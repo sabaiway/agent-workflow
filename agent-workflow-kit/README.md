@@ -181,6 +181,7 @@ command is printed).
 |---------|------|--------------|
 | `/agent-workflow-kit` | new / empty project | recon → **asks visible-or-hidden** + **conversational language** + **agent attribution** (default off) → deploys `AGENTS.md` + `docs/ai/` filled with real recon data → installs enforcement → **asks before committing** |
 | `/agent-workflow-kit upgrade` | existing deployment | reads `docs/ai/.workflow-version`, shows the changelog diff, applies migrations, re-stamps |
+| `/agent-workflow-kit backends` | any time | **read-only** check of the optional execution-backends (the `codex` / `agy` bridges): what's set up vs missing and the next step. Never writes, never commits, never runs a subscription CLI (credentials = marker-file presence, not a live login). |
 
 It **never auto-commits** and **never overwrites** an existing `AGENTS.md` without asking.
 
@@ -223,7 +224,7 @@ agent-workflow-kit/
     ├── scripts/     ← caps / archive / index + tests
     ├── contracts.md ← visibility / language / attribution rules
     └── planning.md  ← plan lifecycle + continuity
-├── tools/           ← family tooling: manifest schema + validator, methodology-slot injection
+├── tools/           ← family tooling: manifest schema + validator, methodology-slot injection, backend detector (detect-backends)
 ├── launchers/       ← Codex / Devin Desktop / Cursor entries
 └── migrations/      ← per-version upgrade steps
 ```

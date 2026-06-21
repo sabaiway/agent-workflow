@@ -4,6 +4,39 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.5.0 — Backend detection (detect + guide)
+
+The kit's onboarding can now **see the optional execution-backends** — the thin bridges to
+subscription CLIs (`codex-cli-bridge` → `codex`, `antigravity-cli-bridge` → `agy`) — instead of
+being blind to everything but the memory substrate. **Additive and read-only**: no `capability.json`
+schema change, no validator change, no auto-install. Since nothing in the deployed `docs/ai/`
+structure changes, **no migration is needed** and the deployment-lineage head stays `1.3.0`
+(`upgrade` reconciles and re-stamps with nothing to apply).
+
+- **`tools/detect-backends.mjs` — the read-only detector.** Pure, dependency-injectable,
+  dependency-free (Node ≥ 18), and already shipped (it lives under `tools/`, which is in the
+  package `files` + the installer `PAYLOAD`). It reports two **decoupled** axes so a healthy
+  manifest is never confused with a usable backend: `manifestState` (health of the bridge *skill*:
+  `not-installed | unsupported-schema | invalid-manifest | foreign | stub | ok`) and the readiness
+  signals `cli` / `credentials` / `wrappers`, probed **independently** for every registry entry even
+  when the skill is absent — so "the `codex` CLI is installed and signed in, but the bridge skill
+  isn't" reads as `needs-skill`, with the setup pointer. Every fs probe is wrapped → an explicit
+  `unknown` + reason, never a throw and never a nameless failure.
+- **Detection is read-only — it never runs a subscription CLI.** "credentials present/missing" is
+  the existence of the credential-marker **file**, never a live `codex login status` / `agy` check
+  (which would spawn a paid, slow, networked CLI). The report deliberately never says
+  "authenticated" (a unit test asserts the word's absence).
+- **Kit-owned registry (`KNOWN_BACKENDS`), not a schema change.** A missing bridge has no manifest
+  on disk and no `setup/README.md` in the kit tarball, so the per-backend facts (`bin`, credential
+  marker, stable setup URL) must live in the detector. A **drift-guard** test keeps the registry in
+  lockstep with the in-repo manifests (set equality with every `kind:execution-backend` dir, unique
+  names, `detect.installed` match, `setup/README.md` exists).
+- **Two surfaces.** A new **`/agent-workflow-kit backends`** mode presents the table and, for any
+  backend that is not `ready`, points to its setup (local `setup/README.md` when installed, else the
+  setup URL). Bootstrap **step 11** also prints a one-line backends summary — read-only, and it
+  **never blocks the commit gate**. Honest about Windows: detection works, but the bridges' POSIX
+  `.sh` wrappers are not promised to run there.
+
 ## 1.4.0 — Delegation-aware composition root (agent-workflow family, Plan 1)
 
 The kit becomes the **composition root** of the new `agent-workflow` family. **Additive** — the
