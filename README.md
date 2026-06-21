@@ -3,6 +3,22 @@
 Monorepo for the **agent-workflow** skill family — portable, cross-agent memory and
 workflow tooling for AI coding agents.
 
+## Start here
+
+Most users want a single command. It deploys the whole workflow — the memory substrate plus the
+injected methodology — into a project:
+
+```
+npx @sabaiway/agent-workflow-kit init
+```
+
+`agent-workflow-kit` is **the entry point**, and it already bundles the memory substrate — so you
+install nothing else. When the kit detects a standalone `@sabaiway/agent-workflow-memory`, it
+delegates substrate deployment to that package; otherwise it uses its bundled copy. Install
+`@sabaiway/agent-workflow-memory` **directly** only to use the memory layer *without* the kit —
+a deliberately rare case. The other family members ship as agent skills, not npm packages (see
+below).
+
 ## Workspaces (npm packages)
 
 | Package | npm | Role |
