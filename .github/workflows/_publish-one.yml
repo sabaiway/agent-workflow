@@ -1,0 +1,155 @@
+name: _publish-one
+
+# Reusable building block: publish ONE workspace package to npm. Called by publish.yml
+# (once per selected package). Kept separate so the per-package preflights live in a single
+# place and "both" can run them twice — memory before kit — without duplicating the logic.
+#
+# The caller passes `dir` (the package directory, which holds its own package.json); every
+# step runs with working-directory set to it, and the package name/version are read from that
+# package.json rather than hardcoded, so this file is package-agnostic.
+#
+# Auth uses the NPM_TOKEN secret (inherited from the caller) — an npm *automation* token (or a
+# granular token scoped to @sabaiway with read+write). Automation/granular tokens bypass 2FA,
+# which an interactive `npm publish` cannot do in CI. Create one at npmjs.com → Access Tokens,
+# then add it under repo Settings → Secrets and variables → Actions → NPM_TOKEN.
+#
+# Provenance is attached via OIDC (id-token: write), so each published version carries a
+# verified build attestation linking it back to this repo + commit.
+#
+# Two preflight steps run before publish (also under dry_run) so failures are unambiguous
+# instead of surfacing as a bare 404 on the publish PUT:
+#   1. "Show publish target" — confirms the version isn't already on npm (no token needed).
+#   2. "Verify npm auth"      — prints who NPM_TOKEN authenticates as and whether that
+#                               account has read-write on the package; fails early, with the
+#                               fix, if the token is missing / wrong-account / read-only.
+
+on:
+  workflow_call:
+    inputs:
+      dir:
+        description: 'Package directory to publish (holds its own package.json)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run — validate & pack, do not actually publish'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write # npm provenance (supply-chain attestation)
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.dir }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      # --- Preflight #1: the package (no token needed; registry read is public) ---
+      - name: Show publish target
+        run: |
+          set -euo pipefail
+          name=$(node -p "require('./package.json').name")
+          ver=$(node -p "require('./package.json').version")
+          echo "Target:   $name@$ver"
+          echo "Directory: ${{ inputs.dir }}"
+          echo "Registry: https://registry.npmjs.org/"
+          enc="${name/\//%2F}"
+          meta=$(curl -fsS "https://registry.npmjs.org/$enc" || echo '{}')
+          node -e '
+            const meta = JSON.parse(process.argv[1] || "{}");
+            const [name, ver] = [process.argv[2], process.argv[3]];
+            const latest = (meta["dist-tags"] || {}).latest;
+            console.log(latest ? `Current latest on npm: ${latest}` : "Not yet published (this would be the first version).");
+            if (meta.versions && meta.versions[ver]) {
+              console.error(`::error::${name}@${ver} is ALREADY published — npm will reject a re-publish. Bump the version in package.json (this workflow never overwrites).`);
+              process.exit(1);
+            }
+            console.log(`OK: ${ver} is a new version (publishing it updates the package).`);
+          ' "$meta" "$name" "$ver"
+
+      # --- Preflight #2: the credentials (this is what turns a cryptic 404 into a clear cause) ---
+      - name: Verify npm auth
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -uo pipefail
+          pkg=$(node -p "require('./package.json').name")
+          # Who does NPM_TOKEN authenticate as? A missing/invalid/expired/revoked token fails here
+          # with a clear message — instead of surfacing as a 404 on the publish PUT later.
+          if ! who=$(npm whoami 2>/tmp/whoami.err); then
+            echo "::error::NPM_TOKEN is missing, invalid, expired, or revoked — npm whoami was rejected."
+            echo "  The publish PUT would return a misleading 404 (npm hides write-auth failures as 404)."
+            echo "  Fix: regenerate a token on npmjs.com (Classic → Automation is simplest — it never expires"
+            echo "       and bypasses 2FA), then overwrite the repo secret NPM_TOKEN with its value."
+            sed 's/^/  npm: /' /tmp/whoami.err >&2 || true
+            exit 1
+          fi
+          echo "Authenticated as: $who"
+
+          # Does that account actually have WRITE on this package? (best-effort: some scope-limited
+          # tokens can't call this API — then we warn and let the publish be the source of truth.)
+          if perms=$(npm access list packages --json 2>/tmp/access.err); then
+            node -e '
+              const map = JSON.parse(process.argv[1] || "{}");
+              const [pkg, who] = [process.argv[2], process.argv[3]];
+              const perm = map[pkg];
+              if (!perm) {
+                console.error(`::error::Account "${who}" has no access entry for ${pkg}.`);
+                console.error(`  Likely the WRONG account, or the token scope/allowlist excludes ${pkg}.`);
+                console.error(`  Fix: publish from the account that owns @sabaiway, with a token granting read-write on the @sabaiway scope.`);
+                process.exit(1);
+              }
+              if (!String(perm).includes("write")) {
+                console.error(`::error::Token has "${perm}" on ${pkg} — needs read-write.`);
+                console.error(`  Fix: regenerate the token with Read and Write on the @sabaiway scope.`);
+                process.exit(1);
+              }
+              console.log(`Write access OK: ${who} has "${perm}" on ${pkg}.`);
+            ' "$perms" "$pkg" "$who" || exit 1
+          else
+            echo "::warning::Could not query npm access (token may be scope-limited) — skipping the write-access precheck; the publish step will be the source of truth."
+            sed 's/^/  npm: /' /tmp/access.err || true
+          fi
+
+      - name: Pack preview
+        run: npm pack --dry-run
+
+      - name: Test shipped enforcement scripts
+        run: node --test references/scripts/*.test.mjs
+
+      - name: Publish (dry run)
+        if: ${{ inputs.dry_run }}
+        run: npm publish --dry-run
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish
+        if: ${{ !inputs.dry_run }}
+        run: npm publish --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Confirm published
+        if: ${{ !inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          name=$(node -p "require('./package.json').name")
+          ver=$(node -p "require('./package.json').version")
+          enc="${name/\//%2F}"
+          # Registry is read-through-cached; retry briefly so we don't false-alarm on propagation lag.
+          for i in 1 2 3 4 5; do
+            latest=$(curl -fsS "https://registry.npmjs.org/$enc/latest" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).version' 2>/dev/null || echo '')
+            [ "$latest" = "$ver" ] && { echo "✓ Published: $name@$ver is now 'latest' on npm."; exit 0; }
+            echo "waiting for registry to reflect $ver (saw '${latest:-none}')… ($i/5)"; sleep 5
+          done
+          echo "::warning::Publish step succeeded but the registry still shows '${latest:-none}' as latest — likely just propagation lag. Verify: npm view $name version"

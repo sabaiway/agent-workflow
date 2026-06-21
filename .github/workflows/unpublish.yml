@@ -1,0 +1,60 @@
+name: unpublish
+
+# Admin tool: remove a published version from npm via CI (uses the NPM_TOKEN secret, so no
+# local `npm login`). Pick which package (memory | kit) and the exact version. npm only allows
+# unpublishing within 72h of publish and with no dependents. Guarded: requires typing the exact
+# version + UNPUBLISH to confirm.
+#
+# Note: if unpublishing would leave the package with zero versions, npm locks the name for
+# 24h — publish the replacement version first, then unpublish the old one(s).
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: 'Which package to unpublish'
+        required: true
+        type: choice
+        options:
+          - memory
+          - kit
+      version:
+        description: 'Exact version to unpublish, e.g. 1.2.3'
+        required: true
+        type: string
+      confirm:
+        description: 'Type UNPUBLISH to confirm'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  unpublish:
+    if: ${{ inputs.confirm == 'UNPUBLISH' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Resolve package name
+        id: pkg
+        env:
+          PACKAGE: ${{ inputs.package }}
+        run: |
+          set -euo pipefail
+          case "$PACKAGE" in
+            memory) echo "name=@sabaiway/agent-workflow-memory" >> "$GITHUB_OUTPUT" ;;
+            kit)    echo "name=@sabaiway/agent-workflow-kit"    >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::unknown package '$PACKAGE'"; exit 1 ;;
+          esac
+
+      - name: Unpublish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NAME: ${{ steps.pkg.outputs.name }}
+          VERSION: ${{ inputs.version }}
+        run: npm unpublish "$NAME@$VERSION"
