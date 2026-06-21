@@ -3,7 +3,7 @@ name: agent-workflow-kit
 description: Deploy or upgrade a portable AI-agent memory-and-workflow system in any project. Use when the user wants to bootstrap `docs/ai/` + an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) + cap/archive/index enforcement in a new or existing repo, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-kit` / `/agent-workflow-kit upgrade`. Triggers on phrases like "set up the memory system", "deploy the AI workflow here", "bootstrap docs/ai", "upgrade the workflow".
 disable-model-invocation: true
 metadata:
-  version: '1.4.0'
+  version: '1.5.0'
 ---
 
 # agent-workflow-kit
@@ -72,12 +72,13 @@ ever deleted.
 
 ---
 
-## Two modes
+## Modes
 
 Pick the mode from the user's invocation. Auto-detect an existing `docs/ai/` to guard against bootstrapping over a live system, but the user makes the final call.
 
 - **`/agent-workflow-kit`** (default) — bootstrap a new or empty project. If `docs/ai/` already exists, stop and ask whether they meant `upgrade`.
 - **`/agent-workflow-kit upgrade`** — upgrade an existing deployment to the skill's current `version`.
+- **`/agent-workflow-kit backends`** — read-only environment check: which optional **execution-backends** (the `codex` / `agy` bridges) are set up vs missing. Never writes, never commits, never runs a subscription CLI.
 
 ### Mode: bootstrap
 
@@ -106,7 +107,7 @@ Pick the mode from the user's invocation. Auto-detect an existing `docs/ai/` to 
     independent axes: a packaging-only release bumps the package but leaves the lineage head until a
     migration actually changes the deployed `docs/ai` structure. A stamp greater than the head →
     STOP (never downgrade).
-11. **Report & ask.** Show `tree docs/ai/`, 2–3 lines on what was filled with real data vs left as TODO, then **ask before committing** — never auto-commit.
+11. **Report & ask.** Show `tree docs/ai/`, 2–3 lines on what was filled with real data vs left as TODO, then run the **backend detector** (`node ${CLAUDE_SKILL_DIR}/tools/detect-backends.mjs`) and print a one-line summary of the optional execution-backends (e.g. `backends: codex ✓ ready · antigravity ✗ needs-credentials — run /agent-workflow-kit backends`). This is **read-only and never blocks the commit gate**. Then **ask before committing** — never auto-commit.
 
 Fill strategy:
 
@@ -126,6 +127,16 @@ Fill strategy:
 4. Apply `${CLAUDE_SKILL_DIR}/migrations/<version>-<slug>.md` in **semver order**, only those newer than the project's stamp. Migrations are **idempotent** — safe to re-run.
 5. Reconcile drift: add any kernel files/scripts the project is missing; never clobber project-authored content (their `decisions.md`, `known_issues.md`, page specs stay). Any user question a migration raises follows the same rule as bootstrap — **structured multiple-choice where supported** (`AskUserQuestion` in Claude Code), otherwise prose. If `AGENTS.md` has no *Communication language* block (pre-1.1.0 deployment), **ask the user their conversational language** and insert the block — see `migrations/1.1.0-communication-language.md`. If it has no *Attribution* block (pre-1.2.0 deployment), **ask whether the agent may attribute work to itself / AI** and insert the block (defaulting to `off`) — see `migrations/1.2.0-agent-attribution.md`.
 6. Re-stamp `docs/ai/.workflow-version` to the **deployment-lineage head** (`1.3.0`, not the package version). Report changes; **ask before committing**.
+
+### Mode: backends
+
+Read-only. Answers *"which optional execution-backends are set up vs missing, and what's the next step?"* — for the family's subscription-CLI bridges (`codex-cli-bridge` → `codex`, `antigravity-cli-bridge` → `agy`). It **never writes, never commits, and never runs a subscription CLI**.
+
+1. Run `node ${CLAUDE_SKILL_DIR}/tools/detect-backends.mjs` and present its table verbatim. Each row reports two **decoupled** axes: `manifestState` (health of the bridge *skill* — `not-installed | unsupported-schema | invalid-manifest | foreign | stub | ok`) and the readiness signals `cli` / `credentials` / `wrappers`, probed independently — so a CLI that is installed and signed in but whose bridge *skill* is absent reads `needs-skill`, not "missing".
+2. For any backend that is not `ready`, point to its setup: the local `setup/README.md` when the bridge is installed, otherwise the backend's setup URL (both are in the report).
+3. State plainly to the user that this is **detection only**:
+   - **"credentials present"** means the credential-marker **file** exists — it is **not** a live login check. The detector never runs `codex login status` / `agy` (that would spawn a paid, slow, networked subscription CLI).
+   - The bridges' wrappers are **POSIX `.sh`** scripts. On Windows the detector still works, but the bridges themselves are **not promised to run** — say so rather than implying they will.
 
 ---
 
@@ -196,6 +207,6 @@ Deploy these into `AGENTS.md`; remove rows that don't apply to the stack.
 - [`references/scripts/`](references/scripts/) — the Node enforcement scripts (caps + staleness + index-freshness gate, 3-tier archive, hook installer) and their unit tests.
 - [`migrations/`](migrations/) — per-version upgrade steps; see `migrations/README.md`.
 - [`launchers/`](launchers/) — run the bootstrapper from non-Claude agents (`SKILL.md` is a native Codex skill; a Devin Desktop workflow launcher + install script). See `launchers/README.md`.
-- [`tools/`](tools/) — the family-wide tooling the kit **owns and ships**: `manifest/{schema.md,validate.mjs}` (the `capability.json` schema + the validator the kit runs as the memory detector, and root CI invokes), `delegation.mjs` (the executable delegate/fallback decision + hand-off plan), `inject-methodology.mjs` + `methodology-slot.md` (the bounded slot injection), and `release-scan.mjs` (the attribution-off release gate). See [`tools/manifest/schema.md`](tools/manifest/schema.md).
+- [`tools/`](tools/) — the family-wide tooling the kit **owns and ships**: `manifest/{schema.md,validate.mjs}` (the `capability.json` schema + the validator the kit runs as the memory detector, and root CI invokes), `delegation.mjs` (the executable delegate/fallback decision + hand-off plan), `inject-methodology.mjs` + `methodology-slot.md` (the bounded slot injection), `detect-backends.mjs` (the read-only **backend detector** behind `/agent-workflow-kit backends`), and `release-scan.mjs` (the attribution-off release gate). See [`tools/manifest/schema.md`](tools/manifest/schema.md).
 - [`capability.json`](capability.json) — the kit's own `agent-workflow` family manifest (`kind: composition-root`).
 - [`CHANGELOG.md`](CHANGELOG.md) — version history of this kernel.
