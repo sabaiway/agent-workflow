@@ -1,0 +1,62 @@
+name: publish
+
+# Manual npm publish for the monorepo. Run from the Actions tab → "publish" → Run workflow.
+#
+# Pick which package to publish: `memory`, `kit`, or `both`. The actual per-package preflight +
+# publish logic lives in the reusable workflow _publish-one.yml; this file just selects the
+# package(s) and enforces ordering.
+#
+# Ordering: @sabaiway/agent-workflow-kit composes on top of @sabaiway/agent-workflow-memory, so
+# when publishing `both` the memory package goes first. That is enforced by `kit needs: memory`
+# (kit also refuses to run if memory's publish failed). For a single package the other job is
+# simply skipped.
+#
+# Auth: NODE_AUTH_TOKEN comes from the NPM_TOKEN repo secret (inherited into the reusable
+# workflow). Provenance is attached via OIDC (id-token: write). See _publish-one.yml for the
+# token requirements and the preflight checks that turn auth problems into clear errors.
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: 'Which package to publish'
+        type: choice
+        options:
+          - both
+          - memory
+          - kit
+        default: both
+      dry_run:
+        description: 'Dry run — validate & pack, do not actually publish'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write # npm provenance (supply-chain attestation)
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  # Publish order is memory → kit (kit composes on top of memory).
+  memory:
+    if: ${{ inputs.package == 'memory' || inputs.package == 'both' }}
+    uses: ./.github/workflows/_publish-one.yml
+    with:
+      dir: agent-workflow-memory
+      dry_run: ${{ inputs.dry_run }}
+    secrets: inherit
+
+  kit:
+    # `needs: memory` makes kit wait for memory; `always()` lets kit still run when memory was
+    # SKIPPED (package=kit), while the result guard blocks kit if memory was actually published
+    # and FAILED (package=both).
+    needs: memory
+    if: ${{ always() && (inputs.package == 'kit' || inputs.package == 'both') && (needs.memory.result == 'success' || needs.memory.result == 'skipped') }}
+    uses: ./.github/workflows/_publish-one.yml
+    with:
+      dir: agent-workflow-kit
+      dry_run: ${{ inputs.dry_run }}
+    secrets: inherit
