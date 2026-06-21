@@ -1,0 +1,27 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "agent-workflow-memory",
+  "kind": "memory-substrate",
+  "version": "1.0.0",
+  "provides": ["context"],
+  "roles": {},
+  "detect": {
+    "installed": {
+      "env": "AGENT_WORKFLOW_MEMORY_DIR",
+      "default": "~/.claude/skills/agent-workflow-memory",
+      "file": "SKILL.md"
+    },
+    "deployed": {
+      "file": "docs/ai/.memory-version"
+    }
+  },
+  "install": { "npm": "@sabaiway/agent-workflow-memory" },
+  "uninstall": {
+    "removeResolved": "detect.installed",
+    "note": "init copies into the skill dir; uninstall removes the resolved detect.installed dir — not an npm dependency"
+  },
+  "cost": "none",
+  "quota": null,
+  "provenance": { "author": "sabaiway", "source": "github:sabaiway/agent-workflow" }
+}

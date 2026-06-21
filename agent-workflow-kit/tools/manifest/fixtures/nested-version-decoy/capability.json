@@ -1,0 +1,9 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "nested-version-decoy",
+  "kind": "memory-substrate",
+  "version": "1.0.0",
+  "provides": [],
+  "roles": {}
+}

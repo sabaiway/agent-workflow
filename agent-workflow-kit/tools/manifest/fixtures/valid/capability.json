@@ -1,0 +1,18 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "fixture-valid",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["review", "execute"],
+  "roles": {
+    "review": { "cmd": "fixture-review", "source": "bin/run.sh", "modes": ["plan", "code"], "output": "advisory" },
+    "execute": { "cmd": "fixture-exec", "source": "bin/run.sh" }
+  },
+  "detect": {
+    "installed": { "env": "FIXTURE_DIR", "default": "~/.claude/skills/fixture-valid", "file": "SKILL.md" },
+    "deployed": { "file": "docs/ai/.memory-version" }
+  },
+  "cost": "subscription",
+  "quota": { "kind": "subscription", "finite": true }
+}

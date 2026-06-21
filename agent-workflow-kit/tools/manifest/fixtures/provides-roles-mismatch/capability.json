@@ -1,0 +1,11 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "mismatch",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["execute"],
+  "roles": {
+    "review": { "cmd": "mismatch-review", "source": "bin/run.sh" }
+  }
+}

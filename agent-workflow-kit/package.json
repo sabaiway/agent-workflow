@@ -1,0 +1,60 @@
+{
+  "name": "@sabaiway/agent-workflow-kit",
+  "version": "1.4.0",
+  "description": "Portable, cross-agent memory & workflow for AI coding agents — Claude Code, Codex, Cursor, Devin Desktop. One command deploys an AGENTS.md entry point + docs/ai context with cap/archive/index enforcement into any repo.",
+  "keywords": [
+    "ai-agents",
+    "ai-coding",
+    "coding-agent",
+    "llm",
+    "ai-tools",
+    "claude-code",
+    "codex",
+    "cursor",
+    "windsurf",
+    "devin",
+    "github-copilot",
+    "gemini-cli",
+    "cline",
+    "aider",
+    "agents-md",
+    "agent-memory",
+    "context-engineering",
+    "cross-agent",
+    "workflow",
+    "memory",
+    "developer-tools"
+  ],
+  "homepage": "https://github.com/sabaiway/agent-workflow#readme",
+  "bugs": {
+    "url": "https://github.com/sabaiway/agent-workflow/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sabaiway/agent-workflow.git",
+    "directory": "agent-workflow-kit"
+  },
+  "license": "MIT",
+  "author": "sabaiway",
+  "type": "module",
+  "bin": {
+    "agent-workflow-kit": "bin/install.mjs"
+  },
+  "files": [
+    "bin/",
+    "SKILL.md",
+    "README.md",
+    "CHANGELOG.md",
+    "capability.json",
+    "references/",
+    "launchers/",
+    "migrations/",
+    "tools/"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

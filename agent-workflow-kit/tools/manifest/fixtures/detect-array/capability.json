@@ -1,0 +1,10 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "detect-array",
+  "kind": "memory-substrate",
+  "version": "1.0.0",
+  "provides": [],
+  "roles": {},
+  "detect": { "installed": [] }
+}

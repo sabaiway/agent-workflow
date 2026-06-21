@@ -1,0 +1,38 @@
+name: unpublish
+
+# Admin tool: remove a published version from npm via CI (uses the NPM_TOKEN secret, so no
+# local `npm login`). npm only allows unpublishing within 72h of publish and with no
+# dependents. Guarded: requires typing the exact version + UNPUBLISH to confirm.
+#
+# Note: if unpublishing would leave the package with zero versions, npm locks the name for
+# 24h — publish the replacement version first, then unpublish the old one(s).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Exact version to unpublish, e.g. 1.2.3'
+        required: true
+        type: string
+      confirm:
+        description: 'Type UNPUBLISH to confirm'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  unpublish:
+    if: ${{ inputs.confirm == 'UNPUBLISH' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Unpublish ${{ inputs.version }}
+        run: npm unpublish "@sabaiway/agent-workflow-kit@${{ inputs.version }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

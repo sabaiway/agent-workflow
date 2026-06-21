@@ -1,0 +1,9 @@
+{
+  "family": "agent-workflow",
+  "schema": 2,
+  "name": "from-the-future",
+  "kind": "memory-substrate",
+  "version": "1.0.0",
+  "provides": [],
+  "roles": {}
+}

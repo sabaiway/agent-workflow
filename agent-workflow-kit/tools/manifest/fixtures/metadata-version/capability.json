@@ -1,0 +1,9 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "metadata-version",
+  "kind": "memory-substrate",
+  "version": "1.0.0",
+  "provides": [],
+  "roles": {}
+}

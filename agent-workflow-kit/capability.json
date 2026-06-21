@@ -1,0 +1,21 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "agent-workflow-kit",
+  "kind": "composition-root",
+  "version": "1.4.0",
+  "provides": [],
+  "roles": {},
+  "detect": {
+    "installed": {
+      "env": "AGENT_WORKFLOW_KIT_DIR",
+      "default": "~/.claude/skills/agent-workflow-kit",
+      "file": "SKILL.md"
+    },
+    "deployed": { "file": "docs/ai/.workflow-version" }
+  },
+  "install": { "npm": "@sabaiway/agent-workflow-kit" },
+  "cost": "none",
+  "quota": null,
+  "provenance": { "author": "sabaiway", "source": "github:sabaiway/agent-workflow" }
+}

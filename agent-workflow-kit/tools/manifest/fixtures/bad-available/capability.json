@@ -1,0 +1,10 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "bad-available",
+  "kind": "memory-substrate",
+  "version": "1.0.0",
+  "available": "yes",
+  "provides": [],
+  "roles": {}
+}
