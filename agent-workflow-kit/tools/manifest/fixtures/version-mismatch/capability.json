@@ -1,0 +1,9 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "version-drift",
+  "kind": "memory-substrate",
+  "version": "2.0.0",
+  "provides": [],
+  "roles": {}
+}

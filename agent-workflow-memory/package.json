@@ -1,0 +1,53 @@
+{
+  "name": "@sabaiway/agent-workflow-memory",
+  "version": "1.0.0",
+  "description": "Portable, cross-agent memory substrate for AI coding agents — an AGENTS.md entry point + docs/ai context with cap/archive/index enforcement, deployable standalone or as part of the agent-workflow family. The memory layer of the agent-workflow family.",
+  "keywords": [
+    "ai-agents",
+    "ai-coding",
+    "coding-agent",
+    "llm",
+    "ai-tools",
+    "claude-code",
+    "codex",
+    "cursor",
+    "agents-md",
+    "agent-memory",
+    "context-engineering",
+    "cross-agent",
+    "memory",
+    "developer-tools"
+  ],
+  "homepage": "https://github.com/sabaiway/agent-workflow#readme",
+  "bugs": {
+    "url": "https://github.com/sabaiway/agent-workflow/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sabaiway/agent-workflow.git",
+    "directory": "agent-workflow-memory"
+  },
+  "license": "MIT",
+  "author": "sabaiway",
+  "type": "module",
+  "bin": {
+    "agent-workflow-memory": "bin/install.mjs"
+  },
+  "files": [
+    "bin/",
+    "SKILL.md",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "capability.json",
+    "references/",
+    "scripts/",
+    "migrations/"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "antigravity-cli-bridge",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["review", "probe"],
+  "roles": {
+    "review": { "cmd": "agy-run", "source": "bin/agy.sh", "template": "references/review-prompt.md", "output": "advisory" },
+    "probe": { "cmd": "agy-run", "source": "bin/agy.sh", "output": "advisory" }
+  },
+  "detect": {
+    "installed": {
+      "env": "ANTIGRAVITY_CLI_BRIDGE_DIR",
+      "default": "~/.claude/skills/antigravity-cli-bridge",
+      "file": "SKILL.md"
+    }
+  },
+  "cost": "subscription",
+  "quota": { "kind": "subscription", "finite": true },
+  "provenance": { "author": "sabaiway", "source": "github:sabaiway/agent-workflow" }
+}

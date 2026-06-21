@@ -1,0 +1,11 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "missing-source",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["review"],
+  "roles": {
+    "review": { "cmd": "ghost-review", "source": "bin/does-not-exist.sh" }
+  }
+}

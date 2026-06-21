@@ -1,0 +1,11 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "agent-workflow-engine",
+  "kind": "methodology-engine",
+  "version": "0.0.0",
+  "available": false,
+  "provides": ["plan"],
+  "roles": {},
+  "provenance": { "author": "sabaiway", "source": "github:sabaiway/agent-workflow" }
+}

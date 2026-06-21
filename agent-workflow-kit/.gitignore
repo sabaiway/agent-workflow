@@ -1,0 +1,12 @@
+# npm pack output
+*.tgz
+
+# dependencies (the kit is dependency-free — guard against accidental installs)
+node_modules/
+
+# logs
+npm-debug.log*
+
+# OS / editor cruft
+.DS_Store
+*.swp

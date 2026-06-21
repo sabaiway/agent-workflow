@@ -1,0 +1,20 @@
+# Machine-local plans -- NEVER committed (family workflow methodology: plans are ephemeral).
+docs/plans/
+
+# Node
+node_modules/
+*.log
+npm-debug.log*
+.npm/
+
+# Build / coverage
+dist/
+coverage/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+
+.idea/
+.claude/settings.local.json

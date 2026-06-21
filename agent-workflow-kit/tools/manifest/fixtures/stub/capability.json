@@ -1,0 +1,10 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "fixture-engine-stub",
+  "kind": "methodology-engine",
+  "version": "0.0.0",
+  "available": false,
+  "provides": ["plan"],
+  "roles": {}
+}

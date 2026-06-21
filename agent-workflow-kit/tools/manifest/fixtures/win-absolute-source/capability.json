@@ -1,0 +1,11 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "win-absolute-source",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["review"],
+  "roles": {
+    "review": { "cmd": "ghost", "source": "C:\\evil\\run.sh" }
+  }
+}

@@ -1,0 +1,83 @@
+name: stats
+
+# Level-0 usage telemetry — passive, registry/GitHub-side only, no client phone-home.
+# Appends a daily row to stats/history.csv (committed) so the time series survives
+# GitHub's 14-day Traffic window. npm download counts come from the public registry API.
+#
+# Traffic endpoints need push access. The default GITHUB_TOKEN usually suffices; if the
+# clone/view columns stay 0, add a repo-scoped PAT as the secret STATS_TOKEN — it is used
+# automatically when present.
+
+on:
+  schedule:
+    - cron: '17 6 * * *' # daily, 06:17 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write # commit the snapshot back
+
+concurrency:
+  group: stats
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Collect Level-0 signals
+        env:
+          GH_TOKEN: ${{ secrets.STATS_TOKEN || secrets.GITHUB_TOKEN }}
+          PKG: '@sabaiway/agent-workflow-kit'
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          today=$(date -u +%F)
+          enc="${PKG/\//%2F}"
+
+          # --- npm registry (public; tolerates 404 before first publish) ---
+          # Fetch raw then parse separately so a 404 can't leave an empty CSV field.
+          npm_raw_day=$(curl -fsS "https://api.npmjs.org/downloads/point/last-day/$enc"   || echo '{}')
+          npm_raw_week=$(curl -fsS "https://api.npmjs.org/downloads/point/last-week/$enc" || echo '{}')
+          npm_day=$(jq -r '.downloads // 0'  <<<"$npm_raw_day"  2>/dev/null || echo 0)
+          npm_week=$(jq -r '.downloads // 0' <<<"$npm_raw_week" 2>/dev/null || echo 0)
+          [[ "$npm_day"  =~ ^[0-9]+$ ]] || npm_day=0
+          [[ "$npm_week" =~ ^[0-9]+$ ]] || npm_week=0
+
+          gh() { curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO$1"; }
+
+          repo=$(gh "" || echo '{}')
+          stars=$(jq -r '.stargazers_count // 0'     <<<"$repo" 2>/dev/null || echo 0)
+          forks=$(jq -r '.forks_count // 0'          <<<"$repo" 2>/dev/null || echo 0)
+          watchers=$(jq -r '.subscribers_count // 0' <<<"$repo" 2>/dev/null || echo 0)
+
+          # --- Traffic (needs push access; zeros if the token can't read it) ---
+          clones=$(gh "/traffic/clones" || echo '{}')
+          clones_14d=$(jq -r '.count // 0'   <<<"$clones")
+          clones_uniq=$(jq -r '.uniques // 0' <<<"$clones")
+          views=$(gh "/traffic/views" || echo '{}')
+          views_14d=$(jq -r '.count // 0'    <<<"$views")
+          views_uniq=$(jq -r '.uniques // 0' <<<"$views")
+
+          mkdir -p stats
+          file=stats/history.csv
+          [ -f "$file" ] || echo "date,npm_last_day,npm_last_week,stars,forks,watchers,clones_14d,clones_uniques_14d,views_14d,views_uniques_14d" > "$file"
+          # idempotent: drop any existing row for today before appending
+          { grep -v "^$today," "$file" || true; } > "$file.tmp"
+          mv "$file.tmp" "$file"
+          echo "$today,$npm_day,$npm_week,$stars,$forks,$watchers,$clones_14d,$clones_uniq,$views_14d,$views_uniq" >> "$file"
+          echo "snapshot $today: npm/day=$npm_day stars=$stars clones14d=$clones_14d"
+
+      - name: Commit snapshot
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add stats/history.csv
+          if git diff --cached --quiet; then
+            echo "no change today"
+          else
+            git commit -m "chore(stats): snapshot $(date -u +%F)"
+            git push
+          fi
