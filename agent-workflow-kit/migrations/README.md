@@ -11,7 +11,7 @@ releases add files/templates, which `upgrade` reconciles without a migration.
 2. Select every migration whose `<version>` is **strictly newer** than the stamp.
 3. Apply them in **ascending semver order**.
 4. Re-stamp `docs/ai/.workflow-version` to the **deployment-lineage head** (`1.3.0` today — the
-   shared lineage, **not** this skill's package version `1.4.0`). A stamp greater than the head → STOP.
+   shared lineage, **not** this skill's npm package version). A stamp greater than the head → STOP.
 
 ## Authoring rules
 

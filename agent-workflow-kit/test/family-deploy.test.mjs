@@ -1,7 +1,8 @@
 // End-to-end acceptance for the composition root's two deploy paths, tying the executable
 // hand-off contract (detectMemory / handoffPlan) to the artifacts that actually land on disk.
 //
-//   fallback  (substrate absent)  → bundled entry point, methodology inline, .workflow-version ONLY
+//   fallback  (substrate absent)  → bundled entry point with an EMPTY slot the root reconciles +
+//                                   fills, .workflow-version ONLY
 //   delegate  (substrate present) → substrate writes .memory-version + empty slot; the root injects
 //                                   the bounded fragment and writes .workflow-version → BOTH stamps
 //
@@ -21,6 +22,7 @@ import { execFileSync } from 'node:child_process';
 import { detectMemory, handoffPlan, EXPECTED_MEMORY_NAME } from '../tools/delegation.mjs';
 import {
   injectMethodology,
+  reconcileSlot,
   extractSlot,
   AGENTS_MD_CAP,
   START_MARKER,
@@ -37,6 +39,23 @@ const KIT_METHODOLOGY = join(KIT_ROOT, 'tools', 'methodology-slot.md');
 // independently of the substrate package version (SKILL.md bootstrap step 10) — hard-coded here so
 // the fallback path asserts it without importing the substrate (which, in fallback, is absent).
 const LINEAGE_HEAD = '1.3.0';
+
+// A realistic pre-slot ("markerless") deployment: it carries the Session-Protocols ANCHOR line the
+// reconcile inserts the slot after, but no slot markers yet (it predates the methodology slot).
+const LEGACY_WITH_ANCHOR = [
+  '# AI Agent Algorithm — legacy project',
+  '',
+  '## 🚀 Session Protocols',
+  '',
+  'Start-of-session, during-work, and task-completion procedures live in [`docs/ai/agent_rules.md`](./docs/ai/agent_rules.md) §1. **Read it before any code change.**',
+  '',
+  '---',
+  '',
+  '## 🚫 Hard Constraints',
+  '',
+  'project-specific rules the user wrote',
+  '',
+].join('\n');
 
 const projects = [];
 const makeProject = () => {
@@ -72,17 +91,19 @@ describe('composition root — fallback (substrate absent)', () => {
     assert.deepEqual(plan.stampsPresent, ['.workflow-version']);
   });
 
-  it('deploys the bundled entry point (inline methodology) and stamps .workflow-version ONLY', () => {
+  it('deploys the bundled entry point (empty slot), reconciles it FILLED, stamps .workflow-version ONLY', () => {
     const { project, docsAi } = makeProject();
     cpSync(KIT_ENTRY_TEMPLATE, join(project, 'AGENTS.md'));
 
-    // The bundled entry point carries methodology inline (no slot markers), so injection is a
-    // deliberate no-op — assert the injector reports exactly that rather than editing the file.
+    // The bundled entry point now ships an EMPTY methodology slot (Plan 2). The kit reconciles it —
+    // ensure (already present) + inject-because-empty — so the fallback path ends with a FILLED slot.
     const fragment = readFileSync(KIT_METHODOLOGY, 'utf8');
-    const result = injectMethodology(readFileSync(join(project, 'AGENTS.md'), 'utf8'), fragment, {
+    const result = reconcileSlot(readFileSync(join(project, 'AGENTS.md'), 'utf8'), fragment, {
       maxLines: AGENTS_MD_CAP,
     });
-    assert.equal(result.status, 'noop-absent');
+    assert.equal(result.status, 'reconciled-filled');
+    writeFileSync(join(project, 'AGENTS.md'), result.text);
+    assert.equal(extractSlot(readFileSync(join(project, 'AGENTS.md'), 'utf8')).trim(), fragment.trim());
 
     writeFileSync(join(docsAi, '.workflow-version'), `${LINEAGE_HEAD}\n`);
     assert.equal(readFileSync(join(docsAi, '.workflow-version'), 'utf8').trim(), LINEAGE_HEAD);
@@ -162,31 +183,36 @@ describe('transition — a fallback project later adopts the substrate', () => {
   });
 });
 
-// Upgrade safety: a markerless prior-lineage entry point (one that predates the methodology slot)
-// must survive an upgrade untouched, and a user-customized slot must be preserved verbatim.
+// Upgrade safety (Plan 2): a markerless prior-lineage entry point (one that predates the
+// methodology slot) now gets the slot ADDED at its Session-Protocols anchor, with every other byte
+// preserved; an empty slot is filled; a user-customized slot is preserved verbatim.
 
-describe('backward compatibility — a prior-lineage deployment survives an upgrade', () => {
-  it('a markerless prior entry point passes injection untouched', () => {
-    const legacy = '# Entry (no slot)\n\n> a prior-lineage entry point that predates the methodology slot\n';
+describe('backward compatibility — a prior-lineage deployment is reconciled on upgrade', () => {
+  it('a markerless prior entry point gets the slot inserted at the anchor, all other bytes preserved', () => {
+    const legacy = LEGACY_WITH_ANCHOR;
     assert.equal(legacy.includes('workflow:methodology'), false, 'precondition: the fixture predates the slot');
-    const result = injectMethodology(legacy, readFileSync(KIT_METHODOLOGY, 'utf8'), { maxLines: AGENTS_MD_CAP });
-    assert.equal(result.status, 'noop-absent');
-    assert.equal(result.text, legacy, 'a markerless entry point is returned byte-for-byte');
+    const fragment = readFileSync(KIT_METHODOLOGY, 'utf8');
+    const result = reconcileSlot(legacy, fragment, { maxLines: AGENTS_MD_CAP });
+    assert.equal(result.status, 'reconciled-inserted');
+    assert.equal(extractSlot(result.text).trim(), fragment.trim(), 'the inserted slot is filled');
+    for (const line of legacy.split('\n').filter(Boolean)) {
+      assert.ok(result.text.includes(line), `original line preserved: ${line}`);
+    }
   });
 
-  it('a user-customized slot is preserved across re-injection (extract-and-reinsert, never regenerate)', () => {
+  it('a user-customized slot is preserved verbatim on reconcile (never regenerated)', () => {
     const custom = 'methodology notes the user wrote\nand a second line';
     const entry = `# Entry\n\n${START_MARKER}\n${custom}\n${END_MARKER}\n\n# Tail\n`;
     assert.equal(extractSlot(entry).trim(), custom, 'the user content is what lives in the slot');
 
-    const result = injectMethodology(entry, extractSlot(entry), { maxLines: AGENTS_MD_CAP });
-    assert.equal(result.status, 'injected');
-    assert.equal(extractSlot(result.text).trim(), custom, 'the customization survives — not replaced by the bundled fragment');
+    const result = reconcileSlot(entry, readFileSync(KIT_METHODOLOGY, 'utf8'), { maxLines: AGENTS_MD_CAP });
+    assert.equal(result.status, 'present-filled');
+    assert.equal(result.text, entry, 'the customization survives byte-for-byte — not replaced by the bundled fragment');
   });
 
   it('an upgrade touches only the artifacts it owns — unrelated project files stay intact', async () => {
     const { project, docsAi } = makeProject();
-    const legacy = '# Entry (no slot)\n';
+    const legacy = LEGACY_WITH_ANCHOR;
     writeFileSync(join(project, 'AGENTS.md'), legacy);
     writeFileSync(join(docsAi, '.workflow-version'), `${LINEAGE_HEAD}\n`);
     mkdirSync(join(project, '.claude'), { recursive: true });
@@ -195,17 +221,21 @@ describe('backward compatibility — a prior-lineage deployment survives an upgr
     const userDoc = '# my own decisions\n';
     writeFileSync(join(docsAi, 'decisions.md'), userDoc);
 
-    // The two upgrade seams that actually write: the substrate stamp takeover + the slot injection.
+    // The two upgrade seams that actually write: the substrate stamp takeover + the slot reconcile.
     await stamp.applyTakeover(docsAi);
-    const injected = injectMethodology(readFileSync(join(project, 'AGENTS.md'), 'utf8'), readFileSync(KIT_METHODOLOGY, 'utf8'), {
+    const fragment = readFileSync(KIT_METHODOLOGY, 'utf8');
+    const reconciled = reconcileSlot(readFileSync(join(project, 'AGENTS.md'), 'utf8'), fragment, {
       maxLines: AGENTS_MD_CAP,
     });
-    if (injected.status === 'injected') writeFileSync(join(project, 'AGENTS.md'), injected.text);
+    assert.equal(reconciled.status, 'reconciled-inserted');
+    writeFileSync(join(project, 'AGENTS.md'), reconciled.text);
 
     assert.equal(readFileSync(join(project, '.claude', 'settings.json'), 'utf8'), settings, 'user settings untouched');
     assert.equal(readFileSync(join(docsAi, 'decisions.md'), 'utf8'), userDoc, 'user-authored doc untouched');
     assert.equal(readFileSync(join(docsAi, '.workflow-version'), 'utf8').trim(), LINEAGE_HEAD, 'legacy stamp preserved');
     assert.equal(readFileSync(join(docsAi, '.memory-version'), 'utf8').trim(), LINEAGE_HEAD, 'takeover reconciled the stamp');
-    assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), legacy, 'a markerless entry point is left as-is (no-op injection)');
+    const entry = readFileSync(join(project, 'AGENTS.md'), 'utf8');
+    assert.equal(extractSlot(entry).trim(), fragment.trim(), 'the entry point now carries the filled slot');
+    assert.ok(entry.includes('Read it before any code change.'), 'the anchor and surrounding content survive');
   });
 });

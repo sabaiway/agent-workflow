@@ -4,6 +4,42 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.6.0 — Methodology slot reconciliation; engine becomes the canonical methodology home
+
+The workflow methodology now has a **single canonical home** in `agent-workflow-engine`
+(`available:false` — content only, not yet published or wired live), and the kit keeps
+**byte-identical mirror copies** so the existing injection + fallback keep working with **no new
+runtime dependency**. A drift-guard test (`tools/methodology-mirror.test.mjs`) pins the mirrors to
+the engine canon: `references/planning.md` and `tools/methodology-slot.md` must equal their engine
+counterparts byte-for-byte.
+
+The user-facing win is **stamp-independent slot reconciliation**. A single atomic, idempotent kit
+operation now **ensures the `workflow:methodology` slot exists and is filled** in a deployed
+`AGENTS.md`, on **bootstrap** and on **every upgrade**:
+
+- **`tools/inject-methodology.mjs`** gains `METHODOLOGY_ANCHOR`, `EMPTY_SLOT`, `ensureSlot`, and
+  `reconcileSlot` (reusing the existing `findSlot` / `injectMethodology` / `extractSlot` marker
+  parser — no second parser). `reconcileSlot` = **ensure the slot exists** (insert an empty marker
+  pair right after the Session-Protocols anchor when a legacy entry point lacks one) → **inject the
+  bounded fragment ONLY IF the slot is empty** (a filled / user-customized slot is preserved
+  verbatim) → **cap-check** (`AGENTS.md` ≤ 100 lines). On a malformed slot or a missing / duplicate
+  anchor it **STOPs with an error and never edits** — the file is left byte-for-byte unchanged.
+- A new CLI mode — `inject-methodology.mjs reconcile <AGENTS.md>` — runs that policy as **one
+  atomic write** (temp + rename); there is no partial state where markers exist but the fill failed.
+- The kit **fallback** entry-point template (`references/templates/AGENTS.md`) now ships the **empty
+  methodology slot** (matching memory's template) instead of an inline methodology line, so a fresh
+  fallback bootstrap gets a slot the kit fills. A new test (`test/fallback-template-cap.test.mjs`)
+  pins that template — empty and filled — under the 100-line cap.
+- **Bootstrap** and **upgrade** (`SKILL.md`) now run `reconcile`. On upgrade it runs
+  **before** the lineage short-circuit, so the slot is reconciled on every upgrade — reaching even
+  legacy **`1.3.0`** deployments — **without bumping the deployment-lineage head**.
+
+The deployment-lineage head **stays `1.3.0`** and `agent-workflow-memory` is **untouched** (no code,
+version, or migration change): reconciliation is stamp-independent, so it needs no head bump (which
+would have forced a memory republish, since the head is hard-coded in memory's stamp module).
+Additive — no user-facing break. The engine's npm packaging, `available:true`, and the live
+`kit → engine` read selector are deferred to the next plan.
+
 ## 1.5.2 — README uplift to front-door grade (docs)
 
 Docs-only patch. The npm-facing `README.md` is uplifted to match the GitHub family front door's

@@ -106,10 +106,11 @@ describe('handoffPlan — stamp sets + single commit gate', () => {
     assert.deepEqual(p.memoryWrites, []);
     assert.equal(p.memoryRaisesCommitGate, false);
     assert.equal(p.commitGate, 'kit-only-after-injection');
-    // Fallback ships the kit's own AGENTS.md with methodology INLINE — never a "slot" (no markers).
+    // Fallback now ships the kit's own AGENTS.md with the EMPTY methodology slot, which the kit
+    // reconciles + fills — the same slot mechanism as the delegate path (Plan 2).
     assert.ok(
-      p.kitWrites.some((w) => w.includes('inline')) && !p.kitWrites.some((w) => w.includes('slot')),
-      'fallback kitWrites should describe inline methodology, not a slot',
+      p.kitWrites.some((w) => w.includes('slot')) && !p.kitWrites.some((w) => w.includes('inline')),
+      'fallback kitWrites should describe the methodology slot, not inline methodology',
     );
   });
 });
