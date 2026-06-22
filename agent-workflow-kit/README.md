@@ -12,7 +12,7 @@ instead of re-reading your whole repo.*
 [![license](https://img.shields.io/npm/l/@sabaiway/agent-workflow-kit)](./LICENSE)
 [![node](https://img.shields.io/node/v/@sabaiway/agent-workflow-kit)](https://nodejs.org)
 
-`v1.4.0`  ·  `Node ≥ 18`  ·  `kernel-only`
+`Node ≥ 18`  ·  `dependency-free`  ·  `kernel-only`
 
 **Works with any tool that reads `AGENTS.md`** — Claude Code · Codex · Cursor · Devin Desktop (formerly Windsurf) · GitHub Copilot · Gemini CLI · Cline · Aider · and 20+ more.
 
