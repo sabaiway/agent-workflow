@@ -76,15 +76,17 @@ agy-run "your prompt"                         # prompt as an argument
 echo "your prompt" | agy-run -                # prompt from stdin
 agy-run @path/to/prompt.md                    # prompt from a file
 AGY_MODEL="Claude Opus 4.6 (Thinking)" agy-run "..."   # pick a model
-AGY_TIMEOUT=10m agy-run "..."                 # override the print timeout
+AGY_TIMEOUT=10m agy-run "..."                 # agy's soft --print-timeout
+AGY_HARD_TIMEOUT=8m agy-run "..."             # hard wall-clock cap via timeout(1)
 agy-run "..." -- --add-dir . --dangerously-skip-permissions   # passthrough agy flags
 ```
 
 `agy` is **headless-only** here (`-p`/`--print`) and there is **no JSON output mode** in v1.0.10 — you
 get plain text. If you need structure, ask for Markdown with explicit headings and validate it
 yourself. Wrapper inputs: first argument is the prompt (`text`, `-` for stdin, or `@file`);
-`AGY_MODEL` (default `Gemini 3.1 Pro (High)`); `AGY_TIMEOUT` → `--print-timeout` (default `5m`); extra
-`agy` flags after `--`. Full detail: [`references/models-and-flags.md`](references/models-and-flags.md).
+`AGY_MODEL` (default `Gemini 3.1 Pro (High)`); `AGY_TIMEOUT` → `--print-timeout` (default `5m`);
+`AGY_HARD_TIMEOUT` → hard `timeout(1)` wall-clock cap (default = `AGY_TIMEOUT`); extra `agy` flags
+after `--`. Full detail: [`references/models-and-flags.md`](references/models-and-flags.md).
 
 ## Project context (how `agy` sees the repo)
 
@@ -167,5 +169,10 @@ checklist, prompt templates, output handling). Essentials:
 - Model names must match the `agy models` display strings **exactly**.
 - **Quota is finite.** Heavy use of Pro/Claude models can exhaust the subscription; prefer Flash for
   cheap work.
+- **A run can't hang forever.** The wrapper caps `agy` with `timeout(1)` (`AGY_HARD_TIMEOUT`,
+  default = `AGY_TIMEOUT`) because `agy`'s own `--print-timeout` is **not** a reliable wall-clock
+  kill (a run was seen surviving 32 min past a 10m `--print-timeout`). A heavy `--add-dir` agentic
+  prompt on the slowest model (`Gemini 3.1 Pro (High)`) can run unbounded — prefer a faster model or
+  a **self-contained prompt** (no `--add-dir`); an "exceeded the hard cap" error is the guard firing.
 - `agy` output is plain text and may be incomplete or out of date — treat it as advisory until the
   main agent verifies it.

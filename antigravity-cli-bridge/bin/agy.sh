@@ -26,7 +26,8 @@
 #   echo "your prompt" | agy-run -           # prompt from stdin
 #   agy-run @path/to/prompt.md               # prompt from a file
 #   AGY_MODEL="Claude Opus 4.6 (Thinking)" agy-run "..."   # pick a model
-#   AGY_TIMEOUT=10m agy-run "..."            # override print timeout
+#   AGY_TIMEOUT=10m agy-run "..."            # override print timeout (agy's soft bound)
+#   AGY_HARD_TIMEOUT=8m agy-run "..."        # override the hard wall-clock cap (timeout(1))
 #   agy-run "..." -- --add-dir . --dangerously-skip-permissions
 #                                            # passthrough agy flags (future flows)
 set -euo pipefail
@@ -50,6 +51,11 @@ fi
 # `-` (empty) => skip --model and let agy use settings.json; default to Pro.
 AGY_MODEL="${AGY_MODEL-Gemini 3.1 Pro (High)}"
 AGY_TIMEOUT="${AGY_TIMEOUT:-5m}"
+# Hard wall-clock cap (defaults to AGY_TIMEOUT). agy's own --print-timeout is NOT a reliable
+# wall-clock kill — a run was observed surviving 32 min past a 10m --print-timeout — so we also wrap
+# agy in timeout(1). A heavy `--add-dir` agentic prompt on the slowest model can otherwise run
+# unbounded, and once a caller backgrounds it nothing kills it. Raise only for a known-healthy run.
+AGY_HARD_TIMEOUT="${AGY_HARD_TIMEOUT:-$AGY_TIMEOUT}"
 
 if [[ $# -lt 1 ]]; then
   echo "usage: $0 <prompt | - | @file> [-- extra agy flags...]" >&2
@@ -95,4 +101,33 @@ if [[ -n "$AGY_MODEL" ]]; then
   model_flag=(--model "$AGY_MODEL")
 fi
 
-exec agy "${model_flag[@]}" --print-timeout "$AGY_TIMEOUT" "${passthrough[@]}" -p "$prompt"
+agy_cmd=(agy "${model_flag[@]}" --print-timeout "$AGY_TIMEOUT" "${passthrough[@]}" -p "$prompt")
+
+# Hard wall-clock cap via timeout(1) (GNU `timeout` on Linux, `gtimeout` from coreutils on macOS).
+# This is the real guard — a backgrounded, hung agy survives its own --print-timeout otherwise.
+timeout_bin=""
+if command -v timeout >/dev/null 2>&1; then
+  timeout_bin="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+  timeout_bin="gtimeout"
+fi
+
+if [[ -z "$timeout_bin" ]]; then
+  echo "warning: no 'timeout'/'gtimeout' on PATH — running agy WITHOUT a hard wall-clock cap" >&2
+  echo "         (install coreutils to enable AGY_HARD_TIMEOUT=$AGY_HARD_TIMEOUT)." >&2
+  exec "${agy_cmd[@]}"
+fi
+
+# --kill-after: if agy ignores the initial TERM, SIGKILL it 10s later. Capture rc (don't `exec`) so
+# we can turn a timeout into an explicit, actionable error instead of a silent non-zero.
+set +e
+"$timeout_bin" --kill-after=10s "$AGY_HARD_TIMEOUT" "${agy_cmd[@]}"
+rc=$?
+set -e
+if [[ $rc -eq 124 || $rc -eq 137 ]]; then
+  echo "error: agy exceeded the hard cap AGY_HARD_TIMEOUT=$AGY_HARD_TIMEOUT and was terminated." >&2
+  echo "       This usually means a heavy '--add-dir' agentic run, or the slowest model looping." >&2
+  echo "       Retry with a faster model (e.g. AGY_MODEL='Gemini 3.5 Flash (High)') or a" >&2
+  echo "       self-contained prompt without --add-dir. Raise AGY_HARD_TIMEOUT only if the run is healthy." >&2
+fi
+exit $rc
