@@ -4,6 +4,14 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.5.1 — README hero fix (docs)
+
+Docs-only patch. The hero showed a hardcoded `v1.4.0` chip while the kit was 1.5.0; the chip is
+removed (the shields.io npm-version badge already shows the live version). A repo test
+(`test/readme-no-stale-version.test.mjs`, dev-only — not shipped) now asserts no published README
+hero carries a pinned `vX.Y.Z` chip, so the drift can't recur. No code, schema, or deployed-payload
+change; the deployment-lineage head stays `1.3.0` (no migration).
+
 ## 1.5.0 — Backend detection (detect + guide)
 
 The kit's onboarding can now **see the optional execution-backends** — the thin bridges to
