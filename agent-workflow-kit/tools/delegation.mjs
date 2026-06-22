@@ -83,10 +83,10 @@ export const handoffPlan = (delegate) =>
     : {
         mode: 'fallback',
         memoryWrites: [],
-        // Fallback ships the kit's OWN AGENTS.md, which carries the methodology INLINE (no slot
-        // markers) — so injection is a deliberate no-op here. Label it as inline, not a "slot"
-        // (the "slot" mechanism only exists in the delegate branch, on memory's AGENTS.md).
-        kitWrites: ['docs/ai/', 'AGENTS.md', 'AGENTS.md methodology (inline)', 'docs/ai/.workflow-version'],
+        // Fallback now ships the kit's OWN AGENTS.md carrying the EMPTY methodology slot (Plan 2);
+        // the kit reconciles it (ensure-slot + inject-because-empty) exactly like the delegate
+        // path — so both paths end with a FILLED slot, not inline methodology.
+        kitWrites: ['docs/ai/', 'AGENTS.md', 'AGENTS.md methodology slot', 'docs/ai/.workflow-version'],
         stampsPresent: ['.workflow-version'],
         memoryRaisesCommitGate: false,
         commitGate: 'kit-only-after-injection',

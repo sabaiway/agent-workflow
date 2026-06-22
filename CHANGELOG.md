@@ -6,6 +6,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-kit` → [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md)
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 
+## 2026-06-22
+
+- **`agent-workflow-kit@1.6.0` — methodology slot reconciliation + engine becomes the canonical
+  methodology home.** `agent-workflow-engine` (still `available:false`) is now the single source of
+  truth for the planning methodology; the kit keeps byte-identical mirror copies, pinned by a
+  drift-guard test. The kit gains a stamp-independent `reconcile` operation (`ensureSlot` /
+  `reconcileSlot`) that ensures the `workflow:methodology` slot exists and is filled on bootstrap +
+  every upgrade — reaching legacy `1.3.0` deployments **without** bumping the deployment-lineage
+  head. The kit fallback template now ships the empty slot. `agent-workflow-memory` is unchanged (no
+  republish). See [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md) and AD-010.
+
 ## 2026-06-21
 
 - **First publish from the monorepo.** Released `@sabaiway/agent-workflow-memory@1.0.0` (initial

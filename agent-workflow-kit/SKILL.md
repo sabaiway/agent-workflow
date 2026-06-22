@@ -3,7 +3,7 @@ name: agent-workflow-kit
 description: Deploy or upgrade a portable AI-agent memory-and-workflow system in any project. Use when the user wants to bootstrap `docs/ai/` + an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) + cap/archive/index enforcement in a new or existing repo, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-kit` / `/agent-workflow-kit upgrade`. Triggers on phrases like "set up the memory system", "deploy the AI workflow here", "bootstrap docs/ai", "upgrade the workflow".
 disable-model-invocation: true
 metadata:
-  version: '1.5.2'
+  version: '1.6.0'
 ---
 
 # agent-workflow-kit
@@ -49,21 +49,25 @@ made: a partial/broken memory install discovered mid-flow must not disable the w
 **Hand-off contract (explicit; tested independent of agent interpretation).**
 - **Delegated** (memory valid): the kit passes the **target project dir** + the **three setup
   answers** (visibility / language / attribution) to `agent-workflow-memory`, which writes
-  `docs/ai/` + `AGENTS.md` + **`.memory-version`**. The kit then **injects the bounded
-  methodology slot** (below) and writes the kit-fallback **`.workflow-version`**. → **both
-  stamps** present.
+  `docs/ai/` + `AGENTS.md` (with the empty slot) + **`.memory-version`**. The kit then
+  **reconciles the bounded methodology slot** (below) and writes the kit-fallback
+  **`.workflow-version`**. → **both stamps** present.
 - **Fallback** (memory absent/invalid): the kit runs the bootstrap procedure below from its own
-  bundled assets and writes **`.workflow-version`** only. Softly suggest installing
+  bundled assets — whose entry-point template now ships the **empty methodology slot** the kit
+  reconciles + fills — and writes **`.workflow-version`** only. Softly suggest installing
   `agent-workflow-memory` — never a prerequisite.
 
-**Methodology injection (the kit is the ONLY writer of memory's slot).** After `AGENTS.md`
-exists, inject the bounded methodology fragment into its `workflow:methodology` slot:
-`node ${CLAUDE_SKILL_DIR}/tools/inject-methodology.mjs <project>/AGENTS.md`. It injects a short
-summary + pointer (Phase-1 source: the kit's bundled `tools/methodology-slot.md`) — **not** the
-full `references/planning.md` — and keeps `AGENTS.md` under its ≤100-line cap. Marker contract:
-exactly one ordered `start → end` pair → replace only the bytes between them; markers absent →
-no-op; any malformed state (single, reversed, nested, duplicate) → no-op **with an error**,
-never edit.
+**Methodology slot reconciliation (the kit is the ONLY writer of memory's slot).** After
+`AGENTS.md` exists, reconcile its `workflow:methodology` slot:
+`node ${CLAUDE_SKILL_DIR}/tools/inject-methodology.mjs reconcile <project>/AGENTS.md`. Reconcile is
+**one atomic operation**: **ensure the slot exists** (insert an empty marker pair right after the
+Session-Protocols anchor when a legacy entry point lacks one) → **inject the bounded fragment ONLY
+IF the slot is empty** (a filled / user-customized slot is preserved verbatim) → **cap-check**
+(keeps `AGENTS.md` ≤100 lines). The fragment is a short summary + pointer (source: the kit's bundled
+`tools/methodology-slot.md`, a **byte-identical mirror of the `agent-workflow-engine` canon**) —
+**not** the full `references/planning.md`. Contract: exactly one ordered `start → end` pair; a
+malformed slot (single, reversed, nested, duplicate) or a missing / duplicate anchor → **STOP with
+an error**, never edit (the file is left byte-for-byte unchanged).
 
 **One composition-level commit gate.** The delegated memory mode performs **no** commit and
 raises **no** "ask to commit". There is exactly **one** gate, owned by the kit, **after**
@@ -103,7 +107,8 @@ Pick the mode from the user's invocation. Auto-detect an existing `docs/ai/` to 
 9. **Wire / hide** per visibility (see contract). Install the pre-commit hook (Node projects): `node scripts/install-git-hooks.mjs`. If the installer reports a pre-existing non-marker hook, stop and ask the user to merge it manually rather than overwriting.
 10. **Stamp the deployment lineage.** Write the **deployment-lineage head** into
     `docs/ai/.workflow-version` (one semver line). The lineage head is **`1.3.0`** — the shared
-    `agent-workflow` deployment lineage, **NOT** this kit's package version (`1.4.0`). The two are
+    `agent-workflow` deployment lineage, **NOT** this kit's npm package version (see
+    `package.json` / `CHANGELOG.md`). The two are
     independent axes: a packaging-only release bumps the package but leaves the lineage head until a
     migration actually changes the deployed `docs/ai` structure. A stamp greater than the head →
     STOP (never downgrade).
@@ -122,11 +127,13 @@ Fill strategy:
 ### Mode: upgrade
 
 1. Read `docs/ai/.workflow-version` (the project's stamped lineage). If missing, treat as a pre-versioned deployment and offer to re-bootstrap conservatively.
-2. Compare to the **deployment-lineage head** (`1.3.0` — NOT this kit's package version). If equal → report "up to date" and stop. If the stamp is **greater than the head** or unparseable → **STOP and report** (never downgrade).
-3. Show the relevant `${CLAUDE_SKILL_DIR}/CHANGELOG.md` diff (entries newer than the project's stamp).
-4. Apply `${CLAUDE_SKILL_DIR}/migrations/<version>-<slug>.md` in **semver order**, only those newer than the project's stamp. Migrations are **idempotent** — safe to re-run.
-5. Reconcile drift: add any kernel files/scripts the project is missing; never clobber project-authored content (their `decisions.md`, `known_issues.md`, page specs stay). Any user question a migration raises follows the same rule as bootstrap — **structured multiple-choice where supported** (`AskUserQuestion` in Claude Code), otherwise prose. If `AGENTS.md` has no *Communication language* block (pre-1.1.0 deployment), **ask the user their conversational language** and insert the block — see `migrations/1.1.0-communication-language.md`. If it has no *Attribution* block (pre-1.2.0 deployment), **ask whether the agent may attribute work to itself / AI** and insert the block (defaulting to `off`) — see `migrations/1.2.0-agent-attribution.md`.
-6. Re-stamp `docs/ai/.workflow-version` to the **deployment-lineage head** (`1.3.0`, not the package version). Report changes; **ask before committing**.
+2. **Never-downgrade gate — FIRST, before any write.** Compare the stamp to the **deployment-lineage head** (`1.3.0` — NOT this kit's package version). If the stamp is **greater than the head** or unparseable → **STOP and report**; do not touch a newer / unknown deployment at all (not even the methodology slot).
+3. **Reconcile the methodology slot — stamp-independent, BEFORE the equal-head short-circuit.** Reached only when the stamp **≤ head**. Run `node ${CLAUDE_SKILL_DIR}/tools/inject-methodology.mjs reconcile <project>/AGENTS.md`. This ensures the `workflow:methodology` slot exists and is filled on **every** upgrade, idempotently (zero-diff when already present + filled) — so even a legacy / current **`1.3.0`** deployment gains the slot **without a lineage-head bump** (the head stays `1.3.0`; **no `agent-workflow-memory` change**). It inserts an empty slot at the Session-Protocols anchor if absent, preserves a customized slot verbatim, and STOPs (never edits) on a malformed slot or a missing / duplicate anchor. No-Node project: open `AGENTS.md`, and if there is no `<!-- workflow:methodology:start/end -->` pair, paste it right after the *Read it before any code change.* line and fill it from `tools/methodology-slot.md`.
+4. **Equal-head short-circuit.** If the stamp **equals** the head → the lineage is up to date: **stop here** (the slot was already reconciled in step 3).
+5. Show the relevant `${CLAUDE_SKILL_DIR}/CHANGELOG.md` diff (entries newer than the project's stamp).
+6. Apply `${CLAUDE_SKILL_DIR}/migrations/<version>-<slug>.md` in **semver order**, only those newer than the project's stamp. Migrations are **idempotent** — safe to re-run.
+7. Reconcile drift: add any kernel files/scripts the project is missing; never clobber project-authored content (their `decisions.md`, `known_issues.md`, page specs stay). Any user question a migration raises follows the same rule as bootstrap — **structured multiple-choice where supported** (`AskUserQuestion` in Claude Code), otherwise prose. If `AGENTS.md` has no *Communication language* block (pre-1.1.0 deployment), **ask the user their conversational language** and insert the block — see `migrations/1.1.0-communication-language.md`. If it has no *Attribution* block (pre-1.2.0 deployment), **ask whether the agent may attribute work to itself / AI** and insert the block (defaulting to `off`) — see `migrations/1.2.0-agent-attribution.md`.
+8. Re-stamp `docs/ai/.workflow-version` to the **deployment-lineage head** (`1.3.0`, not the package version). Report changes; **ask before committing**.
 
 ### Mode: backends
 
@@ -207,6 +214,6 @@ Deploy these into `AGENTS.md`; remove rows that don't apply to the stack.
 - [`references/scripts/`](references/scripts/) — the Node enforcement scripts (caps + staleness + index-freshness gate, 3-tier archive, hook installer) and their unit tests.
 - [`migrations/`](migrations/) — per-version upgrade steps; see `migrations/README.md`.
 - [`launchers/`](launchers/) — run the bootstrapper from non-Claude agents (`SKILL.md` is a native Codex skill; a Devin Desktop workflow launcher + install script). See `launchers/README.md`.
-- [`tools/`](tools/) — the family-wide tooling the kit **owns and ships**: `manifest/{schema.md,validate.mjs}` (the `capability.json` schema + the validator the kit runs as the memory detector, and root CI invokes), `delegation.mjs` (the executable delegate/fallback decision + hand-off plan), `inject-methodology.mjs` + `methodology-slot.md` (the bounded slot injection), `detect-backends.mjs` (the read-only **backend detector** behind `/agent-workflow-kit backends`), and `release-scan.mjs` (the attribution-off release gate). See [`tools/manifest/schema.md`](tools/manifest/schema.md).
+- [`tools/`](tools/) — the family-wide tooling the kit **owns and ships**: `manifest/{schema.md,validate.mjs}` (the `capability.json` schema + the validator the kit runs as the memory detector, and root CI invokes), `delegation.mjs` (the executable delegate/fallback decision + hand-off plan), `inject-methodology.mjs` + `methodology-slot.md` (the bounded slot reconciliation — ensure-slot / inject-if-empty / cap; the fragment is a byte-identical mirror of the `agent-workflow-engine` canon, pinned by `methodology-mirror.test.mjs`), `detect-backends.mjs` (the read-only **backend detector** behind `/agent-workflow-kit backends`), and `release-scan.mjs` (the attribution-off release gate). See [`tools/manifest/schema.md`](tools/manifest/schema.md).
 - [`capability.json`](capability.json) — the kit's own `agent-workflow` family manifest (`kind: composition-root`).
 - [`CHANGELOG.md`](CHANGELOG.md) — version history of this kernel.

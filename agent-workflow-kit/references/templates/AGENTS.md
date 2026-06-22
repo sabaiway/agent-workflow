@@ -53,7 +53,8 @@ All project knowledge lives in `docs/ai/`. Layered, lazy-loaded context:
 
 Start-of-session, during-work, and task-completion procedures live in [`docs/ai/agent_rules.md`](./docs/ai/agent_rules.md) §1. **Read it before any code change.**
 
-Planning (plan files, vocabulary, lifecycle, mandatory Cleanup) → the project's planning skill / `docs/ai/agent_rules.md` §"Planning Workflow".
+<!-- workflow:methodology:start -->
+<!-- workflow:methodology:end -->
 
 ---
 
