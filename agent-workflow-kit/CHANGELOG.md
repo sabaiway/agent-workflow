@@ -4,6 +4,20 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.5.2 — README uplift to front-door grade (docs)
+
+Docs-only patch. The npm-facing `README.md` is uplifted to match the GitHub family front door's
+pitch and voice while staying the kit's **manual**: a stronger hero, a compact "Part of the
+agent-workflow family" callout, a new **composition-root** section (the kit delegates to the memory
+substrate, injects the methodology, and detects the optional `codex` / `agy` bridges — all on the
+in-repo deploy, never on `npx … init`), a two-tier cross-agent note, and links **up** to the family
+front door instead of re-telling the whole-family story (AD-009). Accuracy passes hold: `init` ≠
+project deploy, the scoped `dependency-free` / `no telemetry` claims, bridges-as-skills, the
+`available:false` engine stub, and the bridge context-file priority. A new dev-only test
+(`test/readme-structure.test.mjs`) enforces fenced-ASCII width ≤ 78, in-page anchor resolution, and
+local-link existence across the published READMEs. No code, schema, or deployed-payload change; the
+deployment-lineage head stays `1.3.0` (no migration).
+
 ## 1.5.1 — README hero fix (docs)
 
 Docs-only patch. The hero showed a hardcoded `v1.4.0` chip while the kit was 1.5.0; the chip is
