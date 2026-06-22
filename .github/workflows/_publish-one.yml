@@ -37,7 +37,7 @@ on:
         type: boolean
 
 permissions:
-  contents: read
+  contents: write # create the git tag + GitHub Release after a successful publish
   id-token: write # npm provenance (supply-chain attestation)
 
 jobs:
@@ -153,3 +153,44 @@ jobs:
             echo "waiting for registry to reflect $ver (saw '${latest:-none}')… ($i/5)"; sleep 5
           done
           echo "::warning::Publish step succeeded but the registry still shows '${latest:-none}' as latest — likely just propagation lag. Verify: npm view $name version"
+
+      # --- Post-publish: cut the git tag + GitHub Release so the Releases page tracks npm. ---
+      # The npm publish above only touches the registry; without this step the Releases page
+      # drifts (it stayed at kit v1.4.0 across the 1.5.0/1.5.1/1.5.2 npm publishes). Idempotent:
+      # a re-run, or a tag that already has a release, is a no-op rather than a failure.
+      - name: Create GitHub Release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ver=$(node -p "require('./package.json').version")
+          tag="${{ inputs.dir }}-v$ver"
+          title="${{ inputs.dir }} v$ver"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already exists — nothing to do."
+            exit 0
+          fi
+          # Notes = this package's "## <ver>" CHANGELOG section, else a short fallback.
+          node -e '
+            const fs = require("fs");
+            const ver = process.argv[1];
+            let body = "";
+            try {
+              const lines = fs.readFileSync("CHANGELOG.md", "utf8").split(/\r?\n/);
+              const re = new RegExp("^##\\s+" + ver.replace(/\./g, "\\.") + "(\\s|$)");
+              let i = lines.findIndex((l) => re.test(l));
+              if (i >= 0) {
+                const out = [];
+                for (i++; i < lines.length && !/^##\s/.test(lines[i]); i++) out.push(lines[i]);
+                body = out.join("\n").trim();
+              }
+            } catch {}
+            fs.writeFileSync("/tmp/relnotes.md", body || `Release ${ver} — published to npm. See CHANGELOG.md.`);
+          ' "$ver"
+          gh release create "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$title" \
+            --notes-file /tmp/relnotes.md
+          echo "✓ Created GitHub Release $tag at $GITHUB_SHA"

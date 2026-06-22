@@ -32,7 +32,7 @@ on:
         default: false
 
 permissions:
-  contents: read
+  contents: write # _publish-one cuts the git tag + GitHub Release (caller must grant the cap)
   id-token: write # npm provenance (supply-chain attestation)
 
 concurrency:
