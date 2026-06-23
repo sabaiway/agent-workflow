@@ -4,6 +4,36 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.8.0 — Stale-version DX: `@latest` everywhere + a no-network never-downgrade gate
+
+A returning user ran the headline `npx @sabaiway/agent-workflow-kit init` and it quietly did nothing:
+a bare `npx <pkg> init` (no `@latest`) reuses the npx cache and re-runs an **older cached build** of
+the installer, which exits 0 and reports it "updated" — to the same stale version. This release makes
+that mistake hard to miss while **the installer itself stays 100% network-free** — the only thing
+that ever contacts npm is npx resolving `@latest`, exactly as it already does (the no-phone-home
+principle is preserved; see AD-012):
+
+- **`@latest` is the documented default everywhere.** Every prescribing surface (both READMEs, the
+  bridge `SKILL.md` files + their bundled mirrors, the installer `--help` / header) now shows
+  `npx @sabaiway/agent-workflow-kit@latest init`. A new drift guard
+  (`test/init-command-uses-latest.test.mjs`) fails the build if a bare form sneaks back in (historical
+  contexts — CHANGELOG / `releases/` / `migrations/` — are exempt).
+- **Never-downgrade gate (no network).** `init` reads the installed skill's version from
+  `SKILL.md` **before** writing; if the installed kit is **newer** than the version you ran (the exact
+  stale-cache signature), it **refuses** (nonzero) and points at `@latest`, rather than silently
+  overwriting a newer install with old code. `--force` overrides. A legacy install with no version
+  stamp still upgrades cleanly.
+- **No-op re-run hint.** When `init` refreshes the skill with the *same* version it already had, it
+  says so and points at `@latest` — the no-network signal that catches the reported scenario.
+- **In-agent skill** (`SKILL.md`): surfaces a one-line version status (project `docs/ai/.workflow-version`
+  vs the lineage head) + routes (bootstrap / upgrade / current), spells out the **two independent
+  version axes** (project deployment vs kit freshness — the latter is the npx installer's job, never
+  this skill's), and tells you to **restart the session** after refreshing the kit so the new skill
+  files load.
+
+New users are unaffected (an empty npx cache already fetches `latest`); this targets the returning-user
+trap. No `docs/ai` structural change → the deployment-lineage head stays **`1.3.0`**; no migration.
+
 ## 1.7.0 — Link-only backend auto-setup; bridges bundled in the tarball
 
 The optional execution-backend bridges (`codex-cli-bridge` → `codex`, `antigravity-cli-bridge` →

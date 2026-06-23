@@ -18,7 +18,7 @@ Claude Code, Codex, Cursor, and any agent that reads `AGENTS.md`.*
 **One command to start:**
 
 ```bash
-npx @sabaiway/agent-workflow-kit init
+npx @sabaiway/agent-workflow-kit@latest init
 ```
 
 **Cross-agent by design** — the deployed `AGENTS.md` is read natively by Claude Code (via the
@@ -92,13 +92,13 @@ point: cold re-reads that grow vs. a flat, cache-warm boot.*</sub>
 Onboarding has three honest scopes — and `init` is **not** the project deploy:
 
 ```
-ONCE / MACHINE    npx @sabaiway/agent-workflow-kit init  -> global kit skill
+ONCE / MACHINE    npx @sabaiway/agent-workflow-kit@latest init -> global skill
 ONCE / PROJECT    invoke the skill in the repo  -> deploy AGENTS.md + docs/ai/
 EVERY SESSION     agent reads entry layer -> loads on demand -> handover
 OPTIONAL/MACHINE  install a bridge + subscription login -> delegated exec
 ```
 
-1. **Once per machine** — `npx @sabaiway/agent-workflow-kit init` installs/refreshes the
+1. **Once per machine** — `npx @sabaiway/agent-workflow-kit@latest init` installs/refreshes the
    **global skill** in `~/.claude/skills/` and wires launchers for any Claude Code / Codex /
    Devin Desktop you have. It does **not** deploy into a project and does **not** install the
    bridges.

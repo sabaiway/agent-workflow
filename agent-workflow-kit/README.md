@@ -18,7 +18,7 @@ decisions. Works with Claude Code, Codex, Cursor, and any agent that reads `AGEN
 **One command to start:**
 
 ```bash
-npx @sabaiway/agent-workflow-kit init
+npx @sabaiway/agent-workflow-kit@latest init
 ```
 
 <sub>This installs the **global skill** — deploying into a project is a separate step ([below](#-install)).</sub>
@@ -134,7 +134,7 @@ Hidden changes how the files are *tracked*, not where agents find them.
 ### 1. Install the global skill — once per machine
 
 ```bash
-npx @sabaiway/agent-workflow-kit init
+npx @sabaiway/agent-workflow-kit@latest init
 ```
 
 `init` installs/refreshes the skill at `~/.claude/skills/agent-workflow-kit/` and wires launchers for
