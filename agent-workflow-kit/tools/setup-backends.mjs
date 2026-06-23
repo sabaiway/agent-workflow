@@ -1,0 +1,468 @@
+#!/usr/bin/env node
+// setup-backends.mjs — link-only auto-setup for the execution-backend bridges (Plan B / AD-011).
+// The kit owns ONLY the two deterministic, secret-free steps: (1) PLACE/REFRESH the bundled bridge
+// skill into its canonical dir, and (2) LINK its POSIX wrappers onto PATH (~/.local/bin) via managed
+// symlinks. Binary install + the interactive subscription login stay GUIDED (printed, never run) —
+// guideFor() supplies the exact commands. The read-only detector is the reader; this is the writer.
+//
+// Safety posture (AD-011): drive off the decoupled axes (a per-bindir wrapper check + an independent
+// skill-dir inspection), never the detector's collapsed readiness. REFRESH only a dir we provably own
+// (valid manifest, name+kind match) or one that is absent/empty; STOP on anything else (a marker fs
+// error, a stub/foreign/invalid/unsupported manifest, a non-empty unknown dir, or a symlinked dir).
+// Clobber-risk lives only on the wrapper symlinks — replace only a symlink already pointing at our
+// source; STOP on a foreign symlink or a non-symlink. PREFLIGHT every dst, THEN mutate (a conflict on
+// the 2nd wrapper ⇒ zero mutations; no rollback — symlinks/chmod converge on re-run). Windows: the
+// wrappers are POSIX .sh — report unsupported / use WSL and mutate nothing. Every fs primitive is
+// injectable (deps.*) so the whole module is unit-testable without touching the real filesystem.
+//
+// Dependency-free, Node >= 18.
+
+import {
+  existsSync, lstatSync, statSync, readdirSync, readlinkSync, symlinkSync, mkdirSync, copyFileSync,
+  chmodSync, readFileSync, realpathSync,
+} from 'node:fs';
+import { join, resolve, relative, dirname, isAbsolute } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import os from 'node:os';
+import { KNOWN_BACKENDS, detectBackend, resolveDir, guideFor } from './detect-backends.mjs';
+import { copyTreeRefresh, linkManaged } from './fs-safe.mjs';
+import { validateManifest, UNSUPPORTED, INVALID } from './manifest/validate.mjs';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+// bridges/ ships beside tools/ in both the repo and the installed kit, so this resolves in both.
+const DEFAULT_BUNDLE_ROOT = resolve(__dirname, '..', 'bridges');
+const DEFAULT_BINDIR_REL = '.local/bin';
+const EXPECTED_KIND = 'execution-backend';
+// A wrapper cmd becomes a PATH filename — keep it to a plain basename, no separators/traversal/control.
+const CMD_ALLOWED = /^[A-Za-z0-9._-]+$/;
+
+// Token → registry name. `codex`/`agy`/`antigravity` are the CLI-facing aliases.
+const ALIASES = { codex: 'codex-cli-bridge', agy: 'antigravity-cli-bridge', antigravity: 'antigravity-cli-bridge' };
+const resolveBackendName = (token) => ALIASES[token] ?? token;
+const registryEntry = (name) => KNOWN_BACKENDS.find((b) => b.name === resolveBackendName(name));
+
+// A typed STOP — a deliberate refusal we surface (distinct from a native fs error, though both exit
+// non-zero). `Object.assign(new Error(), { code })`, the codebase's typed-error idiom (no classes).
+export const SETUP_STOP = 'SETUP_STOP';
+const stop = (message, fields = {}) =>
+  Object.assign(new Error(`[agent-workflow-kit] ${message}`), { name: 'SetupStop', code: SETUP_STOP, ...fields });
+
+// ── injectable fs ──────────────────────────────────────────────────────────────
+
+const fsDeps = (deps = {}) => ({
+  lstat: deps.lstat ?? lstatSync,
+  exists: deps.exists ?? existsSync,
+  stat: deps.stat ?? statSync,
+  readdir: deps.readdir ?? readdirSync,
+  readlink: deps.readlink ?? readlinkSync,
+  symlink: deps.symlink ?? symlinkSync,
+  mkdir: deps.mkdir ?? ((p) => mkdirSync(p, { recursive: true })),
+  copyFile: deps.copyFile ?? copyFileSync,
+  chmod: deps.chmod ?? chmodSync,
+  readFile: deps.readFile ?? readFileSync,
+  realpath: deps.realpath ?? realpathSync,
+});
+
+// lstat without following symlinks; null when absent. A non-ENOENT error propagates (never fail open).
+const lstatNoFollow = (path, lstat) => {
+  try {
+    return lstat(path);
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return null;
+    throw err;
+  }
+};
+
+// A path must be a real REGULAR file (never a symlink). Gates both the bundle source (during planning
+// — what we will copy then link) and the placed skill source (at link time, a TOCTOU re-check).
+const assertRegularFile = (absPath, label, fs) => {
+  const st = lstatNoFollow(absPath, fs.lstat);
+  if (st === null) throw stop(`${label} is missing: ${absPath}`);
+  if (st.isSymbolicLink()) throw stop(`${label} is a symlink — refusing: ${absPath}`);
+  if (!st.isFile()) throw stop(`${label} is not a regular file: ${absPath}`);
+};
+
+// Wrapped file probe: present (regular file) | missing (absent / not a file) | unknown (other fs err).
+const probeMarker = (file, fs) => {
+  try {
+    if (!fs.exists(file)) return 'missing';
+    return fs.stat(file).isFile() ? 'present' : 'missing';
+  } catch (err) {
+    return err && err.code === 'ENOENT' ? 'missing' : 'unknown';
+  }
+};
+
+// ── path resolution ──────────────────────────────────────────────────────────
+
+const skillDirOf = (entry, deps) =>
+  resolveDir({ env: entry.installed.env, default: entry.installed.default }, deps.getenv ?? process.env, deps.home ?? os.homedir());
+const bundleDirOf = (name, deps) => join(deps.bundleRoot ?? DEFAULT_BUNDLE_ROOT, name);
+const bindirOf = (deps) => deps.bindir ?? join(deps.home ?? os.homedir(), DEFAULT_BINDIR_REL);
+
+// Is `bindir` already a PATH member? Normalised per platform (delimiter + win32 case-fold). Read-only —
+// a "no" only yields a printed "add to PATH" hint; we never edit a shell rc file.
+export const bindirOnPath = (bindir, env = process.env, platform = process.platform) => {
+  const isWin = platform === 'win32';
+  const raw = (isWin ? env.PATH ?? env.Path : env.PATH) ?? '';
+  const norm = (p) => (isWin ? resolve(p).toLowerCase() : resolve(p));
+  const target = norm(bindir);
+  return raw.split(isWin ? ';' : ':').filter(Boolean).some((d) => norm(d) === target);
+};
+
+// ── skill-dir inspection (read-only) ──────────────────────────────────────────
+
+const provenManaged = (report, entry) => {
+  if (report.result === UNSUPPORTED) return { ok: false, state: 'unsupported-schema' };
+  if (report.result === INVALID) return { ok: false, state: 'invalid-manifest' };
+  if (report.available === false) return { ok: false, state: 'stub' };
+  if (report.kind !== EXPECTED_KIND || report.name !== entry.name) return { ok: false, state: 'foreign' };
+  return { ok: true, state: 'ok' };
+};
+
+// Decide what placeSkill WOULD do, without writing. Returns { action:'place'|'refresh', skillDir,
+// bundleDir, reason } or throws a typed STOP. `place` = absent/empty dir; `refresh` = proven-managed.
+const inspectSkillDir = (entry, deps) => {
+  const fs = fsDeps(deps);
+  const validate = deps.validate ?? validateManifest;
+  const skillDir = skillDirOf(entry, deps);
+  const bundleDir = bundleDirOf(entry.name, deps);
+
+  // A published tarball always ships the bundle; its absence means a corrupt/partial kit, fail loud.
+  if (!fs.exists(join(bundleDir, entry.installed.file))) {
+    throw Object.assign(
+      new Error(`[agent-workflow-kit] bundled bridge missing: ${bundleDir} (corrupt kit install?)`),
+      { code: 'MISSING_BUNDLE' },
+    );
+  }
+  // Defense-in-depth: never place/link from a bundle we can't validate as THIS backend. The mirror
+  // drift-guard pins the bundle at build time; this catches a corrupted / tampered install at runtime
+  // (a valid-JSON manifest with the wrong name/kind would otherwise place a foreign bridge). Always
+  // the REAL validator — the bundle is our own shipped artifact; `deps.validate` mocks only the
+  // user-owned skill dir checked below.
+  const bundleProvenance = provenManaged(validateManifest(bundleDir), entry);
+  if (!bundleProvenance.ok) {
+    throw Object.assign(
+      new Error(`[agent-workflow-kit] bundled bridge manifest is "${bundleProvenance.state}" at ${bundleDir} (corrupt kit install?)`),
+      { code: 'CORRUPT_BUNDLE' },
+    );
+  }
+
+  const dirStat = lstatNoFollow(skillDir, fs.lstat);
+  if (dirStat === null) return { action: 'place', skillDir, bundleDir, reason: 'skill dir absent' };
+  if (dirStat.isSymbolicLink()) throw stop(`skill dir is a symlink — refusing to write through it: ${skillDir}`, { skillDir });
+  if (!dirStat.isDirectory()) throw stop(`skill path exists but is not a directory: ${skillDir}`, { skillDir });
+
+  const markerState = probeMarker(join(skillDir, entry.installed.file), fs);
+  if (markerState === 'unknown') throw stop(`cannot determine bridge skill state — fs error on ${join(skillDir, entry.installed.file)}`, { skillDir });
+  if (markerState === 'missing') {
+    let entries;
+    try {
+      entries = fs.readdir(skillDir);
+    } catch (err) {
+      throw stop(`cannot read skill dir (${err.code ?? 'fs error'}): ${skillDir}`, { skillDir });
+    }
+    if (entries.length === 0) return { action: 'place', skillDir, bundleDir, reason: 'skill dir empty' };
+    throw stop(`skill dir is non-empty but has no ${entry.installed.file} — refusing to overwrite unknown files: ${skillDir}`, { skillDir });
+  }
+
+  const provenance = provenManaged(validate(skillDir), entry);
+  if (!provenance.ok) throw stop(`skill dir manifest is "${provenance.state}" — refusing to overwrite a dir we don't own: ${skillDir}`, { skillDir, state: provenance.state });
+  return { action: 'refresh', skillDir, bundleDir, reason: 'proven-managed bridge skill' };
+};
+
+// ── wrapper link derivation (string-only) ─────────────────────────────────────
+
+// Manifest roles → the deduped { cmd, sourceRel, source } link set. Validates UNTRUSTED manifest
+// strings: cmd allowlist; a cmd mapped to two different sources is a STOP; a source must stay inside
+// the skill dir. Pure string work — no fs (so the dry-run plan is correct before the skill is placed).
+export const deriveLinks = (manifest, skillDir) => {
+  const roles = manifest && typeof manifest.roles === 'object' && !Array.isArray(manifest.roles) ? manifest.roles : {};
+  const byCmd = new Map();
+  for (const role of Object.values(roles)) {
+    const cmd = role && typeof role.cmd === 'string' ? role.cmd : null;
+    const sourceRel = role && typeof role.source === 'string' ? role.source : null;
+    if (!cmd || !CMD_ALLOWED.test(cmd)) throw stop(`invalid wrapper cmd ${JSON.stringify(cmd)} (must match ${CMD_ALLOWED})`);
+    if (cmd === '.' || cmd === '..') throw stop(`invalid wrapper cmd ${JSON.stringify(cmd)} (reserved path name)`);
+    if (!sourceRel) throw stop(`wrapper "${cmd}" has no source in the manifest`);
+    if (byCmd.has(cmd) && byCmd.get(cmd) !== sourceRel) {
+      throw stop(`wrapper "${cmd}" maps to two sources: "${byCmd.get(cmd)}" and "${sourceRel}"`);
+    }
+    byCmd.set(cmd, sourceRel);
+  }
+  if (byCmd.size === 0) throw stop('manifest declares no wrapper roles');
+  return [...byCmd.entries()].map(([cmd, sourceRel]) => {
+    const source = resolve(skillDir, sourceRel);
+    const rel = relative(skillDir, source);
+    if (rel.startsWith('..') || isAbsolute(rel)) throw stop(`wrapper "${cmd}" source escapes the skill dir: "${sourceRel}"`);
+    return { cmd, sourceRel, source };
+  });
+};
+
+// Classify a wrapper dst per-bindir (NOT PATH-wide): absent | ours (symlink → our source) | conflict.
+const inspectDst = (dst, source, fs) => {
+  const st = lstatNoFollow(dst, fs.lstat);
+  if (st === null) return { state: 'absent' };
+  if (!st.isSymbolicLink()) return { state: 'conflict', reason: 'a non-symlink already exists there' };
+  let target;
+  try {
+    target = fs.readlink(dst);
+  } catch (err) {
+    return { state: 'conflict', reason: `unreadable symlink (${err.code ?? 'fs error'})` };
+  }
+  const resolved = isAbsolute(target) ? target : resolve(dirname(dst), target);
+  return resolved === resolve(source) ? { state: 'ours' } : { state: 'conflict', reason: `foreign symlink → ${target}` };
+};
+
+// ── mutating primitives ───────────────────────────────────────────────────────
+
+// Place/refresh the bundled bridge skill. Re-inspects before writing (never trusts a stale plan).
+export const placeSkill = (name, deps = {}) => {
+  const entry = registryEntry(name);
+  if (!entry) throw stop(`unknown backend: ${name}`);
+  const plan = inspectSkillDir(entry, deps);
+  copyTreeRefresh(plan.bundleDir, plan.skillDir, plan.skillDir, fsDeps(deps));
+  return plan;
+};
+
+// Link the wrappers onto `bindir`. PREFLIGHT all (source is a regular non-symlink file inside the
+// skill dir; every dst is absent/ours) THEN mutate, so a conflict on a later wrapper leaves the
+// filesystem untouched. win32 → no mutation (POSIX-only wrappers). Returns the per-wrapper results.
+export const linkWrappers = (skillDir, manifest, opts = {}) => {
+  const platform = opts.platform ?? process.platform;
+  if (platform === 'win32') return { platform, skipped: true, links: [] };
+  const fs = fsDeps(opts);
+  const bindir = opts.bindir ?? bindirOf(opts);
+  const derived = deriveLinks(manifest, skillDir);
+
+  for (const { cmd, source } of derived) {
+    assertRegularFile(source, `wrapper "${cmd}" source (was the skill placed?)`, fs);
+  }
+  for (const { cmd, source } of derived) {
+    const info = inspectDst(join(bindir, cmd), source, fs);
+    if (info.state === 'conflict') throw stop(`wrapper "${cmd}" target conflict at ${join(bindir, cmd)} — ${info.reason}`, { dst: join(bindir, cmd) });
+  }
+
+  fs.mkdir(bindir);
+  // Collapse a symlinked bindir (a common dotfiles setup, e.g. ~/.local/bin → ~/dotfiles/bin) to its
+  // real path, so the traversal guard inside linkManaged doesn't refuse the user's own PATH dir. cmd is
+  // an allowlisted basename, so dst can never escape this dir.
+  const realBindir = fs.realpath(bindir);
+  const links = [];
+  for (const { cmd, source } of derived) {
+    fs.chmod(source, 0o755);
+    const action = linkManaged(source, join(realBindir, cmd), realBindir, fs); // 'linked' | 'noop'
+    links.push({ cmd, source, dst: join(bindir, cmd), action });
+  }
+  return { platform, skipped: false, links };
+};
+
+// ── planning (read-only) ──────────────────────────────────────────────────────
+
+const readBundledManifest = (bundleDir, deps) => {
+  const read = deps.readFile ?? readFileSync;
+  let raw;
+  try {
+    raw = read(join(bundleDir, 'capability.json'), 'utf8');
+  } catch (err) {
+    throw Object.assign(
+      new Error(`[agent-workflow-kit] cannot read bundled manifest: ${join(bundleDir, 'capability.json')} (${err.code ?? 'fs error'})`),
+      { code: 'MISSING_BUNDLE' },
+    );
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    throw stop(`bundled manifest is not valid JSON: ${err.message}`);
+  }
+};
+
+const errOutcome = (entry, skillDir, bindir, platform, err, place = null) => ({
+  name: entry.name,
+  skillDir,
+  bindir,
+  platform,
+  place,
+  links: [],
+  guides: [],
+  bindirHint: null,
+  outcome: err.code === SETUP_STOP ? 'stop' : 'error',
+  reason: err.message,
+});
+
+// Build the full per-backend plan WITHOUT mutating anything (this is exactly what --dry-run prints).
+// outcome ∈ unsupported(win32) | error | stop | ok. Only the deterministic skill+wrapper steps are
+// "owned"; the cli/login axes surface as guides (informational — they never fail the command).
+export const planFor = (backend, deps = {}) => {
+  const entry = registryEntry(backend);
+  if (!entry) throw stop(`unknown backend: ${backend}`);
+  const platform = deps.platform ?? process.platform;
+  const skillDir = skillDirOf(entry, deps);
+  const bindir = bindirOf(deps);
+
+  if (platform === 'win32') {
+    return {
+      name: entry.name, skillDir, bindir, platform, place: null, links: [], guides: [], bindirHint: null,
+      outcome: 'unsupported',
+      reason: 'POSIX .sh wrappers — run setup under WSL (Claude Code reads the kit natively on Windows)',
+    };
+  }
+
+  let place;
+  try {
+    place = inspectSkillDir(entry, deps);
+  } catch (err) {
+    return errOutcome(entry, skillDir, bindir, platform, err);
+  }
+
+  let links;
+  try {
+    const fs = fsDeps(deps);
+    const derived = deriveLinks(readBundledManifest(place.bundleDir, deps), skillDir);
+    // Preflight the BUNDLE sources (what we will copy → link). After place, the skill source IS the
+    // bundle source, so checking it here makes a dry-run faithfully predict linkWrappers instead of
+    // reporting "ok" and then throwing at apply time.
+    for (const { cmd, sourceRel } of derived) {
+      assertRegularFile(join(place.bundleDir, sourceRel), `bundled wrapper "${cmd}" source`, fs);
+    }
+    links = derived.map(({ cmd, sourceRel, source }) => {
+      const dst = join(bindir, cmd);
+      const info = inspectDst(dst, source, fs);
+      return { cmd, sourceRel, source, dst, dstState: info.state, dstReason: info.reason ?? null };
+    });
+  } catch (err) {
+    return errOutcome(entry, skillDir, bindir, platform, err, place);
+  }
+
+  const conflicts = links.filter((l) => l.dstState === 'conflict');
+  if (conflicts.length > 0) {
+    return {
+      name: entry.name, skillDir, bindir, platform, place, links, guides: [], bindirHint: null,
+      outcome: 'stop',
+      reason: conflicts.map((c) => `wrapper "${c.cmd}": ${c.dstReason}`).join('; '),
+    };
+  }
+
+  const status = (deps.detect ?? detectBackend)(entry, deps);
+  const guides = guideFor(status).filter((g) => g.need !== 'skill'); // the place plan owns the skill axis
+  const onPath = bindirOnPath(bindir, deps.getenv ?? process.env, platform);
+  const bindirHint = onPath ? null : `add ${bindir} to PATH to use the wrappers: export PATH="${bindir}:$PATH"  (persist in ~/.bashrc / ~/.zshrc)`;
+
+  return { name: entry.name, skillDir, bindir, platform, place, links, guides, bindirHint, outcome: 'ok' };
+};
+
+// Perform an `ok` plan's deterministic steps. Re-derives + re-checks inside the primitives (no trust
+// in the plan across the read→write gap). Throws on a mid-flight conflict / fs error (honest partial
+// failure — placeSkill/chmod/symlink all converge on a re-run, so there is nothing to roll back).
+const applyBackend = (plan, deps) => {
+  if (plan.place.action === 'place' || plan.place.action === 'refresh') placeSkill(plan.name, deps);
+  const manifest = readBundledManifest(plan.place.bundleDir, deps);
+  linkWrappers(plan.skillDir, manifest, { ...deps, bindir: plan.bindir, platform: plan.platform });
+};
+
+// ── formatting ─────────────────────────────────────────────────────────────────
+
+const formatBackend = (plan, applied) => {
+  const lines = [`  ${plan.name} → ${plan.outcome}`];
+  if (plan.outcome === 'unsupported') {
+    lines.push(`      ↳ ${plan.reason}`);
+    return lines.join('\n');
+  }
+  if (plan.outcome === 'stop' || plan.outcome === 'error') {
+    lines.push(`      ✗ ${plan.reason}`);
+    return lines.join('\n');
+  }
+  const placeVerb = applied ? { place: 'placed', refresh: 'refreshed' } : { place: 'will place', refresh: 'will refresh' };
+  lines.push(`      • skill: ${placeVerb[plan.place.action]} → ${plan.skillDir}`);
+  for (const l of plan.links) {
+    const verb = l.dstState === 'ours' ? 'already linked' : applied ? 'linked' : 'will link';
+    lines.push(`      • wrapper ${l.cmd}: ${verb} → ${l.dst}`);
+  }
+  if (plan.bindirHint) lines.push(`      ↳ ${plan.bindirHint}`);
+  for (const g of plan.guides) lines.push(`      ↳ ${g.need}: ${g.hint}`);
+  return lines.join('\n');
+};
+
+// ── CLI ─────────────────────────────────────────────────────────────────────────
+
+const USAGE = `usage: setup-backends [<backend>] [--bindir <path>] [--dry-run] [--help]
+
+  <backend>   codex | agy | antigravity | codex-cli-bridge | antigravity-cli-bridge   (default: all)
+  --bindir    where to link the wrappers                                              (default: ~/.local/bin)
+  --dry-run   print the plan; change nothing
+  --help, -h  this help
+
+Places the bundled bridge skill + links its wrappers (idempotent; refuses to clobber a non-symlink).
+Binary install + the interactive subscription login stay manual — the printed guidance has the exact
+commands. The detector ("/agent-workflow-kit backends") stays read-only; this is the only writer.`;
+
+const parseArgs = (argv) => {
+  const out = { dryRun: false, help: false, bindir: undefined, backend: undefined, bad: null };
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === '--help' || a === '-h') out.help = true;
+    else if (a === '--dry-run') out.dryRun = true;
+    else if (a === '--bindir') {
+      // Do NOT greedily swallow a following flag (e.g. `--bindir --dry-run` must not become
+      // bindir="--dry-run" and silently mutate); a missing or flag-like value is a usage error.
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith('-')) out.bad = '--bindir needs a path argument';
+      else {
+        out.bindir = next;
+        i += 1;
+      }
+    } else if (a.startsWith('-')) out.bad = `unknown flag: ${a}`;
+    else if (out.backend === undefined) out.backend = a;
+    else out.bad = `unexpected argument: ${a}`;
+  }
+  return out;
+};
+
+// Returns the process exit code (0 ok/guided/unsupported, non-zero on STOP/error/bad-args). Pure of
+// process.exit so tests can assert the code; isDirectRun is what actually exits.
+export const main = (argv = process.argv.slice(2), deps = {}) => {
+  const log = deps.log ?? console.log;
+  const errlog = deps.errlog ?? console.error;
+  const args = parseArgs(argv);
+
+  if (args.help) {
+    log(USAGE);
+    return 0;
+  }
+  if (args.bad) {
+    errlog(args.bad);
+    errlog(USAGE);
+    return 2;
+  }
+
+  let targets;
+  if (args.backend === undefined) targets = KNOWN_BACKENDS.map((b) => b.name);
+  else {
+    const entry = registryEntry(args.backend);
+    if (!entry) {
+      errlog(`unknown backend: ${args.backend}`);
+      errlog(USAGE);
+      return 2;
+    }
+    targets = [entry.name];
+  }
+
+  const runDeps = { ...deps, bindir: args.bindir ?? deps.bindir };
+  log(args.dryRun ? 'agent-workflow backend setup — DRY RUN (no changes)' : 'agent-workflow backend setup (link-only)');
+  let worst = 0;
+  for (const name of targets) {
+    let plan = planFor(name, runDeps);
+    if (!args.dryRun && plan.outcome === 'ok') {
+      try {
+        applyBackend(plan, runDeps);
+      } catch (err) {
+        plan = { ...plan, outcome: err.code === SETUP_STOP ? 'stop' : 'error', reason: err.message };
+      }
+    }
+    log(formatBackend(plan, !args.dryRun));
+    if (plan.outcome === 'stop' || plan.outcome === 'error') worst = 1;
+  }
+  return worst;
+};
+
+const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isDirectRun) process.exit(main(process.argv.slice(2)));

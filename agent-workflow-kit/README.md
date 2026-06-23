@@ -216,6 +216,7 @@ command is printed).
 | `/agent-workflow-kit` | new / empty project | recon → **asks visible-or-hidden** + **conversational language** + **agent attribution** (default off) → deploys `AGENTS.md` + `docs/ai/` filled with real recon data → installs enforcement → **asks before committing** |
 | `/agent-workflow-kit upgrade` | existing deployment | reads `docs/ai/.workflow-version`, shows the changelog diff, preserves your authored memory, applies migrations, re-stamps |
 | `/agent-workflow-kit backends` | any time | **read-only** check of the optional execution-backends (the `codex` / `agy` bridges): what's set up vs missing and the next step. Never writes, never commits, never runs a subscription CLI (credentials = marker-file presence, not a live login). |
+| `/agent-workflow-kit setup [backend]` | opt-in, any time | **link-only** auto-setup of a bridge: places the bundled bridge skill (only into an absent / empty / managed dir — never overwrites an unmanaged one) + links its wrappers onto `PATH` via managed symlinks (idempotent; refuses to clobber a non-symlink; try `--dry-run` to preview). The binary install + the one-time subscription login stay **manual**: it prints the exact **login** command and points the binary install at each bridge's `setup/README.md`. POSIX wrappers — on Windows use WSL. Never commits, never runs a subscription CLI. |
 
 It **never auto-commits** and **never overwrites** an existing `AGENTS.md` without asking.
 
@@ -248,17 +249,20 @@ agent-workflow-kit  —  the composition root (installed via npx … init)
    ├─ delegates ─▶ memory substrate   (healthy copy, else bundled fallback)
    ├─ injects   ─▶ workflow methodology  (engine = future supplier; stub)
    ├─ deploys   ─▶ AGENTS.md + docs/ai/ + Node scripts + pre-commit hook
-   └─ detects   ─▶ optional backends     (codex / agy — not by init)
+   ├─ detects   ─▶ optional backends   (codex / agy, read-only)
+   └─ sets up   ─▶ a bridge (opt-in)   (place skill + link wrappers)
 ```
 
 - **Delegates** substrate deployment to **`@sabaiway/agent-workflow-memory`** when a healthy
   standalone copy is present, else uses its **bundled fallback** — same `docs/ai/` either way.
 - **Injects** the bounded workflow methodology into the deployed `AGENTS.md`. Its *future* home is
   **`agent-workflow-engine`** — today an `available: false` stub, never one of the shipped backends.
-- **Detects** the optional `codex` / `agy` **bridges** — agent skills with a manual once-per-machine
-  setup (not npm, not installed by `init`); `/agent-workflow-kit backends` reports readiness
-  read-only. A bridge reads the deployed memory only if it wins that tool's context-file priority,
-  and the bridges call third-party services (so "no telemetry" covers family code, not those).
+- **Detects & (opt-in) sets up** the optional `codex` / `agy` **bridges** — agent skills (not npm, not
+  installed by `init`). `/agent-workflow-kit backends` reports readiness **read-only**;
+  `/agent-workflow-kit setup` does the **link-only** part (place the bundled bridge skill + link its
+  wrappers), while the binary install + the subscription login stay manual. A bridge reads the deployed
+  memory only if it wins that tool's context-file priority, and the bridges call third-party services
+  (so "no telemetry" covers family code, not those).
 
 > Full member-by-member map + the whole-family story: the
 > **[family front door](https://github.com/sabaiway/agent-workflow#readme)** — this page stays the
@@ -295,7 +299,10 @@ agent-workflow-kit/
 │   ├── delegation.mjs        ← detect substrate · delegate-or-fall-back
 │   ├── inject-methodology.mjs ← write the methodology slot
 │   ├── detect-backends.mjs    ← read-only backend detector
+│   ├── setup-backends.mjs     ← link-only backend setup
+│   ├── fs-safe.mjs            ← symlink-safe copy/link
 │   └── release-scan.mjs       ← attribution / release gate
+├── bridges/         ← bundled bridge skill mirrors (codex / antigravity)
 ├── launchers/       ← Codex / Devin Desktop / Cursor entries
 └── migrations/      ← per-version upgrade steps
 ```

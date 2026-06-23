@@ -12,6 +12,7 @@ import {
   detectBackend,
   detectBackends,
   formatReport,
+  guideFor,
   KNOWN_BACKENDS,
 } from './detect-backends.mjs';
 
@@ -337,6 +338,107 @@ describe('detectBackends — live shape on this machine', () => {
       }
       assert.ok(['present', 'missing', 'unknown'].includes(s.cli.state));
       assert.ok(['present', 'missing', 'unknown'].includes(s.credentials.state));
+    }
+  });
+});
+
+// ── guideFor (axis-aware manual steps) ────────────────────────────────────────
+
+// A status with all axes satisfied; override per-case to drive each axis independently.
+const okStatus = (over = {}) => ({
+  name: 'codex-cli-bridge',
+  manifestState: 'ok',
+  manifestReason: 'ok',
+  skillDir: '/skills/codex-cli-bridge',
+  cli: { bin: 'codex', state: 'present', path: '/usr/bin/codex' },
+  credentials: { state: 'present', path: '/home/u/.codex/auth.json' },
+  wrappers: [{ name: 'codex-exec', state: 'present' }, { name: 'codex-review', state: 'present' }],
+  readiness: 'ready',
+  setupHint: { local: 'setup/README.md', url: 'https://example.test/codex' },
+  ...over,
+});
+
+describe('guideFor — axis-aware manual steps', () => {
+  it('returns [] when the backend is ready', () => {
+    assert.deepEqual(guideFor(okStatus()), []);
+  });
+
+  it('returns [] for a degraded backend (wrappers are the linker\'s job, not a manual step)', () => {
+    const s = okStatus({ readiness: 'degraded', wrappers: [{ name: 'codex-exec', state: 'missing' }] });
+    assert.deepEqual(guideFor(s), []);
+  });
+
+  it('returns BOTH cli and credentials steps when both are missing (multiple simultaneous)', () => {
+    const s = okStatus({
+      cli: { bin: 'codex', state: 'missing', path: null },
+      credentials: { state: 'missing', path: '/c/auth.json' },
+    });
+    const needs = guideFor(s).map((g) => g.need);
+    assert.deepEqual(needs, ['cli', 'credentials']);
+  });
+
+  it('credentials step carries the canonical loginCmd + verifyCmd from the registry', () => {
+    const s = okStatus({ credentials: { state: 'missing', path: '/c/auth.json' } });
+    const step = guideFor(s).find((g) => g.need === 'credentials');
+    assert.match(step.hint, /codex login/);
+    assert.match(step.hint, /codex login status/);
+  });
+
+  it('cli step references the setup README (no duplicated install channels)', () => {
+    const s = okStatus({ cli: { bin: 'codex', state: 'missing', path: null } });
+    const step = guideFor(s).find((g) => g.need === 'cli');
+    assert.match(step.hint, /codex-cli-bridge\/setup\/README\.md/);
+  });
+
+  it('manifestState not-installed → a placeable bundled-skill hint (+ any cli/creds owed)', () => {
+    const s = okStatus({ manifestState: 'not-installed', skillDir: null });
+    const skill = guideFor(s).find((g) => g.need === 'skill');
+    assert.ok(skill, 'expected a skill step');
+    assert.match(skill.hint, /bundled bridge skill/);
+    assert.match(skill.hint, /setup codex-cli-bridge/);
+  });
+
+  it('manifestState foreign/stub → a STOP hint (never auto-overwritten)', () => {
+    for (const state of ['foreign', 'stub', 'invalid-manifest', 'unsupported-schema', 'unknown']) {
+      const skill = guideFor(okStatus({ manifestState: state })).find((g) => g.need === 'skill');
+      assert.ok(skill, `expected a skill step for ${state}`);
+      assert.match(skill.hint, /STOP/);
+      assert.match(skill.hint, new RegExp(state.replace(/[-]/g, '\\$&')));
+    }
+  });
+
+  it('every step is {need, hint} with a non-empty hint', () => {
+    const s = okStatus({
+      manifestState: 'not-installed',
+      skillDir: null,
+      cli: { bin: 'codex', state: 'missing', path: null },
+      credentials: { state: 'missing', path: '/c/auth.json' },
+    });
+    const steps = guideFor(s);
+    assert.equal(steps.length, 3);
+    for (const step of steps) {
+      assert.ok(typeof step.need === 'string' && step.need.length > 0);
+      assert.ok(typeof step.hint === 'string' && step.hint.length > 0);
+    }
+  });
+});
+
+describe('KNOWN_BACKENDS — each entry exposes a guide', () => {
+  it('guide carries setupRef + loginCmd + verifyCmd (non-empty strings)', () => {
+    for (const entry of KNOWN_BACKENDS) {
+      assert.ok(entry.guide, `${entry.name} missing guide`);
+      for (const key of ['setupRef', 'loginCmd', 'verifyCmd']) {
+        assert.ok(
+          typeof entry.guide[key] === 'string' && entry.guide[key].length > 0,
+          `${entry.name}.guide.${key} must be a non-empty string`,
+        );
+      }
+    }
+  });
+
+  it('guide.setupRef points at a real file in the repo', () => {
+    for (const entry of KNOWN_BACKENDS) {
+      assert.ok(existsSync(join(REPO, entry.guide.setupRef)), `${entry.guide.setupRef} (${entry.name})`);
     }
   });
 });

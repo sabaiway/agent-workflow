@@ -1,0 +1,22 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "codex-cli-bridge",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["execute", "review"],
+  "roles": {
+    "execute": { "cmd": "codex-exec", "source": "bin/codex-exec.sh", "output": "diff" },
+    "review": { "cmd": "codex-review", "source": "bin/codex-review.sh", "modes": ["plan", "code"], "output": "advisory" }
+  },
+  "detect": {
+    "installed": {
+      "env": "CODEX_CLI_BRIDGE_DIR",
+      "default": "~/.claude/skills/codex-cli-bridge",
+      "file": "SKILL.md"
+    }
+  },
+  "cost": "subscription",
+  "quota": { "kind": "subscription", "finite": true },
+  "provenance": { "author": "sabaiway", "source": "github:sabaiway/agent-workflow" }
+}

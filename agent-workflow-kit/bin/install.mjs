@@ -18,19 +18,22 @@
 //
 // Dependency-free, Node >= 18.
 
-import { readFile, mkdir, readdir, copyFile, lstat, readlink, symlink } from 'node:fs/promises';
+import { readFile, mkdir } from 'node:fs/promises';
 import { existsSync, lstatSync } from 'node:fs';
-import { dirname, join, resolve, relative, sep, isAbsolute } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { copyTreeRefresh } from '../tools/fs-safe.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
 
 // The deployable skill = everything except the npm wrapper (package.json, bin/).
 // capability.json (the family manifest) + tools/ (the family schema + validator the kit runs
-// as the memory detector) must land in the installed skill dir too.
+// as the memory detector) must land in the installed skill dir too. bridges/ carries the
+// byte-identical execution-backend skill mirrors (codex/antigravity) so `setup` can place a bridge
+// from the installed kit, with no network fetch (Plan B / AD-011).
 const PAYLOAD = [
   'SKILL.md',
   'README.md',
@@ -40,6 +43,7 @@ const PAYLOAD = [
   'launchers',
   'migrations',
   'tools',
+  'bridges',
 ];
 
 const tildify = (path) => path.replace(homedir(), '~');
@@ -64,42 +68,10 @@ const lstatNoFollow = (path) => {
   }
 };
 
-// Symlink-traversal guard: refuse to write *through* any symlink at or above `dest` within
-// `root` (root / intermediate dir / leaf, including a dangling one), or to a dest outside `root`.
-const assertContainedRealPath = (root, dest) => {
-  const rel = relative(root, dest);
-  if (rel.startsWith('..') || isAbsolute(rel)) {
-    throw new Error(`[agent-workflow-kit] refusing to write outside the target dir: ${dest}`);
-  }
-  if (lstatNoFollow(root)?.isSymbolicLink()) {
-    throw new Error(`[agent-workflow-kit] refusing to install into a symlinked target dir: ${root}`);
-  }
-  const walk = (acc, part) => {
-    const cur = join(acc, part);
-    if (lstatNoFollow(cur)?.isSymbolicLink()) {
-      throw new Error(`[agent-workflow-kit] refusing to write through a symlink at ${cur} (would escape ${root}).`);
-    }
-    return cur;
-  };
-  rel.split(sep).filter(Boolean).reduce(walk, root);
-};
-
-const copyRecursive = async (src, dest, root) => {
-  assertContainedRealPath(root, dest); // never write through a dest symlink (root/intermediate/leaf)
-  const stat = await lstat(src);
-  if (stat.isSymbolicLink()) {
-    if (existsSync(dest)) return; // additive: never delete/replace an existing entry
-    const linkTarget = await readlink(src);
-    await symlink(linkTarget, dest);
-  } else if (stat.isDirectory()) {
-    await mkdir(dest, { recursive: true });
-    const entries = await readdir(src);
-    await Promise.all(entries.map((entry) => copyRecursive(join(src, entry), join(dest, entry), root)));
-  } else {
-    await mkdir(dirname(dest), { recursive: true });
-    await copyFile(src, dest);
-  }
-};
+// The symlink-traversal guard + the recursive refresh copy now live in tools/fs-safe.mjs (shared,
+// dependency-injectable, unit-tested in isolation). install.mjs consumes copyTreeRefresh, which guards
+// every dest via assertContainedRealPath internally. The local lstatNoFollow above stays for the
+// pre-flight check on the target root itself (a nicer error than letting the copy throw).
 
 const parseArgs = (argv) => {
   const dirFlag = argv.indexOf('--dir');
@@ -150,7 +122,15 @@ const main = async () => {
 
   // Critical payload must be present, or the install would silently ship a kit that can't run
   // its own detector (tools/) or family contract (capability.json). Fail loudly, don't filter away.
-  const REQUIRED = ['SKILL.md', 'capability.json', 'references', 'tools', 'migrations'];
+  const REQUIRED = [
+    'SKILL.md',
+    'capability.json',
+    'references',
+    'tools',
+    'migrations',
+    'bridges/codex-cli-bridge',
+    'bridges/antigravity-cli-bridge',
+  ];
   const missing = REQUIRED.filter((entry) => !existsSync(resolve(PKG_ROOT, entry)));
   if (missing.length > 0) {
     console.error(`[agent-workflow-kit] package payload incomplete — missing: ${missing.join(', ')} (corrupt install?)`);
@@ -164,11 +144,9 @@ const main = async () => {
     process.exit(1);
   }
   await mkdir(target, { recursive: true });
-  await Promise.all(
-    PAYLOAD.filter((entry) => existsSync(resolve(PKG_ROOT, entry))).map((entry) =>
-      copyRecursive(resolve(PKG_ROOT, entry), resolve(target, entry), target),
-    ),
-  );
+  for (const entry of PAYLOAD.filter((e) => existsSync(resolve(PKG_ROOT, e)))) {
+    copyTreeRefresh(resolve(PKG_ROOT, entry), resolve(target, entry), target);
+  }
   console.log(`[agent-workflow-kit] ${wasPresent ? 'updated the kit to' : 'installed'} v${version} -> ${tildify(target)}`);
 
   // Wire non-Claude agents — best-effort; the launcher only touches tools you have.
@@ -198,7 +176,12 @@ This command only installs/updates the kit itself (in ${tildify(target)}).
 To update the kit later, re-run:  npx @sabaiway/agent-workflow-kit@latest init`);
 };
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Run main() only when executed directly (npx / node bin/install.mjs), never on import — so tests
+// can import this module to assert it has no side effects. Same idiom as tools/detect-backends.mjs.
+const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isDirectRun) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
