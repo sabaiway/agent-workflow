@@ -4,6 +4,33 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.8.2 — Upgrade DX: graceful, plain-language handling when the methodology slot can't fit the cap
+
+On a real `upgrade`, a project whose `AGENTS.md` was already over its 100-line cap hit the
+methodology-slot `reconcile`'s **cap refusal** (adding the bounded pointer would push the file to 109
+lines). The tool behaved correctly — it refused and left the file byte-for-byte unchanged — but the
+upgrade procedure had **no instruction for this exit path**, so the agent improvised: it surfaced a
+confusing, kit-internal multiple-choice prompt to the user (ADR ids, tool / operation names, marker
+terminology) that a third-party user has no vocabulary to answer.
+
+- **Defined the cap-refusal path in `SKILL.md` (upgrade step 3):** a cap-exceeded `reconcile` refusal
+  is now a **soft, explicitly-reported skip — not a STOP** (a malformed slot / missing-or-duplicate
+  anchor still STOPs, unchanged). The upgrade continues without the slot; the skip is reported in
+  plain language in the final report — the methodology is already documented in
+  `docs/ai/agent_rules.md`, and trimming the entry point then re-running adds the pointer. It is
+  **not** silent (Hard Constraint — no silent failures). The reported line count is the file's
+  **current** size, not the tool's would-be post-injection number, and any remaining mandatory
+  `AGENTS.md` edit must keep the file ≤100 lines rather than bust the cap to land a migration.
+- **No-Node manual path:** count the lines before pasting the slot by hand — skip + report if it
+  would take the file over the cap.
+- **New Gotcha — communication firewall:** never surface ADR ids, tool / function / operation names,
+  marker / slot / fragment / anchor terminology, or verbatim tool stderr to the user; translate every
+  tool outcome into plain language.
+
+Agent-procedure / documentation change only — no `inject-methodology.mjs` behavior change (the tool
+was already correct), no `docs/ai` structural change, deployment-lineage head stays **`1.3.0`**, no
+migration.
+
 ## 1.8.1 — Fix: `npx … init` ran nothing (the installer's own run-guard mis-fired under npx)
 
 1.8.0 set out to fix "`npx <pkg> init` quietly did nothing" — and shipped a *second*, unrelated
