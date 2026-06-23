@@ -199,9 +199,10 @@ own subscription** (no pay-as-you-go):
 
 Honest caveats:
 
-- They are **agent skills, not npm packages**, and are **not installed by `init`**. Each needs a
-  **separate, once-per-machine setup** + an **interactive subscription login that can't be fully
-  automated yet**.
+- They are **agent skills, not npm packages**, and are **not placed by `init`** (it only bundles
+  them in the kit tarball). `/agent-workflow-kit setup` does the **link-only** part — places the
+  bundled bridge skill + links its wrappers — while the **binary install** and the **interactive
+  subscription login stay manual** (they can't be safely automated).
 - Their context provider is the deployed memory — but not unconditionally (`codex` auto-reads
   `AGENTS.md`; `agy` reads `.antigravity.md` > `GEMINI.md` > `AGENTS.md`, so a higher-priority
   file shadows it).
@@ -209,7 +210,8 @@ Honest caveats:
   family's own code, not those external services.
 
 `/agent-workflow-kit backends` checks readiness **read-only** (marker-file presence — it never
-runs a subscription CLI or changes the machine). See each bridge's
+runs a subscription CLI or changes the machine); `/agent-workflow-kit setup` then does the link-only
+setup (place skill + link wrappers). See each bridge's
 [`codex-cli-bridge/SKILL.md`](codex-cli-bridge/SKILL.md) ·
 [`antigravity-cli-bridge/SKILL.md`](antigravity-cli-bridge/SKILL.md) and its `setup/README.md`.
 
@@ -221,8 +223,8 @@ runs a subscription CLI or changes the machine). See each bridge's
 |---|---|---|---|
 | **agent-workflow-kit** | almost everyone — the entry point | npm | [README](agent-workflow-kit/README.md) |
 | **agent-workflow-memory** | the substrate only, without the methodology (rare) | npm | [README](agent-workflow-memory/README.md) |
-| **codex-cli-bridge** | delegated execute / review via `codex` | agent skill (manual setup) | [SKILL](codex-cli-bridge/SKILL.md) |
-| **antigravity-cli-bridge** | delegated review / probe via `agy` | agent skill (manual setup) | [SKILL](antigravity-cli-bridge/SKILL.md) |
+| **codex-cli-bridge** | delegated execute / review via `codex` | agent skill (bundled; `setup` places + links) | [SKILL](codex-cli-bridge/SKILL.md) |
+| **antigravity-cli-bridge** | delegated review / probe via `agy` | agent skill (bundled; `setup` places + links) | [SKILL](antigravity-cli-bridge/SKILL.md) |
 | **agent-workflow-engine** | *not available yet* (future methodology engine) | stub (`available: false`) | [capability.json](agent-workflow-engine/capability.json) |
 
 Most people only ever need the **kit**. Each per-package README / SKILL stays the source of truth

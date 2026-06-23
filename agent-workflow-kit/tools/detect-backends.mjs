@@ -58,6 +58,9 @@ export const KNOWN_BACKENDS = [
     credential: { env: 'CODEX_HOME', default: '~/.codex', file: 'auth.json' },
     setupUrl: 'https://github.com/sabaiway/agent-workflow/blob/main/codex-cli-bridge/setup/README.md',
     setupPathLocal: 'setup/README.md',
+    // The short canonical guided commands. Binary-install is platform-variant and longer, so it is
+    // REFERENCED via setupRef (§1 of that README), never duplicated here (would drift with the README).
+    guide: { setupRef: 'codex-cli-bridge/setup/README.md', loginCmd: 'codex login', verifyCmd: 'codex login status' },
   },
   {
     name: 'antigravity-cli-bridge',
@@ -66,6 +69,7 @@ export const KNOWN_BACKENDS = [
     credential: { env: null, default: '~/.gemini/antigravity-cli', file: 'antigravity-oauth-token' },
     setupUrl: 'https://github.com/sabaiway/agent-workflow/blob/main/antigravity-cli-bridge/setup/README.md',
     setupPathLocal: 'setup/README.md',
+    guide: { setupRef: 'antigravity-cli-bridge/setup/README.md', loginCmd: 'agy', verifyCmd: 'echo "say OK" | agy-run -' },
   },
 ];
 
@@ -256,6 +260,38 @@ export const detectBackend = (entry, deps = {}) => {
 };
 
 export const detectBackends = (deps = {}) => KNOWN_BACKENDS.map((entry) => detectBackend(entry, deps));
+
+// ── guidance (axis-aware, for the `setup` flow) ───────────────────────────────
+
+const registryEntry = (name) => KNOWN_BACKENDS.find((b) => b.name === name);
+
+// The skill axis can't be auto-fixed in every state: an absent dir IS placeable from the bundled
+// kit; any other non-ok state (stub/foreign/invalid/unsupported, or an `unknown` marker fs error)
+// is a STOP — never overwrite a dir we don't provably own.
+const skillHint = (status, guide) =>
+  status.manifestState === NOT_INSTALLED
+    ? `place the bundled bridge skill — run \`/agent-workflow-kit setup ${status.name}\``
+    : `bridge skill dir is "${status.manifestState}" — STOP and inspect ${status.skillDir ?? 'the skill dir'} (see ${guide?.setupRef ?? status.setupHint?.url})`;
+
+// guideFor inspects the manifest/cli/credentials axes INDEPENDENTLY (never the collapsed readiness)
+// and returns an ORDERED list of the manual steps still owed — possibly several at once (e.g. a
+// fresh machine needs both the CLI and a login). `[]` ⇒ nothing manual left (the linker handles the
+// wrappers). Each step is `{ need: 'skill'|'cli'|'credentials', hint }`. Pure; no fs, no side effects.
+export const guideFor = (status) => {
+  const guide = registryEntry(status.name)?.guide;
+  const out = [];
+  if (status.manifestState !== OK) out.push({ need: 'skill', hint: skillHint(status, guide) });
+  if (status.cli.state !== PRESENT) {
+    out.push({ need: 'cli', hint: `install the "${status.cli.bin}" CLI — see ${guide?.setupRef ?? status.setupHint?.url} §1` });
+  }
+  if (status.credentials.state !== PRESENT) {
+    out.push({
+      need: 'credentials',
+      hint: `sign in once (subscription): ${guide?.loginCmd ?? 'see the setup README'}  (verify: ${guide?.verifyCmd ?? 'see the setup README'})`,
+    });
+  }
+  return out;
+};
 
 // ── report ───────────────────────────────────────────────────────────────────
 

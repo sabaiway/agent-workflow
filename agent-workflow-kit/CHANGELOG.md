@@ -4,6 +4,37 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.7.0 — Link-only backend auto-setup; bridges bundled in the tarball
+
+The optional execution-backend bridges (`codex-cli-bridge` → `codex`, `antigravity-cli-bridge` →
+`agy`) can now be set up from the kit itself, via a new **opt-in, in-agent** mode —
+**`/agent-workflow-kit setup [backend]`** (`tools/setup-backends.mjs`). It owns only the two
+**deterministic, secret-free** steps and **guides** the rest (AD-011):
+
+- **Bridges are bundled in the kit's npm tarball** under `bridges/<name>/` — a **byte-identical
+  mirror** of the repo-root bridges, pinned by `test/bridges-mirror.test.mjs` (the same drift-guard
+  pattern as the methodology mirror). So `setup` places a bridge from local files, with **no network
+  fetch**. `init` (npx) bundles them but still **does not place** them — that stays the opt-in
+  `setup` job (preserving the honest `init` ≠ deploy claim).
+- **`setup` places/refreshes the bundled bridge skill**, but only into a dir that is **absent /
+  empty / proven-managed** (valid manifest, matching `name`+`kind`); a stub/foreign/invalid/
+  unsupported manifest, a marker fs-error, a non-empty unknown dir, or a symlinked dir → **STOP**,
+  never overwritten. Refresh re-runs on a managed dir so re-running `setup` delivers bundled fixes.
+- **It links the wrappers** (`codex-exec` / `codex-review`; `agy-run`) onto `PATH` (`~/.local/bin`,
+  override with `--bindir`) via **managed symlinks** — replacing only a symlink already pointing at
+  our source. It **preflights every target first**, so a conflict on one wrapper makes **zero**
+  changes; a non-symlink or a foreign symlink → STOP. Wrapper presence is judged **per-bindir**, not
+  PATH-wide. `--dry-run` prints the plan and changes nothing.
+- **The binary install + the interactive subscription login stay manual** — `setup` prints the exact
+  commands (the detector's axis-aware `guideFor`), never runs a subscription CLI, never commits. On
+  **Windows** it reports *unsupported — use WSL* and mutates nothing (the wrappers are POSIX `.sh`).
+- Internal: the symlink-traversal-safe copy/link primitives are now shared in `tools/fs-safe.mjs`
+  (the npx installer consumes them and gained an `isDirectRun` guard so importing it runs nothing).
+  The per-package publish workflow now gates the kit on its **whole** test suite, not just the
+  shipped enforcement scripts.
+
+No `docs/ai` structural change → the deployment-lineage head stays **`1.3.0`**; no migration.
+
 ## 1.6.0 — Methodology slot reconciliation; engine becomes the canonical methodology home
 
 The workflow methodology now has a **single canonical home** in `agent-workflow-engine`

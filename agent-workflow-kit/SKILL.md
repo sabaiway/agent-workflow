@@ -3,7 +3,7 @@ name: agent-workflow-kit
 description: Deploy or upgrade a portable AI-agent memory-and-workflow system in any project. Use when the user wants to bootstrap `docs/ai/` + an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) + cap/archive/index enforcement in a new or existing repo, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-kit` / `/agent-workflow-kit upgrade`. Triggers on phrases like "set up the memory system", "deploy the AI workflow here", "bootstrap docs/ai", "upgrade the workflow".
 disable-model-invocation: true
 metadata:
-  version: '1.6.0'
+  version: '1.7.0'
 ---
 
 # agent-workflow-kit
@@ -83,6 +83,7 @@ Pick the mode from the user's invocation. Auto-detect an existing `docs/ai/` to 
 - **`/agent-workflow-kit`** (default) — bootstrap a new or empty project. If `docs/ai/` already exists, stop and ask whether they meant `upgrade`.
 - **`/agent-workflow-kit upgrade`** — upgrade an existing deployment to the skill's current `version`.
 - **`/agent-workflow-kit backends`** — read-only environment check: which optional **execution-backends** (the `codex` / `agy` bridges) are set up vs missing. Never writes, never commits, never runs a subscription CLI.
+- **`/agent-workflow-kit setup [backend]`** — the **link-only**, opt-in companion to `backends`: place the bundled bridge skill + link its wrappers onto `PATH`. **In-agent only** — `init` (npx) never places bridges. The binary install + the interactive subscription login stay **manual** (it prints the exact commands); idempotent; refuses to clobber a non-symlink; never commits, never runs a subscription CLI.
 
 ### Mode: bootstrap
 
@@ -144,6 +145,26 @@ Read-only. Answers *"which optional execution-backends are set up vs missing, an
 3. State plainly to the user that this is **detection only**:
    - **"credentials present"** means the credential-marker **file** exists — it is **not** a live login check. The detector never runs `codex login status` / `agy` (that would spawn a paid, slow, networked subscription CLI).
    - The bridges' wrappers are **POSIX `.sh`** scripts. On Windows the detector still works, but the bridges themselves are **not promised to run** — say so rather than implying they will.
+
+### Mode: setup
+
+The **only writer** among the backend modes, and **opt-in / in-agent only** — it is **never** part of `init`. The npx installer deploys the *kit* and bundles the bridge skills in its tarball, but **does not place** them (that honesty claim is load-bearing — see `decisions.md` AD-009 / AD-011). `setup` owns exactly the two deterministic, secret-free steps and **guides** the rest. It **never commits and never runs a subscription CLI**.
+
+Run `node ${CLAUDE_SKILL_DIR}/tools/setup-backends.mjs [<backend>] [--bindir <path>] [--dry-run]`:
+
+- `<backend>` — `codex` | `agy` | `antigravity` | `codex-cli-bridge` | `antigravity-cli-bridge`; omit for **all**.
+- `--bindir <path>` — where to link the wrappers (default `~/.local/bin`).
+- `--dry-run` — print the per-backend plan and change **nothing** (run this first).
+- `--help`, `-h` — usage.
+
+For each backend it:
+1. **Places / refreshes the bundled bridge skill** (from the kit's `bridges/<name>/` mirror) into its canonical dir — but only when that dir is **absent / empty / proven-managed** (valid manifest, matching `name`+`kind`). A `stub` / `foreign` / `invalid` / `unsupported` dir, a marker fs-error, or a symlinked dir → **STOP**, never overwritten. Refresh re-runs on a proven-managed dir so re-running `setup` delivers bundled fixes.
+2. **Links its wrappers** (`codex-exec` / `codex-review`; `agy-run`) onto `--bindir` via **managed symlinks** — replacing only a symlink that already points at our source. A non-symlink or a foreign symlink → **STOP**; it **preflights every target first**, so a conflict on one wrapper makes **zero** changes. If `--bindir` is not on `PATH`, it prints the one-line `export PATH=…` to add — it never edits a shell rc.
+3. **Guides the manual, secret-bearing steps it will NOT automate** — the binary install (each bridge's `setup/README.md` §1) and the one-time interactive subscription login (`codex login` / `agy`) — printing the exact command for whichever axis is still missing (axis-aware: it can ask for both the CLI and the login at once).
+
+**Windows:** the wrappers are POSIX `.sh`; on `win32` it reports *unsupported — use WSL* and mutates nothing.
+
+**Exit codes:** `0` = done / already set up / only manual steps remain (guidance is never a failure); **non-zero** = a STOP (a dir/symlink it refuses to clobber), a bad argument, a missing bundle, or a native fs error (the underlying reason is preserved in the message).
 
 ---
 
@@ -214,6 +235,6 @@ Deploy these into `AGENTS.md`; remove rows that don't apply to the stack.
 - [`references/scripts/`](references/scripts/) — the Node enforcement scripts (caps + staleness + index-freshness gate, 3-tier archive, hook installer) and their unit tests.
 - [`migrations/`](migrations/) — per-version upgrade steps; see `migrations/README.md`.
 - [`launchers/`](launchers/) — run the bootstrapper from non-Claude agents (`SKILL.md` is a native Codex skill; a Devin Desktop workflow launcher + install script). See `launchers/README.md`.
-- [`tools/`](tools/) — the family-wide tooling the kit **owns and ships**: `manifest/{schema.md,validate.mjs}` (the `capability.json` schema + the validator the kit runs as the memory detector, and root CI invokes), `delegation.mjs` (the executable delegate/fallback decision + hand-off plan), `inject-methodology.mjs` + `methodology-slot.md` (the bounded slot reconciliation — ensure-slot / inject-if-empty / cap; the fragment is a byte-identical mirror of the `agent-workflow-engine` canon, pinned by `methodology-mirror.test.mjs`), `detect-backends.mjs` (the read-only **backend detector** behind `/agent-workflow-kit backends`), and `release-scan.mjs` (the attribution-off release gate). See [`tools/manifest/schema.md`](tools/manifest/schema.md).
+- [`tools/`](tools/) — the family-wide tooling the kit **owns and ships**: `manifest/{schema.md,validate.mjs}` (the `capability.json` schema + the validator the kit runs as the memory detector, and root CI invokes), `delegation.mjs` (the executable delegate/fallback decision + hand-off plan), `inject-methodology.mjs` + `methodology-slot.md` (the bounded slot reconciliation — ensure-slot / inject-if-empty / cap; the fragment is a byte-identical mirror of the `agent-workflow-engine` canon, pinned by `methodology-mirror.test.mjs`), `detect-backends.mjs` (the read-only **backend detector** behind `/agent-workflow-kit backends`, plus the axis-aware `guideFor`), `setup-backends.mjs` (the **link-only** backend setup behind `/agent-workflow-kit setup` — place the bundled bridge + link wrappers), `fs-safe.mjs` (the shared symlink-traversal-safe copy/link primitives both `setup-backends` and the npx installer use), and `release-scan.mjs` (the attribution-off release gate). The bundled bridge skill mirrors live under [`bridges/`](bridges/) (byte-identical to the repo-root bridges, pinned by `test/bridges-mirror.test.mjs`). See [`tools/manifest/schema.md`](tools/manifest/schema.md).
 - [`capability.json`](capability.json) — the kit's own `agent-workflow` family manifest (`kind: composition-root`).
 - [`CHANGELOG.md`](CHANGELOG.md) — version history of this kernel.
