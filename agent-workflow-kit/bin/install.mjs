@@ -23,9 +23,9 @@
 // Dependency-free, Node >= 18.
 
 import { readFile, mkdir } from 'node:fs/promises';
-import { existsSync, lstatSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { copyTreeRefresh } from '../tools/fs-safe.mjs';
@@ -274,7 +274,22 @@ To update the kit later, re-run:  npx @sabaiway/agent-workflow-kit@latest init`)
 
 // Run main() only when executed directly (npx / node bin/install.mjs), never on import — so tests
 // can import this module to assert it has no side effects. Same idiom as tools/detect-backends.mjs.
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+//
+// Compare by REAL path, not by URL string: npx invokes the bin through a symlink in node_modules/.bin,
+// so process.argv[1] is that symlink while import.meta.url is the resolved real file — a raw string
+// compare reads them as different, main() never runs, and `npx … init` exits silently (the reported
+// "nothing happens after install" bug). realpathSync collapses the symlink so both sides match; it also
+// holds under --preserve-symlinks. A bare `node -e` (no argv[1]) and a missing file (realpath throws)
+// both correctly fall through to false — importing the module still runs nothing.
+const isDirectRun = (() => {
+  const invoked = process.argv[1];
+  if (!invoked) return false;
+  try {
+    return realpathSync(invoked) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+})();
 if (isDirectRun) {
   main().catch((err) => {
     console.error(err);

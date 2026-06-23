@@ -78,6 +78,31 @@ describe('kit installer — payload + symlink-traversal hardening', () => {
   });
 });
 
+describe('kit installer — runs through the npx bin symlink', () => {
+  let dir;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'aw-kit-symlink-'));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('main() runs when invoked through a symlink (the node_modules/.bin shim npx uses)', async () => {
+    // npx never runs bin/install.mjs by its real path — it runs node_modules/.bin/agent-workflow-kit,
+    // a symlink to it. Node resolves import.meta.url to the REAL file but leaves argv[1] as the symlink,
+    // so a string compare of the two makes isDirectRun false and main() silently no-ops. Reproduce that
+    // exact invocation: run the installer via a symlink and assert it actually installed (visible output
+    // + payload on disk). A regression here means `npx … init` goes quiet again.
+    const shim = join(dir, 'agent-workflow-kit'); // stands in for node_modules/.bin/<name>
+    await symlink(INSTALLER, shim);
+    const target = join(dir, 'home', 'agent-workflow-kit');
+    const res = spawnSync(process.execPath, [shim, '--dir', target, '--no-launchers'], { encoding: 'utf8' });
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /installed v|updated the kit/);
+    assert.ok(existsSync(join(target, 'SKILL.md')), 'install through the symlink must write the payload');
+  });
+});
+
 describe('kit installer — module hygiene', () => {
   it('importing install.mjs runs nothing (main() is guarded by isDirectRun)', () => {
     // `node -e` has no argv[1], so isDirectRun is false → importing must not run main()

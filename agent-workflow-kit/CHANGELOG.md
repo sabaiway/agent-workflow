@@ -4,6 +4,37 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.8.1 — Fix: `npx … init` ran nothing (the installer's own run-guard mis-fired under npx)
+
+1.8.0 set out to fix "`npx <pkg> init` quietly did nothing" — and shipped a *second*, unrelated
+silent no-op in the same spot. The reported symptom: `npx @sabaiway/agent-workflow-kit@latest init`
+installs the package, prints the npx "Ok to proceed?" line, and then **prints nothing and does
+nothing** — none of 1.8.0's new DX messaging, no install, exit 0.
+
+Root cause: the bottom-of-file run-guard that gates `main()` so importing the module has no side
+effects:
+
+```js
+const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+```
+
+npx never runs `bin/install.mjs` by its real path — it runs the `node_modules/.bin/agent-workflow-kit`
+**symlink** to it. Node resolves `import.meta.url` to the real file but leaves `process.argv[1]` as the
+symlink path, so the string compare is always false, `main()` never runs, and the process exits 0
+without a word. (Running `node bin/install.mjs` directly — as the test suite did — has no symlink, which
+is why every test passed while real `npx` was broken.)
+
+- **Fix:** the guard now compares **real paths** (`realpathSync` on both sides), which collapses the
+  `.bin` symlink so direct and npx invocations both register as a direct run; it also holds under
+  `--preserve-symlinks`. Import-with-no-`argv[1]` and a missing file still fall through to `false`, so
+  importing the module continues to run nothing.
+- **Regression test:** a new case invokes the installer **through a symlink** (the exact `.bin` shim
+  npx uses) and asserts it both prints and writes the payload — the previous suite never exercised a
+  symlinked invocation, so the bug slipped through.
+
+Installer bugfix only — no `docs/ai` structural change, deployment-lineage head stays **`1.3.0`**, no
+migration.
+
 ## 1.8.0 — Stale-version DX: `@latest` everywhere + a no-network never-downgrade gate
 
 A returning user ran the headline `npx @sabaiway/agent-workflow-kit init` and it quietly did nothing:
