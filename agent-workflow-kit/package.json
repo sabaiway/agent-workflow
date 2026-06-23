@@ -1,6 +1,6 @@
 {
   "name": "@sabaiway/agent-workflow-kit",
-  "version": "1.8.1",
+  "version": "1.8.2",
   "description": "Portable, cross-agent memory & workflow for AI coding agents — Claude Code, Codex, Cursor, Devin Desktop. One command deploys an AGENTS.md entry point + docs/ai context with cap/archive/index enforcement into any repo.",
   "keywords": [
     "ai-agents",
