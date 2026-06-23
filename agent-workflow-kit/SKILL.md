@@ -3,7 +3,7 @@ name: agent-workflow-kit
 description: Deploy or upgrade a portable AI-agent memory-and-workflow system in any project. Use when the user wants to bootstrap `docs/ai/` + an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) + cap/archive/index enforcement in a new or existing repo, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-kit` / `/agent-workflow-kit upgrade`. Triggers on phrases like "set up the memory system", "deploy the AI workflow here", "bootstrap docs/ai", "upgrade the workflow".
 disable-model-invocation: true
 metadata:
-  version: '1.7.0'
+  version: '1.8.0'
 ---
 
 # agent-workflow-kit
@@ -84,6 +84,22 @@ Pick the mode from the user's invocation. Auto-detect an existing `docs/ai/` to 
 - **`/agent-workflow-kit upgrade`** — upgrade an existing deployment to the skill's current `version`.
 - **`/agent-workflow-kit backends`** — read-only environment check: which optional **execution-backends** (the `codex` / `agy` bridges) are set up vs missing. Never writes, never commits, never runs a subscription CLI.
 - **`/agent-workflow-kit setup [backend]`** — the **link-only**, opt-in companion to `backends`: place the bundled bridge skill + link its wrappers onto `PATH`. **In-agent only** — `init` (npx) never places bridges. The binary install + the interactive subscription login stay **manual** (it prints the exact commands); idempotent; refuses to clobber a non-symlink; never commits, never runs a subscription CLI.
+
+### Version status & the two axes — surface this on every invocation
+
+Before acting, read `docs/ai/.workflow-version` (the project's stamp), state a one-line status, then route:
+
+- **absent** → bootstrap (a fresh deployment).
+- **stamp < `1.3.0`** (the deployment-lineage head) → `upgrade`.
+- **stamp == `1.3.0`** → already current; only the stamp-independent methodology-slot reconcile may run.
+- **stamp > head / unparseable** → STOP — never-downgrade gate (see *Mode: upgrade* step 2).
+
+**Two independent version axes — never conflate them:**
+
+1. **Project deployment** — `docs/ai/.workflow-version` vs the lineage head (`1.3.0`). This is the **only** axis this skill compares.
+2. **Kit freshness** — this skill's own files vs the published npm package. That is the **npx installer's** job: `npx @sabaiway/agent-workflow-kit@latest init` (it refuses a stale-cache downgrade by comparing the version on disk — **no network**). This skill never checks npm, and the package version (e.g. `1.x`) is **not** the lineage head.
+
+**Refreshed the kit but nothing changed?** The skill you are running is whatever was on disk when the session started. After `npx @sabaiway/agent-workflow-kit@latest init` updates `~/.claude/skills/agent-workflow-kit/`, **restart the session** so the agent reloads the new skill files (the slash command + this `SKILL.md`).
 
 ### Mode: bootstrap
 

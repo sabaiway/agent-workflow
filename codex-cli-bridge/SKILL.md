@@ -129,8 +129,8 @@ The wrappers work in any git repo where `codex` is installed and authenticated. 
 - **`agent-workflow-memory`** (family **context provider**) — if the target project has **no**
   `AGENTS.md` + `docs/ai/`, codex has no root context to read (and the wrappers' preflight will
   STOP). The memory substrate is what creates that context. Soft-recommend it (only when the user
-  wants the memory workflow): `npx @sabaiway/agent-workflow-memory init`, or bootstrap the whole
-  family via the **`agent-workflow-kit`** orchestrator (`npx @sabaiway/agent-workflow-kit init`),
+  wants the memory workflow): `npx @sabaiway/agent-workflow-memory@latest init`, or bootstrap the whole
+  family via the **`agent-workflow-kit`** orchestrator (`npx @sabaiway/agent-workflow-kit@latest init`),
   which delegates substrate deployment to memory and injects the workflow methodology. Never a
   prerequisite.
 

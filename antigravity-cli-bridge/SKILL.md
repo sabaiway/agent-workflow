@@ -150,9 +150,9 @@ checklist, prompt templates, output handling). Essentials:
 - **`agent-workflow-memory`** (family **context provider**) — if the current project has **no**
   `AGENTS.md` + `docs/ai/`, `agy` has no per-workspace context to read. The memory substrate creates
   it. Soft-recommend it (only when the user wants the memory workflow):
-  `npx @sabaiway/agent-workflow-memory init`, then `/agent-workflow-memory` in the project — or
+  `npx @sabaiway/agent-workflow-memory@latest init`, then `/agent-workflow-memory` in the project — or
   bootstrap the whole family via the **`agent-workflow-kit`** orchestrator
-  (`npx @sabaiway/agent-workflow-kit init`), which delegates substrate deployment to memory. Never a
+  (`npx @sabaiway/agent-workflow-kit@latest init`), which delegates substrate deployment to memory. Never a
   prerequisite for using `agy`.
 - **`codex-cli-bridge`** (sibling backend, OpenAI Codex) — recommend **by actual presence**: if
   `~/.claude/skills/codex-cli-bridge/` exists you have a **second delegated engine** (Codex for

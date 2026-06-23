@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // One-shot installer for @sabaiway/agent-workflow-kit.
 //
-//   npx @sabaiway/agent-workflow-kit init
+//   npx @sabaiway/agent-workflow-kit@latest init
 //
 // Copies the kit into the canonical skill home (~/.claude/skills/agent-workflow-kit),
 // then runs the cross-agent launcher (auto-detects Codex / Devin Desktop — only touches tools
@@ -14,7 +14,11 @@
 // docs/ai deployment — see README "Use".
 //
 // No telemetry, no phone-home: adoption is the npm registry's public, passive per-version
-// download numbers (api.npmjs.org/downloads). Nothing here contacts a server.
+// download numbers (api.npmjs.org/downloads). Nothing here contacts a server — including the
+// stale-version defenses below, which compare the version already on disk (the installed SKILL.md)
+// against this runner's own version, never the registry. That is why `@latest` (above) is the
+// documented form: a bare `npx … init` can reuse an OLDER cached build of this installer, so a
+// returning user must bypass the cache to actually upgrade. See decisions.md AD-012.
 //
 // Dependency-free, Node >= 18.
 
@@ -57,6 +61,58 @@ const readVersion = async () => {
   }
 };
 
+// Dependency-free semver: parse the leading `x.y.z` (prerelease/build ignored — kit versions are
+// plain). compareSemver returns -1 | 0 | 1, or null when either side is unparseable (legacy installs
+// predate any version stamp). No `let`: a small functional comparison (AGENTS.md §2.3).
+const parseSemver = (str) => {
+  const m = typeof str === 'string' ? str.trim().match(/^(\d+)\.(\d+)\.(\d+)/) : null;
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+};
+
+const compareSemver = (a, b) => {
+  const pa = parseSemver(a);
+  const pb = parseSemver(b);
+  if (!pa || !pb) return null;
+  const firstDiff = [0, 1, 2].map((i) => (pa[i] === pb[i] ? 0 : pa[i] < pb[i] ? -1 : 1)).find((c) => c !== 0);
+  return firstDiff ?? 0;
+};
+
+// Extract the version that is a DIRECT child of the top-level `metadata:` key — never a top-level
+// or deeper-nested decoy `version:` (mirrors the manifest validator's rigor; the kit ships manifest
+// fixtures that probe exactly those decoys). Pure string walk over the frontmatter block, no deps.
+const metadataVersion = (frontmatter) => {
+  const lines = frontmatter.split(/\r?\n/);
+  const metaIdx = lines.findIndex((l) => /^metadata:[ \t]*$/.test(l));
+  if (metaIdx === -1) return null;
+  const after = lines.slice(metaIdx + 1);
+  const dedent = after.findIndex((l) => /^[^ \t]/.test(l)); // a column-0 line closes the metadata block
+  const block = dedent === -1 ? after : after.slice(0, dedent);
+  // Direct children share the first child's indent; a nested decoy is MORE indented, so a
+  // `<baseIndent>version:` prefix match excludes it. baseIndent is non-empty, so a top-level
+  // `version:` (column 0, and before `metadata:` anyway) is excluded too.
+  const baseIndent = block.length ? (block[0].match(/^[ \t]*/)?.[0] ?? '') : '';
+  const verLine = block.find((l) => l.startsWith(`${baseIndent}version:`));
+  return verLine?.match(/version:[ \t]*['"]?(\d+\.\d+\.\d+)['"]?/)?.[1] ?? null;
+};
+
+// The installed version is read from the target's SKILL.md frontmatter (`metadata.version`) — the
+// manifest's canonical `detect.installed.file`, present even on legacy installs that predate
+// capability.json. Returns the semver string, or null when ABSENT / has no parseable stamp (legacy
+// → no gate). A SKILL.md that EXISTS but cannot be read is NOT swallowed as "legacy": we fail closed
+// (throw) so the never-downgrade gate can never be silently bypassed (AGENTS.md: no silent failures).
+const readInstalledVersion = async (target) => {
+  const skill = resolve(target, 'SKILL.md');
+  if (!existsSync(skill)) return null; // absent → new/legacy install, nothing to compare
+  const text = await readFile(skill, 'utf8').catch((err) => {
+    throw new Error(
+      `[agent-workflow-kit] cannot read the installed SKILL.md (${tildify(skill)}): ${err.message}. ` +
+        `Refusing to install over an unreadable kit — fix permissions/contents or remove it, then re-run.`,
+    );
+  });
+  const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  return fm ? metadataVersion(fm[1]) : null;
+};
+
 // lstat without following symlinks; null when absent. existsSync FOLLOWS symlinks (so a
 // *dangling* symlink reads as absent) — lstat is what lets the guard catch a dangling dest symlink.
 const lstatNoFollow = (path) => {
@@ -80,6 +136,7 @@ const parseArgs = (argv) => {
     version: argv.includes('--version') || argv.includes('-v'),
     noLaunchers: argv.includes('--no-launchers'),
     force: argv.includes('--force'),
+    allowDowngrade: argv.includes('--allow-downgrade'),
     dir: dirFlag >= 0 ? argv[dirFlag + 1] : undefined,
   };
 };
@@ -94,15 +151,20 @@ const printHelp = (version) => {
   console.log(`agent-workflow-kit ${version}
 
 Usage:
-  npx @sabaiway/agent-workflow-kit init [--dir <path>] [--no-launchers] [--force]
-  npx @sabaiway/agent-workflow-kit --version
-  npx @sabaiway/agent-workflow-kit --help
+  npx @sabaiway/agent-workflow-kit@latest init [--dir <path>] [--no-launchers] [--force] [--allow-downgrade]
+  npx @sabaiway/agent-workflow-kit@latest --version
+  npx @sabaiway/agent-workflow-kit@latest --help
+
+Use the @latest form: a bare \`npx … init\` (no @latest) can reuse an OLDER cached
+  build of this installer, so a returning user must bypass the npx cache to upgrade.
 
 Installs/refreshes the kit at ~/.claude/skills/agent-workflow-kit
   (override with --dir <path> or AGENT_WORKFLOW_KIT_DIR), then wires any
   Codex / Devin Desktop you have. --no-launchers skips that wiring; --force replaces a
   pre-existing non-kit launcher file (backed up first). init is additive — it never
-  deletes your settings.
+  deletes your settings. If the installed kit is newer than the version you ran, init
+  refuses (no network — it compares the version on disk) and points you at @latest;
+  --allow-downgrade overrides that refusal (distinct from --force, which is launcher-only).
 
 After install, invoke the skill in your agent, inside a project:
   first time in the project  ->  /agent-workflow-kit
@@ -143,11 +205,45 @@ const main = async () => {
     console.error(`[agent-workflow-kit] target dir is a symlink — refusing to write through it: ${tildify(target)}`);
     process.exit(1);
   }
+
+  // Stale-cache defenses (no network — version already on disk vs this runner). Read BEFORE any
+  // write so a refusal touches nothing. cmp is null on a legacy/unparseable install → no gate.
+  const installedVersion = wasPresent ? await readInstalledVersion(target) : null;
+  const cmp = installedVersion ? compareSemver(installedVersion, version) : null;
+
+  // Never-downgrade gate: a bare `npx … init` can run an OLDER cached build of this installer, which
+  // would overwrite a NEWER installed skill with old code. Refuse loudly (nonzero) unless the
+  // dedicated --allow-downgrade override is passed — surfacing the cache trap instead of silently
+  // regressing the install (AGENTS.md: no silent failures). The override is its OWN flag, NOT --force:
+  // --force means "replace a foreign launcher file" and is forwarded to the launcher; conflating them
+  // would let someone clearing the version gate also clobber launchers by accident.
+  if (cmp === 1 && !args.allowDowngrade) {
+    console.error(
+      `[agent-workflow-kit] refusing to downgrade: the installed kit is v${installedVersion}, but this ` +
+        `runner is the OLDER v${version}.\n` +
+        `  This is the classic npx cache serving a stale build. To get the newest kit, bypass the cache:\n` +
+        `    npx @sabaiway/agent-workflow-kit@latest init\n` +
+        `  (or pass --allow-downgrade to overwrite the newer install with v${version} anyway).`,
+    );
+    process.exit(1);
+  }
+
   await mkdir(target, { recursive: true });
   for (const entry of PAYLOAD.filter((e) => existsSync(resolve(PKG_ROOT, e)))) {
     copyTreeRefresh(resolve(PKG_ROOT, entry), resolve(target, entry), target);
   }
   console.log(`[agent-workflow-kit] ${wasPresent ? 'updated the kit to' : 'installed'} v${version} -> ${tildify(target)}`);
+
+  // No-op re-run: the install just refreshed the skill with the SAME version it already had. For a
+  // user who ran `init` expecting an upgrade, that almost always means npx reused a cached build —
+  // say so explicitly and point at @latest (the no-network signal that catches the reported scenario).
+  if (cmp === 0) {
+    console.log(
+      `[agent-workflow-kit] note: no version change — the kit was already v${version}. If you expected ` +
+        `an update, npx likely served a cached build; re-run bypassing the cache:\n` +
+        `    npx @sabaiway/agent-workflow-kit@latest init`,
+    );
+  }
 
   // Wire non-Claude agents — best-effort; the launcher only touches tools you have.
   const launcher = resolve(target, 'launchers/install-launchers.sh');
