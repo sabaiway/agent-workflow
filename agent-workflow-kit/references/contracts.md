@@ -17,7 +17,27 @@ The user chooses at bootstrap whether the AI artifacts are visible in the repo o
 diverge:
 
 - **visible** — artifacts are committed. Wire the project's `package.json` scripts (`docs:check` / `docs:index` / `docs:index:check` / `docs:archive` / `docs:archive:check` / `docs:archive:issues` / `docs:archive:issues:check` / `prepare: node scripts/install-git-hooks.mjs`) and add a minimal `.gitignore` (`docs/plans/`, `.claude/settings.local.json`). This is the canonical model.
-- **hidden** (in-tree) — same files on disk, but the repo "looks normal": append the artifact paths (`AGENTS.md`, `CLAUDE.md`, `docs/ai/`, `docs/plans/`, `scripts/*.mjs` you added, `docs/ai/.workflow-version`) to the global excludes file git **already uses** (`git config --get core.excludesFile`); if none is set, point it at `~/.gitignore_global` (`git config --global core.excludesFile ~/.gitignore_global`) and append there. **Verify `git status` shows the artifacts as ignored** afterwards. **Do not edit `package.json`** — that is a tracked change and would leak; the pre-commit hook (always untracked in `.git/hooks/`) calls the scripts via `node scripts/<x>.mjs` directly.
+- **hidden** (in-tree) — same files on disk, but the repo "looks normal": the AI/agent footprint is git-ignored via **one managed block in the project-local `.git/info/exclude`** (resolved with `git rev-parse --git-path info/exclude` — never the machine-global `core.excludesFile`, which would affect every repo on the host; **AD-014** amends **AD-006**). The kit's `tools/hide-footprint.mjs` is the single writer: it covers `KIT_OWN_PATHS ∪ the present subset of KNOWN_FOOTPRINT` (the full footprint table below — the kit's own artifacts **and** every other AI/agent tool's files). Per path: a **tracked** file → **ASK** (an exclude does nothing for it; only `git rm --cached` un-tracks it — the tool prints that command and never runs it); an untracked path already covered by a **tracked `.gitignore`** → dropped (redundant); a **present** file whose name is generic enough to be ambiguous (`falsePositiveRisk`) → **ASK**; everything else → **hidden**. `asks` are excluded from the block unless explicitly opted in. **Verify** treats a path as hidden only when it is **untracked AND ignored by our project-local block** (or a tracked `.gitignore`) — being ignored by the global excludes does **not** count. Re-running re-derives the block wholesale (sorted/deduped) → a clean re-run is a **zero-diff** no-op. On an existing global-excludes deployment the tool **detects + reports the residual legacy machine-global block and keeps it by default** (a harmless double-ignore; the local block wins precedence); removal is the explicit `--remove-global` (it prints the removed lines as a restorable backup), which **the agent only runs after asking** — another of the user's hidden repos on the same host may rely on the same root-anchored global lines. **Do not edit `package.json`** — that is a tracked change and would leak; the pre-commit hook (always untracked in `.git/hooks/`) calls the scripts via `node scripts/<x>.mjs` directly. Windows is supported (text edit, no symlinks; CRLF preserved).
+
+**Known AI/agent footprint** (the `KNOWN_FOOTPRINT` registry in `tools/known-footprint.mjs`; this table is its human mirror, kept in sync by review — D11):
+
+| Pattern | Owner | Kind | Commit-risk name? | Note |
+|---|---|---|---|---|
+| `/.claude/skills/` | Claude Code | dir | no | local-dev skills; absorbs the AD-013 one-off |
+| `/.cursor/rules/` | Cursor | dir | no | project rule files |
+| `/.cursorrules` | Cursor (legacy) | file | **yes** | legacy single-file rules |
+| `/.codeium/` | Codeium/Windsurf | dir | no | home-scoped launchers live under `~/`, out of scope |
+| `/.windsurf/` | Windsurf (Devin) | dir | no | project config dir |
+| `/.windsurfrules` | Windsurf | file | **yes** | legacy single-file rules |
+| `/GEMINI.md` | Gemini/Antigravity | file | **yes** | context file; generic name |
+| `/.antigravity.md` | Antigravity | file | **yes** | context file |
+| `/.github/copilot-*` | GitHub Copilot | file | **yes** | one reviewed glob; covers `copilot-instructions.md` |
+| `/.aider.conf.yml` | Aider | file | no | config |
+| `/.aider.chat.history.md` | Aider | file | no | chat history |
+| `/.aider.input.history` | Aider | file | no | input history |
+| `/.continue/` | Continue | dir | no | project config dir |
+
+The kit's OWN footprint (`KIT_OWN_PATHS`) — `AGENTS.md`, `CLAUDE.md`, `docs/ai/` (subsumes the stamp), the added `scripts/*.mjs`, `docs/plans/`, `.claude/settings.local.json`, and `.claude/settings.json` (hidden-only — visible mode commits it) — is always a candidate in hidden mode.
 
 Not in this version: a fully-external hidden mode (artifacts relocated outside the repo tree).
 Deferred to a later release + migration.
