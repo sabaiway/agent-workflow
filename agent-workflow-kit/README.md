@@ -258,7 +258,10 @@ agent-workflow-kit  —  the composition root (installed via npx … init)
 - **Injects** the bounded workflow methodology into the deployed `AGENTS.md`. Its *future* home is
   **`agent-workflow-engine`** — today an `available: false` stub, never one of the shipped backends.
 - **Detects & (opt-in) sets up** the optional `codex` / `agy` **bridges** — agent skills (not npm, not
-  installed by `init`). `/agent-workflow-kit backends` reports readiness **read-only**;
+  installed by `init`). They plug into the workflow's **execute** and **review** phases — for *what
+  each adds and why*, see the
+  [family front door](https://github.com/sabaiway/agent-workflow#readme). `/agent-workflow-kit backends`
+  reports readiness **read-only**;
   `/agent-workflow-kit setup` does the **link-only** part (place the bundled bridge skill + link its
   wrappers), while the binary install + the subscription login stay manual. A bridge reads the deployed
   memory only if it wins that tool's context-file priority, and the bridges call third-party services

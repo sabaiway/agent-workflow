@@ -191,8 +191,12 @@ by hand.
 
 ## 🔌 Optional delegated execution (the bridges)
 
-Two optional backends let your orchestrator hand bounded sub-tasks to another model under **your
-own subscription** (no pay-as-you-go):
+Your orchestrator works in a loop — **plan → execute → review → ship**. Two optional backends let it
+pull a *second model* into the **execute** and **review** phases without leaving the terminal —
+gaining an **independent reviewer** (a second opinion in review: `codex-review` / `agy` critique a
+plan or a working-tree diff, catching a blind spot the primary agent would share) and a **delegated
+executor** (a parallel hand in execute: a bounded sub-task to `codex exec` in a sandbox) — all under
+**your own subscription** (no pay-as-you-go billing, subject to each provider's quotas):
 
 - **`codex-cli-bridge`** — wraps OpenAI `codex` for **execute / review** under a ChatGPT subscription.
 - **`antigravity-cli-bridge`** — wraps Google `agy` for **review / probe** under a Google AI subscription.
@@ -211,7 +215,8 @@ Honest caveats:
 
 `/agent-workflow-kit backends` checks readiness **read-only** (marker-file presence — it never
 runs a subscription CLI or changes the machine); `/agent-workflow-kit setup` then does the link-only
-setup (place skill + link wrappers). See each bridge's
+setup (place skill + link wrappers). For the command mechanics see the
+[kit README](agent-workflow-kit/README.md#-use); for each bridge's operating policy see
 [`codex-cli-bridge/SKILL.md`](codex-cli-bridge/SKILL.md) ·
 [`antigravity-cli-bridge/SKILL.md`](antigravity-cli-bridge/SKILL.md) and its `setup/README.md`.
 

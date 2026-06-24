@@ -4,6 +4,28 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.9.1 — Front-door value framing for the optional bridges; kit flow-pointer
+
+The optional execution-backends (the `codex` / `agy` bridges) were **listed** but never **sold**: a
+reader couldn't tell what they add to the workflow or why they'd want them. Promoted per **AD-009**
+altitude — value lives at the **family front door**, the per-package page stays a manual.
+
+- **Root README** — the existing `## 🔌 Optional delegated execution (the bridges)` section now
+  frames what the bridges add to **plan → execute → review**: an *independent reviewer* (a second
+  opinion in the **review** phase) and a *delegated executor / parallel hand* (a bounded task to
+  `codex exec` in the **execute** phase), under your own subscription (no pay-as-you-go billing,
+  subject to each provider's quotas). The honesty caveats are unchanged (`init` bundles but never
+  places a bridge; link-only `setup`; third-party services; context-file priority).
+- **Kit README** — one manual-altitude flow-pointer in the composition-root bridge bullet: the
+  bridges plug into the **execute** and **review** phases, routing **up** to the front door for the
+  *why*. No value pitch duplicated into the manual (AD-009 anti-drift).
+
+Documentation change only — no code, detector, or `init`/npx behaviour change, no `docs/ai`
+structural change, deployment-lineage head stays **`1.3.0`**, `agent-workflow-memory` untouched, no
+migration. The **kit** README + metadata ship in the kit tarball (the root README is the GitHub
+family front door, outside the package), so the kit README edit rides a patch bump — three version
+sources in sync.
+
 ## 1.9.0 — `upgrade` surfaces the optional backends at every successful exit
 
 `/agent-workflow-kit upgrade` said **nothing** about the optional execution-backends (the `codex` /
