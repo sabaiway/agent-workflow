@@ -4,6 +4,36 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.9.0 — `upgrade` surfaces the optional backends at every successful exit
+
+`/agent-workflow-kit upgrade` said **nothing** about the optional execution-backends (the `codex` /
+`agy` bridges). A maintainer running `upgrade` on a fresh machine got a full report with **zero**
+bridge mention — because when a deployment is **already current** (by far the most common case),
+`upgrade` stopped *before* its final report. Bootstrap already prints a read-only one-line backend
+summary; `upgrade` never adopted it.
+
+- **The already-current exit is now a real success report**, not a silent stop: it states in plain
+  language whether the workflow-methodology pointer was added, was already present, or was skipped
+  because the entry point is over its line limit; prints the **one-line backend-status line**; and
+  asks before committing when anything changed (otherwise it says "already up to date" and still
+  prints the read-only line).
+- **The full-migration exit** prints the **same** one-line backend-status line before the commit
+  gate — so **every** successful `upgrade` exit now surfaces what's set up vs missing, mirroring
+  bootstrap's summary verbatim
+  (`backends: codex ✓ ready · antigravity ✗ needs-credentials — run /agent-workflow-kit backends`).
+  Both exits share one definition in `SKILL.md`, so the line stays identical everywhere.
+- **Detection-only, honesty-safe.** The line is **read-only · never blocks the commit gate · never
+  runs a subscription CLI · the pointer is the in-agent `backends` mode, never a network fetch ·
+  `init`/npx is unaffected (it still never places a bridge).** If the **agent host** can't run the
+  detector (no `node` on its PATH, or the detector errors), the line is skipped with a
+  plain-language reason — never a silent skip (Hard Constraint).
+- **README "Use" table:** the `upgrade` row notes the read-only backend-status line (never installs
+  a bridge — set one up with `/agent-workflow-kit setup`).
+
+Agent-procedure / documentation change only — no detector or `init`/npx behaviour change, no
+`docs/ai` structural change, deployment-lineage head stays **`1.3.0`**, `agent-workflow-memory`
+untouched, no migration.
+
 ## 1.8.2 — Upgrade DX: graceful, plain-language handling when the methodology slot can't fit the cap
 
 On a real `upgrade`, a project whose `AGENTS.md` was already over its 100-line cap hit the

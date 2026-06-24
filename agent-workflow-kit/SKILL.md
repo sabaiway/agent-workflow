@@ -3,7 +3,7 @@ name: agent-workflow-kit
 description: Deploy or upgrade a portable AI-agent memory-and-workflow system in any project. Use when the user wants to bootstrap `docs/ai/` + an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) + cap/archive/index enforcement in a new or existing repo, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-kit` / `/agent-workflow-kit upgrade`. Triggers on phrases like "set up the memory system", "deploy the AI workflow here", "bootstrap docs/ai", "upgrade the workflow".
 disable-model-invocation: true
 metadata:
-  version: '1.8.2'
+  version: '1.9.0'
 ---
 
 # agent-workflow-kit
@@ -101,6 +101,25 @@ Before acting, read `docs/ai/.workflow-version` (the project's stamp), state a o
 
 **Refreshed the kit but nothing changed?** The skill you are running is whatever was on disk when the session started. After `npx @sabaiway/agent-workflow-kit@latest init` updates `~/.claude/skills/agent-workflow-kit/`, **restart the session** so the agent reloads the new skill files (the slash command + this `SKILL.md`).
 
+### The one-line backend-status line (shared by bootstrap + upgrade)
+
+Bootstrap (step 11) and **every** successful `upgrade` exit (steps 4 + 8) print the **same**
+read-only, one-line summary of the optional execution-backends. Run the **backend detector** —
+`node ${CLAUDE_SKILL_DIR}/tools/detect-backends.mjs` — and compose one line from its per-backend
+readiness. Canonical format:
+`backends: codex ✓ ready · antigravity ✗ needs-credentials — run /agent-workflow-kit backends`
+
+- **Invariants:** **read-only · never blocks the commit gate · never runs a subscription CLI · the
+  pointer is the in-agent `backends` mode, never a network fetch · `init`/npx is unaffected (it never
+  places bridges, AD-011 §5).**
+- **Detector unavailable → skip with a stated reason, never silently.** The detector is a Node script
+  the **agent host** runs (not the target project), so the only skip condition is "**the agent host
+  can't run it**" — `node` is not on the agent's PATH, or the detector itself errors — **not** "the
+  project has no Node runtime". On that condition, skip the line and say so **with the concrete
+  reason**, e.g. *"Couldn't run the backend detector here (node is not on the agent host PATH), so
+  I'm skipping the backend-status line."* — never a silent skip (Hard Constraint — no silent
+  failures).
+
 ### Mode: bootstrap
 
 > Bundled sources below (templates, scripts) live in **this skill's own directory** — `${CLAUDE_SKILL_DIR}/` in Claude Code, or the folder containing this `SKILL.md` in Codex / other agents. Use that as the copy/read source; the working directory is the **target project**, not the skill.
@@ -129,7 +148,7 @@ Before acting, read `docs/ai/.workflow-version` (the project's stamp), state a o
     independent axes: a packaging-only release bumps the package but leaves the lineage head until a
     migration actually changes the deployed `docs/ai` structure. A stamp greater than the head →
     STOP (never downgrade).
-11. **Report & ask.** Show `tree docs/ai/`, 2–3 lines on what was filled with real data vs left as TODO, then run the **backend detector** (`node ${CLAUDE_SKILL_DIR}/tools/detect-backends.mjs`) and print a one-line summary of the optional execution-backends (e.g. `backends: codex ✓ ready · antigravity ✗ needs-credentials — run /agent-workflow-kit backends`). This is **read-only and never blocks the commit gate**. Then **ask before committing** — never auto-commit.
+11. **Report & ask.** Show `tree docs/ai/`, 2–3 lines on what was filled with real data vs left as TODO, then print the **one-line backend-status line** (the shared contract above — same detector, format, invariants, and detector-unavailable skip-with-reason). Then **ask before committing** — never auto-commit.
 
 Fill strategy:
 
@@ -147,14 +166,17 @@ Fill strategy:
 2. **Never-downgrade gate — FIRST, before any write.** Compare the stamp to the **deployment-lineage head** (`1.3.0` — NOT this kit's package version). If the stamp is **greater than the head** or unparseable → **STOP and report**; do not touch a newer / unknown deployment at all (not even the methodology slot).
 3. **Reconcile the methodology slot — stamp-independent, BEFORE the equal-head short-circuit.** Reached only when the stamp **≤ head**. Run `node ${CLAUDE_SKILL_DIR}/tools/inject-methodology.mjs reconcile <project>/AGENTS.md`. This ensures the `workflow:methodology` slot exists and is filled on **every** upgrade, idempotently (zero-diff when already present + filled) — so even a legacy / current **`1.3.0`** deployment gains the slot **without a lineage-head bump** (the head stays `1.3.0`; **no `agent-workflow-memory` change**). It inserts an empty slot at the Session-Protocols anchor if absent, preserves a customized slot verbatim, and STOPs (never edits) on a malformed slot or a missing / duplicate anchor.
 
-   **Cap-refusal is a soft, reported skip — not a STOP.** If — and ONLY if — `reconcile` exits non-zero because filling the slot would exceed the deployed `AGENTS.md` 100-line cap (the entry point is already at / over budget), leave the file byte-for-byte unchanged (the tool already did) and **continue** the upgrade without the slot. A malformed slot or a missing / duplicate anchor is a *different* non-zero exit and still **STOPs** (above) — never soft-skip those. This is **not** a silent skip (Hard Constraint — no silent failures): report it explicitly in the final report (step 8), in plain language, e.g. *"The workflow-methodology pointer wasn't added — `AGENTS.md` is N lines, over its 100-line limit. The methodology is already documented in `docs/ai/agent_rules.md`; to add the pointer, trim the entry point (move detail into `docs/ai/`) and re-run upgrade."* N is the file's **current** line count — never the tool's number (that is the would-be post-injection size). Because the entry point is already over cap, ensure the rest of the upgrade does not push it further: any mandatory `AGENTS.md` edit must keep it ≤100 lines or pause for an explicit trim — never bust the cap to land a migration.
+   **Cap-refusal is a soft, reported skip — not a STOP.** If — and ONLY if — `reconcile` exits non-zero because filling the slot would exceed the deployed `AGENTS.md` 100-line cap (the entry point is already at / over budget), leave the file byte-for-byte unchanged (the tool already did) and **continue** the upgrade without the slot. A malformed slot or a missing / duplicate anchor is a *different* non-zero exit and still **STOPs** (above) — never soft-skip those. This is **not** a silent skip (Hard Constraint — no silent failures): report it explicitly in the successful-exit report (**step 4** on an equal-head deployment, else **step 8**), in plain language, e.g. *"The workflow-methodology pointer wasn't added — `AGENTS.md` is N lines, over its 100-line limit. The methodology is already documented in `docs/ai/agent_rules.md`; to add the pointer, trim the entry point (move detail into `docs/ai/`) and re-run upgrade."* N is the file's **current** line count — never the tool's number (that is the would-be post-injection size). Because the entry point is already over cap, ensure the rest of the upgrade does not push it further: any mandatory `AGENTS.md` edit must keep it ≤100 lines or pause for an explicit trim — never bust the cap to land a migration.
 
    **No-Node project:** open `AGENTS.md`; if there is no `<!-- workflow:methodology:start/end -->` pair, **count the lines first** — if pasting the pair + the fragment from `tools/methodology-slot.md` would take the file over 100 lines, **skip it and report the skip** (as above — the methodology is already in `docs/ai/agent_rules.md`; trim to add the pointer). Otherwise paste the pair right after the *Read it before any code change.* line and fill it from `tools/methodology-slot.md`.
-4. **Equal-head short-circuit.** If the stamp **equals** the head → the lineage is up to date: **stop here** (the slot was already reconciled in step 3).
+4. **Equal-head exit — a real successful-exit report, not a bare stop.** If the stamp **equals** the head, the lineage is up to date — but step 3 (slot reconcile) ran first and may have changed the file, so this is a proper exit report, not a no-op:
+   - **Report step 3's outcome in plain language** — the workflow-methodology pointer was *added*, was *already present* (nothing changed), or was *skipped because the entry point is over its line limit* (the cap-refusal soft-skip from step 3, with its reason). Plain wording only — never the reconcile/slot/anchor/marker terms (Gotcha: never leak kit internals).
+   - **Print the one-line backend-status line** — the shared contract above (run `node ${CLAUDE_SKILL_DIR}/tools/detect-backends.mjs`; same format, invariants, and detector-unavailable skip-with-reason).
+   - **Then ask before committing — never auto-commit.** If step 3 added the slot (or anything else changed), report it and ask. If step 3 was a pure zero-diff no-op and nothing else changed, say **"already up to date"** and still print the read-only backend line.
 5. Show the relevant `${CLAUDE_SKILL_DIR}/CHANGELOG.md` diff (entries newer than the project's stamp).
 6. Apply `${CLAUDE_SKILL_DIR}/migrations/<version>-<slug>.md` in **semver order**, only those newer than the project's stamp. Migrations are **idempotent** — safe to re-run.
 7. Reconcile drift: add any kernel files/scripts the project is missing; never clobber project-authored content (their `decisions.md`, `known_issues.md`, page specs stay). Any user question a migration raises follows the same rule as bootstrap — **structured multiple-choice where supported** (`AskUserQuestion` in Claude Code), otherwise prose. If `AGENTS.md` has no *Communication language* block (pre-1.1.0 deployment), **ask the user their conversational language** and insert the block — see `migrations/1.1.0-communication-language.md`. If it has no *Attribution* block (pre-1.2.0 deployment), **ask whether the agent may attribute work to itself / AI** and insert the block (defaulting to `off`) — see `migrations/1.2.0-agent-attribution.md`.
-8. Re-stamp `docs/ai/.workflow-version` to the **deployment-lineage head** (`1.3.0`, not the package version). Report changes; **ask before committing**.
+8. Re-stamp `docs/ai/.workflow-version` to the **deployment-lineage head** (`1.3.0`, not the package version). Report changes, then **print the one-line backend-status line** (the shared contract above — same detector, format, invariants, and detector-unavailable skip-with-reason). Then **ask before committing**.
 
 ### Mode: backends
 
