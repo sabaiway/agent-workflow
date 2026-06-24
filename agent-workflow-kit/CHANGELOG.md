@@ -4,6 +4,31 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.10.0 — Hidden mode covers the full AI/agent footprint, project-local
+
+Hidden visibility now hides the **full AI/agent footprint** — the kit's own artifacts **and** every
+known foreign tool's files (Claude skills, Cursor, Windsurf, Gemini, Copilot, Aider, Continue, …) — in
+**one managed block in the project-local `.git/info/exclude`**, never the machine-global
+`core.excludesFile` (which leaked the same rules to every repo on the host). **AD-014** amends
+**AD-006** and generalizes the `.claude/skills/` one-off (AD-013). The deployment-lineage head stays
+**`1.3.0`** — this is a stamp-independent reconcile wired into bootstrap + the upgrade flow (the AD-010
+methodology-slot precedent), so there is **no migration file**.
+
+### Added
+- `tools/known-footprint.mjs` — the `KIT_OWN_PATHS` + `KNOWN_FOOTPRINT` registry (+ `patternToProbe` /
+  `expandGlob` / `matchesKnownGlob`), guarded by a frozen-snapshot + count-sentinel drift test.
+- `tools/hide-footprint.mjs` — the single hide-writer. Classifies each path (tracked → **ASK** with the
+  printed `git rm --cached`; present generic-name → **ASK**; else **hide**), writes one re-derived
+  managed fence (a clean re-run is byte-identical / zero-diff), `migrateFromGlobal` (detect + report the
+  residual machine-global block by default; `--remove-global` removes it with a printed backup),
+  `--reconcile` (upgrade-time visibility inference: visible → zero bytes, ambiguous → ASK),
+  `--unhide`, `--include`. Unit + real-`git` integration tests (worktree, precedence, delegated memory).
+
+### Changed
+- `references/contracts.md` Visibility contract rewritten (project-local; full footprint table);
+  `SKILL.md` bootstrap step 9 + the upgrade reconcile now drive the tool; root + kit READMEs corrected.
+- A **tracked** file is never silently un-tracked — the tool prints the `git rm --cached` it will not run.
+
 ## 1.9.1 — Front-door value framing for the optional bridges; kit flow-pointer
 
 The optional execution-backends (the `codex` / `agy` bridges) were **listed** but never **sold**: a

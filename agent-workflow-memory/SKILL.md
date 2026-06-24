@@ -3,7 +3,7 @@ name: agent-workflow-memory
 description: Deploy or upgrade a portable AI-agent memory substrate in any project — an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) and a structured `docs/ai/` context store with cap/archive/index enforcement. Use when the user wants to bootstrap `docs/ai/`, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-memory` / `/agent-workflow-memory upgrade`. Triggers on "set up the memory system", "deploy the AI memory here", "bootstrap docs/ai", "upgrade the memory substrate". This is the substrate only — the workflow methodology (plan→execute→review, queue, Cleanup) is owned elsewhere and injected into AGENTS.md by the family composition root.
 disable-model-invocation: true
 metadata:
-  version: '1.0.0'
+  version: '1.1.0'
 ---
 
 # agent-workflow-memory
@@ -73,7 +73,8 @@ bootstrapping over a live system, but the user makes the final call.
    `AGENTS.md`/`CLAUDE.md`, CI / linter configs; `git log --oneline -30` + `git status`; `src/`
    2–3 levels deep; tests + linter rules. Record stack, package manager, daily commands, layers.
 2. **Choose visibility — ASK explicitly and wait.** `visible` (committed — canonical,
-   recommended) or `hidden` (in-tree, hidden via `~/.gitignore_global`). See
+   recommended) or `hidden` (in-tree, git-ignored via the **project-local** `.git/info/exclude` —
+   never the machine-global excludes). See
    [Visibility contract](references/contracts.md#visibility-contract).
 3. **Choose conversational language — ASK explicitly and wait.** Which language the agent
    *talks to them* in. Offer the language they're already writing in as the default. Carry it
@@ -99,11 +100,15 @@ bootstrapping over a live system, but the user makes the final call.
    follow the cap/archive/index policy manually.
 9. **Wire / hide** per visibility (see contract). Install the pre-commit hook (Node projects):
    `node scripts/install-git-hooks.mjs`. If it reports a pre-existing non-marker hook, stop and
-   ask the user to merge it manually.
+   ask the user to merge it manually. **Hidden** → add memory's own artifact paths (the canonical
+   anchored list in the [Visibility contract](references/contracts.md#visibility-contract)) to the
+   **project-local** `.git/info/exclude` (resolve via `git rev-parse --git-path info/exclude`),
+   append-only (never duplicate an existing line), then **verify `git status` shows them ignored**.
+   Never the machine-global excludes; never edit `package.json`.
 10. **Stamp the deployment lineage.** Write the **deployment-lineage head** into
     `docs/ai/.memory-version` (one semver line). The lineage head is **`1.3.0`** (the
     `LINEAGE_HEAD` constant in `scripts/stamp-takeover.mjs`) — the shared `agent-workflow`
-    lineage, **not** this package's npm version (`1.0.0`). Use the atomic writer in
+    lineage, **not** this package's npm version (`1.1.0`). Use the atomic writer in
     `scripts/stamp-takeover.mjs` (write-temp + rename).
 11. **Report & ask.** Show `tree docs/ai/`, 2–3 lines on filled-vs-TODO, then **ask before
     committing** — never auto-commit. **Exception — delegated mode (below): skip this gate.**
@@ -135,9 +140,22 @@ Fill strategy:
    `.memory-version` (and never deletes the legacy stamp). The pure state machine in
    `scripts/stamp-takeover.mjs` decides the action per state; the Markdown migration is the
    no-Node manual fallback. If **no** stamp exists at all, offer a conservative re-bootstrap.
-2. **Compare** the stamp to the **deployment-lineage head** (`LINEAGE_HEAD`, `1.3.0`). Equal →
-   report "up to date" and stop. **Greater than the head, or unparseable → STOP and report**
-   (never downgrade or guess).
+2. **Never-downgrade gate FIRST, then the stamp-independent hidden-mode reconcile (D14).** Compare the
+   stamp to the **deployment-lineage head** (`LINEAGE_HEAD`, `1.3.0`). **Greater than the head, or
+   unparseable → STOP and report immediately, before ANY write** (never downgrade or guess, and never
+   touch `.git/info/exclude`). Otherwise (stamp **≤ head**) reconcile the hidden-mode footprint — but
+   first **infer this deployment's OWN visibility from its git state** (NOT from whether the machine-global
+   excludes list these paths — another repo on the host may have added them): if `AGENTS.md` (or
+   `docs/ai/`) is **tracked / committed** → **VISIBLE** → do nothing (never write `.git/info/exclude`);
+   if it is **untracked AND currently git-ignored** → **HIDDEN** → move memory's own footprint to the
+   **project-local** `.git/info/exclude` (the canonical anchored list from the Visibility contract,
+   append-only and idempotent — a clean re-run changes nothing), leaving the machine-global lines for the
+   user to remove (in a family upgrade the composition root's hide tool detects + reports that residual
+   block and removes it only after the user's explicit consent — never by default); if it is
+   **untracked AND not ignored** → **AMBIGUOUS** → **ASK** the user before writing. This visibility check
+   runs on **every** in-range upgrade, even at head — it is not gated by the stamp delta, but it is gated
+   **behind** the never-downgrade STOP above. **Then**, if the stamp **equals** the head → report "up to
+   date" (plus any footprint move just made) and stop.
 3. Show the relevant `${CLAUDE_SKILL_DIR}/CHANGELOG.md` context (entries newer than the stamp).
 4. Apply `${CLAUDE_SKILL_DIR}/migrations/<version>-<slug>.md` in **semver order**, only those
    newer than the stamp. Migrations are **idempotent**.
@@ -163,13 +181,15 @@ Fill strategy:
 - **Source vs target directory.** Templates/scripts are read from the skill's own dir; the
   **working directory is the target project** — never write substrate files back into the skill.
 - **Stamp = lineage head, not package version.** `.memory-version` carries `1.3.0` (the shared
-  `agent-workflow` lineage), not the npm `1.0.0`. They are independent axes.
+  `agent-workflow` lineage), not the npm `1.1.0`. They are independent axes.
 - **The methodology slot ships empty and stays the user's.** Never author methodology text into
   it; on upgrade, preserve its content byte-for-byte. The composition root is its only writer.
 - **The `Co-Authored-By` trailer is added by the harness, not by prose.** When attribution is
   `off` + Claude Code, also set `"includeCoAuthoredBy": false` in `.claude/settings.json`.
-- **Hidden mode must never touch `package.json`.** It also ignores `docs/ai/.memory-version`
-  (and any kit-fallback `.workflow-version`). After hiding, verify `git status` shows the
+- **Hidden mode is project-local, never machine-global.** Memory's hide writes to the repo's
+  `.git/info/exclude` (one per-project ignore list), never `core.excludesFile`. `/docs/ai/`
+  subsumes `docs/ai/.memory-version` (and any kit-fallback `.workflow-version`) — list neither
+  separately. **Never touch `package.json`.** After hiding, verify `git status` shows the
   artifacts as ignored.
 - **`CLAUDE.md` is a symlink, not a copy.** `ln -s AGENTS.md CLAUDE.md`.
 - **Never overwrite an existing entry point or hook.** Stop and ask to merge vs replace.

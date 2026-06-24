@@ -4,6 +4,22 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.1.0 — Hidden mode writes project-local, not global, excludes
+
+Memory's **hidden** visibility now targets the **project-local** `.git/info/exclude` (its own footprint
+only — `/AGENTS.md`, `/CLAUDE.md`, `/docs/ai/`, the added `/scripts/*.mjs`, `/docs/plans/`, both
+`/.claude/settings*.json` — in canonical anchored form, idempotently), **never** the machine-global
+`core.excludesFile`. Hiding a deployment no longer affects every other repo on the host (visibility is
+a project setting). This is a **docs/prose** release (memory's hide was always prose-driven; no new
+executable code); the tested superset path is the family composition root's hide tool, which absorbs
+memory's project-local lines into one canonical managed block and adds the external footprint. The
+deployment-lineage head stays **`1.3.0`** (no `docs/ai` structural change; no migration file).
+
+### Changed
+- `references/contracts.md` Visibility contract + `SKILL.md` step 9 retarget the hide to project-local.
+- The upgrade flow moves an older machine-global hide to project-local — **after** the never-downgrade
+  gate and **before** the equal-head short-circuit, so even an at-head hidden deployment is migrated.
+
 ## 1.0.0
 
 Initial standalone release. The **memory substrate** extracted into its own package as Plan 1

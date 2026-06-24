@@ -124,8 +124,9 @@ The Markdown memory is **stack-agnostic**; the `scripts/` + pre-commit hook are 
 (dependency-free, `node --test`). Non-Node projects keep the same policy by hand.
 
 Two **visibility** modes, chosen at deploy time: **visible** (committed with the repo) or **hidden**
-(same files in-tree but git-ignored via the global `core.excludesFile`, so the repo "looks normal").
-Hidden changes how the files are *tracked*, not where agents find them.
+(same files in-tree but git-ignored via the project-local `.git/info/exclude`, so the repo "looks
+normal" — one managed block covering the full AI/agent footprint, scoped to this repo, never
+machine-wide). Hidden changes how the files are *tracked*, not where agents find them.
 
 ---
 
