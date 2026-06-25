@@ -4,8 +4,20 @@
   "name": "agent-workflow-engine",
   "kind": "methodology-engine",
   "version": "1.0.0",
-  "available": false,
+  "available": true,
   "provides": ["plan"],
   "roles": {},
+  "detect": {
+    "installed": {
+      "env": "AGENT_WORKFLOW_ENGINE_DIR",
+      "default": "~/.claude/skills/agent-workflow-engine",
+      "file": "SKILL.md"
+    }
+  },
+  "install": { "npm": "@sabaiway/agent-workflow-engine" },
+  "uninstall": {
+    "removeResolved": "detect.installed",
+    "note": "init copies into the skill dir; uninstall removes the resolved detect.installed dir — not an npm dependency"
+  },
   "provenance": { "author": "sabaiway", "source": "github:sabaiway/agent-workflow" }
 }

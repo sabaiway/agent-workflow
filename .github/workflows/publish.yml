@@ -2,14 +2,15 @@ name: publish
 
 # Manual npm publish for the monorepo. Run from the Actions tab → "publish" → Run workflow.
 #
-# Pick which package to publish: `memory`, `kit`, or `both`. The actual per-package preflight +
-# publish logic lives in the reusable workflow _publish-one.yml; this file just selects the
-# package(s) and enforces ordering.
+# Pick which package to publish: `memory`, `engine`, `kit`, or `all`. The actual per-package
+# preflight + publish logic lives in the reusable workflow _publish-one.yml; this file just selects
+# the package(s) and enforces ordering.
 #
-# Ordering: @sabaiway/agent-workflow-kit composes on top of @sabaiway/agent-workflow-memory, so
-# when publishing `both` the memory package goes first. That is enforced by `kit needs: memory`
-# (kit also refuses to run if memory's publish failed). For a single package the other job is
-# simply skipped.
+# Ordering: @sabaiway/agent-workflow-kit composes on top of memory + engine, which are independent of
+# each other — so on `all` they publish in PARALLEL and kit runs only after BOTH. That is enforced
+# by `kit needs: [memory, engine]` (kit refuses to run if either dependency actually published and
+# failed). memory and engine have no edge between them, so a memory failure does not gate engine (and
+# vice versa) — only kit waits on both. For a single package the other jobs are simply skipped.
 #
 # Auth: NODE_AUTH_TOKEN comes from the NPM_TOKEN repo secret (inherited into the reusable
 # workflow). Provenance is attached via OIDC (id-token: write). See _publish-one.yml for the
@@ -22,10 +23,11 @@ on:
         description: 'Which package to publish'
         type: choice
         options:
-          - both
+          - all
           - memory
+          - engine
           - kit
-        default: both
+        default: all
       dry_run:
         description: 'Dry run — validate & pack, do not actually publish'
         type: boolean
@@ -40,21 +42,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Publish order is memory → kit (kit composes on top of memory).
+  # memory + engine publish in parallel (independent of each other); kit runs after both
+  # (it composes on top of memory + engine). See the header note on ordering.
   memory:
-    if: ${{ inputs.package == 'memory' || inputs.package == 'both' }}
+    if: ${{ inputs.package == 'memory' || inputs.package == 'all' }}
     uses: ./.github/workflows/_publish-one.yml
     with:
       dir: agent-workflow-memory
       dry_run: ${{ inputs.dry_run }}
     secrets: inherit
 
+  engine:
+    if: ${{ inputs.package == 'engine' || inputs.package == 'all' }}
+    uses: ./.github/workflows/_publish-one.yml
+    with:
+      dir: agent-workflow-engine
+      dry_run: ${{ inputs.dry_run }}
+    secrets: inherit
+
   kit:
-    # `needs: memory` makes kit wait for memory; `always()` lets kit still run when memory was
-    # SKIPPED (package=kit), while the result guard blocks kit if memory was actually published
-    # and FAILED (package=both).
-    needs: memory
-    if: ${{ always() && (inputs.package == 'kit' || inputs.package == 'both') && (needs.memory.result == 'success' || needs.memory.result == 'skipped') }}
+    # `needs: [memory, engine]` makes kit wait for both; `always()` lets kit still run when they were
+    # SKIPPED (package=kit), while the result guards block kit if either dependency was actually
+    # published and FAILED (package=all).
+    needs: [memory, engine]
+    if: ${{ always() && (inputs.package == 'kit' || inputs.package == 'all') && (needs.memory.result == 'success' || needs.memory.result == 'skipped') && (needs.engine.result == 'success' || needs.engine.result == 'skipped') }}
     uses: ./.github/workflows/_publish-one.yml
     with:
       dir: agent-workflow-kit

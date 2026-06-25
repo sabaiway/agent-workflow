@@ -2,7 +2,7 @@
   "name": "agent-workflow-family",
   "version": "0.0.0",
   "private": true,
-  "description": "Monorepo for the agent-workflow skill family: the kit (composition root), the memory substrate, the CLI bridges, and the engine stub.",
+  "description": "Monorepo for the agent-workflow skill family: the kit (composition root), the memory substrate, the CLI bridges, and the engine.",
   "homepage": "https://github.com/sabaiway/agent-workflow#readme",
   "bugs": {
     "url": "https://github.com/sabaiway/agent-workflow/issues"
@@ -16,7 +16,8 @@
   "type": "module",
   "workspaces": [
     "agent-workflow-kit",
-    "agent-workflow-memory"
+    "agent-workflow-memory",
+    "agent-workflow-engine"
   ],
   "engines": {
     "node": ">=18"
