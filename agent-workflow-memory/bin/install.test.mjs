@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, rm, mkdir, symlink, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { tmpdir, homedir } from 'node:os';
+import { dirname, join, sep } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { assertContainedRealPath, tildify } from './install.mjs';
 
 const INSTALLER = join(dirname(fileURLToPath(import.meta.url)), 'install.mjs');
 const runInstaller = (target) => spawnSync(process.execPath, [INSTALLER, '--dir', target], { encoding: 'utf8' });
@@ -72,5 +73,37 @@ describe('memory installer — payload + symlink-traversal hardening', () => {
     assert.notEqual(res.status, 0);
     assert.match(res.stderr, /symlink/i);
     assert.deepEqual(await readdir(real), [], 'nothing should be written through the symlinked target');
+  });
+});
+
+describe('memory installer — Issue-004 regressions (exported helpers, in-process)', () => {
+  it('assertContainedRealPath accepts a contained child literally named "..foo"', () => {
+    const root = join(tmpdir(), 'aw-mem-contain-root');
+    assert.doesNotThrow(() => assertContainedRealPath(root, join(root, '..foo')));
+  });
+
+  it('assertContainedRealPath rejects a true `../` escape', () => {
+    const root = join(tmpdir(), 'aw-mem-contain-root');
+    assert.throws(() => assertContainedRealPath(root, join(root, '..', 'escape')), /outside the target dir/);
+  });
+
+  it('tildify collapses only a LEADING homedir, never a mid-path occurrence', () => {
+    assert.equal(tildify(`${homedir()}${sep}skills${sep}x`), `~${sep}skills${sep}x`, 'leading home → ~');
+    const midPath = `${sep}tmp${homedir()}${sep}x`;
+    assert.equal(tildify(midPath), midPath, 'a mid-path home occurrence is left untouched');
+  });
+});
+
+describe('memory installer — module hygiene', () => {
+  it('importing install.mjs runs nothing (main() is guarded by isDirectRun)', () => {
+    const url = JSON.stringify(pathToFileURL(INSTALLER).href);
+    const res = spawnSync(
+      process.execPath,
+      ['--input-type=module', '-e', `import(${url}).then(() => console.log('IMPORT_OK'));`],
+      { encoding: 'utf8' },
+    );
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /IMPORT_OK/);
+    assert.doesNotMatch(res.stdout, /installed v|updated the substrate/);
   });
 });

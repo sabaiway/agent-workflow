@@ -30,6 +30,12 @@ describe('assertContainedRealPath', () => {
     assert.throws(() => assertContainedRealPath('/root', '/etc/passwd'), /outside/);
   });
 
+  it('Issue-004: accepts a contained child literally named "..foo", still rejects a true ".." segment', () => {
+    // rel "..foo" is a real child, NOT a "../" escape — the old `rel.startsWith('..')` wrongly rejected it.
+    assert.doesNotThrow(() => assertContainedRealPath(dir, join(dir, '..foo')));
+    assert.throws(() => assertContainedRealPath(dir, join(dir, '..', 'escape')), /outside/);
+  });
+
   it('rejects writing INTO a symlinked root', () => {
     const real = join(dir, 'real');
     const root = join(dir, 'root');

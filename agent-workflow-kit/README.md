@@ -159,8 +159,10 @@ different sub-commands:
 > [`@sabaiway/agent-workflow-memory`](https://www.npmjs.com/package/@sabaiway/agent-workflow-memory).
 > If a **healthy** copy is installed (the kit validates it with its own shipped validator), the kit
 > **delegates** substrate deployment to it and injects the workflow methodology; otherwise it uses
-> its **own bundled copy** — the one command above keeps working with no new dependency. Same
-> `docs/ai/` either way.
+> its **own bundled copy** — the one command above keeps working with **no new dependency on the
+> memory substrate**. Same `docs/ai/` either way. (The **methodology slot** is a separate axis: its
+> fragment is read **live from the installed `agent-workflow-engine`**, which `npx … init` installs
+> for you — a runtime dependency placed by `init`, read live.)
 
 ### Refresh the kit itself — same command with `@latest`
 
@@ -248,7 +250,7 @@ the kit globally; the composition happens when you **deploy it in a repo** (`/ag
 agent-workflow-kit  —  the composition root (installed via npx … init)
    on /agent-workflow-kit in a repo, the kit:
    ├─ delegates ─▶ memory substrate   (healthy copy, else bundled fallback)
-   ├─ injects   ─▶ workflow methodology  (engine = future supplier; stub)
+   ├─ injects   ─▶ workflow methodology  (live from the installed engine)
    ├─ deploys   ─▶ AGENTS.md + docs/ai/ + Node scripts + pre-commit hook
    ├─ detects   ─▶ optional backends   (codex / agy, read-only)
    └─ sets up   ─▶ a bridge (opt-in)   (place skill + link wrappers)
@@ -296,12 +298,12 @@ agent-workflow-kit/
 ├── references/
 │   ├── templates/   ← AGENTS.md + every docs/ai file
 │   ├── scripts/     ← caps / archive / index + tests
-│   ├── contracts.md ← visibility / language / attribution rules
-│   └── planning.md  ← plan lifecycle + continuity
+│   └── contracts.md ← visibility / language / attribution rules
 ├── tools/           ← family tooling:
 │   ├── manifest/    ← capability-manifest schema + validator
 │   ├── delegation.mjs        ← detect substrate · delegate-or-fall-back
 │   ├── inject-methodology.mjs ← write the methodology slot
+│   ├── engine-source.mjs     ← live engine fragment read (fail-loud)
 │   ├── detect-backends.mjs    ← read-only backend detector
 │   ├── setup-backends.mjs     ← link-only backend setup
 │   ├── fs-safe.mjs            ← symlink-safe copy/link

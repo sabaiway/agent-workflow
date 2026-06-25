@@ -44,7 +44,10 @@ export const assertContainedRealPath = (root, dest, deps = {}) => {
   const lstat = deps.lstat ?? lstatSync;
   const ln = (p) => lstatNoFollow(p, lstat);
   const rel = relative(root, dest);
-  if (rel.startsWith('..') || isAbsolute(rel)) {
+  // A true escape is `..` exactly or a `..`-prefixed PATH SEGMENT (`../x`) — NOT any string starting
+  // with the two chars "..": a legitimately-contained child literally named `..foo` has rel `..foo`,
+  // which the old `rel.startsWith('..')` wrongly rejected (Issue-004 — same fix as the engine/memory installers).
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
     throw new Error(`[agent-workflow-kit] refusing to write outside the target dir: ${dest}`);
   }
   if (ln(root)?.isSymbolicLink()) {

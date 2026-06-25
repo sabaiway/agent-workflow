@@ -4,6 +4,23 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.1.1 — Installer hardening (Issue-004 parity)
+
+A patch release that applies the same two installer fixes shipped to the engine in 1.1.0, keeping the
+two identical family installers in lockstep.
+
+### Fixed
+- Containment check now accepts a legitimately-contained child literally named `..foo` (it wrongly
+  rejected anything starting with `..` before); `tildify` collapses only a **leading** `$HOME`, never
+  a mid-path occurrence (**Issue-004**).
+
+### Changed
+- The installer is importable without side effects (the `isDirectRun` guard) and exports its
+  path/format helpers for in-process tests. The installer's own + README bare `npx … init` strings now
+  use `@latest`.
+
+The deployment-lineage head stays **`1.3.0`** (no `docs/ai` structural change; no migration file).
+
 ## 1.1.0 — Hidden mode writes project-local, not global, excludes
 
 Memory's **hidden** visibility now targets the **project-local** `.git/info/exclude` (its own footprint

@@ -14,17 +14,19 @@
 // docs/ai deployment — see README "Use".
 //
 // No telemetry, no phone-home: adoption is the npm registry's public, passive per-version
-// download numbers (api.npmjs.org/downloads). Nothing here contacts a server — including the
-// stale-version defenses below, which compare the version already on disk (the installed SKILL.md)
-// against this runner's own version, never the registry. That is why `@latest` (above) is the
-// documented form: a bare `npx … init` can reuse an OLDER cached build of this installer, so a
-// returning user must bypass the cache to actually upgrade. See decisions.md AD-012.
+// download numbers (api.npmjs.org/downloads). The stale-version GATE below is no-network — it
+// compares the version already on disk (the installed SKILL.md) against this runner's own version,
+// never the registry — which is why `@latest` (above) is the documented form: a bare `npx … init`
+// can reuse an OLDER cached build of this installer, so a returning user must bypass the cache to
+// actually upgrade (see decisions.md AD-012). One step DOES contact a server: `init` fetches and
+// installs the methodology engine the kit reads live (`npx @sabaiway/agent-workflow-engine@latest
+// init`), skippable with `--no-engine` (Plan 3D / AD-016). No tracking either way.
 //
 // Dependency-free, Node >= 18.
 
-import { readFile, mkdir } from 'node:fs/promises';
+import { readFile, mkdir, rm } from 'node:fs/promises';
 import { existsSync, lstatSync, realpathSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -50,7 +52,16 @@ const PAYLOAD = [
   'bridges',
 ];
 
-const tildify = (path) => path.replace(homedir(), '~');
+// Kit-owned files the package NO LONGER ships (Plan 3D retired the bundled methodology mirror). The
+// refresh copy is additive, so a 1.10.0→1.11.0 upgrade would leave these dead copies behind; remove
+// exactly these known kit paths from the target on install (never user content, never a dir/symlink),
+// so an upgraded install has the same single-source-of-truth shape as a fresh one.
+const RETIRED_PATHS = ['references/planning.md', 'tools/methodology-slot.md'];
+
+// Collapse only a LEADING homedir() to "~" — anchored at the string start (boundary-checked with
+// `sep`), never a mid-path occurrence (Issue-004 parity with the engine/memory installers).
+const tildify = (path) =>
+  path === homedir() ? '~' : path.startsWith(homedir() + sep) ? `~${path.slice(homedir().length)}` : path;
 
 const readVersion = async () => {
   try {
@@ -135,10 +146,61 @@ const parseArgs = (argv) => {
     help: argv.includes('--help') || argv.includes('-h'),
     version: argv.includes('--version') || argv.includes('-v'),
     noLaunchers: argv.includes('--no-launchers'),
+    noEngine: argv.includes('--no-engine'),
     force: argv.includes('--force'),
     allowDowngrade: argv.includes('--allow-downgrade'),
     dir: dirFlag >= 0 ? argv[dirFlag + 1] : undefined,
   };
+};
+
+// Mandatory engine install (Plan 3D / AD-016). The kit reads the methodology fragment LIVE from the
+// installed agent-workflow-engine, so init places it as a CORE part of the kit (not an optional
+// execution-backend — this deliberately diverges from AD-011 §5). It is fetched over npm, consistent
+// with the kit's own npx install context; NO engine canon is bundled into the kit (that would
+// re-create the mirror Plan 3D deletes). --no-engine skips it for air-gapped/scripted installs.
+export const ENGINE_PACKAGE = '@sabaiway/agent-workflow-engine';
+
+// The exact command + argv to install the engine. Windows resolution: spawn `npx.cmd` on win32,
+// `npx` elsewhere, WITHOUT shell:true (no shell-parse overhead/inconsistency; the repo has no
+// npx-spawn precedent to inherit a shell from). Pure → unit-tested in-process, no network.
+export const engineInstallArgv = (platform) => ({
+  command: platform === 'win32' ? 'npx.cmd' : 'npx',
+  args: [`${ENGINE_PACKAGE}@latest`, 'init'],
+  options: { stdio: 'inherit' }, // note: no `shell: true`
+});
+
+// The default runner — the only place that actually spawns. Injected in tests so the suite never
+// hits the network.
+const spawnEngine = ({ command, args, options }) => spawnSync(command, args, options);
+
+// Synchronous backoff before the single retry. The common first-attempt failure is a TRANSIENT
+// npm/network blip (rate-limit, registry hiccup, momentary DNS) — an immediate retry tends to hit the
+// same blip, so wait briefly first. Atomics.wait is a dependency-free sync sleep (the install flow is
+// already synchronous here). Injected in tests as a 0ms no-op so the suite never actually sleeps.
+const ENGINE_RETRY_DELAY_MS = 1500;
+const sleepSync = (ms) => {
+  if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+};
+
+// D1 failure policy: attempt → wait → retry-once → fail. Retry exactly once before giving up. Pure
+// aside from the injected runner/sleep; returns { ok } so the caller prints the loud manual-recovery
+// message + nonzero exit on a hard failure (the kit is already on disk — recovery is one step; never
+// a silent skip).
+export const installEngine = (platform, runner, { sleep = sleepSync, retryDelayMs = ENGINE_RETRY_DELAY_MS } = {}) => {
+  const descriptor = engineInstallArgv(platform);
+  const ranOk = (label) => {
+    const res = runner(descriptor);
+    const ok = (res?.status ?? 1) === 0 && !res?.error;
+    if (!ok) {
+      const why = res?.error ? `: ${res.error.message}` : ` (exit ${res?.status ?? 'unknown'})`;
+      console.warn(`[agent-workflow-kit] methodology engine install ${label} failed${why}.`);
+    }
+    return ok;
+  };
+  if (ranOk('attempt 1')) return { ok: true };
+  sleep(retryDelayMs); // brief backoff so the retry does not immediately re-hit a transient blip
+  if (ranOk('retry')) return { ok: true };
+  return { ok: false };
 };
 
 const resolveTarget = (dirArg) => {
@@ -151,7 +213,7 @@ const printHelp = (version) => {
   console.log(`agent-workflow-kit ${version}
 
 Usage:
-  npx @sabaiway/agent-workflow-kit@latest init [--dir <path>] [--no-launchers] [--force] [--allow-downgrade]
+  npx @sabaiway/agent-workflow-kit@latest init [--dir <path>] [--no-launchers] [--no-engine] [--force] [--allow-downgrade]
   npx @sabaiway/agent-workflow-kit@latest --version
   npx @sabaiway/agent-workflow-kit@latest --help
 
@@ -160,11 +222,14 @@ Use the @latest form: a bare \`npx … init\` (no @latest) can reuse an OLDER ca
 
 Installs/refreshes the kit at ~/.claude/skills/agent-workflow-kit
   (override with --dir <path> or AGENT_WORKFLOW_KIT_DIR), then wires any
-  Codex / Devin Desktop you have. --no-launchers skips that wiring; --force replaces a
-  pre-existing non-kit launcher file (backed up first). init is additive — it never
-  deletes your settings. If the installed kit is newer than the version you ran, init
-  refuses (no network — it compares the version on disk) and points you at @latest;
-  --allow-downgrade overrides that refusal (distinct from --force, which is launcher-only).
+  Codex / Devin Desktop you have, then installs the methodology engine the kit reads
+  live (npx ${ENGINE_PACKAGE}@latest init). --no-launchers skips the
+  launcher wiring; --no-engine skips the engine install (the live methodology read then
+  STOPs until you install it by hand); --force replaces a pre-existing non-kit launcher
+  file (backed up first). init is additive — it never deletes your settings. If the
+  installed kit is newer than the version you ran, init refuses (no network — it compares
+  the version on disk) and points you at @latest; --allow-downgrade overrides that
+  refusal (distinct from --force, which is launcher-only).
 
 After install, invoke the skill in your agent, inside a project:
   first time in the project  ->  /agent-workflow-kit
@@ -232,6 +297,16 @@ const main = async () => {
   for (const entry of PAYLOAD.filter((e) => existsSync(resolve(PKG_ROOT, e)))) {
     copyTreeRefresh(resolve(PKG_ROOT, entry), resolve(target, entry), target);
   }
+  // Remove the retired mirror files an older install may have left (additive refresh never deletes).
+  // Only a regular file at the exact known path is removed — lstat (no-follow) so a dir/symlink is
+  // left untouched, and the path is a hardcoded kit-owned constant (no traversal, never user content).
+  for (const rel of RETIRED_PATHS) {
+    const retired = resolve(target, rel);
+    if (lstatNoFollow(retired)?.isFile()) {
+      await rm(retired, { force: true });
+      console.log(`[agent-workflow-kit] removed retired file ${tildify(retired)} (now read live from the engine).`);
+    }
+  }
   console.log(`[agent-workflow-kit] ${wasPresent ? 'updated the kit to' : 'installed'} v${version} -> ${tildify(target)}`);
 
   // No-op re-run: the install just refreshed the skill with the SAME version it already had. For a
@@ -258,6 +333,34 @@ const main = async () => {
       console.warn('[agent-workflow-kit] launcher step skipped/failed — run it by hand if you use Codex/Devin Desktop:');
       console.warn(`  bash ${tildify(launcher)}`);
     }
+  }
+
+  // Mandatory engine install — AFTER the kit + launchers but BEFORE the success block, so a failure
+  // never first claims everything succeeded. The kit reads the methodology fragment live from the
+  // installed engine; this places it (over npm, no canon bundled into the kit). --no-engine opts out.
+  const engineCmd = `npx ${ENGINE_PACKAGE}@latest init`;
+  if (args.noEngine) {
+    console.log(
+      `[agent-workflow-kit] --no-engine: skipped installing the methodology engine. The methodology ` +
+        `slot is read LIVE from the installed engine, so a reconcile/upgrade will STOP until you run:\n` +
+        `    ${engineCmd}`,
+    );
+  } else {
+    console.log(`[agent-workflow-kit] installing the methodology engine the kit reads live: ${engineCmd}`);
+    const engine = installEngine(process.platform, spawnEngine);
+    if (!engine.ok) {
+      // D1: two attempts failed → loud error + concrete recommendations + nonzero exit. The kit IS on
+      // disk, so recovery is one step. Never a silent skip (Hard Constraint: no silent failures).
+      console.error(
+        `[agent-workflow-kit] FAILED to install the methodology engine after two attempts. The kit ` +
+          `itself IS installed at ${tildify(target)}, but the methodology-slot read will STOP until the ` +
+          `engine is present. Finish with EITHER:\n` +
+          `    ${engineCmd}                                          (install the engine — recommended)\n` +
+          `    npx @sabaiway/agent-workflow-kit@latest init --no-engine   (skip it deliberately)`,
+      );
+      process.exit(1);
+    }
+    console.log('[agent-workflow-kit] methodology engine installed.');
   }
 
   // This command (de)installed the *kit* globally. Deploying it into a project is a

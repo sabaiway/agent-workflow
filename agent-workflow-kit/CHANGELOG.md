@@ -4,6 +4,42 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.11.0 — One source of truth: the kit reads the methodology live from the installed engine
+
+The bounded methodology fragment the kit writes into a project's `AGENTS.md` is now read **live from
+the installed `@sabaiway/agent-workflow-engine`** — the family's single source of truth. The kit's old
+bundled mirror of that text (and its drift-guard) is **retired**: there is exactly one copy now, in the
+engine. `npx @sabaiway/agent-workflow-kit@latest init` installs the engine as a **core** part of the
+kit (it is core methodology, not an optional backend — deliberately diverging from AD-011 §5), so the
+slot can always be filled. The read is **lazy + fail-loud**: the engine is consulted only when a slot
+actually needs filling — a deployment whose slot is already filled upgrades to a **zero-diff no-op even
+without the engine** — and when a fill *is* needed but the engine is absent/invalid the reconcile
+**STOPs** with the exact install command, never a silent fallback. The deployment-lineage head stays
+**`1.3.0`** (no `docs/ai` structural change; no migration file). See **AD-016**.
+
+### Added
+- `tools/engine-source.mjs` — resolves the installed engine via the family `detect.installed` pattern
+  (env `AGENT_WORKFLOW_ENGINE_DIR` → `~/.claude/skills/agent-workflow-engine`, **not** an npm
+  dependency), validates it with the kit's own manifest validator, and reads the live fragment —
+  throwing a loud, actionable error (with the install command) when the engine is needed but absent.
+- `npx … init` now installs the engine after placing the kit. `--no-engine` opts out (the live read
+  then STOPs until the engine is installed by hand). An install failure **retries once**, then fails
+  loudly with concrete recovery steps and a non-zero exit (the kit itself is already on disk).
+
+### Changed
+- `tools/inject-methodology.mjs` sources the fragment live from the engine (a lazy `slotNeedsFill`
+  guard), not a bundled file. `SKILL.md` / `README.md` rewired to the live-read reality; the
+  `init-command-uses-latest` drift-guard now also covers the engine's `init` command.
+
+### Removed
+- The bundled mirror (`references/planning.md` + `tools/methodology-slot.md`) and its drift-guard
+  `test/methodology-mirror.test.mjs` — retired in favor of the live read.
+
+### Honesty
+- `init` now contacts a server (it fetches the engine over npm) and the kit gains a **runtime
+  dependency on the installed engine**; the "nothing contacts a server" / "no new dependency" notes
+  were scoped accordingly. The stale-version gate stays no-network, and there is still no telemetry.
+
 ## 1.10.0 — Hidden mode covers the full AI/agent footprint, project-local
 
 Hidden visibility now hides the **full AI/agent footprint** — the kit's own artifacts **and** every

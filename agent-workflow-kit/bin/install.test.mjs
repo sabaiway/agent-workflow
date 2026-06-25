@@ -7,11 +7,16 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { engineInstallArgv, installEngine, ENGINE_PACKAGE } from './install.mjs';
+
 const INSTALLER = join(dirname(fileURLToPath(import.meta.url)), 'install.mjs');
 const KIT_ROOT = dirname(dirname(INSTALLER));
-// --no-launchers so the test never wires Codex/Devin on the host. `extra` appends flags (e.g. --force).
+// --no-launchers so the test never wires Codex/Devin on the host; --no-engine so a full install never
+// spawns a real `npx … agent-workflow-engine init` (network + a write to the real engine dir). The
+// dedicated engine-step tests cover that path in-process / via a deliberately-broken PATH. `extra`
+// appends flags (e.g. --force, --allow-downgrade).
 const runInstaller = (target, extra = []) =>
-  spawnSync(process.execPath, [INSTALLER, '--dir', target, '--no-launchers', ...extra], { encoding: 'utf8' });
+  spawnSync(process.execPath, [INSTALLER, '--dir', target, '--no-launchers', '--no-engine', ...extra], { encoding: 'utf8' });
 
 // Rewrite / read the installed skill's frontmatter version — used to simulate "a newer kit is already
 // installed" (the stale-cache downgrade scenario). The installer reads exactly this field.
@@ -42,6 +47,21 @@ describe('kit installer — payload + symlink-traversal hardening', () => {
       assert.ok(existsSync(join(target, f)), `missing installed entry: ${f}`);
     }
     assert.equal(existsSync(join(target, 'bin/install.mjs')), false);
+  });
+
+  it('removes retired mirror files an older install left behind (single source of truth on upgrade)', async () => {
+    const target = join(dir, 'agent-workflow-kit');
+    // Seed a pre-3D install carrying the now-retired bundled mirror files.
+    await mkdir(join(target, 'references'), { recursive: true });
+    await mkdir(join(target, 'tools'), { recursive: true });
+    await writeFile(join(target, 'references', 'planning.md'), 'stale mirror\n');
+    await writeFile(join(target, 'tools', 'methodology-slot.md'), 'stale mirror\n');
+    const res = runInstaller(target);
+    assert.equal(res.status, 0, res.stderr);
+    assert.equal(existsSync(join(target, 'references', 'planning.md')), false, 'retired references/planning.md removed');
+    assert.equal(existsSync(join(target, 'tools', 'methodology-slot.md')), false, 'retired tools/methodology-slot.md removed');
+    assert.ok(existsSync(join(target, 'SKILL.md')), 'the real payload is still installed');
+    assert.ok(existsSync(join(target, 'references', 'contracts.md')), 'non-retired references/ content survives');
   });
 
   it('refuses to write through a symlinked INTERMEDIATE dest component (no leak)', async () => {
@@ -96,7 +116,7 @@ describe('kit installer — runs through the npx bin symlink', () => {
     const shim = join(dir, 'agent-workflow-kit'); // stands in for node_modules/.bin/<name>
     await symlink(INSTALLER, shim);
     const target = join(dir, 'home', 'agent-workflow-kit');
-    const res = spawnSync(process.execPath, [shim, '--dir', target, '--no-launchers'], { encoding: 'utf8' });
+    const res = spawnSync(process.execPath, [shim, '--dir', target, '--no-launchers', '--no-engine'], { encoding: 'utf8' });
     assert.equal(res.status, 0, res.stderr);
     assert.match(res.stdout, /installed v|updated the kit/);
     assert.ok(existsSync(join(target, 'SKILL.md')), 'install through the symlink must write the payload');
@@ -211,8 +231,107 @@ describe('kit installer — stale-cache defenses (no network)', () => {
   });
 });
 
-describe('kit installer — published tarball bundles the bridges', () => {
-  it('npm pack ships bridges/<name>/ (the execution-backend skill mirrors)', () => {
+describe('kit installer — mandatory engine install dispatch (Plan 3D, in-process, no network)', () => {
+  it('engineInstallArgv: `npx @…/engine@latest init` on POSIX, `npx.cmd` on win32, no shell:true', () => {
+    const posix = engineInstallArgv('linux');
+    assert.equal(posix.command, 'npx');
+    assert.deepEqual(posix.args, [`${ENGINE_PACKAGE}@latest`, 'init']);
+    assert.equal(posix.options.shell, undefined, 'must not spawn through a shell');
+    assert.equal(engineInstallArgv('darwin').command, 'npx');
+    assert.equal(engineInstallArgv('win32').command, 'npx.cmd');
+  });
+
+  it('installEngine: first attempt succeeds → ok, runner called once (no retry)', () => {
+    let calls = 0;
+    const res = installEngine('linux', () => {
+      calls += 1;
+      return { status: 0 };
+    });
+    assert.deepEqual(res, { ok: true });
+    assert.equal(calls, 1);
+  });
+
+  const NO_SLEEP = { sleep: () => {} }; // skip the real backoff so the suite never actually waits
+
+  it('installEngine: fail once then succeed → backoff + retried exactly once, ends ok (D1)', () => {
+    let calls = 0;
+    let slept = 0;
+    const res = installEngine('linux', () => {
+      calls += 1;
+      return { status: calls === 1 ? 1 : 0 };
+    }, { sleep: () => { slept += 1; } });
+    assert.deepEqual(res, { ok: true });
+    assert.equal(calls, 2);
+    assert.equal(slept, 1, 'backoff runs exactly once, before the single retry');
+  });
+
+  it('installEngine: fails twice → not ok (D1 hard-failure outcome), no third attempt', () => {
+    let calls = 0;
+    const res = installEngine('linux', () => {
+      calls += 1;
+      return { status: 1 };
+    }, NO_SLEEP);
+    assert.deepEqual(res, { ok: false });
+    assert.equal(calls, 2);
+  });
+
+  it('installEngine: a spawn error (npx not found) counts as a failure', () => {
+    const res = installEngine('linux', () => ({ status: null, error: new Error('spawn npx ENOENT') }), NO_SLEEP);
+    assert.deepEqual(res, { ok: false });
+  });
+
+  it('installEngine: hands the runner the exact descriptor (command/args/options, no shell)', () => {
+    let received;
+    installEngine('win32', (d) => {
+      received = d;
+      return { status: 0 };
+    });
+    assert.equal(received.command, 'npx.cmd');
+    assert.deepEqual(received.args, [`${ENGINE_PACKAGE}@latest`, 'init']);
+    assert.equal(received.options.shell, undefined);
+  });
+});
+
+describe('kit installer — mandatory engine install (subprocess)', () => {
+  let dir;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'aw-kit-engine-'));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('--no-engine skips the engine install and prints the live-read STOP note (exit 0)', () => {
+    const target = join(dir, 'agent-workflow-kit'); // runInstaller appends --no-engine by default
+    const res = runInstaller(target);
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /--no-engine: skipped installing the methodology engine/);
+    assert.match(res.stdout, /@latest init/);
+    assert.match(res.stdout, /installed v|updated the kit/, 'the kit itself still installs');
+  });
+
+  it('D1: when `npx` cannot run (both attempts fail) → nonzero exit, recommendations, success block NOT printed first', async () => {
+    // Force both engine-install attempts to fail deterministically WITHOUT network: run a real install
+    // (no --no-engine) with an empty PATH so `npx` resolves to ENOENT. The kit copy + the version gate
+    // do not need PATH; only the engine spawn does. This exercises the D1 loud-error + nonzero exit.
+    const target = join(dir, 'agent-workflow-kit');
+    const emptyBin = join(dir, 'emptybin');
+    await mkdir(emptyBin, { recursive: true });
+    const res = spawnSync(process.execPath, [INSTALLER, '--dir', target, '--no-launchers'], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: emptyBin },
+    });
+    assert.notEqual(res.status, 0, 'an engine-install failure must exit nonzero');
+    assert.match(res.stderr, /FAILED to install the methodology engine/);
+    assert.match(res.stderr, /@latest init/, 'recommends the manual engine install');
+    assert.match(res.stderr, /--no-engine/, 'recommends the opt-out');
+    assert.doesNotMatch(res.stdout, /Next — open your agent/, 'must NOT claim success before the engine failed');
+    assert.ok(existsSync(join(target, 'SKILL.md')), 'the kit itself is still on disk (recovery is one step)');
+  });
+});
+
+describe('kit installer — published tarball bundles the bridges + the live-read tool', () => {
+  it('npm pack ships bridges/<name>/ and tools/engine-source.mjs', () => {
     // The real `files` whitelist decides what publishes — assert against `npm pack`, not the source
     // tree, so a dropped `bridges/` entry in package.json fails here (not silently at install time).
     const res = spawnSync('npm', ['pack', '--dry-run', '--json'], { cwd: KIT_ROOT, encoding: 'utf8' });
@@ -220,5 +339,9 @@ describe('kit installer — published tarball bundles the bridges', () => {
     const paths = JSON.parse(res.stdout)[0].files.map((f) => f.path);
     assert.ok(paths.includes('bridges/codex-cli-bridge/SKILL.md'), 'codex bridge SKILL.md not packed');
     assert.ok(paths.includes('bridges/antigravity-cli-bridge/bin/agy.sh'), 'antigravity agy.sh not packed');
+    assert.ok(paths.includes('tools/engine-source.mjs'), 'the live-read resolver must ship in the tarball');
+    // The retired mirror must NOT ship — the whole point of Plan 3D is one source of truth.
+    assert.ok(!paths.includes('tools/methodology-slot.md'), 'retired mirror tools/methodology-slot.md must not be packed');
+    assert.ok(!paths.includes('references/planning.md'), 'retired mirror references/planning.md must not be packed');
   });
 });

@@ -28,15 +28,22 @@ const SURFACES = [
   'agent-workflow-kit/bridges/codex-cli-bridge/SKILL.md',
   'agent-workflow-kit/bridges/antigravity-cli-bridge/SKILL.md',
   'agent-workflow-kit/bin/install.mjs',
+  // The engine's own prescribing surfaces — `npx kit init` now drives `npx engine@latest init`, so the
+  // engine command falls under the same stale-cache trap (AD-012/AD-016). (memory's OWN README is the
+  // memory package's concern and is intentionally NOT listed — see PACKAGES note below.)
+  'agent-workflow-engine/SKILL.md',
+  'agent-workflow-engine/README.md',
+  'agent-workflow-engine/bin/install.mjs',
 ];
 
 // The bare form: the scoped package name, then WHITESPACE, then `init` (no `@latest`). `\s+` (not a
 // single literal space) so `<pkg>  init`, a tab, or a line-wrap can't slip the bare form past the
 // guard. The recommended `…-<pkg>@latest init` does NOT match — `@latest` sits between name and `init`.
-// Both family packages that have an `init` are guarded across the kit-controlled surfaces above
-// (memory's OWN README is the memory package's concern, not in this list).
+// All three family packages that have an `init` are guarded across the kit-controlled surfaces above
+// (memory's OWN README is the memory package's concern, not in this list). The engine joins the guard
+// in Plan 3D because `npx kit init` now spawns `npx engine@latest init`.
 const barePattern = (pkg) => new RegExp(`@sabaiway/${pkg}\\s+init\\b`, 'g');
-const PACKAGES = ['agent-workflow-kit', 'agent-workflow-memory'];
+const PACKAGES = ['agent-workflow-kit', 'agent-workflow-memory', 'agent-workflow-engine'];
 
 describe('install commands are documented with @latest, never bare (AD-012 — drift guard)', () => {
   for (const rel of SURFACES) {
