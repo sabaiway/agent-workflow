@@ -2,7 +2,7 @@ name: _publish-one
 
 # Reusable building block: publish ONE workspace package to npm. Called by publish.yml
 # (once per selected package). Kept separate so the per-package preflights live in a single
-# place and "both" can run them twice — memory before kit — without duplicating the logic.
+# place and "all" can run them in order — memory → engine → kit — without duplicating the logic.
 #
 # The caller passes `dir` (the package directory, which holds its own package.json); every
 # step runs with working-directory set to it, and the package name/version are read from that
@@ -129,7 +129,10 @@ jobs:
       # validator, installer, bridge-mirror drift-guard, … (tools/ + tools/manifest/ + bin/ + test/ +
       # references/scripts/). For memory it is its scripts/ (package-content, stamp-takeover,
       # standalone-bootstrap) + bin/ installer + references/scripts/ enforcement scripts — NOT just
-      # references/scripts/, which silently skipped four of memory's test files before.
+      # references/scripts/, which silently skipped four of memory's test files before. For the engine
+      # it is its monorepo-only test/ (package-content DAG guard + installer payload/symlink tests) — the
+      # engine has no scripts/ or references/scripts/, so it needs its own branch (the memory `else`
+      # globs would not match and, under `set -euo pipefail`, a literal unmatched glob fails the gate).
       # The kit's bridges/ is excluded on purpose: its mirrored agy.test.mjs drives the real `agy` CLI
       # and is run from the canonical bridge dir, not here.
       - name: Test the package before publish
@@ -137,6 +140,8 @@ jobs:
           set -euo pipefail
           if [ "${{ inputs.dir }}" = "agent-workflow-kit" ]; then
             node --test tools/*.test.mjs tools/manifest/*.test.mjs references/scripts/*.test.mjs bin/*.test.mjs test/*.test.mjs
+          elif [ "${{ inputs.dir }}" = "agent-workflow-engine" ]; then
+            node --test test/*.test.mjs
           else
             node --test scripts/*.test.mjs bin/*.test.mjs references/scripts/*.test.mjs
           fi
