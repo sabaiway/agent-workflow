@@ -153,7 +153,7 @@ One kit is the entry point; everything else is a layer it composes:
 
 ```
 npx ... init -> kit  (composition root; global skill, NOT a project deploy)
-   |- injects the methodology  <- engine (canonical supplier; kit mirrors)
+   |- injects the methodology  <- engine (canon supplier; kit reads it live)
    |- delegates -> memory substrate (standalone, else bundled fallback)
    `- deploys -> AGENTS.md + docs/ai/ + Node scripts + pre-commit hook
 
@@ -168,8 +168,9 @@ optional backends (set up once per machine, NOT by init):
   `docs/ai/` with caps / archive / index gate). The kit uses a **standalone** copy if present,
   else its bundled fallback — same `docs/ai/` either way.
 - **engine** (`@sabaiway/agent-workflow-engine`) — the published canonical home of the methodology
-  the kit injects. The kit currently injects from a byte-identical, drift-guarded mirror of this
-  canon; the live `kit → engine` read lands next.
+  the kit injects. The kit reads this canon **live from the installed engine** — **one source of
+  truth, no bundled mirror**; the kit's `init` installs the engine as a core part of the kit, and a
+  reconcile that needs the fragment **fails loudly** if it is absent.
 - **bridges** — optional execution backends (below) that *can read* the deployed memory as their
   context file.
 

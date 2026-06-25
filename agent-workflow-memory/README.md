@@ -17,7 +17,7 @@ into a delimited slot in `AGENTS.md` by the family composition root, not by this
 ## Install
 
 ```bash
-npx @sabaiway/agent-workflow-memory init
+npx @sabaiway/agent-workflow-memory@latest init
 ```
 
 Installs/refreshes the skill at `~/.claude/skills/agent-workflow-memory` (override with

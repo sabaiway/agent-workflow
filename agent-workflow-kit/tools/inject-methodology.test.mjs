@@ -1,6 +1,6 @@
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +11,7 @@ import {
   extractSlot,
   ensureSlot,
   reconcileSlot,
+  slotNeedsFill,
   METHODOLOGY_ANCHOR,
   EMPTY_SLOT,
   AGENTS_MD_CAP,
@@ -20,7 +21,47 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(HERE, 'inject-methodology.mjs');
-const FRAGMENT = readFileSync(join(HERE, 'methodology-slot.md'), 'utf8');
+
+// The bounded methodology fragment is read LIVE from the installed engine now (the kit mirror is
+// retired in Plan 3D), so this suite no longer reads a bundled methodology-slot.md. Tests use an
+// inline fragment and, for the live-read CLI cases, an on-the-fly engine fixture that ships exactly
+// this fragment — keeping the kit suite decoupled from the sibling engine's on-disk presence.
+// Single-line (like the canonical fragment) so byte-equality holds in both LF and CRLF documents.
+const FRAGMENT =
+  '> **Workflow methodology (test fixture)** — plan → execute → review. Plans are ephemeral, gitignored, never committed; every Plan ends with a mandatory **Phase: Cleanup**.\n';
+
+// Temp dirs created by the fixtures below — cleaned up once after the whole file.
+const tmpDirs = [];
+after(() => tmpDirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
+
+// A minimal but VALID installed-engine fixture: a methodology-engine capability.json + a SKILL.md
+// whose metadata.version matches it (the validator's authoritative version source when there is no
+// package.json) + the live fragment at references/methodology-slot.md. detectEngine accepts it.
+const makeEngineFixture = (fragment = FRAGMENT, version = '1.0.0') => {
+  const dir = mkdtempSync(join(tmpdir(), 'engine-fixture-'));
+  tmpDirs.push(dir);
+  const manifest = {
+    family: 'agent-workflow',
+    schema: 1,
+    name: 'agent-workflow-engine',
+    kind: 'methodology-engine',
+    version,
+    available: true,
+    provides: ['plan'],
+    roles: {},
+  };
+  writeFileSync(join(dir, 'capability.json'), JSON.stringify(manifest, null, 2));
+  writeFileSync(join(dir, 'SKILL.md'), `---\nname: agent-workflow-engine\nmetadata:\n  version: '${version}'\n---\n# engine\n`);
+  mkdirSync(join(dir, 'references'), { recursive: true });
+  writeFileSync(join(dir, 'references', 'methodology-slot.md'), fragment);
+  return dir;
+};
+
+const ENGINE = makeEngineFixture();
+// A path that is guaranteed NOT to be a valid engine — proves the no-op / explicit-override paths
+// never consult the engine, and drives the fail-loud STOP.
+const NO_ENGINE = join(tmpdir(), `definitely-no-engine-${process.pid}`);
+const withEngine = (engineDir) => ({ ...process.env, AGENT_WORKFLOW_ENGINE_DIR: engineDir });
 
 const wrap = (inner) =>
   `# AGENTS.md\n\nprefix bytes\n\n## Session Protocols\n\nintro line.\n\n${START_MARKER}${inner}${END_MARKER}\n\n## Hard Constraints\n\nsuffix bytes\n`;
@@ -309,7 +350,46 @@ describe('reconcileSlot — ensure + inject-if-empty + cap, as one atomic policy
   });
 });
 
-describe('reconcile CLI — atomic ensure+inject-if-empty+cap on the real filesystem', () => {
+describe('slotNeedsFill — lazy-read predicate (matches reconcileSlot fill decision)', () => {
+  it('present empty slot → true', () => {
+    assert.equal(slotNeedsFill(wrap('\n')), true);
+  });
+  it('markerless legacy with one anchor (insertable empty slot) → true', () => {
+    assert.equal(slotNeedsFill(legacyWithAnchor()), true);
+  });
+  it('present filled/customized slot → false (fragment not needed)', () => {
+    assert.equal(slotNeedsFill(wrap('\nuser notes\n')), false);
+  });
+  it('malformed slot → false (reconcileSlot error path fires, not a fill)', () => {
+    assert.equal(slotNeedsFill(`${START_MARKER}\n${END_MARKER}\n${START_MARKER}\n${END_MARKER}\n`), false);
+  });
+  it('markerless with no anchor → false (cannot insert; reconcile errors without the engine)', () => {
+    assert.equal(slotNeedsFill('# AGENTS.md\n\nno anchor here\n'), false);
+  });
+
+  // slotNeedsFill and reconcileSlot share the SAME emptiness primitives (ensureSlot + extractSlot), so
+  // the lazy "read the engine only when needed" guard cannot disagree with reconcileSlot's actual fill
+  // decision. Pin that equivalence across representative inputs: needsFill === true  IFF reconcile fills
+  // (reconciled-filled / reconciled-inserted); needsFill === false IFF reconcile does NOT fill
+  // (present-filled / error). This forecloses any future divergence that could silently drop a slot.
+  it('agrees with reconcileSlot across every slot state (no divergence → no silent drop)', () => {
+    const cases = [
+      wrap('\n'), // present empty slot → fill
+      legacyWithAnchor(), // markerless + anchor → insert + fill
+      wrap('\nuser notes\n'), // filled slot → no fill
+      `${START_MARKER}\n${END_MARKER}\n${START_MARKER}\n${END_MARKER}\n`, // malformed → no fill (error)
+      '# AGENTS.md\n\nno anchor here\n', // no anchor → no fill (error)
+    ];
+    for (const text of cases) {
+      const needs = slotNeedsFill(text);
+      const result = reconcileSlot(text, FRAGMENT, { maxLines: AGENTS_MD_CAP });
+      const filled = result.status === 'reconciled-filled' || result.status === 'reconciled-inserted';
+      assert.equal(needs, filled, `slotNeedsFill (${needs}) must match whether reconcile fills (${result.status})`);
+    }
+  });
+});
+
+describe('reconcile CLI — atomic ensure+inject-if-empty+cap, reading the fragment LIVE from the engine', () => {
   const withTempAgents = (contents, run) => {
     const dir = mkdtempSync(join(tmpdir(), 'reconcile-cli-'));
     const agents = join(dir, 'AGENTS.md');
@@ -321,35 +401,100 @@ describe('reconcile CLI — atomic ensure+inject-if-empty+cap on the real filesy
     }
   };
 
-  it('markerless legacy (with anchor) → slot inserted and filled (exit 0)', () => {
+  it('markerless legacy (with anchor) → slot inserted + filled from the live engine fragment (exit 0)', () => {
     withTempAgents(legacyWithAnchor(), (agents) => {
-      execFileSync(process.execPath, [SCRIPT, 'reconcile', agents], { stdio: 'pipe' });
+      execFileSync(process.execPath, [SCRIPT, 'reconcile', agents], { stdio: 'pipe', env: withEngine(ENGINE) });
       const out = readFileSync(agents, 'utf8');
       assert.equal(findSlot(out).state, 'ok');
       assert.equal(extractSlot(out).trim(), FRAGMENT.trim());
     });
   });
 
-  it('present empty slot → slot filled (exit 0)', () => {
+  it('present empty slot → filled from the live engine fragment (exit 0)', () => {
     withTempAgents(wrap('\n'), (agents) => {
-      execFileSync(process.execPath, [SCRIPT, 'reconcile', agents], { stdio: 'pipe' });
+      execFileSync(process.execPath, [SCRIPT, 'reconcile', agents], { stdio: 'pipe', env: withEngine(ENGINE) });
       assert.equal(extractSlot(readFileSync(agents, 'utf8')).trim(), FRAGMENT.trim());
     });
   });
 
-  it('filled/customized slot → file left byte-for-byte untouched', () => {
+  it('filled/customized slot → zero-diff no-op WITHOUT consulting the engine (engine absent, exit 0)', () => {
     const custom = wrap('\nuser notes\n');
     withTempAgents(custom, (agents) => {
-      execFileSync(process.execPath, [SCRIPT, 'reconcile', agents], { stdio: 'pipe' });
+      // Engine pointed at a path that does not exist — a filled slot must NOT require it.
+      execFileSync(process.execPath, [SCRIPT, 'reconcile', agents], { stdio: 'pipe', env: withEngine(NO_ENGINE) });
       assert.equal(readFileSync(agents, 'utf8'), custom);
     });
   });
 
-  it('malformed slot → STOP with non-zero exit, file byte-unchanged', () => {
+  it('present empty slot + engine ABSENT → hard STOP (nonzero) printing the install command, file unchanged', () => {
+    withTempAgents(wrap('\n'), (agents) => {
+      const err = (() => {
+        try {
+          execFileSync(process.execPath, [SCRIPT, 'reconcile', agents], { stdio: 'pipe', env: withEngine(NO_ENGINE) });
+          return null;
+        } catch (e) {
+          return e;
+        }
+      })();
+      assert.ok(err, 'expected a non-zero exit when a fill is needed but the engine is absent');
+      const stderr = String(err.stderr);
+      assert.match(stderr, /methodology engine not found\/invalid/);
+      assert.match(stderr, /npx @sabaiway\/agent-workflow-engine@latest init/);
+      assert.equal(readFileSync(agents, 'utf8'), wrap('\n'), 'no partial write on STOP');
+    });
+  });
+
+  it('explicit [fragment.md] override fills from that file and skips engine resolution (engine absent)', () => {
+    const override = '> custom override fragment line\n';
+    const fdir = mkdtempSync(join(tmpdir(), 'frag-'));
+    tmpDirs.push(fdir);
+    const fpath = join(fdir, 'frag.md');
+    writeFileSync(fpath, override);
+    withTempAgents(wrap('\n'), (agents) => {
+      execFileSync(process.execPath, [SCRIPT, 'reconcile', agents, fpath], { stdio: 'pipe', env: withEngine(NO_ENGINE) });
+      assert.equal(extractSlot(readFileSync(agents, 'utf8')).trim(), override.trim());
+    });
+  });
+
+  it('malformed slot → STOP with non-zero exit, file byte-unchanged (engine never consulted)', () => {
     const malformed = `${START_MARKER}\n${END_MARKER}\n${START_MARKER}\n${END_MARKER}\n`;
     withTempAgents(malformed, (agents) => {
-      assert.throws(() => execFileSync(process.execPath, [SCRIPT, 'reconcile', agents], { stdio: 'pipe' }));
+      assert.throws(() =>
+        execFileSync(process.execPath, [SCRIPT, 'reconcile', agents], { stdio: 'pipe', env: withEngine(NO_ENGINE) }),
+      );
       assert.equal(readFileSync(agents, 'utf8'), malformed);
+    });
+  });
+
+  it('legacy inject mode: markerless AGENTS.md → no-op WITHOUT the engine (exit 0)', () => {
+    const markerless = '# AGENTS.md\n\nlegacy, no slot\n';
+    withTempAgents(markerless, (agents) => {
+      execFileSync(process.execPath, [SCRIPT, agents], { stdio: 'pipe', env: withEngine(NO_ENGINE) });
+      assert.equal(readFileSync(agents, 'utf8'), markerless);
+    });
+  });
+
+  // Legacy `inject` mode FORCE-OVERWRITES any present (ok) slot — filled or empty — unlike `reconcile`,
+  // which preserves a filled slot. So for an ok slot it genuinely NEEDS the fragment and reads the
+  // engine; the read-on-`state==='ok'` guard is correct (reading only an EMPTY ok slot would inject ''
+  // and WIPE a filled slot). These two tests pin that contract.
+  it('legacy inject mode: a FILLED slot is OVERWRITTEN from the live engine (engine present, exit 0)', () => {
+    const filled = wrap('\nstale user content\n');
+    withTempAgents(filled, (agents) => {
+      execFileSync(process.execPath, [SCRIPT, agents], { stdio: 'pipe', env: withEngine(ENGINE) });
+      const out = readFileSync(agents, 'utf8');
+      assert.equal(extractSlot(out).trim(), FRAGMENT.trim(), 'slot overwritten with the live fragment');
+      assert.ok(!out.includes('stale user content'), 'prior slot content replaced');
+    });
+  });
+
+  it('legacy inject mode: a present (ok) slot + engine ABSENT → hard STOP, file unchanged', () => {
+    const filled = wrap('\nstale user content\n');
+    withTempAgents(filled, (agents) => {
+      assert.throws(() =>
+        execFileSync(process.execPath, [SCRIPT, agents], { stdio: 'pipe', env: withEngine(NO_ENGINE) }),
+      );
+      assert.equal(readFileSync(agents, 'utf8'), filled, 'no partial write on STOP');
     });
   });
 });

@@ -4,6 +4,29 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.1.0 — Live-read ready: never-downgrade gate + installer hardening
+
+The kit now reads this canon **live from the installed engine** and has retired its bundled mirror
+(see the kit's 1.11.0 / **AD-016**). This release hardens the engine's own installer to match — so an
+engine placed by `npx … kit init` (or by hand) is safe to refresh.
+
+### Added
+- **Never-downgrade gate** (cloned from the kit, AD-012): a bare `npx … init` that npx serves from an
+  **older cached build** can no longer overwrite a **newer** installed canon — `init` compares the
+  on-disk version (no network) and refuses loudly unless you pass `--allow-downgrade`. A same-version
+  re-run prints a cache hint and points at `@latest`. An existing but **unreadable** `SKILL.md` fails
+  closed (the gate is never silently bypassed).
+
+### Fixed
+- Containment check now accepts a legitimately-contained child literally named `..foo` (it wrongly
+  rejected anything starting with `..` before); `tildify` collapses only a **leading** `$HOME`, never
+  a mid-path occurrence (**Issue-004**, fixed in lockstep with the memory installer).
+
+### Changed
+- The installer is importable without side effects (the `isDirectRun` guard) and exports its
+  path/format helpers for in-process tests. The installer's own bare `npx … init` strings now use
+  `@latest`.
+
 ## 1.0.0
 
 First publish. The canonical home of the `agent-workflow` planning methodology is now an

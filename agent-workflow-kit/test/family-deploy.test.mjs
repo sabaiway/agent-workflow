@@ -33,7 +33,11 @@ const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const FAMILY_ROOT = resolve(KIT_ROOT, '..');
 const SUBSTRATE_INSTALLER = join(FAMILY_ROOT, 'agent-workflow-memory', 'bin', 'install.mjs');
 const KIT_ENTRY_TEMPLATE = join(KIT_ROOT, 'references', 'templates', 'AGENTS.md');
-const KIT_METHODOLOGY = join(KIT_ROOT, 'tools', 'methodology-slot.md');
+// The bounded methodology fragment is read LIVE from the installed engine at runtime (Plan 3D — the
+// kit mirror is retired). This dev-only acceptance test exercises the pure reconcile/inject contract
+// with an inline single-line fragment, kept decoupled from the sibling engine's on-disk presence.
+const FRAGMENT =
+  '> **Workflow methodology (test fixture)** — plan → execute → review; plans are ephemeral, every Plan ends with a mandatory Phase: Cleanup.\n';
 
 // The shared deployment-lineage head the composition root stamps in BOTH paths. The root knows it
 // independently of the substrate package version (SKILL.md bootstrap step 10) — hard-coded here so
@@ -97,7 +101,7 @@ describe('composition root — fallback (substrate absent)', () => {
 
     // The bundled entry point now ships an EMPTY methodology slot (Plan 2). The kit reconciles it —
     // ensure (already present) + inject-because-empty — so the fallback path ends with a FILLED slot.
-    const fragment = readFileSync(KIT_METHODOLOGY, 'utf8');
+    const fragment = FRAGMENT;
     const result = reconcileSlot(readFileSync(join(project, 'AGENTS.md'), 'utf8'), fragment, {
       maxLines: AGENTS_MD_CAP,
     });
@@ -132,7 +136,7 @@ describe('composition root — delegate (substrate present + healthy)', () => {
 
     // Composition-root side: inject the bounded fragment into the slot, then write the second
     // stamp. (Exactly one commit gate would follow injection — not exercised by this test.)
-    const fragment = readFileSync(KIT_METHODOLOGY, 'utf8');
+    const fragment = FRAGMENT;
     const result = injectMethodology(readFileSync(join(project, 'AGENTS.md'), 'utf8'), fragment, {
       maxLines: AGENTS_MD_CAP,
     });
@@ -191,7 +195,7 @@ describe('backward compatibility — a prior-lineage deployment is reconciled on
   it('a markerless prior entry point gets the slot inserted at the anchor, all other bytes preserved', () => {
     const legacy = LEGACY_WITH_ANCHOR;
     assert.equal(legacy.includes('workflow:methodology'), false, 'precondition: the fixture predates the slot');
-    const fragment = readFileSync(KIT_METHODOLOGY, 'utf8');
+    const fragment = FRAGMENT;
     const result = reconcileSlot(legacy, fragment, { maxLines: AGENTS_MD_CAP });
     assert.equal(result.status, 'reconciled-inserted');
     assert.equal(extractSlot(result.text).trim(), fragment.trim(), 'the inserted slot is filled');
@@ -205,7 +209,7 @@ describe('backward compatibility — a prior-lineage deployment is reconciled on
     const entry = `# Entry\n\n${START_MARKER}\n${custom}\n${END_MARKER}\n\n# Tail\n`;
     assert.equal(extractSlot(entry).trim(), custom, 'the user content is what lives in the slot');
 
-    const result = reconcileSlot(entry, readFileSync(KIT_METHODOLOGY, 'utf8'), { maxLines: AGENTS_MD_CAP });
+    const result = reconcileSlot(entry, FRAGMENT, { maxLines: AGENTS_MD_CAP });
     assert.equal(result.status, 'present-filled');
     assert.equal(result.text, entry, 'the customization survives byte-for-byte — not replaced by the bundled fragment');
   });
@@ -223,7 +227,7 @@ describe('backward compatibility — a prior-lineage deployment is reconciled on
 
     // The two upgrade seams that actually write: the substrate stamp takeover + the slot reconcile.
     await stamp.applyTakeover(docsAi);
-    const fragment = readFileSync(KIT_METHODOLOGY, 'utf8');
+    const fragment = FRAGMENT;
     const reconciled = reconcileSlot(readFileSync(join(project, 'AGENTS.md'), 'utf8'), fragment, {
       maxLines: AGENTS_MD_CAP,
     });

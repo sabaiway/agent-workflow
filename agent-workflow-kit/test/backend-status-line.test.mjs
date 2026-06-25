@@ -6,7 +6,7 @@
 // reason, keyed on "the agent host can't run it", NOT "the project has no Node runtime"), so a
 // future SKILL.md edit can't quietly drop the line from an exit or weaken the contract. There is no
 // runtime that "executes" SKILL.md prose, so this static text-drift guard is the automatable half of
-// the "No changes without tests" Hard Constraint (same pattern as readme-structure / methodology-mirror).
+// the "No changes without tests" Hard Constraint (same pattern as readme-structure / init-command-uses-latest).
 //
 // Dev-only repo test (test/ is outside the package `files` whitelist — not shipped in the tarball).
 

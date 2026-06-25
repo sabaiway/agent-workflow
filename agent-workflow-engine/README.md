@@ -10,9 +10,10 @@ This is the **methodology engine** of the `agent-workflow` family — the canoni
 rest of the family builds on. It is **content**, not a runtime: it reads nothing, writes
 nothing, and mutates no project file. It deliberately **knows nobody else** in the family —
 it only *provides* the methodology; the family composition root (`agent-workflow-kit`) is the
-one that injects it. The kit currently consumes a **byte-identical, drift-guarded mirror** of
-this canon bundled inside the kit; the live `kit → engine` read (and retiring that mirror)
-lands in the next slice.
+one that injects it. The kit reads **this canon live from the installed engine** and injects the
+bounded slot from it — **one source of truth, no bundled mirror** (Plan 3D / AD-016).
+`npx @sabaiway/agent-workflow-kit@latest init` installs the engine as a core part of the kit; if a
+slot fill is needed but the engine is absent, the kit's reconcile **fails loudly**.
 
 ## Install
 

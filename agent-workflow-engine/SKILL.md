@@ -1,19 +1,20 @@
 ---
 name: agent-workflow-engine
-description: Canonical home of the agent-workflow planning methodology — the Plan→Phase→Step→Substep vocabulary, plan lifecycle, queue.md series index, mandatory Cleanup phase, and the bounded methodology slot fragment. A published, installable npm package (available:true) that *provides* the methodology text; it mutates nothing. The composition root (agent-workflow-kit) currently keeps byte-identical mirror copies of this text (drift-guarded) and injects the slot from its mirror; the live kit → engine read + mirror retirement land in the next slice.
+description: Canonical home of the agent-workflow planning methodology — the Plan→Phase→Step→Substep vocabulary, plan lifecycle, queue.md series index, mandatory Cleanup phase, and the bounded methodology slot fragment. A published, installable npm package (available:true) that *provides* the methodology text; it mutates nothing. The composition root (agent-workflow-kit) reads this canon LIVE from the installed engine and injects the bounded slot from it — one source of truth, no bundled mirror; `npx @sabaiway/agent-workflow-kit@latest init` installs the engine.
 disable-model-invocation: true
 metadata:
-  version: '1.0.0'
+  version: '1.1.0'
 ---
 
 # agent-workflow-engine
 
 The **canonical source of truth** for the `agent-workflow` planning methodology. It is a
 **published, installable npm package** (`capability.json` → `available:true`): it holds the
-methodology text and **provides** it, but it ships no runtime and mutates no files. The kit
-currently keeps **byte-identical mirror copies** of these files so the live injection + fallback
-keep working with no new dependency; a drift-guard test pins the mirrors to this canon. The live
-`kit → engine` read (and retiring the mirror) lands in the next slice.
+methodology text and **provides** it, but it ships no runtime and mutates no files. The kit reads
+**this canon live from the installed engine** (resolved via the family `detect.installed` pattern)
+and injects the bounded slot fragment from it — **one source of truth, no bundled mirror**.
+`npx @sabaiway/agent-workflow-kit@latest init` installs the engine as a core part of the kit; when a
+slot fill is needed but the engine is absent, the kit's reconcile **fails loudly** (never silently).
 
 ## What it provides (`provides: ["plan"]`)
 
@@ -36,9 +37,8 @@ no outbound edges.
 ## Status & roadmap
 
 The engine is **no longer a stub**: it is a published, `available:true`, installable npm package
-(`@sabaiway/agent-workflow-engine`). The kit currently keeps **byte-identical mirror copies** of
-this canon (drift-guarded), so the live injection + fallback keep working with no new dependency.
-The live `kit → engine` read (the kit reading this canon from the installed engine instead of its
-bundled mirror) and **retiring that mirror** land in the next slice. See the kit's
-`tools/inject-methodology.mjs` for the marker contract and the slot reconciliation the kit runs on
-bootstrap + upgrade.
+(`@sabaiway/agent-workflow-engine`). The kit reads **this canon live from the installed engine** and
+injects the methodology slot from it — the old bundled mirror is **retired** (Plan 3D / AD-016):
+**one source of truth**. `npx @sabaiway/agent-workflow-kit@latest init` installs the engine as a core
+part of the kit. See the kit's `tools/inject-methodology.mjs` (the marker contract + slot
+reconciliation) and `tools/engine-source.mjs` (the live read + fail-loud resolver).

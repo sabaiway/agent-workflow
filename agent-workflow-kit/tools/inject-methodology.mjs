@@ -3,9 +3,12 @@
 // deployed AGENTS.md.
 //
 // Both templates (memory's + the kit fallback) ship an EMPTY delimited slot; the kit (which knows
-// the whole family) fills it. The bounded fragment (tools/methodology-slot.md) is a BOUNDED summary
-// + pointer, NOT the full references/planning.md, so AGENTS.md stays under its line cap; it is a
-// byte-identical MIRROR of the canonical text in agent-workflow-engine (drift-guarded).
+// the whole family) fills it. The bounded fragment is a BOUNDED summary + pointer (NOT the full
+// references/planning.md), so AGENTS.md stays under its line cap. It is read LIVE from the installed
+// agent-workflow-engine (references/methodology-slot.md) via engine-source.mjs — the family's one
+// source of truth; there is no bundled mirror (retired in Plan 3D, AD-016). The live read is lazy +
+// fail-loud: resolve+read the engine ONLY when a fill is actually needed, and STOP loudly (never a
+// silent fallback) when the engine is needed but absent/invalid.
 //
 // Two layers over one marker parser:
 //   - injectMethodology — fill an EXISTING slot. Marker contract, strictly enforced:
@@ -152,11 +155,24 @@ export const reconcileSlot = (text, fragment, { maxLines } = {}) => {
   return { status, text: injected.text };
 };
 
+// Pure predicate (no fs): does this AGENTS.md actually need the methodology fragment? True only when
+// the slot can be ensured (present or insertable) AND is empty — i.e. when reconcileSlot would
+// inject. False when the slot is already filled (preserve-verbatim, no fragment read) OR when the
+// slot/anchor is malformed (so reconcileSlot's own precise error path still fires). It reuses the
+// SAME primitives as reconcileSlot (ensureSlot + extractSlot), so the lazy "read the engine only
+// when needed" guard in main() cannot diverge from the actual fill decision.
+export const slotNeedsFill = (text) => {
+  const ensured = ensureSlot(text);
+  if (ensured.status === 'error') return false;
+  const current = extractSlot(ensured.text);
+  return current == null || current.trim() === '';
+};
+
 const main = async (argv) => {
   const { readFile, writeFile, rename, rm } = await import('node:fs/promises');
   const { dirname, basename, join, resolve } = await import('node:path');
-  const { fileURLToPath } = await import('node:url');
-  const here = dirname(fileURLToPath(import.meta.url));
+  const { homedir } = await import('node:os');
+  const { resolveEngineDir, readEngineFragment } = await import('./engine-source.mjs');
 
   // `reconcile <AGENTS.md> [fragment.md]` = ensure-slot + inject-if-empty + cap (bootstrap/upgrade);
   // `<AGENTS.md> [fragment.md]` = the legacy inject-into-existing-slot mode.
@@ -167,9 +183,29 @@ const main = async (argv) => {
     console.error('usage: inject-methodology.mjs [reconcile] <path/to/AGENTS.md> [fragment.md]');
     process.exit(2);
   }
-  const fragmentPath = rest[1] ? resolve(rest[1]) : resolve(here, 'methodology-slot.md');
+  const explicitFragmentArg = rest[1];
   const text = await readFile(resolve(agentsPath), 'utf8');
-  const fragment = await readFile(fragmentPath, 'utf8');
+
+  // Source the bounded fragment LAZILY. An explicit [fragment.md] arg (tests + manual) wins and skips
+  // engine resolution entirely. Otherwise read it LIVE from the installed engine — there is no
+  // bundled mirror. readEngineFragment THROWS (never falls back) when the engine is needed but
+  // absent/invalid; sourceFragmentOrStop turns that into a hard, loud STOP carrying the install
+  // command. The caller only invokes this when a fill is actually needed (the laziness).
+  const sourceFragment = async () => {
+    if (explicitFragmentArg) return readFile(resolve(explicitFragmentArg), 'utf8');
+    const { dir, source } = resolveEngineDir({ env: process.env, home: homedir() });
+    return readEngineFragment(dir, { source }); // sync; throws loudly when the engine is absent/invalid
+  };
+  const sourceFragmentOrStop = async (label) => {
+    try {
+      return await sourceFragment();
+    } catch (err) {
+      // Engine needed-but-absent → a hard STOP, distinct from the soft cap-skip. The
+      // "methodology engine not found/invalid" prefix lets the agent classify this exit (SKILL.md).
+      console.error(`[inject-methodology] ${label} — ${err.message}`);
+      process.exit(1);
+    }
+  };
 
   const writeAtomic = async (out) => {
     const tmp = join(dirname(resolve(agentsPath)), `.${basename(agentsPath)}.tmp-${process.pid}-${Date.now()}`);
@@ -183,6 +219,10 @@ const main = async (argv) => {
   };
 
   if (mode === 'reconcile') {
+    // Read the engine only when the slot actually needs filling (lazy). slotNeedsFill reuses the same
+    // primitives reconcileSlot does, so it cannot disagree with the fill decision below — a filled
+    // slot reconciles to a zero-diff no-op WITHOUT consulting the engine.
+    const fragment = slotNeedsFill(text) ? await sourceFragmentOrStop('reconcile STOP') : '';
     const result = reconcileSlot(text, fragment, { maxLines: AGENTS_MD_CAP });
     if (result.status === 'error') {
       console.error(`[inject-methodology] reconcile refused — ${result.error}`);
@@ -201,6 +241,10 @@ const main = async (argv) => {
     return;
   }
 
+  // Legacy inject-into-existing-slot mode. injectMethodology no-ops on absent markers and errors on a
+  // malformed slot WITHOUT reading the fragment, so resolve+read the engine only when there is a
+  // present (ok) slot to fill — a markerless legacy AGENTS.md stays a no-op without the engine.
+  const fragment = findSlot(text).state === 'ok' ? await sourceFragmentOrStop('STOP') : '';
   const result = injectMethodology(text, fragment, { maxLines: AGENTS_MD_CAP });
   if (result.status === 'error') {
     console.error(`[inject-methodology] malformed slot — refusing to edit: ${result.error}`);

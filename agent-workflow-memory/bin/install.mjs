@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // One-shot installer for @sabaiway/agent-workflow-memory.
 //
-//   npx @sabaiway/agent-workflow-memory init
+//   npx @sabaiway/agent-workflow-memory@latest init
 //
 // Copies the memory substrate into the canonical skill home
 // (~/.claude/skills/agent-workflow-memory, override with --dir or
@@ -16,7 +16,7 @@
 // No telemetry, no phone-home. Dependency-free, Node >= 18.
 
 import { readFile, mkdir, readdir, copyFile, lstat, readlink, symlink } from 'node:fs/promises';
-import { existsSync, lstatSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve, relative, sep, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -38,7 +38,11 @@ const PAYLOAD = [
   'migrations',
 ];
 
-const tildify = (path) => path.replace(homedir(), '~');
+// Collapse only a LEADING homedir() to "~" — anchored at the string start (boundary-checked with
+// `sep`), never a mid-path occurrence. A naive `path.replace(homedir(), '~')` would rewrite the
+// first match anywhere in the path (Issue-004). Exported so the regression can pin it in-process.
+export const tildify = (path) =>
+  path === homedir() ? '~' : path.startsWith(homedir() + sep) ? `~${path.slice(homedir().length)}` : path;
 
 const readVersion = async () => {
   try {
@@ -65,9 +69,12 @@ const lstatNoFollow = (path) => {
 // within `root`. Walks `root` plus each existing path component down to `dest`; if the
 // root, an intermediate dir, or the leaf is a symlink (including a dangling one), a copy
 // could escape the target — STOP rather than follow it. Also refuses a dest outside `root`.
-const assertContainedRealPath = (root, dest) => {
+export const assertContainedRealPath = (root, dest) => {
   const rel = relative(root, dest);
-  if (rel.startsWith('..') || isAbsolute(rel)) {
+  // A true escape is `..` exactly or a `..`-prefixed PATH SEGMENT (`../x`) — NOT any string starting
+  // with the two chars "..": a legitimately-contained child literally named `..foo` has rel `..foo`,
+  // which the old `rel.startsWith('..')` wrongly rejected (Issue-004).
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
     throw new Error(`[agent-workflow-memory] refusing to write outside the target dir: ${dest}`);
   }
   if (lstatNoFollow(root)?.isSymbolicLink()) {
@@ -121,7 +128,7 @@ const printHelp = (version) => {
   console.log(`agent-workflow-memory ${version}
 
 Usage:
-  npx @sabaiway/agent-workflow-memory init [--dir <path>]
+  npx @sabaiway/agent-workflow-memory@latest init [--dir <path>]
   npx @sabaiway/agent-workflow-memory --version
   npx @sabaiway/agent-workflow-memory --help
 
@@ -179,7 +186,23 @@ This command only installs/updates the skill itself (in ${tildify(target)}).
 To update it later, re-run:  npx @sabaiway/agent-workflow-memory@latest init`);
 };
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Run main() only when executed directly (npx / node bin/install.mjs), never on import — so tests can
+// import this module to unit-test its exported helpers with no side effects. Compare by REAL path:
+// npx invokes the bin through a node_modules/.bin symlink, so process.argv[1] is that symlink while
+// import.meta.url is the resolved real file — a raw string compare reads them as different and main()
+// never runs. realpathSync collapses the symlink so both sides match. (Same idiom as the kit.)
+const isDirectRun = (() => {
+  const invoked = process.argv[1];
+  if (!invoked) return false;
+  try {
+    return realpathSync(invoked) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+})();
+if (isDirectRun) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

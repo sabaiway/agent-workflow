@@ -8,8 +8,8 @@ import { fileURLToPath } from 'node:url';
 // → `agy`) are CANONICAL at the repo root; the kit ships BYTE-IDENTICAL mirror copies under
 // agent-workflow-kit/bridges/<name>/ so the published npm tarball can place a bridge skill (Plan B /
 // AD-011). This test pins each mirror to its canon — every file byte-for-byte AND set-equality of the
-// file lists (a canon file added/deleted without re-syncing the mirror fails here). Same pattern as
-// test/methodology-mirror.test.mjs (AD-010).
+// file lists (a canon file added/deleted without re-syncing the mirror fails here). Same byte-set
+// drift-guard pattern used elsewhere in the suite (e.g. test/known-footprint.test.mjs).
 //
 // Lives under test/ (NOT tools/): it reads the repo-root bridge dirs, which are sibling packages
 // outside the kit's npm tarball, so it must stay a monorepo-only dev test. test/ is excluded from the
