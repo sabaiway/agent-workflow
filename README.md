@@ -153,7 +153,7 @@ One kit is the entry point; everything else is a layer it composes:
 
 ```
 npx ... init -> kit  (composition root; global skill, NOT a project deploy)
-   |- injects the methodology   <- engine (future supplier; available:false)
+   |- injects the methodology  <- engine (canonical supplier; kit mirrors)
    |- delegates -> memory substrate (standalone, else bundled fallback)
    `- deploys -> AGENTS.md + docs/ai/ + Node scripts + pre-commit hook
 
@@ -167,8 +167,9 @@ optional backends (set up once per machine, NOT by init):
 - **memory** (`@sabaiway/agent-workflow-memory`) — the standalone substrate (`AGENTS.md` +
   `docs/ai/` with caps / archive / index gate). The kit uses a **standalone** copy if present,
   else its bundled fallback — same `docs/ai/` either way.
-- **engine** (`agent-workflow-engine`) — a stub (`available: false`); the *future* home of the
-  methodology the kit injects today. Not shipped yet.
+- **engine** (`@sabaiway/agent-workflow-engine`) — the published canonical home of the methodology
+  the kit injects. The kit currently injects from a byte-identical, drift-guarded mirror of this
+  canon; the live `kit → engine` read lands next.
 - **bridges** — optional execution backends (below) that *can read* the deployed memory as their
   context file.
 
@@ -231,7 +232,7 @@ setup (place skill + link wrappers). For the command mechanics see the
 | **agent-workflow-memory** | the substrate only, without the methodology (rare) | npm | [README](agent-workflow-memory/README.md) |
 | **codex-cli-bridge** | delegated execute / review via `codex` | agent skill (bundled; `setup` places + links) | [SKILL](codex-cli-bridge/SKILL.md) |
 | **antigravity-cli-bridge** | delegated review / probe via `agy` | agent skill (bundled; `setup` places + links) | [SKILL](antigravity-cli-bridge/SKILL.md) |
-| **agent-workflow-engine** | *not available yet* (future methodology engine) | stub (`available: false`) | [capability.json](agent-workflow-engine/capability.json) |
+| **agent-workflow-engine** | the canonical methodology on disk, standalone (rare — the kit injects it for you) | npm | [README](agent-workflow-engine/README.md) |
 
 Most people only ever need the **kit**. Each per-package README / SKILL stays the source of truth
 for its detailed commands and operating policy — this front door summarizes and routes, it does
@@ -248,13 +249,14 @@ This is a monorepo (npm workspaces) for the whole family.
 |---|---|---|
 | [`agent-workflow-kit`](agent-workflow-kit) | `@sabaiway/agent-workflow-kit` | composition root: detects the substrate, delegates or falls back, injects the methodology, ships the manifest schema + validator + backend detector |
 | [`agent-workflow-memory`](agent-workflow-memory) | `@sabaiway/agent-workflow-memory` | standalone memory substrate: `AGENTS.md` + `docs/ai/` with cap / archive / index enforcement |
+| [`agent-workflow-engine`](agent-workflow-engine) | `@sabaiway/agent-workflow-engine` | methodology engine: the canonical planning methodology (Plan→Phase→Step, lifecycle, `queue.md`, mandatory Cleanup) the kit injects; ships the canon + its manifest, no family tooling |
 
 - `codex-cli-bridge` · `antigravity-cli-bridge` — in-repo agent skills (not npm workspaces); each
   declares its role + detection contract in `capability.json`.
-- `agent-workflow-engine` — declared-but-unbuilt stub (`available: false`).
-- **Publish order is memory before kit** (the kit may delegate to memory at deploy time).
-- The deployment-lineage stamp is independent of the npm package versions; both packages stamp
-  the shared lineage head.
+- **Publish order is memory → engine → kit** (the kit composes on top of both).
+- The deployment-lineage stamp is independent of the npm package versions; the deploying packages
+  (kit + memory) stamp the shared lineage head — the engine has no per-project footprint, so it does
+  not stamp it.
 - `docs/plans/` is machine-local and is never committed (see `.gitignore`).
 - Shipped Node scripts stay dependency-free and support Node ≥ 18. Run the repo's test,
   manifest-validate, release-scan, and docs-caps checks before proposing a commit.

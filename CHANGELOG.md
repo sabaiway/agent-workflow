@@ -5,6 +5,19 @@ versioned **independently** — see its own changelog for package-level detail:
 
 - `@sabaiway/agent-workflow-kit` → [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md)
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
+- `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
+
+## 2026-06-25
+
+- **`@sabaiway/agent-workflow-engine@1.0.0` — first publish.** The canonical home of the
+  `agent-workflow` planning methodology is now an installable, `available:true` npm package — no
+  longer a declared, content-only stub. It ships its own `bin/install.mjs` (symlink-hardened),
+  `capability.json` (`detect.installed` + `install.npm`), README/CHANGELOG/LICENSE, and the
+  methodology canon (`references/`). The composition root (`agent-workflow-kit`) still consumes a
+  byte-identical, drift-guarded mirror of this canon; the live `kit → engine` read and retiring that
+  mirror land in the next slice. **No kit/memory republish**, and the deployment-lineage head stays
+  `1.3.0` (packaging changes only the npm axis). Release tag: `agent-workflow-engine-v1.0.0`. See
+  [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md) and AD-015.
 
 ## 2026-06-22
 
