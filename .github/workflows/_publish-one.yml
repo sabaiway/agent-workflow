@@ -124,18 +124,21 @@ jobs:
       - name: Pack preview
         run: npm pack --dry-run
 
-      # Gate publish on the package's tests. For the kit that means its WHOLE suite (the backend
-      # detector/linker, fs-safe, manifest validator, installer, bridge-mirror drift-guard, …), not
-      # just the shipped enforcement scripts — so a kit release can't go out with these untested.
-      # bridges/ is excluded on purpose: its mirrored agy.test.mjs drives the real `agy` CLI and is
-      # run from the canonical bridge dir, not here.
+      # Gate publish on the package's WHOLE test suite — so a release can't go out with any part of
+      # the package untested. For the kit that is the backend detector/linker, fs-safe, manifest
+      # validator, installer, bridge-mirror drift-guard, … (tools/ + tools/manifest/ + bin/ + test/ +
+      # references/scripts/). For memory it is its scripts/ (package-content, stamp-takeover,
+      # standalone-bootstrap) + bin/ installer + references/scripts/ enforcement scripts — NOT just
+      # references/scripts/, which silently skipped four of memory's test files before.
+      # The kit's bridges/ is excluded on purpose: its mirrored agy.test.mjs drives the real `agy` CLI
+      # and is run from the canonical bridge dir, not here.
       - name: Test the package before publish
         run: |
           set -euo pipefail
           if [ "${{ inputs.dir }}" = "agent-workflow-kit" ]; then
             node --test tools/*.test.mjs tools/manifest/*.test.mjs references/scripts/*.test.mjs bin/*.test.mjs test/*.test.mjs
           else
-            node --test references/scripts/*.test.mjs
+            node --test scripts/*.test.mjs bin/*.test.mjs references/scripts/*.test.mjs
           fi
 
       - name: Publish (dry run)
