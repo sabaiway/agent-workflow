@@ -35,6 +35,17 @@ const ENFORCEMENT = join(SKILL_ROOT, 'references', 'scripts');
 // from the composition root) so this substrate test stays self-contained and dependency-free.
 const SLOT_START = '<!-- workflow:methodology:start -->';
 const SLOT_END = '<!-- workflow:methodology:end -->';
+const ORCH_START = '<!-- workflow:orchestration:start -->';
+const ORCH_END = '<!-- workflow:orchestration:end -->';
+// The deployed AGENTS.md line budget the composition root fills BOTH pointers inside (D-CAP). A
+// representative single-line fragment per slot models what the composition root injects.
+const AGENTS_MD_CAP = 100;
+const lineCount = (text) => text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
+const extractPair = (text, start, end) => {
+  const a = text.indexOf(start);
+  const b = text.indexOf(end);
+  return a !== -1 && b !== -1 && b > a ? text.slice(a + start.length, b) : null;
+};
 
 const tempDirs = [];
 const makeProject = () => {
@@ -98,14 +109,32 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
     assert.ok(!existsSync(join(docsAi, '.workflow-version')), 'no composition-root stamp in a standalone bootstrap');
   });
 
-  it('ships the methodology slot present-but-empty', () => {
+  it('ships BOTH pointer slots present-but-empty (methodology + orchestration)', () => {
     const project = makeProject();
     bootstrap(project);
 
     const entry = readFileSync(join(project, 'AGENTS.md'), 'utf8');
-    const start = entry.indexOf(SLOT_START);
-    const end = entry.indexOf(SLOT_END);
-    assert.ok(start !== -1 && end !== -1 && end > start, 'an ordered slot marker pair is present');
-    assert.equal(entry.slice(start + SLOT_START.length, end).trim(), '', 'the slot is empty as shipped');
+    const meth = extractPair(entry, SLOT_START, SLOT_END);
+    const orch = extractPair(entry, ORCH_START, ORCH_END);
+    assert.notEqual(meth, null, 'an ordered methodology marker pair is present');
+    assert.equal(meth.trim(), '', 'the methodology slot is empty as shipped');
+    assert.notEqual(orch, null, 'an ordered orchestration marker pair is present');
+    assert.equal(orch.trim(), '', 'the orchestration slot is empty as shipped');
+  });
+
+  it('stays ≤ the cap when the composition root fills BOTH pointer slots (D-CAP headroom)', () => {
+    const project = makeProject();
+    bootstrap(project);
+    const entry = readFileSync(join(project, 'AGENTS.md'), 'utf8');
+    assert.ok(lineCount(entry) <= AGENTS_MD_CAP, `shipped (empty) AGENTS.md is ${lineCount(entry)} lines (cap ${AGENTS_MD_CAP})`);
+    // Fill each one-line pointer the way the composition root does (replace the empty body), then re-count.
+    const fill = (text, start, end, body) => {
+      const a = text.indexOf(start);
+      const b = text.indexOf(end);
+      return `${text.slice(0, a + start.length)}\n${body}\n${text.slice(b)}`;
+    };
+    let filled = fill(entry, SLOT_START, SLOT_END, '> methodology pointer (one line)');
+    filled = fill(filled, ORCH_START, ORCH_END, '> orchestration recipes pointer (one line)');
+    assert.ok(lineCount(filled) <= AGENTS_MD_CAP, `dual-filled AGENTS.md is ${lineCount(filled)} lines (cap ${AGENTS_MD_CAP})`);
   });
 });

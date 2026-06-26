@@ -8,6 +8,7 @@ import {
   ENGINE_ENV,
   EXPECTED_ENGINE_NAME,
   ENGINE_FRAGMENT_REL,
+  ORCHESTRATION_FRAGMENT_REL,
 } from './engine-source.mjs';
 
 // A valid engine dir = it exists (dir), the fragment file exists, and the validator reports a
@@ -174,6 +175,55 @@ describe('readEngineFragment — live read or loud throw', () => {
         ),
       (err) => {
         assert.match(err.message, /fragment unreadable: EISDIR/);
+        assert.match(err.message, /npx @sabaiway\/agent-workflow-engine@latest init/);
+        return true;
+      },
+    );
+  });
+});
+
+// The orchestration fragment is a SECOND bounded fragment (Plan 4), selected via deps.rel /
+// detectEngine({ rel }) — non-breaking: the default rel stays the methodology fragment so every
+// existing methodology call site is unchanged.
+describe('detectEngine / readEngineFragment — orchestration fragment via rel', () => {
+  // statType that knows both fragments live in the engine (a current >=1.2.0 engine).
+  const bothPresent = (path) =>
+    path === ENGINE_DIR
+      ? 'dir'
+      : path === join(ENGINE_DIR, ENGINE_FRAGMENT_REL) || path === join(ENGINE_DIR, ORCHESTRATION_FRAGMENT_REL)
+        ? 'file'
+        : null;
+
+  it('verifies the orchestration fragment when rel is the orchestration path', () => {
+    const out = detectEngine(ENGINE_DIR, { source: 'default', rel: ORCHESTRATION_FRAGMENT_REL }, deps({ statType: bothPresent }));
+    assert.equal(out.ok, true);
+  });
+
+  it('an older engine (no orchestration fragment) → detect not-ok, the reason names that fragment', () => {
+    const out = detectEngine(ENGINE_DIR, { source: 'default', rel: ORCHESTRATION_FRAGMENT_REL }, deps()); // okStatType: only the methodology fragment is a file
+    assert.equal(out.ok, false);
+    assert.match(out.reason, /orchestration-slot\.md/);
+  });
+
+  it('the methodology read is unaffected by the new rel default (back-compat)', () => {
+    const out = detectEngine(ENGINE_DIR, { source: 'default' }, deps({ statType: bothPresent }));
+    assert.equal(out.ok, true);
+  });
+
+  it('readEngineFragment reads the orchestration fragment bytes when deps.rel is set', () => {
+    const out = readEngineFragment(
+      ENGINE_DIR,
+      deps({ source: 'default', rel: ORCHESTRATION_FRAGMENT_REL, statType: bothPresent, readFileSync: () => 'ORCH BODY' }),
+    );
+    assert.equal(out, 'ORCH BODY');
+  });
+
+  it('readEngineFragment STOPs loudly when the orchestration fragment is absent (older engine)', () => {
+    assert.throws(
+      () => readEngineFragment(ENGINE_DIR, deps({ source: 'default', rel: ORCHESTRATION_FRAGMENT_REL })),
+      (err) => {
+        assert.match(err.message, /methodology engine not found\/invalid/);
+        assert.match(err.message, /orchestration-slot\.md/);
         assert.match(err.message, /npx @sabaiway\/agent-workflow-engine@latest init/);
         return true;
       },

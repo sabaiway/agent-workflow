@@ -4,6 +4,27 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.2.0 — Orchestration recipes: a named vocabulary for composing the bridges
+
+The engine now also owns the **orchestration-recipe** canon — the named patterns an agent uses to
+compose the optional execution-backends (the `codex` / `agy` bridges) into `plan → execute → review`.
+Four recipes, built over the bridges' role vocabulary: **Solo** (no backend — the floor), **Reviewed**
+(one backend reviews), **Council** (both review, you synthesize), **Delegated** (a backend executes a
+bounded sub-task). The orchestrator always owns the decisions and the single commit; a backend is
+advisory or delegated, never autonomous. The kit reads this canon **live** and surfaces a read-only
+`/agent-workflow-kit recipes` advisor that plans a recipe for the current environment.
+
+### Added
+- **`references/orchestration.md`** — the canonical narrative: the four recipes over the role
+  vocabulary, the when/why decision guidance, the graceful-degradation lattice (Council → Reviewed →
+  Solo; Delegated → Solo, always with a stated reason), and the quota/health guard.
+- **`references/orchestration-slot.md`** — the bounded **one-line** fragment the composition root
+  injects into a deployed `AGENTS.md` (between the `workflow:orchestration` markers). It names the four
+  recipes and routes to `/agent-workflow-kit recipes` — never to this engine-internal reference.
+
+The deployment-lineage head stays **`1.3.0`** (no `docs/ai` structural change; no migration file). The
+npm package version is a separate axis.
+
 ## 1.1.0 — Live-read ready: never-downgrade gate + installer hardening
 
 The kit now reads this canon **live from the installed engine** and has retired its bundled mirror

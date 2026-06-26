@@ -79,6 +79,8 @@ describe('engine package content — DAG guard (knows nobody)', () => {
       'capability.json',
       'package.json', // npm always includes the manifest, even though files[] does not list it
       'references/methodology-slot.md',
+      'references/orchestration-slot.md',
+      'references/orchestration.md',
       'references/planning.md',
     ].sort();
     const res = spawnSync('npm', ['pack', '--dry-run', '--json'], { cwd: ROOT, encoding: 'utf8' });

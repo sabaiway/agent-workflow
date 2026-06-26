@@ -1,6 +1,6 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +17,16 @@ import {
   AGENTS_MD_CAP,
   START_MARKER,
   END_MARKER,
+  ORCH_START_MARKER,
+  ORCH_END_MARKER,
+  ORCHESTRATION_DESCRIPTOR,
+  findMarkerSlot,
+  extractMarkerSlot,
 } from './inject-methodology.mjs';
+
+// Read the orchestration slot's content from a reconciled entry point.
+const extractOrch = (text) => extractMarkerSlot(text, ORCHESTRATION_DESCRIPTOR);
+const hasOrchSlot = (text) => findMarkerSlot(text, ORCHESTRATION_DESCRIPTOR).state === 'ok';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(HERE, 'inject-methodology.mjs');
@@ -29,6 +38,9 @@ const SCRIPT = join(HERE, 'inject-methodology.mjs');
 // Single-line (like the canonical fragment) so byte-equality holds in both LF and CRLF documents.
 const FRAGMENT =
   '> **Workflow methodology (test fixture)** — plan → execute → review. Plans are ephemeral, gitignored, never committed; every Plan ends with a mandatory **Phase: Cleanup**.\n';
+// The SECOND bounded fragment (Plan 4) — distinct content so a test can tell which slot got which.
+const ORCH_FRAGMENT =
+  '> **Orchestration recipes (test fixture)** — Solo / Reviewed / Council / Delegated; pick one with `/agent-workflow-kit recipes`.\n';
 
 // Temp dirs created by the fixtures below — cleaned up once after the whole file.
 const tmpDirs = [];
@@ -36,8 +48,9 @@ after(() => tmpDirs.forEach((d) => rmSync(d, { recursive: true, force: true })))
 
 // A minimal but VALID installed-engine fixture: a methodology-engine capability.json + a SKILL.md
 // whose metadata.version matches it (the validator's authoritative version source when there is no
-// package.json) + the live fragment at references/methodology-slot.md. detectEngine accepts it.
-const makeEngineFixture = (fragment = FRAGMENT, version = '1.0.0') => {
+// package.json) + BOTH live fragments (methodology + orchestration). detectEngine accepts it; pass
+// `orchFragment = null` to model an OLDER engine (<1.2.0) that ships no orchestration fragment.
+const makeEngineFixture = (fragment = FRAGMENT, version = '1.0.0', orchFragment = ORCH_FRAGMENT) => {
   const dir = mkdtempSync(join(tmpdir(), 'engine-fixture-'));
   tmpDirs.push(dir);
   const manifest = {
@@ -54,6 +67,7 @@ const makeEngineFixture = (fragment = FRAGMENT, version = '1.0.0') => {
   writeFileSync(join(dir, 'SKILL.md'), `---\nname: agent-workflow-engine\nmetadata:\n  version: '${version}'\n---\n# engine\n`);
   mkdirSync(join(dir, 'references'), { recursive: true });
   writeFileSync(join(dir, 'references', 'methodology-slot.md'), fragment);
+  if (orchFragment != null) writeFileSync(join(dir, 'references', 'orchestration-slot.md'), orchFragment);
   return dir;
 };
 
@@ -65,6 +79,11 @@ const withEngine = (engineDir) => ({ ...process.env, AGENT_WORKFLOW_ENGINE_DIR: 
 
 const wrap = (inner) =>
   `# AGENTS.md\n\nprefix bytes\n\n## Session Protocols\n\nintro line.\n\n${START_MARKER}${inner}${END_MARKER}\n\n## Hard Constraints\n\nsuffix bytes\n`;
+
+// An entry point carrying BOTH reconciled slots (the orchestration pair sits right under the
+// methodology pair, as the descriptor anchors it) — the deployed shape after a dual-slot reconcile.
+const wrapDual = (methInner, orchInner) =>
+  `# AGENTS.md\n\nprefix bytes\n\n## Session Protocols\n\nintro line.\n\n${START_MARKER}${methInner}${END_MARKER}\n${ORCH_START_MARKER}${orchInner}${ORCH_END_MARKER}\n\n## Hard Constraints\n\nsuffix bytes\n`;
 
 // The exact Session-Protocols line both deployed templates carry — the slot anchor.
 const ANCHOR_LINE =
@@ -401,26 +420,32 @@ describe('reconcile CLI — atomic ensure+inject-if-empty+cap, reading the fragm
     }
   };
 
-  it('markerless legacy (with anchor) → slot inserted + filled from the live engine fragment (exit 0)', () => {
+  it('markerless legacy (with anchor) → BOTH slots inserted + filled from their own live engine fragments (exit 0)', () => {
     withTempAgents(legacyWithAnchor(), (agents) => {
       execFileSync(process.execPath, [SCRIPT, 'reconcile', agents], { stdio: 'pipe', env: withEngine(ENGINE) });
       const out = readFileSync(agents, 'utf8');
       assert.equal(findSlot(out).state, 'ok');
-      assert.equal(extractSlot(out).trim(), FRAGMENT.trim());
+      assert.equal(extractSlot(out).trim(), FRAGMENT.trim(), 'methodology slot filled from the methodology fragment');
+      assert.ok(hasOrchSlot(out), 'the orchestration slot was inserted below the methodology pair');
+      assert.equal(extractOrch(out).trim(), ORCH_FRAGMENT.trim(), 'orchestration slot filled from the orchestration fragment');
     });
   });
 
-  it('present empty slot → filled from the live engine fragment (exit 0)', () => {
+  it('present empty methodology slot → BOTH slots filled; each from its OWN engine fragment (exit 0)', () => {
     withTempAgents(wrap('\n'), (agents) => {
       execFileSync(process.execPath, [SCRIPT, 'reconcile', agents], { stdio: 'pipe', env: withEngine(ENGINE) });
-      assert.equal(extractSlot(readFileSync(agents, 'utf8')).trim(), FRAGMENT.trim());
+      const out = readFileSync(agents, 'utf8');
+      assert.equal(extractSlot(out).trim(), FRAGMENT.trim());
+      assert.equal(extractOrch(out).trim(), ORCH_FRAGMENT.trim());
+      // Per-slot fragment sourcing: the two slots carry DIFFERENT content (not both the methodology one).
+      assert.notEqual(extractSlot(out).trim(), extractOrch(out).trim());
     });
   });
 
-  it('filled/customized slot → zero-diff no-op WITHOUT consulting the engine (engine absent, exit 0)', () => {
-    const custom = wrap('\nuser notes\n');
+  it('BOTH slots already filled → zero-diff no-op WITHOUT consulting the engine (engine absent, exit 0)', () => {
+    const custom = wrapDual('\nuser meth notes\n', '\nuser orch notes\n');
     withTempAgents(custom, (agents) => {
-      // Engine pointed at a path that does not exist — a filled slot must NOT require it.
+      // Engine pointed at a path that does not exist — a fully-filled entry point must NOT require it.
       execFileSync(process.execPath, [SCRIPT, 'reconcile', agents], { stdio: 'pipe', env: withEngine(NO_ENGINE) });
       assert.equal(readFileSync(agents, 'utf8'), custom);
     });
@@ -444,7 +469,7 @@ describe('reconcile CLI — atomic ensure+inject-if-empty+cap, reading the fragm
     });
   });
 
-  it('explicit [fragment.md] override fills from that file and skips engine resolution (engine absent)', () => {
+  it('explicit [fragment.md] override fills methodology ONLY and skips both engine + the orchestration slot', () => {
     const override = '> custom override fragment line\n';
     const fdir = mkdtempSync(join(tmpdir(), 'frag-'));
     tmpDirs.push(fdir);
@@ -452,7 +477,98 @@ describe('reconcile CLI — atomic ensure+inject-if-empty+cap, reading the fragm
     writeFileSync(fpath, override);
     withTempAgents(wrap('\n'), (agents) => {
       execFileSync(process.execPath, [SCRIPT, 'reconcile', agents, fpath], { stdio: 'pipe', env: withEngine(NO_ENGINE) });
-      assert.equal(extractSlot(readFileSync(agents, 'utf8')).trim(), override.trim());
+      const out = readFileSync(agents, 'utf8');
+      assert.equal(extractSlot(out).trim(), override.trim(), 'methodology filled from the explicit fragment');
+      assert.ok(!hasOrchSlot(out), 'an explicit single-file override binds methodology only — no orchestration slot added');
+    });
+  });
+
+  it('dual-block cap → orchestration pointer is SOFT-skipped (reported), the file is byte-unchanged (exit 0)', () => {
+    // A 100-line entry point with a FILLED methodology slot + an EMPTY orchestration slot: filling the
+    // orchestration slot would push it to 101 > 100, so it is skipped loudly while methodology stays.
+    const head = [
+      '# AGENTS.md',
+      '',
+      '## Session Protocols',
+      '',
+      'Read it before any code change.',
+      '',
+      START_MARKER,
+      FRAGMENT.trim(),
+      END_MARKER,
+      ORCH_START_MARKER,
+      ORCH_END_MARKER,
+    ];
+    const pad = Array.from({ length: AGENTS_MD_CAP - head.length }, (_, i) => `pad line ${i}`);
+    const atCap = [...head, ...pad].join('\n') + '\n';
+    withTempAgents(atCap, (agents) => {
+      const out = execFileSync(process.execPath, [SCRIPT, 'reconcile', agents], { encoding: 'utf8', env: withEngine(ENGINE) });
+      assert.match(out, /skipped/i, 'the orchestration cap-skip is reported, not silent');
+      assert.equal(readFileSync(agents, 'utf8'), atCap, 'file byte-unchanged — the orchestration pointer was withheld, methodology already present');
+    });
+  });
+
+  it('malformed orchestration pair → hard STOP (nonzero), file byte-unchanged (methodology fine)', () => {
+    const malformedOrch =
+      `# AGENTS.md\n\nintro line.\n\n${START_MARKER}\n${FRAGMENT.trim()}\n${END_MARKER}\n` +
+      `${ORCH_START_MARKER}\n${ORCH_END_MARKER}\n${ORCH_START_MARKER}\n${ORCH_END_MARKER}\n`;
+    withTempAgents(malformedOrch, (agents) => {
+      assert.throws(() =>
+        execFileSync(process.execPath, [SCRIPT, 'reconcile', agents], { stdio: 'pipe', env: withEngine(ENGINE) }),
+      );
+      assert.equal(readFileSync(agents, 'utf8'), malformedOrch, 'no partial write on an orchestration STOP');
+    });
+  });
+
+  it('engine too old (no orchestration fragment) → methodology filled, orchestration SOFT-skipped (exit 0, not a regression)', () => {
+    // A VALID engine that ships methodology-slot.md but NOT orchestration-slot.md (i.e. <1.2.0). The
+    // methodology fill must NOT be discarded — only the recipes pointer is withheld, reported, exit 0.
+    const oldEngine = makeEngineFixture(FRAGMENT, '1.0.0', null);
+    withTempAgents(wrap('\n'), (agents) => {
+      const out = execFileSync(process.execPath, [SCRIPT, 'reconcile', agents], { encoding: 'utf8', env: withEngine(oldEngine) });
+      const text = readFileSync(agents, 'utf8');
+      assert.equal(extractSlot(text).trim(), FRAGMENT.trim(), 'methodology pointer filled (not discarded by the too-old engine)');
+      assert.match(out, /skipped/i, 'the orchestration skip is reported (not silent)');
+      assert.match(out, /too old/i, 'the skip names the too-old-engine reason');
+      assert.ok(!hasOrchSlot(text), 'a too-old engine adds no orchestration pointer');
+    });
+  });
+
+  it('orchestration fragment PRESENT but unreadable → hard STOP (a corrupt engine is NOT mislabeled "too old")', () => {
+    if (process.getuid && process.getuid() === 0) return; // root bypasses 0o000 perms — can't restrict
+    const corruptEngine = makeEngineFixture(FRAGMENT, '1.2.0', '> orchestration line\n'); // both fragments present
+    const orchPath = join(corruptEngine, 'references', 'orchestration-slot.md');
+    chmodSync(orchPath, 0o000);
+    let restricted = false;
+    try {
+      readFileSync(orchPath, 'utf8');
+    } catch {
+      restricted = true;
+    }
+    if (!restricted) {
+      chmodSync(orchPath, 0o644); // exotic FS / perms ignored → can't exercise this path here
+      return;
+    }
+    try {
+      withTempAgents(wrap('\n'), (agents) => {
+        assert.throws(() =>
+          execFileSync(process.execPath, [SCRIPT, 'reconcile', agents], { stdio: 'pipe', env: withEngine(corruptEngine) }),
+        );
+        assert.equal(extractSlot(readFileSync(agents, 'utf8')).trim(), '', 'no partial write on a corrupt-fragment STOP');
+      });
+    } finally {
+      chmodSync(orchPath, 0o644); // restore so the after() cleanup can remove the fixture
+    }
+  });
+
+  it('fully absent engine + a fill needed → hard STOP (methodology fragment also unavailable)', () => {
+    // Distinct from the too-old case: a fully absent engine cannot supply EITHER fragment, so the
+    // methodology slot fill itself STOPs first — the dual-slot reconcile never silently no-ops.
+    withTempAgents(wrap('\n'), (agents) => {
+      assert.throws(() =>
+        execFileSync(process.execPath, [SCRIPT, 'reconcile', agents], { stdio: 'pipe', env: withEngine(NO_ENGINE) }),
+      );
+      assert.equal(readFileSync(agents, 'utf8'), wrap('\n'), 'no partial write when the engine is fully absent');
     });
   });
 

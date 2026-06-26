@@ -48,6 +48,20 @@ describe('upgrade backend-status — shared one-line contract (drift guard)', ()
     assert.equal(occurrences, 1, `the canonical backend line must appear once (single source), found ${occurrences}`);
   });
 
+  it('appends an actionable recipe recommendation after the backends pointer (P2-rich)', () => {
+    // The shared status line gains a trailing recipes clause from recommendRecipe(detection), AFTER
+    // the canonical `— run /agent-workflow-kit backends` substring, routing to the recipes surface.
+    assert.match(shared, /tools\/recipes\.mjs/, 'names the recipe planner script as the recommendation source');
+    assert.match(shared, /recipes:/, 'the appended clause is prefixed "recipes:"');
+    assert.match(shared, /\/agent-workflow-kit recipes/, 'the clause routes to the read-only recipes surface');
+    // Never blank — the none-installed case still recommends Solo + a setup pointer.
+    assert.match(shared, /Solo/, 'the none-installed recommendation names Solo');
+    assert.match(shared, /\/agent-workflow-kit setup/, 'the none-installed recommendation points at setup');
+    // The recommendation is appended (does not replace) — the backends pointer still appears once.
+    const occurrences = (SKILL.match(new RegExp(CANONICAL.source, 'g')) ?? []).length;
+    assert.equal(occurrences, 1, 'the recipes clause is appended after the unchanged backends pointer');
+  });
+
   it('pins the read-only / non-blocking invariants', () => {
     assert.match(shared, /read-only/i);
     assert.match(shared, /never blocks the commit gate/i);

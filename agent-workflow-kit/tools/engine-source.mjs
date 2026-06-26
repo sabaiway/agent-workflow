@@ -22,6 +22,10 @@ import { validateManifest, VALID } from './manifest/validate.mjs';
 export const ENGINE_ENV = 'AGENT_WORKFLOW_ENGINE_DIR';
 export const EXPECTED_ENGINE_NAME = 'agent-workflow-engine';
 export const ENGINE_FRAGMENT_REL = 'references/methodology-slot.md';
+// The orchestration-recipes slot fragment — a SECOND bounded fragment the kit injects (Plan 4). An
+// engine older than 1.2.0 does not ship it; detectEngine({ rel }) lets a caller verify the specific
+// fragment so `status` can caveat a too-old engine instead of failing the methodology read.
+export const ORCHESTRATION_FRAGMENT_REL = 'references/orchestration-slot.md';
 const ENGINE_DEFAULT_REL = '.claude/skills/agent-workflow-engine';
 
 const defaultStatType = (path) => {
@@ -47,9 +51,10 @@ export const resolveEngineDir = ({ env = {}, home = '' } = {}) => {
 // (never a candidate-shipped one), and clones detectMemory's reason ladder so each failure has a
 // distinct, actionable reason. ok only on: a dir that exists + VALID manifest + kind
 // methodology-engine + the right name + available + the live fragment file present.
-export const detectEngine = (engineDir, { source } = {}, deps = {}) => {
+export const detectEngine = (engineDir, { source, rel } = {}, deps = {}) => {
   const validate = deps.validate ?? validateManifest;
   const statType = deps.statType ?? defaultStatType;
+  const fragmentRel = rel ?? ENGINE_FRAGMENT_REL;
 
   // The dir itself must exist first — this is what lets an env-pointed-but-absent dir read as the
   // distinct `env-set-but-missing` (validateManifest would only say "capability.json not found").
@@ -72,7 +77,7 @@ export const detectEngine = (engineDir, { source } = {}, deps = {}) => {
       return { result: 'invalid', errors: [`validator threw: ${err?.message ?? err}`] };
     }
   })();
-  const fragmentPresent = statType(join(engineDir, ENGINE_FRAGMENT_REL)) === 'file';
+  const fragmentPresent = statType(join(engineDir, fragmentRel)) === 'file';
   const ok =
     report.result === VALID &&
     report.kind === 'methodology-engine' &&
@@ -89,7 +94,7 @@ export const detectEngine = (engineDir, { source } = {}, deps = {}) => {
           ? `engine manifest name "${report.name}" is not "${EXPECTED_ENGINE_NAME}"`
           : report.available === false
             ? 'engine manifest is a declared stub (available:false)'
-            : `engine fragment missing (${ENGINE_FRAGMENT_REL})`;
+            : `engine fragment missing (${fragmentRel})`;
   return { ok, reason, dir: engineDir };
 };
 
@@ -99,14 +104,14 @@ export const detectEngine = (engineDir, { source } = {}, deps = {}) => {
 // not found/invalid" prefix is a stable contract: the agent classifies the reconcile STOP by it
 // (distinct from the cap-skip message), so do not reword it without updating SKILL.md.
 export const readEngineFragment = (engineDir, deps = {}) => {
-  const detection = detectEngine(engineDir, { source: deps.source }, deps);
+  const detection = detectEngine(engineDir, { source: deps.source, rel: deps.rel }, deps);
   const installHint = `npx @sabaiway/agent-workflow-engine@latest init  (or set ${ENGINE_ENV})`;
   if (!detection.ok) {
     throw new Error(`methodology engine not found/invalid at ${engineDir} (${detection.reason}) — install it: ${installHint}`);
   }
   const read = deps.readFileSync ?? readFileSync;
   try {
-    return read(join(engineDir, ENGINE_FRAGMENT_REL), 'utf8');
+    return read(join(engineDir, deps.rel ?? ENGINE_FRAGMENT_REL), 'utf8');
   } catch (err) {
     throw new Error(
       `methodology engine not found/invalid at ${engineDir} (fragment unreadable: ${err.message}) — install it: ${installHint}`,

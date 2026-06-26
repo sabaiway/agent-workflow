@@ -55,19 +55,18 @@ Start-of-session, during-work, and task-completion procedures live in [`docs/ai/
 
 <!-- workflow:methodology:start -->
 <!-- workflow:methodology:end -->
+<!-- workflow:orchestration:start -->
+<!-- workflow:orchestration:end -->
 
 ---
 
 ## 🚫 Hard Constraints
-
-> Adapt to this stack — remove rows that don't apply. Style rules should be linter-enforced, not prose.
 
 | Rule | Enforcement |
 |------|-------------|
 | No `export default` (named exports only) | Linter |
 | No `any` / no unsafe casts | Linter / type-checker |
 | Functional style (no mutation in app code) | Linter |
-| No single-letter variables | Code review |
 | Interactive elements semantic (button/link, not div+onClick) | Linter / a11y |
 | No hardcoded colors — design tokens only | Code review |
 | No business logic in components → hooks/services | Architecture review |

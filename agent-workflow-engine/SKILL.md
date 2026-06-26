@@ -1,9 +1,9 @@
 ---
 name: agent-workflow-engine
-description: Canonical home of the agent-workflow planning methodology — the Plan→Phase→Step→Substep vocabulary, plan lifecycle, queue.md series index, mandatory Cleanup phase, and the bounded methodology slot fragment. A published, installable npm package (available:true) that *provides* the methodology text; it mutates nothing. The composition root (agent-workflow-kit) reads this canon LIVE from the installed engine and injects the bounded slot from it — one source of truth, no bundled mirror; `npx @sabaiway/agent-workflow-kit@latest init` installs the engine.
+description: Canonical home of the agent-workflow planning methodology — the Plan→Phase→Step→Substep vocabulary, plan lifecycle, queue.md series index, mandatory Cleanup phase, the bounded methodology slot fragment, and the orchestration-recipe vocabulary (Solo / Reviewed / Council / Delegated). A published, installable npm package (available:true) that *provides* the methodology text; it mutates nothing. The composition root (agent-workflow-kit) reads this canon LIVE from the installed engine and injects the bounded slots from it — one source of truth, no bundled mirror; `npx @sabaiway/agent-workflow-kit@latest init` installs the engine.
 disable-model-invocation: true
 metadata:
-  version: '1.1.0'
+  version: '1.2.0'
 ---
 
 # agent-workflow-engine
@@ -26,6 +26,14 @@ slot fill is needed but the engine is absent, the kit's reconcile **fails loudly
   composition root injects into a deployed project's `AGENTS.md`, between the
   `<!-- workflow:methodology:start -->` / `<!-- workflow:methodology:end -->` markers. A short
   summary + pointer, not the full reference, so the entry point stays under its line cap.
+- [`references/orchestration.md`](references/orchestration.md) — the canonical **orchestration-recipe**
+  reference: the four recipes (Solo / Reviewed / Council / Delegated) defined over the bridges' role
+  vocabulary, the when/why decision guidance, the graceful-degradation lattice, and the quota/health
+  guard. The kit owns the executable dispatch and surfaces it as `/agent-workflow-kit recipes`.
+- [`references/orchestration-slot.md`](references/orchestration-slot.md) — the **bounded** one-line
+  orchestration fragment the composition root injects into a deployed `AGENTS.md`, between the
+  `<!-- workflow:orchestration:start -->` / `<!-- workflow:orchestration:end -->` markers. It names the
+  four recipes and routes to `/agent-workflow-kit recipes`, never to this engine-internal reference.
 
 ## Ownership rule (the engine knows nobody)
 
