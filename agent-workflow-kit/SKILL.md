@@ -3,7 +3,7 @@ name: agent-workflow-kit
 description: Deploy or upgrade a portable AI-agent memory-and-workflow system in any project. Use when the user wants to bootstrap `docs/ai/` + an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) + cap/archive/index enforcement in a new or existing repo, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-kit` / `/agent-workflow-kit upgrade`. Triggers on phrases like "set up the memory system", "deploy the AI workflow here", "bootstrap docs/ai", "upgrade the workflow".
 disable-model-invocation: true
 metadata:
-  version: '1.11.0'
+  version: '1.12.0'
 ---
 
 # agent-workflow-kit
@@ -96,6 +96,8 @@ Pick the mode from the user's invocation. Auto-detect an existing `docs/ai/` to 
 - **`/agent-workflow-kit upgrade`** — upgrade an existing deployment to the skill's current `version`.
 - **`/agent-workflow-kit backends`** — read-only environment check: which optional **execution-backends** (the `codex` / `agy` bridges) are set up vs missing. Never writes, never commits, never runs a subscription CLI.
 - **`/agent-workflow-kit setup [backend]`** — the **link-only**, opt-in companion to `backends`: place the bundled bridge skill + link its wrappers onto `PATH`. **In-agent only** — `init` (npx) never places bridges. The binary install + the interactive subscription login stay **manual** (it prints the exact commands); idempotent; refuses to clobber a non-symlink; never commits, never runs a subscription CLI.
+- **`/agent-workflow-kit status`** — read-only view of the **whole family**: which members (kit / memory / engine / the two bridges) are installed, at what version, and — in a project — what is deployed (`docs/ai`, the version stamps, the hidden-mode fence). Never writes, never commits, never runs a subscription CLI.
+- **`/agent-workflow-kit uninstall`** — the **guarded teardown** companion to `init`/`setup`. Removes what they placed — installed skill dirs + the bridge wrappers — and, in a project, reverses the hidden-mode fence + the marker pre-commit hook. **Never deletes user-authored content** (`docs/ai`, `AGENTS.md`, `.claude/settings.json`): it prints the exact commands for you to run by hand. `--dry-run` first, always; preflight-then-mutate; never commits.
 
 ### Version status & the two axes — surface this on every invocation
 
@@ -235,6 +237,36 @@ For each backend it:
 
 **Exit codes:** `0` = done / already set up / only manual steps remain (guidance is never a failure); **non-zero** = a STOP (a dir/symlink it refuses to clobber), a bad argument, a missing bundle, or a native fs error (the underlying reason is preserved in the message).
 
+### Mode: status
+
+Read-only. Answers *"which family members are installed (and at what version), and what is deployed in this project?"* across the **whole family** — the unified registry behind it (`tools/family-registry.mjs`) aggregates every member's `capability.json`. It **never writes, never commits, and never runs a subscription CLI**.
+
+Run `node ${CLAUDE_SKILL_DIR}/tools/family-registry.mjs [--dir <project>]` and present its two-axis table:
+
+1. **Skill axis (always):** per member — `installed` + the manifest health (`ok` / `not-installed` / `foreign` / `stub` / `invalid-manifest` / `unsupported-schema`, the same precedence the backend detector uses) + the installed version (read from the member's own `SKILL.md`, the authoritative source).
+2. **Deploy axis (`--dir <project>`):** the deployment stamps (`docs/ai/.workflow-version`, `.memory-version`), whether `docs/ai/` exists, and whether the hidden-mode managed fence is present.
+
+State plainly that the two version axes stay decoupled (an installed *skill* version is not a project's deployment-lineage stamp — see *Version status & the two axes*). The installed version reflects whatever is on disk under `~/.claude/skills/…`; a stale install shows its real (older) version, honestly.
+
+### Mode: uninstall
+
+The **guarded teardown** — the inverse of `init` (the kit + engine skills) + `setup` (the bridges) + a hidden deploy. **In-agent, opt-in**, and built around one hard rule: **it never deletes user-authored content.** Run **`--dry-run` first, always**, show the user the classified plan in plain language, get explicit consent, then re-run with `--yes`. It **never commits**.
+
+Run `node ${CLAUDE_SKILL_DIR}/tools/uninstall.mjs [<member>] [--dir <project>] [--bindir <path>] [--dry-run | --yes]`:
+
+- `<member>` — limit the skill axis to one member (`agent-workflow-kit` / `-memory` / `-engine` / a bridge); omit for the **whole family**.
+- `--dir <project>` — also reverse the **project-deployment** surfaces in `<project>`.
+- `--bindir <path>` — where the bridge wrappers were linked (default `~/.local/bin`, mirrors `setup`).
+- `--dry-run` — print the plan and change **nothing** (run this first). `--yes` — apply the **auto-removable** set.
+
+It classifies every surface into four classes and acts accordingly:
+
+- **remove** (safe) — an installed skill dir that is **provably ours** (valid manifest, `name`+`kind` match). A dir present but **not provably ours** (`foreign`/`stub`/`invalid`/unreadable) → **STOP**: left untouched **and reported**, while the teardown still removes the members that ARE ours (a not-ours surface is never clobbered, and never blocks removing the rest — the per-item `setup` posture). **Preflight-then-mutate:** if a mutable surface **changed since the dry-run** (a skill no longer ours, a wrapper turned foreign, a hook that lost our marker, a malformed fence), the run **aborts with zero changes**.
+- **reverse** (managed-marker) — a bridge **wrapper symlink that points at our source** (a foreign/non-symlink one → STOP); the hidden-mode **managed fence** (via the existing `--unhide` path — only the fenced lines); a **pre-commit hook carrying our marker** (an unmarked / user hook → left + reported).
+- **KEEP — never deleted** (report-only) — `docs/ai`, `AGENTS.md`, `CLAUDE.md`, `docs/plans`, and the `.claude/settings.json` `includeCoAuthoredBy` edit. The tool **prints the exact `rm` / `git rm --cached` commands**; the **user** runs them. Surface this in plain language; never delete on their behalf.
+
+**Shared globals:** removing `agent-workflow-memory` / `agent-workflow-engine` / a bridge removes a **global** skill that another project on the machine may use — say so before applying. **Windows:** the wrappers are POSIX; the skill-dir + project arms still work, the wrapper arm reports *use WSL*.
+
 ---
 
 ## Gotchas
@@ -251,6 +283,7 @@ The non-obvious traps — scan these before bootstrapping or upgrading. Each is 
 - **Conversational language never translates artifacts.** It governs *dialogue only*. Code, identifiers, paths, commands, log output, abbreviations, and every deployed `docs/ai/` / `AGENTS.md` file stay in their source language. See [Communication contract](references/contracts.md#communication-contract).
 - **Never auto-commit.** Report quality-gate results and wait for explicit approval — in both modes.
 - **Never leak kit internals to the user.** No ADR ids, tool / function / operation names (`reconcile`, `inject`, `ensureSlot`), marker / slot / fragment / anchor terminology, or verbatim tool stderr in anything the user reads. Translate every tool outcome into plain language a third-party user — who has never read this `SKILL.md` — can understand and act on (e.g. the cap-refusal report in *Mode: upgrade* step 3).
+- **Uninstall never deletes user-authored content, and dry-runs first.** `/agent-workflow-kit uninstall` removes only what is **provably ours** (a managed skill dir / wrapper symlink / fenced block / marker hook) and **prints — never runs** the `rm` / `git rm --cached` for `docs/ai`, the entry-point docs, and `.claude/settings.json`. Always run `--dry-run` first, show the plan, get consent, then `--yes`. A skill dir or symlink that is not provably ours is a STOP, never a clobber (the `setup` posture, inverted). Removing a shared global (memory/engine/a bridge) may affect another project — say so.
 
 ---
 
@@ -306,6 +339,6 @@ Deploy these into `AGENTS.md`; remove rows that don't apply to the stack.
 - [`references/scripts/`](references/scripts/) — the Node enforcement scripts (caps + staleness + index-freshness gate, 3-tier archive, hook installer) and their unit tests.
 - [`migrations/`](migrations/) — per-version upgrade steps; see `migrations/README.md`.
 - [`launchers/`](launchers/) — run the bootstrapper from non-Claude agents (`SKILL.md` is a native Codex skill; a Devin Desktop workflow launcher + install script). See `launchers/README.md`.
-- [`tools/`](tools/) — the family-wide tooling the kit **owns and ships**: `manifest/{schema.md,validate.mjs}` (the `capability.json` schema + the validator the kit runs as the memory detector, and root CI invokes), `delegation.mjs` (the executable delegate/fallback decision + hand-off plan), `inject-methodology.mjs` + `engine-source.mjs` (the bounded slot reconciliation — ensure-slot / inject-if-empty / cap; the fragment is read **live** from the installed `agent-workflow-engine` via `engine-source.mjs` — the family's one source of truth, no bundled mirror; fail-loud when the engine is needed but absent), `detect-backends.mjs` (the read-only **backend detector** behind `/agent-workflow-kit backends`, plus the axis-aware `guideFor`), `setup-backends.mjs` (the **link-only** backend setup behind `/agent-workflow-kit setup` — place the bundled bridge + link wrappers), `fs-safe.mjs` (the shared symlink-traversal-safe copy/link primitives both `setup-backends` and the npx installer use), `known-footprint.mjs` + `hide-footprint.mjs` (the **hidden-mode** registry + the single hide-writer behind step 9 / the upgrade reconcile — one managed block in the **project-local** `.git/info/exclude` covering the full AI/agent footprint; pinned by `known-footprint.test.mjs` drift-guard + `hide-footprint.test.mjs` / `.integration.test.mjs`), and `release-scan.mjs` (the attribution-off release gate). The bundled bridge skill mirrors live under [`bridges/`](bridges/) (byte-identical to the repo-root bridges, pinned by `test/bridges-mirror.test.mjs`). See [`tools/manifest/schema.md`](tools/manifest/schema.md).
+- [`tools/`](tools/) — the family-wide tooling the kit **owns and ships**: `manifest/{schema.md,validate.mjs}` (the `capability.json` schema + the validator the kit runs as the memory detector, and root CI invokes), `delegation.mjs` (the executable delegate/fallback decision + hand-off plan), `inject-methodology.mjs` + `engine-source.mjs` (the bounded slot reconciliation — ensure-slot / inject-if-empty / cap; the fragment is read **live** from the installed `agent-workflow-engine` via `engine-source.mjs` — the family's one source of truth, no bundled mirror; fail-loud when the engine is needed but absent), `detect-backends.mjs` (the read-only **backend detector** behind `/agent-workflow-kit backends`, plus the axis-aware `guideFor`), `setup-backends.mjs` (the **link-only** backend setup behind `/agent-workflow-kit setup` — place the bundled bridge + link wrappers), `fs-safe.mjs` (the shared symlink-traversal-safe copy/link/**remove/unlink** primitives that `setup-backends`, the npx installer, and the uninstaller use), `known-footprint.mjs` + `hide-footprint.mjs` (the **hidden-mode** registry + the single hide-writer behind step 9 / the upgrade reconcile — one managed block in the **project-local** `.git/info/exclude` covering the full AI/agent footprint; pinned by `known-footprint.test.mjs` drift-guard + `hide-footprint.test.mjs` / `.integration.test.mjs`), `family-registry.mjs` (the **unified family registry** behind `/agent-workflow-kit status` — aggregates every member's `capability.json`; pinned by a `family-registry.test.mjs` drift-guard), `uninstall.mjs` (the **guarded teardown** behind `/agent-workflow-kit uninstall` — classify each surface, preflight-then-mutate, never delete user-authored content), and `release-scan.mjs` (the attribution-off release gate). The bundled bridge skill mirrors live under [`bridges/`](bridges/) (byte-identical to the repo-root bridges, pinned by `test/bridges-mirror.test.mjs`). See [`tools/manifest/schema.md`](tools/manifest/schema.md).
 - [`capability.json`](capability.json) — the kit's own `agent-workflow` family manifest (`kind: composition-root`).
 - [`CHANGELOG.md`](CHANGELOG.md) — version history of this kernel.

@@ -9,6 +9,8 @@ import {
   assertContainedRealPath,
   copyTreeRefresh,
   linkManaged,
+  removeTreeManaged,
+  unlinkManaged,
   MANAGED_LINK_CONFLICT,
 } from './fs-safe.mjs';
 
@@ -202,5 +204,143 @@ describe('linkManaged', () => {
     const root = join(dir, 'bin');
     mkdirSync(root);
     assert.throws(() => linkManaged(srcDir, join(root, 'cmd'), root), /regular file/i);
+  });
+});
+
+// ── removeTreeManaged ───────────────────────────────────────────────────────────
+
+describe('removeTreeManaged', () => {
+  it('recursively removes a managed dir tree', () => {
+    const root = join(dir, 'skills');
+    const skill = join(root, 'agent-workflow-kit');
+    mkdirSync(join(skill, 'tools'), { recursive: true });
+    writeFileSync(join(skill, 'SKILL.md'), 'x');
+    writeFileSync(join(skill, 'tools', 'a.mjs'), 'y');
+    const result = removeTreeManaged(skill, root);
+    assert.equal(result, 'removed');
+    assert.equal(existsSync(skill), false);
+    assert.equal(existsSync(root), true); // only the target went, not the parent
+  });
+
+  it('is a no-op when the target is already absent', () => {
+    const root = join(dir, 'skills');
+    mkdirSync(root);
+    assert.equal(removeTreeManaged(join(root, 'gone'), root), 'noop');
+  });
+
+  it('STOPs on a symlinked target (never follows + deletes through it)', () => {
+    const root = join(dir, 'skills');
+    const real = join(dir, 'real-skill');
+    mkdirSync(root);
+    mkdirSync(real);
+    writeFileSync(join(real, 'keep.txt'), 'keep');
+    symlinkSync(real, join(root, 'agent-workflow-kit')); // the skill dir is a symlink
+    assert.throws(() => removeTreeManaged(join(root, 'agent-workflow-kit'), root), /symlink/i);
+    assert.equal(existsSync(join(real, 'keep.txt')), true); // the target it pointed at is untouched
+  });
+
+  it('removes a symlink ENTRY inside the tree without touching what it points at', () => {
+    const root = join(dir, 'skills');
+    const skill = join(root, 'agent-workflow-kit');
+    const outside = join(dir, 'outside');
+    mkdirSync(skill, { recursive: true });
+    mkdirSync(outside);
+    writeFileSync(join(outside, 'precious.txt'), 'precious');
+    symlinkSync(outside, join(skill, 'link-to-outside')); // an internal symlink
+    removeTreeManaged(skill, root);
+    assert.equal(existsSync(skill), false);
+    assert.equal(existsSync(join(outside, 'precious.txt')), true); // never recursed through the link
+  });
+
+  it('refuses a target outside the root', () => {
+    const root = join(dir, 'skills');
+    mkdirSync(root);
+    assert.throws(() => removeTreeManaged(join(dir, 'elsewhere'), root), /outside/);
+  });
+
+  it('rm is injectable (no real deletion when injected)', () => {
+    const root = join(dir, 'skills');
+    const skill = join(root, 'agent-workflow-kit');
+    mkdirSync(skill, { recursive: true });
+    let removed = null;
+    const result = removeTreeManaged(skill, root, { rm: (p) => { removed = p; } });
+    assert.equal(result, 'removed');
+    assert.equal(removed, skill);
+    assert.equal(existsSync(skill), true); // the injected rm did nothing
+  });
+});
+
+// ── unlinkManaged ───────────────────────────────────────────────────────────────
+
+describe('unlinkManaged', () => {
+  const makeSrc = () => {
+    const src = join(dir, 'src.sh');
+    writeFileSync(src, '#!/bin/sh\n');
+    return src;
+  };
+
+  it('unlinks a symlink that points at our source', () => {
+    const src = makeSrc();
+    const root = join(dir, 'bin');
+    mkdirSync(root);
+    const dest = join(root, 'cmd');
+    symlinkSync(src, dest);
+    const result = unlinkManaged(dest, src, root);
+    assert.equal(result, 'unlinked');
+    assert.equal(existsSync(dest), false);
+    assert.equal(existsSync(src), true); // the source it pointed at is untouched
+  });
+
+  it('is a no-op when the dest is absent', () => {
+    const src = makeSrc();
+    const root = join(dir, 'bin');
+    mkdirSync(root);
+    assert.equal(unlinkManaged(join(root, 'cmd'), src, root), 'noop');
+  });
+
+  it('STOPs on a non-symlink dest (typed ManagedLinkConflict)', () => {
+    const src = makeSrc();
+    const root = join(dir, 'bin');
+    mkdirSync(root);
+    const dest = join(root, 'cmd');
+    writeFileSync(dest, 'someone-elses-file');
+    assert.throws(() => unlinkManaged(dest, src, root), (err) => err.code === MANAGED_LINK_CONFLICT);
+    assert.equal(readFileSync(dest, 'utf8'), 'someone-elses-file'); // untouched
+  });
+
+  it('STOPs on a foreign symlink (points elsewhere)', () => {
+    const src = makeSrc();
+    const root = join(dir, 'bin');
+    mkdirSync(root);
+    const dest = join(root, 'cmd');
+    const foreign = join(dir, 'foreign.sh');
+    writeFileSync(foreign, '#!/bin/sh\n');
+    symlinkSync(foreign, dest);
+    assert.throws(() => unlinkManaged(dest, src, root), (err) => err.code === MANAGED_LINK_CONFLICT);
+    assert.equal(readlinkSync(dest), foreign); // untouched
+  });
+
+  it('removes a dangling symlink that still textually points at our source', () => {
+    const src = join(dir, 'src.sh'); // never created → the link is dangling
+    const root = join(dir, 'bin');
+    mkdirSync(root);
+    const dest = join(root, 'cmd');
+    symlinkSync(src, dest);
+    assert.equal(unlinkManaged(dest, src, root), 'unlinked');
+    assert.equal(lstatSync(root).isDirectory(), true);
+    assert.equal(existsSync(dest), false);
+  });
+
+  it('unlink is injectable', () => {
+    const src = makeSrc();
+    const root = join(dir, 'bin');
+    mkdirSync(root);
+    const dest = join(root, 'cmd');
+    symlinkSync(src, dest);
+    let unlinked = null;
+    const result = unlinkManaged(dest, src, root, { unlink: (p) => { unlinked = p; } });
+    assert.equal(result, 'unlinked');
+    assert.equal(unlinked, dest);
+    assert.equal(existsSync(dest), true); // the injected unlink did nothing
   });
 });
