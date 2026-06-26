@@ -4,7 +4,39 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
-## 1.11.0 — One source of truth: the kit reads the methodology live from the installed engine
+## 1.12.0 — See the whole family, and uninstall it cleanly
+
+Two new in-agent modes, built on a single **unified family registry**. `/agent-workflow-kit status`
+shows — read-only — which family members (kit / memory / engine / the two bridges) are installed, at
+what version, and (in a project) what is deployed (`docs/ai`, the version stamps, the hidden-mode
+fence). `/agent-workflow-kit uninstall` is the **guarded teardown**: it reverses what `init` and
+`setup` placed — installed skill dirs + bridge wrappers, and in a project the hidden-mode fence + the
+marker pre-commit hook — but it **never deletes user-authored content** (`docs/ai`, `AGENTS.md`, your
+`.claude/settings.json`); for those it prints the exact commands and lets you run them. It removes only
+what is **provably ours** (a valid manifest, name + kind match; a wrapper symlink that points at our
+source) — anything else is left untouched — and it **previews with `--dry-run` and preflights before
+it touches anything**, so a conflict makes zero changes. The deployment-lineage head stays **`1.3.0`**
+(no `docs/ai` structural change; no migration file). See **AD-017**.
+
+### Added
+- `tools/family-registry.mjs` — the unified, kit-owned registry over every family member (the
+  `KNOWN_BACKENDS` precedent, generalized to all five). Resolves each member's `detect.installed`,
+  manifest health, and installed version; powers `/agent-workflow-kit status`. A drift-guard test pins
+  it to the five in-repo `capability.json` files.
+- `tools/uninstall.mjs` — the guarded uninstaller behind `/agent-workflow-kit uninstall`: a pure
+  classifier (`buildPlan`) + a preflight-then-mutate executor (`executePlan`). Four surface classes —
+  safe-remove (provably-ours skill dirs), managed-marker (wrapper symlinks / the hidden-mode fence /
+  the marker hook), report-only (never-deleted user content), and stop (present-but-not-ours).
+- `tools/fs-safe.mjs` gains `removeTreeManaged` + `unlinkManaged` — the symlink-safe inverses of
+  `copyTreeRefresh` / `linkManaged` (refuse to delete through a symlink or outside the root; remove
+  only a symlink whose target is ours).
+
+### Changed
+- `tools/manifest/validate.mjs` exports `readAuthoritativeVersion` so the registry reports an installed
+  member's version from the same authoritative source the validator checks.
+- The kit's own `capability.json` now declares `uninstall.removeResolved` (uniform with memory +
+  engine); the guarded uninstaller's behavior matches it — it removes exactly the resolved
+  `detect.installed` dir, so the long-declared teardown is now realized, not just documented.
 
 The bounded methodology fragment the kit writes into a project's `AGENTS.md` is now read **live from
 the installed `@sabaiway/agent-workflow-engine`** — the family's single source of truth. The kit's old

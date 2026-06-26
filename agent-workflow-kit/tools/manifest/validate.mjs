@@ -77,7 +77,9 @@ const readSkillVersion = (text) => {
 
 // Authoritative version source: package.json where one exists, else SKILL.md
 // frontmatter metadata.version. So a bridge (no package.json) can't drift from its SKILL.md.
-const readAuthoritativeVersion = (skillDir) => {
+// Exported so the family registry (tools/family-registry.mjs) reports an INSTALLED member's
+// version from the SAME authoritative source the validator checks — no second, drifting reader.
+export const readAuthoritativeVersion = (skillDir) => {
   const pkgPath = join(skillDir, 'package.json');
   if (existsSync(pkgPath)) {
     try {

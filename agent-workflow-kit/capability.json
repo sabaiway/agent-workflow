@@ -3,7 +3,7 @@
   "schema": 1,
   "name": "agent-workflow-kit",
   "kind": "composition-root",
-  "version": "1.11.0",
+  "version": "1.12.0",
   "provides": [],
   "roles": {},
   "detect": {
@@ -15,6 +15,10 @@
     "deployed": { "file": "docs/ai/.workflow-version" }
   },
   "install": { "npm": "@sabaiway/agent-workflow-kit" },
+  "uninstall": {
+    "removeResolved": "detect.installed",
+    "note": "the guarded `/agent-workflow-kit uninstall` removes the resolved detect.installed dir — never user-authored docs/ai (those are reported, not deleted)"
+  },
   "cost": "none",
   "quota": null,
   "provenance": { "author": "sabaiway", "source": "github:sabaiway/agent-workflow" }

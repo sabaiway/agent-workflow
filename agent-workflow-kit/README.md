@@ -220,6 +220,8 @@ command is printed).
 | `/agent-workflow-kit upgrade` | existing deployment | reads `docs/ai/.workflow-version`, shows the changelog diff, preserves your authored memory, applies migrations, re-stamps — then prints a **read-only** one-line backend-status line (what's set up vs missing); never installs a bridge — set one up with `/agent-workflow-kit setup` |
 | `/agent-workflow-kit backends` | any time | **read-only** check of the optional execution-backends (the `codex` / `agy` bridges): what's set up vs missing and the next step. Never writes, never commits, never runs a subscription CLI (credentials = marker-file presence, not a live login). |
 | `/agent-workflow-kit setup [backend]` | opt-in, any time | **link-only** auto-setup of a bridge: places the bundled bridge skill (only into an absent / empty / managed dir — never overwrites an unmanaged one) + links its wrappers onto `PATH` via managed symlinks (idempotent; refuses to clobber a non-symlink; try `--dry-run` to preview). The binary install + the one-time subscription login stay **manual**: it prints the exact **login** command and points the binary install at each bridge's `setup/README.md`. POSIX wrappers — on Windows use WSL. Never commits, never runs a subscription CLI. |
+| `/agent-workflow-kit status` | any time | **read-only** view of the whole family: which members (kit / memory / engine / the two bridges) are installed and at what version, and — with a project — what's deployed (`docs/ai`, the version stamps, and whether the AI files are git-ignored for hidden mode). Never writes, never commits, never runs a subscription CLI. |
+| `/agent-workflow-kit uninstall` | opt-in, any time | **guarded teardown** — the inverse of `init` / `setup`. Removes only what's **provably ours** (managed skill dirs + bridge wrappers; in a project, the hidden-mode git-ignore block it added + the pre-commit hook it installed); **never deletes** your `docs/ai` / `AGENTS.md` / settings — for those it prints the exact `rm` commands to run by hand. Always `--dry-run` first; preflight-then-mutate; never commits. |
 
 It **never auto-commits** and **never overwrites** an existing `AGENTS.md` without asking.
 
@@ -306,7 +308,9 @@ agent-workflow-kit/
 │   ├── engine-source.mjs     ← live engine fragment read (fail-loud)
 │   ├── detect-backends.mjs    ← read-only backend detector
 │   ├── setup-backends.mjs     ← link-only backend setup
-│   ├── fs-safe.mjs            ← symlink-safe copy/link
+│   ├── fs-safe.mjs            ← symlink-safe copy/link/remove/unlink
+│   ├── family-registry.mjs    ← unified family registry (status)
+│   ├── uninstall.mjs          ← guarded teardown (uninstall)
 │   └── release-scan.mjs       ← attribution / release gate
 ├── bridges/         ← bundled bridge skill mirrors (codex / antigravity)
 ├── launchers/       ← Codex / Devin Desktop / Cursor entries

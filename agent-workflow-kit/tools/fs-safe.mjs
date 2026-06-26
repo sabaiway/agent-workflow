@@ -4,15 +4,20 @@
 // unit-testable without touching the real filesystem; the defaults are Node's SYNC fs (matching the
 // tools/ detector style). Dependency-free, Node >= 18.
 //
-// Three primitives:
+// Five primitives:
 //   assertContainedRealPath — refuse to write through/into a symlink, or to a dest outside a root.
 //   copyTreeRefresh         — recursive copy that OVERWRITES regular files (refresh), SKIPS a symlink
 //                             whose dest already exists (additive), and guards every dest component.
 //   linkManaged             — create/keep ONLY a symlink we own; STOP (typed ManagedLinkConflict) on
 //                             a foreign symlink or a non-symlink dest; refuse a symlinked source.
+//   removeTreeManaged       — the inverse of copyTreeRefresh: recursively remove a dir/file ONLY when
+//                             it (and its path) is not reached through a symlink and stays within root.
+//   unlinkManaged           — the inverse of linkManaged: remove ONLY a symlink whose target is ours;
+//                             STOP (typed ManagedLinkConflict) on a foreign symlink or a non-symlink.
 
 import {
   lstatSync, existsSync, mkdirSync, readdirSync, copyFileSync, readlinkSync, symlinkSync,
+  rmSync, unlinkSync,
 } from 'node:fs';
 import { dirname, join, resolve, relative, sep, isAbsolute } from 'node:path';
 
@@ -129,4 +134,48 @@ export const linkManaged = (src, dest, root, deps = {}) => {
     `refusing to replace a foreign symlink at ${dest} (points at ${target}, not our ${src})`,
     { dest, expected: src, found: target },
   );
+};
+
+// Recursively remove a managed dir/file — the inverse of copyTreeRefresh. `assertContainedRealPath`
+// guards `target` first: it refuses a `target` outside `root`, and refuses when `root`, any
+// intermediate component, OR `target` itself is a symlink — so we never delete *through* or *at* a
+// symlink (a symlinked skill dir is a STOP, not a follow-and-delete). A recursive `rm` does NOT
+// follow symlinks *inside* the tree (Node unlinks a symlink entry rather than recursing into its
+// target), so an internal symlink is removed safely without touching what it points at. Outcomes:
+// 'removed', or 'noop' when the target is already absent. Dependency-injected (lstat / rm).
+export const removeTreeManaged = (target, root, deps = {}) => {
+  const lstat = deps.lstat ?? lstatSync;
+  const rm = deps.rm ?? ((p) => rmSync(p, { recursive: true, force: true }));
+  assertContainedRealPath(root, target, deps);
+  if (lstatNoFollow(target, lstat) === null) return 'noop';
+  rm(target);
+  return 'removed';
+};
+
+// Remove ONLY a symlink we own — the inverse of linkManaged. Guards the PARENT chain (root +
+// intermediate dirs) the same way linkManaged does (the leaf IS the managed symlink, so it is
+// inspected, not traversal-rejected). Outcomes: 'unlinked' (a symlink whose resolved target is our
+// `expectedSrc` — including a dangling-but-ours link), 'noop' (dest absent), or a thrown
+// ManagedLinkConflict (a non-symlink, or a symlink pointing elsewhere — never removed).
+export const unlinkManaged = (dest, expectedSrc, root, deps = {}) => {
+  const lstat = deps.lstat ?? lstatSync;
+  const readlink = deps.readlink ?? readlinkSync;
+  const unlink = deps.unlink ?? unlinkSync;
+
+  assertContainedRealPath(root, dirname(dest), deps);
+  const existing = lstatNoFollow(dest, lstat);
+  if (existing === null) return 'noop';
+  if (!existing.isSymbolicLink()) {
+    throw managedLinkConflict(`refusing to remove a non-symlink at ${dest}`, { dest, found: 'file' });
+  }
+  const target = readlink(dest);
+  const resolvedTarget = isAbsolute(target) ? target : resolve(dirname(dest), target);
+  if (resolvedTarget !== resolve(expectedSrc)) {
+    throw managedLinkConflict(
+      `refusing to remove a foreign symlink at ${dest} (points at ${target}, not our ${expectedSrc})`,
+      { dest, expected: expectedSrc, found: target },
+    );
+  }
+  unlink(dest);
+  return 'unlinked';
 };
