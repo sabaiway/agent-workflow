@@ -38,12 +38,13 @@ const STUB = 'stub';
 const FOREIGN = 'foreign';
 const OK = 'ok';
 
-// readiness values.
-const READY = 'ready';
-const NEEDS_SKILL = 'needs-skill';
-const NEEDS_CLI = 'needs-cli';
-const NEEDS_CREDENTIALS = 'needs-credentials';
-const DEGRADED = 'degraded';
+// readiness values. Exported so the recipe planner (tools/recipes.mjs) maps backend availability off
+// the SAME consts the detector emits — no magic readiness literals duplicated across the two modules.
+export const READY = 'ready';
+export const NEEDS_SKILL = 'needs-skill';
+export const NEEDS_CLI = 'needs-cli';
+export const NEEDS_CREDENTIALS = 'needs-credentials';
+export const DEGRADED = 'degraded';
 
 const EXPECTED_KIND = 'execution-backend';
 

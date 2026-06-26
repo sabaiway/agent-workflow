@@ -3,7 +3,7 @@ name: agent-workflow-kit
 description: Deploy or upgrade a portable AI-agent memory-and-workflow system in any project. Use when the user wants to bootstrap `docs/ai/` + an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) + cap/archive/index enforcement in a new or existing repo, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-kit` / `/agent-workflow-kit upgrade`. Triggers on phrases like "set up the memory system", "deploy the AI workflow here", "bootstrap docs/ai", "upgrade the workflow".
 disable-model-invocation: true
 metadata:
-  version: '1.12.0'
+  version: '1.13.0'
 ---
 
 # agent-workflow-kit
@@ -52,34 +52,40 @@ made: a partial/broken memory install discovered mid-flow must not disable the w
 **Hand-off contract (explicit; tested independent of agent interpretation).**
 - **Delegated** (memory valid): the kit passes the **target project dir** + the **three setup
   answers** (visibility / language / attribution) to `agent-workflow-memory`, which writes
-  `docs/ai/` + `AGENTS.md` (with the empty slot) + **`.memory-version`**. The kit then
-  **reconciles the bounded methodology slot** (below) and writes the kit-fallback
-  **`.workflow-version`**. → **both stamps** present. In **hidden** mode the kit is the **single
+  `docs/ai/` + `AGENTS.md` (carrying the **two empty pointer pairs** — `workflow:methodology` and
+  `workflow:orchestration`) + **`.memory-version`**. The kit then **reconciles both bounded pointers**
+  (below) and writes the kit-fallback **`.workflow-version`**. → **both stamps** present. In **hidden** mode the kit is the **single
   hide authority**: after the hand-off it runs `tools/hide-footprint.mjs` (step 9), which **absorbs
   memory's project-local footprint lines** into the one canonical `.git/info/exclude` block and adds
   the external footprint — so there is **no machine-global write** at any step (a stale memory's
   residual global block is cleaned via the upgrade reconcile, below).
 - **Fallback** (memory absent/invalid): the kit runs the bootstrap procedure below from its own
-  bundled assets — whose entry-point template now ships the **empty methodology slot** the kit
-  reconciles + fills — and writes **`.workflow-version`** only. Softly suggest installing
-  `agent-workflow-memory` — never a prerequisite.
+  bundled assets — whose entry-point template now ships **two empty pointer pairs** (`workflow:methodology`
+  + `workflow:orchestration`) the kit reconciles + fills — and writes **`.workflow-version`** only.
+  Softly suggest installing `agent-workflow-memory` — never a prerequisite.
 
-**Methodology slot reconciliation (the kit is the ONLY writer of memory's slot).** After
-`AGENTS.md` exists, reconcile its `workflow:methodology` slot:
-`node ${CLAUDE_SKILL_DIR}/tools/inject-methodology.mjs reconcile <project>/AGENTS.md`. Reconcile is
-**one atomic operation**: **ensure the slot exists** (insert an empty marker pair right after the
-Session-Protocols anchor when a legacy entry point lacks one) → **inject the bounded fragment ONLY
-IF the slot is empty** (a filled / user-customized slot is preserved verbatim) → **cap-check**
-(keeps `AGENTS.md` ≤100 lines). The fragment is a short summary + pointer read **live from the
-installed `agent-workflow-engine`** (`references/methodology-slot.md`, the family's one source of
-truth) — **not** a bundled mirror, and **not** the full `references/planning.md`. The live read is
-**lazy + fail-loud**: the engine is consulted **only when the slot actually needs filling**, so a
-deployment whose slot is already filled reconciles to a zero-diff no-op even on a host without the
-engine; but when a fill **is** needed and the engine is **absent/invalid**, reconcile **STOPs** —
-report it in plain language with the one-line install command `npx @sabaiway/agent-workflow-engine@latest init`
-(`npx @sabaiway/agent-workflow-kit@latest init` installs the engine for you; translate, never leak tool internals). Contract:
-exactly one ordered `start → end` pair; a malformed slot (single, reversed, nested, duplicate) or a
-missing / duplicate anchor → **STOP with an error**, never edit (the file is left byte-for-byte unchanged).
+**Bounded pointer reconciliation (the kit is the ONLY writer of these slots).** After `AGENTS.md`
+exists, run ONE command — `node ${CLAUDE_SKILL_DIR}/tools/inject-methodology.mjs reconcile
+<project>/AGENTS.md` — which reconciles **two** bounded pointers in a single atomic write: the
+**workflow-methodology** pointer (the plan → execute → review summary) **and**, right below it, the
+**orchestration-recipes** pointer (the Solo / Reviewed / Council / Delegated vocabulary, routing to
+`/agent-workflow-kit recipes`). Each is **one atomic operation per slot**: **ensure the slot exists**
+(insert an empty marker pair at its anchor when a legacy entry point lacks one) → **inject the bounded
+fragment ONLY IF the slot is empty** (a filled / user-customized slot is preserved verbatim) →
+**cap-check** (the second pointer's check runs on the file *after* the first, so it guards the
+**combined** ≤100-line budget). Both fragments are short summary + pointer, read **live from the
+installed `agent-workflow-engine`** (`references/methodology-slot.md` + `references/orchestration-slot.md`,
+the family's one source of truth) — **not** a bundled mirror, and **not** the full references. The
+live read is **lazy + fail-loud**: the engine is consulted **only when a slot actually needs filling**,
+so a deployment whose pointers are already filled reconciles to a zero-diff no-op even on a host
+without the engine; but when a fill **is** needed and the engine is **absent/invalid**, reconcile
+**STOPs** — report it in plain language with the one-line install command
+`npx @sabaiway/agent-workflow-engine@latest init` (`npx @sabaiway/agent-workflow-kit@latest init`
+installs the engine for you; translate, never leak tool internals). Contract per slot: exactly one
+ordered `start → end` pair; a malformed slot (single, reversed, nested, duplicate) or a missing /
+duplicate anchor → **STOP with an error**, never edit (the file is left byte-for-byte unchanged). The
+**orchestration pointer is soft-skipped** (reported, never silent) when — and only when — adding it
+would exceed the 100-line cap: the methodology pointer still lands and the upgrade continues.
 
 **One composition-level commit gate.** The delegated memory mode performs **no** commit and
 raises **no** "ask to commit". There is exactly **one** gate, owned by the kit, **after**
@@ -97,6 +103,7 @@ Pick the mode from the user's invocation. Auto-detect an existing `docs/ai/` to 
 - **`/agent-workflow-kit backends`** — read-only environment check: which optional **execution-backends** (the `codex` / `agy` bridges) are set up vs missing. Never writes, never commits, never runs a subscription CLI.
 - **`/agent-workflow-kit setup [backend]`** — the **link-only**, opt-in companion to `backends`: place the bundled bridge skill + link its wrappers onto `PATH`. **In-agent only** — `init` (npx) never places bridges. The binary install + the interactive subscription login stay **manual** (it prints the exact commands); idempotent; refuses to clobber a non-symlink; never commits, never runs a subscription CLI.
 - **`/agent-workflow-kit status`** — read-only view of the **whole family**: which members (kit / memory / engine / the two bridges) are installed, at what version, and — in a project — what is deployed (`docs/ai`, the version stamps, the hidden-mode fence). Never writes, never commits, never runs a subscription CLI.
+- **`/agent-workflow-kit recipes`** — read-only **orchestration advisor**: present the four recipes (Solo / Reviewed / Council / Delegated) over the bridges' role vocabulary, plan + recommend one for the current environment, and offer the choice. **The orchestrator executes the chosen recipe via the bridge skills and always commits** — the kit only surfaces/selects/plans it; it never executes a recipe, never runs a subscription CLI, never commits.
 - **`/agent-workflow-kit uninstall`** — the **guarded teardown** companion to `init`/`setup`. Removes what they placed — installed skill dirs + the bridge wrappers — and, in a project, reverses the hidden-mode fence + the marker pre-commit hook. **Never deletes user-authored content** (`docs/ai`, `AGENTS.md`, `.claude/settings.json`): it prints the exact commands for you to run by hand. `--dry-run` first, always; preflight-then-mutate; never commits.
 
 ### Version status & the two axes — surface this on every invocation
@@ -120,12 +127,20 @@ Before acting, read `docs/ai/.workflow-version` (the project's stamp), state a o
 Bootstrap (step 11) and **every** successful `upgrade` exit (steps 4 + 8) print the **same**
 read-only, one-line summary of the optional execution-backends. Run the **backend detector** —
 `node ${CLAUDE_SKILL_DIR}/tools/detect-backends.mjs` — and compose one line from its per-backend
-readiness. Canonical format:
-`backends: codex ✓ ready · antigravity ✗ needs-credentials — run /agent-workflow-kit backends`
+readiness, then **append an actionable recipe recommendation** from the recipe planner
+(`node ${CLAUDE_SKILL_DIR}/tools/recipes.mjs --json` → `recommendation.clause`, P2-rich). Canonical format:
+`backends: codex ✓ ready · antigravity ✗ needs-credentials — run /agent-workflow-kit backends · recipes: Reviewed available (via codex) — see /agent-workflow-kit recipes`
 
+- The **`recipes:` clause is appended after** the `— run /agent-workflow-kit backends` pointer (never
+  replacing it) and routes to the read-only `recipes` mode (`see /agent-workflow-kit recipes`). It is
+  **never blank**: both backends ready → *"Council available, Reviewed the everyday default"*; one
+  ready → *"Reviewed available (via …)"*; **none installed → *"Solo — run /agent-workflow-kit setup to
+  add a backend"***; a backend present-but-not-ready → Solo with that backend's specific remedy.
+  (Matches `recommendRecipe`.)
 - **Invariants:** **read-only · never blocks the commit gate · never runs a subscription CLI · the
-  pointer is the in-agent `backends` mode, never a network fetch · `init`/npx is unaffected (it never
-  places bridges, AD-011 §5).**
+  pointer is the in-agent `backends` mode, never a network fetch · the appended `recipes:` clause
+  routes to the in-agent `recipes` mode the same way · `init`/npx is unaffected (it never places
+  bridges, AD-011 §5).**
 - **Detector unavailable → skip with a stated reason, never silently.** The detector is a Node script
   the **agent host** runs (not the target project), so the only skip condition is "**the agent host
   can't run it**" — `node` is not on the agent's PATH, or the detector itself errors — **not** "the
@@ -185,21 +200,21 @@ Fill strategy:
 
 1. Read `docs/ai/.workflow-version` (the project's stamped lineage). If missing, treat as a pre-versioned deployment and offer to re-bootstrap conservatively.
 2. **Never-downgrade gate — FIRST, before any write.** Compare the stamp to the **deployment-lineage head** (`1.3.0` — NOT this kit's package version). If the stamp is **greater than the head** or unparseable → **STOP and report**; do not touch a newer / unknown deployment at all (not even the methodology slot).
-3. **Reconcile the methodology slot — stamp-independent, BEFORE the equal-head short-circuit.** Reached only when the stamp **≤ head**. Run `node ${CLAUDE_SKILL_DIR}/tools/inject-methodology.mjs reconcile <project>/AGENTS.md`. This ensures the `workflow:methodology` slot exists and is filled on **every** upgrade, idempotently (zero-diff when already present + filled) — so even a legacy / current **`1.3.0`** deployment gains the slot **without a lineage-head bump** (the head stays `1.3.0`; **no `agent-workflow-memory` change**). It inserts an empty slot at the Session-Protocols anchor if absent, preserves a customized slot verbatim, and STOPs (never edits) on a malformed slot, a missing / duplicate anchor, or **when a fill is needed but the installed `agent-workflow-engine` is absent/invalid** (the fragment is read live from it — see the three distinct non-zero outcomes below).
+3. **Reconcile the bounded pointers — stamp-independent, BEFORE the equal-head short-circuit.** Reached only when the stamp **≤ head**. Run `node ${CLAUDE_SKILL_DIR}/tools/inject-methodology.mjs reconcile <project>/AGENTS.md`. ONE call reconciles **two** pointers — the **workflow-methodology** pointer and, right below it, the **orchestration-recipes** pointer (Solo / Reviewed / Council / Delegated, routing to `/agent-workflow-kit recipes`) — and is filled on **every** upgrade, idempotently (zero-diff when both are already present + filled), so even a legacy / current **`1.3.0`** deployment gains them **without a lineage-head bump or a migration** (the deployment-lineage head stays `1.3.0`; the `agent-workflow-memory` **package** template did get a docs-only headroom trim for the second pointer, but no deployed-`docs/ai` structure changed). Per slot it inserts an empty pair at its anchor if absent, preserves a customized pair verbatim, and STOPs (never edits) on a malformed pair, a missing / duplicate anchor, or **when a fill is needed but the installed `agent-workflow-engine` is absent/invalid** (both fragments are read live from it — see the distinct outcomes below).
 
-   **`reconcile` has THREE distinct non-zero exits — classify by the stderr text, handle each differently:**
+   **Classify the exit — there are THREE non-zero exits + one soft in-band skip; handle each differently:**
 
-   (a) **Cap-refusal — a soft, reported skip (CONTINUE the upgrade).** If — and ONLY if — `reconcile` exits non-zero because filling the slot would exceed the deployed `AGENTS.md` 100-line cap (the entry point is already at / over budget), leave the file byte-for-byte unchanged (the tool already did) and **continue** the upgrade without the slot. This is **not** a silent skip (Hard Constraint — no silent failures): report it explicitly in the successful-exit report (**step 4** on an equal-head deployment, else **step 8**), in plain language, e.g. *"The workflow-methodology pointer wasn't added — `AGENTS.md` is N lines, over its 100-line limit. The methodology is already documented in `docs/ai/agent_rules.md`; to add the pointer, trim the entry point (move detail into `docs/ai/`) and re-run upgrade."* N is the file's **current** line count — never the tool's number (that is the would-be post-injection size). Because the entry point is already over cap, ensure the rest of the upgrade does not push it further: any mandatory `AGENTS.md` edit must keep it ≤100 lines or pause for an explicit trim — never bust the cap to land a migration.
+   (a) **Soft, reported skip of the orchestration pointer (CONTINUE the upgrade).** The orchestration pointer is the less-critical second pointer; when it can't be added right now `reconcile` exits **zero**, keeps the methodology pointer, and **reports the skip on stdout** (the `… skipped …` line) — never silent (Hard Constraint). Two reasons: **(i)** the methodology pointer fits but adding the orchestration pointer would push the file past the `AGENTS.md` 100-line cap; or **(ii)** the installed `agent-workflow-engine` is **present but too old** to ship the recipes fragment (`<1.2.0`) — it can still supply the methodology pointer, so only the recipes pointer is withheld. Report it in the successful-exit report (**step 4** equal-head, else **step 8**) in plain language, e.g. *"The orchestration-recipes pointer wasn't added — the entry point is at its 100-line limit / your methodology engine is older than the recipes feature. The recipes are still available any time via `/agent-workflow-kit recipes`; to add the pointer, trim the entry point and/or refresh the engine with `npx @sabaiway/agent-workflow-engine@latest init`, then re-run upgrade."* (The separate case where the **methodology** pointer ITSELF can't fit the cap is a non-zero exit that changes nothing — continue without either pointer, same plain-language framing.)
 
-   (b) **Malformed slot / missing-or-duplicate anchor — a hard STOP (do NOT continue).** A different non-zero exit (above); never soft-skip it.
+   (b) **Malformed pair / missing-or-duplicate anchor (either pointer) — a hard STOP (do NOT continue).** A non-zero exit whose message names a marker/anchor problem; never soft-skip it.
 
-   (c) **`methodology engine not found/invalid …` — a hard STOP (do NOT continue).** A fill was needed but the installed `agent-workflow-engine` (the live source of the fragment) is **absent/invalid**. Report it in plain language with the one-line install command `npx @sabaiway/agent-workflow-engine@latest init` (or note that `npx @sabaiway/agent-workflow-kit@latest init` installs the engine for you), then re-run upgrade once it is present. **Never** treat (c) as the cap soft-skip (a) — its message is distinct, and mis-handling it as a soft-skip would silently drop the slot (a no-silent-failures violation). (b) and (c) STOP the upgrade; only (a) continues.
+   (c) **`methodology engine not found/invalid …` — a hard STOP (do NOT continue).** A fill was needed but the installed `agent-workflow-engine` is **fully absent/invalid** — it can supply **neither** fragment (distinct from (a)(ii), where the engine is valid but merely too old for the recipes one). Report it in plain language with the one-line install command `npx @sabaiway/agent-workflow-engine@latest init` (or note that `npx @sabaiway/agent-workflow-kit@latest init` installs the engine for you), then re-run upgrade once it is present. **Never** treat (c) as a soft-skip (a) — mis-handling it would silently drop the methodology pointer (a no-silent-failures violation). (b) and (c) STOP the upgrade; only (a) continues.
 
-   **No-Node project:** the fragment lives only in the **installed `agent-workflow-engine`** (`references/methodology-slot.md`, under `~/.claude/skills/agent-workflow-engine` or `$AGENT_WORKFLOW_ENGINE_DIR`) — there is no bundled copy. A No-Node host also cannot run the `npx` engine install. Open `AGENTS.md` and classify the slot by hand: a **filled / customized** slot → leave it verbatim (no-op, no engine needed); a **malformed** slot (not exactly one ordered `start → end` pair) → STOP, do not edit. A slot that needs filling — **absent markers OR a present-but-empty pair** — needs the engine's fragment, so: if the engine is **not installed**, the pointer **cannot be added** — report that plainly (mirroring the Node STOP: the methodology is already in `docs/ai/agent_rules.md`; install the engine to add the pointer). If the engine **is** present, **count the lines first** — if adding/filling the pair with that fragment would take the file over 100 lines, **skip it and report the skip** (as above — trim to add the pointer). Otherwise: when markers are absent, paste the pair right after the *Read it before any code change.* line; then fill the empty pair from the engine's `references/methodology-slot.md` (never inline a copy — that would re-create the retired mirror).
+   **No-Node project:** the fragments live only in the **installed `agent-workflow-engine`** (`references/methodology-slot.md` + `references/orchestration-slot.md`, under `~/.claude/skills/agent-workflow-engine` or `$AGENT_WORKFLOW_ENGINE_DIR`) — there is no bundled copy, and a No-Node host cannot run the `npx` engine install. Open `AGENTS.md` and classify **each** pointer by hand: a **filled / customized** pair → leave it verbatim (no engine needed); a **malformed** pair (not exactly one ordered `start → end`) → STOP, do not edit. A pair that needs filling — **absent markers OR a present-but-empty pair** — needs the engine's fragment, so: if the engine is **not installed**, that pointer **cannot be added** — report it plainly (the methodology is already in `docs/ai/agent_rules.md`; the recipes are available via `/agent-workflow-kit recipes`; install the engine to add the pointers). If the engine **is** present, **count the lines first** — if adding/filling would take the file over 100 lines, **skip that pointer and report the skip** (methodology first, then orchestration; the orchestration pair sits right under the methodology end marker). Fill each empty pair from its engine fragment (`methodology-slot.md` / `orchestration-slot.md`) — never inline a copy (that would re-create the retired mirror).
 
    **Hidden-mode footprint reconcile — stamp-independent, same gate, BEFORE the equal-head short-circuit (D9 / AD-014).** A deployment does not record whether it chose `hidden`, so first **infer visibility**: `node ${CLAUDE_SKILL_DIR}/tools/hide-footprint.mjs --dir <project> --reconcile --dry-run` (writes **zero bytes**). It reports one of — **visible** (the entry point is tracked) → nothing to do; **ambiguous** (untracked but not ignored — could be a fresh uncommitted repo, or a hide that broke) → **ASK** the user which it is, never guess; **hidden** → re-run without `--dry-run` to migrate any older **machine-global** hide to the **project-local** `.git/info/exclude` (one managed block; folds in the legacy `.claude/skills/` line), idempotently (a clean re-run is zero-diff). Handle its surfaced paths exactly as bootstrap step 9 (already-committed → show `git rm --cached`, ask before `--include`; generic-name present file → ask; **leftover machine-wide ignore block → ASK before `--remove-global`**, default keep + report). No Node on the agent host / Windows → as step 9. This runs on **every** hidden upgrade, like the methodology slot — no lineage-head bump, no migration file.
 4. **Equal-head exit — a real successful-exit report, not a bare stop.** If the stamp **equals** the head, the lineage is up to date — but step 3 (the methodology-slot **and** hidden-mode footprint reconciles) ran first and may have changed things, so this is a proper exit report, not a no-op:
-   - **Report step 3's outcome in plain language** — the workflow-methodology pointer was *added*, was *already present* (nothing changed), or was *skipped because the entry point is over its line limit* (the cap-refusal soft-skip from step 3, with its reason); and, for a hidden deployment, whether the hidden-mode footprint was *moved to project-local*, was *already project-local* (nothing changed), or needed a question (ambiguous visibility / a leftover machine-wide block). Plain wording only — never the reconcile/slot/anchor/marker terms (Gotcha: never leak kit internals).
+   - **Report step 3's outcome in plain language** — for **each** pointer (workflow-methodology and orchestration-recipes) whether it was *added*, was *already present* (nothing changed), or was *skipped because the entry point is over its line limit* (the cap-refusal soft-skip from step 3, with its reason); and, for a hidden deployment, whether the hidden-mode footprint was *moved to project-local*, was *already project-local* (nothing changed), or needed a question (ambiguous visibility / a leftover machine-wide block). Plain wording only — never the reconcile/slot/anchor/marker terms (Gotcha: never leak kit internals).
    - **Print the one-line backend-status line** — the shared contract above (run `node ${CLAUDE_SKILL_DIR}/tools/detect-backends.mjs`; same format, invariants, and detector-unavailable skip-with-reason).
    - **Then ask before committing — never auto-commit.** If step 3 added the slot (or anything else changed), report it and ask. If step 3 was a pure zero-diff no-op and nothing else changed, say **"already up to date"** and still print the read-only backend line.
 5. Show the relevant `${CLAUDE_SKILL_DIR}/CHANGELOG.md` diff (entries newer than the project's stamp).
@@ -247,6 +262,23 @@ Run `node ${CLAUDE_SKILL_DIR}/tools/family-registry.mjs [--dir <project>]` and p
 2. **Deploy axis (`--dir <project>`):** the deployment stamps (`docs/ai/.workflow-version`, `.memory-version`), whether `docs/ai/` exists, and whether the hidden-mode managed fence is present.
 
 State plainly that the two version axes stay decoupled (an installed *skill* version is not a project's deployment-lineage stamp — see *Version status & the two axes*). The installed version reflects whatever is on disk under `~/.claude/skills/…`; a stale install shows its real (older) version, honestly.
+
+### Mode: recipes
+
+Read-only **orchestration advisor**. Answers *"how should I compose the optional execution-backends into plan → execute → review here, and which recipe fits?"* It **never writes, never commits, never runs a subscription CLI, and never executes a recipe** — the orchestrator (you) runs the chosen recipe through the bridge skills and makes the single commit; a backend is advisory or delegated, never autonomous.
+
+The four recipes (defined over each bridge's `provides` roles — `codex`: execute + review; `agy`: review + probe), canonical narrative in the **installed engine** (`references/orchestration.md`):
+
+- **Solo** — you plan, execute, and self-review; no backend (always available; the floor).
+- **Reviewed** — you execute; **one** backend reviews the result (advisory). Prefers `codex` when both are ready (`agy` carries a standing health caveat).
+- **Council** — **both** backends review independently; you synthesize the two opinions.
+- **Delegated** — you hand a **bounded** execution sub-task to a backend (`codex exec`), then review the returned diff and commit.
+
+1. Run **`node ${CLAUDE_SKILL_DIR}/tools/recipes.mjs`** (the read-only planner; `--json` for the structured form). It runs the backend detector, lists the four recipes, and prints — for the current environment — a **per-recipe dispatch plan that degrades with a stated reason** when a backend isn't `ready` (Council → Reviewed → Solo; Delegated → Solo), plus advisory **quota/health notes** (prefer the cheapest model; Council spends two backends' quota; `agy` may stall on substantive prompts — Issue-001, prefer `codex`).
+2. **Offer the choice** via **`AskUserQuestion` where your agent supports it** (`AskUserQuestion` in Claude Code) — one option per recipe, the `recommendRecipe` choice listed **first** — otherwise in prose. Then print `planRecipe(chosen, detection)` (the per-stage dispatch + degradation reasons + quota/health notes) so the user sees exactly what running it entails.
+3. **Availability = `readiness === ready`, full stop.** Every other readiness supplies the human reason (needs-skill → "not installed — `/agent-workflow-kit setup`"; needs-cli → "install the CLI"; needs-credentials → "log in"; degraded → "wrapper not on PATH — `/agent-workflow-kit setup`"). This is set-up state only — **never** a claim that a backend's service is responsive (the detector cannot observe a runtime stall; `agy`'s Issue-001 is a *standing advisory*, not a readiness signal).
+
+**Invariants:** read-only · never runs a subscription CLI · never commits · the orchestrator executes the recipe via the bridge skills, not the kit.
 
 ### Mode: uninstall
 
@@ -307,6 +339,7 @@ The three setup choices — **visibility** (step 2), **conversational language**
 10. **Honest `known_issues.md`.** Every bug with a workaround gets Impact + Plan so it isn't re-discovered later.
 11. **One conversational language.** Talk to the user in the language chosen at bootstrap; keep code, paths, commands, and abbreviations in their source language. See *Communication contract*.
 12. **Attribution is opt-in.** Honour the *Attribution* block: by default no agent/AI/model mention anywhere (commits, PRs, code, comments, docs), and no `Co-Authored-By` trailer. See *Attribution contract*.
+13. **Orchestrate via a named recipe.** Compose execution through a named recipe (Solo / Reviewed / Council / Delegated) and **always commit yourself** — backends are advisory or delegated, never autonomous. Encoded via the reconciled `workflow:orchestration` pointer (it routes to `/agent-workflow-kit recipes` + the engine canon), not by bloating the entry point.
 
 ---
 
@@ -339,6 +372,6 @@ Deploy these into `AGENTS.md`; remove rows that don't apply to the stack.
 - [`references/scripts/`](references/scripts/) — the Node enforcement scripts (caps + staleness + index-freshness gate, 3-tier archive, hook installer) and their unit tests.
 - [`migrations/`](migrations/) — per-version upgrade steps; see `migrations/README.md`.
 - [`launchers/`](launchers/) — run the bootstrapper from non-Claude agents (`SKILL.md` is a native Codex skill; a Devin Desktop workflow launcher + install script). See `launchers/README.md`.
-- [`tools/`](tools/) — the family-wide tooling the kit **owns and ships**: `manifest/{schema.md,validate.mjs}` (the `capability.json` schema + the validator the kit runs as the memory detector, and root CI invokes), `delegation.mjs` (the executable delegate/fallback decision + hand-off plan), `inject-methodology.mjs` + `engine-source.mjs` (the bounded slot reconciliation — ensure-slot / inject-if-empty / cap; the fragment is read **live** from the installed `agent-workflow-engine` via `engine-source.mjs` — the family's one source of truth, no bundled mirror; fail-loud when the engine is needed but absent), `detect-backends.mjs` (the read-only **backend detector** behind `/agent-workflow-kit backends`, plus the axis-aware `guideFor`), `setup-backends.mjs` (the **link-only** backend setup behind `/agent-workflow-kit setup` — place the bundled bridge + link wrappers), `fs-safe.mjs` (the shared symlink-traversal-safe copy/link/**remove/unlink** primitives that `setup-backends`, the npx installer, and the uninstaller use), `known-footprint.mjs` + `hide-footprint.mjs` (the **hidden-mode** registry + the single hide-writer behind step 9 / the upgrade reconcile — one managed block in the **project-local** `.git/info/exclude` covering the full AI/agent footprint; pinned by `known-footprint.test.mjs` drift-guard + `hide-footprint.test.mjs` / `.integration.test.mjs`), `family-registry.mjs` (the **unified family registry** behind `/agent-workflow-kit status` — aggregates every member's `capability.json`; pinned by a `family-registry.test.mjs` drift-guard), `uninstall.mjs` (the **guarded teardown** behind `/agent-workflow-kit uninstall` — classify each surface, preflight-then-mutate, never delete user-authored content), and `release-scan.mjs` (the attribution-off release gate). The bundled bridge skill mirrors live under [`bridges/`](bridges/) (byte-identical to the repo-root bridges, pinned by `test/bridges-mirror.test.mjs`). See [`tools/manifest/schema.md`](tools/manifest/schema.md).
+- [`tools/`](tools/) — the family-wide tooling the kit **owns and ships**: `manifest/{schema.md,validate.mjs}` (the `capability.json` schema + the validator the kit runs as the memory detector, and root CI invokes), `delegation.mjs` (the executable delegate/fallback decision + hand-off plan), `inject-methodology.mjs` + `engine-source.mjs` (the bounded **two-slot** reconciliation — ensure-slot / inject-if-empty / cap for the `workflow:methodology` **and** `workflow:orchestration` pointers; both fragments read **live** from the installed `agent-workflow-engine` via `engine-source.mjs` (`deps.rel` selects which) — the family's one source of truth, no bundled mirror; fail-loud when the engine is needed but absent, orchestration soft-skipped when it would bust the cap), `detect-backends.mjs` (the read-only **backend detector** behind `/agent-workflow-kit backends`, plus the axis-aware `guideFor`; exports the readiness consts the planner reuses), `recipes.mjs` (the read-only **recipe planner** behind `/agent-workflow-kit recipes` — `RECIPES` / `planRecipe` / `recommendRecipe` over the bridges' role vocabulary, drift-guarded against `provides`/`cost`/`quota` + an engine↔kit recipe-name parity guard; pure, never runs a subscription CLI), `setup-backends.mjs` (the **link-only** backend setup behind `/agent-workflow-kit setup` — place the bundled bridge + link wrappers), `fs-safe.mjs` (the shared symlink-traversal-safe copy/link/**remove/unlink** primitives that `setup-backends`, the npx installer, and the uninstaller use), `known-footprint.mjs` + `hide-footprint.mjs` (the **hidden-mode** registry + the single hide-writer behind step 9 / the upgrade reconcile — one managed block in the **project-local** `.git/info/exclude` covering the full AI/agent footprint; pinned by `known-footprint.test.mjs` drift-guard + `hide-footprint.test.mjs` / `.integration.test.mjs`), `family-registry.mjs` (the **unified family registry** behind `/agent-workflow-kit status` — aggregates every member's `capability.json`; pinned by a `family-registry.test.mjs` drift-guard), `uninstall.mjs` (the **guarded teardown** behind `/agent-workflow-kit uninstall` — classify each surface, preflight-then-mutate, never delete user-authored content), and `release-scan.mjs` (the attribution-off release gate). The bundled bridge skill mirrors live under [`bridges/`](bridges/) (byte-identical to the repo-root bridges, pinned by `test/bridges-mirror.test.mjs`). See [`tools/manifest/schema.md`](tools/manifest/schema.md).
 - [`capability.json`](capability.json) — the kit's own `agent-workflow` family manifest (`kind: composition-root`).
 - [`CHANGELOG.md`](CHANGELOG.md) — version history of this kernel.

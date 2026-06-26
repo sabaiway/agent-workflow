@@ -3,8 +3,9 @@
 **The canonical home of the `agent-workflow` planning methodology.** It owns the
 methodology *text* — the Plan → Phase → Step vocabulary, the plan-file lifecycle
 (`docs/plans/*.md`, ephemeral, never committed), the `queue.md` series index, the mandatory
-final **Phase: Cleanup**, and the bounded methodology slot fragment the family kit injects
-into a deployed project's `AGENTS.md`.
+final **Phase: Cleanup**, the **orchestration-recipe** vocabulary (Solo / Reviewed / Council /
+Delegated), and the two bounded slot fragments the family kit injects into a deployed project's
+`AGENTS.md`.
 
 This is the **methodology engine** of the `agent-workflow` family — the canonical source the
 rest of the family builds on. It is **content**, not a runtime: it reads nothing, writes
@@ -41,13 +42,19 @@ the canonical methodology reference on disk:
   Plan → Phase → Step vocabulary, the plan-file lifecycle, the `queue.md` series index, the
   mandatory final **Phase: Cleanup**, and the plan-then-execute split.
 - [`references/methodology-slot.md`](references/methodology-slot.md) — the **bounded**
-  fragment the composition root injects into a deployed `AGENTS.md` (a short summary +
+  methodology fragment the composition root injects into a deployed `AGENTS.md` (a short summary +
   pointer, kept under the entry point's line cap).
+- [`references/orchestration.md`](references/orchestration.md) — the canonical **orchestration-recipe**
+  reference: the four recipes (Solo / Reviewed / Council / Delegated) over the bridges' role
+  vocabulary, the when/why, the graceful-degradation lattice, and the quota/health guard.
+- [`references/orchestration-slot.md`](references/orchestration-slot.md) — the **bounded** one-line
+  orchestration fragment the composition root injects into a deployed `AGENTS.md`, routing to the
+  in-project recipes surface.
 
 ## What this package ships
 
-`SKILL.md` (the canon overview + ownership rule), `references/` (the full methodology
-reference + the bounded slot fragment), `capability.json` (the family manifest), and this
+`SKILL.md` (the canon overview + ownership rule), `references/` (the full methodology + orchestration
+references + the two bounded slot fragments), `capability.json` (the family manifest), and this
 installer. It ships **no** family-wide tooling (the schema/validator/injection live in the
 composition root) and mutates nothing — preserving "knows nobody".
 

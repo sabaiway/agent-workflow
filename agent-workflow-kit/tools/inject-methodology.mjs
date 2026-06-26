@@ -1,29 +1,31 @@
 #!/usr/bin/env node
-// Methodology slot injection + reconciliation — the composition root's only mutation of a
-// deployed AGENTS.md.
+// Marker-slot injection + reconciliation — the composition root's only mutation of a deployed
+// AGENTS.md. A deployed entry point carries TWO reconciled marker slots, each filled LIVE from the
+// installed agent-workflow-engine (the family's one source of truth, no bundled mirror):
+//   1. workflow:methodology  — the plan→execute→review pointer (references/methodology-slot.md).
+//   2. workflow:orchestration — the recipe-vocabulary pointer  (references/orchestration-slot.md).
 //
-// Both templates (memory's + the kit fallback) ship an EMPTY delimited slot; the kit (which knows
-// the whole family) fills it. The bounded fragment is a BOUNDED summary + pointer (NOT the full
-// references/planning.md), so AGENTS.md stays under its line cap. It is read LIVE from the installed
-// agent-workflow-engine (references/methodology-slot.md) via engine-source.mjs — the family's one
-// source of truth; there is no bundled mirror (retired in Plan 3D, AD-016). The live read is lazy +
-// fail-loud: resolve+read the engine ONLY when a fill is actually needed, and STOP loudly (never a
-// silent fallback) when the engine is needed but absent/invalid.
+// Both share ONE generic marker engine (a slot DESCRIPTOR parameterizes the markers / anchor /
+// empty-slot / leading-blank). The methodology exports (findSlot / injectMethodology / ensureSlot /
+// reconcileSlot / slotNeedsFill / extractSlot) delegate to it byte-for-byte, so the methodology
+// contract is unchanged; the orchestration slot is the SAME engine with a different descriptor.
 //
-// Two layers over one marker parser:
-//   - injectMethodology — fill an EXISTING slot. Marker contract, strictly enforced:
-//       exactly one ordered start→end pair → replace only the bytes between them;
-//       markers absent → NO-OP; any malformed state (single, reversed, nested, duplicate) →
-//       NO-OP WITH AN ERROR, never edit. Prefix/suffix preserved exactly; re-run is idempotent.
-//   - ensureSlot / reconcileSlot — the bootstrap/upgrade policy (Plan 2): ensure the slot EXISTS
-//       (insert an empty pair at the Session-Protocols anchor when a legacy file lacks one) →
-//       inject ONLY IF empty (preserve a customized slot verbatim) → cap-check. Stamp-independent.
+// Contract per slot, strictly enforced:
+//   exactly one ordered start→end pair → replace only the bytes between them;
+//   markers absent → ensure-insert an empty pair at the slot's anchor (or NO-OP in legacy inject);
+//   any malformed state (single, reversed, nested, duplicate) → NO-OP WITH AN ERROR, never edit.
+// The live read is lazy + fail-loud: resolve+read the engine ONLY when a fill is actually needed, and
+// STOP loudly (never a silent fallback) when the engine is needed but absent/invalid.
 //
 // Pure string functions (testable with byte-preservation fixtures); dependency-free, Node >= 18.
 
 export const START_MARKER = '<!-- workflow:methodology:start -->';
 export const END_MARKER = '<!-- workflow:methodology:end -->';
+export const ORCH_START_MARKER = '<!-- workflow:orchestration:start -->';
+export const ORCH_END_MARKER = '<!-- workflow:orchestration:end -->';
 export const AGENTS_MD_CAP = 100; // the deployed AGENTS.md line budget (its own footer rule)
+
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // Count lines independent of a trailing newline (CRLF-safe: split on '\n' — a CRLF line still ends
 // in '\n', so the count is the same as for LF).
@@ -40,39 +42,77 @@ const countOccurrences = (haystack, needle) => {
   }
 };
 
-// Classify the marker state of an AGENTS.md text. Pure; no fs.
+const countMatches = (text, re) => (text.match(new RegExp(re.source, 'gm')) || []).length;
+
+// The Session-Protocols anchor line both deployed templates carry (the agent_rules.md §1 sentence).
+// ensureSlot inserts an empty METHODOLOGY slot right after this line when a legacy entry point has no
+// markers. Contract: EXACTLY ONE match required — 0 or >1 → error (never guess where it lives).
+export const METHODOLOGY_ANCHOR = /^.*Read it before any code change\..*$/m;
+// The orchestration pair lands right BELOW the methodology end marker — so its anchor is that line.
+// A well-formed entry point carries exactly one methodology end marker → exactly one anchor.
+export const ORCH_ANCHOR = new RegExp(`^.*${escapeRegExp(END_MARKER)}.*$`, 'm');
+
+// The canonical empty slots (an ordered start→end pair, nothing between) — what a fresh template
+// ships and what ensureSlot inserts. LF form; ensureSlot rewrites the newline to match the document.
+export const EMPTY_SLOT = `${START_MARKER}\n${END_MARKER}`;
+export const ORCH_EMPTY_SLOT = `${ORCH_START_MARKER}\n${ORCH_END_MARKER}`;
+
+// A slot descriptor bundles everything the generic engine needs to operate on ONE marker pair.
+// `leadingBlank` controls whether the inserted empty pair gets a blank separator line above it — the
+// methodology insert keeps it (readability), the orchestration insert omits it to save a cap line
+// (the pair already sits right under the methodology block).
+const METHODOLOGY_DESCRIPTOR = {
+  startMarker: START_MARKER,
+  endMarker: END_MARKER,
+  anchor: METHODOLOGY_ANCHOR,
+  emptySlot: EMPTY_SLOT,
+  leadingBlank: true,
+  markerName: 'methodology',
+  anchorLabel: 'methodology anchor (the "Read it before any code change." Session-Protocols line)',
+};
+export const ORCHESTRATION_DESCRIPTOR = {
+  startMarker: ORCH_START_MARKER,
+  endMarker: ORCH_END_MARKER,
+  anchor: ORCH_ANCHOR,
+  emptySlot: ORCH_EMPTY_SLOT,
+  leadingBlank: false,
+  markerName: 'orchestration',
+  anchorLabel: 'orchestration anchor (the methodology end-marker line)',
+};
+
+// ── generic marker-slot engine (descriptor-parameterized) ──────────────────────
+
+// Classify the marker state of a slot. Pure; no fs.
 //   { state: 'ok',      startIdx, endIdx }   exactly one ordered pair
-//   { state: 'absent' }                      no markers at all → caller no-ops
+//   { state: 'absent' }                      no markers at all → caller no-ops / ensure-inserts
 //   { state: 'malformed', reason }           anything else → caller no-ops WITH error
-export const findSlot = (text) => {
-  const starts = countOccurrences(text, START_MARKER);
-  const ends = countOccurrences(text, END_MARKER);
+export const findMarkerSlot = (text, descriptor) => {
+  const starts = countOccurrences(text, descriptor.startMarker);
+  const ends = countOccurrences(text, descriptor.endMarker);
   if (starts === 0 && ends === 0) return { state: 'absent' };
   if (starts !== 1 || ends !== 1) {
     return { state: 'malformed', reason: `expected exactly one start/end marker pair, found ${starts} start / ${ends} end` };
   }
-  const startIdx = text.indexOf(START_MARKER);
-  const endIdx = text.indexOf(END_MARKER);
+  const startIdx = text.indexOf(descriptor.startMarker);
+  const endIdx = text.indexOf(descriptor.endMarker);
   if (endIdx < startIdx) return { state: 'malformed', reason: 'end marker precedes start marker' };
   return { state: 'ok', startIdx, endIdx };
 };
 
-// Inject `fragment` between the markers, replacing only the bytes between them.
-// Returns { status: 'injected' | 'noop-absent' | 'error', text, error? }. On absent/error the
-// returned text is the INPUT, byte-for-byte (never edit on a malformed slot). Pass
-// `{ maxLines }` to enforce the AGENTS.md line cap as a postcondition (refuse, don't bust it).
-export const injectMethodology = (text, fragment, { maxLines } = {}) => {
-  // A fragment that itself contains a marker would create a duplicate/nested slot — refuse.
-  if (fragment.includes(START_MARKER) || fragment.includes(END_MARKER)) {
-    return { status: 'error', text, error: 'fragment contains a methodology marker — refusing to inject (would create a duplicate/nested slot)' };
+// Inject `fragment` between the markers, replacing only the bytes between them. Returns
+// { status: 'injected' | 'noop-absent' | 'error', text, error? }. On absent/error the returned text
+// is the INPUT, byte-for-byte. Pass `{ maxLines }` to enforce the AGENTS.md line cap (refuse, don't bust).
+export const injectIntoSlot = (text, descriptor, fragment, { maxLines } = {}) => {
+  if (fragment.includes(descriptor.startMarker) || fragment.includes(descriptor.endMarker)) {
+    return { status: 'error', text, error: `fragment contains a ${descriptor.markerName} marker — refusing to inject (would create a duplicate/nested slot)` };
   }
-  const slot = findSlot(text);
+  const slot = findMarkerSlot(text, descriptor);
   if (slot.state === 'absent') return { status: 'noop-absent', text };
   if (slot.state === 'malformed') return { status: 'error', text, error: slot.reason };
   // Frame the fragment with the DOCUMENT's newline style (and convert the LF-canonical fragment to
   // it) so injecting into a CRLF file does not leave lone LFs around the slot.
   const nl = text.includes('\r\n') ? '\r\n' : '\n';
-  const before = text.slice(0, slot.startIdx + START_MARKER.length);
+  const before = text.slice(0, slot.startIdx + descriptor.startMarker.length);
   const after = text.slice(slot.endIdx);
   const body = fragment.trim().replace(/\r?\n/g, nl);
   const out = `${before}${nl}${body}${nl}${after}`;
@@ -82,100 +122,98 @@ export const injectMethodology = (text, fragment, { maxLines } = {}) => {
   return { status: 'injected', text: out };
 };
 
-// Inverse used by memory's upgrade: extract the current slot content (preserve-on-upgrade).
-// Returns the bytes strictly between the markers, or null on absent/malformed.
-export const extractSlot = (text) => {
-  const slot = findSlot(text);
+// Extract the current slot content (preserve-on-upgrade inverse). Bytes strictly between the markers,
+// or null on absent/malformed.
+export const extractMarkerSlot = (text, descriptor) => {
+  const slot = findMarkerSlot(text, descriptor);
   if (slot.state !== 'ok') return null;
-  return text.slice(slot.startIdx + START_MARKER.length, slot.endIdx);
+  return text.slice(slot.startIdx + descriptor.startMarker.length, slot.endIdx);
 };
 
-// The Session-Protocols anchor line both deployed templates carry (the agent_rules.md §1 sentence).
-// ensureSlot inserts an empty slot right after this line when a legacy entry point has no markers.
-// Contract: EXACTLY ONE match required — 0 or >1 → error (never guess where the methodology lives).
-export const METHODOLOGY_ANCHOR = /^.*Read it before any code change\..*$/m;
-
-// The canonical empty slot (an ordered start→end pair, nothing between) — what a fresh template
-// ships and what ensureSlot inserts. LF form; ensureSlot rewrites the newline to match the document.
-export const EMPTY_SLOT = `${START_MARKER}\n${END_MARKER}`;
-
-const countMatches = (text, re) => (text.match(new RegExp(re.source, 'gm')) || []).length;
-
-// Ensure a single, well-formed methodology slot EXISTS — without filling it. Pure; no fs.
+// Ensure a single, well-formed slot EXISTS — without filling it. Pure; no fs.
 //   { status: 'present',  text }   a well-formed slot already exists → bytes unchanged (idempotent).
 //   { status: 'inserted', text }   absent + exactly one anchor → an EMPTY slot inserted right after
 //                                   the anchor line, newline style + all other bytes preserved.
 //   { status: 'error', text, error }  malformed slot, OR (when absent) 0/>1 anchors → bytes unchanged.
-export const ensureSlot = (text) => {
-  const slot = findSlot(text);
+export const ensureMarkerSlot = (text, descriptor) => {
+  const slot = findMarkerSlot(text, descriptor);
   if (slot.state === 'ok') return { status: 'present', text };
   if (slot.state === 'malformed') return { status: 'error', text, error: slot.reason };
-  // absent → place an empty slot at the one anchor, or refuse rather than guess.
-  const anchors = countMatches(text, METHODOLOGY_ANCHOR);
+  const anchors = countMatches(text, descriptor.anchor);
   if (anchors !== 1) {
     return {
       status: 'error',
       text,
-      error: `expected exactly one methodology anchor (the "Read it before any code change." Session-Protocols line), found ${anchors} — refusing to guess where the slot belongs; add the slot markers manually`,
+      error: `expected exactly one ${descriptor.anchorLabel}, found ${anchors} — refusing to guess where the slot belongs; add the slot markers manually`,
     };
   }
   const nl = text.includes('\r\n') ? '\r\n' : '\n';
-  const match = text.match(METHODOLOGY_ANCHOR);
+  const match = text.match(descriptor.anchor);
   const eol = text.indexOf('\n', match.index);
   const insertAt = eol === -1 ? text.length : eol + 1;
-  const block = `${nl}${EMPTY_SLOT.replace(/\n/g, nl)}${nl}`;
+  const slotText = descriptor.emptySlot.replace(/\n/g, nl);
+  const block = descriptor.leadingBlank ? `${nl}${slotText}${nl}` : `${slotText}${nl}`;
   const out = `${text.slice(0, insertAt)}${block}${text.slice(insertAt)}`;
   return { status: 'inserted', text: out };
 };
 
 // Bootstrap/upgrade reconciliation policy (pure): ensure the slot exists, then fill it ONLY IF it
-// is empty (a filled/customized slot is preserved verbatim), enforcing the line cap — all as one
-// step the CLI commits with a single atomic write. On ANY error the INPUT bytes are returned
-// unchanged (the intermediate slot-insert is discarded), so there is no partial on-disk state.
+// is empty (a filled/customized slot is preserved verbatim), enforcing the line cap — all as one step
+// the CLI commits with a single atomic write. On ANY error the INPUT bytes are returned unchanged.
 //   reconciled-inserted — slot was absent, inserted at the anchor, then filled.
 //   reconciled-filled   — slot existed but was empty, now filled.
 //   present-filled      — slot already carried content → preserved verbatim.
 //   error               — malformed slot, 0/>1 anchors, or cap exceeded → input unchanged.
-export const reconcileSlot = (text, fragment, { maxLines } = {}) => {
-  const ensured = ensureSlot(text);
+export const reconcileMarkerSlot = (text, descriptor, fragment, { maxLines } = {}) => {
+  const ensured = ensureMarkerSlot(text, descriptor);
   if (ensured.status === 'error') return { status: 'error', text, error: ensured.error };
-  const current = extractSlot(ensured.text);
+  const current = extractMarkerSlot(ensured.text, descriptor);
   const isEmpty = current == null || current.trim() === '';
   if (!isEmpty) {
-    // Preserve a filled/customized slot verbatim — but still enforce the cap on the result, so an
-    // already-over-cap entry point is surfaced (input unchanged) rather than silently accepted.
     if (maxLines != null && lineCount(ensured.text) > maxLines) {
-      return { status: 'error', text, error: `AGENTS.md is ${lineCount(ensured.text)} lines (cap ${maxLines}) — trim the file (a customized methodology slot must still fit the cap)` };
+      return { status: 'error', text, error: `AGENTS.md is ${lineCount(ensured.text)} lines (cap ${maxLines}) — trim the file (a customized ${descriptor.markerName} slot must still fit the cap)` };
     }
     return { status: 'present-filled', text: ensured.text };
   }
-  const injected = injectMethodology(ensured.text, fragment, { maxLines });
+  const injected = injectIntoSlot(ensured.text, descriptor, fragment, { maxLines });
   if (injected.status !== 'injected') return { status: 'error', text, error: injected.error };
   const status = ensured.status === 'inserted' ? 'reconciled-inserted' : 'reconciled-filled';
   return { status, text: injected.text };
 };
 
-// Pure predicate (no fs): does this AGENTS.md actually need the methodology fragment? True only when
-// the slot can be ensured (present or insertable) AND is empty — i.e. when reconcileSlot would
-// inject. False when the slot is already filled (preserve-verbatim, no fragment read) OR when the
-// slot/anchor is malformed (so reconcileSlot's own precise error path still fires). It reuses the
-// SAME primitives as reconcileSlot (ensureSlot + extractSlot), so the lazy "read the engine only
-// when needed" guard in main() cannot diverge from the actual fill decision.
-export const slotNeedsFill = (text) => {
-  const ensured = ensureSlot(text);
+// Pure predicate (no fs): does this slot actually need its fragment? True only when the slot can be
+// ensured (present or insertable) AND is empty — i.e. when reconcileMarkerSlot would inject. Reuses
+// the SAME primitives as reconcileMarkerSlot, so the lazy "read the engine only when needed" guard in
+// main() cannot diverge from the actual fill decision.
+export const markerSlotNeedsFill = (text, descriptor) => {
+  const ensured = ensureMarkerSlot(text, descriptor);
   if (ensured.status === 'error') return false;
-  const current = extractSlot(ensured.text);
+  const current = extractMarkerSlot(ensured.text, descriptor);
   return current == null || current.trim() === '';
 };
+
+// ── methodology-slot exports (delegate to the generic engine, byte-for-byte) ────
+
+export const findSlot = (text) => findMarkerSlot(text, METHODOLOGY_DESCRIPTOR);
+export const injectMethodology = (text, fragment, opts) => injectIntoSlot(text, METHODOLOGY_DESCRIPTOR, fragment, opts);
+export const extractSlot = (text) => extractMarkerSlot(text, METHODOLOGY_DESCRIPTOR);
+export const ensureSlot = (text) => ensureMarkerSlot(text, METHODOLOGY_DESCRIPTOR);
+export const reconcileSlot = (text, fragment, opts) => reconcileMarkerSlot(text, METHODOLOGY_DESCRIPTOR, fragment, opts);
+export const slotNeedsFill = (text) => markerSlotNeedsFill(text, METHODOLOGY_DESCRIPTOR);
+
+// A cap-refusal is a SOFT, reported skip (distinct from a malformed/anchor STOP) — keyed off the
+// stable "(cap N)" substring both cap messages carry, so the dual-slot reconcile can skip the
+// orchestration pointer (loud) while keeping the methodology fill, instead of aborting both.
+const isCapRefusal = (errorMessage) => typeof errorMessage === 'string' && errorMessage.includes('(cap ');
 
 const main = async (argv) => {
   const { readFile, writeFile, rename, rm } = await import('node:fs/promises');
   const { dirname, basename, join, resolve } = await import('node:path');
   const { homedir } = await import('node:os');
-  const { resolveEngineDir, readEngineFragment } = await import('./engine-source.mjs');
+  const { resolveEngineDir, readEngineFragment, detectEngine, ENGINE_FRAGMENT_REL, ORCHESTRATION_FRAGMENT_REL } = await import('./engine-source.mjs');
 
-  // `reconcile <AGENTS.md> [fragment.md]` = ensure-slot + inject-if-empty + cap (bootstrap/upgrade);
-  // `<AGENTS.md> [fragment.md]` = the legacy inject-into-existing-slot mode.
+  // `reconcile <AGENTS.md> [fragment.md]` = ensure-slot + inject-if-empty + cap (bootstrap/upgrade) for
+  // BOTH slots; `<AGENTS.md> [fragment.md]` = the legacy inject-into-existing-(methodology)-slot mode.
   const mode = argv[0] === 'reconcile' ? 'reconcile' : 'inject';
   const rest = mode === 'reconcile' ? argv.slice(1) : argv;
   const agentsPath = rest[0];
@@ -186,24 +224,59 @@ const main = async (argv) => {
   const explicitFragmentArg = rest[1];
   const text = await readFile(resolve(agentsPath), 'utf8');
 
-  // Source the bounded fragment LAZILY. An explicit [fragment.md] arg (tests + manual) wins and skips
-  // engine resolution entirely. Otherwise read it LIVE from the installed engine — there is no
-  // bundled mirror. readEngineFragment THROWS (never falls back) when the engine is needed but
-  // absent/invalid; sourceFragmentOrStop turns that into a hard, loud STOP carrying the install
-  // command. The caller only invokes this when a fill is actually needed (the laziness).
-  const sourceFragment = async () => {
+  // Source a bounded fragment LAZILY, per slot. An explicit [fragment.md] arg (tests + manual) wins and
+  // skips engine resolution entirely; it binds the METHODOLOGY slot only. Otherwise read it LIVE from
+  // the installed engine (no bundled mirror) — readEngineFragment THROWS (never falls back) when the
+  // engine is needed but absent/invalid; sourceFragmentOrStop turns that into a hard, loud STOP carrying
+  // the install command. The caller only invokes this when a fill is actually needed (the laziness).
+  const sourceFragment = async (rel) => {
     if (explicitFragmentArg) return readFile(resolve(explicitFragmentArg), 'utf8');
     const { dir, source } = resolveEngineDir({ env: process.env, home: homedir() });
-    return readEngineFragment(dir, { source }); // sync; throws loudly when the engine is absent/invalid
+    return readEngineFragment(dir, { source, rel }); // sync; throws loudly when the engine is absent/invalid
   };
-  const sourceFragmentOrStop = async (label) => {
+  const sourceFragmentOrStop = async (label, rel) => {
     try {
-      return await sourceFragment();
+      return await sourceFragment(rel);
     } catch (err) {
-      // Engine needed-but-absent → a hard STOP, distinct from the soft cap-skip. The
-      // "methodology engine not found/invalid" prefix lets the agent classify this exit (SKILL.md).
+      // Engine needed-but-absent → a hard STOP, distinct from the soft cap-skip. The "methodology
+      // engine not found/invalid" prefix lets the agent classify this exit (SKILL.md).
       console.error(`[inject-methodology] ${label} — ${err.message}`);
       process.exit(1);
+    }
+  };
+
+  // The orchestration fragment is the SECOND (less-critical) pointer. Source it lazily, but DISTINGUISH
+  // two failures keyed off the engine's own detection (not message text): an engine that is VALID but
+  // simply TOO OLD to ship `orchestration-slot.md` (e.g. <1.2.0) is a SOFT skip — the methodology fill
+  // is kept and the recipes pointer is reported as withheld (parallel to the cap-skip); only a FULLY
+  // absent/invalid engine (it cannot supply EITHER pointer) is a hard STOP. Returns
+  // { fragment } on success, { skip } for the soft case, or process.exit(1) for the hard STOP.
+  const sourceOrchestrationFragment = async () => {
+    const { dir, source } = resolveEngineDir({ env: process.env, home: homedir() });
+    const stop = (err) => {
+      console.error(`[inject-methodology] reconcile STOP — ${err.message}`);
+      process.exit(1);
+    };
+    // The orchestration fragment FILE is present + the engine is valid → read it. A read error on a
+    // PRESENT fragment is a real corruption STOP, NEVER a "too old" skip (don't mislabel a current
+    // engine with an unreadable fragment).
+    if (detectEngine(dir, { source, rel: ORCHESTRATION_FRAGMENT_REL }).ok) {
+      try {
+        return { fragment: readEngineFragment(dir, { source, rel: ORCHESTRATION_FRAGMENT_REL }) };
+      } catch (err) {
+        stop(err);
+      }
+    }
+    // The orchestration fragment is NOT a usable file. SOFT-skip ONLY when the engine is otherwise
+    // valid (it can still supply the methodology fragment) — a genuine too-old (<1.2.0) engine. A
+    // fully absent/invalid engine cannot supply EITHER fragment → hard STOP with the install command.
+    if (detectEngine(dir, { source }).ok) {
+      return { skip: 'the installed engine is too old to supply it — refresh with `npx @sabaiway/agent-workflow-engine@latest init`' };
+    }
+    try {
+      readEngineFragment(dir, { source, rel: ORCHESTRATION_FRAGMENT_REL }); // throws the canonical install-me error
+    } catch (err) {
+      stop(err);
     }
   };
 
@@ -219,32 +292,86 @@ const main = async (argv) => {
   };
 
   if (mode === 'reconcile') {
-    // Read the engine only when the slot actually needs filling (lazy). slotNeedsFill reuses the same
-    // primitives reconcileSlot does, so it cannot disagree with the fill decision below — a filled
-    // slot reconciles to a zero-diff no-op WITHOUT consulting the engine.
-    const fragment = slotNeedsFill(text) ? await sourceFragmentOrStop('reconcile STOP') : '';
-    const result = reconcileSlot(text, fragment, { maxLines: AGENTS_MD_CAP });
-    if (result.status === 'error') {
-      console.error(`[inject-methodology] reconcile refused — ${result.error}`);
+    // ── Slot 1: methodology (lazy engine read, then reconcile) ──
+    const methFragment = slotNeedsFill(text) ? await sourceFragmentOrStop('reconcile STOP', ENGINE_FRAGMENT_REL) : '';
+    const methResult = reconcileSlot(text, methFragment, { maxLines: AGENTS_MD_CAP });
+    if (methResult.status === 'error') {
+      // cap-refusal OR malformed/anchor STOP — preserve the single-slot classification (SKILL.md
+      // distinguishes by the message); the file is byte-for-byte unchanged either way.
+      console.error(`[inject-methodology] reconcile refused — ${methResult.error}`);
       process.exit(1);
     }
-    if (result.status === 'present-filled') {
-      console.log('[inject-methodology] methodology slot already present and filled — nothing to do (zero-diff).');
+    const afterMeth = methResult.text; // === text when the methodology slot was already filled
+    const describeMeth = {
+      'reconciled-inserted': 'inserted the workflow-methodology pointer at the Session-Protocols anchor and filled it',
+      'reconciled-filled': 'filled the empty workflow-methodology pointer',
+      'present-filled': 'workflow-methodology pointer already present',
+    }[methResult.status];
+
+    // ── Explicit [fragment.md] binds methodology ONLY → skip the orchestration reconcile ──
+    if (explicitFragmentArg) {
+      if (afterMeth === text) {
+        console.log('[inject-methodology] methodology slot already present and filled — nothing to do (zero-diff).');
+        return;
+      }
+      await writeAtomic(afterMeth);
+      console.log(`[inject-methodology] reconcile: ${describeMeth}.`);
       return;
     }
-    await writeAtomic(result.text);
-    const what =
-      result.status === 'reconciled-inserted'
-        ? 'inserted the methodology slot at the Session-Protocols anchor and filled it'
-        : 'filled the empty methodology slot';
-    console.log(`[inject-methodology] reconcile: ${what}.`);
+
+    // ── Slot 2: orchestration, reconciled on the methodology-reconciled text (the cap-check then guards
+    //    the COMBINED ≤100). Lazy: the engine is read only when the orchestration slot needs filling. ──
+    let finalText = afterMeth;
+    let describeOrch;
+    let orchSkipped = false;
+
+    const orchSource = markerSlotNeedsFill(afterMeth, ORCHESTRATION_DESCRIPTOR)
+      ? await sourceOrchestrationFragment()
+      : { fragment: '' };
+    if (orchSource.skip) {
+      // Engine too old to supply the recipes pointer → SOFT skip, parallel to the cap-skip: the
+      // methodology fill is preserved and written; the recipes pointer is reported as withheld.
+      orchSkipped = true;
+      describeOrch = `orchestration-recipes pointer skipped — ${orchSource.skip}`;
+    } else {
+      const orchResult = reconcileMarkerSlot(afterMeth, ORCHESTRATION_DESCRIPTOR, orchSource.fragment, { maxLines: AGENTS_MD_CAP });
+      if (orchResult.status === 'error') {
+        if (isCapRefusal(orchResult.error)) {
+          // SOFT skip — keep the methodology result, report the orchestration cap-skip loudly (not
+          // silent). The methodology fill (if any) is preserved; the orchestration pointer is not added.
+          orchSkipped = true;
+          describeOrch = `orchestration-recipes pointer skipped — ${orchResult.error}`;
+        } else {
+          // Malformed orchestration slot/anchor → a hard STOP. No partial write.
+          console.error(`[inject-methodology] reconcile refused (orchestration) — ${orchResult.error}`);
+          process.exit(1);
+        }
+      } else {
+        finalText = orchResult.text;
+        describeOrch = {
+          'reconciled-inserted': 'inserted the orchestration-recipes pointer below it and filled it',
+          'reconciled-filled': 'filled the empty orchestration-recipes pointer',
+          'present-filled': 'orchestration-recipes pointer already present',
+        }[orchResult.status];
+      }
+    }
+
+    // ── One atomic write of the final (both-slot) text ──
+    if (finalText === text) {
+      // Byte-unchanged. Still report a cap-skip (it is not "nothing to do" — a pointer was withheld).
+      if (orchSkipped) console.log(`[inject-methodology] reconcile: ${describeMeth}; ${describeOrch}.`);
+      else console.log('[inject-methodology] reconcile: both pointers already present and filled — nothing to do (zero-diff).');
+      return;
+    }
+    await writeAtomic(finalText);
+    console.log(`[inject-methodology] reconcile: ${describeMeth}; ${describeOrch}.`);
     return;
   }
 
-  // Legacy inject-into-existing-slot mode. injectMethodology no-ops on absent markers and errors on a
-  // malformed slot WITHOUT reading the fragment, so resolve+read the engine only when there is a
-  // present (ok) slot to fill — a markerless legacy AGENTS.md stays a no-op without the engine.
-  const fragment = findSlot(text).state === 'ok' ? await sourceFragmentOrStop('STOP') : '';
+  // Legacy inject-into-existing-slot mode (METHODOLOGY only). injectMethodology no-ops on absent markers
+  // and errors on a malformed slot WITHOUT reading the fragment, so resolve+read the engine only when
+  // there is a present (ok) slot to fill — a markerless legacy AGENTS.md stays a no-op without the engine.
+  const fragment = findSlot(text).state === 'ok' ? await sourceFragmentOrStop('STOP', ENGINE_FRAGMENT_REL) : '';
   const result = injectMethodology(text, fragment, { maxLines: AGENTS_MD_CAP });
   if (result.status === 'error') {
     console.error(`[inject-methodology] malformed slot — refusing to edit: ${result.error}`);

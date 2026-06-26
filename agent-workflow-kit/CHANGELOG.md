@@ -4,6 +4,29 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.13.0 — Orchestration recipes: a named way to compose the bridges
+
+The kit now knows **how to put the optional execution-backends to work**, not just whether they're set
+up. A new read-only **`/agent-workflow-kit recipes`** advisor presents four named recipes — **Solo**
+(no backend), **Reviewed** (one backend reviews), **Council** (both review, you synthesize), and
+**Delegated** (a backend executes a bounded sub-task) — plans the right one for your environment, and
+**degrades gracefully with a stated reason** when a backend isn't ready (Council → Reviewed → Solo;
+Delegated → Solo). It offers the choice (a multiple-choice prompt where your agent supports it) and
+prints exactly what running it entails, including advisory quota/health notes. It is **read-only**:
+the orchestrator runs the chosen recipe through the bridge skills and always makes the single commit —
+the kit never executes a recipe and never runs a subscription CLI.
+
+Every deployed `AGENTS.md` now also carries a one-line **orchestration-recipes pointer** (right under
+the methodology pointer), reconciled live from the engine on bootstrap + upgrade. And the read-only
+backend-status line that bootstrap/upgrade already print gains an **actionable tail** — e.g.
+*"recipes: Reviewed available (via codex) — see /agent-workflow-kit recipes"* — so you're nudged
+toward the recipe that fits, never left guessing.
+
+Both entry-point templates were trimmed for headroom so both pointers fit inside the 100-line cap; if
+an entry point is already at the limit, the orchestration pointer is **skipped and reported** (never
+silently) while the methodology pointer still lands. The deployment-lineage head stays **`1.3.0`** (no
+`docs/ai` structural change; no migration file). See **AD-018**.
+
 ## 1.12.0 — See the whole family, and uninstall it cleanly
 
 Two new in-agent modes, built on a single **unified family registry**. `/agent-workflow-kit status`

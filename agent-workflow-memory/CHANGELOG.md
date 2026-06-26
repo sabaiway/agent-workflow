@@ -4,6 +4,18 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.1.2 — Entry-point template headroom for the orchestration pointer
+
+A **docs/prose** release (no new executable, the `1.1.1`/`1.9.1` precedent). The bundled entry-point
+template (`references/templates/AGENTS.md`) ships a second empty marker pair — `workflow:orchestration`,
+right under the methodology pair — which the family **composition root** fills live from the methodology
+engine on deploy. To keep the deployed `AGENTS.md` inside its ≤100-line budget with **both** pointers
+filled, the template trimmed non-essential slack (the Hard-Constraints intro blockquote + one
+illustrative row a deploying agent adapts anyway). No behaviour change; the composition root remains the
+only writer of the slots.
+
+The deployment-lineage head stays **`1.3.0`** (no `docs/ai` structural change; no migration file).
+
 ## 1.1.1 — Installer hardening (Issue-004 parity)
 
 A patch release that applies the same two installer fixes shipped to the engine in 1.1.0, keeping the
