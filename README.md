@@ -204,6 +204,12 @@ executor** (a parallel hand in execute: a bounded sub-task to `codex exec` in a 
 - **`codex-cli-bridge`** — wraps OpenAI `codex` for **execute / review** under a ChatGPT subscription.
 - **`antigravity-cli-bridge`** — wraps Google `agy` for **review / probe** under a Google AI subscription.
 
+**Named recipes tie it together.** Rather than improvising "should I get a second opinion? from which
+bridge? what if it's down?" each time, the kit offers four named ways to compose the bridges into the
+loop — **Solo** (no backend), **Reviewed** (one reviews), **Council** (both review, you synthesize),
+**Delegated** (a bridge runs a bounded sub-task). `/agent-workflow-kit recipes` plans + recommends one
+for your environment (degrading gracefully when a bridge isn't ready); the orchestrator always commits.
+
 Honest caveats:
 
 - They are **agent skills, not npm packages**, and are **not placed by `init`** (it only bundles
