@@ -8,8 +8,8 @@ import { ACTIVITIES, SLOT_RECIPES } from '../tools/recipes.mjs';
 // The composition root deploys docs/ai/ from MEMORY's templates when memory is healthy, and from its
 // OWN bundled fallback templates otherwise (SKILL.md). For a deployment to be identical on both paths,
 // the shared templates must be byte-identical across the two packages. This guard pins that parity for
-// the entry-point template AND the orchestration.json config seed (Plan: workflow procedures, AD-019),
-// and validates the seed against the kit's schema (so a malformed seed can never ship).
+// the entry-point template AND the orchestration.json config seed (AD-019), and validates the seed
+// against the kit's schema (so a malformed seed can never ship).
 //
 // Dev-only repo test (test/ is outside the package `files` whitelist — not shipped in the tarball).
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
