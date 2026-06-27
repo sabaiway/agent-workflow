@@ -19,9 +19,12 @@ export const SAFE_DEFAULT_MODES = Object.freeze(['default', 'acceptEdits', 'plan
 export const UNSAFE_BYPASS_MODE = 'bypassPermissions';
 export const ACCEPT_EDITS_MODE = 'acceptEdits';
 
-// The audited read-only core. Every entry is a Claude Code Bash allow pattern whose command performs
-// NO write and NO arbitrary code execution through its own flags (verified empirically, not assumed):
-// commands with an inline write/exec flag are deliberately EXCLUDED, e.g. `git grep`
+// The audited read-only core. Every entry is a Claude Code Bash allow pattern whose command runs NO
+// mutating operation and NO inline arbitrary code execution through its OWN flags (verified
+// empirically, not assumed) — the only own-flag residual is a bounded WRITE via `--output`
+// (git diff/log/show). (The SEPARATE settings-level residual — redirection writes + command
+// substitution exec — is a property of Claude Code's allow-rule parsing, documented at
+// SHELL_METACHARACTERS below.) Commands with an inline write/exec flag are deliberately EXCLUDED, e.g. `git grep`
 // (`--open-files-in-pager=<cmd>` runs a program), `sort` (`-o` writes, `--compress-program=<cmd>`
 // runs a program), `echo`/`find` (redirect-/`-delete`-writable), `gh` (`gh api` can POST),
 // `node`/`npx`/`npm run`/`npm install`/`npm pack` (arbitrary/lifecycle code), bare `git`/`npm`.
@@ -134,7 +137,7 @@ const MUTATING_SCRIPT_HOOK_PATTERN = /^(pre|post)/iu;
 // refusal is named, tested, and produces a clear message).
 const MUTATING_ALLOW_COMMAND_PATTERN = /^(?:git\s+(?:commit|push)|npm\s+publish)(?:\s|$)/iu;
 const RESIDUAL_NOTICE =
-  'residual: seeded read-only allow entries are a trust-posture convenience, NOT a sandbox; settings-level rules cannot inspect runtime redirection/command-substitution; commit/push/publish always ASK; full closure is the deferred PreToolUse hook.';
+  'residual: seeded read-only allow entries are a trust-posture convenience, NOT a sandbox; settings-level rules cannot inspect runtime redirection/command-substitution; commit/push/publish are never allowlisted (a DIRECT invocation still ASKs, but the substitution/redirection residual is not closed here); full closure is the deferred PreToolUse hook.';
 
 const USAGE = `usage: velocity-profile [--dry-run | --apply] [--accept-edits] [--cwd <dir>] [--help]
 

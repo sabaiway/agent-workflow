@@ -4,6 +4,44 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.15.0 — Velocity-profile onboarding (kit)
+
+An opt-in **`/agent-workflow-kit velocity`** mode seeds a fixed, audited **read-only** Claude Code
+allowlist into `.claude/settings.json` so an agent stops idling on approval prompts for routine
+read-only commands while the maintainer is away. It never allowlists `commit`/`push`/`publish`, so a
+direct invocation still ASKs — the only caveat is the trust-posture residual (below), closed by a
+deferred hook.
+
+### Added
+- **`tools/velocity-profile.mjs`** — the pure core (a frozen 18-entry `UNIVERSAL_READONLY_ALLOWLIST`,
+  the `screenAllowlistEntry` read-only screen, the read-only `discoverGateCandidates` gate advisor, and
+  the `validateProfile` drift guard) **plus** the programmatic settings writer + CLI
+  (`[--dry-run | --apply] [--accept-edits] [--cwd <dir>]`). Strict **preflight-then-mutate**:
+  merge-don't-clobber, opt-in `acceptEdits`; refuses an unsafe `permissions.defaultMode`
+  (`bypassPermissions` / any non-`{default,acceptEdits,plan}` mode present in **either** settings file),
+  a symlinked `.claude`, malformed settings JSON, or a non-current deployment stamp on `--apply`. Writes
+  **only** `.claude/settings.json`, never `settings.local.json`.
+- A **`### Mode: velocity`** section + a `## Modes` dispatch entry + a one-line opt-in bootstrap offer
+  in `SKILL.md`.
+- The guarded **`uninstall`** now also reports `permissions.defaultMode`/`permissions.allow` in
+  `.claude/settings.json` **non-committally** (REPORT_ONLY, never auto-removed — the writer stores no
+  ownership marker).
+
+### Honesty
+- This is the family's **first programmatic `.claude/settings.json` writer** — a new writer subsystem
+  with its own tests and teardown reporting, **not** merely an extension of the attribution prose seam.
+- The audited core is **read-only by intent — verified, not assumed** (no mutating command, no inline
+  code execution): build-time probes proved `git grep` (`--open-files-in-pager`) and `sort`
+  (`--compress-program`) give inline code execution; both were dropped (the core is 18, not 20).
+  `git diff`/`log`/`show` are kept with a documented bounded-write (`--output`) residual.
+- A seeded read-only allow entry is a **trust posture, not a sandbox**: Claude Code's settings-level
+  allow rules do not inspect output redirection (`cmd > file`) nor command substitution (`cmd $(…)`),
+  so that residual is surfaced honestly in the consent copy, bounded by `acceptEdits` staying opt-in,
+  and **fully closed only by a deferred PreToolUse hook** (a recorded follow-up). `commit`/`push`/
+  `publish` are never added as allow rules.
+
+Lineage head stays **1.3.0** (no `docs/ai` structural change; no migration). See AD-021.
+
 ## 1.14.0 — Activity procedures: recipe-aware, configurable playbooks
 
 A new read-only **`/agent-workflow-kit procedures <activity>`** advisor turns a bare command like

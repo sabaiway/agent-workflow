@@ -5,8 +5,9 @@
 // family-registry (the SKILL axis) + surveyProject (the DEPLOY axis) and classifies every surface it
 // could touch into one of four classes, then mutates ONLY after preflighting all of them (AD-011:
 // a conflict on a later item leaves the filesystem untouched). The hard rule: it NEVER deletes
-// user-authored content (docs/ai, the entry-point docs, settings.json) — it only PRINTS the exact
-// commands for the user to run by hand (the AD-014 tracked-file posture, generalized to teardown).
+// user-authored content — it PRINTS the exact remove commands for docs/ai + the entry-point docs, and
+// an EDIT instruction for .claude/settings.json (never an rm), for the user to run by hand (the
+// AD-014 tracked-file posture, generalized to teardown).
 //
 //   safe-remove    — kit-placed + provably ours: a family skill dir (valid manifest, name+kind match).
 //   managed-marker — recognized by an OWNED marker: a wrapper symlink that points at our source, the
@@ -425,8 +426,9 @@ Usage:
   --yes        apply the auto-removable set (skill dirs + wrappers + fence + marker hook)
   --help       this help
 
-It NEVER deletes user-authored content (docs/ai, AGENTS.md, settings.json) — those are reported with
-the exact commands for you to run by hand. A skill dir that is not provably ours is left untouched.`;
+It NEVER deletes user-authored content — docs/ai and the entry-point docs are reported with the exact
+rm commands for you to run, and .claude/settings.json with an EDIT instruction (remove the attribution
+key; review any velocity permissions.*), never an rm. A skill dir not provably ours is left untouched.`;
 
 const main = (argv) => {
   const args = parseArgs(argv);
