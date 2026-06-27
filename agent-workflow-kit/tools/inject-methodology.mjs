@@ -201,6 +201,22 @@ export const ensureSlot = (text) => ensureMarkerSlot(text, METHODOLOGY_DESCRIPTO
 export const reconcileSlot = (text, fragment, opts) => reconcileMarkerSlot(text, METHODOLOGY_DESCRIPTOR, fragment, opts);
 export const slotNeedsFill = (text) => markerSlotNeedsFill(text, METHODOLOGY_DESCRIPTOR);
 
+// The routing token the methodology pointer should carry so NL like "write a plan" auto-discovers the
+// activity procedures. A deployment whose methodology slot was filled (legacy / customized) BEFORE this
+// clause existed will NOT auto-receive it — reconcile preserves a filled slot verbatim (AD-019 §3.1a).
+export const PROCEDURES_POINTER = '/agent-workflow-kit procedures';
+
+// Read-only upgrade advisory (NO mutation): when the methodology slot is present + FILLED but lacks the
+// procedures route, return a one-line note the upgrade flow surfaces — add it for auto-discovery; the
+// feature is reachable now via the explicit command. Returns null for an absent / empty / malformed slot
+// or one that already routes to procedures. Pure; never edits the file.
+export const methodologyProceduresHint = (text) => {
+  const content = extractSlot(text);
+  if (content == null || content.trim() === '') return null; // only a FILLED methodology slot
+  if (content.includes(PROCEDURES_POINTER)) return null; // already routes to the procedures advisor
+  return `the methodology pointer has no procedures route — add "${PROCEDURES_POINTER} <activity>" for auto-discovery; the activity procedures are reachable now via ${PROCEDURES_POINTER}.`;
+};
+
 // A cap-refusal is a SOFT, reported skip (distinct from a malformed/anchor STOP) — keyed off the
 // stable "(cap N)" substring both cap messages carry, so the dual-slot reconcile can skip the
 // orchestration pointer (loud) while keeping the methodology fill, instead of aborting both.
@@ -307,6 +323,13 @@ const main = async (argv) => {
       'reconciled-filled': 'filled the empty workflow-methodology pointer',
       'present-filled': 'workflow-methodology pointer already present',
     }[methResult.status];
+    // Read-only upgrade advisory (AD-019 §3.1a): a pre-existing FILLED methodology pointer that predates
+    // the procedures clause won't be re-rendered (reconcile preserves it verbatim), so surface a hint to
+    // add the procedures route. No mutation — purely a reported note appended to the success report.
+    const proceduresNote = methResult.status === 'present-filled' ? methodologyProceduresHint(afterMeth) : null;
+    const reportNote = () => {
+      if (proceduresNote) console.log(`[inject-methodology] note: ${proceduresNote}`);
+    };
 
     // ── Explicit [fragment.md] binds methodology ONLY → skip the orchestration reconcile ──
     if (explicitFragmentArg) {
@@ -361,10 +384,12 @@ const main = async (argv) => {
       // Byte-unchanged. Still report a cap-skip (it is not "nothing to do" — a pointer was withheld).
       if (orchSkipped) console.log(`[inject-methodology] reconcile: ${describeMeth}; ${describeOrch}.`);
       else console.log('[inject-methodology] reconcile: both pointers already present and filled — nothing to do (zero-diff).');
+      reportNote();
       return;
     }
     await writeAtomic(finalText);
     console.log(`[inject-methodology] reconcile: ${describeMeth}; ${describeOrch}.`);
+    reportNote();
     return;
   }
 

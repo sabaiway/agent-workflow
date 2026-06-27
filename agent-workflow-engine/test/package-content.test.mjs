@@ -82,6 +82,7 @@ describe('engine package content — DAG guard (knows nobody)', () => {
       'references/orchestration-slot.md',
       'references/orchestration.md',
       'references/planning.md',
+      'references/procedures.md',
     ].sort();
     const res = spawnSync('npm', ['pack', '--dry-run', '--json'], { cwd: ROOT, encoding: 'utf8' });
     assert.equal(res.status, 0, `npm pack failed: ${res.stderr}`);

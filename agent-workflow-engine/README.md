@@ -50,12 +50,15 @@ the canonical methodology reference on disk:
 - [`references/orchestration-slot.md`](references/orchestration-slot.md) — the **bounded** one-line
   orchestration fragment the composition root injects into a deployed `AGENTS.md`, routing to the
   in-project recipes surface.
+- [`references/procedures.md`](references/procedures.md) — the canonical **activity-procedures** canon:
+  the named activities (`plan-authoring`, `plan-execution`) as ordered steps with typed recipe slots,
+  read live and rendered by the read-only `/agent-workflow-kit procedures <activity>`.
 
 ## What this package ships
 
-`SKILL.md` (the canon overview + ownership rule), `references/` (the full methodology + orchestration
-references + the two bounded slot fragments), `capability.json` (the family manifest), and this
-installer. It ships **no** family-wide tooling (the schema/validator/injection live in the
+`SKILL.md` (the canon overview + ownership rule), `references/` (the full methodology + the
+orchestration + activity-procedures references + the two bounded slot fragments), `capability.json`
+(the family manifest), and this installer. It ships **no** family-wide tooling (the schema/validator/injection live in the
 composition root) and mutates nothing — preserving "knows nobody".
 
 ## License

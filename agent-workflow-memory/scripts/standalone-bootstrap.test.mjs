@@ -18,6 +18,7 @@ import {
   cpSync,
   readdirSync,
   readFileSync,
+  writeFileSync,
   existsSync,
   symlinkSync,
 } from 'node:fs';
@@ -120,6 +121,45 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
     assert.equal(meth.trim(), '', 'the methodology slot is empty as shipped');
     assert.notEqual(orch, null, 'an ordered orchestration marker pair is present');
     assert.equal(orch.trim(), '', 'the orchestration slot is empty as shipped');
+  });
+
+  it('seeds docs/ai/orchestration.json from the template (the bootstrap loop deploys it)', () => {
+    const project = makeProject();
+    const docsAi = bootstrap(project);
+    const seeded = join(docsAi, 'orchestration.json');
+    assert.ok(existsSync(seeded), 'the orchestration.json config is seeded into docs/ai');
+    assert.equal(
+      readFileSync(seeded, 'utf8'),
+      readFileSync(join(TEMPLATES, 'orchestration.json'), 'utf8'),
+      'the seeded config is byte-identical to the template',
+    );
+    // strict JSON valid + the conservative all-solo default the maintainer chose.
+    const config = JSON.parse(readFileSync(seeded, 'utf8'));
+    assert.equal(typeof config._README, 'string', 'an onboarding _README is present');
+    assert.equal(config['plan-authoring'].review, 'solo', 'default review recipe is solo');
+  });
+
+  // The stamp-independent upgrade "ensure" (SKILL.md upgrade step 2): create-if-missing /
+  // preserve-if-edited. Modeled here the way the documented prose performs it — so an equal-head
+  // re-run never clobbers a user's edited config, and a deleted one is re-seeded.
+  it('the upgrade ensure preserves an edited config and re-creates a deleted one', () => {
+    const project = makeProject();
+    const docsAi = bootstrap(project);
+    const dest = join(docsAi, 'orchestration.json');
+    const ensureConfig = () => {
+      if (!existsSync(dest)) cpSync(join(TEMPLATES, 'orchestration.json'), dest);
+    };
+
+    // A user edits the deployed config.
+    writeFileSync(dest, '{ "plan-authoring": { "review": "council" } }\n');
+    ensureConfig(); // an equal-head upgrade re-runs the ensure
+    assert.match(readFileSync(dest, 'utf8'), /council/, 'an edited config is preserved (never clobbered)');
+
+    // A missing config is re-seeded.
+    rmSync(dest);
+    ensureConfig();
+    assert.ok(existsSync(dest), 'a missing config is re-created from the template');
+    assert.equal(readFileSync(dest, 'utf8'), readFileSync(join(TEMPLATES, 'orchestration.json'), 'utf8'));
   });
 
   it('stays ≤ the cap when the composition root fills BOTH pointer slots (D-CAP headroom)', () => {

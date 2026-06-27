@@ -218,6 +218,70 @@ export const recommendRecipe = (detection) => {
   return { recipe: 'solo', clause: `Solo — ${DISPLAY_ALIASES[best.name] ?? best.name}: ${remedy} to unlock Reviewed` };
 };
 
+// ── activity procedures: per-slot recipe resolution ────────────────────────────────
+
+// The named activities and their typed recipe slots — the EXECUTABLE mirror of the engine canon
+// (agent-workflow-engine/references/procedures.md). Drift-guarded against that canon's `Slots:` lines
+// (recipes.test.mjs): the activity ids and each section's slot set must match this table. The slot
+// VALUE is the slot's recipe-TYPE (used to look up which recipes are valid for it, SLOT_RECIPES); in
+// v1 each slot's key equals its type, but the indirection keeps a future renamed slot expressible.
+export const ACTIVITIES = {
+  'plan-authoring': { slots: { review: 'review' } },
+  'plan-execution': { slots: { execute: 'execute', review: 'review' } },
+};
+
+// Which recipes are valid in each slot type. `review` composes a review DEPTH (Solo / Reviewed /
+// Council); `execute` composes Solo / Delegated (delegation is opt-in). A recipe outside its slot's
+// list is a config error (the IO shell) or a usage error (an --override) — never silently coerced.
+export const SLOT_RECIPES = {
+  review: ['solo', 'reviewed', 'council'],
+  execute: ['solo', 'delegated'],
+};
+
+// The computed default for a slot when the config is silent (no file, or no entry for this slot).
+// review → Reviewed when ANY review-capable backend is `ready`, else Solo (NEVER Council — Council is
+// opt-in; it spends two backends' quota). execute → Solo (Delegated is opt-in only). Readiness-aware,
+// so a computed default is always satisfiable and never itself degrades. Deliberately NOT
+// recommendRecipe (which returns Council when both are ready — that drives the status line, not a
+// per-slot default).
+const computedDefaultForSlot = (slotType, detection) => {
+  if (slotType === 'review') return readyProvidersOf('review', detection).length >= 1 ? 'reviewed' : 'solo';
+  return 'solo'; // execute (and any future opt-in slot) floors at Solo
+};
+
+// resolveActivityRecipe({ config, readiness, activity, slot, override }) → the effective recipe for ONE
+// slot of an activity, with graceful-vs-loud degradation. Precedence: an explicit `override` (degrades
+// LOUDLY — overrideUnsatisfied, so the agent tells the user) > the `config` entry (degrades gracefully)
+// > the computed default (graceful; readiness-aware so it never degrades). Satisfiability + the
+// degradation lattice REUSE planRecipe (Council → Reviewed → Solo; Delegated → Solo) — the single source
+// of the recipe lattice. `readiness` is the detector array ([{ name, readiness }]). Pure; never mutates.
+export const resolveActivityRecipe = ({ config = {}, readiness = [], activity, slot, override } = {}) => {
+  const activityDef = ACTIVITIES[activity];
+  if (!activityDef) throw new Error(`unknown activity: ${activity}`);
+  const slotType = activityDef.slots[slot];
+  if (!slotType) throw new Error(`unknown slot "${slot}" for activity "${activity}"`);
+
+  const configured = config?.[activity]?.[slot];
+  const requested = override ?? configured ?? computedDefaultForSlot(slotType, readiness);
+  const source = override != null ? 'override' : configured != null ? 'config' : 'default';
+
+  // Defensive: the IO shell (config) and CLI (override) validate recipe-for-slot first; a stray value
+  // here is a programmer error, surfaced loudly rather than silently coerced into a neighbour recipe.
+  if (!(SLOT_RECIPES[slotType] ?? []).includes(requested)) {
+    throw new Error(`invalid recipe "${requested}" for ${slotType} slot of "${activity}"`);
+  }
+
+  const plan = planRecipe(requested, readiness);
+  const degraded = plan.degraded;
+  return {
+    recipe: plan.effective,
+    source,
+    degradedFrom: degraded ? requested : null,
+    reason: degraded ? plan.degradation.map((d) => d.reason).join('; ') : null,
+    overrideUnsatisfied: source === 'override' && degraded,
+  };
+};
+
 // ── report + CLI ─────────────────────────────────────────────────────────────────
 
 // The structured report behind `--json` — the recipes, the recommendation, and a plan per recipe.

@@ -3,7 +3,7 @@ name: agent-workflow-memory
 description: Deploy or upgrade a portable AI-agent memory substrate in any project — an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) and a structured `docs/ai/` context store with cap/archive/index enforcement. Use when the user wants to bootstrap `docs/ai/`, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-memory` / `/agent-workflow-memory upgrade`. Triggers on "set up the memory system", "deploy the AI memory here", "bootstrap docs/ai", "upgrade the memory substrate". This is the substrate only — the workflow methodology (plan→execute→review, queue, Cleanup) is owned elsewhere and injected into AGENTS.md by the family composition root.
 disable-model-invocation: true
 metadata:
-  version: '1.1.2'
+  version: '1.2.0'
 ---
 
 # agent-workflow-memory
@@ -47,6 +47,7 @@ What this substrate owns vs what it only points at. The methodology + orchestrat
 | Deployment-lineage stamp | **memory** | `docs/ai/.memory-version` |
 | Plan→Phase→Step vocabulary, lifecycle, `queue.md`, mandatory Cleanup | **methodology** (not this skill) | the empty `workflow:methodology` slot — filled by the composition root |
 | Orchestration recipes (Solo / Reviewed / Council / Delegated) | **methodology engine** (not this skill) | the empty `workflow:orchestration` slot — filled by the composition root |
+| Per-project recipe **CONFIG** (which recipe each activity/slot uses) | **memory** seeds an *editable default* | `docs/ai/orchestration.json` (hand-edited; the recipe **canon** + the slot **vocabulary** live in the engine / composition root, never here) |
 
 ---
 
@@ -95,7 +96,9 @@ bootstrapping over a live system, but the user makes the final call.
    (`ln -s AGENTS.md CLAUDE.md`). **Leave BOTH pointer slots (`workflow:methodology` +
    `workflow:orchestration`) exactly as shipped — empty.** Filling them is the composition root's job.
 6. **Deploy `docs/ai/`.** Create the files + `pages/` from
-   `${CLAUDE_SKILL_DIR}/references/templates/`. Keep each file's frontmatter.
+   `${CLAUDE_SKILL_DIR}/references/templates/` (every non-`AGENTS.md` template, including the seeded,
+   **user-editable** `docs/ai/orchestration.json` config — strict JSON, the per-project recipe defaults
+   the composition root's `procedures` advisor reads). Keep each file's frontmatter.
 7. **Fill templates** per the table below.
 8. **Install enforcement (Node projects).** Copy `${CLAUDE_SKILL_DIR}/references/scripts/*.mjs`
    (+ `*.test.mjs`) into the project's `scripts/`. **No Node runtime** → skip this + the hook;
@@ -110,7 +113,7 @@ bootstrapping over a live system, but the user makes the final call.
 10. **Stamp the deployment lineage.** Write the **deployment-lineage head** into
     `docs/ai/.memory-version` (one semver line). The lineage head is **`1.3.0`** (the
     `LINEAGE_HEAD` constant in `scripts/stamp-takeover.mjs`) — the shared `agent-workflow`
-    lineage, **not** this package's npm version (`1.1.0`). Use the atomic writer in
+    lineage, **not** this package's npm version (`1.2.0`). Use the atomic writer in
     `scripts/stamp-takeover.mjs` (write-temp + rename).
 11. **Report & ask.** Show `tree docs/ai/`, 2–3 lines on filled-vs-TODO, then **ask before
     committing** — never auto-commit. **Exception — delegated mode (below): skip this gate.**
@@ -118,7 +121,8 @@ bootstrapping over a live system, but the user makes the final call.
 > **Delegated mode (invoked by the composition root) — applies to BOTH bootstrap and upgrade.**
 > When the family composition root drives this substrate as part of a family bootstrap **or
 > upgrade**, do the write steps (bootstrap 1–10 / upgrade 1–7: write `docs/ai/` + `AGENTS.md` +
-> `.memory-version`) but **do NOT** run **any** commit gate and **do NOT** ask to commit — the
+> `.memory-version`, **including seeding / stamp-independently ensuring `docs/ai/orchestration.json`**)
+> but **do NOT** run **any** commit gate and **do NOT** ask to commit — the
 > composition root owns the **single** commit gate, raised after it injects the two pointer slots.
 > The three setup answers and the target dir are passed in by the composition root; you perform no
 > commit and no slot injection. **Standalone** invocation keeps its own commit gate (bootstrap step
@@ -156,8 +160,14 @@ Fill strategy:
    block and removes it only after the user's explicit consent — never by default); if it is
    **untracked AND not ignored** → **AMBIGUOUS** → **ASK** the user before writing. This visibility check
    runs on **every** in-range upgrade, even at head — it is not gated by the stamp delta, but it is gated
-   **behind** the never-downgrade STOP above. **Then**, if the stamp **equals** the head → report "up to
-   date" (plus any footprint move just made) and stop.
+   **behind** the never-downgrade STOP above. **Also stamp-independent (same gate, before the equal-head
+   short-circuit): ensure `docs/ai/orchestration.json`** — **create it from
+   `${CLAUDE_SKILL_DIR}/references/templates/orchestration.json` if missing**, **preserve it byte-for-byte
+   if it already exists** (a user may have edited it; never clobber it). This is why an equal-head (`1.3.0`)
+   deployment still gains the config seed **without a lineage-head bump or a migration file** (the
+   stamp-independent-reconcile precedent — like the pointer slots + the hidden-mode footprint). **Then**,
+   if the stamp **equals** the head → report "up to date" (plus any footprint move / config seed just
+   made) and stop.
 3. Show the relevant `${CLAUDE_SKILL_DIR}/CHANGELOG.md` context (entries newer than the stamp).
 4. Apply `${CLAUDE_SKILL_DIR}/migrations/<version>-<slug>.md` in **semver order**, only those
    newer than the stamp. Migrations are **idempotent**.
@@ -183,7 +193,7 @@ Fill strategy:
 - **Source vs target directory.** Templates/scripts are read from the skill's own dir; the
   **working directory is the target project** — never write substrate files back into the skill.
 - **Stamp = lineage head, not package version.** `.memory-version` carries `1.3.0` (the shared
-  `agent-workflow` lineage), not the npm `1.1.0`. They are independent axes.
+  `agent-workflow` lineage), not the npm `1.2.0`. They are independent axes.
 - **Both pointer slots ship empty and stay the user's.** Never author methodology or orchestration
   text into them; on upgrade, preserve their content byte-for-byte. The composition root is their only
   writer.
@@ -213,7 +223,8 @@ The three setup choices each have a full contract in
 
 - [`references/contracts.md`](references/contracts.md) — the three setup contracts in full.
 - [`references/templates/`](references/templates/) — stack-agnostic `AGENTS.md` (with the two empty
-  pointer slots — methodology + orchestration), `agent_rules.md`, and all `docs/ai/` files to deploy.
+  pointer slots — methodology + orchestration), `agent_rules.md`, the seeded user-editable
+  `orchestration.json` config, and all `docs/ai/` files to deploy.
 - [`references/scripts/`](references/scripts/) — the Node enforcement scripts (caps + staleness +
   index-freshness gate, 3-tier archive, hook installer) and their unit tests.
 - [`scripts/stamp-takeover.mjs`](scripts/stamp-takeover.mjs) — the upgrade-time lineage state

@@ -4,6 +4,30 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.3.0 — Activity procedures: named, recipe-aware playbooks
+
+The engine now also owns the **activity-procedures** canon — *how to perform* a named workflow
+activity, as ordered steps with **typed recipe slots** that bind to the orchestration recipes (Solo /
+Reviewed / Council / Delegated). Two v1 activities: **`plan-authoring`** (slot: `review`) and
+**`plan-execution`** (slots: `execute`, `review`). The canon composes with `planning.md` (it binds to
+the §7 structure, §8 self-review, and §4 Cleanup without restating them) and stays **generic** — it
+bakes in no single project's stages, deferring any project-declared release/publishing to that
+project's `workflow:methodology` slot. The kit reads this canon **live** and surfaces a read-only
+`/agent-workflow-kit procedures <activity>` that renders the steps + the resolved effective recipe per
+slot (from `docs/ai/orchestration.json` + backend readiness).
+
+### Added
+- **`references/procedures.md`** — the canonical activity-procedures canon: `plan-authoring` +
+  `plan-execution` as `## <activity>` sections, each opening with a machine-parseable `Slots:` line
+  (the only line the kit parses, drift-guarded against its activity table). It carries the
+  load-bearing "Delegated → dispatch execution first" rule and restates the commit contract as a
+  commit-BOUNDARY rule (when an activity has a commit boundary the orchestrator owns that commit; a
+  backend never commits — `plan-authoring` ends at approval with no commit, `plan-execution` commits
+  per Step).
+
+The deployment-lineage head stays **`1.3.0`** (no `docs/ai` structural change; no migration file). The
+npm package version is a separate axis.
+
 ## 1.2.0 — Orchestration recipes: a named vocabulary for composing the bridges
 
 The engine now also owns the **orchestration-recipe** canon — the named patterns an agent uses to

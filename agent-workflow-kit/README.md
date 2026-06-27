@@ -222,6 +222,7 @@ command is printed).
 | `/agent-workflow-kit setup [backend]` | opt-in, any time | **link-only** auto-setup of a bridge: places the bundled bridge skill (only into an absent / empty / managed dir — never overwrites an unmanaged one) + links its wrappers onto `PATH` via managed symlinks (idempotent; refuses to clobber a non-symlink; try `--dry-run` to preview). The binary install + the one-time subscription login stay **manual**: it prints the exact **login** command and points the binary install at each bridge's `setup/README.md`. POSIX wrappers — on Windows use WSL. Never commits, never runs a subscription CLI. |
 | `/agent-workflow-kit status` | any time | **read-only** view of the whole family: which members (kit / memory / engine / the two bridges) are installed and at what version, and — with a project — what's deployed (`docs/ai`, the version stamps, and whether the AI files are git-ignored for hidden mode). Never writes, never commits, never runs a subscription CLI. |
 | `/agent-workflow-kit recipes` | any time | **read-only** orchestration advisor: presents four named recipes for composing the bridges into plan → execute → review — **Solo / Reviewed / Council / Delegated** — plans + recommends one for your environment (degrading with a stated reason when a backend isn't ready), and offers the choice. The orchestrator runs it via the bridge skills and **always commits**; the kit never executes a recipe, never runs a subscription CLI, never commits. |
+| `/agent-workflow-kit procedures <activity>` | any time | **read-only** activity-procedures advisor: prints a named activity's ordered steps (`plan-authoring` / `plan-execution`) read **live** from the engine, plus the **resolved recipe per slot** from your hand-edited `docs/ai/orchestration.json` + backend readiness (default Reviewed when a backend is ready, Council on request, slot-aware incl. Delegated). `--override <slot>=<recipe>` adjusts one slot per run. Composes with `recipes`; never writes, never commits, never runs a subscription CLI. |
 | `/agent-workflow-kit uninstall` | opt-in, any time | **guarded teardown** — the inverse of `init` / `setup`. Removes only what's **provably ours** (managed skill dirs + bridge wrappers; in a project, the hidden-mode git-ignore block it added + the pre-commit hook it installed); **never deletes** your `docs/ai` / `AGENTS.md` / settings — for those it prints the exact `rm` commands to run by hand. Always `--dry-run` first; preflight-then-mutate; never commits. |
 
 It **never auto-commits** and **never overwrites** an existing `AGENTS.md` without asking.
@@ -311,6 +312,7 @@ agent-workflow-kit/
 │   ├── engine-source.mjs     ← live engine fragment read (fail-loud)
 │   ├── detect-backends.mjs    ← read-only backend detector
 │   ├── recipes.mjs           ← read-only recipe planner (recipes)
+│   ├── procedures.mjs        ← activity-procedures advisor (procedures)
 │   ├── setup-backends.mjs     ← link-only backend setup
 │   ├── fs-safe.mjs            ← symlink-safe copy/link/remove/unlink
 │   ├── family-registry.mjs    ← unified family registry (status)

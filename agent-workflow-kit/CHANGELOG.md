@@ -4,6 +4,33 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.14.0 — Activity procedures: recipe-aware, configurable playbooks
+
+A new read-only **`/agent-workflow-kit procedures <activity>`** advisor turns a bare command like
+"write a plan" into a codified, recipe-aware procedure. It reads the named activity's ordered steps
+**live** from the installed engine (`references/procedures.md`) and prints them verbatim, then resolves
+the **effective recipe per slot** from a new per-project, hand-edited config and the read-only backend
+detector. Two v1 activities: **`plan-authoring`** (slot: `review`) and **`plan-execution`** (slots:
+`execute`, `review`). It composes with the AD-018 recipes; **`recipes` stays read-only** (the config is
+hand-edited, never written by the kit).
+
+### Added
+- **`tools/procedures.mjs`** — the read-only CLI: live engine read + per-activity section extraction,
+  config IO + validation, and the resolved recipe per slot (default = Reviewed when a backend is ready,
+  Council on request, slot-aware incl. Delegated). A repeatable `--override <slot>=<recipe>` adjusts one
+  slot per run. Exit codes: `0` success (an unsatisfiable override degrades **loudly** but still `0`),
+  `2` usage (unknown activity / bad `--override`), `1` config or engine error (loud `path: reason`).
+- **`docs/ai/orchestration.json`** — the per-project, strict-JSON config (`{ activity: { slot: recipe } }`;
+  all slots optional; an optional `"_README"` is allowed + ignored). Hand-edited; kit-validated.
+- **`resolveActivityRecipe` / `ACTIVITIES` / `SLOT_RECIPES`** in `tools/recipes.mjs` — the pure resolver
+  (graceful default vs loud override degradation), drift-guarded against the engine canon's `Slots:`
+  lines. `planRecipe` / `recommendRecipe` are unchanged.
+- A **`workflow:methodology`** pointer clause routing to `/agent-workflow-kit procedures <activity>`
+  (the feature's only auto-discovery route — both engine + kit are `disable-model-invocation`).
+
+The deployment-lineage head stays **`1.3.0`** (no `docs/ai` structural change; no migration file). See
+**AD-019**.
+
 ## 1.13.0 — Orchestration recipes: a named way to compose the bridges
 
 The kit now knows **how to put the optional execution-backends to work**, not just whether they're set
