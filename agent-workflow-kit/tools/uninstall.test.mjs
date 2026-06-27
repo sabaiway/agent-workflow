@@ -163,6 +163,35 @@ describe('buildPlan — project deploy axis', () => {
     assert.equal(settings.class, REPORT_ONLY);
   });
 
+  it('reports velocity permissions.* in settings.json NON-COMMITTALLY (never auto-removed)', () => {
+    const fs = projectFs({ files: { [join(dir, '.claude/settings.json')]: JSON.stringify({ permissions: { defaultMode: 'acceptEdits', allow: ['Bash(git status:*)'] } }) } });
+    const plan = buildPlan({ family: [], project, projectDir: dir }, fs);
+    const settings = plan.items.find((i) => i.surface === 'settings');
+    assert.equal(settings.class, REPORT_ONLY);
+    assert.match(settings.reason, /velocity profile seeded them/);
+    assert.doesNotMatch(settings.reason, /includeCoAuthoredBy/);
+    const out = formatPlan(plan);
+    assert.match(out, /permissions\.defaultMode/);
+    assert.ok(!/rm -rf .*settings\.json/.test(out), 'settings.json is never rm-ed');
+  });
+
+  it('reports BOTH the attribution edit and velocity permissions when both are present', () => {
+    const fs = projectFs({ files: { [join(dir, '.claude/settings.json')]: JSON.stringify({ includeCoAuthoredBy: false, permissions: { allow: ['Bash(cat:*)'] } }) } });
+    const settings = buildPlan({ family: [], project, projectDir: dir }, fs).items.find((i) => i.surface === 'settings');
+    assert.equal(settings.class, REPORT_ONLY);
+    assert.match(settings.reason, /includeCoAuthoredBy/);
+    assert.match(settings.reason, /permissions\.(defaultMode|allow)/);
+  });
+
+  it('falls back to a substring probe on malformed settings JSON (no silent miss of either seam)', () => {
+    const broken = '{ "includeCoAuthoredBy": false, "permissions": { "allow": ["Bash(ls:*)"] },, }'; // double comma → JSON.parse throws
+    const fs = projectFs({ files: { [join(dir, '.claude/settings.json')]: broken } });
+    const settings = buildPlan({ family: [], project, projectDir: dir }, fs).items.find((i) => i.surface === 'settings');
+    assert.equal(settings.class, REPORT_ONLY);
+    assert.match(settings.reason, /includeCoAuthoredBy/);
+    assert.match(settings.reason, /permissions/);
+  });
+
   it('reports docs/ai, AGENTS.md, CLAUDE.md, docs/plans as never-deleted', () => {
     const fs = projectFs({ files: { [join(dir, 'AGENTS.md')]: 'x', [join(dir, 'CLAUDE.md')]: 'x' } });
     const docs = buildPlan({ family: [], project, projectDir: dir }, fs).items.filter((i) => i.surface === 'docs');

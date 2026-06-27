@@ -193,8 +193,15 @@ export const buildPlan = ({ family, project = null, projectDir = null, member = 
         return null;
       }
     })();
-    if (settings != null && settings.includes('includeCoAuthoredBy')) {
-      items.push({ surface: 'settings', path: settingsPath, class: REPORT_ONLY, reason: 'we set "includeCoAuthoredBy": false here — review/remove that key by hand (the file may hold your own settings)' });
+    const settingsSeams = detectSettingsSeams(settings);
+    if (settingsSeams.attribution || settingsSeams.permissions) {
+      items.push({
+        surface: 'settings',
+        path: settingsPath,
+        class: REPORT_ONLY,
+        reason: settingsSeamReason(settingsSeams),
+        hand: settingsSeamHand(settingsSeams, settingsPath),
+      });
     }
 
     for (const rel of REPORT_PATHS) {
@@ -306,12 +313,51 @@ const CLASS_LABEL = { [SAFE_REMOVE]: 'remove', [MANAGED_MARKER]: 'reverse', [REP
 // or shell metacharacters can't misbehave when the user pastes it (codex #4).
 const shq = (p) => `'${String(p).replace(/'/g, "'\\''")}'`;
 
-// The "do this by hand" line for a report-only surface. settings.json is an EDIT (remove one key), not
-// an `rm` — deleting it would lose the user's own settings (codex #4); everything else is a quoted rm.
+// Detect the two settings.json seams the family may have written: the attribution edit
+// (`includeCoAuthoredBy`) and the velocity profile (`permissions.defaultMode` / `permissions.allow`).
+// Parse when possible (accurate); on malformed JSON fall back to a substring probe for the attribution
+// key so it is still surfaced (no silent miss). The velocity writer stores NO ownership marker, so the
+// permissions seam is reported NON-COMMITTALLY — never a false ownership claim, never auto-removed.
+const detectSettingsSeams = (settings) => {
+  if (settings == null) return { attribution: false, permissions: false };
+  const parsed = (() => { try { return JSON.parse(settings); } catch { return null; } })();
+  if (parsed == null || typeof parsed !== 'object') {
+    // Malformed / JSONC settings.json (comments, trailing commas) — probe both seams by substring so
+    // neither is silently missed (over-reporting REPORT_ONLY is safe; it is never auto-removed).
+    return {
+      attribution: settings.includes('includeCoAuthoredBy'),
+      permissions: settings.includes('"permissions"') && (settings.includes('"defaultMode"') || settings.includes('"allow"')),
+    };
+  }
+  const perms = parsed.permissions;
+  const permissions = perms != null && typeof perms === 'object'
+    && (Object.prototype.hasOwnProperty.call(perms, 'defaultMode') || Object.prototype.hasOwnProperty.call(perms, 'allow'));
+  return { attribution: Object.prototype.hasOwnProperty.call(parsed, 'includeCoAuthoredBy'), permissions };
+};
+
+const ATTRIBUTION_REASON = 'we set "includeCoAuthoredBy": false here — review/remove that key by hand (the file may hold your own settings)';
+const PERMISSIONS_REASON = 'a "permissions.defaultMode" and/or "permissions.allow" key is present in this file — if the velocity profile seeded them, review/remove by hand (no ownership marker is stored); otherwise leave them';
+
+const settingsSeamReason = (seams) =>
+  seams.attribution && seams.permissions ? `${ATTRIBUTION_REASON}. Also: ${PERMISSIONS_REASON}`
+    : seams.permissions ? PERMISSIONS_REASON
+      : ATTRIBUTION_REASON;
+
+const settingsSeamHand = (seams, p) =>
+  seams.attribution && seams.permissions
+    ? `edit ${shq(p)} → remove the "includeCoAuthoredBy" entry and review "permissions.defaultMode"/"permissions.allow" (if the velocity profile seeded them) — keep the rest of your settings`
+    : seams.permissions
+      ? `edit ${shq(p)} → if the velocity profile seeded "permissions.defaultMode"/"permissions.allow", review/remove them by hand (keep the rest of your settings)`
+      : `edit ${shq(p)} → remove the "includeCoAuthoredBy" entry (keep the rest of your settings)`;
+
+// The "do this by hand" line for a report-only surface. A settings.json item carries its own `hand`
+// guidance (an EDIT, never an `rm` — deleting it would lose the user's own settings, codex #4);
+// everything else is a quoted rm. The fallback preserves the attribution wording for a bare item.
 const handGuidance = (item) =>
-  item.surface === 'settings'
+  item.hand ??
+  (item.surface === 'settings'
     ? `edit ${shq(item.path)} → remove the "includeCoAuthoredBy" entry (keep the rest of your settings)`
-    : `rm -rf ${shq(item.path)}   # if it was committed:  git rm -r --cached ${shq(item.path)}`;
+    : `rm -rf ${shq(item.path)}   # if it was committed:  git rm -r --cached ${shq(item.path)}`);
 
 export const formatPlan = (plan) => {
   const lines = ['agent-workflow uninstall — planned actions (nothing is changed without --yes)', ''];
