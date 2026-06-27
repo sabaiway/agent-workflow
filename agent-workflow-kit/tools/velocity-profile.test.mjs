@@ -483,4 +483,14 @@ describe('velocity profile writer + CLI', () => {
     assert.equal(result.code, EXIT_OK);
     assertCorePresentOnce(readJson(settingsPath(cwd)).permissions.allow);
   });
+
+  it('always prints the honest residual notice (locks the release honesty contract)', (t) => {
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    const dry = runMain(['--dry-run'], cwd);
+    assert.match(dry.stdout, /trust-posture convenience, NOT a sandbox/);
+    assert.match(dry.stdout, /commit\/push\/publish are never allowlisted/);
+    assert.match(dry.stdout, /substitution\/redirection residual is not closed/);
+    assert.match(dry.stdout, /deferred PreToolUse hook/);
+  });
 });
