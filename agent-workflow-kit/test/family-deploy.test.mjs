@@ -237,6 +237,7 @@ describe('backward compatibility — a prior-lineage deployment is reconciled on
     writeFileSync(join(project, 'AGENTS.md'), reconciled.text);
 
     assert.equal(readFileSync(join(project, '.claude', 'settings.json'), 'utf8'), settings, 'user settings untouched');
+    assert.ok(!readFileSync(join(project, '.claude', 'settings.json'), 'utf8').includes('permissions'), 'upgrade never seeds velocity permissions.* into settings.json (velocity is never auto-run)');
     assert.equal(readFileSync(join(docsAi, 'decisions.md'), 'utf8'), userDoc, 'user-authored doc untouched');
     assert.equal(readFileSync(join(docsAi, '.workflow-version'), 'utf8').trim(), LINEAGE_HEAD, 'legacy stamp preserved');
     assert.equal(readFileSync(join(docsAi, '.memory-version'), 'utf8').trim(), LINEAGE_HEAD, 'takeover reconciled the stamp');
