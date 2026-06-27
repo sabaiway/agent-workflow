@@ -10,6 +10,7 @@ import {
   inspectFile,
   buildIndex,
   checkIndexFreshness,
+  walkMarkdownFiles,
 } from './check-docs-size.mjs';
 
 describe('parseFrontmatter', () => {
@@ -123,6 +124,29 @@ describe('inspectFile', () => {
     const result = await inspectFile(path, computeToday('2026-05-24'));
     expect(result.frontmatter).toBeNull();
     expect(result.errors).toContain('missing YAML frontmatter');
+  });
+});
+
+// The cap-validator discovers ONLY `*.md` files, so a non-`.md` doc — e.g. a hand-edited
+// `docs/ai/orchestration.json` config — is inherently skipped: never validated for frontmatter / caps.
+// This belt-and-suspenders regression pins that skip so adding a config `.json` under docs/ai can never
+// start failing the docs gate.
+describe('walkMarkdownFiles — only *.md is discovered (a config .json is skipped)', () => {
+  let dir;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'walk-md-test-'));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('returns the .md file and NOT a sibling orchestration.json', async () => {
+    await writeFile(join(dir, 'doc.md'), '---\ntype: reference\nmaxLines: 100\n---\n\nbody.\n');
+    await writeFile(join(dir, 'orchestration.json'), '{ "plan-authoring": { "review": "reviewed" } }\n');
+    const found = await walkMarkdownFiles(dir);
+    expect(found.some((f) => f.endsWith('doc.md'))).toBe(true);
+    expect(found.some((f) => f.endsWith('.json'))).toBe(false);
+    expect(found.some((f) => f.endsWith('orchestration.json'))).toBe(false);
   });
 });
 

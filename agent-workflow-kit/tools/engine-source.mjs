@@ -26,6 +26,11 @@ export const ENGINE_FRAGMENT_REL = 'references/methodology-slot.md';
 // engine older than 1.2.0 does not ship it; detectEngine({ rel }) lets a caller verify the specific
 // fragment so `status` can caveat a too-old engine instead of failing the methodology read.
 export const ORCHESTRATION_FRAGMENT_REL = 'references/orchestration-slot.md';
+// The activity-procedures canon — a NEW live-read engine fragment (engine >= 1.3.0). The procedures
+// CLI reads it via readEngineFragment({ rel }); detectEngine({ rel }) lets `status` caveat — and the
+// CLI fail loudly on — an engine too old to ship it. readEngineFragment accepts an arbitrary `rel`
+// (no whitelist), so no further plumbing is needed beyond this constant.
+export const PROCEDURES_FRAGMENT_REL = 'references/procedures.md';
 const ENGINE_DEFAULT_REL = '.claude/skills/agent-workflow-engine';
 
 const defaultStatType = (path) => {

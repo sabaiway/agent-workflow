@@ -139,7 +139,10 @@ export const parseStaleAfter = (value) => {
   return Number(m[1]);
 };
 
-const walkMarkdownFiles = async (dir) => {
+// Discover the docs to validate: ONLY `*.md` files (recursively). Non-`.md` files — e.g. a hand-edited
+// `docs/ai/orchestration.json` config — are inherently skipped, so they are never subject to the
+// frontmatter / maxLines caps. Exported so that skip is pinned by a regression test.
+export const walkMarkdownFiles = async (dir) => {
   const entries = await readdir(dir, { withFileTypes: true });
   const files = [];
   for (const entry of entries) {

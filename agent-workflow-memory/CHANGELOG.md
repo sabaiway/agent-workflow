@@ -4,6 +4,27 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.2.0 — Seeds the per-project orchestration config
+
+The substrate now seeds a new **per-project, user-editable recipe config** —
+`references/templates/orchestration.json` — deployed into `docs/ai/orchestration.json` by the bootstrap
+template loop. It declares the orchestration **recipe** each named activity/slot uses (the composition
+root's read-only `procedures` advisor reads it); the recipe **canon** and the slot **vocabulary** still
+live in the engine / composition root, never here (the substrate keeps knowing nobody — the seed's
+self-documentation uses generic "composition root" phrasing, naming no sibling). The shipped default is
+conservative: **`solo` everywhere**, with an onboarding `_README` explaining how to raise a slot.
+
+### Added
+- **`references/templates/orchestration.json`** — strict JSON (no comments), byte-identical to the kit's
+  fallback copy (kit↔memory template parity guard). Seeded on bootstrap; on upgrade it is **ensured
+  stamp-independently** (create-if-missing / **preserve-if-edited** — a user's edits are never clobbered),
+  so even an equal-head (`1.3.0`) deployment gains it **without a lineage-head bump or a migration file**.
+- An **ownership-table** row distinguishing the seeded, editable recipe **CONFIG** (memory) from the
+  recipe **CANON** + slot vocabulary (engine / composition root).
+
+The deployment-lineage head stays **`1.3.0`** (no `docs/ai` structural change; no migration file). The
+npm package version is a separate axis.
+
 ## 1.1.2 — Entry-point template headroom for the orchestration pointer
 
 A **docs/prose** release (no new executable, the `1.1.1`/`1.9.1` precedent). The bundled entry-point

@@ -24,6 +24,8 @@ import {
   injectMethodology,
   reconcileSlot,
   extractSlot,
+  extractMarkerSlot,
+  ORCHESTRATION_DESCRIPTOR,
   AGENTS_MD_CAP,
   START_MARKER,
   END_MARKER,
@@ -214,7 +216,7 @@ describe('backward compatibility — a prior-lineage deployment is reconciled on
     assert.equal(result.text, entry, 'the customization survives byte-for-byte — not replaced by the bundled fragment');
   });
 
-  it('an upgrade touches only the artifacts it owns — unrelated project files stay intact', async () => {
+  it('an upgrade touches only the artifacts it owns — unrelated project files stay intact (slot reconcile)', async () => {
     const { project, docsAi } = makeProject();
     const legacy = LEGACY_WITH_ANCHOR;
     writeFileSync(join(project, 'AGENTS.md'), legacy);
@@ -241,5 +243,47 @@ describe('backward compatibility — a prior-lineage deployment is reconciled on
     const entry = readFileSync(join(project, 'AGENTS.md'), 'utf8');
     assert.equal(extractSlot(entry).trim(), fragment.trim(), 'the entry point now carries the filled slot');
     assert.ok(entry.includes('Read it before any code change.'), 'the anchor and surrounding content survive');
+  });
+});
+
+// AD-019 — the CLI-backed deploy seam (not the pure helpers): drive the REAL `inject-methodology.mjs
+// reconcile` against the REAL local engine, so the methodology pointer is filled from the actual
+// fragment (which carries the procedures auto-discovery route) and the orchestration pointer from its
+// fragment. Plus the kit-fallback config seed: the kit ships `references/templates/orchestration.json`,
+// seeds it into docs/ai, and a stamp-independent ensure preserves an edited one.
+describe('composition root — CLI-backed reconcile + config seed (real engine, AD-019)', () => {
+  const ENGINE_DIR = join(FAMILY_ROOT, 'agent-workflow-engine');
+  const INJECT = join(KIT_ROOT, 'tools', 'inject-methodology.mjs');
+  const KIT_ORCH_TEMPLATE = join(KIT_ROOT, 'references', 'templates', 'orchestration.json');
+  const withEngine = { ...process.env, AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR };
+  const lineCount = (t) => t.split('\n').length - (t.endsWith('\n') ? 1 : 0);
+
+  it('fallback deploy: CLI reconcile fills BOTH pointers live — methodology carries the /agent-workflow-kit procedures route', () => {
+    const { project } = makeProject();
+    cpSync(KIT_ENTRY_TEMPLATE, join(project, 'AGENTS.md'));
+    execFileSync(process.execPath, [INJECT, 'reconcile', join(project, 'AGENTS.md')], { stdio: 'pipe', env: withEngine });
+    const entry = readFileSync(join(project, 'AGENTS.md'), 'utf8');
+    assert.match(extractSlot(entry), /\/agent-workflow-kit procedures/, 'the methodology pointer routes to the procedures advisor');
+    const orch = extractMarkerSlot(entry, ORCHESTRATION_DESCRIPTOR);
+    assert.match(orch, /Solo|Reviewed|Council|Delegated/, 'the orchestration pointer carries the recipe vocabulary');
+    assert.ok(lineCount(entry) <= AGENTS_MD_CAP, `dual-filled entry point within ${AGENTS_MD_CAP} lines (got ${lineCount(entry)})`);
+  });
+
+  it('fallback deploy: the kit seeds docs/ai/orchestration.json; the stamp-independent ensure preserves an edited one', () => {
+    const { docsAi } = makeProject();
+    const dest = join(docsAi, 'orchestration.json');
+    // bootstrap step 6 seed (the template loop copies the kit's own config template into docs/ai)
+    cpSync(KIT_ORCH_TEMPLATE, dest);
+    assert.equal(readFileSync(dest, 'utf8'), readFileSync(KIT_ORCH_TEMPLATE, 'utf8'), 'seeded byte-identical to the kit template');
+    // the upgrade ensure (SKILL.md upgrade step 3): create-if-missing / preserve-if-edited
+    const ensure = () => {
+      if (!existsSync(dest)) cpSync(KIT_ORCH_TEMPLATE, dest);
+    };
+    writeFileSync(dest, '{ "plan-execution": { "execute": "delegated" } }\n');
+    ensure();
+    assert.match(readFileSync(dest, 'utf8'), /delegated/, 'an edited config is preserved on a re-run (never clobbered)');
+    rmSync(dest);
+    ensure();
+    assert.ok(existsSync(dest), 'a missing config is re-seeded from the kit template');
   });
 });

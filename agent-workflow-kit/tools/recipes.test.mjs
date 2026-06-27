@@ -9,8 +9,11 @@ import {
   BACKEND_ROLES,
   BACKEND_META,
   DISPLAY_ALIASES,
+  ACTIVITIES,
+  SLOT_RECIPES,
   planRecipe,
   recommendRecipe,
+  resolveActivityRecipe,
   formatRecipes,
 } from './recipes.mjs';
 import { READY, NEEDS_SKILL, NEEDS_CLI, NEEDS_CREDENTIALS, DEGRADED } from './detect-backends.mjs';
@@ -346,6 +349,178 @@ describe('formatRecipes — deterministic advisor text', () => {
     const once = formatRecipes(det);
     assert.equal(once, formatRecipes(det), 'same detection → identical text');
     for (const title of ['Solo', 'Reviewed', 'Council', 'Delegated']) assert.match(once, new RegExp(title));
+  });
+});
+
+// ── ACTIVITIES + resolveActivityRecipe (the activity-procedures resolver) ───────────
+
+describe('ACTIVITIES — the v1 activity/slot table', () => {
+  it('declares exactly plan-authoring (review) and plan-execution (execute, review)', () => {
+    assert.deepEqual(Object.keys(ACTIVITIES), ['plan-authoring', 'plan-execution']);
+    assert.deepEqual(Object.keys(ACTIVITIES['plan-authoring'].slots), ['review']);
+    assert.deepEqual(Object.keys(ACTIVITIES['plan-execution'].slots), ['execute', 'review']);
+  });
+
+  it('every slot type maps to a SLOT_RECIPES list, and every listed recipe is a real RECIPE id', () => {
+    const recipeIds = new Set(RECIPES.map((r) => r.id));
+    for (const def of Object.values(ACTIVITIES)) {
+      for (const slotType of Object.values(def.slots)) {
+        assert.ok(Array.isArray(SLOT_RECIPES[slotType]), `slot type "${slotType}" has a recipe list`);
+        for (const id of SLOT_RECIPES[slotType]) assert.ok(recipeIds.has(id), `"${id}" is a real recipe`);
+      }
+    }
+  });
+
+  it('review composes solo|reviewed|council; execute composes solo|delegated', () => {
+    assert.deepEqual(SLOT_RECIPES.review, ['solo', 'reviewed', 'council']);
+    assert.deepEqual(SLOT_RECIPES.execute, ['solo', 'delegated']);
+  });
+});
+
+// The activity/slot drift guard — the JS ACTIVITIES table must match the engine canon's parseable
+// `Slots:` lines (the kit parses ONLY that line; the steps are rendered verbatim). Clones the
+// engine↔kit recipe-name parity pattern above.
+describe('engine↔kit activity/slot parity — ACTIVITIES matches procedures.md `Slots:` lines', () => {
+  const PROCEDURES = readFileSync(join(REPO_ROOT, 'agent-workflow-engine', 'references', 'procedures.md'), 'utf8');
+  const sectionOf = (activity) => {
+    const lines = PROCEDURES.split('\n');
+    const start = lines.findIndex((l) => l.trim() === `## ${activity}`);
+    if (start === -1) return null;
+    let end = lines.length;
+    for (let i = start + 1; i < lines.length; i += 1) {
+      if (/^## /.test(lines[i])) {
+        end = i;
+        break;
+      }
+    }
+    return lines.slice(start, end);
+  };
+  const slotsOf = (activity) => {
+    const sec = sectionOf(activity);
+    if (!sec) return null;
+    const slotsLine = sec.slice(1).map((l) => l.trim()).find((l) => l.startsWith('Slots:'));
+    if (!slotsLine) return null;
+    return slotsLine
+      .replace(/^Slots:\s*/, '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  };
+
+  for (const [activity, def] of Object.entries(ACTIVITIES)) {
+    it(`${activity}: the canon's Slots line equals the JS slot set`, () => {
+      assert.deepEqual(slotsOf(activity), Object.keys(def.slots), `procedures.md "## ${activity}" Slots: drifted from ACTIVITIES`);
+    });
+  }
+
+  it('procedures.md declares no activity section absent from the ACTIVITIES table', () => {
+    const headingIds = PROCEDURES.split('\n')
+      .filter((l) => /^## /.test(l))
+      .map((l) => l.replace(/^##\s+/, '').trim());
+    for (const id of headingIds) assert.ok(ACTIVITIES[id], `procedures.md "## ${id}" has no ACTIVITIES entry`);
+  });
+});
+
+describe('resolveActivityRecipe — defaults (config silent), readiness-aware', () => {
+  it('review default is Reviewed when a backend is ready — NOT Council (recommendRecipe is not reused)', () => {
+    const r = resolveActivityRecipe({ readiness: detect(READY, READY), activity: 'plan-authoring', slot: 'review' });
+    assert.equal(r.recipe, 'reviewed');
+    assert.equal(r.source, 'default');
+    assert.equal(r.degradedFrom, null);
+    // sanity: recommendRecipe DOES return council for the same detection — the default must not.
+    assert.equal(recommendRecipe(detect(READY, READY)).recipe, 'council');
+  });
+
+  it('review default is Solo when no backend is ready', () => {
+    const r = resolveActivityRecipe({ readiness: detect(NEEDS_SKILL, NEEDS_SKILL), activity: 'plan-authoring', slot: 'review' });
+    assert.equal(r.recipe, 'solo');
+    assert.equal(r.source, 'default');
+  });
+
+  it('execute default is Solo even when codex is ready (Delegated is opt-in)', () => {
+    const r = resolveActivityRecipe({ readiness: detect(READY, READY), activity: 'plan-execution', slot: 'execute' });
+    assert.equal(r.recipe, 'solo');
+    assert.equal(r.source, 'default');
+  });
+});
+
+describe('resolveActivityRecipe — config-driven, graceful degradation', () => {
+  const config = { 'plan-authoring': { review: 'council' }, 'plan-execution': { execute: 'delegated', review: 'reviewed' } };
+
+  it('config review=council holds when both backends are ready', () => {
+    const r = resolveActivityRecipe({ config, readiness: detect(READY, READY), activity: 'plan-authoring', slot: 'review' });
+    assert.equal(r.recipe, 'council');
+    assert.equal(r.source, 'config');
+    assert.equal(r.degradedFrom, null);
+    assert.equal(r.overrideUnsatisfied, false);
+  });
+
+  it('config review=council degrades GRACEFULLY to Reviewed with one backend (not a loud override)', () => {
+    const r = resolveActivityRecipe({ config, readiness: detect(READY, NEEDS_SKILL), activity: 'plan-authoring', slot: 'review' });
+    assert.equal(r.recipe, 'reviewed');
+    assert.equal(r.degradedFrom, 'council');
+    assert.equal(r.overrideUnsatisfied, false);
+    assert.match(r.reason, /not installed|council/i);
+  });
+
+  it('config execute=delegated holds when codex is ready', () => {
+    const r = resolveActivityRecipe({ config, readiness: detect(READY, NEEDS_SKILL), activity: 'plan-execution', slot: 'execute' });
+    assert.equal(r.recipe, 'delegated');
+    assert.equal(r.degradedFrom, null);
+  });
+
+  it('config execute=delegated degrades to Solo when codex is not ready (agy cannot execute)', () => {
+    const r = resolveActivityRecipe({ config, readiness: detect(NEEDS_SKILL, READY), activity: 'plan-execution', slot: 'execute' });
+    assert.equal(r.recipe, 'solo');
+    assert.equal(r.degradedFrom, 'delegated');
+    assert.equal(r.overrideUnsatisfied, false);
+    assert.match(r.reason, /execute/i);
+  });
+});
+
+describe('resolveActivityRecipe — override precedence + LOUD degradation', () => {
+  it('an override beats the config entry', () => {
+    const config = { 'plan-authoring': { review: 'solo' } };
+    const r = resolveActivityRecipe({ config, readiness: detect(READY, READY), activity: 'plan-authoring', slot: 'review', override: 'council' });
+    assert.equal(r.recipe, 'council');
+    assert.equal(r.source, 'override');
+  });
+
+  it('an unsatisfiable override degrades LOUDLY (overrideUnsatisfied = true)', () => {
+    const r = resolveActivityRecipe({ readiness: detect(READY, NEEDS_SKILL), activity: 'plan-authoring', slot: 'review', override: 'council' });
+    assert.equal(r.recipe, 'reviewed');
+    assert.equal(r.degradedFrom, 'council');
+    assert.equal(r.overrideUnsatisfied, true, 'an explicit override that cannot be satisfied is flagged loud');
+  });
+
+  it('a satisfiable override is not flagged', () => {
+    const r = resolveActivityRecipe({ readiness: detect(READY, READY), activity: 'plan-authoring', slot: 'review', override: 'council' });
+    assert.equal(r.recipe, 'council');
+    assert.equal(r.overrideUnsatisfied, false);
+  });
+});
+
+describe('resolveActivityRecipe — defensive validity + purity', () => {
+  it('throws on an unknown activity', () => {
+    assert.throws(() => resolveActivityRecipe({ readiness: detect(READY, READY), activity: 'nope', slot: 'review' }), /unknown activity/);
+  });
+  it('throws on an unknown slot for the activity', () => {
+    assert.throws(
+      () => resolveActivityRecipe({ readiness: detect(READY, READY), activity: 'plan-authoring', slot: 'execute' }),
+      /unknown slot/,
+    );
+  });
+  it('throws on a recipe invalid for the slot (e.g. delegated in a review slot)', () => {
+    assert.throws(
+      () => resolveActivityRecipe({ readiness: detect(READY, READY), activity: 'plan-authoring', slot: 'review', override: 'delegated' }),
+      /invalid recipe/,
+    );
+  });
+  it('does not mutate the detection input', () => {
+    const det = detect(READY, READY);
+    const snapshot = JSON.parse(JSON.stringify(det));
+    resolveActivityRecipe({ readiness: det, activity: 'plan-execution', slot: 'review' });
+    assert.deepEqual(det, snapshot);
   });
 });
 

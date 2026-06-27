@@ -22,6 +22,9 @@ import {
   ORCHESTRATION_DESCRIPTOR,
   findMarkerSlot,
   extractMarkerSlot,
+  reconcileMarkerSlot,
+  methodologyProceduresHint,
+  PROCEDURES_POINTER,
 } from './inject-methodology.mjs';
 
 // Read the orchestration slot's content from a reconciled entry point.
@@ -613,4 +616,74 @@ describe('reconcile CLI — atomic ensure+inject-if-empty+cap, reading the fragm
       assert.equal(readFileSync(agents, 'utf8'), filled, 'no partial write on STOP');
     });
   });
+});
+
+// AD-019 §3.1a — the read-only upgrade advisory: a FILLED methodology pointer lacking the procedures
+// route gets a hint (it can't be auto-re-rendered, reconcile preserves a filled slot verbatim); a slot
+// that already routes to procedures, or an empty / absent / malformed slot, is silent. NO mutation.
+describe('methodologyProceduresHint — read-only upgrade advisory (§3.1a)', () => {
+  it('a filled methodology slot WITHOUT the procedures route → a hint naming the procedures command', () => {
+    const entry = wrap('\n> methodology notes the user wrote, no procedures route here\n');
+    const hint = methodologyProceduresHint(entry);
+    assert.ok(hint, 'a filled-without-clause slot yields a hint');
+    assert.match(hint, new RegExp(PROCEDURES_POINTER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  });
+
+  it('a filled methodology slot that ALREADY routes to procedures → silent (null)', () => {
+    const entry = wrap(`\n> methodology — see ${PROCEDURES_POINTER} <activity> for the steps\n`);
+    assert.equal(methodologyProceduresHint(entry), null);
+  });
+
+  it('an empty methodology slot → silent (null) — only a filled slot is advised', () => {
+    assert.equal(methodologyProceduresHint(wrap('\n')), null);
+  });
+
+  it('an absent / malformed methodology slot → silent (null)', () => {
+    assert.equal(methodologyProceduresHint('# AGENTS.md\n\nno slot here\n'), null);
+    assert.equal(methodologyProceduresHint(`${START_MARKER}\n${END_MARKER}\n${START_MARKER}\n${END_MARKER}\n`), null);
+  });
+
+  it('is read-only: a pre-filled-without-clause deployment is reported, not mutated, on reconcile (engine absent)', () => {
+    // A dual-filled entry point whose methodology lacks the procedures route: reconcile is a zero-diff
+    // no-op (filled slots preserved) yet still surfaces the hint on stdout — never rewrites the file.
+    const custom = wrapDual('\nuser meth notes, no procedures route\n', '\nuser orch notes\n');
+    const dir = mkdtempSync(join(tmpdir(), 'reconcile-hint-'));
+    tmpDirs.push(dir);
+    const agents = join(dir, 'AGENTS.md');
+    writeFileSync(agents, custom);
+    const out = execFileSync(process.execPath, [SCRIPT, 'reconcile', agents], { encoding: 'utf8', env: withEngine(NO_ENGINE) });
+    assert.equal(readFileSync(agents, 'utf8'), custom, 'the file is byte-unchanged (read-only advisory)');
+    assert.match(out, /note:.*procedures/i, 'the upgrade flow surfaces the procedures hint');
+  });
+});
+
+// §3.2 (kit) — the REAL extended engine fragments must keep the dual-fill ≤ 100 on BOTH deployed
+// templates. The methodology fragment grew a procedures clause (still ONE line, so no extra line), but
+// pin it against the REAL fragments + REAL templates so a future fragment edit that DID add a line is
+// caught here, not in the field.
+describe('real-fragment dual-fill ≤ cap on both deployed templates (§3.2)', () => {
+  const ENGINE_REFS = join(HERE, '..', '..', 'agent-workflow-engine', 'references');
+  const realMeth = readFileSync(join(ENGINE_REFS, 'methodology-slot.md'), 'utf8');
+  const realOrch = readFileSync(join(ENGINE_REFS, 'orchestration-slot.md'), 'utf8');
+  const lineCount = (t) => t.split('\n').length - (t.endsWith('\n') ? 1 : 0);
+  const TEMPLATES = {
+    kit: join(HERE, '..', 'references', 'templates', 'AGENTS.md'),
+    memory: join(HERE, '..', '..', 'agent-workflow-memory', 'references', 'templates', 'AGENTS.md'),
+  };
+
+  it('the real methodology fragment carries the procedures route (auto-discovery clause)', () => {
+    assert.match(realMeth, new RegExp(PROCEDURES_POINTER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.equal(lineCount(realMeth), 1, 'the methodology fragment stays exactly one content line');
+  });
+
+  for (const [name, path] of Object.entries(TEMPLATES)) {
+    it(`${name} template: filling BOTH real fragments stays ≤ ${AGENTS_MD_CAP} lines`, () => {
+      const template = readFileSync(path, 'utf8');
+      const meth = reconcileSlot(template, realMeth, { maxLines: AGENTS_MD_CAP });
+      assert.equal(meth.status, 'reconciled-filled', `${name}: methodology slot fills`);
+      const both = reconcileMarkerSlot(meth.text, ORCHESTRATION_DESCRIPTOR, realOrch, { maxLines: AGENTS_MD_CAP });
+      assert.equal(both.status, 'reconciled-filled', `${name}: orchestration slot fills`);
+      assert.ok(lineCount(both.text) <= AGENTS_MD_CAP, `${name}: dual-filled entry point is ${lineCount(both.text)} lines (cap ${AGENTS_MD_CAP})`);
+    });
+  }
 });

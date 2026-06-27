@@ -33,6 +33,7 @@ describe('memory installer — payload + symlink-traversal hardening', () => {
       'scripts/stamp-takeover.mjs',
       'references/contracts.md',
       'references/templates/AGENTS.md',
+      'references/templates/orchestration.json',
       'migrations/legacy-stamp-takeover.md',
     ]) {
       assert.ok(existsSync(join(target, f)), `missing installed entry: ${f}`);

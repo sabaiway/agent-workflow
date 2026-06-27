@@ -18,6 +18,7 @@ import {
 } from './family-registry.mjs';
 import { VALID, INVALID, UNSUPPORTED } from './manifest/validate.mjs';
 import { START_MARKER } from './hide-footprint.mjs';
+import { ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '../..'); // agent-workflow-kit/tools → repo root
@@ -110,55 +111,86 @@ describe('surveyFamily', () => {
       ? { result: VALID, name: 'agent-workflow-engine', kind: 'methodology-engine', available: true }
       : { result: VALID, name: 'x', kind: 'x', available: true };
 
-  // The caveat mirrors the reconcile: it reads the orchestration fragment (readEngineFragment), so an
-  // absent / non-file / unreadable fragment all surface; a current readable fragment does not.
+  // The caveats mirror the consumers: each reads a live engine fragment (readEngineFragment) — the
+  // recipes pointer (orchestration-slot.md, engine >= 1.2.0) AND the activity-procedures canon
+  // (procedures.md, engine >= 1.3.0). An absent / non-file / unreadable fragment surfaces as a DISTINCT
+  // caveat in `row.caveats` (an array, so missing BOTH surfaces BOTH); a current readable
+  // fragment never gets one. Helpers below model each fragment's on-disk state independently.
   const engineDeps = (over) => ({
     exists: () => true, // SKILL.md marker present (classifyMember)
     stat: () => ({ isFile: () => true }),
     getenv: {},
     home: '/home/test',
     validate: engineValidate,
-    readVersion: () => ({ version: '1.2.0' }),
+    readVersion: () => ({ version: '1.3.0' }),
     ...over,
   });
+  // statType where each fragment is independently a readable file ('file') or absent (null); the engine
+  // dir + everything else is a 'dir'. readFileSync returns content for a present fragment.
+  // Pin the mock to the AUTHORITATIVE engine-source constants (mirrors engine-source.test.mjs), so a
+  // fragment-path rename follows here instead of silently passing against the old basename.
+  const fragmentStat = ({ orch = 'file', proc = 'file' }) => (p) => {
+    const s = String(p);
+    if (s.endsWith(ORCHESTRATION_FRAGMENT_REL)) return orch;
+    if (s.endsWith(PROCEDURES_FRAGMENT_REL)) return proc;
+    return 'dir';
+  };
+  const caveatsOf = (rows) => rows.find((r) => r.kind === 'methodology-engine').caveats ?? [];
 
-  it('an OK engine MISSING the orchestration fragment gets a plain caveat', () => {
+  it('a current engine WITH BOTH fragments readable carries NO caveat', () => {
+    const rows = surveyFamily(engineDeps({ statType: fragmentStat({}), readFileSync: () => '> a bounded fragment' }));
+    const engine = rows.find((r) => r.kind === 'methodology-engine');
+    assert.equal(engine.manifestState, OK);
+    assert.equal(engine.caveats, undefined, 'no caveats when both live fragments are present + readable');
+  });
+
+  it('an OK engine MISSING the orchestration fragment gets the recipes caveat (only)', () => {
+    const rows = surveyFamily(engineDeps({
+      readVersion: () => ({ version: '1.2.0' }),
+      statType: fragmentStat({ orch: null }), // recipes fragment ABSENT, procedures present
+      readFileSync: () => '> a bounded fragment',
+    }));
+    const caveats = caveatsOf(rows);
+    assert.equal(caveats.length, 1);
+    assert.match(caveats[0], /recipes pointer/i);
+  });
+
+  it('an OK engine MISSING the procedures canon gets the activity-procedures caveat (only)', () => {
+    // The realistic post-release case: an engine at 1.2.0 ships the recipes pointer but not procedures.md.
+    const rows = surveyFamily(engineDeps({
+      readVersion: () => ({ version: '1.2.0' }),
+      statType: fragmentStat({ proc: null }), // procedures canon ABSENT, recipes present
+      readFileSync: () => '> a bounded fragment',
+    }));
+    const caveats = caveatsOf(rows);
+    assert.equal(caveats.length, 1);
+    assert.match(caveats[0], /activity-procedures|procedures canon/i);
+  });
+
+  it('an engine MISSING BOTH fragments surfaces BOTH caveats (neither overwrites the other)', () => {
     const rows = surveyFamily(engineDeps({
       readVersion: () => ({ version: '1.1.0' }),
-      statType: (p) => (String(p).endsWith('orchestration-slot.md') ? null : 'dir'), // fragment ABSENT
+      statType: fragmentStat({ orch: null, proc: null }),
     }));
-    const engine = rows.find((r) => r.kind === 'methodology-engine');
-    assert.equal(engine.manifestState, OK);
-    assert.ok(engine.caveat, 'an engine without the recipes fragment carries a caveat');
-    assert.match(engine.caveat, /recipes pointer|too old|incomplete/i);
+    const caveats = caveatsOf(rows);
+    assert.equal(caveats.length, 2, 'both missing fragments are reported');
+    assert.ok(caveats.some((c) => /recipes pointer/i.test(c)));
+    assert.ok(caveats.some((c) => /activity-procedures|procedures canon/i.test(c)));
   });
 
-  it('a current engine WITH a readable orchestration fragment carries NO caveat', () => {
-    const rows = surveyFamily(engineDeps({
-      statType: (p) => (String(p).endsWith('orchestration-slot.md') ? 'file' : 'dir'),
-      readFileSync: () => '> orchestration recipes pointer', // present + readable
-    }));
-    const engine = rows.find((r) => r.kind === 'methodology-engine');
-    assert.equal(engine.manifestState, OK);
-    assert.ok(!engine.caveat);
+  it('a broken engine whose fragments are DIRECTORIES is NOT a false "ok"', () => {
+    const rows = surveyFamily(engineDeps({ statType: () => 'dir' })); // every fragment path is a dir
+    assert.equal(caveatsOf(rows).length, 2, 'non-file fragments are caveated');
   });
 
-  it('a broken engine whose orchestration "fragment" is a DIRECTORY is NOT a false "ok"', () => {
+  it('a fragment PRESENT but UNREADABLE is NOT a false "ok" (mirrors the consumer STOP)', () => {
     const rows = surveyFamily(engineDeps({
-      statType: () => 'dir', // orchestration path is a directory, not a file
-    }));
-    assert.ok(rows.find((r) => r.kind === 'methodology-engine').caveat, 'a non-file fragment is caveated');
-  });
-
-  it('a current engine whose orchestration fragment is PRESENT but UNREADABLE is NOT a false "ok"', () => {
-    const rows = surveyFamily(engineDeps({
-      statType: (p) => (String(p).endsWith('orchestration-slot.md') ? 'file' : 'dir'), // present as a file
+      statType: fragmentStat({}), // both present as files
       readFileSync: () => {
         throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); // but unreadable
       },
     }));
-    const engine = rows.find((r) => r.kind === 'methodology-engine');
-    assert.ok(engine.caveat, 'an unreadable fragment is caveated (mirrors the reconcile STOP), not reported clean');
+    assert.equal(caveatsOf(rows).length, 2, 'unreadable fragments are caveated, not reported clean');
   });
 });
 

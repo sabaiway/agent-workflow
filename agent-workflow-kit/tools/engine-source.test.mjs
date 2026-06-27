@@ -9,6 +9,7 @@ import {
   EXPECTED_ENGINE_NAME,
   ENGINE_FRAGMENT_REL,
   ORCHESTRATION_FRAGMENT_REL,
+  PROCEDURES_FRAGMENT_REL,
 } from './engine-source.mjs';
 
 // A valid engine dir = it exists (dir), the fragment file exists, and the validator reports a
@@ -224,6 +225,53 @@ describe('detectEngine / readEngineFragment — orchestration fragment via rel',
       (err) => {
         assert.match(err.message, /methodology engine not found\/invalid/);
         assert.match(err.message, /orchestration-slot\.md/);
+        assert.match(err.message, /npx @sabaiway\/agent-workflow-engine@latest init/);
+        return true;
+      },
+    );
+  });
+});
+
+// The activity-procedures canon is a THIRD live-read fragment (engine >= 1.3.0), selected the same way
+// (deps.rel / detectEngine({ rel })). An engine too old to ship it must read as not-ok naming the
+// fragment, and readEngineFragment must STOP loudly — the procedures CLI maps that to a clean exit 1.
+describe('detectEngine / readEngineFragment — procedures fragment via rel', () => {
+  const proceduresPresent = (path) =>
+    path === ENGINE_DIR
+      ? 'dir'
+      : path === join(ENGINE_DIR, ENGINE_FRAGMENT_REL) || path === join(ENGINE_DIR, PROCEDURES_FRAGMENT_REL)
+        ? 'file'
+        : null;
+
+  it('exposes the procedures fragment rel constant', () => {
+    assert.equal(PROCEDURES_FRAGMENT_REL, 'references/procedures.md');
+  });
+
+  it('verifies the procedures fragment when rel is the procedures path', () => {
+    const out = detectEngine(ENGINE_DIR, { source: 'default', rel: PROCEDURES_FRAGMENT_REL }, deps({ statType: proceduresPresent }));
+    assert.equal(out.ok, true);
+  });
+
+  it('an older engine (no procedures fragment) → detect not-ok, the reason names that fragment', () => {
+    const out = detectEngine(ENGINE_DIR, { source: 'default', rel: PROCEDURES_FRAGMENT_REL }, deps()); // okStatType: only the methodology fragment is a file
+    assert.equal(out.ok, false);
+    assert.match(out.reason, /procedures\.md/);
+  });
+
+  it('readEngineFragment reads the procedures fragment bytes when deps.rel is set', () => {
+    const out = readEngineFragment(
+      ENGINE_DIR,
+      deps({ source: 'default', rel: PROCEDURES_FRAGMENT_REL, statType: proceduresPresent, readFileSync: () => 'PROCEDURES BODY' }),
+    );
+    assert.equal(out, 'PROCEDURES BODY');
+  });
+
+  it('readEngineFragment STOPs loudly when the procedures fragment is absent (engine < 1.3.0)', () => {
+    assert.throws(
+      () => readEngineFragment(ENGINE_DIR, deps({ source: 'default', rel: PROCEDURES_FRAGMENT_REL })),
+      (err) => {
+        assert.match(err.message, /methodology engine not found\/invalid/);
+        assert.match(err.message, /procedures\.md/);
         assert.match(err.message, /npx @sabaiway\/agent-workflow-engine@latest init/);
         return true;
       },

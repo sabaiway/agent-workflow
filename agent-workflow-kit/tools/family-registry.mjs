@@ -23,7 +23,7 @@ import os from 'node:os';
 import { resolveDir } from './detect-backends.mjs';
 import { validateManifest, readAuthoritativeVersion, UNSUPPORTED, INVALID } from './manifest/validate.mjs';
 import { START_MARKER, excludePath } from './hide-footprint.mjs';
-import { readEngineFragment, ORCHESTRATION_FRAGMENT_REL } from './engine-source.mjs';
+import { readEngineFragment, ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
 
 // ── manifestState values (the detect-backends precedence, generalized to any member kind) ──────────
 export const NOT_INSTALLED = 'not-installed';
@@ -144,28 +144,34 @@ export const classifyMember = (member, deps = {}) => {
   return { name: member.name, kind: member.kind, installed, skillDir: installed ? skillDir : null, manifestState, version };
 };
 
-// An engine OLDER than 1.2.0 has a valid manifest + version but ships no orchestration-recipes
-// fragment (references/orchestration-slot.md), so it cannot supply the recipes pointer the kit
-// injects. surveyFamily attaches a plain-language caveat to that engine row instead of a bare "ok".
-// The check mirrors what a RECONCILE actually does — `readEngineFragment(..., { rel: orchestration })`
-// validates the manifest AND reads the fragment — so an absent, non-file, OR present-but-unreadable
-// fragment all surface as a caveat (status never claims "ok" for a fragment the reconcile would STOP
-// on), and a current, readable fragment never gets the caveat. Read-only, best-effort.
+// An installed engine may be a VALID methodology-engine yet too old (or incomplete) to ship one of the
+// kit's live-read fragments: `references/orchestration-slot.md` (the recipes pointer, engine >= 1.2.0)
+// and `references/procedures.md` (the activity-procedures canon, engine >= 1.3.0). Each missing
+// fragment is a DISTINCT, plain-language caveat. They are collected into `row.caveats` (an ARRAY) so an
+// engine missing BOTH surfaces both — a single `row.caveat` would overwrite one with the other. The
+// check mirrors what each consumer actually does — `readEngineFragment(..., { rel })` validates
+// the manifest AND reads the fragment — so an absent, non-file, OR present-but-unreadable fragment all
+// surface (status never claims "ok" for a fragment a reconcile / the procedures CLI would STOP on), and
+// a current, readable fragment never gets the caveat. Read-only, best-effort.
+const ENGINE_FRAGMENT_CAVEATS = [
+  { rel: ORCHESTRATION_FRAGMENT_REL, caveat: 'engine present but does not supply the recipes pointer (too old / incomplete) — run `npx @sabaiway/agent-workflow-engine@latest init`' },
+  { rel: PROCEDURES_FRAGMENT_REL, caveat: 'engine present but does not ship the activity-procedures canon (too old / incomplete) — run `npx @sabaiway/agent-workflow-engine@latest init`' },
+];
+
 export const surveyFamily = (deps = {}) =>
   FAMILY_MEMBERS.map((member) => {
     const row = classifyMember(member, deps);
     if (row.kind === 'methodology-engine' && row.manifestState === OK && row.skillDir) {
-      const orchUsable = (() => {
+      const fragmentUsable = (rel) => {
         try {
-          readEngineFragment(row.skillDir, { source: 'default', rel: ORCHESTRATION_FRAGMENT_REL, ...deps });
+          readEngineFragment(row.skillDir, { source: 'default', rel, ...deps });
           return true;
         } catch {
-          return false; // absent / non-file / unreadable fragment → the engine can't supply the pointer
+          return false; // absent / non-file / unreadable fragment → the engine can't supply it
         }
-      })();
-      if (!orchUsable) {
-        row.caveat = 'engine present but does not supply the recipes pointer (too old / incomplete) — run `npx @sabaiway/agent-workflow-engine@latest init`';
-      }
+      };
+      const caveats = ENGINE_FRAGMENT_CAVEATS.filter((f) => !fragmentUsable(f.rel)).map((f) => f.caveat);
+      if (caveats.length) row.caveats = caveats;
     }
     return row;
   });
@@ -233,7 +239,7 @@ export const formatStatus = (family, project = null) => {
   for (const m of family) {
     const ver = m.version ? `v${m.version}` : '—';
     lines.push(`  ${pad(m.name, 26)}[${pad(m.manifestState, 16)}] ${pad(ver, 10)} ${m.kind}`);
-    if (m.caveat) lines.push(`      ↳ ${m.caveat}`);
+    for (const c of m.caveats ?? []) lines.push(`      ↳ ${c}`);
   }
   if (project) {
     lines.push('', `project deployment (${project.dir})`, '');
