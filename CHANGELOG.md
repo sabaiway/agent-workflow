@@ -7,6 +7,26 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-06-27
+
+- **Activity procedures — recipe-aware, configurable playbooks (AD-019).** A bare activity ("write a
+  plan", "execute the plan") now has codified, recipe-aware steps + a per-project, user-configurable
+  default recipe, composing over the AD-018 recipes (which stay read-only). Three packages bumped in
+  lockstep:
+  - **`@sabaiway/agent-workflow-engine@1.3.0`** — new `references/procedures.md` activity canon
+    (`plan-authoring`, `plan-execution`; typed recipe slots; generic); the methodology slot fragment
+    gained the one-line `/agent-workflow-kit procedures` auto-discovery route.
+  - **`@sabaiway/agent-workflow-kit@1.14.0`** — read-only **`/agent-workflow-kit procedures <activity>`**
+    advisor (`tools/procedures.mjs`): live engine read + `docs/ai/orchestration.json` validation + the
+    resolved recipe per slot (graceful default vs loud override degradation). `status` multi-caveat.
+  - **`@sabaiway/agent-workflow-memory@1.2.0`** — seeds the user-editable `docs/ai/orchestration.json`
+    config (byte-identical to the kit fallback copy; conservative `solo` default + onboarding note),
+    ensured stamp-independently on upgrade.
+
+  The deployment-lineage head stays `1.3.0` (no deployed `docs/ai` structural change; no migration).
+  Release tags: `agent-workflow-engine-v1.3.0` / `agent-workflow-kit-v1.14.0` / `agent-workflow-memory-v1.2.0`.
+  See the per-package changelogs and AD-019.
+
 ## 2026-06-25
 
 - **`@sabaiway/agent-workflow-engine@1.0.0` — first publish.** The canonical home of the

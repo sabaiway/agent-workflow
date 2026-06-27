@@ -210,6 +210,13 @@ loop — **Solo** (no backend), **Reviewed** (one reviews), **Council** (both re
 **Delegated** (a bridge runs a bounded sub-task). `/agent-workflow-kit recipes` plans + recommends one
 for your environment (degrading gracefully when a bridge isn't ready); the orchestrator always commits.
 
+**Activity procedures make it a playbook.** A bare "write a plan" or "execute the plan" now has codified,
+recipe-aware steps. `/agent-workflow-kit procedures <activity>` (read-only) prints a named activity's
+ordered steps — `plan-authoring`, `plan-execution` — and the **recipe resolved for each step** from a
+per-project, hand-edited `docs/ai/orchestration.json` (seeded conservative — Solo by default — with an
+onboarding note on how to opt into a backend) plus the live backend readiness. Each activity and each
+slot is configured independently; a per-run `--override` adjusts one step once.
+
 Honest caveats:
 
 - They are **agent skills, not npm packages**, and are **not placed by `init`** (it only bundles
