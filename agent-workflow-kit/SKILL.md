@@ -106,6 +106,7 @@ Pick the mode from the user's invocation. Auto-detect an existing `docs/ai/` to 
 - **`/agent-workflow-kit recipes`** — read-only **orchestration advisor**: present the four recipes (Solo / Reviewed / Council / Delegated) over the bridges' role vocabulary, plan + recommend one for the current environment, and offer the choice. **The orchestrator executes the chosen recipe via the bridge skills and always commits** — the kit only surfaces/selects/plans it; it never executes a recipe, never runs a subscription CLI, never commits.
 - **`/agent-workflow-kit procedures <activity>`** — read-only **activity-procedures advisor**: print the ordered steps of a named activity (`plan-authoring` / `plan-execution`) read **live** from the installed engine (`references/procedures.md`), and the **resolved effective recipe per slot** from the per-project `docs/ai/orchestration.json` (hand-edited, strict JSON) + backend readiness (default = Reviewed when a backend is ready, Council on request, slot-aware incl. Delegated; graceful default vs loud override degradation). A per-run `--override <slot>=<recipe>` overrides one slot. Composes with `recipes` (which stays read-only); never writes, never commits, never runs a subscription CLI.
 - **`/agent-workflow-kit uninstall`** — the **guarded teardown** companion to `init`/`setup`. Removes what they placed — installed skill dirs + the bridge wrappers — and, in a project, reverses the hidden-mode fence + the marker pre-commit hook. **Never deletes user-authored content** (`docs/ai`, `AGENTS.md`, `.claude/settings.json`): it prints the exact commands for you to run by hand. `--dry-run` first, always; preflight-then-mutate; never commits.
+- **`/agent-workflow-kit velocity`** — opt-in onboarding **velocity profile**: seed a fixed, audited **read-only** Claude Code allowlist into `.claude/settings.json` so routine read-only commands stop idling on approval prompts; opt-in `acceptEdits`; plus a **read-only advisory** of likely project gate commands to add by hand. **Writes only `.claude/settings.json`, never allowlists commit/push/publish, never writes `settings.local.json`, never commits.** `--dry-run` first.
 
 ### Version status & the two axes — surface this on every invocation
 
@@ -185,7 +186,7 @@ readiness, then **append an actionable recipe recommendation** from the recipe p
     independent axes: a packaging-only release bumps the package but leaves the lineage head until a
     migration actually changes the deployed `docs/ai` structure. A stamp greater than the head →
     STOP (never downgrade).
-11. **Report & ask.** Show `tree docs/ai/`, 2–3 lines on what was filled with real data vs left as TODO, then print the **one-line backend-status line** (the shared contract above — same detector, format, invariants, and detector-unavailable skip-with-reason). Then **ask before committing** — never auto-commit.
+11. **Report & ask.** Show `tree docs/ai/`, 2–3 lines on what was filled with real data vs left as TODO, then print the **one-line backend-status line** (the shared contract above — same detector, format, invariants, and detector-unavailable skip-with-reason). Then **ask before committing** — never auto-commit. Finally, offer the optional, opt-in **velocity profile** in one line — `/agent-workflow-kit velocity` seeds a read-only allowlist so routine read-only commands stop prompting (*Mode: velocity*); never run it without a yes.
 
 Fill strategy:
 
@@ -320,6 +321,25 @@ It classifies every surface into four classes and acts accordingly:
 - **KEEP — never deleted** (report-only) — `docs/ai`, `AGENTS.md`, `CLAUDE.md`, `docs/plans`, and the `.claude/settings.json` `includeCoAuthoredBy` edit. The tool **prints the exact `rm` / `git rm --cached` commands**; the **user** runs them. Surface this in plain language; never delete on their behalf.
 
 **Shared globals:** removing `agent-workflow-memory` / `agent-workflow-engine` / a bridge removes a **global** skill that another project on the machine may use — say so before applying. **Windows:** the wrappers are POSIX; the skill-dir + project arms still work, the wrapper arm reports *use WSL*.
+
+### Mode: velocity
+
+The opt-in onboarding **velocity profile** — it seeds a fixed, audited **read-only** Claude Code allowlist into `.claude/settings.json` so an agent stops idling on approval prompts for routine read-only commands while the maintainer is away. It is the family's **first programmatic `.claude/settings.json` writer** (attribution stayed an agent-driven prose merge). **In-agent, opt-in, writes only `.claude/settings.json`**, on one hard rule: **it never allowlists `commit`/`push`/`publish` and never weakens the ASK checkpoint** — commit stays the single human gate.
+
+**Version-status routing (like the other writer modes):** read `docs/ai/.workflow-version` first — not-deployed → bootstrap; stamp < `1.3.0` → `upgrade`; stamp > head / unparseable → STOP. The tool enforces this in code too (`--apply` STOPs unless the stamp is the lineage head).
+
+Run `node ${CLAUDE_SKILL_DIR}/tools/velocity-profile.mjs [--dry-run | --apply] [--accept-edits] [--cwd <dir>]`:
+
+1. **`--dry-run` first, always** (the default — changes nothing). It prints: the fixed read-only core it would add; a **read-only advisory** that lists your `package.json` `scripts` as **unaudited candidates you may add BY HAND** (inspect each first) to `.claude/settings.json` / `settings.local.json` — the tool **never** writes them and flags obviously-mutating names as "do not add"; any **pre-existing non-read-only `Bash(...)` entries** to consider removing by hand; and the honest residual notice (below). It STOPs (zero writes) on a symlinked `.claude` / non-regular `settings.json`, malformed settings JSON, or an unsafe `permissions.defaultMode` — `bypassPermissions` or anything outside `default`/`acceptEdits`/`plan`, present in **either** `settings.json` or `settings.local.json`.
+2. **Ask the `acceptEdits` opt-in** via **`AskUserQuestion` where supported**, the safe option FIRST:
+   - **"Keep per-edit approval prompts (recommended)"** — seed only the read-only allowlist; file edits still prompt.
+   - **"Auto-accept file edits (`defaultMode: acceptEdits`)"** — present the honest FULL posture: it auto-applies Edit/Write AND auto-runs `mkdir`/`touch`/`mv`/`cp` in the working dir, is paired with the read-only allowlist, and — stated plainly — a settings-level allow rule is a **trust posture, not a sandbox**: a read-only entry can still write a file via output redirection, and (Claude Code's allow rules do not inspect command substitution) could in principle run another command via `cmd $(…)`. velocity **never adds `commit`/`push`/`publish` as allow rules** — so a direct `git push` still ASKs — but that same redirection/substitution residual means they are not *fully* closed until the deferred PreToolUse hook (family backlog). Note also that a `defaultMode` in `settings.local.json` would override this project-level write (local > project), since velocity writes only `.claude/settings.json`.
+3. **Only on an explicit yes**, re-run with `--apply` (add `--accept-edits` only if they chose the second option). It merges-don't-clobber (preserves `includeCoAuthoredBy`, every key, and existing allow entries) and writes **only** `.claude/settings.json`.
+4. **Surface delegation-readiness, read-only.** If they want a step run Delegated, point them at the hand-edited `docs/ai/orchestration.json` (*Mode: procedures*); the tool never writes it.
+
+**Invariants:** creates `.claude/` if absent and writes **only** `.claude/settings.json` (no other file); **never** allowlists commit/push/publish; **never** writes `settings.local.json`; never commits; opt-in `acceptEdits`, never silent.
+
+**Exit codes:** `0` done / dry-run; `1` a precondition STOP (stamp not current, unsafe mode, malformed settings, symlinked `.claude` / non-regular target); `2` bad arguments.
 
 ---
 
