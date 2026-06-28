@@ -155,8 +155,9 @@ fi
 
 # --- Resume detection (must be the FIRST argument) ---------------------------
 # A dedicated entrypoint for iterating on a session without re-sending context.
-# `codex exec resume` RESETS posture and REJECTS -s/--add-dir/-C/-o/--json (probed),
-# so we restate the FULL policy via -c and capture stdout directly.
+# `codex exec resume` RESETS posture and rejects the -s/--add-dir/-C posture flags
+# (it DOES accept -o/--json on 0.142.3, but we capture stdout directly), so we
+# restate the FULL policy via -c.
 resume_mode=""
 resume_id=""
 case "${1:-}" in
@@ -324,9 +325,9 @@ chmod 755 "$shim_dir/git"
 
 # --- Build the codex invocation + the prompt ---------------------------------
 if [[ -n "$resume_mode" ]]; then
-  # Resume RESETS posture and accepts only -c/-m/--ignore-user-config (+ stdin `-`);
-  # restate the entire policy via -c. No -o/--json (unsupported) — codex prints the
-  # final message to stdout, which we capture into $out directly.
+  # Resume RESETS posture and rejects the -s/--add-dir/-C posture flags, so restate
+  # the entire policy via -c. We deliberately pass no -o/--json (resume DOES accept
+  # them) — codex prints the final message to stdout, which we capture into $out.
   codex_cmd=(codex exec resume "$resume_id"
     --ignore-user-config
     -m "$CODEX_MODEL"

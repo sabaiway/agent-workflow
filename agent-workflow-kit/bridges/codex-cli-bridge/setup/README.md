@@ -11,7 +11,7 @@ confirm it is on `PATH`:
 
 ```bash
 npm install -g @openai/codex     # or: brew install codex  (use the current official channel)
-codex --version                  # this skill was verified with codex-cli 0.140.0 or newer
+codex --version                  # this skill was verified with codex-cli 0.142.3 or newer
 ```
 
 The binary is **`codex`**. If `codex --version` works but the wrappers can't find it, fix your
@@ -70,7 +70,11 @@ if it reports a missing git work tree or root `AGENTS.md`, run it from a project
 
 - The wrappers are **subscription-only** by design and will not use api-key billing.
 - `codex-exec` runs a **workspace-write** sandbox with **network OFF**; `codex-review` runs
-  **read-only**. See [`../references/sandbox-and-flags.md`](../references/sandbox-and-flags.md).
+  **read-only**. They also pin the frontier model/effort (refusing a downgrade), enforce a hard
+  timeout, capture only codex's final message, and block codex from writing git via a shim — see
+  [`../references/sandbox-and-flags.md`](../references/sandbox-and-flags.md) and the knob table in
+  [`../SKILL.md`](../SKILL.md#environment-knobs). No setup is needed to enable these — they are on by
+  default.
 - `codex exec` requires a git repository, and the wrappers also require a root `AGENTS.md`. The
   orchestrator commits, not codex. Re-run `codex login` only when the cached login expires or the
   account changes.

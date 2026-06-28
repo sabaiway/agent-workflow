@@ -2,7 +2,7 @@
 name: codex-cli-bridge
 description: Delegate work to the OpenAI Codex CLI (`codex`) under a ChatGPT subscription — run plan/instruction EXECUTION in a sandboxed workspace, or get a read-only ADVISORY review of a plan or working-tree diff — as a second delegated-execution backend beside Antigravity. Use when the user wants to hand a bounded coding task or plan to `codex exec`, get a second-opinion review from codex, install or authenticate Codex CLI, understand its sandbox/network/approval policy, drive codex efficiently from the main agent (exec vs review, resume, the commit boundary), bridge project context (`AGENTS.md`) into codex, or troubleshoot codex flags, models, auth, or its no-TTY headless behaviour.
 metadata:
-  version: '1.0.0'
+  version: '2.0.0'
 ---
 
 # codex-cli-bridge
@@ -46,21 +46,28 @@ this skill. Both wrappers enforce the subscription path before invoking codex:
   regardless of that flag);
 - they **preflight `codex login status`** and refuse to run unless it reports `Logged in using ChatGPT`.
 
-## Models
+## Models quality-first pinned
 
-The wrappers default to `gpt-5.5` at reasoning effort `xhigh` (the strongest setting verified in this
-environment), both overridable per call. `codex --version` reports the CLI version, **not** the model
-list — check your Codex CLI / ChatGPT account for the model slugs available to you, or let a wrong
-`-m` surface the error.
+Delegated codex work ALWAYS runs on the **frontier model at maximum reasoning effort**: the wrappers
+**pin** `gpt-5.5` / `xhigh` and **refuse** (exit 2, loud) a non-default `CODEX_MODEL` / `CODEX_EFFORT`
+— knowingly-worse output is never traded for quota. The pin is deliberate (an explicit `-m gpt-5.5`
+guarantees the *strongest* model, not merely the CLI's current default); a release-time gate against
+<https://developers.openai.com/codex/models> re-checks that `gpt-5.5` is still the strongest selectable
+Codex model. Economy comes only from **quality-neutral waste removal** (clean capture, a hard timeout,
+a precomputed review diff, `resume` instead of re-sending context), never from a downgrade.
+
+The ONLY escape is a **throwaway probe** whose result is effort-independent (a reachability / smoke
+check): set `CODEX_PROBE=1` (echoed loudly) to relax the model/effort guard. Never use a probe run's
+output as real delegated work.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `CODEX_MODEL` | `gpt-5.5` | model passed to `-m` |
-| `CODEX_EFFORT` | `xhigh` | reasoning effort passed to `-c model_reasoning_effort=…` |
+| `CODEX_MODEL` | `gpt-5.5` (pinned) | model passed to `-m`; a non-default is REFUSED unless `CODEX_PROBE=1` |
+| `CODEX_EFFORT` | `xhigh` (pinned) | reasoning effort (`-c model_reasoning_effort=…`); non-default REFUSED unless `CODEX_PROBE=1` |
 
-```bash
-CODEX_MODEL=<slug> CODEX_EFFORT=<low|medium|high|xhigh> codex-exec <file>
-```
+`codex --version` reports the CLI version, **not** the model list. Quota is metered in **messages**
+(a rolling 5h window + a weekly cap), not raw tokens — which is why the levers above are about removing
+waste, never lowering quality. Full knob list: [§ Environment knobs](#environment-knobs).
 
 ## Usage
 
@@ -70,27 +77,55 @@ Drive codex only through the two wrappers (installed on `PATH`), run from the ta
 # EXECUTION (workspace-write sandbox, network OFF, never prompts):
 codex-exec docs/plans/<slug>.md                 # drive a plan file
 echo "apply review fix: ..." | codex-exec -      # ad-hoc instruction from stdin
-CODEX_MODEL=<slug> codex-exec <file>             # override the model
-codex-exec <file|-> -- <extra codex flags...>    # passthrough codex flags after `--`
+codex-exec <file|-> -- <unguarded codex flags...> # passthrough codex flags after `--` (guarded ones rejected)
+
+# RESUME (iterate on the SAME session without re-sending context):
+codex-exec --resume-last docs/plans/<slug>.md    # continue the last session (id from the sidecar)
+echo "now do step 2 ..." | codex-exec --resume <session-id> -
 
 # REVIEW (read-only sandbox — codex cannot edit anything, only emits findings):
 codex-review plan docs/plans/<slug>.md           # critique a plan
-codex-review code                                # review the current working-tree diff
+codex-review code                                # review the current working-tree diff (precomputed)
 codex-review code "focus on the new reducer"     # review with extra focus
 ```
 
 `codex exec` is headless: there is **no TTY**, so `approval_policy=never` — anything needing
-escalation is refused and reported, never interactively approved. Extra `codex` flags go after a
-literal `--`; args without the separator are rejected (never silently dropped). Full flag/policy
-detail: [`references/sandbox-and-flags.md`](references/sandbox-and-flags.md).
+escalation is refused and reported, never interactively approved. The wrappers capture only codex's
+**final message** (`-o`; the JSON event stream + reasoning go to a discarded trace), so output is
+clean; a successful **non-resume** `codex-exec` also records the session id to a sidecar
+(`${CODEX_SESSION_FILE:-./.codex-last-session}`) so `--resume-last` can find it. Extra `codex` flags
+go after a literal `--`; the wrapper rejects any that would defeat the policy or the pinned model (see
+[§ Environment knobs](#environment-knobs) and the flag tiers in
+[`references/sandbox-and-flags.md`](references/sandbox-and-flags.md)); args without the separator are
+rejected, never silently dropped.
+
+## Environment knobs
+
+All optional; the defaults are the supported path. Anything that would lower quality (model/effort) or
+defeat a policy is guarded — see [§ Models](#models-quality-first-pinned).
+
+| Variable | Default | Effect |
+|---|---|---|
+| `CODEX_MODEL` | `gpt-5.5` (pinned) | model; non-default REFUSED unless `CODEX_PROBE=1` |
+| `CODEX_EFFORT` | `xhigh` (pinned) | reasoning effort; non-default REFUSED unless `CODEX_PROBE=1` |
+| `CODEX_HARD_TIMEOUT` | `3600` (exec) / `1800` (review) | hard wall-clock cap (seconds) via `timeout`/`gtimeout`; exit 124/137 ⇒ "exceeded hard cap". No `timeout` binary ⇒ loud warning + uncapped (never silent). |
+| `CODEX_SESSION_FILE` | `./.codex-last-session` | where `codex-exec` records the session id and where `--resume-last` reads it |
+| `CODEX_REVIEW_MAX_TOTAL_BYTES` | `1500000` | `codex-review code`: above this the assembled diff goes via a git-dir temp file instead of inline — never truncated |
+| `CODEX_REVIEW_SCHEMA` | unset | `codex-review`: `=1` returns findings as a validated JSON object (`--output-schema`), with a raw-text fallback. Default off. |
+| `CODEX_PROBE` | unset | `=1` ⇒ throwaway-probe mode: relaxes the model/effort guard AND the tier-2 passthrough guard (echoed loudly). Never for real work. |
+
+The git-write shim, `--ignore-user-config`, and the `*_API_KEY` scrub are NOT env-tunable — they are
+fixed invariants.
 
 ## Project context (how `codex` sees the repo)
 
-From its **current working directory** `codex` auto-reads the root **`AGENTS.md`** — so when you run a
-wrapper from a project root, the project's Hard Constraints are available to codex with no wiring (a
+`codex` auto-**merges** `AGENTS.md` (root→cwd, plus a global `~/.codex/AGENTS.md`) straight into its
+developer context, truncated at `project_doc_max_bytes` (default 32 KiB) — so when you run a wrapper
+from a project root, the project's Hard Constraints are already in front of the model with no wiring (a
 probe confirmed codex returned a repo's declared dialogue language from `AGENTS.md`). The wrappers
-therefore **hardcode no project rules**: the orchestrator contract tells codex to read the target
-`AGENTS.md` and obey it.
+therefore **hardcode no project rules**, and the orchestrator contract is **lean**: it tells codex to
+*obey* the already-merged `AGENTS.md` Hard Constraints + declared gates — it does NOT waste a step
+telling codex to go *read* a file that is already in context.
 
 **Fallback is strict.** Both wrappers preflight that they run inside a git work tree and that a root
 `AGENTS.md` exists — if either is missing they **STOP and report** (a wasted subscription run is
@@ -105,17 +140,28 @@ See [`references/driving-codex.md`](references/driving-codex.md) for the full pl
 - **`codex-exec` for doing, `codex-review` for judging.** Use exec to implement a plan/fix under the
   sandbox; use review to get advisory findings on a plan or diff without any edits.
 - **The orchestrator commits — codex never does.** The execution contract forbids every git write
-  (branch/add/commit/stash/reset/checkout/tag/rewrite); you review codex's diff, then commit yourself.
+  (branch/add/commit/stash/reset/checkout/tag/rewrite), and `codex-exec` additionally enforces it with
+  a physical **git-write shim** on the codex subprocess's `PATH`: read-only git verbs pass through,
+  every write/unknown verb is blocked (codex spawns `git` via `execve`, which bypasses shell
+  functions — so the boundary must be a real file). You review codex's diff, then commit yourself.
 - **Treat output as advisory** and verify before acting — re-run the project's gates yourself, reject
   advice that conflicts with user instructions or repo rules.
 - **Hand codex a self-contained task.** It cannot see your conversation — for an ad-hoc instruction,
   embed the goal, the relevant paths, and the expected result; codex reads `AGENTS.md` for the rules.
-- **Re-dispatch with `codex exec resume`** (run codex directly — the wrapper's flag/stdin shape can't
-  host the `resume` subcommand) instead of re-sending context. **Caveat:** resume runs outside the
-  wrapper and may not re-accept `--sandbox` / policy flags — restate the policy, or start a fresh
-  `codex-exec` run when a guaranteed sandbox/network posture matters.
+- **Iterate with `codex-exec --resume-last` / `--resume <id>`** instead of re-sending context. The
+  resume entrypoint re-establishes EVERY wrapper invariant (subscription-only, `--ignore-user-config`,
+  the pinned model/effort) and **restates the full posture via `-c`** — `codex exec resume` resets the
+  sandbox/approval/network posture and rejects the `-s`/`--add-dir`/`-C` posture flags, so the wrapper
+  sets `sandbox_mode=workspace-write` + `approval_policy=never` +
+  `sandbox_workspace_write.network_access=false` explicitly. It reads the session id from the sidecar
+  (`--resume-last`) or takes it as an argument.
 - **Network is OFF in exec.** New dependencies and any network step are installed by hand, then codex
   is re-dispatched.
+- **`codex-review code` precomputes the diff.** The wrapper assembles the change set (repo map, status,
+  staged + unstaged diff, untracked file contents) and feeds it in, so codex does not roam the
+  filesystem rediscovering it; a clean tree exits 0 before a run is spent. Native `codex review` is
+  deliberately NOT used — it rejects `--ignore-user-config` and would load a personal config.toml,
+  breaking the subscription/config-isolation invariant.
 
 ## Complementary skills (optional, standalone-first)
 
@@ -140,8 +186,15 @@ The wrappers work in any git repo where `codex` is installed and authenticated. 
   install dependencies or reach the network — do that by hand, then re-dispatch.
 - **No live approvals** — `codex exec` has no TTY, so `approval_policy=never`; an action that would
   need escalation is reported, not approved interactively.
-- **`resume` may drop sandbox/policy flags** — restate the policy or start a fresh run when the
-  posture matters (see the driving reference).
+- **`resume` resets the posture** — `codex exec resume` rejects `-s`/`--add-dir`/`-C` and forgets the
+  original sandbox/approval/network policy. The `codex-exec --resume`/`--resume-last` entrypoint
+  restates it via `-c`; only a *raw* `codex exec resume` (bypassing the wrapper) loses the posture.
+- **Hard timeout** — a hung run is killed at `CODEX_HARD_TIMEOUT` (exec 3600s / review 1800s) and
+  reported (exit 124/137); raise it for a known-healthy slow run. If neither `timeout` nor `gtimeout`
+  is on `PATH` the wrapper warns loudly and runs uncapped (never silently).
+- **Native `codex review` is out of scope** — it rejects `--ignore-user-config` (would load a personal
+  `config.toml` and break the subscription/config-isolation invariant) and can't be cleanly captured;
+  `codex-review` runs `codex exec` over a precomputed diff instead.
 - **bubblewrap** — on Linux, if `bubblewrap` is not on `PATH` codex prints a warning and uses a
   bundled copy; install it via your package manager to silence the warning.
 - codex output is advisory and may be incomplete or out of date — the main agent verifies before
