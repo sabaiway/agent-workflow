@@ -20,8 +20,16 @@ export const EXPECTED_MEMORY_NAME = 'agent-workflow-memory';
 // The assets a memory candidate must carry, AND their required type. A partial install (manifest +
 // SKILL.md only) is missing these → invalid → fallback. Checking the type (not just existence)
 // rejects a wrong-shaped install (e.g. a file where a dir is expected) BEFORE any project write.
+//
+// `references/templates/orchestration.json` (Step 2.4) is a SURGICAL gate: a memory too old to ship
+// the orchestration-config template (pre-1.2.0, e.g. v1.0.0) can't seed `docs/ai/orchestration.json`,
+// so it must NOT be delegate-classified — the kit then falls back to its OWN bundled substrate, which
+// DOES seed orchestration.json (Mode: upgrade step 3). This closes the stale-memory trap that the
+// read-only family-registry note (MEMORY_ORCH_TEMPLATE_REL) only INFORMS about — the gate ACTS. The
+// two key on the same asset; a cross-tool parity test pins them in lockstep.
 export const REQUIRED_MEMORY_ASSETS = [
   { path: 'references/templates', type: 'dir' },
+  { path: 'references/templates/orchestration.json', type: 'file' },
   { path: 'references/contracts.md', type: 'file' },
   { path: 'references/scripts', type: 'dir' },
   { path: 'scripts/stamp-takeover.mjs', type: 'file' },
