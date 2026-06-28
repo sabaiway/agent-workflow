@@ -154,6 +154,59 @@ readiness, then **append an actionable recipe recommendation** from the recipe p
   I'm skipping the backend-status line."* — never a silent skip (Hard Constraint — no silent
   failures).
 
+### The version block + welcome mat (shared by bootstrap + upgrade)
+
+Bootstrap (step 11) and **every** successful `upgrade` exit (steps 4 + 8) close with the same
+**report footer**, in this **canonical order**: success state → **version block** → the **one-line
+backend-status line** → **welcome mat**. Only the version block comes from
+`node ${CLAUDE_SKILL_DIR}/tools/family-registry.mjs --json` (add `--dir <project>` for the deploy
+axis) — **never hardcoded semver**; the backend-status line is its own shared contract (above), and
+the welcome mat **composes signals already gathered** (the version block's notes + the backend-status
+line), not a fresh helper call. Present everything in the user's conversational language; never paste
+the JSON or any internal field name.
+
+**Version block — three plain lines, fed from `--json`:**
+- **`Deployment structure: <deploymentHead> (current)`** — the deployed `docs/ai` structure version
+  (the envelope's `deploymentHead`); **the only axis `upgrade` compares**.
+- **`Installed on this machine — package versions:`** `kit <v> · memory <v> · engine <v> ·
+  codex-bridge <v> · antigravity-bridge <v>` — one per `installed[]` entry, labelled by its `display`
+  and showing its `version`, or, when there is no version, the plain phrase for its `state` (map
+  below). Append any `installed[].notes` **in plain words** (e.g. the memory-behind refresh+restart
+  line).
+- **The two axes are different — say so even when the numbers coincide:** an installed *package*
+  version (e.g. engine `1.3.0`) is a package number, **not** the deployment-structure version on line
+  one (which is also `1.3.0` today). The head advances only when the deployed `docs/ai` structure
+  changes, so a higher package number on npm/GitHub is **not** a newer deployment.
+
+**`state` → plain language** (map the envelope's `installed[].state` token; never show the raw token):
+`installed` → its version · `absent` → "not installed" · `other-tool` → "a different tool occupies
+that skill slot" · `placeholder` → "a placeholder, not a working install" · `invalid` → "installed
+but its manifest didn't validate" · `unsupported` → "installed but its manifest schema is too new for
+this kit" · `uncheckable` → "couldn't be checked (a permission error)".
+
+**Helper-failure contract (mirror the backend-status line).** The version block needs the
+family-registry helper, which the **agent host** runs. If the host can't run it (`node` not on the
+agent's PATH, or the helper errors), **skip the version block and say so with the concrete reason** —
+e.g. *"Couldn't run the family-registry helper here (node is not on the agent host PATH), so I'm
+skipping the installed-versions block."* — never a silent skip (Hard Constraint). It is non-essential:
+the rest of the report — and the commit gate — proceeds.
+
+**Welcome mat — the last line(s) of the footer.** After the version block and the backend-status
+line, print *"Run `/agent-workflow-kit help` to see every command."* then **one** recommended next
+step, chosen **caveat-aware** from signals already in hand (the version block's notes + the
+backend-status line — no new helper call) in this priority order:
+1. a member is **behind** (an `installed[].notes` caveat fired — memory/engine) → *refresh the behind
+   member first* (its `npx …@latest init` + restart the session);
+2. else **no backend is ready** (the backend-status line shows none ready) → *set one up with
+   `/agent-workflow-kit setup`*;
+3. else **a backend is ready but the orchestration config is still all-Solo** (no `reviewed` /
+   `council` / `delegated` slot anywhere — inspect `docs/ai/orchestration.json`, or read the
+   procedures advisor's resolved recipes) → *put it to work with `/agent-workflow-kit recipes`*;
+4. else (a backend is ready **and** a backend-backed recipe is already selected) → the optional
+   *`/agent-workflow-kit velocity`* opt-in (never run it without a yes).
+
+Keep it compact — a few short lines, plain language, no kit-internal terms.
+
 ### Mode: help
 
 Read-only. The single discoverable **command index** — it answers *"what can `/agent-workflow-kit` do, and which commands change things?"* It **never writes, never commits, and never runs a subscription CLI**.
@@ -175,6 +228,7 @@ Run `node ${CLAUDE_SKILL_DIR}/tools/commands.mjs` (add `--json` for the machine-
    - `src/` (or equivalent) 2–3 levels deep → modules, routes/pages, components, services, types.
    - Tests (framework, location, E2E?) and linter rules.
    - Record: stack, package manager, daily commands (`dev`/`test`/`lint`/`type-check`), routes/pages, architecture layers.
+   - **First-contact orientation — say this before the first question (read-only).** In 1–2 plain lines, tell the user what this is — a portable memory & workflow system for this repo, so future sessions boot from a small structured memory instead of re-reading everything — and that they can run **`/agent-workflow-kit help`** any time to see every command. This is the "start here"; keep it to a sentence or two, then ask the visibility question.
 2. **Choose visibility — ASK the user explicitly and wait for the answer, before writing anything.** This decides what gets tracked and is hard to reverse after a commit, so never assume the default silently: `visible` (committed — canonical, recommended) or `hidden` (in-tree, git-ignored via the **project-local** `.git/info/exclude` — one managed block covering the full AI/agent footprint, never the machine-global excludes). See [Visibility contract](references/contracts.md#visibility-contract).
 3. **Choose conversational language — ASK the user explicitly and wait for the answer.** Which language should the agent *talk to them* in — questions, explanations, summaries, status updates? Offer the language they're already writing in as the default. Carry the answer into the `{{COMM_LANGUAGE}}` slot of the *Communication language* block when `AGENTS.md` is created (step 5). See [Communication contract](references/contracts.md#communication-contract). This sets the **dialogue** language only — never the files.
 4. **Choose agent attribution — ASK the user explicitly and wait for the answer.** May the agent attribute work to itself / to AI — `Co-Authored-By` trailers, "Generated with …" footers, "AI"/agent/model mentions in code, comments, commit messages, PR titles/bodies, or docs? **Default to `off`** (no agent/AI mention anywhere) unless they opt in — people are routinely surprised to find an AI listed as a repo contributor. Carry the answer into the `{{AGENT_ATTRIBUTION}}` slot of the *Attribution* block when `AGENTS.md` is created (step 5). **If `off` and the project uses Claude Code**, also set `"includeCoAuthoredBy": false` in the project's `.claude/settings.json` (create it if absent) — the trailer is added by the harness, so a doc directive alone won't stop it. See [Attribution contract](references/contracts.md#attribution-contract).
@@ -197,7 +251,7 @@ Run `node ${CLAUDE_SKILL_DIR}/tools/commands.mjs` (add `--json` for the machine-
     independent axes: a packaging-only release bumps the package but leaves the lineage head until a
     migration actually changes the deployed `docs/ai` structure. A stamp greater than the head →
     STOP (never downgrade).
-11. **Report & ask.** Show `tree docs/ai/`, 2–3 lines on what was filled with real data vs left as TODO, then print the **one-line backend-status line** (the shared contract above — same detector, format, invariants, and detector-unavailable skip-with-reason). Then **ask before committing** — never auto-commit. Finally, offer the optional, opt-in **velocity profile** in one line — `/agent-workflow-kit velocity` seeds a read-only allowlist so routine read-only commands stop prompting (*Mode: velocity*); never run it without a yes.
+11. **Report & ask.** Show `tree docs/ai/`, 2–3 lines on what was filled with real data vs left as TODO, then print the **report footer** in the canonical order (version block → one-line backend-status line → welcome mat — the shared contracts above, rendered from the helpers, same host-can't-run skip-with-reason). The welcome mat ends on **one** recommended next step — including the optional, opt-in `/agent-workflow-kit velocity` (a read-only allowlist so routine read-only commands stop prompting; *Mode: velocity*) when nothing more pressing applies, never run without a yes. Then **ask before committing** — never auto-commit.
 
 Fill strategy:
 
@@ -231,12 +285,12 @@ Fill strategy:
 4. **Equal-head exit — a real successful-exit report, not a bare stop.** If the stamp **equals** the head, the lineage is up to date — but step 3 (the methodology-slot **and** hidden-mode footprint reconciles) ran first and may have changed things, so this is a proper exit report, not a no-op:
    - **Report step 3's outcome in plain language** — for **each** pointer (workflow-methodology and orchestration-recipes) whether it was *added*, was *already present* (nothing changed), or was *skipped because the entry point is over its line limit* (the cap-refusal soft-skip from step 3, with its reason); whether the `docs/ai/orchestration.json` config was *seeded* or was *already present* (a user edit is preserved); and, for a hidden deployment, whether the hidden-mode footprint was *moved to project-local*, was *already project-local* (nothing changed), or needed a question (ambiguous visibility / a leftover machine-wide block). Plain wording only — never the reconcile/slot/anchor/marker terms (Gotcha: never leak kit internals).
    - **Name the version axis so the package number isn't mistaken for a newer release.** When you state the deployment is up to date, say it is current at the **deployment-lineage head** (`1.3.0`) and add one plain line: this head versions the deployed `docs/ai` structure and is a **separate axis** from the kit **package** version published on npm/GitHub (the larger number users see on the repo/npm page). A packaging-only release can bump that package version **without** moving the head — the head advances only when the deployed `docs/ai` structure changes — so an equal-head report is **not** a stale deployment even though GitHub shows a higher package number. (This is the only place the two axes meet the user in `upgrade`; surfacing it here prevents the recurring "but GitHub shows a higher version" confusion.)
-   - **Print the one-line backend-status line** — the shared contract above (run `node ${CLAUDE_SKILL_DIR}/tools/detect-backends.mjs`; same format, invariants, and detector-unavailable skip-with-reason).
-   - **Then ask before committing — never auto-commit.** If step 3 added the slot (or anything else changed), report it and ask. If step 3 was a pure zero-diff no-op and nothing else changed, say **"already up to date"** and still print the read-only backend line.
+   - **Print the report footer** in the canonical order (version block → one-line backend-status line → welcome mat — the shared contracts above; rendered from the helpers, same host-can't-run skip-with-reason). The welcome mat closes on **one** caveat-aware next step (a behind member first, else `setup` / `recipes` / `velocity`).
+   - **Then ask before committing — never auto-commit.** If step 3 added the slot (or anything else changed), report it and ask. If step 3 was a pure zero-diff no-op and nothing else changed, say **"already up to date"** and still print the read-only version block + backend line.
 5. Show the relevant `${CLAUDE_SKILL_DIR}/CHANGELOG.md` diff (entries newer than the project's stamp).
 6. Apply `${CLAUDE_SKILL_DIR}/migrations/<version>-<slug>.md` in **semver order**, only those newer than the project's stamp. Migrations are **idempotent** — safe to re-run.
 7. Reconcile drift: add any kernel files/scripts the project is missing; never clobber project-authored content (their `decisions.md`, `known_issues.md`, page specs stay). Any user question a migration raises follows the same rule as bootstrap — **structured multiple-choice where supported** (`AskUserQuestion` in Claude Code), otherwise prose. If `AGENTS.md` has no *Communication language* block (pre-1.1.0 deployment), **ask the user their conversational language** and insert the block — see `migrations/1.1.0-communication-language.md`. If it has no *Attribution* block (pre-1.2.0 deployment), **ask whether the agent may attribute work to itself / AI** and insert the block (defaulting to `off`) — see `migrations/1.2.0-agent-attribution.md`.
-8. Re-stamp `docs/ai/.workflow-version` to the **deployment-lineage head** (`1.3.0`, not the package version). Report changes — and when you report the stamp, **name the axis**: the head versions the deployed `docs/ai` structure and is a separate axis from the kit **package** version on npm/GitHub (the larger number users see there), so the user doesn't read the bigger package number as a newer deployment (same framing as the step 4 equal-head exit). Then **print the one-line backend-status line** (the shared contract above — same detector, format, invariants, and detector-unavailable skip-with-reason). Then **ask before committing**.
+8. Re-stamp `docs/ai/.workflow-version` to the **deployment-lineage head** (`1.3.0`, not the package version). Report changes — and when you report the stamp, **name the axis**: the head versions the deployed `docs/ai` structure and is a separate axis from the kit **package** version on npm/GitHub (the larger number users see there), so the user doesn't read the bigger package number as a newer deployment (same framing as the step 4 equal-head exit). Then **print the report footer** in the canonical order (version block → one-line backend-status line → welcome mat — the shared contracts above; rendered from the helpers, same host-can't-run skip-with-reason; the welcome mat closes on one caveat-aware next step). Then **ask before committing**.
 
 ### Mode: backends
 
