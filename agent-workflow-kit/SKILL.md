@@ -326,14 +326,22 @@ For each backend it:
 
 ### Mode: status
 
-Read-only. Answers *"which family members are installed (and at what version), and what is deployed in this project?"* across the **whole family** — the unified registry behind it (`tools/family-registry.mjs`) aggregates every member's `capability.json`. It **never writes, never commits, and never runs a subscription CLI**.
+Read-only. The **single answer to "versions + deployment + settings + bridges"** across the whole family — `tools/family-registry.mjs` aggregates every member's `capability.json` and surveys the project. It **never writes, never commits, and never runs a subscription CLI**.
 
-Run `node ${CLAUDE_SKILL_DIR}/tools/family-registry.mjs [--dir <project>]` and present its two-axis table:
+Run `node ${CLAUDE_SKILL_DIR}/tools/family-registry.mjs --json [--dir <project>]` and render it **compact**, in the user's conversational language — **never paste the JSON or any internal field name** (no-leak rule). Map the **`installed[].state`** token via the value→plain-language map under *The version block + welcome mat* (the `visibility` and wrapper states have their own phrasings, below). Present, each area on its own line(s), routing detail to its domain mode:
 
-1. **Skill axis (always):** per member — `installed` + the manifest health (`ok` / `not-installed` / `foreign` / `stub` / `invalid-manifest` / `unsupported-schema`, the same precedence the backend detector uses) + the installed version (read from the member's own `SKILL.md`, the authoritative source).
-2. **Deploy axis (`--dir <project>`):** the deployment stamps (`docs/ai/.workflow-version`, `.memory-version`), whether `docs/ai/` exists, and whether the hidden-mode managed fence is present.
+1. **Versions — the version block** (from `installed[]` + `deploymentHead`): the deployment-structure head, the installed package versions by `display`, the two-axes disambiguation, plus any member `notes` (e.g. a behind member's refresh+restart line). This is the shared version block above.
+2. **Deployment (`--dir`)** (from `project`): whether `docs/ai/` is deployed + the deploy stamps by `display`; and **visibility** — render `project.visibility.state` in **user-safe words only**: *visible (tracked)* / *hidden (git-ignored, local-only)* / *unclear (uncommitted or partially set up)* — **never** the words "hidden fence" or any marker term. A `visibility.error` → surface it plainly.
+3. **Settings (`--dir`, one line each)** (from `project.settings`):
+   - **recipes** — the effective recipe per slot (detail → `/agent-workflow-kit procedures` / `recipes`); a `recipes.detectError` → say the backends couldn't be checked, so recipes floored at solo.
+   - **attribution** — `includeCoAuthoredBy` effective; call out a **local override** only when `local` is non-null **and** differs from `project` (a `null` `local` means the key is absent there, so the project value stands — that is not an override).
+   - **velocity** — the effective `permissions.defaultMode` + whether an allowlist is seeded (detail → `/agent-workflow-kit velocity`).
+   - Any area's **`error`** field → surface it **loudly** in plain language; the rest of `status` still renders (never a crash).
+4. **Bridges (host, one line)** (from `bridges[]`): per bridge — readiness + wrapper PATH-presence; render each wrapper's `state` as *on PATH* (`present`) / *not on PATH* (`missing`) / *couldn't check* (`unknown`) (detail → `/agent-workflow-kit backends` / `setup`). **No default-model claim.** "credentials present" means a marker file exists, not a live login.
 
-State plainly that the two version axes stay decoupled (an installed *skill* version is not a project's deployment-lineage stamp — see *Version status & the two axes*). The installed version reflects whatever is on disk under `~/.claude/skills/…`; a stale install shows its real (older) version, honestly.
+Restate the **two-axes honesty** — an installed *package* version is not a project's deployment-lineage stamp (see *Version status & the two axes*); the installed version is whatever is on disk under `~/.claude/skills/…`, so a stale install shows its real (older) version, honestly. A host that can't run the helper → **skip with the concrete reason** (the helper-failure contract), never silently.
+
+**Invariants:** read-only · never writes · never commits · never runs a subscription CLI · plain language only, no leaked internal terms.
 
 ### Mode: recipes
 
