@@ -141,7 +141,9 @@ const validateConfig = (config) => {
 // Load + validate the config from <cwd>/docs/ai/orchestration.json. Absent FILE → computed defaults
 // (NOT an error): { config: null, source: 'none' }. Malformed JSON / schema-invalid / unreadable →
 // loud `path: reason` (exit 1). The resolver receives the parsed+validated object (§2.2 IO/resolver split).
-const loadConfig = (cwd, readFile = readFileSync, lstat = lstatSync) => {
+// Exported so the read-only status settings-survey (family-registry.mjs) reuses ONE config reader —
+// same strict-JSON + loud-on-malformed contract, no second drifting implementation (Plan 3.1).
+export const loadConfig = (cwd, readFile = readFileSync, lstat = lstatSync) => {
   const full = join(cwd, CONFIG_REL);
   // Distinguish a TRULY-absent config (no entry at all → computed defaults) from a present-but-
   // unreadable one (a directory, a DANGLING SYMLINK, a permission error → loud exit 1). lstat does NOT

@@ -16,19 +16,29 @@
 // Pure, dependency-injectable (fs/env/home/validator are deps), dependency-free, Node >= 18. No
 // side effects on import (the isDirectRun idiom) — tests import the helpers with nothing run.
 
-import { existsSync, statSync, readFileSync } from 'node:fs';
+import { existsSync, statSync, readFileSync, lstatSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
-import { resolveDir } from './detect-backends.mjs';
+import { resolveDir, detectBackends, findOnPath } from './detect-backends.mjs';
 import { validateManifest, readAuthoritativeVersion, UNSUPPORTED, INVALID } from './manifest/validate.mjs';
-import { START_MARKER, excludePath } from './hide-footprint.mjs';
+import { START_MARKER, excludePath, inferVisibility } from './hide-footprint.mjs';
 import { readEngineFragment, ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
-// The deployment-lineage head — the kit-owned constant (drift-guarded against the canonical memory
-// LINEAGE_HEAD by test/lineage-head-drift.test.mjs). Reused here so the `--json` envelope exposes the
-// head from ONE source, never a third literal copy. (No import cycle: velocity-profile imports only
-// node builtins and has no side effects on import.)
-import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
+import { ACTIVITIES, resolveActivityRecipe } from './recipes.mjs';
+import { loadConfig } from './procedures.mjs';
+// The deployment-lineage head + the shared settings readers are reused from velocity-profile so the
+// `--json` envelope/settings-survey has ONE implementation each, never a drifting copy:
+//   EXPECTED_WORKFLOW_VERSION — the head literal (drift-guarded vs memory LINEAGE_HEAD)
+//   readSettingsFile / resolveEffectiveMode — the loud `.claude/settings.*` reader + mode precedence
+// (No import cycle: velocity-profile / recipes / procedures import only node builtins + siblings, none
+// import family-registry, and none has a side effect on import — every CLI is isDirectRun-guarded.)
+import {
+  EXPECTED_WORKFLOW_VERSION,
+  SETTINGS_FILE,
+  SETTINGS_LOCAL_FILE,
+  readSettingsFile,
+  resolveEffectiveMode,
+} from './velocity-profile.mjs';
 
 // ── manifestState values (the detect-backends precedence, generalized to any member kind) ──────────
 export const NOT_INSTALLED = 'not-installed';
@@ -258,12 +268,40 @@ export const surveyProject = (projectDir, deps = {}) => {
 // ── report ───────────────────────────────────────────────────────────────────────
 const pad = (s, n) => (s.length >= n ? s : s + ' '.repeat(n - s.length));
 
-export const formatStatus = (family, project = null) => {
+// The human (non-JSON) settings render. A dev view — the agent consumes `--json` + renders in plain
+// language (Mode: status). Each area shows its `error` field loudly when one fired.
+const formatSettings = (s) => {
+  const out = ['', 'settings'];
+  if (s.recipes?.error) out.push(`  ${pad('recipes', 14)}error: ${s.recipes.error}`);
+  else {
+    const parts = [];
+    for (const [act, slots] of Object.entries(s.recipes?.activities ?? {})) {
+      for (const [slot, r] of Object.entries(slots)) parts.push(`${act}.${slot}=${r.recipe}`);
+    }
+    out.push(`  ${pad('recipes', 14)}${parts.join(' · ') || '—'}`);
+    if (s.recipes?.detectError) out.push(`  ${pad('', 14)}↳ couldn't check backends (${s.recipes.detectError}); recipes floored at solo`);
+  }
+  if (s.attribution?.error) out.push(`  ${pad('attribution', 14)}error: ${s.attribution.error}`);
+  else out.push(`  ${pad('attribution', 14)}includeCoAuthoredBy effective=${String(s.attribution?.effective)}`);
+  if (s.velocity?.error) out.push(`  ${pad('velocity', 14)}error: ${s.velocity.error}`);
+  else out.push(`  ${pad('velocity', 14)}defaultMode=${String(s.velocity?.defaultMode)} · allow project/local=${s.velocity?.allowEntries?.project}/${s.velocity?.allowEntries?.local}`);
+  return out;
+};
+
+export const formatStatus = (family, project = null, extras = {}) => {
   const lines = ['agent-workflow family — installed skills (skill axis)', ''];
   for (const m of family) {
     const ver = m.version ? `v${m.version}` : '—';
     lines.push(`  ${pad(m.name, 26)}[${pad(m.manifestState, 16)}] ${pad(ver, 10)} ${m.kind}`);
     for (const c of m.caveats ?? []) lines.push(`      ↳ ${c}`);
+  }
+  if (extras.bridges) {
+    const WRAP_MARK = { present: '✓', missing: '✗', unknown: '?' };
+    lines.push('', 'execution backends (host)', '');
+    for (const b of extras.bridges) {
+      const w = b.wrappers.map((x) => `${x.cmd} ${WRAP_MARK[x.state] ?? '?'}`).join(', ') || '—';
+      lines.push(`  ${pad(b.display, 20)}${pad(b.readiness, 18)}wrappers: ${w}`);
+    }
   }
   if (project) {
     lines.push('', `project deployment (${project.dir})`, '');
@@ -274,8 +312,13 @@ export const formatStatus = (family, project = null) => {
         lines.push(`  ${pad(s.file, 26)}${s.version ?? '—'}`);
       }
       lines.push(`  ${pad('docs/ai present', 26)}${project.docsAiPresent ? 'yes' : 'no'}`);
-      lines.push(`  ${pad('hidden-mode fence', 26)}${project.hiddenFence ? 'present' : 'absent'}`);
+      if (extras.visibility) {
+        lines.push(`  ${pad('visibility', 26)}${extras.visibility.error ? `error: ${extras.visibility.error}` : extras.visibility.state}`);
+      } else {
+        lines.push(`  ${pad('hidden-mode fence', 26)}${project.hiddenFence ? 'present' : 'absent'}`);
+      }
     }
+    if (extras.settings) lines.push(...formatSettings(extras.settings));
   }
   return lines.join('\n');
 };
@@ -309,7 +352,122 @@ export const DISPLAY_NAMES = {
 };
 const displayOf = (name) => DISPLAY_NAMES[name] ?? name;
 
-export const buildEnvelope = (family, project = null) => {
+// ── the settings survey (Phase 3) — read-only, honest, localized-on-error ──────────
+// Each sub-survey returns a small user-safe object OR a single `{ error }` field (a localized message,
+// never a crash): a malformed/unreadable file in ONE area must not break the rest of `status`. The
+// readers are REUSED (one implementation each): loadConfig (procedures.mjs), readSettingsFile /
+// resolveEffectiveMode (velocity-profile.mjs), resolveActivityRecipe (recipes.mjs), inferVisibility
+// (hide-footprint.mjs). Engine-free throughout (the effective-recipe view never reads the engine).
+
+// A localized, user-safe error string. The reused readers already build cwd-relative `path: reason`
+// messages (loadConfig / velocity), so this just normalizes to a string — never a raw stack/abs path.
+const localizeError = (err) => (err && err.message ? String(err.message) : String(err));
+
+const hasOwn = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
+
+// The backend detector is a SECONDARY input to the survey — a corrupt bridge must never break the
+// read-only view, but the failure must NOT be silent (Hard Constraint). Run it defensively: a throw →
+// { detection: [], error: <localized> } so callers floor gracefully (recipes → solo, bridges →
+// 'unknown') AND can surface the concrete reason. Returns a value so callers stay `const`.
+const detectSafe = (deps) => {
+  try {
+    return { detection: (deps.detect ?? detectBackends)(deps), error: null };
+  } catch (err) {
+    return { detection: [], error: localizeError(err) };
+  }
+};
+
+// visibility: the THREE honest states from inferVisibility (NOT the single hiddenFence bit) → user-safe
+// words. Never the internal "hidden fence" / marker terms. A git/probe error → a localized error field.
+const VISIBILITY_PUBLIC = { visible: 'visible', hidden: 'hidden', ambiguous: 'unclear' };
+export const surveyVisibility = (dir, deps = {}) => {
+  try {
+    const vis = inferVisibility(deps, resolve(dir));
+    return { state: VISIBILITY_PUBLIC[vis.visibility] ?? 'unclear' };
+  } catch (err) {
+    return { error: localizeError(err) };
+  }
+};
+
+// orchestration recipes: the EFFECTIVE recipe per slot (config · default · effective), engine-free —
+// shared loadConfig + resolveActivityRecipe + the read-only backend detector. A malformed config → a
+// localized error field; a detection failure floors at solo (a corrupt bridge must not break the view).
+export const surveyRecipes = (dir, deps = {}) => {
+  // A detector failure floors recipes at solo (mirrors procedures) but is surfaced as `detectError`, so
+  // the render says "couldn't check backends" instead of letting a real solo-default look identical.
+  const { detection, error: detectError } = detectSafe(deps);
+  try {
+    const { config, source } = loadConfig(resolve(dir), deps.readFile ?? readFileSync, deps.lstat ?? lstatSync);
+    const activities = {};
+    for (const [activity, def] of Object.entries(ACTIVITIES)) {
+      activities[activity] = {};
+      for (const slot of Object.keys(def.slots)) {
+        const r = resolveActivityRecipe({ config: config ?? {}, readiness: detection, activity, slot });
+        activities[activity][slot] = { recipe: r.recipe, source: r.source, degradedFrom: r.degradedFrom ?? null };
+      }
+    }
+    return { configSource: source, activities, ...(detectError ? { detectError } : {}) };
+  } catch (err) {
+    return { error: localizeError(err) };
+  }
+};
+
+// attribution: includeCoAuthoredBy across .claude/settings.json + settings.local.json as
+// project · local override · effective (local WINS only when it actually sets the key — presence-based,
+// mirroring resolveEffectiveMode). Reuses the loud readSettingsFile; the precedence read is new code.
+export const surveyAttribution = (dir, deps = {}) => {
+  try {
+    const d = resolve(dir);
+    const project = readSettingsFile(join(d, SETTINGS_FILE), { ...deps, cwd: d });
+    const local = readSettingsFile(join(d, SETTINGS_LOCAL_FILE), { ...deps, cwd: d });
+    const projVal = project.present && hasOwn(project.data, 'includeCoAuthoredBy') ? project.data.includeCoAuthoredBy : null;
+    const localHasKey = local.present && hasOwn(local.data, 'includeCoAuthoredBy');
+    const localVal = localHasKey ? local.data.includeCoAuthoredBy : null;
+    return { project: projVal, local: localVal, effective: localHasKey ? localVal : projVal };
+  } catch (err) {
+    return { error: localizeError(err) };
+  }
+};
+
+// velocity: the effective permissions.defaultMode (local > project, via resolveEffectiveMode) + the
+// per-source count of allowlist entries — a read-only view of what the velocity profile may have seeded.
+export const surveyVelocity = (dir, deps = {}) => {
+  try {
+    const d = resolve(dir);
+    const project = readSettingsFile(join(d, SETTINGS_FILE), { ...deps, cwd: d });
+    const local = readSettingsFile(join(d, SETTINGS_LOCAL_FILE), { ...deps, cwd: d });
+    const { effectiveMode } = resolveEffectiveMode(project.data, local.data);
+    const allowOf = (s) => (s.present && Array.isArray(s.data?.permissions?.allow) ? s.data.permissions.allow.length : 0);
+    return { defaultMode: effectiveMode ?? null, allowEntries: { project: allowOf(project), local: allowOf(local) } };
+  } catch (err) {
+    return { error: localizeError(err) };
+  }
+};
+
+// the project-scoped settings survey (needs a project dir). Each area is independently localized-on-error.
+export const surveySettings = (dir, deps = {}) => ({
+  recipes: surveyRecipes(dir, deps),
+  attribution: surveyAttribution(dir, deps),
+  velocity: surveyVelocity(dir, deps),
+});
+
+// bridges: HOST-scoped (no project needed). Wrapper command NAMES come from FAMILY_MEMBERS[].wrapperCmds
+// (static, always present), their PATH-presence is probed DIRECTLY via findOnPath over those names (NOT
+// detect-backends' wrappers[], which is [] when the bridge isn't ok — the onboarding case), and the
+// readiness summary comes from the detector. NO default-model claim (a negative drift-guard asserts it).
+export const surveyBridges = (deps = {}) => {
+  const { detection } = detectSafe(deps); // a detector failure → every readiness reads 'unknown' (honest)
+  const probe = deps.findOnPath ?? findOnPath;
+  return FAMILY_MEMBERS.filter((m) => m.kind === 'execution-backend').map((m) => {
+    const det = detection.find((d) => d.name === m.name);
+    // Preserve findOnPath's THREE-state result (present | missing | unknown): an `unknown` (EACCES,
+    // "cannot confirm") must stay distinct from a real `missing` — never flattened to a false boolean.
+    const wrappers = m.wrapperCmds.map((cmd) => ({ cmd, state: probe(cmd, deps).state }));
+    return { member: m.name, display: displayOf(m.name), readiness: det?.readiness ?? 'unknown', wrappers };
+  });
+};
+
+export const buildEnvelope = (family, project = null, extras = {}) => {
   const installed = family.map((m) => {
     const entry = {
       member: m.name,
@@ -321,6 +479,7 @@ export const buildEnvelope = (family, project = null) => {
     return entry;
   });
   const envelope = { deploymentHead: EXPECTED_WORKFLOW_VERSION, installed };
+  if (extras.bridges) envelope.bridges = extras.bridges; // HOST-scoped (no project needed)
   if (project) {
     envelope.project = {
       dir: project.dir,
@@ -329,6 +488,9 @@ export const buildEnvelope = (family, project = null) => {
       // member + display + version only — never the internal stamp FILENAME (s.file).
       deployStamps: project.stamps.map((s) => ({ member: s.name, display: displayOf(s.name), version: s.version ?? null })),
     };
+    // project-scoped Phase-3 additions (visibility from inferVisibility, not the hiddenFence bit).
+    if (extras.visibility) envelope.project.visibility = extras.visibility;
+    if (extras.settings) envelope.project.settings = extras.settings;
   }
   return envelope;
 };
@@ -356,8 +518,14 @@ Detection only — never writes, never commits, never runs a subscription CLI.`)
     return;
   }
   const family = surveyFamily();
+  const bridges = surveyBridges();
   const project = args.dir ? surveyProject(args.dir) : null;
-  console.log(args.json ? JSON.stringify(buildEnvelope(family, project), null, 2) : formatStatus(family, project));
+  const extras = { bridges };
+  if (args.dir) {
+    extras.visibility = surveyVisibility(args.dir);
+    extras.settings = surveySettings(args.dir);
+  }
+  console.log(args.json ? JSON.stringify(buildEnvelope(family, project, extras), null, 2) : formatStatus(family, project, extras));
 };
 
 const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;

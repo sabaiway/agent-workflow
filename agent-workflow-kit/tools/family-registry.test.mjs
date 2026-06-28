@@ -11,6 +11,11 @@ import {
   buildEnvelope,
   DISPLAY_NAMES,
   MEMORY_ORCH_TEMPLATE_REL,
+  surveyVisibility,
+  surveyRecipes,
+  surveyAttribution,
+  surveyVelocity,
+  surveyBridges,
   NOT_INSTALLED,
   UNSUPPORTED_SCHEMA,
   INVALID_MANIFEST,
@@ -23,6 +28,7 @@ import { VALID, INVALID, UNSUPPORTED } from './manifest/validate.mjs';
 import { START_MARKER } from './hide-footprint.mjs';
 import { ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
 import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
+import { READY, NEEDS_SKILL } from './detect-backends.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '../..'); // agent-workflow-kit/tools → repo root
@@ -353,6 +359,178 @@ describe('buildEnvelope — no-leak --json envelope', () => {
 
   it('DISPLAY_NAMES covers every family member', () => {
     for (const m of FAMILY_MEMBERS) assert.ok(DISPLAY_NAMES[m.name], `no display label for ${m.name}`);
+  });
+});
+
+// ── the settings survey (Phase 3) ──────────────────────────────────────────────────
+
+// A canned git runner for inferVisibility: controls ls-files (tracked) + check-ignore (ignored).
+const fakeGit = ({ tracked = false, ignored = false, error = false }) => (args) => {
+  const sub = args[0];
+  if (sub === 'ls-files') {
+    if (error) return { status: 128, stdout: '', stderr: 'fatal: not a git repository' };
+    return { status: 0, stdout: tracked ? 'AGENTS.md\0' : '', stderr: '' };
+  }
+  if (sub === 'check-ignore') return ignored ? { status: 0, stdout: '.git/info/exclude:1:/AGENTS.md\tAGENTS.md\n', stderr: '' } : { status: 1, stdout: '', stderr: '' };
+  return { status: 0, stdout: '', stderr: '' };
+};
+const STAT_ENOENT = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+
+describe('surveyVisibility — three honest states via inferVisibility (never the hiddenFence bit)', () => {
+  it('a tracked anchor → visible', () => {
+    assert.equal(surveyVisibility('/p', { git: fakeGit({ tracked: true }), stat: STAT_ENOENT, env: {} }).state, 'visible');
+  });
+  it('untracked AND ignored → hidden', () => {
+    assert.equal(surveyVisibility('/p', { git: fakeGit({ ignored: true }), stat: STAT_ENOENT, env: {} }).state, 'hidden');
+  });
+  it('untracked AND not ignored → unclear (the ambiguous case, in user-safe words)', () => {
+    assert.equal(surveyVisibility('/p', { git: fakeGit({}), stat: STAT_ENOENT, env: {} }).state, 'unclear');
+  });
+  it('a git/probe error → a localized error field (never a crash), no marker term leaked', () => {
+    const r = surveyVisibility('/p', { git: fakeGit({ error: true }), stat: STAT_ENOENT, env: {} });
+    assert.ok(r.error, 'a localized error field is present');
+    assert.ok(!/fence|marker|hiddenFence/i.test(JSON.stringify(r)), 'no internal marker term leaks');
+  });
+});
+
+// A path-aware fs for the velocity-profile readSettingsFile (project vs local .claude/settings.*).
+const settingsFs = ({ project, local }) => ({
+  lstat: (p) => {
+    const s = String(p);
+    if (s.endsWith('settings.local.json')) { if (local === undefined) return STAT_ENOENT(); return { isFile: () => true }; }
+    if (s.endsWith('settings.json')) { if (project === undefined) return STAT_ENOENT(); return { isFile: () => true }; }
+    return STAT_ENOENT();
+  },
+  readFile: (p) => {
+    const s = String(p);
+    if (s.endsWith('settings.local.json')) return local;
+    if (s.endsWith('settings.json')) return project;
+    throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+  },
+});
+
+describe('surveyRecipes — engine-free effective recipe per slot', () => {
+  const detect = (codex, agy) => () => [{ name: 'codex-cli-bridge', readiness: codex }, { name: 'antigravity-cli-bridge', readiness: agy }];
+
+  it('a config entry drives the slot (execute=delegated when codex ready), source=config', () => {
+    const r = surveyRecipes('/p', {
+      detect: detect(READY, NEEDS_SKILL),
+      lstat: () => ({}),
+      readFile: () => JSON.stringify({ 'plan-execution': { execute: 'delegated' } }),
+    });
+    assert.equal(r.configSource, 'docs/ai/orchestration.json');
+    assert.equal(r.activities['plan-execution'].execute.recipe, 'delegated');
+    assert.equal(r.activities['plan-execution'].execute.source, 'config');
+  });
+
+  it('absent config → computed defaults (review→reviewed when a backend is ready)', () => {
+    const r = surveyRecipes('/p', { detect: detect(READY, NEEDS_SKILL), lstat: STAT_ENOENT, readFile: () => '' });
+    assert.equal(r.configSource, 'none');
+    assert.equal(r.activities['plan-authoring'].review.recipe, 'reviewed');
+    assert.equal(r.activities['plan-authoring'].review.source, 'default');
+  });
+
+  it('malformed orchestration.json → a localized error field (never a crash)', () => {
+    const r = surveyRecipes('/p', { detect: detect(READY, READY), lstat: () => ({}), readFile: () => '{ not json' });
+    assert.ok(r.error);
+    assert.match(r.error, /orchestration\.json/);
+  });
+
+  it('a detector failure floors recipes at solo BUT surfaces detectError (no silent failure)', () => {
+    const r = surveyRecipes('/p', {
+      detect: () => { throw new Error('corrupt bridge manifest'); },
+      lstat: STAT_ENOENT,
+      readFile: () => '',
+    });
+    assert.equal(r.activities['plan-authoring'].review.recipe, 'solo', 'floors at solo when detection is unavailable');
+    assert.ok(r.detectError, 'the detection failure is surfaced, never swallowed');
+    assert.match(r.detectError, /corrupt bridge/);
+  });
+});
+
+describe('surveyAttribution — includeCoAuthoredBy precedence (local > project)', () => {
+  it('local overrides project when it sets the key', () => {
+    const r = surveyAttribution('/p', settingsFs({ project: '{"includeCoAuthoredBy":true}', local: '{"includeCoAuthoredBy":false}' }));
+    assert.deepEqual(r, { project: true, local: false, effective: false });
+  });
+  it('project value used when local does NOT set the key', () => {
+    const r = surveyAttribution('/p', settingsFs({ project: '{"includeCoAuthoredBy":true}', local: '{}' }));
+    assert.equal(r.effective, true);
+    assert.equal(r.local, null);
+  });
+  it('malformed settings.json → a localized error field', () => {
+    const r = surveyAttribution('/p', settingsFs({ project: '{ bad', local: undefined }));
+    assert.ok(r.error);
+    assert.match(r.error, /settings\.json/);
+  });
+});
+
+describe('surveyVelocity — effective defaultMode + allow counts', () => {
+  it('reports effective defaultMode (local>project) and per-source allow counts', () => {
+    const r = surveyVelocity('/p', settingsFs({
+      project: JSON.stringify({ permissions: { allow: ['Bash(ls:*)'] } }),
+      local: JSON.stringify({ permissions: { defaultMode: 'acceptEdits', allow: ['Bash(cat:*)', 'Bash(grep:*)'] } }),
+    }));
+    assert.equal(r.defaultMode, 'acceptEdits');
+    assert.deepEqual(r.allowEntries, { project: 1, local: 2 });
+  });
+  it('malformed settings.local.json → a localized error field', () => {
+    const r = surveyVelocity('/p', settingsFs({ project: '{}', local: '{ bad' }));
+    assert.ok(r.error);
+    assert.match(r.error, /settings\.local\.json/);
+  });
+});
+
+describe('surveyBridges — host wrapper PATH presence + readiness, NO model claim', () => {
+  const detect = () => [{ name: 'codex-cli-bridge', readiness: READY }, { name: 'antigravity-cli-bridge', readiness: NEEDS_SKILL }];
+  const findOnPath = (cmd) => ({ bin: cmd, state: cmd === 'codex-exec' ? 'present' : 'missing', path: null });
+
+  it('probes wrapperCmds directly (not detect-backends wrappers[]) + reports readiness', () => {
+    const bridges = surveyBridges({ detect, findOnPath });
+    assert.equal(bridges.length, 2);
+    const codex = bridges.find((b) => b.member === 'codex-cli-bridge');
+    assert.equal(codex.readiness, READY);
+    assert.deepEqual(codex.wrappers, [{ cmd: 'codex-exec', state: 'present' }, { cmd: 'codex-review', state: 'missing' }]);
+  });
+
+  it('preserves findOnPath "unknown" (cannot confirm) — never flattened to a false "missing"', () => {
+    const bridges = surveyBridges({ detect, findOnPath: (cmd) => ({ bin: cmd, state: 'unknown', path: null }) });
+    assert.ok(bridges.every((b) => b.wrappers.every((w) => w.state === 'unknown')), 'unknown stays distinct from missing');
+  });
+
+  it('NEVER claims a default model (negative drift-guard)', () => {
+    assert.ok(!/"model"/i.test(JSON.stringify(surveyBridges({ detect, findOnPath }))), 'bridges must not invent a model field');
+  });
+
+  it('a detector failure floors readiness to "unknown" (never a crash)', () => {
+    const bridges = surveyBridges({ detect: () => { throw new Error('corrupt'); }, findOnPath });
+    assert.ok(bridges.every((b) => b.readiness === 'unknown'));
+  });
+});
+
+describe('buildEnvelope — Phase-3 extras merge without breaking the Phase-2 shape', () => {
+  const fam = [{ name: 'agent-workflow-kit', kind: 'composition-root', installed: true, manifestState: OK, version: '1.16.0' }];
+  const project = { dir: '/p', deployed: true, docsAiPresent: true, hiddenFence: true, stamps: [] };
+
+  it('top-level bridges + project.visibility + project.settings; no internal leak', () => {
+    const extras = {
+      bridges: [{ member: 'codex-cli-bridge', display: 'codex-bridge', readiness: 'ready', wrappers: [{ cmd: 'codex-exec', state: 'present' }] }],
+      visibility: { state: 'hidden' },
+      settings: { recipes: { configSource: 'none', activities: {} }, attribution: { effective: false }, velocity: { defaultMode: null } },
+    };
+    const env = buildEnvelope(fam, project, extras);
+    assert.deepEqual(env.bridges, extras.bridges);
+    assert.equal(env.project.visibility.state, 'hidden');
+    assert.ok(env.project.settings.recipes);
+    const blob = JSON.stringify(env);
+    for (const leak of ['hiddenFence', 'manifestState', '"model"']) assert.ok(!blob.includes(leak), `leaks ${leak}`);
+  });
+
+  it('omits the Phase-3 keys when no extras are passed (Phase-2 shape preserved)', () => {
+    const env = buildEnvelope(fam, project);
+    assert.equal('bridges' in env, false);
+    assert.equal('visibility' in env.project, false);
+    assert.equal('settings' in env.project, false);
   });
 });
 
