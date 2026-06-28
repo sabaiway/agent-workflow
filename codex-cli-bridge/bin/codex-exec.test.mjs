@@ -5,7 +5,7 @@ import {
   existsSync, readdirSync, symlinkSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
@@ -20,14 +20,14 @@ const WRAPPER = join(HERE, 'codex-exec.sh');
 const FAKE_CODEX = [
   '#!/usr/bin/env bash',
   'set -u',
-  'if [[ "${1:-}" == "login" ]]; then echo "Logged in using ChatGPT"; exit 0; fi',
+  'if [[ "${1:-}" == "login" ]]; then echo "${CODEX_FAKE_LOGIN:-Logged in using ChatGPT}"; exit 0; fi',
   ': "${CODEX_FAKE_ARGV:=/dev/null}"',
   ': "${CODEX_FAKE_ENV:=/dev/null}"',
   ': "${CODEX_FAKE_STDIN:=/dev/null}"',
   '{ for a in "$@"; do echo "$a"; done; } >"$CODEX_FAKE_ARGV"',
   '{ echo "HOME=${HOME:-}"; echo "CODEX_HOME=${CODEX_HOME:-}"; echo "XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-}"; echo "OPENAI_API_KEY=${OPENAI_API_KEY:-<unset>}"; echo "OPENAI_BASE_URL=${OPENAI_BASE_URL:-<unset>}"; echo "FOO_API_KEY=${FOO_API_KEY:-<unset>}"; echo "CODEX_REAL_GIT=${CODEX_REAL_GIT:-<unset>}"; } >"$CODEX_FAKE_ENV"',
   'cat >"$CODEX_FAKE_STDIN"',
-  'if [[ "${CODEX_FAKE_GIT_PROBE:-}" == "1" ]]; then { echo "realgit_env=${CODEX_REAL_GIT:-unset}"; echo "status=$(git status --short >/dev/null 2>&1; echo $?)"; echo "diff=$(git --no-pager diff >/dev/null 2>&1; echo $?)"; echo "commit=$(git commit -m x >/dev/null 2>&1; echo $?)"; echo "add=$(git add -A >/dev/null 2>&1; echo $?)"; echo "checkout=$(git checkout -- . >/dev/null 2>&1; echo $?)"; echo "unknown=$(git frobnicate >/dev/null 2>&1; echo $?)"; echo "config_read=$(git config user.name >/dev/null 2>&1; echo $?)"; echo "config_list=$(git config --list >/dev/null 2>&1; echo $?)"; echo "config_write=$(git config user.name HACKED >/dev/null 2>&1; echo $?)"; echo "config_bypass=$(git config --get --add a.b v >/dev/null 2>&1; echo $?)"; echo "symref_write=$(git symbolic-ref HEAD refs/heads/x >/dev/null 2>&1; echo $?)"; echo "reflog_write=$(git reflog expire --all >/dev/null 2>&1; echo $?)"; } > "${CODEX_FAKE_GIT_RESULT:-/dev/null}" 2>&1; fi',
+  'if [[ "${CODEX_FAKE_GIT_PROBE:-}" == "1" ]]; then { echo "realgit_env=${CODEX_REAL_GIT:-unset}"; echo "status=$(git status --short >/dev/null 2>&1; echo $?)"; echo "diff=$(git --no-pager diff >/dev/null 2>&1; echo $?)"; echo "dashC_read=$(git -C . status --short >/dev/null 2>&1; echo $?)"; echo "dashc_read=$(git -c core.pager=cat status --short >/dev/null 2>&1; echo $?)"; echo "bare=$(git >/dev/null 2>&1; echo $?)"; echo "commit=$(git commit -m x >/dev/null 2>&1; echo $?)"; echo "add=$(git add -A >/dev/null 2>&1; echo $?)"; echo "checkout=$(git checkout -- . >/dev/null 2>&1; echo $?)"; echo "unknown=$(git frobnicate >/dev/null 2>&1; echo $?)"; echo "config_read=$(git config user.name >/dev/null 2>&1; echo $?)"; echo "config_list=$(git config --list >/dev/null 2>&1; echo $?)"; echo "config_bare=$(git config >/dev/null 2>&1; echo $?)"; echo "config_write=$(git config user.name HACKED >/dev/null 2>&1; echo $?)"; echo "config_bypass=$(git config --get --add a.b v >/dev/null 2>&1; echo $?)"; echo "symref_write=$(git symbolic-ref HEAD refs/heads/x >/dev/null 2>&1; echo $?)"; echo "reflog_write=$(git reflog expire --all >/dev/null 2>&1; echo $?)"; } > "${CODEX_FAKE_GIT_RESULT:-/dev/null}" 2>&1; fi',
   'if [[ -n "${CODEX_FAKE_SLEEP:-}" ]]; then sleep "${CODEX_FAKE_SLEEP}"; fi',
   'out=""',
   'prev=""',
@@ -37,8 +37,12 @@ const FAKE_CODEX = [
   'done',
   'if [[ -n "$out" ]]; then',
   '  if [[ "${CODEX_FAKE_NO_OUT:-}" != "1" ]]; then echo "${CODEX_FAKE_FINAL:-FAKE_FINAL_MESSAGE}" >"$out"; fi',
+  '  if [[ "${CODEX_FAKE_NO_THREAD:-}" != "1" ]]; then',
   '  cat <<EOF',
   '{"type":"thread.started","thread_id":"${CODEX_FAKE_THREAD_ID:-fake-thread-123}"}',
+  'EOF',
+  '  fi',
+  '  cat <<EOF',
   '{"type":"turn.started"}',
   '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"FAKE_FINAL_MESSAGE"}}',
   '{"type":"turn.completed","usage":{}}',
@@ -70,30 +74,33 @@ const makeSandbox = () => {
   return { root, bin, repo };
 };
 
-// A PATH dir mirroring the real one MINUS timeout/gtimeout, to exercise the
-// no-cap fallback hermetically without a production test backdoor.
-const makePathWithoutTimeout = (root) => {
-  const dir = join(root, 'nobin');
-  mkdirSync(dir, { recursive: true });
+// A PATH dir mirroring the real one MINUS the named binaries, to exercise the
+// missing-binary fallbacks (no-cap when timeout is gone; the codex/git preflight
+// 127s) hermetically without a production test backdoor.
+const makePathWithout = (root, exclude = []) => {
+  const skip = new Set(exclude);
+  const dir = mkdtempSync(join(root, 'nobin-'));
   for (const d of (process.env.PATH || '').split(':').filter(Boolean)) {
     let names;
     try { names = readdirSync(d); } catch { continue; }
     for (const name of names) {
-      if (name === 'timeout' || name === 'gtimeout') continue;
+      if (skip.has(name)) continue;
       const link = join(dir, name);
       if (existsSync(link)) continue;
-      try { symlinkSync(join(d, name), link); } catch { /* dup / race — ignore */ }
+      // resolve() so a relative PATH entry still yields an ABSOLUTE symlink target
+      // (a relative target would be broken — it resolves against the temp dir, not cwd).
+      try { symlinkSync(resolve(d, name), link); } catch { /* dup / race — ignore */ }
     }
   }
   return dir;
 };
 
-const run = ({ repo, bin }, { args = ['-'], input = 'do the thing', env = {}, path } = {}) => {
+const run = ({ repo, bin }, { args = ['-'], input = 'do the thing', env = {}, path, cwd } = {}) => {
   const argvFile = join(repo, '.cap-argv');
   const envFile = join(repo, '.cap-env');
   const stdinFile = join(repo, '.cap-stdin');
   const r = spawnSync('bash', [WRAPPER, ...args], {
-    cwd: repo,
+    cwd: cwd || repo,
     input,
     encoding: 'utf8',
     timeout: 30000,
@@ -303,8 +310,18 @@ describe('codex-exec.sh — hard timeout (1.3)', () => {
 
   it('warns and runs uncapped when neither timeout nor gtimeout is on PATH', () => {
     const sb = makeSandbox();
-    const path = `${sb.bin}:${makePathWithoutTimeout(sb.root)}`;
+    const path = `${sb.bin}:${makePathWithout(sb.root, ['timeout', 'gtimeout'])}`;
     const r = run(sb, { path });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /WITHOUT a hard wall-clock cap/);
+    assert.match(r.stdout, /FAKE_FINAL_MESSAGE/);
+  });
+
+  it('resume runs uncapped (and warns) when no timeout binary is on PATH', () => {
+    const sb = makeSandbox();
+    const path = `${sb.bin}:${makePathWithout(sb.root, ['timeout', 'gtimeout'])}`;
+    const r = run(sb, { args: ['--resume', 'sess-1', '-'], input: 'go', path });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /WITHOUT a hard wall-clock cap/);
@@ -435,12 +452,16 @@ describe('codex-exec.sh — enforced git-write boundary shim (3.2)', () => {
     assert.match(probe, /realgit_env=unset/, 'CODEX_REAL_GIT must not be exposed to codex');
     assert.match(probe, /status=0/, 'git status (read) passes through');
     assert.match(probe, /diff=0/, 'git --no-pager diff (read, global option) passes through');
+    assert.match(probe, /dashC_read=0/, 'git -C . status (value-taking global option, 2-token skip) passes through');
+    assert.match(probe, /dashc_read=0/, 'git -c core.pager=cat status (value-taking -c) passes through');
+    assert.match(probe, /bare=1/, 'bare git (empty verb) passes to real git → its own usage code, not the 13 block');
     assert.match(probe, /commit=13/, 'git commit (write) is blocked');
     assert.match(probe, /add=13/, 'git add (write) is blocked');
     assert.match(probe, /checkout=13/, 'git checkout (write) is blocked');
     assert.match(probe, /unknown=13/, 'an unknown verb is blocked by default');
     assert.match(probe, /config_read=0/, 'git config <name> (read) passes through');
     assert.match(probe, /config_list=0/, 'git config --list (read) passes through');
+    assert.match(probe, /config_bare=129/, 'bare git config (empty rest) passes through to real git (usage code 129) — not blocked (13), not a set -u crash (1)');
     assert.match(probe, /config_write=13/, 'git config <name> <value> (write) is blocked');
     assert.match(probe, /config_bypass=13/, 'git config --get --add … (write bypass) is blocked');
     assert.match(probe, /symref_write=13/, 'git symbolic-ref (has write modes) is blocked');
@@ -452,5 +473,121 @@ describe('codex-exec.sh — enforced git-write boundary shim (3.2)', () => {
     const r = run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.match(r.capEnv, /^CODEX_REAL_GIT=<unset>$/m);
+  });
+});
+
+describe('codex-exec.sh — environment preflight (fail fast, before a run)', () => {
+  it('STOPs with 127 when codex is not on PATH', () => {
+    const sb = makeSandbox();
+    // PATH WITHOUT the fake codex bin and without any real codex.
+    const path = makePathWithout(sb.root, ['codex']);
+    const r = run(sb, { path });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 127);
+    assert.match(r.stderr, /'codex'.*not found on PATH/);
+    assert.equal(r.capStdin, '', 'codex must never be invoked');
+  });
+
+  it('STOPs with 127 when git is not on PATH', () => {
+    const sb = makeSandbox();
+    // codex present (sb.bin) but git stripped — exercises the type -P git guard.
+    const path = `${sb.bin}:${makePathWithout(sb.root, ['git'])}`;
+    const r = run(sb, { path });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 127);
+    assert.match(r.stderr, /'git' not found on PATH/);
+  });
+
+  it('STOPs (exit 1) when codex is not on a ChatGPT subscription', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_FAKE_LOGIN: 'Logged in using API key' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /not on a ChatGPT subscription/);
+    assert.equal(r.capStdin, '', 'a wrong login must never spend a run');
+  });
+
+  it('STOPs (exit 2) when not inside a git work tree', () => {
+    const sb = makeSandbox();
+    const nongit = join(sb.root, 'nongit');
+    mkdirSync(nongit, { recursive: true });
+    writeFileSync(join(nongit, 'AGENTS.md'), '# AGENTS\n'); // present, but the work-tree check fires first
+    const r = run(sb, { cwd: nongit });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /must run inside a git working tree/);
+  });
+});
+
+describe('codex-exec.sh — argument & prompt-source dispatch', () => {
+  it('prints usage and STOPs (exit 2) with no arguments', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: [] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /usage:/);
+  });
+
+  it('STOPs on a stray extra argument without the -- separator', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['-', 'stray'], input: 'go' });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /unexpected argument 'stray'/);
+  });
+
+  it('passes an allowed (non-blocked) passthrough flag through to codex', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['-', '--', '--foobar', 'val'], input: 'go' });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.argv, /(^|\n)--foobar(\n|$)/, 'an unguarded flag reaches codex argv');
+  });
+
+  it('reads the task from a prompt FILE (not just stdin)', () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.repo, 'task.md'), 'PROMPT_FROM_FILE_MARKER\n');
+    const r = run(sb, { args: ['task.md'], input: '' });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.capStdin, /PROMPT_FROM_FILE_MARKER/);
+  });
+
+  it('STOPs (exit 2) when the prompt path is neither - nor a file', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['no-such-file.md'], input: '' });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /'no-such-file\.md' is not a file/);
+  });
+
+  it('STOPs on an empty task in normal mode (no "resumed" wording)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['-'], input: '   \n' });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /empty plan\/instruction/);
+    assert.doesNotMatch(r.stderr, /resumed/, 'normal mode must not say "resumed"');
+  });
+
+  it('--resume-last with no prompt argument STOPs (missing <plan-file>)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['--resume-last'], input: '' });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /missing <plan-file/);
+  });
+});
+
+describe('codex-exec.sh — session id absent', () => {
+  it('writes no sidecar and no session line when codex emits no thread id', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_FAKE_NO_THREAD: '1' } });
+    const wrote = existsSync(join(sb.repo, '.codex-last-session'));
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(wrote, false, 'no thread id → no sidecar');
+    assert.doesNotMatch(r.stderr, /session:/, 'no thread id → no session line');
+    assert.match(r.stdout, /FAKE_FINAL_MESSAGE/, 'the run still succeeds');
   });
 });

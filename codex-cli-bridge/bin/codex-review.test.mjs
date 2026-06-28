@@ -5,7 +5,7 @@ import {
   existsSync, readdirSync, symlinkSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
@@ -17,7 +17,7 @@ const WRAPPER = join(HERE, 'codex-review.sh');
 const FAKE_CODEX = [
   '#!/usr/bin/env bash',
   'set -u',
-  'if [[ "${1:-}" == "login" ]]; then echo "Logged in using ChatGPT"; exit 0; fi',
+  'if [[ "${1:-}" == "login" ]]; then echo "${CODEX_FAKE_LOGIN:-Logged in using ChatGPT}"; exit 0; fi',
   ': "${CODEX_FAKE_ARGV:=/dev/null}"',
   ': "${CODEX_FAKE_ENV:=/dev/null}"',
   ': "${CODEX_FAKE_STDIN:=/dev/null}"',
@@ -37,8 +37,12 @@ const FAKE_CODEX = [
   '  prev="$a"',
   'done',
   'if [[ -n "$out" && "${CODEX_FAKE_NO_OUT:-}" != "1" ]]; then echo "${CODEX_FAKE_FINAL:-FAKE_FINAL_MESSAGE}" >"$out"; fi',
+  'if [[ "${CODEX_FAKE_NO_THREAD:-}" != "1" ]]; then',
   'cat <<EOF',
   '{"type":"thread.started","thread_id":"${CODEX_FAKE_THREAD_ID:-fake-thread-123}"}',
+  'EOF',
+  'fi',
+  'cat <<EOF',
   '{"type":"turn.started"}',
   '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"FAKE_FINAL_MESSAGE"}}',
   '{"type":"turn.completed","usage":{}}',
@@ -71,29 +75,31 @@ const makeSandbox = ({ clean = false } = {}) => {
   return { root, bin, repo };
 };
 
-const makePathWithoutTimeout = (root) => {
-  const dir = join(root, 'nobin');
-  mkdirSync(dir, { recursive: true });
+const makePathWithout = (root, exclude = []) => {
+  const skip = new Set(exclude);
+  const dir = mkdtempSync(join(root, 'nobin-'));
   for (const d of (process.env.PATH || '').split(':').filter(Boolean)) {
     let names;
     try { names = readdirSync(d); } catch { continue; }
     for (const name of names) {
-      if (name === 'timeout' || name === 'gtimeout') continue;
+      if (skip.has(name)) continue;
       const link = join(dir, name);
       if (existsSync(link)) continue;
-      try { symlinkSync(join(d, name), link); } catch { /* dup / race — ignore */ }
+      // resolve() so a relative PATH entry still yields an ABSOLUTE symlink target
+      // (a relative target would be broken — it resolves against the temp dir, not cwd).
+      try { symlinkSync(resolve(d, name), link); } catch { /* dup / race — ignore */ }
     }
   }
   return dir;
 };
 
-const run = ({ repo, bin }, { args = ['code'], env = {}, path } = {}) => {
+const run = ({ repo, bin }, { args = ['code'], env = {}, path, cwd } = {}) => {
   const argvFile = join(repo, '.cap-argv');
   const envFile = join(repo, '.cap-env');
   const stdinFile = join(repo, '.cap-stdin');
   const codexHome = join(repo, '..', 'codex-home');
   const r = spawnSync('bash', [WRAPPER, ...args], {
-    cwd: repo,
+    cwd: cwd || repo,
     encoding: 'utf8',
     timeout: 30000,
     env: {
@@ -256,7 +262,7 @@ describe('codex-review.sh — hard timeout (1.3)', () => {
 
   it('warns and runs uncapped when neither timeout nor gtimeout is on PATH', () => {
     const sb = makeSandbox();
-    const path = `${sb.bin}:${makePathWithoutTimeout(sb.root)}`;
+    const path = `${sb.bin}:${makePathWithout(sb.root, ['timeout', 'gtimeout'])}`;
     const r = run(sb, { path });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -391,5 +397,146 @@ describe('codex-review.sh — optional structured findings (2.2)', () => {
     const r = run(sb, { args: ['code'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.match(r.capStdin, /one per line/);
+  });
+});
+
+describe('codex-review.sh — environment preflight (fail fast, before a run)', () => {
+  it('STOPs with 127 when codex is not on PATH', () => {
+    const sb = makeSandbox();
+    const path = makePathWithout(sb.root, ['codex']); // no fake codex, no real codex
+    const r = run(sb, { args: ['code'], path });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 127);
+    assert.match(r.stderr, /'codex'.*not found on PATH/);
+    assert.equal(r.capStdin, '', 'codex must never be invoked');
+  });
+
+  it('STOPs (exit 1) when codex is not on a ChatGPT subscription', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code'], env: { CODEX_FAKE_LOGIN: 'Logged in using API key' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /not on a ChatGPT subscription/);
+    assert.equal(r.capStdin, '', 'a wrong login must never spend a run');
+  });
+
+  it('STOPs (exit 2) when not inside a git work tree', () => {
+    const sb = makeSandbox();
+    const nongit = join(sb.root, 'nongit');
+    mkdirSync(nongit, { recursive: true });
+    writeFileSync(join(nongit, 'AGENTS.md'), '# AGENTS\n');
+    const r = run(sb, { args: ['code'], cwd: nongit });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /must run inside a git working tree/);
+  });
+
+  it('STOPs (exit 2) when there is no root AGENTS.md', () => {
+    const sb = makeSandbox();
+    rmSync(join(sb.repo, 'AGENTS.md'));
+    const r = run(sb, { args: ['code'] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /no root AGENTS\.md/);
+  });
+});
+
+describe('codex-review.sh — CODEX_HOME resolution arms (1.5)', () => {
+  it('resolves a bare ~ in CODEX_HOME to HOME', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code'], env: { CODEX_HOME: '~' } });
+    const codexHome = (r.capEnv.match(/^CODEX_HOME=(.*)$/m) || [])[1];
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(codexHome, sb.repo, 'bare ~ → the HOME handed to the wrapper');
+  });
+
+  it('anchors a relative CODEX_HOME to $PWD', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code'], env: { CODEX_HOME: 'rel/.codex' } });
+    const codexHome = (r.capEnv.match(/^CODEX_HOME=(.*)$/m) || [])[1];
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(codexHome, join(sb.repo, 'rel/.codex'), 'a relative path anchors to cwd, never left bare');
+  });
+});
+
+describe('codex-review.sh — mode dispatch & plan validation', () => {
+  it('unknown mode prints usage and STOPs (exit 2)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['bogus'] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /usage: .* plan <plan-file> \| code/);
+  });
+
+  it('no mode prints usage and STOPs (exit 2)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: [] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /usage:/);
+  });
+
+  it('plan mode: STOPs (exit 2) when the plan file is missing', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['plan', 'nope.md'] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /plan file 'nope\.md' not found/);
+  });
+
+  it('plan mode: STOPs (exit 2) on unexpected trailing arguments', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['plan', 'plan.md', 'extra', 'junk'] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /unexpected arguments after plan file: extra junk/);
+  });
+});
+
+describe('codex-review.sh — assemble & output edge cases', () => {
+  it('skips a non-regular untracked path (an embedded git repo dir) without reading it', () => {
+    // git enumerates an untracked path as non-regular only as a DIRECTORY: a FIFO /
+    // socket / device is not listed by `git ls-files --others` at all, but an embedded
+    // git repo surfaces as `nested/` — a directory, so `[[ ! -f ]]` skips it (and a
+    // `cat` is never attempted, which is what the branch guards against for FIFOs).
+    const sb = makeSandbox();
+    const nested = join(sb.repo, 'nested');
+    mkdirSync(nested, { recursive: true });
+    const g = (...a) => spawnSync('git', a, { cwd: nested, encoding: 'utf8' });
+    g('init', '-q');
+    writeFileSync(join(nested, 'inner.txt'), 'INNER_SHOULD_NOT_BE_INLINED\n');
+    const r = run(sb, { args: ['code'] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.capStdin, /non-regular, skipped\): nested\//);
+    assert.doesNotMatch(r.capStdin, /INNER_SHOULD_NOT_BE_INLINED/, 'a non-regular path must not be inlined');
+  });
+
+  it('appends extra focus on the oversized (temp-file) path too', () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.repo, 'big.txt'), 'x'.repeat(5000));
+    const r = run(sb, { args: ['code', 'watch the parser'], env: { CODEX_REVIEW_MAX_TOTAL_BYTES: '100' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.capStdin, /with ONE exception/, 'this is the oversized temp-file path');
+    assert.match(r.capStdin, /Extra focus: watch the parser/);
+  });
+
+  it('warns and prints the trace tail when codex writes no final-message file', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code'], env: { CODEX_FAKE_NO_OUT: '1' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /no final-message file/);
+    assert.match(r.stdout, /turn\.completed/, 'the trace tail carries the event stream');
+  });
+
+  it('prints no session line when codex emits no thread id', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code'], env: { CODEX_FAKE_NO_THREAD: '1' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stderr, /session:/);
+    assert.match(r.stdout, /FAKE_FINAL_MESSAGE/);
   });
 });

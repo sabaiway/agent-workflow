@@ -133,13 +133,18 @@ jobs:
       # it is its monorepo-only test/ (package-content DAG guard + installer payload/symlink tests) — the
       # engine has no scripts/ or references/scripts/, so it needs its own branch (the memory `else`
       # globs would not match and, under `set -euo pipefail`, a literal unmatched glob fails the gate).
-      # The kit's bridges/ is excluded on purpose: its mirrored agy.test.mjs drives the real `agy` CLI
-      # and is run from the canonical bridge dir, not here.
+      # The kit's mirrored bridges/ tests ARE included (bridges/*/bin/*.test.mjs): both the antigravity
+      # `agy` and the codex exec/review wrapper tests are fully HERMETIC — a stub CLI on a temp PATH +
+      # a throwaway git repo built per-test, with no real codex/agy, no subscription, and no network
+      # (they do shell out to `git`, which CI already has) — so they run here like any other test. They
+      # ship as byte-identical mirror payload in the tarball, so the publish gate must exercise them too.
+      # (The bridge wrappers also have canonical copies at the repo root that this publish job, scoped to
+      # the kit dir, does not see — the byte-identical mirror is what ships.)
       - name: Test the package before publish
         run: |
           set -euo pipefail
           if [ "${{ inputs.dir }}" = "agent-workflow-kit" ]; then
-            node --test tools/*.test.mjs tools/manifest/*.test.mjs references/scripts/*.test.mjs bin/*.test.mjs test/*.test.mjs
+            node --test tools/*.test.mjs tools/manifest/*.test.mjs references/scripts/*.test.mjs bin/*.test.mjs test/*.test.mjs bridges/*/bin/*.test.mjs
           elif [ "${{ inputs.dir }}" = "agent-workflow-engine" ]; then
             node --test test/*.test.mjs
           else
