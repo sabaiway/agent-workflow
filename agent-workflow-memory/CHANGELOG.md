@@ -4,6 +4,16 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.2.1 — Hidden-mode maintenance invariant (memory)
+
+Patch: documentation only. The deployment-lineage head stays **`1.3.0`** (no `docs/ai` structural
+change, no migration file). The npm package version is a separate axis.
+
+- **`agent_rules.md` template (§1.3) + the Visibility contract** now state that the task-completion
+  doc updates are **visibility-independent**: hidden mode git-ignores `docs/ai` but never makes
+  maintaining it optional — the updates simply live on disk and never enter a commit. Future
+  deployments carry the clarified protocol; the durable wording lives in `agent_rules.md` §1.3.
+
 ## 1.2.0 — Seeds the per-project orchestration config
 
 The substrate now seeds a new **per-project, user-editable recipe config** —
