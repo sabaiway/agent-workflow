@@ -35,9 +35,11 @@ validator shipped by the candidate (which could itself be broken). Delegate only
 hold:
 - result is **valid** and `kind` is `memory-substrate`;
 - **every required asset is present** in the candidate, at its real path:
-  `references/templates/`, `references/contracts.md`, `references/scripts/`,
-  `scripts/stamp-takeover.mjs`, `migrations/`, `capability.json`. A partial install (manifest +
-  `SKILL.md` only) is treated as **invalid**.
+  `references/templates/`, **`references/templates/orchestration.json`** (the orchestration-config
+  template — a memory too old to ship it, pre-`1.2.0`, can't seed `docs/ai/orchestration.json`, so it
+  falls back to the kit's own bundled substrate, which does), `references/contracts.md`,
+  `references/scripts/`, `scripts/stamp-takeover.mjs`, `migrations/`, `capability.json`. A partial
+  install (manifest + `SKILL.md` only) is treated as **invalid**.
 
 On **unsupported** (unknown schema), **invalid**, **unavailable**, **wrong-family**, or
 **wrong-name**, **use the bundled copy** — never block. The fallback decision is final once
