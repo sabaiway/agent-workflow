@@ -1,0 +1,89 @@
+name: ci
+
+# Continuous integration for pushes to main and every pull request. This is the
+# repo's FIRST push/PR gate — the other workflows (publish / _publish-one / stats /
+# unpublish) are all manual-dispatch or cron and never run on a normal push.
+#
+# It runs ONLY gates that operate on git-TRACKED content, because this repo runs in
+# HIDDEN mode: AGENTS.md, CLAUDE.md, docs/ai/, docs/plans/ and scripts/ are
+# gitignored (local-only), so a fresh CI checkout does not have them. The
+# docs-size cap-validator + index-freshness check and any AGENTS.md-dependent
+# checks therefore stay LOCAL / pre-commit and are deliberately NOT run here —
+# running them in CI would fail on files that simply do not exist in the checkout.
+#
+# What IS gated (all tracked): the full unit-test suite across every package incl.
+# BOTH cli bridges' hermetic wrapper tests, the bridge-mirror + tarball-content
+# drift guards, family manifest validation (strict), and the release-scan that
+# fails on any AI/agent attribution.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: CI only reads the checkout.
+permissions:
+  contents: read
+
+# A newer push to the same ref supersedes an in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Unit suite across the supported Node range. Every shipped script is dependency-free
+  # and declares engines.node ">=18", so the matrix guards that floor (a 18-only
+  # regression must not pass on a 20-only gate). No `npm install` — there are no deps.
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['18', '20']
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      # Full unit suite over tracked content. Mirrors the local gate in
+      # docs/ai/env_commands.md §1 (which additionally lists the gitignored docs
+      # checks) — here only the package test globs, INCLUDING both cli bridges'
+      # hermetic wrapper tests (antigravity `agy` + codex exec/review). The kit
+      # test/ glob also runs the bridge-mirror + package-content drift guards.
+      - name: Unit tests (tracked content)
+        run: |
+          node --test \
+            agent-workflow-memory/{scripts,references/scripts,bin}/*.test.mjs \
+            agent-workflow-kit/{tools,tools/manifest,references/scripts,bin}/*.test.mjs \
+            agent-workflow-kit/test/*.test.mjs \
+            agent-workflow-engine/test/*.test.mjs \
+            antigravity-cli-bridge/bin/*.test.mjs \
+            codex-cli-bridge/bin/*.test.mjs
+
+  # Version-independent gates — run once on a single Node. Manifest validation and the
+  # attribution scan do not depend on the Node version, so there is no need to matrix them.
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+
+      # Family manifest validation (strict), all five package dirs.
+      - name: Manifest validate (strict, 5 dirs)
+        run: |
+          node agent-workflow-kit/tools/manifest/validate.mjs --strict \
+            agent-workflow-memory agent-workflow-kit codex-cli-bridge antigravity-cli-bridge agent-workflow-engine
+
+      # Release scan — fails on any AI/agent attribution. The five package dirs PLUS the
+      # tracked workflow files (the only other tracked, non-gitignored surface this repo
+      # ships), so the "no attribution anywhere" hard constraint is enforced on CI too.
+      - name: Release scan (no AI attribution)
+        run: |
+          node agent-workflow-kit/tools/release-scan.mjs \
+            agent-workflow-memory agent-workflow-kit codex-cli-bridge antigravity-cli-bridge agent-workflow-engine \
+            .github/workflows
