@@ -4,6 +4,25 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.2.2 — Strip the package's own tests from the npm tarball (memory)
+
+Packaging only — no API/behaviour change; removed the package's own colocated tests from the
+published tarball, deploy payload tests retained. The deployment-lineage head stays **`1.3.0`** (no
+`docs/ai` structural change, no migration file). The npm package version is a separate axis.
+
+- **`files[]` scoped negation.** Appended `!bin/*.test.mjs` and `!scripts/*.test.mjs` to the
+  package allowlist (npm ignores a root `.npmignore` when `files[]` is present, so negation entries
+  in `files[]` are the mechanism). Tarball **41 → 37 files**: 4 of the package's own colocated tests
+  no longer ship.
+- **Deploy payload tests retained.** `references/scripts/*.test.mjs` are deployed into a consumer
+  repo's `scripts/`, so they still ship — `!scripts/*.test.mjs` does not cross `/` and never touches
+  `references/scripts/`. **Never broaden it to `!references/**`** — those tests are deploy payload.
+- **Tarball guard.** `scripts/package-content.test.mjs` (dev-only) gains an `npm pack --dry-run
+  --json` invariant: no own-test leak, payload tests + runtime files present, exact file count
+  `=== 37`.
+- Test files stay on disk; the gate + publish CI run them from the checkout, unchanged. This is a
+  tarball-only exclusion.
+
 ## 1.2.1 — Hidden-mode maintenance invariant (memory)
 
 Patch: documentation only. The deployment-lineage head stays **`1.3.0`** (no `docs/ai` structural

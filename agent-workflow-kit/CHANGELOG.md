@@ -4,6 +4,29 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.15.2 — Strip the package's own tests + fixtures from the npm tarball (kit)
+
+Packaging only — no API/behaviour change; removed the package's own colocated tests + fixtures from
+the published tarball, deploy/mirror payload tests retained. The deployment-lineage head stays
+**`1.3.0`** (no `docs/ai` structural change, no migration file). The kit **package** version is a
+separate axis.
+
+- **`files[]` scoped negation.** Appended `!bin/*.test.mjs`, `!tools/**/*.test.mjs`, and
+  `!tools/manifest/fixtures/**` to the package allowlist (npm ignores a root `.npmignore` when
+  `files[]` is present, so negation entries in `files[]` are the mechanism). Tarball **115 → 69
+  files**: 18 of the package's own colocated tests + 28 manifest fixtures no longer ship.
+- **Deploy/mirror payload tests retained.** `references/scripts/*.test.mjs` (deployed into a
+  consumer repo's `scripts/` with the docs-rotation scripts) and
+  `bridges/antigravity-cli-bridge/bin/agy.test.mjs` (part of the byte-identical bridge mirror the
+  installed kit links from) still ship — a blanket `!**/*.test.mjs` would have silently broken
+  installs, so the negation is deliberately scoped. **Never broaden it to `!references/**` or
+  `!bridges/**`.**
+- **New tarball guard.** `test/package-content.test.mjs` (dev-only; outside `files[]`, never ships)
+  pins the exact shape via `npm pack --dry-run --json`: no own-test/fixture leak, payload tests +
+  runtime files present, exact file count `=== 69`.
+- Test files stay on disk; the gate + publish CI run them from the checkout, unchanged. This is a
+  tarball-only exclusion.
+
 ## 1.15.1 — Version-axis clarity, hidden-mode invariant, lineage-head drift guard (kit)
 
 Patch: documentation + a regression guard; no behaviour change to shipped tooling, and the
