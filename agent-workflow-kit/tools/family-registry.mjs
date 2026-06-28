@@ -24,6 +24,11 @@ import { resolveDir } from './detect-backends.mjs';
 import { validateManifest, readAuthoritativeVersion, UNSUPPORTED, INVALID } from './manifest/validate.mjs';
 import { START_MARKER, excludePath } from './hide-footprint.mjs';
 import { readEngineFragment, ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
+// The deployment-lineage head — the kit-owned constant (drift-guarded against the canonical memory
+// LINEAGE_HEAD by test/lineage-head-drift.test.mjs). Reused here so the `--json` envelope exposes the
+// head from ONE source, never a third literal copy. (No import cycle: velocity-profile imports only
+// node builtins and has no side effects on import.)
+import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
 
 // ── manifestState values (the detect-backends precedence, generalized to any member kind) ──────────
 export const NOT_INSTALLED = 'not-installed';
@@ -93,14 +98,14 @@ export const FAMILY_MEMBERS = [
 export const isGlobalSkill = (member) => member.kind !== undefined; // every member is a global skill today
 
 // ── pure probes ──────────────────────────────────────────────────────────────────
-// Wrapped marker probe → 'present' (a regular file) | 'absent' (ENOENT / not a file) | 'unknown' (a
-// non-ENOENT fs error, e.g. EACCES). 'unknown' is NOT collapsed to 'absent': a permission error must
-// surface, never be masked as not-installed (no silent failure) — and uninstall then leaves it alone.
+// Wrapped marker probe → 'present' (a regular file) | 'absent' (ENOENT / not a regular file) |
+// 'unknown' (a non-ENOENT fs error, e.g. EACCES). STAT-FIRST on purpose: `existsSync()` SWALLOWS an
+// EACCES into a bare `false`, which would mask a permission error as 'absent' (a silent failure);
+// `statSync` THROWS the EACCES so it surfaces as 'unknown'. 'unknown' is never collapsed to 'absent' —
+// classifyMember reports it (uninstall then leaves the dir alone) and the memory caveat skips it.
 const probeMarker = (path, deps = {}) => {
-  const exists = deps.exists ?? existsSync;
   const stat = deps.stat ?? statSync;
   try {
-    if (!exists(path)) return 'absent';
     return stat(path).isFile() ? 'present' : 'absent';
   } catch (err) {
     return err && err.code === 'ENOENT' ? 'absent' : 'unknown';
@@ -158,6 +163,17 @@ const ENGINE_FRAGMENT_CAVEATS = [
   { rel: PROCEDURES_FRAGMENT_REL, caveat: 'engine present but does not ship the activity-procedures canon (too old / incomplete) — run `npx @sabaiway/agent-workflow-engine@latest init`' },
 ];
 
+// The orchestration-config TEMPLATE a current memory ships (added in memory 1.2.0; absent in older
+// installs such as v1.0.0). It is the SAME asset Step 2.4 adds to delegation.mjs's
+// REQUIRED_MEMORY_ASSETS: the read-only note here INFORMS, the delegation gate ACTS. Step 2.4 also
+// adds a parity drift-guard tying this path to that required-asset set, so the note and the gate can
+// never key on different files (until then they are kept in lockstep by review).
+export const MEMORY_ORCH_TEMPLATE_REL = 'references/templates/orchestration.json';
+// Worded as an honest OBSERVATION, not a diagnosis (absence can mean old OR incomplete), and it makes
+// NO claim about an orchestration.json seeding outcome (that depends on delegate-vs-fallback).
+const MEMORY_BEHIND_NOTE =
+  "the memory installed here doesn't include the current orchestration template — refresh it with `npx @sabaiway/agent-workflow-memory@latest init`, then restart the session.";
+
 export const surveyFamily = (deps = {}) =>
   FAMILY_MEMBERS.map((member) => {
     const row = classifyMember(member, deps);
@@ -172,6 +188,14 @@ export const surveyFamily = (deps = {}) =>
       };
       const caveats = ENGINE_FRAGMENT_CAVEATS.filter((f) => !fragmentUsable(f.rel)).map((f) => f.caveat);
       if (caveats.length) row.caveats = caveats;
+    }
+    // Memory offline caveat (Step 2.2): a distinct probe — the orchestration TEMPLATE file's existence.
+    // Only attach when it is provably ABSENT (a non-ENOENT probe error → 'unknown' → skip, never a
+    // false "missing" claim). Mirrors the engine-caveat SHAPE; keyed on the Step-2.4 required asset.
+    if (row.kind === 'memory-substrate' && row.manifestState === OK && row.skillDir) {
+      if (probeMarker(join(row.skillDir, MEMORY_ORCH_TEMPLATE_REL), deps) === 'absent') {
+        row.caveats = [...(row.caveats ?? []), MEMORY_BEHIND_NOTE];
+      }
     }
     return row;
   });
@@ -256,10 +280,67 @@ export const formatStatus = (family, project = null) => {
   return lines.join('\n');
 };
 
+// ── the no-leak --json envelope ──────────────────────────────────────────────────
+// A machine-readable view with USER-SAFE field names only — NEVER the internal manifestState /
+// hiddenFence terms or the raw stamp FILENAMES. The render (SKILL.md version block + Mode: status)
+// consumes THIS, never the human table verbatim. An envelope-shape test pins its shape so later phases
+// (the settings/visibility block) can't silently break the Phase-2 version consumer.
+
+// internal manifestState → a STABLE, user-safe token (SKILL.md owns the value→plain-language phrasing).
+// Deliberately NOT the internal literals (foreign/stub/…): those must never leak past this boundary.
+const STATE_PUBLIC = {
+  [OK]: 'installed',
+  [NOT_INSTALLED]: 'absent',
+  [FOREIGN]: 'other-tool',
+  [STUB]: 'placeholder',
+  [INVALID_MANIFEST]: 'invalid',
+  [UNSUPPORTED_SCHEMA]: 'unsupported',
+  [UNKNOWN]: 'uncheckable',
+};
+
+// Short, user-facing labels for the version block (kit · memory · engine · codex-bridge · …), so the
+// render is deterministic and the agent never invents a label.
+export const DISPLAY_NAMES = {
+  'agent-workflow-kit': 'kit',
+  'agent-workflow-memory': 'memory',
+  'agent-workflow-engine': 'engine',
+  'codex-cli-bridge': 'codex-bridge',
+  'antigravity-cli-bridge': 'antigravity-bridge',
+};
+const displayOf = (name) => DISPLAY_NAMES[name] ?? name;
+
+export const buildEnvelope = (family, project = null) => {
+  const installed = family.map((m) => {
+    const entry = {
+      member: m.name,
+      display: displayOf(m.name),
+      version: m.version ?? null,
+      state: STATE_PUBLIC[m.manifestState] ?? STATE_PUBLIC[UNKNOWN],
+    };
+    if (m.caveats?.length) entry.notes = m.caveats; // plain-language observations (Steps 2.2 / engine)
+    return entry;
+  });
+  const envelope = { deploymentHead: EXPECTED_WORKFLOW_VERSION, installed };
+  if (project) {
+    envelope.project = {
+      dir: project.dir,
+      deployed: project.deployed,
+      docsAi: project.docsAiPresent,
+      // member + display + version only — never the internal stamp FILENAME (s.file).
+      deployStamps: project.stamps.map((s) => ({ member: s.name, display: displayOf(s.name), version: s.version ?? null })),
+    };
+  }
+  return envelope;
+};
+
 // ── CLI ────────────────────────────────────────────────────────────────────────
 const parseArgs = (argv) => {
   const dirFlag = argv.indexOf('--dir');
-  return { help: argv.includes('--help') || argv.includes('-h'), dir: dirFlag >= 0 ? argv[dirFlag + 1] : undefined };
+  return {
+    help: argv.includes('--help') || argv.includes('-h'),
+    json: argv.includes('--json'),
+    dir: dirFlag >= 0 ? argv[dirFlag + 1] : undefined,
+  };
 };
 
 const main = (argv) => {
@@ -268,14 +349,15 @@ const main = (argv) => {
     console.log(`family-registry — read-only view of the agent-workflow family.
 
 Usage:
-  node family-registry.mjs [--dir <project>]   # skill axis always; deploy axis when --dir is given
+  node family-registry.mjs [--dir <project>] [--json]
+    # skill axis always; deploy axis when --dir is given; --json = the no-leak machine envelope
 
 Detection only — never writes, never commits, never runs a subscription CLI.`);
     return;
   }
   const family = surveyFamily();
   const project = args.dir ? surveyProject(args.dir) : null;
-  console.log(formatStatus(family, project));
+  console.log(args.json ? JSON.stringify(buildEnvelope(family, project), null, 2) : formatStatus(family, project));
 };
 
 const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
