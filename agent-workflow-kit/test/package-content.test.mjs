@@ -45,6 +45,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'references/scripts/archive-issues.test.mjs',
       'references/scripts/check-docs-size.test.mjs',
       'bridges/antigravity-cli-bridge/bin/agy.test.mjs',
+      'bridges/codex-cli-bridge/bin/codex-exec.test.mjs',
+      'bridges/codex-cli-bridge/bin/codex-review.test.mjs',
     ];
     const missing = required.filter((p) => !packed.includes(p));
     assert.deepEqual(missing, [], 'a deploy/mirror payload test was dropped from the tarball');
@@ -77,6 +79,6 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
   // file accidentally dropped). After an intentional change, run `npm pack ./agent-workflow-kit
   // --dry-run --json` and set the new count here in the same commit.
   it('ships exactly the expected number of files', () => {
-    assert.equal(packed.length, 70, `tarball file count drifted (${packed.length} ≠ 70)`);
+    assert.equal(packed.length, 72, `tarball file count drifted (${packed.length} ≠ 72)`);
   });
 });
