@@ -8,6 +8,9 @@ import {
   classifyMember,
   surveyFamily,
   surveyProject,
+  buildEnvelope,
+  DISPLAY_NAMES,
+  MEMORY_ORCH_TEMPLATE_REL,
   NOT_INSTALLED,
   UNSUPPORTED_SCHEMA,
   INVALID_MANIFEST,
@@ -19,19 +22,23 @@ import {
 import { VALID, INVALID, UNSUPPORTED } from './manifest/validate.mjs';
 import { START_MARKER } from './hide-footprint.mjs';
 import { ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
+import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '../..'); // agent-workflow-kit/tools → repo root
 
 // Build classifyMember deps that present the marker, with an injectable validate/readVersion.
+// The marker probe is STAT-FIRST (existsSync swallows EACCES), so the marker presence is modeled via
+// the injected `stat` (isFile → present; throw ENOENT → absent; throw EACCES → unknown).
 const installedDeps = ({ report, version = '9.9.9', home = '/home/test' }) => ({
-  exists: () => true,
   stat: () => ({ isFile: () => true }),
   getenv: {},
   home,
   validate: () => report,
   readVersion: () => ({ version }),
 });
+const ENOENT = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+const EACCES = () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); };
 
 const KIT = FAMILY_MEMBERS.find((m) => m.name === 'agent-workflow-kit');
 
@@ -39,7 +46,7 @@ const KIT = FAMILY_MEMBERS.find((m) => m.name === 'agent-workflow-kit');
 
 describe('classifyMember', () => {
   it('marks an absent marker as not-installed (no skillDir, no version)', () => {
-    const r = classifyMember(KIT, { exists: () => false, getenv: {}, home: '/home/test' });
+    const r = classifyMember(KIT, { stat: ENOENT, getenv: {}, home: '/home/test' });
     assert.equal(r.manifestState, NOT_INSTALLED);
     assert.equal(r.installed, false);
     assert.equal(r.skillDir, null);
@@ -77,16 +84,16 @@ describe('classifyMember', () => {
     assert.equal(classifyMember(KIT, installedDeps({ report: { result: UNSUPPORTED } })).manifestState, UNSUPPORTED_SCHEMA);
   });
 
-  it('surfaces an EACCES marker probe as "unknown" — never masked as not-installed', () => {
-    const eacces = () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); };
-    const r = classifyMember(KIT, { exists: eacces, getenv: {}, home: '/home/test' });
+  it('surfaces an EACCES marker probe as "unknown" — never masked as not-installed (stat-first)', () => {
+    // statSync THROWS EACCES (existsSync would have swallowed it into a false → 'absent' → a silent
+    // failure). The stat-first probe surfaces it as 'unknown'.
+    const r = classifyMember(KIT, { stat: EACCES, getenv: {}, home: '/home/test' });
     assert.equal(r.manifestState, UNKNOWN);
     assert.equal(r.installed, false); // not removed — ownership could not be verified
   });
 
   it('resolves the skill dir from the env override when set (resolveDir reuse)', () => {
     const r = classifyMember(KIT, {
-      exists: () => true,
       stat: () => ({ isFile: () => true }),
       getenv: { AGENT_WORKFLOW_KIT_DIR: '/custom/kit' },
       home: '/home/test',
@@ -99,7 +106,7 @@ describe('classifyMember', () => {
 
 describe('surveyFamily', () => {
   it('returns one row per member; all not-installed when no markers present', () => {
-    const rows = surveyFamily({ exists: () => false, getenv: {}, home: '/home/test' });
+    const rows = surveyFamily({ stat: ENOENT, getenv: {}, home: '/home/test' });
     assert.equal(rows.length, FAMILY_MEMBERS.length);
     assert.ok(rows.every((r) => r.manifestState === NOT_INSTALLED));
   });
@@ -228,6 +235,124 @@ describe('surveyProject', () => {
     assert.equal(r.deployed, false);
     assert.equal(r.hiddenFence, false);
     assert.ok(r.stamps.every((s) => s.version === null));
+  });
+});
+
+// ── surveyFamily: the memory offline caveat (Step 2.2) ─────────────────────────────
+
+describe('surveyFamily — memory offline caveat (orchestration template probe)', () => {
+  // Only the memory member validates as ok here; the others go FOREIGN — so only the memory row is
+  // eligible for the orchestration-template caveat. The template probe keys on deps.exists/stat.
+  const memoryValidate = (dir) =>
+    String(dir).includes('agent-workflow-memory')
+      ? { result: VALID, name: 'agent-workflow-memory', kind: 'memory-substrate', available: true }
+      : { result: VALID, name: 'x', kind: 'x', available: true };
+  const endsWithTemplate = (p) => String(p).endsWith(MEMORY_ORCH_TEMPLATE_REL);
+  // STAT-FIRST marker probe → presence is modeled via `stat`. Default: every path is a present file.
+  // Overrides make ONLY the template path absent (ENOENT) / uncheckable (EACCES) while SKILL.md markers
+  // stay present, so the memory member still classifies OK and only the template probe varies.
+  const memoryDeps = (templateStat) => ({
+    stat: (p) => (endsWithTemplate(p) && templateStat ? templateStat() : { isFile: () => true }),
+    getenv: {},
+    home: '/home/test',
+    validate: memoryValidate,
+    readVersion: () => ({ version: '1.0.0' }),
+  });
+  const memoryRow = (rows) => rows.find((r) => r.kind === 'memory-substrate');
+
+  it('an OK memory MISSING the orchestration template gets the offline caveat (refresh + restart)', () => {
+    const rows = surveyFamily(memoryDeps(ENOENT));
+    const caveats = memoryRow(rows).caveats ?? [];
+    assert.equal(caveats.length, 1);
+    assert.match(caveats[0], /orchestration template/i);
+    assert.match(caveats[0], /@latest init/, 'names the refresh command');
+    assert.match(caveats[0], /restart/i, 'tells the user to restart the session');
+    assert.ok(!/seed/i.test(caveats[0]), 'makes NO orchestration.json seeding-outcome claim');
+  });
+
+  it('an OK memory WITH the template carries NO caveat', () => {
+    const rows = surveyFamily(memoryDeps(null));
+    assert.equal(memoryRow(rows).caveats, undefined);
+  });
+
+  it('an UNCHECKABLE probe (EACCES) makes NO false "missing" claim (caveat skipped)', () => {
+    const rows = surveyFamily(memoryDeps(EACCES));
+    assert.equal(memoryRow(rows).caveats, undefined, 'a non-ENOENT probe error must not assert absence');
+  });
+
+  it('a not-installed memory gets no caveat (the probe only runs for an ok install)', () => {
+    const rows = surveyFamily({ stat: ENOENT, getenv: {}, home: '/home/test' });
+    assert.equal(memoryRow(rows).caveats, undefined);
+  });
+});
+
+// ── buildEnvelope: the no-leak --json contract (Step 2.1 / shape-drift guard 2.5) ───
+
+describe('buildEnvelope — no-leak --json envelope', () => {
+  const fam = [
+    { name: 'agent-workflow-kit', kind: 'composition-root', installed: true, manifestState: OK, version: '1.16.0' },
+    { name: 'agent-workflow-memory', kind: 'memory-substrate', installed: true, manifestState: OK, version: '1.0.0', caveats: ['memory note'] },
+    { name: 'agent-workflow-engine', kind: 'methodology-engine', installed: false, manifestState: NOT_INSTALLED, version: null },
+    { name: 'codex-cli-bridge', kind: 'execution-backend', installed: true, manifestState: FOREIGN, version: null },
+    { name: 'antigravity-cli-bridge', kind: 'execution-backend', installed: false, manifestState: UNKNOWN, version: null },
+  ];
+  const PUBLIC_STATES = new Set(['installed', 'absent', 'other-tool', 'placeholder', 'invalid', 'unsupported', 'uncheckable']);
+
+  it('exposes deploymentHead from the ONE kit constant (no third literal copy)', () => {
+    assert.equal(buildEnvelope(fam).deploymentHead, EXPECTED_WORKFLOW_VERSION);
+  });
+
+  it('installed[] carries member/display/version/state (+ notes only when present), state from the public set', () => {
+    const env = buildEnvelope(fam);
+    assert.equal(env.installed.length, fam.length);
+    for (const e of env.installed) {
+      assert.deepEqual(Object.keys(e).filter((k) => k !== 'notes').sort(), ['display', 'member', 'state', 'version'].sort());
+      assert.ok(PUBLIC_STATES.has(e.state), `state "${e.state}" must be a public token`);
+    }
+    const mem = env.installed.find((e) => e.member === 'agent-workflow-memory');
+    assert.deepEqual(mem.notes, ['memory note']);
+    assert.equal(mem.display, 'memory');
+    const eng = env.installed.find((e) => e.member === 'agent-workflow-engine');
+    assert.equal(eng.version, null);
+    assert.equal(eng.state, 'absent');
+    assert.equal(eng.notes, undefined, 'no notes key when there are no caveats');
+    assert.equal(env.installed.find((e) => e.member === 'codex-cli-bridge').state, 'other-tool', 'foreign maps to a user-safe token, never the literal "foreign"');
+  });
+
+  it('the project block exposes member/display/version stamps — NEVER the internal stamp filename', () => {
+    const project = {
+      dir: '/p',
+      deployed: true,
+      docsAiPresent: true,
+      hiddenFence: true,
+      stamps: [
+        { name: 'agent-workflow-kit', file: 'docs/ai/.workflow-version', version: '1.3.0' },
+        { name: 'agent-workflow-memory', file: 'docs/ai/.memory-version', version: '1.0.0' },
+      ],
+    };
+    const env = buildEnvelope(fam, project);
+    assert.equal(env.project.dir, '/p');
+    assert.equal(env.project.deployed, true);
+    assert.equal(env.project.docsAi, true);
+    for (const s of env.project.deployStamps) {
+      assert.deepEqual(Object.keys(s).sort(), ['display', 'member', 'version'].sort());
+      assert.equal('file' in s, false, 'the internal stamp filename must never appear');
+    }
+  });
+
+  it('leaks NO internal field name or stamp filename anywhere in the serialized envelope', () => {
+    const project = {
+      dir: '/p', deployed: true, docsAiPresent: true, hiddenFence: true,
+      stamps: [{ name: 'agent-workflow-kit', file: 'docs/ai/.workflow-version', version: '1.3.0' }],
+    };
+    const blob = JSON.stringify(buildEnvelope(fam, project));
+    for (const leak of ['manifestState', 'hiddenFence', '.workflow-version', '.memory-version', 'foreign', 'not-installed']) {
+      assert.ok(!blob.includes(leak), `envelope leaks internal term "${leak}"`);
+    }
+  });
+
+  it('DISPLAY_NAMES covers every family member', () => {
+    for (const m of FAMILY_MEMBERS) assert.ok(DISPLAY_NAMES[m.name], `no display label for ${m.name}`);
   });
 });
 
