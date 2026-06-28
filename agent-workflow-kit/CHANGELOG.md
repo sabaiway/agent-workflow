@@ -4,6 +4,40 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.16.0 — Onboarding & discoverability: `help`, honest versioning, an enriched `status` (kit)
+
+A **feature** release (additive, backward-compatible). Makes the kit self-explanatory: a discoverable
+command surface, honest installed-on-this-machine version legibility, and one `status` that answers
+"versions + deployment + settings + bridges". The deployment-lineage head stays **`1.3.0`** — nothing
+in the deployed `docs/ai` *structure* changed, so there is **no migration**. The kit **package**
+version is a separate axis from that head.
+
+- **`/agent-workflow-kit help` + safe unknown-invocation routing.** New `tools/commands.mjs`: a frozen
+  command catalog (grouped Inspect / Configure / Orchestrate / Lifecycle, each tagged read-only /
+  writer / guarded) + a pure `routeInvocation` router. A discoverable index, and the read-only landing
+  spot for any unrecognized invocation — **no unrecognized/garbage token ever reaches a writer/guarded
+  mode** (only an explicit known token, or the acknowledged bare-bootstrap exception). Drift-guarded
+  against the `### Mode:` headers.
+- **Honest version legibility.** `tools/family-registry.mjs` gains a no-leak `--json` envelope (user-safe
+  field names only — never the internal manifest/stamp terms) feeding a shared **version block**:
+  deployment-structure head · installed package versions per member · the two-axes disambiguation when
+  the numbers coincide. An **offline caveat** flags a memory install too old to ship the current
+  orchestration template ("installed on this machine", no network). Bootstrap/upgrade now print a
+  **welcome mat** (success → version block → backend line → one caveat-aware next step) and bootstrap
+  opens with a one-line first-contact orientation.
+- **Settings & bridges in `status`.** `status` is now the single answer to "versions + deployment +
+  settings + bridges": orchestration recipes (effective per slot), attribution
+  (`includeCoAuthoredBy`), velocity (`defaultMode`), the bridges (readiness + wrapper PATH presence,
+  no model claim), and **visibility** (visible / hidden / unclear, via `inferVisibility`) — each in
+  plain language, **localized-on-error** (a malformed file surfaces its own error, the rest still
+  renders). `loadConfig` is shared with the procedures advisor (one strict-JSON reader).
+- **Surgical delegation gate.** `references/templates/orchestration.json` joins the memory
+  required-asset set: a memory too old to seed `docs/ai/orchestration.json` now **falls back** to the
+  kit's bundled substrate (which seeds it) instead of being delegate-classified — closing the
+  stale-memory trap the read-only note only informs about.
+- **Tarball guard `69 → 70`** (the new shipped `tools/commands.mjs`); `npm pack --dry-run --json`
+  re-verified. No `docs/ai` structural change → lineage head unchanged.
+
 ## 1.15.2 — Strip the package's own tests + fixtures from the npm tarball (kit)
 
 Packaging only — no API/behaviour change; removed the package's own colocated tests + fixtures from
