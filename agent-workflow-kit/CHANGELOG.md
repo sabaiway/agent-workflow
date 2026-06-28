@@ -4,6 +4,26 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.15.1 — Version-axis clarity, hidden-mode invariant, lineage-head drift guard (kit)
+
+Patch: documentation + a regression guard; no behaviour change to shipped tooling, and the
+deployment-lineage head stays **`1.3.0`** (no `docs/ai` structural change, no migration file). The
+kit **package** version is a separate axis.
+
+- **`upgrade` now names the version axis in its report.** Steps 4 (equal-head exit) and 8 (re-stamp)
+  state that a project's stamp tracks the **deployment-lineage head** (`1.3.0`) — a separate axis from
+  the kit **package** version on npm/GitHub — so an equal-head report is no longer mistaken for a
+  stale deployment when GitHub shows a higher package number. A packaging-only release bumps the
+  package without moving the head; the head advances only when the deployed `docs/ai` structure does.
+- **Hidden-mode maintenance invariant made explicit (Visibility contract).** Hidden mode changes only
+  what *git* sees — never the agent's duty to read/maintain `docs/ai`. "Git-ignored / `git status`
+  clean" is **not** "optional to update"; those updates simply live on disk and never enter a commit.
+- **New cross-package drift guard** (`test/lineage-head-drift.test.mjs`): asserts the kit's
+  `EXPECTED_WORKFLOW_VERSION` equals the canonical `LINEAGE_HEAD` in `agent-workflow-memory`, so a
+  future head bump can't silently desync the two duplicated literals (which would make
+  `velocity --apply` reject a correctly-upgraded project). Runs in the gate; lives outside the package
+  `files` whitelist, so it is never shipped.
+
 ## 1.15.0 — Velocity-profile onboarding (kit)
 
 An opt-in **`/agent-workflow-kit velocity`** mode seeds a fixed, audited **read-only** Claude Code
