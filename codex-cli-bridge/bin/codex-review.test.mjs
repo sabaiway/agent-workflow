@@ -24,6 +24,11 @@ const FAKE_CODEX = [
   '{ for a in "$@"; do echo "$a"; done; } >"$CODEX_FAKE_ARGV"',
   '{ echo "HOME=${HOME:-}"; echo "CODEX_HOME=${CODEX_HOME:-}"; echo "XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-}"; echo "OPENAI_API_KEY=${OPENAI_API_KEY:-<unset>}"; echo "OPENAI_BASE_URL=${OPENAI_BASE_URL:-<unset>}"; echo "FOO_API_KEY=${FOO_API_KEY:-<unset>}"; } >"$CODEX_FAKE_ENV"',
   'cat >"$CODEX_FAKE_STDIN"',
+  // If the prompt points at a precomputed-diff temp file, record its perms + a copy
+  // WHILE it still exists (the wrapper trap removes it on exit) for the oversized test.
+  'df="$(grep -oE "/[^ ]*codex-review-diff\\.[0-9]+" "$CODEX_FAKE_STDIN" 2>/dev/null | head -1 || true)"',
+  'if [[ -n "$df" && -f "$df" ]]; then stat -c "%a" "$df" > "${CODEX_FAKE_DIFF_PERMS:-/dev/null}" 2>/dev/null || true; cp "$df" "${CODEX_FAKE_DIFF_COPY:-/dev/null}" 2>/dev/null || true; fi',
+  'if [[ "${CODEX_FAKE_FAIL_ON_SCHEMA:-}" == "1" ]]; then for a in "$@"; do [[ "$a" == "--output-schema" ]] && exit 1; done; fi',
   'if [[ -n "${CODEX_FAKE_SLEEP:-}" ]]; then sleep "${CODEX_FAKE_SLEEP}"; fi',
   'out=""',
   'prev=""',
@@ -42,7 +47,10 @@ const FAKE_CODEX = [
   '',
 ].join('\n');
 
-const makeSandbox = () => {
+// `clean: true` leaves a committed, pristine tree (for the no-diff preflight);
+// the default leaves one uncommitted untracked file so `code` mode has a diff to
+// review (otherwise the new no-diff preflight short-circuits before codex runs).
+const makeSandbox = ({ clean = false } = {}) => {
   const root = mkdtempSync(join(tmpdir(), 'codex-review-test-'));
   const bin = join(root, 'bin');
   mkdirSync(bin, { recursive: true });
@@ -59,6 +67,7 @@ const makeSandbox = () => {
   writeFileSync(join(repo, 'plan.md'), '# Plan\n\nDo a thing in two steps.\n');
   g('add', '-A');
   g('commit', '-qm', 'base');
+  if (!clean) writeFileSync(join(repo, 'pending.txt'), 'an uncommitted change to review\n');
   return { root, bin, repo };
 };
 
@@ -184,12 +193,13 @@ describe('codex-review.sh — leaner prompt + read-fence line (1.4 / 1.5)', () =
     assert.match(r.capStdin, /Extra focus: the new reducer/);
   });
 
-  it('plan mode: includes the plan body and the read fence', () => {
+  it('plan mode: includes the plan body and a PLAN-specific read fence', () => {
     const sb = makeSandbox();
     const r = run(sb, { args: ['plan', 'plan.md'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.match(r.capStdin, /Do a thing in two steps/);
-    assert.match(r.capStdin, /Do not read files outside this git working tree/);
+    assert.match(r.capStdin, /the plan above plus the in-repo code/);
+    assert.doesNotMatch(r.capStdin, /assembled change set/i, 'plan mode must not borrow the code fence');
   });
 });
 
@@ -252,5 +262,134 @@ describe('codex-review.sh — hard timeout (1.3)', () => {
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /WITHOUT a hard wall-clock cap/);
     assert.match(r.stdout, /FAKE_FINAL_MESSAGE/);
+  });
+});
+
+describe('codex-review.sh — precomputed diff for code mode (2.1)', () => {
+  it('no-diff preflight: a clean tree exits 0 without spending a codex run', () => {
+    const sb = makeSandbox({ clean: true });
+    const r = run(sb, { args: ['code'] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0);
+    assert.match(r.stderr, /no uncommitted changes to review/);
+    assert.equal(r.capStdin, '', 'codex must NOT be invoked on a clean tree');
+  });
+
+  it('assembles repo map, status, staged + unstaged diffs; drops the run-git-yourself directive', () => {
+    const sb = makeSandbox();
+    const g = (...a) => spawnSync('git', a, { cwd: sb.repo, encoding: 'utf8' });
+    writeFileSync(join(sb.repo, 'AGENTS.md'), '# AGENTS\n\nHard Constraints: none.\nan unstaged edit\n');
+    writeFileSync(join(sb.repo, 'staged.mjs'), 'export const s = 1\n');
+    g('add', 'staged.mjs');
+    const r = run(sb, { args: ['code'] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    for (const sec of [/repo file map/, /git status/, /staged diff/, /unstaged diff/, /staged\.mjs/]) {
+      assert.match(r.capStdin, sec);
+    }
+    assert.doesNotMatch(r.capStdin, /Run `git status --short`/, 'the old self-discovery directive must be gone');
+  });
+
+  it('inlines untracked file CONTENTS, not just the path', () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.repo, 'untra.txt'), 'UNIQUE_UNTRACKED_BODY\n');
+    const r = run(sb, { args: ['code'] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.match(r.capStdin, /untracked: untra\.txt/);
+    assert.match(r.capStdin, /UNIQUE_UNTRACKED_BODY/);
+  });
+
+  it('skips binary untracked files (noted; raw bytes not inlined)', () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.repo, 'blob.bin'), Buffer.from([0x00, 0x01, 0x02, 0x00, 0x42]));
+    const r = run(sb, { args: ['code'] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.match(r.capStdin, /binary, skipped\): blob\.bin/);
+  });
+
+  it('handles untracked paths with spaces (NUL-safe)', () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.repo, 'a b c.txt'), 'SPACED_BODY\n');
+    const r = run(sb, { args: ['code'] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.match(r.capStdin, /untracked: a b c\.txt/);
+    assert.match(r.capStdin, /SPACED_BODY/);
+  });
+
+  it('does not follow untracked symlinks (no out-of-tree content leak)', () => {
+    const sb = makeSandbox();
+    const secret = join(sb.root, 'outside-secret.txt');   // OUTSIDE the repo
+    writeFileSync(secret, 'TOP_SECRET_LEAK_MARKER\n');
+    symlinkSync(secret, join(sb.repo, 'link-to-outside')); // untracked symlink → outside
+    const r = run(sb, { args: ['code'] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.match(r.capStdin, /untracked \(symlink\): link-to-outside -> /);
+    assert.doesNotMatch(r.capStdin, /TOP_SECRET_LEAK_MARKER/, 'symlink target content must never leak');
+  });
+
+  it('oversized → git-dir temp file: 600 perms, untruncated, carve-out fence, cleaned up', () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.repo, 'unique.txt'), 'OVERSIZE_UNIQUE_MARKER\n');
+    writeFileSync(join(sb.repo, 'big.txt'), 'x'.repeat(5000));
+    const perms = join(sb.root, 'cap-perms');
+    const copy = join(sb.root, 'cap-diffcopy');
+    const r = run(sb, { args: ['code'], env: {
+      CODEX_REVIEW_MAX_TOTAL_BYTES: '100', CODEX_FAKE_DIFF_PERMS: perms, CODEX_FAKE_DIFF_COPY: copy,
+    } });
+    const leftover = readdirSync(join(sb.repo, '.git')).filter((f) => f.startsWith('codex-review-diff.'));
+    const gotPerms = existsSync(perms) ? readFileSync(perms, 'utf8').trim() : '';
+    const gotCopy = existsSync(copy) ? readFileSync(copy, 'utf8') : '';
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.capStdin, /codex-review-diff\./);
+    assert.match(r.capStdin, /with ONE exception/);
+    assert.match(r.capStdin, /read it IN FULL/);
+    assert.doesNotMatch(r.capStdin, /ASSEMBLED CHANGE SET:/, 'must not also inline the payload');
+    assert.equal(gotPerms, '600', 'the diff temp file must be mode 600');
+    assert.match(gotCopy, /OVERSIZE_UNIQUE_MARKER/, 'the temp file must hold the full untracked content');
+    assert.ok(gotCopy.length > 4000, 'the temp file must be the full untruncated payload');
+    assert.deepEqual(leftover, [], 'the diff temp file must be cleaned up on exit');
+  });
+});
+
+describe('codex-review.sh — optional structured findings (2.2)', () => {
+  it('CODEX_REVIEW_SCHEMA=1 passes --output-schema to codex', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code'], env: { CODEX_REVIEW_SCHEMA: '1' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.argv, /(^|\n)--output-schema(\n|$)/);
+  });
+
+  it('is OFF by default — no --output-schema', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code'] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.doesNotMatch(r.argv, /--output-schema/);
+  });
+
+  it('falls back to a raw-text run when the schema run fails (loud; exit 0)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code'], env: { CODEX_REVIEW_SCHEMA: '1', CODEX_FAKE_FAIL_ON_SCHEMA: '1' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /without the schema constraint/);
+    assert.doesNotMatch(r.argv, /--output-schema/, 'the fallback run must drop the schema');
+    assert.match(r.stdout, /FAKE_FINAL_MESSAGE/);
+  });
+
+  it('schema ON makes the directive ask for schema JSON, not one-per-line text', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code'], env: { CODEX_REVIEW_SCHEMA: '1' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.match(r.capStdin, /JSON object matching the provided output schema/);
+    assert.doesNotMatch(r.capStdin, /one per line/);
+  });
+
+  it('schema OFF (default) asks for one-finding-per-line text', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code'] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.match(r.capStdin, /one per line/);
   });
 });
