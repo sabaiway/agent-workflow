@@ -33,6 +33,8 @@ Read in order, then confirm before starting:
 6. Run quality checks: lint, type-check, tests.
 
 ### 1.3. Task Completion
+> **Visibility-independent.** Every step below is mandatory in **both** visibility modes. Hidden mode (the AI footprint git-ignored via `.git/info/exclude`) changes only what **git** tracks — never whether you maintain `docs/ai`. "Git-ignored / `git status` clean" is **not** "optional to update": the doc/state updates still happen, they just live on disk and never enter a commit.
+
 Before claiming "done":
 1. Run all quality gates (lint + type-check + tests) — all green.
 2. Update docs: `current_state.md` (feature ready), `changelog.md` (entry), `handover.md` (**REPLACE** the last-session block — session delta, never append; older deltas live in `changelog.md` → `history/`), `pages/<page>.md` (matches implementation). Only bump "Last Updated" when content actually changed.
