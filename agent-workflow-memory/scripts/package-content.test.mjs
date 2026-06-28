@@ -1,6 +1,7 @@
-import { describe, it } from 'node:test';
+import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { dirname, join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -74,5 +75,77 @@ describe('memory package content — DAG guard (knows nobody)', () => {
       }
     }
     assert.deepEqual(offenders, [], 'memory must reference only the generic composition root, never a named sibling');
+  });
+});
+
+// Tarball-content guard. `files[]` whitelists whole directories, so the package's OWN colocated
+// *.test.mjs (bin/, scripts/) used to ride into the published npm tarball. Phase-1 SCOPED negation
+// entries strip them — but `!scripts/*.test.mjs` deliberately does NOT cross `/`, so it never
+// touches references/scripts/*.test.mjs, which are deploy PAYLOAD (copied into a consumer repo's
+// scripts/). A blanket `!references/**` would silently drop them and the deploy gate would NOT
+// catch it (it reads the checkout, never the tarball). This guard pins the exact shape: own tests
+// gone, payload tests + runtime files retained. This file is itself stripped from the tarball by
+// Phase 1, but runs from the checkout via the gate + publish-CI `scripts/*.test.mjs` glob.
+//
+// CAUTION: never broaden the negation to `!references/**` — those tests are deploy payload.
+const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+const packMemory = () => {
+  const res = spawnSync('npm', ['pack', '--dry-run', '--json'], { cwd: PKG_ROOT, encoding: 'utf8' });
+  assert.equal(res.status, 0, `npm pack failed: ${res.stderr}`);
+  return JSON.parse(res.stdout)[0].files.map((f) => f.path);
+};
+
+describe('memory package content — tarball guard (no own-test leak; deploy payload retained)', () => {
+  // Packed once in a before() hook (not at describe-body level): a failing `npm pack` is then
+  // reported as a graceful hook failure rather than throwing during test collection.
+  let packed;
+  before(() => {
+    packed = packMemory();
+  });
+
+  it('ships no own colocated test — every shipped *.test.mjs is deploy payload', () => {
+    const leaks = packed
+      .filter((p) => /\.test\.mjs$/.test(p))
+      .filter((p) => !/^references\//.test(p));
+    assert.deepEqual(leaks, [], 'own tests must not ship; only references/ deploy-payload tests may');
+  });
+
+  it('retains the deploy payload tests (reverse pins)', () => {
+    const required = [
+      'references/scripts/archive-changelog.test.mjs',
+      'references/scripts/archive-issues.test.mjs',
+      'references/scripts/check-docs-size.test.mjs',
+    ];
+    const missing = required.filter((p) => !packed.includes(p));
+    assert.deepEqual(missing, [], 'a deploy payload test was dropped from the tarball');
+  });
+
+  it('retains every deployed runtime payload file and entry point', () => {
+    const required = [
+      'references/scripts/archive-changelog.mjs',
+      'references/scripts/archive-issues.mjs',
+      'references/scripts/check-docs-size.mjs',
+      'references/scripts/_expect-shim.mjs',
+      'references/scripts/install-git-hooks.mjs',
+      'bin/install.mjs',
+      'capability.json',
+      'SKILL.md',
+      'scripts/stamp-takeover.mjs',
+    ];
+    const missing = required.filter((p) => !packed.includes(p));
+    assert.deepEqual(missing, [], 'a runtime payload file or entry point was dropped from the tarball');
+  });
+
+  it('ships no fixtures anywhere', () => {
+    const leaks = packed.filter((p) => /(^|\/)fixtures\//.test(p));
+    assert.deepEqual(leaks, [], 'no fixtures may ship in the tarball');
+  });
+
+  // Exact-count pin: update this number only when intentionally adding/removing a shipped file;
+  // a surprise change means over/under-exclusion. After an intentional change, run `npm pack
+  // ./agent-workflow-memory --dry-run --json` and set the new count here in the same commit.
+  it('ships exactly the expected number of files', () => {
+    assert.equal(packed.length, 37, `tarball file count drifted (${packed.length} ≠ 37)`);
   });
 });
