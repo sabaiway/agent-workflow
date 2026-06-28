@@ -25,8 +25,9 @@ const FAKE_CODEX = [
   ': "${CODEX_FAKE_ENV:=/dev/null}"',
   ': "${CODEX_FAKE_STDIN:=/dev/null}"',
   '{ for a in "$@"; do echo "$a"; done; } >"$CODEX_FAKE_ARGV"',
-  '{ echo "HOME=${HOME:-}"; echo "CODEX_HOME=${CODEX_HOME:-}"; echo "XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-}"; echo "OPENAI_API_KEY=${OPENAI_API_KEY:-<unset>}"; echo "OPENAI_BASE_URL=${OPENAI_BASE_URL:-<unset>}"; echo "FOO_API_KEY=${FOO_API_KEY:-<unset>}"; } >"$CODEX_FAKE_ENV"',
+  '{ echo "HOME=${HOME:-}"; echo "CODEX_HOME=${CODEX_HOME:-}"; echo "XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-}"; echo "OPENAI_API_KEY=${OPENAI_API_KEY:-<unset>}"; echo "OPENAI_BASE_URL=${OPENAI_BASE_URL:-<unset>}"; echo "FOO_API_KEY=${FOO_API_KEY:-<unset>}"; echo "CODEX_REAL_GIT=${CODEX_REAL_GIT:-<unset>}"; } >"$CODEX_FAKE_ENV"',
   'cat >"$CODEX_FAKE_STDIN"',
+  'if [[ "${CODEX_FAKE_GIT_PROBE:-}" == "1" ]]; then { echo "realgit_env=${CODEX_REAL_GIT:-unset}"; echo "status=$(git status --short >/dev/null 2>&1; echo $?)"; echo "diff=$(git --no-pager diff >/dev/null 2>&1; echo $?)"; echo "commit=$(git commit -m x >/dev/null 2>&1; echo $?)"; echo "add=$(git add -A >/dev/null 2>&1; echo $?)"; echo "checkout=$(git checkout -- . >/dev/null 2>&1; echo $?)"; echo "unknown=$(git frobnicate >/dev/null 2>&1; echo $?)"; echo "config_read=$(git config user.name >/dev/null 2>&1; echo $?)"; echo "config_list=$(git config --list >/dev/null 2>&1; echo $?)"; echo "config_write=$(git config user.name HACKED >/dev/null 2>&1; echo $?)"; echo "config_bypass=$(git config --get --add a.b v >/dev/null 2>&1; echo $?)"; echo "symref_write=$(git symbolic-ref HEAD refs/heads/x >/dev/null 2>&1; echo $?)"; echo "reflog_write=$(git reflog expire --all >/dev/null 2>&1; echo $?)"; } > "${CODEX_FAKE_GIT_RESULT:-/dev/null}" 2>&1; fi',
   'if [[ -n "${CODEX_FAKE_SLEEP:-}" ]]; then sleep "${CODEX_FAKE_SLEEP}"; fi',
   'out=""',
   'prev=""',
@@ -34,13 +35,17 @@ const FAKE_CODEX = [
   '  if [[ "$prev" == "-o" || "$prev" == "--output-last-message" ]]; then out="$a"; fi',
   '  prev="$a"',
   'done',
-  'if [[ -n "$out" && "${CODEX_FAKE_NO_OUT:-}" != "1" ]]; then echo "${CODEX_FAKE_FINAL:-FAKE_FINAL_MESSAGE}" >"$out"; fi',
-  'cat <<EOF',
+  'if [[ -n "$out" ]]; then',
+  '  if [[ "${CODEX_FAKE_NO_OUT:-}" != "1" ]]; then echo "${CODEX_FAKE_FINAL:-FAKE_FINAL_MESSAGE}" >"$out"; fi',
+  '  cat <<EOF',
   '{"type":"thread.started","thread_id":"${CODEX_FAKE_THREAD_ID:-fake-thread-123}"}',
   '{"type":"turn.started"}',
   '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"FAKE_FINAL_MESSAGE"}}',
   '{"type":"turn.completed","usage":{}}',
   'EOF',
+  'else',
+  '  echo "${CODEX_FAKE_FINAL:-FAKE_FINAL_MESSAGE}"',
+  'fi',
   'exit "${CODEX_FAKE_EXIT:-0}"',
   '',
 ].join('\n');
@@ -315,5 +320,137 @@ describe('codex-exec.sh — preflight (unchanged invariants)', () => {
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /no root AGENTS\.md/);
+  });
+});
+
+describe('codex-exec.sh — resume entrypoint restates every invariant (3.1)', () => {
+  const RESUME_INVARIANTS = [
+    /(^|\n)resume(\n|$)/, /(^|\n)--ignore-user-config(\n|$)/, /(^|\n)gpt-5\.5(\n|$)/,
+    /model_reasoning_effort=xhigh/, /sandbox_mode=workspace-write/,
+    /approval_policy=never/, /sandbox_workspace_write\.network_access=false/,
+  ];
+
+  it('--resume <id>: composes `exec resume <id>` with the full restated policy', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['--resume', 'sess-xyz', '-'], input: 'continue please' });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.argv, /(^|\n)sess-xyz(\n|$)/, 'the session id is passed positionally');
+    for (const inv of RESUME_INVARIANTS) assert.match(r.argv, inv, `resume argv must include ${inv}`);
+    assert.doesNotMatch(r.argv, /(^|\n)-o(\n|$)/, 'resume rejects -o');
+    assert.doesNotMatch(r.argv, /(^|\n)--json(\n|$)/, 'resume rejects --json');
+    assert.doesNotMatch(r.argv, /(^|\n)--color(\n|$)/, 'resume rejects --color');
+    assert.match(r.stdout, /FAKE_FINAL_MESSAGE/, 'resume prints codex stdout');
+  });
+
+  it('--resume-last reads the session id from the sidecar', () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.repo, '.codex-last-session'), 'sess-from-sidecar\n');
+    const r = run(sb, { args: ['--resume-last', '-'], input: 'continue' });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.argv, /(^|\n)sess-from-sidecar(\n|$)/);
+  });
+
+  it('--resume-last honours CODEX_SESSION_FILE', () => {
+    const sb = makeSandbox();
+    const custom = join(sb.repo, 'mysess');
+    writeFileSync(custom, 'sess-custom\n');
+    const r = run(sb, { args: ['--resume-last', '-'], input: 'go', env: { CODEX_SESSION_FILE: custom } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.match(r.argv, /(^|\n)sess-custom(\n|$)/);
+  });
+
+  it('--resume-last with no sidecar STOPs (never guesses)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['--resume-last', '-'], input: 'go' });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /no session sidecar/);
+  });
+
+  it('--resume with no id STOPs', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['--resume', '-'], input: 'go' });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /--resume needs a <session-id>/);
+  });
+
+  it('rejects an empty resumed instruction', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['--resume', 'sess-1', '-'], input: '   \n' });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /empty resumed/);
+  });
+
+  it('resume takes no passthrough flags', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['--resume', 'sess-1', '-', '--', '--add-dir', '/x'], input: 'go' });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /resume modes take no extra flags/);
+  });
+
+  it('resume never sets --ephemeral', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['--resume', 'sess-1', '-'], input: 'go' });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.doesNotMatch(r.argv, /--ephemeral/);
+  });
+
+  it('--resume-last with an EMPTY sidecar STOPs (no blank id)', () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.repo, '.codex-last-session'), '   \n');
+    const r = run(sb, { args: ['--resume-last', '-'], input: 'go' });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /sidecar.*is empty/);
+  });
+
+  it('resume still clears every *_API_KEY/OPENAI_BASE_URL and keeps --ignore-user-config', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['--resume', 'sess-1', '-'], input: 'go', env: {
+      OPENAI_API_KEY: 'sk-x', OPENAI_BASE_URL: 'http://evil.example', FOO_API_KEY: 'bar',
+    } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.capEnv, /^OPENAI_API_KEY=<unset>$/m);
+    assert.match(r.capEnv, /^OPENAI_BASE_URL=<unset>$/m);
+    assert.match(r.capEnv, /^FOO_API_KEY=<unset>$/m);
+    assert.match(r.argv, /(^|\n)--ignore-user-config(\n|$)/);
+  });
+});
+
+describe('codex-exec.sh — enforced git-write boundary shim (3.2)', () => {
+  it('passes read-only verbs, blocks writes/unknown/config-writes; no env bypass', () => {
+    const sb = makeSandbox();
+    const result = join(sb.repo, 'git-probe-result');
+    const r = run(sb, { env: { CODEX_FAKE_GIT_PROBE: '1', CODEX_FAKE_GIT_RESULT: result } });
+    const probe = existsSync(result) ? readFileSync(result, 'utf8') : '';
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    // The real git path is baked into the shim, NOT exported — codex cannot read it.
+    assert.match(probe, /realgit_env=unset/, 'CODEX_REAL_GIT must not be exposed to codex');
+    assert.match(probe, /status=0/, 'git status (read) passes through');
+    assert.match(probe, /diff=0/, 'git --no-pager diff (read, global option) passes through');
+    assert.match(probe, /commit=13/, 'git commit (write) is blocked');
+    assert.match(probe, /add=13/, 'git add (write) is blocked');
+    assert.match(probe, /checkout=13/, 'git checkout (write) is blocked');
+    assert.match(probe, /unknown=13/, 'an unknown verb is blocked by default');
+    assert.match(probe, /config_read=0/, 'git config <name> (read) passes through');
+    assert.match(probe, /config_list=0/, 'git config --list (read) passes through');
+    assert.match(probe, /config_write=13/, 'git config <name> <value> (write) is blocked');
+    assert.match(probe, /config_bypass=13/, 'git config --get --add … (write bypass) is blocked');
+    assert.match(probe, /symref_write=13/, 'git symbolic-ref (has write modes) is blocked');
+    assert.match(probe, /reflog_write=13/, 'git reflog (has write modes) is blocked');
+  });
+
+  it('the codex env carries no CODEX_REAL_GIT (bypass vector closed)', () => {
+    const sb = makeSandbox();
+    const r = run(sb);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.match(r.capEnv, /^CODEX_REAL_GIT=<unset>$/m);
   });
 });
