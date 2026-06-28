@@ -61,6 +61,7 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'capability.json',
       'SKILL.md',
       'tools/engine-source.mjs',
+      'tools/commands.mjs',
     ];
     const missing = required.filter((p) => !packed.includes(p));
     assert.deepEqual(missing, [], 'a runtime payload file or entry point was dropped from the tarball');
@@ -76,6 +77,6 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
   // file accidentally dropped). After an intentional change, run `npm pack ./agent-workflow-kit
   // --dry-run --json` and set the new count here in the same commit.
   it('ships exactly the expected number of files', () => {
-    assert.equal(packed.length, 69, `tarball file count drifted (${packed.length} ≠ 69)`);
+    assert.equal(packed.length, 70, `tarball file count drifted (${packed.length} ≠ 70)`);
   });
 });
