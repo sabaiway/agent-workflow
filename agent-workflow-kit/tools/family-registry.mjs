@@ -25,7 +25,9 @@ import { validateManifest, readAuthoritativeVersion, UNSUPPORTED, INVALID } from
 import { START_MARKER, excludePath, inferVisibility } from './hide-footprint.mjs';
 import { readEngineFragment, ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
 import { ACTIVITIES, resolveActivityRecipe } from './recipes.mjs';
-import { loadConfig } from './procedures.mjs';
+// The config reader lives in orchestration-config.mjs (the single config contract). The read-only status
+// settings-survey reuses THIS reader (one strict-JSON + loud-on-malformed contract), not a second copy.
+import { loadConfig } from './orchestration-config.mjs';
 // The deployment-lineage head + the shared settings readers are reused from velocity-profile so the
 // `--json` envelope/settings-survey has ONE implementation each, never a drifting copy:
 //   EXPECTED_WORKFLOW_VERSION — the head literal (drift-guarded vs memory LINEAGE_HEAD)

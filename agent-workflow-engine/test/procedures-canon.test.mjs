@@ -111,6 +111,30 @@ describe('procedures.md — canonical activity-procedures reference', () => {
       'the procedures canon stays a terse pointer, not a restatement of planning.md',
     );
   });
+
+  // AD-025 — durable session behavior pinned in the live-read canon (so a future canon edit can't
+  // silently drop them): read-at-start, the plan-authoring Definition of Done, and the communication
+  // contract. The engine canon stays GENERIC (the "no project bake-in" test above still holds).
+  it('tells the agent to READ the orchestration preference at session start', () => {
+    const flat = procedures.replace(/\s+/g, ' ');
+    assert.match(flat, /at the start of a planning or execution session, read/i, 'a read-at-start clause');
+    assert.match(procedures, /docs\/ai\/orchestration\.json/, 'names the config to read');
+    assert.match(procedures, /set-recipe/, 'points at the set-recipe writer');
+  });
+
+  it('pins the plan-authoring Definition of Done (plan + next-session execution prompt, unprompted)', () => {
+    const flat = procedures.replace(/\s+/g, ' ');
+    assert.match(flat, /Definition of Done/i);
+    assert.match(flat, /execution prompt to begin the next session/i, 'requires a next-session prompt');
+    assert.match(flat, /without the user asking/i, 'unprompted');
+  });
+
+  it('pins the communication contract (deliver the artifact inline; never a bare pointer as a substitute)', () => {
+    const flat = procedures.replace(/\s+/g, ' ');
+    assert.match(flat, /Communication contract/i);
+    assert.match(flat, /delivers the artifact \*\*inline\*\*/, 'deliver the artifact inline');
+    assert.match(procedures, /see §X/, 'names the banned bare-pointer anti-pattern');
+  });
 });
 
 // §3.2 (engine) — the methodology slot fragment gained the procedures auto-discovery clause. It must
@@ -137,5 +161,10 @@ describe('methodology-slot.md — bounded fragment carries the procedures route'
     for (const activity of ['plan-authoring', 'plan-execution']) {
       assert.ok(slot.includes(activity), `the slot names the "${activity}" activity`);
     }
+  });
+
+  it('carries the §1.9 communication-contract clause (the canonical-refresh signature)', () => {
+    assert.match(slot, /Communication/, 'the methodology slot carries the Communication clause');
+    assert.match(slot, /inline/, 'the clause says deliver the artifact inline');
   });
 });

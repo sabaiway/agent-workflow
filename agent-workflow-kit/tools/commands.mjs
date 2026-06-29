@@ -115,6 +115,13 @@ const CATALOG = [
     kind: READ_ONLY,
     oneLine: 'Show a named activity’s steps and which recipe applies at each stage here.',
   },
+  {
+    key: 'set-recipe',
+    invocation: invocationOf('set-recipe'),
+    group: 'Orchestrate',
+    kind: WRITER,
+    oneLine: 'Set the orchestration recipe for an activity from plain language — previews the change, then writes the config when you confirm.',
+  },
 ];
 
 // Deep-freeze: freeze the array AND every entry, so the catalog is genuinely immutable at runtime

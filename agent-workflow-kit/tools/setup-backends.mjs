@@ -24,9 +24,9 @@ import {
 import { join, resolve, relative, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import os from 'node:os';
-import { KNOWN_BACKENDS, detectBackend, resolveDir, guideFor } from './detect-backends.mjs';
+import { KNOWN_BACKENDS, detectBackend, detectBackends, resolveDir, guideFor, READY } from './detect-backends.mjs';
 import { copyTreeRefresh, linkManaged } from './fs-safe.mjs';
-import { validateManifest, UNSUPPORTED, INVALID } from './manifest/validate.mjs';
+import { validateManifest, readAuthoritativeVersion, UNSUPPORTED, INVALID } from './manifest/validate.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // bridges/ ships beside tools/ in both the repo and the installed kit, so this resolves in both.
@@ -315,9 +315,18 @@ export const planFor = (backend, deps = {}) => {
   }
 
   let links;
+  let version = null;
+  let priorVersion = null;
   try {
     const fs = fsDeps(deps);
-    const derived = deriveLinks(readBundledManifest(place.bundleDir, deps), skillDir);
+    const readVersion = deps.readVersion ?? readAuthoritativeVersion;
+    const bundledManifest = readBundledManifest(place.bundleDir, deps);
+    // The bundled bridge version (what setup will place/refresh) + the prior installed version (only on
+    // a refresh — a place has no prior). readAuthoritativeVersion is the SAME source `status` reads, so
+    // setup never invents a second version reader. A place / absent-prior shows no arrow (never "vnull").
+    version = typeof bundledManifest.version === 'string' ? bundledManifest.version : null;
+    priorVersion = place.action === 'refresh' ? readVersion(skillDir).version ?? null : null;
+    const derived = deriveLinks(bundledManifest, skillDir);
     // Preflight the BUNDLE sources (what we will copy → link). After place, the skill source IS the
     // bundle source, so checking it here makes a dry-run faithfully predict linkWrappers instead of
     // reporting "ok" and then throwing at apply time.
@@ -347,7 +356,7 @@ export const planFor = (backend, deps = {}) => {
   const onPath = bindirOnPath(bindir, deps.getenv ?? process.env, platform);
   const bindirHint = onPath ? null : `add ${bindir} to PATH to use the wrappers: export PATH="${bindir}:$PATH"  (persist in ~/.bashrc / ~/.zshrc)`;
 
-  return { name: entry.name, skillDir, bindir, platform, place, links, guides, bindirHint, outcome: 'ok' };
+  return { name: entry.name, skillDir, bindir, platform, place, links, guides, bindirHint, outcome: 'ok', version, priorVersion };
 };
 
 // Perform an `ok` plan's deterministic steps. Re-derives + re-checks inside the primitives (no trust
@@ -361,6 +370,16 @@ const applyBackend = (plan, deps) => {
 
 // ── formatting ─────────────────────────────────────────────────────────────────
 
+// The bridge version label for the skill line: place / absent-prior → "(vX)" (no arrow, never
+// "vnull → vX"); refresh with a DIFFERENT prior → "(vOld → vNew)"; refresh equal / null prior → "(vX)".
+const versionLabel = (plan) => {
+  if (!plan.version) return '';
+  if (plan.place?.action === 'refresh' && plan.priorVersion && plan.priorVersion !== plan.version) {
+    return ` (v${plan.priorVersion} → v${plan.version})`;
+  }
+  return ` (v${plan.version})`;
+};
+
 const formatBackend = (plan, applied) => {
   const lines = [`  ${plan.name} → ${plan.outcome}`];
   if (plan.outcome === 'unsupported') {
@@ -372,13 +391,48 @@ const formatBackend = (plan, applied) => {
     return lines.join('\n');
   }
   const placeVerb = applied ? { place: 'placed', refresh: 'refreshed' } : { place: 'will place', refresh: 'will refresh' };
-  lines.push(`      • skill: ${placeVerb[plan.place.action]} → ${plan.skillDir}`);
+  lines.push(`      • skill: ${placeVerb[plan.place.action]}${versionLabel(plan)} → ${plan.skillDir}`);
   for (const l of plan.links) {
     const verb = l.dstState === 'ours' ? 'already linked' : applied ? 'linked' : 'will link';
     lines.push(`      • wrapper ${l.cmd}: ${verb} → ${l.dst}`);
   }
   if (plan.bindirHint) lines.push(`      ↳ ${plan.bindirHint}`);
   for (const g of plan.guides) lines.push(`      ↳ ${g.need}: ${g.hint}`);
+  return lines.join('\n');
+};
+
+// ── close-the-loop: surface versions + a proactive recipe offer ───────────────────
+
+// The closing pointer: setup surfaces only the bridge it touched; the full family + deployment version
+// view lives in the read-only status mode.
+const STATUS_POINTER = 'Full family + deployment versions: /agent-workflow-kit status';
+
+// Count the review-capable backends that are READY right now (both bridges provide review, so a READY
+// count ≥1 unlocks Reviewed, ≥2 unlocks Council). Uses the MULTI-backend detector. A detection failure
+// → null: we can't tell, so we make NO offer (never a false one). Read-only.
+const reviewReadyCount = (deps) => {
+  const detectAll = deps.detectAll ?? detectBackends;
+  try {
+    return detectAll(deps).filter((d) => d.readiness === READY).length;
+  } catch {
+    return null;
+  }
+};
+
+// After a successful setup, if a review backend NEWLY became ready (the pre-apply readiness in planFor
+// is stale — re-detect AFTER apply), offer to set the review recipe — for BOTH planning AND execution
+// review (planning review is a core goal; never offer only plan-execution). Council when ≥2 are ready,
+// else Reviewed (with a one-reviewer alternative noted). English; the agent localizes when it narrates.
+export const proactiveReviewOffer = (before, after) => {
+  if (before == null || after == null || after <= before) return null;
+  const depth = after >= 2 ? 'council' : 'reviewed';
+  const lines = [
+    '',
+    `A review backend is now ready (${after} ready). To have your plans reviewed, set the review recipe (preview first; I'll write it for you — or edit docs/ai/orchestration.json yourself):`,
+    `  /agent-workflow-kit set-recipe --set plan-authoring.review=${depth}`,
+    `  /agent-workflow-kit set-recipe --set plan-execution.review=${depth}`,
+  ];
+  if (depth === 'council') lines.push('  (or =reviewed for a single reviewer)');
   return lines.join('\n');
 };
 
@@ -448,18 +502,30 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
 
   const runDeps = { ...deps, bindir: args.bindir ?? deps.bindir };
   log(args.dryRun ? 'agent-workflow backend setup — DRY RUN (no changes)' : 'agent-workflow backend setup (link-only)');
+  // Snapshot review readiness BEFORE applying, so we can offer the recipe only on a true readiness flip.
+  const reviewBefore = args.dryRun ? null : reviewReadyCount(runDeps);
   let worst = 0;
+  let appliedOk = false;
   for (const name of targets) {
     let plan = planFor(name, runDeps);
     if (!args.dryRun && plan.outcome === 'ok') {
       try {
         applyBackend(plan, runDeps);
+        appliedOk = true;
       } catch (err) {
         plan = { ...plan, outcome: err.code === SETUP_STOP ? 'stop' : 'error', reason: err.message };
       }
     }
     log(formatBackend(plan, !args.dryRun));
     if (plan.outcome === 'stop' || plan.outcome === 'error') worst = 1;
+  }
+  log('');
+  log(STATUS_POINTER);
+  // Re-detect AFTER apply (pre-apply readiness is stale): a review backend that just became ready earns
+  // a proactive set-recipe offer. Only after a real apply (never on a dry-run or a no-op run).
+  if (!args.dryRun && appliedOk) {
+    const offer = proactiveReviewOffer(reviewBefore, reviewReadyCount(runDeps));
+    if (offer) log(offer);
   }
   return worst;
 };

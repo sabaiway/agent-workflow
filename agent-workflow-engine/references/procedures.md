@@ -24,6 +24,17 @@ committed); `plan-execution` commits **per Step**. Any project-declared release/
 stages are honored per the project's `workflow:methodology` slot — this generic canon bakes in no
 single project's stages.
 
+**Read your preference at session start.** At the start of a planning or execution session, read the
+project's standing recipe preference in `docs/ai/orchestration.json` (set it in plain language with
+`/agent-workflow-kit set-recipe` — it previews then writes; hand-editing the file stays supported); the
+kit resolves it against backend readiness. Do not re-ask each session what is already configured there.
+
+**Communication contract.** Every user-facing message delivers the artifact **inline** — the plan, the
+next-session prompt, the diff, the value asked for — never a bare pointer ("see §X / open the file") as a
+*substitute* for showing it; lead with the result, show exactly what was asked, and never read as
+mockery. For a genuinely large artifact, deliver a real summary or the key excerpt inline **and** link
+the file — never flood, never hide.
+
 ---
 
 ## plan-authoring
@@ -42,6 +53,10 @@ Produce a self-contained, cold-readable plan, reviewed to the configured depth b
    synthesize). The kit resolves the effective recipe from `docs/ai/orchestration.json` + readiness.
 5. **Fold + loop** — fold every finding back into the draft and re-review until the review is clean.
 6. **Present for approval** — surface the finished plan to the user; do not begin execution here.
+
+**Required output (Definition of Done):** a planning session produces a self-contained plan in
+`docs/plans/` **and** a cold-start execution prompt to begin the next session — **both produced without
+the user asking**. A planning session that ends without both is not done.
 
 The plan MUST end with the mandatory **Phase: Cleanup** ([`planning.md`](planning.md) §4) — a plan
 without it is not done.
@@ -65,6 +80,8 @@ Execute an approved plan Step by Step; each Step is one logical commit.
 6. **Gates** — run the project's verification gate (tests + checks) to green before committing.
 7. **Commit boundary** — the orchestrator makes the single commit for the Step; a backend never
    commits. The project's commit-approval policy (e.g. ask first) lives in the project's own rules.
+
+**Output:** each Step lands as one logical commit with its gates green; the orchestrator owns the commit.
 
 Honor any project-declared release/publishing or extra stages (per the `workflow:methodology` slot)
 before the plan's Cleanup — this generic canon does not enumerate them.

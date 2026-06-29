@@ -4,6 +4,33 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.18.0 — Agent-writable orchestration config (`set-recipe`), version-aware setup, durable session contracts (kit)
+
+A **feature** release. The per-project recipe config (`docs/ai/orchestration.json`) is no longer
+hand-edit-only: a new **`set-recipe`** writer turns plain-language intent into a validated, previewed,
+atomic write — and `setup` now surfaces bridge versions and proactively offers to set the review recipe
+when a backend becomes ready. The deployment-lineage head stays **`1.3.0`** (no `docs/ai` structural
+change, no migration); the kit **package** version is a separate axis.
+
+- **`/agent-workflow-kit set-recipe` (new WRITER).** The agent maps plain language → explicit
+  `--set <activity>.<slot>=<recipe>` / `--unset <activity>.<slot>` ops; the kit validates → merges →
+  **previews by default** → writes only on `--write`. Split modules: `tools/orchestration-config.mjs`
+  (schema/read/pure — the shared slot-recipe validity table + `parseOp` / `applySetOps` /
+  `serializeConfig` / the canonical-refresh helpers) and `tools/orchestration-write.mjs` (the **only**
+  fs-writer — deployment gate, exclusive-create temp + rename, symlink/TOCTOU-safe, last-writer-wins).
+  `procedures` never imports the writer → the read-only invariant is **structural**. Renamed from the
+  planned `orchestrate` (it never *runs* a recipe). Hand-editing the file stays fully supported.
+- **Setup surfaces versions + closes the loop.** Each skill line shows the bridge version (`(vX)` for a
+  fresh place / equal refresh, `(vOld → vNew)` on a bump, never `vnull → …`); a closing pointer at
+  `/agent-workflow-kit status`; and — re-detecting AFTER apply — a proactive `set-recipe` offer for
+  **both** `plan-authoring.review` and `plan-execution.review` when a review backend just became ready.
+- **Canonical-refresh reaches the filled base.** `inject-methodology` refreshes a filled pointer slot to
+  the current engine canon when its content matches a known-prior fragment (a customization is preserved
+  + advised); the `_README` refresh reuses the same `refreshIfCanonical` helper, and the upgrade
+  config-ensure is now seed-**or-refresh**.
+- **Docs.** New `### Mode: set-recipe`; `procedures` / `velocity` / README no longer say the config is
+  "never written for you". Tarball **72 → 75** (three new `tools/*.mjs`).
+
 ## 1.17.0 — Hardened Codex bridge: quality-first delegation, clean capture, enforced git-write boundary (kit)
 
 A **feature** release. The bundled `codex-cli-bridge` (`bridges/codex-cli-bridge/`) is overhauled to

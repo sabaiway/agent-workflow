@@ -43,6 +43,21 @@ describe('commands catalog — drift-guard vs SKILL.md ### Mode: headers', () =>
     const keys = COMMANDS.map((c) => c.key);
     assert.equal(new Set(keys).size, keys.length);
   });
+
+  // A catalog entry alone is NOT runnable — routeInvocation only maps token→mode; the agent runs the
+  // mode by following its `### Mode:` section's `Run node …` dispatch line. For the writer modes that own
+  // a tool, header presence ≠ runnable: pin that the section actually carries the runnable command.
+  it('the ### Mode: set-recipe section carries the runnable node …/tools/set-recipe.mjs dispatch line', () => {
+    const skill = readFileSync(SKILL_MD, 'utf8');
+    const start = skill.indexOf('### Mode: set-recipe');
+    assert.ok(start !== -1, 'SKILL.md must document ### Mode: set-recipe');
+    const after = skill.slice(start);
+    const end = after.indexOf('\n### Mode:', 3);
+    const section = end === -1 ? after : after.slice(0, end);
+    assert.match(section, /node \$\{CLAUDE_SKILL_DIR\}\/tools\/set-recipe\.mjs/, 'the section must carry the runnable dispatch line');
+    assert.match(section, /--write/, 'the section documents the --write apply flag');
+    assert.match(section, /never commits/i, 'the section states the writer never commits');
+  });
 });
 
 // ── (b) routing — known tokens → their mode; garbage → help (never a writer/guarded mode); the

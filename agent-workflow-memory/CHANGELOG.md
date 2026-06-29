@@ -4,6 +4,24 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.3.0 — Agent-writable config note; §2.5 Communication (memory)
+
+A **feature** release. The seeded `docs/ai/orchestration.json` note now frames the config as
+agent-writable (via the `set-recipe` writer) **and** still hand-editable — the old "never written for
+you" wording is gone. The `agent_rules.md` substrate gains a **§2.5 Communication** self-review item
+(deliver the artifact inline; lead with the result; large-artifact carve-out). The deployment-lineage
+head stays **`1.3.0`** (no `docs/ai` structural change, no migration file); the npm package version is a
+separate axis.
+
+- **Seed-or-preserve only (unchanged contract).** This substrate still only **seeds** the config from its
+  template when missing and **preserves** an existing one byte-for-byte — a NEW deployment gets the updated
+  note from the seed. Refreshing the note *in place* on an already-deployed file is the **composition
+  root's** job (memory stays standalone and owns no cross-package refresh helper).
+- **Template parity preserved** — the seeded `orchestration.json` stays byte-identical to the composition
+  root's fallback copy; the new note is identical across both.
+- **Knows-nobody invariant intact** — the note + SKILL.md refer to the writer generically, never naming a
+  specific sibling skill.
+
 ## 1.2.2 — Strip the package's own tests from the npm tarball (memory)
 
 Packaging only — no API/behaviour change; removed the package's own colocated tests from the

@@ -4,6 +4,26 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.4.0 — Durable session contracts in the canon: read-at-start, Definition of Done, communication
+
+A **feature** release. The activity-procedures canon (`references/procedures.md`, read **live** by the
+composition root) gains three durable-session contracts, and the two bounded slot fragments gain the
+matching clauses so the composition root's canonical-refresh can push them to existing deployments:
+
+- **Read-at-start.** The canon tells the agent to read the project's standing recipe preference in
+  `docs/ai/orchestration.json` at the start of a planning/execution session (set it with the `set-recipe`
+  writer) — no re-asking what is already configured.
+- **plan-authoring Definition of Done.** A planning session must produce a self-contained plan **and** a
+  cold-start execution prompt for the next session — both **without the user asking**.
+- **Communication contract.** User-facing messages deliver the artifact **inline** (never a bare "see
+  §X" as a substitute), lead with the result, with a large-artifact carve-out.
+- **Slot fragments.** `orchestration-slot.md` gains the read-at-start clause (points at `set-recipe`);
+  `methodology-slot.md` gains the communication clause. Both stay one bounded content line, under the
+  deployed-`AGENTS.md` cap.
+
+Generic as ever — no project release-publishing bake-in. The deployment-lineage head stays **`1.3.0`**
+(stamp-independent reconciles reach the base; the engine **package** version is a separate axis).
+
 ## 1.3.0 — Activity procedures: named, recipe-aware playbooks
 
 The engine now also owns the **activity-procedures** canon — *how to perform* a named workflow

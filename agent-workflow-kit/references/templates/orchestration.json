@@ -1,5 +1,10 @@
 {
-  "_README": "Per-project orchestration config: the recipe used at each step (slot) of each named activity. Hand-edit this file — it is never written for you. Each activity is configured independently (e.g. plan-authoring, plan-execution), and so is each slot within it. A slot's value is a recipe: a 'review' slot accepts solo | reviewed | council (you self-review / one backend reviews / both review and you synthesize); an 'execute' slot accepts solo | delegated (you implement / a backend runs a bounded sub-task). The default below is 'solo' everywhere — no execution backend required. Raise a slot to reviewed or council for a second opinion, or to delegated to hand off execution; those need an execution backend set up first. Remove a slot's line to fall back to the computed default (reviewed when a review backend is ready, otherwise solo). Run the read-only procedures advisor to see an activity's steps plus the recipe resolved for your environment, and pass a per-run override to change one slot just once. Strict JSON — no comments.",
-  "plan-authoring": { "review": "solo" },
-  "plan-execution": { "execute": "solo", "review": "solo" }
+  "_README": "Per-project orchestration config: the recipe used at each step (slot) of each named activity. Easiest: tell the agent in plain language and run the `set-recipe` writer — it interprets your intent, previews the change, and writes valid JSON for you. You can still hand-edit this file directly whenever you prefer; that option never goes away. Each activity is configured independently (e.g. plan-authoring, plan-execution), and so is each slot within it. A slot's value is a recipe: a 'review' slot accepts solo | reviewed | council (you self-review / one backend reviews / both review and you synthesize); an 'execute' slot accepts solo | delegated (you implement / a backend runs a bounded sub-task). The default below is 'solo' everywhere — no execution backend required. Raise a slot to reviewed or council for a second opinion, or to delegated to hand off execution; those need an execution backend set up first. Remove a slot's line (or run `set-recipe --unset <activity>.<slot>`) to fall back to the computed default (reviewed when a review backend is ready, otherwise solo). Run the read-only procedures advisor to see an activity's steps plus the recipe resolved for your environment. Strict JSON — no comments.",
+  "plan-authoring": {
+    "review": "solo"
+  },
+  "plan-execution": {
+    "execute": "solo",
+    "review": "solo"
+  }
 }

@@ -20,11 +20,16 @@ import {
   ORCH_START_MARKER,
   ORCH_END_MARKER,
   ORCHESTRATION_DESCRIPTOR,
+  METHODOLOGY_DESCRIPTOR,
   findMarkerSlot,
   extractMarkerSlot,
   reconcileMarkerSlot,
+  markerSlotNeedsFill,
+  markerSlotUpgradeHint,
   methodologyProceduresHint,
   PROCEDURES_POINTER,
+  KNOWN_PRIOR_METHODOLOGY_SLOT,
+  KNOWN_PRIOR_ORCH_SLOT,
 } from './inject-methodology.mjs';
 
 // Read the orchestration slot's content from a reconciled entry point.
@@ -408,6 +413,103 @@ describe('slotNeedsFill — lazy-read predicate (matches reconcileSlot fill deci
       const filled = result.status === 'reconciled-filled' || result.status === 'reconciled-inserted';
       assert.equal(needs, filled, `slotNeedsFill (${needs}) must match whether reconcile fills (${result.status})`);
     }
+  });
+});
+
+// ── canonical-refresh (AD-025 §1.6a/§1.9): push a NEW canon clause to FILLED-but-stale slots, preserve a
+//    customization, advise on the customized case. Covers BOTH the methodology + orchestration slots. ──
+describe('canonical-refresh — refresh a known-prior slot, preserve a customization', () => {
+  const PRIOR_METH = KNOWN_PRIOR_METHODOLOGY_SLOT[0];
+  const PRIOR_ORCH = KNOWN_PRIOR_ORCH_SLOT[0];
+  const NEW_METH = '> **Workflow methodology (new canon)** — see `/agent-workflow-kit procedures`. **Communication:** deliver the artifact inline.\n';
+  const NEW_ORCH = '> **Orchestration recipes (new canon)** — `/agent-workflow-kit recipes`; set it with `/agent-workflow-kit set-recipe`.\n';
+  const ENGINE_DIR = join(HERE, '..', '..', 'agent-workflow-engine');
+
+  it('methodology: a slot filled with a KNOWN PRIOR is refreshed to the new fragment', () => {
+    const stale = wrap(`\n${PRIOR_METH}\n`);
+    assert.equal(slotNeedsFill(stale), true, 'a stale slot needs the fragment re-sourced');
+    const out = reconcileSlot(stale, NEW_METH, { maxLines: AGENTS_MD_CAP });
+    assert.equal(out.status, 'reconciled-refreshed');
+    assert.equal(extractSlot(out.text).trim(), NEW_METH.trim());
+  });
+
+  it('methodology: a CUSTOMIZED slot is preserved verbatim (never matches a prior)', () => {
+    const custom = wrap('\n> my own methodology note\n');
+    assert.equal(slotNeedsFill(custom), false, 'a customization is not re-sourced');
+    const out = reconcileSlot(custom, NEW_METH, { maxLines: AGENTS_MD_CAP });
+    assert.equal(out.status, 'present-filled');
+    assert.equal(out.text, custom, 'a customization is never overwritten');
+  });
+
+  it('orchestration: a known-prior slot refreshes; a customized one is preserved', () => {
+    const stale = wrapDual('\nuser meth\n', `\n${PRIOR_ORCH}\n`);
+    assert.equal(markerSlotNeedsFill(stale, ORCHESTRATION_DESCRIPTOR), true);
+    const refreshed = reconcileMarkerSlot(stale, ORCHESTRATION_DESCRIPTOR, NEW_ORCH, { maxLines: AGENTS_MD_CAP });
+    assert.equal(refreshed.status, 'reconciled-refreshed');
+    assert.equal(extractOrch(refreshed.text).trim(), NEW_ORCH.trim());
+
+    const custom = wrapDual('\nuser meth\n', '\n> my own orch note\n');
+    assert.equal(markerSlotNeedsFill(custom, ORCHESTRATION_DESCRIPTOR), false);
+    assert.equal(reconcileMarkerSlot(custom, ORCHESTRATION_DESCRIPTOR, NEW_ORCH, { maxLines: AGENTS_MD_CAP }).status, 'present-filled');
+  });
+
+  it('a prior carrying trailing-space / CRLF noise still matches (normalized)', () => {
+    const trailing = reconcileSlot(wrap(`\n${PRIOR_METH}   \n`), NEW_METH, { maxLines: AGENTS_MD_CAP });
+    assert.equal(trailing.status, 'reconciled-refreshed', 'a trailing-space prior still matches');
+    const crlf = reconcileSlot(wrap(`\n${PRIOR_METH}\n`).replace(/\n/g, '\r\n'), NEW_METH, { maxLines: AGENTS_MD_CAP });
+    assert.equal(crlf.status, 'reconciled-refreshed', 'a CRLF-noisy prior still matches');
+  });
+
+  it('the line cap is still enforced AFTER a refresh (over-cap → error, input unchanged)', () => {
+    const stale = wrap(`\n${PRIOR_METH}\n`);
+    const out = reconcileSlot(stale, NEW_METH, { maxLines: 3 });
+    assert.equal(out.status, 'error');
+    assert.equal(out.text, stale, 'an over-cap refresh leaves the input unchanged');
+  });
+
+  it('a new/empty slot still FILLS (not refreshed) — regression', () => {
+    const out = reconcileSlot(wrap('\n'), NEW_METH, { maxLines: AGENTS_MD_CAP });
+    assert.equal(out.status, 'reconciled-filled');
+  });
+
+  // Drift-guard: the SHIPPED engine fragment (current) must refresh a current-minus-one slot.
+  it('current-minus-one → the SHIPPED new engine fragment (both slots)', () => {
+    const realMeth = readFileSync(join(ENGINE_DIR, 'references', 'methodology-slot.md'), 'utf8');
+    const realOrch = readFileSync(join(ENGINE_DIR, 'references', 'orchestration-slot.md'), 'utf8');
+    assert.notEqual(realMeth.trim(), PRIOR_METH, 'the shipped methodology fragment must differ from its prior');
+    assert.notEqual(realOrch.trim(), PRIOR_ORCH, 'the shipped orchestration fragment must differ from its prior');
+    const m = reconcileSlot(wrap(`\n${PRIOR_METH}\n`), realMeth, { maxLines: AGENTS_MD_CAP });
+    assert.equal(m.status, 'reconciled-refreshed');
+    assert.equal(extractSlot(m.text).trim(), realMeth.trim());
+    const o = reconcileMarkerSlot(wrapDual('\nuser\n', `\n${PRIOR_ORCH}\n`), ORCHESTRATION_DESCRIPTOR, realOrch, { maxLines: AGENTS_MD_CAP });
+    assert.equal(o.status, 'reconciled-refreshed');
+    assert.equal(extractOrch(o.text).trim(), realOrch.trim());
+  });
+});
+
+describe('markerSlotUpgradeHint — read-only advisory for a customized slot missing the new clause', () => {
+  it('methodology: a filled slot WITHOUT "Communication" gets the advice; with it → null', () => {
+    const without = wrap('\n> custom methodology note (no comms clause)\n');
+    const hint = markerSlotUpgradeHint(without, METHODOLOGY_DESCRIPTOR);
+    assert.match(hint, /communication-contract|deliver the artifact/);
+    const realMeth = readFileSync(join(HERE, '..', '..', 'agent-workflow-engine', 'references', 'methodology-slot.md'), 'utf8');
+    assert.ok(realMeth.includes('Communication'), 'the shipped methodology fragment carries the Communication clause');
+    const withClause = wrap(`\n${realMeth.trim()}\n`);
+    assert.equal(markerSlotUpgradeHint(withClause, METHODOLOGY_DESCRIPTOR), null, 'a slot already carrying the clause gets no advice');
+  });
+
+  it('orchestration: a customized slot missing the set-recipe pointer gets the advice; with it → null', () => {
+    const without = wrapDual('\nm\n', '\n> custom orch note, no set-recipe\n');
+    const hint = markerSlotUpgradeHint(without, ORCHESTRATION_DESCRIPTOR);
+    assert.match(hint, /read-at-start|set-recipe/);
+    const realOrch = readFileSync(join(HERE, '..', '..', 'agent-workflow-engine', 'references', 'orchestration-slot.md'), 'utf8');
+    const withClause = wrapDual('\nm\n', `\n${realOrch.trim()}\n`);
+    assert.equal(markerSlotUpgradeHint(withClause, ORCHESTRATION_DESCRIPTOR), null, 'a slot already carrying the clause gets no advice');
+  });
+
+  it('an empty / absent slot gets no advice', () => {
+    assert.equal(markerSlotUpgradeHint(wrapDual('\nm\n', '\n'), ORCHESTRATION_DESCRIPTOR), null);
+    assert.equal(markerSlotUpgradeHint('# AGENTS.md\nno slot\n', ORCHESTRATION_DESCRIPTOR), null);
   });
 });
 
