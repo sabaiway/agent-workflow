@@ -48,6 +48,8 @@ Produce a self-contained, cold-readable plan, reviewed to the configured depth b
    with exact paths and commands per Step. Bind to that structure; do not restate it here.
 3. **Self-review** — run the [`planning.md`](planning.md) §8 checklist (exact paths/commands, strict
    vocabulary, every out-of-plan recommendation folded into a Step, `queue.md` updated for a series).
+   Apply the [`planning.md`](planning.md) §9 lens — fold by code (read and cite the `file:line`), and
+   hold the right altitude.
 4. **review {recipe}** — review the draft at the depth the resolved `review` recipe selects: Solo
    (self-review only), Reviewed (one backend reviews), or Council (both backends review, you
    synthesize). The kit resolves the effective recipe from `docs/ai/orchestration.json` + readiness.
@@ -74,7 +76,9 @@ Execute an approved plan Step by Step; each Step is one logical commit.
    directly.
 3. **Implement / integrate** — apply the change (your own edits, or the reviewed delegated diff),
    following the project's reuse + clean-code rules.
-4. **Self-review** — run the [`planning.md`](planning.md) §8 self-review on the change.
+4. **Self-review** — run the [`planning.md`](planning.md) §8 self-review on the change, applying the
+   [`planning.md`](planning.md) §9 lens — fold by code (read and cite the `file:line`), and hold the
+   right altitude.
 5. **review {recipe}** — review the result at the resolved `review` depth (Solo / Reviewed / Council),
    exactly as in plan-authoring.
 6. **Gates** — run the project's verification gate (tests + checks) to green before committing.

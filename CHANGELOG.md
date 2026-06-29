@@ -7,6 +7,23 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-06-29 — engine 1.5.0 / memory 1.4.0 / kit 1.20.0
+
+- **Right-altitude & code-grounded methodology institutionalized in the canon.** Two planning/review
+  disciplines — right altitude (pin intent + invariants + acceptance; leave mechanics to Execute) and
+  fold-by-code (read + cite the `file:line` before folding a finding), plus the convergence heuristic —
+  now live in the engine canon (`planning.md` §9 + a §8 bullet; a terse §9 review-lens pointer in both
+  `procedures.md` activities) and the deployed self-review substrate (a §2.x lens in both `agent_rules.md`
+  templates). New guards pin them: a cross-package `lens-mirror` (shared vocabulary across all four files
+  + the byte-identical template block, non-vacuous), a new engine `planning-canon`, and an extended
+  `procedures-canon`. Lineage head stays `1.3.0`.
+  - **`@sabaiway/agent-workflow-engine@1.5.0`** — `planning.md` §9 + §8 bullet; `procedures.md` terse §9
+    lens in both activities; `test/planning-canon.test.mjs` + extended `test/procedures-canon.test.mjs`.
+  - **`@sabaiway/agent-workflow-memory@1.4.0`** — `agent_rules.md` §2.6 lens (path-neutral; byte-identical
+    to the kit block).
+  - **`@sabaiway/agent-workflow-kit@1.20.0`** — `agent_rules.md` §2.5 lens; cross-package
+    `test/lens-mirror.test.mjs` (region-scoped tokens + byte-identical block).
+
 ## 2026-06-29 — kit 1.19.0
 
 - **One-command freshness + capability-adaptive `status`.** `npx @sabaiway/agent-workflow-kit@latest
