@@ -4,6 +4,19 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.20.0 — Fallback-template lens + the cross-package lens-mirror guard (kit)
+
+A **feature** release. The kit's fallback `agent_rules.md` template gains the **§2.5 Right-altitude &
+code-grounded** lens (byte-identical to memory's §2.6 block), and a new cross-package
+`test/lens-mirror.test.mjs` ties the shared lens vocabulary across the engine canon (`planning.md` +
+`procedures.md`) AND both `agent_rules.md` templates: each distinctive token must survive in every file's
+lens **region**, and the two template blocks must stay byte-identical apart from the heading number. The
+deployment-lineage head stays **`1.3.0`** (no `docs/ai` structural change, no migration); the kit
+**package** version is a separate axis.
+
+- **Non-vacuous guard.** Deleting the lens block (or a distinctive token) from any of the four files
+  fails the guard — proven by an injected-divergence dry-run.
+
 ## 1.19.0 — One-command freshness: `init` refreshes memory too, and a capability-adaptive `status` (kit)
 
 A **feature** release that closes the returning-user gap and modernizes the status surface. The

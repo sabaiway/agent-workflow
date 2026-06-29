@@ -70,6 +70,11 @@ Apply this as part of §2 before any user-facing summary:
 - **No condescension, no filler.** Own a miss plainly and fix it in the same message.
 - **Large artifact (≈>100 lines):** deliver a real summary or the key excerpt inline **and** link the file — never flood the reader with a 2000-line paste, never hide the answer behind a bare pointer.
 
+### 2.6. Right-altitude & code-grounded (planning + review)
+- **Fold by code, not prose.** Before folding a code-touching finding into a plan or change, read the cited `file:line` and cite it — a prose fold drifts from the code and seeds the next bug.
+- **Right altitude.** Pin intent + invariants + acceptance criteria (named tests); leave fine code-mechanics to Execute, where prose cannot diverge from reality.
+- **Convergence heuristic.** When a review round keeps finding mechanism issues on a stable architecture, stop refining prose — raise the altitude or hand it to Execute. (Full canon: the project's planning methodology / workflow-methodology canon.)
+
 ---
 
 ## 3. Token & Session Optimization

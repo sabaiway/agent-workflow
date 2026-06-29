@@ -61,6 +61,11 @@ Before proposing changes or committing, review against:
 ### 2.4. Quality Gates
 - Always run type-checker, linter, and all tests before committing.
 
+### 2.5. Right-altitude & code-grounded (planning + review)
+- **Fold by code, not prose.** Before folding a code-touching finding into a plan or change, read the cited `file:line` and cite it — a prose fold drifts from the code and seeds the next bug.
+- **Right altitude.** Pin intent + invariants + acceptance criteria (named tests); leave fine code-mechanics to Execute, where prose cannot diverge from reality.
+- **Convergence heuristic.** When a review round keeps finding mechanism issues on a stable architecture, stop refining prose — raise the altitude or hand it to Execute. (Full canon: the project's planning methodology / workflow-methodology canon.)
+
 ---
 
 ## 3. Token & Session Optimization

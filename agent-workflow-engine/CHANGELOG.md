@@ -4,6 +4,23 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.5.0 — Right-altitude & code-grounded folds in the canon
+
+A **feature** release. The planning canon (`references/planning.md`, read **live** by the composition
+root) gains a `## 9. Right-altitude & code-grounded folds` section + a §8 self-review bullet; the
+activity-procedures canon (`references/procedures.md`) weaves a terse §9 review-lens pointer into the
+rendered Self-review steps of **both** activities (binding to §9, not restating it). Two guards pin the
+disciplines: a new `test/planning-canon.test.mjs` and an extended `test/procedures-canon.test.mjs`. The
+deployment-lineage head stays **`1.3.0`** (no `docs/ai` structural change); the npm package version is a
+separate axis.
+
+- **Right altitude.** A plan pins intent + architecture + invariants + acceptance criteria; fine
+  code-mechanics are resolved at Execute, not spelled out in prose.
+- **Fold by code, not prose.** Before folding a code-touching finding, read the cited `file:line` and cite it.
+- **Convergence heuristic.** A stable architecture + recurring code-mechanism findings ⇒ raise the
+  altitude or hand the mechanics to Execute.
+- The procedures lens stays a terse pointer (the terseness invariant holds: `procedures.md` < `planning.md`).
+
 ## 1.4.0 — Durable session contracts in the canon: read-at-start, Definition of Done, communication
 
 A **feature** release. The activity-procedures canon (`references/procedures.md`, read **live** by the

@@ -75,6 +75,17 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     );
   });
 
+  it('pins the §9 review lens inside both activity sections', () => {
+    const planAuthoring = sectionOf(procedures, 'plan-authoring');
+    const planExecution = sectionOf(procedures, 'plan-execution');
+
+    for (const section of [planAuthoring, planExecution]) {
+      assert.match(section, /fold by code/i, 'section carries the fold-by-code lens');
+      assert.match(section, /planning\.md/, 'section references planning.md');
+      assert.match(section, /§9/, 'section references planning.md §9');
+    }
+  });
+
   it('carries the load-bearing "Delegated → dispatch first" phrasing', () => {
     assert.match(
       procedures,

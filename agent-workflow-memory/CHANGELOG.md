@@ -4,6 +4,20 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.4.0 — §2.6 right-altitude & code-grounded lens (memory)
+
+A **feature** release. The `agent_rules.md` substrate gains a **§2.6 Right-altitude & code-grounded
+(planning + review)** self-review subsection — fold by code (read + cite the `file:line`), pin
+intent/invariants/acceptance, and the convergence heuristic. Wording is **path-neutral** (the substrate
+"knows nobody": it points at "the project's planning methodology / workflow-methodology canon", never a
+sibling/engine path). The deployment-lineage head stays **`1.3.0`** (no `docs/ai` structural change, no
+migration file); the npm package version is a separate axis.
+
+- **Seed-or-preserve only (unchanged contract).** A NEW deployment gets the §2.6 lens from the seed;
+  refreshing an already-deployed file is the composition root's job.
+- **Template parity preserved** — the §2.6 block body stays byte-identical to the kit fallback template
+  (only the heading number differs), pinned by the kit's cross-package `lens-mirror.test.mjs`.
+
 ## 1.3.0 — Agent-writable config note; §2.5 Communication (memory)
 
 A **feature** release. The seeded `docs/ai/orchestration.json` note now frames the config as

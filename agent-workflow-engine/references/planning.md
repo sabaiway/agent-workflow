@@ -103,3 +103,14 @@ The volume trigger above (files / LoC / tokens) is necessary but not sufficient.
 - Vocabulary is strict (§1); the Plan ends with **Phase N: Cleanup** (§4).
 - If part of a series: `queue.md` is initialised / updated (§3).
 - No `git add <plan>` and no "commit the plan" wording in the final report.
+- Every code-touching decision cites the `file:line` it is grounded in; the plan stays at intent / invariant / acceptance altitude, leaving fine code-mechanics to Execute (§9).
+
+## 9. Right-altitude & code-grounded folds
+
+Two disciplines keep a plan converging instead of churning. They govern authoring, every review round, and execution.
+
+**Right altitude.** A plan pins *intent + architecture + invariants + acceptance criteria* — the named tests that must stay green and the new tests that must pass. It does NOT spell out fine code-mechanics in prose: those are resolved in code at Execute (against the real files + the per-Step review + the gates), where prose cannot diverge from reality. Most "blockers" that resurface across review rounds are code-level details that never belonged in a prose plan.
+
+**Fold by code, not prose.** Before folding any code-touching finding into the plan, READ the cited `file:line`; the fold cites it. A fold grounded in prose alone drifts from the code and seeds the next bug.
+
+**Convergence heuristic.** When a review round keeps finding code-mechanism issues on a stable architecture, STOP refining prose — either raise the spec to invariant + acceptance altitude, or hand the mechanics to Execute. Do not re-litigate code mechanics in the plan.
