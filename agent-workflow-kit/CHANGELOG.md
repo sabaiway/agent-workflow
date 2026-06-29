@@ -4,6 +4,34 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.19.0 — One-command freshness: `init` refreshes memory too, and a capability-adaptive `status` (kit)
+
+A **feature** release that closes the returning-user gap and modernizes the status surface. The
+deployment-lineage head stays **`1.3.0`** (no `docs/ai` structural change, no migration); the kit
+**package** version is a separate axis.
+
+- **`init` now leaves no stale core member.** After installing/refreshing the kit, `npx
+  @sabaiway/agent-workflow-kit@latest init` also refreshes the **memory substrate** and the
+  **methodology engine** over npm — so a returning user is no longer left with silently stale memory.
+  The memory refresh is **best-effort: a miss is a loud DEGRADED success** — a warning with the exact
+  recovery command (and the on-disk version) plus **exit 0**, never a silent skip and never the engine's
+  hard STOP. New **`--no-memory`** flag skips it for air-gapped/scripted installs. The cascade
+  membership is derived from the one family registry and drift-guarded; bridges are still placed by
+  `setup`, never by `init`.
+- **Capability-adaptive `status` output.** The direct-CLI status view (`node tools/family-registry.mjs`)
+  is rebuilt as a `surface → view-model → renderers` pipeline: it auto-detects the terminal (plain vs
+  ANSI, color via `NO_COLOR`/`FORCE_COLOR`, width with a 40-col floor, ASCII-glyph fallback) and renders
+  all four blocks (members · bridges · project deploy/visibility · settings). `--format=<auto|plain|ansi|json>`
+  (with `--json` as sugar) selects the surface; unknown flags and a missing `--dir` value now **reject
+  loudly** instead of being silently ignored.
+- **Additive `--json` freshness signal.** Each `installed[]` entry gains a structural `refresh`
+  `{ behind, recommend }` object (derived from the registry, never parsed from a caveat). The
+  agent-mediated `/agent-workflow-kit status` reads it to show a localized "needs refresh" label + the
+  exact command **once**; every existing envelope field is unchanged.
+- **Docs.** Install help + READMEs document the memory/engine refresh, `--no-memory`, the degraded-success
+  recovery, and that bridges are not installed by `init`. Tarball **75 → 81** (the pure member-table leaf
+  + five status-presenter modules).
+
 ## 1.18.0 — Agent-writable orchestration config (`set-recipe`), version-aware setup, durable session contracts (kit)
 
 A **feature** release. The per-project recipe config (`docs/ai/orchestration.json`) is no longer

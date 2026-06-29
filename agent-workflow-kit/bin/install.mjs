@@ -18,9 +18,13 @@
 // compares the version already on disk (the installed SKILL.md) against this runner's own version,
 // never the registry — which is why `@latest` (above) is the documented form: a bare `npx … init`
 // can reuse an OLDER cached build of this installer, so a returning user must bypass the cache to
-// actually upgrade (see decisions.md AD-012). One step DOES contact a server: `init` fetches and
-// installs the methodology engine the kit reads live (`npx @sabaiway/agent-workflow-engine@latest
-// init`), skippable with `--no-engine` (Plan 3D / AD-016). No tracking either way.
+// actually upgrade (see decisions.md AD-012). Two steps DO contact a server: after the kit copy,
+// `init` cascades the other npm-installable CORE members so a returning run leaves NO stale core
+// member — the memory substrate (`npx @sabaiway/agent-workflow-memory@latest init`, best-effort: a
+// failure is a loud DEGRADED success, never silent — skippable with `--no-memory`) and the
+// methodology engine the kit reads live (`npx @sabaiway/agent-workflow-engine@latest init`, fatal —
+// the live read STOPs without it — skippable with `--no-engine`). The bridges are NOT installed by
+// `init` (placed by `/agent-workflow-kit setup`). No tracking either way.
 //
 // Dependency-free, Node >= 18.
 
@@ -31,6 +35,11 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { copyTreeRefresh } from '../tools/fs-safe.mjs';
+// The ONE registry of family members (npm packages, kinds). The init-refresh cascade derives its
+// membership from this table — no second source of "who gets refreshed" — so it can't drift from the
+// manifests (a drift-guard test pins the derivation). Imported from the DATA LEAF (family-members.mjs),
+// NOT family-registry.mjs, so the npx cold-start path stays lean (no status/presenter graph pulled in).
+import { FAMILY_MEMBERS } from '../tools/family-members.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
@@ -146,6 +155,7 @@ const parseArgs = (argv) => {
     help: argv.includes('--help') || argv.includes('-h'),
     version: argv.includes('--version') || argv.includes('-v'),
     noLaunchers: argv.includes('--no-launchers'),
+    noMemory: argv.includes('--no-memory'),
     noEngine: argv.includes('--no-engine'),
     force: argv.includes('--force'),
     allowDowngrade: argv.includes('--allow-downgrade'),
@@ -153,47 +163,72 @@ const parseArgs = (argv) => {
   };
 };
 
-// Mandatory engine install (Plan 3D / AD-016). The kit reads the methodology fragment LIVE from the
-// installed agent-workflow-engine, so init places it as a CORE part of the kit (not an optional
-// execution-backend — this deliberately diverges from AD-011 §5). It is fetched over npm, consistent
-// with the kit's own npx install context; NO engine canon is bundled into the kit (that would
-// re-create the mirror Plan 3D deletes). --no-engine skips it for air-gapped/scripted installs.
-export const ENGINE_PACKAGE = '@sabaiway/agent-workflow-engine';
+// Init-refresh cascade (Plan 3D / AD-016 for the engine; the memory cascade closes the
+// returning-user "no stale core member" journey). After the kit copy, init refreshes the OTHER
+// npm-installable CORE members — the memory substrate + the methodology engine — each over npm,
+// consistent with the kit's own npx install context (NO engine/memory canon is bundled into the kit;
+// that would re-create the mirror Plan 3D deletes). The npm package names are read from the ONE
+// registry (FAMILY_MEMBERS) so there is no second source of truth. --no-memory / --no-engine skip
+// each for air-gapped/scripted installs.
+const npmFor = (name) => {
+  const member = FAMILY_MEMBERS.find((m) => m.name === name);
+  if (!member?.npm) throw new Error(`[agent-workflow-kit] no npm package registered for ${name}`);
+  return member.npm;
+};
+export const ENGINE_PACKAGE = npmFor('agent-workflow-engine');
+export const MEMORY_PACKAGE = npmFor('agent-workflow-memory');
 
-// The exact command + argv to install the engine. Windows resolution: spawn `npx.cmd` on win32,
-// `npx` elsewhere, WITHOUT shell:true (no shell-parse overhead/inconsistency; the repo has no
-// npx-spawn precedent to inherit a shell from). Pure → unit-tested in-process, no network.
-export const engineInstallArgv = (platform) => ({
+// The npm-installable core members the cascade refreshes, DERIVED from FAMILY_MEMBERS (every npm
+// member that is neither the kit — the composition root this very runner installs — nor an
+// execution-backend, which `setup` places, not init). Order + policy are part of the contract:
+// NON-FATAL first (memory — a miss is a degraded success), then FATAL (engine — the live methodology
+// read STOPs without it), so a hard engine failure never pre-empts the best-effort memory refresh.
+// A drift-guard test pins this derivation, so adding a future npm core member can't silently bypass
+// the cascade. Per-member messaging stays explicit in main() (the degraded-vs-STOP wording differs).
+const FATAL_KINDS = new Set(['methodology-engine']);
+export const cascadePlan = () =>
+  FAMILY_MEMBERS
+    .filter((m) => m.npm && m.kind !== 'execution-backend' && m.name !== 'agent-workflow-kit')
+    .map((m) => ({ name: m.name, npm: m.npm, fatal: FATAL_KINDS.has(m.kind) }))
+    .sort((a, b) => Number(a.fatal) - Number(b.fatal)); // non-fatal (memory) before fatal (engine)
+
+// The exact command + argv to install a member over npx. Windows resolution: spawn `npx.cmd` on
+// win32, `npx` elsewhere, WITHOUT shell:true (no shell-parse overhead/inconsistency; the repo has no
+// npx-spawn precedent to inherit a shell from). `@latest` exactly — never a pinned version, so the
+// cascade always fetches the newest published member. Pure → unit-tested in-process, no network.
+export const memberInstallArgv = (npmPackage, platform) => ({
   command: platform === 'win32' ? 'npx.cmd' : 'npx',
-  args: [`${ENGINE_PACKAGE}@latest`, 'init'],
+  args: [`${npmPackage}@latest`, 'init'],
   options: { stdio: 'inherit' }, // note: no `shell: true`
 });
+export const engineInstallArgv = (platform) => memberInstallArgv(ENGINE_PACKAGE, platform);
+export const memoryInstallArgv = (platform) => memberInstallArgv(MEMORY_PACKAGE, platform);
 
 // The default runner — the only place that actually spawns. Injected in tests so the suite never
 // hits the network.
-const spawnEngine = ({ command, args, options }) => spawnSync(command, args, options);
+const spawnMember = ({ command, args, options }) => spawnSync(command, args, options);
 
 // Synchronous backoff before the single retry. The common first-attempt failure is a TRANSIENT
 // npm/network blip (rate-limit, registry hiccup, momentary DNS) — an immediate retry tends to hit the
 // same blip, so wait briefly first. Atomics.wait is a dependency-free sync sleep (the install flow is
 // already synchronous here). Injected in tests as a 0ms no-op so the suite never actually sleeps.
-const ENGINE_RETRY_DELAY_MS = 1500;
+const RETRY_DELAY_MS = 1500;
 const sleepSync = (ms) => {
   if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 };
 
 // D1 failure policy: attempt → wait → retry-once → fail. Retry exactly once before giving up. Pure
 // aside from the injected runner/sleep; returns { ok } so the caller prints the loud manual-recovery
-// message + nonzero exit on a hard failure (the kit is already on disk — recovery is one step; never
-// a silent skip).
-export const installEngine = (platform, runner, { sleep = sleepSync, retryDelayMs = ENGINE_RETRY_DELAY_MS } = {}) => {
-  const descriptor = engineInstallArgv(platform);
-  const ranOk = (label) => {
+// message (the engine's nonzero exit, the memory's degraded warning) on a hard failure (the kit is
+// already on disk — recovery is one step; never a silent skip). `label` names the member in the
+// per-attempt warning (e.g. "methodology engine", "memory substrate").
+const installMember = (label, descriptor, runner, { sleep = sleepSync, retryDelayMs = RETRY_DELAY_MS } = {}) => {
+  const ranOk = (attempt) => {
     const res = runner(descriptor);
     const ok = (res?.status ?? 1) === 0 && !res?.error;
     if (!ok) {
       const why = res?.error ? `: ${res.error.message}` : ` (exit ${res?.status ?? 'unknown'})`;
-      console.warn(`[agent-workflow-kit] methodology engine install ${label} failed${why}.`);
+      console.warn(`[agent-workflow-kit] ${label} install ${attempt} failed${why}.`);
     }
     return ok;
   };
@@ -203,17 +238,47 @@ export const installEngine = (platform, runner, { sleep = sleepSync, retryDelayM
   return { ok: false };
 };
 
+export const installEngine = (platform, runner, opts = {}) =>
+  installMember('methodology engine', engineInstallArgv(platform), runner, opts);
+export const installMemory = (platform, runner, opts = {}) =>
+  installMember('memory substrate', memoryInstallArgv(platform), runner, opts);
+
 const resolveTarget = (dirArg) => {
   if (dirArg) return resolve(dirArg);
   if (process.env.AGENT_WORKFLOW_KIT_DIR) return resolve(process.env.AGENT_WORKFLOW_KIT_DIR);
   return resolve(homedir(), '.claude/skills/agent-workflow-kit');
 };
 
+// Where the memory substrate lives — its env override else its home-relative default, both read from
+// the ONE registry (FAMILY_MEMBERS), expanding a leading `~/`. Used only by the DEGRADED warning to
+// report the on-disk memory version after a refresh miss (init never WRITES here — that is memory's
+// own installer's job). getenv/home injectable for hermetic tests.
+const resolveMemoryTarget = (getenv = process.env, home = homedir()) => {
+  const member = FAMILY_MEMBERS.find((m) => m.name === 'agent-workflow-memory');
+  const envDir = getenv[member.installed.env];
+  if (envDir) return resolve(envDir);
+  const dflt = member.installed.default;
+  return dflt.startsWith('~/') ? resolve(home, dflt.slice(2)) : resolve(dflt);
+};
+
+// Crash-proof on-disk version read for the degraded memory warning: readInstalledVersion returns null
+// for an ABSENT SKILL.md and THROWS for a present-but-UNREADABLE one — but the warning must NEVER
+// become fatal, so any throw is swallowed to null here. Both branches (absent → null directly,
+// unreadable → caught → null) keep the warning best-effort and exit 0 (degraded success, no silent
+// skip). Returns the semver string or null.
+export const readMemberVersionSafe = async (dir) => {
+  try {
+    return await readInstalledVersion(dir);
+  } catch {
+    return null;
+  }
+};
+
 const printHelp = (version) => {
   console.log(`agent-workflow-kit ${version}
 
 Usage:
-  npx @sabaiway/agent-workflow-kit@latest init [--dir <path>] [--no-launchers] [--no-engine] [--force] [--allow-downgrade]
+  npx @sabaiway/agent-workflow-kit@latest init [--dir <path>] [--no-launchers] [--no-memory] [--no-engine] [--force] [--allow-downgrade]
   npx @sabaiway/agent-workflow-kit@latest --version
   npx @sabaiway/agent-workflow-kit@latest --help
 
@@ -222,11 +287,15 @@ Use the @latest form: a bare \`npx … init\` (no @latest) can reuse an OLDER ca
 
 Installs/refreshes the kit at ~/.claude/skills/agent-workflow-kit
   (override with --dir <path> or AGENT_WORKFLOW_KIT_DIR), then wires any
-  Codex / Devin Desktop you have, then installs the methodology engine the kit reads
-  live (npx ${ENGINE_PACKAGE}@latest init). --no-launchers skips the
-  launcher wiring; --no-engine skips the engine install (the live methodology read then
-  STOPs until you install it by hand); --force replaces a pre-existing non-kit launcher
-  file (backed up first). init is additive — it never deletes your settings. If the
+  Codex / Devin Desktop you have, then refreshes the other npm core members so no stale
+  one is left behind: the memory substrate (npx ${MEMORY_PACKAGE}@latest init)
+  and the methodology engine the kit reads live (npx ${ENGINE_PACKAGE}@latest init).
+  --no-launchers skips the launcher wiring; --no-memory skips the memory refresh (if it is
+  stale, refresh it yourself + restart — a miss is otherwise a non-fatal degraded success,
+  never the engine's hard STOP); --no-engine skips the engine install (the live methodology
+  read then STOPs until you install it by hand); --force replaces a pre-existing non-kit
+  launcher file (backed up first). The bridges are NOT installed by init (placed by
+  /agent-workflow-kit setup). init is additive — it never deletes your settings. If the
   installed kit is newer than the version you ran, init refuses (no network — it compares
   the version on disk) and points you at @latest; --allow-downgrade overrides that
   refusal (distinct from --force, which is launcher-only).
@@ -335,9 +404,35 @@ const main = async () => {
     }
   }
 
-  // Mandatory engine install — AFTER the kit + launchers but BEFORE the success block, so a failure
-  // never first claims everything succeeded. The kit reads the methodology fragment live from the
-  // installed engine; this places it (over npm, no canon bundled into the kit). --no-engine opts out.
+  // Memory substrate refresh — AFTER the kit + launchers, BEFORE the (fatal) engine and the success
+  // block, so a returning `init` leaves no stale memory. Unlike the engine, a memory miss is a
+  // DEGRADED success: warn with the exact recovery command + the on-disk version (read crash-proof)
+  // and keep exit 0 — never silently skip (Hard Constraint), never the engine's hard STOP.
+  const memoryCmd = `npx ${MEMORY_PACKAGE}@latest init`;
+  if (args.noMemory) {
+    console.log(
+      `[agent-workflow-kit] --no-memory: skipped refreshing the memory substrate. If it is stale, ` +
+        `refresh it yourself and restart the session:\n    ${memoryCmd}`,
+    );
+  } else {
+    console.log(`[agent-workflow-kit] refreshing the memory substrate: ${memoryCmd}`);
+    const memory = installMemory(process.platform, spawnMember);
+    if (memory.ok) {
+      console.log('[agent-workflow-kit] memory substrate refreshed.');
+    } else {
+      const onDisk = await readMemberVersionSafe(resolveMemoryTarget());
+      const where = onDisk ? `on disk: v${onDisk}` : 'not found on disk';
+      console.warn(
+        `[agent-workflow-kit] could not refresh the memory substrate (${where}) — continuing; the ` +
+          `kit itself IS installed and works. To get the latest memory, run it yourself and restart ` +
+          `the session:\n    ${memoryCmd}`,
+      );
+    }
+  }
+
+  // Mandatory engine install — AFTER the kit + launchers + memory but BEFORE the success block, so a
+  // failure never first claims everything succeeded. The kit reads the methodology fragment live from
+  // the installed engine; this places it (over npm, no canon bundled into the kit). --no-engine opts out.
   const engineCmd = `npx ${ENGINE_PACKAGE}@latest init`;
   if (args.noEngine) {
     console.log(
@@ -347,7 +442,7 @@ const main = async () => {
     );
   } else {
     console.log(`[agent-workflow-kit] installing the methodology engine the kit reads live: ${engineCmd}`);
-    const engine = installEngine(process.platform, spawnEngine);
+    const engine = installEngine(process.platform, spawnMember);
     if (!engine.ok) {
       // D1: two attempts failed → loud error + concrete recommendations + nonzero exit. The kit IS on
       // disk, so recovery is one step. Never a silent skip (Hard Constraint: no silent failures).

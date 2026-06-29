@@ -41,73 +41,52 @@ import {
   readSettingsFile,
   resolveEffectiveMode,
 } from './velocity-profile.mjs';
+// The status vocabulary (manifestState constants, internal→public maps, display names, the no-leak
+// forbidden set) lives in the frozen labels.mjs LEAF (Plan §4.2 B1) so the import graph is acyclic —
+// nothing imports family-registry for vocabulary. Imported here for internal use; the public subset is
+// re-exported below.
+import {
+  NOT_INSTALLED,
+  UNSUPPORTED_SCHEMA,
+  INVALID_MANIFEST,
+  STUB,
+  FOREIGN,
+  OK,
+  UNKNOWN,
+  STATE_PUBLIC,
+  VISIBILITY_PUBLIC,
+  DISPLAY_NAMES,
+  displayOf,
+} from './labels.mjs';
+// The capability-adaptive direct-CLI presenter (Plan §4.2/§4.5): the surface detector, the
+// envelope→ViewModel transform, and the plain/ansi renderers. main() composes them; the agent-mediated
+// `status` surface ignores them (it consumes --json). These are leaves — no import cycle.
+import { detectSurface } from './surface.mjs';
+import { toViewModel } from './view-model.mjs';
+import { render } from './renderers.mjs';
 
-// ── manifestState values (the detect-backends precedence, generalized to any member kind) ──────────
-export const NOT_INSTALLED = 'not-installed';
-export const UNSUPPORTED_SCHEMA = 'unsupported-schema';
-export const INVALID_MANIFEST = 'invalid-manifest';
-export const STUB = 'stub';
-export const FOREIGN = 'foreign';
-export const OK = 'ok';
-// The marker could not be probed (a non-ENOENT fs error — EACCES/EIO). Surfaced explicitly instead of
-// being masked as not-installed (no silent failure); uninstall treats it as "do not touch" (skip).
-export const UNKNOWN = 'unknown';
+// ── manifestState values — re-export the EXACT public subset family-registry exported before B1 ─────
+// (the 7 state constants + DISPLAY_NAMES) so every existing importer (uninstall.mjs, the test suites)
+// stays green. STATE_PUBLIC / VISIBILITY_PUBLIC / displayOf were private here and are NOT re-exported.
+export {
+  NOT_INSTALLED,
+  UNSUPPORTED_SCHEMA,
+  INVALID_MANIFEST,
+  STUB,
+  FOREIGN,
+  OK,
+  UNKNOWN,
+  DISPLAY_NAMES,
+};
 
 // ── the unified registry ───────────────────────────────────────────────────────
-// One entry per family member. `installed` is the detect.installed spec (env + home-relative default
-// + marker file); `deployed` is the project-relative stamp a deploy writes (kit + memory only);
-// `npm` is the install package (null for the bridges, which are placed by `setup`, not npm);
-// `wrapperCmds` is the deduped roles[].cmd set the `setup` linker creates on PATH (bridges only).
-// Kept in lockstep with the 5 in-repo capability.json by the drift-guard test. The two release skills
-// (release-engineering / release-marketing) are deliberately NOT here — they are not family members
-// (AD-013): no capability.json, not in the kit tarball, not in the role vocabulary.
-export const FAMILY_MEMBERS = [
-  {
-    name: 'agent-workflow-kit',
-    kind: 'composition-root',
-    installed: { env: 'AGENT_WORKFLOW_KIT_DIR', default: '~/.claude/skills/agent-workflow-kit', file: 'SKILL.md' },
-    deployed: { file: 'docs/ai/.workflow-version' },
-    npm: '@sabaiway/agent-workflow-kit',
-    wrapperCmds: [],
-  },
-  {
-    name: 'agent-workflow-memory',
-    kind: 'memory-substrate',
-    installed: { env: 'AGENT_WORKFLOW_MEMORY_DIR', default: '~/.claude/skills/agent-workflow-memory', file: 'SKILL.md' },
-    deployed: { file: 'docs/ai/.memory-version' },
-    npm: '@sabaiway/agent-workflow-memory',
-    wrapperCmds: [],
-  },
-  {
-    name: 'agent-workflow-engine',
-    kind: 'methodology-engine',
-    installed: { env: 'AGENT_WORKFLOW_ENGINE_DIR', default: '~/.claude/skills/agent-workflow-engine', file: 'SKILL.md' },
-    deployed: null,
-    npm: '@sabaiway/agent-workflow-engine',
-    wrapperCmds: [],
-  },
-  {
-    name: 'codex-cli-bridge',
-    kind: 'execution-backend',
-    installed: { env: 'CODEX_CLI_BRIDGE_DIR', default: '~/.claude/skills/codex-cli-bridge', file: 'SKILL.md' },
-    deployed: null,
-    npm: null,
-    wrapperCmds: ['codex-exec', 'codex-review'],
-  },
-  {
-    name: 'antigravity-cli-bridge',
-    kind: 'execution-backend',
-    installed: { env: 'ANTIGRAVITY_CLI_BRIDGE_DIR', default: '~/.claude/skills/antigravity-cli-bridge', file: 'SKILL.md' },
-    deployed: null,
-    npm: null,
-    wrapperCmds: ['agy-run'],
-  },
-];
-
-// A GLOBAL skill (lives under ~/.claude/skills) may be shared by other projects on the host — the
-// uninstaller warns before removing one (there is no cross-project dependency tracking). All current
-// members are global skills; the field is explicit so the warning is data-driven, not hardcoded.
-export const isGlobalSkill = (member) => member.kind !== undefined; // every member is a global skill today
+// FAMILY_MEMBERS (+ isGlobalSkill) is the one authoritative member table. It moved to the
+// dependency-free DATA LEAF family-members.mjs so the npx installer can derive its init-refresh cascade
+// from the table WITHOUT importing this whole status/presenter graph (a leaner npx cold-start path).
+// Re-exported here so every existing importer (uninstall.mjs, the test suites) stays green, and the
+// drift-guard (family-registry.test.mjs) still pins the table to the 5 in-repo capability.json.
+export { FAMILY_MEMBERS, isGlobalSkill } from './family-members.mjs';
+import { FAMILY_MEMBERS } from './family-members.mjs';
 
 // ── pure probes ──────────────────────────────────────────────────────────────────
 // Wrapped marker probe → 'present' (a regular file) | 'absent' (ENOENT / not a regular file) |
@@ -268,62 +247,10 @@ export const surveyProject = (projectDir, deps = {}) => {
 };
 
 // ── report ───────────────────────────────────────────────────────────────────────
-const pad = (s, n) => (s.length >= n ? s : s + ' '.repeat(n - s.length));
-
-// The human (non-JSON) settings render. A dev view — the agent consumes `--json` + renders in plain
-// language (Mode: status). Each area shows its `error` field loudly when one fired.
-const formatSettings = (s) => {
-  const out = ['', 'settings'];
-  if (s.recipes?.error) out.push(`  ${pad('recipes', 14)}error: ${s.recipes.error}`);
-  else {
-    const parts = [];
-    for (const [act, slots] of Object.entries(s.recipes?.activities ?? {})) {
-      for (const [slot, r] of Object.entries(slots)) parts.push(`${act}.${slot}=${r.recipe}`);
-    }
-    out.push(`  ${pad('recipes', 14)}${parts.join(' · ') || '—'}`);
-    if (s.recipes?.detectError) out.push(`  ${pad('', 14)}↳ couldn't check backends (${s.recipes.detectError}); recipes floored at solo`);
-  }
-  if (s.attribution?.error) out.push(`  ${pad('attribution', 14)}error: ${s.attribution.error}`);
-  else out.push(`  ${pad('attribution', 14)}includeCoAuthoredBy effective=${String(s.attribution?.effective)}`);
-  if (s.velocity?.error) out.push(`  ${pad('velocity', 14)}error: ${s.velocity.error}`);
-  else out.push(`  ${pad('velocity', 14)}defaultMode=${String(s.velocity?.defaultMode)} · allow project/local=${s.velocity?.allowEntries?.project}/${s.velocity?.allowEntries?.local}`);
-  return out;
-};
-
-export const formatStatus = (family, project = null, extras = {}) => {
-  const lines = ['agent-workflow family — installed skills (skill axis)', ''];
-  for (const m of family) {
-    const ver = m.version ? `v${m.version}` : '—';
-    lines.push(`  ${pad(m.name, 26)}[${pad(m.manifestState, 16)}] ${pad(ver, 10)} ${m.kind}`);
-    for (const c of m.caveats ?? []) lines.push(`      ↳ ${c}`);
-  }
-  if (extras.bridges) {
-    const WRAP_MARK = { present: '✓', missing: '✗', unknown: '?' };
-    lines.push('', 'execution backends (host)', '');
-    for (const b of extras.bridges) {
-      const w = b.wrappers.map((x) => `${x.cmd} ${WRAP_MARK[x.state] ?? '?'}`).join(', ') || '—';
-      lines.push(`  ${pad(b.display, 20)}${pad(b.readiness, 18)}wrappers: ${w}`);
-    }
-  }
-  if (project) {
-    lines.push('', `project deployment (${project.dir})`, '');
-    if (!project.deployed) {
-      lines.push('  no agent-workflow deployment detected here (no docs/ai, no version stamp).');
-    } else {
-      for (const s of project.stamps) {
-        lines.push(`  ${pad(s.file, 26)}${s.version ?? '—'}`);
-      }
-      lines.push(`  ${pad('docs/ai present', 26)}${project.docsAiPresent ? 'yes' : 'no'}`);
-      if (extras.visibility) {
-        lines.push(`  ${pad('visibility', 26)}${extras.visibility.error ? `error: ${extras.visibility.error}` : extras.visibility.state}`);
-      } else {
-        lines.push(`  ${pad('hidden-mode fence', 26)}${project.hiddenFence ? 'present' : 'absent'}`);
-      }
-    }
-    if (extras.settings) lines.push(...formatSettings(extras.settings));
-  }
-  return lines.join('\n');
-};
+// The direct-CLI human render (formatStatus + formatSettings) was REPLACED by the capability-adaptive
+// presenter pipeline (surface → view-model → renderers, Plan §4.2/§4.5): main() builds the no-leak
+// envelope once, then renders it via toViewModel + render (plain/ansi) or prints it as JSON. ONE data
+// source for both surfaces — the agent-mediated `status` consumes `--json`, the direct CLI renders it.
 
 // ── the no-leak --json envelope ──────────────────────────────────────────────────
 // A machine-readable view with USER-SAFE field names only — NEVER the internal manifestState /
@@ -331,28 +258,8 @@ export const formatStatus = (family, project = null, extras = {}) => {
 // consumes THIS, never the human table verbatim. An envelope-shape test pins its shape so later phases
 // (the settings/visibility block) can't silently break the Phase-2 version consumer.
 
-// internal manifestState → a STABLE, user-safe token (SKILL.md owns the value→plain-language phrasing).
-// Deliberately NOT the internal literals (foreign/stub/…): those must never leak past this boundary.
-const STATE_PUBLIC = {
-  [OK]: 'installed',
-  [NOT_INSTALLED]: 'absent',
-  [FOREIGN]: 'other-tool',
-  [STUB]: 'placeholder',
-  [INVALID_MANIFEST]: 'invalid',
-  [UNSUPPORTED_SCHEMA]: 'unsupported',
-  [UNKNOWN]: 'uncheckable',
-};
-
-// Short, user-facing labels for the version block (kit · memory · engine · codex-bridge · …), so the
-// render is deterministic and the agent never invents a label.
-export const DISPLAY_NAMES = {
-  'agent-workflow-kit': 'kit',
-  'agent-workflow-memory': 'memory',
-  'agent-workflow-engine': 'engine',
-  'codex-cli-bridge': 'codex-bridge',
-  'antigravity-cli-bridge': 'antigravity-bridge',
-};
-const displayOf = (name) => DISPLAY_NAMES[name] ?? name;
+// STATE_PUBLIC (internal→public token map) + DISPLAY_NAMES + displayOf now live in labels.mjs (B1) —
+// imported at the top of this file. They are used below exactly as before.
 
 // ── the settings survey (Phase 3) — read-only, honest, localized-on-error ──────────
 // Each sub-survey returns a small user-safe object OR a single `{ error }` field (a localized message,
@@ -380,8 +287,8 @@ const detectSafe = (deps) => {
 };
 
 // visibility: the THREE honest states from inferVisibility (NOT the single hiddenFence bit) → user-safe
-// words. Never the internal "hidden fence" / marker terms. A git/probe error → a localized error field.
-const VISIBILITY_PUBLIC = { visible: 'visible', hidden: 'hidden', ambiguous: 'unclear' };
+// words (VISIBILITY_PUBLIC, from labels.mjs). Never the internal "hidden fence" / marker terms. A
+// git/probe error → a localized error field.
 export const surveyVisibility = (dir, deps = {}) => {
   try {
     const vis = inferVisibility(deps, resolve(dir));
@@ -469,6 +376,20 @@ export const surveyBridges = (deps = {}) => {
   });
 };
 
+// INV-2 (structural refresh — additive, derived, never parsed from a caveat string). A member is
+// `behind` when it is a refreshable CORE member (memory / engine) carrying a refresh-recommending
+// caveat — surveyFamily attaches caveats ONLY to those two kinds, and today every such caveat is
+// refresh-recommending. `recommend` is composed from the member's npm package in the ONE registry
+// (FAMILY_MEMBERS[].npm), never extracted from the caveat text. The kit (composition-root) + the two
+// bridges (execution-backend) never carry such a caveat, so they derive { behind:false, recommend:null }
+// — gated by the CAVEAT, not by npm-nullness (the kit's npm is non-null; only the bridges are null).
+const REFRESHABLE_KINDS = new Set(['memory-substrate', 'methodology-engine']);
+const npmOf = (name) => FAMILY_MEMBERS.find((m) => m.name === name)?.npm ?? null;
+const refreshOf = (m) => {
+  const behind = REFRESHABLE_KINDS.has(m.kind) && Boolean(m.caveats?.length);
+  return { behind, recommend: behind ? `npx ${npmOf(m.name)}@latest init` : null };
+};
+
 export const buildEnvelope = (family, project = null, extras = {}) => {
   const installed = family.map((m) => {
     const entry = {
@@ -478,6 +399,7 @@ export const buildEnvelope = (family, project = null, extras = {}) => {
       state: STATE_PUBLIC[m.manifestState] ?? STATE_PUBLIC[UNKNOWN],
     };
     if (m.caveats?.length) entry.notes = m.caveats; // plain-language observations (Steps 2.2 / engine)
+    entry.refresh = refreshOf(m); // additive (INV-1): always present; { behind, recommend } (INV-2)
     return entry;
   });
   const envelope = { deploymentHead: EXPECTED_WORKFLOW_VERSION, installed };
@@ -498,27 +420,72 @@ export const buildEnvelope = (family, project = null, extras = {}) => {
 };
 
 // ── CLI ────────────────────────────────────────────────────────────────────────
-const parseArgs = (argv) => {
-  const dirFlag = argv.indexOf('--dir');
-  return {
-    help: argv.includes('--help') || argv.includes('-h'),
-    json: argv.includes('--json'),
-    dir: dirFlag >= 0 ? argv[dirFlag + 1] : undefined,
-  };
+// Parse contract (Plan §4.5, grounded): the old parseArgs SILENTLY ignored unknown args + a missing
+// --dir value. With the explicit format surface added, the parse now rejects LOUDLY (no silent
+// failure): an unknown flag, a `--dir` with no value, and an invalid `--format` (validated by
+// resolveFormat) all throw. `--json` vs `--format=*` precedence is deterministic (last-wins, in
+// surface.mjs). Returns only { dir } — help is handled first, the format/mode comes from the surface.
+const HELP_FLAGS = new Set(['--help', '-h']);
+// --dir and --format carry/consume a value, so they are handled explicitly below — only the valueless
+// flags live in KNOWN_FLAGS.
+const KNOWN_FLAGS = new Set(['--help', '-h', '--json']);
+// Single left-to-right pass (functional reduce, no `let`): EVERY `--dir` must carry a value — a
+// trailing or REPEATED `--dir` with no value rejects loudly, never silently (a first-occurrence-only
+// check let `--dir /p --dir` slip through as a "known flag"). The token right after a `--dir` is its
+// value (skipped), so a path is never mistaken for an unknown flag; the last `--dir` wins.
+export const parseArgs = (argv) => {
+  const { dir } = argv.reduce(
+    (state, a, i) => {
+      if (state.skip) return { dir: state.dir, skip: false }; // this token was the preceding --dir value
+      if (a === '--dir') {
+        const value = argv[i + 1];
+        if (value === undefined || value.startsWith('-')) {
+          throw new Error('[agent-workflow-kit] --dir needs a value: --dir <project>');
+        }
+        return { dir: value, skip: true }; // consume the value; last --dir wins
+      }
+      if (KNOWN_FLAGS.has(a) || a === '--format' || a.startsWith('--format=')) return state;
+      throw new Error(`[agent-workflow-kit] unknown argument: ${a}`);
+    },
+    { dir: undefined, skip: false },
+  );
+  return { dir };
 };
 
-const main = (argv) => {
-  const args = parseArgs(argv);
-  if (args.help) {
-    console.log(`family-registry — read-only view of the agent-workflow family.
+const HELP = `family-registry — read-only view of the agent-workflow family.
 
 Usage:
-  node family-registry.mjs [--dir <project>] [--json]
-    # skill axis always; deploy axis when --dir is given; --json = the no-leak machine envelope
+  node family-registry.mjs [--dir <project>] [--format=<auto|plain|ansi|json>] [--json]
+    # skill axis always; deploy axis when --dir is given.
+    # --format: auto (default — ansi on a TTY, plain otherwise) | plain | ansi | json.
+    #   --json is sugar for --format=json (the no-leak machine envelope). AGENT_WORKFLOW_FORMAT
+    #   sets the default; a flag beats it. Width/color follow the terminal (NO_COLOR / FORCE_COLOR).
 
-Detection only — never writes, never commits, never runs a subscription CLI.`);
+Detection only — never writes, never commits, never runs a subscription CLI.`;
+
+const main = (argv) => {
+  if (argv.some((a) => HELP_FLAGS.has(a))) {
+    console.log(HELP);
     return;
   }
+  // Validate args + resolve the output surface BEFORE any survey work; a bad flag/format → loud exit 1.
+  const args = (() => {
+    try {
+      const parsed = parseArgs(argv);
+      const surface = detectSurface({
+        argv,
+        env: process.env,
+        isTTY: Boolean(process.stdout.isTTY),
+        columns: process.stdout.columns,
+        platform: process.platform,
+      });
+      return { ...parsed, surface };
+    } catch (err) {
+      console.error(err?.message ?? String(err));
+      process.exit(1);
+    }
+  })();
+
   const family = surveyFamily();
   const bridges = surveyBridges();
   const project = args.dir ? surveyProject(args.dir) : null;
@@ -527,7 +494,10 @@ Detection only — never writes, never commits, never runs a subscription CLI.`)
     extras.visibility = surveyVisibility(args.dir);
     extras.settings = surveySettings(args.dir);
   }
-  console.log(args.json ? JSON.stringify(buildEnvelope(family, project, extras), null, 2) : formatStatus(family, project, extras));
+  const envelope = buildEnvelope(family, project, extras);
+  // Two surfaces, one data source: JSON prints the envelope verbatim; plain/ansi render it through the
+  // capability-adaptive presenter pipeline (view-model → renderers). No-leak inherited from the envelope.
+  console.log(args.surface.mode === 'json' ? JSON.stringify(envelope, null, 2) : render(toViewModel(envelope), args.surface));
 };
 
 const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;

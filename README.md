@@ -100,8 +100,11 @@ OPTIONAL/MACHINE  install a bridge + subscription login -> delegated exec
 
 1. **Once per machine** — `npx @sabaiway/agent-workflow-kit@latest init` installs/refreshes the
    **global skill** in `~/.claude/skills/` and wires launchers for any Claude Code / Codex /
-   Devin Desktop you have. It does **not** deploy into a project and does **not** install the
-   bridges.
+   Devin Desktop you have. It also refreshes the other npm core members so a returning `init` leaves
+   **no stale core member** — the **memory substrate** (best-effort: a miss is a loud degraded success
+   with the exact recovery command + exit 0; skip with `--no-memory`) and the **methodology engine**
+   (required; skip with `--no-engine`). It does **not** deploy into a project and does **not** install
+   the execution-backend bridges (those are placed on demand by `/agent-workflow-kit setup`).
 2. **Once per project** — invoke the skill **inside the repo** (the command differs per agent —
    see the [kit README's command table](agent-workflow-kit/README.md#-use)). It deploys
    `AGENTS.md` + `docs/ai/` filled with real recon, installs the enforcement scripts +
