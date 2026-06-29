@@ -18,6 +18,14 @@
 // STOP loudly (never a silent fallback) when the engine is needed but absent/invalid.
 //
 // Pure string functions (testable with byte-preservation fixtures); dependency-free, Node >= 18.
+//
+// Canonical-refresh (AD-025): a slot filled BEFORE a clause existed is normally preserved verbatim
+// (reconcile only fills an EMPTY slot). To push a NEW canonical clause to the EXISTING filled base
+// without clobbering a user's customization, reconcileMarkerSlot also REFRESHES a filled slot — but
+// ONLY when its content normalize-matches a KNOWN PRIOR canonical fragment (drift-guarded, append-only
+// per descriptor). A customized slot never matches → preserved verbatim + a read-only upgrade advisory.
+
+import { normalizeCanonical } from './orchestration-config.mjs';
 
 export const START_MARKER = '<!-- workflow:methodology:start -->';
 export const END_MARKER = '<!-- workflow:methodology:end -->';
@@ -57,11 +65,29 @@ export const ORCH_ANCHOR = new RegExp(`^.*${escapeRegExp(END_MARKER)}.*$`, 'm');
 export const EMPTY_SLOT = `${START_MARKER}\n${END_MARKER}`;
 export const ORCH_EMPTY_SLOT = `${ORCH_START_MARKER}\n${ORCH_END_MARKER}`;
 
+// ── known-prior canonical fragments (drift-guarded, APPEND-ONLY per slot) ───────
+// The EXACT content a PREVIOUS release's engine fragment shipped (what a filled slot would carry today).
+// reconcileMarkerSlot refreshes a filled slot to the current engine fragment IFF its content
+// normalize-matches one of these — so the install base gains a new clause without clobbering a
+// customization (which never matches). Any release that CHANGES an engine fragment must FIRST append the
+// OUTGOING content here, so the immediately-previous deployments still match (a drift-guard test pins
+// current-minus-one → new). NEVER edit an existing entry — only append.
+export const KNOWN_PRIOR_METHODOLOGY_SLOT = [
+  // v1.3.0 — pre-communication-contract methodology pointer (procedures route, no §1.9 clause).
+  '> **Workflow methodology** — plan → execute → review. Plans are ephemeral `docs/plans/*.md` (gitignored, **never committed**); every Plan ends with a mandatory **Phase: Cleanup**; series order lives in `docs/plans/queue.md`. Full vocabulary, lifecycle, and the plan-then-execute split live in the project\'s **planning skill** (it overrides the generic `writing-plans`); summary in `docs/ai/agent_rules.md` §5. Named activities (plan-authoring, plan-execution) have procedures — see `/agent-workflow-kit procedures <activity>` for the steps + resolved recipe.',
+];
+export const KNOWN_PRIOR_ORCH_SLOT = [
+  // v1.3.0 — pre-read-at-start orchestration pointer (recipes vocabulary, no orchestration.json clause).
+  '> **Orchestration recipes** — compose plan → execute → review with a named recipe: **Solo** (no backend), **Reviewed** (one backend reviews), **Council** (both review, you synthesize), **Delegated** (a backend executes a bounded sub-task); the orchestrator always commits, a backend is never autonomous. Pick + plan one for this environment with `/agent-workflow-kit recipes` (read-only); the deployed how/why lives in your `docs/ai/` workflow docs.',
+];
+
 // A slot descriptor bundles everything the generic engine needs to operate on ONE marker pair.
 // `leadingBlank` controls whether the inserted empty pair gets a blank separator line above it — the
 // methodology insert keeps it (readability), the orchestration insert omits it to save a cap line
-// (the pair already sits right under the methodology block).
-const METHODOLOGY_DESCRIPTOR = {
+// (the pair already sits right under the methodology block). `knownPriorCanonicals` drives the refresh;
+// `upgradeSignature` + `upgradeAdvice` drive the read-only advisory for a CUSTOMIZED (non-matching) slot
+// that predates the current clause.
+export const METHODOLOGY_DESCRIPTOR = {
   startMarker: START_MARKER,
   endMarker: END_MARKER,
   anchor: METHODOLOGY_ANCHOR,
@@ -69,6 +95,10 @@ const METHODOLOGY_DESCRIPTOR = {
   leadingBlank: true,
   markerName: 'methodology',
   anchorLabel: 'methodology anchor (the "Read it before any code change." Session-Protocols line)',
+  knownPriorCanonicals: KNOWN_PRIOR_METHODOLOGY_SLOT,
+  upgradeSignature: 'Communication',
+  upgradeAdvice:
+    'the workflow-methodology pointer predates the communication-contract clause (deliver the artifact inline, lead with the result) — refresh it to the current canon, or add the clause by hand; the contract still applies.',
 };
 export const ORCHESTRATION_DESCRIPTOR = {
   startMarker: ORCH_START_MARKER,
@@ -78,6 +108,10 @@ export const ORCHESTRATION_DESCRIPTOR = {
   leadingBlank: false,
   markerName: 'orchestration',
   anchorLabel: 'orchestration anchor (the methodology end-marker line)',
+  knownPriorCanonicals: KNOWN_PRIOR_ORCH_SLOT,
+  upgradeSignature: '/agent-workflow-kit set-recipe',
+  upgradeAdvice:
+    'the orchestration-recipes pointer predates the read-at-start clause — add "read `docs/ai/orchestration.json` at session start; set it with /agent-workflow-kit set-recipe", or set your preference now with /agent-workflow-kit set-recipe.',
 };
 
 // ── generic marker-slot engine (descriptor-parameterized) ──────────────────────
@@ -160,16 +194,27 @@ export const ensureMarkerSlot = (text, descriptor) => {
 // Bootstrap/upgrade reconciliation policy (pure): ensure the slot exists, then fill it ONLY IF it
 // is empty (a filled/customized slot is preserved verbatim), enforcing the line cap — all as one step
 // the CLI commits with a single atomic write. On ANY error the INPUT bytes are returned unchanged.
-//   reconciled-inserted — slot was absent, inserted at the anchor, then filled.
-//   reconciled-filled   — slot existed but was empty, now filled.
-//   present-filled      — slot already carried content → preserved verbatim.
-//   error               — malformed slot, 0/>1 anchors, or cap exceeded → input unchanged.
+//   reconciled-inserted  — slot was absent, inserted at the anchor, then filled.
+//   reconciled-filled    — slot existed but was empty, now filled.
+//   reconciled-refreshed — slot was filled with a KNOWN PRIOR canonical → replaced with `fragment`.
+//   present-filled       — slot already carried CUSTOM content → preserved verbatim.
+//   error                — malformed slot, 0/>1 anchors, or cap exceeded → input unchanged.
 export const reconcileMarkerSlot = (text, descriptor, fragment, { maxLines } = {}) => {
   const ensured = ensureMarkerSlot(text, descriptor);
   if (ensured.status === 'error') return { status: 'error', text, error: ensured.error };
   const current = extractMarkerSlot(ensured.text, descriptor);
   const isEmpty = current == null || current.trim() === '';
   if (!isEmpty) {
+    // Canonical-refresh: a slot whose content normalize-matches a known prior canonical is STALE — replace
+    // it with the current `fragment`. A customized slot never matches → preserved verbatim. (`fragment`
+    // is empty for a customized slot — main() only sources it when markerSlotNeedsFill is true.)
+    const priors = descriptor.knownPriorCanonicals ?? [];
+    const matchesPrior = fragment && fragment.trim() !== '' && priors.some((p) => normalizeCanonical(p) === normalizeCanonical(current));
+    if (matchesPrior) {
+      const injected = injectIntoSlot(ensured.text, descriptor, fragment, { maxLines });
+      if (injected.status !== 'injected') return { status: 'error', text, error: injected.error };
+      return { status: 'reconciled-refreshed', text: injected.text };
+    }
     if (maxLines != null && lineCount(ensured.text) > maxLines) {
       return { status: 'error', text, error: `AGENTS.md is ${lineCount(ensured.text)} lines (cap ${maxLines}) — trim the file (a customized ${descriptor.markerName} slot must still fit the cap)` };
     }
@@ -189,7 +234,11 @@ export const markerSlotNeedsFill = (text, descriptor) => {
   const ensured = ensureMarkerSlot(text, descriptor);
   if (ensured.status === 'error') return false;
   const current = extractMarkerSlot(ensured.text, descriptor);
-  return current == null || current.trim() === '';
+  if (current == null || current.trim() === '') return true; // empty → fill
+  // filled-but-STALE (content matches a known prior canonical) → needs a refresh, so main() must
+  // re-source the fragment. A customized slot doesn't match → no source needed (preserved verbatim).
+  const priors = descriptor.knownPriorCanonicals ?? [];
+  return priors.some((p) => normalizeCanonical(p) === normalizeCanonical(current));
 };
 
 // ── methodology-slot exports (delegate to the generic engine, byte-for-byte) ────
@@ -215,6 +264,19 @@ export const methodologyProceduresHint = (text) => {
   if (content == null || content.trim() === '') return null; // only a FILLED methodology slot
   if (content.includes(PROCEDURES_POINTER)) return null; // already routes to the procedures advisor
   return `the methodology pointer has no procedures route — add "${PROCEDURES_POINTER} <activity>" for auto-discovery; the activity procedures are reachable now via ${PROCEDURES_POINTER}.`;
+};
+
+// Generic read-only upgrade advisory (AD-025; the §1.6a/§1.9 reach to CUSTOMIZED filled slots): a slot
+// that is present + FILLED but lacks the descriptor's current-canon `upgradeSignature` (and so could not
+// be canonical-refreshed — its content is customized) gets a one-line note the upgrade flow surfaces.
+// Returns null for an absent / empty / malformed slot, or one that already carries the signature. Pure;
+// never edits the file (a customization is never rewritten — only the user decides).
+export const markerSlotUpgradeHint = (text, descriptor) => {
+  if (!descriptor.upgradeSignature) return null;
+  const content = extractMarkerSlot(text, descriptor);
+  if (content == null || content.trim() === '') return null; // only a FILLED slot
+  if (content.includes(descriptor.upgradeSignature)) return null; // already carries the current clause
+  return descriptor.upgradeAdvice;
 };
 
 // A cap-refusal is a SOFT, reported skip (distinct from a malformed/anchor STOP) — keyed off the
@@ -317,18 +379,23 @@ const main = async (argv) => {
       console.error(`[inject-methodology] reconcile refused — ${methResult.error}`);
       process.exit(1);
     }
-    const afterMeth = methResult.text; // === text when the methodology slot was already filled
+    const afterMeth = methResult.text; // === text when the methodology slot was already filled (custom)
     const describeMeth = {
       'reconciled-inserted': 'inserted the workflow-methodology pointer at the Session-Protocols anchor and filled it',
       'reconciled-filled': 'filled the empty workflow-methodology pointer',
+      'reconciled-refreshed': 'refreshed the workflow-methodology pointer to the current canon',
       'present-filled': 'workflow-methodology pointer already present',
     }[methResult.status];
-    // Read-only upgrade advisory (AD-019 §3.1a): a pre-existing FILLED methodology pointer that predates
-    // the procedures clause won't be re-rendered (reconcile preserves it verbatim), so surface a hint to
-    // add the procedures route. No mutation — purely a reported note appended to the success report.
-    const proceduresNote = methResult.status === 'present-filled' ? methodologyProceduresHint(afterMeth) : null;
-    const reportNote = () => {
-      if (proceduresNote) console.log(`[inject-methodology] note: ${proceduresNote}`);
+    // Read-only upgrade advisories for a CUSTOMIZED methodology pointer that reconcile preserved verbatim
+    // (a refreshed/filled/inserted slot already carries the current canon, so it gets none): the AD-019
+    // procedures route AND the §1.9 communication-contract clause. No mutation — reported notes only.
+    const notes = [];
+    if (methResult.status === 'present-filled') {
+      const p = methodologyProceduresHint(afterMeth); if (p) notes.push(p);
+      const u = markerSlotUpgradeHint(afterMeth, METHODOLOGY_DESCRIPTOR); if (u) notes.push(u);
+    }
+    const reportNotes = () => {
+      for (const n of notes) console.log(`[inject-methodology] note: ${n}`);
     };
 
     // ── Explicit [fragment.md] binds methodology ONLY → skip the orchestration reconcile ──
@@ -374,8 +441,15 @@ const main = async (argv) => {
         describeOrch = {
           'reconciled-inserted': 'inserted the orchestration-recipes pointer below it and filled it',
           'reconciled-filled': 'filled the empty orchestration-recipes pointer',
+          'reconciled-refreshed': 'refreshed the orchestration-recipes pointer to the current canon',
           'present-filled': 'orchestration-recipes pointer already present',
         }[orchResult.status];
+        // §1.6a advisory: a CUSTOMIZED orchestration pointer preserved verbatim, lacking the read-at-start
+        // clause, gets a read-only nudge (a refreshed/filled slot already carries it).
+        if (orchResult.status === 'present-filled') {
+          const u = markerSlotUpgradeHint(finalText, ORCHESTRATION_DESCRIPTOR);
+          if (u) notes.push(u);
+        }
       }
     }
 
@@ -384,12 +458,12 @@ const main = async (argv) => {
       // Byte-unchanged. Still report a cap-skip (it is not "nothing to do" — a pointer was withheld).
       if (orchSkipped) console.log(`[inject-methodology] reconcile: ${describeMeth}; ${describeOrch}.`);
       else console.log('[inject-methodology] reconcile: both pointers already present and filled — nothing to do (zero-diff).');
-      reportNote();
+      reportNotes();
       return;
     }
     await writeAtomic(finalText);
     console.log(`[inject-methodology] reconcile: ${describeMeth}; ${describeOrch}.`);
-    reportNote();
+    reportNotes();
     return;
   }
 

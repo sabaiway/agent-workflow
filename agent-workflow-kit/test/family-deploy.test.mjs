@@ -30,6 +30,7 @@ import {
   START_MARKER,
   END_MARKER,
 } from '../tools/inject-methodology.mjs';
+import { refreshReadme, serializeConfig, CANON_README, KNOWN_PRIOR_README } from '../tools/orchestration-config.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const FAMILY_ROOT = resolve(KIT_ROOT, '..');
@@ -270,19 +271,46 @@ describe('composition root — CLI-backed reconcile + config seed (real engine, 
     assert.ok(lineCount(entry) <= AGENTS_MD_CAP, `dual-filled entry point within ${AGENTS_MD_CAP} lines (got ${lineCount(entry)})`);
   });
 
-  it('fallback deploy: the kit seeds docs/ai/orchestration.json; the stamp-independent ensure preserves an edited one', () => {
+  it('fallback deploy: the kit seeds docs/ai/orchestration.json; the kit-owned ensure seeds-or-refreshes (preserving recipes + a customized note)', () => {
     const { docsAi } = makeProject();
     const dest = join(docsAi, 'orchestration.json');
     // bootstrap step 6 seed (the template loop copies the kit's own config template into docs/ai)
     cpSync(KIT_ORCH_TEMPLATE, dest);
     assert.equal(readFileSync(dest, 'utf8'), readFileSync(KIT_ORCH_TEMPLATE, 'utf8'), 'seeded byte-identical to the kit template');
-    // the upgrade ensure (SKILL.md upgrade step 3): create-if-missing / preserve-if-edited
+
+    // The kit-owned upgrade config-ensure (SKILL.md upgrade step 3): create-if-missing, else refresh the
+    // `_README` note via the tested helper (seed-or-refresh) — modeled here with the REAL refreshReadme so
+    // the fallback acceptance actually exercises the kit-owned refresh path, not just create-or-preserve.
     const ensure = () => {
-      if (!existsSync(dest)) cpSync(KIT_ORCH_TEMPLATE, dest);
+      if (!existsSync(dest)) { cpSync(KIT_ORCH_TEMPLATE, dest); return; }
+      let parsed;
+      try {
+        parsed = JSON.parse(readFileSync(dest, 'utf8'));
+      } catch {
+        return; // malformed config → preserve untouched (loud warning is the agent's; never clobber)
+      }
+      const { config, changed } = refreshReadme(parsed);
+      if (changed) writeFileSync(dest, serializeConfig(config));
     };
-    writeFileSync(dest, '{ "plan-execution": { "execute": "delegated" } }\n');
+
+    // (a) a prior-canonical _README on an edited config → the note is REFRESHED, the recipe preserved.
+    writeFileSync(dest, serializeConfig({ _README: KNOWN_PRIOR_README[0], 'plan-execution': { execute: 'delegated' } }));
     ensure();
-    assert.match(readFileSync(dest, 'utf8'), /delegated/, 'an edited config is preserved on a re-run (never clobbered)');
+    const refreshed = JSON.parse(readFileSync(dest, 'utf8'));
+    assert.equal(refreshed._README, CANON_README, 'a prior-canonical note is refreshed to the current canon');
+    assert.equal(refreshed['plan-execution'].execute, 'delegated', 'the edited recipe is preserved through the refresh');
+
+    // (b) a CUSTOMIZED note is preserved verbatim (never clobbered).
+    writeFileSync(dest, serializeConfig({ _README: 'my own note', 'plan-execution': { execute: 'delegated' } }));
+    ensure();
+    assert.equal(JSON.parse(readFileSync(dest, 'utf8'))._README, 'my own note', 'a customized note is preserved');
+
+    // (c) a malformed config is left untouched (never parsed into a clobber).
+    writeFileSync(dest, '{ not valid json');
+    ensure();
+    assert.equal(readFileSync(dest, 'utf8'), '{ not valid json', 'a malformed config is preserved untouched');
+
+    // (d) a missing config is re-seeded from the kit template.
     rmSync(dest);
     ensure();
     assert.ok(existsSync(dest), 'a missing config is re-seeded from the kit template');

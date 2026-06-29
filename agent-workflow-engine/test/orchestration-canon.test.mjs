@@ -44,6 +44,11 @@ describe('engine orchestration-slot.md — bounded one-line fragment', () => {
     const lower = slot.toLowerCase();
     for (const id of RECIPE_IDS) assert.ok(lower.includes(id), `the slot fragment names the "${id}" recipe`);
   });
+
+  it('carries the §1.6a read-at-start clause (read orchestration.json; set it with set-recipe)', () => {
+    assert.match(slot, /docs\/ai\/orchestration\.json/, 'points at the per-project config to read at session start');
+    assert.match(slot, /\/agent-workflow-kit set-recipe/, 'names the set-recipe writer');
+  });
 });
 
 describe('engine orchestration.md — canonical recipe reference', () => {

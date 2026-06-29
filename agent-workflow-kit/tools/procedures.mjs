@@ -17,48 +17,36 @@
 // installed engine is absent / invalid / too old to ship references/procedures.md).
 
 import { readFileSync, lstatSync } from 'node:fs';
-import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { detectBackends } from './detect-backends.mjs';
-import { ACTIVITIES, SLOT_RECIPES, resolveActivityRecipe } from './recipes.mjs';
+import { ACTIVITIES, resolveActivityRecipe } from './recipes.mjs';
 import { resolveEngineDir, readEngineFragment, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
-
-// The hand-edited, per-project config (strict JSON). cwd-relative — the error prefix uses this rel path
-// so a user sees a path they can open, never an absolute temp/host path.
-export const CONFIG_REL = 'docs/ai/orchestration.json';
-
-// A tagged failure: a plain Error carrying the intended process exit code (2 usage / 1 config|engine).
-// Avoids a class (project rule) while letting main() map a throw to the right code in one place.
-const fail = (exitCode, message) => Object.assign(new Error(message), { exitCode });
+// The config schema/read core lives in orchestration-config.mjs (the single config contract). procedures
+// is READ-ONLY: it imports the reader + the SHARED slot/recipe validity, never the fs-writer
+// (orchestration-write.mjs) — so "the read-only advisor can never reach a writer" is STRUCTURALLY true
+// (an import-split test pins it). CONFIG_REL is RE-EXPORTED so existing importers (procedures.test.mjs,
+// historically) keep their import site working.
+import { CONFIG_REL, fail, loadConfig, assertSlotRecipe } from './orchestration-config.mjs';
+export { CONFIG_REL };
 
 // ── argument + override parsing (usage errors → exit 2) ─────────────────────────────
 
 // Parse the activity's --override <slot>=<recipe> tokens into a { slot: recipe } map, validating each
-// against the activity's slots + SLOT_RECIPES. Every malformed token is a USAGE error (exit 2): a bare
-// `<recipe>` (no slot), an unknown slot for the activity, an invalid recipe-for-slot, or a duplicate
-// slot. (An override naming a recipe whose backend merely is not `ready` is NOT a usage error — it
-// degrades loudly at resolution time, exit 0.)
-const parseOverrides = (tokens, activity, activityDef) => {
+// against the SHARED slot/recipe validity table (assertSlotRecipe — the SAME accept/reject the set-recipe
+// op parser uses, drift-guarded). Every malformed token is a USAGE error (exit 2): a bare `<recipe>` (no
+// slot), an unknown slot for the activity, an invalid recipe-for-slot, or a duplicate slot. (An override
+// naming a recipe whose backend merely is not `ready` is NOT a usage error — it degrades loudly at
+// resolution time, exit 0.) The `--override` grammar stays activity-SCOPED (the activity comes from the
+// CLI arg), unlike the fully-qualified `--set <activity>.<slot>=<recipe>` the writer takes.
+const parseOverrides = (tokens, activity) => {
   const overrides = {};
   for (const tok of tokens) {
     const eq = tok.indexOf('=');
     if (eq <= 0) throw fail(2, `--override must be <slot>=<recipe> (got "${tok}")`);
     const slot = tok.slice(0, eq);
     const recipe = tok.slice(eq + 1);
-    const slotType = activityDef.slots[slot];
-    if (!slotType) {
-      throw fail(
-        2,
-        `--override: unknown slot "${slot}" for activity "${activity}" (${activity} slots: ${Object.keys(activityDef.slots).join(', ')})`,
-      );
-    }
-    if (!(SLOT_RECIPES[slotType] ?? []).includes(recipe)) {
-      throw fail(
-        2,
-        `--override: invalid recipe "${recipe}" for ${slotType} slot of "${activity}" (${slotType} accepts: ${SLOT_RECIPES[slotType].join(', ')})`,
-      );
-    }
+    assertSlotRecipe(activity, slot, recipe); // shared validity (unknown slot / invalid recipe → exit 2)
     if (slot in overrides) throw fail(2, `--override: duplicate override for slot "${slot}"`);
     overrides[slot] = recipe;
   }
@@ -94,80 +82,7 @@ const parseArgs = (argv) => {
   if (!activity) throw fail(2, `missing <activity> (known: ${KNOWN_ACTIVITIES()})`);
   const activityDef = ACTIVITIES[activity];
   if (!activityDef) throw fail(2, `unknown activity "${activity}" (known: ${KNOWN_ACTIVITIES()})`);
-  return { activity, overrides: parseOverrides(overrideTokens, activity, activityDef), json };
-};
-
-// ── config IO + validation (config errors → exit 1) ────────────────────────────────
-
-// Validate a parsed orchestration.json object against the §2.0 schema. Strict: an unknown top-level
-// activity, an unknown slot for an activity, or a recipe invalid-for-slot is an error. All slots are
-// optional. An optional "_README" string key is allowed + ignored (self-documentation). Never a silent
-// fallback — every rejection is a loud `path: reason`.
-const validateConfig = (config) => {
-  if (config === null || typeof config !== 'object' || Array.isArray(config)) {
-    throw fail(1, `${CONFIG_REL}: must be a JSON object of activity → { slot: recipe }`);
-  }
-  for (const [key, val] of Object.entries(config)) {
-    if (key === '_README') {
-      if (typeof val !== 'string') throw fail(1, `${CONFIG_REL}: "_README" must be a string`);
-      continue;
-    }
-    const activityDef = ACTIVITIES[key];
-    if (!activityDef) {
-      throw fail(1, `${CONFIG_REL}: unknown activity "${key}" (known: ${KNOWN_ACTIVITIES()})`);
-    }
-    if (val === null || typeof val !== 'object' || Array.isArray(val)) {
-      throw fail(1, `${CONFIG_REL}: activity "${key}" must be a JSON object of slot → recipe`);
-    }
-    for (const [slot, recipe] of Object.entries(val)) {
-      const slotType = activityDef.slots[slot];
-      if (!slotType) {
-        throw fail(
-          1,
-          `${CONFIG_REL}: unknown slot "${slot}" for activity "${key}" (${key} slots: ${Object.keys(activityDef.slots).join(', ')})`,
-        );
-      }
-      if (typeof recipe !== 'string' || !(SLOT_RECIPES[slotType] ?? []).includes(recipe)) {
-        throw fail(
-          1,
-          `${CONFIG_REL}: invalid recipe "${recipe}" for ${slotType} slot of "${key}" (${slotType} accepts: ${SLOT_RECIPES[slotType].join(', ')})`,
-        );
-      }
-    }
-  }
-  return config;
-};
-
-// Load + validate the config from <cwd>/docs/ai/orchestration.json. Absent FILE → computed defaults
-// (NOT an error): { config: null, source: 'none' }. Malformed JSON / schema-invalid / unreadable →
-// loud `path: reason` (exit 1). The resolver receives the parsed+validated object (§2.2 IO/resolver split).
-// Exported so the read-only status settings-survey (family-registry.mjs) reuses ONE config reader —
-// same strict-JSON + loud-on-malformed contract, no second drifting implementation (Plan 3.1).
-export const loadConfig = (cwd, readFile = readFileSync, lstat = lstatSync) => {
-  const full = join(cwd, CONFIG_REL);
-  // Distinguish a TRULY-absent config (no entry at all → computed defaults) from a present-but-
-  // unreadable one (a directory, a DANGLING SYMLINK, a permission error → loud exit 1). lstat does NOT
-  // follow the link, so a dangling symlink reads as "present" here and its later read failure surfaces
-  // loudly — never silently treated as absent (no-silent-failures Hard Constraint).
-  try {
-    lstat(full);
-  } catch (err) {
-    if (err && err.code === 'ENOENT') return { config: null, source: 'none' };
-    throw fail(1, `${CONFIG_REL}: unreadable (${(err && err.code) || (err && err.message) || err})`);
-  }
-  let raw;
-  try {
-    raw = readFile(full, 'utf8');
-  } catch (err) {
-    throw fail(1, `${CONFIG_REL}: unreadable (${(err && err.code) || (err && err.message) || err})`);
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw fail(1, `${CONFIG_REL}: malformed JSON (${err.message})`);
-  }
-  return { config: validateConfig(parsed), source: CONFIG_REL };
+  return { activity, overrides: parseOverrides(overrideTokens, activity), json };
 };
 
 // ── engine canon: live read + per-activity section extraction (engine errors → exit 1) ──

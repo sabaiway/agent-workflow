@@ -12,6 +12,7 @@ import {
   linkWrappers,
   planFor,
   main,
+  proactiveReviewOffer,
   SETUP_STOP,
 } from './setup-backends.mjs';
 
@@ -496,5 +497,106 @@ describe('main — CLI contract + exit matrix', () => {
     const second = capturedMain(['codex'], { ...deps, validate: okValidate() });
     assert.equal(second.code, 0);
     assert.match(second.text, /already linked/);
+  });
+
+  it('always closes with the /agent-workflow-kit status pointer', () => {
+    writeBundle(join(tmp, 'bundles'));
+    const { text } = capturedMain(['codex', '--dry-run'], baseDeps({ skillDir: join(tmp, 'skill') }));
+    assert.match(text, /\/agent-workflow-kit status/);
+  });
+});
+
+// ── §1.4 version surfacing — 4 render states on the skill line ─────────────────
+describe('setup — bridge version surfacing (4 states)', () => {
+  // An installed, proven-managed skill dir carrying a chosen SKILL.md (for readAuthoritativeVersion).
+  const installSkill = (skillContent) => {
+    const skillDir = join(tmp, 'skill');
+    mkdirSync(join(skillDir, 'bin'), { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), skillContent);
+    writeFileSync(join(skillDir, 'capability.json'), '{}');
+    return skillDir;
+  };
+
+  it('place / no prior → "(vX)" no arrow (never "vnull → ...")', () => {
+    writeBundle(join(tmp, 'bundles')); // bundle version 1.0.0
+    const { text } = capturedMain(['codex', '--dry-run'], baseDeps({ skillDir: join(tmp, 'skill') }));
+    assert.match(text, /will place \(v1\.0\.0\)/);
+    assert.ok(!/→ v/.test(text), 'a place shows no version arrow');
+  });
+
+  it('refresh, equal version → "(vX)" no arrow', () => {
+    writeBundle(join(tmp, 'bundles'));
+    const skillDir = installSkill(skillMd('codex-cli-bridge')); // metadata.version 1.0.0 == bundle
+    const { text } = capturedMain(['codex', '--dry-run'], baseDeps({ skillDir, validate: okValidate() }));
+    assert.match(text, /will refresh \(v1\.0\.0\)/);
+    assert.ok(!/v1\.0\.0 → /.test(text));
+  });
+
+  it('refresh, differing version → "(vOld → vNew)"', () => {
+    writeBundle(join(tmp, 'bundles'));
+    const skillDir = installSkill('# installed\n');
+    const deps = baseDeps({ skillDir, validate: okValidate(), rest: { readVersion: () => ({ version: '0.9.0' }) } });
+    const { text } = capturedMain(['codex', '--dry-run'], deps);
+    assert.match(text, /will refresh \(v0\.9\.0 → v1\.0\.0\)/);
+  });
+
+  it('refresh, prior version null → "(vX)" no arrow (never "vnull → vX")', () => {
+    writeBundle(join(tmp, 'bundles'));
+    const skillDir = installSkill('# installed\n'); // SKILL.md without frontmatter → version null
+    const { text } = capturedMain(['codex', '--dry-run'], baseDeps({ skillDir, validate: okValidate() }));
+    assert.match(text, /will refresh \(v1\.0\.0\)/);
+    assert.ok(!/vnull/.test(text));
+  });
+});
+
+// ── §1.7 proactive set-recipe offer (re-detect AFTER apply; true readiness flip only) ──
+describe('setup — proactive review-recipe offer', () => {
+  it('proactiveReviewOffer is a pure flip-gated helper (both review slots; council ≥2, reviewed =1)', () => {
+    const reviewed = proactiveReviewOffer(0, 1);
+    assert.match(reviewed, /plan-authoring\.review=reviewed/);
+    assert.match(reviewed, /plan-execution\.review=reviewed/, 'never offers only plan-execution');
+    const council = proactiveReviewOffer(1, 2);
+    assert.match(council, /plan-authoring\.review=council/);
+    assert.match(council, /or =reviewed/);
+    assert.equal(proactiveReviewOffer(1, 1), null, 'no flip → no offer');
+    assert.equal(proactiveReviewOffer(null, 2), null, 'detection failure → no offer');
+    assert.equal(proactiveReviewOffer(2, 1), null, 'a decrease never offers');
+  });
+
+  // A stateful multi-backend detector: returns `counts[i]` READY backends on the i-th call (before then
+  // after the apply). reviewReadyCount filters readiness === 'ready'.
+  const flippingDetectAll = (counts) => {
+    let i = 0;
+    return () => {
+      const c = counts[Math.min(i, counts.length - 1)];
+      i += 1;
+      return [
+        { name: 'codex-cli-bridge', readiness: c >= 1 ? 'ready' : 'needs-skill' },
+        { name: 'antigravity-cli-bridge', readiness: c >= 2 ? 'ready' : 'needs-skill' },
+      ];
+    };
+  };
+
+  it('a real apply that flips a review backend to ready prints the offer', () => {
+    writeBundle(join(tmp, 'bundles'));
+    const deps = baseDeps({ skillDir: join(tmp, 'skill'), bindir: join(tmp, 'bin'), rest: { detectAll: flippingDetectAll([0, 1]) } });
+    const { code, text } = capturedMain(['codex'], deps);
+    assert.equal(code, 0);
+    assert.match(text, /set-recipe --set plan-authoring\.review=reviewed/);
+    assert.match(text, /set-recipe --set plan-execution\.review=reviewed/);
+  });
+
+  it('no readiness flip → NO offer', () => {
+    writeBundle(join(tmp, 'bundles'));
+    const deps = baseDeps({ skillDir: join(tmp, 'skill'), bindir: join(tmp, 'bin'), rest: { detectAll: flippingDetectAll([1, 1]) } });
+    const { text } = capturedMain(['codex'], deps);
+    assert.ok(!/set-recipe/.test(text), 'a stable readiness count makes no offer');
+  });
+
+  it('a DRY-RUN never offers (no apply happened)', () => {
+    writeBundle(join(tmp, 'bundles'));
+    const deps = baseDeps({ skillDir: join(tmp, 'skill'), bindir: join(tmp, 'bin'), rest: { detectAll: flippingDetectAll([0, 2]) } });
+    const { text } = capturedMain(['codex', '--dry-run'], deps);
+    assert.ok(!/set-recipe/.test(text));
   });
 });

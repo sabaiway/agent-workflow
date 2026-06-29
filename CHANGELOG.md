@@ -7,6 +7,21 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-06-29
+
+- **Agent-writable orchestration config + durable session/communication contracts (AD-025).** The
+  per-project recipe config is no longer hand-edit-only, `setup` surfaces bridge versions, and the
+  methodology canon gains read-at-start + a planning Definition of Done + a communication contract that
+  reach the existing base via a canonical-refresh. Three packages bumped (lineage head stays `1.3.0`):
+  - **`@sabaiway/agent-workflow-kit@1.18.0`** — new `/agent-workflow-kit set-recipe` writer
+    (`tools/{orchestration-config,orchestration-write,set-recipe}.mjs`; previews by default; hardened
+    atomic write; `procedures` never imports the writer); `setup` bridge-version surfacing + a re-detect-
+    after-apply proactive offer + a `status` pointer; `inject-methodology` canonical-refresh + advisory.
+  - **`@sabaiway/agent-workflow-engine@1.4.0`** — `references/procedures.md` read-at-start + plan-authoring
+    Definition of Done + communication contract; the two slot fragments gain the matching clauses.
+  - **`@sabaiway/agent-workflow-memory@1.3.0`** — agent-writable config note in the seed (seeds-when-missing
+    / preserves existing; the in-place note refresh is kit-owned); `agent_rules.md` §2.5 Communication.
+
 ## 2026-06-27
 
 - **Activity procedures — recipe-aware, configurable playbooks (AD-019).** A bare activity ("write a

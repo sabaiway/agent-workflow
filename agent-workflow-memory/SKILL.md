@@ -3,7 +3,7 @@ name: agent-workflow-memory
 description: Deploy or upgrade a portable AI-agent memory substrate in any project — an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) and a structured `docs/ai/` context store with cap/archive/index enforcement. Use when the user wants to bootstrap `docs/ai/`, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-memory` / `/agent-workflow-memory upgrade`. Triggers on "set up the memory system", "deploy the AI memory here", "bootstrap docs/ai", "upgrade the memory substrate". This is the substrate only — the workflow methodology (plan→execute→review, queue, Cleanup) is owned elsewhere and injected into AGENTS.md by the family composition root.
 disable-model-invocation: true
 metadata:
-  version: '1.2.2'
+  version: '1.3.0'
 ---
 
 # agent-workflow-memory
@@ -47,7 +47,7 @@ What this substrate owns vs what it only points at. The methodology + orchestrat
 | Deployment-lineage stamp | **memory** | `docs/ai/.memory-version` |
 | Plan→Phase→Step vocabulary, lifecycle, `queue.md`, mandatory Cleanup | **methodology** (not this skill) | the empty `workflow:methodology` slot — filled by the composition root |
 | Orchestration recipes (Solo / Reviewed / Council / Delegated) | **methodology engine** (not this skill) | the empty `workflow:orchestration` slot — filled by the composition root |
-| Per-project recipe **CONFIG** (which recipe each activity/slot uses) | **memory** seeds an *editable default* | `docs/ai/orchestration.json` (hand-edited; the recipe **canon** + the slot **vocabulary** live in the engine / composition root, never here) |
+| Per-project recipe **CONFIG** (which recipe each activity/slot uses) | **memory** seeds an *editable default* | `docs/ai/orchestration.json` (agent-writable via the composition root's `set-recipe` writer, or hand-edited; the recipe **canon** + the slot **vocabulary** live in the engine / composition root, never here) |
 
 ---
 
@@ -113,7 +113,8 @@ bootstrapping over a live system, but the user makes the final call.
 10. **Stamp the deployment lineage.** Write the **deployment-lineage head** into
     `docs/ai/.memory-version` (one semver line). The lineage head is **`1.3.0`** (the
     `LINEAGE_HEAD` constant in `scripts/stamp-takeover.mjs`) — the shared `agent-workflow`
-    lineage, **not** this package's npm version (`1.2.0`). Use the atomic writer in
+    lineage, a **separate axis** from this package's npm version (the two may even coincide by
+    accident; see *Stamp = lineage head, not package version*). Use the atomic writer in
     `scripts/stamp-takeover.mjs` (write-temp + rename).
 11. **Report & ask.** Show `tree docs/ai/`, 2–3 lines on filled-vs-TODO, then **ask before
     committing** — never auto-commit. **Exception — delegated mode (below): skip this gate.**
@@ -163,11 +164,14 @@ Fill strategy:
    **behind** the never-downgrade STOP above. **Also stamp-independent (same gate, before the equal-head
    short-circuit): ensure `docs/ai/orchestration.json`** — **create it from
    `${CLAUDE_SKILL_DIR}/references/templates/orchestration.json` if missing**, **preserve it byte-for-byte
-   if it already exists** (a user may have edited it; never clobber it). This is why an equal-head (`1.3.0`)
-   deployment still gains the config seed **without a lineage-head bump or a migration file** (the
-   stamp-independent-reconcile precedent — like the pointer slots + the hidden-mode footprint). **Then**,
-   if the stamp **equals** the head → report "up to date" (plus any footprint move / config seed just
-   made) and stop.
+   if it already exists** (a user may have edited it; never clobber it). The shipped template's `_README`
+   already frames the config as agent-writable (set it with the `set-recipe` writer) and still
+   hand-editable. (Refreshing that note in place on an existing file is the **composition root's** job on
+   its own reconcile — this substrate is standalone and only seeds-or-preserves; it owns no cross-package
+   refresh helper.) This is why an equal-head (`1.3.0`) deployment still gains the config seed **without a
+   lineage-head bump or a migration file** (the stamp-independent-reconcile precedent — like the pointer
+   slots + the hidden-mode footprint). **Then**, if the stamp **equals** the head → report "up to date"
+   (plus any footprint move / config seed just made) and stop.
 3. Show the relevant `${CLAUDE_SKILL_DIR}/CHANGELOG.md` context (entries newer than the stamp).
 4. Apply `${CLAUDE_SKILL_DIR}/migrations/<version>-<slug>.md` in **semver order**, only those
    newer than the stamp. Migrations are **idempotent**.
@@ -192,8 +196,9 @@ Fill strategy:
 
 - **Source vs target directory.** Templates/scripts are read from the skill's own dir; the
   **working directory is the target project** — never write substrate files back into the skill.
-- **Stamp = lineage head, not package version.** `.memory-version` carries `1.3.0` (the shared
-  `agent-workflow` lineage), not the npm `1.2.0`. They are independent axes.
+- **Stamp = lineage head, not package version.** `.memory-version` carries the **deployment-lineage
+  head** (`1.3.0`, the shared `agent-workflow` lineage) — a **separate axis** from this package's npm
+  version (the two may even coincide by accident). They move independently.
 - **Both pointer slots ship empty and stay the user's.** Never author methodology or orchestration
   text into them; on upgrade, preserve their content byte-for-byte. The composition root is their only
   writer.

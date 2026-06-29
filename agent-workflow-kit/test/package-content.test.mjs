@@ -79,6 +79,6 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
   // file accidentally dropped). After an intentional change, run `npm pack ./agent-workflow-kit
   // --dry-run --json` and set the new count here in the same commit.
   it('ships exactly the expected number of files', () => {
-    assert.equal(packed.length, 72, `tarball file count drifted (${packed.length} ≠ 72)`);
+    assert.equal(packed.length, 75, `tarball file count drifted (${packed.length} ≠ 75)`);
   });
 });
