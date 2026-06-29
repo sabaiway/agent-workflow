@@ -7,6 +7,24 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-06-29 — kit 1.19.0
+
+- **One-command freshness + capability-adaptive `status`.** `npx @sabaiway/agent-workflow-kit@latest
+  init` now refreshes the **memory substrate** and the **methodology engine** alongside the kit, so a
+  returning user is no longer left with silently stale memory — a memory miss is a **loud DEGRADED
+  success** (warning + exact recovery command + exit 0), `--no-memory` skips it, and bridges are still
+  placed by `setup`, not `init`. The direct-CLI `status` view is rebuilt as a capability-adaptive
+  `surface → view-model → renderers` pipeline (plain/ansi, `NO_COLOR`/`FORCE_COLOR`, width floor,
+  ASCII fallback; `--format=<auto|plain|ansi|json>`, loud-reject parse), and the `--json` envelope
+  gains an additive structural `installed[].refresh` `{ behind, recommend }`. Lineage head stays `1.3.0`.
+  - **`@sabaiway/agent-workflow-kit@1.19.0`** — memory cascade in `bin/install.mjs` (`installMemory`,
+    `--no-memory`, crash-proof degraded warning, drift-guarded cascade derived from `FAMILY_MEMBERS`);
+    the status-presenter modules `tools/{labels,presentation,surface,view-model,renderers}.mjs` + the
+    pure member-table leaf `tools/family-members.mjs`; `formatStatus`/`formatSettings` replaced by the
+    pipeline; `SKILL.md` `Mode: status` reads `refresh` (the shared notes-based footers untouched).
+  - **`@sabaiway/agent-workflow-memory`** / **`@sabaiway/agent-workflow-engine`** — unchanged, not
+    republished (the kit refreshes the already-published versions).
+
 ## 2026-06-29
 
 - **Agent-writable orchestration config + durable session/communication contracts (AD-025).** The

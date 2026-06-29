@@ -3,7 +3,7 @@ name: agent-workflow-kit
 description: Deploy or upgrade a portable AI-agent memory-and-workflow system in any project. Use when the user wants to bootstrap `docs/ai/` + an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) + cap/archive/index enforcement in a new or existing repo, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-kit` / `/agent-workflow-kit upgrade`. Triggers on phrases like "set up the memory system", "deploy the AI workflow here", "bootstrap docs/ai", "upgrade the workflow".
 disable-model-invocation: true
 metadata:
-  version: '1.18.0'
+  version: '1.19.0'
 ---
 
 # agent-workflow-kit
@@ -28,6 +28,10 @@ when it is present and healthy, and otherwise uses its **own bundled copy** (`re
 memory substrate**. (The methodology slot is a separate axis: its fragment is read **live from the
 installed `agent-workflow-engine`**, which `npx @sabaiway/agent-workflow-kit@latest init` installs — a
 runtime dependency placed by `init` and read live; see *Methodology slot reconciliation* below.)
+`init` also **refreshes the installed memory substrate** (best-effort — a miss is a loud DEGRADED
+success: a warning with the exact recovery command + exit 0, never silent, never the engine's hard
+STOP; `--no-memory` skips it), so a returning `init` leaves **no stale core member**. The
+execution-backend bridges are still **not** installed by `init` (placed on demand by `setup`).
 
 **Detection (kit-owned, decided BEFORE any project write).** Run the kit's **own shipped**
 validator — `node ${CLAUDE_SKILL_DIR}/tools/manifest/validate.mjs <memory-skill-dir>` — never a
@@ -336,7 +340,9 @@ Read-only. The **single answer to "versions + deployment + settings + bridges"**
 
 Run `node ${CLAUDE_SKILL_DIR}/tools/family-registry.mjs --json [--dir <project>]` and render it **compact**, in the user's conversational language — **never paste the JSON or any internal field name** (no-leak rule). Map the **`installed[].state`** token via the value→plain-language map under *The version block + welcome mat* (the `visibility` and wrapper states have their own phrasings, below). Present, each area on its own line(s), routing detail to its domain mode:
 
-1. **Versions — the version block** (from `installed[]` + `deploymentHead`): the deployment-structure head, the installed package versions by `display`, the two-axes disambiguation, plus any member `notes` (e.g. a behind member's refresh+restart line). This is the shared version block above.
+1. **Versions — a status-only render from `installed[]` + `deploymentHead`** (this is **NOT** the shared notes-based version block — see the separation note below): the deployment-structure head, then each member by its `display` showing its `version` (or, when there is no version, the plain phrase for its `state`, mapped above), plus the two-axes disambiguation. **Freshness comes from `installed[].refresh`, not from `notes`:** for each member whose **`refresh.behind`** is `true`, show a **localized "needs refresh"** label and the **verbatim `refresh.recommend`** command **exactly once** (the command/package name stays source-language; **do not also paste the English `notes` caveats** — `refresh.recommend` is the single source of the recovery step, so the command is never duplicated on this surface). Lead with a one-line **headline count** derived from `installed[].state` + `refresh.behind` (e.g. *"5 members installed · 1 needs a refresh"*).
+
+> **Status reads `refresh`; the shared version block + the bootstrap/upgrade footers stay `notes`-based (unchanged this release).** *Mode: status* has its OWN status-only render (above), keyed on `installed[].refresh.behind` / `refresh.recommend`. The shared **version block** (under *The version block + welcome mat*) and the bootstrap (step 11) + every upgrade (steps 4 / 8) report footer still consume `installed[].notes` verbatim — that wiring is deliberately **untouched** here (their migration onto `refresh` is deferred). Do not rewrite those footers onto `refresh`.
 2. **Deployment (`--dir`)** (from `project`): whether `docs/ai/` is deployed + the deploy stamps by `display`; and **visibility** — render `project.visibility.state` in **user-safe words only**: *visible (tracked)* / *hidden (git-ignored, local-only)* / *unclear (uncommitted or partially set up)* — **never** the words "hidden fence" or any marker term. A `visibility.error` → surface it plainly.
 3. **Settings (`--dir`, one line each)** (from `project.settings`):
    - **recipes** — the effective recipe per slot (detail → `/agent-workflow-kit procedures` / `recipes`); a `recipes.detectError` → say the backends couldn't be checked, so recipes floored at solo.

@@ -1,22 +1,32 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, rm, mkdir, symlink, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, symlink, readdir, readFile, writeFile, chmod } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { engineInstallArgv, installEngine, ENGINE_PACKAGE } from './install.mjs';
+import {
+  engineInstallArgv,
+  installEngine,
+  ENGINE_PACKAGE,
+  memoryInstallArgv,
+  installMemory,
+  MEMORY_PACKAGE,
+  cascadePlan,
+  readMemberVersionSafe,
+} from './install.mjs';
+import { FAMILY_MEMBERS } from '../tools/family-members.mjs';
 
 const INSTALLER = join(dirname(fileURLToPath(import.meta.url)), 'install.mjs');
 const KIT_ROOT = dirname(dirname(INSTALLER));
-// --no-launchers so the test never wires Codex/Devin on the host; --no-engine so a full install never
-// spawns a real `npx … agent-workflow-engine init` (network + a write to the real engine dir). The
-// dedicated engine-step tests cover that path in-process / via a deliberately-broken PATH. `extra`
-// appends flags (e.g. --force, --allow-downgrade).
+// --no-launchers so the test never wires Codex/Devin on the host; --no-engine + --no-memory so a full
+// install never spawns a real `npx … (engine|memory) init` (network + a write to the real skill dir).
+// The dedicated cascade tests cover those paths in-process / via a stubbed `npx` on a sanitized PATH.
+// `extra` appends flags (e.g. --force, --allow-downgrade).
 const runInstaller = (target, extra = []) =>
-  spawnSync(process.execPath, [INSTALLER, '--dir', target, '--no-launchers', '--no-engine', ...extra], { encoding: 'utf8' });
+  spawnSync(process.execPath, [INSTALLER, '--dir', target, '--no-launchers', '--no-engine', '--no-memory', ...extra], { encoding: 'utf8' });
 
 // Rewrite / read the installed skill's frontmatter version — used to simulate "a newer kit is already
 // installed" (the stale-cache downgrade scenario). The installer reads exactly this field.
@@ -116,7 +126,7 @@ describe('kit installer — runs through the npx bin symlink', () => {
     const shim = join(dir, 'agent-workflow-kit'); // stands in for node_modules/.bin/<name>
     await symlink(INSTALLER, shim);
     const target = join(dir, 'home', 'agent-workflow-kit');
-    const res = spawnSync(process.execPath, [shim, '--dir', target, '--no-launchers', '--no-engine'], { encoding: 'utf8' });
+    const res = spawnSync(process.execPath, [shim, '--dir', target, '--no-launchers', '--no-engine', '--no-memory'], { encoding: 'utf8' });
     assert.equal(res.status, 0, res.stderr);
     assert.match(res.stdout, /installed v|updated the kit/);
     assert.ok(existsSync(join(target, 'SKILL.md')), 'install through the symlink must write the payload');
@@ -317,7 +327,9 @@ describe('kit installer — mandatory engine install (subprocess)', () => {
     const target = join(dir, 'agent-workflow-kit');
     const emptyBin = join(dir, 'emptybin');
     await mkdir(emptyBin, { recursive: true });
-    const res = spawnSync(process.execPath, [INSTALLER, '--dir', target, '--no-launchers'], {
+    // --no-memory keeps this focused on the engine's FATAL path (the memory-first ordering has its own
+    // dedicated test below); without it the empty-PATH memory spawn would add a second 1.5s backoff.
+    const res = spawnSync(process.execPath, [INSTALLER, '--dir', target, '--no-launchers', '--no-memory'], {
       encoding: 'utf8',
       env: { ...process.env, PATH: emptyBin },
     });
@@ -327,6 +339,184 @@ describe('kit installer — mandatory engine install (subprocess)', () => {
     assert.match(res.stderr, /--no-engine/, 'recommends the opt-out');
     assert.doesNotMatch(res.stdout, /Next — open your agent/, 'must NOT claim success before the engine failed');
     assert.ok(existsSync(join(target, 'SKILL.md')), 'the kit itself is still on disk (recovery is one step)');
+  });
+});
+
+describe('kit installer — memory cascade dispatch (Plan A, in-process, no network)', () => {
+  it('memoryInstallArgv: `npx @…/memory@latest init` on POSIX, `npx.cmd` on win32, no shell:true', () => {
+    const posix = memoryInstallArgv('linux');
+    assert.equal(posix.command, 'npx');
+    assert.deepEqual(posix.args, [`${MEMORY_PACKAGE}@latest`, 'init']);
+    assert.equal(posix.options.shell, undefined, 'must not spawn through a shell');
+    assert.equal(memoryInstallArgv('darwin').command, 'npx');
+    assert.equal(memoryInstallArgv('win32').command, 'npx.cmd');
+  });
+
+  const NO_SLEEP = { sleep: () => {} };
+
+  it('installMemory: first attempt succeeds → ok, runner called once (no retry)', () => {
+    let calls = 0;
+    const res = installMemory('linux', () => {
+      calls += 1;
+      return { status: 0 };
+    });
+    assert.deepEqual(res, { ok: true });
+    assert.equal(calls, 1);
+  });
+
+  it('installMemory: fails twice → not ok, retried exactly once (mirrors the engine D1 policy)', () => {
+    let calls = 0;
+    const res = installMemory('linux', () => {
+      calls += 1;
+      return { status: 1 };
+    }, NO_SLEEP);
+    assert.deepEqual(res, { ok: false });
+    assert.equal(calls, 2);
+  });
+
+  it('installMemory: a spawn error (npx not found) counts as a failure', () => {
+    const res = installMemory('linux', () => ({ status: null, error: new Error('spawn npx ENOENT') }), NO_SLEEP);
+    assert.deepEqual(res, { ok: false });
+  });
+
+  it('cascadePlan: refreshes exactly the npm core members, non-fatal (memory) before fatal (engine), DERIVED from FAMILY_MEMBERS', () => {
+    const plan = cascadePlan();
+    assert.deepEqual(plan.map((p) => p.name), ['agent-workflow-memory', 'agent-workflow-engine']);
+    assert.deepEqual(plan.map((p) => p.npm), [MEMORY_PACKAGE, ENGINE_PACKAGE]);
+    assert.deepEqual(plan.map((p) => p.fatal), [false, true], 'non-fatal first, then the fatal engine');
+    assert.equal(plan.filter((p) => p.fatal).length, 1, 'exactly one fatal member (the engine)');
+    // The cascade membership is the registry's npm core, minus the kit (this runner) + the bridges
+    // (placed by setup): a second literal set could drift, so pin the derivation, not a copy.
+    const derived = FAMILY_MEMBERS.filter((m) => m.npm && m.kind !== 'execution-backend' && m.name !== 'agent-workflow-kit');
+    assert.deepEqual(new Set(plan.map((p) => p.name)), new Set(derived.map((m) => m.name)));
+  });
+
+  describe('readMemberVersionSafe — crash-proof on-disk version read for the degraded warning', () => {
+    let dir;
+    beforeEach(async () => {
+      dir = await mkdtemp(join(tmpdir(), 'aw-kit-memver-'));
+    });
+    afterEach(async () => {
+      await rm(dir, { recursive: true, force: true });
+    });
+
+    it('an ABSENT skill dir → null (no SKILL.md, nothing to compare)', async () => {
+      assert.equal(await readMemberVersionSafe(join(dir, 'nope')), null);
+    });
+
+    it('a valid SKILL.md → its metadata.version', async () => {
+      const ok = join(dir, 'okmem');
+      await mkdir(ok, { recursive: true });
+      await writeFile(join(ok, 'SKILL.md'), "---\nname: agent-workflow-memory\nmetadata:\n  version: '1.3.0'\n---\n# mem\n");
+      assert.equal(await readMemberVersionSafe(ok), '1.3.0');
+    });
+
+    it('an UNREADABLE SKILL.md (a directory → EISDIR) → null, never a throw (warning stays best-effort)', async () => {
+      const bad = join(dir, 'badmem');
+      await mkdir(join(bad, 'SKILL.md'), { recursive: true });
+      assert.equal(await readMemberVersionSafe(bad), null, 'an unreadable SKILL.md must be swallowed, not escalated to fatal');
+    });
+  });
+});
+
+describe('kit installer — memory cascade (subprocess, stubbed npx, no network)', { skip: process.platform === 'win32' }, () => {
+  let dir;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'aw-kit-cascade-'));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  // A stub `npx` on PATH that records each invocation's joined args to NPX_LOG and exits per-package:
+  // a member whose package name contains "memory"/"engine" exits with MEM_EXIT/ENG_EXIT (default 0).
+  // No network, no real install — it only records + returns a status, exercising the cascade's spawn
+  // descriptors, order, and per-member (degraded vs fatal) policy.
+  const stubNpx = async () => {
+    const binDir = join(dir, 'bin');
+    await mkdir(binDir, { recursive: true });
+    await writeFile(
+      join(binDir, 'npx'),
+      ['#!/bin/sh', 'printf "%s\\n" "$*" >> "$NPX_LOG"', 'case "$1" in', '  *memory*) exit "${MEM_EXIT:-0}" ;;', '  *engine*) exit "${ENG_EXIT:-0}" ;;', 'esac', 'exit 0', ''].join('\n'),
+    );
+    await chmod(join(binDir, 'npx'), 0o755);
+    return binDir;
+  };
+  const runCascade = (binDir, target, { env = {}, extra = [] } = {}) =>
+    spawnSync(process.execPath, [INSTALLER, '--dir', target, '--no-launchers', ...extra], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: binDir, // ONLY the stub npx — no real npx, no network
+        NPX_LOG: join(dir, 'npx.log'),
+        HOME: join(dir, 'home'),
+        AGENT_WORKFLOW_MEMORY_DIR: join(dir, 'mem'), // sanitized: the degraded warning never reads real home
+        AGENT_WORKFLOW_ENGINE_DIR: join(dir, 'eng'),
+        ...env,
+      },
+    });
+  const recordedCalls = async () => (await readFile(join(dir, 'npx.log'), 'utf8').catch(() => '')).split('\n').filter(Boolean);
+
+  it('a normal init refreshes memory THEN engine — @latest, in order, matching the derived cascade plan (clean success)', async () => {
+    const binDir = await stubNpx();
+    const target = join(dir, 'agent-workflow-kit');
+    const res = runCascade(binDir, target); // both exit 0
+    assert.equal(res.status, 0, res.stderr);
+    const calls = await recordedCalls();
+    assert.deepEqual(calls, [`${MEMORY_PACKAGE}@latest init`, `${ENGINE_PACKAGE}@latest init`], 'memory first, then engine, both @latest');
+    assert.deepEqual(calls, cascadePlan().map((m) => `${m.npm}@latest init`), 'attempted spawn set === the derived cascade plan');
+    assert.match(res.stdout, /memory substrate refreshed/);
+    assert.match(res.stdout, /Next — open your agent/, 'a clean cascade ends on the success block');
+    assert.doesNotMatch(res.stderr, /could not refresh the memory/, 'no degraded warning on the clean path');
+  });
+
+  it('--no-memory skips the memory spawn (skip note, NOT a STOP) while the engine still runs', async () => {
+    const binDir = await stubNpx();
+    const target = join(dir, 'agent-workflow-kit');
+    const res = runCascade(binDir, target, { extra: ['--no-memory'] });
+    assert.equal(res.status, 0, res.stderr);
+    assert.deepEqual(await recordedCalls(), [`${ENGINE_PACKAGE}@latest init`], 'memory NOT spawned under --no-memory; engine still runs');
+    assert.match(res.stdout, /--no-memory: skipped refreshing the memory substrate/);
+    assert.doesNotMatch(res.stdout, /STOP/, 'a skipped memory refresh is never the engine-style hard STOP');
+  });
+
+  it('DEGRADED success: a memory failure → exit 0 + the success block + a loud warning with the recovery command (absent on-disk branch)', async () => {
+    const binDir = await stubNpx();
+    const target = join(dir, 'agent-workflow-kit');
+    const res = runCascade(binDir, target, { env: { MEM_EXIT: '1' } }); // memory fails twice, engine ok
+    assert.equal(res.status, 0, `a degraded memory refresh must stay exit 0: ${res.stderr}`);
+    assert.match(res.stderr, /could not refresh the memory substrate/);
+    assert.match(res.stderr, /agent-workflow-memory@latest init/, 'the warning names the exact recovery command');
+    assert.match(res.stderr, /not found on disk/, 'the sanitized memory dir is absent → the crash-proof read reports it');
+    assert.match(res.stdout, /Next — open your agent/, 'degraded is still a success — the success block prints');
+    const calls = await recordedCalls();
+    assert.equal(calls.filter((c) => c.includes('memory')).length, 2, 'memory was attempted twice (attempt + retry)');
+    assert.equal(calls.filter((c) => c.includes('engine')).length, 1, 'the engine still ran after the degraded memory');
+  });
+
+  it('DEGRADED success: a memory failure with a PRESENT-but-stale install reports its on-disk version (resolveMemoryTarget env path)', async () => {
+    const binDir = await stubNpx();
+    const target = join(dir, 'agent-workflow-kit');
+    // Pre-write a valid memory SKILL.md into the sanitized AGENT_WORKFLOW_MEMORY_DIR so the crash-proof
+    // read finds a version (the common real-world degraded path: stale-but-present memory + npm blip).
+    await mkdir(join(dir, 'mem'), { recursive: true });
+    await writeFile(join(dir, 'mem', 'SKILL.md'), "---\nname: agent-workflow-memory\nmetadata:\n  version: '1.2.3'\n---\n# mem\n");
+    const res = runCascade(binDir, target, { env: { MEM_EXIT: '1' } });
+    assert.equal(res.status, 0, `a degraded memory refresh must stay exit 0: ${res.stderr}`);
+    assert.match(res.stderr, /could not refresh the memory substrate \(on disk: v1\.2\.3\)/, 'reports the on-disk version from the env-resolved memory dir');
+    assert.match(res.stderr, /agent-workflow-memory@latest init/, 'still names the recovery command');
+    assert.match(res.stdout, /Next — open your agent/, 'still a success');
+  });
+
+  it('engine-hard-fail-still-ran-memory-FIRST: a fatal engine failure exits nonzero, but memory was attempted before it', async () => {
+    const binDir = await stubNpx();
+    const target = join(dir, 'agent-workflow-kit');
+    const res = runCascade(binDir, target, { env: { ENG_EXIT: '1' } }); // memory ok, engine fails twice
+    assert.notEqual(res.status, 0, 'a fatal engine failure exits nonzero');
+    const calls = await recordedCalls();
+    assert.ok(calls[0].includes('memory'), 'memory ran FIRST, before the fatal engine (non-fatal-before-fatal)');
+    assert.match(res.stderr, /FAILED to install the methodology engine/);
+    assert.doesNotMatch(res.stdout, /Next — open your agent/, 'must NOT claim success after the engine failed');
   });
 });
 

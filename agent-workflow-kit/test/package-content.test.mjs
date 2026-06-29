@@ -64,14 +64,26 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'SKILL.md',
       'tools/engine-source.mjs',
       'tools/commands.mjs',
+      // the pure member-table leaf (shared by family-registry + the npx installer)
+      'tools/family-members.mjs',
+      // the status-presenter core (Plan: One-init-freshness §4.2) — runtime modules that MUST ship
+      'tools/labels.mjs',
+      'tools/presentation.mjs',
+      'tools/surface.mjs',
+      'tools/view-model.mjs',
+      'tools/renderers.mjs',
     ];
     const missing = required.filter((p) => !packed.includes(p));
     assert.deepEqual(missing, [], 'a runtime payload file or entry point was dropped from the tarball');
   });
 
-  it('ships no fixtures anywhere', () => {
-    const leaks = packed.filter((p) => /(^|\/)fixtures\//.test(p));
-    assert.deepEqual(leaks, [], 'no fixtures may ship in the tarball');
+  it('ships no fixtures anywhere (neither `fixtures/` nor the inline-fixtures `__fixtures__/`)', () => {
+    // The manifest validator's `fixtures/` dir is stripped by files[]. The presenter modules use
+    // INLINE fixtures (never a tools/__fixtures__/ dir) — defense-in-depth: reject either spelling so a
+    // stray fixtures dir can never leak past the gate (`!tools/**/*.test.mjs` would NOT catch a non-test
+    // fixtures file).
+    const leaks = packed.filter((p) => /(^|\/)fixtures\//.test(p) || /(^|\/)__fixtures__\//.test(p));
+    assert.deepEqual(leaks, [], 'no fixtures (fixtures/ or __fixtures__/) may ship in the tarball');
   });
 
   // Exact-count pin: update this number only when intentionally adding/removing a shipped file;
@@ -79,6 +91,6 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
   // file accidentally dropped). After an intentional change, run `npm pack ./agent-workflow-kit
   // --dry-run --json` and set the new count here in the same commit.
   it('ships exactly the expected number of files', () => {
-    assert.equal(packed.length, 75, `tarball file count drifted (${packed.length} ≠ 75)`);
+    assert.equal(packed.length, 81, `tarball file count drifted (${packed.length} ≠ 81)`);
   });
 });

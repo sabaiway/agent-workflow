@@ -16,6 +16,7 @@ import {
   surveyAttribution,
   surveyVelocity,
   surveyBridges,
+  parseArgs,
   NOT_INSTALLED,
   UNSUPPORTED_SCHEMA,
   INVALID_MANIFEST,
@@ -25,6 +26,7 @@ import {
   UNKNOWN,
 } from './family-registry.mjs';
 import { VALID, INVALID, UNSUPPORTED } from './manifest/validate.mjs';
+import { INTERNAL_RENDER_FORBIDDEN } from './labels.mjs';
 import { START_MARKER } from './hide-footprint.mjs';
 import { ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
 import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
@@ -308,12 +310,15 @@ describe('buildEnvelope — no-leak --json envelope', () => {
     assert.equal(buildEnvelope(fam).deploymentHead, EXPECTED_WORKFLOW_VERSION);
   });
 
-  it('installed[] carries member/display/version/state (+ notes only when present), state from the public set', () => {
+  it('installed[] carries member/display/version/state (+ notes only when present, refresh always), state from the public set', () => {
     const env = buildEnvelope(fam);
     assert.equal(env.installed.length, fam.length);
     for (const e of env.installed) {
-      assert.deepEqual(Object.keys(e).filter((k) => k !== 'notes').sort(), ['display', 'member', 'state', 'version'].sort());
+      // INV-1 (additive): the ONLY new key is `refresh` (always present) — the allowlist filter admits
+      // it alongside the optional `notes`; every other field stays byte/shape-pinned.
+      assert.deepEqual(Object.keys(e).filter((k) => k !== 'notes' && k !== 'refresh').sort(), ['display', 'member', 'state', 'version'].sort());
       assert.ok(PUBLIC_STATES.has(e.state), `state "${e.state}" must be a public token`);
+      assert.deepEqual(Object.keys(e.refresh).sort(), ['behind', 'recommend'], 'refresh is { behind, recommend }');
     }
     const mem = env.installed.find((e) => e.member === 'agent-workflow-memory');
     assert.deepEqual(mem.notes, ['memory note']);
@@ -323,6 +328,27 @@ describe('buildEnvelope — no-leak --json envelope', () => {
     assert.equal(eng.state, 'absent');
     assert.equal(eng.notes, undefined, 'no notes key when there are no caveats');
     assert.equal(env.installed.find((e) => e.member === 'codex-cli-bridge').state, 'other-tool', 'foreign maps to a user-safe token, never the literal "foreign"');
+  });
+
+  it('INV-2: refresh is derived structurally — behind only for a CORE member carrying a caveat; recommend from FAMILY_MEMBERS.npm, never parsed', () => {
+    const env = buildEnvelope(fam); // memory has a caveat; engine has none in this fixture
+    const refreshOf = (member) => env.installed.find((e) => e.member === member).refresh;
+    // memory: refreshable core + caveat → behind, command composed from its npm package
+    assert.deepEqual(refreshOf('agent-workflow-memory'), { behind: true, recommend: 'npx @sabaiway/agent-workflow-memory@latest init' });
+    // engine: refreshable core but NO caveat here → not behind
+    assert.deepEqual(refreshOf('agent-workflow-engine'), { behind: false, recommend: null });
+    // kit: composition-root (npm NON-null) → behind is caveat-gated, not npm-gated → not behind
+    assert.deepEqual(refreshOf('agent-workflow-kit'), { behind: false, recommend: null });
+    // bridges: execution-backend → never a refresh caveat → not behind
+    assert.deepEqual(refreshOf('codex-cli-bridge'), { behind: false, recommend: null });
+  });
+
+  it('INV-2: a behind ENGINE (caveat present) derives behind + its own npm recommend command', () => {
+    const withEngineCaveat = fam.map((m) =>
+      m.kind === 'methodology-engine' ? { ...m, manifestState: OK, version: '1.1.0', caveats: ['engine present but does not ship the activity-procedures canon'] } : m,
+    );
+    const eng = buildEnvelope(withEngineCaveat).installed.find((e) => e.member === 'agent-workflow-engine');
+    assert.deepEqual(eng.refresh, { behind: true, recommend: 'npx @sabaiway/agent-workflow-engine@latest init' });
   });
 
   it('the project block exposes member/display/version stamps — NEVER the internal stamp filename', () => {
@@ -346,15 +372,25 @@ describe('buildEnvelope — no-leak --json envelope', () => {
     }
   });
 
-  it('leaks NO internal field name or stamp filename anywhere in the serialized envelope', () => {
+  it('INV-4: the SERIALIZED envelope leaks NO INTERNAL_RENDER_FORBIDDEN term (notes, refresh.recommend, settings error, bridge states)', () => {
     const project = {
       dir: '/p', deployed: true, docsAiPresent: true, hiddenFence: true,
       stamps: [{ name: 'agent-workflow-kit', file: 'docs/ai/.workflow-version', version: '1.3.0' }],
     };
-    const blob = JSON.stringify(buildEnvelope(fam, project));
-    for (const leak of ['manifestState', 'hiddenFence', '.workflow-version', '.memory-version', 'foreign', 'not-installed']) {
+    const extras = {
+      // a bridge whose readiness AND wrapper state are the PUBLIC 'unknown' — it must survive the scan.
+      bridges: [{ member: 'antigravity-cli-bridge', display: 'antigravity-bridge', readiness: 'unknown', wrappers: [{ cmd: 'agy-run', state: 'unknown' }] }],
+      visibility: { state: 'hidden' },
+      settings: { recipes: { error: 'docs/ai/orchestration.json: bad' }, attribution: { effective: false }, velocity: { defaultMode: null } },
+    };
+    const blob = JSON.stringify(buildEnvelope(fam, project, extras)); // fam's memory row carries a caveat → refresh.recommend
+    for (const leak of INTERNAL_RENDER_FORBIDDEN) {
       assert.ok(!blob.includes(leak), `envelope leaks internal term "${leak}"`);
     }
+    // the EXCLUDED public token 'unknown' (a bridge state) MUST pass — it is both internal + public.
+    assert.ok(blob.includes('"state":"unknown"'), 'a public bridge wrappers[].state="unknown" must survive the no-leak scan');
+    // refresh.recommend IS in the serialized blob (so the scan genuinely covers it).
+    assert.ok(blob.includes('npx @sabaiway/agent-workflow-memory@latest init'), 'refresh.recommend is part of the scanned envelope');
   });
 
   it('DISPLAY_NAMES covers every family member', () => {
@@ -531,6 +567,37 @@ describe('buildEnvelope — Phase-3 extras merge without breaking the Phase-2 sh
     assert.equal('bridges' in env, false);
     assert.equal('visibility' in env.project, false);
     assert.equal('settings' in env.project, false);
+  });
+});
+
+// ── the CLI parse contract (Plan §4.5 — loud reject, no silent failure) ─────────────────────────────
+
+describe('parseArgs — loud reject (no more silent ignore)', () => {
+  it('accepts a --dir value and returns it', () => {
+    assert.deepEqual(parseArgs(['--dir', '/p']), { dir: '/p' });
+  });
+  it('accepts the known/format flags without throwing (dir undefined)', () => {
+    assert.deepEqual(parseArgs([]), { dir: undefined });
+    assert.deepEqual(parseArgs(['--json']), { dir: undefined });
+    assert.deepEqual(parseArgs(['--format=ansi', '--dir', '/p']), { dir: '/p' });
+  });
+  it('rejects an unknown flag loudly (was silently ignored before)', () => {
+    assert.throws(() => parseArgs(['--bogus']), /unknown argument: --bogus/);
+  });
+  it('rejects --dir with no value (last token)', () => {
+    assert.throws(() => parseArgs(['--dir']), /--dir needs a value/);
+  });
+  it('rejects --dir whose next token is a flag, not a value', () => {
+    assert.throws(() => parseArgs(['--dir', '--json']), /--dir needs a value/);
+  });
+  it('rejects a REPEATED/trailing --dir with no value (not just the first occurrence)', () => {
+    assert.throws(() => parseArgs(['--dir', '/p', '--dir']), /--dir needs a value/);
+  });
+  it('a repeated --dir with a value is last-wins (both validated)', () => {
+    assert.deepEqual(parseArgs(['--dir', '/p', '--dir', '/q']), { dir: '/q' });
+  });
+  it('does not mistake the --dir VALUE for an unknown flag', () => {
+    assert.deepEqual(parseArgs(['--dir', '/weird-path', '--json']), { dir: '/weird-path' });
   });
 });
 

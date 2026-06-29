@@ -194,20 +194,25 @@ other agent). The manual path works identically but **isn't reflected in install
 <details>
 <summary><b>What <code>init</code> touches — and how to undo it</b></summary>
 
-`init` is **additive — it never deletes your settings.** It writes only its own namespaced slots:
+`init` is **additive — it never deletes your settings.** It writes its own namespaced slots, then
+refreshes the other npm core members so a returning `init` leaves **no stale core member**:
 
 | Path | What |
 |------|------|
 | `~/.claude/skills/agent-workflow-kit/` | the kit itself (refreshed on every `init`) |
+| `~/.claude/skills/agent-workflow-memory/` | the **memory substrate**, refreshed via `npx @sabaiway/agent-workflow-memory@latest init` — **best-effort:** a failure is a **loud degraded success** (warning + the exact recovery command + exit 0), never silent; skip with `--no-memory` |
+| `~/.claude/skills/agent-workflow-engine/` | the **methodology engine** the kit reads live, refreshed via `npx @sabaiway/agent-workflow-engine@latest init` — **required** (the live read STOPs without it); skip with `--no-engine` |
 | `~/.codex/skills/agent-workflow-kit` | a symlink — only if you have Codex |
 | `…/global_workflows/agent-workflow-kit.md` | a managed file — only if you have Devin Desktop |
 
-Your other Codex skills and Devin Desktop workflows are never touched. If one of those exact slots
-already holds a file the kit didn't write, it is **left alone** and you're told — re-run with
-`--force` to replace it (the original is first copied to `*.bak.<timestamp>` and the restore
-command is printed).
+The **execution-backend bridges** (`codex` / `agy`) are **not** installed by `init` — set one up on
+demand with `/agent-workflow-kit setup`. Your other Codex skills and Devin Desktop workflows are
+never touched. If one of those exact slots already holds a file the kit didn't write, it is **left
+alone** and you're told — re-run with `--force` to replace it (the original is first copied to
+`*.bak.<timestamp>` and the restore command is printed).
 
-**Uninstall:** delete the slots above (the kit folder, the symlink, the workflow file).
+**Uninstall:** delete the slots above (the kit / memory / engine folders, the symlink, the workflow
+file), or run the guarded `/agent-workflow-kit uninstall`.
 </details>
 
 ---
