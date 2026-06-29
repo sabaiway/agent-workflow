@@ -4,6 +4,44 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.17.0 — Hardened Codex bridge: quality-first delegation, clean capture, enforced git-write boundary (kit)
+
+A **feature** release. The bundled `codex-cli-bridge` (`bridges/codex-cli-bridge/`) is overhauled to
+make delegating to the OpenAI Codex CLI faster, quieter, and safer **without lowering output quality** —
+economy comes only from quality-neutral waste removal, never a model/effort downgrade. The bridge's own
+contract bumps to **`2.0.0`** (MAJOR — the hardened wrappers now *refuse* inputs the `1.0.0` wrappers
+silently accepted). The kit's own modes/CLI are unchanged, so the kit is a MINOR bump; the
+deployment-lineage head stays **`1.3.0`** (no `docs/ai` structural change, no migration). The kit
+**package** version is a separate axis.
+
+- **Quality-first — no silent downgrade.** Both wrappers pin frontier `gpt-5.5` @ `xhigh` and **refuse
+  with a loud error** if `CODEX_MODEL`/`CODEX_EFFORT` resolves to a non-default, unless the explicit
+  throwaway `CODEX_PROBE=1` mode is set (echoed loudly). Outside that probe mode the passthrough guard
+  now blocks **every** model/context/policy-affecting flag (`-m/--model`, `--add-dir`, `-C/--cd`,
+  `-p/--profile`, `--oss`, …), not just the previous subset.
+- **Clean output capture.** `-o` (final message only) + a `--json` event trace +
+  `hide_agent_reasoning=true` + `--color never` replace the streamed reasoning transcript; the session id
+  is persisted to a sidecar (`CODEX_SESSION_FILE`) for resume; on failure the trace tail is surfaced to
+  stderr (no silent failure). Reasoning still runs at `xhigh` — quality unchanged.
+- **Hard timeout.** New `CODEX_HARD_TIMEOUT` (`timeout`/`gtimeout`, generous `xhigh`-sized defaults —
+  exec `3600` s / review `1800` s, `--kill-after=15s`); a hard kill (124/137) reports `codex exceeded
+  hard timeout`. A host with no `timeout` warns and runs uncapped (no silent skip).
+- **Precomputed-diff review.** `review code` now assembles the diff itself (`git status` + cached/unstaged
+  `git diff` + untracked file **contents**, binary-skipped; a payload above the
+  `CODEX_REVIEW_MAX_TOTAL_BYTES` threshold goes via a repo-local temp file, never truncated) and feeds it
+  to `codex exec` — killing the agentic
+  discovery roaming that read unrelated files (incl. `~/.claude`). Reads stay `read-only` for
+  surrounding-file context; a no-change preflight exits before spending a run. Optional structured
+  findings via `CODEX_REVIEW_SCHEMA=1` (default off, raw-text fallback).
+- **Invariant-preserving resume + enforced git-write boundary.** A dedicated `--resume-last` /
+  `--resume <id>` entrypoint re-establishes every wrapper invariant (`--ignore-user-config`, the pin,
+  posture restated via `-c`). A **physical `git` shim** (a real executable on a temp `PATH`, since
+  `execve` bypasses bash functions) enforces a strict read allowlist and blocks every write verb by
+  default — defence beyond the prompt contract.
+- **First hermetic bridge tests + tarball `70 → 72` files.** `bridges/codex-cli-bridge/bin/{codex-exec,codex-review}.test.mjs`
+  ship as byte-identical mirror payload (matching `agy.test.mjs`); `npm pack --dry-run --json`
+  re-verified. The byte-identical bridge mirror + `capability.json` stay valid.
+
 ## 1.16.0 — Onboarding & discoverability: `help`, honest versioning, an enriched `status` (kit)
 
 A **feature** release (additive, backward-compatible). Makes the kit self-explanatory: a discoverable
