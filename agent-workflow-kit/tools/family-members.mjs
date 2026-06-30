@@ -57,7 +57,8 @@ export const FAMILY_MEMBERS = [
     installed: { env: 'ANTIGRAVITY_CLI_BRIDGE_DIR', default: '~/.claude/skills/antigravity-cli-bridge', file: 'SKILL.md' },
     deployed: null,
     npm: null,
-    wrapperCmds: ['agy-run'],
+    // review → agy-review, probe → agy-run (first-seen role order in capability.json; bridge 2.0.0).
+    wrapperCmds: ['agy-review', 'agy-run'],
   },
 ];
 

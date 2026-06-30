@@ -55,6 +55,14 @@ const CODEX_MANIFEST = {
   },
 };
 
+const AGY_MANIFEST = {
+  name: 'antigravity-cli-bridge', kind: 'execution-backend',
+  roles: {
+    review: { cmd: 'agy-review', source: 'bin/agy-review.sh' },
+    probe: { cmd: 'agy-run', source: 'bin/agy.sh' },
+  },
+};
+
 // ── buildPlan: SKILL axis ──────────────────────────────────────────────────────
 
 describe('buildPlan — skill axis', () => {
@@ -109,6 +117,26 @@ describe('buildPlan — bridge wrappers', () => {
     assert.equal(wrappers.length, 2);
     assert.ok(wrappers.every((w) => w.class === MANAGED_MARKER));
     assert.equal(find(wrappers, 'wrapper').expectedSrc, join(skillDir, 'bin/codex-exec.sh'));
+  });
+
+  it('antigravity 2.0.0: classifies BOTH managed wrappers (agy-review + agy-run) for removal', () => {
+    // The teardown surface widened from one wrapper to two; uninstall derives them dynamically from the
+    // installed manifest (deriveLinks), so this pins that both agy-review and agy-run are reversed.
+    const agySkill = '/skills/antigravity-cli-bridge';
+    const fs = mockFs({
+      manifests: { [agySkill]: AGY_MANIFEST },
+      symlinks: {
+        [join(bindir, 'agy-review')]: join(agySkill, 'bin/agy-review.sh'),
+        [join(bindir, 'agy-run')]: join(agySkill, 'bin/agy.sh'),
+      },
+    });
+    const wrappers = buildPlan({ family: [ANTIGRAVITY], bindir }, fs).items.filter((i) => i.surface === 'wrapper');
+    assert.equal(wrappers.length, 2);
+    assert.ok(wrappers.every((w) => w.class === MANAGED_MARKER));
+    assert.deepEqual(
+      wrappers.map((w) => w.path).sort(),
+      [join(bindir, 'agy-review'), join(bindir, 'agy-run')].sort(),
+    );
   });
 
   it('STOPs on a foreign wrapper symlink (points elsewhere) — never removed', () => {

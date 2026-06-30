@@ -20,6 +20,7 @@ export const ALLOWLIST = [
   'codex-review',
   'antigravity-cli-bridge',
   'agy-run',
+  'agy-review',
   'agent-workflow-kit',
   'agent-workflow-memory',
   'agent-workflow-engine',

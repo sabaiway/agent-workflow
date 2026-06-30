@@ -18,7 +18,7 @@ const fullEnvelope = () => ({
   ],
   bridges: [
     { member: 'codex-cli-bridge', display: 'codex-bridge', readiness: 'ready', wrappers: [{ cmd: 'codex-exec', state: 'present' }, { cmd: 'codex-review', state: 'missing' }] },
-    { member: 'antigravity-cli-bridge', display: 'antigravity-bridge', readiness: 'needs-skill', wrappers: [{ cmd: 'agy-run', state: 'unknown' }] },
+    { member: 'antigravity-cli-bridge', display: 'antigravity-bridge', readiness: 'needs-skill', wrappers: [{ cmd: 'agy-review', state: 'unknown' }, { cmd: 'agy-run', state: 'unknown' }] },
   ],
   project: {
     dir: '/proj', deployed: true, docsAi: true,
@@ -46,7 +46,7 @@ const PLAIN_GOLDEN = `agent-workflow family — installed members (skill axis)
 execution backends (host)
 
   codex-bridge        ready         wrappers: codex-exec ✓, codex-review ✗
-  antigravity-bridge  needs-skill   wrappers: agy-run ?
+  antigravity-bridge  needs-skill   wrappers: agy-review ?, agy-run ?
 
 project deployment (/proj)
 
@@ -124,6 +124,7 @@ describe('renderers — ASCII glyph fallback', () => {
     assert.match(out, /-> the memory installed here is behind/);
     assert.match(out, /codex-exec \+/);
     assert.match(out, /codex-review x/);
+    assert.match(out, /agy-review \?/);
     assert.match(out, /agy-run \?/);
     assert.ok(!out.includes('↳') && !out.includes('✓') && !out.includes('✗'), 'no unicode glyphs in ASCII mode');
   });
@@ -171,8 +172,9 @@ describe('renderers — branch coverage (every replaced-function branch)', () =>
   });
 
   it('a bridge unknown wrapper state renders as the unknown glyph, distinct from missing', () => {
-    const out = renderPlain({ installed: [], bridges: [{ display: 'antigravity-bridge', readiness: 'needs-skill', wrappers: [{ cmd: 'agy-run', state: 'unknown' }] }] });
-    assert.match(out, /agy-run \?/);
+    const out = renderPlain({ installed: [], bridges: [{ display: 'antigravity-bridge', readiness: 'needs-skill', wrappers: [{ cmd: 'agy-review', state: 'unknown' }, { cmd: 'agy-run', state: 'missing' }] }] });
+    assert.match(out, /agy-review \?/, 'unknown → ?');
+    assert.match(out, /agy-run ✗/, 'missing → ✗ (distinct from unknown)');
   });
 
   it('a member with no refresh object renders without a headline behind-count', () => {

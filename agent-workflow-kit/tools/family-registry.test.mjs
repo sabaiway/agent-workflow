@@ -379,7 +379,7 @@ describe('buildEnvelope — no-leak --json envelope', () => {
     };
     const extras = {
       // a bridge whose readiness AND wrapper state are the PUBLIC 'unknown' — it must survive the scan.
-      bridges: [{ member: 'antigravity-cli-bridge', display: 'antigravity-bridge', readiness: 'unknown', wrappers: [{ cmd: 'agy-run', state: 'unknown' }] }],
+      bridges: [{ member: 'antigravity-cli-bridge', display: 'antigravity-bridge', readiness: 'unknown', wrappers: [{ cmd: 'agy-review', state: 'unknown' }, { cmd: 'agy-run', state: 'unknown' }] }],
       visibility: { state: 'hidden' },
       settings: { recipes: { error: 'docs/ai/orchestration.json: bad' }, attribution: { effective: false }, velocity: { defaultMode: null } },
     };
