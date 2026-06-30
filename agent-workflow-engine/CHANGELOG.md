@@ -4,6 +4,15 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.6.0 — Loosen the agy Issue-001 caveat (grounded review is sound)
+
+A **feature** release. `references/orchestration.md` §5 reframes the `agy` health advisory: the grounded
+`agy-review` contract removes agy's stale-model / partial-diff **false positives**, so `agy` is a **sound**
+second opinion now — no longer something to merely avoid. The real **service-stall** caveat (Issue-001) is
+kept — it is a separate risk that grounding does not remove — as is the codex-before-agy tie-break for
+large / latency-sensitive substantive reviews and the `--add-dir` escalation path. The deployment-lineage
+head stays **`1.3.0`** (no `docs/ai` structural change).
+
 ## 1.5.0 — Right-altitude & code-grounded folds in the canon
 
 A **feature** release. The planning canon (`references/planning.md`, read **live** by the composition
