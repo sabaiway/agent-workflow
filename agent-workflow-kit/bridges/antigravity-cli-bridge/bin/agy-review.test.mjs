@@ -393,6 +393,23 @@ describe('agy-review.sh — mode / arg validation (11)', () => {
     assert.equal(r.status, 2);
     assert.match(r.stderr, /this wrapper OWNS the review posture/);
   });
+
+  it('rejects a value-flag that swallows the NEXT flag as its value (--facts --focus x → exit 2)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', '--focus', 'x'] });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /--facts needs a value/);
+    assert.equal(r.invoked, false, 'a misplaced flag must not be spent as bogus grounding');
+  });
+
+  it('rejects a value-flag with no value at the end of args (--decided → exit 2)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'f', '--decided'] });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /--decided needs a value/);
+  });
 });
 
 describe('agy-review.sh — no-env run (12)', () => {

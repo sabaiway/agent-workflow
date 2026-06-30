@@ -59,7 +59,7 @@ agy --version
 echo "say OK" | agy-run -
 ```
 
-Expected: the version prints (`1.0.10` or newer), then a short reply containing `OK`. If `agy-run`
+Expected: the version prints (`1.0.13` or newer), then a short reply containing `OK`. If `agy-run`
 reports `'agy' not found`, fix your `PATH` (step 1). If it asks you to sign in, complete step 2.
 
 ## Notes

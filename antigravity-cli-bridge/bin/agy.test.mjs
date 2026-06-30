@@ -140,4 +140,15 @@ describe('agy.sh — argv byte-ceiling guard (AGY_MAX_PROMPT_BYTES)', () => {
     assert.match(r.stderr, /not a non-negative integer/);
     assert.equal(invoked, false, 'a malformed ceiling must fail loud before invoking agy');
   });
+
+  it('rejects an AGY_MAX_PROMPT_BYTES raised above the OS single-argv ceiling (exit 2; agy never invoked)', () => {
+    const home = makeSandbox(RECORDING_STUB);
+    const sentinel = withSentinel(home);
+    const r = runArgs(home, { args: ['hi'], env: { AGY_MAX_PROMPT_BYTES: '200000', AGY_STUB_SENTINEL: sentinel } });
+    const invoked = existsSync(sentinel);
+    rmSync(home, { recursive: true, force: true });
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /exceeds the OS single-argv ceiling/);
+    assert.equal(invoked, false, 'raising the ceiling past the OS limit must fail loud, not pass through to E2BIG');
+  });
 });

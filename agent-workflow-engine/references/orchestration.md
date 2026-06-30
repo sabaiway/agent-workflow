@@ -22,8 +22,8 @@ Each backend declares what it can do in its `capability.json` `provides` / `role
 - **`codex-cli-bridge`** (`codex`) — `provides: ["execute", "review"]`. It can run a bounded
   execution sub-task (`codex-exec`, output: a diff) and give an advisory review (`codex-review`,
   modes `plan` / `code`).
-- **`antigravity-cli-bridge`** (`agy`) — `provides: ["review", "probe"]`. It can give an advisory
-  review and answer a bounded probe (both via `agy-run`).
+- **`antigravity-cli-bridge`** (`agy`) — `provides: ["review", "probe"]`. It gives an advisory,
+  grounded review via `agy-review` (modes `code` / `plan` / `diff`) and answers a bounded probe via `agy-run`.
 
 Both are **subscription** backends with a **finite quota** — spend deliberately.
 
