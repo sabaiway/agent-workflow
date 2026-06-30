@@ -28,6 +28,7 @@
 #   AGY_MODEL="Claude Opus 4.6 (Thinking)" agy-run "..."   # pick a model
 #   AGY_TIMEOUT=10m agy-run "..."            # override print timeout (agy's soft bound)
 #   AGY_HARD_TIMEOUT=8m agy-run "..."        # override the hard wall-clock cap (timeout(1))
+#   AGY_MAX_PROMPT_BYTES=200000 agy-run @big.md   # raise the single-argv byte ceiling (default 120000)
 #   agy-run "..." -- --add-dir . --dangerously-skip-permissions
 #                                            # passthrough agy flags (future flows)
 set -euo pipefail
@@ -93,6 +94,27 @@ fi
 
 if [[ -z "${prompt// }" ]]; then
   echo "error: empty prompt" >&2
+  exit 2
+fi
+
+# --- Argv byte-ceiling guard --------------------------------------------------
+# agy takes the prompt as a single `-p` argv. On Linux a single argv element past
+# MAX_ARG_STRLEN (~131072 bytes) makes execve fail with a cryptic "Argument list
+# too long". Guard the prompt THIS wrapper holds — the `-` (stdin) / `@file` paths,
+# and pre-measuring callers like agy-review.sh — with a margin under that ceiling.
+# Scope: a huge LITERAL `agy-run "<huge>"` argv fails at THIS script's own exec
+# before any line here runs, so it can't be caught here — route large prompts via
+# `-` (stdin) or `@file`, which land in $prompt where this guard can measure them.
+AGY_MAX_PROMPT_BYTES="${AGY_MAX_PROMPT_BYTES:-120000}"
+if [[ ! "$AGY_MAX_PROMPT_BYTES" =~ ^[0-9]+$ ]]; then
+  echo "error: AGY_MAX_PROMPT_BYTES='$AGY_MAX_PROMPT_BYTES' is not a non-negative integer." >&2
+  exit 2
+fi
+prompt_bytes=$(( $(printf '%s' "$prompt" | wc -c) ))   # arithmetic strips any BSD `wc` padding
+if (( prompt_bytes > AGY_MAX_PROMPT_BYTES )); then
+  echo "error: prompt is ${prompt_bytes} bytes, over AGY_MAX_PROMPT_BYTES=${AGY_MAX_PROMPT_BYTES}." >&2
+  echo "       agy takes the prompt as a single argv; past ~131072 bytes it fails with a cryptic" >&2
+  echo "       'Argument list too long'. Trim or split the prompt. (Override via AGY_MAX_PROMPT_BYTES.)" >&2
   exit 2
 fi
 
