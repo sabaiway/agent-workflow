@@ -19,7 +19,7 @@
 // Pure, dependency-injectable (fs/env/validator are deps), dependency-free, Node >= 18. Every fs
 // probe is wrapped → an explicit `unknown` + reason, never a throw and never a nameless failure.
 
-import { existsSync, statSync, accessSync, realpathSync, readFileSync, constants } from 'node:fs';
+import { existsSync, statSync, accessSync, realpathSync, constants } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
@@ -51,10 +51,13 @@ const EXPECTED_KIND = 'execution-backend';
 // The kit-owned registry: the per-backend facts the detector needs even when a bridge is NOT
 // installed (no manifest on disk to read). Kept in lockstep with the in-repo manifests by the
 // drift-guard test. `credential.env: null` → no env override exists (do not invent one).
+// `wrapperCmds` is the EXPECTED deduped roles[].cmd set the CURRENT kit bundles — readiness probes
+// THIS set (not the installed manifest's), so a stale install missing a wrapper surfaces DEGRADED.
 export const KNOWN_BACKENDS = [
   {
     name: 'codex-cli-bridge',
     installed: { env: 'CODEX_CLI_BRIDGE_DIR', default: '~/.claude/skills/codex-cli-bridge', file: 'SKILL.md' },
+    wrapperCmds: ['codex-exec', 'codex-review'],
     bin: 'codex',
     credential: { env: 'CODEX_HOME', default: '~/.codex', file: 'auth.json' },
     setupUrl: 'https://github.com/sabaiway/agent-workflow/blob/main/codex-cli-bridge/setup/README.md',
@@ -66,6 +69,7 @@ export const KNOWN_BACKENDS = [
   {
     name: 'antigravity-cli-bridge',
     installed: { env: 'ANTIGRAVITY_CLI_BRIDGE_DIR', default: '~/.claude/skills/antigravity-cli-bridge', file: 'SKILL.md' },
+    wrapperCmds: ['agy-review', 'agy-run'],
     bin: 'agy',
     credential: { env: null, default: '~/.gemini/antigravity-cli', file: 'antigravity-oauth-token' },
     setupUrl: 'https://github.com/sabaiway/agent-workflow/blob/main/antigravity-cli-bridge/setup/README.md',
@@ -154,31 +158,6 @@ export const probeCredential = (entry, deps = {}) => {
   return { state: probeFile(file, deps), path: file };
 };
 
-const defaultReadManifest = (skillDir, deps = {}) => {
-  const read = deps.readFile ?? readFileSync;
-  try {
-    return JSON.parse(read(join(skillDir, 'capability.json'), 'utf8'));
-  } catch {
-    return null;
-  }
-};
-
-// The bridge's PATH wrapper names = the deduped `roles[].cmd` set (codex's review + execute roles
-// are two cmds; antigravity's review + probe roles share one `agy-run`).
-const wrapperCmds = (manifest) => {
-  const roles = manifest && typeof manifest.roles === 'object' && !Array.isArray(manifest.roles) ? manifest.roles : {};
-  const seen = new Set();
-  const out = [];
-  for (const role of Object.values(roles)) {
-    const cmd = role && typeof role.cmd === 'string' ? role.cmd : null;
-    if (cmd && !seen.has(cmd)) {
-      seen.add(cmd);
-      out.push(cmd);
-    }
-  }
-  return out;
-};
-
 const computeReadiness = (manifestState, cli, credentials, wrappers) => {
   if (manifestState !== OK) return NEEDS_SKILL;
   if (cli.state !== PRESENT) return NEEDS_CLI;
@@ -204,7 +183,6 @@ export const detectBackend = (entry, deps = {}) => {
       return { name: cmd, state: r.state };
     });
   const probeCredentialsFn = deps.probeCredentials ?? ((e) => probeCredential(e, deps));
-  const readManifest = deps.readManifest ?? ((dir) => defaultReadManifest(dir, deps));
 
   const resolvedDir = resolveDir({ env: entry.installed.env, default: entry.installed.default }, getenv, home);
   const markerPresent = probeFile(join(resolvedDir, entry.installed.file), deps) === PRESENT;
@@ -238,7 +216,10 @@ export const detectBackend = (entry, deps = {}) => {
 
   const cliProbe = probeCliFn(entry.bin);
   const credentials = probeCredentialsFn(entry);
-  const wrappers = isOk ? wrapperCmds(readManifest(resolvedDir)).map(probeWrapperFn) : [];
+  // Probe the EXPECTED wrapper set the kit bundles (entry.wrapperCmds), NOT the installed manifest's
+  // roles — so a STALE install missing a newer wrapper (e.g. agy-review on a v1.0.0 antigravity) is
+  // reported DEGRADED rather than a false "ready N/N". Keeps detectBackend pure (reads only its args).
+  const wrappers = isOk ? (entry.wrapperCmds ?? []).map(probeWrapperFn) : [];
   const readiness = computeReadiness(manifestState, cliProbe, credentials, wrappers);
 
   const installed = manifestState !== NOT_INSTALLED;

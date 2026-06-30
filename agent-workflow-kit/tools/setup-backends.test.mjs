@@ -98,11 +98,19 @@ describe('bindirOnPath', () => {
 describe('deriveLinks', () => {
   const SK = '/skills/codex-cli-bridge';
 
-  it('dedupes a cmd shared by two roles with the SAME source (agy-run case)', () => {
-    const roles = { review: { cmd: 'agy-run', source: 'bin/agy.sh' }, probe: { cmd: 'agy-run', source: 'bin/agy.sh' } };
+  it('antigravity 2.0.0: review→agy-review, probe→agy-run → two managed links, in role order', () => {
+    const roles = { review: { cmd: 'agy-review', source: 'bin/agy-review.sh' }, probe: { cmd: 'agy-run', source: 'bin/agy.sh' } };
     const links = deriveLinks(manifestOf('antigravity-cli-bridge', roles), SK);
+    assert.equal(links.length, 2);
+    assert.deepEqual(links.map((l) => l.cmd), ['agy-review', 'agy-run']);
+    assert.deepEqual(links.map((l) => l.sourceRel), ['bin/agy-review.sh', 'bin/agy.sh']);
+  });
+
+  it('dedupes a cmd shared by two roles with the SAME source (general feature)', () => {
+    const roles = { a: { cmd: 'shared-wrapper', source: 'bin/x.sh' }, b: { cmd: 'shared-wrapper', source: 'bin/x.sh' } };
+    const links = deriveLinks(manifestOf('codex-cli-bridge', roles), SK);
     assert.equal(links.length, 1);
-    assert.equal(links[0].cmd, 'agy-run');
+    assert.equal(links[0].cmd, 'shared-wrapper');
   });
 
   it('two distinct cmds → two links', () => {

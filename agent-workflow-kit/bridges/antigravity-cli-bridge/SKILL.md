@@ -2,7 +2,7 @@
 name: antigravity-cli-bridge
 description: Delegate work to Google's Antigravity CLI (`agy`) — the successor to Gemini CLI — to reach Gemini, Claude, and GPT-OSS models under a Google AI Pro/Ultra subscription from the terminal. Use when the user wants to run a headless `agy` prompt, hand a focused task or second-opinion review to `agy`, install or authenticate Antigravity CLI, check or economise its quota/models, bridge project context into `agy`, set up a second delegated-execution backend beside Codex, or troubleshoot `agy` flags, models, auth, conversations, or its no-JSON headless behaviour.
 metadata:
-  version: '1.0.0'
+  version: '2.0.0'
 ---
 
 # antigravity-cli-bridge
@@ -81,12 +81,38 @@ AGY_HARD_TIMEOUT=8m agy-run "..."             # hard wall-clock cap via timeout(
 agy-run "..." -- --add-dir . --dangerously-skip-permissions   # passthrough agy flags
 ```
 
-`agy` is **headless-only** here (`-p`/`--print`) and there is **no JSON output mode** in v1.0.10 — you
+`agy` is **headless-only** here (`-p`/`--print`) and there is **no JSON output mode** in v1.0.13 — you
 get plain text. If you need structure, ask for Markdown with explicit headings and validate it
 yourself. Wrapper inputs: first argument is the prompt (`text`, `-` for stdin, or `@file`);
 `AGY_MODEL` (default `Gemini 3.1 Pro (High)`); `AGY_TIMEOUT` → `--print-timeout` (default `5m`);
 `AGY_HARD_TIMEOUT` → hard `timeout(1)` wall-clock cap (default = `AGY_TIMEOUT`); extra `agy` flags
 after `--`. Full detail: [`references/models-and-flags.md`](references/models-and-flags.md).
+
+## Review mode (`agy-review`)
+
+For a **code / plan / diff review**, drive the dedicated **`agy-review`** wrapper
+([`bin/agy-review.sh`](bin/agy-review.sh)) — the `review` role — instead of hand-rolling an `agy-run`
+prompt. Because `agy` reads nothing by default and its training predates your codebase, an *ungrounded*
+review **guesses** (stale-model and partial-diff false positives). `agy-review` mechanizes the
+**grounded contract** (see [`references/review-prompt.md`](references/review-prompt.md)): it assembles
+POSTURE + a **model/cutoff GUARD** + your **`--facts`** (the verified facts the model reviews AGAINST)
++ **`--decided`** (the anti-circling list) + **`--focus`** + the artifact + a strict output shape, then
+delegates execution to `agy-run` (one home for the timeout, the subscription invariant, and the byte
+ceiling).
+
+```bash
+agy-review code [--facts @facts.md] [--decided @decided.md] [--focus "…"]   # the repo-complete diff
+agy-review plan <plan-file> [--facts @f] …      # critique a plan
+agy-review diff <diff-file> [--facts @f] …      # review a supplied diff
+agy-review --continue --decided @round1.md --focus "still-open items"   # round-2 delta, no re-assembly
+```
+
+Frontier default `Gemini 3.1 Pro (High)`; **any** model is allowed (a sub-frontier one earns a
+silenceable `AGY_PROBE=1` advisory). An oversized `code` review trips the byte ceiling with trim/split
+guidance; `AGY_REVIEW_ALLOW_ADDDIR=1` offloads only the change set to a private `--add-dir` staging dir
+(grounding stays inline). The service can still **stall on large/substantive prompts** (Issue-001) — keep
+reviews **focused**; the inherited hard timeout is the guard. Full playbook:
+[`references/driving-agy.md`](references/driving-agy.md).
 
 ## Project context (how `agy` sees the repo)
 
@@ -110,7 +136,9 @@ wins, or include them in the prompt. Probe results in a real repo confirmed `agy
 per-workspace skills by directory scan. In testing it also **named a project-specific skill without
 being pointed at any file** (auto-discovery), but that is `agy`'s own mechanism, not a guaranteed
 Claude-style description-dispatch engine; don't promise more than the probe shows in a given repo.
-Re-runnable from a project root (use a cheap model):
+**A review, though, must never *depend* on this** — `agy` does not read your repo code or a diff
+without an explicit `--add-dir`, so ground a review **self-contained** via `agy-review --facts` (above)
+rather than relying on `agy` to read the change set. Re-runnable from a project root (use a cheap model):
 
 ```bash
 AGY_MODEL="Gemini 3.5 Flash (Low)" agy-run \
@@ -164,7 +192,7 @@ checklist, prompt templates, output handling). Essentials:
 - Subdirectory `CLAUDE.md` files are **not** auto-loaded by `agy` (only the cwd context file +
   `.agents/skills/`). Put cross-cutting rules in the root context file, or include local rules in the
   prompt when they matter.
-- **No JSON output** and **no `agy inspect`** in v1.0.10 — parse text; there is no machine-readable
+- **No JSON output** and **no `agy inspect`** in v1.0.13 — parse text; there is no machine-readable
   introspection.
 - Model names must match the `agy models` display strings **exactly**.
 - **Quota is finite.** Heavy use of Pro/Claude models can exhaust the subscription; prefer Flash for

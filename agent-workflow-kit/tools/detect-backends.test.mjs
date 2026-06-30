@@ -140,6 +140,7 @@ describe('probeCredential', () => {
 const entryAt = (dir, over = {}) => ({
   name: 'codex-cli-bridge',
   installed: { env: 'X_DIR', default: dir, file: 'capability.json' },
+  wrapperCmds: ['codex-exec', 'codex-review'],
   bin: 'codex',
   credential: { env: null, default: '/no/such/dir', file: 'auth.json' },
   setupUrl: 'https://example.test/setup',
@@ -235,6 +236,27 @@ describe('detectBackend — readiness over an ok manifest', () => {
     const d = detectBackend(entryAt(empty), allPresentDeps);
     assert.equal(d.readiness, 'needs-skill');
   });
+
+  it('stale v1.0.0 install (manifest knows only agy-run) → degraded, agy-review flagged missing', () => {
+    // The bundled kit EXPECTS ['agy-review','agy-run']; an OLD v1.0.0 install only linked agy-run.
+    // The detector probes the EXPECTED set (from FAMILY_MEMBERS), NOT the installed manifest's roles —
+    // so the missing agy-review surfaces as DEGRADED instead of a false "ready 1/1". (`validate` is
+    // injected to OK so we don't have to materialise a full valid v1.0.0 skill dir on disk.)
+    const dir = mkdtempSync(join(tmpdir(), 'awf-stale-agy-'));
+    writeFileSync(join(dir, 'SKILL.md'), '---\nname: antigravity-cli-bridge\nmetadata:\n  version: "1.0.0"\n---\n');
+    const agyEntry = KNOWN_BACKENDS.find((b) => b.name === 'antigravity-cli-bridge');
+    const entry = { ...agyEntry, installed: { ...agyEntry.installed, env: 'X_DIR', default: dir } };
+    const d = detectBackend(entry, {
+      getenv: {},
+      validate: () => ({ result: 'valid', available: true, kind: 'execution-backend', name: 'antigravity-cli-bridge' }),
+      probeCli: () => ({ bin: 'agy', state: 'present', path: '/u/agy' }),
+      probeCredentials: () => ({ state: 'present', path: '/c/tok' }),
+      probeWrapper: (cmd) => ({ name: cmd, state: cmd === 'agy-run' ? 'present' : 'missing' }),
+    });
+    assert.equal(d.readiness, 'degraded');
+    assert.deepEqual(d.wrappers.map((w) => w.name), ['agy-review', 'agy-run']);
+    assert.equal(d.wrappers.find((w) => w.name === 'agy-review').state, 'missing');
+  });
 });
 
 // ── registry drift guard ─────────────────────────────────────────────────────
@@ -271,6 +293,20 @@ describe('KNOWN_BACKENDS — drift guard against the in-repo manifests', () => {
       assert.equal(entry.installed.env, real.env, `${entry.name} env`);
       assert.equal(entry.installed.default, real.default, `${entry.name} default`);
       assert.equal(entry.installed.file, real.file, `${entry.name} file`);
+    }
+  });
+
+  it('each entry.wrapperCmds matches the manifest roles[].cmd deduped in first-seen order', () => {
+    const dedupedCmds = (manifest) => {
+      const seen = new Set();
+      const out = [];
+      for (const role of Object.values(manifest.roles ?? {})) {
+        if (role && typeof role.cmd === 'string' && !seen.has(role.cmd)) { seen.add(role.cmd); out.push(role.cmd); }
+      }
+      return out;
+    };
+    for (const entry of KNOWN_BACKENDS) {
+      assert.deepEqual(entry.wrapperCmds, dedupedCmds(readManifest(join(REPO, entry.name))), `${entry.name} wrapperCmds`);
     }
   });
 

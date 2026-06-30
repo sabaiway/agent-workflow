@@ -22,7 +22,7 @@ const fullEnvelope = () => ({
   ],
   bridges: [
     { member: 'codex-cli-bridge', display: 'codex-bridge', readiness: 'ready', wrappers: [{ cmd: 'codex-exec', state: 'present' }, { cmd: 'codex-review', state: 'missing' }] },
-    { member: 'antigravity-cli-bridge', display: 'antigravity-bridge', readiness: 'needs-skill', wrappers: [{ cmd: 'agy-run', state: 'unknown' }] },
+    { member: 'antigravity-cli-bridge', display: 'antigravity-bridge', readiness: 'needs-skill', wrappers: [{ cmd: 'agy-review', state: 'unknown' }, { cmd: 'agy-run', state: 'unknown' }] },
   ],
   project: {
     dir: '/proj',
@@ -81,7 +81,7 @@ describe('view-model — bridges / project / settings', () => {
     const vm = toViewModel(fullEnvelope());
     assert.equal(vm.bridges.length, 2);
     assert.deepEqual(vm.bridges[0].wrappers, [{ cmd: 'codex-exec', state: 'present' }, { cmd: 'codex-review', state: 'missing' }]);
-    assert.equal(vm.bridges[1].wrappers[0].state, 'unknown');
+    assert.deepEqual(vm.bridges[1].wrappers, [{ cmd: 'agy-review', state: 'unknown' }, { cmd: 'agy-run', state: 'unknown' }]);
   });
 
   it('project stamps carry display/version only (never the internal filename); visibility → phrase', () => {
