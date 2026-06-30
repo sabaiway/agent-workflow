@@ -28,7 +28,8 @@
 #   AGY_MODEL="Claude Opus 4.6 (Thinking)" agy-run "..."   # pick a model
 #   AGY_TIMEOUT=10m agy-run "..."            # override print timeout (agy's soft bound)
 #   AGY_HARD_TIMEOUT=8m agy-run "..."        # override the hard wall-clock cap (timeout(1))
-#   AGY_MAX_PROMPT_BYTES=200000 agy-run @big.md   # raise the single-argv byte ceiling (default 120000)
+#   AGY_MAX_PROMPT_BYTES=60000 agy-run @big.md    # LOWER the single-argv byte ceiling (default 120000;
+#                                            # the override only tightens it — it can never exceed the OS ~131072 limit)
 #   agy-run "..." -- --add-dir . --dangerously-skip-permissions
 #                                            # passthrough agy flags (future flows)
 set -euo pipefail
@@ -108,6 +109,16 @@ fi
 AGY_MAX_PROMPT_BYTES="${AGY_MAX_PROMPT_BYTES:-120000}"
 if [[ ! "$AGY_MAX_PROMPT_BYTES" =~ ^[0-9]+$ ]]; then
   echo "error: AGY_MAX_PROMPT_BYTES='$AGY_MAX_PROMPT_BYTES' is not a non-negative integer." >&2
+  exit 2
+fi
+# The override may only TIGHTEN the ceiling. Raising it past the OS single-argv limit (MAX_ARG_STRLEN
+# ~131072) would let an oversized prompt through the guard only to fail at `exec` with E2BIG — exactly
+# what the guard exists to prevent. Reject anything above a safe hard maximum just under that limit.
+AGY_ARGV_HARD_MAX=131000
+if (( AGY_MAX_PROMPT_BYTES > AGY_ARGV_HARD_MAX )); then
+  echo "error: AGY_MAX_PROMPT_BYTES=${AGY_MAX_PROMPT_BYTES} exceeds the OS single-argv ceiling (~${AGY_ARGV_HARD_MAX})." >&2
+  echo "       The prompt is passed as ONE -p argv; raising the limit past the OS ceiling only restores the cryptic" >&2
+  echo "       'Argument list too long' failure. The override may LOWER the ceiling (stricter), never raise it past this." >&2
   exit 2
 fi
 prompt_bytes=$(( $(printf '%s' "$prompt" | wc -c) ))   # arithmetic strips any BSD `wc` padding

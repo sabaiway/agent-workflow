@@ -61,6 +61,14 @@ if [[ ! "$AGY_MAX_PROMPT_BYTES" =~ ^[0-9]+$ ]]; then
   echo "error: AGY_MAX_PROMPT_BYTES='$AGY_MAX_PROMPT_BYTES' is not a non-negative integer." >&2
   exit 2
 fi
+# The override may only TIGHTEN the ceiling — raising it past the OS single-argv limit (~131072) would
+# defeat the guard (the prompt fails at exec with E2BIG). Reject above a safe hard maximum (matches agy.sh).
+AGY_ARGV_HARD_MAX=131000
+if (( AGY_MAX_PROMPT_BYTES > AGY_ARGV_HARD_MAX )); then
+  echo "error: AGY_MAX_PROMPT_BYTES=${AGY_MAX_PROMPT_BYTES} exceeds the OS single-argv ceiling (~${AGY_ARGV_HARD_MAX})." >&2
+  echo "       The override may LOWER the ceiling (stricter), never raise it past the OS limit." >&2
+  exit 2
+fi
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -226,6 +234,15 @@ fi
 FACTS_RAW=""
 DECIDED_RAW=""
 FOCUS_PARTS=()
+# A value-taking flag must be followed by a real value — never end-of-args and never another flag.
+# Otherwise `agy-review code --facts --focus x` would silently take "--focus" as the facts and spend a
+# review on bogus grounding. ($2 is referenced only as ${2:-} so an unset value is safe under set -u.)
+need_value() {  # $1 = flag name, $2 = candidate value
+  if [[ -z "${2:-}" || "${2:0:2}" == "--" ]]; then
+    echo "error: $1 needs a value; got '${2:-<end of args>}' (empty or a misplaced flag)." >&2
+    exit 2
+  fi
+}
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --facts)
@@ -233,11 +250,11 @@ while [[ $# -gt 0 ]]; do
         echo "error: --facts is not valid on a continuation (the facts are already in the conversation)." >&2
         exit 2
       fi
-      shift; FACTS_RAW="${1:-}"; shift || true ;;
+      need_value "$1" "${2:-}"; FACTS_RAW="$2"; shift 2 ;;
     --decided)
-      shift; DECIDED_RAW="${1:-}"; shift || true ;;
+      need_value "$1" "${2:-}"; DECIDED_RAW="$2"; shift 2 ;;
     --focus)
-      shift; FOCUS_PARTS+=("${1:-}"); shift || true ;;
+      need_value "$1" "${2:-}"; FOCUS_PARTS+=("$2"); shift 2 ;;
     --)
       echo "error: this wrapper OWNS the review posture — no '--' passthrough. The only escapes are" >&2
       echo "       AGY_PROBE=1 (off-frontier model) and AGY_REVIEW_ALLOW_ADDDIR=1 (oversized code review)." >&2
