@@ -4,6 +4,27 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.7.0 — Harden the planning canon: process-fidelity + regression-free editing
+
+A **feature** release. The methodology canon gains **seven invariants** that close recurring
+process-fidelity slips and fold-induced churn — each pinned in its natural home and guarded by the engine
+canon tests (+ the kit's extended cross-package `lens-mirror.test.mjs`):
+
+- **`references/planning.md` §6 — *ExitPlanMode ≠ execute*.** A harness "approved — start coding" prompt
+  authorizes the PLAN only; "continue in-session" is a DELIBERATE transition into `plan-execution` after
+  the plan + cold-start prompt exist, never an implicit slide (disambiguates §6 vs the Definition of Done).
+- **`references/planning.md` §9 — regression-free editing + the convergence bar.** *No code-mechanics in
+  the plan*, *test-as-spec* (fold a code-touching finding into a red→green test, not prose),
+  *characterize-first* (pin uncovered behavior before editing), *heavy review at the diff*, and a CLEAN
+  loop defined as **0 blockers + 0 majors from every named backend** (folding ≠ convergence).
+- **`references/orchestration.md` §4/§5 — *recipe fidelity*.** Council runs every ready backend **every
+  round**; quietly dropping a ready backend is a forbidden silent downgrade (the converse of the
+  unavailable-backend degrade), and the §5 quota guard is explicitly not a licence to drop one.
+- **`references/procedures.md`** — terse pointers weave all of the above into both activity steps.
+
+The deployment-lineage head stays **`1.3.0`** (no `docs/ai` structural change, no migration); the npm
+package version is a separate axis.
+
 ## 1.6.0 — Loosen the agy Issue-001 caveat (grounded review is sound)
 
 A **feature** release. `references/orchestration.md` §5 reframes the `agy` health advisory: the grounded

@@ -4,6 +4,24 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.22.0 — Harden the planning canon: two-set lens drift guard + the deployed lens
+
+A **feature** release. The kit's fallback `agent_rules.md` **§2.5** lens is generalized from *Right-altitude
+& code-grounded* to **Planning, review & process-fidelity invariants** (byte-identical to memory's §2.6
+block) and now carries all **seven** methodology invariants. The cross-package **`test/lens-mirror.test.mjs`**
+is extended to **two scoped, non-vacuous token sets**:
+
+- **Set 1 (cross-all-four)** pins the §9-native review/fold + convergence disciplines in EVERY region —
+  planning §9, procedures (`## plan-authoring` onward), and both template lens blocks: `0 blockers + 0
+  majors`, `test-as-spec`, `no code-mechanics`, `at the diff`, `characterize-first` (alongside the
+  existing `fold by code` / `file:line` / `altitude`).
+- **Set 2 (template-scoped)** pins the process-fidelity invariants A1/A2 (`ExitPlanMode`, recipe-fidelity
+  `every round`) PRESENT in both template lens blocks — closing the gap the byte-identical check alone
+  cannot (it only proves the two templates AGREE, so both could drop A1/A2 and stay green).
+
+The lens heading + the `extractLensBlock` regex move in lockstep. The deployment-lineage head stays
+**`1.3.0`** (no `docs/ai` structural change, no migration); the kit **package** version is a separate axis.
+
 ## 1.21.0 — Ships the antigravity-cli-bridge 2.0.0 mirror (grounded agy-review)
 
 A **feature** release. The kit now bundles the **antigravity-cli-bridge 2.0.0** byte-identical mirror —

@@ -53,8 +53,18 @@ Produce a self-contained, cold-readable plan, reviewed to the configured depth b
 4. **review {recipe}** — review the draft at the depth the resolved `review` recipe selects: Solo
    (self-review only), Reviewed (one backend reviews), or Council (both backends review, you
    synthesize). The kit resolves the effective recipe from `docs/ai/orchestration.json` + readiness.
-5. **Fold + loop** — fold every finding back into the draft and re-review until the review is clean.
-6. **Present for approval** — surface the finished plan to the user; do not begin execution here.
+5. **Fold + loop** — fold every finding back into the draft and re-review. A loop is CLEAN only at
+   **0 blockers + 0 majors** from every backend the recipe names (the convergence bar,
+   [`planning.md`](planning.md) §9); folding ≠ convergence — re-review after folding. Fold a
+   code-touching finding **test-as-spec** (a named acceptance test, not a prose paragraph); a fold must
+   add **no code-mechanics** to the plan — a Step still carries its own exact paths + commands, but a
+   fold needing a mechanic is the trigger to name the test instead. Council runs every named backend
+   **every round** (recipe fidelity,
+   [`orchestration.md`](orchestration.md) §4) — never quietly drop a ready backend.
+6. **Present for approval** — surface the finished plan to the user; do not begin execution here. A
+   harness "approved — start coding" prompt (**ExitPlanMode**) authorizes the PLAN only
+   ([`planning.md`](planning.md) §6); continuing into `plan-execution` is a deliberate transition taken
+   after the plan + its cold-start prompt exist, never an implicit slide.
 
 **Required output (Definition of Done):** a planning session produces a self-contained plan in
 `docs/plans/` **and** a cold-start execution prompt to begin the next session — **both produced without
@@ -78,9 +88,14 @@ Execute an approved plan Step by Step; each Step is one logical commit.
    following the project's reuse + clean-code rules.
 4. **Self-review** — run the [`planning.md`](planning.md) §8 self-review on the change, applying the
    [`planning.md`](planning.md) §9 lens — fold by code (read and cite the `file:line`), and hold the
-   right altitude.
+   right altitude. Edit-time corollary: **characterize-first** — before editing uncovered code, pin its
+   current behavior in a green test, then edit (any unintended change goes red); fold each finding
+   **test-as-spec** (red→green), and keep edits atomic/reversible.
 5. **review {recipe}** — review the result at the resolved `review` depth (Solo / Reviewed / Council),
-   exactly as in plan-authoring.
+   exactly as in plan-authoring. This is the **heavy review at the diff** — real compiling code + the
+   full suite, where a regression fails a gate immediately ([`planning.md`](planning.md) §9). Council
+   runs every named backend **every round** (recipe fidelity, [`orchestration.md`](orchestration.md) §4);
+   loop to **0 blockers + 0 majors** from every backend before the gate.
 6. **Gates** — run the project's verification gate (tests + checks) to green before committing.
 7. **Commit boundary** — the orchestrator makes the single commit for the Step; a backend never
    commits. The project's commit-approval policy (e.g. ask first) lives in the project's own rules.

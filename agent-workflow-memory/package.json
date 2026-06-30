@@ -1,6 +1,6 @@
 {
   "name": "@sabaiway/agent-workflow-memory",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Portable, cross-agent memory substrate for AI coding agents — an AGENTS.md entry point + docs/ai context with cap/archive/index enforcement, deployable standalone or as part of the agent-workflow family. The memory layer of the agent-workflow family.",
   "keywords": [
     "ai-agents",

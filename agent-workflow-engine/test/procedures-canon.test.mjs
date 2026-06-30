@@ -75,6 +75,26 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     );
   });
 
+  // Set-1 coverage (Phase 3 consistency invariant): every cross-all-four regression-free / convergence
+  // token must live in the procedures region (`## plan-authoring` onward) — the same region
+  // lens-mirror.test.mjs scopes — so the kit drift guard's per-region check passes here too.
+  it('lands the cross-all-four regression-free + convergence tokens in the procedures region (Set-1)', () => {
+    const start = procedures.indexOf('## plan-authoring');
+    assert.notEqual(start, -1, 'has a plan-authoring region');
+    const region = procedures.slice(start).toLowerCase();
+    for (const token of ['0 blockers + 0 majors', 'test-as-spec', 'no code-mechanics', 'at the diff', 'characterize-first']) {
+      assert.ok(region.includes(token), `procedures region carries the "${token}" token`);
+    }
+  });
+
+  // Terse process-fidelity pointers: A1 (ExitPlanMode boundary → planning.md §6) in plan-authoring
+  // step 6; A2 (recipe fidelity → orchestration.md §4) in the review steps.
+  it('carries the terse A1 (ExitPlanMode) + A2 (recipe-fidelity) process-fidelity pointers', () => {
+    assert.match(procedures, /ExitPlanMode/, 'names the ExitPlanMode boundary (A1)');
+    assert.match(procedures, /recipe fidelity/i, 'names recipe fidelity (A2)');
+    assert.match(procedures, /every round/i, 'A2 — every named backend every round');
+  });
+
   it('pins the §9 review lens inside both activity sections', () => {
     const planAuthoring = sectionOf(procedures, 'plan-authoring');
     const planExecution = sectionOf(procedures, 'plan-execution');

@@ -70,10 +70,17 @@ Apply this as part of §2 before any user-facing summary:
 - **No condescension, no filler.** Own a miss plainly and fix it in the same message.
 - **Large artifact (≈>100 lines):** deliver a real summary or the key excerpt inline **and** link the file — never flood the reader with a 2000-line paste, never hide the answer behind a bare pointer.
 
-### 2.6. Right-altitude & code-grounded (planning + review)
+### 2.6. Planning, review & process-fidelity invariants
+Apply these when authoring a plan, reviewing, folding a finding, or editing code — the layer read **before any code change**. (Full canon: the project's planning / workflow-methodology + orchestration canon.)
 - **Fold by code, not prose.** Before folding a code-touching finding into a plan or change, read the cited `file:line` and cite it — a prose fold drifts from the code and seeds the next bug.
 - **Right altitude.** Pin intent + invariants + acceptance criteria (named tests); leave fine code-mechanics to Execute, where prose cannot diverge from reality.
-- **Convergence heuristic.** When a review round keeps finding mechanism issues on a stable architecture, stop refining prose — raise the altitude or hand it to Execute. (Full canon: the project's planning methodology / workflow-methodology canon.)
+- **No code-mechanics in the plan.** A Step still carries its exact paths + commands (the plan-structure / self-review canon); the ceiling is on *fold-bred* detail — a review fold must not push fine code-mechanics (`cd`, an env default, a flag) into prose. A fold that needs a mechanic is the trigger to write the test instead.
+- **Test-as-spec.** Fold a code-touching finding into a red→green TEST, not a prose paragraph — the gate is the only deterministic checker; a paragraph cannot self-check.
+- **Characterize-first.** Before editing UNCOVERED code, pin its current behavior in a green test, then edit — any unintended change goes red. Never edit what has no checker; first give it one. Keep edits atomic/reversible; prefer SUBTRACTIVE folds.
+- **Heavy review at the diff.** Plan-review settles architecture only (≤2 rounds, stop at the pre-existing→fold-induced crossover); the exhaustive per-Step review runs against real compiling code + the full suite, where a regression fails a gate immediately.
+- **Convergence bar.** A review loop is CLEAN only when one round returns **0 blockers + 0 majors** from EVERY backend the recipe names (nits + a ship verdict is the stop). Folding ≠ convergence — re-review after folding.
+- **Recipe fidelity.** Council runs every backend the recipe names, **every round**; silently dropping a ready backend for quota/convenience is a forbidden downgrade — an unavailable backend is a LOUD, stated degrade, never a quiet drop.
+- **ExitPlanMode ≠ execute.** A harness "approved — start coding" prompt authorizes the PLAN only; this methodology overrides it. Continue into execution only as a DELIBERATE transition after the plan + cold-start prompt exist, never an implicit slide.
 
 ---
 

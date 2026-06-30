@@ -69,11 +69,26 @@ always reported, never silently dropped:
 - **Delegated → Solo.** No backend provides `execute` and is `ready` → Solo, with the reason.
 - **Reviewed → Solo.** No backend provides `review` and is `ready` → Solo, with the reason.
 
+**Recipe fidelity — the converse: every ready backend, every round.** Degradation is the *only*
+licence to run fewer backends than the recipe names. When the resolved recipe is `council` and BOTH
+reviewers are `ready`, EVERY review round runs BOTH — skipping a ready backend for quota, convenience,
+or "the other one already shipped" is a **SILENT downgrade of Council → Reviewed, and is forbidden**.
+The distinction is strict: an *unavailable* backend is a LOUD, stated degrade (the lattice above); a
+*ready* backend you quietly drop is a fidelity breach, not a degrade. The same holds for any recipe
+that names ≥2 backends. Folding a finding and re-reviewing (the convergence bar, [`planning.md`](planning.md)
+§9) re-runs **every named backend each round** — convergence is reached only when one round comes back
+clean from all of them.
+
 ## 5. Quota & health guard (advisory)
 
 Backends are **subscription** services with **finite** quota. The orchestrator should: prefer the
 cheapest model that fits the task; not reach for a top-tier model by reflex; and remember that
 **Council spends two backends' quota** for one decision.
+
+This guides *which recipe to choose up front* and *which model to run within a backend* — it is
+**never a licence to drop a ready backend mid-Council** (that is the §4 fidelity breach, not a quota
+saving). Once `council` is the resolved recipe and both backends are `ready`, the two-backend cost is
+already accepted: run both, every round, until a round comes back clean.
 
 A **standing health advisory** applies to `agy`: the Antigravity service can **stall on substantive
 prompts** (a long hang that returns nothing — an external service issue, not a setup problem;

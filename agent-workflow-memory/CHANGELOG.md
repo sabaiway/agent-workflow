@@ -4,6 +4,22 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.5.0 — §2.6 carries the planning/review/process-fidelity invariants (memory)
+
+A **feature** release. The `agent_rules.md` substrate **§2.6** is generalized from *Right-altitude &
+code-grounded* to **Planning, review & process-fidelity invariants** — the always-loaded,
+read-before-any-code-change lens now carries all **seven** methodology invariants: fold by code, right
+altitude, no code-mechanics, test-as-spec, characterize-first, heavy review at the diff, the convergence
+bar (0 blockers + 0 majors), recipe fidelity, and ExitPlanMode ≠ execute. Wording stays **path-neutral**
+(the substrate "knows nobody"). The deployment-lineage head stays **`1.3.0`** (no `docs/ai` structural
+change, no migration); the npm package version is a separate axis.
+
+- **Seed-or-preserve only (unchanged contract).** A NEW deployment gets the §2.6 lens from the seed;
+  refreshing an already-deployed file is the composition root's job.
+- **Template parity preserved** — the §2.6 block body stays byte-identical to the kit fallback template
+  (only the heading number differs), pinned by the kit's cross-package `lens-mirror.test.mjs` (now over
+  two scoped, non-vacuous token sets).
+
 ## 1.4.0 — §2.6 right-altitude & code-grounded lens (memory)
 
 A **feature** release. The `agent_rules.md` substrate gains a **§2.6 Right-altitude & code-grounded
