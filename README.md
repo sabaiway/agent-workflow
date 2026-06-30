@@ -199,13 +199,15 @@ by hand.
 
 Your orchestrator works in a loop — **plan → execute → review → ship**. Two optional backends let it
 pull a *second model* into the **execute** and **review** phases without leaving the terminal —
-gaining an **independent reviewer** (a second opinion in review: `codex-review` / `agy` critique a
-plan or a working-tree diff, catching a blind spot the primary agent would share) and a **delegated
+gaining an **independent reviewer** (a second opinion in review: `codex-review` / `agy-review` critique
+a plan or a working-tree diff, catching a blind spot the primary agent would share) and a **delegated
 executor** (a parallel hand in execute: a bounded sub-task to `codex exec` in a sandbox) — all under
 **your own subscription** (no pay-as-you-go billing, subject to each provider's quotas):
 
 - **`codex-cli-bridge`** — wraps OpenAI `codex` for **execute / review** under a ChatGPT subscription.
-- **`antigravity-cli-bridge`** — wraps Google `agy` for **review / probe** under a Google AI subscription.
+- **`antigravity-cli-bridge`** — wraps Google `agy` for a **grounded review** (`agy-review`) + **probe**
+  (`agy-run`) under a Google AI subscription. The review is *self-contained*: the wrapper feeds `agy`
+  verified facts + the full diff, so it gives a sound second opinion instead of guessing from stale context.
 
 **Named recipes tie it together.** Rather than improvising "should I get a second opinion? from which
 bridge? what if it's down?" each time, the kit offers four named ways to compose the bridges into the
@@ -248,7 +250,7 @@ setup (place skill + link wrappers). For the command mechanics see the
 | **agent-workflow-kit** | almost everyone — the entry point | npm | [README](agent-workflow-kit/README.md) |
 | **agent-workflow-memory** | the substrate only, without the methodology (rare) | npm | [README](agent-workflow-memory/README.md) |
 | **codex-cli-bridge** | delegated execute / review via `codex` | agent skill (bundled; `setup` places + links) | [SKILL](codex-cli-bridge/SKILL.md) |
-| **antigravity-cli-bridge** | delegated review / probe via `agy` | agent skill (bundled; `setup` places + links) | [SKILL](antigravity-cli-bridge/SKILL.md) |
+| **antigravity-cli-bridge** | delegated grounded review (`agy-review`) / probe (`agy-run`) via `agy` | agent skill (bundled; `setup` places + links) | [SKILL](antigravity-cli-bridge/SKILL.md) |
 | **agent-workflow-engine** | the canonical methodology on disk, standalone (rare — the kit injects it for you) | npm | [README](agent-workflow-engine/README.md) |
 
 Most people only ever need the **kit**. Each per-package README / SKILL stays the source of truth
