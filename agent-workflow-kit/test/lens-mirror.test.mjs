@@ -19,11 +19,31 @@ const KIT_ROOT = join(HERE, '..');
 const FAMILY_ROOT = join(KIT_ROOT, '..');
 
 const DRIFT_MESSAGE =
-  'right-altitude/code-grounded lens drifted — re-sync the lens across the engine canon + both agent_rules templates.';
-// DISTINCTIVE phrases — each occurs ONLY inside the lens region of every file (a bare word like
-// "Execute"/"invariant" recurs elsewhere and would make the guard vacuous). Matched plural-robustly via a
-// lowercased substring ("altitude" matches "right altitude").
-const LENS_TOKENS = ['fold by code', 'file:line', 'altitude'];
+  'planning/review/process-fidelity lens drifted — re-sync the lens across the engine canon + both agent_rules templates.';
+// Set 1 — CROSS-ALL-FOUR. DISTINCTIVE phrases — each occurs ONLY inside the lens region of every file (a
+// bare word like "Execute"/"invariant" recurs elsewhere and would make the guard vacuous). Matched
+// plural-robustly via a lowercased substring ("altitude" matches "right altitude"). These are the
+// §9-native review/fold + convergence disciplines, pinned PRESENT in EACH of the four lens regions
+// (planning §9, procedures `## plan-authoring` onward, both template lens blocks).
+const LENS_TOKENS = [
+  'fold by code', // fold-by-code (existing)
+  'file:line', // cite the grounding (existing)
+  'right altitude', // right-altitude bullet (distinctive: "altitude" alone recurs in §9, so pin the bullet lead)
+  '0 blockers + 0 majors', // A3 — convergence bar
+  'test-as-spec', // B4 — fold as a red→green test, not prose
+  'no code-mechanics', // B5 — altitude ceiling
+  'at the diff', // B6 — heavy review against real code
+  'characterize-first', // B7 — pin behaviour before editing uncovered code
+];
+// Set 2 — TEMPLATE-SCOPED PRESENCE. The process-fidelity invariants A1/A2 are NOT §9-native (A1 → §6,
+// A2 → orchestration.md §4), so they are not in Set 1; without this set they could be dropped from BOTH
+// template lens blocks undetected (the byte-identical check only proves the templates AGREE, not that the
+// content EXISTS). These pin A1/A2 PRESENT in each template's lens block. (A1/A2 are ALSO pinned in the
+// engine canon by planning-canon §6 / orchestration-canon §4 / procedures-canon.)
+const TEMPLATE_INVARIANT_TOKENS = [
+  'exitplanmode', // A1 — ExitPlanMode ≠ execute (lowercased; matched case-insensitively)
+  'every round', // A2 — recipe fidelity: every named backend, every round
+];
 
 const PLANNING = join(FAMILY_ROOT, 'agent-workflow-engine', 'references', 'planning.md');
 const PROCEDURES = join(FAMILY_ROOT, 'agent-workflow-engine', 'references', 'procedures.md');
@@ -64,7 +84,7 @@ const sectionFrom = (text, headingRe) => {
 // added between the bullets.
 const extractLensBlock = (label, text) => {
   const lines = text.split('\n');
-  const start = lines.findIndex((line) => /^### 2\.\d+\. Right-altitude/.test(line));
+  const start = lines.findIndex((line) => /^### 2\.\d+\. Planning, review & process-fidelity/.test(line));
   assert.notEqual(start, -1, `${label} missing lens block. ${DRIFT_MESSAGE}`);
   const tail = lines.slice(start);
   const end = tail.findIndex((line, index) => index > 0 && (line === '---' || /^#{2,3} /.test(line)));
@@ -87,14 +107,26 @@ const lensRegionOf = (label, text) => {
   return start === -1 ? '' : lines.slice(start).join('\n');
 };
 
-describe('right-altitude/code-grounded lens — cross-package drift guard', () => {
-  it('keeps the distinctive lens tokens inside the lens region of the engine canon and both templates', () => {
+describe('planning/review/process-fidelity lens — cross-package drift guard', () => {
+  it('keeps the Set-1 cross-all-four tokens inside the lens region of the engine canon and both templates', () => {
     for (const token of LENS_TOKENS) {
       for (const [label, file, text] of contents) {
         const region = lensRegionOf(label, text);
         assert.ok(
           region.toLowerCase().includes(token),
           `missing token "${token}" in the lens region of ${label} (${file}). ${DRIFT_MESSAGE}`,
+        );
+      }
+    }
+  });
+
+  it('keeps the Set-2 process-fidelity tokens (A1/A2) present in BOTH template lens blocks', () => {
+    for (const token of TEMPLATE_INVARIANT_TOKENS) {
+      for (const [label, file] of TEMPLATE_FILES) {
+        const block = extractLensBlock(label, readFileSync(file, 'utf8'));
+        assert.ok(
+          block.toLowerCase().includes(token),
+          `missing process-fidelity token "${token}" in the lens block of ${label} (${file}). ${DRIFT_MESSAGE}`,
         );
       }
     }

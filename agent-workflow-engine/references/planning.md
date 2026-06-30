@@ -78,6 +78,10 @@ The volume trigger above (files / LoC / tokens) is necessary but not sufficient.
 - **Continue** in the current session when ALL hold: (1) exploration was *targeted-deep* — you read the exact files to be created/modified/copied, so execution would just re-read them; (2) no new heavy exploration is needed to execute; (3) the context budget is healthy (far from the window limit / Lost-in-the-Middle).
 - When continuing, each Phase's Verification block is a natural checkpoint. If different Phases need different cold context, continue only through the warm Phases, then split.
 
+### ExitPlanMode authorizes the plan, not execution
+
+A harness "approved — you can now start coding" prompt (e.g. Claude Code's **ExitPlanMode**) authorizes the **PLAN only** — this methodology overrides that generic prompt. A planning session is not done until the plan is landed in `docs/plans/` **and** the cold-start execution prompt is emitted (the plan-authoring Definition of Done). So **"Continue in-session" above is a DELIBERATE transition into `plan-execution`, taken *after* both of those exist** — never an implicit slide from plan-approval straight into editing tracked files. Plan-approval is not a licence to execute the plan in the same breath; the boundary holds whether you split or continue.
+
 ## 7. Plan-document structure
 
 ```
@@ -107,10 +111,20 @@ The volume trigger above (files / LoC / tokens) is necessary but not sufficient.
 
 ## 9. Right-altitude & code-grounded folds
 
-Two disciplines keep a plan converging instead of churning. They govern authoring, every review round, and execution.
+These disciplines keep a plan converging instead of churning, and keep a fold or edit from shipping a new bug. They govern authoring, every review round, and execution. The honest premise: prose has no checker, so the only guarantee that a fold/edit ships no regression is a deterministic, non-vacuous, auto-run gate — hence test-as-spec + characterize-first below.
 
 **Right altitude.** A plan pins *intent + architecture + invariants + acceptance criteria* — the named tests that must stay green and the new tests that must pass. It does NOT spell out fine code-mechanics in prose: those are resolved in code at Execute (against the real files + the per-Step review + the gates), where prose cannot diverge from reality. Most "blockers" that resurface across review rounds are code-level details that never belonged in a prose plan.
 
+**No code-mechanics in the plan.** A Step still carries its exact paths + commands (§7, §8); the ceiling is on *fold-bred* detail — a review fold must not push fine code-mechanics (`cd`, an env default, a flag) into prose, where they diverge from reality. A fold that needs a mechanic is the trigger to write the test (test-as-spec) instead.
+
 **Fold by code, not prose.** Before folding any code-touching finding into the plan, READ the cited `file:line`; the fold cites it. A fold grounded in prose alone drifts from the code and seeds the next bug.
+
+**Test-as-spec.** Fold a code-touching review finding into a red→green TEST, not a prose paragraph — the gate is the only deterministic checker, and a paragraph cannot self-check. A bug may still be written, but the test catches a fold-/edit-induced regression before it ships.
+
+**Characterize-first.** Before editing UNCOVERED code, first write a test pinning its current behavior (green), then edit — any unintended change goes red. Never edit what has no checker; first give it one. Keep edits atomic/reversible (one logical change = one gated commit), and prefer SUBTRACTIVE folds.
+
+**Heavy review at the diff, not the plan.** Plan-review settles architecture only (≤2 rounds, stop at the pre-existing→fold-induced crossover); the exhaustive per-Step review runs against real compiling code + the full suite, where a regression fails a gate immediately. The plan is the wrong place for an exhaustive line-by-line review.
+
+**Convergence bar.** A review loop is CLEAN only when one round returns **0 blockers + 0 majors** from EVERY named backend the recipe runs (nits / non-blocking + a ship verdict is the stop). FOLDING a finding is NOT convergence — re-review after folding. This §9 governs the ALTITUDE at which you reach clean (fix the major, or raise it to an explicit acceptance invariant Execute must meet) — it NEVER lowers the bar to "majors folded".
 
 **Convergence heuristic.** When a review round keeps finding code-mechanism issues on a stable architecture, STOP refining prose — either raise the spec to invariant + acceptance altitude, or hand the mechanics to Execute. Do not re-litigate code mechanics in the plan.

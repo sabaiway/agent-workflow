@@ -15,6 +15,21 @@ const REFERENCE = join(ROOT, 'references', 'orchestration.md');
 
 const RECIPE_IDS = ['solo', 'reviewed', 'council', 'delegated'];
 
+// A `## <n>. <heading>` section: the heading line through the line before the next `## ` (or EOF).
+const sectionFrom = (text, headingRe) => {
+  const lines = text.split('\n');
+  const start = lines.findIndex((line) => headingRe.test(line));
+  if (start === -1) return '';
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (/^## /.test(lines[i])) {
+      end = i;
+      break;
+    }
+  }
+  return lines.slice(start, end).join('\n');
+};
+
 // A "content line" is a non-blank line; the slot must be exactly one (the cap budget has no room for
 // more — the kit injects it verbatim between the orchestration markers).
 const contentLines = (text) => text.split('\n').map((l) => l.trim()).filter(Boolean);
@@ -65,5 +80,29 @@ describe('engine orchestration.md — canonical recipe reference', () => {
 
   it('cross-references the plan lifecycle without duplicating it', () => {
     assert.match(reference, /planning\.md/, 'the reference points at the plan lifecycle canon');
+  });
+
+  // A2 (recipe fidelity): orchestration.md is A2's canon home. §4 already defines the
+  // unavailable-backend degrade; this pins the CONVERSE — every backend a READY recipe names runs
+  // every round, and quietly dropping a ready backend is a forbidden silent downgrade.
+  it('pins the §4 recipe-fidelity invariant (A2) — every ready backend runs every round', () => {
+    const section4 = sectionFrom(reference, /^## 4\. /);
+    assert.ok(section4.length > 0, 'the reference has a §4 section');
+    assert.match(section4, /fidelity/i, '§4 names the recipe-fidelity invariant');
+    assert.match(section4, /every round/i, '§4 requires every ready backend every round');
+    assert.match(section4, /forbidden/i, 'dropping a ready backend is forbidden');
+    // Pin the load-bearing SEMANTICS — §4 must keep "ready" backend, the Council case, and the
+    // quiet-drop-is-a-breach phrasing, not just the keywords.
+    assert.match(section4, /ready/i, '§4 distinguishes a READY backend (vs an unavailable degrade)');
+    assert.match(section4, /Council/, '§4 names the Council case it forbids downgrading');
+    assert.match(section4, /skipping a ready backend/i, '§4 names the forbidden act — skipping a ready backend');
+    assert.match(section4, /quietly drop/i, '§4 pins that a quietly-dropped ready backend is the breach');
+  });
+
+  // §5 disambiguation: the quota/health guard must not read as licence to drop a ready backend.
+  it('disambiguates §5 so the quota guard is not a licence to drop a ready backend', () => {
+    const section5 = sectionFrom(reference, /^## 5\. /);
+    assert.match(section5, /licence|license/i, '§5 explicitly disclaims the drop-a-ready-backend reading');
+    assert.match(section5, /ready backend mid-Council/i, '§5 pins the specific mid-Council drop it disclaims');
   });
 });

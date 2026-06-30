@@ -7,6 +7,20 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-06-30 — engine 1.7.0 / memory 1.5.0 / kit 1.22.0
+
+- **Harden the planning canon — process-fidelity + regression-free editing (all users).** Seven
+  methodology invariants land in the kit canon and the deployed always-loaded lens, guarded by an extended
+  non-vacuous drift test. **Process-fidelity:** *ExitPlanMode ≠ execute* (`planning.md` §6); *recipe
+  fidelity* — Council runs every ready backend every round, dropping a ready one is a forbidden silent
+  downgrade (`orchestration.md` §4/§5); and a *convergence bar* — a review loop is clean only at **0
+  blockers + 0 majors from every named backend** (folding ≠ convergence). **Regression-free editing**
+  (`planning.md` §9): *no code-mechanics in the plan*, *test-as-spec*, *characterize-first*, *heavy review
+  at the diff*. Both `agent_rules.md` templates carry all seven in a generalized, byte-identical lens
+  block; the kit's `lens-mirror.test.mjs` gains two scoped token sets (cross-all-four + template-scoped),
+  proven non-vacuous. **engine → 1.7.0**, **memory → 1.5.0**, **kit → 1.22.0**; lineage head stays
+  **`1.3.0`**.
+
 ## 2026-06-30 — antigravity-cli-bridge 2.0.0 / engine 1.6.0 / kit 1.21.0
 
 - **Antigravity (`agy`) bridge grounded-review hardening.** A dedicated **`agy-review`** wrapper
