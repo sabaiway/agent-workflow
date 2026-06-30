@@ -9,7 +9,7 @@ works in any project.
 ```bash
 curl -fsSL https://antigravity.google/cli/install.sh | bash
 export PATH="$HOME/.local/bin:$PATH"   # add to ~/.bashrc / ~/.zshrc to persist
-agy --version                          # expect 1.0.10 or newer
+agy --version                          # expect 1.0.13 or newer
 ```
 
 - The binary is **`agy`** (not `antigravity`); it installs to `~/.local/bin/agy`.
@@ -29,22 +29,27 @@ is **personal** — never copy, commit, package, print, or share that directory 
 needs no API keys and must not be configured with API-key billing; the wrapper unsets every
 `*_API_KEY` so billing can never silently fall back to pay-as-you-go.
 
-## 3. Put the wrapper on `PATH` as `agy-run`
+## 3. Put the wrappers on `PATH` (`agy-run` + `agy-review`)
 
-The skill ships the wrapper at `bin/agy.sh`. Expose it on `PATH` under the stable name `agy-run`
-(idempotent; refuses to clobber a non-symlink):
+The skill ships **two** wrappers: `bin/agy.sh` (the `probe` role, exposed as `agy-run`) and
+`bin/agy-review.sh` (the grounded `review` role, exposed as `agy-review`). Expose **both** on `PATH`
+(idempotent; refuses to clobber a non-symlink). The kit's `setup-backends.mjs` does this automatically;
+by hand:
 
 ```bash
 mkdir -p "$HOME/.local/bin"
 skill_dir="$HOME/.claude/skills/antigravity-cli-bridge"   # adjust if installed elsewhere
-dst="$HOME/.local/bin/agy-run"
-if [ -e "$dst" ] && [ ! -L "$dst" ]; then
-  echo "STOP: $dst exists and is not a symlink"; exit 1
-fi
-chmod +x "$skill_dir/bin/agy.sh"
-ln -sfn "$skill_dir/bin/agy.sh" "$dst"
+for pair in "agy-run:bin/agy.sh" "agy-review:bin/agy-review.sh"; do
+  name="${pair%%:*}"; src="$skill_dir/${pair#*:}"
+  dst="$HOME/.local/bin/$name"
+  if [ -e "$dst" ] && [ ! -L "$dst" ]; then
+    echo "STOP: $dst exists and is not a symlink"; exit 1
+  fi
+  chmod +x "$src"
+  ln -sfn "$src" "$dst"
+done
 export PATH="$HOME/.local/bin:$PATH"
-command -v agy-run
+command -v agy-run agy-review
 ```
 
 ## 4. Smoke test

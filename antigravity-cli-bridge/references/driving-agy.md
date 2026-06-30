@@ -51,6 +51,41 @@ agy-run "Continue from the prior architecture critique; focus on test gaps." -- 
 Use conversation state only when it saves quota or preserves useful context. For auditable decisions,
 prefer self-contained prompts.
 
+## Review via `agy-review` (grounded second opinion)
+
+For a code / plan / diff review, drive the dedicated **`agy-review`** wrapper rather than hand-rolling a
+prompt for `agy-run`. It **mechanizes the grounded-review contract** (see
+[`review-prompt.md`](./review-prompt.md)) so grounding is the enforced default, not a per-call effort:
+
+```bash
+agy-review code  [--facts @facts.md] [--decided @decided.md] [--focus "…"] [extra focus…]
+agy-review plan  <plan-file> [--facts @f] [--decided @f] [--focus "…"]
+agy-review diff  <diff-file> [--facts @f] [--decided @f] [--focus "…"]
+agy-review --continue          [--decided @f] [--focus "…"]   # round-2 delta — no re-assembly
+agy-review --conversation <id> [--decided @f] [--focus "…"]
+```
+
+What it does for you, and what YOU must supply:
+
+- **It** assembles POSTURE + a model/cutoff GUARD + your facts + your already-decided list + your focus
+  + the artifact (in `code` mode, the **repo-complete** working-tree change set) + a strict output
+  SHAPE, then delegates execution to `agy-run` (so the hard timeout, the subscription invariant, and
+  the single-argv byte ceiling apply once).
+- **You** supply what a script can't generate: `--facts @file` (the **verified facts** the model must
+  review AGAINST — agy reads nothing by default, so without this it guesses), `--decided @file` (the
+  **anti-circling** list of things already handled — the round-2 payload), and `--focus`.
+- **Anti-circling round 2:** after folding round 1, iterate with `agy-review --continue --decided
+  @round1-decisions.md --focus "only the still-open items"`. The continuation sends a small DELTA
+  (restated posture + new focus + the output shape + the decided list) and never re-sends the artifact
+  — `agy` holds it in the conversation.
+- **Oversized `code` review:** the byte ceiling (`AGY_MAX_PROMPT_BYTES`, default 120000) trips with
+  trim/split guidance. `AGY_REVIEW_ALLOW_ADDDIR=1` offloads ONLY the change set to a private staging
+  dir and passes it via `--add-dir` (the grounding stays inline) — this re-enables the Issue-001 stall
+  risk, bounded by the hard timeout; prefer splitting into focused per-area reviews.
+- **Model:** frontier default `Gemini 3.1 Pro (High)`; any model is allowed (a sub-frontier one earns a
+  silenceable `AGY_PROBE=1` advisory). The service can still **stall on large/substantive prompts**
+  (Issue-001) — keep reviews **focused**; the hard timeout is the guard.
+
 ## Escalation policy (edits, network, git)
 
 The wrapper passes no `--add-dir`, no `--dangerously-skip-permissions`, and no `--sandbox`. Treat this
@@ -70,7 +105,8 @@ rewrite history. Return findings and suggested changes only.
 
 ## Project-context prompts
 
-Probe reachability from a project root (cheap model):
+Probe **reachability** from a project root (cheap model) — this is the one place `agy` reading its cwd
+context file is the point of the prompt:
 
 ```bash
 AGY_MODEL="Gemini 3.5 Flash (Low)" agy-run \
@@ -79,24 +115,12 @@ AGY_MODEL="Gemini 3.5 Flash (Low)" agy-run \
   "Without using a file pointer, is there a project-specific planning skill in this repo? Name it and cite its path."
 ```
 
-Plan-review prompt shape:
-
-```text
-You are reviewing the plan below from the current repository root.
-Use the root context file and per-workspace skills if they are reachable.
-Do not edit files. Do not run git write commands.
-Return: 1) blocking issues  2) non-blocking risks  3) missing verification  4) a concise recommendation.
-The implementation plan text follows in this same prompt.
-```
-
-Diff/code-review prompt shape (provide the diff as text):
-
-```text
-Review this diff against the stated constraints.
-Focus on bugs, behavioural regressions, missing tests, and violations of the project rules.
-Cite file paths and line hints from the diff where possible. Do not summarise unless there are no findings.
-The project constraints and diff text follow in this same prompt.
-```
+**For an actual review, do NOT hand-roll a prompt that tells `agy` to "use the root context file if
+reachable"** — that is the documented root cause of guessing (`agy` cannot reliably read the repo code
+or the diff without an explicit `--add-dir`). Use **`agy-review`** (above): it makes the review
+**self-contained via `--facts`** plus the assembled artifact, so the review never *depends* on `agy`
+reading anything. `agy` may still surface the single cwd context file, but the grounded contract does
+not rely on it.
 
 ## Handling output
 
