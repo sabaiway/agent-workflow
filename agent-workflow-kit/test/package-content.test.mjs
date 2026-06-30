@@ -18,11 +18,12 @@ import { fileURLToPath } from 'node:url';
 // byte-identical bridge mirror the installed kit links from. Both are payload, asserted below.
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-const pack = () => {
+const packFull = () => {
   const res = spawnSync('npm', ['pack', '--dry-run', '--json'], { cwd: ROOT, encoding: 'utf8' });
   assert.equal(res.status, 0, `npm pack failed: ${res.stderr}`);
-  return JSON.parse(res.stdout)[0].files.map((f) => f.path);
+  return JSON.parse(res.stdout)[0].files;
 };
+const pack = () => packFull().map((f) => f.path);
 
 describe('kit package content — tarball guard (no own-test/fixture leak; payload retained)', () => {
   // Packed once in a before() hook (not at describe-body level): a failing `npm pack` is then
@@ -45,6 +46,7 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'references/scripts/archive-issues.test.mjs',
       'references/scripts/check-docs-size.test.mjs',
       'bridges/antigravity-cli-bridge/bin/agy.test.mjs',
+      'bridges/antigravity-cli-bridge/bin/agy-review.test.mjs',
       'bridges/codex-cli-bridge/bin/codex-exec.test.mjs',
       'bridges/codex-cli-bridge/bin/codex-review.test.mjs',
     ];
@@ -91,6 +93,16 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
   // file accidentally dropped). After an intentional change, run `npm pack ./agent-workflow-kit
   // --dry-run --json` and set the new count here in the same commit.
   it('ships exactly the expected number of files', () => {
-    assert.equal(packed.length, 81, `tarball file count drifted (${packed.length} ≠ 81)`);
+    assert.equal(packed.length, 83, `tarball file count drifted (${packed.length} ≠ 83)`);
+  });
+
+  // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
+  // the `setup` symlink target. npm normalizes a packed file's mode to 0755 (executable) or 0644, so
+  // pinning the packed mode pins the shipped exec bit.
+  it('ships agy-review.sh executable (packed mode 0755)', () => {
+    const full = packFull();
+    const sh = full.find((f) => f.path === 'bridges/antigravity-cli-bridge/bin/agy-review.sh');
+    assert.ok(sh, 'agy-review.sh must be packed');
+    assert.equal(sh.mode, 0o755, `agy-review.sh must ship executable, got mode ${sh.mode?.toString(8)}`);
   });
 });
