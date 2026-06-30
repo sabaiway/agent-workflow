@@ -7,6 +7,18 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-06-30 — antigravity-cli-bridge 2.0.0 / engine 1.6.0 / kit 1.21.0
+
+- **Antigravity (`agy`) bridge grounded-review hardening.** A dedicated **`agy-review`** wrapper
+  mechanizes the grounded-review contract (POSTURE + a model/cutoff GUARD + `--facts` + `--decided` +
+  the artifact + a strict output shape), delegating execution to `agy-run` so the hard timeout, the
+  subscription invariant, and a new single-argv byte ceiling (`AGY_MAX_PROMPT_BYTES`) live in one place.
+  The bridge goes to **2.0.0** (review role → `agy-review`; two PATH wrappers). The kit (**1.21.0**)
+  bundles the byte-identical mirror, probes the EXPECTED wrapper set in readiness (a stale install missing
+  `agy-review` surfaces **DEGRADED**), and manages both wrappers in `setup` / `uninstall`. The engine
+  (**1.6.0**) loosens the Issue-001 caveat — grounded review is a sound second opinion; the real
+  service-stall risk is kept. `memory` is unchanged. Lineage head stays **`1.3.0`**.
+
 ## 2026-06-29 — engine 1.5.0 / memory 1.4.0 / kit 1.20.0
 
 - **Right-altitude & code-grounded methodology institutionalized in the canon.** Two planning/review

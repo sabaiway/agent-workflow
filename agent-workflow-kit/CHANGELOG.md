@@ -4,6 +4,17 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.21.0 — Ships the antigravity-cli-bridge 2.0.0 mirror (grounded agy-review)
+
+A **feature** release. The kit now bundles the **antigravity-cli-bridge 2.0.0** byte-identical mirror —
+a grounded `agy-review` review wrapper beside the `agy-run` probe. The two-wrapper ripple lands kit-side:
+`detect-backends` readiness probes the **EXPECTED** bundled wrapper set (a stale install missing
+`agy-review` now reports **DEGRADED**, not a false "ready 1/1"), `setup` / `uninstall` manage **both**
+wrappers, `release-scan` allowlists `agy-review`, and the recipes ↔ engine Issue-001 caveat is loosened
+(grounded review is a sound second opinion; the service-stall risk is kept). The deployment-lineage head
+stays **`1.3.0`** (no `docs/ai` structural change, no migration); the kit **package** version is a
+separate axis.
+
 ## 1.20.0 — Fallback-template lens + the cross-package lens-mirror guard (kit)
 
 A **feature** release. The kit's fallback `agent_rules.md` template gains the **§2.5 Right-altitude &
