@@ -529,6 +529,7 @@ describe('kit installer — published tarball bundles the bridges + the live-rea
     const paths = JSON.parse(res.stdout)[0].files.map((f) => f.path);
     assert.ok(paths.includes('bridges/codex-cli-bridge/SKILL.md'), 'codex bridge SKILL.md not packed');
     assert.ok(paths.includes('bridges/antigravity-cli-bridge/bin/agy.sh'), 'antigravity agy.sh not packed');
+    assert.ok(paths.includes('bridges/antigravity-cli-bridge/bin/agy-review.sh'), 'antigravity agy-review.sh not packed');
     assert.ok(paths.includes('tools/engine-source.mjs'), 'the live-read resolver must ship in the tarball');
     // The retired mirror must NOT ship — the whole point of Plan 3D is one source of truth.
     assert.ok(!paths.includes('tools/methodology-slot.md'), 'retired mirror tools/methodology-slot.md must not be packed');
