@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,5 +55,89 @@ describe('agy.sh — hard wall-clock cap (timeout(1))', () => {
     rmSync(home, { recursive: true, force: true });
     assert.equal(r.status, 3, 'a genuine agy failure code must pass through');
     assert.doesNotMatch(r.stderr, /exceeded the hard cap/, 'must not mislabel a non-timeout failure');
+  });
+});
+
+// A stub that records (via a SENTINEL file) whether agy was actually invoked, so a
+// "guard fires" test can prove the wrapper exited BEFORE spending a run. When the
+// argv-byte guard trips, the sentinel must be absent.
+const RECORDING_STUB = [
+  '#!/usr/bin/env bash',
+  'if [[ -n "${AGY_STUB_SENTINEL:-}" ]]; then printf invoked > "$AGY_STUB_SENTINEL"; fi',
+  'echo "OK reply"',
+  'exit 0',
+  '',
+].join('\n');
+
+// Run the wrapper with an explicit argv (so a `@file` / `-` prompt form can be passed)
+// and optional stdin. AGY_MODEL='' drops --model so the stub argv stays clean.
+const runArgs = (home, { args, env = {}, input } = {}) =>
+  spawnSync('bash', [WRAPPER, ...args], {
+    env: { HOME: home, PATH: `${join(home, '.local', 'bin')}:${process.env.PATH}`, AGY_MODEL: '', ...env },
+    encoding: 'utf8',
+    timeout: 20000,
+    input,
+  });
+
+describe('agy.sh — argv byte-ceiling guard (AGY_MAX_PROMPT_BYTES)', () => {
+  const withSentinel = (home) => join(home, 'sentinel');
+
+  it('fires for an @file prompt over a lowered cap (exit 2; agy never invoked)', () => {
+    const home = makeSandbox(RECORDING_STUB);
+    const big = join(home, 'big.md');
+    writeFileSync(big, 'x'.repeat(500));
+    const sentinel = withSentinel(home);
+    const r = runArgs(home, { args: [`@${big}`], env: { AGY_MAX_PROMPT_BYTES: '100', AGY_STUB_SENTINEL: sentinel } });
+    const invoked = existsSync(sentinel);
+    rmSync(home, { recursive: true, force: true });
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /over AGY_MAX_PROMPT_BYTES=100/);
+    assert.equal(invoked, false, 'agy must NOT be invoked when the size guard fires');
+  });
+
+  it('fires for a stdin (-) prompt over a lowered cap (exit 2; agy never invoked)', () => {
+    const home = makeSandbox(RECORDING_STUB);
+    const sentinel = withSentinel(home);
+    const r = runArgs(home, { args: ['-'], input: 'y'.repeat(500), env: { AGY_MAX_PROMPT_BYTES: '100', AGY_STUB_SENTINEL: sentinel } });
+    const invoked = existsSync(sentinel);
+    rmSync(home, { recursive: true, force: true });
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /over AGY_MAX_PROMPT_BYTES=100/);   // same headline as the @file case
+    assert.match(r.stderr, /Argument list too long/);         // plus the guidance line
+    assert.equal(invoked, false, 'agy must NOT be invoked when the size guard fires');
+  });
+
+  it('passes a normal prompt through unchanged under the default ceiling', () => {
+    const home = makeSandbox(RECORDING_STUB);
+    const sentinel = withSentinel(home);
+    const r = runArgs(home, { args: ['a short prompt'], env: { AGY_STUB_SENTINEL: sentinel } });
+    const invoked = existsSync(sentinel);
+    rmSync(home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /OK reply/);
+    assert.equal(invoked, true, 'a within-ceiling prompt must reach agy');
+  });
+
+  it('an AGY_MAX_PROMPT_BYTES override raises the ceiling so a large prompt passes', () => {
+    const home = makeSandbox(RECORDING_STUB);
+    const big = join(home, 'big.md');
+    writeFileSync(big, 'z'.repeat(500));
+    const sentinel = withSentinel(home);
+    const r = runArgs(home, { args: [`@${big}`], env: { AGY_MAX_PROMPT_BYTES: '10000', AGY_STUB_SENTINEL: sentinel } });
+    const invoked = existsSync(sentinel);
+    rmSync(home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(invoked, true, 'the raised ceiling must let the large prompt through');
+  });
+
+  it('rejects a non-integer AGY_MAX_PROMPT_BYTES (exit 2; agy never invoked)', () => {
+    const home = makeSandbox(RECORDING_STUB);
+    const sentinel = withSentinel(home);
+    const r = runArgs(home, { args: ['hi'], env: { AGY_MAX_PROMPT_BYTES: 'abc', AGY_STUB_SENTINEL: sentinel } });
+    const invoked = existsSync(sentinel);
+    rmSync(home, { recursive: true, force: true });
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /not a non-negative integer/);
+    assert.equal(invoked, false, 'a malformed ceiling must fail loud before invoking agy');
   });
 });
