@@ -46,11 +46,12 @@ export const BACKEND_META = {
   [AGY]: {
     cost: 'subscription',
     quota: { kind: 'subscription', finite: true },
-    health: 'Note: the Antigravity service may stall on substantive prompts (Issue-001) — prefer codex while it lasts.',
+    health: 'Note: grounded agy-review gives a SOUND second opinion (it removes the stale-model/partial-diff false positives) — but the Antigravity service can still stall on substantive prompts (Issue-001), so keep reviews focused and prefer codex for large or latency-sensitive ones.',
   },
 };
 
-// Deterministic tie-break order: codex before agy (agy carries the standing health caveat above).
+// Deterministic tie-break order: codex before agy. agy is a sound grounded reviewer now, but codex is
+// the more reliable default for substantive reviews (agy carries the standing service-stall caveat above).
 const BACKEND_PRIORITY = [CODEX, AGY];
 const priorityIndex = (name) => {
   const i = BACKEND_PRIORITY.indexOf(name);

@@ -145,15 +145,21 @@ describe('engine narrative ⟷ manifest role-vocabulary parity', () => {
     });
   }
 
-  it('the agy health advisory (Issue-001) is consistent between BACKEND_META and the engine narrative', () => {
+  it('the agy health advisory (Issue-001) is consistent between BACKEND_META and the engine narrative, and reflects the grounded loosening', () => {
     // Flatten whitespace so a prose line-wrap (e.g. "substantive\nprompts") doesn't hide the substring.
     const flat = orchestration.replace(/\s+/g, ' ').toLowerCase();
-    assert.match(flat, /stall on substantive prompts/, 'the engine narrates the stall advisory');
+    // The REAL service-stall caveat is kept (grounding removes false positives, not the stalls).
+    assert.match(flat, /stall on substantive prompts/, 'the engine still narrates the real service-stall advisory');
     assert.match(flat, /issue-001/, 'the engine narrative ties it to Issue-001');
-    assert.match(flat, /prefer .?codex/, 'the engine narrates the prefer-codex remedy');
+    assert.match(flat, /prefer .?codex/, 'codex stays the default for substantive / escalation reviews');
+    // The LOOSENING: grounded agy-review is a sound second opinion (no longer "merely avoid agy").
+    assert.match(flat, /grounded/, 'the loosening: the grounded agy-review contract is named');
+    assert.match(flat, /sound|false positive/, 'the loosening: grounded review is a SOUND opinion (false positives removed)');
     // BACKEND_META carries the same advisory facts (kit-side), tying the two representations together.
     const health = BACKEND_META[AGY].health.toLowerCase();
-    assert.ok(health.includes('stall on substantive prompts') && health.includes('issue-001') && health.includes('codex'));
+    for (const frag of ['stall on substantive prompts', 'issue-001', 'codex', 'grounded']) {
+      assert.ok(health.includes(frag), `BACKEND_META[AGY].health must include "${frag}"`);
+    }
   });
 });
 

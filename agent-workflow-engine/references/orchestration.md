@@ -78,9 +78,14 @@ cheapest model that fits the task; not reach for a top-tier model by reflex; and
 A **standing health advisory** applies to `agy`: the Antigravity service can **stall on substantive
 prompts** (a long hang that returns nothing — an external service issue, not a setup problem;
 tracked as **Issue-001** in the kit's known issues). It is **invisible to file-presence detection**,
-so it is *not* a readiness signal — it is a static caveat attached whenever a recipe would use `agy`. While it lasts, **prefer `codex`** for substantive
-reviews (this is the Reviewed tie-break in §3). The recipe machinery **never runs a subscription
-CLI** to check — detection stays read-only.
+so it is *not* a readiness signal — only a standing caveat. The **grounded** `agy-review` contract
+makes `agy` a **sound** second opinion — it removes the stale-model / partial-diff **false positives**
+that the old ungrounded, `--add-dir`-roaming reviews produced — so `agy` is no longer something to
+merely avoid. But the *service* stall is a **separate, real** risk that grounding does **not** remove,
+so keep reviews **focused** (the inherited hard timeout is the guard) and **prefer `codex`** for large
+or latency-sensitive substantive reviews and for the `--add-dir` escalation path (the deterministic
+Reviewed tie-break in §3). The recipe machinery **never runs a subscription CLI** to check — detection
+stays read-only.
 
 ## 6. The orchestrator always commits
 
