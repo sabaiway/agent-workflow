@@ -5,6 +5,10 @@ name: unpublish
 # unpublishing within 72h of publish and with no dependents. Guarded: requires typing the exact
 # version + UNPUBLISH to confirm.
 #
+# Since the publish path moved to OIDC Trusted Publishing (see publish.yml / _publish-one.yml), this
+# workflow is now the SOLE consumer of the NPM_TOKEN secret — a break-glass admin tool. Best practice
+# is `npm deprecate` over unpublishing; retiring this in favor of that flow is a tracked follow-up.
+#
 # Note: if unpublishing would leave the package with zero versions, npm locks the name for
 # 24h — publish the replacement version first, then unpublish the old one(s).
 

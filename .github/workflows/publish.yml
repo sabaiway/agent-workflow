@@ -12,9 +12,12 @@ name: publish
 # failed). memory and engine have no edge between them, so a memory failure does not gate engine (and
 # vice versa) — only kit waits on both. For a single package the other jobs are simply skipped.
 #
-# Auth: NODE_AUTH_TOKEN comes from the NPM_TOKEN repo secret (inherited into the reusable
-# workflow). Provenance is attached via OIDC (id-token: write). See _publish-one.yml for the
-# token requirements and the preflight checks that turn auth problems into clear errors.
+# Auth: OIDC Trusted Publishing — no npm token on the publish path. _publish-one.yml mints a
+# short-lived OIDC credential at publish time (id-token: write) and auto-generates provenance; each
+# package needs a Trusted Publisher entry on npmjs.com naming workflow `publish.yml` (the top-level
+# dispatch entrypoint — npm validates the CALLING workflow even though the publish runs in the called
+# _publish-one.yml). See _publish-one.yml for the runner floor, the preflights, and the manual
+# break-glass recovery path (the NPM_TOKEN secret is retained only for that and for unpublish.yml).
 
 on:
   workflow_dispatch:
@@ -35,7 +38,7 @@ on:
 
 permissions:
   contents: write # _publish-one cuts the git tag + GitHub Release (caller must grant the cap)
-  id-token: write # npm provenance (supply-chain attestation)
+  id-token: write # OIDC trusted publishing (npm mints a short-lived credential) + provenance
 
 concurrency:
   group: publish
@@ -50,7 +53,6 @@ jobs:
     with:
       dir: agent-workflow-memory
       dry_run: ${{ inputs.dry_run }}
-    secrets: inherit
 
   engine:
     if: ${{ inputs.package == 'engine' || inputs.package == 'all' }}
@@ -58,7 +60,6 @@ jobs:
     with:
       dir: agent-workflow-engine
       dry_run: ${{ inputs.dry_run }}
-    secrets: inherit
 
   kit:
     # `needs: [memory, engine]` makes kit wait for both; `always()` lets kit still run when they were
@@ -70,4 +71,3 @@ jobs:
     with:
       dir: agent-workflow-kit
       dry_run: ${{ inputs.dry_run }}
-    secrets: inherit
