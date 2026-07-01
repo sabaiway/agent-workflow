@@ -4,6 +4,27 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.23.0 — Surface the review-loop economics + the resolved backend set in the procedures advisor
+
+A **feature** release. `/agent-workflow-kit procedures <activity>` now makes the review-loop discipline
+mechanical at the point of use:
+
+- **Backend-set aid.** Each resolved recipe prints its EXPLICIT wrapper set beside the recipe name
+  (`review: council → run every backend every round: codex-review + agy-review`; `reviewed → codex-review`;
+  `delegated → codex-exec`; solo prints none), so recipe fidelity is visible where the advisor is invoked.
+  Sourced from `planRecipe().dispatch` + a new role-keyed `detect-backends.wrapperCmdFor` (reading
+  `KNOWN_BACKENDS[].roleCmds`, now the source of truth; the deduped `wrapperCmds` readiness list is derived
+  from it). Drift-guarded against each bridge manifest `roles[role].cmd`.
+- **Review-loop economics block.** For a review slot resolving reviewed|council (omitted for solo) the
+  advisor prints the ≤2-round cap, the bar-met-by-raising-a-major rule, the backend-divergence crossover
+  stop, the thin-plan/diff-review carve-out, a self-consistency read, and the required per-round emission
+  {round N · finding-origin · per-backend verdict}. `--json` carries per-slot `backends` + a top-level
+  `reviewLoop`.
+- The fallback `agent_rules.md` **§2.5** lens mirror gains the same review-loop disciplines (byte-identical
+  to memory's §2.6).
+
+Read-only; no resolution behaviour change. Deployment-lineage head stays `1.3.0`.
+
 ## 1.22.0 — Harden the planning canon: two-set lens drift guard + the deployed lens
 
 A **feature** release. The kit's fallback `agent_rules.md` **§2.5** lens is generalized from *Right-altitude

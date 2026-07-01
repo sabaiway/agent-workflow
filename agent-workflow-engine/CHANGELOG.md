@@ -4,6 +4,24 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.8.0 — Mechanize the §9 review-loop discipline (round cap · crossover · finding-origin)
+
+A **feature** release. The methodology canon institutionalizes the review-loop economics so the round
+cap, the crossover stop, and the finding-origin discipline stop being deletable prose:
+
+- **`planning.md` §9** gains a *Fold minimally — a prose plan has no checker* bullet (a self-consistency
+  read; fold minimally in ONE place), and the *Heavy review at the diff* bullet now names
+  **backend divergence** as the crossover and routes an all-mechanics/CI or prose-only artifact to a
+  **thin plan + diff-review**.
+- **`orchestration.md` §4/§5** adds the **backend-divergence stop-signal**, reconciled with recipe
+  fidelity: divergence bounds the *rounds*, never drops a ready backend within one.
+- **`procedures.md`** requires a per-round emission **{round N · finding-origin tally · per-backend
+  verdict}** at the loop point of *both* activities.
+
+Guarded non-vacuously: `planning-`/`procedures-`/`orchestration-canon` gain region-scoped tokens; the
+kit's `lens-mirror` registers the five review-loop tokens (Set-1) + the M6 `finding-origin` token (Set-2).
+Deployment-lineage head stays `1.3.0` (no `docs/ai` migration).
+
 ## 1.7.0 — Harden the planning canon: process-fidelity + regression-free editing
 
 A **feature** release. The methodology canon gains **seven invariants** that close recurring
