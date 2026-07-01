@@ -7,6 +7,23 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-01 — engine 1.8.0 / memory 1.6.0 / kit 1.23.0
+
+- **Mechanize the §9 review-loop discipline (all users).** The methodology canon turns the review-loop
+  economics from deletable prose into guarded, point-of-use mechanism, so review loops **converge in ≤2
+  rounds with a computed crossover signal** instead of churning. **Engine:** `planning.md` §9 gains a
+  *Fold minimally* bullet (a self-consistency read; fold in ONE place); `orchestration.md` §4/§5 adds the
+  **backend-divergence stop-signal** (divergence — one backend ships while another keeps revising mechanics
+  — IS the crossover; it bounds the *rounds*, never drops a ready backend within one); `procedures.md`
+  requires a per-round emission **{round N · finding-origin tally · per-backend verdict}** in both
+  activities; and an all-mechanics/CI or prose-only artifact is routed at the right altitude via a *thin
+  plan + diff-review* carve-out. **Kit:** `/agent-workflow-kit procedures` now prints the **explicit
+  backend set** beside each recipe (`review: council → run every backend every round: codex-review +
+  agy-review`) and a **review-loop economics block** for reviewed|council, surfacing the discipline where
+  the advisor is invoked. Guarded non-vacuously by region-scoped canon tokens + the kit's two-set
+  `lens-mirror` drift test; both `agent_rules.md` lenses (kit §2.5 / memory §2.6) carry the disciplines
+  byte-identically. Deployment-lineage head stays `1.3.0` (no `docs/ai` migration).
+
 ## 2026-06-30 — engine 1.7.0 / memory 1.5.0 / kit 1.22.0
 
 - **Harden the planning canon — process-fidelity + regression-free editing (all users).** Seven

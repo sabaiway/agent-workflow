@@ -4,6 +4,15 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.6.0 — §2.6 carries the review-loop economics disciplines (memory)
+
+A **feature** release. The `agent_rules.md` substrate **§2.6** lens gains the review-loop economics
+disciplines — *Fold minimally* (a self-consistency read), the extended *Heavy review at the diff*
+(**backend divergence** = the crossover; **thin plan + diff-review**), and a *Per-round emission*
+**{round N · finding-origin · per-backend verdict}** — kept **byte-identical** to the kit's §2.5 block and
+guarded by the kit's cross-package `lens-mirror` two-set drift test. Substrate/docs only; deployment-lineage
+head stays `1.3.0` (no migration).
+
 ## 1.5.0 — §2.6 carries the planning/review/process-fidelity invariants (memory)
 
 A **feature** release. The `agent_rules.md` substrate **§2.6** is generalized from *Right-altitude &
