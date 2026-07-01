@@ -65,4 +65,16 @@ describe('planning.md — right-altitude/code-grounded canon', () => {
     assert.match(section9, /at the diff/i); // B6
     assert.match(section9, /characterize-first/i); // B7
   });
+
+  // Review-loop economics (M2/M3/M4/M5-b): the round cap + crossover already lived in §9 but were
+  // token-unguarded here; the backend-divergence stop, the thin-plan/diff-review carve-out, and the
+  // self-consistency fold discipline are the new §9-native tokens. Same strings lens-mirror.test.mjs pins.
+  it('carries the §9 review-loop-economics tokens (round cap, crossover, divergence, diff-review, self-consistency)', () => {
+    const section9 = sectionOf(planning, /^## 9\..*$/im);
+    assert.match(section9, /≤2 rounds/); // architecture round cap
+    assert.match(section9, /crossover/i); // the crossover stop
+    assert.match(section9, /backend divergence/i); // M3 — divergence IS the crossover
+    assert.match(section9, /diff-review/i); // M5-b — thin plan + diff-review for all-mechanics/prose-only
+    assert.match(section9, /self-consistency/i); // M4 — self-consistency read before every re-review
+  });
 });

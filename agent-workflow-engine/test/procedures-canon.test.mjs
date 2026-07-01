@@ -82,8 +82,26 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     const start = procedures.indexOf('## plan-authoring');
     assert.notEqual(start, -1, 'has a plan-authoring region');
     const region = procedures.slice(start).toLowerCase();
-    for (const token of ['0 blockers + 0 majors', 'test-as-spec', 'no code-mechanics', 'at the diff', 'characterize-first']) {
+    for (const token of [
+      '0 blockers + 0 majors', 'test-as-spec', 'no code-mechanics', 'at the diff', 'characterize-first',
+      // Review-loop economics (M2/M3/M4/M5-b) — the same five lens-mirror.test.mjs now pins in all four regions.
+      '≤2 rounds', 'crossover', 'backend divergence', 'diff-review', 'self-consistency',
+    ]) {
       assert.ok(region.includes(token), `procedures region carries the "${token}" token`);
+    }
+  });
+
+  // M6 (queue.md third leg — advisor + procedures.md canon step + a token guard): the required per-round
+  // structured emission {round N · finding-origin tally · per-backend verdict} is pinned in the per-round
+  // loop point of BOTH activities so the canon step cannot be silently deleted from EITHER section, nor
+  // any one of its three fields dropped, with tests green. (M6 is not §9-native, so it is a Set-2 template
+  // token in lens-mirror.test.mjs, not a cross-all-four Set-1 one.)
+  it('pins the M6 per-round emission (round N · finding-origin · per-backend verdict) in BOTH activity sections', () => {
+    for (const activity of ['plan-authoring', 'plan-execution']) {
+      const section = sectionOf(procedures, activity);
+      assert.match(section, /round N/, `${activity} §5 requires the per-round emission (round N)`);
+      assert.match(section, /finding-origin/i, `${activity} §5 emits a finding-origin tally`);
+      assert.match(section, /per-backend verdict/i, `${activity} §5 emits a per-backend verdict`);
     }
   });
 
