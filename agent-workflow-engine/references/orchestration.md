@@ -79,6 +79,15 @@ that names ≥2 backends. Folding a finding and re-reviewing (the convergence ba
 §9) re-runs **every named backend each round** — convergence is reached only when one round comes back
 clean from all of them.
 
+**Backend divergence is the crossover stop — it bounds the ROUNDS, never the backends.** Running every
+named backend every round CONVERGES when one round returns **0 blockers + 0 majors** from all of them.
+But when the backends **diverge** — one grounded-**ships** while another keeps line-by-line **revising**
+mechanics round after round — that **backend divergence** IS the crossover the loop must stop at: resolve
+at **altitude** (raise the surviving major to an explicit acceptance invariant Execute must meet, or hand
+the mechanics to the diff), NOT by exhausting the strictest line-by-line backend. This is the exact
+converse of the fidelity rule above: divergence bounds how many ROUNDS the loop runs, and never licenses
+dropping a ready backend within a round — both still run every round.
+
 ## 5. Quota & health guard (advisory)
 
 Backends are **subscription** services with **finite** quota. The orchestrator should: prefer the
@@ -88,7 +97,9 @@ cheapest model that fits the task; not reach for a top-tier model by reflex; and
 This guides *which recipe to choose up front* and *which model to run within a backend* — it is
 **never a licence to drop a ready backend mid-Council** (that is the §4 fidelity breach, not a quota
 saving). Once `council` is the resolved recipe and both backends are `ready`, the two-backend cost is
-already accepted: run both, every round, until a round comes back clean.
+already accepted: run both, every round, until a round comes back clean — or until **backend divergence**
+marks the crossover (§4), resolved at altitude rather than by exhausting the strictest backend. Spending
+quota to line-by-line re-review mechanics past that crossover is the over-run the divergence stop prevents.
 
 A **standing health advisory** applies to `agy`: the Antigravity service can **stall on substantive
 prompts** (a long hang that returns nothing — an external service issue, not a setup problem;

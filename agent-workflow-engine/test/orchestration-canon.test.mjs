@@ -99,6 +99,17 @@ describe('engine orchestration.md — canonical recipe reference', () => {
     assert.match(section4, /quietly drop/i, '§4 pins that a quietly-dropped ready backend is the breach');
   });
 
+  // M3 (backend-divergence stop-signal): §4 pins that running every backend every round CONVERGES at
+  // 0/0, but when backends DIVERGE (one ships while another keeps revising mechanics) the divergence IS
+  // the crossover — resolve at altitude, bounding the ROUNDS, never dropping a ready backend within one.
+  it('pins the §4 backend-divergence crossover stop (M3) — bounds rounds, not backends', () => {
+    const section4 = sectionFrom(reference, /^## 4\. /);
+    assert.match(section4, /backend divergence/i, '§4 names backend divergence as the stop signal');
+    assert.match(section4, /crossover/i, '§4 pins that divergence IS the crossover');
+    assert.match(section4, /altitude/i, '§4 resolves divergence at altitude');
+    assert.match(section4, /0 blockers \+ 0 majors/i, '§4 reconciles with the A3 convergence bar');
+  });
+
   // §5 disambiguation: the quota/health guard must not read as licence to drop a ready backend.
   it('disambiguates §5 so the quota guard is not a licence to drop a ready backend', () => {
     const section5 = sectionFrom(reference, /^## 5\. /);

@@ -34,6 +34,15 @@ const LENS_TOKENS = [
   'no code-mechanics', // B5 — altitude ceiling
   'at the diff', // B6 — heavy review against real code
   'characterize-first', // B7 — pin behaviour before editing uncovered code
+  // Review-loop economics (M2 — closes the round-cap/crossover token-guard hole): the ≤2-round cap +
+  // crossover already lived in planning.md §9 + both templates but were token-UNGUARDED (deletable with
+  // every test green); the divergence/thin-plan/self-consistency disciplines are new. All five are pinned
+  // PRESENT in EACH of the four lens regions (planning §9, procedures `## plan-authoring` onward, both templates).
+  '≤2 rounds', // architecture plan-review round cap
+  'crossover', // the pre-existing→fold-induced (and backend-divergence) stop point
+  'backend divergence', // M3 — one backend ships while another revises mechanics IS the crossover
+  'diff-review', // M5-b — route all-mechanics/CI or prose-only artifacts to a thin plan + diff-review
+  'self-consistency', // M4 — a self-consistency read across a prose plan before every re-review
 ];
 // Set 2 — TEMPLATE-SCOPED PRESENCE. The process-fidelity invariants A1/A2 are NOT §9-native (A1 → §6,
 // A2 → orchestration.md §4), so they are not in Set 1; without this set they could be dropped from BOTH
@@ -43,6 +52,7 @@ const LENS_TOKENS = [
 const TEMPLATE_INVARIANT_TOKENS = [
   'exitplanmode', // A1 — ExitPlanMode ≠ execute (lowercased; matched case-insensitively)
   'every round', // A2 — recipe fidelity: every named backend, every round
+  'finding-origin', // M6 — the required per-round {round N · finding-origin tally · per-backend verdict} emission
 ];
 
 const PLANNING = join(FAMILY_ROOT, 'agent-workflow-engine', 'references', 'planning.md');

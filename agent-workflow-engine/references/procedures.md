@@ -60,7 +60,14 @@ Produce a self-contained, cold-readable plan, reviewed to the configured depth b
    add **no code-mechanics** to the plan — a Step still carries its own exact paths + commands, but a
    fold needing a mechanic is the trigger to name the test instead. Council runs every named backend
    **every round** (recipe fidelity,
-   [`orchestration.md`](orchestration.md) §4) — never quietly drop a ready backend.
+   [`orchestration.md`](orchestration.md) §4) — never quietly drop a ready backend. Cap architecture
+   plan-review at **≤2 rounds**, stopping at the **crossover** where **backend divergence** (one backend
+   grounded-ships while another keeps revising mechanics) IS the stop — the bar is still met by RESOLVING
+   the surviving major at altitude (raise it to an acceptance invariant, or hand it to Execute), never by
+   exhausting the strictest backend. Run a **self-consistency** read before every re-review and route an
+   all-mechanics/CI or prose-only artifact to a **thin plan + diff-review** ([`planning.md`](planning.md)
+   §9). Each round MUST emit **{round N · finding-origin tally (first-draft / fold-induced / mechanics) ·
+   per-backend verdict}** so the crossover is a computed signal, not a remembered rule.
 6. **Present for approval** — surface the finished plan to the user; do not begin execution here. A
    harness "approved — start coding" prompt (**ExitPlanMode**) authorizes the PLAN only
    ([`planning.md`](planning.md) §6); continuing into `plan-execution` is a deliberate transition taken
@@ -95,7 +102,9 @@ Execute an approved plan Step by Step; each Step is one logical commit.
    exactly as in plan-authoring. This is the **heavy review at the diff** — real compiling code + the
    full suite, where a regression fails a gate immediately ([`planning.md`](planning.md) §9). Council
    runs every named backend **every round** (recipe fidelity, [`orchestration.md`](orchestration.md) §4);
-   loop to **0 blockers + 0 majors** from every backend before the gate.
+   loop to **0 blockers + 0 majors** from every backend before the gate. Each round MUST emit
+   **{round N · finding-origin tally · per-backend verdict}**; when backends diverge, that is the
+   crossover — resolve at altitude, not by exhausting the strictest backend.
 6. **Gates** — run the project's verification gate (tests + checks) to green before committing.
 7. **Commit boundary** — the orchestrator makes the single commit for the Step; a backend never
    commits. The project's commit-approval policy (e.g. ask first) lives in the project's own rules.
