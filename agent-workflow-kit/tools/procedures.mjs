@@ -19,8 +19,8 @@
 import { readFileSync, lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
-import { detectBackends } from './detect-backends.mjs';
-import { ACTIVITIES, resolveActivityRecipe } from './recipes.mjs';
+import { detectBackends, wrapperCmdFor } from './detect-backends.mjs';
+import { ACTIVITIES, resolveActivityRecipe, planRecipe } from './recipes.mjs';
 import { resolveEngineDir, readEngineFragment, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
 // The config schema/read core lives in orchestration-config.mjs (the single config contract). procedures
 // is READ-ONLY: it imports the reader + the SHARED slot/recipe validity, never the fs-writer
@@ -126,10 +126,16 @@ export const extractSection = (text, activity) => {
 // ── resolution + rendering ─────────────────────────────────────────────────────────
 
 const resolveAllSlots = ({ activity, config, detection, overrides }) =>
-  Object.keys(ACTIVITIES[activity].slots).map((slot) => ({
-    slot,
-    ...resolveActivityRecipe({ config: config ?? {}, readiness: detection, activity, slot, override: overrides[slot] }),
-  }));
+  Object.keys(ACTIVITIES[activity].slots).map((slot) => {
+    const resolved = resolveActivityRecipe({ config: config ?? {}, readiness: detection, activity, slot, override: overrides[slot] });
+    // The concrete wrapper set this slot's EFFECTIVE recipe dispatches (empty for solo). Reuse
+    // planRecipe's drift-guarded dispatch for WHICH backends, then resolve each (backend, role) to its
+    // manifest wrapper cmd via the bridge registry — no wrapper name is hand-composed here.
+    const backends = planRecipe(resolved.recipe, detection).dispatch
+      .map((d) => wrapperCmdFor(d.backend, d.role))
+      .filter(Boolean);
+    return { slot, ...resolved, backends };
+  });
 
 // An unsatisfiable EXPLICIT override is the only "warning" (loud, flagged for the agent to relay). A
 // graceful config/default degradation is reported as a per-slot reason, not a warning.
@@ -147,6 +153,16 @@ const SOURCE_LABEL = {
   override: 'from --override',
 };
 
+// The explicit wrapper set a review/execute recipe dispatches, printed beside the recipe name so the A2
+// recipe-fidelity obligation ("run every named backend, every round") is mechanical at the point of use.
+// ≥2 backends (Council) → the every-round reminder; exactly 1 → the lone wrapper; Solo dispatches none → ''.
+const backendSetLabel = (backends) =>
+  !backends || backends.length === 0
+    ? ''
+    : backends.length >= 2
+      ? ` → run every backend every round: ${backends.join(' + ')}`
+      : ` → ${backends[0]}`;
+
 const formatHuman = ({ activity, section, slots, warnings }) => {
   const lines = [
     section,
@@ -155,7 +171,7 @@ const formatHuman = ({ activity, section, slots, warnings }) => {
   ];
   for (const s of slots) {
     const arrow = s.degradedFrom ? ` (requested ${s.degradedFrom} → degraded)` : '';
-    lines.push(`  ${s.slot}: ${s.recipe} — ${SOURCE_LABEL[s.source]}${arrow}`);
+    lines.push(`  ${s.slot}: ${s.recipe} — ${SOURCE_LABEL[s.source]}${arrow}${backendSetLabel(s.backends)}`);
     if (s.reason) lines.push(`      ↳ ${s.reason}`);
   }
   if (warnings.length) {
@@ -169,7 +185,7 @@ const buildJson = ({ activity, section, slots, configSource, warnings }) => ({
   activity,
   section,
   slots: Object.fromEntries(
-    slots.map((s) => [s.slot, { recipe: s.recipe, source: s.source, degradedFrom: s.degradedFrom, reason: s.reason }]),
+    slots.map((s) => [s.slot, { recipe: s.recipe, source: s.source, degradedFrom: s.degradedFrom, reason: s.reason, backends: s.backends }]),
   ),
   configSource,
   warnings,

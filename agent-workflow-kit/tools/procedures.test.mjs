@@ -227,9 +227,49 @@ describe('procedures CLI — --json schema (§2.0)', () => {
     assert.match(j.section, /## plan-execution/);
     for (const slot of ['execute', 'review']) {
       assert.ok(j.slots[slot], `slot ${slot} present`);
-      assert.deepEqual(Object.keys(j.slots[slot]).sort(), ['degradedFrom', 'reason', 'recipe', 'source'].sort());
+      assert.deepEqual(Object.keys(j.slots[slot]).sort(), ['backends', 'degradedFrom', 'reason', 'recipe', 'source'].sort());
     }
     assert.ok(Array.isArray(j.warnings));
+  });
+});
+
+describe('procedures CLI — backend-set aid (§2.1): the explicit wrapper set beside the recipe', () => {
+  it('council prints BOTH dispatched wrappers (codex-review + agy-review) with the every-round reminder', () => {
+    const r = run(['plan-authoring', '--override', 'review=council'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /review: council .*→ run every backend every round: codex-review \+ agy-review/);
+  });
+
+  it('reviewed prints the single dispatched wrapper (codex-review), no every-round reminder', () => {
+    const r = run(['plan-authoring'], { codex: READY, agy: NEEDS_SKILL }); // computed default = reviewed
+    assert.match(r.stdout, /review: reviewed — computed default → codex-review/);
+    assert.ok(!/run every backend every round/.test(r.stdout), 'a single-backend recipe carries no every-round set');
+  });
+
+  it('delegated prints the codex-exec executor wrapper', () => {
+    const r = run(['plan-execution', '--override', 'execute=delegated'], { codex: READY, agy: NEEDS_SKILL });
+    assert.match(r.stdout, /execute: delegated .*→ codex-exec/);
+  });
+
+  it('solo prints NO backend set (nothing dispatched)', () => {
+    const r = run(['plan-authoring'], { codex: NEEDS_SKILL, agy: NEEDS_SKILL }); // review = solo
+    assert.match(r.stdout, /^  review: solo — computed default$/m, 'the solo recipe line carries no wrapper label');
+  });
+
+  it('--json carries the per-slot wrapper set, drift-guarded to the bridge manifests (non-vacuous)', () => {
+    const council = JSON.parse(run(['plan-authoring', '--override', 'review=council', '--json'], { codex: READY, agy: READY }).stdout);
+    assert.deepEqual(council.slots.review.backends, ['codex-review', 'agy-review']);
+    const delegated = JSON.parse(run(['plan-execution', '--override', 'execute=delegated', '--json'], { codex: READY, agy: NEEDS_SKILL }).stdout);
+    assert.deepEqual(delegated.slots.execute.backends, ['codex-exec']);
+    const solo = JSON.parse(run(['plan-authoring', '--json'], { codex: NEEDS_SKILL, agy: NEEDS_SKILL }).stdout);
+    assert.deepEqual(solo.slots.review.backends, [], 'solo → empty backend set');
+  });
+
+  it('a council degraded to reviewed prints only the surviving wrapper (set follows the EFFECTIVE recipe)', () => {
+    const r = run(['plan-authoring', '--override', 'review=council', '--json'], { codex: READY, agy: NEEDS_SKILL });
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.slots.review.recipe, 'reviewed', 'council degraded to reviewed (only codex ready)');
+    assert.deepEqual(j.slots.review.backends, ['codex-review'], 'the set reflects the dispatched, effective recipe');
   });
 });
 
