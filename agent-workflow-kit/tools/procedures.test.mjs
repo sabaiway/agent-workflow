@@ -222,7 +222,7 @@ describe('procedures CLI — --json schema (§2.0)', () => {
     const r = run(['plan-execution', '--json'], { codex: READY, agy: NEEDS_SKILL });
     assert.equal(r.code, 0, r.stderr);
     const j = JSON.parse(r.stdout);
-    assert.deepEqual(Object.keys(j).sort(), ['activity', 'configSource', 'section', 'slots', 'warnings'].sort());
+    assert.deepEqual(Object.keys(j).sort(), ['activity', 'configSource', 'reviewLoop', 'section', 'slots', 'warnings'].sort());
     assert.equal(j.activity, 'plan-execution');
     assert.match(j.section, /## plan-execution/);
     for (const slot of ['execute', 'review']) {
@@ -270,6 +270,46 @@ describe('procedures CLI — backend-set aid (§2.1): the explicit wrapper set b
     const j = JSON.parse(r.stdout);
     assert.equal(j.slots.review.recipe, 'reviewed', 'council degraded to reviewed (only codex ready)');
     assert.deepEqual(j.slots.review.backends, ['codex-review'], 'the set reflects the dispatched, effective recipe');
+  });
+});
+
+describe('procedures CLI — review-loop economics block (§2.2, M1/M6): prints for reviewed|council, omits solo', () => {
+  const SENTINEL = /Review-loop economics/;
+
+  it('PRINTS the block for council (carries the ≤2-round cap, divergence stop, and the M6 emission)', () => {
+    const r = run(['plan-authoring', '--override', 'review=council'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, SENTINEL);
+    assert.match(r.stdout, /≤2 rounds/);
+    assert.match(r.stdout, /backend divergence/i);
+    assert.match(r.stdout, /finding-origin tally/);
+    assert.match(r.stdout, /diff-review/);
+    assert.match(r.stdout, /self-consistency/);
+  });
+
+  it('PRINTS the block for reviewed (single-backend review still runs the loop economics)', () => {
+    const r = run(['plan-authoring'], { codex: READY, agy: NEEDS_SKILL }); // computed default = reviewed
+    assert.match(r.stdout, /review: reviewed/);
+    assert.match(r.stdout, SENTINEL);
+  });
+
+  it('OMITS the block for solo (non-vacuous — the same activity flips when review resolves solo)', () => {
+    const r = run(['plan-authoring'], { codex: NEEDS_SKILL, agy: NEEDS_SKILL }); // review = solo
+    assert.match(r.stdout, /review: solo/);
+    assert.ok(!SENTINEL.test(r.stdout), 'solo omits the review-loop economics block');
+  });
+
+  it('--json carries the structured reviewLoop counterpart (present for council, empty for solo)', () => {
+    const council = JSON.parse(run(['plan-authoring', '--override', 'review=council', '--json'], { codex: READY, agy: READY }).stdout);
+    assert.ok(Array.isArray(council.reviewLoop) && council.reviewLoop.length > 0, 'council carries a non-empty reviewLoop');
+    assert.ok(council.reviewLoop.some((l) => /finding-origin/.test(l)), 'the M6 per-round emission is in the structured block');
+    const solo = JSON.parse(run(['plan-authoring', '--json'], { codex: NEEDS_SKILL, agy: NEEDS_SKILL }).stdout);
+    assert.deepEqual(solo.reviewLoop, [], 'solo → empty reviewLoop');
+  });
+
+  it('prints for plan-execution too when its review slot resolves council (not only plan-authoring)', () => {
+    const r = run(['plan-execution', '--override', 'review=council'], { codex: READY, agy: READY });
+    assert.match(r.stdout, SENTINEL);
   });
 });
 
