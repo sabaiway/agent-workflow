@@ -274,7 +274,15 @@ jobs:
           # exist while its tag is missing (a partial run), and a re-run must restore it. gh creates a
           # LIGHTWEIGHT tag, so the ref object's sha IS the commit. Immutable releases: NEVER re-point a
           # tag — if it points at another commit, FAIL LOUDLY (ship a new version instead).
-          tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha' 2>/dev/null || echo "")
+          # A MISSING tag is a 404: `gh api` prints the error BODY to stdout and exits non-zero, so the
+          # old `$(… || echo "")` captured the "Not Found" JSON as a bogus non-empty sha and misfired the
+          # "tag moved" guard on the create path. Assign ONLY on a successful lookup, so a 404 (or a
+          # transient error) leaves tag_sha empty and the git-push below stays the immutability backstop
+          # (a same-sha tag re-push is a no-op; a different-sha remote tag is rejected — fail loud).
+          tag_sha=""
+          if _tag_ref=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha' 2>/dev/null); then
+            tag_sha="$_tag_ref"
+          fi
           if [ -n "$tag_sha" ] && [ "$tag_sha" != "$GITHUB_SHA" ]; then
             echo "::error::Tag $tag already points at $tag_sha, not this commit $GITHUB_SHA — refusing to move it (immutable releases). Ship a new version."
             exit 1
