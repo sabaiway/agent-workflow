@@ -3,7 +3,7 @@ name: agent-workflow-memory
 description: Deploy or upgrade a portable AI-agent memory substrate in any project — an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) and a structured `docs/ai/` context store with cap/archive/index enforcement. Use when the user wants to bootstrap `docs/ai/`, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-memory` / `/agent-workflow-memory upgrade`. Triggers on "set up the memory system", "deploy the AI memory here", "bootstrap docs/ai", "upgrade the memory substrate". This is the substrate only — the workflow methodology (plan→execute→review, queue, Cleanup) is owned elsewhere and injected into AGENTS.md by the family composition root.
 disable-model-invocation: true
 metadata:
-  version: '1.6.0'
+  version: '1.7.0'
 ---
 
 # agent-workflow-memory
@@ -116,7 +116,8 @@ bootstrapping over a live system, but the user makes the final call.
     lineage, a **separate axis** from this package's npm version (the two may even coincide by
     accident; see *Stamp = lineage head, not package version*). Use the atomic writer in
     `scripts/stamp-takeover.mjs` (write-temp + rename).
-11. **Report & ask.** Show `tree docs/ai/`, 2–3 lines on filled-vs-TODO, then **ask before
+11. **Report & ask.** Show `tree docs/ai/`, 2–3 lines on filled-vs-TODO — its normal deploy-success
+    framing, with **no `docs/ai` structure number** (see *Version disclosure*) — then **ask before
     committing** — never auto-commit. **Exception — delegated mode (below): skip this gate.**
 
 > **Delegated mode (invoked by the composition root) — applies to BOTH bootstrap and upgrade.**
@@ -150,7 +151,10 @@ Fill strategy:
 2. **Never-downgrade gate FIRST, then the stamp-independent hidden-mode reconcile (D14).** Compare the
    stamp to the **deployment-lineage head** (`LINEAGE_HEAD`, `1.3.0`). **Greater than the head, or
    unparseable → STOP and report immediately, before ANY write** (never downgrade or guess, and never
-   touch `.git/info/exclude`). Otherwise (stamp **≤ head**) reconcile the hidden-mode footprint — but
+   touch `.git/info/exclude`). This STOP is one of the only two places the number is shown (see
+   *Version disclosure* below): tell the user **the `docs/ai` structure version** their deployment
+   carries versus the one this substrate expects, plus the plain one-line two-axes note — naming it the
+   structure version, **never** "lineage head". Otherwise (stamp **≤ head**) reconcile the hidden-mode footprint — but
    first **infer this deployment's OWN visibility from its git state** (NOT from whether the machine-global
    excludes list these paths — another repo on the host may have added them): if `AGENTS.md` (or
    `docs/ai/`) is **tracked / committed** → **VISIBLE** → do nothing (never write `.git/info/exclude`);
@@ -170,8 +174,13 @@ Fill strategy:
    its own reconcile — this substrate is standalone and only seeds-or-preserves; it owns no cross-package
    refresh helper.) This is why an equal-head (`1.3.0`) deployment still gains the config seed **without a
    lineage-head bump or a migration file** (the stamp-independent-reconcile precedent — like the pointer
-   slots + the hidden-mode footprint). **Then**, if the stamp **equals** the head → report "up to date"
-   (plus any footprint move / config seed just made) and stop.
+   slots + the hidden-mode footprint). **Then**, if the stamp **equals** the head → the substrate is
+   current (no structure migration is due), and stop after reporting. Report **in the user's
+   conversational language**: if step 2's reconcile just **changed something** (a footprint move /
+   config seed), say **what changed** in plain terms and ask before committing; if **nothing changed at
+   all**, say their **settings are already current — no update is required**. Either way, show **no**
+   structure number, stamp filename, or internal versioning vocabulary on this happy-path exit — the
+   number is inert here and belongs to *Version disclosure* (below).
 3. Show the relevant `${CLAUDE_SKILL_DIR}/CHANGELOG.md` context (entries newer than the stamp).
 4. Apply `${CLAUDE_SKILL_DIR}/migrations/<version>-<slug>.md` in **semver order**, only those
    newer than the stamp. Migrations are **idempotent**.
@@ -186,9 +195,37 @@ Fill strategy:
    gracefully **no-op** on that slot (adding a slot to already-deployed files is the composition
    root's reconcile, not this substrate's job). On any malformed marker state (single, reversed,
    nested, or duplicate pair), **no-op with an error** — never edit.
-7. **Re-stamp** `docs/ai/.memory-version` to the lineage head (atomic write). Report changes;
-   **ask before committing** — **except in delegated mode** (see the *Delegated mode* note above),
-   where the composition root owns the single gate and this step raises none.
+7. **Re-stamp** `docs/ai/.memory-version` to the lineage head (atomic write — mechanics unchanged).
+   Report changes **in plain human terms** (which parts of the deployment are now different);
+   **omit the raw structure number**, and do not recite the two-axes note here (it belongs to
+   *Version disclosure*). **Ask before committing** — **except in delegated mode** (see the *Delegated
+   mode* note above), where the composition root owns the single gate and this step raises none.
+
+---
+
+## Version disclosure — the `docs/ai` structure version, on demand only
+
+The deployment carries an internal **`docs/ai` structure version** in `.memory-version` (the
+`LINEAGE_HEAD` — the number `upgrade` compares the stamp against to decide whether a migration is due).
+It is un-actionable in the happy path and reads as smaller than this package's npm version, so the
+happy path **hides** it. This substrate has **no status mode** (unlike the family composition root), so
+the number surfaces in exactly **two** places, and nowhere else:
+1. the **never-downgrade STOP** (*Mode: upgrade* step 2) — the stamp is ahead of what this substrate
+   knows, so the number IS the message;
+2. when the **user explicitly asks** about versions — a **read-only** answer: read `.memory-version`
+   and state it plainly (with the two-axes note). This adds **no mode** and **writes nothing**.
+
+When you show it, **name what it versions — "the `docs/ai` structure version"** (render that meaning in
+the user's conversational language) — **never** "lineage head" or any raw internal token. Pair it with
+**one plain-language line** telling the two axes apart, on demand only:
+
+> the number your project carries versions its `docs/ai` **structure**; the (usually larger) number on
+> npm is this package's **own version** — the two advance independently, so a bigger package number is
+> **not** a newer deployment.
+
+**Never** print this two-axes line on a successful equal-head exit — only at the STOP or on an explicit
+ask. (This is the one intended kit↔memory asymmetry: the kit hosts the number in its `status` mode; the
+memory substrate has none, so it relies on the STOP + the explicit ask — never invent a status mode.)
 
 ---
 

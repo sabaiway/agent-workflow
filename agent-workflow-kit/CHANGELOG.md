@@ -4,6 +4,25 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.24.0 — Humanize the deploy/version report: hide the internal structure number in the happy path
+
+A **feature** release (report-contract only — no logic, migration, or lineage change; the
+deployment-lineage head stays `1.3.0`).
+
+The bootstrap/upgrade report no longer leads with the internal `docs/ai` **structure version**
+(`deploymentHead`) — an un-actionable number that leaked into **every** successful report, including
+zero-diff no-ops, and read as "smaller than the version on npm/GitHub".
+
+- **Happy path is now plain.** A zero-diff no-op `upgrade` says **settings already current — no update
+  needed** (rendered in the user's language); a fresh `bootstrap` keeps its "deployed and ready"
+  framing. Neither surfaces the structure semver, the stamp filename, or any head/lineage vocabulary.
+- **The number survives only where it is actionable** — the never-downgrade STOP gate and the explicit
+  `Mode: status` view — now **named "the `docs/ai` structure version"** (never "lineage head"), paired
+  with a plain, on-demand two-axes note (*Version disclosure*). A migration that ran is described in
+  **human terms**; the raw number is omitted, never recited on a successful report.
+- **The version-status check is framed as internal routing**, not a line printed on every invocation.
+- Pinned by a new static contract test (`test/report-contract.test.mjs`, invariants A1–A6).
+
 ## 1.23.0 — Surface the review-loop economics + the resolved backend set in the procedures advisor
 
 A **feature** release. `/agent-workflow-kit procedures <activity>` now makes the review-loop discipline
