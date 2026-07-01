@@ -51,13 +51,15 @@ const EXPECTED_KIND = 'execution-backend';
 // The kit-owned registry: the per-backend facts the detector needs even when a bridge is NOT
 // installed (no manifest on disk to read). Kept in lockstep with the in-repo manifests by the
 // drift-guard test. `credential.env: null` → no env override exists (do not invent one).
-// `wrapperCmds` is the EXPECTED deduped roles[].cmd set the CURRENT kit bundles — readiness probes
-// THIS set (not the installed manifest's), so a stale install missing a wrapper surfaces DEGRADED.
-export const KNOWN_BACKENDS = [
+// `roleCmds` is the role-keyed source of truth (role → the PATH wrapper cmd), mirroring each bridge
+// manifest `roles[role].cmd`, drift-guarded. Two derivations ride on it, both drift-guarded against the
+// manifests: `wrapperCmds` (the deduped set the readiness probe checks — a stale install missing one
+// surfaces DEGRADED) and `wrapperCmdFor(backend, role)` (which concrete wrapper the backend-set aid prints).
+const RAW_BACKENDS = [
   {
     name: 'codex-cli-bridge',
     installed: { env: 'CODEX_CLI_BRIDGE_DIR', default: '~/.claude/skills/codex-cli-bridge', file: 'SKILL.md' },
-    wrapperCmds: ['codex-exec', 'codex-review'],
+    roleCmds: { execute: 'codex-exec', review: 'codex-review' },
     bin: 'codex',
     credential: { env: 'CODEX_HOME', default: '~/.codex', file: 'auth.json' },
     setupUrl: 'https://github.com/sabaiway/agent-workflow/blob/main/codex-cli-bridge/setup/README.md',
@@ -69,7 +71,7 @@ export const KNOWN_BACKENDS = [
   {
     name: 'antigravity-cli-bridge',
     installed: { env: 'ANTIGRAVITY_CLI_BRIDGE_DIR', default: '~/.claude/skills/antigravity-cli-bridge', file: 'SKILL.md' },
-    wrapperCmds: ['agy-review', 'agy-run'],
+    roleCmds: { review: 'agy-review', probe: 'agy-run' },
     bin: 'agy',
     credential: { env: null, default: '~/.gemini/antigravity-cli', file: 'antigravity-oauth-token' },
     setupUrl: 'https://github.com/sabaiway/agent-workflow/blob/main/antigravity-cli-bridge/setup/README.md',
@@ -77,6 +79,17 @@ export const KNOWN_BACKENDS = [
     guide: { setupRef: 'antigravity-cli-bridge/setup/README.md', loginCmd: 'agy', verifyCmd: 'echo "say OK" | agy-run -' },
   },
 ];
+
+// The deduped roles[].cmd set the CURRENT kit bundles, derived from roleCmds in first-seen order — one
+// source, so the readiness-probe list can never drift from the role-keyed map.
+const wrapperCmdsFromRoles = (roleCmds) => [...new Set(Object.values(roleCmds ?? {}))];
+export const KNOWN_BACKENDS = RAW_BACKENDS.map((entry) => ({ ...entry, wrapperCmds: wrapperCmdsFromRoles(entry.roleCmds) }));
+
+// Resolve a dispatched (backend manifest name, role) to its concrete PATH wrapper cmd (e.g.
+// codex-cli-bridge + review → "codex-review") from the role-keyed registry — the backend-set aid
+// consumes this to print WHICH wrapper each dispatched backend runs. `null` when the pair is unknown.
+export const wrapperCmdFor = (backendName, role) =>
+  KNOWN_BACKENDS.find((b) => b.name === backendName)?.roleCmds?.[role] ?? null;
 
 // ── pure helpers ─────────────────────────────────────────────────────────────
 

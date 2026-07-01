@@ -14,6 +14,7 @@ import {
   formatReport,
   guideFor,
   KNOWN_BACKENDS,
+  wrapperCmdFor,
 } from './detect-backends.mjs';
 
 const REPO = fileURLToPath(new URL('../../', import.meta.url)); // …/agent-workflow-kit/tools/ → repo root
@@ -310,10 +311,44 @@ describe('KNOWN_BACKENDS — drift guard against the in-repo manifests', () => {
     }
   });
 
+  // The role-keyed source of truth the backend-set aid consumes: entry.roleCmds must equal the manifest
+  // role→cmd map exactly, so a manifest cmd rename (codex-review → something) fails a test here.
+  it('each entry.roleCmds matches the manifest roles[role].cmd (role-keyed, drift-guarded)', () => {
+    for (const entry of KNOWN_BACKENDS) {
+      const manifest = readManifest(join(REPO, entry.name));
+      const manifestRoleCmds = Object.fromEntries(
+        Object.entries(manifest.roles ?? {}).map(([role, r]) => [role, r.cmd]),
+      );
+      assert.deepEqual(entry.roleCmds, manifestRoleCmds, `${entry.name} roleCmds`);
+    }
+  });
+
   it('each entry.setupPathLocal exists in the repo', () => {
     for (const entry of KNOWN_BACKENDS) {
       assert.ok(existsSync(join(REPO, entry.name, entry.setupPathLocal)), `${entry.name}/${entry.setupPathLocal}`);
     }
+  });
+});
+
+describe('wrapperCmdFor — role-keyed wrapper resolution (drift-guarded via KNOWN_BACKENDS.roleCmds)', () => {
+  it('resolves each dispatched (backend, role) to the manifest wrapper cmd', () => {
+    assert.equal(wrapperCmdFor('codex-cli-bridge', 'review'), 'codex-review');
+    assert.equal(wrapperCmdFor('codex-cli-bridge', 'execute'), 'codex-exec');
+    assert.equal(wrapperCmdFor('antigravity-cli-bridge', 'review'), 'agy-review');
+  });
+
+  it('the resolved cmd matches the on-disk manifest roles[role].cmd (a rename fails this)', () => {
+    for (const entry of KNOWN_BACKENDS) {
+      const manifest = readManifest(join(REPO, entry.name));
+      for (const [role, r] of Object.entries(manifest.roles ?? {})) {
+        assert.equal(wrapperCmdFor(entry.name, role), r.cmd, `${entry.name} ${role}`);
+      }
+    }
+  });
+
+  it('an unknown backend or role → null (never invents a wrapper name)', () => {
+    assert.equal(wrapperCmdFor('antigravity-cli-bridge', 'execute'), null); // agy has no execute role
+    assert.equal(wrapperCmdFor('nope-bridge', 'review'), null);
   });
 });
 
