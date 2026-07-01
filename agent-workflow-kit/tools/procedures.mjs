@@ -163,6 +163,25 @@ const backendSetLabel = (backends) =>
       ? ` → run every backend every round: ${backends.join(' + ')}`
       : ` → ${backends[0]}`;
 
+// The review-loop economics block (M1 + M6's firing half) — printed when the activity engages a review
+// backend (a slot resolving reviewed | council) and OMITTED for solo. It paraphrases the §9 +
+// orchestration §4 canon (no rival rule): the ≤2-round architecture cap, the bar met by RAISING a
+// surviving major to an acceptance invariant (not exhausting prose), backend divergence = the crossover
+// stop, the thin-plan/diff-review carve-out, a self-consistency read before every re-review, and the
+// REQUIRED per-round structured emission {round N · finding-origin tally · per-backend verdict}. Only a
+// review slot can resolve reviewed|council (execute floors at solo|delegated), so gate on the recipe.
+const REVIEW_RECIPES = new Set(['reviewed', 'council']);
+const reviewLoopAdvice = (slots) =>
+  slots.some((s) => REVIEW_RECIPES.has(s.recipe))
+    ? [
+        'Review-loop economics (planning.md §9 · orchestration.md §4) — the review this recipe runs:',
+        '  • Cap architecture plan-review at ≤2 rounds; the bar is met by RAISING a surviving major to an acceptance invariant (or handing it to Execute/diff-review), never by exhausting the strictest backend.',
+        '  • Backend divergence (one backend grounded-ships while another keeps revising mechanics) IS the crossover stop.',
+        '  • Route an all-mechanics/CI or prose-only artifact to a thin plan + diff-review; run a self-consistency read before every re-review.',
+        '  • Each round MUST emit {round N · finding-origin tally (first-draft / fold-induced / mechanics) · per-backend verdict} so the crossover is a computed signal.',
+      ]
+    : [];
+
 const formatHuman = ({ activity, section, slots, warnings }) => {
   const lines = [
     section,
@@ -174,6 +193,8 @@ const formatHuman = ({ activity, section, slots, warnings }) => {
     lines.push(`  ${s.slot}: ${s.recipe} — ${SOURCE_LABEL[s.source]}${arrow}${backendSetLabel(s.backends)}`);
     if (s.reason) lines.push(`      ↳ ${s.reason}`);
   }
+  const advice = reviewLoopAdvice(slots);
+  if (advice.length) lines.push('', ...advice);
   if (warnings.length) {
     lines.push('', 'warnings:');
     for (const w of warnings) lines.push(`  ⚠ ${w}`);
@@ -187,6 +208,7 @@ const buildJson = ({ activity, section, slots, configSource, warnings }) => ({
   slots: Object.fromEntries(
     slots.map((s) => [s.slot, { recipe: s.recipe, source: s.source, degradedFrom: s.degradedFrom, reason: s.reason, backends: s.backends }]),
   ),
+  reviewLoop: reviewLoopAdvice(slots),
   configSource,
   warnings,
 });
