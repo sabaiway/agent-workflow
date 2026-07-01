@@ -7,6 +7,19 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-01 — memory 1.7.0 / kit 1.24.0
+
+- **Humanize the deploy/version report (all users).** `/agent-workflow-kit upgrade|bootstrap` (and the
+  memory substrate) stop leaking the internal `docs/ai` **structure-version** number into the happy
+  path — it was un-actionable and appeared on every success, including no-ops, reading as smaller than
+  the npm/GitHub package version. Now a no-op says **settings already current — no update needed**
+  (rendered in the user's language) with **no** structure semver / stamp path / head-lineage wording; a
+  fresh bootstrap keeps its "deployed and ready" framing. The number survives only where it is
+  actionable — the never-downgrade STOP gate, the kit's explicit `Mode: status`, and (memory) an
+  explicit user ask — **named "the `docs/ai` structure version"** (never "lineage head"), with a plain
+  on-demand two-axes note. **Report-contract (prose) change only:** no logic, no migration, no
+  lineage-head bump (stays `1.3.0`); pinned by new static contract tests in both packages.
+
 ## 2026-07-01 — engine 1.8.0 / memory 1.6.0 / kit 1.23.0
 
 - **Mechanize the §9 review-loop discipline (all users).** The methodology canon turns the review-loop

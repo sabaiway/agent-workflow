@@ -3,7 +3,7 @@ name: agent-workflow-kit
 description: Deploy or upgrade a portable AI-agent memory-and-workflow system in any project. Use when the user wants to bootstrap `docs/ai/` + an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) + cap/archive/index enforcement in a new or existing repo, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-kit` / `/agent-workflow-kit upgrade`. Triggers on phrases like "set up the memory system", "deploy the AI workflow here", "bootstrap docs/ai", "upgrade the workflow".
 disable-model-invocation: true
 metadata:
-  version: '1.23.0'
+  version: '1.24.0'
 ---
 
 # agent-workflow-kit
@@ -116,11 +116,11 @@ Pick the mode from the user's invocation. Auto-detect an existing `docs/ai/` to 
 - **`/agent-workflow-kit uninstall`** — the **guarded teardown** companion to `init`/`setup`. Removes what they placed — installed skill dirs + the bridge wrappers — and, in a project, reverses the hidden-mode fence + the marker pre-commit hook. **Never deletes user-authored content**: it prints the exact `rm` for `docs/ai` / `AGENTS.md` and an **edit** for `.claude/settings.json` (the `includeCoAuthoredBy` key + any velocity `permissions.*`), for you to run by hand. `--dry-run` first, always; preflight-then-mutate; never commits.
 - **`/agent-workflow-kit velocity`** — opt-in onboarding **velocity profile**: seed a fixed, audited **read-only** Claude Code allowlist into `.claude/settings.json` so routine read-only commands stop idling on approval prompts; opt-in `acceptEdits`; plus a **read-only advisory** of likely project gate commands to add by hand. **Writes only `.claude/settings.json`, never allowlists commit/push/publish, never writes `settings.local.json`, never commits.** `--dry-run` first.
 
-### Version status & the two axes — surface this on every invocation
+### Version status & the two axes — the internal routing check
 
 **Safe-routing rule (which mode did the user invoke?).** Map the invocation token with `tools/commands.mjs` `routeInvocation`: a **known** subcommand → its mode; the **bare/empty** invocation → `bootstrap` — the one writer reachable without a token, and only on an undeployed project (if `docs/ai/` already exists, **ask upgrade-vs-bootstrap**, never overwrite); **any unrecognized/ambiguous** token → `help`, which is **read-only**. The invariant: **no unrecognized/garbage invocation ever triggers a write** (only an explicit known token or the acknowledged bare-bootstrap exception can). The mapping is unit-tested, so it is not left to interpretation.
 
-Before acting, read `docs/ai/.workflow-version` (the project's stamp), state a one-line status, then route:
+Before acting, read `docs/ai/.workflow-version` (the project's stamp) to decide the route — this is an **internal** routing decision, **not** a line you print to the user (the number itself is shown only per *Version disclosure*). Route:
 
 - **absent** → bootstrap (a fresh deployment).
 - **stamp < `1.3.0`** (the deployment-lineage head) → `upgrade`.
@@ -172,18 +172,22 @@ the welcome mat **composes signals already gathered** (the version block's notes
 line), not a fresh helper call. Present everything in the user's conversational language; never paste
 the JSON or any internal field name.
 
-**Version block — three plain lines, fed from `--json`:**
-- **`Deployment structure: <deploymentHead> (current)`** — the deployed `docs/ai` structure version
-  (the envelope's `deploymentHead`); **the only axis `upgrade` compares**.
+**Success state — the happy path never leads with a structure number.** No happy-path report surfaces
+the project's internal `docs/ai` structure version, the stamp filename, or the internal versioning
+vocabulary — that number is inert here and only confuses; it belongs to *Version disclosure* (below).
+Frame the success itself plainly, in the **user's conversational language** (never hardcode a phrase):
+- a **zero-diff no-op `upgrade`** (step 4) → **settings already current — no update is required**
+  (illustrative tone for a Russian-speaking user, an example of the meaning, not a literal string to
+  embed: *«Настройки уже актуальны — обновление не требуется»*);
+- a **fresh `bootstrap`** → its normal "deployed and ready" success, minus the number.
+
+**Version block — the installed package versions, fed from `--json`** (the `docs/ai` structure version
+is shown on demand only — see *Version disclosure* below, **not** here):
 - **`Installed on this machine — package versions:`** `kit <v> · memory <v> · engine <v> ·
   codex-bridge <v> · antigravity-bridge <v>` — one per `installed[]` entry, labelled by its `display`
   and showing its `version`, or, when there is no version, the plain phrase for its `state` (map
   below). Append any `installed[].notes` **in plain words** (e.g. the memory-behind refresh+restart
   line).
-- **The two axes are different — say so even when the numbers coincide:** an installed *package*
-  version (e.g. engine `1.3.0`) is a package number, **not** the deployment-structure version on line
-  one (which is also `1.3.0` today). The head advances only when the deployed `docs/ai` structure
-  changes, so a higher package number on npm/GitHub is **not** a newer deployment.
 
 **`state` → plain language** (map the envelope's `installed[].state` token; never show the raw token):
 `installed` → its version · `absent` → "not installed" · `other-tool` → "a different tool occupies
@@ -213,6 +217,29 @@ backend-status line — no new helper call) in this priority order:
    *`/agent-workflow-kit velocity`* opt-in (never run it without a yes).
 
 Keep it compact — a few short lines, plain language, no kit-internal terms.
+
+### Version disclosure — the `docs/ai` structure version, on demand only
+
+The deployment carries an internal **`docs/ai` structure version** (the envelope's `deploymentHead`) —
+the number `upgrade` compares the project's stamp against to decide whether a migration is due. The
+happy path deliberately **hides** it: a user cannot act on it, and because it advances far more slowly
+than the published package version, it reads as *"why is this smaller than what GitHub shows?"* Surface
+it in exactly **three** places, and nowhere else:
+1. the **never-downgrade STOP** (*Mode: upgrade* step 2) — the stamp is ahead of what this kit knows,
+   so the number IS the message;
+2. the **explicit version-status view** (*Mode: status*) the user deliberately opens;
+3. when the **user explicitly asks** about versions.
+
+When you show it, **name what it versions — "the `docs/ai` structure version"** (render that meaning in
+the user's conversational language) — **never** "lineage head", "deployment head", or any raw internal
+token. Pair it with **one plain-language line** telling the two axes apart, on demand only:
+
+> the number your project carries versions its `docs/ai` **structure**; the (usually larger) number on
+> npm/GitHub is the **tool's own package version** — the two advance independently, so a bigger package
+> number is **not** a newer deployment.
+
+**Never** print this two-axes line on a successful equal-head exit — only at the STOP, the status view,
+or on an explicit ask.
 
 ### Mode: help
 
@@ -273,7 +300,7 @@ Fill strategy:
 ### Mode: upgrade
 
 1. Read `docs/ai/.workflow-version` (the project's stamped lineage). If missing, treat as a pre-versioned deployment and offer to re-bootstrap conservatively.
-2. **Never-downgrade gate — FIRST, before any write.** Compare the stamp to the **deployment-lineage head** (`1.3.0` — NOT this kit's package version). If the stamp is **greater than the head** or unparseable → **STOP and report**; do not touch a newer / unknown deployment at all (not even the methodology slot).
+2. **Never-downgrade gate — FIRST, before any write.** Compare the stamp to the **deployment-lineage head** (`1.3.0` — NOT this kit's package version). If the stamp is **greater than the head** or unparseable → **STOP and report**; do not touch a newer / unknown deployment at all (not even the methodology slot). This STOP is one of the few places the number is actionable (*Version disclosure*): show the user **the `docs/ai` structure version** their deployment carries versus the one this kit expects, plus the plain one-line two-axes note — naming it the structure version, **never** "lineage head".
 3. **Reconcile the bounded pointers — stamp-independent, BEFORE the equal-head short-circuit.** Reached only when the stamp **≤ head**. Run `node ${CLAUDE_SKILL_DIR}/tools/inject-methodology.mjs reconcile <project>/AGENTS.md`. ONE call reconciles **two** pointers — the **workflow-methodology** pointer and, right below it, the **orchestration-recipes** pointer (Solo / Reviewed / Council / Delegated, routing to `/agent-workflow-kit recipes`) — and is filled on **every** upgrade, idempotently (zero-diff when both are already present + filled), so even a legacy / current **`1.3.0`** deployment gains them **without a lineage-head bump or a migration** (the deployment-lineage head stays `1.3.0`; the `agent-workflow-memory` **package** template did get a docs-only headroom trim for the second pointer, but no deployed-`docs/ai` structure changed). Per slot it inserts an empty pair at its anchor if absent, preserves a customized pair verbatim, and STOPs (never edits) on a malformed pair, a missing / duplicate anchor, or **when a fill is needed but the installed `agent-workflow-engine` is absent/invalid** (both fragments are read live from it — see the distinct outcomes below).
 
    **Classify the exit — there are THREE non-zero exits + one soft in-band skip; handle each differently:**
@@ -291,13 +318,13 @@ Fill strategy:
    **Orchestration config ensure (seed-or-refresh) — stamp-independent, same gate, BEFORE the equal-head short-circuit.** Ensure `docs/ai/orchestration.json` exists **and its onboarding note is current**: **create it from the template if missing**; **if it already exists, preserve every activity/slot the user set, and refresh ONLY the `_README` note when the existing one still matches a known prior canonical** — the tested `refreshIfCanonical` / `refreshReadme` in `tools/orchestration-config.mjs` is the source of truth for that decision (normalize CRLF/whitespace before comparing; a *customized* `_README` is preserved verbatim; a *malformed* existing config is **preserved + a loud warning**, never clobbered or silently skipped). The current note points at `/agent-workflow-kit set-recipe` (the config is now agent-writable — no more "never written for you"). **The refresh helper is kit-owned** — in the **delegated** path memory only seeds/preserves the file (memory upgrade step 2) and the **kit** then applies the `_README` refresh; in the **fallback** path the kit seeds-or-refreshes directly from `${CLAUDE_SKILL_DIR}/references/templates/orchestration.json`. (Memory stays standalone — it never depends on this helper.) Like the pointer slots + the footprint reconcile, this reaches an equal-head (`1.3.0`) deployment **without a lineage-head bump or a migration file** (it is a `.json`, inherently outside the docs cap-validator). Report it in the step 4 / step 8 success report (config *seeded* / *note refreshed* / *already current* / *customized — preserved*).
 4. **Equal-head exit — a real successful-exit report, not a bare stop.** If the stamp **equals** the head, the lineage is up to date — but step 3 (the methodology-slot **and** hidden-mode footprint reconciles) ran first and may have changed things, so this is a proper exit report, not a no-op:
    - **Report step 3's outcome in plain language** — for **each** pointer (workflow-methodology and orchestration-recipes) whether it was *added*, was *already present* (nothing changed), or was *skipped because the entry point is over its line limit* (the cap-refusal soft-skip from step 3, with its reason); whether the `docs/ai/orchestration.json` config was *seeded* (created from the template), had its onboarding note *refreshed*, was *already current*, or carried a *customized note that was preserved* (a user edit is never clobbered); and, for a hidden deployment, whether the hidden-mode footprint was *moved to project-local*, was *already project-local* (nothing changed), or needed a question (ambiguous visibility / a leftover machine-wide block). Plain wording only — never the reconcile/slot/anchor/marker terms (Gotcha: never leak kit internals).
-   - **Name the version axis so the package number isn't mistaken for a newer release.** When you state the deployment is up to date, say it is current at the **deployment-lineage head** (`1.3.0`) and add one plain line: this head versions the deployed `docs/ai` structure and is a **separate axis** from the kit **package** version published on npm/GitHub (the larger number users see on the repo/npm page). A packaging-only release can bump that package version **without** moving the head — the head advances only when the deployed `docs/ai` structure changes — so an equal-head report is **not** a stale deployment even though GitHub shows a higher package number. (This is the only place the two axes meet the user in `upgrade`; surfacing it here prevents the recurring "but GitHub shows a higher version" confusion.)
+   - **Never surface the structure number on this exit.** Whatever step 3 did, do **not** recite the `docs/ai` structure version, the internal versioning vocabulary, or the two-axes note here — the number is inert on an equal-head exit; it belongs to *Version disclosure* (shown at the never-downgrade STOP, the explicit status view, or on an explicit ask). Frame the success itself per the final bullet: if step 3 changed anything, say **what changed** in plain human terms; only a pure zero-diff no-op is *settings already current — no update needed*.
    - **Print the report footer** in the canonical order (version block → one-line backend-status line → welcome mat — the shared contracts above; rendered from the helpers, same host-can't-run skip-with-reason). The welcome mat closes on **one** caveat-aware next step (a behind member first, else `setup` / `recipes` / `velocity`).
-   - **Then ask before committing — never auto-commit.** If step 3 added the slot (or anything else changed), report it and ask. If step 3 was a pure zero-diff no-op and nothing else changed, say **"already up to date"** and still print the read-only version block + backend line.
+   - **Then ask before committing — never auto-commit.** If step 3 added the slot (or anything else changed), report it and ask. If step 3 was a pure zero-diff no-op and nothing else changed, give the plain **settings already current — no update needed** message (the *Success state* contract) and still print the read-only version block (installed package versions) + backend line — but **no `docs/ai` structure version and no two-axes note** (nothing changed, so the number is inert here).
 5. Show the relevant `${CLAUDE_SKILL_DIR}/CHANGELOG.md` diff (entries newer than the project's stamp).
 6. Apply `${CLAUDE_SKILL_DIR}/migrations/<version>-<slug>.md` in **semver order**, only those newer than the project's stamp. Migrations are **idempotent** — safe to re-run.
 7. Reconcile drift: add any kernel files/scripts the project is missing; never clobber project-authored content (their `decisions.md`, `known_issues.md`, page specs stay). Any user question a migration raises follows the same rule as bootstrap — **structured multiple-choice where supported** (`AskUserQuestion` in Claude Code), otherwise prose. If `AGENTS.md` has no *Communication language* block (pre-1.1.0 deployment), **ask the user their conversational language** and insert the block — see `migrations/1.1.0-communication-language.md`. If it has no *Attribution* block (pre-1.2.0 deployment), **ask whether the agent may attribute work to itself / AI** and insert the block (defaulting to `off`) — see `migrations/1.2.0-agent-attribution.md`.
-8. Re-stamp `docs/ai/.workflow-version` to the **deployment-lineage head** (`1.3.0`, not the package version). Report changes — and when you report the stamp, **name the axis**: the head versions the deployed `docs/ai` structure and is a separate axis from the kit **package** version on npm/GitHub (the larger number users see there), so the user doesn't read the bigger package number as a newer deployment (same framing as the step 4 equal-head exit). Then **print the report footer** in the canonical order (version block → one-line backend-status line → welcome mat — the shared contracts above; rendered from the helpers, same host-can't-run skip-with-reason; the welcome mat closes on one caveat-aware next step). Then **ask before committing**.
+8. Re-stamp `docs/ai/.workflow-version` to the **deployment-lineage head** (`1.3.0`, not the package version — mechanics unchanged: the atomic write to the stamp file). In the report, **describe what the upgrade changed in plain human terms** — which parts of their `docs/ai` are now different (the migrations that ran) — rather than reciting a version number; **omit the raw structure number**, and do **not** print the two-axes note here (it belongs to *Version disclosure*, on demand only). Then **print the report footer** in the canonical order (version block → one-line backend-status line → welcome mat — the shared contracts above; rendered from the helpers, same host-can't-run skip-with-reason; the welcome mat closes on one caveat-aware next step). Then **ask before committing**.
 
 ### Mode: backends
 
@@ -340,7 +367,7 @@ Read-only. The **single answer to "versions + deployment + settings + bridges"**
 
 Run `node ${CLAUDE_SKILL_DIR}/tools/family-registry.mjs --json [--dir <project>]` and render it **compact**, in the user's conversational language — **never paste the JSON or any internal field name** (no-leak rule). Map the **`installed[].state`** token via the value→plain-language map under *The version block + welcome mat* (the `visibility` and wrapper states have their own phrasings, below). Present, each area on its own line(s), routing detail to its domain mode:
 
-1. **Versions — a status-only render from `installed[]` + `deploymentHead`** (this is **NOT** the shared notes-based version block — see the separation note below): the deployment-structure head, then each member by its `display` showing its `version` (or, when there is no version, the plain phrase for its `state`, mapped above), plus the two-axes disambiguation. **Freshness comes from `installed[].refresh`, not from `notes`:** for each member whose **`refresh.behind`** is `true`, show a **localized "needs refresh"** label and the **verbatim `refresh.recommend`** command **exactly once** (the command/package name stays source-language; **do not also paste the English `notes` caveats** — `refresh.recommend` is the single source of the recovery step, so the command is never duplicated on this surface). Lead with a one-line **headline count** derived from `installed[].state` + `refresh.behind` (e.g. *"5 members installed · 1 needs a refresh"*).
+1. **Versions — a status-only render from `installed[]` + `deploymentHead`** (this is **NOT** the shared notes-based version block — see the separation note below): the **`docs/ai` structure version** (named as such, never "lineage head"), then each member by its `display` showing its `version` (or, when there is no version, the plain phrase for its `state`, mapped above), plus the two-axes disambiguation. **Freshness comes from `installed[].refresh`, not from `notes`:** for each member whose **`refresh.behind`** is `true`, show a **localized "needs refresh"** label and the **verbatim `refresh.recommend`** command **exactly once** (the command/package name stays source-language; **do not also paste the English `notes` caveats** — `refresh.recommend` is the single source of the recovery step, so the command is never duplicated on this surface). Lead with a one-line **headline count** derived from `installed[].state` + `refresh.behind` (e.g. *"5 members installed · 1 needs a refresh"*).
 
 > **Status reads `refresh`; the shared version block + the bootstrap/upgrade footers stay `notes`-based (unchanged this release).** *Mode: status* has its OWN status-only render (above), keyed on `installed[].refresh.behind` / `refresh.recommend`. The shared **version block** (under *The version block + welcome mat*) and the bootstrap (step 11) + every upgrade (steps 4 / 8) report footer still consume `installed[].notes` verbatim — that wiring is deliberately **untouched** here (their migration onto `refresh` is deferred). Do not rewrite those footers onto `refresh`.
 2. **Deployment (`--dir`)** (from `project`): whether `docs/ai/` is deployed + the deploy stamps by `display`; and **visibility** — render `project.visibility.state` in **user-safe words only**: *visible (tracked)* / *hidden (git-ignored, local-only)* / *unclear (uncommitted or partially set up)* — **never** the words "hidden fence" or any marker term. A `visibility.error` → surface it plainly.
@@ -351,7 +378,7 @@ Run `node ${CLAUDE_SKILL_DIR}/tools/family-registry.mjs --json [--dir <project>]
    - Any area's **`error`** field → surface it **loudly** in plain language; the rest of `status` still renders (never a crash).
 4. **Bridges (host, one line)** (from `bridges[]`): per bridge — readiness + wrapper PATH-presence; render each wrapper's `state` as *on PATH* (`present`) / *not on PATH* (`missing`) / *couldn't check* (`unknown`) (detail → `/agent-workflow-kit backends` / `setup`). **No default-model claim.** "credentials present" means a marker file exists, not a live login.
 
-Restate the **two-axes honesty** — an installed *package* version is not a project's deployment-lineage stamp (see *Version status & the two axes*); the installed version is whatever is on disk under `~/.claude/skills/…`, so a stale install shows its real (older) version, honestly. A host that can't run the helper → **skip with the concrete reason** (the helper-failure contract), never silently.
+Restate the **two-axes honesty** — an installed *package* version is not the project's **`docs/ai` structure version** (see *Version disclosure*); the installed version is whatever is on disk under `~/.claude/skills/…`, so a stale install shows its real (older) version, honestly. A host that can't run the helper → **skip with the concrete reason** (the helper-failure contract), never silently.
 
 **Invariants:** read-only · never writes · never commits · never runs a subscription CLI · plain language only, no leaked internal terms.
 

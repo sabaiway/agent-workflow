@@ -4,6 +4,23 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.7.0 — Humanize the deploy/version report (memory)
+
+A **feature** release (report-prose only — the atomic stamp-WRITE mechanics and the *Stamp = lineage
+head, not package version* gotcha are unchanged; deployment-lineage head stays `1.3.0`, no migration).
+
+The substrate's upgrade report no longer surfaces the internal `docs/ai` **structure version**
+(`.memory-version`) on the happy path:
+
+- A zero-diff equal-head upgrade says **settings already current — no update needed**; a writeful
+  reconcile (a footprint move / config seed) instead reports **what changed** and asks before commit.
+  A fresh bootstrap keeps its deploy-success framing. Neither shows the structure number.
+- The number surfaces only at the never-downgrade **STOP** gate and on an **explicit user ask** (a
+  read-only answer that writes nothing) — named "the `docs/ai` structure version", never "lineage
+  head", with a plain two-axes note (*Version disclosure*). Memory adds **no status mode** (the one
+  intended kit↔memory asymmetry).
+- Pinned by a new static contract test (`scripts/skill-report-contract.test.mjs`).
+
 ## 1.6.0 — §2.6 carries the review-loop economics disciplines (memory)
 
 A **feature** release. The `agent_rules.md` substrate **§2.6** lens gains the review-loop economics
