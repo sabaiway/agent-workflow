@@ -8,20 +8,34 @@ name: _publish-one
 # step runs with working-directory set to it, and the package name/version are read from that
 # package.json rather than hardcoded, so this file is package-agnostic.
 #
-# Auth uses the NPM_TOKEN secret (inherited from the caller) — an npm *automation* token (or a
-# granular token scoped to @sabaiway with read+write). Automation/granular tokens bypass 2FA,
-# which an interactive `npm publish` cannot do in CI. Create one at npmjs.com → Access Tokens,
-# then add it under repo Settings → Secrets and variables → Actions → NPM_TOKEN.
+# Auth: OIDC TRUSTED PUBLISHING — no long-lived npm token on the publish path. With
+# `id-token: write` and npm CLI >= 11.5.1 on a Node >= 22.14.0 runner, `npm publish` mints a
+# short-lived OIDC credential at publish time and auto-generates provenance (no provenance flag,
+# no auth-token env). Each package must have a Trusted Publisher configured on npmjs.com:
+#   package → Settings → Trusted Publishing → GitHub Actions, with
+#     Repository:        <owner>/agent-workflow
+#     Workflow filename: publish.yml   ← the TOP-LEVEL dispatch entrypoint. npm validates the
+#                        CALLING workflow's filename even though the publish actually runs in this
+#                        reusable _publish-one.yml (job `publish`). Ref: docs.npmjs.com/trusted-publishers
 #
-# Provenance is attached via OIDC (id-token: write), so each published version carries a
-# verified build attestation linking it back to this repo + commit.
+# RECOVERY (if a publish fails):
+#   1. Verify the package's Trusted Publisher entry (owner/repo + workflow `publish.yml`) on npmjs.com.
+#   2. Confirm the runner floor — npm >= 11.5.1, Node >= 22.14.0, and `id-token: write` on both this
+#      job and the caller (the "runner floor + OIDC prerequisites" preflight checks all three).
+#   3. Break-glass (OIDC genuinely unavailable) — a documented MANUAL path, NOT a standing binding:
+#      temporarily restore token auth — add `registry-url: 'https://registry.npmjs.org'` back onto the
+#      setup-node step, re-add the auth-token env on the Publish step (the `NODE_AUTH_TOKEN` variable
+#      bound to the `NPM_TOKEN` secret), and `secrets: inherit` on the caller jobs in publish.yml. Set
+#      the `NPM_TOKEN` secret to a short-lived GRANULAR access token (scoped to @sabaiway, read+write,
+#      2FA, <= 90-day; legacy npm tokens were retired in late 2025). Publish the SAME packed .tgz from
+#      the SAME commit (so the npm artifact still matches the Release asset), then revert. The
+#      `NPM_TOKEN` secret is otherwise consumed only by unpublish.yml (break-glass admin).
 #
-# Two preflight steps run before publish (also under dry_run) so failures are unambiguous
-# instead of surfacing as a bare 404 on the publish PUT:
-#   1. "Show publish target" — confirms the version isn't already on npm (no token needed).
-#   2. "Verify npm auth"      — prints who NPM_TOKEN authenticates as and whether that
-#                               account has read-write on the package; fails early, with the
-#                               fix, if the token is missing / wrong-account / read-only.
+# Two preflights run before publish (also under dry_run) so failures are unambiguous instead of
+# surfacing as a bare 404 on the publish PUT:
+#   1. "runner floor + OIDC prerequisites" — Node/npm floor met and the OIDC token endpoint is exposed.
+#   2. "Show publish target" — reports whether the version is already on npm (no token needed); an
+#      already-published version is tolerated (dry run / Release-repair) and NEVER overwritten.
 
 on:
   workflow_call:
@@ -38,7 +52,7 @@ on:
 
 permissions:
   contents: write # create the git tag + GitHub Release after a successful publish
-  id-token: write # npm provenance (supply-chain attestation)
+  id-token: write # OIDC trusted publishing (npm mints a short-lived credential) + provenance
 
 jobs:
   publish:
@@ -51,78 +65,88 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: '20'
-          registry-url: 'https://registry.npmjs.org'
+          node-version: '24' # >= 22.14.0 OIDC floor; bundles a recent npm (floor asserted/upgraded below)
+      # NB: deliberately NO `registry-url:` on setup-node — it would write an `.npmrc`
+      # `_authToken=${NODE_AUTH_TOKEN}` placeholder and muddy whether the publish is token-less. Omitting
+      # it writes NO npm auth config at all, so `npm publish` (>= 11.5.1) has no token and mints an OIDC
+      # credential; the default registry is registry.npmjs.org and each package.json sets
+      # publishConfig.access=public. The preflight below asserts the token-less state explicitly.
 
-      # --- Preflight #1: the package (no token needed; registry read is public) ---
+      # --- Preflight #1: runner floor + OIDC prerequisites (replaces the old token-auth "Verify npm auth") ---
+      # Under OIDC there is no token to `npm whoami` with, so fail early and clearly on the things that
+      # would actually stop a publish: the Node/npm floor and the OIDC token endpoint being available.
+      - name: Runner floor + OIDC prerequisites
+        run: |
+          set -euo pipefail
+          echo "Node: $(node -v)   npm: $(npm -v)"
+          # Node >= 22.14.0 — hard floor for trusted publishing (Node 20 does NOT qualify).
+          node -e 'const v=process.versions.node.split(".").map(Number); if(!(v[0]>22||(v[0]===22&&v[1]>=14))){console.error(`::error::Node ${process.versions.node} is below the OIDC floor 22.14.0.`);process.exit(1)}'
+          # npm >= 11.5.1 — upgrade explicitly if the Node distribution's bundled npm is below the floor.
+          npmv=$(npm -v)
+          if ! node -e 'const a=process.argv[1].split("-")[0].split(".").map(Number),b=[11,5,1];for(let i=0;i<3;i++){const x=a[i]||0,y=b[i];if(x>y)process.exit(0);if(x<y)process.exit(1)}process.exit(0)' "$npmv"; then
+            echo "npm $npmv is below 11.5.1 — upgrading npm to satisfy the OIDC floor."
+            npm install -g "npm@^11.5.1"
+            echo "npm now: $(npm -v)"
+          fi
+          # The OIDC token endpoint must be exposed — this proves `id-token: write` is in effect on this
+          # job AND the caller. Without it a real publish cannot mint an OIDC credential.
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::OIDC token endpoint is not exposed (ACTIONS_ID_TOKEN_REQUEST_URL is empty)."
+            echo "  Grant 'id-token: write' on this job and the caller (publish.yml), and confirm the"
+            echo "  package's Trusted Publisher entry (workflow publish.yml) exists on npmjs.com."
+            exit 1
+          fi
+          # Assert the publish path is TOKEN-LESS: with no registry-url and no NODE_AUTH_TOKEN there is no
+          # standing npm credential, so `npm whoami` MUST fail here (OIDC mints a short-lived credential
+          # only at `npm publish` time). A success means a stray token is configured — fail loudly.
+          if npm whoami >/dev/null 2>&1; then
+            echo "::error::npm is authenticated with a STANDING token — the publish path must be token-less (OIDC only). Remove any configured npm auth token / registry-url."
+            exit 1
+          fi
+          echo "OIDC prerequisites OK: Node/npm floor met, OIDC token endpoint available, and the publish path is token-less."
+
+      # --- Preflight #2: the package (no token needed; registry read is public) ---
+      # Reports whether the version already exists and emits `already_published` so a real re-run does
+      # NOT try to overwrite it: a real publish of an already-present version skips `npm publish` and
+      # repairs/verifies the GitHub Release only (partial-failure recovery); a dry run tolerates it.
       - name: Show publish target
+        id: target
         run: |
           set -euo pipefail
           name=$(node -p "require('./package.json').name")
           ver=$(node -p "require('./package.json').version")
-          echo "Target:   $name@$ver"
+          echo "Target:    $name@$ver"
           echo "Directory: ${{ inputs.dir }}"
-          echo "Registry: https://registry.npmjs.org/"
+          echo "Registry:  https://registry.npmjs.org/"
           enc="${name/\//%2F}"
-          meta=$(curl -fsS "https://registry.npmjs.org/$enc" || echo '{}')
-          node -e '
-            const meta = JSON.parse(process.argv[1] || "{}");
-            const [name, ver] = [process.argv[2], process.argv[3]];
-            const latest = (meta["dist-tags"] || {}).latest;
-            console.log(latest ? `Current latest on npm: ${latest}` : "Not yet published (this would be the first version).");
-            if (meta.versions && meta.versions[ver]) {
-              console.error(`::error::${name}@${ver} is ALREADY published — npm will reject a re-publish. Bump the version in package.json (this workflow never overwrites).`);
-              process.exit(1);
-            }
-            console.log(`OK: ${ver} is a new version (publishing it updates the package).`);
-          ' "$meta" "$name" "$ver"
-
-      # --- Preflight #2: the credentials (this is what turns a cryptic 404 into a clear cause) ---
-      - name: Verify npm auth
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          set -uo pipefail
-          pkg=$(node -p "require('./package.json').name")
-          # Who does NPM_TOKEN authenticate as? A missing/invalid/expired/revoked token fails here
-          # with a clear message — instead of surfacing as a 404 on the publish PUT later.
-          if ! who=$(npm whoami 2>/tmp/whoami.err); then
-            echo "::error::NPM_TOKEN is missing, invalid, expired, or revoked — npm whoami was rejected."
-            echo "  The publish PUT would return a misleading 404 (npm hides write-auth failures as 404)."
-            echo "  Fix: regenerate a token on npmjs.com (Classic → Automation is simplest — it never expires"
-            echo "       and bypasses 2FA), then overwrite the repo secret NPM_TOKEN with its value."
-            sed 's/^/  npm: /' /tmp/whoami.err >&2 || true
+          # Distinguish "not published" (HTTP 404) from a real registry/network failure. A 5xx/000 must
+          # NOT be read as "not published" — that would misroute `already_published` and, on a repair run,
+          # attempt a re-publish npm then rejects (EPUBLISHCONFLICT), defeating the Release repair.
+          code=$(curl -sS -o "$RUNNER_TEMP/packument.json" -w '%{http_code}' "https://registry.npmjs.org/$enc" || echo "000")
+          if [ "$code" = "404" ]; then
+            echo "Not yet published (this would be the first version)."
+            published=no
+          elif [ "$code" = "200" ]; then
+            # Read the packument from a FILE (not an argv) — a package with many versions can exceed ARG_MAX.
+            published=$(node -e '
+              const meta = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8") || "{}");
+              const ver = process.argv[2];
+              const latest = (meta["dist-tags"] || {}).latest;
+              console.error(latest ? `Current latest on npm: ${latest}` : "No dist-tags yet.");
+              const exists = !!(meta.versions && meta.versions[ver]);
+              console.error(exists ? `${ver} is ALREADY published.` : `OK: ${ver} is a new version.`);
+              process.stdout.write(exists ? "yes" : "no");
+            ' "$RUNNER_TEMP/packument.json" "$ver")
+          else
+            echo "::error::Registry query for $name returned HTTP $code (not 404) — cannot determine publish state; failing rather than assuming 'not published'."
             exit 1
           fi
-          echo "Authenticated as: $who"
-
-          # Does that account actually have WRITE on this package? (best-effort: some scope-limited
-          # tokens can't call this API — then we warn and let the publish be the source of truth.)
-          if perms=$(npm access list packages --json 2>/tmp/access.err); then
-            node -e '
-              const map = JSON.parse(process.argv[1] || "{}");
-              const [pkg, who] = [process.argv[2], process.argv[3]];
-              const perm = map[pkg];
-              if (!perm) {
-                console.error(`::error::Account "${who}" has no access entry for ${pkg}.`);
-                console.error(`  Likely the WRONG account, or the token scope/allowlist excludes ${pkg}.`);
-                console.error(`  Fix: publish from the account that owns @sabaiway, with a token granting read-write on the @sabaiway scope.`);
-                process.exit(1);
-              }
-              if (!String(perm).includes("write")) {
-                console.error(`::error::Token has "${perm}" on ${pkg} — needs read-write.`);
-                console.error(`  Fix: regenerate the token with Read and Write on the @sabaiway scope.`);
-                process.exit(1);
-              }
-              console.log(`Write access OK: ${who} has "${perm}" on ${pkg}.`);
-            ' "$perms" "$pkg" "$who" || exit 1
-          else
-            echo "::warning::Could not query npm access (token may be scope-limited) — skipping the write-access precheck; the publish step will be the source of truth."
-            sed 's/^/  npm: /' /tmp/access.err || true
+          echo "already_published=$published" >> "$GITHUB_OUTPUT"
+          if [ "$published" = "yes" ] && [ "${{ inputs.dry_run }}" != "true" ]; then
+            echo "::warning::$name@$ver is already on npm — skipping publish; will verify/repair the GitHub Release only (no republish)."
+          elif [ "$published" = "yes" ]; then
+            echo "::warning::$name@$ver is already on npm — dry run proceeds pack-only, tolerating the already-published version."
           fi
-
-      - name: Pack preview
-        run: npm pack --dry-run
 
       # Gate publish on the package's WHOLE test suite — so a release can't go out with any part of
       # the package untested. For the kit that is the backend detector/linker, fs-safe, manifest
@@ -151,20 +175,40 @@ jobs:
             node --test scripts/*.test.mjs bin/*.test.mjs references/scripts/*.test.mjs
           fi
 
-      - name: Publish (dry run)
-        if: ${{ inputs.dry_run }}
-        run: npm publish --dry-run
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Pack the REAL tarball ONCE, to $RUNNER_TEMP (outside the package dir, so the exact-count
+      # package-content tests above saw an unpolluted tree). This SAME .tgz is what we publish AND
+      # attach as the GitHub Release asset — published artifact == Release asset, no second pack.
+      - name: Pack the tarball once
+        id: pack
+        run: |
+          set -euo pipefail
+          file=$(npm pack --json --pack-destination "$RUNNER_TEMP" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));process.stdout.write(d[0].filename)')
+          path="$RUNNER_TEMP/$file"
+          test -f "$path"
+          echo "tarball=$path" >> "$GITHUB_OUTPUT"
+          echo "Packed $path"
+          ls -l "$path"
 
-      - name: Publish
-        if: ${{ !inputs.dry_run }}
-        run: npm publish --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Dry run is PACK-ONLY: `npm publish --dry-run` fails EPUBLISHCONFLICT on an already-published
+      # version (the maintainer's `dry_run: all` gate targets exactly those), so it is intentionally not
+      # used. Preflights + Node/npm floor + the whole test suite + the real `npm pack` all ran above —
+      # everything short of the OIDC token exchange, which only a real publish performs.
+      - name: Publish (dry run — pack-only, no OIDC exchange)
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "Dry run OK: preflights + Node/npm floor + tests + 'npm pack' all passed."
+          echo "Packed tarball: ${{ steps.pack.outputs.tarball }}"
+          echo "Skipping 'npm publish' and the GitHub Release — the live OIDC token exchange is exercised only by a real publish (verify-on-next-release)."
+
+      # Real publish: OIDC trusted publishing. No NODE_AUTH_TOKEN and no provenance flag — npm (>= 11.5.1)
+      # mints a short-lived OIDC credential and auto-generates provenance. Publishing the EXACT packed
+      # tarball (not a bare `npm publish`, which re-packs) keeps the npm artifact == the Release asset.
+      - name: Publish (OIDC trusted publishing)
+        if: ${{ !inputs.dry_run && steps.target.outputs.already_published != 'yes' }}
+        run: npm publish "${{ steps.pack.outputs.tarball }}"
 
       - name: Confirm published
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && steps.target.outputs.already_published != 'yes' }}
         run: |
           set -euo pipefail
           name=$(node -p "require('./package.json').name")
@@ -178,23 +222,35 @@ jobs:
           done
           echo "::warning::Publish step succeeded but the registry still shows '${latest:-none}' as latest — likely just propagation lag. Verify: npm view $name version"
 
-      # --- Post-publish: cut the git tag + GitHub Release so the Releases page tracks npm. ---
-      # The npm publish above only touches the registry; without this step the Releases page
-      # drifts (it stayed at kit v1.4.0 across the 1.5.0/1.5.1/1.5.2 npm publishes). Idempotent:
-      # a re-run, or a tag that already has a release, is a no-op rather than a failure.
-      - name: Create GitHub Release
+      # --- Post-publish: cut the git tag + a draft-first, immutable-safe GitHub Release. ---
+      # Under immutable releases (GA 2025-10-28) a published release's assets can't be changed afterward,
+      # so we create the release as a DRAFT, attach the .tgz while it is a draft, then un-draft. Idempotent
+      # and repair-aware: a complete release is a no-op; a partial state (publish succeeded but this step
+      # failed earlier) is repaired WITHOUT republishing; a tag that points at another commit fails loudly
+      # (never re-point a published tag — ship a new version instead).
+      - name: Create or repair the GitHub Release (draft-first, immutable-safe)
         if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          name=$(node -p "require('./package.json').name")
           ver=$(node -p "require('./package.json').version")
           tag="${{ inputs.dir }}-v$ver"
           title="${{ inputs.dir }} v$ver"
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $tag already exists — nothing to do."
-            exit 0
+          asset_path="${{ steps.pack.outputs.tarball }}"
+          asset=$(basename "$asset_path")
+
+          # The Release asset MUST equal the PUBLISHED npm artifact. If we published in THIS run, that is
+          # the exact tarball we packed and published. If the version was ALREADY on npm (repair path), a
+          # fresh local pack is not guaranteed byte-identical to what was published — so overwrite it with
+          # the EXACT published bytes from the registry (dist.tarball), keeping published == asset.
+          if [ "${{ steps.target.outputs.already_published }}" = "yes" ]; then
+            url=$(npm view "$name@$ver" dist.tarball)
+            curl -fsSL "$url" -o "$asset_path"
+            echo "Repair path: Release asset = the exact published tarball from the registry ($url)."
           fi
+
           # Notes = this package's "## <ver>" CHANGELOG section, else a short fallback.
           node -e '
             const fs = require("fs");
@@ -210,11 +266,66 @@ jobs:
                 body = out.join("\n").trim();
               }
             } catch {}
-            fs.writeFileSync("/tmp/relnotes.md", body || `Release ${ver} — published to npm. See CHANGELOG.md.`);
+            fs.writeFileSync(process.env.RUNNER_TEMP + "/relnotes.md", body || `Release ${ver} — published to npm. See CHANGELOG.md.`);
           ' "$ver"
+          notes="$RUNNER_TEMP/relnotes.md"
+
+          # Ensure the tag exists at THIS commit BEFORE any no-op/repair/create decision — a release can
+          # exist while its tag is missing (a partial run), and a re-run must restore it. gh creates a
+          # LIGHTWEIGHT tag, so the ref object's sha IS the commit. Immutable releases: NEVER re-point a
+          # tag — if it points at another commit, FAIL LOUDLY (ship a new version instead).
+          tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha' 2>/dev/null || echo "")
+          if [ -n "$tag_sha" ] && [ "$tag_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::Tag $tag already points at $tag_sha, not this commit $GITHUB_SHA — refusing to move it (immutable releases). Ship a new version."
+            exit 1
+          fi
+          # Materialize the tag LOCALLY at THIS commit (idempotent). actions/checkout fetches no tags, so a
+          # remote-only tag (a repair re-run) is otherwise absent locally. `gh release create --verify-tag`
+          # checks the REMOTE (gh 2.93.0), but keeping a matching local tag removes any reliance on that and
+          # lets local git see it. Push to the remote only when the remote does not already have the tag.
+          git tag -f "$tag" "$GITHUB_SHA"
+          if [ -z "$tag_sha" ]; then
+            git push "https://x-access-token:${GH_TOKEN}@github.com/$GITHUB_REPOSITORY" "refs/tags/$tag"
+            echo "Created and pushed tag $tag at $GITHUB_SHA"
+          else
+            echo "Tag $tag already on the remote at $GITHUB_SHA — ensured locally too."
+          fi
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            isDraft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fxq "$asset"; then
+              hasAsset=true
+            else
+              hasAsset=false
+            fi
+            # Complete (published + asset present) and the tag is at THIS commit (ensured above) => no-op.
+            if [ "$isDraft" = "false" ] && [ "$hasAsset" = "true" ]; then
+              echo "Release $tag is complete (published, asset $asset attached, tag at $GITHUB_SHA) — nothing to do."
+              exit 0
+            fi
+            # A PUBLISHED release missing its asset is an immutable-state anomaly — assets cannot be changed
+            # after publish, so do NOT silently mutate it. Fail loudly with recovery guidance.
+            if [ "$isDraft" = "false" ]; then
+              echo "::error::Release $tag is already published but missing asset $asset. Under immutable releases its assets cannot be changed."
+              echo "  Recover manually: recreate the release as a draft with the asset (if immutability permits) or ship a new version."
+              exit 1
+            fi
+            # Still a DRAFT — safe to complete: attach the asset if missing, then un-draft.
+            echo "Completing DRAFT Release $tag (hasAsset=$hasAsset) without republishing."
+            [ "$hasAsset" = "true" ] || gh release upload "$tag" "$asset_path" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
+            echo "✓ Completed Release $tag"
+            exit 0
+          fi
+
+          # No release yet — create a DRAFT with the asset attached (draft-first, so the asset is in place
+          # before the release turns immutable), then un-draft.
           gh release create "$tag" \
             --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
+            --verify-tag \
+            --draft \
             --title "$title" \
-            --notes-file /tmp/relnotes.md
-          echo "✓ Created GitHub Release $tag at $GITHUB_SHA"
+            --notes-file "$notes" \
+            "$asset_path"
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
+          echo "✓ Created GitHub Release $tag at $GITHUB_SHA (draft → published, asset $asset attached)"
