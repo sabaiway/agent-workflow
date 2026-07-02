@@ -34,6 +34,29 @@
 #                                            # passthrough agy flags (future flows)
 set -euo pipefail
 
+# --- --help / -h (pre-preflight: no agy, no login needed) ----------------------
+# Keyed ONLY on the FIRST argument — never a scan of all args, else a passthrough
+# payload like `agy-run "prompt" -- --help` would be intercepted. agy-run is the
+# probe role (not dispatched by any activity slot), so this help is authored here
+# — not manifest-pinned (candidate C only).
+case "${1:-}" in
+  --help|-h)
+    cat <<'HELP'
+agy-run — thin, flow-agnostic wrapper around Google's Antigravity CLI (agy; subscription-only, hard wall-clock cap).
+
+Usage:
+  agy-run "your prompt"
+  echo "your prompt" | agy-run -
+  agy-run @path/to/prompt.md
+  agy-run <prompt|-|@file> -- <extra agy flags...>
+
+Environment: AGY_MODEL (exact display string from `agy models`; empty ⇒ agy's settings.json), AGY_TIMEOUT / AGY_HARD_TIMEOUT (duration strings), AGY_MAX_PROMPT_BYTES (single-argv byte ceiling; the override only lowers it).
+Requires at run time: the agy CLI on PATH + a Google AI subscription login (--help needs neither).
+HELP
+    exit 0
+    ;;
+esac
+
 # 1. Make `agy` findable even when ~/.bashrc was not sourced.
 export PATH="$HOME/.local/bin:$PATH"
 

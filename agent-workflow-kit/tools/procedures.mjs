@@ -19,7 +19,7 @@
 import { readFileSync, lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
-import { detectBackends, wrapperCmdFor } from './detect-backends.mjs';
+import { detectBackends, wrapperCmdFor, wrapperContractFor } from './detect-backends.mjs';
 import { ACTIVITIES, resolveActivityRecipe, planRecipe } from './recipes.mjs';
 import { resolveEngineDir, readEngineFragment, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
 // The config schema/read core lives in orchestration-config.mjs (the single config contract). procedures
@@ -131,10 +131,16 @@ const resolveAllSlots = ({ activity, config, detection, overrides }) =>
     // The concrete wrapper set this slot's EFFECTIVE recipe dispatches (empty for solo). Reuse
     // planRecipe's drift-guarded dispatch for WHICH backends, then resolve each (backend, role) to its
     // manifest wrapper cmd via the bridge registry — no wrapper name is hand-composed here.
-    const backends = planRecipe(resolved.recipe, detection).dispatch
-      .map((d) => wrapperCmdFor(d.backend, d.role))
-      .filter(Boolean);
-    return { slot, ...resolved, backends };
+    const { dispatch } = planRecipe(resolved.recipe, detection);
+    const backends = dispatch.map((d) => wrapperCmdFor(d.backend, d.role)).filter(Boolean);
+    // The full DRIVING CONTRACT per dispatched (backend, role) — resolved HERE, on the raw dispatch
+    // pairs, BEFORE they are flattened to wrapper names (the name array cannot reconstruct the role).
+    // Every slot with a non-empty dispatch gets contracts — including execute=delegated; the contract
+    // is NEVER gated by REVIEW_RECIPES (that set gates only the review-loop economics block).
+    const contracts = dispatch
+      .map((d) => ({ backend: d.backend, role: d.role, cmd: wrapperCmdFor(d.backend, d.role), contract: wrapperContractFor(d.backend, d.role) }))
+      .filter((c) => c.cmd && c.contract);
+    return { slot, ...resolved, backends, contracts };
   });
 
 // An unsatisfiable EXPLICIT override is the only "warning" (loud, flagged for the agent to relay). A
@@ -182,6 +188,28 @@ const reviewLoopAdvice = (slots) =>
       ]
     : [];
 
+// The verbatim per-backend DRIVING CONTRACT block (M-contract): the exact invocation descriptor(s),
+// the closed flag set, the grounding note, the round-2/continue delta, and the guarded passthrough
+// tiers — every descriptor printed VERBATIM from the registry mirror of the bridge manifest
+// roles[role].contract (drift-guarded), never re-derived or re-worded here. Rendered for EVERY
+// dispatched backend of EVERY slot (review AND execute=delegated); each wrapper's --help prints the
+// same contract, so the agent never needs to open the wrapper source.
+const contractLines = ({ cmd, contract }) => {
+  const lines = [`      ${cmd} — driving contract (as bundled with this kit; copy-paste — \`${cmd} --help\` prints the same):`];
+  for (const inv of contract.invocations) lines.push(`        ${inv}`);
+  for (const f of contract.flags ?? []) lines.push(`        ${f}`);
+  if (contract.grounding) lines.push(`        grounding: ${contract.grounding}`);
+  const cont = contract.continue ?? [];
+  if (cont.length) {
+    lines.push('        round-2 delta (resume — never re-send the reviewed artifact):');
+    for (const c of cont) lines.push(`          ${c}`);
+  }
+  if (contract.passthrough) {
+    lines.push(`        passthrough after '--' is ${contract.passthrough.policy}: blocked always: ${contract.passthrough.blocked.join(' ')}; relaxed only under CODEX_PROBE=1: ${contract.passthrough.probeRelaxed.join(' ')}`);
+  }
+  return lines;
+};
+
 const formatHuman = ({ activity, section, slots, warnings }) => {
   const lines = [
     section,
@@ -192,6 +220,7 @@ const formatHuman = ({ activity, section, slots, warnings }) => {
     const arrow = s.degradedFrom ? ` (requested ${s.degradedFrom} → degraded)` : '';
     lines.push(`  ${s.slot}: ${s.recipe} — ${SOURCE_LABEL[s.source]}${arrow}${backendSetLabel(s.backends)}`);
     if (s.reason) lines.push(`      ↳ ${s.reason}`);
+    for (const c of s.contracts ?? []) lines.push(...contractLines(c));
   }
   const advice = reviewLoopAdvice(slots);
   if (advice.length) lines.push('', ...advice);
@@ -206,7 +235,9 @@ const buildJson = ({ activity, section, slots, configSource, warnings }) => ({
   activity,
   section,
   slots: Object.fromEntries(
-    slots.map((s) => [s.slot, { recipe: s.recipe, source: s.source, degradedFrom: s.degradedFrom, reason: s.reason, backends: s.backends }]),
+    // `backends: string[]` is the STABLE pre-existing shape (wrapper names) — never repurposed.
+    // `contracts` is the ADDITIVE per-dispatch driving-contract field (empty for solo).
+    slots.map((s) => [s.slot, { recipe: s.recipe, source: s.source, degradedFrom: s.degradedFrom, reason: s.reason, backends: s.backends, contracts: s.contracts }]),
   ),
   reviewLoop: reviewLoopAdvice(slots),
   configSource,

@@ -1,8 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, existsSync, readdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
@@ -150,5 +150,61 @@ describe('agy.sh — argv byte-ceiling guard (AGY_MAX_PROMPT_BYTES)', () => {
     assert.equal(r.status, 2, r.stderr);
     assert.match(r.stderr, /exceeds the OS single-argv ceiling/);
     assert.equal(invoked, false, 'raising the ceiling past the OS limit must fail loud, not pass through to E2BIG');
+  });
+});
+
+// ── --help (candidate C only — the probe role is not dispatched by any activity
+// slot, so this help is authored in the wrapper, NOT manifest-pinned; the lighter
+// guard pins pre-preflight reachability + the documented usage forms). ──────────
+
+// A PATH farm mirroring the real one MINUS the named binaries — so the reachability claim
+// ("--help needs no agy/git") holds even on a host that has the real CLIs installed.
+// Ported from agy-review.test.mjs (inline: each bridge test file stays standalone).
+const makePathWithout = (root, exclude = []) => {
+  const skip = new Set(exclude);
+  const dir = mkdtempSync(join(root, 'nobin-'));
+  for (const d of (process.env.PATH || '').split(':').filter(Boolean)) {
+    let names;
+    try { names = readdirSync(d); } catch { continue; }
+    for (const name of names) {
+      if (skip.has(name)) continue;
+      const link = join(dir, name);
+      if (existsSync(link)) continue;
+      try { symlinkSync(resolve(d, name), link); } catch { /* dup / race — ignore */ }
+    }
+  }
+  return dir;
+};
+
+describe('agy.sh — --help (pre-preflight, candidate C)', () => {
+  it('--help and -h exit 0 with NO agy on PATH and name the documented usage', () => {
+    for (const arg of ['--help', '-h']) {
+      // A bare HOME with no ~/.local/bin/agy stub AND a PATH farm stripped of agy/git —
+      // the help must not need the CLI even when the host has a real agy installed.
+      const home = mkdtempSync(join(tmpdir(), 'agy-help-'));
+      const r = spawnSync('bash', [WRAPPER, arg], {
+        env: { HOME: home, PATH: makePathWithout(home, ['agy', 'git']) },
+        encoding: 'utf8',
+        timeout: 15000,
+      });
+      rmSync(home, { recursive: true, force: true });
+      assert.equal(r.status, 0, `${arg}: ${r.stderr}`);
+      assert.equal(r.stderr, '', `${arg} prints nothing to stderr`);
+      assert.match(r.stdout, /Usage:/);
+      assert.match(r.stdout, /agy-run "your prompt"/);
+      assert.match(r.stdout, /agy-run @path\/to\/prompt\.md/);
+      assert.match(r.stdout, /agy-run <prompt\|-\|@file> -- <extra agy flags\.\.\.>/);
+    }
+  });
+
+  it('--help after the -- separator is passthrough payload, never intercepted', () => {
+    const home = makeSandbox(RECORDING_STUB);
+    const sentinel = join(home, 'sentinel');
+    const r = runArgs(home, { args: ['prompt', '--', '--help'], env: { AGY_STUB_SENTINEL: sentinel } });
+    const invoked = existsSync(sentinel);
+    rmSync(home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stdout, /Usage:/, 'help is keyed on the FIRST argument only');
+    assert.equal(invoked, true, 'the run must proceed to agy with the payload');
   });
 });

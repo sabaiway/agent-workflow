@@ -4,6 +4,40 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.25.0 — The bridge driving contract at the point of use (advisor render + wrapper `--help`)
+
+A **feature** release (additive; ships the bundled bridges at **2.1.0**). An agent told to run a
+bridge no longer re-derives the invocation from wrapper source — where it missed documented levers
+(agy's `--facts`/`--decided` grounding, the `agy-review --continue` round-2 delta) and wasted
+subscription runs on ungrounded reviews. The contract is now **delivered at the moment a recipe
+dispatches a backend**, from ONE machine-readable source:
+
+- **Manifest as source.** Each bridge `capability.json` dispatchable role (`review`, `execute`) now
+  carries a structured `contract`: exact copy-pasteable **invocation descriptors** (operands and
+  alternatives included), the **grounding** note, the closed **flag** set (agy-review), the
+  **round-2 / resume** descriptors, and codex-exec's **tiered guarded passthrough**
+  (always-blocked vs `CODEX_PROBE=1`-relaxable). Documented in `tools/manifest/schema.md`.
+- **Advisor renders it at the point of use.** `/agent-workflow-kit procedures <activity>` prints,
+  under every dispatched backend of every slot (review recipes AND `execute=delegated`), the full
+  driving contract VERBATIM — e.g. council shows `agy-review code [--facts @f] [--decided @f] …`
+  plus the `agy-review --continue` delta beside `codex-review plan|code`. `--json` carries the same
+  in an **additive** `slots[*].contracts` field (`backends: string[]` unchanged).
+- **Every wrapper answers `--help`/`-h`** — pre-preflight (no CLI, no login, no git tree, no
+  AGENTS.md needed); keyed on the FIRST argument only, so an open wrapper's passthrough payload
+  (`codex-exec - -- --help`) is never intercepted. The three **dispatchable** wrappers
+  (`codex-review`, `agy-review`, `codex-exec`) print the manifest contract; `agy-run` (probe role —
+  never dispatched by a recipe slot) ships a lightweight wrapper-authored help, pinned for
+  pre-preflight reachability only, with no manifest pivot by design.
+- **Drift-guarded in both directions (test-as-spec), for the dispatchable wrappers.** The kit
+  registry mirror (`wrapperContractFor`) deep-equals each manifest; the advisor's rendered
+  descriptor set set-EQUALS the manifest (a missing AND a stale-extra descriptor both fail); each
+  dispatchable wrapper's `--help` set-EQUALS the manifest; and a **source-level reverse guard**
+  extracts each dispatchable wrapper's real parser arms (mode/flag/resume/passthrough-tier `case`
+  arms, heredocs excluded) and pins them to the manifest — adding a wrapper mode or flag without
+  updating the surfaced contract fails a test.
+- Stale "unguarded codex flags" wording in the codex bridge docs corrected to the real **guarded**
+  passthrough contract.
+
 ## 1.24.0 — Humanize the deploy/version report: hide the internal structure number in the happy path
 
 A **feature** release (report-contract only — no logic, migration, or lineage change; the

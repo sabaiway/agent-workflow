@@ -60,6 +60,36 @@ const RAW_BACKENDS = [
     name: 'codex-cli-bridge',
     installed: { env: 'CODEX_CLI_BRIDGE_DIR', default: '~/.claude/skills/codex-cli-bridge', file: 'SKILL.md' },
     roleCmds: { execute: 'codex-exec', review: 'codex-review' },
+    // The per-role DRIVING CONTRACT (exact invocation descriptors + grounding + round-2 continue),
+    // mirroring the bridge manifest roles[role].contract byte-for-byte — drift-guarded like roleCmds.
+    // Scope = dispatchable recipe roles ONLY (review, execute): the probe role is never dispatched by
+    // an activity slot, so it carries NO contract here (wrapperContractFor(_, 'probe') → null).
+    roleContracts: {
+      execute: {
+        invocations: [
+          'codex-exec <plan-file|->',
+          'codex-exec <plan-file|-> -- <extra codex flags...>',
+        ],
+        grounding: "automatic — the root AGENTS.md (Hard Constraints) is auto-merged into codex's context and the wrapper prepends the orchestrator execution contract; no grounding flags",
+        continue: [
+          'codex-exec --resume-last <plan-file|->',
+          'codex-exec --resume <session-id> <plan-file|->',
+        ],
+        passthrough: {
+          policy: 'guarded',
+          blocked: ['-c*', '--config*', '-s*', '--sandbox*', '--dangerously-bypass-approvals-and-sandbox', '--dangerously-bypass-hook-trust', '--full-auto', '--oss', '--local-provider*', '-p*', '--profile*', '-m*', '--model*', '-o*', '--output-last-message*', '--json*', '--color*', '--output-schema*', '--ephemeral*'],
+          probeRelaxed: ['--add-dir*', '-C*', '--cd*', '--skip-git-repo-check', '--ignore-rules', '--enable*', '--disable*'],
+        },
+      },
+      review: {
+        invocations: [
+          'codex-review plan <plan-file>',
+          'codex-review code [extra focus...]',
+        ],
+        grounding: 'automatic — the wrapper precomputes the full working-tree change set (repo map, status, diffs, untracked contents) and codex auto-merges the root AGENTS.md; no grounding flags',
+        continue: [],
+      },
+    },
     bin: 'codex',
     credential: { env: 'CODEX_HOME', default: '~/.codex', file: 'auth.json' },
     setupUrl: 'https://github.com/sabaiway/agent-workflow/blob/main/codex-cli-bridge/setup/README.md',
@@ -72,6 +102,26 @@ const RAW_BACKENDS = [
     name: 'antigravity-cli-bridge',
     installed: { env: 'ANTIGRAVITY_CLI_BRIDGE_DIR', default: '~/.claude/skills/antigravity-cli-bridge', file: 'SKILL.md' },
     roleCmds: { review: 'agy-review', probe: 'agy-run' },
+    // Mirror of the manifest roles.review.contract (see the codex entry note). probe: NO contract.
+    roleContracts: {
+      review: {
+        invocations: [
+          'agy-review code [--facts @f] [--decided @f] [--focus "…"] [extra focus…]',
+          'agy-review plan <plan-file> [--facts @f] [--decided @f] [--focus "…"]',
+          'agy-review diff <diff-file> [--facts @f] [--decided @f] [--focus "…"]',
+        ],
+        grounding: 'grounded review — agy reads NOTHING by default, an ungrounded review GUESSES: --facts @f = the verified facts to review AGAINST; --decided @f = decisions already made, do NOT re-raise (anti-circling)',
+        flags: [
+          '--facts @f — verified facts the review runs AGAINST (omit ⇒ loud ungrounded-review warning)',
+          '--decided @f — already-decided / already-addressed list; do NOT re-raise (anti-circling; the round-2 payload)',
+          '--focus "…" — extra focus (repeatable; code mode also takes trailing focus words)',
+        ],
+        continue: [
+          'agy-review --continue [--decided @f] [--focus "…"]',
+          'agy-review --conversation <id> [--decided @f] [--focus "…"]',
+        ],
+      },
+    },
     bin: 'agy',
     credential: { env: null, default: '~/.gemini/antigravity-cli', file: 'antigravity-oauth-token' },
     setupUrl: 'https://github.com/sabaiway/agent-workflow/blob/main/antigravity-cli-bridge/setup/README.md',
@@ -90,6 +140,15 @@ export const KNOWN_BACKENDS = RAW_BACKENDS.map((entry) => ({ ...entry, wrapperCm
 // consumes this to print WHICH wrapper each dispatched backend runs. `null` when the pair is unknown.
 export const wrapperCmdFor = (backendName, role) =>
   KNOWN_BACKENDS.find((b) => b.name === backendName)?.roleCmds?.[role] ?? null;
+
+// Resolve a dispatched (backend, role) to its structured DRIVING CONTRACT — the registry mirror of
+// the bridge manifest roles[role].contract: exact invocation descriptor(s), the grounding note, the
+// closed flag set (when the wrapper's grammar is closed), the round-2/continue descriptor(s), and
+// the guarded passthrough tiers (codex-exec). The point-of-use advisor (procedures.mjs) renders this
+// VERBATIM so a driving agent never re-derives the contract from wrapper source. `null` when the
+// pair is unknown or the role carries no contract (probe — never dispatched by an activity slot).
+export const wrapperContractFor = (backendName, role) =>
+  KNOWN_BACKENDS.find((b) => b.name === backendName)?.roleContracts?.[role] ?? null;
 
 // ── pure helpers ─────────────────────────────────────────────────────────────
 

@@ -50,7 +50,7 @@ object (raw-text fallback on failure).
 ```bash
 codex-exec docs/plans/<slug>.md                  # drive a plan file
 echo "apply review fix: tighten the guard in X, keep tests green" | codex-exec -
-codex-exec <file|-> -- <unguarded codex flags>   # passthrough AFTER `--` (policy/model/capture flags are rejected)
+codex-exec <file|-> -- <extra codex flags>       # GUARDED passthrough AFTER `--` (policy/model/capture flags rejected; some relaxed only under CODEX_PROBE=1)
 
 codex-exec --resume-last docs/plans/<slug>.md    # continue the last session, no re-send
 echo "now do step 2" | codex-exec --resume <id> -

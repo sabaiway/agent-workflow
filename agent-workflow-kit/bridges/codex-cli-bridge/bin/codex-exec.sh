@@ -40,6 +40,40 @@
 #   CODEX_PROBE=1 CODEX_MODEL=<slug> codex-exec <file>   # throwaway probe (relaxes the guard)
 set -euo pipefail
 
+# --- --help / -h (pre-preflight: no codex, no login, no git tree needed) -------
+# Keyed ONLY on the FIRST argument — never a scan of all args, else a passthrough
+# payload like `codex-exec f - -- --help` would be intercepted.
+# The contract below is drift-guarded against capability.json roles.execute.contract.
+case "${1:-}" in
+  --help|-h)
+    cat <<'HELP'
+codex-exec — delegate plan/instruction EXECUTION to the OpenAI Codex CLI (subscription-only; workspace-write sandbox, network OFF, git writes blocked — the orchestrator commits).
+
+Usage:
+  codex-exec <plan-file|->
+  codex-exec <plan-file|-> -- <extra codex flags...>
+
+Grounding:
+  automatic — the root AGENTS.md (Hard Constraints) is auto-merged into codex's
+  context and the wrapper prepends the orchestrator execution contract; no
+  grounding flags
+
+Round-2 / resume:
+  codex-exec --resume-last <plan-file|->
+  codex-exec --resume <session-id> <plan-file|->
+  (resume continues the recorded session without re-sending context; takes no '--' passthrough)
+
+Guarded passthrough after '--':
+  blocked always: -c* --config* -s* --sandbox* --dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust --full-auto --oss --local-provider* -p* --profile* -m* --model* -o* --output-last-message* --json* --color* --output-schema* --ephemeral*
+  relaxed only under CODEX_PROBE=1: --add-dir* -C* --cd* --skip-git-repo-check --ignore-rules --enable* --disable*
+
+Environment: CODEX_HARD_TIMEOUT (seconds, default 3600), CODEX_PROBE=1 (throwaway probe only).
+Requires at run time: the codex CLI on PATH, a ChatGPT-subscription login, a git work tree with a root AGENTS.md (--help needs none of these).
+HELP
+    exit 0
+    ;;
+esac
+
 DEFAULT_CODEX_MODEL="gpt-5.5"   # frontier coding model (verified locally) — pinned
 DEFAULT_CODEX_EFFORT="xhigh"    # maximum reasoning effort — pinned
 CODEX_MODEL="${CODEX_MODEL:-$DEFAULT_CODEX_MODEL}"

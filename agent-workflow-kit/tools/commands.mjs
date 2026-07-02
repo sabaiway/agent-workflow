@@ -113,7 +113,7 @@ const CATALOG = [
     invocation: invocationOf('procedures'),
     group: 'Orchestrate',
     kind: READ_ONLY,
-    oneLine: 'Show a named activity’s steps and which recipe applies at each stage here.',
+    oneLine: 'Show a named activity’s steps, the recipe per stage, and each dispatched backend’s exact driving contract (invocation + grounding + round-2 delta).',
   },
   {
     key: 'set-recipe',

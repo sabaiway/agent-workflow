@@ -3,11 +3,44 @@
   "schema": 1,
   "name": "codex-cli-bridge",
   "kind": "execution-backend",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "provides": ["execute", "review"],
   "roles": {
-    "execute": { "cmd": "codex-exec", "source": "bin/codex-exec.sh", "output": "diff" },
-    "review": { "cmd": "codex-review", "source": "bin/codex-review.sh", "modes": ["plan", "code"], "output": "advisory" }
+    "execute": {
+      "cmd": "codex-exec",
+      "source": "bin/codex-exec.sh",
+      "output": "diff",
+      "contract": {
+        "invocations": [
+          "codex-exec <plan-file|->",
+          "codex-exec <plan-file|-> -- <extra codex flags...>"
+        ],
+        "grounding": "automatic — the root AGENTS.md (Hard Constraints) is auto-merged into codex's context and the wrapper prepends the orchestrator execution contract; no grounding flags",
+        "continue": [
+          "codex-exec --resume-last <plan-file|->",
+          "codex-exec --resume <session-id> <plan-file|->"
+        ],
+        "passthrough": {
+          "policy": "guarded",
+          "blocked": ["-c*", "--config*", "-s*", "--sandbox*", "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust", "--full-auto", "--oss", "--local-provider*", "-p*", "--profile*", "-m*", "--model*", "-o*", "--output-last-message*", "--json*", "--color*", "--output-schema*", "--ephemeral*"],
+          "probeRelaxed": ["--add-dir*", "-C*", "--cd*", "--skip-git-repo-check", "--ignore-rules", "--enable*", "--disable*"]
+        }
+      }
+    },
+    "review": {
+      "cmd": "codex-review",
+      "source": "bin/codex-review.sh",
+      "modes": ["plan", "code"],
+      "output": "advisory",
+      "contract": {
+        "invocations": [
+          "codex-review plan <plan-file>",
+          "codex-review code [extra focus...]"
+        ],
+        "grounding": "automatic — the wrapper precomputes the full working-tree change set (repo map, status, diffs, untracked contents) and codex auto-merges the root AGENTS.md; no grounding flags",
+        "continue": []
+      }
+    }
   },
   "detect": {
     "installed": {

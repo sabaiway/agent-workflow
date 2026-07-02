@@ -15,6 +15,7 @@ import {
   guideFor,
   KNOWN_BACKENDS,
   wrapperCmdFor,
+  wrapperContractFor,
 } from './detect-backends.mjs';
 
 const REPO = fileURLToPath(new URL('../../', import.meta.url)); // …/agent-workflow-kit/tools/ → repo root
@@ -349,6 +350,40 @@ describe('wrapperCmdFor — role-keyed wrapper resolution (drift-guarded via KNO
   it('an unknown backend or role → null (never invents a wrapper name)', () => {
     assert.equal(wrapperCmdFor('antigravity-cli-bridge', 'execute'), null); // agy has no execute role
     assert.equal(wrapperCmdFor('nope-bridge', 'review'), null);
+  });
+});
+
+describe('wrapperContractFor — per-role driving contract (drift-guarded vs the manifests)', () => {
+  it('every dispatchable manifest role declares a contract and the registry mirror deep-equals it', () => {
+    let checked = 0;
+    for (const entry of KNOWN_BACKENDS) {
+      const manifest = readManifest(join(REPO, entry.name));
+      for (const [role, r] of Object.entries(manifest.roles ?? {})) {
+        if (role === 'probe') continue; // never dispatched by an activity slot — no contract by design
+        assert.ok(r.contract, `${entry.name} manifest roles.${role} must declare a contract`);
+        assert.ok(Array.isArray(r.contract.invocations) && r.contract.invocations.length > 0,
+          `${entry.name} ${role} contract.invocations must be non-empty (never a vacuous equality)`);
+        assert.deepEqual(wrapperContractFor(entry.name, role), r.contract, `${entry.name} ${role} contract`);
+        checked += 1;
+      }
+    }
+    assert.ok(checked >= 3, `expected ≥3 dispatchable role contracts across the registry, saw ${checked}`);
+  });
+
+  it('the registry carries ONLY manifest-declared contracts (a stale extra role fails here)', () => {
+    for (const entry of KNOWN_BACKENDS) {
+      const manifest = readManifest(join(REPO, entry.name));
+      for (const role of Object.keys(entry.roleContracts ?? {})) {
+        assert.ok(manifest.roles?.[role]?.contract, `${entry.name} registry contract "${role}" has no manifest counterpart`);
+      }
+    }
+  });
+
+  it('probe resolves to null and the probe manifest role stays contract-free', () => {
+    assert.equal(wrapperContractFor('antigravity-cli-bridge', 'probe'), null);
+    const agy = readManifest(join(REPO, 'antigravity-cli-bridge'));
+    assert.equal(agy.roles.probe.contract, undefined, 'the probe role must not grow contract fields (candidate C only)');
+    assert.equal(wrapperContractFor('nope-bridge', 'review'), null, 'an unknown backend never invents a contract');
   });
 });
 

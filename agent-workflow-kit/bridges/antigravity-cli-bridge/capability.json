@@ -3,10 +3,33 @@
   "schema": 1,
   "name": "antigravity-cli-bridge",
   "kind": "execution-backend",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "provides": ["review", "probe"],
   "roles": {
-    "review": { "cmd": "agy-review", "source": "bin/agy-review.sh", "template": "references/review-prompt.md", "modes": ["code", "plan", "diff"], "output": "advisory" },
+    "review": {
+      "cmd": "agy-review",
+      "source": "bin/agy-review.sh",
+      "template": "references/review-prompt.md",
+      "modes": ["code", "plan", "diff"],
+      "output": "advisory",
+      "contract": {
+        "invocations": [
+          "agy-review code [--facts @f] [--decided @f] [--focus \"…\"] [extra focus…]",
+          "agy-review plan <plan-file> [--facts @f] [--decided @f] [--focus \"…\"]",
+          "agy-review diff <diff-file> [--facts @f] [--decided @f] [--focus \"…\"]"
+        ],
+        "grounding": "grounded review — agy reads NOTHING by default, an ungrounded review GUESSES: --facts @f = the verified facts to review AGAINST; --decided @f = decisions already made, do NOT re-raise (anti-circling)",
+        "flags": [
+          "--facts @f — verified facts the review runs AGAINST (omit ⇒ loud ungrounded-review warning)",
+          "--decided @f — already-decided / already-addressed list; do NOT re-raise (anti-circling; the round-2 payload)",
+          "--focus \"…\" — extra focus (repeatable; code mode also takes trailing focus words)"
+        ],
+        "continue": [
+          "agy-review --continue [--decided @f] [--focus \"…\"]",
+          "agy-review --conversation <id> [--decided @f] [--focus \"…\"]"
+        ]
+      }
+    },
     "probe": { "cmd": "agy-run", "source": "bin/agy.sh", "output": "advisory" }
   },
   "detect": {

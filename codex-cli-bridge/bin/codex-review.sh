@@ -31,6 +31,34 @@
 # on disk remain readable under read-only — read-scoping is a prompt concern).
 set -euo pipefail
 
+# --- --help / -h (pre-preflight: no codex, no login, no git tree needed) -------
+# Keyed ONLY on the FIRST argument — never a scan of all args (uniform rule across
+# the four wrappers, so an open wrapper's passthrough payload is never intercepted).
+# The contract below is drift-guarded against capability.json roles.review.contract.
+case "${1:-}" in
+  --help|-h)
+    cat <<'HELP'
+codex-review — read-only ADVISORY review by the OpenAI Codex CLI (subscription-only; frontier model at max effort).
+
+Usage:
+  codex-review plan <plan-file>
+  codex-review code [extra focus...]
+
+Grounding:
+  automatic — the wrapper precomputes the full working-tree change set (repo map,
+  status, diffs, untracked contents) and codex auto-merges the root AGENTS.md;
+  no grounding flags
+
+Round-2 / resume:
+  (none — one-shot; a follow-up review is a fresh run)
+
+Environment: CODEX_REVIEW_SCHEMA=1 (structured JSON findings), CODEX_HARD_TIMEOUT (seconds, default 1800), CODEX_PROBE=1 (throwaway probe only).
+Requires at run time: the codex CLI on PATH, a ChatGPT-subscription login, a git work tree with a root AGENTS.md (--help needs none of these).
+HELP
+    exit 0
+    ;;
+esac
+
 DEFAULT_CODEX_MODEL="gpt-5.5"
 DEFAULT_CODEX_EFFORT="xhigh"
 CODEX_MODEL="${CODEX_MODEL:-$DEFAULT_CODEX_MODEL}"

@@ -7,6 +7,25 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-02 — kit 1.25.0 (bridges 2.1.0, bundled)
+
+- **The bridge driving contract, guaranteed at the point of use (all users).** An agent running a
+  recipe no longer re-derives how to drive `codex-review` / `agy-review` / `codex-exec` from wrapper
+  source — a path that missed documented levers (agy's `--facts`/`--decided` grounding, the
+  `agy-review --continue` round-2 delta) and wasted subscription runs. **Bridges 2.1.0:** each
+  manifest's dispatchable role carries a machine-readable `contract` (exact invocation descriptors +
+  grounding + continue + codex-exec's tiered guarded passthrough), and **all four wrappers answer
+  `--help`/`-h` pre-preflight** (no CLI/login/git needed; first-argument-only, passthrough-safe) —
+  the three dispatchable ones print the manifest contract; `agy-run` (probe role, never dispatched)
+  ships a lightweight wrapper-authored help with no manifest pivot by design. **Kit 1.25.0:**
+  `/agent-workflow-kit procedures` renders the full contract VERBATIM under every dispatched backend
+  (council/reviewed AND `execute=delegated`); `--json` adds the additive `slots[*].contracts` field.
+  Drift-guarded in both directions for the dispatchable wrappers — registry ⟷ manifest
+  deep-equality, advisor ⟷ manifest and `--help` ⟷ manifest set-EQUALITY, plus a **source-level
+  reverse guard** pinning each dispatchable wrapper's real parser arms to the manifest, so a wrapper
+  change without the surfaced contract fails a test. Bridges ship bundled in the kit tarball — no
+  separate publish.
+
 ## 2026-07-01 — memory 1.7.0 / kit 1.24.0
 
 - **Humanize the deploy/version report (all users).** `/agent-workflow-kit upgrade|bootstrap` (and the

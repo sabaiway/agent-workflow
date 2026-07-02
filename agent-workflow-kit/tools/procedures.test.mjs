@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -227,7 +227,7 @@ describe('procedures CLI — --json schema (§2.0)', () => {
     assert.match(j.section, /## plan-execution/);
     for (const slot of ['execute', 'review']) {
       assert.ok(j.slots[slot], `slot ${slot} present`);
-      assert.deepEqual(Object.keys(j.slots[slot]).sort(), ['backends', 'degradedFrom', 'reason', 'recipe', 'source'].sort());
+      assert.deepEqual(Object.keys(j.slots[slot]).sort(), ['backends', 'contracts', 'degradedFrom', 'reason', 'recipe', 'source'].sort());
     }
     assert.ok(Array.isArray(j.warnings));
   });
@@ -320,6 +320,92 @@ describe('procedures CLI — --help is read-only and exits 0', () => {
     assert.match(r.stdout, /plan-authoring/);
     assert.match(r.stdout, /plan-execution/);
     assert.match(r.stdout, /never commits/);
+  });
+});
+
+describe('procedures CLI — point-of-use driving contract: verbatim, manifest-drift-guarded (non-vacuous)', () => {
+  const REPO_ROOT = join(HERE, '..', '..');
+  const manifestContract = (bridge, role) =>
+    JSON.parse(readFileSync(join(REPO_ROOT, bridge, 'capability.json'), 'utf8')).roles[role].contract;
+  const norm = (s) => s.replace(/\s+/g, ' ').trim();
+  // The advisor region below the verbatim canon section — scope the descriptor parse to it so a
+  // canon edit mentioning a wrapper name can never leak into the set-equality.
+  const adviceRegion = (stdout) => stdout.slice(stdout.indexOf('resolved recipes for'));
+  // The exact descriptor lines rendered for one wrapper (its block-header line excluded): these must
+  // set-EQUAL the manifest invocations ∪ continue — a MISSING descriptor and a STALE EXTRA both fail.
+  const cmdLines = (stdout, cmd) =>
+    adviceRegion(stdout).split('\n').map((l) => l.trim())
+      .filter((l) => l.startsWith(`${cmd} `) && !l.includes('— driving contract'))
+      .map(norm);
+  const descriptorSet = (contract) => [...contract.invocations, ...(contract.continue ?? [])].map(norm).sort();
+  // One wrapper's whole rendered contract block (header + its deeper-indented body lines).
+  const contractBlock = (stdout, cmd) => {
+    const lines = stdout.split('\n');
+    const start = lines.findIndex((l) => l.trim().startsWith(`${cmd} — driving contract`));
+    assert.notEqual(start, -1, `${cmd} contract block present`);
+    const out = [lines[start]];
+    for (let i = start + 1; i < lines.length; i += 1) {
+      if (!lines[i].trim() || /^\s{0,6}\S/.test(lines[i])) break; // next slot/block/blank ends it
+      out.push(lines[i]);
+    }
+    return out.join('\n');
+  };
+
+  it('council (both READY): each backend\'s exact descriptors render, set-EQUAL to its manifest', () => {
+    const r = run(['plan-authoring', '--override', 'review=council'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    const agy = manifestContract(AGY, 'review');
+    const codex = manifestContract(CODEX, 'review');
+    assert.ok(agy.invocations.length && codex.invocations.length, 'manifest descriptor sets are non-empty');
+    assert.deepEqual(cmdLines(r.stdout, 'agy-review').sort(), descriptorSet(agy), 'agy-review descriptors ⟷ manifest');
+    assert.deepEqual(cmdLines(r.stdout, 'codex-review').sort(), descriptorSet(codex), 'codex-review descriptors ⟷ manifest');
+    // agy: the FULL contract renders in the block — flags set-EQUAL the manifest descriptors,
+    // the grounding note is verbatim, and the round-2 delta is surfaced at the point of use.
+    const agyBlock = contractBlock(r.stdout, 'agy-review');
+    const agyFlagLines = agyBlock.split('\n').map((l) => norm(l)).filter((l) => l.startsWith('--'));
+    assert.deepEqual(agyFlagLines.sort(), agy.flags.map(norm).sort(), 'rendered flag lines ⟷ manifest flags');
+    assert.ok(norm(agyBlock).includes(norm(agy.grounding)), 'the agy grounding note renders verbatim');
+    assert.match(agyBlock, /agy-review --continue/);
+    // codex-review: grounding is automatic, one-shot — no grounding flags, no continue line.
+    const codexBlock = contractBlock(r.stdout, 'codex-review');
+    assert.ok(norm(codexBlock).includes(norm(codex.grounding)), 'the codex grounding note renders verbatim');
+    assert.doesNotMatch(codexBlock, /--facts|--decided|--continue/);
+  });
+
+  it('delegated (a NON-review recipe) renders the codex-exec contract incl. resume — not gated by the review set', () => {
+    const r = run(['plan-execution', '--override', 'execute=delegated'], { codex: READY, agy: NEEDS_SKILL });
+    assert.equal(r.code, 0, r.stderr);
+    const exec = manifestContract(CODEX, 'execute');
+    assert.deepEqual(cmdLines(r.stdout, 'codex-exec').sort(), descriptorSet(exec), 'codex-exec descriptors ⟷ manifest');
+    const block = contractBlock(r.stdout, 'codex-exec');
+    assert.match(block, /codex-exec --resume-last/);
+    assert.match(block, /passthrough after '--' is guarded/);
+    assert.ok(norm(block).includes(norm(exec.grounding)), 'the exec grounding note renders verbatim');
+    // Both passthrough TIERS render in full — every manifest tier pattern appears in the block.
+    for (const p of [...exec.passthrough.blocked, ...exec.passthrough.probeRelaxed]) {
+      assert.ok(block.includes(p), `passthrough pattern ${p} renders`);
+    }
+  });
+
+  it('--json: the ADDITIVE contracts field deep-equals the manifests; backends keeps the stable shape', () => {
+    const j = JSON.parse(run(['plan-authoring', '--override', 'review=council', '--json'], { codex: READY, agy: READY }).stdout);
+    assert.deepEqual(j.slots.review.backends, ['codex-review', 'agy-review'], 'the pre-existing backends shape is unchanged');
+    assert.deepEqual(j.slots.review.contracts, [
+      { backend: CODEX, role: 'review', cmd: 'codex-review', contract: manifestContract(CODEX, 'review') },
+      { backend: AGY, role: 'review', cmd: 'agy-review', contract: manifestContract(AGY, 'review') },
+    ], 'the surfaced contract deep-equals the bridge manifests (drift-guarded, both directions)');
+    const d = JSON.parse(run(['plan-execution', '--override', 'execute=delegated', '--json'], { codex: READY, agy: NEEDS_SKILL }).stdout);
+    assert.deepEqual(d.slots.execute.contracts, [
+      { backend: CODEX, role: 'execute', cmd: 'codex-exec', contract: manifestContract(CODEX, 'execute') },
+    ]);
+  });
+
+  it('solo: no contract block in human output; contracts empty in --json (solo-omits holds)', () => {
+    const r = run(['plan-authoring'], { codex: NEEDS_SKILL, agy: NEEDS_SKILL });
+    assert.match(r.stdout, /review: solo/);
+    assert.ok(!/driving contract/.test(r.stdout), 'solo dispatches nothing — no contract to drive');
+    const j = JSON.parse(run(['plan-authoring', '--json'], { codex: NEEDS_SKILL, agy: NEEDS_SKILL }).stdout);
+    assert.deepEqual(j.slots.review.contracts, []);
   });
 });
 
