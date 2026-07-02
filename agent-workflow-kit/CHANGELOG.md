@@ -4,6 +4,41 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.26.0 — Deterministic bridge freshness & delivery; machine-composed status line; honest installer messaging
+
+A **feature** release (ships the bundled bridges unchanged at **2.1.0**). One architecture across
+four fixes: **the registry computes, the tools speak, the agent pastes** — no factual line on these
+surfaces is agent-composed anymore.
+
+- **Bridge freshness is now visible.** `family-registry` compares each placed bridge against the
+  kit-bundled mirror (both local files — nothing checks npm): behind → a plain caveat + the runnable
+  `/agent-workflow-kit setup` recommend + `refresh.behind:true` in `--json`, reaching the
+  bootstrap/upgrade footers and the welcome mat (priority 1 is now caveat-generic and quotes the
+  firing note's OWN recovery verbatim); uncheckable → an explicit unknown note (never "current",
+  never "behind"); zero-behind → the TOOL prints a checked-scope verdict (`all N checked members are
+  current` — any unknown blocks the all-current claim). New dependency-free `tools/semver-lite.mjs`.
+- **Placed bridges refresh on `init` and `upgrade`.** A refresh-only driver in `setup-backends.mjs`
+  (`--refresh-placed`) refreshes proven-managed placed bridges and NEVER places an absent one —
+  placement stays opt-in via `/agent-workflow-kit setup`. `npx … init` calls it best-effort (a miss
+  is a loud warning + a recovery command composed from the resolved install target + exit 0;
+  `--no-bridges` opts out; win32 is a stated skip); `Mode: upgrade` runs it as a fourth
+  stamp-independent reconcile and pastes the output verbatim. **Never-downgrade:** a placed bridge
+  NEWER than the bundle is a stated keep + "update the kit", enforced at both the plan and the write
+  boundary (TOCTOU re-inspect at apply); an unparseable version is treated as legacy repair, stated.
+- **The one-line backend status is machine-composed.** `tools/recipes.mjs --status-line` emits the
+  exact line (deterministic order, one alias table; additive `statusLine` in `--json`; strict argv —
+  an unknown flag exits loudly instead of masquerading as the human render); SKILL.md now says run
+  the tool and paste its line verbatim — the realistic example that once got echoed as fact is
+  replaced by an explicitly-placeholder template.
+- **The installer speaks facts.** The final verb is keyed on the OBSERVED version comparison
+  (installed / updated / refreshed-the-already-current / downgraded-under-`--allow-downgrade`); the
+  same-version note states that the copy ran (a re-run repairs locally modified files) + a
+  CONDITIONAL `@latest` hint; the false "npx likely served a cached build" accusation is gone. One
+  message contract with the engine installer (engine `1.9.0`).
+- Lens sync everywhere — "placed by `setup` (opt-in), refreshed by `init`/`upgrade` once placed" —
+  across SKILL.md, both READMEs and `family-members.mjs`, guarded by the new region+token
+  `test/init-refresh-lens.test.mjs` (non-vacuous, injected red→green proven).
+
 ## 1.25.0 — The bridge driving contract at the point of use (advisor render + wrapper `--help`)
 
 A **feature** release (additive; ships the bundled bridges at **2.1.0**). An agent told to run a

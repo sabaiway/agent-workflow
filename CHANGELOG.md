@@ -7,6 +7,22 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-02 — engine 1.9.0 · kit 1.26.0 (bridges bundled unchanged at 2.1.0)
+
+- **A returning user's `init`/`upgrade` now leaves no stale bridge behind (all users).** Bridges are
+  placed by the opt-in `/agent-workflow-kit setup`; once placed they were refreshed by NOTHING, so
+  every bridge release left placed copies lagging silently — and no read-only surface could tell a
+  lagging bridge from a current one. Now: `family-registry` compares placed vs kit-bundled versions
+  (local files only — nothing checks npm) and reports behind / unknown / current honestly, with a
+  tool-composed checked-scope verdict; `npx … init` and `Mode: upgrade` refresh proven-managed
+  placed bridges (never place an absent one, never downgrade a newer one — each a stated line;
+  `--no-bridges` opts out); the one-line backend-status comes verbatim from
+  `recipes.mjs --status-line` instead of being agent-composed. **Both installers stop contradicting
+  themselves:** the final verb states what was observed (installed / updated /
+  refreshed-the-already-current) and the same-version note states facts — no more false "npx likely
+  served a cached build". Kit `1.26.0` + engine `1.9.0`; memory unchanged; bridges bundled unchanged
+  at `2.1.0`. AD-034.
+
 ## 2026-07-02 — kit 1.25.0 (bridges 2.1.0, bundled)
 
 - **The bridge driving contract, guaranteed at the point of use (all users).** An agent running a

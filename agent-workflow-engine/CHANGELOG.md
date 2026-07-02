@@ -4,6 +4,22 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.9.0 — Honest installer messaging: the verb states what was observed, the note states facts
+
+A **feature** release (installer output contract only; the canon text is unchanged). `bin/install.mjs`
+no longer claims "updated the canon to vX" on every run and no longer accuses the npx cache on a
+same-version re-run:
+
+- **The final verb is keyed on the OBSERVED version comparison**, never on mere presence: fresh or
+  legacy/unstamped → `installed` (no transition claim when the prior version is unknowable); older →
+  `updated the canon to vX`; same → `refreshed the already-current canon`; newer → `downgraded the
+  canon to vX` (reachable only under the explicit `--allow-downgrade`).
+- **The same-version note states observable facts only** — the copy still ran (a re-run repairs
+  locally modified or deleted files) — plus a CONDITIONAL hint: *if you expected a newer version*,
+  invoke the `@latest` tag explicitly. The "npx likely served a cached build" accusation is gone
+  (not observable without a network check).
+- The never-downgrade gate, its refusal wording, and the read-before-write ordering are untouched.
+
 ## 1.8.0 — Mechanize the §9 review-loop discipline (round cap · crossover · finding-origin)
 
 A **feature** release. The methodology canon institutionalizes the review-loop economics so the round
