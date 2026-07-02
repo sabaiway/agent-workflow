@@ -64,6 +64,9 @@ describe('planning.md — right-altitude/code-grounded canon', () => {
     assert.match(section9, /no code-mechanics/i); // B5
     assert.match(section9, /at the diff/i); // B6
     assert.match(section9, /characterize-first/i); // B7
+    // B5 sharpening (checked-vs-unchecked boundary) — same two strings lens-mirror.test.mjs pins.
+    assert.match(section9, /checked syntax/i); // checked = asserted by the plan's own Verification
+    assert.match(section9, /logic-bearing/i); // un-run, logic-bearing syntax never lives in plan prose
   });
 
   // Review-loop economics (M2/M3/M4/M5-b): the round cap + crossover already lived in §9 but were

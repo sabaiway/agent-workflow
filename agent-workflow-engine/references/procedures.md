@@ -57,8 +57,10 @@ Produce a self-contained, cold-readable plan, reviewed to the configured depth b
    **0 blockers + 0 majors** from every backend the recipe names (the convergence bar,
    [`planning.md`](planning.md) §9); folding ≠ convergence — re-review after folding. Fold a
    code-touching finding **test-as-spec** (a named acceptance test, not a prose paragraph); a fold must
-   add **no code-mechanics** to the plan — a Step still carries its own exact paths + commands, but a
-   fold needing a mechanic is the trigger to name the test instead. Council runs every named backend
+   add **no code-mechanics** to the plan — a Step still carries its own exact paths + commands
+   (checked syntax: its Verification asserts an expected outcome), but un-run, logic-bearing syntax
+   (control-flow, a regex, a glob, a mini-DSL) never enters plan prose — a fold needing one is the
+   trigger to name the test instead. Council runs every named backend
    **every round** (recipe fidelity,
    [`orchestration.md`](orchestration.md) §4) — never quietly drop a ready backend. Cap architecture
    plan-review at **≤2 rounds**, stopping at the **crossover** where **backend divergence** (one backend

@@ -43,6 +43,12 @@ const LENS_TOKENS = [
   'backend divergence', // M3 — one backend ships while another revises mechanics IS the crossover
   'diff-review', // M5-b — route all-mechanics/CI or prose-only artifacts to a thin plan + diff-review
   'self-consistency', // M4 — a self-consistency read across a prose plan before every re-review
+  // Checked-vs-unchecked boundary (the §9 B5 sharpening): a plan carries only CHECKED syntax — a command
+  // its own Verification asserts, or a literal fixture/schema fragment a named test copies or validates;
+  // un-run, logic-bearing syntax (control-flow, a regex, a glob, a mini-DSL) never lives in plan prose.
+  // Pinned PRESENT in EACH of the four lens regions, like the M2 group above.
+  'checked syntax', // the checked-vs-unchecked discriminator (checked = asserted, not merely executed)
+  'logic-bearing', // the banned category — un-run, logic-bearing syntax in plan prose
 ];
 // Set 2 — TEMPLATE-SCOPED PRESENCE. The process-fidelity invariants A1/A2 are NOT §9-native (A1 → §6,
 // A2 → orchestration.md §4), so they are not in Set 1; without this set they could be dropped from BOTH
