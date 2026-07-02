@@ -103,8 +103,9 @@ OPTIONAL/MACHINE  install a bridge + subscription login -> delegated exec
    Devin Desktop you have. It also refreshes the other npm core members so a returning `init` leaves
    **no stale core member** — the **memory substrate** (best-effort: a miss is a loud degraded success
    with the exact recovery command + exit 0; skip with `--no-memory`) and the **methodology engine**
-   (required; skip with `--no-engine`). It does **not** deploy into a project and does **not** install
-   the execution-backend bridges (those are placed on demand by `/agent-workflow-kit setup`).
+   (required; skip with `--no-engine`). It does **not** deploy into a project and never **places**
+   the execution-backend bridges (those are placed on demand by `/agent-workflow-kit setup`; **once
+   placed**, `init` refreshes them from its bundled copies — skip with `--no-bridges`).
 2. **Once per project** — invoke the skill **inside the repo** (the command differs per agent —
    see the [kit README's command table](agent-workflow-kit/README.md#-use)). It deploys
    `AGENTS.md` + `docs/ai/` filled with real recon, installs the enforcement scripts +
@@ -160,7 +161,7 @@ npx ... init -> kit  (composition root; global skill, NOT a project deploy)
    |- delegates -> memory substrate (standalone, else bundled fallback)
    `- deploys -> AGENTS.md + docs/ai/ + Node scripts + pre-commit hook
 
-optional backends (set up once per machine, NOT by init):
+optional backends (placed once by setup, NOT by init; init refreshes them):
    codex (execute / review)  |  antigravity (review / probe)
    `- read the deployed memory as context (codex auto; agy if it wins)
 ```
@@ -224,8 +225,9 @@ slot is configured independently; a per-run `--override` adjusts one step once.
 
 Honest caveats:
 
-- They are **agent skills, not npm packages**, and are **not placed by `init`** (it only bundles
-  them in the kit tarball). `/agent-workflow-kit setup` does the **link-only** part — places the
+- They are **agent skills, not npm packages**, and are **not placed by `init`** (it bundles them in
+  the kit tarball and, **once `setup` placed one**, refreshes it on every run — never a first
+  placement, never a downgrade). `/agent-workflow-kit setup` does the **link-only** part — places the
   bundled bridge skill + links its wrappers — while the **binary install** and the **interactive
   subscription login stay manual** (they can't be safely automated).
 - Their context provider is the deployed memory — but not unconditionally (`codex` auto-reads
@@ -249,8 +251,8 @@ setup (place skill + link wrappers). For the command mechanics see the
 |---|---|---|---|
 | **agent-workflow-kit** | almost everyone — the entry point | npm | [README](agent-workflow-kit/README.md) |
 | **agent-workflow-memory** | the substrate only, without the methodology (rare) | npm | [README](agent-workflow-memory/README.md) |
-| **codex-cli-bridge** | delegated execute / review via `codex` | agent skill (bundled; `setup` places + links) | [SKILL](codex-cli-bridge/SKILL.md) |
-| **antigravity-cli-bridge** | delegated grounded review (`agy-review`) / probe (`agy-run`) via `agy` | agent skill (bundled; `setup` places + links) | [SKILL](antigravity-cli-bridge/SKILL.md) |
+| **codex-cli-bridge** | delegated execute / review via `codex` | agent skill (bundled; `setup` places + links; `init` refreshes) | [SKILL](codex-cli-bridge/SKILL.md) |
+| **antigravity-cli-bridge** | delegated grounded review (`agy-review`) / probe (`agy-run`) via `agy` | agent skill (bundled; `setup` places + links; `init` refreshes) | [SKILL](antigravity-cli-bridge/SKILL.md) |
 | **agent-workflow-engine** | the canonical methodology on disk, standalone (rare — the kit injects it for you) | npm | [README](agent-workflow-engine/README.md) |
 
 Most people only ever need the **kit**. Each per-package README / SKILL stays the source of truth

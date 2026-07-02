@@ -36,7 +36,21 @@ describe('SKILL.md — status reads refresh; the shared notes-based footers stay
     assert.match(skill, /Append any `installed\[\]\.notes`/, 'the shared version block must stay notes-based');
   });
 
-  it('the welcome-mat next-step is unchanged — still keys on an installed[].notes caveat', () => {
-    assert.match(skill, /`installed\[\]\.notes` caveat fired/, 'the bootstrap/upgrade welcome mat must stay notes-based');
+  it('the welcome-mat next-step stays notes-based, widened caveat-generic (Plan §2.4)', () => {
+    const flat = skill.replace(/\s+/g, ' ');
+    assert.match(flat, /`installed\[\]\.notes` caveat fired/, 'the bootstrap/upgrade welcome mat must stay notes-based');
+    assert.match(flat, /a behind-class `installed\[\]\.notes` caveat fired — any member, the bridges included/,
+      'priority 1 is caveat-generic now — no member allowlist');
+    assert.match(flat, /that note's own recovery command verbatim/i,
+      'the recommended step quotes the firing note, never a re-composed command');
+    assert.match(flat, /a bridge note carries `\/agent-workflow-kit setup`/,
+      'a behind bridge routes to setup (bridges have no npx form)');
+  });
+
+  it('an UNKNOWN-freshness note is NOT a welcome-mat refresh trigger — only a behind note fires priority 1', () => {
+    const flat = skill.replace(/\s+/g, ' ');
+    assert.match(flat, /uncheckable.{0,120}never.{0,3}a refresh trigger/i,
+      'the widened priority 1 must exclude couldn\'t-be-checked notes');
+    assert.match(flat, /only a behind note fires this step/i);
   });
 });

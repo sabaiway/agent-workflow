@@ -31,7 +31,10 @@ runtime dependency placed by `init` and read live; see *Methodology slot reconci
 `init` also **refreshes the installed memory substrate** (best-effort — a miss is a loud DEGRADED
 success: a warning with the exact recovery command + exit 0, never silent, never the engine's hard
 STOP; `--no-memory` skips it), so a returning `init` leaves **no stale core member**. The
-execution-backend bridges are still **not** installed by `init` (placed on demand by `setup`).
+execution-backend bridges are still never **placed** by `init` (placed on demand by `setup`, opt-in);
+**once placed**, `init` **refreshes** them from the kit's own bundled copies (refresh-only, local
+files, never a downgrade; `--no-bridges` skips it) — so a returning `init` leaves no stale placed
+bridge either.
 
 **Detection (kit-owned, decided BEFORE any project write).** Run the kit's **own shipped**
 validator — `node ${CLAUDE_SKILL_DIR}/tools/manifest/validate.mjs <memory-skill-dir>` — never a
@@ -108,7 +111,7 @@ Pick the mode from the user's invocation. Auto-detect an existing `docs/ai/` to 
 - **`/agent-workflow-kit upgrade`** — upgrade an existing deployment to the skill's current `version`.
 - **`/agent-workflow-kit help`** — read-only **command index**: enumerate every command, grouped (Inspect / Configure / Orchestrate / Lifecycle) and tagged read-only / writer / guarded. The single discoverable entry point, and the landing spot for any unrecognized invocation. Never writes, never commits, never runs a subscription CLI.
 - **`/agent-workflow-kit backends`** — read-only environment check: which optional **execution-backends** (the `codex` / `agy` bridges) are set up vs missing. Never writes, never commits, never runs a subscription CLI.
-- **`/agent-workflow-kit setup [backend]`** — the **link-only**, opt-in companion to `backends`: place the bundled bridge skill + link its wrappers onto `PATH`. **In-agent only** — `init` (npx) never places bridges. The binary install + the interactive subscription login stay **manual** (it prints the exact commands); idempotent; refuses to clobber a non-symlink; never commits, never runs a subscription CLI.
+- **`/agent-workflow-kit setup [backend]`** — the **link-only**, opt-in companion to `backends`: place the bundled bridge skill + link its wrappers onto `PATH`. **In-agent only** — `init` (npx) never *places* bridges; once placed, `init`/`upgrade` refresh them (refresh-only). The binary install + the interactive subscription login stay **manual** (it prints the exact commands); idempotent; refuses to clobber a non-symlink; never commits, never runs a subscription CLI.
 - **`/agent-workflow-kit status`** — read-only view of the **whole family**: which members (kit / memory / engine / the two bridges) are installed, at what version, and — in a project — what is deployed (`docs/ai`, the version stamps, the hidden-mode fence). Never writes, never commits, never runs a subscription CLI.
 - **`/agent-workflow-kit recipes`** — read-only **orchestration advisor**: present the four recipes (Solo / Reviewed / Council / Delegated) over the bridges' role vocabulary, plan + recommend one for the current environment, and offer the choice. **The orchestrator executes the chosen recipe via the bridge skills and always commits** — the kit only surfaces/selects/plans it; it never executes a recipe, never runs a subscription CLI, never commits.
 - **`/agent-workflow-kit procedures <activity>`** — read-only **activity-procedures advisor**: print the ordered steps of a named activity (`plan-authoring` / `plan-execution`) read **live** from the installed engine (`references/procedures.md`), and the **resolved effective recipe per slot** from the per-project `docs/ai/orchestration.json` (strict JSON; agent-writable via `set-recipe` or hand-edit) + backend readiness (default = Reviewed when a backend is ready, Council on request, slot-aware incl. Delegated; graceful default vs loud override degradation) — plus, for every dispatched backend, the **full driving contract at the point of use**: the exact copy-pasteable invocation descriptor(s), the grounding levers (agy `--facts`/`--decided`), the round-2 `--continue` delta, and the guarded passthrough tiers, rendered verbatim from the bridge manifests (drift-guarded; each wrapper's `--help` prints the same contract). A per-run `--override <slot>=<recipe>` overrides one slot. Composes with `recipes` (which stays read-only); never writes, never commits, never runs a subscription CLI.
@@ -154,8 +157,8 @@ recipe clause of its own, ever.
   (Composed by `recommendRecipe` inside the same tool run — never by the agent.)
 - **Invariants:** **read-only · never blocks the commit gate · never runs a subscription CLI · the
   pointer is the in-agent `backends` mode, never a network fetch · the appended `recipes:` clause
-  routes to the in-agent `recipes` mode the same way · `init`/npx is unaffected (it never places
-  bridges, AD-011 §5).**
+  routes to the in-agent `recipes` mode the same way · `init`/npx never *places* bridges (it
+  refreshes only what `setup` already placed, AD-011 §5).**
 - **Composer unavailable → skip with a stated reason, never silently.** The composer is a Node script
   the **agent host** runs (not the target project), so the only skip condition is "**the agent host
   can't run it**" — `node` is not on the agent's PATH, or the tool itself errors — **not** "the
@@ -209,8 +212,12 @@ the rest of the report — and the commit gate — proceeds.
 line, print *"Run `/agent-workflow-kit help` to see every command."* then **one** recommended next
 step, chosen **caveat-aware** from signals already in hand (the version block's notes + the
 backend-status line — no new helper call) in this priority order:
-1. a member is **behind** (an `installed[].notes` caveat fired — memory/engine) → *refresh the behind
-   member first* (its `npx …@latest init` + restart the session);
+1. a member is **behind** (a behind-class `installed[].notes` caveat fired — any member, the bridges
+   included) → *refresh the behind member first*, quoting **that note's own recovery command
+   verbatim** (a memory/engine note carries its `npx …@latest init` + restart the session; a bridge
+   note carries `/agent-workflow-kit setup`). An **uncheckable** member ("couldn't be checked" — an
+   unknown-freshness note) is **never** a refresh trigger: only a behind note fires this step — the
+   uncheckable note already appears in the version block, add nothing more;
 2. else **no backend is ready** (the backend-status line shows none ready) → *set one up with
    `/agent-workflow-kit setup`*;
 3. else **a backend is ready but the orchestration config is still all-Solo** (no `reviewed` /
@@ -319,15 +326,27 @@ Fill strategy:
    **Hidden-mode footprint reconcile — stamp-independent, same gate, BEFORE the equal-head short-circuit (D9 / AD-014).** A deployment does not record whether it chose `hidden`, so first **infer visibility**: `node ${CLAUDE_SKILL_DIR}/tools/hide-footprint.mjs --dir <project> --reconcile --dry-run` (writes **zero bytes**). It reports one of — **visible** (the entry point is tracked) → nothing to do; **ambiguous** (untracked but not ignored — could be a fresh uncommitted repo, or a hide that broke) → **ASK** the user which it is, never guess; **hidden** → re-run without `--dry-run` to migrate any older **machine-global** hide to the **project-local** `.git/info/exclude` (one managed block; folds in the legacy `.claude/skills/` line), idempotently (a clean re-run is zero-diff). Handle its surfaced paths exactly as bootstrap step 9 (already-committed → show `git rm --cached`, ask before `--include`; generic-name present file → ask; **leftover machine-wide ignore block → ASK before `--remove-global`**, default keep + report). No Node on the agent host / Windows → as step 9. This runs on **every** hidden upgrade, like the methodology slot — no lineage-head bump, no migration file.
 
    **Orchestration config ensure (seed-or-refresh) — stamp-independent, same gate, BEFORE the equal-head short-circuit.** Ensure `docs/ai/orchestration.json` exists **and its onboarding note is current**: **create it from the template if missing**; **if it already exists, preserve every activity/slot the user set, and refresh ONLY the `_README` note when the existing one still matches a known prior canonical** — the tested `refreshIfCanonical` / `refreshReadme` in `tools/orchestration-config.mjs` is the source of truth for that decision (normalize CRLF/whitespace before comparing; a *customized* `_README` is preserved verbatim; a *malformed* existing config is **preserved + a loud warning**, never clobbered or silently skipped). The current note points at `/agent-workflow-kit set-recipe` (the config is now agent-writable — no more "never written for you"). **The refresh helper is kit-owned** — in the **delegated** path memory only seeds/preserves the file (memory upgrade step 2) and the **kit** then applies the `_README` refresh; in the **fallback** path the kit seeds-or-refreshes directly from `${CLAUDE_SKILL_DIR}/references/templates/orchestration.json`. (Memory stays standalone — it never depends on this helper.) Like the pointer slots + the footprint reconcile, this reaches an equal-head (`1.3.0`) deployment **without a lineage-head bump or a migration file** (it is a `.json`, inherently outside the docs cap-validator). Report it in the step 4 / step 8 success report (config *seeded* / *note refreshed* / *already current* / *customized — preserved*).
+
+   **Placed-bridge refresh — stamp-independent, same gate, BEFORE the equal-head short-circuit.** Run
+   `node ${CLAUDE_SKILL_DIR}/tools/setup-backends.mjs --refresh-placed` and **paste its per-bridge
+   output lines verbatim** — every outcome line is composed by the tool (*refreshed* / *already
+   current* / *skipped — not placed* / *could not refresh* + its recovery); you compose nothing
+   factual. It is **refresh-only**: it refreshes a bridge **`setup` already placed** from this kit's
+   bundled copies and re-links its wrappers; an **absent** bridge is a stated skip, **never a first
+   placement** (placement stays the opt-in *Mode: setup* — AD-009/AD-011 honesty intact), and a
+   placed bridge **newer** than the bundled copy is a stated skip naming the kit update (**never a
+   downgrade**). Like the other three reconciles it runs on **every** upgrade — including an
+   equal-head one — with no lineage-head bump. A *could not refresh* line is non-fatal: relay it
+   plainly with its recovery and continue the upgrade.
 4. **Equal-head exit — a real successful-exit report, not a bare stop.** If the stamp **equals** the head, the lineage is up to date — but step 3 (the methodology-slot **and** hidden-mode footprint reconciles) ran first and may have changed things, so this is a proper exit report, not a no-op:
-   - **Report step 3's outcome in plain language** — for **each** pointer (workflow-methodology and orchestration-recipes) whether it was *added*, was *already present* (nothing changed), or was *skipped because the entry point is over its line limit* (the cap-refusal soft-skip from step 3, with its reason); whether the `docs/ai/orchestration.json` config was *seeded* (created from the template), had its onboarding note *refreshed*, was *already current*, or carried a *customized note that was preserved* (a user edit is never clobbered); and, for a hidden deployment, whether the hidden-mode footprint was *moved to project-local*, was *already project-local* (nothing changed), or needed a question (ambiguous visibility / a leftover machine-wide block). Plain wording only — never the reconcile/slot/anchor/marker terms (Gotcha: never leak kit internals).
+   - **Report step 3's outcome in plain language** — for **each** pointer (workflow-methodology and orchestration-recipes) whether it was *added*, was *already present* (nothing changed), or was *skipped because the entry point is over its line limit* (the cap-refusal soft-skip from step 3, with its reason); whether the `docs/ai/orchestration.json` config was *seeded* (created from the template), had its onboarding note *refreshed*, was *already current*, or carried a *customized note that was preserved* (a user edit is never clobbered); the **placed-bridge refresh** outcome — paste the tool's per-bridge lines verbatim (they are already plain: *refreshed* / *already current* / *skipped — not placed* / *could not refresh* + recovery); and, for a hidden deployment, whether the hidden-mode footprint was *moved to project-local*, was *already project-local* (nothing changed), or needed a question (ambiguous visibility / a leftover machine-wide block). Plain wording only — never the reconcile/slot/anchor/marker terms (Gotcha: never leak kit internals).
    - **Never surface the structure number on this exit.** Whatever step 3 did, do **not** recite the `docs/ai` structure version, the internal versioning vocabulary, or the two-axes note here — the number is inert on an equal-head exit; it belongs to *Version disclosure* (shown at the never-downgrade STOP, the explicit status view, or on an explicit ask). Frame the success itself per the final bullet: if step 3 changed anything, say **what changed** in plain human terms; only a pure zero-diff no-op is *settings already current — no update needed*.
    - **Print the report footer** in the canonical order (version block → one-line backend-status line → welcome mat — the shared contracts above; rendered from the helpers, same host-can't-run skip-with-reason). The welcome mat closes on **one** caveat-aware next step (a behind member first, else `setup` / `recipes` / `velocity`).
    - **Then ask before committing — never auto-commit.** If step 3 added the slot (or anything else changed), report it and ask. If step 3 was a pure zero-diff no-op and nothing else changed, give the plain **settings already current — no update needed** message (the *Success state* contract) and still print the read-only version block (installed package versions) + backend line — but **no `docs/ai` structure version and no two-axes note** (nothing changed, so the number is inert here).
 5. Show the relevant `${CLAUDE_SKILL_DIR}/CHANGELOG.md` diff (entries newer than the project's stamp).
 6. Apply `${CLAUDE_SKILL_DIR}/migrations/<version>-<slug>.md` in **semver order**, only those newer than the project's stamp. Migrations are **idempotent** — safe to re-run.
 7. Reconcile drift: add any kernel files/scripts the project is missing; never clobber project-authored content (their `decisions.md`, `known_issues.md`, page specs stay). Any user question a migration raises follows the same rule as bootstrap — **structured multiple-choice where supported** (`AskUserQuestion` in Claude Code), otherwise prose. If `AGENTS.md` has no *Communication language* block (pre-1.1.0 deployment), **ask the user their conversational language** and insert the block — see `migrations/1.1.0-communication-language.md`. If it has no *Attribution* block (pre-1.2.0 deployment), **ask whether the agent may attribute work to itself / AI** and insert the block (defaulting to `off`) — see `migrations/1.2.0-agent-attribution.md`.
-8. Re-stamp `docs/ai/.workflow-version` to the **deployment-lineage head** (`1.3.0`, not the package version — mechanics unchanged: the atomic write to the stamp file). In the report, **describe what the upgrade changed in plain human terms** — which parts of their `docs/ai` are now different (the migrations that ran) — rather than reciting a version number; **omit the raw structure number**, and do **not** print the two-axes note here (it belongs to *Version disclosure*, on demand only). Then **print the report footer** in the canonical order (version block → one-line backend-status line → welcome mat — the shared contracts above; rendered from the helpers, same host-can't-run skip-with-reason; the welcome mat closes on one caveat-aware next step). Then **ask before committing**.
+8. Re-stamp `docs/ai/.workflow-version` to the **deployment-lineage head** (`1.3.0`, not the package version — mechanics unchanged: the atomic write to the stamp file). In the report, **describe what the upgrade changed in plain human terms** — which parts of their `docs/ai` are now different (the migrations that ran), plus the step-3 **placed-bridge refresh** lines (pasted verbatim) — rather than reciting a version number; **omit the raw structure number**, and do **not** print the two-axes note here (it belongs to *Version disclosure*, on demand only). Then **print the report footer** in the canonical order (version block → one-line backend-status line → welcome mat — the shared contracts above; rendered from the helpers, same host-can't-run skip-with-reason; the welcome mat closes on one caveat-aware next step). Then **ask before committing**.
 
 ### Mode: backends
 
@@ -341,13 +360,19 @@ Read-only. Answers *"which optional execution-backends are set up vs missing, an
 
 ### Mode: setup
 
-The **only writer** among the backend modes, and **opt-in / in-agent only** — it is **never** part of `init`. The npx installer deploys the *kit* and bundles the bridge skills in its tarball, but **does not place** them (that honesty claim is load-bearing — see `decisions.md` AD-009 / AD-011). `setup` owns exactly the two deterministic, secret-free steps and **guides** the rest. It **never commits and never runs a subscription CLI**.
+The **only writer** among the backend modes, and **opt-in / in-agent only** — **placement** is **never** part of `init`. The npx installer deploys the *kit* and bundles the bridge skills in its tarball, but **does not place** them (that honesty claim is load-bearing — see `decisions.md` AD-009 / AD-011); **once placed** by `setup`, `init` and *Mode: upgrade* keep the placed copy fresh via the refresh-only `--refresh-placed` (below) — **never a first placement, never a downgrade**. `setup` owns exactly the two deterministic, secret-free steps and **guides** the rest. It **never commits and never runs a subscription CLI**.
 
 Run `node ${CLAUDE_SKILL_DIR}/tools/setup-backends.mjs [<backend>] [--bindir <path>] [--dry-run]`:
 
 - `<backend>` — `codex` | `agy` | `antigravity` | `codex-cli-bridge` | `antigravity-cli-bridge`; omit for **all**.
 - `--bindir <path>` — where to link the wrappers (default `~/.local/bin`).
 - `--dry-run` — print the per-backend plan and change **nothing** (run this first).
+- `--refresh-placed` — the **refresh-only** mode (what `init` runs automatically and *Mode: upgrade*
+  runs as its fourth stamp-independent reconcile): refresh every bridge `setup` **already placed**
+  from the kit's bundled copies + re-link its wrappers; an absent bridge is a stated skip (**never**
+  placed), a placed bridge newer than the bundle is a stated skip naming the kit update (**never**
+  downgraded), and every outcome line is composed by the tool — paste verbatim. Does not combine
+  with `--dry-run`.
 - `--help`, `-h` — usage.
 
 For each backend it:

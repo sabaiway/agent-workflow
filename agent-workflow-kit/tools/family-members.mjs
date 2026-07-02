@@ -13,7 +13,8 @@
 // ── the unified registry ───────────────────────────────────────────────────────
 // One entry per family member. `installed` is the detect.installed spec (env + home-relative default
 // + marker file); `deployed` is the project-relative stamp a deploy writes (kit + memory only);
-// `npm` is the install package (null for the bridges, which are placed by `setup`, not npm);
+// `npm` is the install package (null for the bridges — placed by `setup`, and once placed refreshed
+// by `init`/`upgrade` from the kit's bundled copies, never npm);
 // `wrapperCmds` is the deduped roles[].cmd set the `setup` linker creates on PATH (bridges only).
 // Kept in lockstep with the 5 in-repo capability.json by the drift-guard test. The two release skills
 // (release-engineering / release-marketing) are deliberately NOT here — they are not family members

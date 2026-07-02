@@ -23,8 +23,10 @@
 // member — the memory substrate (`npx @sabaiway/agent-workflow-memory@latest init`, best-effort: a
 // failure is a loud DEGRADED success, never silent — skippable with `--no-memory`) and the
 // methodology engine the kit reads live (`npx @sabaiway/agent-workflow-engine@latest init`, fatal —
-// the live read STOPs without it — skippable with `--no-engine`). The bridges are NOT installed by
-// `init` (placed by `/agent-workflow-kit setup`). No tracking either way.
+// the live read STOPs without it — skippable with `--no-engine`). The bridges are never PLACED by
+// `init` (first placement stays `/agent-workflow-kit setup`, opt-in); once placed, `init` REFRESHES
+// them from this package's own bundled copies — a purely LOCAL copy, no third server contact —
+// skippable with `--no-bridges`. No tracking either way.
 //
 // Dependency-free, Node >= 18.
 
@@ -42,8 +44,15 @@ import { compareSemver } from '../tools/semver-lite.mjs';
 // The ONE registry of family members (npm packages, kinds). The init-refresh cascade derives its
 // membership from this table — no second source of "who gets refreshed" — so it can't drift from the
 // manifests (a drift-guard test pins the derivation). Imported from the DATA LEAF (family-members.mjs),
-// NOT family-registry.mjs, so the npx cold-start path stays lean (no status/presenter graph pulled in).
+// NOT family-registry.mjs. Leanness note: the bridge-refresh driver below does pull in the backend
+// detector + the manifest validator (setup-backends' imports), but still NOT the status/presenter
+// graph (family-registry, renderers, recipes) — the npx cold-start path stays presenter-free.
 import { FAMILY_MEMBERS } from '../tools/family-members.mjs';
+// The refresh-only bridge driver (shared with `/agent-workflow-kit setup --refresh-placed` and the
+// upgrade reconcile): refreshes ONLY a bridge `setup` already placed — an absent bridge is a stated
+// skip (never a first placement, AD-009/AD-011) and a placed bridge newer than this kit's bundled
+// mirror is a stated skip too (never a downgrade). Every line it returns is tool-composed.
+import { refreshPlacedBridges } from '../tools/setup-backends.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
@@ -145,6 +154,7 @@ const parseArgs = (argv) => {
     noLaunchers: argv.includes('--no-launchers'),
     noMemory: argv.includes('--no-memory'),
     noEngine: argv.includes('--no-engine'),
+    noBridges: argv.includes('--no-bridges'),
     force: argv.includes('--force'),
     allowDowngrade: argv.includes('--allow-downgrade'),
     dir: dirFlag >= 0 ? argv[dirFlag + 1] : undefined,
@@ -266,7 +276,7 @@ const printHelp = (version) => {
   console.log(`agent-workflow-kit ${version}
 
 Usage:
-  npx @sabaiway/agent-workflow-kit@latest init [--dir <path>] [--no-launchers] [--no-memory] [--no-engine] [--force] [--allow-downgrade]
+  npx @sabaiway/agent-workflow-kit@latest init [--dir <path>] [--no-launchers] [--no-memory] [--no-engine] [--no-bridges] [--force] [--allow-downgrade]
   npx @sabaiway/agent-workflow-kit@latest --version
   npx @sabaiway/agent-workflow-kit@latest --help
 
@@ -282,8 +292,10 @@ Installs/refreshes the kit at ~/.claude/skills/agent-workflow-kit
   stale, refresh it yourself + restart — a miss is otherwise a non-fatal degraded success,
   never the engine's hard STOP); --no-engine skips the engine install (the live methodology
   read then STOPs until you install it by hand); --force replaces a pre-existing non-kit
-  launcher file (backed up first). The bridges are NOT installed by init (placed by
-  /agent-workflow-kit setup). init is additive — it never deletes your settings. If the
+  launcher file (backed up first). The bridges are never PLACED by init (first placement
+  stays /agent-workflow-kit setup, opt-in); once placed, init refreshes them from the kit's
+  own bundled copies — local files only, never a downgrade — and --no-bridges skips that
+  refresh. init is additive — it never deletes your settings. If the
   installed kit is newer than the version you ran, init refuses (no network — it compares
   the version on disk) and points you at @latest; --allow-downgrade overrides that
   refusal (distinct from --force, which is launcher-only).
@@ -389,6 +401,40 @@ const main = async () => {
     if (launcherRun.status !== 0) {
       console.warn('[agent-workflow-kit] launcher step skipped/failed — run it by hand if you use Codex/Devin Desktop:');
       console.warn(`  bash ${tildify(launcher)}`);
+    }
+  }
+
+  // Placed-bridge refresh — AFTER the kit copy (the bundled bridges/ just landed), BEFORE the two
+  // network cascade steps (this one is LOCAL files only: bundle → placed copy). Refresh-only, so the
+  // AD-009/AD-011 honesty claim survives as "init never PLACES bridges; it refreshes what setup
+  // already placed" — an absent bridge is a stated skip, a placed-newer one a stated skip too (never
+  // a downgrade). Best-effort in the memory DEGRADED shape: any miss is a loud warning + a
+  // host-runnable recovery composed from the RESOLVED target (a --dir / AGENT_WORKFLOW_KIT_DIR
+  // install must get a line that runs) + exit 0 — never silent, never the engine's hard STOP.
+  const bridgeRefreshCmd = `node ${tildify(resolve(target, 'tools/setup-backends.mjs'))} --refresh-placed`;
+  if (args.noBridges) {
+    console.log(
+      `[agent-workflow-kit] --no-bridges: skipped refreshing the placed bridges. If one is stale, ` +
+        `refresh it yourself:\n    ${bridgeRefreshCmd}`,
+    );
+  } else if (process.platform === 'win32') {
+    console.log('[agent-workflow-kit] Windows: skipped the placed-bridge refresh (POSIX wrappers — refresh under WSL).');
+  } else {
+    console.log('[agent-workflow-kit] refreshing the bridges setup already placed (an absent bridge is never placed here):');
+    try {
+      const results = refreshPlacedBridges();
+      for (const r of results) console.log(r.line);
+      if (results.some((r) => r.outcome === 'failed')) {
+        console.warn(
+          `[agent-workflow-kit] could not refresh every placed bridge — continuing; the kit itself IS ` +
+            `installed and works. Re-run the refresh yourself:\n    ${bridgeRefreshCmd}`,
+        );
+      }
+    } catch (err) {
+      console.warn(
+        `[agent-workflow-kit] could not refresh the placed bridges (${err.message}) — continuing; the ` +
+          `kit itself IS installed and works. Re-run the refresh yourself:\n    ${bridgeRefreshCmd}`,
+      );
     }
   }
 

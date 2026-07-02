@@ -139,8 +139,9 @@ npx @sabaiway/agent-workflow-kit@latest init
 ```
 
 `init` installs/refreshes the skill at `~/.claude/skills/agent-workflow-kit/` and wires launchers for
-any Claude Code / Codex / Devin Desktop it finds. It **does not** deploy into a project, and **does
-not** install the optional bridges.
+any Claude Code / Codex / Devin Desktop it finds. It **does not** deploy into a project, and **never
+places** the optional bridges — **once placed** (by `/agent-workflow-kit setup`) it **refreshes** them
+from its bundled copies (never a downgrade; skip with `--no-bridges`).
 
 ### 2. Deploy into a project — once per repo
 
@@ -202,11 +203,13 @@ refreshes the other npm core members so a returning `init` leaves **no stale cor
 | `~/.claude/skills/agent-workflow-kit/` | the kit itself (refreshed on every `init`) |
 | `~/.claude/skills/agent-workflow-memory/` | the **memory substrate**, refreshed via `npx @sabaiway/agent-workflow-memory@latest init` — **best-effort:** a failure is a **loud degraded success** (warning + the exact recovery command + exit 0), never silent; skip with `--no-memory` |
 | `~/.claude/skills/agent-workflow-engine/` | the **methodology engine** the kit reads live, refreshed via `npx @sabaiway/agent-workflow-engine@latest init` — **required** (the live read STOPs without it); skip with `--no-engine` |
+| `~/.claude/skills/{codex,antigravity}-cli-bridge/` | the placed **bridges**, refreshed from the kit's bundled copies (local files, no network) — **only if `/agent-workflow-kit setup` already placed them**: an absent bridge is never placed, a newer one never downgraded; skip with `--no-bridges` |
 | `~/.codex/skills/agent-workflow-kit` | a symlink — only if you have Codex |
 | `…/global_workflows/agent-workflow-kit.md` | a managed file — only if you have Devin Desktop |
 
-The **execution-backend bridges** (`codex` / `agy`) are **not** installed by `init` — set one up on
-demand with `/agent-workflow-kit setup`. Your other Codex skills and Devin Desktop workflows are
+The **execution-backend bridges** (`codex` / `agy`) are never first **placed** by `init` — set one up
+on demand with `/agent-workflow-kit setup`; after that, a returning `init` keeps the placed copy
+fresh (the table row above). Your other Codex skills and Devin Desktop workflows are
 never touched. If one of those exact slots already holds a file the kit didn't write, it is **left
 alone** and you're told — re-run with `--force` to replace it (the original is first copied to
 `*.bak.<timestamp>` and the restore command is printed).
@@ -222,7 +225,7 @@ file), or run the guarded `/agent-workflow-kit uninstall`.
 | Command | When | What happens |
 |---------|------|--------------|
 | `/agent-workflow-kit` | new / empty project | recon → **asks visible-or-hidden** + **conversational language** + **agent attribution** (default off) → deploys `AGENTS.md` + `docs/ai/` filled with real recon data → installs enforcement → **asks before committing** |
-| `/agent-workflow-kit upgrade` | existing deployment | reads `docs/ai/.workflow-version`, shows the changelog diff, preserves your authored memory, applies migrations, re-stamps — then prints a **read-only** one-line backend-status line (what's set up vs missing); never installs a bridge — set one up with `/agent-workflow-kit setup` |
+| `/agent-workflow-kit upgrade` | existing deployment | reads `docs/ai/.workflow-version`, shows the changelog diff, preserves your authored memory, applies migrations, re-stamps — then prints a **read-only** one-line backend-status line (what's set up vs missing); refreshes the already-placed bridges from the kit's bundled copies (never installs a new one — set one up with `/agent-workflow-kit setup`) |
 | `/agent-workflow-kit help` | any time | **read-only command index** — every command, grouped (Inspect / Configure / Orchestrate / Lifecycle) and tagged read-only / writer / guarded. The discoverable entry point, and where any unrecognized invocation lands (always read-only — a garbage invocation never writes). Never writes, never commits, never runs a subscription CLI. |
 | `/agent-workflow-kit backends` | any time | **read-only** check of the optional execution-backends (the `codex` / `agy` bridges): what's set up vs missing and the next step. Never writes, never commits, never runs a subscription CLI (credentials = marker-file presence, not a live login). |
 | `/agent-workflow-kit setup [backend]` | opt-in, any time | **link-only** auto-setup of a bridge: places the bundled bridge skill (only into an absent / empty / managed dir — never overwrites an unmanaged one) + links its wrappers onto `PATH` via managed symlinks (idempotent; refuses to clobber a non-symlink; try `--dry-run` to preview). The binary install + the one-time subscription login stay **manual**: it prints the exact **login** command and points the binary install at each bridge's `setup/README.md`. POSIX wrappers — on Windows use WSL. Never commits, never runs a subscription CLI. |
@@ -274,8 +277,9 @@ agent-workflow-kit  —  the composition root (installed via npx … init)
   **orchestration recipes** (Solo / Reviewed / Council / Delegated) — read **live** from the installed
   **`agent-workflow-engine`** (the canonical narrative; a published member, never one of the shipped
   backends). `/agent-workflow-kit recipes` surfaces + plans a recipe for your environment, read-only.
-- **Detects & (opt-in) sets up** the optional `codex` / `agy` **bridges** — agent skills (not npm, not
-  installed by `init`). They plug into the workflow's **execute** and **review** phases — for *what
+- **Detects & (opt-in) sets up** the optional `codex` / `agy` **bridges** — agent skills (not npm;
+  never first placed by `init` — `setup` places them, and once placed `init`/`upgrade` refresh
+  them). They plug into the workflow's **execute** and **review** phases — for *what
   each adds and why*, see the
   [family front door](https://github.com/sabaiway/agent-workflow#readme). `/agent-workflow-kit backends`
   reports readiness **read-only**;
