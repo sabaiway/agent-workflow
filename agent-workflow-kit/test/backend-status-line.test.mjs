@@ -1,12 +1,23 @@
-// Drift guard: the one-line backend-status contract must stay present and consistent across the
-// three successful-exit points — bootstrap (step 11), the upgrade already-current exit (step 4),
-// and the upgrade full-migration final report (step 8) — all pointing at ONE shared definition.
-// It pins the honesty-critical invariants (read-only, never blocks the commit gate, never runs a
-// subscription CLI) and the no-silent-failure fallback (detector unavailable → skip WITH a stated
-// reason, keyed on "the agent host can't run it", NOT "the project has no Node runtime"), so a
-// future SKILL.md edit can't quietly drop the line from an exit or weaken the contract. There is no
-// runtime that "executes" SKILL.md prose, so this static text-drift guard is the automatable half of
-// the "No changes without tests" Hard Constraint (same pattern as readme-structure / init-command-uses-latest).
+// Drift guard: the one-line backend-status contract across the three successful-exit points —
+// bootstrap (step 11), the upgrade already-current exit (step 4), and the upgrade full-migration
+// final report (step 8) — all pointing at ONE shared definition.
+//
+// The line is MACHINE-COMPOSED now (deterministic-first): the agent runs
+// `tools/recipes.mjs --status-line` and pastes the single emitted line verbatim. SKILL.md carries
+// only an explicitly-placeholder template — the realistic canonical example is GONE (a session once
+// echoed it verbatim while the detector said both backends were ready: example contamination). This
+// guard pins:
+//   (1) the shared region names the composer invocation + the paste-verbatim instruction;
+//   (2) the template is placeholder-only (no realistic alias+readiness pair anywhere in the region)
+//       and appears exactly once in the whole SKILL.md (single source);
+//   (3) composer⟷SKILL: every fixed skeleton fragment of composeStatusLine's output appears
+//       verbatim in the region — DERIVED from the composer with sentinel variables (the AD-033
+//       deep-equal shape), never a hand-copied string, and non-vacuous by construction;
+//   (4) the honesty invariants + the composer-unavailable skip stay keyed on the AGENT HOST with a
+//       stated reason (no silent skip);
+//   (5) both upgrade exits + bootstrap still print the line.
+// There is no runtime that "executes" SKILL.md prose, so this static text-drift guard is the
+// automatable half of the "No changes without tests" Hard Constraint.
 //
 // Dev-only repo test (test/ is outside the package `files` whitelist — not shipped in the tarball).
 
@@ -15,6 +26,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { composeStatusLine, DISPLAY_ALIASES } from '../tools/recipes.mjs';
 
 // agent-workflow-kit/test → agent-workflow-kit
 const kitRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -32,34 +44,66 @@ const between = (text, from, to) => {
 // Collapse all whitespace so assertions survive source re-wrapping (the contract wraps across lines).
 const flat = (s) => s.replace(/\s+/g, ' ');
 
-// The canonical one-line summary — the single source of truth lives in the shared block.
-const CANONICAL = /backends: codex .* — run \/agent-workflow-kit backends/;
+// The tight shared-definition region (the template + invariants live here, before the version block).
+const shared = flat(between(SKILL, '### The one-line backend-status line', '### The version block + welcome mat'));
+const bootstrap = flat(between(SKILL, '### Mode: bootstrap', '### Mode: upgrade'));
+const upgrade = flat(between(SKILL, '### Mode: upgrade', '### Mode: backends'));
 
-describe('upgrade backend-status — shared one-line contract (drift guard)', () => {
-  const shared = flat(between(SKILL, '### The one-line backend-status line', '### Mode: bootstrap'));
-  const bootstrap = flat(between(SKILL, '### Mode: bootstrap', '### Mode: upgrade'));
-  const upgrade = flat(between(SKILL, '### Mode: upgrade', '### Mode: backends'));
-
-  it('defines the detector, the canonical format, and the pointer once', () => {
-    assert.match(shared, /tools\/detect-backends\.mjs/, 'names the backend detector script');
-    assert.match(shared, CANONICAL, 'shows the canonical one-line format + the `backends` pointer');
-    // Single source of truth: the canonical line appears exactly once in the whole SKILL.md.
-    const occurrences = (SKILL.match(new RegExp(CANONICAL.source, 'g')) ?? []).length;
-    assert.equal(occurrences, 1, `the canonical backend line must appear once (single source), found ${occurrences}`);
+describe('backend-status line — machine-composed, paste-verbatim (deterministic-first)', () => {
+  it('names the composer invocation and the paste-verbatim instruction once, in the shared region', () => {
+    assert.match(shared, /tools\/recipes\.mjs --status-line/, 'names the composer flag');
+    assert.match(shared, /paste its single emitted line verbatim/i, 'the paste-verbatim instruction');
+    assert.match(shared, /composes nothing factual/i, 'the agent composes nothing factual');
+    assert.ok(!shared.includes('tools/detect-backends.mjs'), 'the agent no longer drives the raw detector here');
   });
 
-  it('appends an actionable recipe recommendation after the backends pointer (P2-rich)', () => {
-    // The shared status line gains a trailing recipes clause from recommendRecipe(detection), AFTER
-    // the canonical `— run /agent-workflow-kit backends` substring, routing to the recipes surface.
-    assert.match(shared, /tools\/recipes\.mjs/, 'names the recipe planner script as the recommendation source');
+  it('carries a placeholder-only template, exactly once in the whole SKILL.md', () => {
+    assert.match(shared, /never copy this example/i, 'the template is explicitly a placeholder');
+    const TEMPLATE = /backends: <alias>/g;
+    const occurrences = (flat(SKILL).match(TEMPLATE) ?? []).length;
+    assert.equal(occurrences, 1, `the placeholder template must appear exactly once (single source), found ${occurrences}`);
+    // Non-vacuous: the template line is made of <placeholder> tokens, not real values.
+    const placeholders = (shared.match(/<[^>]+>/g) ?? []).length;
+    assert.ok(placeholders >= 4, `expected >=4 <placeholder> tokens in the region, found ${placeholders}`);
+  });
+
+  it('the region contains NO realistic alias+readiness example to contaminate a session (the closed defect class)', () => {
+    for (const alias of Object.values(DISPLAY_ALIASES)) {
+      assert.ok(!new RegExp(`${alias} [✓✗]`).test(shared), `realistic example leaks: "${alias} ✓/✗ …"`);
+    }
+    assert.ok(!/antigravity [✓✗]/.test(shared), 'the old canonical example ("antigravity ✗ …") must stay gone');
+    assert.ok(!/[✓✗] (ready|needs-|degraded)/.test(shared), 'no glyph+readiness pair outside a placeholder');
+  });
+
+  it('composer⟷SKILL: every fixed skeleton fragment of composeStatusLine appears in the template (AD-033 deep-equal shape)', () => {
+    // Derive the fixed skeleton FROM the composer, never a hand-copied string: compose with sentinel
+    // variables, strip them (and the alias/glyph variables) out — what remains is the fixed skeleton
+    // the SKILL template must carry verbatim.
+    const detection = [
+      { name: 'codex-cli-bridge', readiness: 'SENTINEL_R1' },
+      { name: 'antigravity-cli-bridge', readiness: 'SENTINEL_R2' },
+    ];
+    const line = composeStatusLine(detection, { clause: 'SENTINEL_CLAUSE' });
+    const variables = ['SENTINEL_R1', 'SENTINEL_R2', 'SENTINEL_CLAUSE', ...Object.values(DISPLAY_ALIASES), '✓', '✗'];
+    const fragments = variables
+      .reduce((parts, v) => parts.flatMap((p) => p.split(v)), [line])
+      .map((f) => f.trim())
+      .filter((f) => f.length >= 3);
+    assert.ok(fragments.length >= 3, 'the skeleton derivation is non-vacuous');
+    for (const fragment of fragments) {
+      assert.ok(shared.includes(fragment), `SKILL template misses the composer skeleton fragment "${fragment}"`);
+    }
+    // Both glyphs the composer can emit are named inside the template's placeholder.
+    assert.ok(shared.includes('✓') && shared.includes('✗'), 'the template names both readiness glyphs');
+  });
+
+  it('the recipes clause is appended after the backends pointer and is never blank', () => {
     assert.match(shared, /recipes:/, 'the appended clause is prefixed "recipes:"');
     assert.match(shared, /\/agent-workflow-kit recipes/, 'the clause routes to the read-only recipes surface');
-    // Never blank — the none-installed case still recommends Solo + a setup pointer.
+    assert.match(shared, /never blank/i);
     assert.match(shared, /Solo/, 'the none-installed recommendation names Solo');
     assert.match(shared, /\/agent-workflow-kit setup/, 'the none-installed recommendation points at setup');
-    // The recommendation is appended (does not replace) — the backends pointer still appears once.
-    const occurrences = (SKILL.match(new RegExp(CANONICAL.source, 'g')) ?? []).length;
-    assert.equal(occurrences, 1, 'the recipes clause is appended after the unchanged backends pointer');
+    assert.match(shared, /recommendRecipe/, 'the clause source is the tool, named');
   });
 
   it('pins the read-only / non-blocking invariants', () => {

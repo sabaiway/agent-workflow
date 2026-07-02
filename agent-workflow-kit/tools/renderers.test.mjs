@@ -10,9 +10,9 @@ import { toViewModel } from './view-model.mjs';
 const fullEnvelope = () => ({
   deploymentHead: '1.3.0',
   installed: [
-    { member: 'agent-workflow-kit', display: 'kit', version: '1.19.0', state: 'installed', refresh: { behind: false, recommend: null } },
-    { member: 'agent-workflow-memory', display: 'memory', version: '1.0.0', state: 'installed', notes: ['the memory installed here is behind — run `npx @sabaiway/agent-workflow-memory@latest init`'], refresh: { behind: true, recommend: 'npx @sabaiway/agent-workflow-memory@latest init' } },
-    { member: 'agent-workflow-engine', display: 'engine', version: null, state: 'absent', refresh: { behind: false, recommend: null } },
+    { member: 'agent-workflow-kit', display: 'kit', version: '1.19.0', state: 'installed', refresh: { behind: false, recommend: null, freshness: 'not-checked' } },
+    { member: 'agent-workflow-memory', display: 'memory', version: '1.0.0', state: 'installed', notes: ['the memory installed here is behind — run `npx @sabaiway/agent-workflow-memory@latest init`'], refresh: { behind: true, recommend: 'npx @sabaiway/agent-workflow-memory@latest init', freshness: 'behind' } },
+    { member: 'agent-workflow-engine', display: 'engine', version: null, state: 'absent', refresh: { behind: false, recommend: null, freshness: 'not-checked' } },
     { member: 'codex-cli-bridge', display: 'codex-bridge', version: null, state: 'other-tool' },
     { member: 'antigravity-cli-bridge', display: 'antigravity-bridge', version: null, state: 'uncheckable' },
   ],
@@ -177,8 +177,60 @@ describe('renderers — branch coverage (every replaced-function branch)', () =>
     assert.match(out, /agy-run ✗/, 'missing → ✗ (distinct from unknown)');
   });
 
-  it('a member with no refresh object renders without a headline behind-count', () => {
+  it('a member with no refresh object renders without a headline behind-count AND without a verdict (nothing checked)', () => {
     const out = renderPlain({ installed: [{ member: 'agent-workflow-kit', display: 'kit', version: '1.19.0', state: 'installed' }] });
     assert.ok(!/need a refresh/.test(out));
+    assert.ok(!/freshness:/.test(out), 'no vacuous verdict when nothing was checked');
+  });
+});
+
+describe('renderers — the checked-scope freshness verdict (INV-C × INV-B)', () => {
+  const renderPlain = (env) => render(toViewModel(env), { mode: 'plain', width: 80, color: false, ascii: false });
+  const member = (name, display, freshness, extra = {}) => ({
+    member: name,
+    display,
+    version: '9.9.9',
+    state: 'installed',
+    refresh: { behind: freshness === 'behind', recommend: freshness === 'behind' ? 'cmd' : null, freshness },
+    ...extra,
+  });
+
+  it('zero-behind with checked members renders the explicit checked-scope verdict (INV-C)', () => {
+    const out = renderPlain({
+      installed: [
+        member('agent-workflow-kit', 'kit', 'not-checked'),
+        member('agent-workflow-memory', 'memory', 'current'),
+        member('codex-cli-bridge', 'codex-bridge', 'current'),
+      ],
+    });
+    assert.match(out, /freshness: all 2 checked member\(s\) are current\./);
+    assert.ok(!/could not be checked/.test(out));
+  });
+
+  it('an UNCHECKABLE bridge never renders the all-current verdict (INV-C × INV-B)', () => {
+    const out = renderPlain({
+      installed: [
+        member('agent-workflow-memory', 'memory', 'current'),
+        member('codex-cli-bridge', 'codex-bridge', 'unknown', { notes: ["couldn't compare the codex-bridge installed here with the copy bundled with this kit"] }),
+      ],
+    });
+    assert.ok(!/all \d+ checked member\(s\) are current/.test(out), 'the blanket all-current claim is blocked');
+    assert.match(out, /freshness: 1 member\(s\) checked and current · 1 could not be checked\./);
+  });
+
+  it('a MIXED behind+unknown state appends the unknown count to the refresh headline (never swallowed)', () => {
+    const out = renderPlain({
+      installed: [member('agent-workflow-memory', 'memory', 'behind', { notes: ['behind note'] }), member('codex-cli-bridge', 'codex-bridge', 'unknown')],
+    });
+    assert.match(out, /1 member\(s\) need a refresh \(see the ↳ notes above\) · 1 could not be checked\./);
+    assert.ok(!/freshness:/.test(out), 'the zero-behind verdict line renders only at zero-behind');
+  });
+
+  it('behind WITHOUT any unknown keeps the plain refresh headline (no empty tail)', () => {
+    const out = renderPlain({
+      installed: [member('agent-workflow-memory', 'memory', 'behind', { notes: ['behind note'] })],
+    });
+    assert.match(out, /1 member\(s\) need a refresh \(see the ↳ notes above\)\./);
+    assert.ok(!/could not be checked/.test(out));
   });
 });

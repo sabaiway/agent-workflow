@@ -68,6 +68,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/commands.mjs',
       // the pure member-table leaf (shared by family-registry + the npx installer)
       'tools/family-members.mjs',
+      // the dependency-free semver leaf (shared by the installer gate + the bridge freshness probe)
+      'tools/semver-lite.mjs',
       // the status-presenter core (Plan: One-init-freshness §4.2) — runtime modules that MUST ship
       'tools/labels.mjs',
       'tools/presentation.mjs',
@@ -93,7 +95,7 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
   // file accidentally dropped). After an intentional change, run `npm pack ./agent-workflow-kit
   // --dry-run --json` and set the new count here in the same commit.
   it('ships exactly the expected number of files', () => {
-    assert.equal(packed.length, 83, `tarball file count drifted (${packed.length} ≠ 83)`);
+    assert.equal(packed.length, 84, `tarball file count drifted (${packed.length} ≠ 84)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

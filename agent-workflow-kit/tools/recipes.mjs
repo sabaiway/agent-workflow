@@ -283,21 +283,43 @@ export const resolveActivityRecipe = ({ config = {}, readiness = [], activity, s
   };
 };
 
+// ── the one-line backend status (deterministic-first: the tool speaks, the agent pastes) ───────────
+
+// composeStatusLine(detection, recommendation) → the ENTIRE one-line backend-status summary the
+// bootstrap/upgrade report footers print. Machine-composed so the agent pastes it verbatim and
+// composes NOTHING factual (this closes the realistic-example contamination class: a session once
+// echoed SKILL.md's canonical example while the detector said otherwise). Display names come from
+// DISPLAY_ALIASES — the ONE alias table the recommendation clause already uses; ordering is the
+// deterministic BACKEND_PRIORITY (codex before agy), independent of detection emission order.
+// Always exactly one line: no part may carry a newline (pinned by tests).
+export const composeStatusLine = (detection, recommendation) => {
+  const backends = [...detection]
+    .sort((a, b) => priorityIndex(a.name) - priorityIndex(b.name))
+    .map((b) => `${DISPLAY_ALIASES[b.name] ?? b.name} ${b.readiness === READY ? '✓' : '✗'} ${b.readiness}`)
+    .join(' · ');
+  return `backends: ${backends} — run /agent-workflow-kit backends · recipes: ${recommendation.clause} — see /agent-workflow-kit recipes`;
+};
+
 // ── report + CLI ─────────────────────────────────────────────────────────────────
 
-// The structured report behind `--json` — the recipes, the recommendation, and a plan per recipe.
-export const buildReport = (detection) => ({
-  recipes: RECIPES.map(({ id, title, role, minBackends, degradesTo, summary }) => ({
-    id,
-    title,
-    role,
-    minBackends,
-    degradesTo,
-    summary,
-  })),
-  recommendation: recommendRecipe(detection),
-  plans: RECIPES.map((r) => planRecipe(r.id, detection)),
-});
+// The structured report behind `--json` — the recipes, the recommendation, a plan per recipe, and
+// (additive) the pasteable one-line backend status composed from the same detection.
+export const buildReport = (detection) => {
+  const recommendation = recommendRecipe(detection);
+  return {
+    recipes: RECIPES.map(({ id, title, role, minBackends, degradesTo, summary }) => ({
+      id,
+      title,
+      role,
+      minBackends,
+      degradesTo,
+      summary,
+    })),
+    recommendation,
+    plans: RECIPES.map((r) => planRecipe(r.id, detection)),
+    statusLine: composeStatusLine(detection, recommendation),
+  };
+};
 
 // formatRecipes(detection) → deterministic human advisor text: the four recipes, the recommendation,
 // and the per-recipe plan for the current environment (degradation reasons + dispatch + notes).
@@ -320,20 +342,37 @@ export const formatRecipes = (detection) => {
   return lines.join('\n');
 };
 
+// The full argv vocabulary — anything else rejects LOUDLY. The old parse silently routed unknown
+// args into the multi-line human render; with `--status-line` (whose output is pasted as fact) a
+// mistyped flag masquerading as a mode would be a silent failure, so the parse is strict now.
+const KNOWN_ARGS = new Set(['--help', '-h', '--json', '--status-line']);
+
 const main = (argv) => {
   if (argv.includes('--help') || argv.includes('-h')) {
     console.log(`recipes — read-only orchestration-recipe advisor for the agent-workflow family.
 
 Usage:
-  node recipes.mjs [--json]
+  node recipes.mjs [--json | --status-line]
 
 Lists the four recipes (Solo / Reviewed / Council / Delegated) and, from the read-only backend
-detector, plans + recommends one for the current environment. Detection only — never writes, never
-commits, never runs a subscription CLI.`);
+detector, plans + recommends one for the current environment. --status-line prints exactly ONE
+line — the machine-composed backend-status summary the bootstrap/upgrade reports paste verbatim.
+--json emits the structured report (incl. the same line as \`statusLine\`); the two are mutually
+exclusive. Detection only — never writes, never commits, never runs a subscription CLI.`);
     return;
   }
+  const unknown = argv.find((a) => !KNOWN_ARGS.has(a));
+  if (unknown !== undefined) {
+    console.error(`[agent-workflow-kit] unknown argument: ${unknown}`);
+    process.exit(1);
+  }
+  if (argv.includes('--json') && argv.includes('--status-line')) {
+    console.error('[agent-workflow-kit] --json and --status-line are mutually exclusive — pick one output');
+    process.exit(1);
+  }
   const detection = detectBackends();
-  if (argv.includes('--json')) console.log(JSON.stringify(buildReport(detection), null, 2));
+  if (argv.includes('--status-line')) console.log(composeStatusLine(detection, recommendRecipe(detection)));
+  else if (argv.includes('--json')) console.log(JSON.stringify(buildReport(detection), null, 2));
   else console.log(formatRecipes(detection));
 };
 

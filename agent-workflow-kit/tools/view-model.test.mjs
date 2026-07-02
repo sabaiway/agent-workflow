@@ -7,16 +7,16 @@ import { INTERNAL_RENDER_FORBIDDEN } from './labels.mjs';
 const fullEnvelope = () => ({
   deploymentHead: '1.3.0',
   installed: [
-    { member: 'agent-workflow-kit', display: 'kit', version: '1.19.0', state: 'installed', refresh: { behind: false, recommend: null } },
+    { member: 'agent-workflow-kit', display: 'kit', version: '1.19.0', state: 'installed', refresh: { behind: false, recommend: null, freshness: 'not-checked' } },
     {
       member: 'agent-workflow-memory',
       display: 'memory',
       version: '1.0.0',
       state: 'installed',
       notes: ['the memory installed here is behind — run `npx @sabaiway/agent-workflow-memory@latest init`'],
-      refresh: { behind: true, recommend: 'npx @sabaiway/agent-workflow-memory@latest init' },
+      refresh: { behind: true, recommend: 'npx @sabaiway/agent-workflow-memory@latest init', freshness: 'behind' },
     },
-    { member: 'agent-workflow-engine', display: 'engine', version: null, state: 'absent', refresh: { behind: false, recommend: null } },
+    { member: 'agent-workflow-engine', display: 'engine', version: null, state: 'absent', refresh: { behind: false, recommend: null, freshness: 'not-checked' } },
     { member: 'codex-cli-bridge', display: 'codex-bridge', version: null, state: 'other-tool' },
     { member: 'antigravity-cli-bridge', display: 'antigravity-bridge', version: null, state: 'uncheckable' },
   ],
@@ -63,16 +63,31 @@ describe('view-model — members', () => {
     assert.equal(vm.members[4].statePhrase, "couldn't be checked (a permission error)");
   });
 
-  it('headline counts total members + how many are behind (the only use of refresh.behind on the CLI)', () => {
+  it('headline counts total + behind + the INV-C verdict scope (checked vs unknown)', () => {
     const vm = toViewModel(fullEnvelope());
-    assert.deepEqual(vm.headline, { total: 5, behind: 1 });
+    // memory carries freshness 'behind' → it is both the behind count and the only checked member here.
+    assert.deepEqual(vm.headline, { total: 5, behind: 1, checked: 1, unknown: 0 });
   });
 
-  it('a member without a refresh object defaults to not-behind (additive back-compat)', () => {
+  it('an unknown freshness is counted separately from checked (INV-B never collapses)', () => {
+    const vm = toViewModel({
+      installed: [
+        { member: 'agent-workflow-memory', display: 'memory', version: '1.7.0', state: 'installed', refresh: { behind: false, recommend: null, freshness: 'current' } },
+        { member: 'codex-cli-bridge', display: 'codex-bridge', version: '2.1.0', state: 'installed', refresh: { behind: false, recommend: null, freshness: 'unknown' } },
+      ],
+    });
+    assert.deepEqual(vm.headline, { total: 2, behind: 0, checked: 1, unknown: 1 });
+  });
+
+  it('a member without a refresh object defaults to not-behind + not-checked (additive back-compat)', () => {
     const vm = toViewModel({ installed: [{ member: 'agent-workflow-kit', display: 'kit', version: '1.19.0', state: 'installed' }] });
     assert.equal(vm.members[0].behind, false);
     assert.equal(vm.members[0].recommend, null);
     assert.deepEqual(vm.members[0].notes, []);
+    assert.equal(vm.members[0].freshness, 'not-checked');
+    // a legacy refresh WITHOUT the freshness field: behind stays behind, current is never assumed.
+    const legacy = toViewModel({ installed: [{ member: 'x', display: 'x', version: '1.0.0', state: 'installed', refresh: { behind: true, recommend: 'cmd' } }] });
+    assert.equal(legacy.members[0].freshness, 'behind');
   });
 });
 
