@@ -35,6 +35,10 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { copyTreeRefresh } from '../tools/fs-safe.mjs';
+// Dependency-free semver, shared with the family registry's bridge freshness probe (one leaf, no
+// second drifting copy). The null-on-unparseable contract is load-bearing here: legacy installs
+// predate any version stamp, so an unparseable side means "no gate", never a false ordering.
+import { compareSemver } from '../tools/semver-lite.mjs';
 // The ONE registry of family members (npm packages, kinds). The init-refresh cascade derives its
 // membership from this table — no second source of "who gets refreshed" — so it can't drift from the
 // manifests (a drift-guard test pins the derivation). Imported from the DATA LEAF (family-members.mjs),
@@ -79,22 +83,6 @@ const readVersion = async () => {
   } catch {
     return 'unknown';
   }
-};
-
-// Dependency-free semver: parse the leading `x.y.z` (prerelease/build ignored — kit versions are
-// plain). compareSemver returns -1 | 0 | 1, or null when either side is unparseable (legacy installs
-// predate any version stamp). No `let`: a small functional comparison (AGENTS.md §2.3).
-const parseSemver = (str) => {
-  const m = typeof str === 'string' ? str.trim().match(/^(\d+)\.(\d+)\.(\d+)/) : null;
-  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
-};
-
-const compareSemver = (a, b) => {
-  const pa = parseSemver(a);
-  const pb = parseSemver(b);
-  if (!pa || !pb) return null;
-  const firstDiff = [0, 1, 2].map((i) => (pa[i] === pb[i] ? 0 : pa[i] < pb[i] ? -1 : 1)).find((c) => c !== 0);
-  return firstDiff ?? 0;
 };
 
 // Extract the version that is a DIRECT child of the top-level `metadata:` key — never a top-level

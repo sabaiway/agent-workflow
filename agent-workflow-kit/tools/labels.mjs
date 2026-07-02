@@ -41,6 +41,19 @@ export const STATE_PUBLIC = Object.freeze({
 // "hidden fence" / marker terms. ('hidden' here is the PUBLIC visibility word, not the internal fence.)
 export const VISIBILITY_PUBLIC = Object.freeze({ visible: 'visible', hidden: 'hidden', ambiguous: 'unclear' });
 
+// ── refresh freshness tokens (PUBLIC — the envelope's installed[].refresh.freshness) ────────────────
+// The checked-vs-unknown signal the zero-behind verdict scopes itself with (INV-C): `behind:false`
+// alone cannot distinguish "checked, current" from "could not be checked".
+//   'current' / 'behind' — a freshness probe RAN and concluded (these two are the "checked" scope);
+//   'unknown'            — a probe ran but could not conclude (INV-B: never collapsed to a claim
+//                          in either direction);
+//   'not-checked'        — no freshness probe exists for this member/state (e.g. the kit itself:
+//                          its freshness is the npx installer's axis, never checked here).
+export const FRESH_CURRENT = 'current';
+export const FRESH_BEHIND = 'behind';
+export const FRESH_UNKNOWN = 'unknown';
+export const FRESH_NOT_CHECKED = 'not-checked';
+
 // Short, user-facing labels for the version block (kit · memory · engine · codex-bridge · …), so the
 // render is deterministic and the agent never invents a label.
 export const DISPLAY_NAMES = Object.freeze({

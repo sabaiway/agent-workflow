@@ -17,10 +17,13 @@
 // side effects on import (the isDirectRun idiom) — tests import the helpers with nothing run.
 
 import { existsSync, statSync, readFileSync, lstatSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { join, resolve, dirname } from 'node:path';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { resolveDir, detectBackends, findOnPath } from './detect-backends.mjs';
+// The ONE dependency-free semver (shared with bin/install.mjs) — the bridge freshness probe compares
+// the placed version against the kit-bundled mirror; null-on-unparseable maps to 'unknown' (INV-B).
+import { parseSemver, compareSemver } from './semver-lite.mjs';
 import { validateManifest, readAuthoritativeVersion, UNSUPPORTED, INVALID } from './manifest/validate.mjs';
 import { START_MARKER, excludePath, inferVisibility } from './hide-footprint.mjs';
 import { readEngineFragment, ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
@@ -57,6 +60,10 @@ import {
   VISIBILITY_PUBLIC,
   DISPLAY_NAMES,
   displayOf,
+  FRESH_CURRENT,
+  FRESH_BEHIND,
+  FRESH_UNKNOWN,
+  FRESH_NOT_CHECKED,
 } from './labels.mjs';
 // The capability-adaptive direct-CLI presenter (Plan §4.2/§4.5): the surface detector, the
 // envelope→ViewModel transform, and the plain/ansi renderers. main() composes them; the agent-mediated
@@ -135,7 +142,18 @@ export const classifyMember = (member, deps = {}) => {
   const report = markerPresent ? validate(skillDir) : { result: NOT_INSTALLED };
   const manifestState = classifyState(markerPresent, report, member);
   const installed = manifestState !== NOT_INSTALLED;
-  const version = manifestState === OK ? readVersion(skillDir).version ?? null : null;
+  // Crash-safe version read: readAuthoritativeVersion THROWS on a present-but-unreadable SKILL.md
+  // (stat needs no read permission, readFileSync does — a TOCTOU/EACCES window after validate).
+  // The read-only survey must never crash on it: degrade to null, which the bridge freshness probe
+  // then reports as 'unknown' (INV-B), never as a throw and never as a silent claim.
+  const version = (() => {
+    if (manifestState !== OK) return null;
+    try {
+      return readVersion(skillDir).version ?? null;
+    } catch {
+      return null;
+    }
+  })();
 
   return { name: member.name, kind: member.kind, installed, skillDir: installed ? skillDir : null, manifestState, version };
 };
@@ -165,6 +183,51 @@ export const MEMORY_ORCH_TEMPLATE_REL = 'references/templates/orchestration.json
 const MEMORY_BEHIND_NOTE =
   "the memory installed here doesn't include the current orchestration template — refresh it with `npx @sabaiway/agent-workflow-memory@latest init`, then restart the session.";
 
+// ── the bridge freshness probe (deterministic-first — INV-A / INV-B) ─────────────
+// The bridges are not npm packages: their ONLY delivery channel is the copy bundled inside this kit
+// (`bridges/<name>/`, placed by `/agent-workflow-kit setup`). A placed bridge therefore has exactly
+// one authoritative freshness comparison — its installed version (readAuthoritativeVersion, already
+// on the row) vs the kit-bundled mirror's capability.json. BOTH are local files, so the "never
+// checks npm" invariant holds. The probe sets the internal row field `freshness`
+// ('behind' | 'current' | 'unknown'); refreshOf derives the public refresh block STRUCTURALLY from
+// that field (INV-2 — never parsed from caveat text). INV-B: an unreadable/unparseable version on
+// EITHER side degrades to 'unknown' + a plain-language note — never a false claim in either direction.
+const __dirname = dirname(fileURLToPath(import.meta.url));
+// bridges/ ships beside tools/ in both the repo and the installed kit (the setup-backends.mjs
+// resolution), so this resolves in both. Injectable via deps.bundleRoot for tests.
+const BUNDLE_ROOT = resolve(__dirname, '..', 'bridges');
+
+// Crash-safe on the bundled side: an absent / unreadable / malformed bundle manifest → null (INV-B
+// 'unknown'), never a throw — the read-only survey must survive a broken kit install.
+const readBundledBridgeVersion = (name, deps = {}) => {
+  const read = deps.readFile ?? readFileSync;
+  const root = deps.bundleRoot ?? BUNDLE_ROOT;
+  try {
+    const manifest = JSON.parse(String(read(join(root, name, 'capability.json'), 'utf8')));
+    return typeof manifest.version === 'string' ? manifest.version : null;
+  } catch {
+    return null;
+  }
+};
+
+const bridgeBehindNote = (display, placed, bundled) =>
+  `the ${display} installed here (v${placed}) is older than the copy bundled with this kit (v${bundled}) — refresh it with \`/agent-workflow-kit setup\`.`;
+// The recovery differs per failing SIDE: `setup` re-places FROM the bundle, so it can repair an
+// unreadable INSTALLED copy but can never repair an unreadable BUNDLED copy — that needs a kit
+// refresh first (the npx installer), then `setup`.
+const bridgeUnknownNote = (display, side, recovery) =>
+  `couldn't compare the ${display} installed here with the copy bundled with this kit (${side}), so its freshness is unknown — ${recovery}.`;
+const UNKNOWN_SIDES = Object.freeze({
+  placed: {
+    side: 'the installed copy has no readable version',
+    recovery: '`/agent-workflow-kit setup` re-places the bundled copy',
+  },
+  bundled: {
+    side: "the kit's bundled copy has no readable version",
+    recovery: 'refresh the kit first (`npx @sabaiway/agent-workflow-kit@latest init`), then `/agent-workflow-kit setup`',
+  },
+});
+
 export const surveyFamily = (deps = {}) =>
   FAMILY_MEMBERS.map((member) => {
     const row = classifyMember(member, deps);
@@ -184,8 +247,30 @@ export const surveyFamily = (deps = {}) =>
     // Only attach when it is provably ABSENT (a non-ENOENT probe error → 'unknown' → skip, never a
     // false "missing" claim). Mirrors the engine-caveat SHAPE; keyed on the Step-2.4 required asset.
     if (row.kind === 'memory-substrate' && row.manifestState === OK && row.skillDir) {
-      if (probeMarker(join(row.skillDir, MEMORY_ORCH_TEMPLATE_REL), deps) === 'absent') {
+      const templateProbe = probeMarker(join(row.skillDir, MEMORY_ORCH_TEMPLATE_REL), deps);
+      if (templateProbe === 'absent') {
         row.caveats = [...(row.caveats ?? []), MEMORY_BEHIND_NOTE];
+      } else if (templateProbe === 'unknown') {
+        // Could not verify → this row must not be counted "checked, current" by the verdict (INV-B).
+        row.freshness = FRESH_UNKNOWN;
+      }
+    }
+    // Bridge freshness probe (INV-A / INV-B): only for a provably-OURS placed bridge (manifestState
+    // OK). Compares two LOCAL files; a non-OK / absent bridge is out of scope ('not-checked').
+    if (row.kind === 'execution-backend' && row.manifestState === OK && row.skillDir) {
+      const bundled = readBundledBridgeVersion(row.name, deps);
+      const cmp = compareSemver(row.version, bundled);
+      if (cmp === null) {
+        const { side, recovery } = parseSemver(row.version) === null ? UNKNOWN_SIDES.placed : UNKNOWN_SIDES.bundled;
+        row.freshness = FRESH_UNKNOWN;
+        row.caveats = [...(row.caveats ?? []), bridgeUnknownNote(displayOf(row.name), side, recovery)];
+      } else if (cmp < 0) {
+        row.freshness = FRESH_BEHIND;
+        row.caveats = [...(row.caveats ?? []), bridgeBehindNote(displayOf(row.name), row.version, bundled)];
+      } else {
+        // Equal OR newer-than-bundled → not behind. A newer placed bridge is a Phase-2 concern for
+        // the refresh DRIVER (INV-D never-downgrade skip); the read-only status axis never flags it.
+        row.freshness = FRESH_CURRENT;
       }
     }
     return row;
@@ -376,18 +461,31 @@ export const surveyBridges = (deps = {}) => {
   });
 };
 
-// INV-2 (structural refresh — additive, derived, never parsed from a caveat string). A member is
-// `behind` when it is a refreshable CORE member (memory / engine) carrying a refresh-recommending
-// caveat — surveyFamily attaches caveats ONLY to those two kinds, and today every such caveat is
-// refresh-recommending. `recommend` is composed from the member's npm package in the ONE registry
-// (FAMILY_MEMBERS[].npm), never extracted from the caveat text. The kit (composition-root) + the two
-// bridges (execution-backend) never carry such a caveat, so they derive { behind:false, recommend:null }
-// — gated by the CAVEAT, not by npm-nullness (the kit's npm is non-null; only the bridges are null).
+// INV-2 (structural refresh — additive, derived, never parsed from a caveat string), per KIND:
+//   • memory / engine (REFRESHABLE_KINDS): `behind` ⟷ an OK row carrying a refresh-recommending
+//     caveat (surveyFamily attaches caveats to those kinds only then, and every such caveat is
+//     refresh-recommending); `recommend` is composed from FAMILY_MEMBERS[].npm — never the caveat text.
+//   • execution-backend: `behind` ⟷ the bridge freshness probe's row field (freshness === 'behind');
+//     `recommend` is composed PER-KIND — bridges have npm:null (placed by `setup`, never npx), so the
+//     runnable recovery is `/agent-workflow-kit setup`, never an npx composition.
+//   • composition-root (the kit): no freshness probe exists on this surface (the two-axes doctrine —
+//     kit freshness is the npx installer's axis) → never behind, 'not-checked'.
+// `freshness` is the checked-vs-unknown signal the zero-behind verdict scopes itself with (INV-C):
+// behind:false alone cannot distinguish "checked, current" from "could not be checked".
 const REFRESHABLE_KINDS = new Set(['memory-substrate', 'methodology-engine']);
 const npmOf = (name) => FAMILY_MEMBERS.find((m) => m.name === name)?.npm ?? null;
+export const BRIDGE_REFRESH_RECOMMEND = '/agent-workflow-kit setup';
 const refreshOf = (m) => {
+  if (m.kind === 'execution-backend') {
+    const freshness = m.freshness ?? FRESH_NOT_CHECKED;
+    const behind = freshness === FRESH_BEHIND;
+    return { behind, recommend: behind ? BRIDGE_REFRESH_RECOMMEND : null, freshness };
+  }
   const behind = REFRESHABLE_KINDS.has(m.kind) && Boolean(m.caveats?.length);
-  return { behind, recommend: behind ? `npx ${npmOf(m.name)}@latest init` : null };
+  const freshness = REFRESHABLE_KINDS.has(m.kind) && m.manifestState === OK
+    ? m.freshness ?? (behind ? FRESH_BEHIND : FRESH_CURRENT)
+    : FRESH_NOT_CHECKED;
+  return { behind, recommend: behind ? `npx ${npmOf(m.name)}@latest init` : null, freshness };
 };
 
 export const buildEnvelope = (family, project = null, extras = {}) => {
@@ -399,7 +497,7 @@ export const buildEnvelope = (family, project = null, extras = {}) => {
       state: STATE_PUBLIC[m.manifestState] ?? STATE_PUBLIC[UNKNOWN],
     };
     if (m.caveats?.length) entry.notes = m.caveats; // plain-language observations (Steps 2.2 / engine)
-    entry.refresh = refreshOf(m); // additive (INV-1): always present; { behind, recommend } (INV-2)
+    entry.refresh = refreshOf(m); // additive (INV-1): always present; { behind, recommend, freshness } (INV-2)
     return entry;
   });
   const envelope = { deploymentHead: EXPECTED_WORKFLOW_VERSION, installed };

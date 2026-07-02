@@ -34,7 +34,18 @@ const renderMembers = (vm, { color, glyph }) => {
   // refresh.behind drives a HEADLINE COUNT only — the recovery command stays in the verbatim notes
   // above (the direct CLI never dedupes, never re-prints it). Omitted when nothing is behind.
   if (vm.headline.behind > 0) {
-    lines.push(`  ${vm.headline.behind} member(s) need a refresh (see the ${glyph.note} notes above).`);
+    // A mixed behind+unknown state must not swallow the unknown count (INV-B): append it here so an
+    // uncheckable member never disappears behind the refresh headline.
+    const unknownTail = vm.headline.unknown > 0 ? ` · ${vm.headline.unknown} could not be checked` : '';
+    lines.push(`  ${vm.headline.behind} member(s) need a refresh (see the ${glyph.note} notes above)${unknownTail}.`);
+  } else if (vm.headline.unknown > 0) {
+    // INV-B × INV-C: an uncheckable member BLOCKS the all-current verdict — state the split, never a
+    // blanket freshness claim in either direction.
+    lines.push(`  freshness: ${vm.headline.checked} member(s) checked and current · ${vm.headline.unknown} could not be checked.`);
+  } else if (vm.headline.checked > 0) {
+    // INV-C: the zero-behind verdict is composed by the TOOL, scoped to what was actually checked —
+    // the agent has no gap to fill with an "everything is fresh" gloss.
+    lines.push(`  freshness: all ${vm.headline.checked} checked member(s) are current.`);
   }
   return lines;
 };

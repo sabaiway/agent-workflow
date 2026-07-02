@@ -21,6 +21,9 @@ const memberVm = (m) => {
     notes: m.notes ?? [], // the verbatim caveats — printed as ↳ sub-lines (INV-3: no dedupe)
     behind: Boolean(refresh.behind), // used ONLY for the headline count on the direct CLI (INV-3)
     recommend: refresh.recommend ?? null,
+    // The checked-vs-unknown freshness signal (INV-C): 'current' | 'behind' | 'unknown' | 'not-checked'.
+    // An envelope predating the field defaults to not-checked (behind stays behind) — never a claim.
+    freshness: refresh.freshness ?? (refresh.behind ? 'behind' : 'not-checked'),
   };
 };
 
@@ -82,7 +85,14 @@ export const toViewModel = (envelope = {}) => {
   return {
     deploymentHead: envelope.deploymentHead ?? null,
     members,
-    headline: { total: members.length, behind: members.filter((m) => m.behind).length },
+    headline: {
+      total: members.length,
+      behind: members.filter((m) => m.behind).length,
+      // The zero-behind verdict scope (INV-C): checked = a freshness probe RAN and concluded;
+      // unknown = it ran but could not conclude (INV-B — blocks the all-current verdict).
+      checked: members.filter((m) => m.freshness === 'current' || m.freshness === 'behind').length,
+      unknown: members.filter((m) => m.freshness === 'unknown').length,
+    },
     bridges: envelope.bridges ? envelope.bridges.map(bridgeVm) : null,
     project: projectVm(envelope.project),
   };

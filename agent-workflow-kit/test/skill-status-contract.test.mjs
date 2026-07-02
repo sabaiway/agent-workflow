@@ -22,6 +22,12 @@ describe('SKILL.md — status reads refresh; the shared notes-based footers stay
     assert.match(skill, /refresh\.recommend/, 'status must show the verbatim refresh.recommend command');
   });
 
+  it('Mode: status surfaces refresh.freshness "unknown" — never counted as current, never as behind', () => {
+    assert.match(skill, /refresh\.freshness/, 'status must read the checked-vs-unknown signal');
+    assert.match(skill, /couldn't be checked/i, 'an unknown member gets a plain "couldn\'t be checked" label');
+    assert.match(skill, /never counted as current and never as behind/i, 'INV-B: no claim in either direction');
+  });
+
   it('Mode: status does NOT also paste the English notes caveats (no command duplication on the agent surface)', () => {
     assert.match(skill, /do not also paste the English `notes` caveats/i);
   });

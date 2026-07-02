@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   RECIPES,
   BACKEND_ROLES,
@@ -15,6 +15,8 @@ import {
   recommendRecipe,
   resolveActivityRecipe,
   formatRecipes,
+  composeStatusLine,
+  buildReport,
 } from './recipes.mjs';
 import { READY, NEEDS_SKILL, NEEDS_CLI, NEEDS_CREDENTIALS, DEGRADED } from './detect-backends.mjs';
 
@@ -530,15 +532,93 @@ describe('resolveActivityRecipe — defensive validity + purity', () => {
   });
 });
 
+// ── composeStatusLine (the machine-composed one-line backend status) ───────────────
+
+describe('composeStatusLine — the tool speaks, the agent pastes', () => {
+  it('composes the WHOLE line: backend parts · backends pointer · recipes clause · recipes pointer', () => {
+    const det = detect(READY, NEEDS_CREDENTIALS);
+    const rec = recommendRecipe(det);
+    assert.equal(
+      composeStatusLine(det, rec),
+      `backends: codex ✓ ready · agy ✗ needs-credentials — run /agent-workflow-kit backends · recipes: ${rec.clause} — see /agent-workflow-kit recipes`,
+    );
+  });
+
+  it('is exactly one line for every readiness mix (no part may inject a newline)', () => {
+    for (const det of [detect(READY, READY), detect(NEEDS_SKILL, DEGRADED), detect(NEEDS_CLI, NEEDS_CREDENTIALS)]) {
+      assert.ok(!composeStatusLine(det, recommendRecipe(det)).includes('\n'));
+    }
+  });
+
+  it('is deterministic under reversed detection order (codex renders before agy)', () => {
+    const forward = detect(READY, DEGRADED);
+    const reversed = [...forward].reverse();
+    assert.equal(composeStatusLine(forward, recommendRecipe(forward)), composeStatusLine(reversed, recommendRecipe(reversed)));
+    assert.match(composeStatusLine(reversed, recommendRecipe(reversed)), /codex .* agy/);
+  });
+
+  it('display names come from the ONE alias table (DISPLAY_ALIASES) — never the raw manifest names', () => {
+    const line = composeStatusLine(detect(READY, READY), { clause: 'x' });
+    for (const alias of Object.values(DISPLAY_ALIASES)) assert.ok(line.includes(`${alias} `), `uses the "${alias}" alias`);
+    assert.ok(!line.includes('cli-bridge'), 'raw manifest names never leak into the line');
+  });
+
+  it('ready → ✓; every non-ready readiness → ✗ + its own token', () => {
+    const line = composeStatusLine(detect(READY, NEEDS_SKILL), { clause: 'x' });
+    assert.match(line, /codex ✓ ready/);
+    assert.match(line, /agy ✗ needs-skill/);
+  });
+});
+
+describe('buildReport — additive statusLine field', () => {
+  it('statusLine equals composeStatusLine over the same detection + recommendation', () => {
+    const det = detect(READY, NEEDS_SKILL);
+    const report = buildReport(det);
+    assert.equal(report.statusLine, composeStatusLine(det, report.recommendation));
+  });
+});
+
 describe('recipes.mjs CLI — read-only, exit 0', () => {
   it('prints the recipes and exits 0', () => {
     const out = execFileSync(process.execPath, [SCRIPT], { encoding: 'utf8', env: { ...process.env, PATH: '' } });
     for (const title of ['Solo', 'Reviewed', 'Council', 'Delegated']) assert.match(out, new RegExp(title));
   });
-  it('--json emits parseable JSON with the recommendation', () => {
+  it('--json emits parseable JSON with the recommendation + the additive statusLine', () => {
     const out = execFileSync(process.execPath, [SCRIPT, '--json'], { encoding: 'utf8', env: { ...process.env, PATH: '' } });
     const parsed = JSON.parse(out);
     assert.ok(Array.isArray(parsed.recipes));
     assert.ok(parsed.recommendation && typeof parsed.recommendation.recipe === 'string');
+    assert.equal(typeof parsed.statusLine, 'string');
+    assert.match(parsed.statusLine, /^backends: /);
+  });
+});
+
+describe('recipes.mjs CLI — --status-line + strict args (no silent fallthrough)', () => {
+  it('--status-line emits exactly one line matching the composed contract', () => {
+    const out = execFileSync(process.execPath, [SCRIPT, '--status-line'], { encoding: 'utf8', env: { ...process.env, PATH: '' } });
+    assert.ok(out.endsWith('\n'), 'ends with the single trailing newline');
+    const line = out.slice(0, -1);
+    assert.ok(!line.includes('\n'), 'exactly one line');
+    assert.match(line, /^backends: /);
+    assert.match(line, / — run \/agent-workflow-kit backends · recipes: /);
+    assert.match(line, / — see \/agent-workflow-kit recipes$/);
+  });
+
+  it('rejects an unknown/mistyped argument loudly — never the silent multi-line human render', () => {
+    const r = spawnSync(process.execPath, [SCRIPT, '--status-lien'], { encoding: 'utf8', env: { ...process.env, PATH: '' } });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /unknown argument: --status-lien/);
+    assert.equal(r.stdout, '');
+  });
+
+  it('rejects --json + --status-line together (each owns stdout whole)', () => {
+    const r = spawnSync(process.execPath, [SCRIPT, '--json', '--status-line'], { encoding: 'utf8', env: { ...process.env, PATH: '' } });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /mutually exclusive/);
+  });
+
+  it('--help mentions the --status-line mode', () => {
+    const out = execFileSync(process.execPath, [SCRIPT, '--help'], { encoding: 'utf8', env: { ...process.env, PATH: '' } });
+    assert.match(out, /--status-line/);
   });
 });

@@ -1,7 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, cpSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import {
   FAMILY_MEMBERS,
@@ -292,6 +293,149 @@ describe('surveyFamily — memory offline caveat (orchestration template probe)'
     const rows = surveyFamily({ stat: ENOENT, getenv: {}, home: '/home/test' });
     assert.equal(memoryRow(rows).caveats, undefined);
   });
+
+  it('an UNCHECKABLE probe is never counted "checked, current" — freshness degrades to unknown (INV-B)', () => {
+    const env = buildEnvelope(surveyFamily(memoryDeps(EACCES)));
+    assert.equal(env.installed.find((e) => e.member === 'agent-workflow-memory').refresh.freshness, 'unknown');
+    // …while a verified template keeps the checked-current claim.
+    const ok = buildEnvelope(surveyFamily(memoryDeps(null)));
+    assert.equal(ok.installed.find((e) => e.member === 'agent-workflow-memory').refresh.freshness, 'current');
+  });
+});
+
+// ── surveyFamily: the bridge freshness probe (INV-A / INV-B) ────────────────────────
+
+describe('surveyFamily — bridge freshness probe (placed vs kit-bundled mirror)', () => {
+  // Only the codex bridge validates as ok here; every other member goes FOREIGN — so only the codex
+  // row is eligible for the probe. The bundled side is modeled via deps.readFile against the
+  // resolved `<bundleRoot>/<name>/capability.json` path (both sides stay local files).
+  const bridgeValidate = (dir) =>
+    String(dir).includes('codex-cli-bridge')
+      ? { result: VALID, name: 'codex-cli-bridge', kind: 'execution-backend', available: true }
+      : { result: VALID, name: 'x', kind: 'x', available: true };
+  const bundlePath = join('codex-cli-bridge', 'capability.json');
+  const bridgeDeps = ({ placed = '2.0.0', bundled = '2.1.0' } = {}) => ({
+    stat: () => ({ isFile: () => true }),
+    getenv: {},
+    home: '/home/test',
+    validate: bridgeValidate,
+    readVersion: () => ({ version: placed }),
+    readFile: (p) => {
+      if (!String(p).endsWith(bundlePath)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      if (bundled === null) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      return typeof bundled === 'string' && bundled.startsWith('{') ? bundled : JSON.stringify({ version: bundled });
+    },
+  });
+  const codexEnvelope = (deps) =>
+    buildEnvelope(surveyFamily(deps)).installed.find((e) => e.member === 'codex-cli-bridge');
+
+  it('INV-A: a placed bridge OLDER than the bundled mirror is behind — caveat + runnable per-kind recommend', () => {
+    const e = codexEnvelope(bridgeDeps({ placed: '2.0.0', bundled: '2.1.0' }));
+    assert.deepEqual(e.refresh, { behind: true, recommend: '/agent-workflow-kit setup', freshness: 'behind' });
+    assert.equal(e.notes.length, 1);
+    assert.match(e.notes[0], /older than the copy bundled with this kit/);
+    assert.match(e.notes[0], /v2\.0\.0/);
+    assert.match(e.notes[0], /v2\.1\.0/);
+    assert.match(e.notes[0], /\/agent-workflow-kit setup/, 'the caveat names the runnable recovery');
+    assert.ok(!/npx /.test(e.refresh.recommend), 'a bridge recommend is never an npx composition (npm is null)');
+  });
+
+  it('a placed bridge EQUAL to the bundled mirror is checked-current — no caveat, no behind', () => {
+    const e = codexEnvelope(bridgeDeps({ placed: '2.1.0', bundled: '2.1.0' }));
+    assert.deepEqual(e.refresh, { behind: false, recommend: null, freshness: 'current' });
+    assert.equal(e.notes, undefined);
+  });
+
+  it('a placed bridge NEWER than the bundled mirror is NOT behind (the status axis never flags a downgrade)', () => {
+    const e = codexEnvelope(bridgeDeps({ placed: '2.2.0', bundled: '2.1.0' }));
+    assert.deepEqual(e.refresh, { behind: false, recommend: null, freshness: 'current' });
+    assert.equal(e.notes, undefined);
+  });
+
+  it('INV-B: an unreadable PLACED version → unknown note, no crash, no behind AND no current claim; recovery = setup (it re-places from the intact bundle)', () => {
+    const e = codexEnvelope(bridgeDeps({ placed: null, bundled: '2.1.0' }));
+    assert.deepEqual(e.refresh, { behind: false, recommend: null, freshness: 'unknown' });
+    assert.equal(e.notes.length, 1);
+    assert.match(e.notes[0], /couldn't compare/);
+    assert.match(e.notes[0], /installed copy has no readable version/);
+    assert.match(e.notes[0], /\/agent-workflow-kit setup/, 'setup can repair an unreadable INSTALLED copy');
+    assert.ok(!/npx /.test(e.notes[0]), 'no kit-refresh detour when the bundle itself is intact');
+  });
+
+  it('INV-B: an unreadable BUNDLED mirror → unknown note whose recovery is a KIT refresh (setup would re-copy the same broken bundle)', () => {
+    const e = codexEnvelope(bridgeDeps({ placed: '2.1.0', bundled: null }));
+    assert.deepEqual(e.refresh, { behind: false, recommend: null, freshness: 'unknown' });
+    assert.match(e.notes[0], /bundled copy has no readable version/);
+    assert.match(e.notes[0], /npx @sabaiway\/agent-workflow-kit@latest init/, 'the broken side is the bundle — refresh the kit first');
+  });
+
+  it('INV-B: a MALFORMED bundled manifest degrades to unknown, never a throw', () => {
+    const e = codexEnvelope(bridgeDeps({ placed: '2.1.0', bundled: '{ not json' }));
+    assert.equal(e.refresh.freshness, 'unknown');
+  });
+
+  it('a non-OK (foreign) bridge is out of the probe scope — not-checked, no caveat', () => {
+    // With the shared FOREIGN-everything validate, the codex row never reaches OK → no probe runs.
+    const e = codexEnvelope({ ...bridgeDeps({}), validate: () => ({ result: VALID, name: 'x', kind: 'x', available: true }) });
+    assert.deepEqual(e.refresh, { behind: false, recommend: null, freshness: 'not-checked' });
+    assert.equal(e.notes, undefined);
+  });
+
+  it('the DEFAULT bundle root resolves the real in-repo mirror (no injection → reads bridges/<name>/capability.json)', () => {
+    // Feed the probe the REAL bundled version as the placed version: the comparison must run against
+    // the in-repo bundle via the default root and conclude checked-current (version-agnostic).
+    const realBundled = JSON.parse(
+      readFileSync(resolve(REPO_ROOT, 'agent-workflow-kit', 'bridges', 'codex-cli-bridge', 'capability.json'), 'utf8'),
+    ).version;
+    const e = codexEnvelope({
+      stat: () => ({ isFile: () => true }),
+      getenv: {},
+      home: '/home/test',
+      validate: bridgeValidate,
+      readVersion: () => ({ version: realBundled }),
+    });
+    assert.equal(e.refresh.freshness, 'current');
+  });
+
+  it('a version read that THROWS (present-but-unreadable SKILL.md, EACCES after validate) never crashes — placed-side unknown', () => {
+    // The real readAuthoritativeVersion throws on an existing-but-unreadable SKILL.md: stat needs no
+    // read permission, readFileSync does. The survey must degrade to the placed-side unknown note
+    // (INV-B), never crash the read-only status.
+    const e = codexEnvelope({ ...bridgeDeps({}), readVersion: () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); } });
+    assert.deepEqual(e.refresh, { behind: false, recommend: null, freshness: 'unknown' });
+    assert.match(e.notes[0], /installed copy has no readable version/);
+    assert.match(e.notes[0], /\/agent-workflow-kit setup/);
+  });
+});
+
+// ── the bridge freshness probe, end-to-end: REAL validator + REAL files (no mocks) ────────────────
+// Round-2 council regression: the unit fixtures above inject validate/readVersion; this block runs the
+// probe through the real validateManifest + readAuthoritativeVersion over real temp files (the
+// acceptance-fixture shape: the in-repo bundled bridge copied and downgraded), so the mocked pair can
+// never drift from what the real validator accepts.
+
+describe('surveyFamily — bridge freshness probe against the REAL validator + real files', () => {
+  const bundledSrc = resolve(REPO_ROOT, 'agent-workflow-kit', 'bridges', 'codex-cli-bridge');
+
+  it('a real placed copy downgraded below the real bundled mirror classifies OK and reads behind', (t) => {
+    const tmp = mkdtempSync(join(tmpdir(), 'awf-freshness-'));
+    t.after(() => rmSync(tmp, { recursive: true, force: true }));
+    const placedDir = join(tmp, 'codex-cli-bridge');
+    cpSync(bundledSrc, placedDir, { recursive: true });
+    const bundledVersion = JSON.parse(readFileSync(join(bundledSrc, 'capability.json'), 'utf8')).version;
+    for (const f of ['capability.json', 'SKILL.md']) {
+      const p = join(placedDir, f);
+      writeFileSync(p, readFileSync(p, 'utf8').replaceAll(bundledVersion, '0.0.1'));
+    }
+    // Default validate / readVersion / stat / readFile — only the placed dir is pointed at the fixture.
+    const rows = surveyFamily({ getenv: { CODEX_CLI_BRIDGE_DIR: placedDir }, home: '/nonexistent-home' });
+    const codex = rows.find((r) => r.name === 'codex-cli-bridge');
+    assert.equal(codex.manifestState, OK, 'the downgraded real copy still passes the REAL validator');
+    assert.equal(codex.version, '0.0.1');
+    const e = buildEnvelope(rows).installed.find((x) => x.member === 'codex-cli-bridge');
+    assert.deepEqual(e.refresh, { behind: true, recommend: '/agent-workflow-kit setup', freshness: 'behind' });
+    assert.match(e.notes[0], new RegExp(`older than the copy bundled with this kit \\(v${bundledVersion.replaceAll('.', '\\.')}\\)`));
+  });
 });
 
 // ── buildEnvelope: the no-leak --json contract (Step 2.1 / shape-drift guard 2.5) ───
@@ -318,7 +462,7 @@ describe('buildEnvelope — no-leak --json envelope', () => {
       // it alongside the optional `notes`; every other field stays byte/shape-pinned.
       assert.deepEqual(Object.keys(e).filter((k) => k !== 'notes' && k !== 'refresh').sort(), ['display', 'member', 'state', 'version'].sort());
       assert.ok(PUBLIC_STATES.has(e.state), `state "${e.state}" must be a public token`);
-      assert.deepEqual(Object.keys(e.refresh).sort(), ['behind', 'recommend'], 'refresh is { behind, recommend }');
+      assert.deepEqual(Object.keys(e.refresh).sort(), ['behind', 'freshness', 'recommend'], 'refresh is { behind, recommend, freshness }');
     }
     const mem = env.installed.find((e) => e.member === 'agent-workflow-memory');
     assert.deepEqual(mem.notes, ['memory note']);
@@ -334,13 +478,13 @@ describe('buildEnvelope — no-leak --json envelope', () => {
     const env = buildEnvelope(fam); // memory has a caveat; engine has none in this fixture
     const refreshOf = (member) => env.installed.find((e) => e.member === member).refresh;
     // memory: refreshable core + caveat → behind, command composed from its npm package
-    assert.deepEqual(refreshOf('agent-workflow-memory'), { behind: true, recommend: 'npx @sabaiway/agent-workflow-memory@latest init' });
-    // engine: refreshable core but NO caveat here → not behind
-    assert.deepEqual(refreshOf('agent-workflow-engine'), { behind: false, recommend: null });
-    // kit: composition-root (npm NON-null) → behind is caveat-gated, not npm-gated → not behind
-    assert.deepEqual(refreshOf('agent-workflow-kit'), { behind: false, recommend: null });
-    // bridges: execution-backend → never a refresh caveat → not behind
-    assert.deepEqual(refreshOf('codex-cli-bridge'), { behind: false, recommend: null });
+    assert.deepEqual(refreshOf('agent-workflow-memory'), { behind: true, recommend: 'npx @sabaiway/agent-workflow-memory@latest init', freshness: 'behind' });
+    // engine: refreshable core but NOT installed here → nothing to check → not behind, not-checked
+    assert.deepEqual(refreshOf('agent-workflow-engine'), { behind: false, recommend: null, freshness: 'not-checked' });
+    // kit: composition-root (npm NON-null) → no freshness probe on this surface (two-axes doctrine)
+    assert.deepEqual(refreshOf('agent-workflow-kit'), { behind: false, recommend: null, freshness: 'not-checked' });
+    // bridges: execution-backend without a probe field (non-OK here) → not behind, not-checked
+    assert.deepEqual(refreshOf('codex-cli-bridge'), { behind: false, recommend: null, freshness: 'not-checked' });
   });
 
   it('INV-2: a behind ENGINE (caveat present) derives behind + its own npm recommend command', () => {
@@ -348,7 +492,17 @@ describe('buildEnvelope — no-leak --json envelope', () => {
       m.kind === 'methodology-engine' ? { ...m, manifestState: OK, version: '1.1.0', caveats: ['engine present but does not ship the activity-procedures canon'] } : m,
     );
     const eng = buildEnvelope(withEngineCaveat).installed.find((e) => e.member === 'agent-workflow-engine');
-    assert.deepEqual(eng.refresh, { behind: true, recommend: 'npx @sabaiway/agent-workflow-engine@latest init' });
+    assert.deepEqual(eng.refresh, { behind: true, recommend: 'npx @sabaiway/agent-workflow-engine@latest init', freshness: 'behind' });
+  });
+
+  it('INV-2: a behind BRIDGE (probe row field) derives behind + the per-kind setup recommend — never npx', () => {
+    const withBridgeProbe = fam.map((m) =>
+      m.name === 'codex-cli-bridge'
+        ? { ...m, manifestState: OK, version: '2.0.0', caveats: ['bridge note'], freshness: 'behind' }
+        : m,
+    );
+    const codex = buildEnvelope(withBridgeProbe).installed.find((e) => e.member === 'codex-cli-bridge');
+    assert.deepEqual(codex.refresh, { behind: true, recommend: '/agent-workflow-kit setup', freshness: 'behind' });
   });
 
   it('the project block exposes member/display/version stamps — NEVER the internal stamp filename', () => {
