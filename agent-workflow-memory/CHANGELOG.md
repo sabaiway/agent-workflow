@@ -4,6 +4,40 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.8.0 — ADR-cascade rotation script + the seeded per-project gate declaration
+
+A **feature** release (deployment-lineage head stays `1.3.0`; the new surfaces reach existing
+deployments via stamp-independent ensures, no migration file). The last hand-rolled docs
+rotation — the `decisions.md` ADR cascade — is now a script, and every project gains a
+hand-editable gate declaration:
+
+- **`references/scripts/archive-decisions.mjs` (+ test)** — the `archive-changelog.mjs` sibling:
+  a chained three-tier cascade (HOT `decisions.md` → WARM `history/decisions-archive.md` → COLD
+  `history/decisions-archive-early.md`), caps read from each file's own frontmatter `maxLines`.
+  Whole entries move, oldest first; the id multiset and every entry's line count are
+  conservation-checked before any write. **Fail-LOUD**: a non-canonical `## AD-0NN — <title>`
+  heading, disordered ids, a cross-tier duplicate, or a roll that would not fit COLD's remaining
+  headroom all refuse **before any write** (a cap raise is a maintainer decision — the script
+  only moves entries). `--check` reports per-tier `lines/cap`; on a project **without**
+  `decisions.md` it exits 0 with a **stated skip** — a deliberate divergence from
+  `archive-changelog.mjs` (the deployed pre-commit hook must never block a commit over an absent
+  ADR substrate).
+- **The pre-commit hook runs it** — `install-git-hooks.mjs` adds `archive-decisions.mjs --check`
+  to the installed gate line-up.
+- **`references/templates/gates.json`** — the seeded, user-editable per-project **gate
+  declaration** (`{ id, title, cmd }`, strict JSON, an empty list as shipped; `cmd` is ONE bash
+  command line). Bootstrap seeds it; upgrade **ensures-if-missing and preserves an existing file
+  byte-for-byte**. It declares WHAT to check — the runner lives in the composition root, never
+  here.
+- **Stamp-independent ensures (equal-head deployments self-heal)** — the upgrade procedure now
+  ensures BOTH seeded `.json` configs **and** the `archive-decisions` script pair
+  (copy-if-missing into `scripts/`, never overwriting an existing file); an old hook without the
+  decisions line stays consistent-safe until the next hook refresh.
+- **Tests** — 22 cascade tests (fixtures for the chained roll, the COLD-exhaustion refusal, the
+  absent-file `--check` skip, determinism, range-token maintenance); bootstrap/ensure coverage
+  extended in `standalone-bootstrap.test.mjs`; tarball content re-pinned (40 files, reverse pins
+  for every new asset).
+
 ## 1.7.0 — Humanize the deploy/version report (memory)
 
 A **feature** release (report-prose only — the atomic stamp-WRITE mechanics and the *Stamp = lineage

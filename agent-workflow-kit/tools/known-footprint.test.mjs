@@ -137,6 +137,8 @@ describe('frozen snapshot', () => {
       '/scripts/_expect-shim.mjs',
       '/scripts/archive-changelog.mjs',
       '/scripts/archive-changelog.test.mjs',
+      '/scripts/archive-decisions.mjs',
+      '/scripts/archive-decisions.test.mjs',
       '/scripts/archive-issues.mjs',
       '/scripts/archive-issues.test.mjs',
       '/scripts/check-docs-size.mjs',
@@ -146,13 +148,14 @@ describe('frozen snapshot', () => {
       '/.claude/settings.local.json',
       '/.claude/settings.json',
     ];
-    assert.equal(KIT_OWN_PATHS.length, 14, 'KIT_OWN_PATHS count sentinel — edit deliberately');
+    assert.equal(KIT_OWN_PATHS.length, 16, 'KIT_OWN_PATHS count sentinel — edit deliberately');
     assert.deepEqual(KIT_OWN_PATHS, expected);
   });
 
   it('KNOWN_FOOTPRINT matches the frozen expected pattern set + count', () => {
     const expected = [
       '/.claude/skills/',
+      '/.claude/agents/',
       '/.cursor/rules/',
       '/.cursorrules',
       '/.codeium/',
@@ -166,7 +169,7 @@ describe('frozen snapshot', () => {
       '/.aider.input.history',
       '/.continue/',
     ];
-    assert.equal(KNOWN_FOOTPRINT.length, 13, 'KNOWN_FOOTPRINT count sentinel — edit deliberately');
+    assert.equal(KNOWN_FOOTPRINT.length, 14, 'KNOWN_FOOTPRINT count sentinel — edit deliberately');
     assert.deepEqual(KNOWN_FOOTPRINT.map((e) => e.pattern), expected);
   });
 });

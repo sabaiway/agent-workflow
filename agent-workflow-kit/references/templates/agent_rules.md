@@ -74,6 +74,7 @@ Apply these when authoring a plan, reviewing, folding a finding, or editing code
 - **Per-round emission.** Every review round emits **{round N · finding-origin tally · per-backend verdict}** so the crossover is a computed, visible signal, not a remembered rule.
 - **Recipe fidelity.** Council runs every backend the recipe names, **every round**; silently dropping a ready backend for quota/convenience is a forbidden downgrade — an unavailable backend is a LOUD, stated degrade, never a quiet drop.
 - **ExitPlanMode ≠ execute.** A harness "approved — start coding" prompt authorizes the PLAN only; this methodology overrides it. Continue into execution only as a DELIBERATE transition after the plan + cold-start prompt exist, never an implicit slide.
+- **Cost lanes.** Route every step to the **cheapest adequate executor** — L0 deterministic script (the batched gate matrix over `gates.json`, the rotation `--check`s) · L1 cheap subagent (extraction/drafting only; the orchestrator verifies) · L2 subscription bridge · L3 frontier judgment. A step with **no named guardrail does not move down** a lane, and the **red lines never move down** (council review models · real code · ADR/handover/changelog-entry wording · persuasive copy · go/no-go · the approval asks). Own-error repair: salvage recorded state first (L0/L1, batched), never frontier re-derivation.
 
 ---
 

@@ -7,6 +7,37 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-02 — engine 1.10.0 · memory 1.8.0 · kit 1.27.0: cost-tiered execution (bridges unchanged at 2.1.0)
+
+- **Every project gate is now ONE command.** The kit gained a generic gate runner
+  (`/agent-workflow-kit gates` — `tools/run-gates.mjs`) over a per-project, hand-editable
+  `docs/ai/gates.json` (seeded by bootstrap, ensured on upgrade, byte-identical template twins in
+  kit + memory): a PASS/FAIL table, one machine-readable summary line, exit 0 iff all green,
+  verbatim failing output, honest distinct outcomes for a missing/empty/malformed declaration.
+  This repo's own matrix (unit tests · manifest validate ×5 · release scan · docs caps/index ·
+  3 rotation checks · the release-skill existence gate) runs behind it — 9 gates, one exit code.
+- **Mechanical work moved off the frontier lane.** `/agent-workflow-kit agents`
+  (`tools/cheap-agents.mjs`) places three cheap-model subagent vehicles (haiku/low, read-only
+  tools: mechanical-sweep, changelog-skeleton, gate-triage) on the velocity writer discipline;
+  the engine canon (`orchestration.md` §5) now names the four **cost lanes** (L0 script · L1
+  cheap subagent · L2 bridge · L3 frontier), the cheapest-adequate-executor rule, the
+  no-guardrail-no-move rule, and the red lines that never move down; the `procedures` advisor
+  renders the lanes at the point of use (additive `costLanes` in `--json`), drift-guarded on
+  both sides.
+- **The ADR cascade is a script now.** `agent-workflow-memory` ships
+  `archive-decisions.mjs` (+ kit fallback mirror, byte-parity-guarded): the chained
+  HOT→WARM→COLD `decisions.md` rotation with conservation checks and fail-LOUD refusals (bad
+  heading, disordered ids, COLD exhaustion — always before any write); the deployed pre-commit
+  hook now runs its `--check`; an absent `decisions.md` is a stated exit-0 skip.
+- **Release mechanics live in the repo, not the kit.** New tracked `scripts/release/`:
+  `version-sync.mjs` (all version sources per package compared; `--expect`),
+  `dispatch-publish.mjs` (ordered per-package `publish.yml` dispatch via gh REST — ALL dry-runs
+  green before the FIRST live dispatch, deterministic run correlation, kit LAST, stale
+  `--expect` refused against the local tree, npm `@latest` + Release single-asset verification
+  with bounded retry, distinct exit codes), and `smoke-init.mjs` (temp-HOME/`npm_config_*`-
+  sanitized installer smoke). Wired into CI (unit glob + release-scan target). The kit ships no
+  publish/dispatch/marketing logic — the boundary holds.
+
 ## 2026-07-02 — engine 1.9.0 · kit 1.26.0 (bridges bundled unchanged at 2.1.0)
 
 - **A returning user's `init`/`upgrade` now leaves no stale bridge behind (all users).** Bridges are

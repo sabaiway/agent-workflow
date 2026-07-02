@@ -26,15 +26,19 @@ const BARE_INVOCATION = `/${SKILL_NAME}`;
 const invocationOf = (token) => `${BARE_INVOCATION}${token ? ` ${token}` : ''}`;
 
 // ── kinds ────────────────────────────────────────────────────────────────────────
-// read-only — never writes, never commits, never runs a subscription CLI.
-// writer    — writes files (a project deployment or a settings/skill placement).
-// guarded   — a destructive teardown gated behind a mandatory dry-run-first + explicit consent.
+// read-only    — never writes, never commits, never runs a subscription CLI.
+// writer       — writes files (a project deployment or a settings/skill placement).
+// guarded      — a destructive teardown gated behind a mandatory dry-run-first + explicit consent.
+// project-exec — the kit itself writes nothing, but the mode RUNS the project's own declared
+//                commands with the caller's privileges (the `gates` runner) — honest-tagged so a
+//                user never reads "read-only" on a surface that executes their gate matrix.
 // `writer` and `guarded` are the "acts on the system" kinds; only an explicit known token may reach
 // one (plus the bare bootstrap exception). Garbage routes to `help` (read-only) — see routeInvocation.
 export const READ_ONLY = 'read-only';
 export const WRITER = 'writer';
 export const GUARDED = 'guarded';
-const KINDS = new Set([READ_ONLY, WRITER, GUARDED]);
+export const PROJECT_EXEC = 'project-exec';
+const KINDS = new Set([READ_ONLY, WRITER, GUARDED, PROJECT_EXEC]);
 
 // ── groups (fixed render order) ────────────────────────────────────────────────────
 export const GROUP_ORDER = Object.freeze(['Inspect', 'Configure', 'Orchestrate', 'Lifecycle']);
@@ -88,6 +92,13 @@ const CATALOG = [
     oneLine: 'List every command, grouped, marking each as read-only or as one that makes changes.',
   },
   {
+    key: 'gates',
+    invocation: invocationOf('gates'),
+    group: 'Inspect',
+    kind: PROJECT_EXEC,
+    oneLine: 'Run the project’s own declared gate commands (docs/ai/gates.json) as one batch — a PASS/FAIL table, one summary line.',
+  },
+  {
     key: 'setup',
     invocation: invocationOf('setup'),
     group: 'Configure',
@@ -100,6 +111,13 @@ const CATALOG = [
     group: 'Configure',
     kind: WRITER,
     oneLine: 'Seed a read-only command allowlist so routine read-only commands stop prompting (Claude Code; opt-in; preview first).',
+  },
+  {
+    key: 'agents',
+    invocation: invocationOf('agents'),
+    group: 'Configure',
+    kind: WRITER,
+    oneLine: 'Place bundled cheap-model subagent definitions for mechanical work — sweeps, changelog skeletons, gate triage (Claude Code; opt-in; preview first).',
   },
   {
     key: 'recipes',
@@ -165,7 +183,12 @@ export const routeInvocation = (token) => {
 
 // ── render ──────────────────────────────────────────────────────────────────────────
 
-const KIND_TAG = { [READ_ONLY]: '[read-only]', [WRITER]: '[writer]   ', [GUARDED]: '[guarded]  ' };
+const KIND_TAG = {
+  [READ_ONLY]: '[read-only]        ',
+  [WRITER]: '[writer]           ',
+  [GUARDED]: '[guarded]          ',
+  [PROJECT_EXEC]: '[runs project cmds]',
+};
 const pad = (s, n) => (s.length >= n ? s : s + ' '.repeat(n - s.length));
 
 // formatHelp() → the grouped, kind-tagged human index. Deterministic; groups in GROUP_ORDER, modes in
@@ -175,7 +198,7 @@ export const formatHelp = () => {
   const lines = [
     `${SKILL_NAME} — command index (this list is read-only)`,
     '',
-    'Each command is tagged read-only · writer (makes changes) · guarded (destructive, previews first).',
+    'Each command is tagged read-only · writer (makes changes) · guarded (destructive, previews first) · runs project cmds (executes your own declared commands).',
   ];
   for (const group of GROUP_ORDER) {
     const inGroup = COMMANDS.filter((c) => c.group === group);

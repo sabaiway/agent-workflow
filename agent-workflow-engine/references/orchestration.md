@@ -101,6 +101,41 @@ already accepted: run both, every round, until a round comes back clean — or u
 marks the crossover (§4), resolved at altitude rather than by exhausting the strictest backend. Spending
 quota to line-by-line re-review mechanics past that crossover is the over-run the divergence stop prevents.
 
+### Cost lanes — route every step to the cheapest adequate executor
+
+Model quota is one axis of a wider guard: work has **lanes**, and every step routes to the
+**cheapest adequate executor**:
+
+- **L0 — deterministic script.** Anything rule-driven and verifiable by exit code: the batched
+  project gate matrix (the family's generic gate runner over a project-declared
+  `docs/ai/gates.json`), the docs cap/index checks, the rotation `--check` scripts
+  (changelog / issues / decisions). If a step CAN be a script, it IS a script — a model
+  re-reading what an exit code already proves is the canonical waste.
+- **L1 — cheap subagent** (a small model at low effort, bounded read-only tools): mechanical
+  extraction at scale — inventories, fact sweeps, changelog fact-skeletons, digesting long
+  failing output. Extraction and drafting ONLY; the orchestrator verifies the output against
+  sources and owns every conclusion.
+- **L2 — subscription bridge** (`codex` / `agy`): review and bounded delegated execution,
+  governed by the recipes above; real review work stays on frontier bridge models
+  (quality-first — economy on this lane comes from precomputed context, never a weaker model).
+- **L3 — frontier main lane**: judgment — plans, folds, syntheses, ADR / handover /
+  changelog-entry wording, user-facing copy, go/no-go, real code.
+
+Two rules bound the routing. **A step with no named guardrail does not move down a lane** — a
+deterministic checker, a pinned test, or a verifying orchestrator must catch a cheaper executor's
+error, otherwise the step stays where it is. And the **red lines never move down**: council
+reviews on frontier bridge models · real code implementation · ADR / plan / handover /
+changelog-entry wording · persuasive user-facing copy · go/no-go judgment · the maintainer's
+approval asks (commit / push / publish — cost tiering never touches approval gates).
+
+**Asymmetric pairing** is the default composition: the cheap lane drafts, a deterministic tool or
+the frontier verifies and signs — never the reverse.
+
+**Incident repair (your own error) defaults down-lane:** salvage recorded state first (journals,
+transcripts, git), replay it deterministically (L0), hand the leftovers to L1 in one batch —
+frontier re-derivation of recoverable state is the expensive failure mode, and the maintainer
+never pays frontier tokens for the agent's own mistake.
+
 A **standing health advisory** applies to `agy`: the Antigravity service can **stall on substantive
 prompts** (a long hang that returns nothing — an external service issue, not a setup problem;
 tracked as **Issue-001** in the kit's known issues). It is **invisible to file-presence detection**,

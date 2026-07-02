@@ -114,6 +114,7 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
   it('retains the deploy payload tests (reverse pins)', () => {
     const required = [
       'references/scripts/archive-changelog.test.mjs',
+      'references/scripts/archive-decisions.test.mjs',
       'references/scripts/archive-issues.test.mjs',
       'references/scripts/check-docs-size.test.mjs',
     ];
@@ -124,6 +125,7 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
   it('retains every deployed runtime payload file and entry point', () => {
     const required = [
       'references/scripts/archive-changelog.mjs',
+      'references/scripts/archive-decisions.mjs',
       'references/scripts/archive-issues.mjs',
       'references/scripts/check-docs-size.mjs',
       'references/scripts/_expect-shim.mjs',
@@ -132,6 +134,7 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
       'capability.json',
       'SKILL.md',
       'scripts/stamp-takeover.mjs',
+      'references/templates/gates.json',
     ];
     const missing = required.filter((p) => !packed.includes(p));
     assert.deepEqual(missing, [], 'a runtime payload file or entry point was dropped from the tarball');
@@ -146,6 +149,6 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
   // a surprise change means over/under-exclusion. After an intentional change, run `npm pack
   // ./agent-workflow-memory --dry-run --json` and set the new count here in the same commit.
   it('ships exactly the expected number of files', () => {
-    assert.equal(packed.length, 37, `tarball file count drifted (${packed.length} ≠ 37)`);
+    assert.equal(packed.length, 40, `tarball file count drifted (${packed.length} ≠ 40)`);
   });
 });

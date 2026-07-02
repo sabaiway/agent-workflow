@@ -43,6 +43,8 @@ export const KIT_OWN_PATHS = [
   '/scripts/_expect-shim.mjs',
   '/scripts/archive-changelog.mjs',
   '/scripts/archive-changelog.test.mjs',
+  '/scripts/archive-decisions.mjs',
+  '/scripts/archive-decisions.test.mjs',
   '/scripts/archive-issues.mjs',
   '/scripts/archive-issues.test.mjs',
   '/scripts/check-docs-size.mjs',
@@ -59,6 +61,7 @@ export const KIT_OWN_PATHS = [
 // filesystem (expandGlob) to concrete present files before any git probe; never fed to ls-files.
 export const KNOWN_FOOTPRINT = [
   { pattern: '/.claude/skills/', owner: 'Claude Code', type: 'dir', falsePositiveRisk: false, note: 'local-dev skills; absorbs the AD-013 one-off' },
+  { pattern: '/.claude/agents/', owner: 'Claude Code', type: 'dir', falsePositiveRisk: false, note: 'project subagent definitions (incl. the kit-placed cheap-lane vehicles)' },
   { pattern: '/.cursor/rules/', owner: 'Cursor', type: 'dir', falsePositiveRisk: false, note: 'project rule files' },
   { pattern: '/.cursorrules', owner: 'Cursor (legacy)', type: 'file', falsePositiveRisk: true, note: 'legacy single-file rules' },
   { pattern: '/.codeium/', owner: 'Codeium/Windsurf', type: 'dir', falsePositiveRisk: false, note: 'home-scoped launchers live under ~/, out of scope' },

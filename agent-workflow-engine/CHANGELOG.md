@@ -4,6 +4,25 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.10.0 — Cost-lane vocabulary in the orchestration canon (§5)
+
+A **feature** release (canon text + its tests; installer unchanged). Work now has named **cost
+lanes**, and the canon states who runs what:
+
+- **`orchestration.md` §5 defines the lanes** — **L0** deterministic script · **L1** cheap
+  subagent (small model, low effort, read-only tools) · **L2** subscription bridge · **L3**
+  frontier — plus the two routing rules: route every step to the **cheapest adequate executor**,
+  and **a step with no named guardrail does not move down** a lane. The **red lines never move
+  down**: council review models · real code · ADR/plan/handover/changelog-entry wording ·
+  persuasive copy · go/no-go · the maintainer approval asks. Asymmetric pairing (cheap drafts,
+  a deterministic tool or the frontier verifies) and the incident-repair default (salvage
+  recorded state first, never frontier re-derivation) are canon now.
+- **Lockstep tests** — `test/orchestration-canon.test.mjs` pins the four lane tokens, both
+  routing rules, the red-line list, and that §5 stays generic (the L0 examples name the family's
+  own surfaces — the gate runner over `docs/ai/gates.json`, the rotation checks — never a
+  project's publish mechanics); `test/procedures-canon.test.mjs` pins the same canon tokens the
+  composition root's advisor paraphrases, so the two cannot silently drift apart.
+
 ## 1.9.0 — Honest installer messaging: the verb states what was observed, the note states facts
 
 A **feature** release (installer output contract only; the canon text is unchanged). `bin/install.mjs`

@@ -13,6 +13,7 @@ import {
   READ_ONLY,
   WRITER,
   GUARDED,
+  PROJECT_EXEC,
   KINDS,
   UNKNOWN_INVOCATION_MODE,
   BARE_INVOCATION_MODE,
@@ -106,20 +107,26 @@ describe('routeInvocation — safety invariant: NO unrecognized/garbage token re
     });
   }
 
-  it('the ONLY way to reach a writer/guarded mode is a known token or the bare exception', () => {
-    // Sweep every catalog token + a pile of garbage: a writer/guarded result is only ever the bare
-    // bootstrap exception or an exact known writer/guarded token — never a garbage token.
-    const writerOrGuarded = (mode) => kindOf(mode) === WRITER || kindOf(mode) === GUARDED;
+  it('the ONLY way to reach a writer/guarded/project-exec mode is a known token or the bare exception', () => {
+    // Sweep every catalog token + a pile of garbage: an acts-on-the-system result (writer/guarded)
+    // OR a runs-project-commands result (project-exec) is only ever the bare bootstrap exception or
+    // an exact known token — never a garbage token.
+    const actsOnSystem = (mode) => kindOf(mode) === WRITER || kindOf(mode) === GUARDED || kindOf(mode) === PROJECT_EXEC;
     const knownTokens = new Set(COMMANDS.filter((c) => c.key !== BARE_INVOCATION_MODE).map((c) => c.key));
     for (const tok of [...garbage, 'xyzzy', 'STATUS', '']) {
       const mode = routeInvocation(tok);
-      if (writerOrGuarded(mode)) {
+      if (actsOnSystem(mode)) {
         assert.ok(
           mode === BARE_INVOCATION_MODE || knownTokens.has(tok),
-          `garbage token "${tok}" must never resolve to a writer/guarded mode (got ${mode})`,
+          `garbage token "${tok}" must never resolve to a writer/guarded/project-exec mode (got ${mode})`,
         );
       }
     }
+  });
+
+  it('the gates mode is tagged project-exec — never read-only (it runs the project\'s own commands)', () => {
+    assert.equal(kindOf('gates'), PROJECT_EXEC);
+    assert.match(formatHelp(), /\[runs project cmds\]/, 'help renders the honest tag');
   });
 });
 

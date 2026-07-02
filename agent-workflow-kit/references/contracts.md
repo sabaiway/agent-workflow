@@ -26,6 +26,7 @@ diverge:
 | Pattern | Owner | Kind | Commit-risk name? | Note |
 |---|---|---|---|---|
 | `/.claude/skills/` | Claude Code | dir | no | local-dev skills; absorbs the AD-013 one-off |
+| `/.claude/agents/` | Claude Code | dir | no | project subagent definitions (incl. the kit-placed cheap-lane vehicles) |
 | `/.cursor/rules/` | Cursor | dir | no | project rule files |
 | `/.cursorrules` | Cursor (legacy) | file | **yes** | legacy single-file rules |
 | `/.codeium/` | Codeium/Windsurf | dir | no | home-scoped launchers live under `~/`, out of scope |

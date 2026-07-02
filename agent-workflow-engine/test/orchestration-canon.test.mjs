@@ -116,4 +116,23 @@ describe('engine orchestration.md — canonical recipe reference', () => {
     assert.match(section5, /licence|license/i, '§5 explicitly disclaims the drop-a-ready-backend reading');
     assert.match(section5, /ready backend mid-Council/i, '§5 pins the specific mid-Council drop it disclaims');
   });
+
+  // Cost lanes (cost-tiered execution): §5 owns the lane vocabulary — the four lanes, the
+  // cheapest-adequate-executor rule, the no-guardrail-no-move rule, the red-line list, asymmetric
+  // pairing, and the incident-repair default. Generic altitude: the L0 examples are the family's
+  // own generic surfaces (the gate runner, the rotation checks), never project publish steps.
+  it('pins the §5 cost-lane vocabulary — L0..L3 + the two routing rules', () => {
+    const section5 = sectionFrom(reference, /^## 5\. /);
+    for (const lane of ['L0', 'L1', 'L2', 'L3']) {
+      assert.ok(section5.includes(lane), `§5 defines lane ${lane}`);
+    }
+    assert.match(section5, /cheapest adequate executor/i, '§5 states the routing rule');
+    assert.match(section5, /no named guardrail does not move down/i, '§5 states the no-guardrail-no-move rule');
+    assert.match(section5, /red lines never move down/i, '§5 carries the red-line list');
+    assert.match(section5, /approval asks \(commit \/ push \/ publish/i, 'approval gates are a named red line');
+    assert.match(section5, /asymmetric pairing/i, '§5 names the cheap-drafts/verified composition');
+    assert.match(section5, /salvage recorded state first/i, '§5 carries the incident-repair down-lane default');
+    assert.match(section5, /gates\.json/, 'the L0 example names the generic gate-declaration surface');
+    assert.ok(!/dispatch-publish|smoke-init|version-sync/.test(section5), 'canon stays generic — no project publish mechanics');
+  });
 });

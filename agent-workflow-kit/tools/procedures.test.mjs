@@ -222,7 +222,7 @@ describe('procedures CLI — --json schema (§2.0)', () => {
     const r = run(['plan-execution', '--json'], { codex: READY, agy: NEEDS_SKILL });
     assert.equal(r.code, 0, r.stderr);
     const j = JSON.parse(r.stdout);
-    assert.deepEqual(Object.keys(j).sort(), ['activity', 'configSource', 'reviewLoop', 'section', 'slots', 'warnings'].sort());
+    assert.deepEqual(Object.keys(j).sort(), ['activity', 'configSource', 'costLanes', 'reviewLoop', 'section', 'slots', 'warnings'].sort());
     assert.equal(j.activity, 'plan-execution');
     assert.match(j.section, /## plan-execution/);
     for (const slot of ['execute', 'review']) {
@@ -310,6 +310,42 @@ describe('procedures CLI — review-loop economics block (§2.2, M1/M6): prints 
   it('prints for plan-execution too when its review slot resolves council (not only plan-authoring)', () => {
     const r = run(['plan-execution', '--override', 'review=council'], { codex: READY, agy: READY });
     assert.match(r.stdout, SENTINEL);
+  });
+});
+
+describe('procedures CLI — cost-lane advisory block (cost-tiered execution): unconditional, canon-token-guarded', () => {
+  const SENTINEL = /Cost lanes \(orchestration\.md §5\)/;
+  // The distinctive tokens shared with the canon (orchestration.md §5) — pinned on BOTH sides so
+  // the advisor paraphrase and the canon cannot silently drift apart.
+  const CANON_TOKENS = ['cheapest adequate executor', 'no named guardrail', 'L0', 'L1', 'L2', 'L3', 'red lines never move'];
+
+  it('PRINTS for a review-backed activity (council) with the canon tokens', () => {
+    const r = run(['plan-authoring', '--override', 'review=council'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, SENTINEL);
+    for (const token of CANON_TOKENS) assert.ok(r.stdout.includes(token), `advisor carries the canon token "${token}"`);
+  });
+
+  it('PRINTS for solo too — the block is UNCONDITIONAL (lanes route every step, review-backed or not)', () => {
+    const r = run(['plan-authoring'], { codex: NEEDS_SKILL, agy: NEEDS_SKILL }); // review = solo
+    assert.match(r.stdout, /review: solo/);
+    assert.match(r.stdout, SENTINEL, 'solo still gets the cost-lane advisory (unlike the review-loop block)');
+  });
+
+  it('names the kit\'s own generic L0 surfaces (gates + rotation checks) and the L1 vehicles, never project publish mechanics', () => {
+    const r = run(['plan-execution'], { codex: READY, agy: READY });
+    assert.match(r.stdout, /\/agent-workflow-kit gates/, 'points at the batched gate runner');
+    assert.match(r.stdout, /archive-decisions --check/, 'points at the rotation checks');
+    assert.match(r.stdout, /\/agent-workflow-kit agents/, 'points at the cheap-lane vehicle writer');
+    assert.ok(!/dispatch-publish|smoke-init|version-sync/.test(r.stdout), 'stays project-agnostic — no publish mechanics');
+  });
+
+  it('--json carries the ADDITIVE structured costLanes counterpart (present for every activity)', () => {
+    for (const setup of [{ codex: READY, agy: READY }, { codex: NEEDS_SKILL, agy: NEEDS_SKILL }]) {
+      const j = JSON.parse(run(['plan-execution', '--json'], setup).stdout);
+      assert.ok(Array.isArray(j.costLanes) && j.costLanes.length > 0, 'costLanes present + non-empty');
+      assert.ok(j.costLanes.some((l) => /cheapest adequate executor/.test(l)), 'the routing rule is in the structured block');
+    }
   });
 });
 

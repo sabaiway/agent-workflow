@@ -48,6 +48,7 @@ node scripts/check-docs-size.mjs
 node scripts/check-docs-size.mjs --check-index
 node scripts/archive-changelog.mjs --check
 node scripts/archive-issues.mjs --check
+node scripts/archive-decisions.mjs --check
 node --test scripts/*.test.mjs
 `;
 
