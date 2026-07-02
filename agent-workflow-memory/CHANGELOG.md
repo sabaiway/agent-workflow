@@ -4,6 +4,19 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.9.0 — The agent_rules lens carries the checked-vs-unchecked plan boundary
+
+A **feature** release (template text only; scripts and installer unchanged; deployment-lineage
+head stays `1.3.0` — content-only, no migration). The §2.6 lens B5 bullet mirrors the engine's §9
+sharpening:
+
+- **`references/templates/agent_rules.md` (B5)** — a plan carries only **checked syntax** (a
+  Step's commands, run by its own Verification against an explicit expected outcome or gate) plus
+  literal fixture/schema fragments a named test copies or validates; **un-run, logic-bearing
+  syntax** (control-flow, a regex, a glob, a grammar, an algorithm body, a mini-DSL) never lives
+  in plan prose — a fold or draft that wants one is the trigger to write the test instead. The
+  line stays byte-identical to the kit template (lens-mirror guarded).
+
 ## 1.8.0 — ADR-cascade rotation script + the seeded per-project gate declaration
 
 A **feature** release (deployment-lineage head stays `1.3.0`; the new surfaces reach existing

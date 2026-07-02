@@ -7,6 +7,26 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-02 — engine 1.11.0 · memory 1.9.0 · kit 1.28.0: plans carry only checked syntax (bridges unchanged at 2.1.0)
+
+- **A plan may carry only checked syntax.** The methodology's §9 "No code-mechanics in the plan"
+  rule now has a hard boundary: a Step's exact paths + commands stay required and count as
+  CHECKED because the plan's own Verification runs them against an explicit expected outcome or
+  gate (merely running without asserting checks nothing); the only other syntax a plan may carry
+  is a literal fixture/schema fragment a named test copies or validates. **Un-run, logic-bearing
+  syntax** — control-flow, a regex, a glob, a grammar, an algorithm body, a mini-DSL — never
+  lives in plan prose, however plausible or shell-verified it looks: a fold or draft that wants
+  one writes the red→green test-as-spec at Execute instead. Origin: a 2026-07-01 incident where
+  invalid bash (`[[ … == --help|-h ]]`) survived a review round inside an ephemeral plan — prose
+  has no checker.
+- **Four surfaces, one boundary, drift-guarded.** The engine canon (`planning.md` §9 +
+  `procedures.md` plan-authoring step 5) and both `agent_rules.md` templates (byte-identical)
+  carry the boundary; the two new tokens `checked syntax` + `logic-bearing` are pinned by all
+  three guards (kit `lens-mirror`, engine `planning-canon` + `procedures-canon`), each proven
+  non-vacuous by an injected red→green.
+- **Nothing else moved** — no installer/tool/API change; bridges stay 2.1.0; deployment-lineage
+  head stays `1.3.0` (content-only, no migration).
+
 ## 2026-07-02 — engine 1.10.0 · memory 1.8.0 · kit 1.27.0: cost-tiered execution (bridges unchanged at 2.1.0)
 
 - **Every project gate is now ONE command.** The kit gained a generic gate runner

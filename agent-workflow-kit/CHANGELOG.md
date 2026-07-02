@@ -4,6 +4,19 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.28.0 — Lens-mirror guards the checked-vs-unchecked plan boundary
+
+A **feature** release (template + test only; ships the bundled bridges unchanged at **2.1.0**).
+The kit's half of the §9 sharpening:
+
+- **`references/templates/agent_rules.md` (B5)** — the byte-identical sharpened lens bullet (see
+  the memory 1.9.0 entry): a plan carries only checked syntax plus literal fixture/schema
+  fragments a named test validates; un-run, logic-bearing syntax never lives in plan prose.
+- **`test/lens-mirror.test.mjs`** — Set-1 gains the two new tokens `checked syntax` +
+  `logic-bearing`, pinned inside the lens region of all four files (engine planning §9, engine
+  procedures, both templates); template byte-identity unchanged; non-vacuity proven by an
+  injected red→green (a broken token fails the guard twice over — region + byte-identity).
+
 ## 1.27.0 — Cost-tiered execution: the `gates` runner + the `agents` cheap-lane writer
 
 A **feature** release (ships the bundled bridges unchanged at **2.1.0**). Two new modes move
