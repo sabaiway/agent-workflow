@@ -159,14 +159,17 @@ describe('kit installer — stale-cache defenses (no network)', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('a no-op re-run (same version) flags the likely npx cache and points at @latest', async () => {
+  it('a no-op re-run (same version) states already-current + repair-on-rerun — no contradiction, no cache accusation', async () => {
     const target = join(dir, 'agent-workflow-kit');
     assert.equal(runInstaller(target).status, 0); // first install
     const again = runInstaller(target); // second run: installed == running
     assert.equal(again.status, 0, again.stderr);
-    assert.match(again.stdout, /no version change/i);
-    assert.match(again.stdout, /cache/i);
+    assert.match(again.stdout, /refreshed the already-current kit v/, 'the verb states the no-op, never "updated"');
+    assert.match(again.stdout, /was already v/, 'the note fires — no-op detection preserved');
+    assert.match(again.stdout, /expected a NEWER version/i, 'the @latest hint is conditional');
     assert.match(again.stdout, /@latest/);
+    assert.doesNotMatch(again.stdout, /cache/i, 'no cache accusation — not observable without a network check');
+    assert.doesNotMatch(again.stdout, /updated the kit to/, 'verb and note must not contradict each other');
   });
 
   it('refuses to downgrade when the installed kit is NEWER, and writes nothing', async () => {
@@ -187,6 +190,7 @@ describe('kit installer — stale-cache defenses (no network)', () => {
     const res = runInstaller(target, ['--allow-downgrade']);
     assert.equal(res.status, 0, res.stderr);
     assert.equal(await getInstalledVersion(target), await pkgVersion());
+    assert.match(res.stdout, /downgraded the kit to v/, 'the verb states the downgrade plainly, never "updated"');
   });
 
   it('--force alone does NOT override the downgrade gate (the override is its own flag)', async () => {
@@ -238,7 +242,9 @@ describe('kit installer — stale-cache defenses (no network)', () => {
     await writeFile(join(target, 'SKILL.md'), '---\nname: agent-workflow-kit\n---\n# legacy stub\n');
     const res = runInstaller(target);
     assert.equal(res.status, 0, res.stderr);
-    assert.match(res.stdout, /updated the kit to/);
+    // cmp is null (no stamp → the prior version is unknowable), so the verb claims no transition.
+    assert.match(res.stdout, /installed v/);
+    assert.doesNotMatch(res.stdout, /updated the kit to/, 'no update claim from an unknowable prior version');
   });
 });
 

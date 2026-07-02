@@ -241,15 +241,25 @@ const main = async () => {
   await Promise.all(
     PAYLOAD.map((entry) => copyRecursive(resolve(PKG_ROOT, entry), resolve(target, entry), target)),
   );
-  console.log(
-    `[agent-workflow-engine] ${wasPresent ? 'updated the canon to' : 'installed'} v${version} -> ${tildify(target)}`,
-  );
+  // Verb keyed on the OBSERVED version relation (cmp), never on mere presence: null (fresh install,
+  // or a legacy/unstamped one whose prior version is unknowable) → "installed"; -1 → a real update;
+  // 0 → already current (the copy still ran — see the note below); 1 is reachable only under
+  // --allow-downgrade (the gate above refused otherwise) and says so plainly.
+  const verb =
+    cmp === 0 ? 'refreshed the already-current canon'
+    : cmp === 1 ? 'downgraded the canon to'
+    : cmp === -1 ? 'updated the canon to'
+    : 'installed';
+  console.log(`[agent-workflow-engine] ${verb} v${version} -> ${tildify(target)}`);
 
-  // No-op re-run (same version) → almost always npx served a cached build; say so + point at @latest.
+  // Same-version re-run: state observable facts only. The copy DID run (repair-on-rerun is a feature —
+  // it restores locally modified/deleted files), and whether npx served a cached build is NOT
+  // observable here (no network), so the note never claims it; the @latest hint is conditional.
   if (cmp === 0) {
     console.log(
-      `[agent-workflow-engine] note: no version change — the canon was already v${version}. If you ` +
-        `expected an update, npx likely served a cached build; re-run bypassing the cache:\n` +
+      `[agent-workflow-engine] note: the canon was already v${version} — the copy still ran, restoring ` +
+        `any locally modified or deleted canon file to this version's packaged contents. If you ` +
+        `expected a NEWER version, invoke the @latest tag explicitly:\n` +
         `    npx @sabaiway/agent-workflow-engine@latest init`,
     );
   }
