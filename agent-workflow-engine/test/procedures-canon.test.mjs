@@ -86,6 +86,8 @@ describe('procedures.md — canonical activity-procedures reference', () => {
       '0 blockers + 0 majors', 'test-as-spec', 'no code-mechanics', 'at the diff', 'characterize-first',
       // Review-loop economics (M2/M3/M4/M5-b) — the same five lens-mirror.test.mjs now pins in all four regions.
       '≤2 rounds', 'crossover', 'backend divergence', 'diff-review', 'self-consistency',
+      // Checked-vs-unchecked boundary (the §9 B5 sharpening) — same two strings lens-mirror.test.mjs pins.
+      'checked syntax', 'logic-bearing',
     ]) {
       assert.ok(region.includes(token), `procedures region carries the "${token}" token`);
     }
