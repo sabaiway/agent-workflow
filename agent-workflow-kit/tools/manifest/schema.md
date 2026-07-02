@@ -38,6 +38,21 @@ Each `roles.<role>` is an object:
 - `template` (string, optional) — an in-skill prompt/template path (e.g.
   `references/review-prompt.md`); repo-relative, **must exist**.
 - `modes`, `output` (optional) — e.g. `["plan","code"]`, `"advisory"`.
+- `contract` (object, optional; execution-backend bridges) — the machine-readable **driving
+  contract** for a dispatchable recipe role (`review` / `execute`; the `probe` role carries none).
+  Rides as a validator-tolerated extra field (format-checked by the bridge/kit drift-guard tests,
+  not by `validate.mjs`), and is the single source the point-of-use advisor
+  (`/agent-workflow-kit procedures`) and each wrapper's `--help` render verbatim:
+  - `invocations` (string[], non-empty) — exact copy-pasteable invocation descriptors, one per
+    mode/variant, incl. operand placeholders (`<plan-file>`, `[extra focus...]`).
+  - `grounding` (string) — the grounding note (e.g. agy's `--facts @f` / `--decided @f` levers, or
+    "automatic — …" when the wrapper grounds itself).
+  - `flags` (string[], optional) — the closed per-mode flag descriptor set (closed-grammar
+    wrappers only).
+  - `continue` (string[]) — round-2 / resume invocation descriptors; `[]` when one-shot.
+  - `passthrough` (object, optional) — the guarded `--` passthrough tiers:
+    `{ policy: "guarded", blocked: string[], probeRelaxed: string[] }`, matching the wrapper's
+    real case-arm patterns (pinned by the source-level reverse-guard test).
 
 ## Path-field rules (Windows-safe, traversal-safe)
 

@@ -44,6 +44,41 @@
 #                            staging dir and pass it via --add-dir (re-enables Issue-001 stall risk)
 set -euo pipefail
 
+# --- --help / -h (pre-preflight: no agy, no login, no git tree needed) ---------
+# Keyed ONLY on the FIRST argument — never a scan of all args (uniform rule across
+# the four wrappers). Drift-guarded against capability.json roles.review.contract.
+case "${1:-}" in
+  --help|-h)
+    cat <<'HELP'
+agy-review — grounded read-only ADVISORY review by Google's Antigravity CLI (agy; subscription-only).
+
+Usage:
+  agy-review code [--facts @f] [--decided @f] [--focus "…"] [extra focus…]
+  agy-review plan <plan-file> [--facts @f] [--decided @f] [--focus "…"]
+  agy-review diff <diff-file> [--facts @f] [--decided @f] [--focus "…"]
+
+Flags:
+  --facts @f — verified facts the review runs AGAINST (omit ⇒ loud ungrounded-review warning)
+  --decided @f — already-decided / already-addressed list; do NOT re-raise (anti-circling; the round-2 payload)
+  --focus "…" — extra focus (repeatable; code mode also takes trailing focus words)
+
+Grounding:
+  grounded review — agy reads NOTHING by default, an ungrounded review GUESSES:
+  --facts @f = the verified facts to review AGAINST; --decided @f = decisions
+  already made, do NOT re-raise (anti-circling)
+
+Round-2 / resume:
+  agy-review --continue [--decided @f] [--focus "…"]
+  agy-review --conversation <id> [--decided @f] [--focus "…"]
+  (a continuation sends a small delta — agy holds the artifact server-side; --facts is invalid on a continuation)
+
+Closed grammar: unknown flags are rejected; no '--' passthrough (the only escapes are AGY_PROBE=1 and AGY_REVIEW_ALLOW_ADDDIR=1).
+Requires at run time: the agy CLI on PATH + a Google AI subscription login (--help needs neither).
+HELP
+    exit 0
+    ;;
+esac
+
 DEFAULT_AGY_REVIEW_MODEL="Gemini 3.1 Pro (High)"
 # `-` not `:-` so an EXPLICIT empty AGY_MODEL= survives (drop --model, use settings.json — agy.sh:52).
 AGY_MODEL="${AGY_MODEL-$DEFAULT_AGY_REVIEW_MODEL}"

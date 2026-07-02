@@ -149,7 +149,8 @@ describe('codex-exec.sh — quality-first model/effort guard (1.1)', () => {
 // capture flags: rejected ALWAYS, even under CODEX_PROBE=1.
 const ALWAYS_BLOCKED = [
   ['-s', 'read-only'], ['--sandbox', 'danger-full-access'], ['-c', 'k=v'], ['--config', 'k=v'],
-  ['--full-auto'], ['--dangerously-bypass-approvals-and-sandbox'], ['--oss'], ['--local-provider', 'x'],
+  ['--full-auto'], ['--dangerously-bypass-approvals-and-sandbox'], ['--dangerously-bypass-hook-trust'],
+  ['--oss'], ['--local-provider', 'x'],
   ['-p', 'prof'], ['--profile', 'prof'], ['-m', 'gpt-5.5'], ['--model', 'gpt-5.5'],
   ['-o', '/x'], ['--output-last-message', '/x'], ['--json'], ['--color', 'always'],
   ['--output-schema', '/x'], ['--ephemeral'],
@@ -589,5 +590,163 @@ describe('codex-exec.sh — session id absent', () => {
     assert.equal(wrote, false, 'no thread id → no sidecar');
     assert.doesNotMatch(r.stderr, /session:/, 'no thread id → no session line');
     assert.match(r.stdout, /FAKE_FINAL_MESSAGE/, 'the run still succeeds');
+  });
+});
+
+// ── driving contract: --help ⟷ manifest ⟷ real arg-parsing (drift-guarded) ─────
+// The manifest roles.execute.contract is the single machine-readable source of the
+// driving contract; these suites pin (a) --help renders it verbatim (set-EQUALITY,
+// both directions, incl. the TIERED guarded-passthrough sets), (b) the wrapper's
+// REAL parser arms equal the declared sets (source-level reverse guard — the
+// git-shim heredoc's own `case` arms are NOT CLI modes and must be skipped).
+// Helpers are inline — each bridge test file stays standalone (mirror byte-equality).
+
+const MANIFEST = JSON.parse(readFileSync(join(HERE, '..', 'capability.json'), 'utf8'));
+const EXEC_CONTRACT = MANIFEST.roles.execute.contract;
+const norm = (s) => s.replace(/\s+/g, ' ').trim();
+const setEq = (got, want, msg) => assert.deepEqual([...got].sort(), [...want].sort(), msg);
+const leadingFlag = (descriptor) => {
+  const m = norm(descriptor).match(/(^|\s)(--[a-z-]+)/);
+  assert.ok(m, `descriptor "${descriptor}" carries no --flag token`);
+  return m[2];
+};
+
+// Run `--help`/-h with PATH stripped of codex/agy/git, from a non-git cwd with no
+// AGENTS.md — proving the short-circuit fires BEFORE every preflight.
+const runHelp = (arg) => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-exec-help-'));
+  const nongit = join(root, 'nongit');
+  mkdirSync(nongit, { recursive: true });
+  const path = makePathWithout(root, ['codex', 'agy', 'git']);
+  const r = spawnSync('bash', [WRAPPER, arg], {
+    cwd: nongit, encoding: 'utf8', timeout: 15000, env: { HOME: root, PATH: path },
+  });
+  rmSync(root, { recursive: true, force: true });
+  return r;
+};
+
+// The lines of a labelled --help section (header line → the next blank line).
+const helpSection = (text, header) => {
+  const lines = text.split('\n');
+  const i = lines.findIndex((l) => l.trim() === header);
+  assert.notEqual(i, -1, `--help must carry a "${header}" section`);
+  const out = [];
+  for (let j = i + 1; j < lines.length; j += 1) {
+    if (lines[j].trim() === '') break;
+    out.push(lines[j].trim());
+  }
+  return out;
+};
+
+// Source-level parser-arm extractor — the reverse drift guard. Scans ONLY `case`
+// statements whose SUBJECT is a CLI-argument variable (allowlisted), skipping
+// heredoc bodies (codex-exec's git-shim heredoc carries its own `case "$verb"`
+// git-verb arms that are NOT CLI modes). Returns Map(subject → [raw arm label, …]).
+const ARG_SUBJECTS = new Set(['"$mode"', '"${1:-}"', '"$1"', '"$_arg"']);
+const extractArgCaseArms = (source) => {
+  const arms = new Map();
+  const stack = [];
+  let heredoc = null;
+  for (const raw of source.split('\n')) {
+    if (heredoc) {
+      if (raw.trim() === heredoc) heredoc = null;
+      continue;
+    }
+    if (raw.trimStart().startsWith('#')) continue; // a comment line may carry a stray ')'
+    const hd = raw.match(/<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?/);
+    if (hd) { heredoc = hd[1]; continue; }
+    const cs = raw.match(/^\s*case\s+(\S+)\s+in\b/);
+    if (cs) { stack.push(cs[1]); continue; }
+    if (/^\s*esac\b/.test(raw)) { stack.pop(); continue; }
+    if (stack.length && ARG_SUBJECTS.has(stack[stack.length - 1])) {
+      const arm = raw.match(/^\s*([^)(\s][^)(]*)\)/);
+      if (arm) {
+        const subject = stack[stack.length - 1];
+        if (!arms.has(subject)) arms.set(subject, []);
+        arms.get(subject).push(arm[1].trim());
+      }
+    }
+  }
+  return arms;
+};
+const splitArms = (labels) => (labels ?? []).flatMap((l) => l.split('|'));
+
+describe('codex-exec.sh — --help contract (manifest-pinned)', () => {
+  it('--help and -h exit 0 pre-preflight (no codex, no git, no AGENTS.md)', () => {
+    for (const arg of ['--help', '-h']) {
+      const r = runHelp(arg);
+      assert.equal(r.status, 0, `${arg}: ${r.stderr}`);
+      assert.match(r.stdout, /Usage:/, `${arg} prints the contract to stdout`);
+      assert.equal(r.stderr, '', `${arg} prints nothing to stderr`);
+    }
+  });
+
+  it('Usage set-EQUALS the manifest invocation descriptors (both directions)', () => {
+    const help = runHelp('--help').stdout;
+    const got = helpSection(help, 'Usage:').filter((l) => l.startsWith('codex-exec')).map(norm);
+    assert.ok(EXEC_CONTRACT.invocations.length > 0, 'manifest invocations must be non-empty');
+    setEq(got, EXEC_CONTRACT.invocations.map(norm), 'help Usage ⟷ manifest invocations');
+  });
+
+  it('Grounding renders the manifest grounding note verbatim', () => {
+    const help = runHelp('--help').stdout;
+    assert.equal(norm(helpSection(help, 'Grounding:').join(' ')), norm(EXEC_CONTRACT.grounding));
+  });
+
+  it('Round-2 / resume set-EQUALS the manifest continue descriptors', () => {
+    const help = runHelp('--help').stdout;
+    const got = helpSection(help, 'Round-2 / resume:').filter((l) => l.startsWith('codex-exec')).map(norm);
+    assert.ok(EXEC_CONTRACT.continue.length > 0, 'manifest continue must be non-empty');
+    setEq(got, EXEC_CONTRACT.continue.map(norm), 'help continue ⟷ manifest continue');
+  });
+
+  it('the guarded-passthrough TIERS set-EQUAL the manifest tiers (never a flat set)', () => {
+    const help = runHelp('--help').stdout;
+    const section = helpSection(help, "Guarded passthrough after '--':");
+    const tier = (prefix) => {
+      const line = section.find((l) => l.startsWith(prefix));
+      assert.ok(line, `passthrough section must carry a "${prefix}" line`);
+      return line.slice(prefix.length).trim().split(/\s+/);
+    };
+    assert.ok(EXEC_CONTRACT.passthrough.blocked.length > 0, 'manifest blocked tier must be non-empty');
+    assert.ok(EXEC_CONTRACT.passthrough.probeRelaxed.length > 0, 'manifest probe tier must be non-empty');
+    setEq(tier('blocked always:'), EXEC_CONTRACT.passthrough.blocked, 'help tier-1 ⟷ manifest blocked');
+    setEq(tier('relaxed only under CODEX_PROBE=1:'), EXEC_CONTRACT.passthrough.probeRelaxed, 'help tier-2 ⟷ manifest probeRelaxed');
+  });
+
+  it('--help after the -- separator is passthrough payload, never intercepted', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['-', '--', '--help'], input: 'go' });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stdout, /Usage:/, 'help is keyed on the FIRST argument only');
+    assert.match(r.argv, /(^|\n)--help(\n|$)/, 'the payload --help reaches codex argv');
+  });
+});
+
+describe('codex-exec.sh — source-level reverse guard (parser arms ⟷ manifest)', () => {
+  const arms = extractArgCaseArms(readFileSync(WRAPPER, 'utf8'));
+
+  it('the first-arg entrypoints are exactly --help/-h + the manifest resume flags', () => {
+    const declared = EXEC_CONTRACT.continue.map(leadingFlag);
+    assert.ok(declared.length > 0, 'manifest resume set must be non-empty');
+    setEq(new Set(splitArms(arms.get('"${1:-}"'))), new Set(['--help', '-h', ...declared]));
+  });
+
+  it('the real passthrough tier arms equal the manifest tiers (git-shim heredoc excluded)', () => {
+    const tierArms = arms.get('"$_arg"') ?? [];
+    assert.equal(tierArms.length, 2, 'exactly two passthrough tiers: always-blocked, probe-relaxed');
+    setEq(tierArms[0].split('|'), EXEC_CONTRACT.passthrough.blocked, 'tier-1 arm ⟷ manifest blocked');
+    setEq(tierArms[1].split('|'), EXEC_CONTRACT.passthrough.probeRelaxed, 'tier-2 arm ⟷ manifest probeRelaxed');
+  });
+
+  it('the in-test tier samples cover every manifest tier pattern (behavioural forward guard)', () => {
+    // ALWAYS_BLOCKED / PROBE_RELAXABLE drive the real behaviour suite above; pin them
+    // to the manifest so a tier edit cannot leave the behavioural samples stale.
+    const sample = (patterns) => patterns.map((p) => p.replace(/\*$/, ''));
+    const covered = (flags, patterns) =>
+      sample(patterns).every((p) => flags.some(([f]) => f === p || f.startsWith(p)));
+    assert.ok(covered(ALWAYS_BLOCKED, EXEC_CONTRACT.passthrough.blocked), 'every blocked pattern has a behavioural sample');
+    assert.ok(covered(PROBE_RELAXABLE, EXEC_CONTRACT.passthrough.probeRelaxed), 'every probe pattern has a behavioural sample');
   });
 });

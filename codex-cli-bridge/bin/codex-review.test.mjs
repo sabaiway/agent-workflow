@@ -540,3 +540,130 @@ describe('codex-review.sh — assemble & output edge cases', () => {
     assert.match(r.stdout, /FAKE_FINAL_MESSAGE/);
   });
 });
+
+// ── driving contract: --help ⟷ manifest ⟷ real arg-parsing (drift-guarded) ─────
+// The manifest roles.review.contract is the single machine-readable source of the
+// driving contract; these suites pin (a) --help renders it verbatim (set-EQUALITY,
+// both directions), (b) the wrapper's REAL parser arms equal the declared sets
+// (source-level reverse guard), (c) each declared mode is really accepted.
+// Helpers are inline — each bridge test file stays standalone (mirror byte-equality).
+
+const MANIFEST = JSON.parse(readFileSync(join(HERE, '..', 'capability.json'), 'utf8'));
+const REVIEW_CONTRACT = MANIFEST.roles.review.contract;
+const norm = (s) => s.replace(/\s+/g, ' ').trim();
+const setEq = (got, want, msg) => assert.deepEqual([...got].sort(), [...want].sort(), msg);
+
+// Run `--help`/-h with PATH stripped of codex/agy/git, from a non-git cwd with no
+// AGENTS.md — proving the short-circuit fires BEFORE every preflight.
+const runHelp = (arg) => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-review-help-'));
+  const nongit = join(root, 'nongit');
+  mkdirSync(nongit, { recursive: true });
+  const path = makePathWithout(root, ['codex', 'agy', 'git']);
+  const r = spawnSync('bash', [WRAPPER, arg], {
+    cwd: nongit, encoding: 'utf8', timeout: 15000, env: { HOME: root, PATH: path },
+  });
+  rmSync(root, { recursive: true, force: true });
+  return r;
+};
+
+// The lines of a labelled --help section (header line → the next blank line).
+const helpSection = (text, header) => {
+  const lines = text.split('\n');
+  const i = lines.findIndex((l) => l.trim() === header);
+  assert.notEqual(i, -1, `--help must carry a "${header}" section`);
+  const out = [];
+  for (let j = i + 1; j < lines.length; j += 1) {
+    if (lines[j].trim() === '') break;
+    out.push(lines[j].trim());
+  }
+  return out;
+};
+
+// Source-level parser-arm extractor — the reverse drift guard. Scans ONLY `case`
+// statements whose SUBJECT is a CLI-argument variable (allowlisted), skipping
+// heredoc bodies (a heredoc may carry non-CLI `case` arms — e.g. codex-exec's
+// git-shim). Returns Map(subject → [raw arm label, …]) in source order.
+const ARG_SUBJECTS = new Set(['"$mode"', '"${1:-}"', '"$1"', '"$_arg"']);
+const extractArgCaseArms = (source) => {
+  const arms = new Map();
+  const stack = [];
+  let heredoc = null;
+  for (const raw of source.split('\n')) {
+    if (heredoc) {
+      if (raw.trim() === heredoc) heredoc = null;
+      continue;
+    }
+    if (raw.trimStart().startsWith('#')) continue; // a comment line may carry a stray ')'
+    const hd = raw.match(/<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?/);
+    if (hd) { heredoc = hd[1]; continue; }
+    const cs = raw.match(/^\s*case\s+(\S+)\s+in\b/);
+    if (cs) { stack.push(cs[1]); continue; }
+    if (/^\s*esac\b/.test(raw)) { stack.pop(); continue; }
+    if (stack.length && ARG_SUBJECTS.has(stack[stack.length - 1])) {
+      const arm = raw.match(/^\s*([^)(\s][^)(]*)\)/);
+      if (arm) {
+        const subject = stack[stack.length - 1];
+        if (!arms.has(subject)) arms.set(subject, []);
+        arms.get(subject).push(arm[1].trim());
+      }
+    }
+  }
+  return arms;
+};
+const splitArms = (labels) => (labels ?? []).flatMap((l) => l.split('|'));
+
+describe('codex-review.sh — --help contract (manifest-pinned)', () => {
+  it('--help and -h exit 0 pre-preflight (no codex, no git, no AGENTS.md)', () => {
+    for (const arg of ['--help', '-h']) {
+      const r = runHelp(arg);
+      assert.equal(r.status, 0, `${arg}: ${r.stderr}`);
+      assert.match(r.stdout, /Usage:/, `${arg} prints the contract to stdout`);
+      assert.equal(r.stderr, '', `${arg} prints nothing to stderr`);
+    }
+  });
+
+  it('Usage set-EQUALS the manifest invocation descriptors (both directions)', () => {
+    const help = runHelp('--help').stdout;
+    const got = helpSection(help, 'Usage:').filter((l) => l.startsWith('codex-review')).map(norm);
+    assert.ok(REVIEW_CONTRACT.invocations.length > 0, 'manifest invocations must be non-empty');
+    setEq(got, REVIEW_CONTRACT.invocations.map(norm), 'help Usage ⟷ manifest invocations');
+  });
+
+  it('Grounding renders the manifest grounding note verbatim', () => {
+    const help = runHelp('--help').stdout;
+    assert.equal(norm(helpSection(help, 'Grounding:').join(' ')), norm(REVIEW_CONTRACT.grounding));
+  });
+
+  it('Round-2 / resume set-EQUALS the manifest continue descriptors (empty — one-shot)', () => {
+    const help = runHelp('--help').stdout;
+    const got = helpSection(help, 'Round-2 / resume:').filter((l) => l.startsWith('codex-review')).map(norm);
+    setEq(got, (REVIEW_CONTRACT.continue ?? []).map(norm), 'help continue ⟷ manifest continue');
+    assert.deepEqual(REVIEW_CONTRACT.continue, [], 'codex-review is one-shot — no continue descriptor');
+  });
+});
+
+describe('codex-review.sh — source-level reverse guard (parser arms ⟷ manifest)', () => {
+  const arms = extractArgCaseArms(readFileSync(WRAPPER, 'utf8'));
+
+  it('the real mode arms equal the manifest modes (adding a mode without the manifest fails here)', () => {
+    const modes = splitArms(arms.get('"$mode"')).filter((a) => a !== '*');
+    assert.ok(MANIFEST.roles.review.modes.length > 0, 'manifest modes must be non-empty');
+    setEq(new Set(modes), MANIFEST.roles.review.modes, 'parser mode arms ⟷ manifest modes');
+  });
+
+  it('the first-arg entrypoints are exactly --help/-h (no undeclared resume/flag entrypoint)', () => {
+    setEq(new Set(splitArms(arms.get('"${1:-}"'))), ['--help', '-h']);
+  });
+
+  it('every manifest mode is really accepted (forward guard)', () => {
+    const drive = { plan: ['plan', 'plan.md'], code: ['code'] };
+    for (const mode of MANIFEST.roles.review.modes) {
+      assert.ok(drive[mode], `no test drive for manifest mode "${mode}" — add one`);
+      const sb = makeSandbox();
+      const r = run(sb, { args: drive[mode] });
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(r.status, 0, `mode ${mode}: ${r.stderr}`);
+    }
+  });
+});

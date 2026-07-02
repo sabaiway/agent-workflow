@@ -2,7 +2,7 @@
 name: codex-cli-bridge
 description: Delegate work to the OpenAI Codex CLI (`codex`) under a ChatGPT subscription — run plan/instruction EXECUTION in a sandboxed workspace, or get a read-only ADVISORY review of a plan or working-tree diff — as a second delegated-execution backend beside Antigravity. Use when the user wants to hand a bounded coding task or plan to `codex exec`, get a second-opinion review from codex, install or authenticate Codex CLI, understand its sandbox/network/approval policy, drive codex efficiently from the main agent (exec vs review, resume, the commit boundary), bridge project context (`AGENTS.md`) into codex, or troubleshoot codex flags, models, auth, or its no-TTY headless behaviour.
 metadata:
-  version: '2.0.0'
+  version: '2.1.0'
 ---
 
 # codex-cli-bridge
@@ -77,7 +77,7 @@ Drive codex only through the two wrappers (installed on `PATH`), run from the ta
 # EXECUTION (workspace-write sandbox, network OFF, never prompts):
 codex-exec docs/plans/<slug>.md                 # drive a plan file
 echo "apply review fix: ..." | codex-exec -      # ad-hoc instruction from stdin
-codex-exec <file|-> -- <unguarded codex flags...> # passthrough codex flags after `--` (guarded ones rejected)
+codex-exec <file|-> -- <extra codex flags...>     # GUARDED passthrough after `--` (policy/model/capture flags rejected; some relaxed only under CODEX_PROBE=1)
 
 # RESUME (iterate on the SAME session without re-sending context):
 codex-exec --resume-last docs/plans/<slug>.md    # continue the last session (id from the sidecar)
