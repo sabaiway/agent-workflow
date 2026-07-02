@@ -11,6 +11,7 @@ import {
   placeSkill,
   linkWrappers,
   planFor,
+  refreshPlacedBridges,
   main,
   proactiveReviewOffer,
   SETUP_STOP,
@@ -24,22 +25,23 @@ const CODEX_ROLES = {
   execute: { cmd: 'codex-exec', source: 'bin/codex-exec.sh' },
   review: { cmd: 'codex-review', source: 'bin/codex-review.sh' },
 };
-const manifestOf = (name, roles) => ({
-  family: 'agent-workflow', schema: 1, name, kind: 'execution-backend', version: '1.0.0',
+const manifestOf = (name, roles, version = '1.0.0') => ({
+  family: 'agent-workflow', schema: 1, name, kind: 'execution-backend', version,
   provides: Object.keys(roles), roles,
 });
 
 // A bundle SKILL.md the REAL validator accepts (it now validates the bundle): metadata.version must
-// match the manifest version (1.0.0). The frontmatter `name` is decorative — validateManifest reads
-// the name from capability.json.
-const skillMd = (name) => `---\nname: ${name}\nmetadata:\n  version: '1.0.0'\n---\n# ${name} (bundled)\n`;
+// match the manifest version (default 1.0.0). The frontmatter `name` is decorative — validateManifest
+// reads the name from capability.json.
+const skillMd = (name, version = '1.0.0') => `---\nname: ${name}\nmetadata:\n  version: '${version}'\n---\n# ${name} (bundled)\n`;
 
 // Write a fake bundle at <root>/<name>/ with SKILL.md + capability.json + the wrapper scripts.
+// extra.version sets BOTH stamps (they must match for the real validator).
 const writeBundle = (root, name = 'codex-cli-bridge', roles = CODEX_ROLES, extra = {}) => {
   const dir = join(root, name);
   mkdirSync(join(dir, 'bin'), { recursive: true });
-  writeFileSync(join(dir, 'SKILL.md'), extra.skill ?? skillMd(name));
-  writeFileSync(join(dir, 'capability.json'), JSON.stringify(manifestOf(name, roles), null, 2));
+  writeFileSync(join(dir, 'SKILL.md'), extra.skill ?? skillMd(name, extra.version));
+  writeFileSync(join(dir, 'capability.json'), JSON.stringify(manifestOf(name, roles, extra.version), null, 2));
   for (const r of Object.values(roles)) writeFileSync(join(dir, r.source), '#!/bin/sh\necho hi\n');
   if (extra.newFile) writeFileSync(join(dir, extra.newFile), 'bundled-only\n');
   return dir;
@@ -606,5 +608,235 @@ describe('setup — proactive review-recipe offer', () => {
     const deps = baseDeps({ skillDir: join(tmp, 'skill'), bindir: join(tmp, 'bin'), rest: { detectAll: flippingDetectAll([0, 2]) } });
     const { text } = capturedMain(['codex', '--dry-run'], deps);
     assert.ok(!/set-recipe/.test(text));
+  });
+});
+
+// ── §2.1 INV-D — the bridge refresh NEVER downgrades (plain setup AND the driver) ──
+
+// A proven-managed placed bridge NEWER than the kit-bundled mirror (an older npx runner / a kit
+// downgrade). Every refresh path must be a stated skip naming the kit update — never a copy.
+// Seed a placed dir the REAL validator accepts (SKILL.md + capability.json versions in lockstep +
+// the roles' wrapper sources present) — the same shape writeBundle produces, at a chosen version.
+const seedPlaced = (version) => {
+  const skillDir = join(tmp, 'skill');
+  mkdirSync(join(skillDir, 'bin'), { recursive: true });
+  writeFileSync(join(skillDir, 'SKILL.md'), skillMd('codex-cli-bridge', version));
+  writeFileSync(join(skillDir, 'capability.json'), JSON.stringify(manifestOf('codex-cli-bridge', CODEX_ROLES, version), null, 2));
+  for (const r of Object.values(CODEX_ROLES)) writeFileSync(join(skillDir, r.source), '#!/bin/sh\necho placed\n');
+  return skillDir;
+};
+
+const seedNewerPlaced = () => {
+  writeBundle(join(tmp, 'bundles'), 'codex-cli-bridge', CODEX_ROLES, { version: '2.1.0' });
+  return seedPlaced('2.2.0');
+};
+
+describe('INV-D — never downgrade a placed bridge (placed 2.2.0 vs bundled 2.1.0)', () => {
+  it('plain setup: stated skip + the kit-update recovery, NO copy, nonzero exit', () => {
+    const skillDir = seedNewerPlaced();
+    const before = readFileSync(join(skillDir, 'SKILL.md'), 'utf8');
+    const bindir = join(tmp, 'bin');
+    const { code, text } = capturedMain(['codex'], baseDeps({ skillDir, bindir }));
+    assert.notEqual(code, 0);
+    assert.match(text, /refusing to downgrade/i);
+    assert.match(text, /v2\.2\.0/), assert.match(text, /v2\.1\.0/);
+    assert.match(text, /npx @sabaiway\/agent-workflow-kit@latest init/, 'the recovery names the kit update');
+    assert.equal(readFileSync(join(skillDir, 'SKILL.md'), 'utf8'), before, 'the newer placed bridge is untouched');
+    assert.equal(existsSync(bindir), false, 'no wrapper mutation either');
+  });
+
+  it('plain setup --dry-run predicts the same STOP (faithful plan)', () => {
+    const skillDir = seedNewerPlaced();
+    const plan = planFor('codex', baseDeps({ skillDir }));
+    assert.equal(plan.outcome, 'stop');
+    assert.match(plan.reason, /downgrade/i);
+    assert.match(plan.reason, /@latest init/);
+  });
+
+  it('placeSkill (the mutating primitive) refuses too — belt at write time', () => {
+    const skillDir = seedNewerPlaced();
+    const before = readFileSync(join(skillDir, 'SKILL.md'), 'utf8');
+    assert.throws(() => placeSkill('codex', baseDeps({ skillDir })), (e) => e.code === SETUP_STOP && /downgrade/i.test(e.message));
+    assert.equal(readFileSync(join(skillDir, 'SKILL.md'), 'utf8'), before);
+  });
+
+  it('the refresh driver: stated skip naming the kit update, NO copy', () => {
+    const skillDir = seedNewerPlaced();
+    const before = readFileSync(join(skillDir, 'SKILL.md'), 'utf8');
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'kept-newer');
+    assert.match(res.line, /skipped/i);
+    assert.match(res.line, /npx @sabaiway\/agent-workflow-kit@latest init/);
+    assert.equal(readFileSync(join(skillDir, 'SKILL.md'), 'utf8'), before, 'never copied');
+  });
+});
+
+// ── §2.1 the refresh-only driver (the init/upgrade delivery hook) ──────────────────
+
+describe('refreshPlacedBridges — refresh-only driver', () => {
+  // A proven-managed placed bridge older than the bundle (versions consistent for the real validator).
+  const seedOlderPlaced = (placedVersion = '0.9.0') => {
+    writeBundle(join(tmp, 'bundles'));
+    return seedPlaced(placedVersion);
+  };
+
+  it('proven-managed older bridge → refreshed with the (vOld → vNew) arrow + wrappers re-linked', () => {
+    const skillDir = seedOlderPlaced();
+    const bindir = join(tmp, 'bin');
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir, bindir }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'refreshed');
+    assert.match(res.line, /refreshed \(v0\.9\.0 → v1\.0\.0\)/);
+    assert.equal(readFileSync(join(skillDir, 'SKILL.md'), 'utf8'), skillMd('codex-cli-bridge'), 'placed copy now IS the bundle');
+    assert.equal(readlinkSync(join(bindir, 'codex-exec')), join(skillDir, 'bin', 'codex-exec.sh'), 'a newer bridge can add a wrapper — re-linked');
+  });
+
+  it('equal version → "already current (vX)" that STATES the re-sync, and the copy ran (repair-on-rerun)', () => {
+    const skillDir = seedOlderPlaced('1.0.0');
+    writeFileSync(join(skillDir, 'SKILL.md'), skillMd('codex-cli-bridge').replace('# codex-cli-bridge (bundled)', '# locally edited'));
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'already-current');
+    assert.match(res.line, /already current \(v1\.0\.0\) — files re-synced from the bundled copy/,
+      'the line states the copy that ran — never a mutation-free-sounding "already current"');
+    assert.ok(!/→ v/.test(res.line), 'no version arrow on an equal refresh');
+    assert.equal(readFileSync(join(skillDir, 'SKILL.md'), 'utf8'), skillMd('codex-cli-bridge'), 'a locally-edited file is repaired');
+  });
+
+  it('absent bridge + a FOREIGN same-named wrapper in bindir → still "not placed", never "could not refresh"', () => {
+    // The shared planFor stops on the wrapper conflict, but the refresh-only driver skips an
+    // unplaced bridge BEFORE the wrapper axis matters — it must not claim a failure on a backend
+    // it would never touch.
+    writeBundle(join(tmp, 'bundles'));
+    const skillDir = join(tmp, 'skill'); // absent
+    const bindir = join(tmp, 'bin');
+    mkdirSync(bindir, { recursive: true });
+    writeFileSync(join(bindir, 'codex-exec'), 'someone else\'s real file'); // conflict for planFor
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir, bindir }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'not-placed');
+    assert.match(res.line, /skipped — not placed/);
+    assert.ok(!/could not refresh/.test(res.line));
+    assert.equal(existsSync(skillDir), false, 'still never placed');
+    assert.equal(readFileSync(join(bindir, 'codex-exec'), 'utf8'), 'someone else\'s real file', 'the foreign wrapper is untouched');
+  });
+
+  it('a NEWER version landing between plan and apply → typed downgrade skip at the write boundary, no copy', () => {
+    const skillDir = seedOlderPlaced('0.9.0');
+    // Stateful version reader: the plan sees 0.9.0 (refresh allowed), the apply-time re-read sees
+    // 99.0.0 — the write-boundary guard must turn that into the same stated skip, never a copy.
+    let reads = 0;
+    const readVersion = () => {
+      reads += 1;
+      return { version: reads === 1 ? '0.9.0' : '99.0.0' };
+    };
+    const before = readFileSync(join(skillDir, 'SKILL.md'), 'utf8');
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir, rest: { readVersion } }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'kept-newer');
+    assert.match(res.line, /refusing to downgrade/);
+    assert.match(res.line, /npx @sabaiway\/agent-workflow-kit@latest init/);
+    assert.equal(readFileSync(join(skillDir, 'SKILL.md'), 'utf8'), before, 'no copy after the race');
+    assert.ok(reads >= 2, 'the write boundary really re-read the placed version (non-vacuous)');
+  });
+
+  it('unparseable placed version → refresh proceeds, stated with no arrow (legacy repair)', () => {
+    writeBundle(join(tmp, 'bundles'));
+    const skillDir = join(tmp, 'skill');
+    mkdirSync(join(skillDir, 'bin'), { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), '# legacy, no frontmatter\n');
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir, validate: okValidate() }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'refreshed');
+    assert.match(res.line, /refreshed \(v1\.0\.0\)/);
+    assert.ok(!/vnull|→/.test(res.line));
+  });
+
+  it('absent bridge → stated skip, NEVER placed (AD-009/AD-011 placement stays opt-in)', () => {
+    writeBundle(join(tmp, 'bundles'));
+    const skillDir = join(tmp, 'skill');
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'not-placed');
+    assert.match(res.line, /skipped — not placed/);
+    assert.match(res.line, /opt-in/), assert.match(res.line, /\/agent-workflow-kit setup/);
+    assert.equal(existsSync(skillDir), false, 'the driver must NEVER place an absent bridge');
+  });
+
+  it('foreign/invalid placed dir → a reported failure with a recovery, never a crash, dir untouched', () => {
+    writeBundle(join(tmp, 'bundles'));
+    const skillDir = join(tmp, 'skill');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), '# present\n');
+    writeFileSync(join(skillDir, 'capability.json'), 'not json');
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'failed');
+    assert.match(res.line, /could not refresh/);
+    assert.match(res.line, /\/agent-workflow-kit setup/, 'the failure line carries a recovery');
+    assert.equal(readFileSync(join(skillDir, 'SKILL.md'), 'utf8'), '# present\n');
+  });
+
+  it('TOCTOU: plan says refresh, dir gone absent at apply → reported skip, NOTHING placed', () => {
+    const skillDir = seedOlderPlaced('1.0.0');
+    const before = readFileSync(join(skillDir, 'SKILL.md'), 'utf8');
+    // The skill dir "vanishes" AFTER the plan and BEFORE the apply: the 2nd lstat of the skill dir
+    // itself reports ENOENT; every other path stays the real filesystem.
+    let dirLstats = 0;
+    const lstat = (p) => {
+      if (p === skillDir) {
+        dirLstats += 1;
+        if (dirLstats > 1) throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
+      }
+      return lstatSync(p);
+    };
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir, rest: { lstat } }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'not-placed');
+    assert.match(res.line, /skipped — not placed/);
+    assert.equal(readFileSync(join(skillDir, 'SKILL.md'), 'utf8'), before, 'the re-inspection must stop the copy, never place');
+    assert.ok(dirLstats > 1, 'the apply really re-inspected the dir (non-vacuous)');
+  });
+});
+
+// ── §2.1 --refresh-placed CLI mode ────────────────────────────────────────────────
+
+describe('main --refresh-placed — CLI contract', () => {
+  const AGY_ROLES = { review: { cmd: 'agy-review', source: 'bin/agy-review.sh' }, probe: { cmd: 'agy-run', source: 'bin/agy.sh' } };
+  const bothBundles = () => {
+    writeBundle(join(tmp, 'bundles'));
+    writeBundle(join(tmp, 'bundles'), 'antigravity-cli-bridge', AGY_ROLES);
+  };
+
+  it('refreshes the placed bridge, states the absent one, exit 0, and never offers set-recipe', () => {
+    bothBundles();
+    const skillDir = seedPlaced('0.9.0');
+    const { code, text } = capturedMain(['--refresh-placed'], baseDeps({ skillDir }));
+    assert.equal(code, 0);
+    assert.match(text, /codex-cli-bridge: refreshed \(v0\.9\.0 → v1\.0\.0\)/);
+    assert.match(text, /antigravity-cli-bridge: skipped — not placed/);
+    assert.ok(!/set-recipe/.test(text), 'a refresh never flips readiness, so no recipe offer');
+  });
+
+  it('a failed backend → exit 1 (the line still carries the reason + recovery)', () => {
+    bothBundles();
+    const skillDir = join(tmp, 'skill');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), '# present\n');
+    writeFileSync(join(skillDir, 'capability.json'), 'not json');
+    const { code, text } = capturedMain(['--refresh-placed'], baseDeps({ skillDir }));
+    assert.equal(code, 1);
+    assert.match(text, /could not refresh/);
+  });
+
+  it('composes with a single named backend', () => {
+    writeBundle(join(tmp, 'bundles'));
+    const { code, text } = capturedMain(['codex', '--refresh-placed'], baseDeps({ skillDir: join(tmp, 'skill') }));
+    assert.equal(code, 0);
+    assert.match(text, /codex-cli-bridge: skipped — not placed/);
+    assert.ok(!/antigravity/.test(text), 'only the named backend is touched');
+  });
+
+  it('--refresh-placed --dry-run → usage error (no silent flag-swallowing)', () => {
+    const { code, text } = capturedMain(['--refresh-placed', '--dry-run']);
+    assert.equal(code, 2);
+    assert.match(text, /usage: setup-backends/);
+  });
+
+  it('--help lists --refresh-placed', () => {
+    const { text } = capturedMain(['--help']);
+    assert.match(text, /--refresh-placed/);
   });
 });

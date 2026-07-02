@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, rm, mkdir, symlink, readdir, readFile, writeFile, chmod } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, symlink, readdir, readFile, writeFile, chmod, cp } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -22,11 +22,12 @@ import { FAMILY_MEMBERS } from '../tools/family-members.mjs';
 const INSTALLER = join(dirname(fileURLToPath(import.meta.url)), 'install.mjs');
 const KIT_ROOT = dirname(dirname(INSTALLER));
 // --no-launchers so the test never wires Codex/Devin on the host; --no-engine + --no-memory so a full
-// install never spawns a real `npx … (engine|memory) init` (network + a write to the real skill dir).
-// The dedicated cascade tests cover those paths in-process / via a stubbed `npx` on a sanitized PATH.
-// `extra` appends flags (e.g. --force, --allow-downgrade).
+// install never spawns a real `npx … (engine|memory) init` (network + a write to the real skill dir);
+// --no-bridges so it never refreshes the HOST's real placed bridges (~/.claude/skills/<bridge>) or
+// links wrappers into the real ~/.local/bin. The dedicated cascade/bridge tests cover those paths
+// via stubbed `npx` / sandboxed HOME + bridge-dir envs. `extra` appends flags (e.g. --force).
 const runInstaller = (target, extra = []) =>
-  spawnSync(process.execPath, [INSTALLER, '--dir', target, '--no-launchers', '--no-engine', '--no-memory', ...extra], { encoding: 'utf8' });
+  spawnSync(process.execPath, [INSTALLER, '--dir', target, '--no-launchers', '--no-engine', '--no-memory', '--no-bridges', ...extra], { encoding: 'utf8' });
 
 // Rewrite / read the installed skill's frontmatter version — used to simulate "a newer kit is already
 // installed" (the stale-cache downgrade scenario). The installer reads exactly this field.
@@ -126,7 +127,7 @@ describe('kit installer — runs through the npx bin symlink', () => {
     const shim = join(dir, 'agent-workflow-kit'); // stands in for node_modules/.bin/<name>
     await symlink(INSTALLER, shim);
     const target = join(dir, 'home', 'agent-workflow-kit');
-    const res = spawnSync(process.execPath, [shim, '--dir', target, '--no-launchers', '--no-engine', '--no-memory'], { encoding: 'utf8' });
+    const res = spawnSync(process.execPath, [shim, '--dir', target, '--no-launchers', '--no-engine', '--no-memory', '--no-bridges'], { encoding: 'utf8' });
     assert.equal(res.status, 0, res.stderr);
     assert.match(res.stdout, /installed v|updated the kit/);
     assert.ok(existsSync(join(target, 'SKILL.md')), 'install through the symlink must write the payload');
@@ -329,7 +330,8 @@ describe('kit installer — mandatory engine install (subprocess)', () => {
     await mkdir(emptyBin, { recursive: true });
     // --no-memory keeps this focused on the engine's FATAL path (the memory-first ordering has its own
     // dedicated test below); without it the empty-PATH memory spawn would add a second 1.5s backoff.
-    const res = spawnSync(process.execPath, [INSTALLER, '--dir', target, '--no-launchers', '--no-memory'], {
+    // --no-bridges keeps the run off the host's real placed bridges (dedicated sandboxed tests below).
+    const res = spawnSync(process.execPath, [INSTALLER, '--dir', target, '--no-launchers', '--no-memory', '--no-bridges'], {
       encoding: 'utf8',
       env: { ...process.env, PATH: emptyBin },
     });
@@ -517,6 +519,121 @@ describe('kit installer — memory cascade (subprocess, stubbed npx, no network)
     assert.ok(calls[0].includes('memory'), 'memory ran FIRST, before the fatal engine (non-fatal-before-fatal)');
     assert.match(res.stderr, /FAILED to install the methodology engine/);
     assert.doesNotMatch(res.stdout, /Next — open your agent/, 'must NOT claim success after the engine failed');
+  });
+});
+
+describe('kit installer — placed-bridge refresh (subprocess, refresh-only, local files only)', { skip: process.platform === 'win32' }, () => {
+  let dir;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'aw-kit-bridge-'));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const BRIDGE = 'codex-cli-bridge';
+  const bundledVersion = async () =>
+    JSON.parse(await readFile(join(KIT_ROOT, 'bridges', BRIDGE, 'capability.json'), 'utf8')).version;
+
+  // Seed a proven-managed placed bridge: copy the kit's REAL bundled bridge (valid manifest,
+  // name+kind match), then rewrite BOTH version stamps (capability.json + SKILL.md metadata.version
+  // must stay in lockstep for the real validator) to the chosen older/newer version.
+  const seedPlacedBridge = async (dest, v) => {
+    await cp(join(KIT_ROOT, 'bridges', BRIDGE), dest, { recursive: true });
+    const cap = JSON.parse(await readFile(join(dest, 'capability.json'), 'utf8'));
+    cap.version = v;
+    await writeFile(join(dest, 'capability.json'), JSON.stringify(cap, null, 2));
+    const skill = await readFile(join(dest, 'SKILL.md'), 'utf8');
+    await writeFile(join(dest, 'SKILL.md'), skill.replace(/(metadata:\r?\n\s*version:\s*)'[^']*'/, `$1'${v}'`));
+  };
+  const placedVersion = async (dest) =>
+    (await readFile(join(dest, 'SKILL.md'), 'utf8')).match(/metadata:\r?\n\s*version:\s*'([^']*)'/)?.[1] ?? null;
+
+  // Sandboxed HOME (the wrapper links land under $HOME/.local/bin) + both bridge dirs pointed into
+  // the sandbox — the run must NEVER touch the host's real placed bridges (:449-455 precedent).
+  const runBridgeInstall = (target, { env = {}, extra = [] } = {}) =>
+    spawnSync(process.execPath, [INSTALLER, '--dir', target, '--no-launchers', '--no-memory', '--no-engine', ...extra], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: join(dir, 'home'),
+        CODEX_CLI_BRIDGE_DIR: join(dir, 'codex-skill'),
+        ANTIGRAVITY_CLI_BRIDGE_DIR: join(dir, 'agy-skill'),
+        ...env,
+      },
+    });
+
+  it('a seeded OLD placed bridge is refreshed with the printed (vOld → vNew) arrow; the absent one is a stated skip, never placed', async () => {
+    const codexDir = join(dir, 'codex-skill');
+    await seedPlacedBridge(codexDir, '2.0.0');
+    const target = join(dir, 'agent-workflow-kit');
+    const res = runBridgeInstall(target);
+    assert.equal(res.status, 0, res.stderr);
+    const bundled = await bundledVersion();
+    assert.match(res.stdout, new RegExp(`codex-cli-bridge: refreshed \\(v2\\.0\\.0 → v${bundled.replaceAll('.', '\\.')}\\)`));
+    assert.equal(await placedVersion(codexDir), bundled, 'the placed copy now carries the bundled version');
+    assert.match(res.stdout, /antigravity-cli-bridge: skipped — not placed/);
+    assert.match(res.stdout, /opt-in/, 'the skip states that placement stays opt-in');
+    assert.equal(existsSync(join(dir, 'agy-skill')), false, 'an absent bridge must NEVER be placed by init');
+  });
+
+  it('both bridges absent → two stated skips, neither dir created (AD-009/AD-011 placement opt-in)', async () => {
+    const target = join(dir, 'agent-workflow-kit');
+    const res = runBridgeInstall(target);
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /codex-cli-bridge: skipped — not placed/);
+    assert.match(res.stdout, /antigravity-cli-bridge: skipped — not placed/);
+    assert.equal(existsSync(join(dir, 'codex-skill')), false);
+    assert.equal(existsSync(join(dir, 'agy-skill')), false);
+  });
+
+  it('--no-bridges: the seeded old bridge stays untouched and the skip note prints the recovery command', async () => {
+    const codexDir = join(dir, 'codex-skill');
+    await seedPlacedBridge(codexDir, '2.0.0');
+    const target = join(dir, 'agent-workflow-kit');
+    const res = runBridgeInstall(target, { extra: ['--no-bridges'] });
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /--no-bridges: skipped refreshing the placed bridges/);
+    assert.match(res.stdout, /--refresh-placed/, 'the note names the host-runnable recovery');
+    assert.doesNotMatch(res.stdout, /codex-cli-bridge: refreshed/);
+    assert.equal(await placedVersion(codexDir), '2.0.0', 'untouched under --no-bridges');
+  });
+
+  it('INV-D: a placed bridge NEWER than the bundle → stated skip naming the kit update, no downgrade, exit 0', async () => {
+    const codexDir = join(dir, 'codex-skill');
+    await seedPlacedBridge(codexDir, '99.0.0');
+    const target = join(dir, 'agent-workflow-kit');
+    const res = runBridgeInstall(target);
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /codex-cli-bridge: skipped — .*refusing to downgrade/);
+    assert.match(res.stdout, /npx @sabaiway\/agent-workflow-kit@latest init/, 'the skip names the kit update');
+    assert.equal(await placedVersion(codexDir), '99.0.0', 'the newer placed bridge is untouched');
+  });
+
+  it('a bridge-refresh failure is a loud DEGRADED success: warn + recovery at the RESOLVED --dir target + exit 0 + the success block', async () => {
+    // A placed dir with an unparseable manifest → the driver reports `could not refresh`, and the
+    // installer warns (never a hard stop) with a recovery command that points at the resolved target.
+    const codexDir = join(dir, 'codex-skill');
+    await mkdir(codexDir, { recursive: true });
+    await writeFile(join(codexDir, 'SKILL.md'), '# present\n');
+    await writeFile(join(codexDir, 'capability.json'), 'not json');
+    const target = join(dir, 'custom-kit-target');
+    const res = runBridgeInstall(target);
+    assert.equal(res.status, 0, `a bridge miss must stay exit 0: ${res.stderr}`);
+    assert.match(res.stdout, /codex-cli-bridge: could not refresh/);
+    assert.match(res.stderr, /could not refresh every placed bridge/);
+    assert.ok(
+      res.stderr.includes(`${join(target, 'tools/setup-backends.mjs')} --refresh-placed`),
+      `the recovery must run against the resolved --dir target, got: ${res.stderr}`,
+    );
+    assert.match(res.stdout, /Next — open your agent/, 'degraded is still a success — the success block prints');
+  });
+
+  it('--help lists --no-bridges and states the refresh-only contract', () => {
+    const res = spawnSync(process.execPath, [INSTALLER, '--help'], { encoding: 'utf8' });
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /--no-bridges/);
+    assert.match(res.stdout, /never PLACED by init/);
   });
 });
 

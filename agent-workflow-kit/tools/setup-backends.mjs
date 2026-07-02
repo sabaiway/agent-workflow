@@ -5,6 +5,12 @@
 // symlinks. Binary install + the interactive subscription login stay GUIDED (printed, never run) —
 // guideFor() supplies the exact commands. The read-only detector is the reader; this is the writer.
 //
+// Two write modes: plain setup (opt-in, in-agent — the ONLY path that ever PLACES a bridge) and the
+// refresh-only driver (`--refresh-placed` / refreshPlacedBridges, run by `init` and Mode: upgrade) —
+// it refreshes what setup already placed and re-links wrappers, states an absent bridge as a skip
+// (never a first placement), and never downgrades: a placed bridge newer than the kit-bundled mirror
+// is a stated skip naming the kit update (guarded again at the write boundary in placeSkill).
+//
 // Safety posture (AD-011): drive off the decoupled axes (a per-bindir wrapper check + an independent
 // skill-dir inspection), never the detector's collapsed readiness. REFRESH only a dir we provably own
 // (valid manifest, name+kind match) or one that is absent/empty; STOP on anything else (a marker fs
@@ -27,6 +33,7 @@ import os from 'node:os';
 import { KNOWN_BACKENDS, detectBackend, detectBackends, resolveDir, guideFor, READY } from './detect-backends.mjs';
 import { copyTreeRefresh, linkManaged } from './fs-safe.mjs';
 import { validateManifest, readAuthoritativeVersion, UNSUPPORTED, INVALID } from './manifest/validate.mjs';
+import { compareSemver } from './semver-lite.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // bridges/ ships beside tools/ in both the repo and the installed kit, so this resolves in both.
@@ -215,11 +222,43 @@ const inspectDst = (dst, source, fs) => {
 
 // ── mutating primitives ───────────────────────────────────────────────────────
 
+// The one kit-update recovery the never-downgrade skip names (the bundle only gets newer via the kit).
+const KIT_UPDATE_RECOVERY = 'npx @sabaiway/agent-workflow-kit@latest init';
+
+// Crash-safe placed-version read for the downgrade guard: an unreadable placed version yields null →
+// compareSemver returns null → no ordering claim → the refresh stays allowed (legacy repair). The
+// guard forbids only a PROVEN downgrade; it never turns an unreadable stamp into a false refusal.
+const readPlacedVersionSafe = (skillDir, deps = {}) => {
+  const readVersion = deps.readVersion ?? readAuthoritativeVersion;
+  try {
+    return readVersion(skillDir).version ?? null;
+  } catch {
+    return null;
+  }
+};
+
+// Never-downgrade guard at the WRITE boundary (belt to planFor's braces — both read the versions
+// fresh): a placed bridge NEWER than the kit-bundled mirror (an older npx runner / a kit downgrade)
+// is a typed STOP naming the kit update, never a copy. Load-bearing once init/upgrade run the
+// refresh automatically.
+const downgradeReason = (placed, bundled) =>
+  `placed bridge is v${placed} but this kit bundles the older v${bundled} — refusing to downgrade; ` +
+  `update the kit first: ${KIT_UPDATE_RECOVERY}`;
+const assertNoDowngrade = (plan, deps = {}) => {
+  if (plan.action !== 'refresh') return;
+  const placed = readPlacedVersionSafe(plan.skillDir, deps);
+  const manifest = readBundledManifest(plan.bundleDir, deps);
+  const bundled = typeof manifest.version === 'string' ? manifest.version : null;
+  // `wouldDowngrade` lets a caller classify this STOP structurally (never by matching message text).
+  if (compareSemver(placed, bundled) === 1) throw stop(downgradeReason(placed, bundled), { skillDir: plan.skillDir, wouldDowngrade: true });
+};
+
 // Place/refresh the bundled bridge skill. Re-inspects before writing (never trusts a stale plan).
 export const placeSkill = (name, deps = {}) => {
   const entry = registryEntry(name);
   if (!entry) throw stop(`unknown backend: ${name}`);
   const plan = inspectSkillDir(entry, deps);
+  assertNoDowngrade(plan, deps);
   copyTreeRefresh(plan.bundleDir, plan.skillDir, plan.skillDir, fsDeps(deps));
   return plan;
 };
@@ -326,6 +365,17 @@ export const planFor = (backend, deps = {}) => {
     // setup never invents a second version reader. A place / absent-prior shows no arrow (never "vnull").
     version = typeof bundledManifest.version === 'string' ? bundledManifest.version : null;
     priorVersion = place.action === 'refresh' ? readVersion(skillDir).version ?? null : null;
+    // Never-downgrade (predicted here so a --dry-run is faithful and a real run stops before any
+    // write; placeSkill re-checks at the write boundary). An unparseable side → compareSemver null →
+    // no ordering claim → the refresh stays allowed (legacy repair). `wouldDowngrade` lets the
+    // refresh-only driver report this as a stated skip rather than a failure.
+    if (place.action === 'refresh' && compareSemver(priorVersion, version) === 1) {
+      return {
+        name: entry.name, skillDir, bindir, platform, place, links: [], guides: [], bindirHint: null,
+        outcome: 'stop', wouldDowngrade: true, version, priorVersion,
+        reason: downgradeReason(priorVersion, version),
+      };
+    }
     const derived = deriveLinks(bundledManifest, skillDir);
     // Preflight the BUNDLE sources (what we will copy → link). After place, the skill source IS the
     // bundle source, so checking it here makes a dry-run faithfully predict linkWrappers instead of
@@ -401,6 +451,77 @@ const formatBackend = (plan, applied) => {
   return lines.join('\n');
 };
 
+// ── the refresh-only driver (the init/upgrade delivery hook — refresh, never place) ──
+
+// Refresh-only apply: re-inspects at APPLY time and copies ONLY when the fresh inspection still says
+// `refresh` (TOCTOU: a dir gone absent between plan and apply is a reported skip, NEVER a first
+// placement — placement stays setup's opt-in step, AD-009/AD-011), and re-asserts the downgrade
+// guard against a freshly-read placed version (a NEWER bridge landing between plan and apply is a
+// typed STOP, never overwritten). No cross-process lock beyond that: like every mutating primitive
+// here (see applyBackend), concurrent writers are resolved by CONVERGE-ON-RE-RUN — the Phase-1
+// freshness probe flags any interleaving loser as behind and the next init/upgrade/setup repairs it;
+// a per-bridge lock file would be new machinery for a user-driven, self-healing race.
+const refreshSkillOnly = (entry, deps = {}) => {
+  const fresh = inspectSkillDir(entry, deps);
+  if (fresh.action !== 'refresh') return false;
+  assertNoDowngrade(fresh, deps);
+  copyTreeRefresh(fresh.bundleDir, fresh.skillDir, fresh.skillDir, fsDeps(deps));
+  return true;
+};
+
+const NOT_PLACED_LINE = 'skipped — not placed (placement is opt-in: /agent-workflow-kit setup)';
+const stripPrefix = (message) => message.replace('[agent-workflow-kit] ', '');
+
+// Refresh every ALREADY-PLACED bridge from the kit's bundled copies and re-link its wrappers (a newer
+// bridge can add one). One reported outcome per backend — never a crash; a per-backend STOP/error
+// becomes a `failed` result. `line` is the tool-composed sentence callers print VERBATIM (the agent
+// pastes, never composes — deterministic-first). Outcomes: refreshed · already-current · not-placed
+// (absent — NEVER placed here) · kept-newer (INV-D stated skip) · unsupported (win32) · failed.
+export const refreshPlacedBridges = (deps = {}, names = KNOWN_BACKENDS.map((b) => b.name)) =>
+  names.map((name) => {
+    const canonical = resolveBackendName(name);
+    // The whole per-backend path is crash-proof, not just the apply: planFor itself can throw on a
+    // truly unexpected dependency error, and one broken backend must never abort the others' report.
+    try {
+      const plan = planFor(name, deps);
+      if (plan.outcome === 'unsupported') {
+        return { name: plan.name, outcome: 'unsupported', line: `  ${plan.name}: skipped — ${plan.reason}` };
+      }
+      if (plan.wouldDowngrade) {
+        return { name: plan.name, outcome: 'kept-newer', line: `  ${plan.name}: skipped — ${stripPrefix(plan.reason)}` };
+      }
+      // An absent/empty skill dir is `not placed` REGARDLESS of any later plan trouble (a foreign
+      // wrapper conflict, a bundle-source problem): the refresh-only driver skips an unplaced bridge
+      // before those axes matter, so it must never claim "could not refresh" what it would not touch.
+      if (plan.place && plan.place.action !== 'refresh') {
+        return { name: plan.name, outcome: 'not-placed', line: `  ${plan.name}: ${NOT_PLACED_LINE}` };
+      }
+      if (plan.outcome === 'stop' || plan.outcome === 'error') {
+        return { name: plan.name, outcome: 'failed', line: `  ${plan.name}: could not refresh — ${stripPrefix(plan.reason)}; recover with /agent-workflow-kit setup` };
+      }
+      if (!refreshSkillOnly(registryEntry(plan.name), deps)) {
+        return { name: plan.name, outcome: 'not-placed', line: `  ${plan.name}: ${NOT_PLACED_LINE}` };
+      }
+      const manifest = readBundledManifest(plan.place.bundleDir, deps);
+      linkWrappers(plan.skillDir, manifest, { ...deps, bindir: plan.bindir, platform: plan.platform });
+      const current = plan.version !== null && plan.priorVersion === plan.version;
+      // The equal-version line still states the copy that ran (repair-on-rerun) — the tool never
+      // reports a mutation-free "already current" while it re-synced files underneath.
+      return {
+        name: plan.name,
+        outcome: current ? 'already-current' : 'refreshed',
+        line: `  ${plan.name}: ${current ? `already current${versionLabel(plan)} — files re-synced from the bundled copy` : `refreshed${versionLabel(plan)}`}`,
+      };
+    } catch (err) {
+      // A downgrade STOP raised at the write boundary (a newer bridge landed between plan and apply)
+      // is the same stated skip as the planned one — classified structurally via the typed field.
+      if (err.wouldDowngrade) {
+        return { name: canonical, outcome: 'kept-newer', line: `  ${canonical}: skipped — ${stripPrefix(err.message)}` };
+      }
+      return { name: canonical, outcome: 'failed', line: `  ${canonical}: could not refresh — ${stripPrefix(err.message)}; recover with /agent-workflow-kit setup` };
+    }
+  });
+
 // ── close-the-loop: surface versions + a proactive recipe offer ───────────────────
 
 // The closing pointer: setup surfaces only the bridge it touched; the full family + deployment version
@@ -438,23 +559,28 @@ export const proactiveReviewOffer = (before, after) => {
 
 // ── CLI ─────────────────────────────────────────────────────────────────────────
 
-const USAGE = `usage: setup-backends [<backend>] [--bindir <path>] [--dry-run] [--help]
+const USAGE = `usage: setup-backends [<backend>] [--bindir <path>] [--dry-run | --refresh-placed] [--help]
 
-  <backend>   codex | agy | antigravity | codex-cli-bridge | antigravity-cli-bridge   (default: all)
-  --bindir    where to link the wrappers                                              (default: ~/.local/bin)
-  --dry-run   print the plan; change nothing
-  --help, -h  this help
+  <backend>          codex | agy | antigravity | codex-cli-bridge | antigravity-cli-bridge   (default: all)
+  --bindir           where to link the wrappers                                              (default: ~/.local/bin)
+  --dry-run          print the plan; change nothing
+  --refresh-placed   refresh ONLY the already-placed bridges from the kit's bundled copies —
+                     an absent bridge is a stated skip (never placed), a placed bridge newer
+                     than the bundle is a stated skip (never downgraded). The refresh-only
+                     mode init/upgrade run; does not combine with --dry-run.
+  --help, -h         this help
 
 Places the bundled bridge skill + links its wrappers (idempotent; refuses to clobber a non-symlink).
 Binary install + the interactive subscription login stay manual — the printed guidance has the exact
 commands. The detector ("/agent-workflow-kit backends") stays read-only; this is the only writer.`;
 
 const parseArgs = (argv) => {
-  const out = { dryRun: false, help: false, bindir: undefined, backend: undefined, bad: null };
+  const out = { dryRun: false, refreshPlaced: false, help: false, bindir: undefined, backend: undefined, bad: null };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--help' || a === '-h') out.help = true;
     else if (a === '--dry-run') out.dryRun = true;
+    else if (a === '--refresh-placed') out.refreshPlaced = true;
     else if (a === '--bindir') {
       // Do NOT greedily swallow a following flag (e.g. `--bindir --dry-run` must not become
       // bindir="--dry-run" and silently mutate); a missing or flag-like value is a usage error.
@@ -482,6 +608,7 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
     log(USAGE);
     return 0;
   }
+  if (args.refreshPlaced && args.dryRun) args.bad = '--refresh-placed does not combine with --dry-run';
   if (args.bad) {
     errlog(args.bad);
     errlog(USAGE);
@@ -501,6 +628,16 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
   }
 
   const runDeps = { ...deps, bindir: args.bindir ?? deps.bindir };
+
+  // Refresh-only mode: act on what setup already placed; never place, never downgrade. Every line is
+  // tool-composed — callers (init, Mode: upgrade) print/paste them verbatim.
+  if (args.refreshPlaced) {
+    log('agent-workflow placed-bridge refresh (refresh-only — placement stays opt-in: /agent-workflow-kit setup)');
+    const results = refreshPlacedBridges(runDeps, targets);
+    for (const r of results) log(r.line);
+    return results.some((r) => r.outcome === 'failed') ? 1 : 0;
+  }
+
   log(args.dryRun ? 'agent-workflow backend setup — DRY RUN (no changes)' : 'agent-workflow backend setup (link-only)');
   // Snapshot review readiness BEFORE applying, so we can offer the recipe only on a true readiness flip.
   const reviewBefore = args.dryRun ? null : reviewReadyCount(runDeps);
