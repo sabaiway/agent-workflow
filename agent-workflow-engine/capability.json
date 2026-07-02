@@ -3,7 +3,7 @@
   "schema": 1,
   "name": "agent-workflow-engine",
   "kind": "methodology-engine",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "available": true,
   "provides": ["plan"],
   "roles": {},

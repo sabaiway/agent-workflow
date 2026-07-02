@@ -3,7 +3,7 @@ name: agent-workflow-memory
 description: Deploy or upgrade a portable AI-agent memory substrate in any project — an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) and a structured `docs/ai/` context store with cap/archive/index enforcement. Use when the user wants to bootstrap `docs/ai/`, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-memory` / `/agent-workflow-memory upgrade`. Triggers on "set up the memory system", "deploy the AI memory here", "bootstrap docs/ai", "upgrade the memory substrate". This is the substrate only — the workflow methodology (plan→execute→review, queue, Cleanup) is owned elsewhere and injected into AGENTS.md by the family composition root.
 disable-model-invocation: true
 metadata:
-  version: '1.7.0'
+  version: '1.8.0'
 ---
 
 # agent-workflow-memory
@@ -48,6 +48,7 @@ What this substrate owns vs what it only points at. The methodology + orchestrat
 | Plan→Phase→Step vocabulary, lifecycle, `queue.md`, mandatory Cleanup | **methodology** (not this skill) | the empty `workflow:methodology` slot — filled by the composition root |
 | Orchestration recipes (Solo / Reviewed / Council / Delegated) | **methodology engine** (not this skill) | the empty `workflow:orchestration` slot — filled by the composition root |
 | Per-project recipe **CONFIG** (which recipe each activity/slot uses) | **memory** seeds an *editable default* | `docs/ai/orchestration.json` (agent-writable via the composition root's `set-recipe` writer, or hand-edited; the recipe **canon** + the slot **vocabulary** live in the engine / composition root, never here) |
+| Per-project **gate declaration** (which verification commands must be green) | **memory** seeds an *editable default* | `docs/ai/gates.json` (hand-editable; an empty list as shipped — the project declares its own commands; the **runner** lives in the composition root, never here) |
 
 ---
 
@@ -96,9 +97,11 @@ bootstrapping over a live system, but the user makes the final call.
    (`ln -s AGENTS.md CLAUDE.md`). **Leave BOTH pointer slots (`workflow:methodology` +
    `workflow:orchestration`) exactly as shipped — empty.** Filling them is the composition root's job.
 6. **Deploy `docs/ai/`.** Create the files + `pages/` from
-   `${CLAUDE_SKILL_DIR}/references/templates/` (every non-`AGENTS.md` template, including the seeded,
-   **user-editable** `docs/ai/orchestration.json` config — strict JSON, the per-project recipe defaults
-   the composition root's `procedures` advisor reads). Keep each file's frontmatter.
+   `${CLAUDE_SKILL_DIR}/references/templates/` (every non-`AGENTS.md` template, including the two
+   seeded, **user-editable** strict-JSON configs: `docs/ai/orchestration.json` — the per-project
+   recipe defaults the composition root's `procedures` advisor reads — and `docs/ai/gates.json` —
+   the project's gate declaration, an empty list to fill with its own verification commands,
+   consumed by the composition root's gate runner). Keep each `.md` file's frontmatter.
 7. **Fill templates** per the table below.
 8. **Install enforcement (Node projects).** Copy `${CLAUDE_SKILL_DIR}/references/scripts/*.mjs`
    (+ `*.test.mjs`) into the project's `scripts/`. **No Node runtime** → skip this + the hook;
@@ -166,15 +169,26 @@ Fill strategy:
    **untracked AND not ignored** → **AMBIGUOUS** → **ASK** the user before writing. This visibility check
    runs on **every** in-range upgrade, even at head — it is not gated by the stamp delta, but it is gated
    **behind** the never-downgrade STOP above. **Also stamp-independent (same gate, before the equal-head
-   short-circuit): ensure `docs/ai/orchestration.json`** — **create it from
-   `${CLAUDE_SKILL_DIR}/references/templates/orchestration.json` if missing**, **preserve it byte-for-byte
-   if it already exists** (a user may have edited it; never clobber it). The shipped template's `_README`
-   already frames the config as agent-writable (set it with the `set-recipe` writer) and still
-   hand-editable. (Refreshing that note in place on an existing file is the **composition root's** job on
-   its own reconcile — this substrate is standalone and only seeds-or-preserves; it owns no cross-package
-   refresh helper.) This is why an equal-head (`1.3.0`) deployment still gains the config seed **without a
-   lineage-head bump or a migration file** (the stamp-independent-reconcile precedent — like the pointer
-   slots + the hidden-mode footprint). **Then**, if the stamp **equals** the head → the substrate is
+   short-circuit): ensure BOTH seeded `.json` configs** — for `docs/ai/orchestration.json` AND
+   `docs/ai/gates.json`, **create the file from its
+   `${CLAUDE_SKILL_DIR}/references/templates/` template if missing**, **preserve it byte-for-byte
+   if it already exists** (a user may have edited it; never clobber it). The shipped
+   `orchestration.json` template's `_README` already frames that config as agent-writable (set it
+   with the `set-recipe` writer) and still hand-editable; `gates.json` is the project's own gate
+   declaration (what to verify — consumed by the composition root's gate runner). (Refreshing the
+   orchestration `_README` note in place on an existing file is the **composition root's** job on
+   its own reconcile — this substrate is standalone and only seeds-or-preserves; it owns no
+   cross-package refresh helper. The gates declaration gets no note-refresh at all — authored
+   content, seed-or-preserve only.) This is why an equal-head (`1.3.0`) deployment still gains the
+   config seeds **without a lineage-head bump or a migration file** (the
+   stamp-independent-reconcile precedent — like the pointer slots + the hidden-mode footprint).
+   **Same gate, also stamp-independent: ensure the ADR-cascade enforcement pair** — copy
+   `archive-decisions.mjs` + `archive-decisions.test.mjs` from
+   `${CLAUDE_SKILL_DIR}/references/scripts/` into the project's `scripts/` **if missing**
+   (preserve an existing file byte-for-byte; skip on a No-Node project). The deployed pre-commit
+   hook gains its `archive-decisions.mjs --check` line only when the hook is next refreshed via
+   `node scripts/install-git-hooks.mjs`; an old hook without the line stays consistent-safe (the
+   decisions gate is simply not enforced yet — never a broken hook). **Then**, if the stamp **equals** the head → the substrate is
    current (no structure migration is due), and stop after reporting. Report **in the user's
    conversational language**: if step 2's reconcile just **changed something** (a footprint move /
    config seed), say **what changed** in plain terms and ask before committing; if **nothing changed at

@@ -105,6 +105,17 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     }
   });
 
+  // Cost lanes (cost-tiered execution): the kit advisor renders an unconditional cost-lane block
+  // that PARAPHRASES orchestration.md §5 — pin the same distinctive tokens in the CANON here
+  // (the kit side pins them in the advisor output, procedures.test.mjs), so the paraphrase and
+  // the canon cannot silently drift apart.
+  it('the orchestration.md §5 canon carries the cost-lane tokens the kit advisor paraphrases', () => {
+    const orchestration = readFileSync(join(ROOT, 'references', 'orchestration.md'), 'utf8');
+    for (const token of ['cheapest adequate executor', 'no named guardrail', 'L0', 'L1', 'L2', 'L3', 'red lines never move']) {
+      assert.ok(orchestration.includes(token), `orchestration.md carries the "${token}" canon token`);
+    }
+  });
+
   // Terse process-fidelity pointers: A1 (ExitPlanMode boundary → planning.md §6) in plan-authoring
   // step 6; A2 (recipe fidelity → orchestration.md §4) in the review steps.
   it('carries the terse A1 (ExitPlanMode) + A2 (recipe-fidelity) process-fidelity pointers', () => {

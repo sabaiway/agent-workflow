@@ -17,7 +17,7 @@ const MEMORY_ROOT = resolve(KIT_ROOT, '..', 'agent-workflow-memory');
 const KIT_TEMPLATES = join(KIT_ROOT, 'references', 'templates');
 const MEMORY_TEMPLATES = join(MEMORY_ROOT, 'references', 'templates');
 
-const SHARED_TEMPLATES = ['AGENTS.md', 'orchestration.json'];
+const SHARED_TEMPLATES = ['AGENTS.md', 'orchestration.json', 'gates.json'];
 
 describe('kit ⟷ memory template parity — byte-identical shared seeds', () => {
   for (const name of SHARED_TEMPLATES) {
@@ -33,6 +33,28 @@ describe('kit ⟷ memory template parity — byte-identical shared seeds', () =>
       );
     });
   }
+});
+
+describe('gates.json seed — strict JSON valid against the kit runner schema', () => {
+  const raw = readFileSync(join(KIT_TEMPLATES, 'gates.json'), 'utf8');
+
+  it('parses as strict JSON (no comments — the runner JSON.parses it)', () => {
+    assert.doesNotThrow(() => JSON.parse(raw));
+  });
+
+  it('validates against the runner schema and ships an EMPTY gates list + a string _README', async () => {
+    const { validateDeclaration } = await import('../tools/run-gates.mjs');
+    const parsed = JSON.parse(raw);
+    assert.equal(typeof parsed._README, 'string', 'the onboarding _README is a string');
+    assert.deepEqual(validateDeclaration(parsed), [], 'the seed declares no gates — a project declares its own');
+  });
+
+  it('the _README states the bash cmd contract and the trust posture', () => {
+    const readme = JSON.parse(raw)._README;
+    assert.match(readme, /bash/i, 'names the bash execution shell');
+    assert.match(readme, /not a sandbox/i, 'states the trust posture');
+    assert.match(readme, /never who executes/i, 'states the no-lane/model/routing axis');
+  });
 });
 
 describe('orchestration.json seed — strict JSON valid against the kit schema', () => {

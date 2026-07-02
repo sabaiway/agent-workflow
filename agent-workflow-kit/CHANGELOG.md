@@ -4,6 +4,46 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.27.0 — Cost-tiered execution: the `gates` runner + the `agents` cheap-lane writer
+
+A **feature** release (ships the bundled bridges unchanged at **2.1.0**). Two new modes move
+mechanical work off the frontier lane — one batches every project gate into a single exit code,
+the other places cheap-model subagents for extraction work:
+
+- **`/agent-workflow-kit gates`** (`tools/run-gates.mjs`) — the **generic project gate runner**:
+  reads the project-declared `docs/ai/gates.json` (`{ id, title, cmd }`, strict schema, unknown
+  keys rejected — the declaration names WHAT to check, never who executes it), runs each `cmd`
+  as ONE bash line from the project root, prints a per-gate PASS/FAIL table + one
+  machine-readable summary line, exits 0 iff all green. A failing gate's own output is preserved
+  verbatim; `--only <id>` re-runs a subset; **honest distinct outcomes** for a missing (exit 3,
+  recovery named), empty (4), or malformed (5) declaration and a bash-less host (6) — never a
+  silent green. Trust posture stated: it executes the project's OWN declared commands — a
+  batching convenience, not a sandbox. 33 hermetic tests + one real-spawn brace-glob fixture.
+- **`/agent-workflow-kit agents`** (`tools/cheap-agents.mjs`) — the opt-in **cheap-lane subagent
+  writer** (the second `.claude/` writer, on the velocity discipline: dry-run default,
+  deployment-gated `--apply`, symlink STOPs, never `settings*.json`, never commits). Places
+  three bundled vehicles (`references/agents/`): `mechanical-sweep`, `changelog-skeleton`,
+  `gate-triage` — each pinned `model: haiku` + `effort: low` + read-only tools (content-tested).
+  A diverged existing file is **preserved and reported, never overwritten**. Claude-Code-specific,
+  like velocity.
+- **`gates.json` seeded everywhere** — `references/templates/gates.json` ships byte-identical in
+  kit + memory (template-parity guard); bootstrap seeds it; upgrade **ensures-if-missing from
+  the kit's OWN twin** (a stale memory never silently loses the feature) and preserves an
+  existing declaration byte-for-byte. Also new on upgrade: a stamp-independent
+  **enforcement-script ensure** seeds a missing `archive-decisions.mjs` pair into deployed
+  projects (the kit's byte-identical fallback mirror of the memory canon — pinned by the new
+  `test/scripts-mirror.test.mjs` across ALL shared reference scripts).
+- **The advisor now routes by cost** — `procedures.mjs` renders an unconditional **cost-lanes**
+  block (L0 script · L1 cheap subagent · L2 bridge · L3 frontier; cheapest adequate executor; no
+  guardrail → no down-move; the red lines) + an additive `costLanes` field in `--json`,
+  drift-guarded against the engine canon on both sides. One byte-identical cost-lane bullet
+  joined both `agent_rules.md` templates (lens-mirror tokens + an injected red→green non-vacuity
+  proof).
+- **Footprint registries** — `KNOWN_FOOTPRINT` += `/.claude/agents/` (the vehicles stay
+  invisible in a hidden deployment); `KIT_OWN_PATHS` += the two deployed decisions copies;
+  snapshots + the `contracts.md` mirror row updated in lockstep. Tarball re-pinned (92 files,
+  reverse pins for every new asset).
+
 ## 1.26.0 — Deterministic bridge freshness & delivery; machine-composed status line; honest installer messaging
 
 A **feature** release (ships the bundled bridges unchanged at **2.1.0**). One architecture across

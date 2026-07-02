@@ -139,6 +139,76 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
     assert.equal(config['plan-authoring'].review, 'solo', 'default review recipe is solo');
   });
 
+  it('seeds docs/ai/gates.json from the template (the bootstrap loop deploys it)', () => {
+    const project = makeProject();
+    const docsAi = bootstrap(project);
+    const seeded = join(docsAi, 'gates.json');
+    assert.ok(existsSync(seeded), 'the gates.json declaration is seeded into docs/ai');
+    assert.equal(
+      readFileSync(seeded, 'utf8'),
+      readFileSync(join(TEMPLATES, 'gates.json'), 'utf8'),
+      'the seeded declaration is byte-identical to the template',
+    );
+    // strict JSON valid + the conservative empty-list default (a project declares its own gates).
+    const declaration = JSON.parse(readFileSync(seeded, 'utf8'));
+    assert.equal(typeof declaration._README, 'string', 'an onboarding _README is present');
+    assert.deepEqual(declaration.gates, [], 'ships an empty gates list');
+  });
+
+  // The stamp-independent upgrade "ensure" for gates.json (SKILL.md upgrade step 2): the same
+  // create-if-missing / preserve-byte-for-byte contract as orchestration.json — an authored gate
+  // matrix is never clobbered, a deleted declaration is re-seeded.
+  it('the upgrade ensure preserves an edited gates.json and re-creates a deleted one', () => {
+    const project = makeProject();
+    const docsAi = bootstrap(project);
+    const dest = join(docsAi, 'gates.json');
+    const ensureGates = () => {
+      if (!existsSync(dest)) cpSync(join(TEMPLATES, 'gates.json'), dest);
+    };
+
+    // A user declares their own gate matrix.
+    const authored = '{ "gates": [{ "id": "unit-tests", "title": "Unit tests", "cmd": "node --test" }] }\n';
+    writeFileSync(dest, authored);
+    ensureGates(); // an equal-head upgrade re-runs the ensure
+    assert.equal(readFileSync(dest, 'utf8'), authored, 'an authored declaration is preserved byte-for-byte');
+
+    // A missing declaration is re-seeded.
+    rmSync(dest);
+    ensureGates();
+    assert.ok(existsSync(dest), 'a missing declaration is re-created from the template');
+    assert.equal(readFileSync(dest, 'utf8'), readFileSync(join(TEMPLATES, 'gates.json'), 'utf8'));
+  });
+
+  // The stamp-independent enforcement-script ensure (SKILL.md upgrade step 2, the codex R1 fold):
+  // a deployment older than the ADR-cascade feature gains the archive-decisions pair on an
+  // equal-head upgrade — copy-if-missing from references/scripts, never overwrite an existing
+  // file. Modeled the way the documented prose performs it (the ensureConfig idiom).
+  it('the upgrade ensure adds a MISSING archive-decisions pair and preserves an existing one', () => {
+    const project = makeProject();
+    bootstrap(project);
+    const projectScripts = join(project, 'scripts');
+    const pair = ['archive-decisions.mjs', 'archive-decisions.test.mjs'];
+    // Simulate a PRE-cascade deployment: the pair is absent from the deployed scripts/.
+    for (const name of pair) rmSync(join(projectScripts, name));
+    const ensureEnforcementPair = () => {
+      for (const name of pair) {
+        if (!existsSync(join(projectScripts, name))) cpSync(join(ENFORCEMENT, name), join(projectScripts, name));
+      }
+    };
+    ensureEnforcementPair();
+    for (const name of pair) {
+      assert.equal(
+        readFileSync(join(projectScripts, name), 'utf8'),
+        readFileSync(join(ENFORCEMENT, name), 'utf8'),
+        `${name} seeded byte-identical from references/scripts`,
+      );
+    }
+    // An existing (possibly older) file is preserved — drift repair is a migration's job.
+    writeFileSync(join(projectScripts, 'archive-decisions.mjs'), '// locally pinned older copy\n');
+    ensureEnforcementPair();
+    assert.match(readFileSync(join(projectScripts, 'archive-decisions.mjs'), 'utf8'), /locally pinned/, 'never overwritten');
+  });
+
   // The stamp-independent upgrade "ensure" (SKILL.md upgrade step 2): create-if-missing /
   // preserve-if-edited. Modeled here the way the documented prose performs it — so an equal-head
   // re-run never clobbers a user's edited config, and a deleted one is re-seeded.

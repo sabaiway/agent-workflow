@@ -1,0 +1,4 @@
+{
+  "_README": "Per-project gate declaration: the ordered list of verification commands (tests, validators, scanners, docs checks) that must be green before a commit. Run them all in one batch with the family gate runner (the composition root's `gates` command); re-run one with `--only <id>`. Each entry is { id, title, cmd }: `id` = a unique kebab-case handle, `title` = a short human label, `cmd` = ONE bash command line — gates are spawned via bash (brace/glob expansion works; a host without bash gets a loud preflight error, never a silent reinterpretation under another shell). This file declares WHAT to check, never who executes it — the schema has no lane/model/routing fields and rejects unknown keys loudly. Trust posture: the runner executes this project's OWN declared commands with the caller's privileges — a batching convenience over commands the project already runs by hand, not a sandbox. Strict JSON — no comments.",
+  "gates": []
+}

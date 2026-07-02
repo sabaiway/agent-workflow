@@ -188,6 +188,22 @@ const reviewLoopAdvice = (slots) =>
       ]
     : [];
 
+// The cost-lane advisory block (cost-tiered execution — orchestration.md §5 canon, paraphrased
+// at the point of use like reviewLoopAdvice paraphrases §9/§4). Rendered UNCONDITIONALLY for
+// every activity — the lanes route EVERY step, review-backed or not (unlike reviewLoopAdvice,
+// which fires only when a review backend engages). It may name the kit's own GENERIC L0
+// surfaces (the gate runner, the rotation checks, the cheap-agents vehicles) — point-of-use
+// routing, still project-agnostic (never a project's publish mechanics). Its distinctive tokens
+// are drift-guarded against the canon on both sides (procedures.test.mjs + the engine canon tests).
+const costLanesAdvice = () => [
+  'Cost lanes (orchestration.md §5) — route every step to the cheapest adequate executor:',
+  '  • L0 deterministic script — run the gate matrix as ONE batch: /agent-workflow-kit gates (the project-declared docs/ai/gates.json); rotation headroom: archive-changelog / archive-issues / archive-decisions --check. An exit code beats a model re-read.',
+  '  • L1 cheap subagent (small model, low effort, read-only tools — /agent-workflow-kit agents places the vehicles) — mechanical sweeps, changelog fact-skeletons, gate-failure triage. Extraction/drafting ONLY; the orchestrator verifies the output and owns every conclusion.',
+  '  • L2 subscription bridge (codex / agy) — reviews per the resolved recipe above, on frontier bridge models (quality-first).',
+  '  • L3 frontier — judgment: plan/fold/synthesis, ADR/handover/changelog-entry wording, persuasive copy, go/no-go, real code.',
+  '  • A step with no named guardrail does not move down a lane; red lines never move down (council review models · real code · memory/copy wording · the maintainer approval asks).',
+];
+
 // The verbatim per-backend DRIVING CONTRACT block (M-contract): the exact invocation descriptor(s),
 // the closed flag set, the grounding note, the round-2/continue delta, and the guarded passthrough
 // tiers — every descriptor printed VERBATIM from the registry mirror of the bridge manifest
@@ -224,6 +240,7 @@ const formatHuman = ({ activity, section, slots, warnings }) => {
   }
   const advice = reviewLoopAdvice(slots);
   if (advice.length) lines.push('', ...advice);
+  lines.push('', ...costLanesAdvice());
   if (warnings.length) {
     lines.push('', 'warnings:');
     for (const w of warnings) lines.push(`  ⚠ ${w}`);
@@ -240,6 +257,8 @@ const buildJson = ({ activity, section, slots, configSource, warnings }) => ({
     slots.map((s) => [s.slot, { recipe: s.recipe, source: s.source, degradedFrom: s.degradedFrom, reason: s.reason, backends: s.backends, contracts: s.contracts }]),
   ),
   reviewLoop: reviewLoopAdvice(slots),
+  // ADDITIVE (cost-tiered execution): the unconditional cost-lane advisory, structured.
+  costLanes: costLanesAdvice(),
   configSource,
   warnings,
 });

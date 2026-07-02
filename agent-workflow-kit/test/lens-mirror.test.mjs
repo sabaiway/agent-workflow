@@ -53,6 +53,13 @@ const TEMPLATE_INVARIANT_TOKENS = [
   'exitplanmode', // A1 — ExitPlanMode ≠ execute (lowercased; matched case-insensitively)
   'every round', // A2 — recipe fidelity: every named backend, every round
   'finding-origin', // M6 — the required per-round {round N · finding-origin tally · per-backend verdict} emission
+  // Cost lanes (cost-tiered execution) — canon home is orchestration.md §5 (pinned by
+  // orchestration-canon.test.mjs + the advisor guard in tools/procedures.test.mjs), so like A1/A2
+  // these are template-scoped here: the ONE lens bullet must survive in BOTH template blocks.
+  'cheapest adequate executor', // the routing rule
+  'no named guardrail does not move down', // the no-guardrail-no-move rule
+  'red lines never move down', // the red-line list lead
+  'salvage recorded state first', // the incident-repair down-lane default
 ];
 
 const PLANNING = join(FAMILY_ROOT, 'agent-workflow-engine', 'references', 'planning.md');
@@ -145,5 +152,25 @@ describe('planning/review/process-fidelity lens — cross-package drift guard', 
   it('keeps the agent_rules template lens blocks byte-identical apart from the heading number', () => {
     const blocks = TEMPLATE_FILES.map(([label, file]) => extractLensBlock(label, readFileSync(file, 'utf8')));
     assert.equal(blocks[0], blocks[1], DRIFT_MESSAGE);
+  });
+
+  // Injected red→green NON-VACUITY proof (the AD-029/AD-031 precedent): corrupt the token IN
+  // MEMORY (a string substitution on the real template text — never a disk write, so "restoring"
+  // is simply not using the substituted copy) and assert the guard's own check goes RED on the
+  // corrupted copy. Proves each new cost-lane token is checked WHERE THE BULLET LIVES — the
+  // extracted lens block — not satisfied by an accidental occurrence elsewhere in the file.
+  it('non-vacuity: deleting a cost-lane token from a template lens block makes the guard go red (injected, in-memory)', () => {
+    const [label, file] = TEMPLATE_FILES[0];
+    const real = readFileSync(file, 'utf8');
+    for (const token of ['cheapest adequate executor', 'no named guardrail does not move down', 'red lines never move down']) {
+      // sanity (green half): the real block carries the token
+      assert.ok(extractLensBlock(label, real).toLowerCase().includes(token), `sanity: real block carries "${token}"`);
+      // red half: the same check on a token-stripped copy fails
+      const corrupted = real.replace(new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), 'REDACTED');
+      assert.ok(
+        !extractLensBlock(label, corrupted).toLowerCase().includes(token),
+        `the guard must go RED when "${token}" is removed from the lens block — otherwise the token check is vacuous`,
+      );
+    }
   });
 });

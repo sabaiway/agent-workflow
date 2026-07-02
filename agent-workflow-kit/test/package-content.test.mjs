@@ -43,6 +43,7 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
   it('retains the deploy/mirror payload tests (reverse pins)', () => {
     const required = [
       'references/scripts/archive-changelog.test.mjs',
+      'references/scripts/archive-decisions.test.mjs',
       'references/scripts/archive-issues.test.mjs',
       'references/scripts/check-docs-size.test.mjs',
       'bridges/antigravity-cli-bridge/bin/agy.test.mjs',
@@ -57,6 +58,7 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
   it('retains every deployed runtime payload file and entry point', () => {
     const required = [
       'references/scripts/archive-changelog.mjs',
+      'references/scripts/archive-decisions.mjs',
       'references/scripts/archive-issues.mjs',
       'references/scripts/check-docs-size.mjs',
       'references/scripts/_expect-shim.mjs',
@@ -76,6 +78,14 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/surface.mjs',
       'tools/view-model.mjs',
       'tools/renderers.mjs',
+      // the generic gate runner + its project-declaration seed (cost-tiered execution)
+      'tools/run-gates.mjs',
+      'references/templates/gates.json',
+      // the cheap-lane subagent writer + its bundled vehicles
+      'tools/cheap-agents.mjs',
+      'references/agents/mechanical-sweep.md',
+      'references/agents/changelog-skeleton.md',
+      'references/agents/gate-triage.md',
     ];
     const missing = required.filter((p) => !packed.includes(p));
     assert.deepEqual(missing, [], 'a runtime payload file or entry point was dropped from the tarball');
@@ -95,7 +105,7 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
   // file accidentally dropped). After an intentional change, run `npm pack ./agent-workflow-kit
   // --dry-run --json` and set the new count here in the same commit.
   it('ships exactly the expected number of files', () => {
-    assert.equal(packed.length, 84, `tarball file count drifted (${packed.length} ≠ 84)`);
+    assert.equal(packed.length, 92, `tarball file count drifted (${packed.length} ≠ 92)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

@@ -60,7 +60,8 @@ jobs:
             agent-workflow-kit/test/*.test.mjs \
             agent-workflow-engine/test/*.test.mjs \
             antigravity-cli-bridge/bin/*.test.mjs \
-            codex-cli-bridge/bin/*.test.mjs
+            codex-cli-bridge/bin/*.test.mjs \
+            scripts/release/*.test.mjs
 
   # Version-independent gates — run once on a single Node. Manifest validation and the
   # attribution scan do not depend on the Node version, so there is no need to matrix them.
@@ -80,11 +81,11 @@ jobs:
             agent-workflow-memory agent-workflow-kit codex-cli-bridge antigravity-cli-bridge agent-workflow-engine
 
       # Release scan — fails on any AI/agent attribution. The five package dirs PLUS the
-      # tracked workflow files AND the root README.md / CHANGELOG.md (the other tracked,
-      # non-gitignored surface this repo ships), so the "no attribution anywhere" hard
-      # constraint is enforced on CI too.
+      # tracked workflow files, the root README.md / CHANGELOG.md, AND the tracked release
+      # scripts (scripts/release/), so the "no attribution anywhere" hard constraint is
+      # enforced on CI too.
       - name: Release scan (no AI attribution)
         run: |
           node agent-workflow-kit/tools/release-scan.mjs \
             agent-workflow-memory agent-workflow-kit codex-cli-bridge antigravity-cli-bridge agent-workflow-engine \
-            .github/workflows README.md CHANGELOG.md
+            .github/workflows README.md CHANGELOG.md scripts/release
