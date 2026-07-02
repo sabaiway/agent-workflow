@@ -4,6 +4,25 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.11.0 — Plans carry only checked syntax (the §9 checked-vs-unchecked boundary)
+
+A **feature** release (canon text + its tests; installer unchanged). The §9 "No code-mechanics in
+the plan" rule now names a hard discriminator for what syntax plan prose may carry:
+
+- **`references/planning.md` §9 (B5)** — **checked syntax**: a Step's exact paths + commands stay
+  REQUIRED (§7/§8) and count as checked because the plan's own Verification runs them against an
+  explicit expected outcome or gate — merely running without asserting checks nothing; the only
+  other syntax a plan may carry is a literal fixture/schema fragment a named test copies or
+  validates. **Un-run, logic-bearing syntax** — control-flow, a regex, a glob, a grammar, an
+  algorithm body, a mini-DSL, anything that transforms data or evaluates a condition — never lives
+  in plan prose, however plausible or shell-verified it looks ("I ran it in my shell" is not a
+  checker): a fold or draft that wants one writes the red→green test-as-spec at Execute instead.
+- **`references/procedures.md` plan-authoring step 5** — the terse mirror of the same boundary at
+  the point of use (the kit advisor prints this section verbatim).
+- **Lockstep tests** — `planning-canon.test.mjs` (§9 it-block) and `procedures-canon.test.mjs`
+  (Set-1) pin the two new tokens `checked syntax` + `logic-bearing`; non-vacuity proven by an
+  injected red→green in both guards.
+
 ## 1.10.0 — Cost-lane vocabulary in the orchestration canon (§5)
 
 A **feature** release (canon text + its tests; installer unchanged). Work now has named **cost
