@@ -16,6 +16,7 @@ import {
   surveyRecipes,
   surveyAttribution,
   surveyVelocity,
+  surveyGateHook,
   surveyBridges,
   parseArgs,
   NOT_INSTALLED,
@@ -668,6 +669,30 @@ describe('surveyVelocity — effective defaultMode + allow counts', () => {
     const r = surveyVelocity('/p', settingsFs({ project: '{}', local: '{ bad' }));
     assert.ok(r.error);
     assert.match(r.error, /settings\.local\.json/);
+  });
+});
+
+describe('surveyGateHook — wired (either settings file) / file placed / declaration present', () => {
+  const HOOK_CMD = 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/agent-workflow-gates.mjs"';
+  const wired = JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: HOOK_CMD, timeout: 30 }] }] } });
+
+  it('reports wired from the LOCAL settings file too, plus the file/declaration probes', () => {
+    const r = surveyGateHook('/p', {
+      ...settingsFs({ project: '{}', local: wired }),
+      exists: (p) => String(p).endsWith('agent-workflow-gates.mjs') || String(p).endsWith('gates.json'),
+    });
+    assert.deepEqual(r, { wired: true, filePlaced: true, declarationPresent: true });
+  });
+
+  it('nothing wired / placed / declared → all-false (an honest zero, never an error)', () => {
+    const r = surveyGateHook('/p', { ...settingsFs({ project: undefined, local: undefined }), exists: () => false });
+    assert.deepEqual(r, { wired: false, filePlaced: false, declarationPresent: false });
+  });
+
+  it('malformed settings.json → a localized error field', () => {
+    const r = surveyGateHook('/p', { ...settingsFs({ project: '{ bad', local: undefined }), exists: () => false });
+    assert.ok(r.error);
+    assert.match(r.error, /settings\.json/);
   });
 });
 

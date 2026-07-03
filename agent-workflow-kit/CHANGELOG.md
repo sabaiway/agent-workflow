@@ -4,6 +4,42 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.29.0 — Velocity scope C: an opt-in PreToolUse gate-approval hook
+
+A **feature** release (ships the bundled bridges unchanged at **2.1.0**). The shipped, probe-proven
+closure of the velocity trust-posture residual ([[AD-021]] scope C, recorded in **AD-037**) — a
+new opt-in `.claude/` writer, the family's third:
+
+- **`/agent-workflow-kit hook`** (`tools/gate-hook.mjs`) — places a **self-contained** hook runtime
+  (`references/hooks/gate-approve.mjs` → `.claude/hooks/agent-workflow-gates.mjs`; no kit imports, so
+  the placed copy survives an uninstall) and wires ONE `PreToolUse` "Bash" entry into
+  `.claude/settings.json`. Velocity writer discipline verbatim: `--dry-run` default, deployment-gated
+  `--apply`, symlink-safe, refuses unsafe modes in either settings file, merge-don't-clobber,
+  idempotent, never `settings.local.json`, never commits. Place-file-FIRST-then-wire; a malformed
+  existing `hooks` shape or a diverged-and-unwired target file is a STOP with zero writes (it refuses
+  to wire an unknown script as a hook); the target is re-verified no-follow immediately before wiring.
+- **The hook's decision ladder**, read against `docs/ai/gates.json` LIVE per call (one declaration,
+  two consumers with *Mode: gates* — editing gates.json never needs re-wiring): **(a)** a command
+  BYTE-EXACT to a declared gate `cmd` (trim-only; never a pattern — the rejected AD-021 shape),
+  invoked from the project root, under `default`/`acceptEdits` → `allow`; **(b)** a seeded-read-only
+  command carrying a documented runtime residual (output redirection, command/process substitution
+  `$(…)`/`` ` ``/`<(…)`, or the `--output` write-flag family — matched as a whole-command substring so
+  a quoted/escaped form can't hide it) → `ask`, overriding a settings allow rule (**proven live** on
+  Claude Code 2.1.185); **(c)** else no decision. Never `deny`. Fail-safe is **decoupled**: a broken
+  `gates.json` disables only (a), the guard keeps running; every anomaly exits 0, never 2. Validation
+  parity with the runner (`_README` included) — an invalid declaration approves nothing.
+- **Integration.** `/.claude/hooks/` joins the hidden-mode footprint registry; `uninstall` gains the
+  hook seam (reports the settings edit + preserves a still-wired or non-bundle file, removes only a
+  byte-identical unwired one and cleans an emptied `.claude/hooks/`, all lstat-no-follow + AD-011
+  preflight; the wired-probe reads DECODED settings JSON so an escaped `\/` path still counts as
+  wired); `status` gains one row (wired / file placed / declaration present) through the full
+  surface→view-model→renderers pipeline; the velocity residual notice + SKILL/README point at the
+  shipped hook instead of a "deferred" one. Kit-only; the runtime + writer ride the tarball.
+- **Review.** Council at the diff converged over four rounds (codex + agy, grounded): every finding
+  closed one obfuscation-of-a-string-scan class (process substitution, quoted/escaped `--output`,
+  JSON-escaped `\/`) or a TOCTOU/symlink window — folded by code with red→green regressions; the
+  final round was codex **ship** + agy **SHIP**, 0 blockers / 0 majors.
+
 ## 1.28.0 — Lens-mirror guards the checked-vs-unchecked plan boundary
 
 A **feature** release (template + test only; ships the bundled bridges unchanged at **2.1.0**).

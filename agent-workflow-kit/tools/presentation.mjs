@@ -41,6 +41,7 @@ export const SETTINGS_LABELS = Object.freeze({
   recipes: 'recipes',
   attribution: 'attribution',
   velocity: 'velocity',
+  hook: 'gate hook',
 });
 
 // Glyph sets — Unicode for a capable terminal, an ASCII fallback for a narrow / Windows-legacy one.

@@ -28,6 +28,7 @@ const fullEnvelope = () => ({
       recipes: { configSource: 'docs/ai/orchestration.json', activities: { 'plan-authoring': { review: { recipe: 'reviewed' } }, 'plan-execution': { execute: { recipe: 'delegated' }, review: { recipe: 'council' } } } },
       attribution: { project: false, local: null, effective: false },
       velocity: { defaultMode: 'acceptEdits', allowEntries: { project: 1, local: 2 } },
+      hook: { wired: true, filePlaced: true, declarationPresent: false },
     },
   },
 });
@@ -58,7 +59,8 @@ project deployment (/proj)
 settings
   recipes       plan-authoring.review=reviewed · plan-execution.execute=delegated · plan-execution.review=council
   attribution   includeCoAuthoredBy effective=false
-  velocity      defaultMode=acceptEdits · allow project/local=1/2`;
+  velocity      defaultMode=acceptEdits · allow project/local=1/2
+  gate hook     wired=yes · file=yes · gates.json=no`;
 
 describe('renderers — plain (byte-exact golden)', () => {
   it('renders the full 4-block envelope byte-for-byte', () => {
@@ -151,11 +153,12 @@ describe('renderers — branch coverage (every replaced-function branch)', () =>
   it('settings: each area error renders loudly', () => {
     const out = renderPlain({
       installed: [],
-      project: { dir: '/p', deployed: true, deployStamps: [], settings: { recipes: { error: 'docs/ai/orchestration.json: bad json' }, attribution: { error: '.claude/settings.json: bad json' }, velocity: { error: '.claude/settings.local.json: bad json' } } },
+      project: { dir: '/p', deployed: true, deployStamps: [], settings: { recipes: { error: 'docs/ai/orchestration.json: bad json' }, attribution: { error: '.claude/settings.json: bad json' }, velocity: { error: '.claude/settings.local.json: bad json' }, hook: { error: '.claude/settings.json: bad json' } } },
     });
     assert.match(out, /recipes\s+error: docs\/ai\/orchestration\.json: bad json/);
     assert.match(out, /attribution\s+error: \.claude\/settings\.json: bad json/);
     assert.match(out, /velocity\s+error: \.claude\/settings\.local\.json: bad json/);
+    assert.match(out, /gate hook\s+error: \.claude\/settings\.json: bad json/);
   });
 
   it('settings: a recipes detectError floors with a sub-line', () => {

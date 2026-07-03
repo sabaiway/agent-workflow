@@ -22,7 +22,7 @@
 // module is unit-testable without the real filesystem. Dependency-free, Node >= 18. No side effects on
 // import (the isDirectRun idiom).
 
-import { existsSync, statSync, lstatSync, readlinkSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, statSync, lstatSync, readlinkSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { join, resolve, dirname, basename, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
@@ -30,6 +30,7 @@ import { surveyFamily, surveyProject, FAMILY_MEMBERS, classifyMember, OK } from 
 import { removeTreeManaged, unlinkManaged, MANAGED_LINK_CONFLICT } from './fs-safe.mjs';
 import { deriveLinks } from './setup-backends.mjs';
 import { hideFootprint, excludePath } from './hide-footprint.mjs';
+import { HOOK_FILE_REL as GATE_HOOK_FILE_REL, readBundledHook } from './gate-hook.mjs';
 
 // ── surface classes ────────────────────────────────────────────────────────────
 export const SAFE_REMOVE = 'safe-remove';
@@ -57,6 +58,7 @@ const fsOf = (deps = {}) => ({
   lstat: deps.lstat ?? lstatSync,
   readlink: deps.readlink ?? readlinkSync,
   readFile: deps.readFile ?? readFileSync,
+  readdir: deps.readdir ?? readdirSync,
   realpath: deps.realpath ?? realpathSync,
   readManifest: deps.readManifest ?? ((skillDir) => JSON.parse(readFileSync(join(skillDir, 'capability.json'), 'utf8'))),
 });
@@ -186,16 +188,17 @@ export const buildPlan = ({ family, project = null, projectDir = null, member = 
       }
     }
 
-    const settingsPath = join(dir, '.claude/settings.json');
-    const settings = (() => {
+    const readRaw = (p) => {
       try {
-        return fs.exists(settingsPath) ? String(fs.readFile(settingsPath, 'utf8')) : null;
+        return fs.exists(p) ? String(fs.readFile(p, 'utf8')) : null;
       } catch {
         return null;
       }
-    })();
+    };
+    const settingsPath = join(dir, '.claude/settings.json');
+    const settings = readRaw(settingsPath);
     const settingsSeams = detectSettingsSeams(settings);
-    if (settingsSeams.attribution || settingsSeams.permissions) {
+    if (settingsSeams.attribution || settingsSeams.permissions || settingsSeams.gateHook) {
       items.push({
         surface: 'settings',
         path: settingsPath,
@@ -203,6 +206,66 @@ export const buildPlan = ({ family, project = null, projectDir = null, member = 
         reason: settingsSeamReason(settingsSeams),
         hand: settingsSeamHand(settingsSeams, settingsPath),
       });
+    }
+
+    // The gate-approval hook (Mode: hook). Hooks merge from project AND local settings (the Claude
+    // Code contract), so the wired probe checks BOTH files; a local entry is user-authored → its own
+    // REPORT_ONLY edit item (uninstall never writes settings — either file). The placed FILE is
+    // removable ONLY when the entry is absent from BOTH (hand-removed) AND the content is
+    // byte-identical to the current bundle — never create the wired-but-missing state this tool
+    // itself would warn about; while any entry is present, all surfaces are reported as one bundle
+    // (edit settings first, re-run to remove the file).
+    const localSettingsPath = join(dir, '.claude/settings.local.json');
+    const localSeams = detectSettingsSeams(readRaw(localSettingsPath));
+    if (localSeams.gateHook) {
+      items.push({
+        surface: 'settings',
+        path: localSettingsPath,
+        class: REPORT_ONLY,
+        reason: 'a PreToolUse entry wiring the kit-placed gate-approval hook is present in this file — remove it by hand to unwire (the tool never edits settings)',
+        hand: `edit ${shq(localSettingsPath)} → remove the PreToolUse entry whose command runs ${GATE_HOOK_FILE_REL} (keep the rest of your settings)`,
+      });
+    }
+    const gateHookPath = join(dir, GATE_HOOK_FILE_REL);
+    const gateHookStat = lstatNoFollow(gateHookPath, fs.lstat);
+    // lstat no-follow BEFORE reading: a symlink (or any non-regular file) at the placed path is
+    // never a kit-placed hook we remove — reading through it would classify a symlink-to-bundle as
+    // SAFE_REMOVE and only removeTreeManaged would catch it at mutate time, AFTER earlier removals.
+    // Report it, never remove it.
+    if (gateHookStat !== null && (gateHookStat.isSymbolicLink() || !gateHookStat.isFile())) {
+      items.push({
+        surface: 'gate-hook', path: gateHookPath, class: REPORT_ONLY,
+        reason: 'a file exists at the gate-approval hook path but is a symlink or not a regular file — left untouched; remove by hand if you want it gone',
+      });
+    }
+    const gateHookContent = gateHookStat !== null && gateHookStat.isFile() && !gateHookStat.isSymbolicLink() ? readRaw(gateHookPath) : null;
+    if (gateHookContent != null) {
+      const wired = settingsSeams.gateHook || localSeams.gateHook;
+      const bundle = (() => {
+        try {
+          return readBundledHook(deps);
+        } catch {
+          return null;
+        }
+      })();
+      if (wired) {
+        items.push({
+          surface: 'gate-hook', path: gateHookPath, class: REPORT_ONLY,
+          reason: 'the gate-approval hook file is still WIRED in Claude settings — edit the settings entry first (see the settings item above), then re-run uninstall to remove the file (never leaves a wired-but-missing hook)',
+        });
+      } else if (bundle != null && gateHookContent === bundle) {
+        items.push({
+          surface: 'gate-hook', path: gateHookPath, class: SAFE_REMOVE, expectedContent: bundle,
+          reason: 'kit-placed gate-approval hook — byte-identical to the current bundle and not wired in either settings file',
+        });
+      } else {
+        items.push({
+          surface: 'gate-hook', path: gateHookPath, class: REPORT_ONLY,
+          reason: bundle == null
+            ? 'could not read the kit bundle to verify this hook file — left untouched; remove by hand if you want it gone'
+            : 'not byte-identical to the current kit bundle (customized, or from another kit version) — left untouched; remove by hand if you want it gone',
+        });
+      }
     }
 
     for (const rel of REPORT_PATHS) {
@@ -235,7 +298,7 @@ export const executePlan = (plan, opts = {}, deps = {}) => {
   // we leave them untouched and proceed with what IS ours (the per-item posture of setup-backends —
   // a stray foreign wrapper never blocks removing the rest). They are NEVER mutated.
   const reported = plan.items.filter((i) => i.class === REPORT_ONLY || i.class === STOP);
-  const result = { removed: [], unlinked: [], unhidden: false, hookRemoved: false, reported, applied: false, dryRun: !!opts.dryRun };
+  const result = { removed: [], unlinked: [], unhidden: false, hookRemoved: false, gateHookRemoved: false, reported, applied: false, dryRun: !!opts.dryRun };
 
   // Preview / awaiting consent → show the plan (formatPlan), mutate NOTHING, abort NOTHING.
   if (opts.dryRun || !opts.yes) return result;
@@ -261,6 +324,20 @@ export const executePlan = (plan, opts = {}, deps = {}) => {
       if (present) {
         const content = (() => { try { return String(fs.readFile(item.path, 'utf8')); } catch { return ''; } })();
         if (!content.includes(HOOK_MARKER_SUFFIX)) conflicts.push(`${item.path} no longer carries our marker`);
+      }
+    } else if (item.surface === 'gate-hook') {
+      // Same AD-011 recheck as the marker hook: the file must STILL be a regular (non-symlink)
+      // file, byte-identical to the bundle, AND still unwired — a symlink swapped in, a divergence,
+      // or a new settings entry since the plan ⇒ zero mutations. lstat no-follow FIRST: a symlink
+      // read through by fs.readFile would masquerade as the bundle and slip past this guard.
+      const st = lstatNoFollow(item.path, fs.lstat);
+      if (st !== null) {
+        if (st.isSymbolicLink() || !st.isFile()) conflicts.push(`${item.path} is no longer a regular file (symlink or special file)`);
+        else {
+          const content = (() => { try { return String(fs.readFile(item.path, 'utf8')); } catch { return null; } })();
+          if (content !== item.expectedContent) conflicts.push(`${item.path} no longer matches the kit bundle`);
+          else if (gateHookWiredNow(plan.projectDir, fs)) conflicts.push(`${item.path} became wired in Claude settings since the plan`);
+        }
       }
     } else if (item.surface === 'fence') {
       // Validate the unhide WITHOUT writing — a malformed managed block throws here, before any mutation,
@@ -303,8 +380,42 @@ export const executePlan = (plan, opts = {}, deps = {}) => {
       result.hookRemoved = true;
     }
   }
+  for (const item of mutable.filter((i) => i.surface === 'gate-hook')) {
+    // Bundle-identity + unwired re-verified at mutate time too (the TOCTOU posture above), lstat
+    // no-follow FIRST so a symlink swapped in cannot be read-through as the bundle and removed: a
+    // file that changed, turned into a symlink, or got wired between preflight and now is left
+    // untouched, never removed.
+    const st = lstatNoFollow(item.path, fs.lstat);
+    const content = st !== null && st.isFile() && !st.isSymbolicLink()
+      ? (() => { try { return String(fs.readFile(item.path, 'utf8')); } catch { return null; } })()
+      : null;
+    if (content != null && content === item.expectedContent && !gateHookWiredNow(plan.projectDir, fs)) {
+      rmFile(item.path);
+      result.gateHookRemoved = true;
+      // A `.claude/hooks/` dir left EMPTY by that removal is removed too (clean footprint); a dir
+      // with anything else in it is untouched.
+      const hooksDir = dirname(item.path);
+      const leftover = (() => { try { return fs.readdir(hooksDir); } catch { return null; } })();
+      if (leftover != null && leftover.length === 0) removeTree(hooksDir, dirname(hooksDir), deps);
+    }
+  }
   result.applied = true;
   return result;
+};
+
+// Is the gate-approval hook wired NOW (either settings file)? Probed by the placed-path substring
+// (the same broad detectSettingsSeams posture). Fail-CLOSED: an unreadable settings file counts as
+// wired — "cannot prove unwired" must preserve the file, never remove it.
+const gateHookWiredNow = (projectDir, fs) => {
+  if (!projectDir) return false;
+  const probe = (p) => {
+    try {
+      return fs.exists(p) ? settingsMentionsGateHook(String(fs.readFile(p, 'utf8'))) : false;
+    } catch {
+      return true;
+    }
+  };
+  return probe(join(projectDir, '.claude/settings.json')) || probe(join(projectDir, '.claude/settings.local.json'));
 };
 
 // ── report ───────────────────────────────────────────────────────────────────
@@ -314,42 +425,80 @@ const CLASS_LABEL = { [SAFE_REMOVE]: 'remove', [MANAGED_MARKER]: 'reverse', [REP
 // or shell metacharacters can't misbehave when the user pastes it (codex #4).
 const shq = (p) => `'${String(p).replace(/'/g, "'\\''")}'`;
 
-// Detect the two settings.json seams the family may have written: the attribution edit
-// (`includeCoAuthoredBy`) and the velocity profile (`permissions.defaultMode` / `permissions.allow`).
-// Parse when possible (accurate); on malformed JSON fall back to a substring probe for the attribution
-// key so it is still surfaced (no silent miss). The velocity writer stores NO ownership marker, so the
-// permissions seam is reported NON-COMMITTALLY — never a false ownership claim, never auto-removed.
+// Does any STRING VALUE anywhere in a parsed settings tree contain the placed hook path? Recursive
+// so the probe reads the DECODED command (JSON `\/` and `/` escapes are already resolved by
+// JSON.parse) — a raw-text substring scan would miss a validly-escaped `.claude\/hooks\/…` entry
+// and wrongly read the hook as unwired.
+const jsonStringContains = (value, needle) => {
+  if (typeof value === 'string') return value.includes(needle);
+  if (Array.isArray(value)) return value.some((v) => jsonStringContains(v, needle));
+  if (value !== null && typeof value === 'object') return Object.values(value).some((v) => jsonStringContains(v, needle));
+  return false;
+};
+
+// Is the gate-approval hook wired anywhere in a settings blob? Parse when possible and scan the
+// DECODED string values (catches `\/` / `/` escapes); on malformed JSON fall back to a raw
+// substring probe. Deliberately BROADER than the writer's exact-command check (any string mentioning
+// the placed path counts): over-detection preserves the hook file, under-detection could remove a
+// still-wired one — so the fallback errs toward wired.
+const settingsMentionsGateHook = (settings) => {
+  const parsed = (() => { try { return JSON.parse(settings); } catch { return null; } })();
+  return parsed !== null && typeof parsed === 'object'
+    ? jsonStringContains(parsed, GATE_HOOK_FILE_REL)
+    : settings.includes(GATE_HOOK_FILE_REL);
+};
+
+// Detect the three settings.json seams the family may have written: the attribution edit
+// (`includeCoAuthoredBy`), the velocity profile (`permissions.defaultMode` / `permissions.allow`),
+// and the gate-approval hook wiring (a PreToolUse entry running the placed hook file — probed by
+// the placed path across DECODED string values, deliberately BROADER than the writer's exact-command
+// check: a hand-edited variant still counts as wired, so the file is preserved rather than removed).
+// Parse when possible (accurate); on malformed JSON fall back to a substring probe for the
+// attribution key so it is still surfaced (no silent miss). The velocity writer stores NO ownership
+// marker, so the permissions seam is reported NON-COMMITTALLY — never a false ownership claim,
+// never auto-removed.
 const detectSettingsSeams = (settings) => {
-  if (settings == null) return { attribution: false, permissions: false };
+  if (settings == null) return { attribution: false, permissions: false, gateHook: false };
+  const gateHook = settingsMentionsGateHook(settings);
   const parsed = (() => { try { return JSON.parse(settings); } catch { return null; } })();
   if (parsed == null || typeof parsed !== 'object') {
-    // Malformed / JSONC settings.json (comments, trailing commas) — probe both seams by substring so
-    // neither is silently missed (over-reporting REPORT_ONLY is safe; it is never auto-removed).
+    // Malformed / JSONC settings.json (comments, trailing commas) — probe the seams by substring so
+    // none is silently missed (over-reporting REPORT_ONLY is safe; it is never auto-removed).
     return {
       attribution: settings.includes('includeCoAuthoredBy'),
       permissions: settings.includes('"permissions"') && (settings.includes('"defaultMode"') || settings.includes('"allow"')),
+      gateHook,
     };
   }
   const perms = parsed.permissions;
   const permissions = perms != null && typeof perms === 'object'
     && (Object.prototype.hasOwnProperty.call(perms, 'defaultMode') || Object.prototype.hasOwnProperty.call(perms, 'allow'));
-  return { attribution: Object.prototype.hasOwnProperty.call(parsed, 'includeCoAuthoredBy'), permissions };
+  return { attribution: Object.prototype.hasOwnProperty.call(parsed, 'includeCoAuthoredBy'), permissions, gateHook };
 };
 
 const ATTRIBUTION_REASON = 'we set "includeCoAuthoredBy": false here — review/remove that key by hand (the file may hold your own settings)';
 const PERMISSIONS_REASON = 'a "permissions.defaultMode" and/or "permissions.allow" key is present in this file — if the velocity profile seeded them, review/remove by hand (no ownership marker is stored); otherwise leave them';
+const GATE_HOOK_SEAM_REASON = `a PreToolUse entry wiring the kit-placed gate-approval hook (${GATE_HOOK_FILE_REL}) is present — remove that entry by hand to unwire it (the tool never edits settings)`;
 
 const settingsSeamReason = (seams) =>
-  seams.attribution && seams.permissions ? `${ATTRIBUTION_REASON}. Also: ${PERMISSIONS_REASON}`
-    : seams.permissions ? PERMISSIONS_REASON
-      : ATTRIBUTION_REASON;
+  [
+    ...(seams.attribution ? [ATTRIBUTION_REASON] : []),
+    ...(seams.permissions ? [PERMISSIONS_REASON] : []),
+    ...(seams.gateHook ? [GATE_HOOK_SEAM_REASON] : []),
+  ].join('. Also: ');
 
-const settingsSeamHand = (seams, p) =>
-  seams.attribution && seams.permissions
-    ? `edit ${shq(p)} → remove the "includeCoAuthoredBy" entry and review "permissions.defaultMode"/"permissions.allow" (if the velocity profile seeded them) — keep the rest of your settings`
-    : seams.permissions
-      ? `edit ${shq(p)} → if the velocity profile seeded "permissions.defaultMode"/"permissions.allow", review/remove them by hand (keep the rest of your settings)`
-      : `edit ${shq(p)} → remove the "includeCoAuthoredBy" entry (keep the rest of your settings)`;
+const settingsSeamHand = (seams, p) => {
+  const clauses = [
+    ...(seams.attribution ? ['remove the "includeCoAuthoredBy" entry'] : []),
+    ...(seams.permissions
+      ? [seams.attribution
+          ? 'review "permissions.defaultMode"/"permissions.allow" (if the velocity profile seeded them)'
+          : 'if the velocity profile seeded "permissions.defaultMode"/"permissions.allow", review/remove them by hand']
+      : []),
+    ...(seams.gateHook ? [`remove the PreToolUse entry whose command runs ${GATE_HOOK_FILE_REL}`] : []),
+  ];
+  return `edit ${shq(p)} → ${clauses.join(' and ')} (keep the rest of your settings)`;
+};
 
 // The "do this by hand" line for a report-only surface. A settings.json item carries its own `hand`
 // guidance (an EDIT, never an `rm` — deleting it would lose the user's own settings, codex #4);

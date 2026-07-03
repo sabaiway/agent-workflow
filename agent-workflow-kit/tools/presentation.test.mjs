@@ -40,7 +40,7 @@ describe('presentation — titles, labels, glyphs', () => {
     assert.equal(BLOCK_TITLES.settings, 'settings');
   });
   it('settings labels + no-deployment line exist', () => {
-    assert.deepEqual(Object.keys(SETTINGS_LABELS).sort(), ['attribution', 'recipes', 'velocity']);
+    assert.deepEqual(Object.keys(SETTINGS_LABELS).sort(), ['attribution', 'hook', 'recipes', 'velocity']);
     assert.match(NO_DEPLOYMENT, /no agent-workflow deployment/);
   });
   it('glyphsFor toggles between the unicode and ASCII sets', () => {

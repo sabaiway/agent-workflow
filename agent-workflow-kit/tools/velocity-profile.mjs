@@ -89,12 +89,30 @@ export const SHELL_READONLY = Object.freeze([
 // commands; but the RUNTIME residual (redirection, command substitution, a kept command's own
 // `--output=<file>` write flag) means a seeded read-only entry is a TRUST-POSTURE convenience, NOT
 // a sandbox. velocity never ADDS commit/push/publish as allow rules and keeps acceptEdits opt-in;
-// full runtime closure (rejecting substitution + mutating commands at invocation) is the deferred
-// PreToolUse hook (queue.md follow-up), not something settings-level allow rules can enforce.
+// runtime closure is not something settings-level allow rules can enforce — the residual guard
+// ships as the opt-in PreToolUse hook (Mode: hook, tools/gate-hook.mjs; probe record in AD-037).
 export const SHELL_METACHARACTERS = Object.freeze([
   '&', '|', ';', '<', '>', '$', '`', '(', ')',
   '\n', '\r', '\t', '\\', '{', '}', '*', '?', '#', '~', '!',
 ]);
+
+// The RUNTIME residual documented above, as data: the exact write-redirection / command-
+// substitution / bounded write-flag forms a settings-level allow rule cannot see. Consumed by
+// the PreToolUse gate hook's residual guard — the placed hook (references/hooks/gate-approve.mjs)
+// bakes a frozen COPY (a placed file cannot import the kit), drift-guarded by
+// test/gate-hook-core-parity.test.mjs alongside UNIVERSAL_READONLY_ALLOWLIST.
+export const RUNTIME_RESIDUAL_FORMS = Object.freeze({
+  writeRedirections: Object.freeze(['>', '>>', '1>', '2>', '&>', '>|']),
+  // `$(…)` + backtick + process substitution `<(…)` all RUN a nested command (`>(…)` is caught by
+  // the `>` redirection scan). Bare `<` is input redirection (reads a file — read-only commands may
+  // already do that), so it is deliberately NOT here.
+  commandSubstitutions: Object.freeze(['$(', '`', '<(']),
+  // The `--output` write-flag family, matched as a raw SUBSTRING of the whole command (never a
+  // whitespace-token check): the hook sees the pre-shell command string, so `--output=f`,
+  // `"--output=f"`, `'--output' f`, and `\--output` must all trip it — over-asking on a benign
+  // `--output-indicator` is the safe direction (never under-allow a real write flag through quotes).
+  boundedWriteFlags: Object.freeze(['--output']),
+});
 
 export const VELOCITY_OFFCORE = 'VELOCITY_OFFCORE';
 export const VELOCITY_NON_READONLY = 'VELOCITY_NON_READONLY';
@@ -137,7 +155,7 @@ const MUTATING_SCRIPT_HOOK_PATTERN = /^(pre|post)/iu;
 // refusal is named, tested, and produces a clear message).
 const MUTATING_ALLOW_COMMAND_PATTERN = /^(?:git\s+(?:commit|push)|npm\s+publish)(?:\s|$)/iu;
 const RESIDUAL_NOTICE =
-  'residual: seeded read-only allow entries are a trust-posture convenience, NOT a sandbox; settings-level rules cannot inspect runtime redirection/command-substitution; commit/push/publish are never allowlisted (a DIRECT invocation still ASKs, but the substitution/redirection residual is not closed here); full closure is the deferred PreToolUse hook.';
+  'residual: seeded read-only allow entries are a trust-posture convenience, NOT a sandbox; settings-level rules cannot inspect runtime redirection/command-substitution/--output writes; commit/push/publish are never allowlisted (a DIRECT invocation still ASKs, but the runtime residual is not closed here); the residual guard ships as the opt-in PreToolUse hook — Mode: hook (/agent-workflow-kit hook).';
 
 const USAGE = `usage: velocity-profile [--dry-run | --apply] [--accept-edits] [--cwd <dir>] [--help]
 
