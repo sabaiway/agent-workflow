@@ -4,6 +4,22 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.12.0 — Plans carry a home for review-settled decisions (§7 optional `## Decisions (locked)`)
+
+A **feature** release (canon text + its tests; installer unchanged; deployment-lineage head stays
+`1.3.0` — no migration). Decisions a plan's review loop SETTLED (fixtures, contracts, boundary
+clauses) now have a canonical, machine-extractable home:
+
+- **`references/planning.md` §7** — the plan-document structure gains one optional row after
+  `## Approach`: `## Decisions (locked) ← optional: settled, binding decisions the executor must
+  not re-litigate`. The heading string is load-bearing: the kit's grounded-review facts assembler
+  (`grounding.mjs`, AD-038) extracts the section by exact-heading match.
+- **`references/planning.md` §8** — one checklist bullet: decisions the review loop settled live
+  under the optional `## Decisions (locked)` heading — binding for the executor, never re-litigated
+  at Execute.
+- **`test/planning-canon.test.mjs`** — pins the exact §7 row (heading + optional + executor-binding
+  wording, positioned after `## Approach`) and the §8 mention.
+
 ## 1.11.0 — Plans carry only checked syntax (the §9 checked-vs-unchecked boundary)
 
 A **feature** release (canon text + its tests; installer unchanged). The §9 "No code-mechanics in

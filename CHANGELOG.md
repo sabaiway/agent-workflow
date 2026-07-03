@@ -7,6 +7,29 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-03 — engine 1.12.0 · memory 1.10.0 · kit 1.30.0 · bridges 2.2.0: review-recipe enforcement (AD-038)
+
+Origin: a real council-substitution incident (Issue-010) + independent kit-user feedback — the
+configured review recipe could be silently skipped, downgraded, or run before later edits, with no
+way to detect it after the fact. The release makes the configured recipe impossible to miss, makes
+"reviewed ≠ shipped" mechanically detectable, and turns grounding assembly into a command:
+
+- **kit 1.30.0** — the machine-composed CONFIGURED-recipe line (`recipes.mjs --active-line` + the
+  `set-recipe` post-write echo + the §1.1/handover template wiring); `/agent-workflow-kit
+  review-state` (read-only receipt checker: fresh grounded current-fingerprint receipts per
+  recipe-named backend, `--check` gate, never auto-seeded); `/agent-workflow-kit grounding` (facts
+  assembler — Hard-Constraints slice + plan decision sections under the agy byte budget; WRITER
+  honesty, scratch-only `--out`); the procedures advisor renders a populated grounding pre-step;
+  bundled **bridges 2.2.0** append one JSONL receipt per successful review (canonical
+  uncommitted-state fingerprint == the review-payload domain; codex literal verdict line; agy
+  verbatim verdict + `factsHash`; continuations `fresh:false`, informational-only).
+- **engine 1.12.0** — `planning.md` §7 gains the optional `## Decisions (locked)` row (+ a §8
+  bullet): review-settled, executor-binding decisions get a canonical, machine-extractable home.
+- **memory 1.10.0** — the installer verb-parity fold (the AD-034 cmp-keyed contract +
+  never-downgrade gate, inline clone); both templates gain the §1.1 discovery step + the handover
+  "Active recipes:" slot, byte-identical with the kit copies (new cross-package region-parity
+  guard).
+
 ## 2026-07-03 — kit 1.29.0: an opt-in PreToolUse gate-approval hook (velocity scope C; bridges unchanged at 2.1.0)
 
 - **The velocity residual is closed, opt-in.** `/agent-workflow-kit hook` places a self-contained
