@@ -166,6 +166,68 @@ describe('tag derivation is READ from _publish-one.yml (never assumed)', () => {
   });
 });
 
+// ── Issue-007: the Release step's unchanged-package no-op branch (content invariants) ──
+// The workflow branch itself can only be PROVEN by the next live publishing release (dry-run
+// skips the Release step) — these pins hold the branch's SHAPE so a refactor cannot silently
+// break invariant (a) "the no-op mutates nothing / downloads nothing" or (e) "a changed-but-
+// unbumped package fails loudly" between now and that live proof.
+
+describe('_publish-one.yml Release step — Issue-007 no-op branch invariants', () => {
+  const workflow = readFileSync(join(REPO_ROOT, '.github/workflows/_publish-one.yml'), 'utf8');
+  const releaseStep = workflow.slice(workflow.indexOf('Create or repair the GitHub Release'));
+  const stepLines = releaseStep.split('\n');
+  const NOOP_MARKER = 'nothing to publish, nothing to repair';
+
+  it('the no-op marker is a LIVE echo (not a comment) immediately followed by exit 0', () => {
+    const markerLineIdx = stepLines.findIndex((line) => line.includes(NOOP_MARKER));
+    assert.ok(markerLineIdx > -1, 'the no-op marker exists in the Release step');
+    assert.ok(stepLines[markerLineIdx].trim().startsWith('echo'), 'the marker is a live echo, not a comment');
+    const following = stepLines.slice(markerLineIdx + 1).map((line) => line.trim()).filter((line) => line !== '');
+    assert.equal(following[0], 'exit 0', 'the stated no-op exits 0 right after the echo');
+  });
+
+  it('the no-op sits inside an already_published-conditioned branch', () => {
+    const markerIdx = releaseStep.indexOf(NOOP_MARKER);
+    const condIdx = releaseStep.indexOf(`if [ "\${{ steps.target.outputs.already_published }}" = "yes" ]`);
+    assert.ok(condIdx > -1 && condIdx < markerIdx, 'the already_published condition precedes the no-op marker');
+  });
+
+  it('ordering: no-op marker BEFORE the repair-curl (dist.tarball) BEFORE the tag-move guard — invariant (a)', () => {
+    const markerIdx = releaseStep.indexOf(NOOP_MARKER);
+    const curlIdx = releaseStep.indexOf('dist.tarball');
+    const guardIdx = releaseStep.indexOf('refusing to move it');
+    assert.ok(markerIdx > -1 && curlIdx > -1 && guardIdx > -1, 'all three anchors exist');
+    assert.ok(markerIdx < curlIdx, 'the no-op decision precedes the registry-tarball download — a no-op inserted after the download could never pass');
+    assert.ok(curlIdx < guardIdx, 'the repair-curl still precedes the immutable-tag guard (existing shape preserved)');
+  });
+
+  it('the subtree comparison is WORKSPACE-ROOTED against an explicitly fetched tag commit', () => {
+    const beforeMarker = releaseStep.slice(0, releaseStep.indexOf(NOOP_MARKER));
+    assert.match(
+      beforeMarker,
+      /git -C "\$GITHUB_WORKSPACE" fetch --depth=1 origin "refs\/tags\/\$tag"/,
+      'the shallow+tagless checkout fetches the tag commit explicitly',
+    );
+    assert.match(
+      beforeMarker,
+      /git -C "\$GITHUB_WORKSPACE" diff --quiet "\$noop_tag_sha" "\$GITHUB_SHA" -- "\$\{\{ inputs\.dir \}\}"/,
+      'the diff runs from the workspace root with a root-relative pathspec (the working-directory trap)',
+    );
+  });
+
+  it('a changed-but-unbumped package fails LOUDLY naming the package — invariant (e), never a silent success', () => {
+    const markerIdx = releaseStep.indexOf(NOOP_MARKER);
+    const refusalIdx = releaseStep.indexOf('CHANGED without a version bump');
+    assert.ok(refusalIdx > markerIdx, 'the refusal is the else-arm of the same subtree decision');
+    assert.ok(refusalIdx < releaseStep.indexOf('dist.tarball'), 'the refusal also precedes the repair path');
+    const refusalLine = stepLines.find((line) => line.includes('CHANGED without a version bump'));
+    assert.match(refusalLine, /::error::/, 'the refusal is a loud workflow error');
+    assert.match(refusalLine, /\$\{\{ inputs\.dir \}\}/, 'the refusal names the offending package dir');
+    const afterRefusal = stepLines.slice(stepLines.indexOf(refusalLine) + 1).map((line) => line.trim()).filter((line) => line !== '');
+    assert.equal(afterRefusal[0], 'exit 1', 'the refusal exits non-zero');
+  });
+});
+
 // ── flow-level invariants ──────────────────────────────────────────────────────────────
 
 describe('runDispatch — dry-run phase gates the live phase', () => {
