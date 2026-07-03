@@ -99,6 +99,43 @@ const runGitDefault = (args, cwd = REPO_ROOT) => {
   return res.stdout;
 };
 
+// Auth preflight — ONE cheap authenticated call (`gh api user`) BEFORE any dispatch, so a missing
+// token fails LOUD with the PROJECT-SPECIFIC recovery instead of gh's generic "run gh auth login".
+// This exists because a session once mis-read an empty `gh auth status` as a hard publish-blocker:
+// gh here authenticates via GH_TOKEN (a PAT), which env_commands.md → "## Access / gh" documents
+// loading — an unloaded token is a SKIPPED SETUP STEP, not a blocker. Injectable via ghApi for tests.
+const firstLine = (text) => String(text ?? '').split('\n')[0].trim();
+// Signatures of an AUTHENTICATION failure specifically (vs network / outage / permission). Only an
+// auth failure earns the GH_TOKEN recovery — anything else keeps its raw error so a real outage is
+// never mislabeled a "skipped token" (a wrong diagnosis is exactly the class this fix exists to end).
+const GH_AUTH_FAILURE_RE = /auth|login|401|unauthenti|credential|token|bad credentials/i;
+export const assertGitHubAuth = (ghApi) => {
+  try {
+    ghApi({ path: 'user' });
+  } catch (err) {
+    if (GH_AUTH_FAILURE_RE.test(err.message ?? '')) {
+      // Looks like missing auth → the project-specific recovery, and deliberately WITHOUT gh's raw
+      // "run gh auth login" line (it contradicts this repo's GH_TOKEN mechanism and misled a session).
+      throw fail(
+        EXIT.preflight,
+        'GitHub auth unavailable — gh could not authenticate.\n' +
+          '  This is a SKIPPED SETUP STEP, not a publish blocker: this repo authenticates gh via GH_TOKEN\n' +
+          '  (a PAT), NOT `gh auth login`. Load it, then re-run — see docs/ai/env_commands.md, the\n' +
+          '  "## Access / gh" block (export GH_TOKEN=$(… your PAT file …); export GH_TOKEN). An empty\n' +
+          '  `gh auth status` here means the token was never exported this session, not that it is missing.',
+      );
+    }
+    // NOT obviously auth (network / GitHub outage / permission) — keep the raw failure honest, never
+    // dress it up as a missing token; point at the token recovery only as a fallback.
+    throw fail(
+      EXIT.preflight,
+      `GitHub auth could not be proven — \`gh api user\` failed, and this does not look like a missing\n` +
+        `  token (network / GitHub outage / permissions?): ${firstLine(err.message)}\n` +
+        '  If it IS auth, load GH_TOKEN per docs/ai/env_commands.md "## Access / gh" and re-run.',
+    );
+  }
+};
+
 // gh REST (GH_TOKEN per docs/ai/env_commands.md). method GET → parsed JSON; POST with fields.
 const ghApiDefault = ({ method = 'GET', path, fields = {} }) => {
   const args = ['api', '-X', method, path];
@@ -335,6 +372,10 @@ export const runDispatch = async (argv, deps = {}) => {
         }
       }
     }
+
+    // GitHub auth is required for BOTH dry-run and live (every phase drives `gh api`) — prove it
+    // ONCE here so a missing token fails with the project-specific recovery, never gh's generic hint.
+    assertGitHubAuth(ghApi);
 
     const ctx = { ghApi, repo, ref: opts.ref, expectedSha, expect: opts.expect, tagFor, fetchJson, readFile, root, pollTimeoutS: opts.pollTimeoutS, now, sleep, log };
 

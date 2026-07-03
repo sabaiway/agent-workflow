@@ -30,6 +30,7 @@ const makeWorld = ({
   extraRunsOnDispatch = 0, // simulate ambiguous correlation
   neverCreateRun = false,
   stallRuns = false,
+  ghAuthFails = false, // the auth preflight (`gh api user`) cannot authenticate
 } = {}) => {
   const calls = { dispatches: [], gitArgs: [], fetches: [] };
   const runs = [];
@@ -37,6 +38,11 @@ const makeWorld = ({
   let pendingRun = null;
 
   const ghApi = ({ method = 'GET', path, fields = {} }) => {
+    if (path === 'user') {
+      if (ghAuthFails === 'network') throw new Error('dial tcp: lookup api.github.com: no such host\nsecond line');
+      if (ghAuthFails) throw new Error('gh: To get started with GitHub CLI, please run:  gh auth login\nsecond line');
+      return { login: 'coder-tool' };
+    }
     if (method === 'POST' && path.includes('/dispatches')) {
       const pkg = fields['inputs[package]'];
       const dry = fields['inputs[dry_run]'] === 'true';
@@ -193,6 +199,44 @@ describe('runDispatch — dry-run phase gates the live phase', () => {
     const code = await runDispatch(['memory'], deps);
     assert.equal(code, EXIT.ok);
     assert.deepEqual(calls.dispatches, [{ pkg: 'memory', dry: true, ref: 'main' }]);
+  });
+});
+
+describe('runDispatch — GitHub auth preflight (the false-blocker fix)', () => {
+  it('an unauthenticated gh fails LOUD before any dispatch, naming GH_TOKEN + env_commands.md', async () => {
+    const { deps, calls } = makeWorld({ ghAuthFails: true });
+    const code = await runDispatch(['memory'], deps);
+    assert.equal(code, EXIT.preflight, 'auth failure is a preflight refusal, not a dispatch error');
+    assert.equal(calls.dispatches.length, 0, 'NOTHING is dispatched when auth cannot be proven');
+    assert.match(calls.lastError, /GH_TOKEN/, 'names the real auth mechanism');
+    assert.match(calls.lastError, /env_commands\.md/, 'points at the documented recovery');
+    assert.match(calls.lastError, /SKIPPED SETUP STEP|not a (publish )?blocker/i, 'reframes it as a skipped step, not a blocker');
+  });
+
+  it('the preflight runs for a plain dry-run too (every phase drives gh api)', async () => {
+    const { deps, calls } = makeWorld({ ghAuthFails: true });
+    const code = await runDispatch(['memory', '--expect', 'memory=1.0.0'], deps);
+    assert.equal(code, EXIT.preflight);
+    assert.equal(calls.dispatches.length, 0);
+  });
+
+  it('a NON-auth failure (network/outage) is NOT mislabeled a missing token — raw error preserved', async () => {
+    const { deps, calls } = makeWorld({ ghAuthFails: 'network' });
+    const code = await runDispatch(['memory'], deps);
+    assert.equal(code, EXIT.preflight);
+    assert.equal(calls.dispatches.length, 0);
+    assert.match(calls.lastError, /could not be proven/, 'honest about uncertainty');
+    assert.match(calls.lastError, /no such host/, 'preserves the raw failure');
+    assert.doesNotMatch(calls.lastError, /SKIPPED SETUP STEP/, 'does not claim a skipped token for a network error');
+  });
+
+  it('the auth-failure message suppresses gh\'s RAW hint but keeps the project-specific correction', async () => {
+    const { deps, calls } = makeWorld({ ghAuthFails: true });
+    await runDispatch(['memory'], deps);
+    // the raw gh line ("To get started… please run: gh auth login") must not surface…
+    assert.doesNotMatch(calls.lastError, /To get started|please run/, 'the raw gh hint is suppressed');
+    // …only the deliberate "NOT gh auth login" correction remains.
+    assert.match(calls.lastError, /NOT `gh auth login`/, 'the project-specific correction stays');
   });
 });
 
