@@ -25,7 +25,7 @@ import { readFileSync, lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { detectBackends } from './detect-backends.mjs';
-import { resolveActivityRecipe } from './recipes.mjs';
+import { resolveActivityRecipe, composeActiveRecipeLine } from './recipes.mjs';
 import {
   CONFIG_REL,
   fail,
@@ -91,7 +91,7 @@ const effectiveLine = (e) =>
     ? `effective here: ${e.effective} (requested ${e.degradedFrom} → degraded: ${e.reason})`
     : `effective here: ${e.effective}`;
 
-const formatHuman = ({ changed, unchanged, warnings, willWrite, wrote, fileBody }) => {
+const formatHuman = ({ changed, unchanged, warnings, willWrite, wrote, fileBody, activeLine }) => {
   const lines = [];
   if (wrote) lines.push(`wrote ${CONFIG_REL}`);
   else if (changed.length) lines.push(`set-recipe — preview (nothing written; re-run with --write to apply)`);
@@ -102,6 +102,12 @@ const formatHuman = ({ changed, unchanged, warnings, willWrite, wrote, fileBody 
   for (const e of unchanged) lines.push(`  ${e.activity}.${e.slot}: already ${valueLabel(e.from)} (no change)`);
   for (const w of warnings) lines.push(`  ⚠ ${w}`);
   if (wrote && fileBody) lines.push('', `${CONFIG_REL} now reads:`, fileBody.replace(/\n$/, ''));
+  // The post-write discovery echo (AD-038): after every successful write, paste the freshly composed
+  // active-recipe line verbatim + the one-line handover reminder — the writer is the ONE surface that
+  // changes the config, so the change is never announced anywhere else.
+  if (wrote && activeLine) {
+    lines.push('', activeLine, `refresh the "Active recipes:" slot line in docs/ai/handover.md with the line above.`);
+  }
   if (!wrote) {
     if (!changed.length) lines.push('  no changes — nothing to write.');
     else if (willWrite) lines.push('', `would write ${CONFIG_REL} — re-run with --write to apply.`);
@@ -109,12 +115,15 @@ const formatHuman = ({ changed, unchanged, warnings, willWrite, wrote, fileBody 
   return lines.join('\n');
 };
 
-const buildJson = ({ changed, unchanged, warnings, writtenPath, noop }) => ({
+const buildJson = ({ changed, unchanged, warnings, writtenPath, noop, activeLine }) => ({
   changed: changed.map((e) => ({ activity: e.activity, slot: e.slot, from: e.from, to: e.to, effective: e.effective, degradedFrom: e.degradedFrom ?? null, reason: e.reason ?? null })),
   unchanged: unchanged.map((e) => ({ activity: e.activity, slot: e.slot, recipe: e.from })),
   writtenPath: writtenPath ?? null,
   noop,
   warnings,
+  // ADDITIVE: the machine-composed active-recipe line, present only after a successful write (the
+  // human render pastes the same line) — the output stays one parseable JSON object either way.
+  activeLine: activeLine ?? null,
 });
 
 const HELP = `set-recipe — write the per-project orchestration config (docs/ai/orchestration.json).
@@ -199,9 +208,10 @@ export const main = (argv, ctx = {}) => {
     validateConfig(after); // defensive re-validate immediately before the write
     const { writtenPath } = writeConfig(cwd, after, ctx);
     const fileBody = serializeConfig(after);
+    const activeLine = composeActiveRecipeLine({ config: after, source: CONFIG_REL }, detection);
     const stdout = json
-      ? JSON.stringify(buildJson({ changed, unchanged, warnings, writtenPath, noop: false }), null, 2)
-      : formatHuman({ changed, unchanged, warnings, wrote: true, fileBody });
+      ? JSON.stringify(buildJson({ changed, unchanged, warnings, writtenPath, noop: false, activeLine }), null, 2)
+      : formatHuman({ changed, unchanged, warnings, wrote: true, fileBody, activeLine });
     return { code: 0, stdout, stderr: '' };
   } catch (err) {
     return { code: err.exitCode ?? 1, stdout: '', stderr: `set-recipe: ${err.message}` };

@@ -3,7 +3,7 @@ name: agent-workflow-kit
 description: Deploy or upgrade a portable AI-agent memory-and-workflow system in any project. Use when the user wants to bootstrap `docs/ai/` + an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) + cap/archive/index enforcement in a new or existing repo, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-kit` / `/agent-workflow-kit upgrade`. Triggers on phrases like "set up the memory system", "deploy the AI workflow here", "bootstrap docs/ai", "upgrade the workflow".
 disable-model-invocation: true
 metadata:
-  version: '1.29.0'
+  version: '1.30.0'
 ---
 
 # agent-workflow-kit
@@ -177,8 +177,11 @@ backend-status line** → **welcome mat**. Only the version block comes from
 `node ${CLAUDE_SKILL_DIR}/tools/family-registry.mjs --json` (add `--dir <project>` for the deploy
 axis) — **never hardcoded semver**; the backend-status line is its own shared contract (above), and
 the welcome mat **composes signals already gathered** (the version block's notes + the backend-status
-line), not a fresh helper call. Present everything in the user's conversational language; never paste
-the JSON or any internal field name.
+line), not a fresh helper call. **Beside the backend-status line**, when the target project carries a
+`docs/ai/orchestration.json`, also paste the one-line **configured-recipe line** verbatim from
+`node ${CLAUDE_SKILL_DIR}/tools/recipes.mjs --active-line` (run from the project root; *Mode: recipes*
+documents it; same agent-host skip-with-reason contract as the status line). Present everything in the
+user's conversational language; never paste the JSON or any internal field name.
 
 **Success state — the happy path never leads with a structure number.** No happy-path report surfaces
 the project's internal `docs/ai` structure version, the stamp filename, or the internal versioning
@@ -274,6 +277,8 @@ Run `node ${CLAUDE_SKILL_DIR}/tools/run-gates.mjs [--cwd <project>] [--only <id>
 The declaration is **seeded at bootstrap** (the template loop, step 6) and **ensured-if-missing on upgrade** from THIS kit's own template twin (*Mode: upgrade* step 3) — independent of the installed memory substrate's age; an existing file is always **preserved byte-for-byte**. It is deliberately **not** a delegation-required memory asset: gates are optional, and absence is an honest runner outcome, not a deployment failure.
 
 Declared gates can also be **auto-approved** (no permission prompt on a byte-exact invocation from the project root) via the opt-in PreToolUse hook — *Mode: hook*: the SAME declaration, a second consumer; editing gates.json needs no re-wiring.
+
+**Candidate line — the review-receipt gate (opt-in, never auto-seeded; AD-021).** Projects that configure a reviewed/council `plan-execution.review` recipe can declare the AD-038 review-state check as one more gate — the exact candidate `{ id, title, cmd }` line and its contract live under *Mode: review-state* (step 3). The template `gates.json` stays EMPTY; adding the line is the maintainer's explicit consent, by hand.
 
 **Invariants:** the runner writes nothing · never commits · never runs a subscription CLI · executes only the project's OWN declared commands (never a kit-invented one) · the bash contract fails loud, never reinterprets.
 
@@ -447,6 +452,8 @@ The four recipes (defined over each bridge's `provides` roles — `codex`: execu
 2. **Offer the choice** via **`AskUserQuestion` where your agent supports it** (`AskUserQuestion` in Claude Code) — one option per recipe, the `recommendRecipe` choice listed **first** — otherwise in prose. Then print `planRecipe(chosen, detection)` (the per-stage dispatch + degradation reasons + quota/health notes) so the user sees exactly what running it entails.
 3. **Availability = `readiness === ready`, full stop.** Every other readiness supplies the human reason (needs-skill → "not installed — `/agent-workflow-kit setup`"; needs-cli → "install the CLI"; needs-credentials → "log in"; degraded → "wrapper not on PATH — `/agent-workflow-kit setup`"). This is set-up state only — **never** a claim that a backend's service is responsive (the detector cannot observe a runtime stall; `agy`'s Issue-001 is a *standing advisory*, not a readiness signal).
 
+**The configured-recipe line (`--active-line`, read-only).** `node ${CLAUDE_SKILL_DIR}/tools/recipes.mjs --active-line` prints exactly **one** machine-composed line: the **CONFIGURED** recipe of every activity/slot, resolved from the target project's `docs/ai/orchestration.json` (read from the current directory) + live readiness — each slot with its source (configured vs computed default), its degradation stated, and its dispatched wrapper set — explicitly contrasted with the readiness **recommendation** (which is informational; the configured recipes are what runs). Paste it verbatim: it fills the session-start discovery step (the deployed `agent_rules.md` §1.1) and the handover "Active recipes:" slot; `set-recipe` echoes the same line after every successful write. A malformed config fails loud (exit 1), never a silent fallback.
+
 **Invariants:** read-only · never runs a subscription CLI · never commits · the orchestrator executes the recipe via the bridge skills, not the kit.
 
 ### Mode: procedures
@@ -566,6 +573,33 @@ Run `node ${CLAUDE_SKILL_DIR}/tools/gate-hook.mjs [--dry-run | --apply] [--cwd <
 **Invariants:** writes ONLY `.claude/hooks/agent-workflow-gates.mjs` + `.claude/settings.json` · never `settings.local.json` · never commits · exact-match approval only (no patterns) · never `deny` · never auto-wired by `init`/`upgrade` (placement stays opt-in — the AD-011/AD-034 boundary: init/upgrade may refresh placed things, never place new ones).
 
 **Exit codes:** `0` done / dry-run (incl. the reported diverged-but-wired state); `1` a precondition STOP; `2` bad arguments.
+
+### Mode: review-state
+
+Read-only **review-receipt checker** (AD-038) — it makes *"reviewed ≠ shipped"* mechanically detectable. The bridge review wrappers (`codex-review` / `agy-review`, from bridge version 2.2.0) append one receipt line per **successful** review to a file **inside the git dir** (`<git dir>/agent-workflow-review-receipts.jsonl` — never committable by construction; `AW_REVIEW_RECEIPTS` overrides). This mode resolves the effective `plan-execution.review` recipe (the SAME config + read-only detector the `procedures` advisor reads), recomputes the canonical **uncommitted-state fingerprint** (staged + unstaged + untracked-not-ignored contents — exactly the review-payload domain; the prose definition lives in each bridge's `capability.json` review contract, implementations cross-checked by the kit's fingerprint-parity test), and reports, per recipe-named backend, whether a **fresh, grounded, current-fingerprint** receipt exists. It **never writes, never commits, never runs a subscription CLI**; it does spawn **read-only `git` queries** to compute the fingerprint — stated honestly (that is still read-only, but it is a subprocess).
+
+Run `node ${CLAUDE_SKILL_DIR}/tools/review-state.mjs [--check] [--json]`:
+
+1. Plain run → the human report: resolved recipe + source, plan-in-flight, tree fingerprint, per-backend receipt state (current / stale / ungrounded / missing) with verdict + grounding + timestamp.
+2. **`--check`** → the gate exit code. The **normative exit contract lives in the tool header** (the single home — do not re-enumerate it elsewhere): exit 0 for a solo-resolved recipe (configured, or degraded there — no ready reviewer), no plan in flight (the `docs/plans` naming convention: `queue.md` and `EXECUTE-`/`FEEDBACK-`-prefixed or `PROMPT`/`prompt`/`handoff`-carrying names are scratch), a clean tree, a non-git cwd, or every recipe-named backend receipted **current + grounded**; exit 1 when a backend is missing, **stale** (ANY edit after its review moves the fingerprint), or grounded:false under reviewed/council. **Presence, not unanimity:** verdict adjudication (ship/revise, the divergence crossover) stays orchestrator judgment — the gate only proves the configured backends really reviewed THIS tree. Plan/diff receipts and continuations (`agy-review --continue`) are **informational-only**: after a fold, only a **fresh grounded re-run** (`codex-review code`; `agy-review code --facts @f`) restores green.
+3. **Wire it as a gate by hand — never auto-seeded (AD-021).** The candidate line for your own `docs/ai/gates.json`: `{ "id": "review-state", "title": "Review receipts current for the uncommitted tree", "cmd": "node <path-to-this-skill>/tools/review-state.mjs --check" }` — with the path your project actually reaches the kit by. Once declared, the opt-in *Mode: hook* auto-approves it like any other declared gate.
+
+**Human residual (stated, accepted):** `git commit --no-verify` and receipt-file deletion/forgery remain possible — this is a self-discipline mechanism against silent process drift, not a security boundary.
+
+**Invariants:** read-only · never writes · never commits · never runs a subscription CLI · spawns read-only `git` queries only · the receipt writers are the bridge review wrappers, never the kit.
+
+### Mode: grounding
+
+The **grounded-review facts assembler** (AD-038) — an ungrounded `agy` review GUESSES, and while the grounding contract is mechanized (`agy-review code --facts @f`), populating the facts file was a manual chore. This mode emits the two **mechanical** halves of a facts payload; the orchestrator still owns any judgment-bearing additions. **Catalogued honestly as a WRITER** — `--out <path>` writes one file — with the invariant: `--out` accepts **only gitignored / out-of-repo scratch destinations** and REFUSES a tracked path AND an in-repo not-ignored path (a new untracked file would itself move the review fingerprint the facts are about to ground); **stdout is the default**. It never commits and never runs a subscription CLI.
+
+Run `node ${CLAUDE_SKILL_DIR}/tools/grounding.mjs [--constraints] [--plan <path>] [--reserve-bytes <n>] [--out <path>]`:
+
+1. **`--constraints`** — slice the root `AGENTS.md` **Hard Constraints** section, verbatim and whole (exactly ONE matching heading; zero or several is a loud STOP, never a guess — the marker-slot discipline).
+2. **`--plan <path>`** — extract the plan's decision-bearing canonical sections, verbatim + whole: `## Approach` (REQUIRED — its "What we are NOT doing" text rides inside; it is not a heading in canon) and `## Verification` (REQUIRED — STOP if missing), plus `## Decisions (locked)` when present (the optional engine §7 heading); a DUPLICATE heading is always a STOP.
+3. **Byte budget** — the output honors the same `AGY_MAX_PROMPT_BYTES` contract the agy wrapper enforces (override may only tighten; the OS argv ceiling is rejected), MINUS **`--reserve-bytes <n>`** — the artifact share the caller expects `agy-review` to add around these facts. Overflow is trimmed tail-first with a loud in-band marker + stderr report — never a silent cut.
+4. Feed the result to the wrapper: `agy-review code --facts @<out>`. The `procedures` advisor renders this invocation as a concrete pre-step whenever the resolved review dispatch includes agy — populated with the in-flight plan path when exactly one plan is in flight.
+
+**Invariants:** writer (writes at most the ONE `--out` scratch file — gitignored / out-of-repo only) · never commits · never runs a subscription CLI · verbatim slices only (assembly is mechanical; facts judgment stays with the orchestrator).
 
 ---
 

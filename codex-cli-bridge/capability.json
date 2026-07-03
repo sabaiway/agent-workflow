@@ -3,7 +3,7 @@
   "schema": 1,
   "name": "codex-cli-bridge",
   "kind": "execution-backend",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "provides": ["execute", "review"],
   "roles": {
     "execute": {
@@ -38,7 +38,8 @@
           "codex-review code [extra focus...]"
         ],
         "grounding": "automatic — the wrapper precomputes the full working-tree change set (repo map, status, diffs, untracked contents) and codex auto-merges the root AGENTS.md; no grounding flags",
-        "continue": []
+        "continue": [],
+        "receipt": "side effect — a successful review appends one JSON receipt line to <git dir>/agent-workflow-review-receipts.jsonl (AW_REVIEW_RECEIPTS overrides): fingerprint = sha256 over the canonical uncommitted-state payload (staged diff + unstaged diff + untracked-not-ignored contents — the review-payload domain) in code mode, the artifact-file sha256 in plan mode; verdict parsed from the mandated literal verdict line (schema mode: the verdict field); always fresh:true (one-shot) + grounded:true (native AGENTS.md auto-merge, factsHash null); a write failure warns, never fails the review"
       }
     }
   },

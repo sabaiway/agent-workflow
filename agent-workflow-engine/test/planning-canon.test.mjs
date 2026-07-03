@@ -39,6 +39,23 @@ describe('planning.md — right-altitude/code-grounded canon', () => {
     assert.match(section8, /altitude/i);
   });
 
+  // AD-038: the optional Decisions-(locked) home for review-settled, executor-binding decisions —
+  // one §7 structure row + one §8 checklist mention (grounding.mjs extracts the section by this
+  // exact heading, so the heading string is load-bearing).
+  it('carries the optional §7 "Decisions (locked)" row + its §8 checklist mention (AD-038)', () => {
+    // §7's skeleton lives inside a code fence whose lines start with `## `, so sectionOf would
+    // truncate it — pin the exact row line on the whole document instead (the heading string is
+    // load-bearing: grounding.mjs extracts the section by trimmed-line equality).
+    assert.match(planning, /^## Decisions \(locked\)\s+← optional: .*re-litigate/m, 'the §7 skeleton row: exact heading, optional, executor-binding');
+    assert.ok(
+      planning.indexOf('## Decisions (locked)') > planning.indexOf('## Approach             ←'),
+      'the row sits after Approach in the §7 skeleton',
+    );
+    const section8 = sectionOf(planning, /^## 8\..*$/im);
+    assert.match(section8, /Decisions \(locked\)/, 'the §8 checklist routes settled decisions there');
+    assert.match(section8, /never re-litigated/i, 'binding for the executor');
+  });
+
   // A1 (process-fidelity): §6 is the home of the plan-then-execute boundary, so the
   // ExitPlanMode-≠-execute clause + the §6↔Definition-of-Done disambiguation are pinned here (NOT §9,
   // so A1 is intentionally not a lens-mirror token — see lens-mirror.test.mjs).

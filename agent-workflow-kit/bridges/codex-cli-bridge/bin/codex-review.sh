@@ -52,7 +52,16 @@ Grounding:
 Round-2 / resume:
   (none — one-shot; a follow-up review is a fresh run)
 
-Environment: CODEX_REVIEW_SCHEMA=1 (structured JSON findings), CODEX_HARD_TIMEOUT (seconds, default 1800), CODEX_PROBE=1 (throwaway probe only).
+Receipt:
+  side effect — a successful review appends one JSON receipt line to
+  <git dir>/agent-workflow-review-receipts.jsonl (AW_REVIEW_RECEIPTS overrides): fingerprint =
+  sha256 over the canonical uncommitted-state payload (staged diff + unstaged diff +
+  untracked-not-ignored contents — the review-payload domain) in code mode, the artifact-file
+  sha256 in plan mode; verdict parsed from the mandated literal verdict line (schema mode: the
+  verdict field); always fresh:true (one-shot) + grounded:true (native AGENTS.md auto-merge,
+  factsHash null); a write failure warns, never fails the review
+
+Environment: CODEX_REVIEW_SCHEMA=1 (structured JSON findings), CODEX_HARD_TIMEOUT (seconds, default 1800), CODEX_PROBE=1 (throwaway probe only), AW_REVIEW_RECEIPTS (receipt file override).
 Requires at run time: the codex CLI on PATH, a ChatGPT-subscription login, a git work tree with a root AGENTS.md (--help needs none of these).
 HELP
     exit 0
@@ -61,6 +70,10 @@ esac
 
 DEFAULT_CODEX_MODEL="gpt-5.5"
 DEFAULT_CODEX_EFFORT="xhigh"
+# Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
+# version (drift-guarded by codex-review.test.mjs against capability.json).
+AW_RECEIPT_BACKEND="codex"
+AW_BRIDGE_VERSION="2.2.0"
 CODEX_MODEL="${CODEX_MODEL:-$DEFAULT_CODEX_MODEL}"
 CODEX_EFFORT="${CODEX_EFFORT:-$DEFAULT_CODEX_EFFORT}"
 # Generous hard cap for a slow xhigh review (subscription latency varies).
@@ -140,8 +153,10 @@ if [[ "${CODEX_REVIEW_SCHEMA:-}" == "1" ]]; then
   OUTPUT_FORMAT_CODE="$_json_fmt"
   OUTPUT_FORMAT_PLAN="$_json_fmt"
 else
-  OUTPUT_FORMAT_CODE="Output findings ONLY, one per line, as: [blocker|major|minor|nit] — file:line — issue — suggested fix. End with a one-line overall verdict (ship / revise / rethink)."
-  OUTPUT_FORMAT_PLAN="Output findings ONLY, one per line, as: [blocker|major|minor|nit] — location — issue — suggested change. End with a one-line overall verdict (ship / revise / rethink)."
+  # The verdict line is machine-parsed into the review receipt (AD-038) — mandate ONE exact literal.
+  _verdict_fmt="End with EXACTLY ONE final verdict line in this literal, machine-parsed form (that word pair alone on the line, nothing else): 'Verdict: ship' or 'Verdict: revise' or 'Verdict: rethink'."
+  OUTPUT_FORMAT_CODE="Output findings ONLY, one per line, as: [blocker|major|minor|nit] — file:line — issue — suggested fix. ${_verdict_fmt}"
+  OUTPUT_FORMAT_PLAN="Output findings ONLY, one per line, as: [blocker|major|minor|nit] — location — issue — suggested change. ${_verdict_fmt}"
 fi
 
 # True (exit 0) when $1 looks BINARY: a NUL byte in the first 8 KiB (git's own
@@ -151,6 +166,81 @@ is_binary() {
   local nul
   nul="$(LC_ALL=C head -c 8192 -- "$1" 2>/dev/null | LC_ALL=C tr -dc '\000' | wc -c)"
   [[ "${nul:-0}" -gt 0 ]]
+}
+
+# --- Review receipts (AD-038) — byte-identical in codex-review.sh and agy-review.sh ---------------
+# sha256 hex of stdin. sha256sum, else shasum -a 256; neither → warn + fail (the caller records a
+# null fingerprint — a null never satisfies the review-state checker, fail-safe direction).
+sha256_stdin() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 | awk '{print $1}'
+  else
+    echo "warning: no sha256sum/shasum on PATH — cannot compute the review fingerprint." >&2
+    return 1
+  fi
+}
+
+# The canonical uncommitted-state fingerprint payload (code mode). Domain == the review payload:
+# tracked staged + unstaged changes + untracked-not-ignored file contents (binary/symlink/non-regular
+# untracked paths ride as name-only notes, mirroring the assembled change set). The prose definition
+# lives in capability.json roles.review.contract.receipt (both bridges, lockstep); the kit checker
+# (tools/review-state.mjs) implements the SAME serialization in node — cross-checked by the kit's
+# review-fingerprint-parity.test.mjs.
+emit_fingerprint_payload() {
+  git diff --cached --no-ext-diff
+  git diff --no-ext-diff
+  local path
+  while IFS= read -r -d '' path; do
+    if [[ -L "$path" ]]; then
+      printf 'untracked-symlink:%s -> %s\n' "$path" "$(readlink -- "$path" 2>/dev/null || echo '?')"
+    elif [[ ! -f "$path" ]]; then
+      printf 'untracked-nonregular:%s\n' "$path"
+    elif is_binary "$path"; then
+      printf 'untracked-binary:%s\n' "$path"
+    else
+      printf 'untracked:%s\n' "$path"
+      cat -- "$path"
+    fi
+  done < <(git ls-files --others --exclude-standard -z)
+}
+
+# sha256 of the canonical payload, emitted from the work-tree ROOT (a subdir invocation hashes the
+# same bytes). Empty output on failure (no git tree / no sha256 tool) — recorded as null.
+compute_tree_fingerprint() {
+  ( cd "$(git rev-parse --show-toplevel)" && emit_fingerprint_payload ) | sha256_stdin
+}
+
+# JSON-encode a receipt scalar: empty → null, else a quoted string (every value comes from a closed
+# vocabulary or a hex digest — no escaping needed by construction).
+receipt_json_scalar() {
+  if [[ -z "${1:-}" ]]; then printf 'null'; else printf '"%s"' "$1"; fi
+}
+
+# write_review_receipt <artifact|""> <fresh: true|false> <fingerprint|""> <verdict> <grounded: true|false> <factsHash|"">
+# Appends ONE receipt line (the AD-038 fixture shape) as a side effect of a SUCCESSFUL review —
+# to $AW_REVIEW_RECEIPTS when set, else <git dir>/agent-workflow-review-receipts.jsonl (inside the
+# git dir by construction, so it is never committable). Fail-safe: every failure here warns loudly
+# and returns 0 — a missing receipt fails the kit's review-state CHECKER, never the review run.
+write_review_receipt() {
+  local artifact="$1" fresh="$2" fingerprint="$3" verdict="$4" grounded="$5" facts_hash="$6"
+  local receipts="${AW_REVIEW_RECEIPTS:-}"
+  if [[ -z "$receipts" ]]; then
+    local receipt_git_dir
+    if ! receipt_git_dir="$(git rev-parse --absolute-git-dir 2>/dev/null)"; then
+      echo "warning: not inside a git work tree and AW_REVIEW_RECEIPTS is unset — skipping the review receipt." >&2
+      return 0
+    fi
+    receipts="$receipt_git_dir/agent-workflow-review-receipts.jsonl"
+  fi
+  local line
+  line="$(printf '{"schema":1,"artifact":%s,"fresh":%s,"fingerprint":%s,"backend":"%s","verdict":"%s","grounded":%s,"factsHash":%s,"wrapperVersion":"%s","timestamp":"%s"}' \
+    "$(receipt_json_scalar "$artifact")" "$fresh" "$(receipt_json_scalar "$fingerprint")" \
+    "$AW_RECEIPT_BACKEND" "$verdict" "$grounded" "$(receipt_json_scalar "$facts_hash")" \
+    "$AW_BRIDGE_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)")"
+  if ! printf '%s\n' "$line" >>"$receipts" 2>/dev/null; then
+    echo "warning: could not append the review receipt to $receipts — the review itself succeeded;" >&2
+    echo "         the review-state gate will read the current tree as un-receipted." >&2
+  fi
 }
 
 # Emit the full review surface to stdout: repo map, status, staged + unstaged
@@ -191,6 +281,9 @@ assemble_code_diff() {
 mode="${1:-}"
 shift || true
 
+REVIEW_ARTIFACT=""
+REVIEW_FINGERPRINT=""
+
 case "$mode" in
   plan)
     target="${1:-}"
@@ -203,6 +296,9 @@ case "$mode" in
       echo "error: unexpected arguments after plan file: $*" >&2
       exit 2
     fi
+    # Plan-mode receipt identity: the artifact-file sha256 (informational-only for the tree checker).
+    REVIEW_ARTIFACT="plan"
+    REVIEW_FINGERPRINT="$(sha256_stdin <"$target" || true)"
     fence_plan="Do not read files outside this git working tree; the plan above plus the in-repo code it references are your whole surface."
     directive="You are REVIEWING an implementation plan — ADVISORY ONLY. You are in a read-only sandbox: do NOT edit, create, or delete any file, and do NOT rewrite the plan. Obey the project's Hard Constraints from its root AGENTS.md (already merged into your context). Read the plan below and the relevant repository code it references. ${fence_plan} ${OUTPUT_FORMAT_PLAN} Cover: correctness risks, missing or mis-ordered steps, ambiguities a cold executor would trip on, violated project Hard Constraints, scope creep, and missing verification/gates."
     prompt="${directive}"$'\n\nPLAN:\n'"$(cat -- "$target")"
@@ -214,6 +310,10 @@ case "$mode" in
       echo "codex-review: no uncommitted changes to review — the working tree is clean." >&2
       exit 0
     fi
+    # The canonical fingerprint of the tree codex is about to review — computed at assembly time
+    # (BEFORE the EXIT trap can fire), so the receipt attests exactly the reviewed state.
+    REVIEW_ARTIFACT="code"
+    REVIEW_FINGERPRINT="$(compute_tree_fingerprint || true)"
     # Assemble DIRECTLY to a git-dir-local temp file (git-invisible + worktree /
     # submodule safe; 600 perms). Measuring size from the file keeps the whole
     # change set off the bash-variable path (no NUL drop, byte-accurate size).
@@ -370,3 +470,20 @@ else
   echo "warning: codex produced no final-message file — printing the run-trace tail instead." >&2
   tail -n 40 "$trace"
 fi
+
+# --- Review receipt (AD-038): parse the verdict, append one receipt line ------
+# Text mode parses the mandated literal 'Verdict: <ship|revise|rethink>' line; CODEX_REVIEW_SCHEMA=1
+# reads the schema's "verdict" field instead; absent either way → "unknown" (recorded, never guessed).
+verdict=""
+if [[ -f "$out" && -s "$out" ]]; then
+  if [[ "${CODEX_REVIEW_SCHEMA:-}" == "1" ]]; then
+    verdict="$(sed -nE 's/.*"verdict"[[:space:]]*:[[:space:]]*"(ship|revise|rethink)".*/\1/p' "$out" | tail -n1)"
+  else
+    verdict="$(sed -nE 's/^Verdict: (ship|revise|rethink)[[:space:]]*$/\1/p' "$out" | tail -n1)"
+  fi
+fi
+[[ -z "$verdict" ]] && verdict="unknown"
+# codex is grounded by construction (AGENTS.md auto-merge + the precomputed change set): grounded
+# true, factsHash null (native grounding — no separate facts payload exists). Every codex run is a
+# full fresh run (one-shot, no resume) → fresh:true.
+write_review_receipt "$REVIEW_ARTIFACT" true "$REVIEW_FINGERPRINT" "$verdict" true ""

@@ -131,7 +131,7 @@ const CATALOG = [
     invocation: invocationOf('recipes'),
     group: 'Orchestrate',
     kind: READ_ONLY,
-    oneLine: 'See the orchestration recipes (Solo / Reviewed / Council / Delegated) and which one fits this environment.',
+    oneLine: 'See the orchestration recipes (Solo / Reviewed / Council / Delegated), which one fits this environment, and the configured per-activity line to paste at session start.',
   },
   {
     key: 'procedures',
@@ -146,6 +146,20 @@ const CATALOG = [
     group: 'Orchestrate',
     kind: WRITER,
     oneLine: 'Set the orchestration recipe for an activity from plain language — previews the change, then writes the config when you confirm.',
+  },
+  {
+    key: 'review-state',
+    invocation: invocationOf('review-state'),
+    group: 'Orchestrate',
+    kind: READ_ONLY,
+    oneLine: 'Check that every configured review backend has receipted the current uncommitted tree with a fresh grounded review; --check turns it into a gate exit code.',
+  },
+  {
+    key: 'grounding',
+    invocation: invocationOf('grounding'),
+    group: 'Orchestrate',
+    kind: WRITER,
+    oneLine: 'Assemble the verified-facts payload a grounded review runs against — the entry-point Hard Constraints plus a plan’s decision sections; prints it, or writes ONE scratch file with --out.',
   },
 ];
 
