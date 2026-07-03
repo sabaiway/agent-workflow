@@ -4,6 +4,63 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.30.0 — Review-recipe enforcement: the configured recipe is impossible to miss, "reviewed ≠ shipped" is detectable, grounding is a command (AD-038)
+
+A **feature** release (ships the bundled bridges refreshed to **2.2.0**). Origin: a real
+council-substitution incident + independent kit-user feedback — the configured review recipe could
+be silently skipped, downgraded, or run before later edits, and nothing could detect it. Three
+mechanisms, each self-firing at its point of use:
+
+- **The discovery line** — `tools/recipes.mjs --active-line` (`Mode: recipes`): exactly ONE
+  machine-composed line rendering the **CONFIGURED** recipe of every activity/slot from
+  `docs/ai/orchestration.json` + live readiness — source labeled, degradation stated, wrapper set
+  named, explicitly contrasted with the readiness recommendation (which is informational). Wired
+  where a session already reads: the deployed `agent_rules.md` §1.1 gains step 2 (read the
+  orchestration config BEFORE picking a task; a silent recipe downgrade is a forbidden
+  substitution) and `handover.md` gains a standing **"Active recipes:"** slot — both template
+  regions byte-identical with the memory copies (new `test/template-region-parity.test.mjs`,
+  injected-divergence non-vacuous); `set-recipe` now ECHOES the freshly composed line + a
+  handover-slot reminder after every successful `--write` (additive `activeLine` field in
+  `--json`). New `test/active-recipe-line.test.mjs` proves the line derives from the CONFIG, not
+  the recommendation.
+- **`/agent-workflow-kit review-state`** (`tools/review-state.mjs`, read-only + colocated tests) —
+  makes "reviewed ≠ shipped" mechanically detectable. The 2.2.0 review wrappers append one JSONL
+  receipt per SUCCESSFUL review to `<git dir>/agent-workflow-review-receipts.jsonl`
+  (`AW_REVIEW_RECEIPTS` overrides; never committable by construction); the checker resolves the
+  effective `plan-execution.review` recipe, recomputes the canonical **uncommitted-state
+  fingerprint** (sha256 over staged diff + unstaged diff + untracked-not-ignored contents — exactly
+  the review-payload domain), and `--check` exits 0 only when every recipe-named backend holds a
+  **fresh, grounded, current-fingerprint** receipt (**presence, not unanimity** — verdicts stay
+  orchestrator judgment). Any later edit stales the receipts; plan/diff receipts and continuations
+  (`fresh:false`) are informational-only — after a fold, only a fresh grounded re-run restores
+  green. Normative exit contract in the tool header; plan-in-flight detector keyed on the
+  documented `docs/plans` naming convention; honest residual stated (`--no-verify`, receipt-file
+  deletion — discipline, not a sandbox). The gate line is **never auto-seeded** ([[AD-021]]): the
+  template `gates.json` stays empty; the candidate line lives in `Mode: review-state`/`Mode: gates`
+  prose. New `test/review-fingerprint-parity.test.mjs` proves bash (both wrappers, byte-identical
+  block) ↔ node fingerprint parity — hash, serialization, AND behavioral domain equality.
+- **`/agent-workflow-kit grounding`** (`tools/grounding.mjs` + colocated tests) — the
+  grounded-review facts assembler, catalogued honestly as a **WRITER**: `--constraints` slices the
+  root `AGENTS.md` Hard-Constraints section verbatim (exactly-one-match, else a loud STOP);
+  `--plan <path>` extracts the decision-bearing sections (`## Approach` + `## Verification`
+  required, `## Decisions (locked)` when present; duplicates STOP); output honors the wrapper's
+  `AGY_MAX_PROMPT_BYTES` budget minus `--reserve-bytes` with a loud tail-trim; `--out` accepts only
+  gitignored / out-of-repo scratch (a tracked or in-repo not-ignored path is refused — a new
+  untracked file would move the fingerprint it grounds). `procedures.mjs` renders the invocation as
+  a POPULATED pre-step whenever agy is dispatched (exactly one plan in flight → its path; else a
+  placeholder + discovery caveat; additive `groundingPreStep` in `--json`).
+- **Bundled bridges 2.2.0** (mirrors byte-refreshed): `codex-review.sh` mandates + parses ONE
+  literal `Verdict: ship|revise|rethink` line (schema mode reads the JSON field); `agy-review.sh`
+  records the `### Verdict` token verbatim (SHIP / SHIP WITH NITS / REWORK), `grounded` +
+  `factsHash` from `--facts` (an empty payload is visible), and marks continuations `fresh:false`
+  with a one-line fresh-run notice; a receipt write failure warns and never fails the review. The
+  review-role `capability.json` contracts gain the `receipt` block (the fingerprint definition
+  home) — three-way lockstep wrapper `--help` ↔ manifest ↔ `detect-backends.mjs` registry,
+  drift-guarded.
+- **Catalog/report wiring:** two new SKILL modes + README rows; the bootstrap/upgrade report
+  footers paste the active-recipe line beside the backend-status line; `package-content` pin
+  94 → 96 (the two new tools).
+
 ## 1.29.0 — Velocity scope C: an opt-in PreToolUse gate-approval hook
 
 A **feature** release (ships the bundled bridges unchanged at **2.1.0**). The shipped, probe-proven

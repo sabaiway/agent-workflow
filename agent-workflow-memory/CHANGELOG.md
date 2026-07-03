@@ -4,6 +4,29 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.10.0 — Installer verb parity (the AD-034 cmp-keyed contract) + the recipe discovery step in the templates
+
+A **feature** release (installer messaging + template text; deployment-lineage head stays `1.3.0`
+— content-only, no migration):
+
+- **`bin/install.mjs`** — the install verb is now keyed on the OBSERVED version relation, never on
+  mere presence (closing the false `updated the substrate to vX` on an already-current machine):
+  fresh/legacy-unstamped → `installed`; older → `updated the substrate to`; same →
+  `refreshed the already-current substrate` + the fact-only repair-on-rerun note (never a cache
+  accusation; conditional `@latest` hint); newer → a loud **never-downgrade refusal** (nothing
+  written) unless `--allow-downgrade`, which then says `downgraded the substrate to` plainly. The
+  installed version is read from the target SKILL.md `metadata:`-scoped `version` (decoy-proof);
+  an existing-but-unreadable SKILL.md **fails closed**, never silently treated as legacy. Helpers
+  cloned INLINE (this package references no sibling — the knows-nobody DAG).
+- **`bin/install.test.mjs`** — the full engine-shape contract suite: no-op re-run wording,
+  downgrade refusal + `--allow-downgrade`, fail-closed unreadable SKILL.md, legacy no-stamp,
+  metadata-decoy version read.
+- **`references/templates/agent_rules.md` §1.1** — new step 2: read `docs/ai/orchestration.json`
+  (the CONFIGURED orchestration recipes) BEFORE picking a task; a silent recipe downgrade is a
+  forbidden substitution. **`references/templates/handover.md`** — a standing `**Active recipes:**`
+  slot line. Both regions byte-identical with the kit template copies, path-neutral (this substrate
+  names no sibling skill), guarded by the kit's `template-region-parity.test.mjs` (AD-038).
+
 ## 1.9.0 — The agent_rules lens carries the checked-vs-unchecked plan boundary
 
 A **feature** release (template text only; scripts and installer unchanged; deployment-lineage
