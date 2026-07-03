@@ -288,28 +288,31 @@ describe('review-state — plan-in-flight detector (the queue.md naming conventi
     for (const scratch of ['queue.md', 'EXECUTE-x.md', 'FEEDBACK-x.md', 'a-PLAN-PROMPT.md', 'item1-execution-prompt.md', 'next-session-ci-handoff.md']) {
       assert.equal(isScratchPlanName(scratch), true, scratch);
     }
-    assert.equal(isScratchPlanName('review-recipe-enforcement.md'), false);
+    assert.equal(isScratchPlanName('active-feature.md'), false);
   });
 
-  it('the fixture mirroring THIS repo\'s post-tidy docs/plans yields exactly the one active plan', () => {
+  it('a fixture mirroring a real mid-execution docs/plans directory yields exactly the one active plan', () => {
+    // The SHAPE of this repo's own docs/plans during a plan execution: the queue index, every
+    // scratch marker class the convention names (EXECUTE- / FEEDBACK- prefixes; PLAN-PROMPT /
+    // prompt / handoff carriers; superseded-plan renames), and exactly ONE bare active plan.
     const root = mkdtempSync(join(tmpdir(), 'review-state-detector-'));
     mkdirSync(join(root, 'docs', 'plans'), { recursive: true });
     const POST_TIDY = [
       'queue.md',
       'EXECUTE-harden-planning-canon.md',
-      'EXECUTE-review-recipe-enforcement.md',
-      'FEEDBACK-review-enforcement-2026-07-03.md',
+      'EXECUTE-active-feature.md',
+      'FEEDBACK-triage-2026-07-03.md',
       'harden-planning-canon-PLAN-PROMPT.md',
       'item1-execution-prompt.md',
       'next-session-ci-handoff.md',
       'agent-workflow-family-refactor-superseded-handoff.md',
       'orchestrate-writer-and-bridge-versions-superseded-handoff.md',
-      'review-recipe-enforcement.md',
+      'active-feature.md',
     ];
     for (const name of POST_TIDY) writeFileSync(join(root, 'docs', 'plans', name), 'x\n');
     const inFlight = plansInFlight(root);
     rmSync(root, { recursive: true, force: true });
-    assert.deepEqual(inFlight, ['review-recipe-enforcement.md'], 'only the real plan is in flight');
+    assert.deepEqual(inFlight, ['active-feature.md'], 'only the real plan is in flight');
   });
 
   it('an absent docs/plans dir means nothing is in flight', () => {
