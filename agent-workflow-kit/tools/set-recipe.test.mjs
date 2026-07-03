@@ -169,24 +169,52 @@ describe('set-recipe — detection failure degrades, never blocks (exit 0)', () 
   });
 });
 
+describe('set-recipe — post-write active-recipe echo (AD-038 discovery)', () => {
+  it('a successful --write echoes the composed active-recipe line + the handover-slot reminder', () => {
+    const r = run(['--set', 'plan-execution.review=council', '--write'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /active recipes \(from docs\/ai\/orchestration\.json\): /);
+    assert.match(r.stdout, /plan-execution\.review = council \(configured\)/);
+    assert.match(r.stdout, /refresh the "Active recipes:" slot line in docs\/ai\/handover\.md/);
+  });
+
+  it('a preview never echoes the line (nothing was written)', () => {
+    const r = run(['--set', 'plan-execution.review=council'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0);
+    assert.doesNotMatch(r.stdout, /active recipes \(/);
+    assert.doesNotMatch(r.stdout, /Active recipes:.*slot/);
+  });
+
+  it('a no-op --write never echoes the line (nothing was written)', () => {
+    write(serializeConfig({ 'plan-authoring': { review: 'solo' } }));
+    const r = run(['--set', 'plan-authoring.review=solo', '--write'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0);
+    assert.doesNotMatch(r.stdout, /active recipes \(/);
+  });
+});
+
 describe('set-recipe — --json schema + readiness permutations', () => {
   it('--json emits the pinned schema', () => {
     const r = run(['--set', 'plan-authoring.review=council', '--json'], { codex: READY, agy: NEEDS_SKILL });
     assert.equal(r.code, 0, r.stderr);
     const j = JSON.parse(r.stdout);
-    assert.deepEqual(Object.keys(j).sort(), ['changed', 'noop', 'unchanged', 'warnings', 'writtenPath'].sort());
+    assert.deepEqual(Object.keys(j).sort(), ['activeLine', 'changed', 'noop', 'unchanged', 'warnings', 'writtenPath'].sort());
     assert.equal(j.noop, false);
     assert.equal(j.writtenPath, null, 'a preview never reports a written path');
+    assert.equal(j.activeLine, null, 'a preview never composes the active-recipe line');
     assert.deepEqual(Object.keys(j.changed[0]).sort(), ['activity', 'degradedFrom', 'effective', 'from', 'reason', 'slot', 'to'].sort());
     assert.equal(j.changed[0].effective, 'reviewed');
     assert.equal(j.changed[0].degradedFrom, 'council');
   });
 
-  it('--write --json reports writtenPath', () => {
+  it('--write --json reports writtenPath and stays one parseable JSON object (the echo rides as a field)', () => {
     const r = run(['--set', 'plan-authoring.review=council', '--write', '--json'], { codex: READY, agy: READY });
     const j = JSON.parse(r.stdout);
     assert.equal(j.writtenPath, CONFIG_REL);
     assert.equal(j.changed[0].effective, 'council');
+    assert.equal(typeof j.activeLine, 'string', 'the active-recipe line rides as a JSON field on a write');
+    assert.match(j.activeLine, /^active recipes \(from docs\/ai\/orchestration\.json\): /);
+    assert.ok(!j.activeLine.includes('\n'), 'the line is exactly one line');
   });
 
   for (const [codex, agy, eff, degraded] of [

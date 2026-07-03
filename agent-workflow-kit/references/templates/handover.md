@@ -14,6 +14,7 @@ maxLines: 80
 
 **Last session:** {{DATE}}
 **Branch:** {{BRANCH}}
+**Active recipes:** not recorded yet — paste the configured-recipe line (composed from `docs/ai/orchestration.json`) and refresh it whenever the config changes.
 
 ## What was done last session
 

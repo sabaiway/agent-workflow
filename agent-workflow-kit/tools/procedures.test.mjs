@@ -217,12 +217,73 @@ describe('procedures CLI — a backend-detection failure does NOT break activity
   });
 });
 
+describe('procedures CLI — grounding pre-step population (AD-038, all three discovery branches)', () => {
+  const councilConfig = () => writeConfig(JSON.stringify({ 'plan-execution': { review: 'council' } }));
+  const addPlan = (name) => {
+    mkdirSync(join(cwd, 'docs', 'plans'), { recursive: true });
+    writeFileSync(join(cwd, 'docs', 'plans', name), '# plan\n');
+  };
+
+  it('exactly ONE plan in flight → the grounding invocation renders POPULATED with that path', () => {
+    councilConfig();
+    addPlan('queue.md');
+    addPlan('my-feature.md');
+    addPlan('EXECUTE-my-feature.md'); // scratch — excluded by the naming convention
+    const r = run(['plan-execution'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /Grounding pre-step \(agy is dispatched/);
+    // Path arguments render shell-QUOTED (a skill dir / plan name with a space stays copy-pasteable).
+    assert.match(r.stdout, /node "[^"]*grounding\.mjs" --constraints --plan "docs\/plans\/my-feature\.md" --out/);
+    assert.match(r.stdout, /agy-review code --facts @/);
+    assert.doesNotMatch(r.stdout, /plan discovery:/, 'a unique plan needs no discovery caveat');
+  });
+
+  it('ZERO plans in flight → the explicit --plan <path> placeholder + a one-line discovery caveat', () => {
+    councilConfig();
+    const r = run(['plan-execution'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /grounding\.mjs" --constraints --plan <path> --out/);
+    assert.match(r.stdout, /plan discovery: no plan in flight/);
+  });
+
+  it('SEVERAL plans in flight → the placeholder + the pick-one caveat naming them', () => {
+    councilConfig();
+    addPlan('feature-a.md');
+    addPlan('feature-b.md');
+    const r = run(['plan-execution'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /grounding\.mjs" --constraints --plan <path> --out/);
+    assert.match(r.stdout, /plan discovery: 2 plans in flight .*feature-a\.md, feature-b\.md/);
+  });
+
+  it('agy NOT dispatched (codex-only reviewed / solo) → no grounding pre-step at all', () => {
+    const reviewed = run(['plan-execution'], { codex: READY, agy: NEEDS_SKILL });
+    assert.doesNotMatch(reviewed.stdout, /Grounding pre-step/, 'codex grounds automatically — no agy pre-step');
+    const solo = run(['plan-execution'], { codex: NEEDS_SKILL, agy: NEEDS_SKILL });
+    assert.doesNotMatch(solo.stdout, /Grounding pre-step/);
+  });
+
+  it('plan-authoring renders the plan-mode --facts form — POPULATED with the unique in-flight plan; --json carries the structured block additively', () => {
+    writeConfig(JSON.stringify({ 'plan-authoring': { review: 'council' } }));
+    addPlan('my-feature.md');
+    const r = run(['plan-authoring'], { codex: READY, agy: READY });
+    assert.match(r.stdout, /agy-review plan "docs\/plans\/my-feature\.md" --facts @/, 'a known plan path never renders a placeholder');
+    const zeroPlans = main(['plan-authoring', '--override', 'review=council'], { cwd: mkdtempSync(join(tmpdir(), 'proc-noplan-')), env: { AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR }, detect: detect(READY, READY) });
+    assert.match(zeroPlans.stdout, /agy-review plan <plan-file> --facts @/, 'zero plans → the placeholder stays');
+    const j = JSON.parse(run(['plan-authoring', '--json'], { codex: READY, agy: READY }).stdout);
+    assert.ok(Array.isArray(j.groundingPreStep) && j.groundingPreStep.length > 0);
+    assert.ok(j.groundingPreStep.some((l) => /--plan "docs\/plans\/my-feature\.md"/.test(l)), 'the populated path rides in --json too');
+    const solo = JSON.parse(run(['plan-authoring', '--json'], { codex: NEEDS_SKILL, agy: NEEDS_SKILL }).stdout);
+    assert.deepEqual(solo.groundingPreStep, [], 'solo → empty grounding pre-step');
+  });
+});
+
 describe('procedures CLI — --json schema (§2.0)', () => {
   it('emits activity, section, per-slot resolution, configSource, warnings', () => {
     const r = run(['plan-execution', '--json'], { codex: READY, agy: NEEDS_SKILL });
     assert.equal(r.code, 0, r.stderr);
     const j = JSON.parse(r.stdout);
-    assert.deepEqual(Object.keys(j).sort(), ['activity', 'configSource', 'costLanes', 'reviewLoop', 'section', 'slots', 'warnings'].sort());
+    assert.deepEqual(Object.keys(j).sort(), ['activity', 'configSource', 'costLanes', 'groundingPreStep', 'reviewLoop', 'section', 'slots', 'warnings'].sort());
     assert.equal(j.activity, 'plan-execution');
     assert.match(j.section, /## plan-execution/);
     for (const slot of ['execute', 'review']) {

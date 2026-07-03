@@ -89,6 +89,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the gate-approval PreToolUse hook: writer + the bundled self-contained runtime
       'tools/gate-hook.mjs',
       'references/hooks/gate-approve.mjs',
+      // the AD-038 review-enforcement pair: the read-only receipt checker + the facts assembler
+      'tools/review-state.mjs',
+      'tools/grounding.mjs',
     ];
     const missing = required.filter((p) => !packed.includes(p));
     assert.deepEqual(missing, [], 'a runtime payload file or entry point was dropped from the tarball');
@@ -108,7 +111,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
   // file accidentally dropped). After an intentional change, run `npm pack ./agent-workflow-kit
   // --dry-run --json` and set the new count here in the same commit.
   it('ships exactly the expected number of files', () => {
-    assert.equal(packed.length, 94, `tarball file count drifted (${packed.length} ≠ 94)`);
+    // 96 = 94 + the two AD-038 tools (tools/review-state.mjs, tools/grounding.mjs).
+    assert.equal(packed.length, 96, `tarball file count drifted (${packed.length} ≠ 96)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

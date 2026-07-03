@@ -18,10 +18,15 @@
 
 import { readFileSync, lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { pathToFileURL } from 'node:url';
+import { join, dirname } from 'node:path';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { detectBackends, wrapperCmdFor, wrapperContractFor } from './detect-backends.mjs';
 import { ACTIVITIES, resolveActivityRecipe, planRecipe } from './recipes.mjs';
 import { resolveEngineDir, readEngineFragment, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
+// The plan-in-flight detector (AD-038) — imported from the READ-ONLY checker (review-state.mjs
+// performs no fs writes, so the "procedures never reaches a writer" import-split invariant holds;
+// the WRITER-capable grounding.mjs is only NAMED in rendered text, never imported).
+import { plansInFlight, PLANS_REL } from './review-state.mjs';
 // The config schema/read core lives in orchestration-config.mjs (the single config contract). procedures
 // is READ-ONLY: it imports the reader + the SHARED slot/recipe validity, never the fs-writer
 // (orchestration-write.mjs) — so "the read-only advisor can never reach a writer" is STRUCTURALLY true
@@ -188,6 +193,41 @@ const reviewLoopAdvice = (slots) =>
       ]
     : [];
 
+// The grounding pre-step (AD-038, extending the AD-033 verbatim-contract rendering): whenever the
+// resolved dispatch includes agy-review, print the CONCRETE facts-assembly invocation + the
+// --facts form as a copy-paste pre-step — population, not placeholders. Plan-path population rule
+// (the review-state plan-in-flight detector): exactly ONE plan in flight → render it populated;
+// zero or several → the explicit `--plan <path>` placeholder + a one-line discovery caveat. The
+// suggested --out lives OUTSIDE the repo (/tmp) — grounding.mjs refuses a non-scratch destination.
+const GROUNDING_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'grounding.mjs');
+const GROUNDING_FACTS_OUT = '/tmp/review-facts.md';
+const groundingPreStepAdvice = (activity, slots, plans) => {
+  if (!slots.some((s) => (s.backends ?? []).includes('agy-review'))) return [];
+  const planArg = plans.length === 1 ? `--plan "${PLANS_REL}/${plans[0]}"` : '--plan <path>';
+  // plan-authoring reviews the plan FILE — when exactly one plan is in flight, the review command
+  // is populated with the same discovered path (codex R3: a known path never renders a placeholder).
+  const reviewForm =
+    activity === 'plan-authoring'
+      ? plans.length === 1
+        ? `agy-review plan "${PLANS_REL}/${plans[0]}"`
+        : 'agy-review plan <plan-file>'
+      : 'agy-review code';
+  // `run:`/`then:` prefixes keep these POPULATED command lines machine-distinguishable from the
+  // verbatim contract DESCRIPTORS above (the descriptor drift guard set-equals bare wrapper lines).
+  // Path arguments are double-quoted — a skill dir or plan name with a space must stay copy-pasteable.
+  const lines = [
+    'Grounding pre-step (agy is dispatched — assemble the verified facts BEFORE the review; grounding.mjs slices verbatim, judgment additions stay yours):',
+    `  run:  node "${GROUNDING_TOOL}" --constraints ${planArg} --out ${GROUNDING_FACTS_OUT}`,
+    `  then: ${reviewForm} --facts @${GROUNDING_FACTS_OUT}`,
+  ];
+  if (plans.length === 0) {
+    lines.push(`  ↳ plan discovery: no plan in flight under ${PLANS_REL} — substitute the plan file you are reviewing against, or drop --plan for constraints-only facts.`);
+  } else if (plans.length > 1) {
+    lines.push(`  ↳ plan discovery: ${plans.length} plans in flight under ${PLANS_REL} (${plans.join(', ')}) — populate --plan with the one under review.`);
+  }
+  return lines;
+};
+
 // The cost-lane advisory block (cost-tiered execution — orchestration.md §5 canon, paraphrased
 // at the point of use like reviewLoopAdvice paraphrases §9/§4). Rendered UNCONDITIONALLY for
 // every activity — the lanes route EVERY step, review-backed or not (unlike reviewLoopAdvice,
@@ -226,7 +266,7 @@ const contractLines = ({ cmd, contract }) => {
   return lines;
 };
 
-const formatHuman = ({ activity, section, slots, warnings }) => {
+const formatHuman = ({ activity, section, slots, warnings, plans }) => {
   const lines = [
     section,
     '',
@@ -238,6 +278,8 @@ const formatHuman = ({ activity, section, slots, warnings }) => {
     if (s.reason) lines.push(`      ↳ ${s.reason}`);
     for (const c of s.contracts ?? []) lines.push(...contractLines(c));
   }
+  const grounding = groundingPreStepAdvice(activity, slots, plans);
+  if (grounding.length) lines.push('', ...grounding);
   const advice = reviewLoopAdvice(slots);
   if (advice.length) lines.push('', ...advice);
   lines.push('', ...costLanesAdvice());
@@ -248,7 +290,7 @@ const formatHuman = ({ activity, section, slots, warnings }) => {
   return lines.join('\n');
 };
 
-const buildJson = ({ activity, section, slots, configSource, warnings }) => ({
+const buildJson = ({ activity, section, slots, configSource, warnings, plans }) => ({
   activity,
   section,
   slots: Object.fromEntries(
@@ -257,6 +299,8 @@ const buildJson = ({ activity, section, slots, configSource, warnings }) => ({
     slots.map((s) => [s.slot, { recipe: s.recipe, source: s.source, degradedFrom: s.degradedFrom, reason: s.reason, backends: s.backends, contracts: s.contracts }]),
   ),
   reviewLoop: reviewLoopAdvice(slots),
+  // ADDITIVE (AD-038): the populated grounding pre-step, structured (empty when agy is not dispatched).
+  groundingPreStep: groundingPreStepAdvice(activity, slots, plans),
   // ADDITIVE (cost-tiered execution): the unconditional cost-lane advisory, structured.
   costLanes: costLanesAdvice(),
   configSource,
@@ -311,9 +355,10 @@ export const main = (argv, ctx = {}) => {
     }
     const slots = resolveAllSlots({ activity, config, detection, overrides });
     const warnings = [...detectWarnings, ...collectWarnings(slots)];
+    const plans = plansInFlight(cwd);
     const stdout = json
-      ? JSON.stringify(buildJson({ activity, section, slots, configSource, warnings }), null, 2)
-      : formatHuman({ activity, section, slots, warnings });
+      ? JSON.stringify(buildJson({ activity, section, slots, configSource, warnings, plans }), null, 2)
+      : formatHuman({ activity, section, slots, warnings, plans });
     return { code: 0, stdout, stderr: '' };
   } catch (err) {
     return { code: err.exitCode ?? 1, stdout: '', stderr: `procedures: ${err.message}` };

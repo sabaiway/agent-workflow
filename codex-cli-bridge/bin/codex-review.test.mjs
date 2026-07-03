@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WRAPPER = join(HERE, 'codex-review.sh');
@@ -641,6 +642,12 @@ describe('codex-review.sh — --help contract (manifest-pinned)', () => {
     setEq(got, (REVIEW_CONTRACT.continue ?? []).map(norm), 'help continue ⟷ manifest continue');
     assert.deepEqual(REVIEW_CONTRACT.continue, [], 'codex-review is one-shot — no continue descriptor');
   });
+
+  it('Receipt renders the manifest receipt contract verbatim (AD-038 three-way lockstep)', () => {
+    const help = runHelp('--help').stdout;
+    assert.equal(norm(helpSection(help, 'Receipt:').join(' ')), norm(REVIEW_CONTRACT.receipt));
+    assert.match(REVIEW_CONTRACT.receipt, /sha256 over the canonical uncommitted-state payload/, 'the fingerprint definition lives in the manifest contract');
+  });
 });
 
 describe('codex-review.sh — source-level reverse guard (parser arms ⟷ manifest)', () => {
@@ -665,5 +672,130 @@ describe('codex-review.sh — source-level reverse guard (parser arms ⟷ manife
       rmSync(sb.root, { recursive: true, force: true });
       assert.equal(r.status, 0, `mode ${mode}: ${r.stderr}`);
     }
+  });
+});
+
+// ── review receipts (AD-038) ─────────────────────────────────────────────────────
+// The normative fixture (docs: the AD-038 plan Decisions — copied verbatim; field VALUES with
+// dynamic content are asserted by shape):
+const RECEIPT_FIXTURE = JSON.parse(
+  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"revise","grounded":true,"factsHash":null,"wrapperVersion":"2.2.0","timestamp":"2026-07-03T12:00:00Z"}',
+);
+const RECEIPTS_REL = join('.git', 'agent-workflow-review-receipts.jsonl');
+const readReceipts = (repo) => {
+  const p = join(repo, RECEIPTS_REL);
+  if (!existsSync(p)) return [];
+  return readFileSync(p, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+};
+const sha256Hex = (buf) => createHash('sha256').update(buf).digest('hex');
+
+describe('codex-review.sh — review receipts (AD-038)', () => {
+  it('a successful code review appends ONE fixture-shaped receipt (text-mode verdict parse)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_FAKE_FINAL: '[major] — a.txt:1 — x — y\nVerdict: revise' } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipts.length, 1, 'exactly one receipt line');
+    const receipt = receipts[0];
+    assert.deepEqual(Object.keys(receipt), Object.keys(RECEIPT_FIXTURE), 'fixture key set + order');
+    assert.equal(receipt.schema, 1);
+    assert.equal(receipt.artifact, 'code');
+    assert.equal(receipt.fresh, true, 'every codex run is a fresh one-shot');
+    assert.match(receipt.fingerprint, /^[0-9a-f]{64}$/, 'a real sha256 hex fingerprint');
+    assert.equal(receipt.backend, 'codex');
+    assert.equal(receipt.verdict, 'revise', 'the mandated literal verdict line is parsed');
+    assert.equal(receipt.grounded, true, 'codex is grounded by construction');
+    assert.equal(receipt.factsHash, null, 'native grounding — no separate facts payload');
+    assert.equal(receipt.wrapperVersion, MANIFEST.version, 'receipt version ⟷ capability.json version');
+    assert.match(receipt.timestamp, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  });
+
+  it('the code-mode fingerprint tracks the uncommitted state (same tree → same hash; edit → different)', () => {
+    const sb = makeSandbox();
+    // Route the fake-codex capture files to /dev/null so the runs themselves leave the repo
+    // byte-identical (the default capture files land inside the repo and would change the tree).
+    const quiet = { CODEX_FAKE_ARGV: '/dev/null', CODEX_FAKE_ENV: '/dev/null', CODEX_FAKE_STDIN: '/dev/null', CODEX_FAKE_FINAL: 'Verdict: ship' };
+    run(sb, { env: quiet });
+    run(sb, { env: quiet });
+    writeFileSync(join(sb.repo, 'pending.txt'), 'edited after the first two reviews\n');
+    run(sb, { env: quiet });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(receipts.length, 3);
+    assert.equal(receipts[0].fingerprint, receipts[1].fingerprint, 'an unchanged tree re-fingerprints identically');
+    assert.notEqual(receipts[1].fingerprint, receipts[2].fingerprint, 'an edited tree changes the fingerprint');
+  });
+
+  it('CODEX_REVIEW_SCHEMA=1 reads the schema verdict field', () => {
+    const sb = makeSandbox();
+    const r = run(sb, {
+      env: { CODEX_REVIEW_SCHEMA: '1', CODEX_FAKE_FINAL: '{"findings":[],"verdict":"ship","notes":"ok"}' },
+    });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipts[0].verdict, 'ship');
+  });
+
+  it('no parseable verdict → recorded as "unknown", never guessed', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_FAKE_FINAL: 'looks fine to me overall' } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipts[0].verdict, 'unknown');
+  });
+
+  it('plan mode: artifact "plan", fingerprint = the artifact-file sha256', () => {
+    const sb = makeSandbox();
+    const planBytes = readFileSync(join(sb.repo, 'plan.md'));
+    const r = run(sb, { args: ['plan', 'plan.md'], env: { CODEX_FAKE_FINAL: 'Verdict: ship' } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipts[0].artifact, 'plan');
+    assert.equal(receipts[0].fingerprint, sha256Hex(planBytes), 'plan fingerprint = file sha256');
+  });
+
+  it('AW_REVIEW_RECEIPTS overrides the receipt destination', () => {
+    const sb = makeSandbox();
+    const override = join(sb.root, 'my-receipts.jsonl');
+    const r = run(sb, { env: { AW_REVIEW_RECEIPTS: override, CODEX_FAKE_FINAL: 'Verdict: ship' } });
+    const inGitDir = readReceipts(sb.repo);
+    const atOverride = existsSync(override) ? readFileSync(override, 'utf8') : '';
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(inGitDir.length, 0, 'nothing written to the default path');
+    assert.match(atOverride, /"backend":"codex"/);
+  });
+
+  it('a receipt write failure warns loudly but never fails the review (fail-safe direction)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, {
+      env: { AW_REVIEW_RECEIPTS: join(sb.repo, 'no-such-dir', 'r.jsonl'), CODEX_FAKE_FINAL: 'Verdict: ship' },
+    });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, 'the review run itself succeeds');
+    assert.match(r.stderr, /could not append the review receipt/);
+    assert.match(r.stdout, /Verdict: ship/, 'the findings still reach stdout');
+  });
+
+  it('a failed codex run writes NO receipt (only a successful review attests)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_FAKE_EXIT: '5' } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.notEqual(r.status, 0);
+    assert.equal(receipts.length, 0);
+  });
+
+  it('the clean-tree preflight exits before any receipt is written', () => {
+    const sb = makeSandbox({ clean: true });
+    const r = run(sb);
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0);
+    assert.equal(receipts.length, 0, 'no review ran — no receipt');
   });
 });

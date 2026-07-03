@@ -18,8 +18,9 @@ Every AI agent working on this project **must** adhere to this protocol before w
 ### 1.1. Start of Session
 Read in order, then confirm before starting:
 1. `docs/ai/handover.md` — where we left off.
-2. `docs/ai/active_plan.md` — pick ONE task from "Immediate Priority".
-3. Confirm with the user: *"I'm taking task X. Confirm?"*
+2. `docs/ai/orchestration.json` — the CONFIGURED orchestration recipes (per activity/slot). Honor them: a silent recipe downgrade is a forbidden substitution.
+3. `docs/ai/active_plan.md` — pick ONE task from "Immediate Priority".
+4. Confirm with the user: *"I'm taking task X. Confirm?"*
 
 ### 1.2. During Work
 **Before any feature:** read the relevant page spec (`docs/ai/pages/<page>.md`). If behaviour changes, update the spec FIRST so docs and code never diverge.

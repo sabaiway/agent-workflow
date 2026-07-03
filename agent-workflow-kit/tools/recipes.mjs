@@ -17,6 +17,7 @@
 import { pathToFileURL } from 'node:url';
 import {
   detectBackends,
+  wrapperCmdFor,
   READY,
   NEEDS_SKILL,
   NEEDS_CLI,
@@ -300,6 +301,41 @@ export const composeStatusLine = (detection, recommendation) => {
   return `backends: ${backends} — run /agent-workflow-kit backends · recipes: ${recommendation.clause} — see /agent-workflow-kit recipes`;
 };
 
+// ── the one-line ACTIVE-recipe line (the discovery line — configured, never recommended) ───────────
+
+// composeActiveRecipeLine({ config, source }, detection) → ONE line rendering the CONFIGURED recipe of
+// every activity/slot (resolved via resolveActivityRecipe: config entry, else computed default), each
+// with its source label, its degradation stated, and its dispatched wrapper set — explicitly labeled
+// "configured" and contrasted with the readiness-RECOMMENDED recipe (which composeStatusLine shows and
+// which is NOT what runs). This is the machine-composed sibling of composeStatusLine (AD-034): the
+// session-start checklist + the handover "Active recipes:" slot paste it verbatim, so no agent composes
+// the configured-recipe facts by hand. `{ config, source }` is exactly what loadConfig returns (source
+// 'none' when no config file exists). Always exactly one line: no part may carry a newline (pinned).
+export const composeActiveRecipeLine = ({ config, source } = {}, detection) => {
+  const cells = [];
+  for (const [activity, def] of Object.entries(ACTIVITIES)) {
+    for (const slot of Object.keys(def.slots)) {
+      const r = resolveActivityRecipe({ config: config ?? {}, readiness: detection, activity, slot });
+      const { dispatch } = planRecipe(r.recipe, detection);
+      const wrappers = dispatch.map((d) => wrapperCmdFor(d.backend, d.role)).filter(Boolean);
+      const srcLabel = r.source === 'config' ? 'configured' : 'computed default';
+      const head = r.degradedFrom
+        ? `${activity}.${slot} = ${r.degradedFrom} (${srcLabel}; degrades here to ${r.recipe} — ${r.reason})`
+        : `${activity}.${slot} = ${r.recipe} (${srcLabel})`;
+      const suffix =
+        wrappers.length >= 2
+          ? ` → every backend every round: ${wrappers.join(' + ')}`
+          : wrappers.length === 1
+            ? ` → ${wrappers[0]}`
+            : '';
+      cells.push(`${head}${suffix}`);
+    }
+  }
+  const rec = recommendRecipe(detection);
+  const origin = source === 'none' || config == null ? 'no config file — computed defaults apply' : `from ${source}`;
+  return `active recipes (${origin}): ${cells.join(' · ')} — the configured recipes above are what runs; readiness-recommended here: ${rec.recipe} (informational)`;
+};
+
 // ── report + CLI ─────────────────────────────────────────────────────────────────
 
 // The structured report behind `--json` — the recipes, the recommendation, a plan per recipe, and
@@ -343,38 +379,68 @@ export const formatRecipes = (detection) => {
 };
 
 // The full argv vocabulary — anything else rejects LOUDLY. The old parse silently routed unknown
-// args into the multi-line human render; with `--status-line` (whose output is pasted as fact) a
-// mistyped flag masquerading as a mode would be a silent failure, so the parse is strict now.
-const KNOWN_ARGS = new Set(['--help', '-h', '--json', '--status-line']);
+// args into the multi-line human render; with `--status-line` / `--active-line` (whose output is
+// pasted as fact) a mistyped flag masquerading as a mode would be a silent failure, so the parse is
+// strict now.
+const KNOWN_ARGS = new Set(['--help', '-h', '--json', '--status-line', '--active-line']);
+const EXCLUSIVE_ARGS = ['--json', '--status-line', '--active-line']; // each owns stdout whole
 
-const main = (argv) => {
+const main = async (argv) => {
   if (argv.includes('--help') || argv.includes('-h')) {
     console.log(`recipes — read-only orchestration-recipe advisor for the agent-workflow family.
 
 Usage:
-  node recipes.mjs [--json | --status-line]
+  node recipes.mjs [--json | --status-line | --active-line]
 
 Lists the four recipes (Solo / Reviewed / Council / Delegated) and, from the read-only backend
 detector, plans + recommends one for the current environment. --status-line prints exactly ONE
 line — the machine-composed backend-status summary the bootstrap/upgrade reports paste verbatim.
---json emits the structured report (incl. the same line as \`statusLine\`); the two are mutually
+--active-line prints exactly ONE line — the CONFIGURED recipe per activity/slot, resolved from the
+per-project docs/ai/orchestration.json (read from the current directory) + live readiness, with
+degradation stated; paste it verbatim at session start / into the handover "Active recipes:" slot.
+--json emits the structured report (incl. the same line as \`statusLine\`); the three are mutually
 exclusive. Detection only — never writes, never commits, never runs a subscription CLI.`);
     return;
   }
   const unknown = argv.find((a) => !KNOWN_ARGS.has(a));
   if (unknown !== undefined) {
     console.error(`[agent-workflow-kit] unknown argument: ${unknown}`);
-    process.exit(1);
+    return 1;
   }
-  if (argv.includes('--json') && argv.includes('--status-line')) {
-    console.error('[agent-workflow-kit] --json and --status-line are mutually exclusive — pick one output');
-    process.exit(1);
+  const exclusive = EXCLUSIVE_ARGS.filter((a) => argv.includes(a));
+  if (exclusive.length > 1) {
+    console.error(`[agent-workflow-kit] ${exclusive.join(' and ')} are mutually exclusive — pick one output`);
+    return 1;
   }
   const detection = detectBackends();
-  if (argv.includes('--status-line')) console.log(composeStatusLine(detection, recommendRecipe(detection)));
+  if (argv.includes('--active-line')) {
+    // Lazy import: orchestration-config.mjs statically imports this module (ACTIVITIES/SLOT_RECIPES),
+    // so the config reader is pulled in at run time only — no static import cycle.
+    const { loadConfig } = await import('./orchestration-config.mjs');
+    try {
+      console.log(composeActiveRecipeLine(loadConfig(process.cwd()), detection));
+    } catch (err) {
+      console.error(`[agent-workflow-kit] ${err.message}`);
+      return err.exitCode ?? 1;
+    }
+  } else if (argv.includes('--status-line')) console.log(composeStatusLine(detection, recommendRecipe(detection)));
   else if (argv.includes('--json')) console.log(JSON.stringify(buildReport(detection), null, 2));
   else console.log(formatRecipes(detection));
+  return 0;
 };
 
 const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) main(process.argv.slice(2));
+// Natural exit via process.exitCode — never process.exit inside the async main (it would drop buffered
+// stdio writes on piped stderr), and never a TOP-LEVEL await here: orchestration-config.mjs statically
+// imports this module, so awaiting the dynamic import during our own evaluation would deadlock the cycle.
+if (isDirectRun) {
+  main(process.argv.slice(2)).then(
+    (code) => {
+      process.exitCode = code ?? 0;
+    },
+    (err) => {
+      console.error(`[agent-workflow-kit] ${(err && err.message) || err}`);
+      process.exitCode = 1;
+    },
+  );
+}

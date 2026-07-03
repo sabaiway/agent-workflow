@@ -38,7 +38,7 @@ const FAKE_AGY = [
   '  fi; prev="$a"',
   'done',
   'if [[ -n "${AGY_FAKE_SLEEP:-}" ]]; then sleep "$AGY_FAKE_SLEEP"; fi',
-  'echo "FAKE_AGY_REVIEW_OUTPUT"',
+  'printf "%s\\n" "${AGY_FAKE_OUTPUT:-FAKE_AGY_REVIEW_OUTPUT}"',
   'exit "${AGY_FAKE_EXIT:-0}"',
   '',
 ].join('\n');
@@ -553,6 +553,13 @@ describe('agy-review.sh — --help contract (manifest-pinned)', () => {
     assert.ok(REVIEW_CONTRACT.continue.length > 0, 'manifest continue must be non-empty');
     setEq(got, REVIEW_CONTRACT.continue.map(norm), 'help continue ⟷ manifest continue');
   });
+
+  it('Receipt renders the manifest receipt contract verbatim (AD-038 three-way lockstep)', () => {
+    const help = runHelp('--help').stdout;
+    assert.equal(norm(helpSection(help, 'Receipt:').join(' ')), norm(REVIEW_CONTRACT.receipt));
+    assert.match(REVIEW_CONTRACT.receipt, /sha256 over the canonical uncommitted-state payload/, 'the fingerprint definition lives in the manifest contract');
+    assert.match(REVIEW_CONTRACT.receipt, /fresh:false/, 'the continuation informational-only clause is contractual');
+  });
 });
 
 describe('agy-review.sh — source-level reverse guard (parser arms ⟷ manifest)', () => {
@@ -623,5 +630,166 @@ describe('agy-review.sh — declared contract is really accepted (forward guard)
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 2, 'help is keyed on the FIRST argument only');
     assert.doesNotMatch(r.stdout, /Usage:/);
+  });
+});
+
+// ── review receipts (AD-038) ─────────────────────────────────────────────────────
+// The normative fixture (docs: the AD-038 plan Decisions — copied verbatim; backend/verdict here
+// carry this bridge's vocabulary; dynamic values are asserted by shape):
+const RECEIPT_FIXTURE = JSON.parse(
+  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"revise","grounded":true,"factsHash":null,"wrapperVersion":"2.2.0","timestamp":"2026-07-03T12:00:00Z"}',
+);
+const RECEIPTS_REL = join('.git', 'agent-workflow-review-receipts.jsonl');
+const readReceipts = (repo) => {
+  const p = join(repo, RECEIPTS_REL);
+  if (!existsSync(p)) return [];
+  return readFileSync(p, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+};
+const sha256HexOf = async (buf) => {
+  const { createHash } = await import('node:crypto');
+  return createHash('sha256').update(buf).digest('hex');
+};
+const VERDICT_OUTPUT = '### Verdict\nSHIP WITH NITS — solid, two nits.\n### Blocking\nnone\n### Non-blocking\n1. nit\n### Questions\nnone';
+
+describe('agy-review.sh — review receipts (AD-038)', () => {
+  it('a fresh grounded code review appends ONE fixture-shaped receipt (verdict verbatim, factsHash real)', async () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipts.length, 1, 'exactly one receipt line');
+    const receipt = receipts[0];
+    assert.deepEqual(Object.keys(receipt), Object.keys(RECEIPT_FIXTURE), 'fixture key set + order');
+    assert.equal(receipt.schema, 1);
+    assert.equal(receipt.artifact, 'code');
+    assert.equal(receipt.fresh, true);
+    assert.match(receipt.fingerprint, /^[0-9a-f]{64}$/, 'a real sha256 hex fingerprint');
+    assert.equal(receipt.backend, 'agy');
+    assert.equal(receipt.verdict, 'SHIP WITH NITS', 'the mandated ### Verdict section is recorded verbatim');
+    assert.equal(receipt.grounded, true, '--facts was supplied');
+    assert.equal(receipt.factsHash, await sha256HexOf('a tiny fact'), 'sha256 of the facts payload — an empty/changed facts file is visible');
+    assert.equal(receipt.wrapperVersion, MANIFEST.version, 'receipt version ⟷ capability.json version');
+    assert.match(receipt.timestamp, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  });
+
+  it('an ungrounded fresh run records grounded:false + factsHash null (the vacuous-grounding hole stays visible)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipts[0].grounded, false);
+    assert.equal(receipts[0].factsHash, null);
+  });
+
+  it('an EMPTY --facts file records grounded:false (fail-closed — vacuous grounding never satisfies the gate) and still warns', () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.home, 'empty-facts.md'), '');
+    const r = run(sb, { args: ['code', '--facts', `@${join(sb.home, 'empty-facts.md')}`], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipts[0].grounded, false, 'an empty payload is recorded as ungrounded, never as grounded-by-flag');
+    assert.equal(receipts[0].factsHash, null);
+    assert.match(r.stderr, /no --facts supplied|ungrounded review GUESSES/, 'the ungrounded warning fires for an empty payload');
+  });
+
+  it('parses REWORK and plain SHIP; records "unknown" when the mandated section is absent', () => {
+    for (const [output, want] of [
+      ['### Verdict\nREWORK — the contract is violated.', 'REWORK'],
+      ['### Verdict\nSHIP — clean.', 'SHIP'],
+      ['free-form text with no verdict heading', 'unknown'],
+    ]) {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_OUTPUT: output } });
+      const receipts = readReceipts(sb.repo);
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(receipts[0].verdict, want, `verdict for: ${output.slice(0, 30)}`);
+    }
+  });
+
+  it('a continuation receipt is fresh:false with null identity fields, and the wrapper prints the fresh-run notice', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['--continue', '--decided', 'already folded'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipts.length, 1);
+    const receipt = receipts[0];
+    assert.deepEqual(Object.keys(receipt), Object.keys(RECEIPT_FIXTURE), 'same fixture shape');
+    assert.equal(receipt.fresh, false, 'a continuation cannot attest the folded tree');
+    assert.equal(receipt.artifact, null);
+    assert.equal(receipt.fingerprint, null);
+    assert.equal(receipt.grounded, false);
+    assert.equal(receipt.factsHash, null);
+    assert.equal(receipt.verdict, 'SHIP WITH NITS', 'the round-2 verdict is still recorded (informational)');
+    assert.match(r.stderr, /fresh grounded run/, 'the one-line notice names the required fresh run');
+    assert.match(r.stderr, /review-state gate/);
+  });
+
+  it('plan mode: artifact "plan", fingerprint = the artifact-file sha256', async () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.repo, 'p.md'), '# plan body\n');
+    const r = run(sb, { args: ['plan', 'p.md', '--facts', 'f'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipts[0].artifact, 'plan');
+    assert.equal(receipts[0].fingerprint, await sha256HexOf('# plan body\n'), 'plan fingerprint = file sha256');
+  });
+
+  it('plan/diff outside a git work tree: warn + skip the receipt (exit 0) unless AW_REVIEW_RECEIPTS is set', () => {
+    const sb = makeSandbox();
+    const outside = join(sb.home, 'no-repo');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'p.md'), '# plan outside git\n');
+
+    const skipped = run(sb, { args: ['plan', 'p.md', '--facts', 'f'], cwd: outside, env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    assert.equal(skipped.status, 0, skipped.stderr);
+    assert.match(skipped.stderr, /not inside a git work tree and AW_REVIEW_RECEIPTS is unset — skipping/);
+
+    const override = join(sb.home, 'receipts-override.jsonl');
+    const written = run(sb, {
+      args: ['plan', 'p.md', '--facts', 'f'],
+      cwd: outside,
+      env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_RECEIPTS: override },
+    });
+    const body = existsSync(override) ? readFileSync(override, 'utf8') : '';
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(written.status, 0, written.stderr);
+    assert.match(body, /"backend":"agy"/, 'the override path receives the receipt outside a git tree');
+    assert.match(body, /"artifact":"plan"/);
+  });
+
+  it('a receipt write failure warns loudly but never fails the review (fail-safe direction)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, {
+      args: ['code', '--facts', 'f'],
+      env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_RECEIPTS: join(sb.home, 'no-such-dir', 'r.jsonl') },
+    });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, 'the review run itself succeeds');
+    assert.match(r.stderr, /could not append the review receipt/);
+    assert.match(r.stdout, /SHIP WITH NITS/, 'the findings still reach stdout');
+  });
+
+  it('a failed agy run writes NO receipt (only a successful review attests)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_EXIT: '7' } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.notEqual(r.status, 0);
+    assert.equal(receipts.length, 0);
+  });
+
+  it('the clean-tree preflight exits before any receipt is written', () => {
+    const sb = makeSandbox({ clean: true });
+    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0);
+    assert.equal(receipts.length, 0, 'no review ran — no receipt');
   });
 });

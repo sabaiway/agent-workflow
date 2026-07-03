@@ -53,6 +53,55 @@ const readVersion = async () => {
   }
 };
 
+// Never-downgrade gate helpers (D3 / AD-012, verb contract AD-034) — cloned INLINE from the
+// kit/engine installers (this package references no sibling — the knows-nobody DAG), so a bare
+// `npx … init` serving an OLDER cached build cannot overwrite a NEWER installed substrate.
+// Dependency-free semver: parse the leading x.y.z (prerelease/build ignored). compareSemver →
+// -1 | 0 | 1, or null when either side is unparseable (a legacy install predating any stamp → no gate).
+const parseSemver = (str) => {
+  const m = typeof str === 'string' ? str.trim().match(/^(\d+)\.(\d+)\.(\d+)/) : null;
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+};
+
+const compareSemver = (a, b) => {
+  const pa = parseSemver(a);
+  const pb = parseSemver(b);
+  if (!pa || !pb) return null;
+  const firstDiff = [0, 1, 2].map((i) => (pa[i] === pb[i] ? 0 : pa[i] < pb[i] ? -1 : 1)).find((c) => c !== 0);
+  return firstDiff ?? 0;
+};
+
+// Extract the version that is a DIRECT child of the top-level `metadata:` key — never a top-level or
+// deeper-nested decoy `version:` (mirrors the manifest validator + the kit installer). Pure walk.
+const metadataVersion = (frontmatter) => {
+  const lines = frontmatter.split(/\r?\n/);
+  const metaIdx = lines.findIndex((l) => /^metadata:[ \t]*$/.test(l));
+  if (metaIdx === -1) return null;
+  const after = lines.slice(metaIdx + 1);
+  const dedent = after.findIndex((l) => /^[^ \t]/.test(l)); // a column-0 line closes the metadata block
+  const block = dedent === -1 ? after : after.slice(0, dedent);
+  const baseIndent = block.length ? (block[0].match(/^[ \t]*/)?.[0] ?? '') : '';
+  const verLine = block.find((l) => l.startsWith(`${baseIndent}version:`));
+  return verLine?.match(/version:[ \t]*['"]?(\d+\.\d+\.\d+)['"]?/)?.[1] ?? null;
+};
+
+// The installed version is read from the target's SKILL.md frontmatter metadata.version (the
+// substrate's detect.installed.file). Returns the semver string, or null when ABSENT / unstamped
+// (legacy → no gate). A SKILL.md that EXISTS but cannot be read is NOT swallowed as "legacy": fail
+// closed (throw) so the gate can never be silently bypassed (AGENTS.md: no silent failures).
+const readInstalledVersion = async (target) => {
+  const skill = resolve(target, 'SKILL.md');
+  if (!existsSync(skill)) return null; // absent → new/legacy install, nothing to compare
+  const text = await readFile(skill, 'utf8').catch((err) => {
+    throw new Error(
+      `[agent-workflow-memory] cannot read the installed SKILL.md (${tildify(skill)}): ${err.message}. ` +
+        `Refusing to install over an unreadable substrate — fix permissions/contents or remove it, then re-run.`,
+    );
+  });
+  const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  return fm ? metadataVersion(fm[1]) : null;
+};
+
 // lstat without following symlinks; null when the path does not exist. Using lstat (not
 // existsSync, which FOLLOWS symlinks and so reports a *dangling* symlink as absent) is what
 // makes the guard below catch a dangling destination symlink too.
@@ -114,6 +163,7 @@ const parseArgs = (argv) => {
   return {
     help: argv.includes('--help') || argv.includes('-h'),
     version: argv.includes('--version') || argv.includes('-v'),
+    allowDowngrade: argv.includes('--allow-downgrade'),
     dir: dirFlag >= 0 ? argv[dirFlag + 1] : undefined,
   };
 };
@@ -128,13 +178,15 @@ const printHelp = (version) => {
   console.log(`agent-workflow-memory ${version}
 
 Usage:
-  npx @sabaiway/agent-workflow-memory@latest init [--dir <path>]
+  npx @sabaiway/agent-workflow-memory@latest init [--dir <path>] [--allow-downgrade]
   npx @sabaiway/agent-workflow-memory --version
   npx @sabaiway/agent-workflow-memory --help
 
 Installs/refreshes the memory substrate at ~/.claude/skills/agent-workflow-memory
   (override with --dir <path> or AGENT_WORKFLOW_MEMORY_DIR). init is additive —
-  it never deletes your settings and never writes through a symlink.
+  it never deletes your settings and never writes through a symlink. If the installed
+  substrate is newer than the version you ran, init refuses (no network — it compares
+  the version on disk) and points you at @latest; --allow-downgrade overrides that refusal.
 
 After install, invoke the skill in your agent, inside a project:
   first time in the project  ->  /agent-workflow-memory
@@ -169,13 +221,52 @@ const main = async () => {
     console.error(`[agent-workflow-memory] target dir is a symlink — refusing to write through it: ${tildify(target)}`);
     process.exit(1);
   }
+
+  // Stale-cache defenses (no network — version already on disk vs this runner). Read BEFORE any write
+  // so a refusal touches nothing. cmp is null on a legacy/unparseable install → no gate.
+  const installedVersion = wasPresent ? await readInstalledVersion(target) : null;
+  const cmp = installedVersion ? compareSemver(installedVersion, version) : null;
+
+  // Never-downgrade gate (D3 / AD-012): a bare `npx … init` can run an OLDER cached build, which
+  // would overwrite a NEWER installed substrate with old files. Refuse loudly (nonzero) unless
+  // --allow-downgrade — surfacing the cache trap instead of silently regressing (no silent failures).
+  if (cmp === 1 && !args.allowDowngrade) {
+    console.error(
+      `[agent-workflow-memory] refusing to downgrade: the installed substrate is v${installedVersion}, but ` +
+        `this runner is the OLDER v${version}.\n` +
+        `  This is the classic npx cache serving a stale build. To get the newest substrate, bypass the cache:\n` +
+        `    npx @sabaiway/agent-workflow-memory@latest init\n` +
+        `  (or pass --allow-downgrade to overwrite the newer install with v${version} anyway).`,
+    );
+    process.exit(1);
+  }
+
   await mkdir(target, { recursive: true });
   await Promise.all(
     PAYLOAD.map((entry) => copyRecursive(resolve(PKG_ROOT, entry), resolve(target, entry), target)),
   );
-  console.log(
-    `[agent-workflow-memory] ${wasPresent ? 'updated the substrate to' : 'installed'} v${version} -> ${tildify(target)}`,
-  );
+  // Verb keyed on the OBSERVED version relation (cmp), never on mere presence (AD-034): null (fresh
+  // install, or a legacy/unstamped one whose prior version is unknowable) → "installed"; -1 → a real
+  // update; 0 → already current (the copy still ran — see the note below); 1 is reachable only under
+  // --allow-downgrade (the gate above refused otherwise) and says so plainly.
+  const verb =
+    cmp === 0 ? 'refreshed the already-current substrate'
+    : cmp === 1 ? 'downgraded the substrate to'
+    : cmp === -1 ? 'updated the substrate to'
+    : 'installed';
+  console.log(`[agent-workflow-memory] ${verb} v${version} -> ${tildify(target)}`);
+
+  // Same-version re-run: state observable facts only. The copy DID run (repair-on-rerun is a feature —
+  // it restores locally modified/deleted files), and whether npx served a cached build is NOT
+  // observable here (no network), so the note never claims it; the @latest hint is conditional.
+  if (cmp === 0) {
+    console.log(
+      `[agent-workflow-memory] note: the substrate was already v${version} — the copy still ran, restoring ` +
+        `any locally modified or deleted skill file to this version's packaged contents. If you ` +
+        `expected a NEWER version, invoke the @latest tag explicitly:\n` +
+        `    npx @sabaiway/agent-workflow-memory@latest init`,
+    );
+  }
 
   console.log(`
 Next — open your agent inside a project and run the skill:

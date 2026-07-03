@@ -89,6 +89,7 @@ A harness "approved — you can now start coding" prompt (e.g. Claude Code's **E
 
 ## Context              ← why this Plan exists, current state, why now (reads cold)
 ## Approach             ← chosen design + an explicit "What we are NOT doing"
+## Decisions (locked)   ← optional: settled, binding decisions the executor must not re-litigate
 ## Phase 1: <name>
    ### 1.1. <step>      ← exact paths + commands
 ## Phase 2: <name>
@@ -108,6 +109,7 @@ A harness "approved — you can now start coding" prompt (e.g. Claude Code's **E
 - If part of a series: `queue.md` is initialised / updated (§3).
 - No `git add <plan>` and no "commit the plan" wording in the final report.
 - Every code-touching decision cites the `file:line` it is grounded in; the plan stays at intent / invariant / acceptance altitude, leaving fine code-mechanics to Execute (§9).
+- Decisions the review loop SETTLED (fixtures, contracts, boundary clauses) live under the optional `## Decisions (locked)` heading (§7) — binding for the executor, never re-litigated at Execute.
 
 ## 9. Right-altitude & code-grounded folds
 

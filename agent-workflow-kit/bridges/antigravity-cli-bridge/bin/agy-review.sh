@@ -42,6 +42,8 @@
 #   AGY_PROBE=1              throwaway probe — silences the off-frontier model advisory
 #   AGY_REVIEW_ALLOW_ADDDIR=1  oversized CODE review: offload the change set to a private
 #                            staging dir and pass it via --add-dir (re-enables Issue-001 stall risk)
+#   AW_REVIEW_RECEIPTS       override the review-receipt file (default: <git dir>/
+#                            agent-workflow-review-receipts.jsonl — see the --help Receipt block)
 set -euo pipefail
 
 # --- --help / -h (pre-preflight: no agy, no login, no git tree needed) ---------
@@ -72,6 +74,18 @@ Round-2 / resume:
   agy-review --conversation <id> [--decided @f] [--focus "…"]
   (a continuation sends a small delta — agy holds the artifact server-side; --facts is invalid on a continuation)
 
+Receipt:
+  side effect — a successful review appends one JSON receipt line to
+  <git dir>/agent-workflow-review-receipts.jsonl (AW_REVIEW_RECEIPTS overrides; plan/diff outside
+  a git tree: warn + skip unless overridden): fingerprint = sha256 over the canonical
+  uncommitted-state payload (staged diff + unstaged diff + untracked-not-ignored contents — the
+  review-payload domain) in code mode, the artifact-file sha256 in plan/diff mode; verdict
+  recorded verbatim from the mandated '### Verdict' section (SHIP / SHIP WITH NITS / REWORK);
+  grounded = whether a NON-EMPTY --facts payload was supplied (an empty payload records
+  grounded:false — fail-closed, the state gate rejects it), factsHash = sha256 of the facts
+  payload; a continuation receipt is fresh:false (informational-only — it cannot attest the
+  folded tree); a write failure warns, never fails the review
+
 Closed grammar: unknown flags are rejected; no '--' passthrough (the only escapes are AGY_PROBE=1 and AGY_REVIEW_ALLOW_ADDDIR=1).
 Requires at run time: the agy CLI on PATH + a Google AI subscription login (--help needs neither).
 HELP
@@ -80,6 +94,10 @@ HELP
 esac
 
 DEFAULT_AGY_REVIEW_MODEL="Gemini 3.1 Pro (High)"
+# Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
+# version (drift-guarded by agy-review.test.mjs against capability.json).
+AW_RECEIPT_BACKEND="agy"
+AW_BRIDGE_VERSION="2.2.0"
 # `-` not `:-` so an EXPLICIT empty AGY_MODEL= survives (drop --model, use settings.json — agy.sh:52).
 AGY_MODEL="${AGY_MODEL-$DEFAULT_AGY_REVIEW_MODEL}"
 # Frontier review models. ANY model is allowed; a sub-frontier one only earns a soft, silenceable warning.
@@ -181,6 +199,95 @@ is_binary() {
   [[ "${nul:-0}" -gt 0 ]]
 }
 
+# --- Review receipts (AD-038) — byte-identical in codex-review.sh and agy-review.sh ---------------
+# sha256 hex of stdin. sha256sum, else shasum -a 256; neither → warn + fail (the caller records a
+# null fingerprint — a null never satisfies the review-state checker, fail-safe direction).
+sha256_stdin() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 | awk '{print $1}'
+  else
+    echo "warning: no sha256sum/shasum on PATH — cannot compute the review fingerprint." >&2
+    return 1
+  fi
+}
+
+# The canonical uncommitted-state fingerprint payload (code mode). Domain == the review payload:
+# tracked staged + unstaged changes + untracked-not-ignored file contents (binary/symlink/non-regular
+# untracked paths ride as name-only notes, mirroring the assembled change set). The prose definition
+# lives in capability.json roles.review.contract.receipt (both bridges, lockstep); the kit checker
+# (tools/review-state.mjs) implements the SAME serialization in node — cross-checked by the kit's
+# review-fingerprint-parity.test.mjs.
+emit_fingerprint_payload() {
+  git diff --cached --no-ext-diff
+  git diff --no-ext-diff
+  local path
+  while IFS= read -r -d '' path; do
+    if [[ -L "$path" ]]; then
+      printf 'untracked-symlink:%s -> %s\n' "$path" "$(readlink -- "$path" 2>/dev/null || echo '?')"
+    elif [[ ! -f "$path" ]]; then
+      printf 'untracked-nonregular:%s\n' "$path"
+    elif is_binary "$path"; then
+      printf 'untracked-binary:%s\n' "$path"
+    else
+      printf 'untracked:%s\n' "$path"
+      cat -- "$path"
+    fi
+  done < <(git ls-files --others --exclude-standard -z)
+}
+
+# sha256 of the canonical payload, emitted from the work-tree ROOT (a subdir invocation hashes the
+# same bytes). Empty output on failure (no git tree / no sha256 tool) — recorded as null.
+compute_tree_fingerprint() {
+  ( cd "$(git rev-parse --show-toplevel)" && emit_fingerprint_payload ) | sha256_stdin
+}
+
+# JSON-encode a receipt scalar: empty → null, else a quoted string (every value comes from a closed
+# vocabulary or a hex digest — no escaping needed by construction).
+receipt_json_scalar() {
+  if [[ -z "${1:-}" ]]; then printf 'null'; else printf '"%s"' "$1"; fi
+}
+
+# write_review_receipt <artifact|""> <fresh: true|false> <fingerprint|""> <verdict> <grounded: true|false> <factsHash|"">
+# Appends ONE receipt line (the AD-038 fixture shape) as a side effect of a SUCCESSFUL review —
+# to $AW_REVIEW_RECEIPTS when set, else <git dir>/agent-workflow-review-receipts.jsonl (inside the
+# git dir by construction, so it is never committable). Fail-safe: every failure here warns loudly
+# and returns 0 — a missing receipt fails the kit's review-state CHECKER, never the review run.
+write_review_receipt() {
+  local artifact="$1" fresh="$2" fingerprint="$3" verdict="$4" grounded="$5" facts_hash="$6"
+  local receipts="${AW_REVIEW_RECEIPTS:-}"
+  if [[ -z "$receipts" ]]; then
+    local receipt_git_dir
+    if ! receipt_git_dir="$(git rev-parse --absolute-git-dir 2>/dev/null)"; then
+      echo "warning: not inside a git work tree and AW_REVIEW_RECEIPTS is unset — skipping the review receipt." >&2
+      return 0
+    fi
+    receipts="$receipt_git_dir/agent-workflow-review-receipts.jsonl"
+  fi
+  local line
+  line="$(printf '{"schema":1,"artifact":%s,"fresh":%s,"fingerprint":%s,"backend":"%s","verdict":"%s","grounded":%s,"factsHash":%s,"wrapperVersion":"%s","timestamp":"%s"}' \
+    "$(receipt_json_scalar "$artifact")" "$fresh" "$(receipt_json_scalar "$fingerprint")" \
+    "$AW_RECEIPT_BACKEND" "$verdict" "$grounded" "$(receipt_json_scalar "$facts_hash")" \
+    "$AW_BRIDGE_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)")"
+  if ! printf '%s\n' "$line" >>"$receipts" 2>/dev/null; then
+    echo "warning: could not append the review receipt to $receipts — the review itself succeeded;" >&2
+    echo "         the review-state gate will read the current tree as un-receipted." >&2
+  fi
+}
+
+# Parse the mandated '### Verdict' section of a captured review: the first non-empty line after the
+# heading, matched against the closed verdict vocabulary (SHIP WITH NITS before SHIP — substring).
+# No heading / no match → "unknown" (recorded, never guessed).
+parse_agy_verdict() { # $1 = captured-output file
+  local line
+  line="$(awk '/^### Verdict/{flag=1; next} flag && NF {print; exit}' "$1" 2>/dev/null)"
+  case "$line" in
+    *"SHIP WITH NITS"*) printf 'SHIP WITH NITS' ;;
+    *REWORK*)           printf 'REWORK' ;;
+    *SHIP*)             printf 'SHIP' ;;
+    *)                  printf 'unknown' ;;
+  esac
+}
+
 # Emit the full code-review surface: repo map, status, staged + unstaged diffs, and the CONTENTS of
 # every untracked REGULAR file (NUL-safe iteration). Symlinks are shown as their target (never
 # followed — no out-of-repo leak); other non-regular paths (FIFO/socket/device/dir) are skipped.
@@ -246,6 +353,8 @@ mode=""
 target=""
 PLAN_CONTENT=""
 DIFF_CONTENT=""
+REVIEW_ARTIFACT=""
+REVIEW_FINGERPRINT=""
 if [[ -z "$resume_mode" ]]; then
   mode="${1:-}"; shift || true
   case "$mode" in
@@ -259,7 +368,10 @@ if [[ -z "$resume_mode" ]]; then
         echo "error: $mode file '$target' not found." >&2; exit 2
       fi
       # Read the target NOW (before any cd) — its path is relative to the invocation cwd.
-      if [[ "$mode" == "plan" ]]; then PLAN_CONTENT="$(cat -- "$target")"; else DIFF_CONTENT="$(cat -- "$target")"; fi ;;
+      if [[ "$mode" == "plan" ]]; then PLAN_CONTENT="$(cat -- "$target")"; else DIFF_CONTENT="$(cat -- "$target")"; fi
+      # Plan/diff receipt identity: the artifact-file sha256 (informational-only for the tree checker).
+      REVIEW_ARTIFACT="$mode"
+      REVIEW_FINGERPRINT="$(sha256_stdin <"$target" || true)" ;;
     *)
       usage; exit 2 ;;
   esac
@@ -392,6 +504,10 @@ else
       echo "agy-review: no uncommitted changes to review — the working tree is clean." >&2
       exit 0
     fi
+    # The canonical fingerprint of the tree agy is about to review — computed at assembly time,
+    # so the receipt attests exactly the reviewed state.
+    REVIEW_ARTIFACT="code"
+    REVIEW_FINGERPRINT="$(compute_tree_fingerprint || true)"
   fi
 
   emit_artifact() {
@@ -468,14 +584,39 @@ else
 fi
 
 # --- Execute via agy-run (single home of timeout + subscription + byte ceiling) ---
+# The output is teed into the private staging dir so the mandated '### Verdict' section can be
+# parsed into the review receipt — the user-facing stream is unchanged.
+review_out_file="$staging/review-output"
 set +e
 if (( ${#run_passthrough[@]} > 0 )); then
   AGY_MODEL="$AGY_MODEL" AGY_TIMEOUT="$AGY_TIMEOUT" AGY_HARD_TIMEOUT="$AGY_HARD_TIMEOUT" \
-    "$AGY_RUN" "@$prompt_file" -- "${run_passthrough[@]}"
+    "$AGY_RUN" "@$prompt_file" -- "${run_passthrough[@]}" | tee "$review_out_file"
+  rc=${PIPESTATUS[0]}
 else
   AGY_MODEL="$AGY_MODEL" AGY_TIMEOUT="$AGY_TIMEOUT" AGY_HARD_TIMEOUT="$AGY_HARD_TIMEOUT" \
-    "$AGY_RUN" "@$prompt_file"
+    "$AGY_RUN" "@$prompt_file" | tee "$review_out_file"
+  rc=${PIPESTATUS[0]}
 fi
-rc=$?
 set -e
+
+# --- Review receipt (AD-038): only a SUCCESSFUL review attests --------------------
+if [[ $rc -eq 0 ]]; then
+  verdict="$(parse_agy_verdict "$review_out_file")"
+  if [[ -n "$resume_mode" ]]; then
+    # A continuation never re-embeds the current artifact (agy holds the ORIGINAL round server-side;
+    # --facts is rejected above), so it cannot attest the folded tree: fresh:false, artifact /
+    # fingerprint / factsHash null, grounded false — informational-only, ignored by the state gate.
+    write_review_receipt "" false "" "$verdict" false ""
+    echo "notice: a continuation receipt is fresh:false (informational-only) — only a fresh grounded run" >&2
+    echo "        (agy-review code --facts @f) mints a receipt that satisfies the review-state gate." >&2
+  else
+    grounded=false
+    facts_hash=""
+    if [[ -n "$FACTS_CONTENT" ]]; then
+      grounded=true
+      facts_hash="$(printf '%s' "$FACTS_CONTENT" | sha256_stdin || true)"
+    fi
+    write_review_receipt "$REVIEW_ARTIFACT" true "$REVIEW_FINGERPRINT" "$verdict" "$grounded" "$facts_hash"
+  fi
+fi
 exit $rc
