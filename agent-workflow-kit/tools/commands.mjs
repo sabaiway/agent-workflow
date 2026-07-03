@@ -120,6 +120,13 @@ const CATALOG = [
     oneLine: 'Place bundled cheap-model subagent definitions for mechanical work — sweeps, changelog skeletons, gate triage (Claude Code; opt-in; preview first).',
   },
   {
+    key: 'hook',
+    invocation: invocationOf('hook'),
+    group: 'Configure',
+    kind: WRITER,
+    oneLine: 'Auto-approve your own declared gate commands (docs/ai/gates.json) via a Claude Code hook — exact matches only, previews first (opt-in).',
+  },
+  {
     key: 'recipes',
     invocation: invocationOf('recipes'),
     group: 'Orchestrate',
@@ -164,8 +171,8 @@ export const kindOf = (key) => byKey.get(key)?.kind ?? null;
 // (`upgrade`) OR the full slash form (`/agent-workflow-kit upgrade`); the first word is significant
 // and trailing args are ignored. Precise semantics:
 //   undefined / null / '' / whitespace-only / the exact bare invocation → 'bootstrap'
-//   a known first token (upgrade/status/setup/backends/recipes/procedures/velocity/uninstall/help)
-//     → that mode
+//   a known first token (upgrade/status/setup/backends/recipes/procedures/velocity/agents/hook/
+//     gates/set-recipe/uninstall/help) → that mode
 //   anything else (unrecognized / ambiguous) → 'help'  (read-only — NEVER a writer/guarded mode)
 export const routeInvocation = (token) => {
   if (token == null) return BARE_INVOCATION_MODE;

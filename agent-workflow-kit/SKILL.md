@@ -3,7 +3,7 @@ name: agent-workflow-kit
 description: Deploy or upgrade a portable AI-agent memory-and-workflow system in any project. Use when the user wants to bootstrap `docs/ai/` + an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) + cap/archive/index enforcement in a new or existing repo, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-kit` / `/agent-workflow-kit upgrade`. Triggers on phrases like "set up the memory system", "deploy the AI workflow here", "bootstrap docs/ai", "upgrade the workflow".
 disable-model-invocation: true
 metadata:
-  version: '1.28.0'
+  version: '1.29.0'
 ---
 
 # agent-workflow-kit
@@ -273,6 +273,8 @@ Run `node ${CLAUDE_SKILL_DIR}/tools/run-gates.mjs [--cwd <project>] [--only <id>
 
 The declaration is **seeded at bootstrap** (the template loop, step 6) and **ensured-if-missing on upgrade** from THIS kit's own template twin (*Mode: upgrade* step 3) — independent of the installed memory substrate's age; an existing file is always **preserved byte-for-byte**. It is deliberately **not** a delegation-required memory asset: gates are optional, and absence is an honest runner outcome, not a deployment failure.
 
+Declared gates can also be **auto-approved** (no permission prompt on a byte-exact invocation from the project root) via the opt-in PreToolUse hook — *Mode: hook*: the SAME declaration, a second consumer; editing gates.json needs no re-wiring.
+
 **Invariants:** the runner writes nothing · never commits · never runs a subscription CLI · executes only the project's OWN declared commands (never a kit-invented one) · the bash contract fails loud, never reinterprets.
 
 ### Mode: bootstrap
@@ -311,7 +313,7 @@ The declaration is **seeded at bootstrap** (the template loop, step 6) and **ens
     independent axes: a packaging-only release bumps the package but leaves the lineage head until a
     migration actually changes the deployed `docs/ai` structure. A stamp greater than the head →
     STOP (never downgrade).
-11. **Report & ask.** Show `tree docs/ai/`, 2–3 lines on what was filled with real data vs left as TODO, then print the **report footer** in the canonical order (version block → one-line backend-status line → welcome mat — the shared contracts above, rendered from the helpers, same host-can't-run skip-with-reason). The welcome mat ends on **one** recommended next step — including the optional, opt-in `/agent-workflow-kit velocity` (a read-only allowlist so routine read-only commands stop prompting; *Mode: velocity*) when nothing more pressing applies, never run without a yes. Then **ask before committing** — never auto-commit.
+11. **Report & ask.** Show `tree docs/ai/`, 2–3 lines on what was filled with real data vs left as TODO, then print the **report footer** in the canonical order (version block → one-line backend-status line → welcome mat — the shared contracts above, rendered from the helpers, same host-can't-run skip-with-reason). The welcome mat ends on **one** recommended next step — including the optional, opt-in `/agent-workflow-kit velocity` (a read-only allowlist so routine read-only commands stop prompting; *Mode: velocity*) or, once gates are declared, `/agent-workflow-kit hook` (auto-approve your own declared gate commands; *Mode: hook*) when nothing more pressing applies, never run without a yes. Then **ask before committing** — never auto-commit.
 
 Fill strategy:
 
@@ -511,7 +513,7 @@ It classifies every surface into four classes and acts accordingly:
 
 ### Mode: velocity
 
-The opt-in onboarding **velocity profile** — it seeds a fixed, audited **read-only** Claude Code allowlist into `.claude/settings.json` so an agent stops idling on approval prompts for routine read-only commands while the maintainer is away. It is the family's **first programmatic `.claude/settings.json` writer** (attribution stayed an agent-driven prose merge). **In-agent, opt-in, writes only `.claude/settings.json`**, on one hard rule: **it never allowlists `commit`/`push`/`publish`** — so a direct commit/push/publish still ASKs; the only caveat is the trust-posture residual (below), closed by the deferred hook.
+The opt-in onboarding **velocity profile** — it seeds a fixed, audited **read-only** Claude Code allowlist into `.claude/settings.json` so an agent stops idling on approval prompts for routine read-only commands while the maintainer is away. It is the family's **first programmatic `.claude/settings.json` writer** (attribution stayed an agent-driven prose merge). **In-agent, opt-in, writes only `.claude/settings.json`**, on one hard rule: **it never allowlists `commit`/`push`/`publish`** — so a direct commit/push/publish still ASKs; the only caveat is the trust-posture residual (below) — its closure is **shipped, opt-in: *Mode: hook***.
 
 **Version-status routing (like the other writer modes):** read `docs/ai/.workflow-version` first — not-deployed → bootstrap; stamp < `1.3.0` → `upgrade`; stamp > head / unparseable → STOP. The tool enforces this in code too (`--apply` STOPs unless the stamp is the lineage head).
 
@@ -520,7 +522,7 @@ Run `node ${CLAUDE_SKILL_DIR}/tools/velocity-profile.mjs [--dry-run | --apply] [
 1. **`--dry-run` first, always** (the default — changes nothing). It prints: the fixed read-only core it would add; a **read-only advisory** that lists your `package.json` `scripts` as **unaudited candidates you may add BY HAND** (inspect each first) to `.claude/settings.json` / `settings.local.json` — the tool **never** writes them and flags obviously-mutating names as "do not add"; any **pre-existing non-read-only `Bash(...)` entries** to consider removing by hand; and the honest residual notice (below). It STOPs (zero writes) on a symlinked `.claude` / non-regular `settings.json`, malformed settings JSON, or an unsafe `permissions.defaultMode` — `bypassPermissions` or anything outside `default`/`acceptEdits`/`plan`, present in **either** `settings.json` or `settings.local.json`.
 2. **Ask the `acceptEdits` opt-in** via **`AskUserQuestion` where supported**, the safe option FIRST:
    - **"Keep per-edit approval prompts (recommended)"** — seed only the read-only allowlist; file edits still prompt.
-   - **"Auto-accept file edits (`defaultMode: acceptEdits`)"** — present the honest FULL posture: it auto-applies Edit/Write AND auto-runs `mkdir`/`touch`/`mv`/`cp` in the working dir, is paired with the read-only allowlist, and — stated plainly — a settings-level allow rule is a **trust posture, not a sandbox**: a read-only entry can still write a file via output redirection, and (Claude Code's allow rules do not inspect command substitution) could in principle run another command via `cmd $(…)`. velocity **never adds `commit`/`push`/`publish` as allow rules** — so a direct `git push` still ASKs — but that same redirection/substitution residual means they are not *fully* closed until the deferred PreToolUse hook (family backlog). Note also that a `defaultMode` in `settings.local.json` would override this project-level write (local > project), since velocity writes only `.claude/settings.json`.
+   - **"Auto-accept file edits (`defaultMode: acceptEdits`)"** — present the honest FULL posture: it auto-applies Edit/Write AND auto-runs `mkdir`/`touch`/`mv`/`cp` in the working dir, is paired with the read-only allowlist, and — stated plainly — a settings-level allow rule is a **trust posture, not a sandbox**: a read-only entry can still write a file via output redirection, and (Claude Code's allow rules do not inspect command substitution) could in principle run another command via `cmd $(…)`. velocity **never adds `commit`/`push`/`publish` as allow rules** — so a direct `git push` still ASKs — and the residual guard for the seeded core ships as the opt-in PreToolUse hook (*Mode: hook*; probe-proven on the `--output` family — current engine builds already intercept redirection/substitution upstream). Note also that a `defaultMode` in `settings.local.json` would override this project-level write (local > project), since velocity writes only `.claude/settings.json`.
 3. **Only on an explicit yes**, re-run with `--apply` (add `--accept-edits` only if they chose the second option). It merges-don't-clobber (preserves `includeCoAuthoredBy`, every key, and existing allow entries) and writes **only** `.claude/settings.json`.
 4. **Surface delegation-readiness, read-only.** If they want a step run Delegated, set it with `/agent-workflow-kit set-recipe --set plan-execution.execute=delegated` (*Mode: set-recipe*) or by hand-editing `docs/ai/orchestration.json`; **velocity itself never writes the orchestration config.**
 
@@ -539,6 +541,31 @@ Run `node ${CLAUDE_SKILL_DIR}/tools/cheap-agents.mjs [--dry-run | --apply] [--cw
 3. **Hidden-mode deployments:** after apply, run the hide-footprint reconcile (`node ${CLAUDE_SKILL_DIR}/tools/hide-footprint.mjs --dir <project> --reconcile`) so the placed files stay invisible to `git status` — `/.claude/agents/` is in the known-footprint registry; the apply report reminds you.
 
 **Invariants:** writer (writes only `.claude/agents/`) · preview by default · a diverged existing file is reported and preserved, never clobbered · never touches settings · never commits · vehicles are pinned to `model: haiku` + `effort: low` + read-only tools (content-tested).
+
+### Mode: hook
+
+The opt-in **gate-approval PreToolUse hook** — the family's third `.claude/` writer (velocity discipline), and the shipped closure of the velocity trust-posture residual (**AD-021 scope C, probe-proven in AD-037**). It places a **self-contained** hook runtime at `.claude/hooks/agent-workflow-gates.mjs` (no kit imports — it keeps working if the kit is uninstalled) and wires ONE `PreToolUse` `"Bash"` entry into `.claude/settings.json`. Per Bash call the hook then walks a decision ladder, first match wins:
+
+- **Auto-approve** a command **byte-identical** (leading/trailing trim only — no whitespace collapsing, no quote/glob/variable interpretation, no prefix or pattern matching, ever: patterns are what made AD-021 auto-seeding rejected) to a gate `cmd` declared in `docs/ai/gates.json` — read **LIVE on every call** (editing gates.json never needs re-wiring; one declaration, two consumers with *Mode: gates*) — invoked **from the project root** (gates run from the root by contract; the same bytes from a subdirectory are NOT approved) and under `default`/`acceptEdits` permission mode (an approval never loosens `plan`/`bypassPermissions`).
+- **Ask** on a command whose leading tokens match the velocity **seeded read-only core** when it carries the documented runtime residual — output redirection, command substitution, or the bounded `--output` write-flag family — surfacing a human prompt even where a seeded allow rule would have silently approved (**hook `ask` overrides an allow rule — proven live**: on Claude Code 2.1.185 a seeded `Bash(git log:*)` silently wrote a file via `git log --output=…`; with the hook wired the same call prompts). Detection is string-level and conservative: a quoted metacharacter may over-ask, never under-allow.
+- **Stay silent otherwise** — the normal permission flow proceeds unchanged. The hook **never emits `deny`**; nothing is hard-blocked.
+
+**Honest residual status (AD-037):** current engine builds already intercept `>` redirection and `$()` substitution upstream (observed headless on 2.1.185); the **`--output` family was proven open** and is the seam this hook demonstrably closes. The guard still covers all three documented classes (defense-in-depth — engine behavior may vary across surfaces/versions). **Fail-safe, decoupled:** a missing/broken/invalid `gates.json` disables ONLY gate auto-approval — the residual guard keeps running; every anomaly path exits 0 (the hook is never the blocker or the noise — the `gates` runner reports a broken declaration at its own point of use). **Not a sandbox:** it closes the named residual for the seeded core and auto-approves declared gates; it does not police arbitrary commands or user-added rules.
+
+**Trust posture (state it plainly when asking consent):** the hook removes the PROMPT only for commands the human already declared in `docs/ai/gates.json` — the same trust boundary as the `gates` runner, which executes them with the caller's privileges. **gates.json thereby becomes a privileged file**: whoever can edit it can get its commands auto-approved. An invalid declaration approves NOTHING (strict parse, exact validation parity with the runner).
+
+**Version-status routing** like the other writer modes (stamp head `1.3.0`; `--apply` enforces it in code).
+
+Run `node ${CLAUDE_SKILL_DIR}/tools/gate-hook.mjs [--dry-run | --apply] [--cwd <dir>]`:
+
+1. **`--dry-run` first, always** (the default — changes nothing): previews the placement and the exact settings entry it would merge. It STOPs (zero writes) on: a symlinked `.claude` / `.claude/hooks` / target file / non-regular `settings.json`; malformed settings JSON; a **malformed existing `hooks` shape** (never a merge-through-clobber); an unsafe `permissions.defaultMode` in **either** settings file; or a target hook file with **different** content while our entry is not wired (**it refuses to wire an unknown script as a PreToolUse hook** — the recovery is named: delete the file to reseed from the bundle).
+2. **Ask consent** via **`AskUserQuestion` where supported**, the no-change option first: keep prompting for gate commands, or place + wire the hook — presenting the trust posture above in plain language.
+3. **Only on an explicit yes**, re-run with `--apply`. It places the file FIRST, then wires settings (a wired-but-missing entry would error on every Bash call); merge-don't-clobber (foreign hooks/matchers/keys and existing permissions preserved; re-apply never duplicates); **settings hot-reload — the hook is active for new Bash calls, no session restart needed**. An identical existing file is *already current*; a diverged-but-already-wired file is reported, never clobbered or unwired.
+4. **Hidden-mode deployments:** after apply, run the hide-footprint reconcile (`node ${CLAUDE_SKILL_DIR}/tools/hide-footprint.mjs --dir <project> --reconcile`) — `/.claude/hooks/` is in the known-footprint registry; the apply report reminds you.
+
+**Invariants:** writes ONLY `.claude/hooks/agent-workflow-gates.mjs` + `.claude/settings.json` · never `settings.local.json` · never commits · exact-match approval only (no patterns) · never `deny` · never auto-wired by `init`/`upgrade` (placement stays opt-in — the AD-011/AD-034 boundary: init/upgrade may refresh placed things, never place new ones).
+
+**Exit codes:** `0` done / dry-run (incl. the reported diverged-but-wired state); `1` a precondition STOP; `2` bad arguments.
 
 ---
 

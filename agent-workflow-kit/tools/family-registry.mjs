@@ -44,6 +44,10 @@ import {
   readSettingsFile,
   resolveEffectiveMode,
 } from './velocity-profile.mjs';
+// The gate-hook writer's own wired-detection + placed path — reused by the settings survey (one
+// implementation; gate-hook imports only node builtins + velocity-profile, so no cycle).
+import { HOOK_FILE_REL as GATE_HOOK_FILE_REL, isHookWired } from './gate-hook.mjs';
+import { GATES_REL } from './run-gates.mjs';
 // The status vocabulary (manifestState constants, internal→public maps, display names, the no-leak
 // forbidden set) lives in the frozen labels.mjs LEAF (Plan §4.2 B1) so the import graph is acyclic —
 // nothing imports family-registry for vocabulary. Imported here for internal use; the public subset is
@@ -438,11 +442,32 @@ export const surveyVelocity = (dir, deps = {}) => {
   }
 };
 
+// gate hook: the opt-in PreToolUse gate-approval hook (Mode: hook) — wired (the settings entry, in
+// EITHER settings file: the hooks contract merges both), the placed hook file, and the gate
+// declaration it consumes. Read-only; the wired-detection is REUSED from the writer (gate-hook.mjs
+// isHookWired — one implementation, never a drifting copy).
+export const surveyGateHook = (dir, deps = {}) => {
+  try {
+    const d = resolve(dir);
+    const exists = deps.exists ?? existsSync;
+    const project = readSettingsFile(join(d, SETTINGS_FILE), { ...deps, cwd: d });
+    const local = readSettingsFile(join(d, SETTINGS_LOCAL_FILE), { ...deps, cwd: d });
+    return {
+      wired: isHookWired(project.data) || isHookWired(local.data),
+      filePlaced: Boolean(exists(join(d, GATE_HOOK_FILE_REL))),
+      declarationPresent: Boolean(exists(join(d, GATES_REL))),
+    };
+  } catch (err) {
+    return { error: localizeError(err) };
+  }
+};
+
 // the project-scoped settings survey (needs a project dir). Each area is independently localized-on-error.
 export const surveySettings = (dir, deps = {}) => ({
   recipes: surveyRecipes(dir, deps),
   attribution: surveyAttribution(dir, deps),
   velocity: surveyVelocity(dir, deps),
+  hook: surveyGateHook(dir, deps),
 });
 
 // bridges: HOST-scoped (no project needed). Wrapper command NAMES come from FAMILY_MEMBERS[].wrapperCmds

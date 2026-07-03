@@ -62,6 +62,7 @@ export const KIT_OWN_PATHS = [
 export const KNOWN_FOOTPRINT = [
   { pattern: '/.claude/skills/', owner: 'Claude Code', type: 'dir', falsePositiveRisk: false, note: 'local-dev skills; absorbs the AD-013 one-off' },
   { pattern: '/.claude/agents/', owner: 'Claude Code', type: 'dir', falsePositiveRisk: false, note: 'project subagent definitions (incl. the kit-placed cheap-lane vehicles)' },
+  { pattern: '/.claude/hooks/', owner: 'Claude Code', type: 'dir', falsePositiveRisk: false, note: 'project hooks (incl. the kit-placed gate-approval hook)' },
   { pattern: '/.cursor/rules/', owner: 'Cursor', type: 'dir', falsePositiveRisk: false, note: 'project rule files' },
   { pattern: '/.cursorrules', owner: 'Cursor (legacy)', type: 'file', falsePositiveRisk: true, note: 'legacy single-file rules' },
   { pattern: '/.codeium/', owner: 'Codeium/Windsurf', type: 'dir', falsePositiveRisk: false, note: 'home-scoped launchers live under ~/, out of scope' },

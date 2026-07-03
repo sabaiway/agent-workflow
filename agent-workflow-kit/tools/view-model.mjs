@@ -65,8 +65,25 @@ const velocityVm = (v) => {
   return { defaultMode: v.defaultMode ?? null, allow: { project: v.allowEntries?.project ?? 0, local: v.allowEntries?.local ?? 0 } };
 };
 
+const hookVm = (h) => {
+  if (!h) return null;
+  if (h.error) return { error: h.error };
+  return {
+    wired: Boolean(h.wired),
+    filePlaced: Boolean(h.filePlaced),
+    declarationPresent: Boolean(h.declarationPresent),
+  };
+};
+
 const settingsVm = (s) =>
-  s ? { recipes: recipesVm(s.recipes), attribution: attributionVm(s.attribution), velocity: velocityVm(s.velocity) } : null;
+  s
+    ? {
+        recipes: recipesVm(s.recipes),
+        attribution: attributionVm(s.attribution),
+        velocity: velocityVm(s.velocity),
+        hook: hookVm(s.hook),
+      }
+    : null;
 
 const projectVm = (p) =>
   p

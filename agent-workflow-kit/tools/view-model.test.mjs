@@ -37,6 +37,7 @@ const fullEnvelope = () => ({
       recipes: { configSource: 'docs/ai/orchestration.json', activities: { 'plan-authoring': { review: { recipe: 'reviewed' } }, 'plan-execution': { execute: { recipe: 'delegated' }, review: { recipe: 'council' } } } },
       attribution: { project: false, local: null, effective: false },
       velocity: { defaultMode: 'acceptEdits', allowEntries: { project: 1, local: 2 } },
+      hook: { wired: true, filePlaced: true, declarationPresent: false },
     },
   },
 });
@@ -114,6 +115,7 @@ describe('view-model — bridges / project / settings', () => {
     ]);
     assert.equal(vm.project.settings.attribution.override, false, 'local null → project value stands, not an override');
     assert.deepEqual(vm.project.settings.velocity, { defaultMode: 'acceptEdits', allow: { project: 1, local: 2 } });
+    assert.deepEqual(vm.project.settings.hook, { wired: true, filePlaced: true, declarationPresent: false });
   });
 
   it('a real local override is flagged (local set AND differs from project)', () => {
@@ -124,11 +126,12 @@ describe('view-model — bridges / project / settings', () => {
   it('per-area settings errors survive as { error }', () => {
     const vm = toViewModel({
       installed: [],
-      project: { dir: '/p', deployed: true, settings: { recipes: { error: 'orchestration.json: bad' }, attribution: { error: 'settings.json: bad' }, velocity: { error: 'settings.local.json: bad' } } },
+      project: { dir: '/p', deployed: true, settings: { recipes: { error: 'orchestration.json: bad' }, attribution: { error: 'settings.json: bad' }, velocity: { error: 'settings.local.json: bad' }, hook: { error: 'settings.json: bad' } } },
     });
     assert.match(vm.project.settings.recipes.error, /orchestration\.json/);
     assert.match(vm.project.settings.attribution.error, /settings\.json/);
     assert.match(vm.project.settings.velocity.error, /settings\.local\.json/);
+    assert.match(vm.project.settings.hook.error, /settings\.json/);
   });
 
   it('a recipes detectError survives onto the VM', () => {

@@ -7,6 +7,23 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-03 — kit 1.29.0: an opt-in PreToolUse gate-approval hook (velocity scope C; bridges unchanged at 2.1.0)
+
+- **The velocity residual is closed, opt-in.** `/agent-workflow-kit hook` places a self-contained
+  PreToolUse hook and wires it into `.claude/settings.json`: a Bash command byte-exact to a gate
+  declared in `docs/ai/gates.json` (invoked from the project root) is auto-approved with no prompt,
+  and a seeded read-only command carrying a runtime residual (output redirection, command/process
+  substitution, an `--output` write flag) now ASKS even where a settings allow rule would have
+  silently passed it — proven live on Claude Code 2.1.185, recorded in **AD-037**. Exact matches
+  only (never patterns — the rejected [[AD-021]] shape); never `deny`; a broken `gates.json` disables
+  only the auto-approval, never the guard. The residual guard reads the whole command as a substring
+  so a quoted or escaped form cannot hide it.
+- **Kit-only, opt-in, reviewed at the diff.** Never auto-wired by `init`/`upgrade` (the AD-034
+  refresh-not-place boundary); `/.claude/hooks/` joins the hidden-mode footprint; `uninstall` reports
+  the settings edit and never removes a still-wired or customized hook; `status` gains one hook row.
+  Council converged over four grounded rounds (codex + agy) — each round closed a string-scan
+  obfuscation class or a TOCTOU/symlink window by code — ending codex **ship** + agy **SHIP**, 0/0.
+
 ## 2026-07-02 — engine 1.11.0 · memory 1.9.0 · kit 1.28.0: plans carry only checked syntax (bridges unchanged at 2.1.0)
 
 - **A plan may carry only checked syntax.** The methodology's §9 "No code-mechanics in the plan"

@@ -101,6 +101,12 @@ const renderSettings = (vm, { color, glyph }) => {
   else if (s.velocity) {
     lines.push(`  ${pad(SETTINGS_LABELS.velocity, SETTINGS_COL)}defaultMode=${String(s.velocity.defaultMode)} · allow project/local=${s.velocity.allow.project}/${s.velocity.allow.local}`);
   }
+  // gate hook — the opt-in PreToolUse gate-approval hook: wired / file placed / declaration present.
+  if (s.hook?.error) lines.push(`  ${pad(SETTINGS_LABELS.hook, SETTINGS_COL)}error: ${s.hook.error}`);
+  else if (s.hook) {
+    const yn = (b) => (b ? 'yes' : 'no');
+    lines.push(`  ${pad(SETTINGS_LABELS.hook, SETTINGS_COL)}wired=${yn(s.hook.wired)} · file=${yn(s.hook.filePlaced)} · gates.json=${yn(s.hook.declarationPresent)}`);
+  }
   return lines;
 };
 

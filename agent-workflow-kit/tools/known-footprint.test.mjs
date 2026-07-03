@@ -156,6 +156,7 @@ describe('frozen snapshot', () => {
     const expected = [
       '/.claude/skills/',
       '/.claude/agents/',
+      '/.claude/hooks/',
       '/.cursor/rules/',
       '/.cursorrules',
       '/.codeium/',
@@ -169,7 +170,7 @@ describe('frozen snapshot', () => {
       '/.aider.input.history',
       '/.continue/',
     ];
-    assert.equal(KNOWN_FOOTPRINT.length, 14, 'KNOWN_FOOTPRINT count sentinel — edit deliberately');
+    assert.equal(KNOWN_FOOTPRINT.length, 15, 'KNOWN_FOOTPRINT count sentinel — edit deliberately');
     assert.deepEqual(KNOWN_FOOTPRINT.map((e) => e.pattern), expected);
   });
 });

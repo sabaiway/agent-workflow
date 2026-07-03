@@ -490,7 +490,7 @@ describe('velocity profile writer + CLI', () => {
     const dry = runMain(['--dry-run'], cwd);
     assert.match(dry.stdout, /trust-posture convenience, NOT a sandbox/);
     assert.match(dry.stdout, /commit\/push\/publish are never allowlisted/);
-    assert.match(dry.stdout, /substitution\/redirection residual is not closed/);
-    assert.match(dry.stdout, /deferred PreToolUse hook/);
+    assert.match(dry.stdout, /runtime residual is not closed here/);
+    assert.match(dry.stdout, /opt-in PreToolUse hook — Mode: hook/);
   });
 });

@@ -220,6 +220,118 @@ describe('buildPlan — project deploy axis', () => {
     assert.match(settings.reason, /permissions/);
   });
 
+  it('gate hook, WIRED ordering: the settings seam is reported and the placed file is preserved as one bundle', () => {
+    const hookPath = join(dir, '.claude/hooks/agent-workflow-gates.mjs');
+    const wired = JSON.stringify({
+      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/agent-workflow-gates.mjs"', timeout: 30 }] }] },
+    });
+    const fs = {
+      ...projectFs({ files: { [join(dir, '.claude/settings.json')]: wired, [hookPath]: 'BUNDLE', ['/bundle/hook.mjs']: 'BUNDLE' } }),
+      bundlePath: '/bundle/hook.mjs',
+    };
+    const plan = buildPlan({ family: [], project, projectDir: dir }, fs);
+    const seam = plan.items.find((i) => i.surface === 'settings');
+    assert.equal(seam.class, REPORT_ONLY);
+    assert.match(seam.reason, /gate-approval hook/);
+    assert.match(seam.hand, /remove the PreToolUse entry/);
+    const file = find(plan.items, 'gate-hook');
+    assert.equal(file.class, REPORT_ONLY);
+    assert.match(file.reason, /still WIRED .* re-run uninstall to remove the file/);
+    // executing the plan removes NOTHING of the hook bundle (report-only is never mutated)
+    const rmFileCalls = [];
+    executePlan(plan, { yes: true }, { ...fs, rmFile: (p) => rmFileCalls.push(p), removeTree: () => 'removed', unlink: () => 'unlinked', hideFootprint: () => ({ action: 'unhidden' }) });
+    assert.equal(rmFileCalls.includes(hookPath), false);
+  });
+
+  it('gate hook, UNWIRED ordering: a byte-identical file is removed and an empty hooks dir is cleaned', () => {
+    const hookPath = join(dir, '.claude/hooks/agent-workflow-gates.mjs');
+    const removedFiles = [];
+    const removedTrees = [];
+    const filesLeft = new Set([hookPath]);
+    const fs = {
+      ...projectFs({ files: { [hookPath]: 'BUNDLE', ['/bundle/hook.mjs']: 'BUNDLE' }, dirs: [join(dir, '.claude/hooks')] }),
+      bundlePath: '/bundle/hook.mjs',
+      readdir: () => [...filesLeft].filter((p) => p !== hookPath).map(() => 'x'),
+    };
+    const plan = buildPlan({ family: [], project, projectDir: dir }, fs);
+    const file = find(plan.items, 'gate-hook');
+    assert.equal(file.class, SAFE_REMOVE);
+    assert.match(file.reason, /byte-identical to the current bundle/);
+    const result = executePlan(plan, { yes: true }, {
+      ...fs,
+      rmFile: (p) => { removedFiles.push(p); filesLeft.delete(p); },
+      removeTree: (p) => { removedTrees.push(p); return 'removed'; },
+      unlink: () => 'unlinked',
+      hideFootprint: () => ({ action: 'unhidden' }),
+    });
+    assert.equal(result.gateHookRemoved, true);
+    assert.equal(removedFiles.includes(hookPath), true);
+    assert.equal(removedTrees.includes(join(dir, '.claude/hooks')), true);
+  });
+
+  it('gate hook: a symlink swapped in AFTER planning aborts the mutation (AD-011, zero changes)', () => {
+    const hookPath = join(dir, '.claude/hooks/agent-workflow-gates.mjs');
+    // Plan sees a regular bundle-identical file (SAFE_REMOVE); at execute time lstat reports a symlink.
+    let lstats = 0;
+    const baseFs = projectFs({ files: { [hookPath]: 'BUNDLE', ['/bundle/hook.mjs']: 'BUNDLE' }, dirs: [join(dir, '.claude/hooks')] });
+    const planFs = { ...baseFs, bundlePath: '/bundle/hook.mjs' };
+    const plan = buildPlan({ family: [], project, projectDir: dir }, planFs);
+    assert.equal(find(plan.items, 'gate-hook').class, SAFE_REMOVE);
+    const removedFiles = [];
+    // Between the plan and execute, a symlink is swapped in at the hook path: the execute preflight
+    // must lstat no-follow, see the symlink, and abort with ZERO mutations (never read-through +
+    // remove it, and never partially remove earlier surfaces first).
+    const execFs = {
+      ...planFs,
+      lstat: (p) => (p === hookPath ? { isSymbolicLink: () => true, isFile: () => false } : baseFs.lstat(p)),
+      rmFile: (p) => removedFiles.push(p),
+      removeTree: () => 'removed',
+      unlink: () => 'unlinked',
+      hideFootprint: () => ({ action: 'unhidden' }),
+    };
+    assert.throws(() => executePlan(plan, { yes: true }, execFs), (thrown) => thrown.code === UNINSTALL_STOP);
+    assert.equal(removedFiles.includes(hookPath), false);
+  });
+
+  it('gate hook: a diverged (non-bundle) unwired file is reported, never removed', () => {
+    const hookPath = join(dir, '.claude/hooks/agent-workflow-gates.mjs');
+    const fs = {
+      ...projectFs({ files: { [hookPath]: 'SOMETHING ELSE', ['/bundle/hook.mjs']: 'BUNDLE' } }),
+      bundlePath: '/bundle/hook.mjs',
+    };
+    const file = find(buildPlan({ family: [], project, projectDir: dir }, fs).items, 'gate-hook');
+    assert.equal(file.class, REPORT_ONLY);
+    assert.match(file.reason, /not byte-identical/);
+  });
+
+  it('gate hook: a JSON-escaped path in the wired entry still counts as wired (file preserved)', () => {
+    const hookPath = join(dir, '.claude/hooks/agent-workflow-gates.mjs');
+    // A valid settings entry whose command escapes the slashes: `.claude\/hooks\/…`. JSON.parse
+    // decodes it back to `/`; a raw-text substring scan would MISS it and wrongly remove a still-
+    // wired hook. This literal keeps the backslashes so JSON.parse sees the escape.
+    const escaped = '{ "hooks": { "PreToolUse": [ { "matcher": "Bash", "hooks": [ { "type": "command", "command": "node \\".claude\\/hooks\\/agent-workflow-gates.mjs\\"" } ] } ] } }';
+    const fs = {
+      ...projectFs({ files: { [join(dir, '.claude/settings.json')]: escaped, [hookPath]: 'BUNDLE', ['/bundle/hook.mjs']: 'BUNDLE' } }),
+      bundlePath: '/bundle/hook.mjs',
+    };
+    const plan = buildPlan({ family: [], project, projectDir: dir }, fs);
+    assert.equal(find(plan.items, 'gate-hook').class, REPORT_ONLY, 'escaped-path wiring must read as wired → file preserved');
+    assert.match(find(plan.items, 'gate-hook').reason, /still WIRED/);
+  });
+
+  it('gate hook: a hand-wired entry in settings.local.json also counts as wired (file preserved)', () => {
+    const hookPath = join(dir, '.claude/hooks/agent-workflow-gates.mjs');
+    const wired = JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'node .claude/hooks/agent-workflow-gates.mjs' }] }] } });
+    const fs = {
+      ...projectFs({ files: { [join(dir, '.claude/settings.local.json')]: wired, [hookPath]: 'BUNDLE', ['/bundle/hook.mjs']: 'BUNDLE' } }),
+      bundlePath: '/bundle/hook.mjs',
+    };
+    const plan = buildPlan({ family: [], project, projectDir: dir }, fs);
+    const localSeam = plan.items.find((i) => i.surface === 'settings' && i.path.endsWith('settings.local.json'));
+    assert.equal(localSeam.class, REPORT_ONLY);
+    assert.equal(find(plan.items, 'gate-hook').class, REPORT_ONLY);
+  });
+
   it('reports docs/ai, AGENTS.md, CLAUDE.md, docs/plans as never-deleted', () => {
     const fs = projectFs({ files: { [join(dir, 'AGENTS.md')]: 'x', [join(dir, 'CLAUDE.md')]: 'x' } });
     const docs = buildPlan({ family: [], project, projectDir: dir }, fs).items.filter((i) => i.surface === 'docs');
