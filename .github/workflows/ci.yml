@@ -52,6 +52,8 @@ jobs:
       # checks) — here only the package test globs, INCLUDING both cli bridges'
       # hermetic wrapper tests (antigravity `agy` + codex exec/review). The kit
       # test/ glob also runs the bridge-mirror + package-content drift guards.
+      # scripts/sync-mirrors.test.mjs is listed EXPLICITLY (not a scripts/ glob):
+      # the other scripts/*.test.mjs files are machine-local and absent here.
       - name: Unit tests (tracked content)
         run: |
           node --test \
@@ -61,7 +63,8 @@ jobs:
             agent-workflow-engine/test/*.test.mjs \
             antigravity-cli-bridge/bin/*.test.mjs \
             codex-cli-bridge/bin/*.test.mjs \
-            scripts/release/*.test.mjs
+            scripts/release/*.test.mjs \
+            scripts/sync-mirrors.test.mjs
 
   # Version-independent gates — run once on a single Node. Manifest validation and the
   # attribution scan do not depend on the Node version, so there is no need to matrix them.
@@ -81,11 +84,12 @@ jobs:
             agent-workflow-memory agent-workflow-kit codex-cli-bridge antigravity-cli-bridge agent-workflow-engine
 
       # Release scan — fails on any AI/agent attribution. The five package dirs PLUS the
-      # tracked workflow files, the root README.md / CHANGELOG.md, AND the tracked release
-      # scripts (scripts/release/), so the "no attribution anywhere" hard constraint is
+      # tracked workflow files, the root README.md / CHANGELOG.md, the tracked release
+      # scripts (scripts/release/) AND the tracked mirror-sync pair (scripts/sync-mirrors*.mjs
+      # sits outside scripts/release/), so the "no attribution anywhere" hard constraint is
       # enforced on CI too.
       - name: Release scan (no AI attribution)
         run: |
           node agent-workflow-kit/tools/release-scan.mjs \
             agent-workflow-memory agent-workflow-kit codex-cli-bridge antigravity-cli-bridge agent-workflow-engine \
-            .github/workflows README.md CHANGELOG.md scripts/release
+            .github/workflows README.md CHANGELOG.md scripts/release scripts/sync-mirrors*.mjs

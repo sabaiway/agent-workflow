@@ -4,23 +4,24 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, SLOT_RECIPES } from '../tools/recipes.mjs';
+import { MIRROR_TEMPLATE_FILES, TEMPLATE_HARD_EXCLUDES } from '../../scripts/sync-mirrors.mjs';
 
 // The composition root deploys docs/ai/ from MEMORY's templates when memory is healthy, and from its
 // OWN bundled fallback templates otherwise (SKILL.md). For a deployment to be identical on both paths,
 // the shared templates must be byte-identical across the two packages. This guard pins that parity for
-// the entry-point template AND the orchestration.json config seed (AD-019), and validates the seed
-// against the kit's schema (so a malformed seed can never ship).
+// the WHOLE mirror manifest exported by scripts/sync-mirrors.mjs — the sync script and this guard
+// govern the SAME explicit set, so drift cannot hide between them — and validates the two JSON seeds
+// against the kit's schemas (so a malformed seed can never ship).
 //
-// Dev-only repo test (test/ is outside the package `files` whitelist — not shipped in the tarball).
+// Dev-only repo test (test/ is outside the package `files` whitelist — not shipped in the tarball;
+// the cross-package import of the tracked repo-root script follows lineage-head-drift.test.mjs).
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const MEMORY_ROOT = resolve(KIT_ROOT, '..', 'agent-workflow-memory');
 const KIT_TEMPLATES = join(KIT_ROOT, 'references', 'templates');
 const MEMORY_TEMPLATES = join(MEMORY_ROOT, 'references', 'templates');
 
-const SHARED_TEMPLATES = ['AGENTS.md', 'orchestration.json', 'gates.json'];
-
-describe('kit ⟷ memory template parity — byte-identical shared seeds', () => {
-  for (const name of SHARED_TEMPLATES) {
+describe('kit ⟷ memory template parity — every manifest-listed template byte-identical', () => {
+  for (const name of MIRROR_TEMPLATE_FILES) {
     it(`${name} is byte-identical in both packages`, () => {
       const kit = join(KIT_TEMPLATES, name);
       const memory = join(MEMORY_TEMPLATES, name);
@@ -29,10 +30,34 @@ describe('kit ⟷ memory template parity — byte-identical shared seeds', () =>
       assert.equal(
         readFileSync(kit, 'utf8'),
         readFileSync(memory, 'utf8'),
-        `${name} drifted between the kit fallback copy and the memory copy — the two deploy paths would diverge`,
+        `${name} drifted between the kit fallback copy and the memory copy — the two deploy paths would diverge (re-sync: node scripts/sync-mirrors.mjs)`,
       );
     });
   }
+});
+
+describe('the mirror manifest itself — reverse pins (the sync and this guard govern ONE set)', () => {
+  it('keeps the load-bearing seeds IN the manifest', () => {
+    for (const required of ['AGENTS.md', 'orchestration.json', 'gates.json']) {
+      assert.ok(
+        MIRROR_TEMPLATE_FILES.includes(required),
+        `${required} must stay in the mirror manifest — dropping it would silently stop both the sync and this parity guard`,
+      );
+    }
+  });
+
+  it('never gains a hard-excluded (deliberately divergent) template', () => {
+    for (const required of ['agent_rules.md', 'decisions.md']) {
+      assert.ok(
+        TEMPLATE_HARD_EXCLUDES.includes(required),
+        `${required} must stay hard-excluded — it is deliberately divergent (AD-038); its shared regions are owned by template-region-parity.test.mjs / lens-mirror.test.mjs`,
+      );
+      assert.ok(
+        !MIRROR_TEMPLATE_FILES.includes(required),
+        `${required} must never enter the whole-file mirror manifest — a full-file sync would clobber the deliberate divergence`,
+      );
+    }
+  });
 });
 
 describe('gates.json seed — strict JSON valid against the kit runner schema', () => {

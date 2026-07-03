@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -57,6 +57,21 @@ describe('bridges mirror — kit copies stay byte-identical to the repo-root can
         assert.ok(
           canonBytes.equals(mirrorBytes),
           `bridge mirror has drifted at ${rel} — re-sync ${mirrorRoot}/${rel} from ${canonRoot}/${rel}`,
+        );
+      }
+    });
+
+    // The tarball ships the MIRROR bytes AND the mirror mode: a canon-executable wrapper whose
+    // mirror copy lost the executable bit would install a non-runnable bin. Exec-bit-only (the
+    // git-tracked axis) — full-mode equality would churn on umask differences.
+    it(`${name}: executable-bit parity on every file (canon === mirror)`, () => {
+      for (const rel of walkFiles(canonRoot)) {
+        const canonExec = (statSync(join(canonRoot, rel)).mode & 0o111) !== 0;
+        const mirrorExec = (statSync(join(mirrorRoot, rel)).mode & 0o111) !== 0;
+        assert.equal(
+          mirrorExec,
+          canonExec,
+          `executable bit drifted at ${rel} (canon ${canonExec ? 'executable' : 'plain'}, mirror ${mirrorExec ? 'executable' : 'plain'}) — re-sync with scripts/sync-mirrors.mjs`,
         );
       }
     });
