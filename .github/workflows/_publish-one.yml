@@ -241,6 +241,30 @@ jobs:
           asset_path="${{ steps.pack.outputs.tarball }}"
           asset=$(basename "$asset_path")
 
+          # Issue-007 no-op: on a family-wide (package=all) run an UNCHANGED package is already
+          # published and its tag legitimately points at the PRIOR release commit — nothing to
+          # publish, nothing to repair. This decision runs BEFORE the repair-curl below: the
+          # no-op branch mutates nothing and downloads nothing. Two traps handled explicitly:
+          # the checkout is shallow and TAGLESS, so the tag's commit must be fetched first; and
+          # this step runs under working-directory ${{ inputs.dir }}, so the subtree comparison
+          # is WORKSPACE-ROOTED (git -C + a root-relative pathspec — an in-dir relative pathspec
+          # would match nothing, see an empty diff, and false-no-op a CHANGED package).
+          if [ "${{ steps.target.outputs.already_published }}" = "yes" ]; then
+            noop_tag_sha=""
+            if git -C "$GITHUB_WORKSPACE" fetch --depth=1 origin "refs/tags/$tag" 2>/dev/null; then
+              noop_tag_sha=$(git -C "$GITHUB_WORKSPACE" rev-parse FETCH_HEAD)
+            fi
+            if [ -n "$noop_tag_sha" ] && [ "$noop_tag_sha" != "$GITHUB_SHA" ]; then
+              if git -C "$GITHUB_WORKSPACE" diff --quiet "$noop_tag_sha" "$GITHUB_SHA" -- "${{ inputs.dir }}"; then
+                echo "No-op: $name@$ver is already published and the ${{ inputs.dir }} subtree is UNCHANGED between tag $tag ($noop_tag_sha) and this commit — nothing to publish, nothing to repair."
+                exit 0
+              fi
+              echo "::error::$name@$ver is already published (tag $tag at $noop_tag_sha) but the ${{ inputs.dir }} subtree CHANGED without a version bump — refusing to no-op a changed-but-unbumped package. Bump its version and ship a new release."
+              exit 1
+            fi
+            # Tag missing, or already at THIS commit → the existing repair path below handles it.
+          fi
+
           # The Release asset MUST equal the PUBLISHED npm artifact. If we published in THIS run, that is
           # the exact tarball we packed and published. If the version was ALREADY on npm (repair path), a
           # fresh local pack is not guaranteed byte-identical to what was published — so overwrite it with
