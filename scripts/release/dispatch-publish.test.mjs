@@ -9,6 +9,8 @@ import {
   parseOriginRepo,
   readTagTemplate,
   runDispatch,
+  newestChangelogEntry,
+  RELEASE_STUB_MARKER,
   NPM_VERIFY_ATTEMPTS,
 } from './dispatch-publish.mjs';
 
@@ -24,6 +26,7 @@ const makeWorld = ({
   npmVersions = {}, // name → the version /latest reports
   releases = {}, // tag → { draft, assets: n }
   localVersions = {}, // package dir → the version its package.json carries (default: the real tree)
+  changelogs = {}, // package dir → its CHANGELOG.md text (default: the real tree)
   dirtyTree = '',
   localHead = SHA,
   remoteSha = SHA,
@@ -98,6 +101,8 @@ const makeWorld = ({
     if (str.endsWith('_publish-one.yml')) return readFileSync(join(REPO_ROOT, '.github/workflows/_publish-one.yml'), enc);
     const dirMatch = Object.keys(localVersions).find((dir) => str.endsWith(`${dir}/package.json`));
     if (dirMatch) return JSON.stringify({ name: `@sabaiway/${dirMatch}`, version: localVersions[dirMatch] });
+    const changelogMatch = Object.keys(changelogs).find((dir) => str.endsWith(`${dir}/CHANGELOG.md`));
+    if (changelogMatch) return changelogs[changelogMatch];
     return readFileSync(path, enc);
   };
 
@@ -126,8 +131,23 @@ describe('parseArgs — ordering + safety refusals', () => {
     assert.throws(() => parseArgs(['kit', 'memory']), (e) => e.exitCode === EXIT.usage && /kit must be LAST/.test(e.message));
   });
 
-  it('package "all" → refused (Issue-007: one dispatch per package)', () => {
-    assert.throws(() => parseArgs(['all']), (e) => e.exitCode === EXIT.usage && /"all" is refused/.test(e.message));
+  it('"all" is accepted ALONE (one workflow run covers the family)', () => {
+    const opts = parseArgs(['all']);
+    assert.deepEqual(opts.packages, ['all']);
+  });
+
+  it('"all" mixed with named packages → refused (all must be alone)', () => {
+    assert.throws(() => parseArgs(['all', 'kit']), (e) => e.exitCode === EXIT.usage && /"all" must be given ALONE/.test(e.message));
+    assert.throws(() => parseArgs(['memory', 'all']), (e) => e.exitCode === EXIT.usage && /"all" must be given ALONE/.test(e.message));
+  });
+
+  it('--live all requires --expect for ALL THREE family packages', () => {
+    assert.throws(
+      () => parseArgs(['all', '--live', '--expect', 'kit=1.0.0', '--expect', 'engine=1.0.0']),
+      (e) => e.exitCode === EXIT.usage && /missing: memory/.test(e.message),
+    );
+    const opts = parseArgs(['all', '--live', '--expect', 'memory=1.0.0', '--expect', 'engine=1.0.0', '--expect', 'kit=1.0.0']);
+    assert.deepEqual(opts.packages, ['all']);
   });
 
   it('unknown / duplicate packages → refused', () => {
@@ -261,6 +281,111 @@ describe('runDispatch — dry-run phase gates the live phase', () => {
     const code = await runDispatch(['memory'], deps);
     assert.equal(code, EXIT.ok);
     assert.deepEqual(calls.dispatches, [{ pkg: 'memory', dry: true, ref: 'main' }]);
+  });
+});
+
+describe('runDispatch — the `all` flow (a 3-package family release = 2 workflow runs)', () => {
+  const allWorld = () =>
+    makeWorld({
+      // kit is UNCHANGED this release: its expectation equals its current, already-published version.
+      npmVersions: {
+        '@sabaiway/agent-workflow-memory': '2.0.0',
+        '@sabaiway/agent-workflow-engine': '2.1.0',
+        '@sabaiway/agent-workflow-kit': '1.5.0',
+      },
+      releases: {
+        'agent-workflow-memory-v2.0.0': { assets: 1 },
+        'agent-workflow-engine-v2.1.0': { assets: 1 },
+        'agent-workflow-kit-v1.5.0': { assets: 1 },
+      },
+      localVersions: { 'agent-workflow-memory': '2.0.0', 'agent-workflow-engine': '2.1.0', 'agent-workflow-kit': '1.5.0' },
+    });
+
+  it('dispatches exactly 2 runs (1 dry + 1 live), inputs[package]=all on both; verifies all 3 incl. the unchanged one', async () => {
+    const { deps, calls } = allWorld();
+    const code = await runDispatch(
+      ['all', '--live', '--expect', 'memory=2.0.0', '--expect', 'engine=2.1.0', '--expect', 'kit=1.5.0'],
+      deps,
+    );
+    assert.equal(code, EXIT.ok);
+    assert.deepEqual(
+      calls.dispatches,
+      [
+        { pkg: 'all', dry: true, ref: 'main' },
+        { pkg: 'all', dry: false, ref: 'main' },
+      ],
+      'ONE dry-run dispatch then ONE live dispatch, the workflow receives package=all on both',
+    );
+    const verifiedNames = calls.fetches.map((url) => decodeURIComponent(url.split('registry.npmjs.org/')[1].replace('/latest', '')));
+    assert.deepEqual(
+      verifiedNames,
+      ['@sabaiway/agent-workflow-memory', '@sabaiway/agent-workflow-engine', '@sabaiway/agent-workflow-kit'],
+      'verifyPublished runs ×3 — the UNCHANGED kit is verified at its current version too',
+    );
+  });
+
+  it('a failed all dry-run blocks the live dispatch entirely', async () => {
+    const { deps, calls } = allWorld();
+    const failing = makeWorld({
+      conclusions: { 'all:dry': 'failure' },
+      localVersions: { 'agent-workflow-memory': '2.0.0', 'agent-workflow-engine': '2.1.0', 'agent-workflow-kit': '1.5.0' },
+    });
+    const code = await runDispatch(
+      ['all', '--live', '--expect', 'memory=2.0.0', '--expect', 'engine=2.1.0', '--expect', 'kit=1.5.0'],
+      failing.deps,
+    );
+    assert.equal(code, EXIT.runFailed);
+    assert.ok(failing.calls.dispatches.every((d) => d.dry), 'no live dispatch after a failed dry-run');
+    assert.equal(calls.dispatches.length, 0, 'the fresh world stayed untouched (sanity)');
+  });
+
+  it('a stale --expect for ANY family package (incl. an unchanged one) blocks the live all before ANY dispatch', async () => {
+    const { deps, calls } = allWorld();
+    const code = await runDispatch(
+      ['all', '--live', '--expect', 'memory=2.0.0', '--expect', 'engine=2.1.0', '--expect', 'kit=9.9.9'],
+      deps,
+    );
+    assert.equal(code, EXIT.preflight);
+    assert.match(calls.lastError, /stale expectation/);
+    assert.deepEqual(calls.dispatches, []);
+  });
+});
+
+describe('runDispatch — the RELEASE-STUB live-preflight gate (D4)', () => {
+  const STUB_CHANGELOG = `# Changelog\n\n## 1.0.0 — ${RELEASE_STUB_MARKER} (bumped 2026-07-03 — replace with the real entry title)\n\n## 0.9.0 — Old\n\n- old\n`;
+
+  it('a dispatched package whose CHANGELOG newest entry carries the stub → refused before ANY dispatch', async () => {
+    const { deps, calls } = makeWorld({
+      localVersions: { 'agent-workflow-memory': '1.0.0' },
+      changelogs: { 'agent-workflow-memory': STUB_CHANGELOG },
+    });
+    const code = await runDispatch(['memory', '--live', '--expect', 'memory=1.0.0'], deps);
+    assert.equal(code, EXIT.preflight);
+    assert.match(calls.lastError, /CHANGELOG\.md newest entry still carries RELEASE-STUB/);
+    assert.deepEqual(calls.dispatches, [], 'zero dispatches — the stub never reaches a live run');
+  });
+
+  it('a stub only in an OLDER entry does not block (the gate reads the NEWEST entry only)', async () => {
+    const oldStub = `# Changelog\n\n## 1.0.0 — Real title\n\n- real\n\n## 0.9.0 — ${RELEASE_STUB_MARKER} historical\n\n- old\n`;
+    const { deps } = makeWorld({
+      npmVersions: { '@sabaiway/agent-workflow-memory': '1.0.0' },
+      releases: { 'agent-workflow-memory-v1.0.0': { assets: 1 } },
+      localVersions: { 'agent-workflow-memory': '1.0.0' },
+      changelogs: { 'agent-workflow-memory': oldStub },
+    });
+    const code = await runDispatch(['memory', '--live', '--expect', 'memory=1.0.0'], deps);
+    assert.equal(code, EXIT.ok);
+  });
+
+  it('a plain dry-run is NOT stub-gated (the gate is a live preflight)', async () => {
+    const { deps } = makeWorld({ changelogs: { 'agent-workflow-memory': STUB_CHANGELOG } });
+    const code = await runDispatch(['memory'], deps);
+    assert.equal(code, EXIT.ok);
+  });
+
+  it('newestChangelogEntry isolates the first heading section', () => {
+    assert.equal(newestChangelogEntry('# C\n\n## 2.0.0 — A\n\nbody\n\n## 1.0.0 — B\n'), '## 2.0.0 — A\n\nbody\n');
+    assert.equal(newestChangelogEntry('# C\n\nno headings\n'), null);
   });
 });
 

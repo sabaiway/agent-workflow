@@ -1,16 +1,22 @@
 #!/usr/bin/env node
-// dispatch-publish.mjs — the ordered per-package publish dispatcher (repo-local, tracked).
+// dispatch-publish.mjs — the ordered publish dispatcher (repo-local, tracked).
 //
 // Replaces the turn-by-turn babysitting of `gh api` dispatch/poll/parse during Release
-// Publishing: one invocation dispatches .github/workflows/publish.yml per package (NEVER
-// `package=all` — Issue-007), polls every run to conclusion, and (in live mode) verifies the
+// Publishing: one invocation dispatches .github/workflows/publish.yml — either ONE `all` run
+// covering the whole family (the preferred form: 2 workflow runs per family release; ordering
+// inside the workflow via `kit needs: [memory, engine]`, and an unchanged member no-ops via the
+// Issue-007 Release-step branch in _publish-one.yml) or one run per named package (the
+// per-package fallback) — polls every run to conclusion, and (in live mode) verifies the
 // published artifact on npm + the GitHub Release.
 //
-//   node scripts/release/dispatch-publish.mjs <pkg>... [--expect <pkg>=X.Y.Z]... [--ref <ref>]
-//        [--live] [--poll-timeout <seconds>] [--repo <owner/name>]
+//   node scripts/release/dispatch-publish.mjs all | <pkg>... [--expect <pkg>=X.Y.Z]...
+//        [--ref <ref>] [--live] [--poll-timeout <seconds>] [--repo <owner/name>]
 //
-//   <pkg>...        ordered package list: memory | engine | kit (kit LAST when present — refused
-//                   otherwise; Issue-007 ordering). One dispatch per package.
+//   all | <pkg>...  `all` ALONE (never mixed with named packages): one workflow run covers
+//                   memory + engine + kit; --live then requires --expect for all three (an
+//                   unchanged package's expectation = its current, already-published version).
+//                   Or an ordered package list: memory | engine | kit (kit LAST when present —
+//                   refused otherwise; Issue-007 ordering). One dispatch per named package.
 //   --expect        (repeatable) the intended version per package — feeds the post-publish
 //                   verification; REQUIRED for every package in --live mode.
 //   --ref           the git ref to dispatch on (default main).
@@ -24,6 +30,9 @@
 //     package's dry-run failure can never leave a partial release.
 //   • Live preflight: clean tree AND `git ls-remote origin <ref>` == the local HEAD (the approved,
 //     pushed release commit) — refused before ANY dispatch on mismatch.
+//   • Live preflight (stub gate): a dispatched package whose CHANGELOG newest entry still carries
+//     the RELEASE-STUB marker (the version-sync --bump placeholder) is refused before ANY
+//     dispatch — "a stub cannot ship" is a gate, not a grep hope.
 //   • Deterministic run correlation: workflow_dispatch returns no run id, so each dispatch is
 //     correlated via a pre/post run-listing diff + head_sha match; zero or multiple candidates →
 //     REFUSE (never guess someone else's run).
@@ -57,12 +66,18 @@ export const EXIT = Object.freeze({
 
 export const fail = (exitCode, message) => Object.assign(new Error(message), { exitCode });
 
-// The publish.yml package vocabulary (minus the forbidden `all`) → package dir.
+// The publish.yml NAMED-package vocabulary → package dir. `all` is deliberately NOT an entry:
+// it is a dispatch-only token (what the workflow receives), never a package dir — the two
+// target lists below (dispatch vs preflight/verify) keep the roles distinct.
 export const PKG_DIRS = Object.freeze({
   memory: 'agent-workflow-memory',
   engine: 'agent-workflow-engine',
   kit: 'agent-workflow-kit',
 });
+
+// What ONE `all` run covers: the preflight/verify iteration order (kit last, matching the
+// workflow's own `kit needs: [memory, engine]` ordering).
+export const ALL_PACKAGES = Object.freeze(['memory', 'engine', 'kit']);
 
 export const WORKFLOW_FILE = 'publish.yml';
 const WORKFLOW_ONE_REL = '.github/workflows/_publish-one.yml';
@@ -159,7 +174,7 @@ const sleepDefault = (ms) => new Promise((resolveSleep) => setTimeout(resolveSle
 // ── arg parsing (usage → exit 2) ──────────────────────────────────────────────────────
 
 const USAGE =
-  'usage: dispatch-publish.mjs <pkg>... [--expect <pkg>=X.Y.Z]... [--ref <ref>] [--live] [--poll-timeout <seconds>] [--repo <owner/name>]';
+  'usage: dispatch-publish.mjs all | <pkg>... [--expect <pkg>=X.Y.Z]... [--ref <ref>] [--live] [--poll-timeout <seconds>] [--repo <owner/name>]';
 
 export const parseArgs = (argv) => {
   const opts = { packages: [], expect: {}, ref: 'main', live: false, pollTimeoutS: DEFAULT_POLL_TIMEOUT_S, repo: null, help: false };
@@ -199,19 +214,29 @@ export const parseArgs = (argv) => {
   }
   if (opts.help) return opts;
   if (opts.packages.length === 0) throw fail(EXIT.usage, `no packages given\n${USAGE}`);
-  for (const pkg of opts.packages) {
-    if (pkg === 'all') throw fail(EXIT.usage, 'package "all" is refused — one dispatch per package (Issue-007); list them in order instead');
-    if (!PKG_DIRS[pkg]) throw fail(EXIT.usage, `unknown package "${pkg}" (known: ${Object.keys(PKG_DIRS).join(', ')})`);
-  }
-  if (new Set(opts.packages).size !== opts.packages.length) throw fail(EXIT.usage, 'duplicate package in the ordered list');
-  const kitIndex = opts.packages.indexOf('kit');
-  if (kitIndex !== -1 && kitIndex !== opts.packages.length - 1) {
-    throw fail(EXIT.usage, 'kit must be LAST in the ordered list (it composes on memory + engine — Issue-007 ordering)');
+  if (opts.packages.includes('all')) {
+    // `all` is accepted ONLY alone — mixed with named packages the intent is ambiguous (the
+    // `all` run would already cover every named one).
+    if (opts.packages.length > 1) {
+      throw fail(EXIT.usage, '"all" must be given ALONE — one all-run already covers memory + engine + kit (drop the named packages, or name them without "all")');
+    }
+  } else {
+    for (const pkg of opts.packages) {
+      if (!PKG_DIRS[pkg]) throw fail(EXIT.usage, `unknown package "${pkg}" (known: all, ${Object.keys(PKG_DIRS).join(', ')})`);
+    }
+    if (new Set(opts.packages).size !== opts.packages.length) throw fail(EXIT.usage, 'duplicate package in the ordered list');
+    const kitIndex = opts.packages.indexOf('kit');
+    if (kitIndex !== -1 && kitIndex !== opts.packages.length - 1) {
+      throw fail(EXIT.usage, 'kit must be LAST in the ordered list (it composes on memory + engine — Issue-007 ordering)');
+    }
   }
   if (opts.live) {
-    const missing = opts.packages.filter((pkg) => !opts.expect[pkg]);
+    // For `all`, every family package needs an expectation — an unchanged package's expectation
+    // is simply its current, already-published version (stale-expect + verify both hold for it).
+    const required = opts.packages.includes('all') ? ALL_PACKAGES : opts.packages;
+    const missing = required.filter((pkg) => !opts.expect[pkg]);
     if (missing.length > 0) {
-      throw fail(EXIT.usage, `--live requires --expect <pkg>=X.Y.Z for every dispatched package (missing: ${missing.join(', ')})`);
+      throw fail(EXIT.usage, `--live requires --expect <pkg>=X.Y.Z for every ${opts.packages.includes('all') ? 'family package (all = memory + engine + kit)' : 'dispatched package'} (missing: ${missing.join(', ')})`);
     }
   }
   return opts;
@@ -221,6 +246,29 @@ export const parseOriginRepo = (originUrl) => {
   const match = originUrl.trim().match(/github\.com[:/]([^/]+\/[^/.\s]+)(\.git)?$/);
   if (!match) throw fail(EXIT.preflight, `cannot derive owner/repo from origin url "${originUrl.trim()}" — pass --repo`);
   return match[1];
+};
+
+// ── the CHANGELOG stub gate (live preflight) ──────────────────────────────────────────
+
+// `version-sync.mjs --bump` inserts a loud placeholder heading carrying this marker; the same
+// release session replaces it with the real entry. "A stub cannot ship silently" is a GATE here,
+// not a grep hope — the verify pass is deliberately stub-agnostic (the heading parses), so the
+// LIVE preflight is the one place that refuses it.
+export const RELEASE_STUB_MARKER = 'RELEASE-STUB';
+
+// The newest entry = from the first `## ` heading to (exclusive) the next one.
+export const newestChangelogEntry = (text) => {
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((line) => /^##\s/.test(line));
+  if (start === -1) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (/^##\s/.test(lines[i])) {
+      end = i;
+      break;
+    }
+  }
+  return lines.slice(start, end).join('\n');
 };
 
 // ── the run machinery ─────────────────────────────────────────────────────────────────
@@ -342,6 +390,14 @@ export const runDispatch = async (argv, deps = {}) => {
       return EXIT.ok;
     }
 
+    // D6: `all` resolves to TWO distinct target lists — the DISPATCH target (what the workflow
+    // receives: the single `all` token) and the preflight/verify target list (the package names
+    // the stale-expect check + verifyPublished iterate). PKG_DIRS has no `all` entry, so one
+    // shared list cannot serve both roles.
+    const isAll = opts.packages.includes('all');
+    const dispatchTargets = isAll ? ['all'] : opts.packages;
+    const verifyTargets = isAll ? [...ALL_PACKAGES] : opts.packages;
+
     // Preflight — everything that can refuse does so BEFORE any dispatch.
     const tagFor = readTagTemplate(readFile(join(root, WORKFLOW_ONE_REL), 'utf8'));
     const repo = opts.repo ?? parseOriginRepo(runGit(['remote', 'get-url', 'origin']));
@@ -358,16 +414,25 @@ export const runDispatch = async (argv, deps = {}) => {
           `origin/${opts.ref} is at ${expectedSha} but the local HEAD is ${localHead} — the approved release commit must be pushed first; refusing ANY live dispatch`,
         );
       }
-      // A stale --expect must never ship: the workflow publishes whatever package.json carries,
-      // so each expectation is compared to the LOCAL package version BEFORE any dispatch — a
-      // mismatch would otherwise publish the wrong artifact and fail only at post-verify.
-      for (const pkg of opts.packages) {
+      for (const pkg of verifyTargets) {
         const dir = PKG_DIRS[pkg];
+        // A stale --expect must never ship: the workflow publishes whatever package.json carries,
+        // so each expectation is compared to the LOCAL package version BEFORE any dispatch — a
+        // mismatch would otherwise publish the wrong artifact and fail only at post-verify.
         const localVersion = JSON.parse(readFile(join(root, dir, 'package.json'), 'utf8')).version;
         if (localVersion !== opts.expect[pkg]) {
           throw fail(
             EXIT.preflight,
             `--expect ${pkg}=${opts.expect[pkg]} but ${dir}/package.json carries ${localVersion} — a stale expectation; refusing ANY live dispatch`,
+          );
+        }
+        // D4 stub gate: a CHANGELOG whose newest entry still carries the --bump placeholder
+        // means the real entry was never written — refused before ANY dispatch.
+        const newestEntry = newestChangelogEntry(readFile(join(root, dir, 'CHANGELOG.md'), 'utf8'));
+        if (newestEntry !== null && newestEntry.includes(RELEASE_STUB_MARKER)) {
+          throw fail(
+            EXIT.preflight,
+            `${dir}/CHANGELOG.md newest entry still carries ${RELEASE_STUB_MARKER} — write the real changelog entry before ANY live dispatch`,
           );
         }
       }
@@ -379,20 +444,26 @@ export const runDispatch = async (argv, deps = {}) => {
 
     const ctx = { ghApi, repo, ref: opts.ref, expectedSha, expect: opts.expect, tagFor, fetchJson, readFile, root, pollTimeoutS: opts.pollTimeoutS, now, sleep, log };
 
-    // Phase 1 — ALL dry-runs conclude green before the FIRST live dispatch.
-    for (const pkg of opts.packages) await dispatchAndAwait({ pkg, dryRun: true, ctx });
-    log(`✓ all ${opts.packages.length} dry-run(s) green (${opts.packages.join(' → ')})`);
+    // Phase 1 — ALL dry-runs conclude green before the FIRST live dispatch (for `all` that is
+    // ONE dry-run workflow run covering the family).
+    for (const pkg of dispatchTargets) await dispatchAndAwait({ pkg, dryRun: true, ctx });
+    log(`✓ all ${dispatchTargets.length} dry-run(s) green (${dispatchTargets.join(' → ')})`);
     if (!opts.live) {
       log('dry-run mode — no live dispatch performed (re-run with --live after approval).');
       return EXIT.ok;
     }
 
-    // Phase 2 — live, in order (kit last enforced at parse), verify after each.
-    for (const pkg of opts.packages) {
+    // Phase 2 — live. Named lists dispatch in order (kit last enforced at parse) and verify
+    // after each package; `all` is ONE live run (ordering lives in the workflow's
+    // `kit needs: [memory, engine]`) verified for every family package afterwards.
+    for (const pkg of dispatchTargets) {
       await dispatchAndAwait({ pkg, dryRun: false, ctx });
-      await verifyPublished({ pkg, ctx });
+      if (!isAll) await verifyPublished({ pkg, ctx });
     }
-    log(`✓ published + verified: ${opts.packages.map((pkg) => `${pkg}@${opts.expect[pkg]}`).join(' · ')}`);
+    if (isAll) {
+      for (const pkg of verifyTargets) await verifyPublished({ pkg, ctx });
+    }
+    log(`✓ published + verified: ${verifyTargets.map((pkg) => `${pkg}@${opts.expect[pkg]}`).join(' · ')}`);
     return EXIT.ok;
   } catch (err) {
     logError(`[dispatch-publish] ${err.message}`);
