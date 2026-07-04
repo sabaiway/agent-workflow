@@ -31,6 +31,7 @@ import {
   END_MARKER,
 } from '../tools/inject-methodology.mjs';
 import { refreshReadme, serializeConfig, CANON_README, KNOWN_PRIOR_README } from '../tools/orchestration-config.mjs';
+import { runCli as lensReconcileCli, extractLensRegion, renderLens, normalizeLensBody, parseLensPriors } from '../tools/lens-region.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const FAMILY_ROOT = resolve(KIT_ROOT, '..');
@@ -157,6 +158,55 @@ describe('composition root — delegate (substrate present + healthy)', () => {
     assert.equal(extractSlot(filled).trim(), fragment.trim(), 'the slot now carries the bounded fragment');
     const lineCount = filled.split('\n').length - (filled.endsWith('\n') ? 1 : 0);
     assert.ok(lineCount <= AGENTS_MD_CAP, `entry point within the ${AGENTS_MD_CAP}-line cap (got ${lineCount})`);
+  });
+});
+
+// The AD-041 bootstrap seam: after the substrate deploys docs/ai/agent_rules.md, the root runs the
+// lens-region reconcile against the INSTALLED engine — a fresh seed is already current (zero-diff),
+// a stale-memory seed (an older canonical lens body) converges to the engine canon on first touch.
+describe('composition root — the lens region converges after the substrate deploy (AD-041)', () => {
+  const ENGINE_DIR = join(FAMILY_ROOT, 'agent-workflow-engine');
+  const runLens = async (target) => {
+    const logs = [];
+    const code = await lensReconcileCli(['reconcile', target], {
+      log: (l) => logs.push(l),
+      logError: (l) => logs.push(l),
+      env: { AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR },
+    });
+    return { code, text: logs.join('\n') };
+  };
+
+  it('a FRESH substrate seed reports already current (zero-diff)', async () => {
+    const { docsAi } = makeProject();
+    const target = join(docsAi, 'agent_rules.md');
+    cpSync(join(substrateDir, 'references', 'templates', 'agent_rules.md'), target);
+    const { code, text } = await runLens(target);
+    assert.equal(code, 0, text);
+    assert.match(text, /already current/);
+  });
+
+  it('a STALE-memory seed (a known-prior lens body) is refreshed to the engine canon', async () => {
+    const { docsAi } = makeProject();
+    const target = join(docsAi, 'agent_rules.md');
+    const seeded = readFileSync(join(substrateDir, 'references', 'templates', 'agent_rules.md'), 'utf8');
+    const fragment = readFileSync(join(ENGINE_DIR, 'references', 'agent-rules-lens.md'), 'utf8');
+    const priors = parseLensPriors(readFileSync(join(ENGINE_DIR, 'references', 'agent-rules-lens-priors.md'), 'utf8'));
+    const region = extractLensRegion(seeded);
+    assert.equal(region.found, true, 'the substrate template carries the lens block');
+    // Rewind the seeded block to the newest PRIOR body — the exact shape an older memory ships.
+    const stale = seeded.replace(region.body, renderLens(priors[priors.length - 1], region.number));
+    assert.notEqual(stale, seeded, 'sanity: the rewind changed the block');
+    writeFileSync(target, stale);
+
+    const { code, text } = await runLens(target);
+    assert.equal(code, 0, text);
+    assert.match(text, /refreshed the planning\/review lens section/);
+    const converged = extractLensRegion(readFileSync(target, 'utf8'));
+    assert.equal(
+      normalizeLensBody(converged.body),
+      normalizeLensBody(fragment),
+      'the stale seed converged to the installed engine canon',
+    );
   });
 });
 

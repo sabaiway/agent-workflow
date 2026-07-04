@@ -30,7 +30,7 @@ import {
 import { VALID, INVALID, UNSUPPORTED } from './manifest/validate.mjs';
 import { INTERNAL_RENDER_FORBIDDEN } from './labels.mjs';
 import { START_MARKER } from './hide-footprint.mjs';
-import { ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
+import { ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL, LENS_FRAGMENT_REL, LENS_PRIORS_REL } from './engine-source.mjs';
 import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
 import { READY, NEEDS_SKILL } from './detect-backends.mjs';
 
@@ -146,19 +146,21 @@ describe('surveyFamily', () => {
   // dir + everything else is a 'dir'. readFileSync returns content for a present fragment.
   // Pin the mock to the AUTHORITATIVE engine-source constants (mirrors engine-source.test.mjs), so a
   // fragment-path rename follows here instead of silently passing against the old basename.
-  const fragmentStat = ({ orch = 'file', proc = 'file' }) => (p) => {
+  const fragmentStat = ({ orch = 'file', proc = 'file', lens = 'file', lensPriors = 'file' }) => (p) => {
     const s = String(p);
     if (s.endsWith(ORCHESTRATION_FRAGMENT_REL)) return orch;
     if (s.endsWith(PROCEDURES_FRAGMENT_REL)) return proc;
+    if (s.endsWith(LENS_PRIORS_REL)) return lensPriors;
+    if (s.endsWith(LENS_FRAGMENT_REL)) return lens;
     return 'dir';
   };
   const caveatsOf = (rows) => rows.find((r) => r.kind === 'methodology-engine').caveats ?? [];
 
-  it('a current engine WITH BOTH fragments readable carries NO caveat', () => {
+  it('a current engine WITH every live-read fragment readable carries NO caveat', () => {
     const rows = surveyFamily(engineDeps({ statType: fragmentStat({}), readFileSync: () => '> a bounded fragment' }));
     const engine = rows.find((r) => r.kind === 'methodology-engine');
     assert.equal(engine.manifestState, OK);
-    assert.equal(engine.caveats, undefined, 'no caveats when both live fragments are present + readable');
+    assert.equal(engine.caveats, undefined, 'no caveats when every live fragment is present + readable');
   });
 
   it('an OK engine MISSING the orchestration fragment gets the recipes caveat (only)', () => {
@@ -184,20 +186,43 @@ describe('surveyFamily', () => {
     assert.match(caveats[0], /activity-procedures|procedures canon/i);
   });
 
-  it('an engine MISSING BOTH fragments surfaces BOTH caveats (neither overwrites the other)', () => {
+  it('an OK pre-1.13.0 engine MISSING the agent-rules lens canon gets the lens caveat (only)', () => {
+    // The realistic post-release case: an engine at 1.12.0 ships recipes + procedures but no lens pair.
     const rows = surveyFamily(engineDeps({
-      readVersion: () => ({ version: '1.1.0' }),
-      statType: fragmentStat({ orch: null, proc: null }),
+      readVersion: () => ({ version: '1.12.0' }),
+      statType: fragmentStat({ lens: null, lensPriors: null }),
+      readFileSync: () => '> a bounded fragment',
     }));
     const caveats = caveatsOf(rows);
-    assert.equal(caveats.length, 2, 'both missing fragments are reported');
+    assert.equal(caveats.length, 1);
+    assert.match(caveats[0], /agent-rules lens/i);
+  });
+
+  it('a lens FRAGMENT present with the PRIOR STORE missing still gets the lens caveat (the reconcile needs the PAIR)', () => {
+    const rows = surveyFamily(engineDeps({
+      statType: fragmentStat({ lensPriors: null }),
+      readFileSync: () => '> a bounded fragment',
+    }));
+    const caveats = caveatsOf(rows);
+    assert.equal(caveats.length, 1, 'a half-shipped lens pair must not report healthy');
+    assert.match(caveats[0], /agent-rules lens/i);
+  });
+
+  it('an engine MISSING every fragment surfaces EVERY caveat (none overwrites another)', () => {
+    const rows = surveyFamily(engineDeps({
+      readVersion: () => ({ version: '1.1.0' }),
+      statType: fragmentStat({ orch: null, proc: null, lens: null }),
+    }));
+    const caveats = caveatsOf(rows);
+    assert.equal(caveats.length, 3, 'every missing fragment is reported');
     assert.ok(caveats.some((c) => /recipes pointer/i.test(c)));
     assert.ok(caveats.some((c) => /activity-procedures|procedures canon/i.test(c)));
+    assert.ok(caveats.some((c) => /agent-rules lens/i.test(c)));
   });
 
   it('a broken engine whose fragments are DIRECTORIES is NOT a false "ok"', () => {
     const rows = surveyFamily(engineDeps({ statType: () => 'dir' })); // every fragment path is a dir
-    assert.equal(caveatsOf(rows).length, 2, 'non-file fragments are caveated');
+    assert.equal(caveatsOf(rows).length, 3, 'non-file fragments are caveated');
   });
 
   it('a fragment PRESENT but UNREADABLE is NOT a false "ok" (mirrors the consumer STOP)', () => {
@@ -207,7 +232,7 @@ describe('surveyFamily', () => {
         throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); // but unreadable
       },
     }));
-    assert.equal(caveatsOf(rows).length, 2, 'unreadable fragments are caveated, not reported clean');
+    assert.equal(caveatsOf(rows).length, 3, 'unreadable fragments are caveated, not reported clean');
   });
 });
 

@@ -83,7 +83,9 @@ export const handoffPlan = (delegate) =>
     ? {
         mode: 'delegate',
         memoryWrites: ['docs/ai/', 'AGENTS.md', 'docs/ai/.memory-version'],
-        kitWrites: ['AGENTS.md methodology slot', 'docs/ai/.workflow-version'],
+        // The lens region runs AFTER the substrate deploy (its own precondition: the file exists)
+        // — it converges a stale-memory seed to the installed engine's canon (AD-041).
+        kitWrites: ['AGENTS.md methodology slot', 'docs/ai/agent_rules.md lens region', 'docs/ai/.workflow-version'],
         stampsPresent: ['.memory-version', '.workflow-version'],
         memoryRaisesCommitGate: false,
         commitGate: 'kit-only-after-injection',
@@ -93,8 +95,9 @@ export const handoffPlan = (delegate) =>
         memoryWrites: [],
         // Fallback now ships the kit's OWN AGENTS.md carrying the EMPTY methodology slot (Plan 2);
         // the kit reconciles it (ensure-slot + inject-because-empty) exactly like the delegate
-        // path — so both paths end with a FILLED slot, not inline methodology.
-        kitWrites: ['docs/ai/', 'AGENTS.md', 'AGENTS.md methodology slot', 'docs/ai/.workflow-version'],
+        // path — so both paths end with a FILLED slot, not inline methodology. The lens region
+        // runs after the fallback-template copy of docs/ai (same reconcile, both paths — AD-041).
+        kitWrites: ['docs/ai/', 'AGENTS.md', 'AGENTS.md methodology slot', 'docs/ai/agent_rules.md lens region', 'docs/ai/.workflow-version'],
         stampsPresent: ['.workflow-version'],
         memoryRaisesCommitGate: false,
         commitGate: 'kit-only-after-injection',

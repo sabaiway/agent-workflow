@@ -128,6 +128,10 @@ describe('handoffPlan — stamp sets + single commit gate', () => {
     assert.ok(p.memoryWrites.includes('docs/ai/.memory-version'));
     // Delegate is the ONLY branch with a real slot (memory ships it empty; the kit injects).
     assert.ok(p.kitWrites.some((w) => w.includes('slot')), 'delegate kitWrites should name the methodology slot');
+    assert.ok(
+      p.kitWrites.some((w) => w.includes('agent_rules.md lens region')),
+      'delegate kitWrites must name the lens-region refresh (it converges a stale-memory seed)',
+    );
   });
 
   it('fallback → only .workflow-version; kit writes everything; one kit gate', () => {
@@ -141,6 +145,10 @@ describe('handoffPlan — stamp sets + single commit gate', () => {
     assert.ok(
       p.kitWrites.some((w) => w.includes('slot')) && !p.kitWrites.some((w) => w.includes('inline')),
       'fallback kitWrites should describe the methodology slot, not inline methodology',
+    );
+    assert.ok(
+      p.kitWrites.some((w) => w.includes('agent_rules.md lens region')),
+      'fallback kitWrites must name the lens-region refresh (both paths run it)',
     );
   });
 });

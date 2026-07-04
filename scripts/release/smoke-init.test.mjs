@@ -1,11 +1,15 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import {
   INSTALL_CMD,
   INSTALL_ARGS,
   buildSanitizedEnv,
   matchExpectations,
+  parseFileExpectation,
+  matchFileExpectations,
   runCli,
 } from './smoke-init.mjs';
 
@@ -117,9 +121,103 @@ describe('runCli — stubbed installer fixture', () => {
     assert.equal(code, 0);
   });
 
-  it('usage: no --expect-line → exit 2 (a smoke with no expectations proves nothing)', () => {
+  it('usage: no expectations at all → exit 2 (a smoke with no expectations proves nothing)', () => {
     const { code, text } = runStubbed([]);
     assert.equal(code, 2);
-    assert.match(text, /at least one --expect-line/);
+    assert.match(text, /at least one --expect-line or --expect-file/);
+  });
+});
+
+// ── --expect-file: installed-file content assertions (a line match cannot see the disk) ─
+
+describe('parseFileExpectation — sandbox-HOME-relative <path>=<substring>', () => {
+  it('splits on the FIRST = (the substring may carry its own)', () => {
+    const parsed = parseFileExpectation('a/b.md=version = 1.13.0');
+    assert.equal(parsed.rel, 'a/b.md');
+    assert.equal(parsed.substring, 'version = 1.13.0');
+  });
+  it('rejects an absolute path, .. traversal, and empty halves (isolation contract)', () => {
+    for (const bad of ['/etc/passwd=x', 'a/../../b=x', '=x', 'a=', 'no-equals']) {
+      assert.throws(() => parseFileExpectation(bad), /expect-file/, `must reject "${bad}"`);
+    }
+  });
+  it('rejects win32 dialect escapes too (drive-absolute, backslash traversal)', () => {
+    for (const bad of ['C:\\host\\file=x', '\\\\srv\\share=x', '..\\secret=x', 'a\\..\\..\\b=x', '\\root=x']) {
+      assert.throws(() => parseFileExpectation(bad), /expect-file/, `must reject "${bad}"`);
+    }
+  });
+});
+
+describe('matchFileExpectations — ok / no-match / absent (injected read)', () => {
+  const files = { '/h/skills/lens.md': 'the canonical lens body' };
+  const read = (p) => {
+    if (!(p in files)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    return files[p];
+  };
+  it('classifies each expectation', () => {
+    const results = matchFileExpectations(
+      '/h',
+      [
+        { rel: 'skills/lens.md', substring: 'canonical lens' },
+        { rel: 'skills/lens.md', substring: 'not in there' },
+        { rel: 'skills/gone.md', substring: 'x' },
+      ],
+      read,
+    );
+    assert.deepEqual(results.map((r) => r.state), ['ok', 'no-match', 'absent']);
+  });
+});
+
+describe('runCli --expect-file — end-to-end against a stubbed installer that writes real files', () => {
+  const runWithFile = (argv, { writeRel = null, content = '' } = {}) => {
+    const out = [];
+    const err = [];
+    const code = runCli(argv, {
+      log: (line) => out.push(line),
+      logError: (line) => err.push(line),
+      baseEnv: { PATH: '/usr/bin', HOME: '/home/real-user' },
+      exec: (cmd, args, { env }) => {
+        if (writeRel) {
+          const target = join(env.HOME, writeRel);
+          mkdirSync(dirname(target), { recursive: true });
+          writeFileSync(target, content);
+        }
+        return { status: 0, stdout: 'installer ok\n', stderr: '' };
+      },
+    });
+    return { code, text: [...out, ...err].join('\n') };
+  };
+
+  it('a present file containing the substring → PASS with the ✓ file line', () => {
+    const rel = '.claude/skills/agent-workflow-engine/references/agent-rules-lens.md';
+    const { code, text } = runWithFile(['--expect-file', `${rel}=process-fidelity invariants`], {
+      writeRel: rel,
+      content: '### 2.x. Planning, review & process-fidelity invariants\n',
+    });
+    assert.equal(code, 0);
+    assert.match(text, /✓ file .*agent-rules-lens\.md contains/);
+    assert.match(text, /PASS — all 1 expectation/);
+  });
+
+  it('an absent file → exit 1 with the distinct absent wording', () => {
+    const { code, text } = runWithFile(['--expect-file', 'missing/file.md=x']);
+    assert.equal(code, 1);
+    assert.match(text, /✗ file missing\/file\.md is absent/);
+    assert.match(text, /FAIL — 1\/1 expectation/);
+  });
+
+  it('a present file WITHOUT the substring → exit 1 with the distinct no-match wording', () => {
+    const { code, text } = runWithFile(['--expect-file', 'a/b.md=needle'], { writeRel: 'a/b.md', content: 'haystack only\n' });
+    assert.equal(code, 1);
+    assert.match(text, /✗ file a\/b\.md does not contain: "needle"/);
+  });
+
+  it('line + file expectations compose in one run (counts add up)', () => {
+    const { code, text } = runWithFile(
+      ['--expect-line', 'installer ok', '--expect-file', 'a/b.md=body'],
+      { writeRel: 'a/b.md', content: 'the body\n' },
+    );
+    assert.equal(code, 0);
+    assert.match(text, /PASS — all 2 expectation/);
   });
 });

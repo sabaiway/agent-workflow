@@ -8,6 +8,12 @@
 // this harness only executes and matches deterministically.
 //
 //   node scripts/release/smoke-init.mjs --expect-line <substring> [--expect-line <substring>]...
+//                                       [--expect-file <HOME-relative-path>=<substring>]...
+//
+// --expect-file asserts INSTALLED FILE CONTENT (a line match cannot see what landed on disk):
+// the path is resolved against the sandbox HOME (never the host), and the file must contain the
+// substring. Deterministic-first (AD-034): the release smoke asserts payload presence by script,
+// not by eyeball.
 //
 // Isolation contract (pinned by smoke-init.test.mjs): the child runs with a SANITIZED env —
 // HOME + npm cache point INTO the temp sandbox and every family/bridge override
@@ -19,9 +25,9 @@
 // on any failure the full captured output is dumped for triage. Exit 0 iff the installer exited
 // 0 AND every expectation matched; 1 otherwise; 2 usage. Dependency-free, Node >= 18.
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, isAbsolute, win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
@@ -61,10 +67,41 @@ export const matchExpectations = (outputText, expectations) => {
   });
 };
 
-const USAGE = 'usage: smoke-init.mjs --expect-line <substring> [--expect-line <substring>]... [--keep]';
+// PURE parse of one --expect-file value: `<HOME-relative-path>=<substring>`, split on the FIRST
+// `=` (the substring may itself carry one). The path must stay sandbox-HOME-relative — an
+// absolute or `..`-traversing path could read the HOST filesystem, breaking the isolation contract.
+export const parseFileExpectation = (raw) => {
+  const eq = raw.indexOf('=');
+  if (eq <= 0 || eq === raw.length - 1) {
+    throw fail(2, '--expect-file requires <sandbox-HOME-relative path>=<non-empty substring>');
+  }
+  const rel = raw.slice(0, eq);
+  const substring = raw.slice(eq + 1);
+  // Reject BOTH path dialects (win32.isAbsolute also covers `/x` and `C:\x`; `..` is checked per
+  // segment across / and \) — a host-absolute or traversing path would escape the sandbox HOME.
+  if (isAbsolute(rel) || win32.isAbsolute(rel) || rel.split(/[\\/]/).includes('..')) {
+    throw fail(2, `--expect-file path must stay sandbox-HOME-relative (got "${rel}")`);
+  }
+  return { rel, substring };
+};
+
+// Match each file expectation against the sandbox HOME: 'ok' (file present + substring found),
+// 'no-match' (present, substring absent), 'absent' (unreadable/missing). Injectable read.
+export const matchFileExpectations = (home, fileExpectations, readFile = readFileSync) =>
+  fileExpectations.map(({ rel, substring }) => {
+    try {
+      const content = readFile(join(home, rel), 'utf8');
+      return { rel, substring, state: content.includes(substring) ? 'ok' : 'no-match' };
+    } catch {
+      return { rel, substring, state: 'absent' };
+    }
+  });
+
+const USAGE =
+  'usage: smoke-init.mjs [--expect-line <substring>]... [--expect-file <HOME-relative-path>=<substring>]... [--keep] (at least one expectation)';
 
 const parseArgs = (argv) => {
-  const opts = { expectations: [], keep: false, help: false };
+  const opts = { expectations: [], fileExpectations: [], keep: false, help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') opts.help = true;
@@ -73,12 +110,16 @@ const parseArgs = (argv) => {
       i += 1;
       if (argv[i] === undefined || argv[i] === '') throw fail(2, '--expect-line requires a non-empty substring');
       opts.expectations.push(argv[i]);
+    } else if (arg === '--expect-file') {
+      i += 1;
+      if (argv[i] === undefined || argv[i] === '') throw fail(2, '--expect-file requires a non-empty <path>=<substring>');
+      opts.fileExpectations.push(parseFileExpectation(argv[i]));
     } else {
       throw fail(2, `unknown argument "${arg}"\n${USAGE}`);
     }
   }
-  if (!opts.help && opts.expectations.length === 0) {
-    throw fail(2, `at least one --expect-line is required (a smoke with no expectations proves nothing)\n${USAGE}`);
+  if (!opts.help && opts.expectations.length === 0 && opts.fileExpectations.length === 0) {
+    throw fail(2, `at least one --expect-line or --expect-file is required (a smoke with no expectations proves nothing)\n${USAGE}`);
   }
   return opts;
 };
@@ -113,16 +154,24 @@ export const runCli = (argv, deps = {}) => {
       if (result.matched !== null) log(`[smoke-init] ✓ ${result.matched.trim()}`);
       else logError(`[smoke-init] ✗ MISSING expected line containing: "${result.expected}"`);
     }
+    const fileResults = matchFileExpectations(home, opts.fileExpectations, deps.readFile ?? readFileSync);
+    const fileMisses = fileResults.filter((result) => result.state !== 'ok');
+    for (const result of fileResults) {
+      if (result.state === 'ok') log(`[smoke-init] ✓ file ${result.rel} contains "${result.substring}"`);
+      else if (result.state === 'absent') logError(`[smoke-init] ✗ file ${result.rel} is absent (or unreadable) in the sandbox HOME`);
+      else logError(`[smoke-init] ✗ file ${result.rel} does not contain: "${result.substring}"`);
+    }
     if (installerFailed) {
       logError(`[smoke-init] installer exited ${res.error ? `with spawn error ${res.error.code}` : res.status}`);
     }
-    if (installerFailed || missing.length > 0) {
+    const totalExpectations = opts.expectations.length + opts.fileExpectations.length;
+    if (installerFailed || missing.length > 0 || fileMisses.length > 0) {
       logError('[smoke-init] full captured output follows:');
       logError(output.trimEnd());
-      log(`[smoke-init] FAIL — ${missing.length}/${opts.expectations.length} expectation(s) missing${installerFailed ? ', installer non-zero' : ''}`);
+      log(`[smoke-init] FAIL — ${missing.length + fileMisses.length}/${totalExpectations} expectation(s) missing${installerFailed ? ', installer non-zero' : ''}`);
       return 1;
     }
-    log(`[smoke-init] PASS — all ${opts.expectations.length} expectation(s) matched.`);
+    log(`[smoke-init] PASS — all ${totalExpectations} expectation(s) matched.`);
     return 0;
   } catch (err) {
     logError(`[smoke-init] ${err.message}`);
