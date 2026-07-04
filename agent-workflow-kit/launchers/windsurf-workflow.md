@@ -14,8 +14,10 @@ reinvent any of it here; the kit's `SKILL.md` is the single source of truth.
 
 ## Steps
 
-1. Read the kit instructions in full: `<KIT_DIR>/SKILL.md`, plus the `references/` files it
-   points to. Wherever it says `${CLAUDE_SKILL_DIR}`, read that as `<KIT_DIR>`.
+1. Read the kit instructions in full: `<KIT_DIR>/SKILL.md` (the thin router), plus the
+   `references/` files it points to — the chosen mode's `<KIT_DIR>/references/modes/<mode>.md`
+   and any `references/shared/` files that mode's `Requires:` line names. Wherever it says
+   `${CLAUDE_SKILL_DIR}`, read that as `<KIT_DIR>`.
 2. Pick the mode:
    - No `docs/ai/` in this project → **bootstrap**.
    - `docs/ai/` already exists → ask the user whether to run **upgrade** instead.

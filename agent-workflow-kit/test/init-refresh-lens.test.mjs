@@ -44,6 +44,10 @@ const missingTokens = (regionText, tokens) => {
 };
 
 const SKILL = readFileSync(resolve(kitRoot, 'SKILL.md'), 'utf8');
+// Post-split: the setup/upgrade procedures live in references/modes/; the composition-root intro
+// (the init refresh-cascade paragraph) stays on the router.
+const SETUP_FILE = readFileSync(resolve(kitRoot, 'references', 'modes', 'setup.md'), 'utf8');
+const UPGRADE_FILE = readFileSync(resolve(kitRoot, 'references', 'modes', 'upgrade.md'), 'utf8');
 const KIT_README = readFileSync(resolve(kitRoot, 'README.md'), 'utf8');
 const ROOT_README = readFileSync(resolve(repoRoot, 'README.md'), 'utf8');
 const FAMILY_MEMBERS_SRC = readFileSync(resolve(kitRoot, 'tools', 'family-members.mjs'), 'utf8');
@@ -51,18 +55,18 @@ const FAMILY_MEMBERS_SRC = readFileSync(resolve(kitRoot, 'tools', 'family-member
 // label · text · region anchors · the distinctive tokens that must live INSIDE that region.
 const SPOTS = [
   {
-    label: 'kit SKILL.md — composition-root intro',
+    label: 'kit SKILL.md — composition-root intro (router)',
     text: SKILL, from: '## Memory substrate', to: '## Modes',
     tokens: ['once placed', 'refresh', 'never a downgrade', '--no-bridges'],
   },
   {
-    label: 'kit SKILL.md — Mode: setup',
-    text: SKILL, from: '### Mode: setup', to: '### Mode: status',
+    label: 'kit references/modes/setup.md — Mode: setup',
+    text: SETUP_FILE, from: '### Mode: setup', to: undefined,
     tokens: ['once placed', '--refresh-placed', 'never a first placement, never a downgrade', 'paste verbatim'],
   },
   {
-    label: 'kit SKILL.md — Mode: upgrade (the 4th stamp-independent reconcile)',
-    text: SKILL, from: '### Mode: upgrade', to: '### Mode: backends',
+    label: 'kit references/modes/upgrade.md — Mode: upgrade (the 4th stamp-independent reconcile)',
+    text: UPGRADE_FILE, from: '### Mode: upgrade', to: undefined,
     tokens: ['placed-bridge refresh — stamp-independent', '--refresh-placed', 'output lines verbatim', 'never a first placement', 'never a downgrade'],
   },
   {
@@ -102,11 +106,11 @@ describe('bridge-delivery lens — placed by setup, refreshed by init/upgrade (d
   }
 
   it('is non-vacuous: a doctored region with a stripped token is reported missing (injected red→green proof)', () => {
-    const doctored = SKILL.replaceAll('--refresh-placed', '--REDACTED');
-    const slice = region(doctored, '### Mode: setup', '### Mode: status', 'doctored SKILL.md');
+    const doctored = SETUP_FILE.replaceAll('--refresh-placed', '--REDACTED');
+    const slice = region(doctored, '### Mode: setup', undefined, 'doctored setup.md');
     assert.deepEqual(missingTokens(slice, ['--refresh-placed']), ['--refresh-placed'],
       'the checker must flag a stripped token — otherwise every spot assertion above is vacuous');
     // And the real, undoctored region passes the same probe (the pair proves red→green).
-    assert.deepEqual(missingTokens(region(SKILL, '### Mode: setup', '### Mode: status', 'SKILL.md'), ['--refresh-placed']), []);
+    assert.deepEqual(missingTokens(region(SETUP_FILE, '### Mode: setup', undefined, 'setup.md'), ['--refresh-placed']), []);
   });
 });

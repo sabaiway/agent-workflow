@@ -17,13 +17,20 @@ import { fileURLToPath } from 'node:url';
 
 const kitRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SKILL = readFileSync(resolve(kitRoot, 'SKILL.md'), 'utf8');
+// Post-split (the progressive-disclosure router): the report contracts live in the shared
+// report-footer file; the mode procedures live in references/modes/<key>.md. The router keeps
+// only the routing surfaces — the whole-file routing asserts below stay on SKILL.
+const FOOTER_FILE = readFileSync(resolve(kitRoot, 'references', 'shared', 'report-footer.md'), 'utf8');
+const UPGRADE_FILE = readFileSync(resolve(kitRoot, 'references', 'modes', 'upgrade.md'), 'utf8');
+const STATUS_FILE = readFileSync(resolve(kitRoot, 'references', 'modes', 'status.md'), 'utf8');
+const BOOTSTRAP_FILE = readFileSync(resolve(kitRoot, 'references', 'modes', 'bootstrap.md'), 'utf8');
 
 // Slice the text between two anchor substrings (to = end-of-file when omitted).
 const between = (text, from, to) => {
   const a = text.indexOf(from);
-  assert.notEqual(a, -1, `SKILL.md is missing the anchor: "${from}"`);
+  assert.notEqual(a, -1, `the split corpus is missing the anchor: "${from}"`);
   const b = to ? text.indexOf(to, a + from.length) : text.length;
-  assert.notEqual(b, -1, `SKILL.md is missing the anchor: "${to}"`);
+  assert.notEqual(b, -1, `the split corpus is missing the anchor: "${to}"`);
   return text.slice(a, b);
 };
 // Collapse all whitespace so assertions survive source re-wrapping (the contract wraps across lines).
@@ -38,15 +45,15 @@ const TWO_AXES_COMPARISON = /npm\/GitHub/i; // the "GitHub shows a bigger number
 // The plain, user-facing NAME the number must carry when it IS shown (never "lineage head").
 const STRUCTURE_NAME = /docs\/ai` structure version/;
 
-// ── Regions ────────────────────────────────────────────────────────────────
-const footer = flat(between(SKILL, '### The version block + welcome mat', '### Version disclosure'));
-const disclosure = flat(between(SKILL, '### Version disclosure', '### Mode: help'));
-const upgrade = between(SKILL, '### Mode: upgrade', '### Mode: backends');
+// ── Regions (anchor-existence keeps the missing-anchor-is-red property) ──────
+const footer = flat(between(FOOTER_FILE, '### The version block + welcome mat', '### Version disclosure'));
+const disclosure = flat(between(FOOTER_FILE, '### Version disclosure', ''));
+const upgrade = between(UPGRADE_FILE, '### Mode: upgrade', '');
 const equalHead = flat(between(upgrade, 'Equal-head exit — a real successful-exit report', '5. Show the relevant'));
 const stopGate = flat(between(upgrade, '2. **Never-downgrade gate — FIRST', '3. **Reconcile the bounded pointers'));
 const step8 = flat(between(upgrade, '8. Re-stamp `docs/ai/.workflow-version`', ''));
-const status = flat(between(SKILL, '### Mode: status', '### Mode: recipes'));
-const bootstrap = flat(between(SKILL, '### Mode: bootstrap', '### Mode: upgrade'));
+const status = flat(between(STATUS_FILE, '### Mode: status', ''));
+const bootstrap = flat(between(BOOTSTRAP_FILE, '### Mode: bootstrap', ''));
 
 describe('report contract — the happy path hides the docs/ai structure number (A1)', () => {
   it('the shared report footer surfaces no structure semver / stamp path / head|lineage wording', () => {
