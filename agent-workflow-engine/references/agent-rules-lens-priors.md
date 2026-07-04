@@ -1,0 +1,79 @@
+# agent-rules-lens — known-prior canonical bodies (append-only)
+
+Every lens-block body a PREVIOUS release ever shipped in an `agent_rules.md` template. The family
+composition root refreshes a deployed `### 2.x. Planning, review & process-fidelity invariants`
+region to the current `references/agent-rules-lens.md` ONLY when the deployed body
+normalize-matches (heading number → `2.x`, trim, CRLF→LF) one of these entries — so every
+unmodified in-the-wild deployment converges on first touch, while a customized region is
+preserved verbatim. A canon wording change edits `agent-rules-lens.md` AND appends the outgoing
+body here — both engine files, an engine-only release.
+
+FROZEN FORMAT (an old reader must keep parsing a newer file — append entries, never reshape):
+
+- Everything above the first delimiter line is this header; parsers ignore it.
+- A delimiter is a line that starts with `<!-- prior` and ends with `-->`; text between is a
+  free-form provenance label (never parsed).
+- An entry body is everything after its delimiter up to the next delimiter or end of file,
+  with leading/trailing blank lines trimmed.
+- APPEND-ONLY: new entries go at the end of the file; never edit or remove an existing entry
+  (a deployment seeded from any past release must keep matching forever).
+
+<!-- prior: 2026-06-30 (AD-029) — the seven process-fidelity invariants land -->
+### 2.x. Planning, review & process-fidelity invariants
+Apply these when authoring a plan, reviewing, folding a finding, or editing code — the layer read **before any code change**. (Full canon: the project's planning / workflow-methodology + orchestration canon.)
+- **Fold by code, not prose.** Before folding a code-touching finding into a plan or change, read the cited `file:line` and cite it — a prose fold drifts from the code and seeds the next bug.
+- **Right altitude.** Pin intent + invariants + acceptance criteria (named tests); leave fine code-mechanics to Execute, where prose cannot diverge from reality.
+- **No code-mechanics in the plan.** A Step still carries its exact paths + commands (the plan-structure / self-review canon); the ceiling is on *fold-bred* detail — a review fold must not push fine code-mechanics (`cd`, an env default, a flag) into prose. A fold that needs a mechanic is the trigger to write the test instead.
+- **Test-as-spec.** Fold a code-touching finding into a red→green TEST, not a prose paragraph — the gate is the only deterministic checker; a paragraph cannot self-check.
+- **Characterize-first.** Before editing UNCOVERED code, pin its current behavior in a green test, then edit — any unintended change goes red. Never edit what has no checker; first give it one. Keep edits atomic/reversible; prefer SUBTRACTIVE folds.
+- **Heavy review at the diff.** Plan-review settles architecture only (≤2 rounds, stop at the pre-existing→fold-induced crossover); the exhaustive per-Step review runs against real compiling code + the full suite, where a regression fails a gate immediately.
+- **Convergence bar.** A review loop is CLEAN only when one round returns **0 blockers + 0 majors** from EVERY backend the recipe names (nits + a ship verdict is the stop). Folding ≠ convergence — re-review after folding.
+- **Recipe fidelity.** Council runs every backend the recipe names, **every round**; silently dropping a ready backend for quota/convenience is a forbidden downgrade — an unavailable backend is a LOUD, stated degrade, never a quiet drop.
+- **ExitPlanMode ≠ execute.** A harness "approved — start coding" prompt authorizes the PLAN only; this methodology overrides it. Continue into execution only as a DELIBERATE transition after the plan + cold-start prompt exist, never an implicit slide.
+
+<!-- prior: 2026-07-01 (AD-031) — review-loop economics: fold-minimally, per-round emission, divergence crossover -->
+### 2.x. Planning, review & process-fidelity invariants
+Apply these when authoring a plan, reviewing, folding a finding, or editing code — the layer read **before any code change**. (Full canon: the project's planning / workflow-methodology + orchestration canon.)
+- **Fold by code, not prose.** Before folding a code-touching finding into a plan or change, read the cited `file:line` and cite it — a prose fold drifts from the code and seeds the next bug.
+- **Right altitude.** Pin intent + invariants + acceptance criteria (named tests); leave fine code-mechanics to Execute, where prose cannot diverge from reality.
+- **No code-mechanics in the plan.** A Step still carries its exact paths + commands (the plan-structure / self-review canon); the ceiling is on *fold-bred* detail — a review fold must not push fine code-mechanics (`cd`, an env default, a flag) into prose. A fold that needs a mechanic is the trigger to write the test instead.
+- **Test-as-spec.** Fold a code-touching finding into a red→green TEST, not a prose paragraph — the gate is the only deterministic checker; a paragraph cannot self-check.
+- **Characterize-first.** Before editing UNCOVERED code, pin its current behavior in a green test, then edit — any unintended change goes red. Never edit what has no checker; first give it one. Keep edits atomic/reversible; prefer SUBTRACTIVE folds.
+- **Fold minimally — prose has no checker.** An ephemeral, gitignored plan is prose with no executable checker; fold **minimally, in ONE place** and run a **self-consistency** read across the plan before every re-review — a fold that drifts several prose spots is what turns a 2-round review into churn.
+- **Heavy review at the diff.** Plan-review settles architecture only (≤2 rounds, stop at the pre-existing→fold-induced crossover); the exhaustive per-Step review runs against real compiling code + the full suite, where a regression fails a gate immediately. **Backend divergence** (one backend grounded-ships while another keeps revising mechanics) IS that crossover — resolve at altitude, don't exhaust the strictest backend; route an all-mechanics/CI or prose-only artifact to a **thin plan + diff-review**.
+- **Convergence bar.** A review loop is CLEAN only when one round returns **0 blockers + 0 majors** from EVERY backend the recipe names (nits + a ship verdict is the stop). Folding ≠ convergence — re-review after folding.
+- **Per-round emission.** Every review round emits **{round N · finding-origin tally · per-backend verdict}** so the crossover is a computed, visible signal, not a remembered rule.
+- **Recipe fidelity.** Council runs every backend the recipe names, **every round**; silently dropping a ready backend for quota/convenience is a forbidden downgrade — an unavailable backend is a LOUD, stated degrade, never a quiet drop.
+- **ExitPlanMode ≠ execute.** A harness "approved — start coding" prompt authorizes the PLAN only; this methodology overrides it. Continue into execution only as a DELIBERATE transition after the plan + cold-start prompt exist, never an implicit slide.
+
+<!-- prior: 2026-07-02 (AD-035) — the cost-lanes bullet lands -->
+### 2.x. Planning, review & process-fidelity invariants
+Apply these when authoring a plan, reviewing, folding a finding, or editing code — the layer read **before any code change**. (Full canon: the project's planning / workflow-methodology + orchestration canon.)
+- **Fold by code, not prose.** Before folding a code-touching finding into a plan or change, read the cited `file:line` and cite it — a prose fold drifts from the code and seeds the next bug.
+- **Right altitude.** Pin intent + invariants + acceptance criteria (named tests); leave fine code-mechanics to Execute, where prose cannot diverge from reality.
+- **No code-mechanics in the plan.** A Step still carries its exact paths + commands (the plan-structure / self-review canon); the ceiling is on *fold-bred* detail — a review fold must not push fine code-mechanics (`cd`, an env default, a flag) into prose. A fold that needs a mechanic is the trigger to write the test instead.
+- **Test-as-spec.** Fold a code-touching finding into a red→green TEST, not a prose paragraph — the gate is the only deterministic checker; a paragraph cannot self-check.
+- **Characterize-first.** Before editing UNCOVERED code, pin its current behavior in a green test, then edit — any unintended change goes red. Never edit what has no checker; first give it one. Keep edits atomic/reversible; prefer SUBTRACTIVE folds.
+- **Fold minimally — prose has no checker.** An ephemeral, gitignored plan is prose with no executable checker; fold **minimally, in ONE place** and run a **self-consistency** read across the plan before every re-review — a fold that drifts several prose spots is what turns a 2-round review into churn.
+- **Heavy review at the diff.** Plan-review settles architecture only (≤2 rounds, stop at the pre-existing→fold-induced crossover); the exhaustive per-Step review runs against real compiling code + the full suite, where a regression fails a gate immediately. **Backend divergence** (one backend grounded-ships while another keeps revising mechanics) IS that crossover — resolve at altitude, don't exhaust the strictest backend; route an all-mechanics/CI or prose-only artifact to a **thin plan + diff-review**.
+- **Convergence bar.** A review loop is CLEAN only when one round returns **0 blockers + 0 majors** from EVERY backend the recipe names (nits + a ship verdict is the stop). Folding ≠ convergence — re-review after folding.
+- **Per-round emission.** Every review round emits **{round N · finding-origin tally · per-backend verdict}** so the crossover is a computed, visible signal, not a remembered rule.
+- **Recipe fidelity.** Council runs every backend the recipe names, **every round**; silently dropping a ready backend for quota/convenience is a forbidden downgrade — an unavailable backend is a LOUD, stated degrade, never a quiet drop.
+- **ExitPlanMode ≠ execute.** A harness "approved — start coding" prompt authorizes the PLAN only; this methodology overrides it. Continue into execution only as a DELIBERATE transition after the plan + cold-start prompt exist, never an implicit slide.
+- **Cost lanes.** Route every step to the **cheapest adequate executor** — L0 deterministic script (the batched gate matrix over `gates.json`, the rotation `--check`s) · L1 cheap subagent (extraction/drafting only; the orchestrator verifies) · L2 subscription bridge · L3 frontier judgment. A step with **no named guardrail does not move down** a lane, and the **red lines never move down** (council review models · real code · ADR/handover/changelog-entry wording · persuasive copy · go/no-go · the approval asks). Own-error repair: salvage recorded state first (L0/L1, batched), never frontier re-derivation.
+
+<!-- prior: 2026-07-02 (AD-036) → pre-E4 outgoing — the checked-syntax B5 sharpening -->
+### 2.x. Planning, review & process-fidelity invariants
+Apply these when authoring a plan, reviewing, folding a finding, or editing code — the layer read **before any code change**. (Full canon: the project's planning / workflow-methodology + orchestration canon.)
+- **Fold by code, not prose.** Before folding a code-touching finding into a plan or change, read the cited `file:line` and cite it — a prose fold drifts from the code and seeds the next bug.
+- **Right altitude.** Pin intent + invariants + acceptance criteria (named tests); leave fine code-mechanics to Execute, where prose cannot diverge from reality.
+- **No code-mechanics in the plan.** A Step still carries its exact paths + commands (the plan-structure / self-review canon) — checked syntax: the plan's own Verification runs them against an explicit expected outcome or gate; the only other syntax a plan may carry is a literal fixture/schema fragment a named test copies or validates. Un-run, logic-bearing syntax — control-flow, a regex, a glob, a grammar, an algorithm body, a mini-DSL — never lives in plan prose, however plausible or shell-verified it looks: a fold or draft that wants one is the trigger to write the test instead.
+- **Test-as-spec.** Fold a code-touching finding into a red→green TEST, not a prose paragraph — the gate is the only deterministic checker; a paragraph cannot self-check.
+- **Characterize-first.** Before editing UNCOVERED code, pin its current behavior in a green test, then edit — any unintended change goes red. Never edit what has no checker; first give it one. Keep edits atomic/reversible; prefer SUBTRACTIVE folds.
+- **Fold minimally — prose has no checker.** An ephemeral, gitignored plan is prose with no executable checker; fold **minimally, in ONE place** and run a **self-consistency** read across the plan before every re-review — a fold that drifts several prose spots is what turns a 2-round review into churn.
+- **Heavy review at the diff.** Plan-review settles architecture only (≤2 rounds, stop at the pre-existing→fold-induced crossover); the exhaustive per-Step review runs against real compiling code + the full suite, where a regression fails a gate immediately. **Backend divergence** (one backend grounded-ships while another keeps revising mechanics) IS that crossover — resolve at altitude, don't exhaust the strictest backend; route an all-mechanics/CI or prose-only artifact to a **thin plan + diff-review**.
+- **Convergence bar.** A review loop is CLEAN only when one round returns **0 blockers + 0 majors** from EVERY backend the recipe names (nits + a ship verdict is the stop). Folding ≠ convergence — re-review after folding.
+- **Per-round emission.** Every review round emits **{round N · finding-origin tally · per-backend verdict}** so the crossover is a computed, visible signal, not a remembered rule.
+- **Recipe fidelity.** Council runs every backend the recipe names, **every round**; silently dropping a ready backend for quota/convenience is a forbidden downgrade — an unavailable backend is a LOUD, stated degrade, never a quiet drop.
+- **ExitPlanMode ≠ execute.** A harness "approved — start coding" prompt authorizes the PLAN only; this methodology overrides it. Continue into execution only as a DELIBERATE transition after the plan + cold-start prompt exist, never an implicit slide.
+- **Cost lanes.** Route every step to the **cheapest adequate executor** — L0 deterministic script (the batched gate matrix over `gates.json`, the rotation `--check`s) · L1 cheap subagent (extraction/drafting only; the orchestrator verifies) · L2 subscription bridge · L3 frontier judgment. A step with **no named guardrail does not move down** a lane, and the **red lines never move down** (council review models · real code · ADR/handover/changelog-entry wording · persuasive copy · go/no-go · the approval asks). Own-error repair: salvage recorded state first (L0/L1, batched), never frontier re-derivation.

@@ -3,7 +3,7 @@ name: agent-workflow-engine
 description: Canonical home of the agent-workflow planning methodology — the Plan→Phase→Step→Substep vocabulary, plan lifecycle, queue.md series index, mandatory Cleanup phase, the bounded methodology slot fragment, the orchestration-recipe vocabulary (Solo / Reviewed / Council / Delegated), and the activity-procedures canon (plan-authoring / plan-execution, with typed recipe slots). A published, installable npm package (available:true) that *provides* the methodology text; it mutates nothing. The composition root (agent-workflow-kit) reads this canon LIVE from the installed engine and injects the bounded slots from it — one source of truth, no bundled mirror; `npx @sabaiway/agent-workflow-kit@latest init` installs the engine.
 disable-model-invocation: true
 metadata:
-  version: '1.12.0'
+  version: '1.13.0'
 ---
 
 # agent-workflow-engine
@@ -39,6 +39,14 @@ slot fill is needed but the engine is absent, the kit's reconcile **fails loudly
   slots** that bind to the orchestration recipes, composing with `planning.md` without restating it. It
   stays generic (no project-specific stages baked in). The kit reads it live and renders the steps +
   the resolved effective recipe per slot via the read-only `/agent-workflow-kit procedures <activity>`.
+- [`references/agent-rules-lens.md`](references/agent-rules-lens.md) — the canonical **agent-rules
+  lens** block (the planning/review/process-fidelity invariants). The kit renders it into a deployed
+  `docs/ai/agent_rules.md` `### 2.x.` region (heading-anchored, no markers) and refreshes that region
+  on bootstrap/upgrade — a canon wording change edits this file (plus the prior store below) and ships
+  as an engine-only release.
+- [`references/agent-rules-lens-priors.md`](references/agent-rules-lens-priors.md) — the **append-only
+  store** of every lens body a previous release shipped. The kit refreshes a deployed region only when
+  its body matches the fragment or one of these entries; a customized region is preserved verbatim.
 
 ## Ownership rule (the engine knows nobody)
 
