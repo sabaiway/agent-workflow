@@ -172,6 +172,22 @@ describe('kit installer — stale-cache defenses (no network)', () => {
     assert.doesNotMatch(again.stdout, /updated the kit to/, 'verb and note must not contradict each other');
   });
 
+  it('a re-run over a PRE-EXISTING install prints the restart hint EXACTLY once (same-version + update paths)', async () => {
+    const target = join(dir, 'agent-workflow-kit');
+    const first = runInstaller(target); // fresh install — nothing was loaded before, no hint
+    assert.equal(first.status, 0, first.stderr);
+    assert.doesNotMatch(first.stdout, /restart the session so the agent reloads/, 'no hint on a fresh install');
+    const again = runInstaller(target); // same-version re-run over the pre-existing install
+    assert.equal(again.status, 0, again.stderr);
+    const hintCount = (s) => (s.match(/restart the session so the agent reloads/g) ?? []).length;
+    assert.equal(hintCount(again.stdout), 1, 'the restart hint prints EXACTLY once (verb path, no next-steps duplicate)');
+    await setInstalledVersion(target, '0.0.1'); // the real-update path over a pre-existing install
+    const updated = runInstaller(target);
+    assert.equal(updated.status, 0, updated.stderr);
+    assert.match(updated.stdout, /updated the kit to/);
+    assert.equal(hintCount(updated.stdout), 1, 'the update path carries the hint exactly once too');
+  });
+
   it('refuses to downgrade when the installed kit is NEWER, and writes nothing', async () => {
     const target = join(dir, 'agent-workflow-kit');
     assert.equal(runInstaller(target).status, 0);
@@ -347,6 +363,44 @@ describe('kit installer — mandatory engine install (subprocess)', () => {
     assert.match(res.stderr, /--no-engine/, 'recommends the opt-out');
     assert.doesNotMatch(res.stdout, /Next — open your agent/, 'must NOT claim success before the engine failed');
     assert.ok(existsSync(join(target, 'SKILL.md')), 'the kit itself is still on disk (recovery is one step)');
+    assert.doesNotMatch(res.stdout, /restart the session so the agent reloads/, 'fresh install — no hint even on the abort path');
+    // F12: over a PRE-EXISTING install the verb-path restart hint must SURVIVE the fatal engine
+    // abort (the next-steps carrier is suppressed on this path, so the verb path is what saves it).
+    const second = spawnSync(process.execPath, [INSTALLER, '--dir', target, '--no-launchers', '--no-memory', '--no-bridges'], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: emptyBin },
+    });
+    assert.notEqual(second.status, 0, 'the engine failure still aborts the re-run');
+    assert.doesNotMatch(second.stdout, /Next — open your agent/, 'still no success block on the abort path');
+    assert.match(second.stdout, /restart the session so the agent reloads/, 'the verb-path hint survives the abort');
+  });
+});
+
+describe('kit installer — per-agent invocation matrix (F12)', () => {
+  let dir;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'aw-kit-matrix-'));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const MATRIX = /Codex -> its \/skills menu -> agent-workflow-kit/;
+
+  it('--help states the per-agent matrix (Codex invokes via its /skills menu, may auto-trigger), not a same-command claim', () => {
+    const res = spawnSync(process.execPath, [INSTALLER, '--help'], { encoding: 'utf8' });
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, MATRIX, 'the help must carry the Codex /skills-menu fact');
+    assert.match(res.stdout, /auto-trigger/, 'the help states Codex may auto-trigger (no agents\\/openai.yaml)');
+    assert.doesNotMatch(res.stdout, /all use the same \/agent-workflow-kit/, 'the false same-command claim is gone');
+  });
+
+  it('the final next-steps block states the per-agent matrix on a successful run', () => {
+    const target = join(dir, 'agent-workflow-kit');
+    const res = runInstaller(target);
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /Next — open your agent/);
+    assert.match(res.stdout, MATRIX, 'the next-steps block must carry the Codex /skills-menu fact');
   });
 });
 

@@ -42,7 +42,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const HOOK_PATH = join(HERE, '..', 'references', 'hooks', 'gate-approve.mjs');
 const TEMPLATE_PATH = join(HERE, '..', 'references', 'templates', 'gates.json');
 
-// This repo's live 9-gate declaration, embedded as a FIXTURE (docs/ai is hidden/machine-local
+// This repo's live 10-gate declaration, embedded as a FIXTURE (docs/ai is hidden/machine-local
 // here — the test must stay green on a checkout without it). Kept verbatim, `_README` included:
 // the validation-parity claim covers real declarations, not synthetic minimal ones.
 const LIVE_DECLARATION = {
@@ -52,7 +52,7 @@ const LIVE_DECLARATION = {
     {
       id: 'unit-tests',
       title: 'Unit tests — full package matrix (node --test)',
-      cmd: 'node --test agent-workflow-memory/{scripts,references/scripts,bin}/*.test.mjs agent-workflow-kit/{tools,tools/manifest,references/scripts,bin}/*.test.mjs agent-workflow-kit/test/*.test.mjs agent-workflow-engine/test/*.test.mjs antigravity-cli-bridge/bin/*.test.mjs codex-cli-bridge/bin/*.test.mjs scripts/release/*.test.mjs',
+      cmd: 'node --test agent-workflow-memory/{scripts,references/scripts,bin}/*.test.mjs agent-workflow-kit/{tools,tools/manifest,references/scripts,bin}/*.test.mjs agent-workflow-kit/test/*.test.mjs agent-workflow-engine/test/*.test.mjs antigravity-cli-bridge/bin/*.test.mjs codex-cli-bridge/bin/*.test.mjs scripts/release/*.test.mjs scripts/sync-mirrors.test.mjs',
     },
     {
       id: 'manifest-validate',
@@ -66,14 +66,19 @@ const LIVE_DECLARATION = {
     },
     {
       id: 'release-scan',
-      title: 'Release scan — no AI attribution (5 dirs + workflows + root README/CHANGELOG + release scripts + local release skill)',
-      cmd: 'node agent-workflow-kit/tools/release-scan.mjs agent-workflow-memory agent-workflow-kit codex-cli-bridge antigravity-cli-bridge agent-workflow-engine .github/workflows README.md CHANGELOG.md scripts/release .claude/skills/release-cycle',
+      title: 'Release scan — no AI attribution (5 dirs + workflows + root README/CHANGELOG + release scripts + mirror-sync pair + local release skill)',
+      cmd: 'node agent-workflow-kit/tools/release-scan.mjs agent-workflow-memory agent-workflow-kit codex-cli-bridge antigravity-cli-bridge agent-workflow-engine .github/workflows README.md CHANGELOG.md scripts/release scripts/sync-mirrors*.mjs .claude/skills/release-cycle',
     },
     { id: 'docs-caps', title: 'Docs frontmatter caps', cmd: 'node scripts/check-docs-size.mjs' },
     { id: 'docs-index', title: 'Docs index freshness', cmd: 'node scripts/check-docs-size.mjs --check-index' },
     { id: 'changelog-rotation', title: 'Changelog rotation headroom (--check)', cmd: 'node scripts/archive-changelog.mjs --check' },
     { id: 'issues-rotation', title: 'Known-issues rotation headroom (--check)', cmd: 'node scripts/archive-issues.mjs --check' },
     { id: 'decisions-rotation', title: 'ADR cascade headroom, 3 tiers (--check)', cmd: 'node scripts/archive-decisions.mjs --check' },
+    {
+      id: 'review-state',
+      title: 'Review receipts current for the uncommitted tree (AD-038)',
+      cmd: 'node agent-workflow-kit/tools/review-state.mjs --check',
+    },
   ],
 };
 
@@ -168,10 +173,10 @@ describe('declaration validation parity with run-gates.mjs', () => {
     assert.equal(validateDeclarationShape(shippedTemplate).ok, true);
   });
 
-  it("this repo's live 9-gate declaration is VALID (carries _README)", () => {
+  it("this repo's live 10-gate declaration is VALID (carries _README)", () => {
     const validated = validateDeclarationShape(LIVE_DECLARATION);
     assert.equal(validated.ok, true);
-    assert.equal(validated.gates.length, 9);
+    assert.equal(validated.gates.length, 10);
   });
 
   // The run-gates.test.mjs invalid-declaration matrix, mirrored: a declaration the runner

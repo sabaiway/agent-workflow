@@ -41,6 +41,7 @@ export const SETTINGS_LABELS = Object.freeze({
   recipes: 'recipes',
   attribution: 'attribution',
   velocity: 'velocity',
+  agents: 'cheap agents',
   hook: 'gate hook',
 });
 

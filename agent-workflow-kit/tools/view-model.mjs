@@ -65,6 +65,12 @@ const velocityVm = (v) => {
   return { defaultMode: v.defaultMode ?? null, allow: { project: v.allowEntries?.project ?? 0, local: v.allowEntries?.local ?? 0 } };
 };
 
+const agentsVm = (a) => {
+  if (!a) return null;
+  if (a.error) return { error: a.error };
+  return { bundled: a.bundled ?? 0, placed: a.placed ?? 0 };
+};
+
 const hookVm = (h) => {
   if (!h) return null;
   if (h.error) return { error: h.error };
@@ -72,6 +78,12 @@ const hookVm = (h) => {
     wired: Boolean(h.wired),
     filePlaced: Boolean(h.filePlaced),
     declarationPresent: Boolean(h.declarationPresent),
+    // 0 = absent/empty declaration; null = unreadable/malformed OR an envelope predating the
+    // field — unknown reads as unknown, never as a count (the welcome-mat hook rung keys on > 0).
+    declaredGates: h.declaredGates ?? null,
+    // The preserved validation reason for a null count (null when absent) — rendered beside the
+    // unknown marker so a malformed declaration is never a silent bare "?".
+    declarationError: h.declarationError ?? null,
   };
 };
 
@@ -81,6 +93,7 @@ const settingsVm = (s) =>
         recipes: recipesVm(s.recipes),
         attribution: attributionVm(s.attribution),
         velocity: velocityVm(s.velocity),
+        agents: agentsVm(s.agents),
         hook: hookVm(s.hook),
       }
     : null;

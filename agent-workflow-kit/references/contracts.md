@@ -5,8 +5,9 @@ language**, and **agent attribution** — each have a contract below. `SKILL.md`
 main procedure stays lean; load this file when you need the full rule for a contract (e.g. while
 filling the matching `AGENTS.md` block, or when an `upgrade` migration touches it).
 
-Ask each as a **structured multiple-choice prompt where your agent supports it** (`AskUserQuestion`
-in Claude Code), otherwise in prose — and always wait for the answer before writing.
+Ask the three as **ONE structured multi-question prompt where your agent supports it**
+(`AskUserQuestion` in Claude Code, up to 4 questions per call), otherwise in prose; record each
+answer individually — and write nothing until ALL are answered.
 
 ---
 

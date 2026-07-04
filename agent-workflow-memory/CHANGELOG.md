@@ -4,6 +4,19 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.11.1 — One batched setup prompt (the F11 ask reword; AD-042)
+
+A **patch** release (prose reword only; deployment-lineage head stays `1.3.0` — no migration).
+The three bootstrap setup questions (visibility / conversational language / attribution) are now
+asked as **ONE structured multi-question prompt where supported** (`AskUserQuestion`, up to 4
+questions per call), each answer recorded individually, nothing written until ALL are answered —
+first contact interrupts once, not three times (`SKILL.md` bootstrap preamble + steps 2–4). The
+upgrade path batches its two migration asks the same way ONLY when both `AGENTS.md` blocks are
+missing (a pre-1.1.0 deployment), collecting them in step 4 BEFORE the migrations apply and never
+re-asking a collected answer (a migration's own "Ask the user" step stays the standalone
+fallback). The `references/contracts.md` ask paragraph is reworded byte-identical with the kit's
+copy — pinned cross-package by the kit's new `ask-contract` test.
+
 ## 1.11.0 — The template lens block becomes a render of the engine canon (AD-041)
 
 A **feature** release (template text only; deployment-lineage head stays `1.3.0` — no migration).

@@ -19,7 +19,7 @@ The non-obvious traps — scan these before bootstrapping or upgrading. Each is 
 
 ## Setup contracts
 
-The three setup choices — **visibility** (step 2), **conversational language** (step 3), and **agent attribution** (step 4) — each have a full contract in [`references/contracts.md`](${CLAUDE_SKILL_DIR}/references/contracts.md). Load it when you need the complete rule (e.g. while filling the matching `AGENTS.md` block, or when an `upgrade` migration touches one). Defaults, in brief: visibility = `visible` (committed); language = whatever the user is already writing in; attribution = `off`. Ask each as a structured multiple-choice prompt where supported (`AskUserQuestion` in Claude Code), otherwise in prose.
+The three setup choices — **visibility** (step 2), **conversational language** (step 3), and **agent attribution** (step 4) — each have a full contract in [`references/contracts.md`](${CLAUDE_SKILL_DIR}/references/contracts.md). Load it when you need the complete rule (e.g. while filling the matching `AGENTS.md` block, or when an `upgrade` migration touches one). Defaults, in brief: visibility = `visible` (committed); language = whatever the user is already writing in; attribution = `off`. Ask the three as ONE structured multi-question prompt where supported (`AskUserQuestion` in Claude Code, up to 4 questions per call), otherwise in prose; record each answer individually — and write nothing until ALL are answered.
 
 ---
 

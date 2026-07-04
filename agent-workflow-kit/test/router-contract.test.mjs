@@ -192,7 +192,9 @@ describe('router contract — D4 pointer audits over the whole split corpus (d)'
 // ── (e) the D6 byte budgets, read sets from the parsed Requires: lines ───────
 const BUDGET = {
   router: 10240, // router alone
-  routerPlusMode: 28672, // router + any single mode file
+  routerPlusMode: 29696, // router + any single mode file (28672 → 29696: the AD-042 documented
+  // AD-039 amendment — the F11 both-blocks batching caveat is +422 B of new upgrade.md contract
+  // content against 154 B of headroom; never a silent re-pin)
   fullReadSet: 53248, // router + mode + its declared shared files
   daily: 16384, // the no-shared daily modes (help/backends/recipes/procedures/gates)
 };

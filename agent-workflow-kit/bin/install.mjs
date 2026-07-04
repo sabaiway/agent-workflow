@@ -303,7 +303,8 @@ Installs/refreshes the kit at ~/.claude/skills/agent-workflow-kit
 After install, invoke the skill in your agent, inside a project:
   first time in the project  ->  /agent-workflow-kit
   project already has it     ->  /agent-workflow-kit upgrade
-  (Claude Code / Codex / Devin Desktop all use the same /agent-workflow-kit.)
+  Per agent: Claude Code -> /agent-workflow-kit; Devin Local -> /agent-workflow-kit;
+  Codex -> its /skills menu -> agent-workflow-kit (Codex may also auto-trigger it).
 
 Re-running this npx command updates the kit's own files; /agent-workflow-kit
 upgrade then migrates a project's deployment to that version.`);
@@ -387,6 +388,23 @@ const main = async () => {
     : cmp === -1 ? 'updated the kit to'
     : 'installed';
   console.log(`[agent-workflow-kit] ${verb} v${version} -> ${tildify(target)}`);
+
+  // F12 restart hint — any run over a PRE-EXISTING install (every cmp outcome, incl. the legacy
+  // unstamped one) leaves an already-open agent session still holding the PREVIOUS kit files in
+  // memory (mirrors the SKILL.md "restart the session" note the memory-miss paths already carry).
+  // Printed AT MOST ONCE per run: here on the verb path — so it survives the fatal engine abort
+  // below — with the final next-steps block as the carrier only if this line did not print.
+  const restartHintState = { pending: wasPresent };
+  const printRestartHint = () => {
+    if (!restartHintState.pending) return;
+    restartHintState.pending = false;
+    console.log(
+      `[agent-workflow-kit] the kit was already installed here — an agent session that was ` +
+        `already open is still running the previous kit files; restart the session so the agent ` +
+        `reloads the refreshed kit files.`,
+    );
+  };
+  printRestartHint();
 
   // Same-version re-run: state observable facts only. The copy DID run (repair-on-rerun is a feature —
   // it restores locally modified/deleted files), and whether npx served a cached build is NOT
@@ -506,10 +524,13 @@ const main = async () => {
   // This command (de)installed the *kit* globally. Deploying it into a project is a
   // separate, in-agent step — and which sub-command depends on whether that project
   // already has the kit. Spell both out so it's unambiguous (see README "Use").
+  printRestartHint(); // carrier fallback — a no-op when the verb path already printed it
   console.log(`
 Next — open your agent inside a project and run the skill:
   • first time in this project  ->  /agent-workflow-kit
   • project already has the kit  ->  /agent-workflow-kit upgrade
+  • per agent: Claude Code -> /agent-workflow-kit · Devin Local -> /agent-workflow-kit ·
+    Codex -> its /skills menu -> agent-workflow-kit (Codex may also auto-trigger it)
 
 This command only installs/updates the kit itself (in ${tildify(target)}).
 To update the kit later, re-run:  npx @sabaiway/agent-workflow-kit@latest init`);

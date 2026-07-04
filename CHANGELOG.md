@@ -7,6 +7,23 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-04 — memory 1.11.1 · kit 1.34.0: onboarding UX — one batched setup prompt, the visible accelerator funnel, the consent-gated gates seeder (AD-042)
+
+First contact now interrupts ONCE: bootstrap asks its three setup questions as one structured
+multi-question prompt (recorded individually; nothing written until all are answered), and
+upgrade batches its two migration asks when both `AGENTS.md` blocks are missing — collected
+before the migrations apply, never re-asked. The installer tells a returning user to restart the
+session after a refresh and states the real per-agent invocation matrix (Codex = its `/skills`
+menu). The opt-in funnel is visible end-to-end: caveat-aware welcome-mat rungs
+(velocity / agents / hook, fed machine-computed from the status envelope), a bootstrap
+accelerators block, and a help "Tune" tail. New consent-gated `seed-gates` writer proposes a
+project's own terminating verification commands (and the review-state gate when the config
+declares reviewed/council on `plan-execution.review`) into `docs/ai/gates.json` — preview-first,
+append-only, mutating variants screened out, every preview disclosing the seeding↔hook two-consent
+trust chain; its hardened atomic core is extracted into `tools/atomic-write.mjs` (shared with the
+orchestration-config writer, API unchanged). Engine unchanged; lineage head stays `1.3.0` (no
+migration). AD-042 also records the documented AD-039 re-pin (`routerPlusMode` 28672 → 29696).
+
 ## 2026-07-04 — engine 1.13.0 · memory 1.11.0 · kit 1.33.0: lens slot-render — canon wording ships engine-only (AD-041)
 
 The planning/review/process-fidelity lens now has ONE canonical home — the engine's

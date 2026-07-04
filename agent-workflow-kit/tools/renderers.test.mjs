@@ -28,7 +28,8 @@ const fullEnvelope = () => ({
       recipes: { configSource: 'docs/ai/orchestration.json', activities: { 'plan-authoring': { review: { recipe: 'reviewed' } }, 'plan-execution': { execute: { recipe: 'delegated' }, review: { recipe: 'council' } } } },
       attribution: { project: false, local: null, effective: false },
       velocity: { defaultMode: 'acceptEdits', allowEntries: { project: 1, local: 2 } },
-      hook: { wired: true, filePlaced: true, declarationPresent: false },
+      agents: { bundled: 3, placed: 1 },
+      hook: { wired: true, filePlaced: true, declarationPresent: false, declaredGates: 0 },
     },
   },
 });
@@ -60,7 +61,8 @@ settings
   recipes       plan-authoring.review=reviewed · plan-execution.execute=delegated · plan-execution.review=council
   attribution   includeCoAuthoredBy effective=false
   velocity      defaultMode=acceptEdits · allow project/local=1/2
-  gate hook     wired=yes · file=yes · gates.json=no`;
+  cheap agents  placed=1/3
+  gate hook     wired=yes · file=yes · gates.json=no · declared=0`;
 
 describe('renderers — plain (byte-exact golden)', () => {
   it('renders the full 4-block envelope byte-for-byte', () => {
@@ -153,12 +155,22 @@ describe('renderers — branch coverage (every replaced-function branch)', () =>
   it('settings: each area error renders loudly', () => {
     const out = renderPlain({
       installed: [],
-      project: { dir: '/p', deployed: true, deployStamps: [], settings: { recipes: { error: 'docs/ai/orchestration.json: bad json' }, attribution: { error: '.claude/settings.json: bad json' }, velocity: { error: '.claude/settings.local.json: bad json' }, hook: { error: '.claude/settings.json: bad json' } } },
+      project: { dir: '/p', deployed: true, deployStamps: [], settings: { recipes: { error: 'docs/ai/orchestration.json: bad json' }, attribution: { error: '.claude/settings.json: bad json' }, velocity: { error: '.claude/settings.local.json: bad json' }, agents: { error: 'bundled agents dir unreadable' }, hook: { error: '.claude/settings.json: bad json' } } },
     });
     assert.match(out, /recipes\s+error: docs\/ai\/orchestration\.json: bad json/);
     assert.match(out, /attribution\s+error: \.claude\/settings\.json: bad json/);
     assert.match(out, /velocity\s+error: \.claude\/settings\.local\.json: bad json/);
+    assert.match(out, /cheap agents\s+error: bundled agents dir unreadable/);
     assert.match(out, /gate hook\s+error: \.claude\/settings\.json: bad json/);
+  });
+
+  it('a malformed gates.json renders declared=? WITH the preserved validation error (never a bare question mark)', () => {
+    const vm = toViewModel({
+      installed: [],
+      project: { dir: '/p', deployed: true, deployStamps: [], settings: { hook: { wired: true, filePlaced: true, declarationPresent: true, declaredGates: null, declarationError: 'docs/ai/gates.json: malformed JSON (Unexpected token)' } } },
+    });
+    const out = render(vm, { mode: 'plain', width: 80, color: false, ascii: false });
+    assert.match(out, /declared=\? \(docs\/ai\/gates\.json: malformed JSON/, 'the reason renders beside the unknown count');
   });
 
   it('settings: a recipes detectError floors with a sub-line', () => {

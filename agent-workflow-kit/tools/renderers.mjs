@@ -101,11 +101,19 @@ const renderSettings = (vm, { color, glyph }) => {
   else if (s.velocity) {
     lines.push(`  ${pad(SETTINGS_LABELS.velocity, SETTINGS_COL)}defaultMode=${String(s.velocity.defaultMode)} · allow project/local=${s.velocity.allow.project}/${s.velocity.allow.local}`);
   }
-  // gate hook — the opt-in PreToolUse gate-approval hook: wired / file placed / declaration present.
+  // cheap agents — the kit-placed .claude/agents/ vehicles: placed count vs the bundle.
+  if (s.agents?.error) lines.push(`  ${pad(SETTINGS_LABELS.agents, SETTINGS_COL)}error: ${s.agents.error}`);
+  else if (s.agents) {
+    lines.push(`  ${pad(SETTINGS_LABELS.agents, SETTINGS_COL)}placed=${s.agents.placed}/${s.agents.bundled}`);
+  }
+  // gate hook — the opt-in PreToolUse gate-approval hook: wired / file placed / declaration present /
+  // declared gate count (null → '?' — unknown is shown as unknown, never as a number).
   if (s.hook?.error) lines.push(`  ${pad(SETTINGS_LABELS.hook, SETTINGS_COL)}error: ${s.hook.error}`);
   else if (s.hook) {
     const yn = (b) => (b ? 'yes' : 'no');
-    lines.push(`  ${pad(SETTINGS_LABELS.hook, SETTINGS_COL)}wired=${yn(s.hook.wired)} · file=${yn(s.hook.filePlaced)} · gates.json=${yn(s.hook.declarationPresent)}`);
+    // A null count carries its preserved validation reason — never a silent bare "?".
+    const declared = s.hook.declaredGates ?? (s.hook.declarationError ? `? (${s.hook.declarationError})` : '?');
+    lines.push(`  ${pad(SETTINGS_LABELS.hook, SETTINGS_COL)}wired=${yn(s.hook.wired)} · file=${yn(s.hook.filePlaced)} · gates.json=${yn(s.hook.declarationPresent)} · declared=${declared}`);
   }
   return lines;
 };

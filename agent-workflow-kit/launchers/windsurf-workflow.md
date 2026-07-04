@@ -22,7 +22,9 @@ reinvent any of it here; the kit's `SKILL.md` is the single source of truth.
    - No `docs/ai/` in this project → **bootstrap**.
    - `docs/ai/` already exists → ask the user whether to run **upgrade** instead.
 3. Execute every step from `SKILL.md` for THIS repository:
-   - Recon (read-only) → **ask the user: visible or hidden** (wait for the answer) →
+   - Recon (read-only) → **ask the three setup questions (visible-or-hidden / language /
+     attribution) as ONE structured multi-question prompt; record each answer individually,
+     write nothing until ALL are answered** →
      create `AGENTS.md` (+ `CLAUDE.md` symlink) from `<KIT_DIR>/references/templates/` →
      deploy `docs/ai/` → copy `<KIT_DIR>/references/scripts/*.mjs` (Node projects) →
      wire/hide per visibility → install the pre-commit hook → stamp `docs/ai/.workflow-version`.

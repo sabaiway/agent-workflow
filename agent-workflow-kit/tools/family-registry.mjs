@@ -47,7 +47,10 @@ import {
 // The gate-hook writer's own wired-detection + placed path — reused by the settings survey (one
 // implementation; gate-hook imports only node builtins + velocity-profile, so no cycle).
 import { HOOK_FILE_REL as GATE_HOOK_FILE_REL, isHookWired } from './gate-hook.mjs';
-import { GATES_REL } from './run-gates.mjs';
+import { GATES_REL, loadDeclaration } from './run-gates.mjs';
+// The cheap-agents writer's own bundle reader + placement planner — reused by the settings survey
+// (one implementation, never a drifting copy; cheap-agents imports only node builtins, no cycle).
+import { readBundledAgents, planPlacement } from './cheap-agents.mjs';
 // The status vocabulary (manifestState constants, internal→public maps, display names, the no-leak
 // forbidden set) lives in the frozen labels.mjs LEAF (Plan §4.2 B1) so the import graph is acyclic —
 // nothing imports family-registry for vocabulary. Imported here for internal use; the public subset is
@@ -456,11 +459,39 @@ export const surveyGateHook = (dir, deps = {}) => {
     const exists = deps.exists ?? existsSync;
     const project = readSettingsFile(join(d, SETTINGS_FILE), { ...deps, cwd: d });
     const local = readSettingsFile(join(d, SETTINGS_LOCAL_FILE), { ...deps, cwd: d });
+    // How many gates are actually DECLARED — the welcome-mat hook rung keys on a non-empty
+    // declaration (a fresh bootstrap seeds gates.json EMPTY, so file presence alone would misfire).
+    // 0 = absent or empty list; null = present but unreadable/malformed (unknown — never a false
+    // count, and never an area-wide error: the wired/placed probes still report; the validation
+    // REASON is preserved beside the null so status never renders a bare question mark).
+    const declaration = (() => {
+      try {
+        const res = loadDeclaration(d, deps);
+        return { declaredGates: res.outcome === 'loaded' ? res.gates.length : 0 };
+      } catch (err) {
+        return { declaredGates: null, declarationError: localizeError(err) };
+      }
+    })();
     return {
       wired: isHookWired(project.data) || isHookWired(local.data),
       filePlaced: Boolean(exists(join(d, GATE_HOOK_FILE_REL))),
       declarationPresent: Boolean(exists(join(d, GATES_REL))),
+      ...declaration,
     };
+  } catch (err) {
+    return { error: localizeError(err) };
+  }
+};
+
+// cheap agents: the kit-placed .claude/agents/ vehicles (Mode: agents) — how many of the bundled
+// cheap-lane definitions are present in the project. A customized copy counts as PLACED (it exists;
+// the writer preserves it) — the welcome-mat agents rung keys on zero placed. Read-only; REUSES the
+// writer's own bundle reader + placement planner (cheap-agents.mjs — one implementation).
+export const surveyCheapAgents = (dir, deps = {}) => {
+  try {
+    const templates = readBundledAgents(deps);
+    const plan = planPlacement(templates, resolve(dir), deps);
+    return { bundled: templates.length, placed: plan.filter((p) => p.action !== 'place').length };
   } catch (err) {
     return { error: localizeError(err) };
   }
@@ -471,6 +502,7 @@ export const surveySettings = (dir, deps = {}) => ({
   recipes: surveyRecipes(dir, deps),
   attribution: surveyAttribution(dir, deps),
   velocity: surveyVelocity(dir, deps),
+  agents: surveyCheapAgents(dir, deps),
   hook: surveyGateHook(dir, deps),
 });
 

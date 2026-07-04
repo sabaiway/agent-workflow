@@ -96,7 +96,7 @@ const CATALOG = [
     invocation: invocationOf('gates'),
     group: 'Inspect',
     kind: PROJECT_EXEC,
-    oneLine: 'Run the project’s own declared gate commands (docs/ai/gates.json) as one batch — a PASS/FAIL table, one summary line.',
+    oneLine: 'Run the project’s own declared gate commands (docs/ai/gates.json) as one batch — a PASS/FAIL table, one summary line. The mode itself writes nothing; a separate consent-gated seeder can propose entries from your project’s own scripts (preview first, written only on your yes).',
   },
   {
     key: 'setup',
@@ -212,6 +212,19 @@ const KIND_TAG = {
 };
 const pad = (s, n) => (s.length >= n ? s : s + ' '.repeat(n - s.length));
 
+// The "Tune" tail — the opt-in accelerator funnel, rendered AFTER the catalog groups. NOT a new
+// catalog key or mode (the frozen CATALOG + GROUP_ORDER stay; the router SKILL.md is untouched):
+// the same four entries the bootstrap accelerators block presents, one line of why each.
+const TUNE_TAIL = Object.freeze([
+  '',
+  'Tune — opt-in accelerators (consent-first: every writer previews before writing; nothing runs without your yes)',
+  `  ${BARE_INVOCATION} velocity      routine read-only commands stop prompting (incl. the --kit-tools tier for the kit's own read-only tools)`,
+  `  ${BARE_INVOCATION} agents        cheap-model subagents take the mechanical work (sweeps, changelog skeletons, gate triage)`,
+  `  ${BARE_INVOCATION} gates         run your declared gates (docs/ai/gates.json) as one batch; its guide also offers the consent-gated seeding preview — writes only on your yes`,
+  `  ${BARE_INVOCATION} hook          auto-approve exactly your declared gate commands (byte-exact matches only)`,
+  `  ${BARE_INVOCATION} set-recipe    put a ready review backend to work on plans and diffs`,
+]);
+
 // formatHelp() → the grouped, kind-tagged human index. Deterministic; groups in GROUP_ORDER, modes in
 // catalog order within each group. The header states the index itself is read-only.
 export const formatHelp = () => {
@@ -229,6 +242,7 @@ export const formatHelp = () => {
       lines.push(`  ${pad(c.invocation, invocWidth)}  ${KIND_TAG[c.kind] ?? c.kind}  ${c.oneLine}`);
     }
   }
+  lines.push(...TUNE_TAIL);
   return lines.join('\n');
 };
 

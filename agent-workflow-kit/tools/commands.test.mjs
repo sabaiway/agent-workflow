@@ -10,6 +10,7 @@ import {
   formatHelp,
   buildJson,
   kindOf,
+  commandFor,
   READ_ONLY,
   WRITER,
   GUARDED,
@@ -179,6 +180,33 @@ describe('commands catalog — well-formed entries', () => {
     assert.throws(() => {
       COMMANDS[0].kind = 'hacked';
     }, TypeError);
+  });
+});
+
+// ── the Tune tail — the opt-in accelerator funnel (F10a) ─────────────────────────────────────────────
+// NOT a new catalog key / mode: the frozen CATALOG + GROUP_ORDER stay, the router SKILL.md is
+// untouched — the funnel is a rendered tail after the groups, mirroring the bootstrap block.
+
+describe('formatHelp — the Tune tail (opt-in accelerators)', () => {
+  it('renders the tail AFTER the catalog groups with the four accelerator entries', () => {
+    const out = formatHelp();
+    const at = out.indexOf('Tune — opt-in accelerators');
+    assert.notEqual(at, -1, 'the Tune tail must render');
+    const lastGroup = out.lastIndexOf(GROUP_ORDER[GROUP_ORDER.length - 1]);
+    assert.ok(at > lastGroup, 'the tail renders after the last catalog group');
+    const tail = out.slice(at);
+    for (const token of ['velocity', 'agents', 'gates', 'hook', 'set-recipe']) {
+      assert.ok(tail.includes(token), `the Tune tail lists ${token}`);
+    }
+    assert.match(tail, /nothing runs without your yes/, 'the tail states the consent posture');
+  });
+
+  it('the gates one-liner names the separate consent-gated seeder (the kind contract stays honest)', () => {
+    const one = commandFor('gates').oneLine;
+    assert.match(one, /consent-gated/, 'the one-liner must name the consent-gated seeding helper');
+    assert.match(one, /preview/i, 'the one-liner states preview-first');
+    assert.match(one, /writes nothing/, 'the one-liner keeps the mode-writes-nothing honesty');
+    assert.equal(kindOf('gates'), PROJECT_EXEC, 'the kind stays PROJECT_EXEC — no re-kind');
   });
 });
 
