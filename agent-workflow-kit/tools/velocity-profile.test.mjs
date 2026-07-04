@@ -2,17 +2,23 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   ACCEPT_EDITS_MODE,
   CLAUDE_DIR,
   EXPECTED_WORKFLOW_VERSION,
+  KIT_READONLY_TOOLS,
+  KIT_RUN_GATES_TOOL,
+  KIT_WRITER_PREVIEW_TOOLS,
   SETTINGS_FILE,
   SETTINGS_LOCAL_FILE,
   UNIVERSAL_READONLY_ALLOWLIST,
   VELOCITY_NON_READONLY,
   VELOCITY_INVALID_ARGUMENT,
+  VELOCITY_OFFCORE,
   WORKFLOW_STAMP,
+  deriveKitToolsAllowlist,
   discoverGateCandidates,
   main,
   parseArgs,
@@ -86,8 +92,14 @@ const assertCorePresentOnce = (allow) => {
 describe('UNIVERSAL_READONLY_ALLOWLIST', () => {
   it('matches the frozen expected set + count', () => {
     // Frozen snapshot of the audited read-only core. `git grep` (`--open-files-in-pager=<cmd>` runs a
-    // program) and `sort` (`-o` writes, `--compress-program=<cmd>` runs a program) are deliberately
-    // ABSENT — they carry an inline write/exec flag, so they are not genuinely read-only.
+    // program), `sort` (`-o` writes, `--compress-program=<cmd>` runs a program), `file`
+    // (`-C -m <magic>` compiles a magic FILE WRITE — probe-proven, AD-040) and `git cat-file`
+    // (`--textconv`/`--filters` activate CONFIGURED external filters under an auto-approved
+    // command, and its read utility is marginal next to the kept `git show` — diff-council fold,
+    // AD-040) are deliberately ABSENT.
+    // `git tag`/`git stash`/`git worktree` join as FIXED read-only forms only (their bare forms
+    // mutate — probe-proven); `git blame`/`git shortlog` carry the same bounded `--output` write
+    // residual as the kept git diff/log/show (documented + hook-covered).
     const expected = [
       'Bash(git status:*)',
       'Bash(git diff:*)',
@@ -96,6 +108,13 @@ describe('UNIVERSAL_READONLY_ALLOWLIST', () => {
       'Bash(git ls-files:*)',
       'Bash(git check-ignore:*)',
       'Bash(git branch --list:*)',
+      'Bash(git rev-parse:*)',
+      'Bash(git blame:*)',
+      'Bash(git shortlog:*)',
+      'Bash(git describe:*)',
+      'Bash(git tag --list:*)',
+      'Bash(git stash list:*)',
+      'Bash(git worktree list:*)',
       'Bash(npm view:*)',
       'Bash(npm ls:*)',
       'Bash(npm outdated:*)',
@@ -107,9 +126,15 @@ describe('UNIVERSAL_READONLY_ALLOWLIST', () => {
       'Bash(readlink:*)',
       'Bash(which:*)',
       'Bash(grep:*)',
+      'Bash(diff:*)',
+      'Bash(stat:*)',
+      'Bash(du:*)',
+      'Bash(basename:*)',
+      'Bash(dirname:*)',
+      'Bash(realpath:*)',
     ];
     assert.equal(Object.isFrozen(UNIVERSAL_READONLY_ALLOWLIST), true);
-    assert.equal(UNIVERSAL_READONLY_ALLOWLIST.length, 18, 'read-only allowlist count sentinel - edit deliberately');
+    assert.equal(UNIVERSAL_READONLY_ALLOWLIST.length, 31, 'read-only allowlist count sentinel - edit deliberately');
     assert.deepEqual(UNIVERSAL_READONLY_ALLOWLIST, expected);
   });
 
@@ -146,6 +171,11 @@ describe('screenAllowlistEntry', () => {
       'Bash(find:*)',
       'Bash(sort:*)',            // -o writes, --compress-program=<cmd> runs a program
       'Bash(git grep:*)',        // --open-files-in-pager=<cmd> runs a program
+      'Bash(file:*)',            // -C -m <magic> compiles a magic FILE WRITE (probe-proven, AD-040)
+      'Bash(git cat-file:*)',    // --textconv/--filters run configured filters; git show covers the reads
+      'Bash(git tag:*)',         // bare form mutates (creates a tag) - only the fixed --list form is core
+      'Bash(git stash:*)',       // bare form mutates (stashes) - only the fixed list form is core
+      'Bash(git worktree:*)',    // add/remove mutate - only the fixed list form is core
       'Bash(git fetch:*)',
       'Bash(git remote:*)',
       'Bash(git branch:*)',
@@ -166,6 +196,167 @@ describe('screenAllowlistEntry', () => {
       'Bash(git\tstatus:*)',
     ];
     for (const entry of rejected) assert.equal(screenAllowlistEntry(entry), false, entry);
+  });
+});
+
+// ── the opt-in --kit-tools tier (F07, AD-040) ──────────────────────────────────────────
+// Derivation is pure (no fs): entries resolve from the RUNNING tool's own location + the given
+// project dir, so a fixed fixture path exercises the exact seeded byte-strings.
+const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const TIER_PROJECT = '/tmp/velocity-tier-fixture';
+const tierEntries = () => deriveKitToolsAllowlist({ projectDir: TIER_PROJECT });
+const wildcardEntryOf = (rel) => `Bash(node ${join(KIT_ROOT, rel)}:*)`;
+const previewEntryOf = (rel) => `Bash(node ${join(KIT_ROOT, rel)})`;
+const RUN_GATES_EXACT = `Bash(node ${join(KIT_ROOT, 'tools/run-gates.mjs')} --cwd ${TIER_PROJECT})`;
+const PREVIEW_FORBIDDEN_FLAGS = ['--apply', '--write', '--yes', '--refresh-placed'];
+
+describe('KIT_READONLY_TOOLS tier — frozen membership + derivation', () => {
+  it('matches the frozen 9-member tool list + count sentinel', () => {
+    const expected = [
+      'tools/recipes.mjs',
+      'tools/procedures.mjs',
+      'tools/family-registry.mjs',
+      'tools/detect-backends.mjs',
+      'tools/commands.mjs',
+      'tools/review-state.mjs',
+      'tools/run-gates.mjs',
+      'tools/manifest/validate.mjs',
+      'tools/release-scan.mjs',
+    ];
+    assert.equal(Object.isFrozen(KIT_READONLY_TOOLS), true);
+    assert.equal(KIT_READONLY_TOOLS.length, 9, 'kit-tools tier count sentinel - edit deliberately');
+    assert.deepEqual([...KIT_READONLY_TOOLS], expected);
+    assert.equal(KIT_RUN_GATES_TOOL, 'tools/run-gates.mjs');
+  });
+
+  it('writer-preview membership is frozen: exactly the three default-dry-run writers, never set-recipe or the rest', () => {
+    assert.equal(Object.isFrozen(KIT_WRITER_PREVIEW_TOOLS), true);
+    assert.deepEqual(
+      [...KIT_WRITER_PREVIEW_TOOLS],
+      ['tools/velocity-profile.mjs', 'tools/cheap-agents.mjs', 'tools/gate-hook.mjs'],
+      'preview count sentinel - only writers whose ARG-FREE invocation is a dry-run',
+    );
+    for (const rel of KIT_WRITER_PREVIEW_TOOLS) assert.equal(KIT_READONLY_TOOLS.includes(rel), false, rel);
+  });
+
+  it('derives 8 wildcard entries + the exact run-gates entry + 3 exact previews (count sentinel 12)', () => {
+    const derived = tierEntries();
+    assert.equal(Object.isFrozen(derived), true);
+    assert.equal(derived.length, 12, 'derived tier count sentinel - edit deliberately');
+    const wildcards = derived.filter((e) => e.endsWith(':*)'));
+    assert.equal(wildcards.length, 8);
+    for (const rel of KIT_READONLY_TOOLS) {
+      if (rel === KIT_RUN_GATES_TOOL) continue;
+      assert.equal(derived.includes(wildcardEntryOf(rel)), true, rel);
+    }
+    assert.equal(derived.includes(RUN_GATES_EXACT), true, 'the exact root-pinned run-gates entry');
+    for (const rel of KIT_WRITER_PREVIEW_TOOLS) assert.equal(derived.includes(previewEntryOf(rel)), true, rel);
+  });
+
+  it('the run-gates negatives (Decision 3): no wildcard form anywhere; bare / other --cwd / --only forms stay uncovered', () => {
+    const derived = tierEntries();
+    assert.equal(derived.some((e) => e.includes('run-gates.mjs:*')), false, 'no wildcard run-gates entry in any seeded set');
+    for (const uncovered of [
+      previewEntryOf('tools/run-gates.mjs'), // bare, cwd-defaulting
+      `Bash(node ${join(KIT_ROOT, 'tools/run-gates.mjs')} --cwd /some/other/project)`,
+      `Bash(node ${join(KIT_ROOT, 'tools/run-gates.mjs')} --cwd ${TIER_PROJECT} --only unit-tests)`,
+    ]) {
+      assert.equal(derived.includes(uncovered), false, uncovered);
+    }
+  });
+
+  it('no preview entry carries an apply-class flag; no tier entry resolves to a writer tool', () => {
+    for (const entry of tierEntries()) {
+      for (const flag of PREVIEW_FORBIDDEN_FLAGS) assert.equal(entry.includes(flag), false, `${entry} ~ ${flag}`);
+      assert.doesNotMatch(entry, /set-recipe|setup-backends|uninstall|hide-footprint|inject-methodology/u, entry);
+    }
+  });
+
+  it('the derivation is fail-safe on a missing project dir (typed argument error)', () => {
+    assert.throws(() => deriveKitToolsAllowlist({}), (e) => e.code === VELOCITY_INVALID_ARGUMENT);
+  });
+
+  it('rejects a space-carrying or metacharacter-carrying project root UP FRONT with a clear error (R1 fold)', () => {
+    for (const bad of ['/tmp/has space', '/tmp/has$dollar', '/tmp/tick`tick']) {
+      assert.throws(
+        () => deriveKitToolsAllowlist({ projectDir: bad }),
+        (e) => e.code === VELOCITY_INVALID_ARGUMENT && /hand-add|by hand/iu.test(e.message),
+        bad,
+      );
+    }
+  });
+
+  it('rejects quote- and glob-bracket-carrying roots too — unquoted shell syntax breaks a byte-exact rule (R2 fold)', () => {
+    for (const bad of ["/tmp/it's", '/tmp/dq"dq', '/tmp/arr[0]', '/tmp/br]x']) {
+      assert.throws(
+        () => deriveKitToolsAllowlist({ projectDir: bad }),
+        (e) => e.code === VELOCITY_INVALID_ARGUMENT,
+        bad,
+      );
+    }
+  });
+});
+
+describe('screenAllowlistEntry — the tier entry classes', () => {
+  it('accepts every derived tier entry', () => {
+    for (const entry of tierEntries()) assert.equal(screenAllowlistEntry(entry), true, entry);
+  });
+
+  it('rejects a wildcard run-gates, writer paths, bare exact run-gates, and relative-path spellings', () => {
+    const rejected = [
+      `Bash(node ${join(KIT_ROOT, 'tools/run-gates.mjs')}:*)`, // wildcard would be BROADER than AD-037 (--cwd escapes)
+      `Bash(node ${join(KIT_ROOT, 'tools/set-recipe.mjs')}:*)`, // writer, never in the tier
+      `Bash(node ${join(KIT_ROOT, 'tools/setup-backends.mjs')}:*)`, // writer
+      `Bash(node ${join(KIT_ROOT, 'tools/uninstall.mjs')})`, // guarded teardown is not a preview
+      `Bash(node ${join(KIT_ROOT, 'tools/hide-footprint.mjs')})`, // arg-free form APPLIES - not a dry-run
+      `Bash(node ${join(KIT_ROOT, 'tools/run-gates.mjs')})`, // bare exact: cwd-defaulting, follows the shell
+      'Bash(node tools/recipes.mjs:*)', // relative spelling is a dead rule - screen refuses to bless it
+      'Bash(node /tmp/"quoted"/tools/recipes.mjs:*)', // unquoted shell syntax in the path token (R2 fold)
+      "Bash(node /tmp/it's/tools/recipes.mjs:*)",
+      'Bash(node /tmp/glob[0]/tools/recipes.mjs:*)',
+      'Bash(node --test:*)',
+    ];
+    for (const entry of rejected) assert.equal(screenAllowlistEntry(entry), false, entry);
+  });
+
+  it('still rejects an exact-form entry for the git/npm/shell core (exact form is tier-only, no behavior change)', () => {
+    for (const entry of ['Bash(git status)', 'Bash(ls)', 'Bash(npm view)']) {
+      assert.equal(screenAllowlistEntry(entry), false, entry);
+    }
+  });
+});
+
+describe('validateProfile — the selected-allowlist contract (core vs core+tier)', () => {
+  it('validates the derived tier against the core+tier audited set', () => {
+    const derived = tierEntries();
+    assert.deepEqual(validateProfile(derived, [...UNIVERSAL_READONLY_ALLOWLIST, ...derived]), {
+      ok: true,
+      count: derived.length,
+    });
+  });
+
+  it('throws VELOCITY_OFFCORE for a screen-passing node entry outside the derived tier (first off-core test)', () => {
+    const foreign = 'Bash(node /elsewhere/tools/recipes.mjs:*)';
+    assert.equal(screenAllowlistEntry(foreign), true, 'shape passes the screen');
+    const derived = tierEntries();
+    assert.throws(
+      () => validateProfile([foreign], [...UNIVERSAL_READONLY_ALLOWLIST, ...derived]),
+      (e) => e.code === VELOCITY_OFFCORE,
+    );
+  });
+
+  it('flagless semantics unchanged: a tier entry is OFFCORE against the argument-less core-only call', () => {
+    assert.throws(
+      () => validateProfile([tierEntries()[0]]),
+      (e) => e.code === VELOCITY_OFFCORE,
+    );
+  });
+
+  it('throws VELOCITY_NON_READONLY for a writer-path tier-shaped entry', () => {
+    assert.throws(
+      () => validateProfile([`Bash(node ${join(KIT_ROOT, 'tools/hide-footprint.mjs')}:*)`], [...UNIVERSAL_READONLY_ALLOWLIST]),
+      (e) => e.code === VELOCITY_NON_READONLY,
+    );
   });
 });
 
@@ -424,8 +615,11 @@ describe('velocity profile writer + CLI', () => {
       dryRun: true,
       apply: false,
       acceptEdits: false,
+      kitTools: false,
       cwd: undefined,
     });
+    assert.equal(parseArgs(['--kit-tools']).kitTools, true);
+    assert.equal(parseArgs(['--kit-tools', '--apply']).apply, true);
   });
 
   it('is idempotent on a second apply', (t) => {
@@ -492,5 +686,137 @@ describe('velocity profile writer + CLI', () => {
     assert.match(dry.stdout, /commit\/push\/publish are never allowlisted/);
     assert.match(dry.stdout, /runtime residual is not closed here/);
     assert.match(dry.stdout, /opt-in PreToolUse hook — Mode: hook/);
+  });
+
+  it('the residual notice carries the approval floor, mirrored in the velocity.md prose twin (F15, AD-040)', (t) => {
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    const dry = runMain(['--dry-run'], cwd);
+    const FLOOR_ITEMS = [
+      /every writer --apply\/--write\/--yes still prompts/,
+      /clobber-protection STOPs still stop/,
+      /the three release asks \(commit\/push\/publish\) stay maintainer-owned/,
+    ];
+    for (const item of FLOOR_ITEMS) assert.match(dry.stdout, item);
+    // Twin-drift guard: the hand-maintained prose twin carries the same floor items (markdown
+    // emphasis stripped so the comparison stays mechanical).
+    const proseTwin = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '..', 'references', 'modes', 'velocity.md'),
+      UTF8,
+    ).replaceAll('`', '').replaceAll('**', '');
+    for (const item of FLOOR_ITEMS) assert.match(proseTwin, item);
+  });
+});
+
+describe('velocity profile CLI — the opt-in --kit-tools tier', () => {
+  const derivedFor = (cwd) => deriveKitToolsAllowlist({ projectDir: cwd });
+
+  it('--kit-tools --apply seeds core + tier; the flagless apply stays core-only', (t) => {
+    const tierCwd = makeTempProject(t);
+    seedWorkflowStamp(tierCwd);
+    const tierResult = runMain(['--apply', '--kit-tools'], tierCwd);
+    const tierAllow = readJson(settingsPath(tierCwd)).permissions.allow;
+
+    const coreCwd = makeTempProject(t);
+    seedWorkflowStamp(coreCwd);
+    const coreResult = runMain(['--apply'], coreCwd);
+    const coreAllow = readJson(settingsPath(coreCwd)).permissions.allow;
+
+    assert.equal(tierResult.code, EXIT_OK);
+    assertCorePresentOnce(tierAllow);
+    for (const entry of derivedFor(tierCwd)) {
+      assert.equal(tierAllow.filter((candidate) => candidate === entry).length, 1, entry);
+    }
+    assert.equal(coreResult.code, EXIT_OK);
+    for (const entry of coreAllow) {
+      assert.equal(entry.includes('/tools/'), false, `flagless apply must stay core-only: ${entry}`);
+    }
+  });
+
+  it('--kit-tools --dry-run works undeployed (no stamp), predicts the tier, writes nothing', (t) => {
+    const cwd = makeTempProject(t); // deliberately NOT seedWorkflowStamp
+    const dry = runMain(['--kit-tools'], cwd);
+
+    assert.equal(dry.code, EXIT_OK);
+    assert.match(dry.stdout, /would add kit-tools tier entries: 12/);
+    assert.equal(existsSync(settingsPath(cwd)), false);
+    assert.equal(existsSync(pathOf(cwd, CLAUDE_DIR)), false);
+  });
+
+  it('--kit-tools output names run-gates as project-exec, never read-only', (t) => {
+    const cwd = makeTempProject(t);
+    const dry = runMain(['--kit-tools'], cwd);
+    assert.match(dry.stdout, /project-exec/);
+    assert.match(dry.stdout, /runs YOUR declared gates\.json/);
+    assert.match(dry.stdout, /every --apply\/--write\/--yes still prompts/);
+    assert.match(dry.stdout, /NO PreToolUse-hook residual coverage/);
+  });
+
+  it('--kit-tools --apply hits the same refusal paths (stamp, bypassPermissions) with zero writes', (t) => {
+    const missingCwd = makeTempProject(t);
+    const missingApply = runMain(['--apply', '--kit-tools'], missingCwd);
+
+    const bypassCwd = makeTempProject(t);
+    seedWorkflowStamp(bypassCwd);
+    ensureClaudeDir(bypassCwd);
+    writeJson(settingsPath(bypassCwd), { permissions: { defaultMode: BYPASS_MODE } });
+    const before = readText(settingsPath(bypassCwd));
+    const bypassApply = runMain(['--apply', '--kit-tools'], bypassCwd);
+
+    assert.equal(missingApply.code, EXIT_PRECONDITION);
+    assert.match(missingApply.stderr, /found none/);
+    assert.equal(existsSync(settingsPath(missingCwd)), false);
+    assert.equal(bypassApply.code, EXIT_PRECONDITION);
+    assert.equal(readText(settingsPath(bypassCwd)), before);
+  });
+
+  it('is idempotent on a second --kit-tools apply', (t) => {
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    const first = runMain(['--apply', '--kit-tools'], cwd);
+    const firstBytes = readText(settingsPath(cwd));
+    const second = runMain(['--apply', '--kit-tools'], cwd);
+
+    assert.equal(first.code, EXIT_OK);
+    assert.equal(second.code, EXIT_OK);
+    assert.equal(readText(settingsPath(cwd)), firstBytes);
+    assert.match(second.stdout, /added read-only core entries: 0/);
+    assert.match(second.stdout, /added kit-tools tier entries: 0/);
+  });
+
+  it('characterizes the flagless pre-existing advisory (pinned pre-tier) and keeps it after a tier apply', (t) => {
+    // (a) characterize-first: the CURRENT flagless behavior on a non-tier project.
+    const legacyCwd = makeTempProject(t);
+    seedWorkflowStamp(legacyCwd);
+    ensureClaudeDir(legacyCwd);
+    writeJson(settingsPath(legacyCwd), { permissions: { allow: [LEGACY_FETCH_ALLOW] } });
+    const legacyDry = runMain(['--dry-run'], legacyCwd);
+    assert.equal(legacyDry.code, EXIT_OK);
+    assert.match(legacyDry.stdout, /pre-existing non-read-only Bash allow entries/);
+    assert.match(legacyDry.stdout, /git fetch/);
+
+    // (b) no self-contradiction: the advisory never flags an entry the tier itself seeded.
+    const tierCwd = makeTempProject(t);
+    seedWorkflowStamp(tierCwd);
+    runMain(['--apply', '--kit-tools'], tierCwd);
+    const after = runMain(['--dry-run'], tierCwd);
+    assert.equal(after.code, EXIT_OK);
+    assert.doesNotMatch(after.stdout, /pre-existing non-read-only Bash allow entries/);
+  });
+
+  it('the advisory flags kit-tool-shaped entries OUTSIDE the derived tier (foreign path / foreign root — R1 fold)', (t) => {
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    ensureClaudeDir(cwd);
+    const foreignWildcard = 'Bash(node /tmp/malicious/tools/recipes.mjs:*)';
+    const foreignRunGates = `Bash(node ${join(KIT_ROOT, 'tools/run-gates.mjs')} --cwd /some/other/project)`;
+    writeJson(settingsPath(cwd), { permissions: { allow: [foreignWildcard, foreignRunGates] } });
+
+    const dry = runMain(['--dry-run'], cwd);
+
+    assert.equal(dry.code, EXIT_OK);
+    assert.match(dry.stdout, /pre-existing non-read-only Bash allow entries/);
+    assert.match(dry.stdout, /\/tmp\/malicious\/tools\/recipes\.mjs/);
+    assert.match(dry.stdout, /--cwd \/some\/other\/project/);
   });
 });

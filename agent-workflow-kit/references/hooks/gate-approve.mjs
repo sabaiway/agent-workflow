@@ -71,6 +71,13 @@ export const SEEDED_READONLY_CORE = Object.freeze([
   'Bash(git ls-files:*)',
   'Bash(git check-ignore:*)',
   'Bash(git branch --list:*)',
+  'Bash(git rev-parse:*)',
+  'Bash(git blame:*)',
+  'Bash(git shortlog:*)',
+  'Bash(git describe:*)',
+  'Bash(git tag --list:*)',
+  'Bash(git stash list:*)',
+  'Bash(git worktree list:*)',
   'Bash(npm view:*)',
   'Bash(npm ls:*)',
   'Bash(npm outdated:*)',
@@ -82,6 +89,12 @@ export const SEEDED_READONLY_CORE = Object.freeze([
   'Bash(readlink:*)',
   'Bash(which:*)',
   'Bash(grep:*)',
+  'Bash(diff:*)',
+  'Bash(stat:*)',
+  'Bash(du:*)',
+  'Bash(basename:*)',
+  'Bash(dirname:*)',
+  'Bash(realpath:*)',
 ]);
 
 // Baked frozen copy of velocity-profile.mjs RUNTIME_RESIDUAL_FORMS (the documented residual a

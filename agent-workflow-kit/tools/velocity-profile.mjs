@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { join, relative, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // Velocity-profile core + writer: a fixed, audited read-only allowlist that an onboarding step seeds
 // into `.claude/settings.json` so routine read-only commands stop idling on approval prompts.
@@ -40,6 +40,13 @@ export const UNIVERSAL_READONLY_ALLOWLIST = Object.freeze([
   'Bash(git ls-files:*)',
   'Bash(git check-ignore:*)',
   'Bash(git branch --list:*)',
+  'Bash(git rev-parse:*)',
+  'Bash(git blame:*)',
+  'Bash(git shortlog:*)',
+  'Bash(git describe:*)',
+  'Bash(git tag --list:*)',
+  'Bash(git stash list:*)',
+  'Bash(git worktree list:*)',
   'Bash(npm view:*)',
   'Bash(npm ls:*)',
   'Bash(npm outdated:*)',
@@ -51,6 +58,12 @@ export const UNIVERSAL_READONLY_ALLOWLIST = Object.freeze([
   'Bash(readlink:*)',
   'Bash(which:*)',
   'Bash(grep:*)',
+  'Bash(diff:*)',
+  'Bash(stat:*)',
+  'Bash(du:*)',
+  'Bash(basename:*)',
+  'Bash(dirname:*)',
+  'Bash(realpath:*)',
 ]);
 
 // Per-tool POSITIVE allowlists, as frozen arrays. NOTE: `Object.freeze` on a Set does NOT prevent
@@ -64,6 +77,18 @@ export const GIT_READONLY_SUBCOMMANDS = Object.freeze([
   'ls-files',
   'check-ignore',
   'branch --list',
+  'rev-parse',
+  'blame',
+  'shortlog',
+  'describe',
+  // `git cat-file` is deliberately ABSENT (diff-council fold, AD-040): `--textconv`/`--filters`
+  // activate CONFIGURED external filters under an auto-approved command, and its read utility is
+  // marginal next to the kept `git show`.
+  // Fixed read-only forms ONLY — the bare `git tag` / `git stash` / `git worktree` forms mutate
+  // (probe-proven, AD-040), the same multi-token precedent as 'branch --list'.
+  'tag --list',
+  'stash list',
+  'worktree list',
 ]);
 export const NPM_READONLY_SUBCOMMANDS = Object.freeze(['view', 'ls', 'outdated']);
 export const SHELL_READONLY = Object.freeze([
@@ -75,7 +100,56 @@ export const SHELL_READONLY = Object.freeze([
   'readlink',
   'which',
   'grep',
+  // AD-040 audit survivors. `file` deliberately FAILED the audit (`-C -m <magic>` compiles a magic
+  // FILE WRITE — probe-proven) and stays a hand-add candidate only. `diff -l/--paginate` execs `pr`
+  // by a build-time FIXED absolute path (probed NOT PATH-resolved) — not arbitrary exec, kept.
+  'diff',
+  'stat',
+  'du',
+  'basename',
+  'dirname',
+  'realpath',
 ]);
+
+// ── the opt-in --kit-tools tier (AD-040) ────────────────────────────────────────────────
+// A SEPARATE frozen tier, never an extension of UNIVERSAL_READONLY_ALLOWLIST: the core stays the
+// hook-parity surface (test/gate-hook-core-parity.test.mjs), while tier entries are derived at
+// seed time from the RUNNING tool's own location — resolved-absolute, so a moved or reinstalled
+// skill leaves a stale rule that FAIL-SAFE prompts again (never a silent widening).
+//
+// Membership (9, frozen): the read-only kit tools plus run-gates.mjs — which is NOT read-only but
+// project-exec (it runs the project's OWN declared gates.json commands), so it seeds as ONE exact
+// byte-string pinned to this project root (`--cwd <resolved root>`): a wildcard would be BROADER
+// than the AD-037 hook boundary (`--cwd <dir>` executes an arbitrary OTHER project's gates.json)
+// and a cwd-defaulting entry would follow the shell's current directory into subdirs. NEVER the
+// writers. review-state.mjs's read-only git spawns are in-scope read-only.
+export const KIT_RUN_GATES_TOOL = 'tools/run-gates.mjs';
+export const KIT_READONLY_TOOLS = Object.freeze([
+  'tools/recipes.mjs',
+  'tools/procedures.mjs',
+  'tools/family-registry.mjs',
+  'tools/detect-backends.mjs',
+  'tools/commands.mjs',
+  'tools/review-state.mjs',
+  KIT_RUN_GATES_TOOL,
+  'tools/manifest/validate.mjs',
+  'tools/release-scan.mjs',
+]);
+// Writer previews: ONLY writers whose ARG-FREE invocation is a documented dry-run ("Default is
+// --dry-run" in their usage) seed an EXACT preview byte-string — every --apply/--write/--yes keeps
+// its prompt. set-recipe is excluded (its preview takes variable --set ops); setup-backends and
+// hide-footprint are excluded (their arg-free forms APPLY); uninstall is excluded (a guarded
+// teardown documents --dry-run explicitly — its bare form is not its preview contract).
+export const KIT_WRITER_PREVIEW_TOOLS = Object.freeze([
+  'tools/velocity-profile.mjs',
+  'tools/cheap-agents.mjs',
+  'tools/gate-hook.mjs',
+]);
+const KIT_WILDCARD_TOOLS = Object.freeze(KIT_READONLY_TOOLS.filter((rel) => rel !== KIT_RUN_GATES_TOOL));
+// The kit root this tool runs from (tools/..) — the tier's seed-time path anchor.
+const KIT_ROOT = fileURLToPath(new URL('..', import.meta.url));
+const KIT_TOOL_INVOKER = 'node';
+const RUN_GATES_CWD_FLAG = '--cwd';
 
 // Characters that make a pattern NOT a single read-only command, so the screen rejects them.
 // Per current Claude Code permission semantics: the recognized command SEPARATORS are
@@ -125,6 +199,9 @@ export const VELOCITY_SYMLINK = 'VELOCITY_SYMLINK';
 const VELOCITY_ERROR_NAME = 'VelocityProfileError';
 const ERROR_PREFIX = '[agent-workflow-kit]';
 const BASH_ALLOW_PATTERN = /^Bash\((.+):\*\)$/u;
+// The EXACT (non-wildcard) allow form `Bash(cmd)` — tier-only (run-gates + writer previews); the
+// git/npm/shell core classes stay wildcard-only so the pre-existing advisory behavior never shifts.
+const BASH_EXACT_ALLOW_PATTERN = /^Bash\((.+)\)$/u;
 const BASH_PERMISSION_PATTERN = /^Bash\(.+\)$/u;
 const WHITESPACE_PATTERN = /\s+/u;
 const GIT_COMMAND = 'git';
@@ -143,6 +220,7 @@ const JSON_NEWLINE_PATTERN = /\n/gu;
 const FLAG_DRY_RUN = '--dry-run';
 const FLAG_APPLY = '--apply';
 const FLAG_ACCEPT_EDITS = '--accept-edits';
+const FLAG_KIT_TOOLS = '--kit-tools';
 const FLAG_CWD = '--cwd';
 const FLAG_HELP = '--help';
 const SHORT_FLAG_HELP = '-h';
@@ -155,12 +233,16 @@ const MUTATING_SCRIPT_HOOK_PATTERN = /^(pre|post)/iu;
 // refusal is named, tested, and produces a clear message).
 const MUTATING_ALLOW_COMMAND_PATTERN = /^(?:git\s+(?:commit|push)|npm\s+publish)(?:\s|$)/iu;
 const RESIDUAL_NOTICE =
-  'residual: seeded read-only allow entries are a trust-posture convenience, NOT a sandbox; settings-level rules cannot inspect runtime redirection/command-substitution/--output writes; commit/push/publish are never allowlisted (a DIRECT invocation still ASKs, but the runtime residual is not closed here); the residual guard ships as the opt-in PreToolUse hook — Mode: hook (/agent-workflow-kit hook).';
+  'residual: seeded read-only allow entries are a trust-posture convenience, NOT a sandbox; settings-level rules cannot inspect runtime redirection/command-substitution/--output writes; commit/push/publish are never allowlisted (a DIRECT invocation still ASKs, but the runtime residual is not closed here); the residual guard ships as the opt-in PreToolUse hook — Mode: hook (/agent-workflow-kit hook). floor (never auto-approved, with or without the tier): every writer --apply/--write/--yes still prompts; clobber-protection STOPs still stop; the three release asks (commit/push/publish) stay maintainer-owned.';
 
-const USAGE = `usage: velocity-profile [--dry-run | --apply] [--accept-edits] [--cwd <dir>] [--help]
+const USAGE = `usage: velocity-profile [--dry-run | --apply] [--kit-tools] [--accept-edits] [--cwd <dir>] [--help]
 
 Seeds the fixed read-only Claude Code allowlist into .claude/settings.json.
-Default is --dry-run. --apply writes; --accept-edits only sets defaultMode when applying.`;
+Default is --dry-run. --apply writes; --accept-edits only sets defaultMode when applying.
+--kit-tools additionally seeds the audited kit-tool tier: 8 read-only kit tools by resolved
+absolute path (args wildcard), run-gates.mjs as ONE exact project-root-pinned byte-string
+(project-exec - it runs YOUR declared gates.json), and the writers' exact arg-free dry-run
+preview byte-strings. Never touches settings.local.json.`;
 
 const fail = (exitCode, message) => Object.assign(new Error(message), { exitCode });
 
@@ -245,6 +327,36 @@ const getBashAllowCommand = (pattern) => {
   return match ? match[1] : undefined;
 };
 
+// Parse the exact (non-wildcard) form ONLY when the wildcard form does not match — `Bash(cmd:*)`
+// would otherwise parse here as `cmd:*`.
+const getBashExactCommand = (pattern) => {
+  if (typeof pattern !== 'string' || BASH_ALLOW_PATTERN.test(pattern)) return undefined;
+  const match = pattern.match(BASH_EXACT_ALLOW_PATTERN);
+  return match ? match[1] : undefined;
+};
+
+// Characters that survive whitespace tokenization but break an UNQUOTED byte-exact path rule:
+// shell quoting syntax and glob brackets (SHELL_METACHARACTERS owns the command-level separators/
+// redirections/expansions — `*`/`?` globs included — but not these four).
+const PATH_BREAKING_CHARACTERS = Object.freeze(["'", '"', '[', ']']);
+
+// A path token that can be seeded UNQUOTED into a byte-exact allow rule: POSIX-absolute, no
+// whitespace, no shell metacharacter, no quoting/glob syntax.
+const isSeedablePathToken = (token) =>
+  typeof token === 'string' &&
+  token.startsWith('/') &&
+  !/\s/u.test(token) &&
+  !hasShellMetacharacter(token) &&
+  !PATH_BREAKING_CHARACTERS.some((ch) => token.includes(ch));
+
+// A tier path token must be SEEDABLE (a relative or shell-syntax-carrying spelling is a dead rule
+// the screen refuses to bless) and end on a known tier-tool tail. Any seedable absolute prefix is
+// accepted — the user's own kit copy elsewhere is legitimate shape-wise; entries OUTSIDE the
+// derived tier are still flagged by the pre-existing advisory, and membership in the SEEDED set
+// stays enforced separately by validateProfile's audited-set check.
+const isKitToolPathToken = (token, relPaths) =>
+  isSeedablePathToken(token) && relPaths.some((rel) => token.endsWith(`/${rel}`));
+
 const isSingleShellToken = (cmd, tokens) => tokens.length === 1 && cmd === tokens[0];
 
 const isScriptMap = (scripts) => Boolean(scripts) && typeof scripts === 'object' && !Array.isArray(scripts);
@@ -309,11 +421,23 @@ const assertClaudeDirSafe = (cwd, deps = {}) => {
   return { claudeDirAbsent: false };
 };
 
-const collectPreExistingNonReadonly = (sources) =>
+// A kit-tool-SHAPED entry (any `node …` allow entry, wildcard or exact) passes the shape screen on
+// any absolute path — but only the entries the tier itself derives for THIS kit + THIS root are
+// audited. Everything else `node`-shaped is arbitrary local JS / foreign project-exec and must
+// stay flagged for hand review (diff-council fold, AD-040).
+const isKitToolShapedCommand = (entry) => {
+  const cmd = getBashAllowCommand(entry) ?? getBashExactCommand(entry);
+  return cmd !== undefined && tokenizeCommand(cmd)[0] === KIT_TOOL_INVOKER;
+};
+
+const collectPreExistingNonReadonly = (sources, derivedTier = []) =>
   sources.flatMap(({ source, data }) =>
     getAllowEntries(data)
       .filter((entry) => typeof entry === 'string' && BASH_PERMISSION_PATTERN.test(entry))
-      .filter((entry) => !screenAllowlistEntry(entry))
+      .filter(
+        (entry) =>
+          !screenAllowlistEntry(entry) || (isKitToolShapedCommand(entry) && !derivedTier.includes(entry)),
+      )
       .map((entry) => ({ source, entry })),
   );
 
@@ -351,6 +475,21 @@ const formatAllowlist = (result) => [
   `already present: ${result.alreadyPresent.length}`,
 ];
 
+// The tier's honest posture, printed on every --kit-tools run: run-gates is project-exec (never
+// "read-only"), previews stay dry-run-only, and the tier gets none of the hook's residual ask-net.
+const KIT_TIER_NOTICE =
+  'kit-tools tier: paths are resolved absolute at seed time (fail-safe - a moved skill or stale path simply prompts again); run-gates.mjs is seeded as ONE exact byte-string pinned to this project root and is project-exec - it runs YOUR declared gates.json commands, never "read-only"; writer previews are exact dry-run byte-strings - every --apply/--write/--yes still prompts; tier entries get NO PreToolUse-hook residual coverage (settings-level posture only - see the velocity mode notes).';
+
+const formatKitTier = (result) =>
+  result.kitTools
+    ? [
+        `${result.wrote ? 'added' : 'would add'} kit-tools tier entries: ${result.tierToAdd.length}`,
+        ...formatEntryList(result.tierToAdd),
+        `already present (tier): ${result.tierAlreadyPresent.length}`,
+        KIT_TIER_NOTICE,
+      ]
+    : [];
+
 const formatGateAdvisory = (gateCandidates) => [
   'gate advisory: candidates you may add BY HAND to .claude/settings.json or settings.local.json; this tool will NOT add them',
   ...(gateCandidates.length
@@ -375,6 +514,7 @@ const formatVelocityProfileResult = (result) =>
   [
     result.dryRun ? 'agent-workflow velocity profile - DRY RUN (no changes)' : 'agent-workflow velocity profile - APPLY',
     ...formatAllowlist(result),
+    ...formatKitTier(result),
     formatDefaultMode(result),
     ...formatGateAdvisory(result.gateCandidates),
     ...formatPreExistingAdvisory(result.preExistingNonReadonly),
@@ -386,16 +526,69 @@ const formatVelocityProfileResult = (result) =>
 const exitCodeFor = (err) => err?.exitCode ?? EXIT_PRECONDITION;
 
 // `:*` is the trailing word-boundary wildcard: equivalent to a trailing ` *`, recognized only at the
-// end of a pattern per Claude Code semantics.
+// end of a pattern per Claude Code semantics. Two forms are recognized: the wildcard form (the
+// git/npm/shell core + the kit-tool wildcard class) and the EXACT form (tier-only: the root-pinned
+// run-gates byte-string + the writer-preview dry-run byte-strings).
 export const screenAllowlistEntry = (pattern) => {
-  const cmd = getBashAllowCommand(pattern);
-  if (!cmd) return false;
-  if (hasShellMetacharacter(cmd)) return false;
+  const wildcardCmd = getBashAllowCommand(pattern);
+  if (wildcardCmd !== undefined) {
+    if (hasShellMetacharacter(wildcardCmd)) return false;
+    const tokens = tokenizeCommand(wildcardCmd);
+    if (tokens[0] === GIT_COMMAND) return GIT_READONLY_SUBCOMMANDS.includes(getSubcommand(tokens));
+    if (tokens[0] === NPM_COMMAND) return NPM_READONLY_SUBCOMMANDS.includes(getSubcommand(tokens));
+    // Kit-tool wildcard class: `node <abs kit tool>` + args wildcard. run-gates is deliberately NOT
+    // here (Decision 3: only its exact root-pinned form below — a wildcard would cover `--cwd <any>`).
+    if (tokens[0] === KIT_TOOL_INVOKER) return tokens.length === 2 && isKitToolPathToken(tokens[1], KIT_WILDCARD_TOOLS);
+    return isSingleShellToken(wildcardCmd, tokens) && SHELL_READONLY.includes(wildcardCmd);
+  }
+  const exactCmd = getBashExactCommand(pattern);
+  if (exactCmd === undefined || hasShellMetacharacter(exactCmd)) return false;
+  const tokens = tokenizeCommand(exactCmd);
+  if (tokens[0] !== KIT_TOOL_INVOKER) return false;
+  // Writer preview: the arg-free dry-run byte-string of a preview-class writer.
+  if (tokens.length === 2) return isKitToolPathToken(tokens[1], KIT_WRITER_PREVIEW_TOOLS);
+  // run-gates: EXACTLY `node <abs run-gates> --cwd <abs root>` — any other form keeps prompting.
+  return (
+    tokens.length === 4 &&
+    isKitToolPathToken(tokens[1], [KIT_RUN_GATES_TOOL]) &&
+    tokens[2] === RUN_GATES_CWD_FLAG &&
+    isSeedablePathToken(tokens[3])
+  );
+};
 
-  const tokens = tokenizeCommand(cmd);
-  if (tokens[0] === GIT_COMMAND) return GIT_READONLY_SUBCOMMANDS.includes(getSubcommand(tokens));
-  if (tokens[0] === NPM_COMMAND) return NPM_READONLY_SUBCOMMANDS.includes(getSubcommand(tokens));
-  return isSingleShellToken(cmd, tokens) && SHELL_READONLY.includes(cmd);
+/**
+ * Derive the opt-in kit-tools tier for a project: 8 wildcard entries (resolved-absolute script
+ * path + args wildcard), ONE exact run-gates entry pinned to the resolved project root, and the
+ * writer-preview exact dry-run byte-strings. Pure derivation — a stale path simply prompts again.
+ */
+// A seedable path must survive UNQUOTED inside a byte-exact allow rule: POSIX-absolute, no
+// whitespace, no shell metacharacter, no quoting/glob syntax (isSeedablePathToken). Anything else
+// is refused UP FRONT with a clear error (a Windows-shaped, space- or quote-carrying path would
+// otherwise die downstream as a confusing VELOCITY_NON_READONLY, or seed dead/shell-reinterpreted
+// byte strings) — the hand-add advisory is the fallback.
+const assertSeedablePath = (label, absPath) => {
+  if (isSeedablePathToken(absPath)) return;
+  throw makeVelocityProfileError(
+    VELOCITY_INVALID_ARGUMENT,
+    `kit-tools tier: the ${label} "${absPath}" is not a POSIX absolute path free of spaces/metacharacters/quoting - byte-exact allow rules cannot be seeded for it; add hand-picked entries to your settings instead (hand-add)`,
+    { entry: absPath },
+  );
+};
+
+export const deriveKitToolsAllowlist = ({ projectDir } = {}) => {
+  if (typeof projectDir !== 'string' || projectDir === '') {
+    throw makeVelocityProfileError(VELOCITY_INVALID_ARGUMENT, 'kit-tools derivation needs a project directory', {
+      entry: projectDir,
+    });
+  }
+  const projectRoot = resolve(projectDir);
+  assertSeedablePath('resolved project root', projectRoot);
+  assertSeedablePath('resolved skill dir', join(KIT_ROOT, '.'));
+  return Object.freeze([
+    ...KIT_WILDCARD_TOOLS.map((rel) => `Bash(${KIT_TOOL_INVOKER} ${join(KIT_ROOT, rel)}:*)`),
+    `Bash(${KIT_TOOL_INVOKER} ${join(KIT_ROOT, KIT_RUN_GATES_TOOL)} ${RUN_GATES_CWD_FLAG} ${projectRoot})`,
+    ...KIT_WRITER_PREVIEW_TOOLS.map((rel) => `Bash(${KIT_TOOL_INVOKER} ${join(KIT_ROOT, rel)})`),
+  ]);
 };
 
 export const discoverGateCandidates = (packageJson) => {
@@ -405,12 +598,14 @@ export const discoverGateCandidates = (packageJson) => {
 };
 
 /**
- * Validate that what we are about to write is a subset of the audited read-only core: every entry
+ * Validate that what we are about to write is a subset of the SELECTED audited set: every entry
  * must (a) NOT be a commit/push/publish allow entry, (b) pass the read-only screen, and (c) be a
- * member of UNIVERSAL_READONLY_ALLOWLIST (a guard against the constant drifting). Pure; owns no exit
- * codes — a CLI maps the typed `.code` to a process exit.
+ * member of the audited set (a guard against the constants drifting). The argument-less call keeps
+ * its exact historical semantics — the full core validated against itself; a --kit-tools run
+ * additionally validates the derived tier against core + tier. Pure; owns no exit codes — a CLI
+ * maps the typed `.code` to a process exit.
  */
-export const validateProfile = (allowEntries = UNIVERSAL_READONLY_ALLOWLIST) => {
+export const validateProfile = (allowEntries = UNIVERSAL_READONLY_ALLOWLIST, auditedSet = UNIVERSAL_READONLY_ALLOWLIST) => {
   if (!Array.isArray(allowEntries)) {
     throw makeVelocityProfileError(VELOCITY_INVALID_ARGUMENT, 'allow entries must be an array', { entry: allowEntries });
   }
@@ -422,7 +617,7 @@ export const validateProfile = (allowEntries = UNIVERSAL_READONLY_ALLOWLIST) => 
     if (!screenAllowlistEntry(entry)) {
       throw makeVelocityProfileError(VELOCITY_NON_READONLY, `not a read-only allow entry: ${entry}`, { entry });
     }
-    if (!UNIVERSAL_READONLY_ALLOWLIST.includes(entry)) {
+    if (!auditedSet.includes(entry)) {
       throw makeVelocityProfileError(VELOCITY_OFFCORE, `allow entry is outside the audited core: ${entry}`, { entry });
     }
   }
@@ -480,10 +675,25 @@ export const preflightVelocityProfile = ({ cwd }, deps = {}) => {
     );
   }
 
-  const preExistingNonReadonly = collectPreExistingNonReadonly([
-    { source: SETTINGS_FILE, data: projectSettings.data },
-    { source: SETTINGS_LOCAL_FILE, data: localSettings.data },
-  ]);
+  // The advisory compares kit-tool-shaped entries against the tier derived for THIS kit + root.
+  // Defensive derive: on a machine whose paths cannot seed (space/metacharacter — the tier itself
+  // refuses loudly on --kit-tools), the flagless advisory falls back to flagging EVERY node-shaped
+  // entry — over-flagging is the safe direction, and flagless behavior never gains a new failure
+  // mode from local skill paths.
+  const derivedTier = (() => {
+    try {
+      return deriveKitToolsAllowlist({ projectDir });
+    } catch {
+      return [];
+    }
+  })();
+  const preExistingNonReadonly = collectPreExistingNonReadonly(
+    [
+      { source: SETTINGS_FILE, data: projectSettings.data },
+      { source: SETTINGS_LOCAL_FILE, data: localSettings.data },
+    ],
+    derivedTier,
+  );
   const gateCandidates = discoverGateCandidates(readPackageJson(projectDir, deps));
 
   return {
@@ -500,21 +710,30 @@ export const preflightVelocityProfile = ({ cwd }, deps = {}) => {
   };
 };
 
-export const planVelocityProfile = (preflight, { acceptEdits } = {}) => {
+export const planVelocityProfile = (preflight, { acceptEdits, kitTools } = {}) => {
   const projectAllow = getAllowEntries(preflight.projectSettings?.data);
   const toAdd = UNIVERSAL_READONLY_ALLOWLIST.filter((entry) => !projectAllow.includes(entry));
   const alreadyPresent = UNIVERSAL_READONLY_ALLOWLIST.filter((entry) => projectAllow.includes(entry));
-  return { toAdd, alreadyPresent, setsDefaultMode: acceptEdits === true };
+  const tier = kitTools === true ? deriveKitToolsAllowlist({ projectDir: preflight.cwd }) : [];
+  const tierToAdd = tier.filter((entry) => !projectAllow.includes(entry));
+  const tierAlreadyPresent = tier.filter((entry) => projectAllow.includes(entry));
+  return { toAdd, alreadyPresent, tierToAdd, tierAlreadyPresent, kitTools: kitTools === true, setsDefaultMode: acceptEdits === true };
 };
 
-export const writeVelocityProfile = ({ cwd, acceptEdits = false, dryRun = true } = {}, deps = {}) => {
+export const writeVelocityProfile = ({ cwd, acceptEdits = false, dryRun = true, kitTools = false } = {}, deps = {}) => {
   const projectDir = cwd ?? deps.cwd ?? process.cwd();
   const preflight = preflightVelocityProfile({ cwd: projectDir }, deps);
-  const plan = planVelocityProfile(preflight, { acceptEdits });
+  const plan = planVelocityProfile(preflight, { acceptEdits, kitTools });
   // Drift guard runs on BOTH dry-run and apply (so a dry-run faithfully predicts the apply) and
   // validates the FULL audited core, not just the to-add delta — a drifted core entry is caught even
   // when it is already present in the user's allow list (and toAdd is a subset of the core anyway).
   validateProfile();
+  // A --kit-tools run additionally validates the SELECTED tier against core + tier — flagless
+  // behavior never depends on local skill paths (the derivation does not even run without the flag).
+  if (kitTools === true) {
+    const tier = deriveKitToolsAllowlist({ projectDir });
+    validateProfile(tier, [...UNIVERSAL_READONLY_ALLOWLIST, ...tier]);
+  }
   const resultBase = { ...preflight, ...plan };
   if (dryRun) return { wrote: false, dryRun: true, ...resultBase };
 
@@ -528,7 +747,7 @@ export const writeVelocityProfile = ({ cwd, acceptEdits = false, dryRun = true }
   const fs = fsDeps(deps);
   const settingsPath = join(projectDir, SETTINGS_FILE);
   if (preflight.claudeDirAbsent) fs.mkdir(join(projectDir, CLAUDE_DIR), { recursive: true });
-  const merged = mergeProjectSettings(preflight.projectSettings.data, plan.toAdd, acceptEdits);
+  const merged = mergeProjectSettings(preflight.projectSettings.data, [...plan.toAdd, ...plan.tierToAdd], acceptEdits);
   fs.writeFile(settingsPath, formatJson(merged, preflight.projectSettings.eol ?? LF), UTF8);
   return { wrote: true, dryRun: false, settingsPath, ...resultBase };
 };
@@ -541,6 +760,7 @@ export const parseArgs = (argv) => {
       if (arg === FLAG_DRY_RUN) return { ...state, dryRunFlag: true };
       if (arg === FLAG_APPLY) return { ...state, apply: true };
       if (arg === FLAG_ACCEPT_EDITS) return { ...state, acceptEdits: true };
+      if (arg === FLAG_KIT_TOOLS) return { ...state, kitTools: true };
       if (arg === FLAG_CWD) {
         const next = allArgs[index + 1];
         if (next === undefined || next.startsWith('-')) throw fail(EXIT_USAGE, `${FLAG_CWD} needs a directory argument`);
@@ -549,7 +769,7 @@ export const parseArgs = (argv) => {
       if (arg.startsWith('-')) throw fail(EXIT_USAGE, `unknown flag: ${arg}`);
       throw fail(EXIT_USAGE, `unexpected argument: ${arg}`);
     },
-    { help: false, dryRunFlag: false, apply: false, acceptEdits: false, cwd: undefined, skipNext: false },
+    { help: false, dryRunFlag: false, apply: false, acceptEdits: false, kitTools: false, cwd: undefined, skipNext: false },
   );
 
   if (parsed.dryRunFlag && parsed.apply) throw fail(EXIT_USAGE, `${FLAG_DRY_RUN} and ${FLAG_APPLY} cannot be used together`);
@@ -558,6 +778,7 @@ export const parseArgs = (argv) => {
     dryRun: parsed.apply ? false : true,
     apply: parsed.apply,
     acceptEdits: parsed.acceptEdits,
+    kitTools: parsed.kitTools,
     cwd: parsed.cwd,
   };
 };
@@ -572,7 +793,7 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
       return EXIT_OK;
     }
     const result = writeVelocityProfile(
-      { cwd: args.cwd ?? deps.cwd ?? process.cwd(), acceptEdits: args.acceptEdits, dryRun: args.dryRun },
+      { cwd: args.cwd ?? deps.cwd ?? process.cwd(), acceptEdits: args.acceptEdits, dryRun: args.dryRun, kitTools: args.kitTools },
       deps,
     );
     log(formatVelocityProfileResult(result));
