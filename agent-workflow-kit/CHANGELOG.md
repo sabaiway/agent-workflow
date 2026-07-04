@@ -4,6 +4,52 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.32.0 — Approval-idle reduction: the opt-in `velocity --kit-tools` tier, an audited core extension, and the standing-consent advisory (AD-040)
+
+A **feature** release; packaging-only for deployments (lineage stays `1.3.0` — no `docs/ai`
+structure change, no migration). Routine read-only kit-tool invocations — the session-start
+discovery line, the procedures advisor, the status/backends/gates checks — stop idling on
+approval prompts, opt-in and honestly labeled; nothing that writes, commits, or publishes gets
+any quieter.
+
+- **`velocity --kit-tools` (opt-in tier).** On top of the read-only core, seeds 12 entries derived
+  from the RUNNING skill's own location at seed time: 8 read-only kit tools as resolved-absolute
+  script path + args wildcard (`recipes` / `procedures` / `family-registry` / `detect-backends` /
+  `commands` / `review-state` / `manifest/validate` / `release-scan`), `run-gates.mjs` as ONE
+  exact byte-string pinned `--cwd <resolved project root>` and advertised **project-exec, never
+  "read-only"** (a wildcard would be broader than the AD-037 hook boundary), and the three
+  default-dry-run writers' exact arg-free preview byte-strings (`velocity-profile`,
+  `cheap-agents`, `gate-hook`) — every `--apply`/`--write`/`--yes` still prompts. Fail-safe by
+  construction: a moved skill or stale path simply prompts again; non-POSIX / space- /
+  quote-carrying paths are refused up front with a typed error (hand-add fallback). Flagless
+  `velocity` behavior is unchanged (validates core-only, never depends on skill paths).
+- **Dead-rule prevention as a test.** The `velocity.md` tier subsection lists the covered dispatch
+  line per tool (the documented-invocation source); the new `test/kit-readonly-tools.test.mjs`
+  substitutes the resolved skill dir (+ project root for run-gates) into each line and asserts the
+  seeded byte-form matches (prefix for wildcard, equality for exact) — plus the tier ↔
+  `commands.mjs` catalog-partition guard (run-gates the only project-exec member; the two
+  non-mode-backed validators get a writes-nothing source assertion).
+- **Audited read-only core 18 → 31 (the AD-021 empirical method, probe record in AD-040).**
+  Survivors: `diff`, `stat`, `du`, `basename`, `dirname`, `realpath`, `git rev-parse`,
+  `git blame`, `git shortlog`, `git describe`, and the FIXED forms `git tag --list`,
+  `git stash list`, `git worktree list` (their bare forms mutate — probe-proven). FAILED and
+  excluded: `file` (`-C -m` compiles a magic FILE WRITE) and `git cat-file` (`--textconv`/
+  `--filters` run configured filters; `git show` already covers the reads). The PreToolUse hook's
+  `SEEDED_READONLY_CORE` extends in LOCKSTEP (order-sensitive parity guard); an already-placed
+  hook keeps the OLD core (a strict subset) until a delete-to-reseed refresh.
+- **Sharper pre-existing advisory.** `node …`-shaped allow entries OUTSIDE the derived tier
+  (foreign script path, foreign `run-gates --cwd` root) are now flagged for hand review — the
+  tier's shape can never hide arbitrary local JS.
+- **`set-recipe` standing-consent advisory (wording-only).** After a `--write` that names a
+  reviewed/council recipe, the mode file now advises the one-time HAND-adds
+  (`codex-review` / `agy-review` / `grounding.mjs`) to `settings.local.json` — stating plainly
+  that auto-approval spends subscription quota without a per-run prompt, the kit never writes
+  that file, and the entry must match the invocation byte-form including quoting. Solo recipes
+  get no advisory; the tool echo is untouched.
+- **Honesty floor, twinned.** The velocity residual notice + its `velocity.md` prose mirror now
+  both carry the approval floor: every writer apply-class flag still prompts, clobber-protection
+  STOPs still stop, the three release asks (commit/push/publish) stay maintainer-owned.
+
 ## 1.31.0 — Progressive disclosure: SKILL.md becomes a thin router over references/modes + references/shared (AD-039)
 
 A **feature** release; packaging-only for deployments (the deployment lineage stays `1.3.0` — no

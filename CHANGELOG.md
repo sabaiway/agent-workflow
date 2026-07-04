@@ -7,6 +7,19 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-04 — kit 1.32.0: approval-idle reduction — the opt-in `velocity --kit-tools` tier (AD-040)
+
+Routine read-only kit-tool invocations stop idling on approval prompts, opt-in and honestly
+labeled. `velocity --kit-tools` seeds 12 entries resolved from the running skill at seed time
+(8 read-only tools wildcard · `run-gates.mjs` as one exact project-root-pinned byte-string,
+advertised project-exec · 3 writer dry-run previews); the audited read-only core grows 18 → 31
+by the AD-021 empirical probe method (`file` and `git cat-file` failed and stay hand-adds), in
+lockstep with the PreToolUse hook; `set-recipe --write` now advises the one-time review-wrapper
+hand-adds with quota honesty; the release flow gains a maintainer-chosen consolidated-ask option
+(machine-local skill) with a deviation-voids-approvals staleness rule. Dead rules are prevented
+by a new drift-guard test that matches every documented dispatch line against the seeded
+byte-form. Details: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-07-04 — kit 1.31.0: SKILL.md progressive-disclosure split (AD-039)
 
 The kit's 112 KB SKILL.md monolith becomes a ~10 KB router + 16 `references/modes/<key>.md`
