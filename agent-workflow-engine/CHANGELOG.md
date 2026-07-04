@@ -4,6 +4,27 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.13.0 — The agent-rules lens gets its ONE canonical home here (slot-render, AD-041)
+
+A **feature** release (canon content + its guard; installer unchanged; deployment-lineage head
+stays `1.3.0` — no migration). The planning/review/process-fidelity lens block that used to be
+hand-mirrored across the family's `agent_rules.md` templates now lives HERE, once:
+
+- **`references/agent-rules-lens.md`** — the canonical lens block (number-neutral `### 2.x.`
+  heading). Its intro now carries the provenance clause (rendered from the canon; refreshed on
+  upgrade; a custom edit is preserved verbatim, but flagged). The family kit renders this into a
+  deployed `docs/ai/agent_rules.md` region and refreshes it on bootstrap/upgrade.
+- **`references/agent-rules-lens-priors.md`** — the **append-only store** of every lens body a
+  previous release shipped (all 4 historical vintages harvested from the template git history,
+  including the outgoing pre-1.13.0 body). The frozen delimiter format is documented in-file.
+  A future canon wording change edits the fragment AND appends the outgoing body — both files
+  in THIS package, so it ships as an **engine-only release** (the AD-041 measurement clause).
+- **`test/lens-fragment.test.mjs`** — canon-presence guard: the 22 discipline tokens (the single
+  token list going forward), heading shape, path-neutrality, priors shape + the computed
+  pre-1.13.0 membership, injected non-vacuity; CRLF-tolerant reads.
+- `SKILL.md` / `README.md` payload lists name the two new files (slot-fragment counts went
+  count-free). Tarball 12 → 14 files, pinned by `package-content.test.mjs`.
+
 ## 1.12.0 — Plans carry a home for review-settled decisions (§7 optional `## Decisions (locked)`)
 
 A **feature** release (canon text + its tests; installer unchanged; deployment-lineage head stays
