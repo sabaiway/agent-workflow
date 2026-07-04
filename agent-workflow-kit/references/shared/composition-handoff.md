@@ -37,3 +37,15 @@ ordered `start → end` pair; a malformed slot (single, reversed, nested, duplic
 duplicate anchor → **STOP with an error**, never edit (the file is left byte-for-byte unchanged). The
 **orchestration pointer is soft-skipped** (reported, never silent) when — and only when — adding it
 would exceed the 100-line cap: the methodology pointer still lands and the upgrade continues.
+
+**Agent-rules lens refresh (runs in BOTH paths).** Its precondition is its own target file — run it
+only after `<project>/docs/ai/agent_rules.md` exists: after the substrate deploy in the
+**delegated** path, after the fallback-template copy in the **kit** path (never anchored to the
+`AGENTS.md` step above). ONE command:
+`node ${CLAUDE_SKILL_DIR}/tools/lens-region.mjs reconcile <project>/docs/ai/agent_rules.md`.
+This is what converges a substrate seeded by an older memory — a lens section matching a known
+prior canonical body is refreshed from the installed engine; a current seed reports *already
+current* (zero-diff). Relay its outcome in plain language (*refreshed* / *already current* /
+*custom edit preserved + note* / *file absent — skipped* / *engine too old — skipped* / *over the
+line cap — refused*); a fully absent/invalid engine is the same loud STOP + one-line install
+command as the pointer reconcile.

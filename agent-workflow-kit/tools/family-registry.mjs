@@ -26,7 +26,7 @@ import { resolveDir, detectBackends, findOnPath } from './detect-backends.mjs';
 import { parseSemver, compareSemver } from './semver-lite.mjs';
 import { validateManifest, readAuthoritativeVersion, UNSUPPORTED, INVALID } from './manifest/validate.mjs';
 import { START_MARKER, excludePath, inferVisibility } from './hide-footprint.mjs';
-import { readEngineFragment, ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
+import { readEngineFragment, ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL, LENS_FRAGMENT_REL, LENS_PRIORS_REL } from './engine-source.mjs';
 import { ACTIVITIES, resolveActivityRecipe } from './recipes.mjs';
 // The config reader lives in orchestration-config.mjs (the single config contract). The read-only status
 // settings-survey reuses THIS reader (one strict-JSON + loud-on-malformed contract), not a second copy.
@@ -171,9 +171,13 @@ export const classifyMember = (member, deps = {}) => {
 // the manifest AND reads the fragment — so an absent, non-file, OR present-but-unreadable fragment all
 // surface (status never claims "ok" for a fragment a reconcile / the procedures CLI would STOP on), and
 // a current, readable fragment never gets the caveat. Read-only, best-effort.
+// Each caveat names the rel(s) its consumer actually needs: the lens reconcile requires the
+// fragment AND its prior store as a PAIR (lens-region soft-skips when either is missing), so its
+// caveat keys on both — an engine missing only the prior store must never report healthy.
 const ENGINE_FRAGMENT_CAVEATS = [
-  { rel: ORCHESTRATION_FRAGMENT_REL, caveat: 'engine present but does not supply the recipes pointer (too old / incomplete) — run `npx @sabaiway/agent-workflow-engine@latest init`' },
-  { rel: PROCEDURES_FRAGMENT_REL, caveat: 'engine present but does not ship the activity-procedures canon (too old / incomplete) — run `npx @sabaiway/agent-workflow-engine@latest init`' },
+  { rels: [ORCHESTRATION_FRAGMENT_REL], caveat: 'engine present but does not supply the recipes pointer (too old / incomplete) — run `npx @sabaiway/agent-workflow-engine@latest init`' },
+  { rels: [PROCEDURES_FRAGMENT_REL], caveat: 'engine present but does not ship the activity-procedures canon (too old / incomplete) — run `npx @sabaiway/agent-workflow-engine@latest init`' },
+  { rels: [LENS_FRAGMENT_REL, LENS_PRIORS_REL], caveat: 'engine present but does not ship the agent-rules lens canon (the fragment + its prior store; too old / incomplete — engine >= 1.13.0) — run `npx @sabaiway/agent-workflow-engine@latest init`' },
 ];
 
 // The orchestration-config TEMPLATE a current memory ships (added in memory 1.2.0; absent in older
@@ -244,7 +248,7 @@ export const surveyFamily = (deps = {}) =>
           return false; // absent / non-file / unreadable fragment → the engine can't supply it
         }
       };
-      const caveats = ENGINE_FRAGMENT_CAVEATS.filter((f) => !fragmentUsable(f.rel)).map((f) => f.caveat);
+      const caveats = ENGINE_FRAGMENT_CAVEATS.filter((f) => !f.rels.every(fragmentUsable)).map((f) => f.caveat);
       if (caveats.length) row.caveats = caveats;
     }
     // Memory offline caveat (Step 2.2): a distinct probe — the orchestration TEMPLATE file's existence.
