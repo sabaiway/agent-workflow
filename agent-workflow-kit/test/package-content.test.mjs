@@ -92,6 +92,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the AD-038 review-enforcement pair: the read-only receipt checker + the facts assembler
       'tools/review-state.mjs',
       'tools/grounding.mjs',
+      // the consent-gated gates.json seeder + the shared atomic-write core it runs on (AD-042)
+      'tools/seed-gates.mjs',
+      'tools/atomic-write.mjs',
       // the lens-region reconcile — invoked from upgrade/bootstrap prose (a count alone would not
       // catch its accidental exclusion)
       'tools/lens-region.mjs',
@@ -122,9 +125,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
   // file accidentally dropped). After an intentional change, run `npm pack ./agent-workflow-kit
   // --dry-run --json` and set the new count here in the same commit.
   it('ships exactly the expected number of files', () => {
-    // 116 = 96 + the 19 progressive-disclosure split files (16 references/modes/ + 3 references/shared/)
-    //     + tools/lens-region.mjs (the agent-rules lens reconcile).
-    assert.equal(packed.length, 116, `tarball file count drifted (${packed.length} ≠ 116)`);
+    // 118 = 96 + the 19 progressive-disclosure split files (16 references/modes/ + 3 references/shared/)
+    //     + tools/lens-region.mjs (the agent-rules lens reconcile)
+    //     + tools/seed-gates.mjs + tools/atomic-write.mjs (the consent-gated seeder pair, AD-042).
+    assert.equal(packed.length, 118, `tarball file count drifted (${packed.length} ≠ 118)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

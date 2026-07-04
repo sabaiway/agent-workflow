@@ -74,8 +74,9 @@ the rest of the report — and the commit gate — proceeds.
 
 **Welcome mat — the last line(s) of the footer.** After the version block and the backend-status
 line, print *"Run `/agent-workflow-kit help` to see every command."* then **one** recommended next
-step, chosen **caveat-aware** from signals already in hand (the version block's notes + the
-backend-status line — no new helper call) in this priority order:
+step, chosen **caveat-aware** from signals already in hand (the version block's notes, the settings
+areas of the same `--json` envelope, and the backend-status line — no new helper call) in this
+priority order:
 1. a member is **behind** (a behind-class `installed[].notes` caveat fired — any member, the bridges
    included) → *refresh the behind member first*, quoting **that note's own recovery command
    verbatim** (a memory/engine note carries its `npx …@latest init` + restart the session; a bridge
@@ -87,8 +88,14 @@ backend-status line — no new helper call) in this priority order:
 3. else **a backend is ready but the orchestration config is still all-Solo** (no `reviewed` /
    `council` / `delegated` slot anywhere — inspect `docs/ai/orchestration.json`, or read the
    procedures advisor's resolved recipes) → *put it to work with `/agent-workflow-kit recipes`*;
-4. else (a backend is ready **and** a backend-backed recipe is already selected) → the optional
-   *`/agent-workflow-kit velocity`* opt-in (never run it without a yes).
+4. else **the velocity allowlist is not yet seeded** (the envelope's velocity settings show zero
+   allow entries) → the optional *`/agent-workflow-kit velocity`* opt-in (never run it without a
+   yes);
+5. else **the cheap-lane agent vehicles are not placed** (the envelope's agents settings show zero
+   placed) → the optional *`/agent-workflow-kit agents`* opt-in (never run it without a yes);
+6. else **gates are declared but the approval hook is not wired** (the envelope's hook settings:
+   at least one declared gate, wired = no) → the optional *`/agent-workflow-kit hook`* opt-in
+   (never run it without a yes). If no rung applies, the help line above stands alone.
 
 Keep it compact — a few short lines, plain language, no kit-internal terms.
 

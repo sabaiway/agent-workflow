@@ -373,12 +373,12 @@ describe('discoverGateCandidates', () => {
       },
     };
     assert.deepEqual(discoverGateCandidates(packageJson), [
-      { command: 'npm run test', addByHand: true },
-      { command: 'npm run lint', addByHand: true },
-      { command: 'npm run release:npm', addByHand: true, warn: 'do not add' },
-      { command: 'npm run prepublishOnly', addByHand: true, warn: 'do not add' },
-      { command: 'npm run commit', addByHand: true, warn: 'do not add' },
-      { command: 'npm run build', addByHand: true },
+      { command: 'npm run test', scriptName: 'test', addByHand: true },
+      { command: 'npm run lint', scriptName: 'lint', addByHand: true },
+      { command: 'npm run release:npm', scriptName: 'release:npm', addByHand: true, warn: 'do not add' },
+      { command: 'npm run prepublishOnly', scriptName: 'prepublishOnly', addByHand: true, warn: 'do not add' },
+      { command: 'npm run commit', scriptName: 'commit', addByHand: true, warn: 'do not add' },
+      { command: 'npm run build', scriptName: 'build', addByHand: true },
     ]);
   });
 

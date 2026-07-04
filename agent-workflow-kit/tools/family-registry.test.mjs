@@ -17,6 +17,8 @@ import {
   surveyAttribution,
   surveyVelocity,
   surveyGateHook,
+  surveyCheapAgents,
+  surveySettings,
   surveyBridges,
   parseArgs,
   NOT_INSTALLED,
@@ -700,24 +702,116 @@ describe('surveyVelocity — effective defaultMode + allow counts', () => {
 describe('surveyGateHook — wired (either settings file) / file placed / declaration present', () => {
   const HOOK_CMD = 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/agent-workflow-gates.mjs"';
   const wired = JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: HOOK_CMD, timeout: 30 }] }] } });
+  // Layer a gates.json over the settings fs (the declaredGates probe reads it via loadDeclaration).
+  const withGates = (fs, declaration) => ({
+    ...fs,
+    lstat: (p) => (String(p).endsWith('gates.json') && declaration !== undefined ? { isFile: () => true } : fs.lstat(p)),
+    readFile: (p) => (String(p).endsWith('gates.json') && declaration !== undefined ? declaration : fs.readFile(p)),
+  });
 
   it('reports wired from the LOCAL settings file too, plus the file/declaration probes', () => {
     const r = surveyGateHook('/p', {
       ...settingsFs({ project: '{}', local: wired }),
       exists: (p) => String(p).endsWith('agent-workflow-gates.mjs') || String(p).endsWith('gates.json'),
     });
-    assert.deepEqual(r, { wired: true, filePlaced: true, declarationPresent: true });
+    assert.deepEqual(r, { wired: true, filePlaced: true, declarationPresent: true, declaredGates: 0 });
   });
 
-  it('nothing wired / placed / declared → all-false (an honest zero, never an error)', () => {
+  it('nothing wired / placed / declared → all-false + zero declared (an honest zero, never an error)', () => {
     const r = surveyGateHook('/p', { ...settingsFs({ project: undefined, local: undefined }), exists: () => false });
-    assert.deepEqual(r, { wired: false, filePlaced: false, declarationPresent: false });
+    assert.deepEqual(r, { wired: false, filePlaced: false, declarationPresent: false, declaredGates: 0 });
+  });
+
+  it('declaredGates counts a NON-EMPTY declaration (the hook rung keys on entries, not file presence)', () => {
+    const declaration = JSON.stringify({ gates: [
+      { id: 'tests', title: 'Tests', cmd: 'npm test' },
+      { id: 'lint', title: 'Lint', cmd: 'npm run lint' },
+    ] });
+    const r = surveyGateHook('/p', {
+      ...withGates(settingsFs({ project: undefined, local: undefined }), declaration),
+      exists: (p) => String(p).endsWith('gates.json'),
+    });
+    assert.deepEqual(r, { wired: false, filePlaced: false, declarationPresent: true, declaredGates: 2 });
+  });
+
+  it('the seeded-EMPTY declaration reads as zero declared (a fresh bootstrap must not fire the hook rung)', () => {
+    const r = surveyGateHook('/p', {
+      ...withGates(settingsFs({ project: undefined, local: undefined }), JSON.stringify({ gates: [] })),
+      exists: (p) => String(p).endsWith('gates.json'),
+    });
+    assert.equal(r.declaredGates, 0);
+    assert.equal(r.declarationPresent, true, 'present-but-empty: the file exists, zero gates declared');
+  });
+
+  it('a MALFORMED gates.json → declaredGates null + the localized error PRESERVED (never a swallowed reason)', () => {
+    const r = surveyGateHook('/p', {
+      ...withGates(settingsFs({ project: undefined, local: undefined }), '{ not json'),
+      exists: (p) => String(p).endsWith('gates.json'),
+    });
+    assert.equal(r.declaredGates, null);
+    assert.ok(r.declarationError, 'the validation error is carried, not dropped');
+    assert.match(r.declarationError, /gates\.json/, 'the error names the file');
+    assert.equal(r.wired, false, 'the rest of the area still reports');
   });
 
   it('malformed settings.json → a localized error field', () => {
     const r = surveyGateHook('/p', { ...settingsFs({ project: '{ bad', local: undefined }), exists: () => false });
     assert.ok(r.error);
     assert.match(r.error, /settings\.json/);
+  });
+});
+
+describe('surveyCheapAgents — the kit-placed .claude/agents/ vehicles (placed vs bundled)', () => {
+  const ENOENT = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+  // A hermetic bundle + project fs: bundle templates under /bundle, project files under .claude/agents/.
+  const vehicleFs = ({ bundle, project = {} }) => ({
+    bundleDir: '/bundle',
+    readdir: () => Object.keys(bundle),
+    readFile: (p) => {
+      const s = String(p);
+      const name = s.split('/').pop();
+      if (s.startsWith('/bundle')) return bundle[name];
+      if (Object.prototype.hasOwnProperty.call(project, name)) return project[name];
+      throw ENOENT();
+    },
+    lstat: (p) => {
+      const s = String(p);
+      const name = s.split('/').pop();
+      if (s.includes('.claude/agents') && Object.prototype.hasOwnProperty.call(project, name)) {
+        return { isSymbolicLink: () => false, isFile: () => true, isDirectory: () => false };
+      }
+      throw ENOENT();
+    },
+  });
+
+  it('none placed → placed=0 with the bundle count (the welcome-mat agents rung keys on zero placed)', () => {
+    const r = surveyCheapAgents('/p', vehicleFs({ bundle: { 'sweep.md': 'S', 'triage.md': 'T' } }));
+    assert.deepEqual(r, { bundled: 2, placed: 0 });
+  });
+
+  it('an identical AND a customized copy both count as placed (a customization is present, never "absent")', () => {
+    const r = surveyCheapAgents('/p', vehicleFs({
+      bundle: { 'sweep.md': 'S', 'triage.md': 'T' },
+      project: { 'sweep.md': 'S', 'triage.md': 'customized' },
+    }));
+    assert.deepEqual(r, { bundled: 2, placed: 2 });
+  });
+
+  it('an unreadable bundle → a localized error field (never a crash, never a false zero)', () => {
+    const r = surveyCheapAgents('/p', { bundleDir: '/bundle', readdir: () => { throw new Error('EACCES'); } });
+    assert.ok(r.error, 'a localized error field is present');
+  });
+});
+
+describe('surveySettings — the five per-area surveys, each independently localized-on-error', () => {
+  it('returns exactly the five areas (agents included)', () => {
+    const s = surveySettings('/p', {
+      ...settingsFs({ project: undefined, local: undefined }),
+      exists: () => false,
+      bundleDir: '/bundle',
+      readdir: () => { throw new Error('EACCES'); },
+    });
+    assert.deepEqual(Object.keys(s).sort(), ['agents', 'attribution', 'hook', 'recipes', 'velocity']);
   });
 });
 

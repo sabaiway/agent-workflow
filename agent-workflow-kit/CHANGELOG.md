@@ -4,6 +4,67 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.34.0 — Onboarding UX: one batched setup prompt, honest installer messaging, the visible accelerator funnel, and the consent-gated gates seeder (AD-042)
+
+A **feature** release (first-contact flow + a new consent-gated writer; deployment-lineage head
+stays `1.3.0` — no migration). First contact now interrupts once instead of three times, the
+opt-in accelerators are discoverable from every happy path, and a project's own verification
+commands can be seeded into `docs/ai/gates.json` behind an explicit per-entry yes:
+
+- **F11 — ONE batched setup prompt.** Bootstrap asks the three setup questions (visibility /
+  conversational language / attribution) as one structured multi-question prompt where supported
+  (`AskUserQuestion`, up to 4 questions per call), records each answer individually, and writes
+  nothing until all are answered (`references/modes/bootstrap.md` preamble + steps 2–4;
+  `references/contracts.md` · `references/shared/deploy-tail.md` · `launchers/windsurf-workflow.md`
+  reworded to match). Upgrade batches its two migration asks the same way ONLY when BOTH
+  `AGENTS.md` blocks are missing (a pre-1.1.0 deployment), collects them in step 6 BEFORE the
+  migrations apply, and never re-asks a collected answer (`references/modes/upgrade.md`); the four
+  migration files are untouched — their own ask stays the standalone fallback. New
+  `test/ask-contract.test.mjs` pins the wording across all 7 files and holds the kit↔memory
+  `references/contracts.md` ask paragraph byte-identical (a hand-lockstep pair, deliberately not a
+  sync-mirrors family).
+- **F12 — the installer says what a returning user needs.** `bin/install.mjs` prints a restart
+  hint on every run over a PRE-existing install ("restart the session so the agent reloads the
+  refreshed kit files") — on the verb path, at most once per run, surviving even the fatal
+  engine-install abort — and replaces the false "Claude Code / Codex / Devin Desktop all use the
+  same /agent-workflow-kit" claim with the real per-agent matrix (Codex invokes via its `/skills`
+  menu and may auto-trigger) in `--help` AND the final next-steps block. Pinned in
+  `bin/install.test.mjs`.
+- **F10a — the opt-in funnel is visible.** The welcome-mat ladder
+  (`references/shared/report-footer.md`) gains caveat-aware rungs: velocity when the allowlist is
+  unseeded, `agents` when no cheap-lane vehicle is placed, `hook` when gates are DECLARED
+  (non-empty — file presence alone would misfire on the empty seed) but the hook is unwired; the
+  two new signals ride the existing status envelope (`tools/family-registry.mjs`
+  `surveyCheapAgents` + `surveyGateHook.declaredGates` → `tools/view-model.mjs` →
+  `tools/renderers.mjs` — no new helper call). Bootstrap step 11 ends on a compact
+  optional-accelerators block (velocity · agents · gates seeding + hook · set-recipe;
+  preview-first, nothing runs without a yes), and `help` output gains a matching "Tune" tail
+  (`tools/commands.mjs` — no new mode, no new kind; the router SKILL.md is untouched). New
+  `test/report-footer-rotation.test.mjs` pins one shorthand ladder literal across
+  upgrade + bootstrap; the `gate-approve-hook` fixture is refreshed to the live 10-gate shape.
+- **F10b — the consent-gated `gates.json` seeder (the seeding↔hook trust chain).** New
+  `tools/seed-gates.mjs`: dry-run by default (prints the derived `{ id, title, cmd }` entries,
+  writes NOTHING; declining leaves the file byte-identical); `--apply [--only <id>]…` appends
+  exactly the consented entries — append-only (never modifies or removes an existing entry),
+  id-collision refusal, validator-checked (it imports the runner's `validateDeclaration`; the
+  runner never imports it), stamp-gated apply, and OUTSIDE every velocity tier (a consent-per-run
+  writer is never pre-approved). Offered candidates are terminating verification classes only
+  (test / lint / type-check / build) — release/publish/deploy scripts, watch/serve modes, and
+  MUTATING variants (`lint:fix`, `test:update`, bodies carrying `--fix`/`--write`/`-w`/`-u`)
+  never enter the offer; commands are package-manager-aware (npm/pnpm/yarn). The review-state
+  candidate is included ONLY when `docs/ai/orchestration.json` declares reviewed/council on
+  `plan-execution.review` (the slot the checker enforces), with the resolved QUOTED path. Every
+  preview prints the trust-chain disclosure: the hook auto-approves byte-exact declared commands —
+  seeding and hook wiring are two separate consents. The hardened atomic write core is extracted
+  into `tools/atomic-write.mjs` (exclusive-create tmp+rename, TOCTOU re-check, symlink STOPs) and
+  shared with `tools/orchestration-write.mjs` (public API unchanged). The consent-seed protocol
+  lives in `references/modes/gates.md`; `references/modes/review-state.md` step 3 now names the
+  seeder path ("by hand OR the explicit-consent seeder — never without consent").
+- **AD-039 amendment (documented, AD-042):** `test/router-contract.test.mjs` `routerPlusMode`
+  28672 → 29696 — the F11 upgrade batching caveat is +422 B of new contract text against 154 B of
+  headroom; the router itself is byte-identical. Tarball 116 → 118 files
+  (`test/package-content.test.mjs` count + payload pins for the seeder pair).
+
 ## 1.33.0 — The agent-rules lens region: render + reconcile from the engine canon (AD-041)
 
 A **feature** release (new shipped tool + wiring; deployment-lineage head stays `1.3.0` — the

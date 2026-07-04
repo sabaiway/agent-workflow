@@ -5,7 +5,8 @@
 // resolves the effective `plan-execution.review` recipe (the advisor's single-source readers),
 // recomputes the CURRENT canonical uncommitted-state fingerprint, and reports — per recipe-named
 // backend — whether a FRESH, grounded, current-fingerprint receipt exists. `--check` turns the
-// report into a gate exit code (declare it in docs/ai/gates.json — by hand; never auto-seeded).
+// report into a gate exit code (declare it in docs/ai/gates.json — by hand OR via the
+// explicit-consent seeder, tools/seed-gates.mjs — never without consent, AD-021/AD-042).
 //
 // Normative `--check` exit contract (the single home of this list — SKILL.md points here):
 //   exit 0  when the resolved plan-execution.review recipe is solo (configured, or degraded there —
@@ -353,7 +354,8 @@ presence + verdict + grounding for the CURRENT tree. Plan/diff-mode receipts and
 --check exits 0/1 per the normative contract in the tool header: 0 for solo / no plan in flight /
 a clean tree / not-a-git-tree / all recipe-named backends receipted-current-and-grounded; 1 when a
 recipe-named backend is missing, stale (edited after review), or grounded:false under
-reviewed/council. Declare it as a project gate by hand (docs/ai/gates.json) — never auto-seeded.
+reviewed/council. Declare it as a project gate by hand (docs/ai/gates.json) or via the
+explicit-consent seeder (tools/seed-gates.mjs) — never without consent.
 
 Read-only: never writes, never commits, never runs a subscription CLI; spawns read-only git queries.
 Human residual: git commit --no-verify and receipt-file deletion remain possible — this is a

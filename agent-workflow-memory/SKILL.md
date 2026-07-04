@@ -3,7 +3,7 @@ name: agent-workflow-memory
 description: Deploy or upgrade a portable AI-agent memory substrate in any project — an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) and a structured `docs/ai/` context store with cap/archive/index enforcement. Use when the user wants to bootstrap `docs/ai/`, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-memory` / `/agent-workflow-memory upgrade`. Triggers on "set up the memory system", "deploy the AI memory here", "bootstrap docs/ai", "upgrade the memory substrate". This is the substrate only — the workflow methodology (plan→execute→review, queue, Cleanup) is owned elsewhere and injected into AGENTS.md by the family composition root.
 disable-model-invocation: true
 metadata:
-  version: '1.11.0'
+  version: '1.11.1'
 ---
 
 # agent-workflow-memory
@@ -68,24 +68,26 @@ bootstrapping over a live system, but the user makes the final call.
 > Use that as the copy/read source; the working directory is the **target project**.
 
 > The three setup questions (steps 2–4) are decisions only the user can make and are hard to
-> reverse after a commit. Ask each as a **structured multiple-choice prompt where supported**
-> (`AskUserQuestion` in Claude Code, recommended option first), otherwise in prose — and
-> **wait for the answer before writing anything**.
+> reverse after a commit. Ask them as **ONE structured multi-question prompt where supported**
+> (`AskUserQuestion` in Claude Code, up to 4 questions per call, recommended option first),
+> otherwise in prose; **record each answer individually** — and **write nothing until ALL are
+> answered**.
 
 1. **Recon (read-only).** Before writing anything: `package.json` / `pyproject.toml` / `go.mod`
    / `Cargo.toml` → stack, package manager, scripts; `ls -la` root → README, existing
    `AGENTS.md`/`CLAUDE.md`, CI / linter configs; `git log --oneline -30` + `git status`; `src/`
    2–3 levels deep; tests + linter rules. Record stack, package manager, daily commands, layers.
-2. **Choose visibility — ASK explicitly and wait.** `visible` (committed — canonical,
+2. **Choose visibility — ask the batched prompt NOW (all three questions, per the preamble
+   above) and wait until every answer is in.** `visible` (committed — canonical,
    recommended) or `hidden` (in-tree, git-ignored via the **project-local** `.git/info/exclude` —
    never the machine-global excludes). See
    [Visibility contract](references/contracts.md#visibility-contract).
-3. **Choose conversational language — ASK explicitly and wait.** Which language the agent
+3. **Choose conversational language — answered in the step-2 batch.** Which language the agent
    *talks to them* in. Offer the language they're already writing in as the default. Carry it
    into the `{{COMM_LANGUAGE}}` slot of the *Communication language* block (step 5). See
    [Communication contract](references/contracts.md#communication-contract). Dialogue only —
    never the files.
-4. **Choose agent attribution — ASK explicitly and wait.** May the agent attribute work to
+4. **Choose agent attribution — answered in the step-2 batch.** May the agent attribute work to
    itself / AI — `Co-Authored-By` trailers, "Generated with …" footers, AI/agent/model mentions?
    **Default `off`.** Carry it into `{{AGENT_ATTRIBUTION}}` (step 5). **If `off` and the project
    uses Claude Code**, also set `"includeCoAuthoredBy": false` in the project's
@@ -196,13 +198,20 @@ Fill strategy:
    structure number, stamp filename, or internal versioning vocabulary on this happy-path exit — the
    number is inert here and belongs to *Version disclosure* (below).
 3. Show the relevant `${CLAUDE_SKILL_DIR}/CHANGELOG.md` context (entries newer than the stamp).
-4. Apply `${CLAUDE_SKILL_DIR}/migrations/<version>-<slug>.md` in **semver order**, only those
-   newer than the stamp. Migrations are **idempotent**.
+4. **Collect the migration answers FIRST, then apply.** If `AGENTS.md` is missing BOTH the
+   *Communication language* and *Attribution* blocks — i.e. both blocks are missing (a pre-1.1.0
+   deployment) — ask the two questions as ONE structured multi-question prompt; record each
+   answer individually, write nothing until ALL are answered, and carry the answers into the
+   migrations below: a migration whose answer was already collected never re-asks (its own
+   "Ask the user" step is the standalone fallback); a single missing block keeps its single ask
+   (step 5). Then apply `${CLAUDE_SKILL_DIR}/migrations/<version>-<slug>.md` in **semver order**,
+   only those newer than the stamp. Migrations are **idempotent**.
 5. Reconcile drift: add any substrate files/scripts the project is missing; **never clobber
    project-authored content** (their `decisions.md`, `known_issues.md`, page specs stay). For a
    pre-1.1.0 deployment with no *Communication language* block, ask + insert
    (`migrations/1.1.0-communication-language.md`); pre-1.2.0 with no *Attribution* block, ask +
-   insert defaulting to `off` (`migrations/1.2.0-agent-attribution.md`).
+   insert defaulting to `off` (`migrations/1.2.0-agent-attribution.md`). (An answer already
+   collected by the step-4 batched prompt is carried in — never re-asked here.)
 6. **Preserve BOTH pointer slots.** If `AGENTS.md` has the `workflow:methodology` and/or
    `workflow:orchestration` markers, **never regenerate the file wholesale** — extract any bytes
    between each pair and reinsert them unchanged. If a pair is absent (a legacy `AGENTS.md`),

@@ -37,7 +37,8 @@ const fullEnvelope = () => ({
       recipes: { configSource: 'docs/ai/orchestration.json', activities: { 'plan-authoring': { review: { recipe: 'reviewed' } }, 'plan-execution': { execute: { recipe: 'delegated' }, review: { recipe: 'council' } } } },
       attribution: { project: false, local: null, effective: false },
       velocity: { defaultMode: 'acceptEdits', allowEntries: { project: 1, local: 2 } },
-      hook: { wired: true, filePlaced: true, declarationPresent: false },
+      agents: { bundled: 3, placed: 1 },
+      hook: { wired: true, filePlaced: true, declarationPresent: false, declaredGates: 0 },
     },
   },
 });
@@ -115,7 +116,17 @@ describe('view-model — bridges / project / settings', () => {
     ]);
     assert.equal(vm.project.settings.attribution.override, false, 'local null → project value stands, not an override');
     assert.deepEqual(vm.project.settings.velocity, { defaultMode: 'acceptEdits', allow: { project: 1, local: 2 } });
-    assert.deepEqual(vm.project.settings.hook, { wired: true, filePlaced: true, declarationPresent: false });
+    assert.deepEqual(vm.project.settings.agents, { bundled: 3, placed: 1 });
+    assert.deepEqual(vm.project.settings.hook, { wired: true, filePlaced: true, declarationPresent: false, declaredGates: 0, declarationError: null });
+  });
+
+  it('hook declaredGates: null (malformed) survives; an envelope predating the field defaults to null', () => {
+    const withNull = toViewModel({ installed: [], project: { dir: '/p', deployed: true, settings: { hook: { wired: false, filePlaced: false, declarationPresent: true, declaredGates: null, declarationError: 'docs/ai/gates.json: malformed JSON' } } } });
+    assert.equal(withNull.project.settings.hook.declaredGates, null);
+    assert.match(withNull.project.settings.hook.declarationError, /malformed/, 'the declaration error rides the VM');
+    const legacy = toViewModel({ installed: [], project: { dir: '/p', deployed: true, settings: { hook: { wired: false, filePlaced: false, declarationPresent: true } } } });
+    assert.equal(legacy.project.settings.hook.declaredGates, null, 'a pre-field envelope reads as unknown, never a count');
+    assert.equal(legacy.project.settings.hook.declarationError, null, 'no error field → null, never undefined');
   });
 
   it('a real local override is flagged (local set AND differs from project)', () => {
@@ -126,11 +137,12 @@ describe('view-model — bridges / project / settings', () => {
   it('per-area settings errors survive as { error }', () => {
     const vm = toViewModel({
       installed: [],
-      project: { dir: '/p', deployed: true, settings: { recipes: { error: 'orchestration.json: bad' }, attribution: { error: 'settings.json: bad' }, velocity: { error: 'settings.local.json: bad' }, hook: { error: 'settings.json: bad' } } },
+      project: { dir: '/p', deployed: true, settings: { recipes: { error: 'orchestration.json: bad' }, attribution: { error: 'settings.json: bad' }, velocity: { error: 'settings.local.json: bad' }, agents: { error: 'bundle: unreadable' }, hook: { error: 'settings.json: bad' } } },
     });
     assert.match(vm.project.settings.recipes.error, /orchestration\.json/);
     assert.match(vm.project.settings.attribution.error, /settings\.json/);
     assert.match(vm.project.settings.velocity.error, /settings\.local\.json/);
+    assert.match(vm.project.settings.agents.error, /bundle/);
     assert.match(vm.project.settings.hook.error, /settings\.json/);
   });
 

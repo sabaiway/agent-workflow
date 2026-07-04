@@ -14,6 +14,8 @@ Run `node ${CLAUDE_SKILL_DIR}/tools/family-registry.mjs --json [--dir <project>]
    - **recipes** — the effective recipe per slot (detail → `/agent-workflow-kit procedures` / `recipes`); a `recipes.detectError` → say the backends couldn't be checked, so recipes floored at solo.
    - **attribution** — `includeCoAuthoredBy` effective; call out a **local override** only when `local` is non-null **and** differs from `project` (a `null` `local` means the key is absent there, so the project value stands — that is not an override).
    - **velocity** — the effective `permissions.defaultMode` + whether an allowlist is seeded (detail → `/agent-workflow-kit velocity`).
+   - **cheap agents** — how many of the kit's cheap-lane subagent vehicles are placed (`agents.placed` of `agents.bundled`; zero placed → the optional `/agent-workflow-kit agents` opt-in).
+   - **gate hook** — wired / hook file placed / declaration present, plus **`hook.declaredGates`** (0 = absent or an empty list; `null` = present but unreadable → say *couldn't be counted*, never a number; detail → `/agent-workflow-kit hook` and the gates guide).
    - Any area's **`error`** field → surface it **loudly** in plain language; the rest of `status` still renders (never a crash).
 4. **Bridges (host, one line)** (from `bridges[]`): per bridge — readiness + wrapper PATH-presence; render each wrapper's `state` as *on PATH* (`present`) / *not on PATH* (`missing`) / *couldn't check* (`unknown`) (detail → `/agent-workflow-kit backends` / `setup`). **No default-model claim.** "credentials present" means a marker file exists, not a live login.
 
