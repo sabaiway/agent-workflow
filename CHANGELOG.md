@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-04 — kit 1.31.0: SKILL.md progressive-disclosure split (AD-039)
+
+The kit's 112 KB SKILL.md monolith becomes a ~10 KB router + 16 `references/modes/<key>.md`
+verbatim mode bodies + 3 `references/shared/` point-of-use contracts, so every invocation loads
+only its own read set (a daily `help` ~10× lighter, the worst path ~2.3×). Byte budgets and the
+pointer conventions are pinned by the new `test/router-contract.test.mjs`; 7 content-coupled
+guards re-anchored; packaging additive (tarball 96 → 115, exact-count-pinned); deployments
+untouched (lineage head stays `1.3.0`, no migration). memory / engine / bridges unchanged — the
+`package=all` dispatch of this release is the Issue-007 live proof (the unchanged packages'
+Release steps must no-op cleanly).
+
 ## 2026-07-03 — engine 1.12.0 · memory 1.10.0 · kit 1.30.0 · bridges 2.2.0: review-recipe enforcement (AD-038)
 
 Origin: a real council-substitution incident (Issue-010) + independent kit-user feedback — the

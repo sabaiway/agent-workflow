@@ -4,6 +4,35 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.31.0 — Progressive disclosure: SKILL.md becomes a thin router over references/modes + references/shared (AD-039)
+
+A **feature** release; packaging-only for deployments (the deployment lineage stays `1.3.0` — no
+`docs/ai` structure change, no migration). The 112,106 B / 680-line SKILL.md monolith — loaded
+whole on EVERY invocation — becomes a **10,139 B router** plus per-mode files, so an invocation
+reads only what it needs:
+
+- **The router** keeps the always-needed core: the composition-root decision (detect → delegate /
+  fallback + the init refresh-cascade), the safe-routing rule + version-status routing note, and
+  16 bare `### Mode:` headers each carrying ONE line — the catalog `kind` EXACTLY + ``read
+  `${CLAUDE_SKILL_DIR}/references/modes/<mode>.md` before acting.``
+- **`references/modes/<key>.md` ×16** — the mode bodies, moved verbatim (set-equality-guarded
+  against the `tools/commands.mjs` catalog). **`references/shared/`** — the point-of-use
+  contracts: `report-footer.md` (backend-status line · version block + welcome mat · version
+  disclosure), `composition-handoff.md` (hand-off + bounded pointer reconciliation),
+  `deploy-tail.md` (Gotchas · Setup contracts · System principles · Hard-Constraints template).
+  Each mode file opens with one `Requires:` line naming its shared reads (bootstrap/upgrade → all
+  three; status → the report footer; the daily modes none).
+- **Byte budgets are acceptance, not vibes** — the new `test/router-contract.test.mjs` asserts,
+  over the real files: router ≤ 10,240 B · router + any mode ≤ 28,672 · every full read set
+  ≤ 53,248 · the daily no-shared modes ≤ 16,384 (realized: 10,139 · 27,392 · 48,419 · 14,121 —
+  a daily `help` run is ~10× lighter, the worst path (`upgrade`) ~2.3×). It also pins the D4
+  pointer audits permanently: every `Requires:` resolves, zero italic/plain cross-mode refs, zero
+  bare kit-relative links, moved shared-section references carry their pointer.
+- **Nothing else moved:** runtime routing untouched (`routeInvocation` never reads SKILL.md);
+  packaging additive (`references/` already rides `files[]`; the npx installer copies it
+  recursively; tarball 96 → 115 files, exact-count-pinned); frontmatter byte-compatible with the
+  twin version readers; 7 content-coupled guards re-anchored to the new files.
+
 ## 1.30.0 — Review-recipe enforcement: the configured recipe is impossible to miss, "reviewed ≠ shipped" is detectable, grounding is a command (AD-038)
 
 A **feature** release (ships the bundled bridges refreshed to **2.2.0**). Origin: a real
