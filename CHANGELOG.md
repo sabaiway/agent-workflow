@@ -7,6 +7,20 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-04 — engine 1.13.0 · memory 1.11.0 · kit 1.33.0: lens slot-render — canon wording ships engine-only (AD-041)
+
+The planning/review/process-fidelity lens now has ONE canonical home — the engine's
+`agent-rules-lens` fragment plus its append-only prior store — and every other copy is a RENDER
+of it: both `agent_rules.md` templates (the provenance intro), and every deployed
+`docs/ai/agent_rules.md` via the kit's new heading-anchored `lens-region` reconcile (the 7th
+stamp-independent upgrade reconcile + both bootstrap paths; a customized region is preserved
+verbatim + flagged; cap-guarded; a too-old engine is a stated soft skip + a `status` caveat).
+The 22-token × 4-file drift mesh is replaced by engine-side canon-presence + kit-side
+render-parity against the known-canonical set. A future lens wording change is an ENGINE-ONLY
+release — the AD-041 measurement clause watches the next ~5 canon changes. The repo release
+harness gains `smoke-init --expect-file` (installed-file content assertions). Lineage head stays
+`1.3.0` (no migration).
+
 ## 2026-07-04 — kit 1.32.0: approval-idle reduction — the opt-in `velocity --kit-tools` tier (AD-040)
 
 Routine read-only kit-tool invocations stop idling on approval prompts, opt-in and honestly

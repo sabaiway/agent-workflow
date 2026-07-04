@@ -4,6 +4,45 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.33.0 — The agent-rules lens region: render + reconcile from the engine canon (AD-041)
+
+A **feature** release (new shipped tool + wiring; deployment-lineage head stays `1.3.0` — the
+refresh is stamp-independent, no migration). The deployed `docs/ai/agent_rules.md` lens section
+is now a RENDER of the engine's canonical fragment, kept current by the kit:
+
+- **New `tools/lens-region.mjs`** — the lens reconcile: heading-anchored region (no markers; a
+  renamed heading is a natural preserve+advise), render with the file's OWN section number,
+  refresh IFF the body matches the engine fragment or a known-prior body (fragment + prior store
+  read LIVE from the installed engine — no kit-side prior constants), a customized region
+  preserved verbatim + a one-line advisory, cap-guard from the target's frontmatter `maxLines`
+  (loud non-fatal refusal; no frontmatter → stated skip), atomic write, document EOL preserved.
+  Lazy + fail-loud: an absent/invalid engine is a STOP with the install command; a valid engine
+  older than 1.13.0 (no lens pair) is a stated soft skip. CLI:
+  `node tools/lens-region.mjs reconcile <path/to/agent_rules.md>`; invariants pinned by
+  `tools/lens-region.test.mjs` incl. the canon-change simulation (v1 deploy + v2 engine →
+  refreshed; re-run → zero-diff).
+- **`Mode: upgrade` step 3** gains the SEVENTH stamp-independent reconcile (plain-language
+  outcomes: refreshed / already current / custom preserved + note / file absent / engine too
+  old / over the line cap), reported in both the step-4 and step-8 exit reports; the stale
+  "other three reconciles" phrasing went count-free.
+  `references/shared/composition-handoff.md` runs the same reconcile in BOTH bootstrap paths
+  (its own precondition: after `docs/ai/agent_rules.md` exists) — this is what converges a
+  stale-memory seed; `handoffPlan` names the lens region in `kitWrites` for both paths.
+- **`family-registry`**: a distinct plain-language `status` caveat for an engine that does not
+  ship the lens canon — keyed on the PAIR (fragment + prior store), so a half-shipped engine
+  never reports healthy.
+- **`test/lens-mirror.test.mjs` REWRITTEN** to render-parity vs the known-canonical set (each
+  template lens block byte-equals a render of the engine fragment or a prior-store entry; the
+  checkout additionally pins the CURRENT render; injected non-vacuity). The 22-token × 4-file
+  vocabulary mesh is deleted — token presence now lives in the ENGINE's own lens-fragment guard,
+  so a future lens wording change is an engine-only release (no forced kit/memory diffs).
+- `references/templates/agent_rules.md` §2.5 intro carries the provenance clause (the render);
+  `tools/engine-source.mjs` exports `LENS_FRAGMENT_REL` + `LENS_PRIORS_REL`. Tarball 115 → 116
+  (`lens-region.mjs` reverse-pinned). AD-039 byte budgets hold unchanged.
+- Repo-local release harness: `scripts/release/smoke-init.mjs` gains repeatable
+  `--expect-file <sandbox-HOME-relative path>=<substring>` (installed-file content assertions;
+  both path dialects fenced to the sandbox HOME).
+
 ## 1.32.0 — Approval-idle reduction: the opt-in `velocity --kit-tools` tier, an audited core extension, and the standing-consent advisory (AD-040)
 
 A **feature** release; packaging-only for deployments (lineage stays `1.3.0` — no `docs/ai`

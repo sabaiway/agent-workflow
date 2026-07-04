@@ -4,6 +4,17 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.11.0 — The template lens block becomes a render of the engine canon (AD-041)
+
+A **feature** release (template text only; deployment-lineage head stays `1.3.0` — no migration).
+`references/templates/agent_rules.md` §2.6 (the planning/review/process-fidelity lens block) is
+now a **render of the engine's canonical `agent-rules-lens` fragment**: the intro gains the
+provenance clause (rendered from the canon; refreshed on upgrade; a custom edit is preserved
+verbatim, but flagged). Standalone-first is unchanged — the template still seeds the complete
+block with no kit/engine present; an unmodified older seed converges to the current canon at the
+next kit bootstrap/upgrade touch (the kit's new `lens-region` reconcile matches it against the
+engine's known-prior store). Future lens wording changes no longer require a memory release.
+
 ## 1.10.0 — Installer verb parity (the AD-034 cmp-keyed contract) + the recipe discovery step in the templates
 
 A **feature** release (installer messaging + template text; deployment-lineage head stays `1.3.0`
