@@ -3,179 +3,88 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { extractLensRegion, renderLens, parseLensPriors } from '../tools/lens-region.mjs';
 
-// Flagship canon ↔ mirror guard. The right-altitude/code-grounded review lens lives in FOUR files that
-// share no runtime import — the engine canon (planning.md §9 + procedures.md activity steps) and BOTH
-// `agent_rules.md` templates (memory rich + kit fallback). Nothing else keeps their shared vocabulary in
-// lockstep, so this dev-only test ties them together: every distinctive token must survive in EACH file's
-// lens REGION (not merely somewhere in the file — a token that leaks elsewhere must not keep the guard
-// green), and the two template blocks must stay byte-identical apart from their heading number.
+// Render-parity guard (the slot-render mesh, post-AD-041). The planning/review/process-fidelity
+// lens block has ONE canonical home — the engine's `references/agent-rules-lens.md` — and both
+// `agent_rules.md` templates carry a RENDER of it (the file's own section number bound into the
+// number-neutral heading). This guard pins exactly that: each template's extracted block must
+// byte-equal render(fragment, its number) OR render(a prior-store entry, its number) — a template
+// seeded from a KNOWN canonical body stays green (the kit reconcile converges it in the wild;
+// a stale-but-known seed is canonical-and-convergent), an unknown/hand-drifted body goes red.
+// Parity against the CURRENT fragment alone would force template edits (kit+memory diffs) on
+// every future engine-only wording release — the exact mesh this design deletes.
 //
-// Reads the full monorepo checkout (sibling packages present); same cross-package precedent as
-// lineage-head-drift.test.mjs / bridges-mirror.test.mjs. Lives under test/ (outside the kit tarball) yet
-// matched by the gate glob.
+// The old 22-token × 4-file vocabulary mesh is gone: discipline-token presence is pinned ONCE, in
+// the engine's own lens-fragment.test.mjs (canon-presence); canon-section coverage stays with
+// planning-canon / orchestration-canon / procedures-canon (unchanged). Extraction runs through
+// the SHIPPED module (tools/lens-region.mjs) — the boundary rule this test once carried privately
+// is now the tested production implementation.
+//
+// Reads the full monorepo checkout (sibling packages present) — the same cross-package precedent
+// as lineage-head-drift.test.mjs / bridges-mirror.test.mjs. Lives under test/ (never ships).
 const HERE = dirname(fileURLToPath(import.meta.url));
 const KIT_ROOT = join(HERE, '..');
 const FAMILY_ROOT = join(KIT_ROOT, '..');
 
 const DRIFT_MESSAGE =
-  'planning/review/process-fidelity lens drifted — re-sync the lens across the engine canon + both agent_rules templates.';
-// Set 1 — CROSS-ALL-FOUR. DISTINCTIVE phrases — each occurs ONLY inside the lens region of every file (a
-// bare word like "Execute"/"invariant" recurs elsewhere and would make the guard vacuous). Matched
-// plural-robustly via a lowercased substring ("altitude" matches "right altitude"). These are the
-// §9-native review/fold + convergence disciplines, pinned PRESENT in EACH of the four lens regions
-// (planning §9, procedures `## plan-authoring` onward, both template lens blocks).
-const LENS_TOKENS = [
-  'fold by code', // fold-by-code (existing)
-  'file:line', // cite the grounding (existing)
-  'right altitude', // right-altitude bullet (distinctive: "altitude" alone recurs in §9, so pin the bullet lead)
-  '0 blockers + 0 majors', // A3 — convergence bar
-  'test-as-spec', // B4 — fold as a red→green test, not prose
-  'no code-mechanics', // B5 — altitude ceiling
-  'at the diff', // B6 — heavy review against real code
-  'characterize-first', // B7 — pin behaviour before editing uncovered code
-  // Review-loop economics (M2 — closes the round-cap/crossover token-guard hole): the ≤2-round cap +
-  // crossover already lived in planning.md §9 + both templates but were token-UNGUARDED (deletable with
-  // every test green); the divergence/thin-plan/self-consistency disciplines are new. All five are pinned
-  // PRESENT in EACH of the four lens regions (planning §9, procedures `## plan-authoring` onward, both templates).
-  '≤2 rounds', // architecture plan-review round cap
-  'crossover', // the pre-existing→fold-induced (and backend-divergence) stop point
-  'backend divergence', // M3 — one backend ships while another revises mechanics IS the crossover
-  'diff-review', // M5-b — route all-mechanics/CI or prose-only artifacts to a thin plan + diff-review
-  'self-consistency', // M4 — a self-consistency read across a prose plan before every re-review
-  // Checked-vs-unchecked boundary (the §9 B5 sharpening): a plan carries only CHECKED syntax — a command
-  // its own Verification asserts, or a literal fixture/schema fragment a named test copies or validates;
-  // un-run, logic-bearing syntax (control-flow, a regex, a glob, a mini-DSL) never lives in plan prose.
-  // Pinned PRESENT in EACH of the four lens regions, like the M2 group above.
-  'checked syntax', // the checked-vs-unchecked discriminator (checked = asserted, not merely executed)
-  'logic-bearing', // the banned category — un-run, logic-bearing syntax in plan prose
-];
-// Set 2 — TEMPLATE-SCOPED PRESENCE. The process-fidelity invariants A1/A2 are NOT §9-native (A1 → §6,
-// A2 → orchestration.md §4), so they are not in Set 1; without this set they could be dropped from BOTH
-// template lens blocks undetected (the byte-identical check only proves the templates AGREE, not that the
-// content EXISTS). These pin A1/A2 PRESENT in each template's lens block. (A1/A2 are ALSO pinned in the
-// engine canon by planning-canon §6 / orchestration-canon §4 / procedures-canon.)
-const TEMPLATE_INVARIANT_TOKENS = [
-  'exitplanmode', // A1 — ExitPlanMode ≠ execute (lowercased; matched case-insensitively)
-  'every round', // A2 — recipe fidelity: every named backend, every round
-  'finding-origin', // M6 — the required per-round {round N · finding-origin tally · per-backend verdict} emission
-  // Cost lanes (cost-tiered execution) — canon home is orchestration.md §5 (pinned by
-  // orchestration-canon.test.mjs + the advisor guard in tools/procedures.test.mjs), so like A1/A2
-  // these are template-scoped here: the ONE lens bullet must survive in BOTH template blocks.
-  'cheapest adequate executor', // the routing rule
-  'no named guardrail does not move down', // the no-guardrail-no-move rule
-  'red lines never move down', // the red-line list lead
-  'salvage recorded state first', // the incident-repair down-lane default
-];
+  'agent_rules template lens block is not a render of a known canonical body — re-render it from the engine fragment (or append the outgoing body to the engine prior store in the same release).';
 
-const PLANNING = join(FAMILY_ROOT, 'agent-workflow-engine', 'references', 'planning.md');
-const PROCEDURES = join(FAMILY_ROOT, 'agent-workflow-engine', 'references', 'procedures.md');
-const MEMORY_TEMPLATE = join(FAMILY_ROOT, 'agent-workflow-memory', 'references', 'templates', 'agent_rules.md');
-const KIT_TEMPLATE = join(KIT_ROOT, 'references', 'templates', 'agent_rules.md');
+const FRAGMENT = readFileSync(join(FAMILY_ROOT, 'agent-workflow-engine', 'references', 'agent-rules-lens.md'), 'utf8');
+const PRIORS = parseLensPriors(
+  readFileSync(join(FAMILY_ROOT, 'agent-workflow-engine', 'references', 'agent-rules-lens-priors.md'), 'utf8'),
+);
 
-const FILES = [
-  ['engine planning canon', PLANNING],
-  ['engine procedures canon', PROCEDURES],
-  ['memory agent_rules template', MEMORY_TEMPLATE],
-  ['kit agent_rules template', KIT_TEMPLATE],
-];
 const TEMPLATE_FILES = [
-  ['memory agent_rules template', MEMORY_TEMPLATE],
-  ['kit agent_rules template', KIT_TEMPLATE],
+  ['memory agent_rules template', join(FAMILY_ROOT, 'agent-workflow-memory', 'references', 'templates', 'agent_rules.md')],
+  ['kit agent_rules template', join(KIT_ROOT, 'references', 'templates', 'agent_rules.md')],
 ];
 
-const contents = FILES.map(([label, file]) => [label, file, readFileSync(file, 'utf8')]);
+// The full known-canonical set, rendered at a given section number.
+const knownRendersAt = (number) => [FRAGMENT, ...PRIORS].map((body) => renderLens(body, number));
 
-// A `## <heading>` section: the heading line through the line before the next `## ` (or EOF).
-const sectionFrom = (text, headingRe) => {
-  const lines = text.split('\n');
-  const start = lines.findIndex((line) => headingRe.test(line));
-  if (start === -1) return '';
-  let end = lines.length;
-  for (let i = start + 1; i < lines.length; i += 1) {
-    if (/^## /.test(lines[i])) {
-      end = i;
-      break;
-    }
+describe('agent_rules lens — render-parity against the engine known-canonical set', () => {
+  for (const [label, file] of TEMPLATE_FILES) {
+    it(`${label}: the lens block byte-equals a render of the fragment or a prior`, () => {
+      const region = extractLensRegion(readFileSync(file, 'utf8'));
+      assert.equal(region.found, true, `${label} (${file}) is missing the lens block. ${DRIFT_MESSAGE}`);
+      assert.ok(
+        knownRendersAt(region.number).includes(region.body),
+        `${label} (${file}) lens block does not byte-equal any known canonical render. ${DRIFT_MESSAGE}`,
+      );
+    });
   }
-  return lines.slice(start, end).join('\n');
-};
 
-// Extract the `### 2.x.` lens block from a template: the heading through the line before the next
-// structural boundary (`---` or any `## `/`### ` heading), trailing blanks trimmed, heading number
-// normalised. Stopping at the boundary (not the first blank line) keeps it robust if a blank line is ever
-// added between the bullets.
-const extractLensBlock = (label, text) => {
-  const lines = text.split('\n');
-  const start = lines.findIndex((line) => /^### 2\.\d+\. Planning, review & process-fidelity/.test(line));
-  assert.notEqual(start, -1, `${label} missing lens block. ${DRIFT_MESSAGE}`);
-  const tail = lines.slice(start);
-  const end = tail.findIndex((line, index) => index > 0 && (line === '---' || /^#{2,3} /.test(line)));
-  const block = tail
-    .slice(0, end === -1 ? tail.length : end)
-    .join('\n')
-    .replace(/\n+$/, '');
-  return block.replace(/^### 2\.\d+\./, '### 2.x.');
-};
-
-// The per-file REGION the lens vocabulary must live in — so a token surviving ELSEWHERE in the same file
-// (e.g. planning.md §8 also names "file:line"/"altitude") can never keep the guard green when the lens
-// block itself is gone.
-const lensRegionOf = (label, text) => {
-  if (label.includes('template')) return extractLensBlock(label, text);
-  if (label.includes('planning')) return sectionFrom(text, /^## 9\. /);
-  // procedures: the lens lives in the rendered activity sections (plan-authoring onward), never the preamble.
-  const lines = text.split('\n');
-  const start = lines.findIndex((line) => line.trim() === '## plan-authoring');
-  return start === -1 ? '' : lines.slice(start).join('\n');
-};
-
-describe('planning/review/process-fidelity lens — cross-package drift guard', () => {
-  it('keeps the Set-1 cross-all-four tokens inside the lens region of the engine canon and both templates', () => {
-    for (const token of LENS_TOKENS) {
-      for (const [label, file, text] of contents) {
-        const region = lensRegionOf(label, text);
-        assert.ok(
-          region.toLowerCase().includes(token),
-          `missing token "${token}" in the lens region of ${label} (${file}). ${DRIFT_MESSAGE}`,
-        );
-      }
+  it('at this release both templates carry the CURRENT render (not merely a prior)', () => {
+    // A stale-but-known template is legal for a SEED in the wild; the CHECKOUT templates are set
+    // to the current render at every release that touches the fragment (this pin is what makes a
+    // fragment edit without a template re-render fail fast in the monorepo).
+    for (const [label, file] of TEMPLATE_FILES) {
+      const region = extractLensRegion(readFileSync(file, 'utf8'));
+      assert.equal(region.body, renderLens(FRAGMENT, region.number), `${label} must carry the current render. ${DRIFT_MESSAGE}`);
     }
   });
 
-  it('keeps the Set-2 process-fidelity tokens (A1/A2) present in BOTH template lens blocks', () => {
-    for (const token of TEMPLATE_INVARIANT_TOKENS) {
-      for (const [label, file] of TEMPLATE_FILES) {
-        const block = extractLensBlock(label, readFileSync(file, 'utf8'));
-        assert.ok(
-          block.toLowerCase().includes(token),
-          `missing process-fidelity token "${token}" in the lens block of ${label} (${file}). ${DRIFT_MESSAGE}`,
-        );
-      }
-    }
-  });
-
-  it('keeps the agent_rules template lens blocks byte-identical apart from the heading number', () => {
-    const blocks = TEMPLATE_FILES.map(([label, file]) => extractLensBlock(label, readFileSync(file, 'utf8')));
-    assert.equal(blocks[0], blocks[1], DRIFT_MESSAGE);
-  });
-
-  // Injected red→green NON-VACUITY proof (the AD-029/AD-031 precedent): corrupt the token IN
-  // MEMORY (a string substitution on the real template text — never a disk write, so "restoring"
-  // is simply not using the substituted copy) and assert the guard's own check goes RED on the
-  // corrupted copy. Proves each new cost-lane token is checked WHERE THE BULLET LIVES — the
-  // extracted lens block — not satisfied by an accidental occurrence elsewhere in the file.
-  it('non-vacuity: deleting a cost-lane token from a template lens block makes the guard go red (injected, in-memory)', () => {
+  // Injected red→green NON-VACUITY proof (the AD-029/AD-031 precedent): corrupt a template copy
+  // IN MEMORY and assert the same extractor + comparator reject it — a hand-drift can never stay
+  // green by matching an accidental occurrence elsewhere.
+  it('non-vacuity: a one-token in-memory drift makes the parity check go red (injected)', () => {
     const [label, file] = TEMPLATE_FILES[0];
     const real = readFileSync(file, 'utf8');
-    for (const token of ['cheapest adequate executor', 'no named guardrail does not move down', 'red lines never move down']) {
-      // sanity (green half): the real block carries the token
-      assert.ok(extractLensBlock(label, real).toLowerCase().includes(token), `sanity: real block carries "${token}"`);
-      // red half: the same check on a token-stripped copy fails
-      const corrupted = real.replace(new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), 'REDACTED');
+    const sane = extractLensRegion(real);
+    assert.ok(knownRendersAt(sane.number).includes(sane.body), `sanity: the real ${label} block is a known render`);
+    for (const corruption of [
+      ['Fold by code', 'Fold by vibes'],
+      ['0 blockers + 0 majors', '1 blocker'],
+      ['cheapest adequate executor', 'priciest executor'],
+    ]) {
+      const corrupted = real.replace(corruption[0], corruption[1]);
+      assert.notEqual(corrupted, real, `sanity: the corruption "${corruption[0]}" actually hits the template`);
+      const region = extractLensRegion(corrupted);
+      assert.equal(region.found, true, 'the corrupted copy still has the heading');
       assert.ok(
-        !extractLensBlock(label, corrupted).toLowerCase().includes(token),
-        `the guard must go RED when "${token}" is removed from the lens block — otherwise the token check is vacuous`,
+        !knownRendersAt(region.number).includes(region.body),
+        `the parity check must go RED when "${corruption[0]}" drifts — otherwise the guard is vacuous`,
       );
     }
   });

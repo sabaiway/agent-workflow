@@ -63,7 +63,7 @@ Before proposing changes or committing, review against:
 - Always run type-checker, linter, and all tests before committing.
 
 ### 2.5. Planning, review & process-fidelity invariants
-Apply these when authoring a plan, reviewing, folding a finding, or editing code — the layer read **before any code change**. (Full canon: the project's planning / workflow-methodology + orchestration canon.)
+Apply these when authoring a plan, reviewing, folding a finding, or editing code — the layer read **before any code change**. (Full canon: the project's planning / workflow-methodology + orchestration canon. This section is rendered from that canon and refreshed on upgrade; a custom edit is preserved verbatim, but flagged.)
 - **Fold by code, not prose.** Before folding a code-touching finding into a plan or change, read the cited `file:line` and cite it — a prose fold drifts from the code and seeds the next bug.
 - **Right altitude.** Pin intent + invariants + acceptance criteria (named tests); leave fine code-mechanics to Execute, where prose cannot diverge from reality.
 - **No code-mechanics in the plan.** A Step still carries its exact paths + commands (the plan-structure / self-review canon) — checked syntax: the plan's own Verification runs them against an explicit expected outcome or gate; the only other syntax a plan may carry is a literal fixture/schema fragment a named test copies or validates. Un-run, logic-bearing syntax — control-flow, a regex, a glob, a grammar, an algorithm body, a mini-DSL — never lives in plan prose, however plausible or shell-verified it looks: a fold or draft that wants one is the trigger to write the test instead.
