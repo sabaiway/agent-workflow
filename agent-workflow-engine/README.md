@@ -4,8 +4,9 @@
 methodology *text* — the Plan → Phase → Step vocabulary, the plan-file lifecycle
 (`docs/plans/*.md`, ephemeral, never committed), the `queue.md` series index, the mandatory
 final **Phase: Cleanup**, the **orchestration-recipe** vocabulary (Solo / Reviewed / Council /
-Delegated), and the two bounded slot fragments the family kit injects into a deployed project's
-`AGENTS.md`.
+Delegated), the bounded slot fragments the family kit injects into a deployed project's
+`AGENTS.md`, and the canonical agent-rules lens block the kit renders into a deployed
+`docs/ai/agent_rules.md`.
 
 This is the **methodology engine** of the `agent-workflow` family — the canonical source the
 rest of the family builds on. It is **content**, not a runtime: it reads nothing, writes
@@ -53,11 +54,19 @@ the canonical methodology reference on disk:
 - [`references/procedures.md`](references/procedures.md) — the canonical **activity-procedures** canon:
   the named activities (`plan-authoring`, `plan-execution`) as ordered steps with typed recipe slots,
   read live and rendered by the read-only `/agent-workflow-kit procedures <activity>`.
+- [`references/agent-rules-lens.md`](references/agent-rules-lens.md) — the canonical **agent-rules
+  lens** block (the planning/review/process-fidelity invariants) the kit renders into a deployed
+  `docs/ai/agent_rules.md` region and refreshes on upgrade — a canon wording change ships as an
+  engine-only release.
+- [`references/agent-rules-lens-priors.md`](references/agent-rules-lens-priors.md) — the
+  **append-only store** of previously-shipped lens bodies; the kit refreshes a deployed region only
+  when it matches a known body (a customized region is preserved verbatim).
 
 ## What this package ships
 
 `SKILL.md` (the canon overview + ownership rule), `references/` (the full methodology + the
-orchestration + activity-procedures references + the two bounded slot fragments), `capability.json`
+orchestration + activity-procedures references + the bounded slot fragments + the agent-rules lens
+fragment and its prior store), `capability.json`
 (the family manifest), and this installer. It ships **no** family-wide tooling (the schema/validator/injection live in the
 composition root) and mutates nothing — preserving "knows nobody".
 
