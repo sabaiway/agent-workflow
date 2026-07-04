@@ -67,6 +67,16 @@ describe('commands catalog — drift-guard vs SKILL.md ### Mode: headers', () =>
     assert.match(section, /--write/, 'the mode file documents the --write apply flag');
     assert.match(section, /never commits/i, 'the mode file states the writer never commits');
   });
+
+  // F08a (AD-040): the standing-consent advisory at the --write success moment — wording-only in
+  // the mode file, the set-recipe.mjs tool echo untouched. Pin its stable tokens.
+  it('the set-recipe mode file carries the standing-consent advisory (hand-adds, quota honesty, solo-silent)', () => {
+    const section = readFileSync(join(MODES_DIR, 'set-recipe.md'), 'utf8');
+    assert.match(section, /settings\.local\.json/, 'the advisory names the hand-edited local settings file');
+    assert.match(section, /spends subscription quota without a per-run prompt/, 'the advisory states the quota honesty plainly');
+    assert.match(section, /INCLUDING quoting/, 'the advisory pins the byte-form/quoting rule');
+    assert.match(section, /solo recipe gets NO advisory/i, 'solo recipes stay advisory-free');
+  });
 });
 
 // ── (b) routing — known tokens → their mode; garbage → help (never a writer/guarded mode); the
