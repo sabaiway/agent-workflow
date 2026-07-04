@@ -23,7 +23,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { composeStatusLine, DISPLAY_ALIASES } from '../tools/recipes.mjs';
@@ -31,13 +31,23 @@ import { composeStatusLine, DISPLAY_ALIASES } from '../tools/recipes.mjs';
 // agent-workflow-kit/test → agent-workflow-kit
 const kitRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SKILL = readFileSync(resolve(kitRoot, 'SKILL.md'), 'utf8');
+// Post-split: the shared contract lives in references/shared/report-footer.md; the bootstrap and
+// upgrade procedures live in references/modes/. The single-source exactly-once count widens to the
+// whole split corpus (router + every mode file + every shared file) so the template can't quietly
+// reappear in a second home.
+const FOOTER_FILE = readFileSync(resolve(kitRoot, 'references', 'shared', 'report-footer.md'), 'utf8');
+const readAll = (dir) =>
+  readdirSync(resolve(kitRoot, 'references', dir))
+    .filter((f) => f.endsWith('.md'))
+    .map((f) => readFileSync(resolve(kitRoot, 'references', dir, f), 'utf8'));
+const CORPUS = [SKILL, ...readAll('modes'), ...readAll('shared')].join('\n');
 
 // Slice the text between two headings (to = end-of-file when omitted).
 const between = (text, from, to) => {
   const a = text.indexOf(from);
-  assert.notEqual(a, -1, `SKILL.md is missing the heading: "${from}"`);
+  assert.notEqual(a, -1, `the split corpus is missing the heading: "${from}"`);
   const b = to ? text.indexOf(to, a + from.length) : text.length;
-  assert.notEqual(b, -1, `SKILL.md is missing the heading: "${to}"`);
+  assert.notEqual(b, -1, `the split corpus is missing the heading: "${to}"`);
   return text.slice(a, b);
 };
 
@@ -45,9 +55,9 @@ const between = (text, from, to) => {
 const flat = (s) => s.replace(/\s+/g, ' ');
 
 // The tight shared-definition region (the template + invariants live here, before the version block).
-const shared = flat(between(SKILL, '### The one-line backend-status line', '### The version block + welcome mat'));
-const bootstrap = flat(between(SKILL, '### Mode: bootstrap', '### Mode: upgrade'));
-const upgrade = flat(between(SKILL, '### Mode: upgrade', '### Mode: backends'));
+const shared = flat(between(FOOTER_FILE, '### The one-line backend-status line', '### The version block + welcome mat'));
+const bootstrap = flat(readFileSync(resolve(kitRoot, 'references', 'modes', 'bootstrap.md'), 'utf8'));
+const upgrade = flat(readFileSync(resolve(kitRoot, 'references', 'modes', 'upgrade.md'), 'utf8'));
 
 describe('backend-status line — machine-composed, paste-verbatim (deterministic-first)', () => {
   it('names the composer invocation and the paste-verbatim instruction once, in the shared region', () => {
@@ -57,10 +67,10 @@ describe('backend-status line — machine-composed, paste-verbatim (deterministi
     assert.ok(!shared.includes('tools/detect-backends.mjs'), 'the agent no longer drives the raw detector here');
   });
 
-  it('carries a placeholder-only template, exactly once in the whole SKILL.md', () => {
+  it('carries a placeholder-only template, exactly once across the whole split corpus (router + modes + shared)', () => {
     assert.match(shared, /never copy this example/i, 'the template is explicitly a placeholder');
     const TEMPLATE = /backends: <alias>/g;
-    const occurrences = (flat(SKILL).match(TEMPLATE) ?? []).length;
+    const occurrences = (flat(CORPUS).match(TEMPLATE) ?? []).length;
     assert.equal(occurrences, 1, `the placeholder template must appear exactly once (single source), found ${occurrences}`);
     // Non-vacuous: the template line is made of <placeholder> tokens, not real values.
     const placeholders = (shared.match(/<[^>]+>/g) ?? []).length;

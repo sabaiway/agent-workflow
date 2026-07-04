@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -21,6 +21,7 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SKILL_MD = join(HERE, '..', 'SKILL.md');
+const MODES_DIR = join(HERE, '..', 'references', 'modes');
 
 // ── (a) drift-guard: COMMANDS keys ⟷ the `### Mode:` headers in SKILL.md (the ONE authoritative
 //        surface). The headers are clean (no [backend]/<activity> placeholders), and the bare-default
@@ -45,19 +46,26 @@ describe('commands catalog — drift-guard vs SKILL.md ### Mode: headers', () =>
     assert.equal(new Set(keys).size, keys.length);
   });
 
+  // The progressive-disclosure split: every catalog mode has its body in references/modes/<key>.md
+  // and every mode file is a catalog mode — a missing mode file (a routed mode with no procedure)
+  // or an orphan file (an unreachable procedure) both go red.
+  it('catalog keys ⟷ references/modes/*.md filenames (set equality, no drift)', () => {
+    const fromFiles = readdirSync(MODES_DIR)
+      .filter((f) => f.endsWith('.md'))
+      .map((f) => f.replace(/\.md$/, ''))
+      .sort();
+    const fromCatalog = COMMANDS.map((c) => c.key).sort();
+    assert.deepEqual(fromFiles, fromCatalog, 'references/modes/ files must equal the catalog keys');
+  });
+
   // A catalog entry alone is NOT runnable — routeInvocation only maps token→mode; the agent runs the
-  // mode by following its `### Mode:` section's `Run node …` dispatch line. For the writer modes that own
-  // a tool, header presence ≠ runnable: pin that the section actually carries the runnable command.
-  it('the ### Mode: set-recipe section carries the runnable node …/tools/set-recipe.mjs dispatch line', () => {
-    const skill = readFileSync(SKILL_MD, 'utf8');
-    const start = skill.indexOf('### Mode: set-recipe');
-    assert.ok(start !== -1, 'SKILL.md must document ### Mode: set-recipe');
-    const after = skill.slice(start);
-    const end = after.indexOf('\n### Mode:', 3);
-    const section = end === -1 ? after : after.slice(0, end);
-    assert.match(section, /node \$\{CLAUDE_SKILL_DIR\}\/tools\/set-recipe\.mjs/, 'the section must carry the runnable dispatch line');
-    assert.match(section, /--write/, 'the section documents the --write apply flag');
-    assert.match(section, /never commits/i, 'the section states the writer never commits');
+  // mode by following its mode file's `Run node …` dispatch line. For the writer modes that own a
+  // tool, header presence ≠ runnable: pin that the mode file actually carries the runnable command.
+  it('the set-recipe mode file carries the runnable node …/tools/set-recipe.mjs dispatch line', () => {
+    const section = readFileSync(join(MODES_DIR, 'set-recipe.md'), 'utf8');
+    assert.match(section, /node \$\{CLAUDE_SKILL_DIR\}\/tools\/set-recipe\.mjs/, 'the mode file must carry the runnable dispatch line');
+    assert.match(section, /--write/, 'the mode file documents the --write apply flag');
+    assert.match(section, /never commits/i, 'the mode file states the writer never commits');
   });
 });
 

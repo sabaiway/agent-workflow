@@ -92,6 +92,14 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the AD-038 review-enforcement pair: the read-only receipt checker + the facts assembler
       'tools/review-state.mjs',
       'tools/grounding.mjs',
+      // the progressive-disclosure split payload: the router's mode files + shared contracts must
+      // ship, or every placed kit routes into a void (representative pins; the exact count below
+      // and the catalog↔modes set-equality guard cover the full set)
+      'references/modes/upgrade.md',
+      'references/modes/help.md',
+      'references/shared/report-footer.md',
+      'references/shared/composition-handoff.md',
+      'references/shared/deploy-tail.md',
     ];
     const missing = required.filter((p) => !packed.includes(p));
     assert.deepEqual(missing, [], 'a runtime payload file or entry point was dropped from the tarball');
@@ -111,8 +119,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
   // file accidentally dropped). After an intentional change, run `npm pack ./agent-workflow-kit
   // --dry-run --json` and set the new count here in the same commit.
   it('ships exactly the expected number of files', () => {
-    // 96 = 94 + the two AD-038 tools (tools/review-state.mjs, tools/grounding.mjs).
-    assert.equal(packed.length, 96, `tarball file count drifted (${packed.length} ≠ 96)`);
+    // 115 = 96 + the 19 progressive-disclosure split files (16 references/modes/ + 3 references/shared/).
+    assert.equal(packed.length, 115, `tarball file count drifted (${packed.length} ≠ 115)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

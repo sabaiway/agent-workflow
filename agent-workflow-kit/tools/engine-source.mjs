@@ -107,7 +107,8 @@ export const detectEngine = (engineDir, { source, rel } = {}, deps = {}) => {
 // on the happy path; THROWS a loud Error naming the resolved dir + the reason + the exact
 // remediation on absent/invalid/unreadable — never a fallback (fail-closed). The "methodology engine
 // not found/invalid" prefix is a stable contract: the agent classifies the reconcile STOP by it
-// (distinct from the cap-skip message), so do not reword it without updating SKILL.md.
+// (distinct from the cap-skip message), so do not reword it without updating the upgrade mode file
+// (references/modes/upgrade.md, step 3 exit classification).
 export const readEngineFragment = (engineDir, deps = {}) => {
   const detection = detectEngine(engineDir, { source: deps.source, rel: deps.rel }, deps);
   const installHint = `npx @sabaiway/agent-workflow-engine@latest init  (or set ${ENGINE_ENV})`;

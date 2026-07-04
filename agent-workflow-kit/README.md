@@ -306,7 +306,8 @@ One kit, two tiers — **no logic is duplicated per tool:**
 - The **output** (`AGENTS.md` + `docs/ai/`) is read natively by Claude Code (via the `CLAUDE.md`
   alias) · Codex · Cursor · Devin Desktop · Copilot · Gemini CLI & 20+ tools.
 - The **bootstrapper** runs from Claude Code · Codex · Devin Desktop — their launchers point at the
-  same `SKILL.md`, so deployment logic lives in one place.
+  same `SKILL.md` router (which loads its `references/modes/` + `references/shared/` files per
+  invocation), so deployment logic lives in one place.
 
 ---
 
@@ -315,10 +316,12 @@ One kit, two tiers — **no logic is duplicated per tool:**
 ```
 agent-workflow-kit/
 ├── README.md        ← you are here (the kit's manual)
-├── SKILL.md         ← agent-facing deploy / upgrade algorithm
+├── SKILL.md         ← thin agent-facing router: mode index + safe routing
 ├── CHANGELOG.md     ← version history
 ├── capability.json  ← agent-workflow family manifest (composition-root)
 ├── references/
+│   ├── modes/       ← one file per mode (deploy/upgrade/… procedures)
+│   ├── shared/      ← shared contracts (footer · hand-off · tail)
 │   ├── templates/   ← AGENTS.md + every docs/ai file
 │   ├── scripts/     ← caps / archive / index + tests
 │   └── contracts.md ← visibility / language / attribution rules

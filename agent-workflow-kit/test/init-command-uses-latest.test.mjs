@@ -9,12 +9,23 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // agent-workflow-kit/test → repo root
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+
+// The kit SKILL.md prose now lives split across the router + references/modes/ + references/shared/
+// (the progressive-disclosure split) — enumerate the split files dynamically so a new mode file is
+// covered the day it appears (a static list would silently lose coverage over moved prose).
+const splitFiles = (dir) => {
+  const abs = resolve(repoRoot, 'agent-workflow-kit', 'references', dir);
+  if (!existsSync(abs)) return [];
+  return readdirSync(abs)
+    .filter((f) => f.endsWith('.md'))
+    .map((f) => `agent-workflow-kit/references/${dir}/${f}`);
+};
 
 // The surfaces that PRESCRIBE the install command to a user. Historical contexts (CHANGELOG, releases/,
 // migrations/) are intentionally excluded — they record what older versions said and must not be
@@ -23,6 +34,8 @@ const SURFACES = [
   'README.md', // family front door
   'agent-workflow-kit/README.md',
   'agent-workflow-kit/SKILL.md',
+  ...splitFiles('modes'),
+  ...splitFiles('shared'),
   'codex-cli-bridge/SKILL.md',
   'antigravity-cli-bridge/SKILL.md',
   'agent-workflow-kit/bridges/codex-cli-bridge/SKILL.md',

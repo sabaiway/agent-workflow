@@ -4,17 +4,22 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Contract guard for the SKILL.md `status` render surface (Plan §4.4 INV). Wiring `Mode: status` onto
+// Contract guard for the `status` render surface (Plan §4.4 INV). Wiring `Mode: status` onto
 // the additive `installed[].refresh` must NOT silently rewrite the SHARED notes-based surfaces — the
 // version block and the bootstrap/upgrade report footers stay `notes`-based this release (their refresh
 // migration is deferred). This grep pins both halves of that contract so a future edit can't drift one
-// without the other failing loudly.
-const SKILL = join(dirname(fileURLToPath(import.meta.url)), '..', 'SKILL.md');
+// without the other failing loudly. Post-split: the status body lives in references/modes/status.md;
+// the shared version block + welcome mat live in references/shared/report-footer.md.
+const kitRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+const STATUS_FILE = join(kitRoot, 'references', 'modes', 'status.md');
+const FOOTER_FILE = join(kitRoot, 'references', 'shared', 'report-footer.md');
 
-describe('SKILL.md — status reads refresh; the shared notes-based footers stay untouched', () => {
-  let skill;
+describe('status mode reads refresh; the shared notes-based footers stay untouched', () => {
+  let skill; // the status-mode body
+  let footer; // the shared report-footer contracts
   before(() => {
-    skill = readFileSync(SKILL, 'utf8');
+    skill = readFileSync(STATUS_FILE, 'utf8');
+    footer = readFileSync(FOOTER_FILE, 'utf8');
   });
 
   it('Mode: status now keys freshness on installed[].refresh (behind + recommend)', () => {
@@ -33,11 +38,11 @@ describe('SKILL.md — status reads refresh; the shared notes-based footers stay
   });
 
   it('the shared VERSION BLOCK is unchanged — still appends installed[].notes verbatim', () => {
-    assert.match(skill, /Append any `installed\[\]\.notes`/, 'the shared version block must stay notes-based');
+    assert.match(footer, /Append any `installed\[\]\.notes`/, 'the shared version block must stay notes-based');
   });
 
   it('the welcome-mat next-step stays notes-based, widened caveat-generic (Plan §2.4)', () => {
-    const flat = skill.replace(/\s+/g, ' ');
+    const flat = footer.replace(/\s+/g, ' ');
     assert.match(flat, /`installed\[\]\.notes` caveat fired/, 'the bootstrap/upgrade welcome mat must stay notes-based');
     assert.match(flat, /a behind-class `installed\[\]\.notes` caveat fired — any member, the bridges included/,
       'priority 1 is caveat-generic now — no member allowlist');
@@ -48,7 +53,7 @@ describe('SKILL.md — status reads refresh; the shared notes-based footers stay
   });
 
   it('an UNKNOWN-freshness note is NOT a welcome-mat refresh trigger — only a behind note fires priority 1', () => {
-    const flat = skill.replace(/\s+/g, ' ');
+    const flat = footer.replace(/\s+/g, ' ');
     assert.match(flat, /uncheckable.{0,120}never.{0,3}a refresh trigger/i,
       'the widened priority 1 must exclude couldn\'t-be-checked notes');
     assert.match(flat, /only a behind note fires this step/i);
