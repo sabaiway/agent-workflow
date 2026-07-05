@@ -568,6 +568,25 @@ describe('composeStatusLine — the tool speaks, the agent pastes', () => {
     assert.match(line, /codex ✓ ready/);
     assert.match(line, /agy ✗ needs-skill/);
   });
+
+  it('settings suffix: appended ONLY when a bridge knob is active; the default line stays byte-identical', () => {
+    const det = detect(READY, READY);
+    const base = composeStatusLine(det, { clause: 'x' });
+    // No snapshot / no active knob → byte-identical to the two-arg form (unchanged unless a knob is active).
+    assert.equal(composeStatusLine(det, { clause: 'x' }, null), base);
+    assert.equal(composeStatusLine(det, { clause: 'x' }, { active: [] }), base);
+    // An active knob → a fact-only ` · settings: KEY=VALUE` suffix, still ONE line (no newline).
+    const withKnob = composeStatusLine(det, { clause: 'x' }, { active: [{ key: 'CODEX_SERVICE_TIER', value: 'priority' }] });
+    assert.equal(withKnob, `${base} · settings: CODEX_SERVICE_TIER=priority`);
+    assert.ok(!withKnob.includes('\n'), 'the knob suffix never breaks the single-line invariant');
+  });
+
+  it('a raw env value carrying a newline is collapsed to one line (codex R2: no newline injection)', () => {
+    const det = detect(READY, READY);
+    const line = composeStatusLine(det, { clause: 'x' }, { active: [{ key: 'CODEX_HARD_TIMEOUT', value: '2h\nINJECTED: pwned' }] });
+    assert.ok(!line.includes('\n'), 'a newline in a raw env value never breaks the one-line contract');
+    assert.match(line, /settings: CODEX_HARD_TIMEOUT=2h INJECTED: pwned/);
+  });
 });
 
 describe('buildReport — additive statusLine field', () => {
@@ -594,8 +613,17 @@ describe('recipes.mjs CLI — read-only, exit 0', () => {
 });
 
 describe('recipes.mjs CLI — --status-line + strict args (no silent fallthrough)', () => {
+  // Isolate the host: --status-line now reads the bridge-settings snapshot (env > file), so a host with
+  // a bridge env var set OR a real ~/.config settings file would otherwise append a `· settings:` suffix
+  // and break the exact-line assertions. Point XDG at an empty dir and strip every bridge setting env var.
+  const cleanEnv = () => {
+    const env = { ...process.env, PATH: '', XDG_CONFIG_HOME: join(HERE, '__no_xdg_fixture__') };
+    for (const k of ['CODEX_SERVICE_TIER', 'CODEX_HARD_TIMEOUT', 'CODEX_REVIEW_MAX_TOTAL_BYTES', 'AGY_HARD_TIMEOUT', 'AGY_REVIEW_ALLOW_ADDDIR']) delete env[k];
+    return env;
+  };
+
   it('--status-line emits exactly one line matching the composed contract', () => {
-    const out = execFileSync(process.execPath, [SCRIPT, '--status-line'], { encoding: 'utf8', env: { ...process.env, PATH: '' } });
+    const out = execFileSync(process.execPath, [SCRIPT, '--status-line'], { encoding: 'utf8', env: cleanEnv() });
     assert.ok(out.endsWith('\n'), 'ends with the single trailing newline');
     const line = out.slice(0, -1);
     assert.ok(!line.includes('\n'), 'exactly one line');
@@ -612,7 +640,7 @@ describe('recipes.mjs CLI — --status-line + strict args (no silent fallthrough
   });
 
   it('rejects --json + --status-line together (each owns stdout whole)', () => {
-    const r = spawnSync(process.execPath, [SCRIPT, '--json', '--status-line'], { encoding: 'utf8', env: { ...process.env, PATH: '' } });
+    const r = spawnSync(process.execPath, [SCRIPT, '--json', '--status-line'], { encoding: 'utf8', env: cleanEnv() });
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /mutually exclusive/);
   });

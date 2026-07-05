@@ -4,6 +4,44 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.35.0 — Host-level bridge settings surface + Codex Fast tier as configuration (AD-043)
+
+A **feature** release (deployment-lineage head stays `1.3.0` — no migration). Bridge knobs like the
+Codex Fast tier are now enabled **through a host-level settings file that survives kit upgrades**,
+never re-researched and re-patched per host; the kit surfaces, reconciles, and honestly refreshes
+that surface. Ships **bridges 2.3.0** inside the tarball (the four wrappers' shared settings-reader
+block + the `CODEX_SERVICE_TIER` knob + the typed `settings` manifest schema, Phase 1). The kit
+machinery (Phase 2):
+
+- **`bridge-settings` mode — the host-config reader + consent-gated writer.** New
+  `tools/bridge-settings.mjs` (+ its read-only core `tools/bridge-settings-read.mjs`) reads/writes
+  `${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf` — a `KEY=VALUE` file **outside
+  every kit tree** (D2, upgrade-survival is structural). Previews by default, `--apply` writes via a
+  hardened out-of-tree atomic core (`writeContainedFileAtomic` / `writeHostConfigFileAtomic`,
+  factored from `atomic-write.mjs` — symlink/parent/TOCTOU-safe, dir created on first use). The
+  allowlist + typed validation come from the **bundled bridge manifests** (`settings` blocks,
+  manifest-as-source / D6 — `settingValueValid` is now the single shared predicate). It refuses an
+  unknown key, an out-of-range/invalid value, and — loudly, naming the key — a duplicate-carrying
+  file; model/effort stay unsettable (the quality guard is untouched, D4). Routed in `SKILL.md`
+  (`guarded` kind) with `references/modes/bridge-settings.md`.
+- **Refresh overwrite honesty (D5).** `tools/setup-backends.mjs` now byte-compares a placed bridge
+  against the bundle on an equal-version re-sync and **states** the local edits it overwrote (file
+  list + the settings-file pointer), instead of the old silent wipe; a version upgrade never cries
+  wolf about the version delta, an unreadable placed file degrades honestly, a placed-only extra is
+  preserved and never claimed as loss.
+- **Init/upgrade reconcile.** `init` (`bin/install.mjs`) and `Mode: upgrade` run
+  `bridge-settings --reconcile` after the bridge refresh: every settings-file key is validated
+  against the new bundled manifests; an unknown/retired key is a loud flag, **preserved verbatim**
+  (never edited — the lens-region posture).
+- **Status + advisor surfaces (fact-only).** `status`' execution-backends block, the `procedures`
+  driving-contract render, and `recipes --status-line` now surface the active knobs (env>file>default)
+  and each wrapper's settable knobs — fact-only, no model claim, localized-on-error; the status line
+  stays byte-identical unless a knob is active.
+- Parity + budgets: new `test/settings-reader-parity.test.mjs` pins the reader block byte-identical
+  across the four wrappers; the always-loaded router stays `≤ 10240 B` (the equal-head reconcile
+  enumeration was trimmed to its step-3 pointer to make room for the new mode); the `routerPlusMode`
+  budget is re-pinned `29696 → 30720` (documented) for the reconcile paragraph added to `upgrade.md`.
+
 ## 1.34.0 — Onboarding UX: one batched setup prompt, honest installer messaging, the visible accelerator funnel, and the consent-gated gates seeder (AD-042)
 
 A **feature** release (first-contact flow + a new consent-gated writer; deployment-lineage head

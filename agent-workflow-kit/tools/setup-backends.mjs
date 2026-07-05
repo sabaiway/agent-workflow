@@ -99,6 +99,78 @@ const probeMarker = (file, fs) => {
   }
 };
 
+// ── overwrite honesty (D5) — state what a refresh replaced, never a silent wipe ────────────────────
+
+// The host-level settings surface a refresh NEVER touches — the one place a bridge tweak survives a
+// kit upgrade (bridge CODE stays kit-owned; only these knobs persist). Named wherever a refresh
+// reports overwriting a local edit, so the recovery is always a copy-paste away.
+const SETTINGS_FILE_HINT = '${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf';
+const SETTINGS_CMD_HINT = '/agent-workflow-kit bridge-settings';
+
+// Bundle-owned regular files whose PLACED copy differs from the bundle (a local edit an equal-version
+// refresh would overwrite) or cannot be read (indeterminate — an honest degrade). Mirrors
+// copyTreeRefresh's src dispatch so it flags EXACTLY the files the overwrite touches: a symlink src is
+// additive (copyTreeRefresh skips an existing dest — never overwritten) and a dir recurses; a
+// bundled-only file (no placed copy) is a pure add, no loss. The BUNDLE read is our own shipped
+// artifact — a failure there is a loud corrupt-kit error upstream (never swallowed here); only the
+// PLACED read is caught (EACCES/EIO → 'unreadable', and the refresh still proceeds). Sorted output is
+// deterministic for the stated line. Exported for a direct unit test (the full driver cannot observe a
+// symlinked placed file — copyTreeRefresh refuses to overwrite one, so the refresh fails before any line).
+export const scanBundleOwnedDrift = (bundleDir, skillDir, fs) => {
+  const drifted = [];
+  const unreadable = [];
+  const walk = (rel) => {
+    const src = join(bundleDir, rel);
+    const dest = join(skillDir, rel);
+    const st = fs.lstat(src);
+    if (st.isSymbolicLink()) return;
+    if (st.isDirectory()) {
+      for (const entry of fs.readdir(src)) walk(rel ? join(rel, entry) : entry);
+      return;
+    }
+    // lstat the PLACED path NO-FOLLOW first — never read THROUGH a symlink (copyTreeRefresh's
+    // assertContainedRealPath would refuse to overwrite a symlinked dest, so reading its target here
+    // would be both unsafe and moot). Absent → a bundled-only addition (no local loss); a symlink /
+    // non-regular / unreadable placed node → "could not compare" without a read-through.
+    const destStat = (() => {
+      try {
+        return fs.lstat(dest);
+      } catch (err) {
+        return err && err.code === 'ENOENT' ? 'absent' : 'error';
+      }
+    })();
+    if (destStat === 'absent') return;
+    if (destStat === 'error' || destStat.isSymbolicLink() || !destStat.isFile()) {
+      unreadable.push(rel);
+      return;
+    }
+    const srcBytes = fs.readFile(src);
+    const destBytes = (() => {
+      try {
+        return fs.readFile(dest);
+      } catch {
+        unreadable.push(rel);
+        return null;
+      }
+    })();
+    if (destBytes === null) return;
+    if (!Buffer.from(srcBytes).equals(Buffer.from(destBytes))) drifted.push(rel);
+  };
+  walk('');
+  return { drifted: drifted.sort(), unreadable: unreadable.sort() };
+};
+
+// One user-facing sentence naming what an equal-version re-sync overwrote — or null when nothing local
+// was lost. Callers apply their own indent; the pointer names the settings file that survives a refresh.
+const driftSummary = (drift) => {
+  if (!drift) return null;
+  const parts = [];
+  if (drift.drifted.length) parts.push(`overwrote ${drift.drifted.length} locally-changed file(s): ${drift.drifted.join(', ')}`);
+  if (drift.unreadable.length) parts.push(`could not compare ${drift.unreadable.length} file(s) (kept the bundled copy): ${drift.unreadable.join(', ')}`);
+  if (!parts.length) return null;
+  return `${parts.join('; ')} — bridge code is kit-owned and always refreshed; persist host tweaks in ${SETTINGS_FILE_HINT} (survives every refresh): ${SETTINGS_CMD_HINT}`;
+};
+
 // ── path resolution ──────────────────────────────────────────────────────────
 
 const skillDirOf = (entry, deps) =>
@@ -253,14 +325,26 @@ const assertNoDowngrade = (plan, deps = {}) => {
   if (compareSemver(placed, bundled) === 1) throw stop(downgradeReason(placed, bundled), { skillDir: plan.skillDir, wouldDowngrade: true });
 };
 
+// Copy the bundle over the placed skill dir (the refresh overwrite), FIRST scanning bundle-owned files
+// for local drift so the caller can STATE what the overwrite replaced (D5 — overwrite honesty). Scan
+// only on a refresh: a `place` writes into an absent/empty dir, so there is nothing local to lose. The
+// copy proceeds either way — bridge code is kit-owned. Returns the drift report (null for a place).
+const copyBridgeWithHonesty = (action, bundleDir, skillDir, deps) => {
+  const fs = fsDeps(deps);
+  const drift = action === 'refresh' ? scanBundleOwnedDrift(bundleDir, skillDir, fs) : null;
+  copyTreeRefresh(bundleDir, skillDir, skillDir, fs);
+  return drift;
+};
+
 // Place/refresh the bundled bridge skill. Re-inspects before writing (never trusts a stale plan).
+// Returns the plan plus `drift`: on a refresh, the bundle-owned files whose local edits it overwrote.
 export const placeSkill = (name, deps = {}) => {
   const entry = registryEntry(name);
   if (!entry) throw stop(`unknown backend: ${name}`);
   const plan = inspectSkillDir(entry, deps);
   assertNoDowngrade(plan, deps);
-  copyTreeRefresh(plan.bundleDir, plan.skillDir, plan.skillDir, fsDeps(deps));
-  return plan;
+  const drift = copyBridgeWithHonesty(plan.action, plan.bundleDir, plan.skillDir, deps);
+  return { ...plan, drift };
 };
 
 // Link the wrappers onto `bindir`. PREFLIGHT all (source is a regular non-symlink file inside the
@@ -413,9 +497,12 @@ export const planFor = (backend, deps = {}) => {
 // in the plan across the read→write gap). Throws on a mid-flight conflict / fs error (honest partial
 // failure — placeSkill/chmod/symlink all converge on a re-run, so there is nothing to roll back).
 const applyBackend = (plan, deps) => {
-  if (plan.place.action === 'place' || plan.place.action === 'refresh') placeSkill(plan.name, deps);
+  const placed = (plan.place.action === 'place' || plan.place.action === 'refresh')
+    ? placeSkill(plan.name, deps)
+    : null;
   const manifest = readBundledManifest(plan.place.bundleDir, deps);
   linkWrappers(plan.skillDir, manifest, { ...deps, bindir: plan.bindir, platform: plan.platform });
+  return { drift: placed?.drift ?? null };
 };
 
 // ── formatting ─────────────────────────────────────────────────────────────────
@@ -442,6 +529,11 @@ const formatBackend = (plan, applied) => {
   }
   const placeVerb = applied ? { place: 'placed', refresh: 'refreshed' } : { place: 'will place', refresh: 'will refresh' };
   lines.push(`      • skill: ${placeVerb[plan.place.action]}${versionLabel(plan)} → ${plan.skillDir}`);
+  // Overwrite honesty (D5): on an equal-version re-sync that clobbered a local edit, say so (a version
+  // upgrade's diffs are the version delta — versionLabel's arrow already signals that change).
+  const equalVersionRefresh = plan.place.action === 'refresh' && (!plan.priorVersion || plan.priorVersion === plan.version);
+  const driftLine = equalVersionRefresh ? driftSummary(plan.drift) : null;
+  if (driftLine) lines.push(`      ↳ ${driftLine}`);
   for (const l of plan.links) {
     const verb = l.dstState === 'ours' ? 'already linked' : applied ? 'linked' : 'will link';
     lines.push(`      • wrapper ${l.cmd}: ${verb} → ${l.dst}`);
@@ -463,10 +555,10 @@ const formatBackend = (plan, applied) => {
 // a per-bridge lock file would be new machinery for a user-driven, self-healing race.
 const refreshSkillOnly = (entry, deps = {}) => {
   const fresh = inspectSkillDir(entry, deps);
-  if (fresh.action !== 'refresh') return false;
+  if (fresh.action !== 'refresh') return { refreshed: false, drift: null };
   assertNoDowngrade(fresh, deps);
-  copyTreeRefresh(fresh.bundleDir, fresh.skillDir, fresh.skillDir, fsDeps(deps));
-  return true;
+  const drift = copyBridgeWithHonesty('refresh', fresh.bundleDir, fresh.skillDir, deps);
+  return { refreshed: true, drift };
 };
 
 const NOT_PLACED_LINE = 'skipped — not placed (placement is opt-in: /agent-workflow-kit setup)';
@@ -499,7 +591,8 @@ export const refreshPlacedBridges = (deps = {}, names = KNOWN_BACKENDS.map((b) =
       if (plan.outcome === 'stop' || plan.outcome === 'error') {
         return { name: plan.name, outcome: 'failed', line: `  ${plan.name}: could not refresh — ${stripPrefix(plan.reason)}; recover with /agent-workflow-kit setup` };
       }
-      if (!refreshSkillOnly(registryEntry(plan.name), deps)) {
+      const refresh = refreshSkillOnly(registryEntry(plan.name), deps);
+      if (!refresh.refreshed) {
         return { name: plan.name, outcome: 'not-placed', line: `  ${plan.name}: ${NOT_PLACED_LINE}` };
       }
       const manifest = readBundledManifest(plan.place.bundleDir, deps);
@@ -507,10 +600,14 @@ export const refreshPlacedBridges = (deps = {}, names = KNOWN_BACKENDS.map((b) =
       const current = plan.version !== null && plan.priorVersion === plan.version;
       // The equal-version line still states the copy that ran (repair-on-rerun) — the tool never
       // reports a mutation-free "already current" while it re-synced files underneath.
+      const base = `  ${plan.name}: ${current ? `already current${versionLabel(plan)} — files re-synced from the bundled copy` : `refreshed${versionLabel(plan)}`}`;
+      // Overwrite honesty (D5): only an EQUAL-version re-sync can prove a byte diff is a LOCAL edit —
+      // a version upgrade's diffs are the version delta, which the (vOld → vNew) arrow already states.
+      const summary = current ? driftSummary(refresh.drift) : null;
       return {
         name: plan.name,
         outcome: current ? 'already-current' : 'refreshed',
-        line: `  ${plan.name}: ${current ? `already current${versionLabel(plan)} — files re-synced from the bundled copy` : `refreshed${versionLabel(plan)}`}`,
+        line: summary ? `${base}\n     ↳ ${summary}` : base,
       };
     } catch (err) {
       // A downgrade STOP raised at the write boundary (a newer bridge landed between plan and apply)
@@ -647,7 +744,8 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
     let plan = planFor(name, runDeps);
     if (!args.dryRun && plan.outcome === 'ok') {
       try {
-        applyBackend(plan, runDeps);
+        const { drift } = applyBackend(plan, runDeps);
+        plan = { ...plan, drift };
         appliedOk = true;
       } catch (err) {
         plan = { ...plan, outcome: err.code === SETUP_STOP ? 'stop' : 'error', reason: err.message };

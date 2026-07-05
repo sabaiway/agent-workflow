@@ -127,6 +127,13 @@ const CATALOG = [
     oneLine: 'Auto-approve your own declared gate commands (docs/ai/gates.json) via a Claude Code hook — exact matches only, previews first (opt-in).',
   },
   {
+    key: 'bridge-settings',
+    invocation: invocationOf('bridge-settings'),
+    group: 'Configure',
+    kind: GUARDED,
+    oneLine: 'Read or change the host-level bridge settings (e.g. the codex Fast tier) — a KEY=VALUE file that survives kit upgrades; previews first, and the Fast tier carries its extra-cost caveat.',
+  },
+  {
     key: 'recipes',
     invocation: invocationOf('recipes'),
     group: 'Orchestrate',

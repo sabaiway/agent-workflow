@@ -47,6 +47,9 @@ import {
 // The gate-hook writer's own wired-detection + placed path — reused by the settings survey (one
 // implementation; gate-hook imports only node builtins + velocity-profile, so no cycle).
 import { HOOK_FILE_REL as GATE_HOOK_FILE_REL, isHookWired } from './gate-hook.mjs';
+// The host-level bridge-settings snapshot (fact-only, best-effort). The READ-ONLY core (never the
+// writer, which pulls in the atomic-write core) so the status survey stays a pure reader.
+import { settingsSnapshot } from './bridge-settings-read.mjs';
 import { GATES_REL, loadDeclaration } from './run-gates.mjs';
 // The cheap-agents writer's own bundle reader + placement planner — reused by the settings survey
 // (one implementation, never a drifting copy; cheap-agents imports only node builtins, no cycle).
@@ -513,12 +516,20 @@ export const surveySettings = (dir, deps = {}) => ({
 export const surveyBridges = (deps = {}) => {
   const { detection } = detectSafe(deps); // a detector failure → every readiness reads 'unknown' (honest)
   const probe = deps.findOnPath ?? findOnPath;
+  // Host-level bridge settings, read ONCE (best-effort — never throws; a corrupt bundle/fs error → error).
+  const snapshot = settingsSnapshot(deps);
   return FAMILY_MEMBERS.filter((m) => m.kind === 'execution-backend').map((m) => {
     const det = detection.find((d) => d.name === m.name);
     // Preserve findOnPath's THREE-state result (present | missing | unknown): an `unknown` (EACCES,
     // "cannot confirm") must stay distinct from a real `missing` — never flattened to a false boolean.
     const wrappers = m.wrapperCmds.map((cmd) => ({ cmd, state: probe(cmd, deps).state }));
-    return { member: m.name, display: displayOf(m.name), readiness: det?.readiness ?? 'unknown', wrappers };
+    // Fact-only: the settings knobs ACTIVE (env/file, non-default) for THIS bridge. Model/effort are
+    // structurally absent from the registry, so this can NEVER carry a model claim (the survey's
+    // no-default-model-claim invariant). Localized-on-error like every other survey.
+    const settings = snapshot.error
+      ? { error: snapshot.error }
+      : { active: snapshot.active.filter((a) => a.bridge === m.name) };
+    return { member: m.name, display: displayOf(m.name), readiness: det?.readiness ?? 'unknown', wrappers, settings };
   });
 };
 

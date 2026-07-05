@@ -21,6 +21,9 @@ import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { detectBackends, wrapperCmdFor, wrapperContractFor } from './detect-backends.mjs';
+// The host-level bridge-settings registry (manifest-as-source) + its allowed-value labels. READ-ONLY
+// core only — never the writer — so this read-only advisor never imports the atomic-write core.
+import { loadRegistry, allowedLabel } from './bridge-settings-read.mjs';
 import { ACTIVITIES, resolveActivityRecipe, planRecipe } from './recipes.mjs';
 import { resolveEngineDir, readEngineFragment, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
 // The plan-in-flight detector (AD-038) — imported from the READ-ONLY checker (review-state.mjs
@@ -130,8 +133,19 @@ export const extractSection = (text, activity) => {
 
 // ── resolution + rendering ─────────────────────────────────────────────────────────
 
-const resolveAllSlots = ({ activity, config, detection, overrides }) =>
-  Object.keys(ACTIVITIES[activity].slots).map((slot) => {
+const resolveAllSlots = ({ activity, config, detection, overrides }) => {
+  // The host-level settings knobs (manifest-as-source), best-effort: a corrupt bundle degrades to none
+  // and the advisor never crashes. Attached per wrapper cmd via each knob's `appliesTo`. Fact-only —
+  // model/effort are not knobs, so no model claim can ride here.
+  const registry = (() => {
+    try {
+      return loadRegistry({});
+    } catch {
+      return new Map();
+    }
+  })();
+  const knobsFor = (cmd) => [...registry.values()].filter((k) => (k.appliesTo ?? []).includes(cmd));
+  return Object.keys(ACTIVITIES[activity].slots).map((slot) => {
     const resolved = resolveActivityRecipe({ config: config ?? {}, readiness: detection, activity, slot, override: overrides[slot] });
     // The concrete wrapper set this slot's EFFECTIVE recipe dispatches (empty for solo). Reuse
     // planRecipe's drift-guarded dispatch for WHICH backends, then resolve each (backend, role) to its
@@ -144,9 +158,11 @@ const resolveAllSlots = ({ activity, config, detection, overrides }) =>
     // is NEVER gated by REVIEW_RECIPES (that set gates only the review-loop economics block).
     const contracts = dispatch
       .map((d) => ({ backend: d.backend, role: d.role, cmd: wrapperCmdFor(d.backend, d.role), contract: wrapperContractFor(d.backend, d.role) }))
-      .filter((c) => c.cmd && c.contract);
+      .filter((c) => c.cmd && c.contract)
+      .map((c) => ({ ...c, settings: knobsFor(c.cmd).map((k) => ({ key: k.key, allowed: allowedLabel(k) })) }));
     return { slot, ...resolved, backends, contracts };
   });
+};
 
 // An unsatisfiable EXPLICIT override is the only "warning" (loud, flagged for the agent to relay). A
 // graceful config/default degradation is reported as a per-slot reason, not a warning.
@@ -250,7 +266,7 @@ const costLanesAdvice = () => [
 // roles[role].contract (drift-guarded), never re-derived or re-worded here. Rendered for EVERY
 // dispatched backend of EVERY slot (review AND execute=delegated); each wrapper's --help prints the
 // same contract, so the agent never needs to open the wrapper source.
-const contractLines = ({ cmd, contract }) => {
+const contractLines = ({ cmd, contract, settings }) => {
   const lines = [`      ${cmd} — driving contract (as bundled with this kit; copy-paste — \`${cmd} --help\` prints the same):`];
   for (const inv of contract.invocations) lines.push(`        ${inv}`);
   for (const f of contract.flags ?? []) lines.push(`        ${f}`);
@@ -262,6 +278,12 @@ const contractLines = ({ cmd, contract }) => {
   }
   if (contract.passthrough) {
     lines.push(`        passthrough after '--' is ${contract.passthrough.policy}: blocked always: ${contract.passthrough.blocked.join(' ')}; relaxed only under CODEX_PROBE=1: ${contract.passthrough.probeRelaxed.join(' ')}`);
+  }
+  // Host-level settings knobs this wrapper honors (fact-only, from the bundled manifests; explicit
+  // branch — contractLines drops any contract key it does not name, so this must be enumerated here).
+  if ((settings ?? []).length) {
+    lines.push('        host settings (survive kit upgrades — set via /agent-workflow-kit bridge-settings):');
+    for (const s of settings) lines.push(`          ${s.key} — ${s.allowed}`);
   }
   return lines;
 };

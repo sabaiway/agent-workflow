@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { main, extractSection, CONFIG_REL } from './procedures.mjs';
 import { READY, NEEDS_SKILL } from './detect-backends.mjs';
+import { allowedLabel } from './bridge-settings-read.mjs';
 
 // Host-independent fixtures: a temp cwd for the config + the REPO's OWN engine via
 // AGENT_WORKFLOW_ENGINE_DIR (it ships references/procedures.md, so the live read is deterministic and
@@ -424,6 +425,12 @@ describe('procedures CLI — point-of-use driving contract: verbatim, manifest-d
   const REPO_ROOT = join(HERE, '..', '..');
   const manifestContract = (bridge, role) =>
     JSON.parse(readFileSync(join(REPO_ROOT, bridge, 'capability.json'), 'utf8')).roles[role].contract;
+  // The host-level settings knobs a wrapper cmd honors, DERIVED from the manifest (drift-guarded both
+  // ways vs the advisor's own manifest read — a new/removed knob or an appliesTo edit fails here).
+  const manifestSettings = (bridge, cmd) =>
+    (JSON.parse(readFileSync(join(REPO_ROOT, bridge, 'capability.json'), 'utf8')).settings ?? [])
+      .filter((s) => (s.appliesTo ?? []).includes(cmd))
+      .map((s) => ({ key: s.key, allowed: allowedLabel(s) }));
   const norm = (s) => s.replace(/\s+/g, ' ').trim();
   // The advisor region below the verbatim canon section — scope the descriptor parse to it so a
   // canon edit mentioning a wrapper name can never leak into the set-equality.
@@ -488,13 +495,18 @@ describe('procedures CLI — point-of-use driving contract: verbatim, manifest-d
     const j = JSON.parse(run(['plan-authoring', '--override', 'review=council', '--json'], { codex: READY, agy: READY }).stdout);
     assert.deepEqual(j.slots.review.backends, ['codex-review', 'agy-review'], 'the pre-existing backends shape is unchanged');
     assert.deepEqual(j.slots.review.contracts, [
-      { backend: CODEX, role: 'review', cmd: 'codex-review', contract: manifestContract(CODEX, 'review') },
-      { backend: AGY, role: 'review', cmd: 'agy-review', contract: manifestContract(AGY, 'review') },
-    ], 'the surfaced contract deep-equals the bridge manifests (drift-guarded, both directions)');
+      { backend: CODEX, role: 'review', cmd: 'codex-review', contract: manifestContract(CODEX, 'review'), settings: manifestSettings(CODEX, 'codex-review') },
+      { backend: AGY, role: 'review', cmd: 'agy-review', contract: manifestContract(AGY, 'review'), settings: manifestSettings(AGY, 'agy-review') },
+    ], 'the surfaced contract + settings deep-equal the bridge manifests (drift-guarded, both directions)');
     const d = JSON.parse(run(['plan-execution', '--override', 'execute=delegated', '--json'], { codex: READY, agy: NEEDS_SKILL }).stdout);
     assert.deepEqual(d.slots.execute.contracts, [
-      { backend: CODEX, role: 'execute', cmd: 'codex-exec', contract: manifestContract(CODEX, 'execute') },
+      { backend: CODEX, role: 'execute', cmd: 'codex-exec', contract: manifestContract(CODEX, 'execute'), settings: manifestSettings(CODEX, 'codex-exec') },
     ]);
+    // The human render surfaces the same knobs, fact-only, under the wrapper's contract block.
+    const human = run(['plan-authoring', '--override', 'review=council'], { codex: READY, agy: READY }).stdout;
+    assert.match(human, /host settings \(survive kit upgrades/);
+    assert.match(human, /CODEX_SERVICE_TIER — "priority"/);
+    assert.match(human, /AGY_REVIEW_ALLOW_ADDDIR — "0" \| "1"/);
   });
 
   it('solo: no contract block in human output; contracts empty in --json (solo-omits holds)', () => {

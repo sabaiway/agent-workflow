@@ -32,6 +32,13 @@ const bridgeVm = (b) => ({
   readiness: b.readiness,
   // preserve the three-state wrapper status (present | missing | unknown) — the renderer maps to a glyph.
   wrappers: (b.wrappers ?? []).map((w) => ({ cmd: w.cmd, state: w.state })),
+  // fact-only host-level settings: the active knobs for this bridge, or a localized error; null when
+  // nothing is set (the renderer then adds no sub-line — the block stays as it was before any knob).
+  settings: b.settings?.error
+    ? { error: b.settings.error }
+    : b.settings?.active?.length
+      ? { active: b.settings.active.map((a) => ({ key: a.key, value: a.value, source: a.source })) }
+      : null,
 });
 
 const visibilityVm = (v) => {
