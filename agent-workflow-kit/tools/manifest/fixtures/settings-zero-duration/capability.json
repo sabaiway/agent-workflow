@@ -1,0 +1,16 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "fixture-settings-zero-duration",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["execute"],
+  "roles": {
+    "execute": { "cmd": "fixture-exec", "source": "bin/run.sh" }
+  },
+  "settings": [
+    { "key": "FIX_WAIT", "kind": "duration", "default": "0s", "appliesTo": ["fixture-exec"], "effect": "a zero duration default — timeout 0 disables a hard cap" }
+  ],
+  "cost": "subscription",
+  "quota": { "kind": "subscription", "finite": true }
+}

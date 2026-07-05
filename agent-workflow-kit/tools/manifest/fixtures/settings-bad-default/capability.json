@@ -1,0 +1,16 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "fixture-settings-bad-default",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["execute"],
+  "roles": {
+    "execute": { "cmd": "fixture-exec", "source": "bin/run.sh" }
+  },
+  "settings": [
+    { "key": "FIX_TIER", "kind": "enum", "values": ["fast"], "default": "slow", "appliesTo": ["fixture-exec"], "effect": "a default outside the enum" }
+  ],
+  "cost": "subscription",
+  "quota": { "kind": "subscription", "finite": true }
+}

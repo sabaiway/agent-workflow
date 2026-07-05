@@ -17,6 +17,7 @@ expansion), never via the shell. The validator is [`validate.mjs`](./validate.mj
 | `provides` | string[] | yes | subset of the **role vocabulary** |
 | `roles` | object | yes | keys ⊆ `provides`; see *Roles* |
 | `detect` | object | no | `installed` (skill on the machine) + `deployed` (substrate set up in cwd) |
+| `settings` | array | no | the bridge's **settings-file surface** (typed; see *Settings*). Unlike `contract`, a malformed entry **fails** `--strict`. |
 | `install` / `uninstall` | object | no | `install.npm` is a package name, not a path |
 | `cost` / `quota` / `provenance` | misc | no | informational |
 | `available` | boolean | no | `false` = a declared-but-not-installed stub; skips fs/version checks |
@@ -53,6 +54,36 @@ Each `roles.<role>` is an object:
   - `passthrough` (object, optional) — the guarded `--` passthrough tiers:
     `{ policy: "guarded", blocked: string[], probeRelaxed: string[] }`, matching the wrapper's
     real case-arm patterns (pinned by the source-level reverse-guard test).
+
+## Settings (bridges 2.3.0, D6 — manifest-as-source)
+
+`settings` declares the bridge's host-level settings-file surface
+(`${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf`). It is an **array** of
+typed entries — a JSON object would silently dedupe duplicate keys under `JSON.parse` — and,
+unlike `contract`, it is validated by `validate.mjs` itself: a malformed entry **fails**
+`--strict` (the kit writer, the status renderers, and the wrapper shell constants all consume
+this block). Each entry:
+
+- `key` (string, required) — UPPER_SNAKE_CASE env-var name; unique across the array.
+- `kind` (string, required) — `enum | integer | duration | boolean`.
+  - `enum` → `values` (string[], non-empty, unique).
+  - `integer` → `min` / `max` (safe integers, `min <= max`); values are decimal strings.
+  - `duration` → the wrappers' shell duration grammar (`5m`, `30m`, `90s`): a unit suffix
+    (`s|m|h|d`) is **required** — a bare integer is invalid — and **zero durations are
+    rejected** (`timeout 0` would silently DISABLE a hard cap).
+  - `boolean` → the pinned wire format `"0" | "1"` (exactly what the wrappers' env vars accept).
+- `default` (string|null, **required property** — a missing key fails validation) — `null` = no
+  file default, the wrapper built-ins apply (state them in `effect`); a non-null default must
+  itself pass the kind's validation.
+- `appliesTo` (string[], required) — the wrapper `cmd` names (from `roles.*.cmd` of THIS
+  manifest) that APPLY the key. Every wrapper still RECOGNIZES the whole family registry (the
+  union of both bridges' `settings` keys) and skips other wrappers' keys silently.
+- `effect` (string, required) — what the knob does, incl. built-in defaults and any spend/risk
+  caveat (the credit-rate caveat rides here for the tier knob).
+
+Wrappers never parse JSON at run time: each carries its own shell registry/validation constants,
+drift-guarded set-equal to this block by the bridge `bin/*.test.mjs` suites (help section keys,
+`aw_settings_known` registry, `AW_SETTINGS_APPLIED` subset, `aw_settings_valid` typed arms).
 
 ## Path-field rules (Windows-safe, traversal-safe)
 

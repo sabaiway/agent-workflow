@@ -1,0 +1,17 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "fixture-settings-duplicate-keys",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["execute"],
+  "roles": {
+    "execute": { "cmd": "fixture-exec", "source": "bin/run.sh" }
+  },
+  "settings": [
+    { "key": "FIX_DUP", "kind": "boolean", "default": "0", "appliesTo": ["fixture-exec"], "effect": "first" },
+    { "key": "FIX_DUP", "kind": "boolean", "default": "1", "appliesTo": ["fixture-exec"], "effect": "second — the duplicate" }
+  ],
+  "cost": "subscription",
+  "quota": { "kind": "subscription", "finite": true }
+}

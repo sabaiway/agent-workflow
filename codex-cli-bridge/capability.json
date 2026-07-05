@@ -3,7 +3,7 @@
   "schema": 1,
   "name": "codex-cli-bridge",
   "kind": "execution-backend",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "provides": ["execute", "review"],
   "roles": {
     "execute": {
@@ -43,6 +43,34 @@
       }
     }
   },
+  "settings": [
+    {
+      "key": "CODEX_SERVICE_TIER",
+      "kind": "enum",
+      "values": ["priority"],
+      "default": null,
+      "appliesTo": ["codex-exec", "codex-review"],
+      "effect": "codex service tier; 'priority' (catalog display name Fast) = ~1.5x token speed at a 2.5x credit rate on gpt-5.5 — quality-neutral (same model), live-probed 2026-07-05. Unset/empty ⇒ no service_tier flag (standard tier). SPEND KNOB: enabling it is a consented per-host act, never a default. codex itself accepts any -c service_tier string silently, so the wrapper validates the value."
+    },
+    {
+      "key": "CODEX_HARD_TIMEOUT",
+      "kind": "integer",
+      "min": 1,
+      "max": 86400,
+      "default": null,
+      "appliesTo": ["codex-exec", "codex-review"],
+      "effect": "hard wall-clock cap in seconds via timeout(1); built-in default 3600 (codex-exec) / 1800 (codex-review)."
+    },
+    {
+      "key": "CODEX_REVIEW_MAX_TOTAL_BYTES",
+      "kind": "integer",
+      "min": 1,
+      "max": 100000000,
+      "default": "1500000",
+      "appliesTo": ["codex-review"],
+      "effect": "codex-review code: above this assembled-payload size (bytes) the diff rides via a git-dir temp file instead of inline — never truncated."
+    }
+  ],
   "detect": {
     "installed": {
       "env": "CODEX_CLI_BRIDGE_DIR",

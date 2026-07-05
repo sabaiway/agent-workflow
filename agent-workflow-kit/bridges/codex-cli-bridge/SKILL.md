@@ -2,7 +2,7 @@
 name: codex-cli-bridge
 description: Delegate work to the OpenAI Codex CLI (`codex`) under a ChatGPT subscription — run plan/instruction EXECUTION in a sandboxed workspace, or get a read-only ADVISORY review of a plan or working-tree diff — as a second delegated-execution backend beside Antigravity. Use when the user wants to hand a bounded coding task or plan to `codex exec`, get a second-opinion review from codex, install or authenticate Codex CLI, understand its sandbox/network/approval policy, drive codex efficiently from the main agent (exec vs review, resume, the commit boundary), bridge project context (`AGENTS.md`) into codex, or troubleshoot codex flags, models, auth, or its no-TTY headless behaviour.
 metadata:
-  version: '2.2.0'
+  version: '2.3.0'
 ---
 
 # codex-cli-bridge
@@ -109,6 +109,7 @@ defeat a policy is guarded — see [§ Models](#models-quality-first-pinned).
 | `CODEX_MODEL` | `gpt-5.5` (pinned) | model; non-default REFUSED unless `CODEX_PROBE=1` |
 | `CODEX_EFFORT` | `xhigh` (pinned) | reasoning effort; non-default REFUSED unless `CODEX_PROBE=1` |
 | `CODEX_HARD_TIMEOUT` | `3600` (exec) / `1800` (review) | hard wall-clock cap (seconds) via `timeout`/`gtimeout`; exit 124/137 ⇒ "exceeded hard cap". No `timeout` binary ⇒ loud warning + uncapped (never silent). |
+| `CODEX_SERVICE_TIER` | unset (standard tier) | **SPEND knob**: `priority` (catalog name "Fast") = ~1.5× token speed at a **2.5× credit rate** on gpt-5.5 — quality-neutral (same model). codex accepts any `-c service_tier` string silently (probe-pinned 2026-07-05), so the wrapper validates: an unsupported value warns and runs standard. Env or settings file. |
 | `CODEX_SESSION_FILE` | `./.codex-last-session` | where `codex-exec` records the session id and where `--resume-last` reads it |
 | `CODEX_REVIEW_MAX_TOTAL_BYTES` | `1500000` | `codex-review code`: above this the assembled diff goes via a git-dir temp file instead of inline — never truncated |
 | `CODEX_REVIEW_SCHEMA` | unset | `codex-review`: `=1` returns findings as a validated JSON object (`--output-schema`), with a raw-text fallback. Default off. |
@@ -116,6 +117,19 @@ defeat a policy is guarded — see [§ Models](#models-quality-first-pinned).
 
 The git-write shim, `--ignore-user-config`, and the `*_API_KEY` scrub are NOT env-tunable — they are
 fixed invariants.
+
+### Settings file (host-level, survives kit upgrades)
+
+`${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf` holds `KEY=VALUE` lines,
+**parsed, never sourced** — a file line can never execute code. Precedence: explicit env (even
+empty — `KEY=` disables a knob for one run) > file > built-in default. File-settable keys for this
+bridge: `CODEX_SERVICE_TIER` (the Fast tier — **2.5× credit rate**; enabling it is a consented
+per-host spend decision, never a default), `CODEX_HARD_TIMEOUT`, `CODEX_REVIEW_MAX_TOTAL_BYTES` —
+exactly the manifest `settings` block (the single source; the wrapper constants and `--help` are
+drift-guarded against it). Model/effort keys are **not** file-settable — the quality guard above
+is untouched. The file lives **outside every kit-managed tree**, so a kit refresh/upgrade can
+never wipe it; edit it by hand or via `/agent-workflow-kit bridge-settings` (preview-first,
+consent-gated).
 
 ## Project context (how `codex` sees the repo)
 

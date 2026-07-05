@@ -637,7 +637,7 @@ describe('agy-review.sh — declared contract is really accepted (forward guard)
 // The normative fixture (docs: the AD-038 plan Decisions — copied verbatim; backend/verdict here
 // carry this bridge's vocabulary; dynamic values are asserted by shape):
 const RECEIPT_FIXTURE = JSON.parse(
-  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"revise","grounded":true,"factsHash":null,"wrapperVersion":"2.2.0","timestamp":"2026-07-03T12:00:00Z"}',
+  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"revise","grounded":true,"factsHash":null,"wrapperVersion":"2.3.0","timestamp":"2026-07-03T12:00:00Z"}',
 );
 const RECEIPTS_REL = join('.git', 'agent-workflow-review-receipts.jsonl');
 const readReceipts = (repo) => {
@@ -791,5 +791,208 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0);
     assert.equal(receipts.length, 0, 'no review ran — no receipt');
+  });
+});
+
+// ── bridge settings file (bridges 2.3.0) ─────────────────────────────────────────
+// ${XDG_CONFIG_HOME:-$HOME/.config}/agent-workflow/bridge-settings.conf holds KEY=VALUE
+// lines, PARSED (never sourced). Precedence: explicit env (even empty: KEY= disables the
+// knob) > file > built-in default. agy-review APPLIES AGY_HARD_TIMEOUT +
+// AGY_REVIEW_ALLOW_ADDDIR and RECOGNIZES the whole registry. HOME is the sandbox home,
+// so the default path is hermetic per test.
+
+const writeSettings = (sb, text) => {
+  const dir = join(sb.home, '.config', 'agent-workflow');
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, 'bridge-settings.conf');
+  writeFileSync(file, text);
+  return file;
+};
+const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+
+describe('agy-review.sh — bridge settings file (bridges 2.3.0)', () => {
+  it('a file-set AGY_REVIEW_ALLOW_ADDDIR=1 arms the oversized --add-dir escape', () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.repo, 'unique.txt'), `OVERSIZE_UNIQUE_MARKER\n${'x'.repeat(8000)}\n`);
+    writeSettings(sb, 'AGY_REVIEW_ALLOW_ADDDIR=1\n');
+    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: '2000' } });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.invoked, true, 'the file-armed escape lets the run proceed');
+    assert.match(r.argv, /--add-dir/);
+    assert.match(r.stderr, /RE-ENABLES the Issue-001 stall risk/);
+  });
+
+  it('env overrides file: AGY_REVIEW_ALLOW_ADDDIR env=0 file=1 → the refusal stands', () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.repo, 'unique.txt'), `MARKER\n${'x'.repeat(8000)}\n`);
+    writeSettings(sb, 'AGY_REVIEW_ALLOW_ADDDIR=1\n');
+    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: '2000', AGY_REVIEW_ALLOW_ADDDIR: '0' } });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /over AGY_MAX_PROMPT_BYTES=2000/);
+    assert.equal(r.invoked, false);
+  });
+
+  it('an EXPLICITLY EMPTY env (AGY_REVIEW_ALLOW_ADDDIR=) disables the file knob', () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.repo, 'unique.txt'), `MARKER\n${'x'.repeat(8000)}\n`);
+    writeSettings(sb, 'AGY_REVIEW_ALLOW_ADDDIR=1\n');
+    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: '2000', AGY_REVIEW_ALLOW_ADDDIR: '' } });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 2, 'env wins over file — empty means knob off (built-in default 0)');
+    assert.equal(r.invoked, false);
+  });
+
+  it('an invalid boolean warns and falls back to the built-in default (refusal stands)', () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.repo, 'unique.txt'), `MARKER\n${'x'.repeat(8000)}\n`);
+    writeSettings(sb, 'AGY_REVIEW_ALLOW_ADDDIR=yes\n');
+    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: '2000' } });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /invalid value 'yes'/);
+    assert.equal(r.invoked, false);
+  });
+
+  it('a file-set AGY_HARD_TIMEOUT flows through the agy-run delegation (killed at the file cap)', () => {
+    const sb = makeSandbox();
+    writeSettings(sb, 'AGY_HARD_TIMEOUT=2s\n');
+    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_SLEEP: '5' } });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.notEqual(r.status, 0, 'the file cap must apply end-to-end (reader → agy-run → timeout)');
+    assert.match(r.stderr, /exceeded the hard cap AGY_HARD_TIMEOUT=2s/);
+  });
+
+  it("another bridge's valid key is skipped silently", () => {
+    const sb = makeSandbox();
+    writeSettings(sb, 'CODEX_SERVICE_TIER=priority\nCODEX_HARD_TIMEOUT=2\nCODEX_REVIEW_MAX_TOTAL_BYTES=100\n');
+    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stderr, /bridge settings/, 'a recognized non-applied key earns NO warning');
+    assert.equal(r.invoked, true);
+  });
+
+  it('a truly unknown key warns ONCE naming the file; the review is unaffected', () => {
+    const sb = makeSandbox();
+    writeSettings(sb, 'TOTALLY_UNKNOWN=1\nTOTALLY_UNKNOWN=2\n');
+    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    const warns = r.stderr.match(/unknown key 'TOTALLY_UNKNOWN'/g) ?? [];
+    assert.equal(warns.length, 1, `exactly one warning per unknown key, got ${warns.length}`);
+    assert.match(r.stderr, /bridge-settings\.conf/, 'the warning must name the settings file');
+    assert.equal(r.invoked, true);
+  });
+
+  it('malformed lines warn and are ignored; comments and blank lines are silent', () => {
+    const sb = makeSandbox();
+    writeSettings(sb, '# a comment\n\nNOT A KEY VALUE LINE\n');
+    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    const malformed = r.stderr.match(/malformed line/g) ?? [];
+    assert.equal(malformed.length, 1, 'comments/blank lines must NOT count as malformed');
+    assert.equal(r.invoked, true);
+  });
+
+  it('an existing-but-unreadable file warns loudly and falls back to built-ins', { skip: isRoot }, () => {
+    const sb = makeSandbox();
+    const file = writeSettings(sb, 'AGY_REVIEW_ALLOW_ADDDIR=1\n');
+    chmodSync(file, 0o000);
+    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /unreadable/);
+    assert.equal(r.invoked, true);
+  });
+
+  it('a settings line can NEVER execute code (command-substitution payload inert)', () => {
+    const sb = makeSandbox();
+    const pwned = join(sb.home, 'pwned');
+    writeSettings(sb, `AGY_HARD_TIMEOUT=$(touch ${pwned})\nEVIL_KEY=\`touch ${pwned}2\`\n`);
+    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const executed = existsSync(pwned) || existsSync(`${pwned}2`);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(executed, false, 'file content must be parsed, never evaluated');
+    assert.equal(r.invoked, true);
+  });
+
+  it('no file → byte-identical behaviour to today (no settings chatter)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stderr, /bridge settings/);
+    assert.equal(r.invoked, true);
+  });
+
+  it('a DIRECTORY at the settings path warns loudly and falls back to built-ins (no crash)', () => {
+    const sb = makeSandbox();
+    mkdirSync(join(sb.home, '.config', 'agent-workflow', 'bridge-settings.conf'), { recursive: true });
+    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, `a directory must degrade honestly, not kill the run: ${r.stderr}`);
+    assert.match(r.stderr, /unreadable or not a regular file/);
+    assert.doesNotMatch(r.stderr, /Is a directory/, 'no raw bash error may leak');
+    assert.equal(r.invoked, true);
+  });
+});
+
+// ── settings surface ⟷ manifest (drift guard, D6) — same contract as the codex bridge ──
+const SETTINGS_HEADER = 'Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):';
+const SIBLING_MANIFEST = JSON.parse(readFileSync(join(HERE, '..', '..', 'codex-cli-bridge', 'capability.json'), 'utf8'));
+const ALL_SETTINGS = [...(MANIFEST.settings ?? []), ...(SIBLING_MANIFEST.settings ?? [])];
+const SETTINGS_CMD = 'agy-review';
+
+describe('agy-review.sh — settings surface ⟷ manifest (D6, manifest-pinned)', () => {
+  it('--help Settings section keys set-EQUAL the manifest appliesTo subset', () => {
+    const help = runHelp('--help').stdout;
+    const section = helpSection(help, SETTINGS_HEADER);
+    const got = section.filter((l) => /^[A-Z][A-Z0-9_]+ —/.test(l)).map((l) => l.split(' ')[0]);
+    const want = (MANIFEST.settings ?? []).filter((s) => s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
+    assert.ok(want.length > 0, 'the manifest must declare settings for this wrapper');
+    setEq(got, want, 'help Settings keys ⟷ manifest settings.appliesTo');
+    assert.ok(section.some((l) => l.includes('agent-workflow/bridge-settings.conf')), 'the section names the settings file');
+  });
+
+  const source = readFileSync(WRAPPER, 'utf8');
+
+  it('aw_settings_known carries exactly the UNION of both bridges settings keys', () => {
+    const m = source.match(/aw_settings_known\(\) \{\n  case " ([^"]+) " in/);
+    assert.ok(m, 'aw_settings_known registry case not found');
+    assert.ok(ALL_SETTINGS.length >= 5, 'both manifests must contribute settings');
+    setEq(m[1].trim().split(/\s+/), ALL_SETTINGS.map((s) => s.key), 'shell registry ⟷ manifest union');
+  });
+
+  it('AW_SETTINGS_APPLIED equals the manifest appliesTo subset for this wrapper', () => {
+    const m = source.match(/^AW_SETTINGS_APPLIED="([^"]*)"$/m);
+    assert.ok(m, 'AW_SETTINGS_APPLIED not found');
+    const want = ALL_SETTINGS.filter((s) => s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
+    assert.ok(want.length > 0);
+    setEq(m[1].trim().split(/\s+/), want, 'applied subset ⟷ manifest appliesTo');
+  });
+
+  it('aw_settings_valid arms carry the manifest typed constants per key', () => {
+    const body = source.match(/aw_settings_valid\(\) \{[\s\S]*?\n\}/);
+    assert.ok(body, 'aw_settings_valid not found');
+    const armKeys = [...body[0].matchAll(/^    ([A-Z][A-Z0-9_]*)\)/gm)].map((x) => x[1]);
+    setEq(armKeys, ALL_SETTINGS.map((s) => s.key), 'validation arms ⟷ manifest keys');
+    for (const s of ALL_SETTINGS) {
+      const arm = body[0].match(new RegExp(`^    ${s.key}\\) (.*) ;;$`, 'm'));
+      assert.ok(arm, `no validation arm for ${s.key}`);
+      if (s.kind === 'enum') for (const v of s.values) assert.ok(arm[1].includes(`"${v}"`), `${s.key}: enum value '${v}' not pinned`);
+      if (s.kind === 'integer') {
+        assert.match(arm[1], new RegExp(`>= ${s.min}\\b`), `${s.key}: min ${s.min} not pinned`);
+        assert.match(arm[1], new RegExp(`<= ${s.max}\\b`), `${s.key}: max ${s.max} not pinned`);
+      }
+      if (s.kind === 'boolean') assert.ok(arm[1].includes('"0"') && arm[1].includes('"1"'), `${s.key}: boolean 0/1 not pinned`);
+      if (s.kind === 'duration') {
+        assert.ok(arm[1].includes('$dur_re'), `${s.key}: duration grammar not pinned`);
+        assert.ok(arm[1].includes('$zero_re'), `${s.key}: zero-duration rejection not pinned (timeout 0 disables the cap)`);
+      }
+    }
   });
 });

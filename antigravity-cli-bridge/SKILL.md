@@ -2,7 +2,7 @@
 name: antigravity-cli-bridge
 description: Delegate work to Google's Antigravity CLI (`agy`) — the successor to Gemini CLI — to reach Gemini, Claude, and GPT-OSS models under a Google AI Pro/Ultra subscription from the terminal. Use when the user wants to run a headless `agy` prompt, hand a focused task or second-opinion review to `agy`, install or authenticate Antigravity CLI, check or economise its quota/models, bridge project context into `agy`, set up a second delegated-execution backend beside Codex, or troubleshoot `agy` flags, models, auth, conversations, or its no-JSON headless behaviour.
 metadata:
-  version: '2.2.0'
+  version: '2.3.0'
 ---
 
 # antigravity-cli-bridge
@@ -87,6 +87,18 @@ yourself. Wrapper inputs: first argument is the prompt (`text`, `-` for stdin, o
 `AGY_MODEL` (default `Gemini 3.1 Pro (High)`); `AGY_TIMEOUT` → `--print-timeout` (default `5m`);
 `AGY_HARD_TIMEOUT` → hard `timeout(1)` wall-clock cap (default = `AGY_TIMEOUT`); extra `agy` flags
 after `--`. Full detail: [`references/models-and-flags.md`](references/models-and-flags.md).
+
+## Settings file (host-level, survives kit upgrades)
+
+`${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf` holds `KEY=VALUE` lines,
+**parsed, never sourced** — a file line can never execute code. Precedence: explicit env (even
+empty — `KEY=` disables a knob for one run) > file > built-in default. File-settable keys for this
+bridge: `AGY_HARD_TIMEOUT` (duration string, e.g. `5m`/`30m`) and `AGY_REVIEW_ALLOW_ADDDIR`
+(`0`/`1`; arming the oversized `--add-dir` escape re-enables the Issue-001 stall risk — the hard
+timeout bounds it) — exactly the manifest `settings` block (the single source; the wrapper
+constants and `--help` are drift-guarded against it). Model keys are **not** file-settable. The
+file lives **outside every kit-managed tree**, so a kit refresh/upgrade can never wipe it; edit it
+by hand or via `/agent-workflow-kit bridge-settings` (preview-first, consent-gated).
 
 ## Review mode (`agy-review`)
 

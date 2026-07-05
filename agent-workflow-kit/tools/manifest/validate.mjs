@@ -228,6 +228,86 @@ export const validateManifest = (skillDir) => {
     if (role.template != null) checkInSkillPath(`role "${key}".template`, role.template, !isStub);
   }
 
+  // Typed `settings` block (bridges 2.3.0, D6 manifest-as-source): the per-bridge settings-file
+  // surface — an ARRAY of typed entries (a JSON object would silently dedupe duplicate keys under
+  // JSON.parse). Unlike the AD-033 `contract` block (validator-tolerated, externally
+  // drift-guarded), a malformed `settings` entry FAILS validation: the kit writer, the status
+  // renderers, and the wrapper shell constants all consume this block, so a bad entry would
+  // corrupt a host-level config surface.
+  const settings = manifest.settings;
+  if (settings != null) {
+    if (!Array.isArray(settings)) {
+      errors.push('`settings` must be an array of setting entries');
+    } else {
+      const SETTING_KINDS = new Set(['enum', 'integer', 'duration', 'boolean']);
+      // The wrappers' shell duration grammar: a unit suffix is REQUIRED (a bare integer is
+      // invalid), and zero durations are rejected — `timeout 0` DISABLES a hard cap, so a
+      // persistent settings line could otherwise silently remove the stall guard.
+      const DURATION_RE = /^[0-9]+(\.[0-9]+)?[smhd]$/;
+      const ZERO_DURATION_RE = /^0+(\.0+)?[smhd]$/;
+      const cmds = new Set(Object.values(roles)
+        .map((r) => (r && typeof r === 'object' && !Array.isArray(r) ? r.cmd : null))
+        .filter((c) => typeof c === 'string' && c));
+      const seenKeys = new Set();
+      const passesKind = (entry, value) => {
+        switch (entry.kind) {
+          case 'enum': return Array.isArray(entry.values) && entry.values.includes(value);
+          case 'integer': {
+            if (!/^[0-9]+$/.test(value)) return false;
+            const n = Number(value);
+            return Number.isSafeInteger(n) && n >= entry.min && n <= entry.max;
+          }
+          case 'duration': return DURATION_RE.test(value) && !ZERO_DURATION_RE.test(value);
+          case 'boolean': return value === '0' || value === '1';
+          default: return false;
+        }
+      };
+      settings.forEach((entry, i) => {
+        const at = `\`settings[${i}]\``;
+        if (entry == null || typeof entry !== 'object' || Array.isArray(entry)) {
+          errors.push(`${at} must be an object`);
+          return;
+        }
+        if (typeof entry.key !== 'string' || !/^[A-Z][A-Z0-9_]*$/.test(entry.key)) {
+          errors.push(`${at}.key must be an UPPER_SNAKE_CASE string`);
+        } else if (seenKeys.has(entry.key)) {
+          errors.push(`duplicate settings key "${entry.key}" (${at})`);
+        } else {
+          seenKeys.add(entry.key);
+        }
+        if (typeof entry.effect !== 'string' || !entry.effect) errors.push(`${at}.effect must be a non-empty string`);
+        if (!Array.isArray(entry.appliesTo) || entry.appliesTo.length === 0
+            || !entry.appliesTo.every((c) => typeof c === 'string' && c)) {
+          errors.push(`${at}.appliesTo must be a non-empty array of wrapper cmd names`);
+        } else {
+          for (const c of entry.appliesTo) {
+            if (!cmds.has(c)) errors.push(`${at}.appliesTo names "${c}" which is no roles.*.cmd of this manifest`);
+          }
+        }
+        if (!SETTING_KINDS.has(entry.kind)) {
+          errors.push(`${at}.kind must be one of enum|integer|duration|boolean`);
+          return; // the typed checks below are meaningless without a kind
+        }
+        if (entry.kind === 'enum'
+            && (!Array.isArray(entry.values) || entry.values.length === 0
+              || !entry.values.every((v) => typeof v === 'string' && v)
+              || new Set(entry.values).size !== entry.values.length)) {
+          errors.push(`${at}.values must be a non-empty array of unique non-empty strings (enum kind)`);
+        }
+        if (entry.kind === 'integer'
+            && (!Number.isSafeInteger(entry.min) || !Number.isSafeInteger(entry.max) || entry.min > entry.max)) {
+          errors.push(`${at}.min/.max must be integers with min <= max (integer kind)`);
+        }
+        if (!Object.hasOwn(entry, 'default')) {
+          errors.push(`${at}.default is required (null = the wrapper built-ins apply)`);
+        } else if (entry.default != null
+            && (typeof entry.default !== 'string' || !passesKind(entry, entry.default))) {
+          errors.push(`${at}.default must be null or a string value that passes the ${entry.kind} validation`);
+        }
+      });
+    }
+  }
+
   if (!isStub) {
     const auth = readAuthoritativeVersion(skillDir);
     if (auth.version == null) errors.push(`could not resolve an authoritative version (${auth.from})`);

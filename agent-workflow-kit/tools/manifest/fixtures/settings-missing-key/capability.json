@@ -1,0 +1,16 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "fixture-settings-missing-key",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["execute"],
+  "roles": {
+    "execute": { "cmd": "fixture-exec", "source": "bin/run.sh" }
+  },
+  "settings": [
+    { "kind": "boolean", "default": "0", "appliesTo": ["fixture-exec"], "effect": "an entry without a key" }
+  ],
+  "cost": "subscription",
+  "quota": { "kind": "subscription", "finite": true }
+}

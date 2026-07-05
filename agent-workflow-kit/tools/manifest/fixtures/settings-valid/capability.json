@@ -1,0 +1,20 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "fixture-settings-valid",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["review", "execute"],
+  "roles": {
+    "review": { "cmd": "fixture-review", "source": "bin/run.sh", "modes": ["plan", "code"], "output": "advisory" },
+    "execute": { "cmd": "fixture-exec", "source": "bin/run.sh" }
+  },
+  "settings": [
+    { "key": "FIX_TIER", "kind": "enum", "values": ["fast"], "default": null, "appliesTo": ["fixture-exec"], "effect": "an enum knob" },
+    { "key": "FIX_CAP", "kind": "integer", "min": 1, "max": 100, "default": "50", "appliesTo": ["fixture-review"], "effect": "an integer knob" },
+    { "key": "FIX_WAIT", "kind": "duration", "default": "5m", "appliesTo": ["fixture-review"], "effect": "a duration knob" },
+    { "key": "FIX_FLAG", "kind": "boolean", "default": "0", "appliesTo": ["fixture-exec", "fixture-review"], "effect": "a boolean knob" }
+  ],
+  "cost": "subscription",
+  "quota": { "kind": "subscription", "finite": true }
+}

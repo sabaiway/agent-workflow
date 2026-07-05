@@ -1,0 +1,16 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "fixture-settings-bad-type",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["execute"],
+  "roles": {
+    "execute": { "cmd": "fixture-exec", "source": "bin/run.sh" }
+  },
+  "settings": [
+    { "key": "FIX_ODD", "kind": "stringy", "default": null, "appliesTo": ["fixture-exec"], "effect": "an unknown kind" }
+  ],
+  "cost": "subscription",
+  "quota": { "kind": "subscription", "finite": true }
+}
