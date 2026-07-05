@@ -616,6 +616,8 @@ describe('velocity profile writer + CLI', () => {
       apply: false,
       acceptEdits: false,
       kitTools: false,
+      autonomy: false,
+      check: false,
       cwd: undefined,
     });
     assert.equal(parseArgs(['--kit-tools']).kitTools, true);
