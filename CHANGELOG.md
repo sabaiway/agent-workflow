@@ -7,6 +7,25 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-05 — bridges 2.3.0: host-level bridge settings file + the Codex Fast tier as configuration
+
+Bridge knobs now live in ONE host-level file that survives kit upgrades:
+`${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf` (`KEY=VALUE`, parsed never
+sourced — a file line can never execute code; explicit env — even empty — wins over file, file
+wins over built-in). All four wrappers read it through a byte-identical reader block: each
+applies only its own subset but recognizes the whole registry (another wrapper's key is skipped
+silently; only a truly unknown key warns, once per run — a delegating chain never repeats
+diagnostics). First shipped knobs: `CODEX_SERVICE_TIER` — the Codex Fast tier (`priority` is the
+only server-catalog tier id on the subscription: ~1.5× token speed at a 2.5× credit rate on
+gpt-5.5, quality-neutral, default OFF — enabling it is a consented per-host spend act),
+`CODEX_HARD_TIMEOUT`, `CODEX_REVIEW_MAX_TOTAL_BYTES`, `AGY_HARD_TIMEOUT`,
+`AGY_REVIEW_ALLOW_ADDDIR`. codex itself accepts any `-c service_tier` string silently
+(live-probed 2026-07-05), so the wrappers validate every effective value against typed constants
+pinned to each bridge's new `capability.json` `settings` block (manifest-as-source;
+`validate.mjs --strict` now fails a malformed block; `--help` Settings sections and the shell
+constants are drift-guarded set-equal to it). Model/effort keys are NOT file-settable — the
+quality-first guard is byte-untouched.
+
 ## 2026-07-04 — memory 1.11.1 · kit 1.34.0: onboarding UX — one batched setup prompt, the visible accelerator funnel, the consent-gated gates seeder (AD-042)
 
 First contact now interrupts ONCE: bootstrap asks its three setup questions as one structured

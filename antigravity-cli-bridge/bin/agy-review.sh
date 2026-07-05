@@ -86,6 +86,11 @@ Receipt:
   payload; a continuation receipt is fresh:false (informational-only — it cannot attest the
   folded tree); a write failure warns, never fails the review
 
+Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):
+  ${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf
+  AGY_HARD_TIMEOUT — hard wall-clock cap, duration string like 5m/30m/90s (built-in default 30m)
+  AGY_REVIEW_ALLOW_ADDDIR — boolean 0/1: 1 arms the oversized --add-dir escape (re-enables the Issue-001 stall risk; default 0)
+
 Closed grammar: unknown flags are rejected; no '--' passthrough (the only escapes are AGY_PROBE=1 and AGY_REVIEW_ALLOW_ADDDIR=1).
 Requires at run time: the agy CLI on PATH + a Google AI subscription login (--help needs neither).
 HELP
@@ -93,11 +98,101 @@ HELP
     ;;
 esac
 
+# This wrapper's applied settings-file subset (see the shared reader block below).
+AW_SETTINGS_APPLIED="AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR"
+
+# --- Bridge settings file (host-level, kit-independent) — byte-identical across the four wrappers ---
+# ${XDG_CONFIG_HOME:-$HOME/.config}/agent-workflow/bridge-settings.conf holds KEY=VALUE lines,
+# PARSED (grep/case), NEVER sourced — a file line can never execute code. Precedence: explicit
+# env (even empty: KEY= disables the knob for one run) > file > built-in default. Each wrapper
+# APPLIES only its own subset ($AW_SETTINGS_APPLIED, set above this block) but RECOGNIZES the
+# whole registry: a key belonging to another wrapper or another bridge is skipped silently; only
+# a key unknown to the entire registry warns (once per key), naming this file as the source.
+# A malformed line warns and is ignored; a value failing the key's typed validation warns and
+# falls back to the built-in default (never passed to the binary); duplicate key → the LAST
+# occurrence wins; a missing file is silent; an existing-but-unreadable or non-regular file
+# warns loudly and falls back to built-in defaults (a directory or FIFO is never opened).
+# Diagnostics are emitted once per user-visible run: a delegating wrapper (agy-review →
+# agy-run) exports AW_SETTINGS_NOTIFIED so the child never repeats the same file's warnings.
+# The registry, per-wrapper subsets, and typed constants mirror
+# the bridges' capability.json `settings` blocks (manifest-as-source, drift-guarded by tests).
+aw_settings_file() {
+  printf '%s/agent-workflow/bridge-settings.conf' "${XDG_CONFIG_HOME:-$HOME/.config}"
+}
+aw_settings_known() {
+  case " CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR " in
+    *" $1 "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+aw_settings_valid() {
+  local k="$1" v="$2" int_re='^[0-9]+$' dur_re='^[0-9]+(\.[0-9]+)?[smhd]$' zero_re='^0+(\.0+)?[smhd]$'
+  case "$k" in
+    CODEX_SERVICE_TIER) [[ "$v" == "priority" ]] ;;
+    CODEX_HARD_TIMEOUT) [[ "$v" =~ $int_re ]] && (( 10#$v >= 1 && 10#$v <= 86400 )) ;;
+    CODEX_REVIEW_MAX_TOTAL_BYTES) [[ "$v" =~ $int_re ]] && (( 10#$v >= 1 && 10#$v <= 100000000 )) ;;
+    AGY_HARD_TIMEOUT) [[ "$v" =~ $dur_re && ! "$v" =~ $zero_re ]] ;;
+    AGY_REVIEW_ALLOW_ADDDIR) [[ "$v" == "0" || "$v" == "1" ]] ;;
+    *) return 1 ;;
+  esac
+}
+aw_apply_settings() {
+  local file line key value warned notify
+  file="$(aw_settings_file)"
+  [[ -e "$file" ]] || return 0
+  notify=1
+  [[ -n "${AW_SETTINGS_NOTIFIED:-}" ]] && notify=0
+  export AW_SETTINGS_NOTIFIED=1
+  if [[ ! -f "$file" || ! -r "$file" ]]; then
+    if (( notify )); then
+      echo "warning: bridge settings file '$file' exists but is unreadable or not a regular file — using built-in defaults." >&2
+    fi
+    return 0
+  fi
+  if (( notify )); then
+    warned=" "
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      [[ -z "${line//[[:space:]]/}" ]] && continue
+      case "${line#"${line%%[![:space:]]*}"}" in "#"*) continue ;; esac
+      if [[ ! "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+        echo "warning: malformed line in bridge settings file '$file' (ignored): $line" >&2
+        continue
+      fi
+      key="${line%%=*}"
+      if ! aw_settings_known "$key"; then
+        case "$warned" in
+          *" $key "*) : ;;
+          *)
+            warned="$warned$key "
+            echo "warning: unknown key '$key' in bridge settings file '$file' (ignored)." >&2
+            ;;
+        esac
+      fi
+    done <"$file"
+  fi
+  for key in $AW_SETTINGS_APPLIED; do
+    if [[ -n "${!key+x}" ]]; then continue; fi
+    value="$(grep "^${key}=" "$file" 2>/dev/null || true)"
+    [[ -n "$value" ]] || continue
+    value="${value##*$'\n'}"
+    value="${value#*=}"
+    if ! aw_settings_valid "$key" "$value"; then
+      if (( notify )); then
+        echo "warning: invalid value '$value' for $key in bridge settings file '$file' — using the built-in default." >&2
+      fi
+      continue
+    fi
+    export "$key=$value"
+  done
+  return 0
+}
+aw_apply_settings
+
 DEFAULT_AGY_REVIEW_MODEL="Gemini 3.1 Pro (High)"
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by agy-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="agy"
-AW_BRIDGE_VERSION="2.2.0"
+AW_BRIDGE_VERSION="2.3.0"
 # `-` not `:-` so an EXPLICIT empty AGY_MODEL= survives (drop --model, use settings.json — agy.sh:52).
 AGY_MODEL="${AGY_MODEL-$DEFAULT_AGY_REVIEW_MODEL}"
 # Frontier review models. ANY model is allowed; a sub-frontier one only earns a soft, silenceable warning.

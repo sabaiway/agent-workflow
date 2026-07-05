@@ -439,6 +439,23 @@ describe('codex-exec.sh — resume entrypoint restates every invariant (3.1)', (
     assert.match(r.capEnv, /^FOO_API_KEY=<unset>$/m);
     assert.match(r.argv, /(^|\n)--ignore-user-config(\n|$)/);
   });
+
+  it('resume keeps the FULL restated policy plus the tier when set (2.3.0)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['--resume', 'sess-1', '-'], input: 'go', env: { CODEX_SERVICE_TIER: 'priority' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    for (const inv of RESUME_INVARIANTS) assert.match(r.argv, inv, `resume argv must include ${inv}`);
+    assert.match(r.argv, /(^|\n)service_tier=priority(\n|$)/, 'a resume must not silently drop the tier');
+  });
+
+  it('resume without the tier carries no service_tier flag (2.3.0)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['--resume', 'sess-1', '-'], input: 'go' });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.argv, /service_tier/);
+  });
 });
 
 describe('codex-exec.sh — enforced git-write boundary shim (3.2)', () => {
@@ -748,5 +765,276 @@ describe('codex-exec.sh — source-level reverse guard (parser arms ⟷ manifest
       sample(patterns).every((p) => flags.some(([f]) => f === p || f.startsWith(p)));
     assert.ok(covered(ALWAYS_BLOCKED, EXEC_CONTRACT.passthrough.blocked), 'every blocked pattern has a behavioural sample');
     assert.ok(covered(PROBE_RELAXABLE, EXEC_CONTRACT.passthrough.probeRelaxed), 'every probe pattern has a behavioural sample');
+  });
+});
+
+// ── bridge settings file + service tier knob (bridges 2.3.0) ─────────────────────
+// ${XDG_CONFIG_HOME:-$HOME/.config}/agent-workflow/bridge-settings.conf holds KEY=VALUE
+// lines, PARSED (never sourced). Precedence: explicit env (even empty: KEY= disables the
+// knob) > file > built-in default. run() sets HOME to the sandbox repo, so the default
+// settings path is hermetic per test.
+
+const writeSettings = (sb, text) => {
+  const dir = join(sb.repo, '.config', 'agent-workflow');
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, 'bridge-settings.conf');
+  writeFileSync(file, text);
+  return file;
+};
+// chmod-based unreadability is void for root (root reads anything) — skip there.
+const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+
+describe('codex-exec.sh — service tier knob (bridges 2.3.0)', () => {
+  it('default: no env, no file → NO service_tier flag in codex argv', () => {
+    const sb = makeSandbox();
+    const r = run(sb);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.argv, /service_tier/, 'default OFF: the flag must be absent');
+    assert.doesNotMatch(r.stderr, /bridge settings/, 'no file → no settings chatter');
+  });
+
+  it('env CODEX_SERVICE_TIER=priority → -c service_tier=priority reaches codex argv', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_SERVICE_TIER: 'priority' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.argv, /(^|\n)service_tier=priority(\n|$)/);
+  });
+
+  it('a file-set tier lands (file wins over the built-in default)', () => {
+    const sb = makeSandbox();
+    writeSettings(sb, 'CODEX_SERVICE_TIER=priority\n');
+    const r = run(sb);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.argv, /(^|\n)service_tier=priority(\n|$)/);
+  });
+
+  it('an EXPLICITLY EMPTY env (CODEX_SERVICE_TIER=) disables a file-set tier for one run', () => {
+    const sb = makeSandbox();
+    writeSettings(sb, 'CODEX_SERVICE_TIER=priority\n');
+    const r = run(sb, { env: { CODEX_SERVICE_TIER: '' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.argv, /service_tier/, 'env wins over file — empty means knob off');
+  });
+
+  it('an invalid env tier warns and runs on the standard tier (never passed to codex)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_SERVICE_TIER: 'turbo' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /not a supported service tier/);
+    assert.doesNotMatch(r.argv, /service_tier/, 'an unvalidated value must never reach codex');
+  });
+
+  it('an invalid file tier warns and falls back to the built-in default', () => {
+    const sb = makeSandbox();
+    writeSettings(sb, 'CODEX_SERVICE_TIER=turbo\n');
+    const r = run(sb);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /invalid value 'turbo'/);
+    assert.doesNotMatch(r.argv, /service_tier/);
+  });
+
+});
+
+describe('codex-exec.sh — bridge settings file semantics (bridges 2.3.0)', () => {
+  it('env overrides file: CODEX_HARD_TIMEOUT env=2 file=9999 → killed at the env cap', () => {
+    const sb = makeSandbox();
+    writeSettings(sb, 'CODEX_HARD_TIMEOUT=9999\n');
+    const r = run(sb, { env: { CODEX_FAKE_SLEEP: '5', CODEX_HARD_TIMEOUT: '2' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.notEqual(r.status, 0, 'the env cap (2s) must win over the file cap (9999s)');
+    assert.match(r.stderr, /exceeded the hard cap CODEX_HARD_TIMEOUT=2s/);
+  });
+
+  it('a file-set CODEX_HARD_TIMEOUT is effective (killed at the file cap)', () => {
+    const sb = makeSandbox();
+    writeSettings(sb, 'CODEX_HARD_TIMEOUT=2\n');
+    const r = run(sb, { env: { CODEX_FAKE_SLEEP: '5' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.notEqual(r.status, 0, 'the file cap must apply when the env is unset');
+    assert.match(r.stderr, /exceeded the hard cap CODEX_HARD_TIMEOUT=2s/);
+  });
+
+  it("another wrapper's / another bridge's valid key is skipped silently", () => {
+    const sb = makeSandbox();
+    writeSettings(sb, 'CODEX_REVIEW_MAX_TOTAL_BYTES=100\nAGY_HARD_TIMEOUT=30m\nAGY_REVIEW_ALLOW_ADDDIR=1\n');
+    const r = run(sb);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stderr, /bridge settings/, 'a recognized non-applied key earns NO warning');
+    assert.match(r.stdout, /FAKE_FINAL_MESSAGE/);
+  });
+
+  it('a truly unknown key warns ONCE naming the file; the run is unaffected', () => {
+    const sb = makeSandbox();
+    writeSettings(sb, 'TOTALLY_UNKNOWN=1\nTOTALLY_UNKNOWN=2\n');
+    const r = run(sb);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    const warns = r.stderr.match(/unknown key 'TOTALLY_UNKNOWN'/g) ?? [];
+    assert.equal(warns.length, 1, `exactly one warning per unknown key, got ${warns.length}`);
+    assert.match(r.stderr, /bridge-settings\.conf/, 'the warning must name the settings file');
+    assert.match(r.stdout, /FAKE_FINAL_MESSAGE/);
+  });
+
+  it('duplicate key → the LAST occurrence wins (invalid then valid → applied, no warning)', () => {
+    const sb = makeSandbox();
+    writeSettings(sb, 'CODEX_SERVICE_TIER=bogus\nCODEX_SERVICE_TIER=priority\n');
+    const r = run(sb);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.argv, /(^|\n)service_tier=priority(\n|$)/);
+    assert.doesNotMatch(r.stderr, /invalid value/, 'only the LAST occurrence is the value');
+  });
+
+  it('duplicate key → the LAST occurrence wins (valid then invalid → warned + default)', () => {
+    const sb = makeSandbox();
+    writeSettings(sb, 'CODEX_SERVICE_TIER=priority\nCODEX_SERVICE_TIER=bogus\n');
+    const r = run(sb);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /invalid value 'bogus'/);
+    assert.doesNotMatch(r.argv, /service_tier/);
+  });
+
+  it('malformed lines warn and are ignored; comments and blank lines are silent', () => {
+    const sb = makeSandbox();
+    writeSettings(sb, '# a comment\n\nNOT A KEY VALUE LINE\nCODEX_SERVICE_TIER=priority\n');
+    const r = run(sb);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /malformed line/);
+    const malformed = r.stderr.match(/malformed line/g) ?? [];
+    assert.equal(malformed.length, 1, 'comments/blank lines must NOT count as malformed');
+    assert.match(r.argv, /(^|\n)service_tier=priority(\n|$)/, 'valid lines still apply');
+  });
+
+  it('an existing-but-unreadable file warns loudly and falls back to built-ins', { skip: isRoot }, () => {
+    const sb = makeSandbox();
+    const file = writeSettings(sb, 'CODEX_SERVICE_TIER=priority\n');
+    chmodSync(file, 0o000);
+    const r = run(sb);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /unreadable/);
+    assert.doesNotMatch(r.argv, /service_tier/, 'an unreadable file must yield built-in defaults');
+  });
+
+  it('a settings line can NEVER execute code (command-substitution payload inert)', () => {
+    const sb = makeSandbox();
+    const pwned = join(sb.repo, 'pwned');
+    const pwned2 = join(sb.repo, 'pwned2');
+    writeSettings(
+      sb,
+      `CODEX_SERVICE_TIER=$(touch ${pwned})\nEVIL_KEY=\`touch ${pwned2}\`\n`,
+    );
+    const r = run(sb);
+    const executed = existsSync(pwned) || existsSync(pwned2);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(executed, false, 'file content must be parsed, never evaluated');
+    assert.doesNotMatch(r.argv, /service_tier/, 'the payload value must fail validation');
+  });
+
+  it('a DIRECTORY at the settings path warns loudly and falls back to built-ins (no crash)', () => {
+    const sb = makeSandbox();
+    mkdirSync(join(sb.repo, '.config', 'agent-workflow', 'bridge-settings.conf'), { recursive: true });
+    const r = run(sb);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, `a directory must degrade honestly, not kill the run: ${r.stderr}`);
+    assert.match(r.stderr, /unreadable or not a regular file/);
+    assert.doesNotMatch(r.stderr, /Is a directory/, 'no raw bash error may leak');
+    assert.match(r.stdout, /FAKE_FINAL_MESSAGE/, 'the run must proceed on built-ins');
+  });
+
+  it('a FIFO at the settings path warns and falls back (never opened — no pre-timeout hang)', () => {
+    const sb = makeSandbox();
+    const dir = join(sb.repo, '.config', 'agent-workflow');
+    mkdirSync(dir, { recursive: true });
+    const fifo = join(dir, 'bridge-settings.conf');
+    const mk = spawnSync('mkfifo', [fifo]);
+    if (mk.status !== 0) { rmSync(sb.root, { recursive: true, force: true }); return; } // no mkfifo here — the directory case covers the class
+    const r = run(sb);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /unreadable or not a regular file/);
+    assert.match(r.stdout, /FAKE_FINAL_MESSAGE/);
+  });
+
+  it('XDG_CONFIG_HOME relocates the settings file', () => {
+    const sb = makeSandbox();
+    const xdg = join(sb.root, 'xdg');
+    mkdirSync(join(xdg, 'agent-workflow'), { recursive: true });
+    writeFileSync(join(xdg, 'agent-workflow', 'bridge-settings.conf'), 'CODEX_SERVICE_TIER=priority\n');
+    const r = run(sb, { env: { XDG_CONFIG_HOME: xdg } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.argv, /(^|\n)service_tier=priority(\n|$)/);
+  });
+});
+
+// ── settings surface ⟷ manifest (drift guard, D6) ────────────────────────────────
+// The manifest `settings` block is the single source: the --help Settings section
+// renders this wrapper's applied subset, and the shell constants (registry, applied
+// subset, typed validation arms) stay set-equal to the UNION of both bridges' blocks
+// (the reader recognizes every family key). The sibling manifest resolves identically
+// in the repo layout and in the kit's bridges/ mirror layout.
+const SETTINGS_HEADER = 'Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):';
+const SIBLING_MANIFEST = JSON.parse(readFileSync(join(HERE, '..', '..', 'antigravity-cli-bridge', 'capability.json'), 'utf8'));
+const ALL_SETTINGS = [...(MANIFEST.settings ?? []), ...(SIBLING_MANIFEST.settings ?? [])];
+const SETTINGS_CMD = 'codex-exec';
+
+describe('codex-exec.sh — settings surface ⟷ manifest (D6, manifest-pinned)', () => {
+  it('--help Settings section keys set-EQUAL the manifest appliesTo subset', () => {
+    const help = runHelp('--help').stdout;
+    const section = helpSection(help, SETTINGS_HEADER);
+    const got = section.filter((l) => /^[A-Z][A-Z0-9_]+ —/.test(l)).map((l) => l.split(' ')[0]);
+    const want = (MANIFEST.settings ?? []).filter((s) => s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
+    assert.ok(want.length > 0, 'the manifest must declare settings for this wrapper');
+    setEq(got, want, 'help Settings keys ⟷ manifest settings.appliesTo');
+    assert.ok(section.some((l) => l.includes('agent-workflow/bridge-settings.conf')), 'the section names the settings file');
+  });
+
+  const source = readFileSync(WRAPPER, 'utf8');
+
+  it('aw_settings_known carries exactly the UNION of both bridges settings keys', () => {
+    const m = source.match(/aw_settings_known\(\) \{\n  case " ([^"]+) " in/);
+    assert.ok(m, 'aw_settings_known registry case not found');
+    assert.ok(ALL_SETTINGS.length >= 5, 'both manifests must contribute settings');
+    setEq(m[1].trim().split(/\s+/), ALL_SETTINGS.map((s) => s.key), 'shell registry ⟷ manifest union');
+  });
+
+  it('AW_SETTINGS_APPLIED equals the manifest appliesTo subset for this wrapper', () => {
+    const m = source.match(/^AW_SETTINGS_APPLIED="([^"]*)"$/m);
+    assert.ok(m, 'AW_SETTINGS_APPLIED not found');
+    const want = ALL_SETTINGS.filter((s) => s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
+    assert.ok(want.length > 0);
+    setEq(m[1].trim().split(/\s+/), want, 'applied subset ⟷ manifest appliesTo');
+  });
+
+  it('aw_settings_valid arms carry the manifest typed constants per key', () => {
+    const body = source.match(/aw_settings_valid\(\) \{[\s\S]*?\n\}/);
+    assert.ok(body, 'aw_settings_valid not found');
+    const armKeys = [...body[0].matchAll(/^    ([A-Z][A-Z0-9_]*)\)/gm)].map((x) => x[1]);
+    setEq(armKeys, ALL_SETTINGS.map((s) => s.key), 'validation arms ⟷ manifest keys');
+    for (const s of ALL_SETTINGS) {
+      const arm = body[0].match(new RegExp(`^    ${s.key}\\) (.*) ;;$`, 'm'));
+      assert.ok(arm, `no validation arm for ${s.key}`);
+      if (s.kind === 'enum') for (const v of s.values) assert.ok(arm[1].includes(`"${v}"`), `${s.key}: enum value '${v}' not pinned`);
+      if (s.kind === 'integer') {
+        assert.match(arm[1], new RegExp(`>= ${s.min}\\b`), `${s.key}: min ${s.min} not pinned`);
+        assert.match(arm[1], new RegExp(`<= ${s.max}\\b`), `${s.key}: max ${s.max} not pinned`);
+      }
+      if (s.kind === 'boolean') assert.ok(arm[1].includes('"0"') && arm[1].includes('"1"'), `${s.key}: boolean 0/1 not pinned`);
+      if (s.kind === 'duration') {
+        assert.ok(arm[1].includes('$dur_re'), `${s.key}: duration grammar not pinned`);
+        assert.ok(arm[1].includes('$zero_re'), `${s.key}: zero-duration rejection not pinned (timeout 0 disables the cap)`);
+      }
+    }
   });
 });

@@ -39,6 +39,12 @@ describe('validateManifest — result classes', () => {
     const r = validateManifest(at('nested-version-decoy'));
     assert.equal(r.result, VALID, r.errors.join('; '));
   });
+
+  it('a well-formed typed `settings` block (all four kinds) → valid', () => {
+    const r = validateManifest(at('settings-valid'));
+    assert.equal(r.result, VALID, r.errors.join('; '));
+    assert.deepEqual(r.errors, []);
+  });
 });
 
 describe('validateManifest — negative fixtures MUST fail (strict)', () => {
@@ -52,6 +58,16 @@ describe('validateManifest — negative fixtures MUST fail (strict)', () => {
     ['win-absolute-source', /must not be an absolute path/],
     ['traversal-source', /must not contain "\.\." traversal/],
     ['bad-available', /`available`, if present, must be a boolean/],
+    // Typed `settings` block (bridges 2.3.0, D6): malformed entries FAIL --strict, never ride
+    // as tolerated extras — the kit writer and the wrapper shell constants consume this block.
+    ['settings-missing-key', /`settings\[0\]`\.key must be an UPPER_SNAKE_CASE string/],
+    ['settings-bad-type', /`settings\[0\]`\.kind must be one of enum\|integer\|duration\|boolean/],
+    ['settings-bad-default', /`settings\[0\]`\.default must be null or a string value that passes the enum validation/],
+    ['settings-invalid-values', /`settings\[0\]`\.values must be a non-empty array of unique non-empty strings/],
+    ['settings-duplicate-keys', /duplicate settings key "FIX_DUP"/],
+    ['settings-bad-appliesto', /`settings\[0\]`\.appliesTo names "not-a-declared-cmd" which is no roles\.\*\.cmd/],
+    ['settings-missing-default', /`settings\[0\]`\.default is required/],
+    ['settings-zero-duration', /`settings\[0\]`\.default must be null or a string value that passes the duration validation/],
   ];
   for (const [name, pattern] of mustFail) {
     it(`${name} → invalid`, () => {

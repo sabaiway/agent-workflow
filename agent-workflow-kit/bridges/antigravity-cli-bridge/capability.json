@@ -3,7 +3,7 @@
   "schema": 1,
   "name": "antigravity-cli-bridge",
   "kind": "execution-backend",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "provides": ["review", "probe"],
   "roles": {
     "review": {
@@ -33,6 +33,22 @@
     },
     "probe": { "cmd": "agy-run", "source": "bin/agy.sh", "output": "advisory" }
   },
+  "settings": [
+    {
+      "key": "AGY_HARD_TIMEOUT",
+      "kind": "duration",
+      "default": null,
+      "appliesTo": ["agy-run", "agy-review"],
+      "effect": "hard wall-clock cap via timeout(1), duration string (e.g. 5m, 30m, 90s); built-in default: agy-run = AGY_TIMEOUT (5m), agy-review 30m."
+    },
+    {
+      "key": "AGY_REVIEW_ALLOW_ADDDIR",
+      "kind": "boolean",
+      "default": "0",
+      "appliesTo": ["agy-review"],
+      "effect": "1 ⇒ an oversized code review offloads the change set to a private --add-dir staging dir (re-enables the Issue-001 stall risk; the hard timeout bounds it). Default 0: an oversized prompt refuses instead."
+    }
+  ],
   "detect": {
     "installed": {
       "env": "ANTIGRAVITY_CLI_BRIDGE_DIR",
