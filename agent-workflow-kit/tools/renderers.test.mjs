@@ -192,6 +192,22 @@ describe('renderers — branch coverage (every replaced-function branch)', () =>
     assert.match(out, /agy-run ✗/, 'missing → ✗ (distinct from unknown)');
   });
 
+  it('a bridge with an ACTIVE settings knob renders a fact-only sub-line; a bridge with none renders none', () => {
+    const out = renderPlain({ installed: [], bridges: [
+      { display: 'codex-bridge', readiness: 'ready', wrappers: [{ cmd: 'codex-exec', state: 'present' }], settings: { active: [{ key: 'CODEX_SERVICE_TIER', value: 'priority', source: 'file' }] } },
+      { display: 'antigravity-bridge', readiness: 'ready', wrappers: [{ cmd: 'agy-review', state: 'present' }], settings: { active: [] } },
+    ] });
+    assert.match(out, /settings: CODEX_SERVICE_TIER=priority \[file\]/, 'the active knob is surfaced fact-only');
+    assert.equal((out.match(/settings:/g) ?? []).length, 1, 'the bridge with no active knob adds no sub-line');
+  });
+
+  it('a bridge settings READ error renders a localized note, never a crash', () => {
+    const out = renderPlain({ installed: [], bridges: [
+      { display: 'codex-bridge', readiness: 'ready', wrappers: [{ cmd: 'codex-exec', state: 'present' }], settings: { error: 'corrupt kit install?' } },
+    ] });
+    assert.match(out, /couldn't read bridge settings \(corrupt kit install\?\)/);
+  });
+
   it('a member with no refresh object renders without a headline behind-count AND without a verdict (nothing checked)', () => {
     const out = renderPlain({ installed: [{ member: 'agent-workflow-kit', display: 'kit', version: '1.19.0', state: 'installed' }] });
     assert.ok(!/need a refresh/.test(out));

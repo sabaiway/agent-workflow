@@ -53,6 +53,7 @@ import { FAMILY_MEMBERS } from '../tools/family-members.mjs';
 // skip (never a first placement, AD-009/AD-011) and a placed bridge newer than this kit's bundled
 // mirror is a stated skip too (never a downgrade). Every line it returns is tool-composed.
 import { refreshPlacedBridges } from '../tools/setup-backends.mjs';
+import { reconcileSettings } from '../tools/bridge-settings.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
@@ -464,6 +465,20 @@ const main = async () => {
         `[agent-workflow-kit] could not refresh the placed bridges (${err.message}) — continuing; the ` +
           `kit itself IS installed and works. Re-run the refresh yourself:\n    ${bridgeRefreshCmd}`,
       );
+    }
+  }
+
+  // Bridge settings reconcile — LOCAL files only, AFTER the bridge refresh, BEFORE the network
+  // cascade. Reads the deployed host settings file and validates its keys against the bundled
+  // manifests that just landed; it NEVER edits the file (D2 — the file lives outside every kit tree,
+  // so upgrade-survival is structural), only STATES unknown/retired keys (preserved verbatim). Rides
+  // with the bridge gate: --no-bridges / win32 skip it. Best-effort — any error is a warning + exit 0.
+  if (!args.noBridges && process.platform !== 'win32') {
+    try {
+      const { lines } = reconcileSettings();
+      for (const l of lines) console.log(l);
+    } catch (err) {
+      console.warn(`[agent-workflow-kit] could not reconcile the bridge settings file (${err.message}) — continuing; the kit itself IS installed and works.`);
     }
   }
 

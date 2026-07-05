@@ -15,6 +15,9 @@
 // a backend is advisory or delegated, never autonomous. Dependency-free, Node >= 18.
 
 import { pathToFileURL } from 'node:url';
+// The host-level bridge-settings snapshot (fact-only, best-effort). READ-ONLY core only — never the
+// writer — so this read-only advisor never pulls in the atomic-write core.
+import { settingsSnapshot } from './bridge-settings-read.mjs';
 import {
   detectBackends,
   wrapperCmdFor,
@@ -293,12 +296,19 @@ export const resolveActivityRecipe = ({ config = {}, readiness = [], activity, s
 // DISPLAY_ALIASES — the ONE alias table the recommendation clause already uses; ordering is the
 // deterministic BACKEND_PRIORITY (codex before agy), independent of detection emission order.
 // Always exactly one line: no part may carry a newline (pinned by tests).
-export const composeStatusLine = (detection, recommendation) => {
+export const composeStatusLine = (detection, recommendation, settings = null) => {
   const backends = [...detection]
     .sort((a, b) => priorityIndex(a.name) - priorityIndex(b.name))
     .map((b) => `${DISPLAY_ALIASES[b.name] ?? b.name} ${b.readiness === READY ? '✓' : '✗'} ${b.readiness}`)
     .join(' · ');
-  return `backends: ${backends} — run /agent-workflow-kit backends · recipes: ${recommendation.clause} — see /agent-workflow-kit recipes`;
+  const base = `backends: ${backends} — run /agent-workflow-kit backends · recipes: ${recommendation.clause} — see /agent-workflow-kit recipes`;
+  // Fact-only suffix, ONLY when a bridge knob is actively set (env/file, non-default). Omitted otherwise,
+  // so the default line is byte-identical to before. A raw env value may (D3) carry newlines/control
+  // chars — collapse them to a single space so the "exactly one line" backend-status contract holds.
+  const oneLine = (s) => String(s).replace(/[\s]+/g, ' ').trim();
+  const active = settings?.active ?? [];
+  const suffix = active.length ? ` · settings: ${active.map((s) => `${oneLine(s.key)}=${oneLine(s.value)}`).join(' · ')}` : '';
+  return base + suffix;
 };
 
 // ── the one-line ACTIVE-recipe line (the discovery line — configured, never recommended) ───────────
@@ -340,7 +350,7 @@ export const composeActiveRecipeLine = ({ config, source } = {}, detection) => {
 
 // The structured report behind `--json` — the recipes, the recommendation, a plan per recipe, and
 // (additive) the pasteable one-line backend status composed from the same detection.
-export const buildReport = (detection) => {
+export const buildReport = (detection, settings = null) => {
   const recommendation = recommendRecipe(detection);
   return {
     recipes: RECIPES.map(({ id, title, role, minBackends, degradesTo, summary }) => ({
@@ -353,7 +363,7 @@ export const buildReport = (detection) => {
     })),
     recommendation,
     plans: RECIPES.map((r) => planRecipe(r.id, detection)),
-    statusLine: composeStatusLine(detection, recommendation),
+    statusLine: composeStatusLine(detection, recommendation, settings),
   };
 };
 
@@ -423,8 +433,8 @@ exclusive. Detection only — never writes, never commits, never runs a subscrip
       console.error(`[agent-workflow-kit] ${err.message}`);
       return err.exitCode ?? 1;
     }
-  } else if (argv.includes('--status-line')) console.log(composeStatusLine(detection, recommendRecipe(detection)));
-  else if (argv.includes('--json')) console.log(JSON.stringify(buildReport(detection), null, 2));
+  } else if (argv.includes('--status-line')) console.log(composeStatusLine(detection, recommendRecipe(detection), settingsSnapshot()));
+  else if (argv.includes('--json')) console.log(JSON.stringify(buildReport(detection, settingsSnapshot()), null, 2));
   else console.log(formatRecipes(detection));
   return 0;
 };

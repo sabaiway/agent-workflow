@@ -3,7 +3,7 @@ name: agent-workflow-kit
 description: Deploy or upgrade a portable AI-agent memory-and-workflow system in any project. Use when the user wants to bootstrap `docs/ai/` + an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) + cap/archive/index enforcement in a new or existing repo, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-kit` / `/agent-workflow-kit upgrade`. Triggers on phrases like "set up the memory system", "deploy the AI workflow here", "bootstrap docs/ai", "upgrade the workflow".
 disable-model-invocation: true
 metadata:
-  version: '1.34.0'
+  version: '1.35.0'
 ---
 
 # agent-workflow-kit
@@ -75,7 +75,7 @@ Before acting, read `docs/ai/.workflow-version` (the project's stamp) to decide 
 
 - **absent** → bootstrap (a fresh deployment).
 - **stamp < `1.3.0`** (the deployment-lineage head) → `upgrade`.
-- **stamp == `1.3.0`** → already current; only the stamp-independent reconciles may run — the FULL set lives in `${CLAUDE_SKILL_DIR}/references/modes/upgrade.md` step 3 (pointer slots · hidden-mode footprint · both `.json` config ensures · the enforcement-script ensure · the placed-bridge refresh · the agent-rules lens refresh); run step 3 rather than enumerating from memory.
+- **stamp == `1.3.0`** → already current; only the stamp-independent reconciles may run — the FULL set lives in `${CLAUDE_SKILL_DIR}/references/modes/upgrade.md` step 3; run step 3 (never enumerate the reconciles from memory).
 - **stamp > head / unparseable** → STOP — never-downgrade gate (see `${CLAUDE_SKILL_DIR}/references/modes/upgrade.md` step 2).
 
 **Two independent version axes — never conflate them:**
@@ -140,6 +140,10 @@ writer — read `${CLAUDE_SKILL_DIR}/references/modes/agents.md` before acting.
 ### Mode: hook
 
 writer — read `${CLAUDE_SKILL_DIR}/references/modes/hook.md` before acting.
+
+### Mode: bridge-settings
+
+guarded — read `${CLAUDE_SKILL_DIR}/references/modes/bridge-settings.md` before acting.
 
 ### Mode: review-state
 

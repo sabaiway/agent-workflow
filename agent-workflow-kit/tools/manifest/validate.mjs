@@ -36,6 +36,30 @@ export const VALID = 'valid';
 export const UNSUPPORTED = 'unsupported';
 export const INVALID = 'invalid';
 
+// Typed settings-value grammar (D6, bridges 2.3.0) — the ONE predicate the manifest validator (for a
+// declared `default`), the kit-side bridge-settings writer (for a user-supplied value), and — mirrored
+// in shell as aw_settings_valid — the wrappers all use, so a value the writer accepts is exactly a
+// value a wrapper honors. A value is always compared as a STRING (the settings-file wire format).
+export const SETTING_KINDS = new Set(['enum', 'integer', 'duration', 'boolean']);
+// The wrappers' shell duration grammar: a unit suffix is REQUIRED (a bare integer is invalid), and
+// zero durations are rejected — `timeout 0` DISABLES a hard cap, so a persistent settings line could
+// otherwise silently remove the stall guard.
+export const DURATION_RE = /^[0-9]+(\.[0-9]+)?[smhd]$/;
+export const ZERO_DURATION_RE = /^0+(\.0+)?[smhd]$/;
+export const settingValueValid = (entry, value) => {
+  switch (entry.kind) {
+    case 'enum': return Array.isArray(entry.values) && entry.values.includes(value);
+    case 'integer': {
+      if (!/^[0-9]+$/.test(value)) return false;
+      const n = Number(value);
+      return Number.isSafeInteger(n) && n >= entry.min && n <= entry.max;
+    }
+    case 'duration': return DURATION_RE.test(value) && !ZERO_DURATION_RE.test(value);
+    case 'boolean': return value === '0' || value === '1';
+    default: return false;
+  }
+};
+
 const hasTraversal = (p) => p.split(/[\\/]/).includes('..');
 const isUnresolved = (s) => /\{\{|\}\}|\$\{/.test(s);
 
@@ -239,29 +263,10 @@ export const validateManifest = (skillDir) => {
     if (!Array.isArray(settings)) {
       errors.push('`settings` must be an array of setting entries');
     } else {
-      const SETTING_KINDS = new Set(['enum', 'integer', 'duration', 'boolean']);
-      // The wrappers' shell duration grammar: a unit suffix is REQUIRED (a bare integer is
-      // invalid), and zero durations are rejected — `timeout 0` DISABLES a hard cap, so a
-      // persistent settings line could otherwise silently remove the stall guard.
-      const DURATION_RE = /^[0-9]+(\.[0-9]+)?[smhd]$/;
-      const ZERO_DURATION_RE = /^0+(\.0+)?[smhd]$/;
       const cmds = new Set(Object.values(roles)
         .map((r) => (r && typeof r === 'object' && !Array.isArray(r) ? r.cmd : null))
         .filter((c) => typeof c === 'string' && c));
       const seenKeys = new Set();
-      const passesKind = (entry, value) => {
-        switch (entry.kind) {
-          case 'enum': return Array.isArray(entry.values) && entry.values.includes(value);
-          case 'integer': {
-            if (!/^[0-9]+$/.test(value)) return false;
-            const n = Number(value);
-            return Number.isSafeInteger(n) && n >= entry.min && n <= entry.max;
-          }
-          case 'duration': return DURATION_RE.test(value) && !ZERO_DURATION_RE.test(value);
-          case 'boolean': return value === '0' || value === '1';
-          default: return false;
-        }
-      };
       settings.forEach((entry, i) => {
         const at = `\`settings[${i}]\``;
         if (entry == null || typeof entry !== 'object' || Array.isArray(entry)) {
@@ -301,7 +306,7 @@ export const validateManifest = (skillDir) => {
         if (!Object.hasOwn(entry, 'default')) {
           errors.push(`${at}.default is required (null = the wrapper built-ins apply)`);
         } else if (entry.default != null
-            && (typeof entry.default !== 'string' || !passesKind(entry, entry.default))) {
+            && (typeof entry.default !== 'string' || !settingValueValid(entry, entry.default))) {
           errors.push(`${at}.default must be null or a string value that passes the ${entry.kind} validation`);
         }
       });

@@ -56,6 +56,13 @@ const renderBridges = (vm, { glyph, color }) => {
   for (const b of vm.bridges) {
     const wrappers = b.wrappers.map((w) => `${w.cmd} ${glyph[w.state] ?? glyph.unknown}`).join(', ') || '—';
     lines.push(`  ${pad(b.display, MEMBER_COL)}${pad(b.readiness, READINESS_COL)}wrappers: ${wrappers}`);
+    // Fact-only host-level settings sub-line: the active knobs for this bridge, or a localized error.
+    // Absent when no knob is active, so the block stays byte-identical to before when nothing is set.
+    if (b.settings?.error) lines.push(`  ${pad('', MEMBER_COL)}${glyph.note} couldn't read bridge settings (${b.settings.error})`);
+    else if (b.settings?.active?.length) {
+      const active = b.settings.active.map((s) => `${s.key}=${s.value} [${s.source}]`).join(' · ');
+      lines.push(`  ${pad('', MEMBER_COL)}settings: ${active}`);
+    }
   }
   return lines;
 };

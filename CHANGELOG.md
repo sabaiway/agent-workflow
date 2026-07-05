@@ -7,7 +7,7 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
-## 2026-07-05 — bridges 2.3.0: host-level bridge settings file + the Codex Fast tier as configuration
+## 2026-07-05 — kit 1.35.0 (bundling bridges 2.3.0): host-level bridge settings file + the Codex Fast tier as configuration (AD-043)
 
 Bridge knobs now live in ONE host-level file that survives kit upgrades:
 `${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf` (`KEY=VALUE`, parsed never
@@ -20,11 +20,23 @@ only server-catalog tier id on the subscription: ~1.5× token speed at a 2.5× c
 gpt-5.5, quality-neutral, default OFF — enabling it is a consented per-host spend act),
 `CODEX_HARD_TIMEOUT`, `CODEX_REVIEW_MAX_TOTAL_BYTES`, `AGY_HARD_TIMEOUT`,
 `AGY_REVIEW_ALLOW_ADDDIR`. codex itself accepts any `-c service_tier` string silently
-(live-probed 2026-07-05), so the wrappers validate every effective value against typed constants
-pinned to each bridge's new `capability.json` `settings` block (manifest-as-source;
+(live-probed 2026-07-05), so the wrappers validate every **file** value — and the service-tier env
+— against typed constants pinned to each bridge's new `capability.json` `settings` block (an explicit
+env override of a non-enum knob stays the operator's documented raw value; manifest-as-source;
 `validate.mjs --strict` now fails a malformed block; `--help` Settings sections and the shell
 constants are drift-guarded set-equal to it). Model/effort keys are NOT file-settable — the
 quality-first guard is byte-untouched.
+
+**kit 1.35.0 machinery.** A `bridge-settings` reader + consent-gated writer (`guarded`) reads/writes
+that file on a hardened out-of-tree atomic core (`writeContainedFileAtomic` / `writeHostConfigFileAtomic`,
+factored from `atomic-write.mjs` — symlink/parent/TOCTOU-safe, dir created on first use); previews by
+default, refuses unknown keys / out-of-range values / a duplicate-carrying file. The bridge **refresh
+driver now states what it overwrites**: on an equal-version re-sync it names the locally-changed files
+and points to the settings file (D5 — killing the silent-wipe that started this), while a version
+upgrade never mislabels the version delta as a local edit. `init` and `upgrade` **reconcile** the
+settings file (unknown/retired keys flagged, preserved verbatim). `status`, the `procedures` advisor,
+and `recipes --status-line` surface the active knobs and each wrapper's settable knobs — fact-only, no
+model claim, via a read-only reader core.
 
 ## 2026-07-04 — memory 1.11.1 · kit 1.34.0: onboarding UX — one batched setup prompt, the visible accelerator funnel, the consent-gated gates seeder (AD-042)
 

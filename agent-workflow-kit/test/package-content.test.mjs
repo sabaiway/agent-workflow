@@ -125,10 +125,12 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
   // file accidentally dropped). After an intentional change, run `npm pack ./agent-workflow-kit
   // --dry-run --json` and set the new count here in the same commit.
   it('ships exactly the expected number of files', () => {
-    // 118 = 96 + the 19 progressive-disclosure split files (16 references/modes/ + 3 references/shared/)
+    // 121 = 96 + the 20 progressive-disclosure split files (17 references/modes/ + 3 references/shared/)
     //     + tools/lens-region.mjs (the agent-rules lens reconcile)
-    //     + tools/seed-gates.mjs + tools/atomic-write.mjs (the consent-gated seeder pair, AD-042).
-    assert.equal(packed.length, 118, `tarball file count drifted (${packed.length} ≠ 118)`);
+    //     + tools/seed-gates.mjs + tools/atomic-write.mjs (the consent-gated seeder pair, AD-042)
+    //     + tools/bridge-settings.mjs + tools/bridge-settings-read.mjs (the host-level bridge-settings
+    //       writer + its read-only core, bridges 2.3.0 / D6; modes/bridge-settings.md is the 17th mode).
+    assert.equal(packed.length, 121, `tarball file count drifted (${packed.length} ≠ 121)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

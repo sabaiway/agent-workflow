@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, readlinkSync, readFileSync, existsSync, lstatSync,
+  mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, readlinkSync, readFileSync, existsSync, lstatSync, readdirSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +12,7 @@ import {
   linkWrappers,
   planFor,
   refreshPlacedBridges,
+  scanBundleOwnedDrift,
   main,
   proactiveReviewOffer,
   SETUP_STOP,
@@ -788,6 +789,107 @@ describe('refreshPlacedBridges — refresh-only driver', () => {
     assert.match(res.line, /skipped — not placed/);
     assert.equal(readFileSync(join(skillDir, 'SKILL.md'), 'utf8'), before, 'the re-inspection must stop the copy, never place');
     assert.ok(dirLstats > 1, 'the apply really re-inspected the dir (non-vacuous)');
+  });
+});
+
+// ── §2.2 overwrite honesty (D5) — a same-version re-sync that clobbers a local edit must SAY so ──
+describe('refreshPlacedBridges — overwrite honesty (D5)', () => {
+  // A pristine placed bridge byte-identical to the bundle at the SAME version (1.0.0): the shape a
+  // clean placement leaves, so any later byte difference is a provable LOCAL edit (never a version
+  // delta). Wrappers match the bundle's `echo hi` (seedPlaced writes `echo placed`, which would be
+  // incidental drift). A refresh here is an equal-version re-sync → outcome 'already-current'.
+  const seedPristineEqual = () => {
+    writeBundle(join(tmp, 'bundles')); // version 1.0.0, wrappers `echo hi`
+    const skillDir = join(tmp, 'skill');
+    mkdirSync(join(skillDir, 'bin'), { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), skillMd('codex-cli-bridge', '1.0.0'));
+    writeFileSync(join(skillDir, 'capability.json'), JSON.stringify(manifestOf('codex-cli-bridge', CODEX_ROLES, '1.0.0'), null, 2));
+    for (const r of Object.values(CODEX_ROLES)) writeFileSync(join(skillDir, r.source), '#!/bin/sh\necho hi\n');
+    return skillDir;
+  };
+
+  it('a placed-only extra survives a refresh and is NEVER reported as loss (preserved, not overwritten)', () => {
+    const skillDir = seedPristineEqual();
+    writeFileSync(join(skillDir, 'LOCAL-NOTE.txt'), 'my local extra\n');
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'already-current');
+    assert.ok(existsSync(join(skillDir, 'LOCAL-NOTE.txt')), 'a placed-only extra is never deleted by a refresh');
+    assert.equal(readFileSync(join(skillDir, 'LOCAL-NOTE.txt'), 'utf8'), 'my local extra\n', 'and its bytes are untouched');
+    assert.ok(!/LOCAL-NOTE\.txt/.test(res.line), 'a preserved extra is never claimed as overwritten');
+    assert.ok(!/overwrote/.test(res.line), 'a clean re-sync of an unchanged tree warns about nothing');
+  });
+
+  it('identical placed tree → refreshed with NO overwrite warning (nothing local was lost)', () => {
+    const skillDir = seedPristineEqual();
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'already-current');
+    assert.ok(!/overwrote|could not compare/.test(res.line), 'an identical re-sync overwrote nothing worth stating');
+  });
+
+  it('a locally-changed bundle-owned file is overwritten AND named, with the host settings-file pointer', () => {
+    const skillDir = seedPristineEqual();
+    // A real local edit that keeps the manifest/version valid (frontmatter intact — only the body).
+    writeFileSync(join(skillDir, 'SKILL.md'), skillMd('codex-cli-bridge', '1.0.0').replace('(bundled)', '(my local patch)'));
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'already-current');
+    assert.match(res.line, /overwrote 1 locally-changed file/i, 'the refresh states the local-edit loss');
+    assert.match(res.line, /SKILL\.md/, 'and names the drifted file');
+    assert.match(res.line, /bridge-settings/, 'and points at the host settings surface that survives every refresh');
+    assert.match(res.line, /bridge-settings\.conf/, 'naming the actual settings file path');
+    assert.equal(readFileSync(join(skillDir, 'SKILL.md'), 'utf8'), skillMd('codex-cli-bridge', '1.0.0'), 'the file is still refreshed to the bundle (kit owns bridge code)');
+  });
+
+  it('a version-UPGRADE refresh does NOT cry wolf about the version delta (no false "locally-changed")', () => {
+    // placed 0.9.0 vs bundle 1.0.0: every bundle-owned file differs (version delta + `echo placed`
+    // wrappers), but that is the upgrade, not a local edit — the (vOld → vNew) arrow is the honest
+    // signal; a byte-list would be a false alarm on every upgrade.
+    writeBundle(join(tmp, 'bundles'));
+    const skillDir = seedPlaced('0.9.0');
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'refreshed');
+    assert.match(res.line, /refreshed \(v0\.9\.0 → v1\.0\.0\)/, 'the version arrow already signals the change');
+    assert.ok(!/overwrote|locally-changed/.test(res.line), 'a version upgrade never claims the version delta was a local edit');
+  });
+
+  it('the drift scan never reads THROUGH a symlinked placed file (codex R2 — lstat no-follow first)', () => {
+    // A placed bundle-owned path that is a symlink is "could not compare" WITHOUT a read-through
+    // (copyTreeRefresh would refuse to overwrite it; reading its target would be unsafe + moot).
+    const bundleDir = writeBundle(join(tmp, 'bundles')); // SKILL.md + capability.json + bin/*
+    const skillDir = join(tmp, 'skill');
+    mkdirSync(join(skillDir, 'bin'), { recursive: true });
+    // Every placed file identical to the bundle EXCEPT SKILL.md, which is a symlink → a secret target.
+    writeFileSync(join(skillDir, 'capability.json'), readFileSync(join(bundleDir, 'capability.json'), 'utf8'));
+    for (const r of Object.values(CODEX_ROLES)) writeFileSync(join(skillDir, r.source), readFileSync(join(bundleDir, r.source), 'utf8'));
+    const secret = join(tmp, 'secret.txt');
+    writeFileSync(secret, 'SHOULD NEVER BE READ THROUGH\n');
+    symlinkSync(secret, join(skillDir, 'SKILL.md'));
+    const reads = [];
+    const fs = {
+      lstat: lstatSync,
+      readdir: (p) => readdirSync(p),
+      readFile: (p, enc) => { reads.push(p); return readFileSync(p, enc); },
+    };
+    const drift = scanBundleOwnedDrift(bundleDir, skillDir, fs);
+    assert.deepEqual(drift.unreadable, ['SKILL.md'], 'the symlinked placed file is "could not compare"');
+    assert.deepEqual(drift.drifted, [], 'the identical regular files show no drift');
+    assert.ok(!reads.includes(join(skillDir, 'SKILL.md')), 'the symlinked placed path was NEVER read through');
+    assert.ok(!reads.includes(secret), 'and its target was never touched');
+  });
+
+  it('an unreadable placed file → honest degrade ("could not compare"), refresh still proceeds, no crash', () => {
+    const skillDir = seedPristineEqual();
+    const placedSkillMd = join(skillDir, 'SKILL.md');
+    // Only the SCAN's read of the placed file fails (copyTreeRefresh uses copyFile, not readFile, so
+    // the overwrite itself is unaffected); the bundle read and the manifest validator use their own fs.
+    const readFile = (p, enc) => {
+      if (p === placedSkillMd) throw eacces();
+      return readFileSync(p, enc);
+    };
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir, rest: { readFile } }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'already-current', 'the refresh still runs — an unverifiable file is not a crash');
+    assert.match(res.line, /could not compare 1 file/i, 'the honest degrade is stated, never silently swallowed');
+    assert.match(res.line, /SKILL\.md/, 'and names the file it could not verify');
+    assert.equal(readFileSync(placedSkillMd, 'utf8'), skillMd('codex-cli-bridge', '1.0.0'), 'the file is refreshed to the bundle regardless');
   });
 });
 
