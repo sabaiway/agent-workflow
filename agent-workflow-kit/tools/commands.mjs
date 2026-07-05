@@ -155,6 +155,13 @@ const CATALOG = [
     oneLine: 'Set the orchestration recipe for an activity from plain language — previews the change, then writes the config when you confirm.',
   },
   {
+    key: 'set-autonomy',
+    invocation: invocationOf('set-autonomy'),
+    group: 'Orchestrate',
+    kind: WRITER,
+    oneLine: 'Set the per-project autonomy policy from plain language — which actions always ask (commit/push/publish/network) and how autonomously each activity runs; previews the change, then writes the policy when you confirm.',
+  },
+  {
     key: 'review-state',
     invocation: invocationOf('review-state'),
     group: 'Orchestrate',

@@ -81,7 +81,7 @@ Before acting, read `docs/ai/.workflow-version` (the project's stamp) to decide 
 **Two independent version axes — never conflate them:**
 
 1. **Project deployment** — `docs/ai/.workflow-version` vs the lineage head (`1.3.0`). This is the **only** axis this skill compares.
-2. **Kit freshness** — this skill's own files vs the published npm package. That is the **npx installer's** job: `npx @sabaiway/agent-workflow-kit@latest init` (it refuses a stale-cache downgrade by comparing the version on disk — **no network**). This skill never checks npm, and the package version (e.g. `1.x`) is **not** the lineage head.
+2. **Kit freshness** — this skill's own files vs the published npm package. That is the **npx installer's** job: `npx @sabaiway/agent-workflow-kit@latest init` (it refuses a stale-cache downgrade by comparing the version on disk — **no network**). This skill never checks npm, and the package version is **not** the lineage head.
 
 **Refreshed the kit but nothing changed?** The skill you are running is whatever was on disk when the session started. After `npx @sabaiway/agent-workflow-kit@latest init` updates `~/.claude/skills/agent-workflow-kit/`, **restart the session** so the agent reloads the new skill files (the slash command + this `SKILL.md`).
 
@@ -124,6 +124,10 @@ read-only — read `${CLAUDE_SKILL_DIR}/references/modes/procedures.md` before a
 ### Mode: set-recipe
 
 writer — read `${CLAUDE_SKILL_DIR}/references/modes/set-recipe.md` before acting.
+
+### Mode: set-autonomy
+
+writer — read `${CLAUDE_SKILL_DIR}/references/modes/set-autonomy.md` before acting.
 
 ### Mode: uninstall
 

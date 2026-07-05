@@ -1,6 +1,11 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+// The --autonomy render reads the per-project autonomy policy through the read-only autonomy core
+// (AD-044). This file is the family's one .claude/settings.json writer, so the policy render lives here;
+// it never imports the policy fs-writer (autonomy-write.mjs) — the render owns the settings file, not
+// the policy file.
+import { AUTONOMY_REL, loadAutonomy, resolveAutonomy, COMMAND_REDLINES } from './autonomy-config.mjs';
 
 // Velocity-profile core + writer: a fixed, audited read-only allowlist that an onboarding step seeds
 // into `.claude/settings.json` so routine read-only commands stop idling on approval prompts.
@@ -195,6 +200,8 @@ export const VELOCITY_STAMP = 'VELOCITY_STAMP';
 export const VELOCITY_UNSAFE_MODE = 'VELOCITY_UNSAFE_MODE';
 export const VELOCITY_MALFORMED = 'VELOCITY_MALFORMED';
 export const VELOCITY_SYMLINK = 'VELOCITY_SYMLINK';
+// The --autonomy render refuses an absent policy file (a writer renders only a declared policy).
+export const VELOCITY_NO_POLICY = 'VELOCITY_NO_POLICY';
 
 const VELOCITY_ERROR_NAME = 'VelocityProfileError';
 const ERROR_PREFIX = '[agent-workflow-kit]';
@@ -221,6 +228,8 @@ const FLAG_DRY_RUN = '--dry-run';
 const FLAG_APPLY = '--apply';
 const FLAG_ACCEPT_EDITS = '--accept-edits';
 const FLAG_KIT_TOOLS = '--kit-tools';
+const FLAG_AUTONOMY = '--autonomy';
+const FLAG_CHECK = '--check';
 const FLAG_CWD = '--cwd';
 const FLAG_HELP = '--help';
 const SHORT_FLAG_HELP = '-h';
@@ -236,13 +245,21 @@ const RESIDUAL_NOTICE =
   'residual: seeded read-only allow entries are a trust-posture convenience, NOT a sandbox; settings-level rules cannot inspect runtime redirection/command-substitution/--output writes; commit/push/publish are never allowlisted (a DIRECT invocation still ASKs, but the runtime residual is not closed here); the residual guard ships as the opt-in PreToolUse hook — Mode: hook (/agent-workflow-kit hook). floor (never auto-approved, with or without the tier): every writer --apply/--write/--yes still prompts; clobber-protection STOPs still stop; the three release asks (commit/push/publish) stay maintainer-owned.';
 
 const USAGE = `usage: velocity-profile [--dry-run | --apply] [--kit-tools] [--accept-edits] [--cwd <dir>] [--help]
+       velocity-profile --autonomy [--apply] [--cwd <dir>]        (render the autonomy policy)
+       velocity-profile --autonomy --check [--cwd <dir>]          (read-only drift gate)
 
-Seeds the fixed read-only Claude Code allowlist into .claude/settings.json.
+Allowlist mode (default): seeds the fixed read-only Claude Code allowlist into .claude/settings.json.
 Default is --dry-run. --apply writes; --accept-edits only sets defaultMode when applying.
 --kit-tools additionally seeds the audited kit-tool tier: 8 read-only kit tools by resolved
 absolute path (args wildcard), run-gates.mjs as ONE exact project-root-pinned byte-string
 (project-exec - it runs YOUR declared gates.json), and the writers' exact arg-free dry-run
-preview byte-strings. Never touches settings.local.json.`;
+preview byte-strings. Never touches settings.local.json.
+
+--autonomy renders docs/ai/autonomy.json into the settings blocks it OWNS — the sandbox block +
+permissions.ask/deny red-lines + permissions.defaultMode. POLICY-ONLY: never seeds the allowlist and
+leaves permissions.allow untouched. Preview by default; --apply writes; --check is a read-only drift
+gate (exit 1 on drift). --autonomy cannot combine with --accept-edits or --kit-tools (allowlist-mode
+flags). Refuses an absent policy (seed one first with set-autonomy). Never touches settings.local.json.`;
 
 const fail = (exitCode, message) => Object.assign(new Error(message), { exitCode });
 
@@ -297,6 +314,19 @@ const validateSettingsShape = (data, relPath) => {
   }
   if (data.permissions?.allow !== undefined && !Array.isArray(data.permissions.allow)) {
     throw makeVelocityProfileError(VELOCITY_MALFORMED, `${relPath}: permissions.allow must be an array`);
+  }
+  // The --autonomy render merges into permissions.ask / permissions.deny (arrays) and the top-level
+  // `sandbox` object — a malformed one of these is a STOP with ZERO writes, never a merge-through-clobber
+  // (the same precondition posture as permissions.allow above). The allowlist mode never touches these,
+  // so this only tightens the autonomy path.
+  if (data.permissions?.ask !== undefined && !Array.isArray(data.permissions.ask)) {
+    throw makeVelocityProfileError(VELOCITY_MALFORMED, `${relPath}: permissions.ask must be an array`);
+  }
+  if (data.permissions?.deny !== undefined && !Array.isArray(data.permissions.deny)) {
+    throw makeVelocityProfileError(VELOCITY_MALFORMED, `${relPath}: permissions.deny must be an array`);
+  }
+  if (data.sandbox !== undefined && !isJsonObject(data.sandbox)) {
+    throw makeVelocityProfileError(VELOCITY_MALFORMED, `${relPath}: sandbox must be a JSON object`);
   }
   return data;
 };
@@ -756,6 +786,414 @@ export const writeVelocityProfile = ({ cwd, acceptEdits = false, dryRun = true, 
   return { wrote: true, dryRun: false, settingsPath, ...resultBase };
 };
 
+// ── the --autonomy render (AD-044) ───────────────────────────────────────────────────────────────
+// Render docs/ai/autonomy.json into the .claude/settings.json blocks the render OWNS — the `sandbox`
+// block + permissions.ask/deny red-lines + permissions.defaultMode — per the Decision-6 invariant,
+// wired to what the REAL claude 2.1.185 accepts (Step 3.1). POLICY-ONLY: never seeds the read-only
+// allowlist and never touches permissions.allow as a value; a sibling of the flagless allowlist merge
+// (mergeProjectSettings) that follows the identical merge-don't-clobber discipline. Preview-then-apply,
+// dry-run default. Refuses an absent policy (a writer renders only a declared policy).
+
+// The exact 2.1.185 sandbox settings keys (Step 3.1, characterized against the real CLI + official docs).
+const SANDBOX_KEY = 'sandbox';
+const SANDBOX_ENABLED_KEY = 'enabled';
+const SANDBOX_AUTOALLOW_KEY = 'autoAllowBashIfSandboxed';
+const DEFAULT_MODE_KEY = 'defaultMode';
+const AUTONOMY_SANDBOX = 'sandbox';
+const AUTONOMY_PROMPT = 'prompt';
+// Decision 6: sandbox level ⇒ defaultMode acceptEdits; prompt level ⇒ defaultMode default.
+const DEFAULT_MODE_FOR = Object.freeze({ [AUTONOMY_SANDBOX]: ACCEPT_EDITS_MODE, [AUTONOMY_PROMPT]: 'default' });
+// The command red-lines → their Bash permission rule. The `:*` wildcard MATCHES argument-bearing forms
+// (`git commit -m x`, `git push origin main`, `npm publish --tag latest`) — an exact `Bash(git commit)`
+// would not (Step 3.1). These rules are the render-owned entries under permissions.ask / permissions.deny.
+// ACCEPTED RESIDUAL (AD-044, do NOT try to enumerate away): Claude's prefix rules cannot cover an
+// obfuscated spelling — a global-option form (`git -c user.name=x commit`) or a shell/wrapper escape
+// falls outside `Bash(git commit:*)`, so under sandbox auto-allow it would not prompt. Enumerating every
+// prefix is impossible; the command red-lines are a BEST-EFFORT checkpoint, not a security boundary (the
+// same settings-level residual velocity documents). The real enforcement is the sandbox + the maintainer's
+// approval process + the repo no-auto-commit constraint — see AUTONOMY_RESIDUAL_NOTICE.
+const REDLINE_COMMAND_RULES = Object.freeze({
+  commit: 'Bash(git commit:*)',
+  push: 'Bash(git push:*)',
+  publish: 'Bash(npm publish:*)',
+});
+export const RENDER_OWNED_REDLINE_RULES = Object.freeze(Object.values(REDLINE_COMMAND_RULES));
+// The Linux sandbox binaries (Step 3.1: BOTH are required for the sandbox to INITIALIZE — a missing
+// socat does NOT degrade only network; the whole sandbox falls back to unsandboxed).
+const SANDBOX_LINUX_BINARIES = Object.freeze(['bwrap', 'socat']);
+
+const AUTONOMY_RESIDUAL_NOTICE =
+  'floor + residual (always, sandbox available or not): the command red-lines gate the DIRECT forms ' +
+  '(`git commit …` / `git push …` / `npm publish …`) as a best-effort checkpoint, NOT a security ' +
+  'boundary. RESIDUAL: Claude prefix-based ask/deny rules cannot exhaustively cover obfuscated forms — ' +
+  'a global-option spelling (`git -c user.name=x commit`) or a shell/wrapper escape is not caught by ' +
+  'the ask rule, and under sandbox auto-allow it would not prompt (the same settings-level residual ' +
+  'velocity documents; enumerating every form is impossible). The REAL backstops are the SANDBOX (a ' +
+  'genuine OS boundary, once available), the maintainer\'s commit/push/publish approval process, and ' +
+  'the repo no-auto-commit constraint — never these settings rules alone. Any bypass/weakening ' +
+  'warnings above are also best-effort: their ABSENCE is not proof no bypass exists. This render writes ' +
+  'ONLY .claude/settings.json (never settings.local.json), touches ONLY the sandbox block + ' +
+  'permissions.ask/deny/defaultMode, and leaves permissions.allow untouched.';
+
+// isExecutableFile — true iff `p` is a REGULAR file with an execute bit (statSync FOLLOWS a symlink, so
+// a symlinked binary resolves to its target). A directory or a non-executable file NAMED bwrap/socat
+// must NOT count as the binary (else the loud sandbox-unavailable degrade would be wrongly suppressed).
+const isExecutableFile = (p) => {
+  try {
+    const st = statSync(p);
+    return st.isFile() && (st.mode & 0o111) !== 0;
+  } catch {
+    return false;
+  }
+};
+
+// hasBinaryOnPath — a read-only PATH scan (no spawn, fully injectable): is `name` present as an
+// EXECUTABLE regular file in any PATH dir? The runtime probe is deterministic (Step 3.1 is the separate
+// one-time MANUAL characterization).
+const hasBinaryOnPath = (name, env, isExec) =>
+  ((env && env.PATH) || '').split(':').filter(Boolean).some((dir) => isExec(join(dir, name)));
+
+// probeSandboxAvailability(deps) → { platform, sandbox, available, missing, reason }. Read-only: platform
+// (process.platform) + EXECUTABLE-binary presence via injectable deps (deps.platform / deps.env /
+// deps.hasBinary / deps.isExecutable). NEVER launches a live `claude`. The degrade RULE is derived from
+// Step 3.1: Linux needs bwrap+socat (both, or NO sandbox); macOS Seatbelt is built-in; native Windows
+// unsupported → WSL2.
+export const probeSandboxAvailability = (deps = {}) => {
+  const platform = deps.platform ?? process.platform;
+  const env = deps.env ?? process.env;
+  const isExec = deps.isExecutable ?? isExecutableFile;
+  const hasBinary = deps.hasBinary ?? ((name) => hasBinaryOnPath(name, env, isExec));
+  if (platform === 'darwin') {
+    return { platform, sandbox: 'seatbelt', available: true, missing: [], reason: 'macOS Seatbelt (built-in)' };
+  }
+  if (platform === 'linux') {
+    const missing = SANDBOX_LINUX_BINARIES.filter((b) => !hasBinary(b));
+    return {
+      platform,
+      sandbox: 'bubblewrap',
+      available: missing.length === 0,
+      missing,
+      reason: missing.length === 0
+        ? `Linux sandbox ready (${SANDBOX_LINUX_BINARIES.join(' + ')} present)`
+        : `Linux sandbox needs ${SANDBOX_LINUX_BINARIES.join(' + ')} — missing: ${missing.join(', ')} (the whole sandbox falls back to unsandboxed)`,
+    };
+  }
+  return { platform, sandbox: 'none', available: false, missing: [], reason: `native ${platform} sandbox unsupported — use WSL2 on Windows` };
+};
+
+// effectiveAutonomyLevel(resolved) → the ONE global level the (global, static) settings file renders.
+// The autonomy policy is per-activity (Decision 2), but .claude/settings.json is global and the
+// plan.end/exec.end checkpoints are BEHAVIORAL, not machine-enforced (Decision 1). Global auto-allow is
+// a global settings behavior, so it engages only when EVERY activity is opted into `sandbox` (conservative
+// unanimity — the safe floor); a mixed/default policy keeps the global `prompt` floor (the sandbox still
+// confines). The preview surfaces the per-activity levels + this collapse loudly (never silent).
+export const effectiveAutonomyLevel = (resolved) => {
+  const levels = Object.values(resolved.activities).map((a) => a.autonomy);
+  return levels.length > 0 && levels.every((l) => l === AUTONOMY_SANDBOX) ? AUTONOMY_SANDBOX : AUTONOMY_PROMPT;
+};
+
+// renderAutonomySettings(resolved, probe) → the render-owned blocks + honesty notes/degrades. PURE. The
+// sandbox is ALWAYS enabled (the Decision-1 floor: BOTH levels confine); auto-allow + defaultMode follow
+// the collapsed level. Command red-lines land under ask/deny by value. The three non-command red-lines
+// are the sandbox DEFAULTS (network prompt-on-egress; fs cwd+$TMPDIR confine) — where 2.1.185 cannot
+// express a value distinctly it DEGRADES LOUDLY (never a silent allow, never silent pretend-security).
+export const renderAutonomySettings = (resolved, probe) => {
+  const level = effectiveAutonomyLevel(resolved);
+  const wantsSandbox = level === AUTONOMY_SANDBOX;
+  const sandbox = { [SANDBOX_ENABLED_KEY]: true, [SANDBOX_AUTOALLOW_KEY]: wantsSandbox };
+  const defaultMode = DEFAULT_MODE_FOR[level];
+  const ask = [];
+  const deny = [];
+  for (const rl of COMMAND_REDLINES) {
+    (resolved.redlines[rl] === 'deny' ? deny : ask).push(REDLINE_COMMAND_RULES[rl]);
+  }
+  const notes = [];
+  const degrades = [];
+  // network — 2.1.185 regular settings cannot HARD-BLOCK egress; both values render as no allowedDomains
+  // (prompt-on-egress). deny DEGRADES LOUDLY (can't hard-block); ask is the faithful sandbox default.
+  if (resolved.redlines.network === 'deny') {
+    degrades.push('network=deny requested, but claude 2.1.185 regular settings cannot HARD-BLOCK egress — rendered as prompt-on-egress (the sandbox default: no domains pre-allowed, a new domain still prompts). A silent hard block needs managed settings (allowManagedDomainsOnly).');
+  } else {
+    notes.push('network=ask → prompt on each new domain (the sandbox default; no domains pre-allowed).');
+  }
+  // credentials — 2.1.185 has NO sandbox.credentials at all (deny added 2.1.187, mask 2.1.199). BOTH
+  // values degrade loudly — never silent pretend-security.
+  degrades.push(`credentials=${resolved.redlines.credentials} requested, but claude 2.1.185 has NO sandbox credential denial (deny added in 2.1.187, mask in 2.1.199) — NPM_TOKEN/GITHUB_TOKEN and ~/.ssh are NOT hidden from sandboxed commands. Upgrade to 2.1.187+ for sandbox.credentials.`);
+  // fs_outside_repo — the sandbox default is a HARD confine to cwd+$TMPDIR; 2.1.185 has no
+  // prompt-on-outside-write, so `ask` DEGRADES LOUDLY to the deny form (hard confine).
+  if (resolved.redlines.fs_outside_repo === 'ask') {
+    degrades.push('fs_outside_repo=ask requested, but claude 2.1.185 has no prompt-on-outside-write — rendered as the deny form (writes hard-confined to cwd+$TMPDIR; an outside write is blocked, then auto-retried through the normal permission flow).');
+  } else {
+    notes.push('fs_outside_repo=deny → writes confined to cwd+$TMPDIR (the sandbox default).');
+  }
+  // sandbox availability (Step 3.3 probe) — a LOUD degrade where the OS can't sandbox; the red-lines +
+  // defaultMode still land (they are permission rules, sandbox-independent).
+  if (!probe.available) {
+    degrades.push(`sandbox UNAVAILABLE on this host (${probe.reason}) — claude renders the sandbox block but WARNS and runs UNSANDBOXED: ad-hoc scripts will still PROMPT and network/fs confinement is NOT enforced until it is available (Plan 2 offers to install the missing dependency). The red-lines + defaultMode still apply. failIfUnavailable is left UNSET so the session is never bricked.`);
+  }
+  return { level, activities: resolved.activities, sandbox, defaultMode, ask, deny, notes, degrades };
+};
+
+// mergeAutonomySettings(projectData, render) → merged settings.json (merge-don't-clobber). Touches ONLY
+// the render-owned blocks: the sandbox key (foreign sub-keys preserved), permissions.defaultMode, and
+// the render-owned red-line rules under permissions.ask/deny (a policy flip MOVES a rule between ask and
+// deny rather than duplicating it; foreign ask/deny entries preserved). permissions.allow is UNTOUCHED
+// as a value; every foreign top-level key (e.g. the gate-hook `hooks` block) is preserved.
+export const mergeAutonomySettings = (projectData, render) => {
+  const base = projectData ?? {};
+  const permissions = getPermissions(base);
+  const existingSandbox = isJsonObject(base[SANDBOX_KEY]) ? base[SANDBOX_KEY] : {};
+  const existingAsk = Array.isArray(permissions.ask) ? permissions.ask : [];
+  const existingDeny = Array.isArray(permissions.deny) ? permissions.deny : [];
+  const stripOwned = (arr) => arr.filter((e) => !RENDER_OWNED_REDLINE_RULES.includes(e));
+  const mergedAsk = [...stripOwned(existingAsk), ...render.ask];
+  const mergedDeny = [...stripOwned(existingDeny), ...render.deny];
+  const mergedPermissions = { ...permissions, [DEFAULT_MODE_KEY]: render.defaultMode };
+  if (mergedAsk.length) mergedPermissions.ask = mergedAsk;
+  else delete mergedPermissions.ask;
+  if (mergedDeny.length) mergedPermissions.deny = mergedDeny;
+  else delete mergedPermissions.deny;
+  const mergedSandbox = { ...existingSandbox, [SANDBOX_ENABLED_KEY]: true, [SANDBOX_AUTOALLOW_KEY]: render.sandbox[SANDBOX_AUTOALLOW_KEY] };
+  return { ...base, [SANDBOX_KEY]: mergedSandbox, permissions: mergedPermissions };
+};
+
+// Each command red-line as [tool, subcommand], for bypass detection over the real Claude allow-rule
+// semantics. Global options can sit between the tool and the subcommand (`git -c x commit`,
+// `npm --registry=r publish`), so bypass detection scans for the subcommand ANYWHERE in the tokens
+// rather than requiring a strict prefix.
+const REDLINE_COMMAND_WORDS = Object.freeze({ commit: ['git', 'commit'], push: ['git', 'push'], publish: ['npm', 'publish'] });
+
+// allowEntryBypass(entry) → the red-lines a single allow entry would AUTO-APPROVE (or null). Parse the
+// entry's command (wildcard `Bash(C:*)` or exact `Bash(C)`). It bypasses red-line R = <tool> <sub> when
+// the command's first token is <tool> AND either (a) it is the bare-tool WILDCARD `Bash(git:*)` /
+// `Bash(npm:*)` (subsumes every subcommand of that tool), or (b) <sub> appears anywhere in the tokens
+// — covering `git commit`, `git -c user.name=x commit`, `npm --registry=r publish`, and exact
+// `Bash(git commit)`. Conservative (over-flags a benign `git branch commit` — a warning, never a write);
+// the render-owned `:*` forms alone would miss broad/exact/global-option allows.
+const allowEntryBypass = (entry) => {
+  const wild = getBashAllowCommand(entry);
+  const cmd = wild ?? getBashExactCommand(entry);
+  if (cmd === undefined) return null;
+  const tokens = tokenizeCommand(cmd);
+  const hit = [];
+  for (const [rl, [tool, sub]] of Object.entries(REDLINE_COMMAND_WORDS)) {
+    if (tokens[0] !== tool) continue;
+    // A bare-tool WILDCARD (`Bash(git:*)`) subsumes every subcommand; otherwise the subcommand must
+    // appear as a token. An EXACT bare-tool (`Bash(git)`) matches only the literal "git" (no bypass).
+    if ((wild !== undefined && tokens.length === 1) || tokens.slice(1).includes(sub)) hit.push(rl);
+  }
+  return hit.length ? hit : null;
+};
+
+// collectRedlineBypass(sources) → the pre-existing allow entries (per file) that would AUTO-APPROVE a
+// render-owned command red-line (commit/push/publish), defeating the rendered ask/deny. The render never
+// touches allow, so it cannot fix this — it REPORTS it loudly (remove the allow entry by hand).
+const collectRedlineBypass = (sources) =>
+  sources.flatMap(({ source, data }) =>
+    getAllowEntries(data).flatMap((entry) => {
+      const redlines = allowEntryBypass(entry);
+      return redlines ? [{ source, entry, redlines }] : [];
+    }));
+
+// collectSandboxWeakenings(sources) → foreign `sandbox` sub-keys (in either settings file) that WEAKEN a
+// rendered red-line: `allowedDomains` pre-allows egress (weakens network); a filesystem write-allowance
+// permits writes outside cwd (weakens fs_outside_repo); `allowUnsandboxedCommands:true` lets commands
+// escape the sandbox entirely. The render owns only enabled/autoAllow and preserves other sandbox
+// sub-keys (merge-don't-clobber, never a silent clobber of the user's sandbox tuning), so a pre-existing
+// weakening sub-key is REPORTED loudly (remove it by hand) — never silently carried as security.
+const collectSandboxWeakenings = (sources) =>
+  sources.flatMap(({ source, data }) => {
+    const sb = isJsonObject(data?.[SANDBOX_KEY]) ? data[SANDBOX_KEY] : {};
+    const out = [];
+    const net = isJsonObject(sb.network) ? sb.network : {};
+    if (Array.isArray(net.allowedDomains) && net.allowedDomains.length) {
+      out.push({ source, key: `${SANDBOX_KEY}.network.allowedDomains`, weakens: 'network', detail: `${net.allowedDomains.length} pre-allowed domain(s) — egress to them is not gated` });
+    }
+    const fsb = isJsonObject(sb.filesystem) ? sb.filesystem : {};
+    if (Array.isArray(fsb.allowWrite) && fsb.allowWrite.length) {
+      out.push({ source, key: `${SANDBOX_KEY}.filesystem.allowWrite`, weakens: 'fs_outside_repo', detail: `${fsb.allowWrite.length} path(s) writable outside cwd+$TMPDIR` });
+    }
+    if (sb.allowUnsandboxedCommands === true) {
+      out.push({ source, key: `${SANDBOX_KEY}.allowUnsandboxedCommands`, weakens: 'every sandbox red-line', detail: 'commands may run unsandboxed' });
+    }
+    if (Array.isArray(sb.excludedCommands) && sb.excludedCommands.length) {
+      out.push({ source, key: `${SANDBOX_KEY}.excludedCommands`, weakens: 'every sandbox red-line', detail: `${sb.excludedCommands.length} command(s) run UNSANDBOXED (network/fs confinement not applied to them)` });
+    }
+    return out;
+  });
+
+// collectLocalMasks(localData, render) → the render-owned keys a settings.local.json value MASKS
+// (local > project, so a differing local value defeats the rendered one silently). The render owns
+// exactly permissions.defaultMode + sandbox.enabled + sandbox.autoAllowBashIfSandboxed — the COMPLETE
+// finite set of scalar render-owned keys (the ask/deny red-line arrays MERGE across scopes and are
+// covered by collectRedlineBypass). Reported loudly; the local file is the maintainer's, never written.
+const collectLocalMasks = (localData, render) => {
+  const local = localData ?? {};
+  const localPerms = getPermissions(local);
+  const localSandbox = isJsonObject(local[SANDBOX_KEY]) ? local[SANDBOX_KEY] : {};
+  const masks = [];
+  if (hasOwn(localPerms, DEFAULT_MODE_KEY) && localPerms[DEFAULT_MODE_KEY] !== render.defaultMode) {
+    masks.push({ key: `permissions.${DEFAULT_MODE_KEY}`, local: localPerms[DEFAULT_MODE_KEY], rendered: render.defaultMode });
+  }
+  for (const k of [SANDBOX_ENABLED_KEY, SANDBOX_AUTOALLOW_KEY]) {
+    if (hasOwn(localSandbox, k) && localSandbox[k] !== render.sandbox[k]) {
+      masks.push({ key: `${SANDBOX_KEY}.${k}`, local: localSandbox[k], rendered: render.sandbox[k] });
+    }
+  }
+  return masks;
+};
+
+const formatActivityLevels = (activities) =>
+  Object.entries(activities).map(([a, v]) => `${a}=${v.autonomy}`).join(', ');
+
+export const formatAutonomyResult = (r) => {
+  const lines = [
+    r.wrote ? 'agent-workflow autonomy render - APPLY' : 'agent-workflow autonomy render - DRY RUN (no changes)',
+    `policy: ${r.source}  ·  per-activity: ${formatActivityLevels(r.activities)}  ·  effective global autonomy: ${r.level}`,
+  ];
+  if (r.level === AUTONOMY_PROMPT && !Object.values(r.activities).every((v) => v.autonomy === AUTONOMY_PROMPT)) {
+    lines.push('  note: global autonomy is `prompt` because not every activity is `sandbox` — set every activity to sandbox (set-autonomy) to enable global auto-allow (conservative unanimity; the sandbox still confines).');
+  }
+  lines.push(
+    `sandbox: ${SANDBOX_ENABLED_KEY}=true, ${SANDBOX_AUTOALLOW_KEY}=${r.sandbox[SANDBOX_AUTOALLOW_KEY]} (${r.level === AUTONOMY_SANDBOX ? 'auto-allow confined commands' : 'auto-allow OFF — confine only'})`,
+    `permissions.${DEFAULT_MODE_KEY}: ${r.wrote ? 'set to' : 'would set to'} ${r.defaultMode}`,
+    `permissions.ask (render-owned red-lines): ${r.ask.length ? r.ask.join(', ') : '(none)'}`,
+    `permissions.deny (render-owned red-lines): ${r.deny.length ? r.deny.join(', ') : '(none)'}`,
+    'permissions.allow: untouched (policy-only render)',
+  );
+  for (const n of r.notes) lines.push(`  note: ${n}`);
+  for (const d of r.degrades) lines.push(`  ⚠ DEGRADE: ${d}`);
+  for (const m of r.localMasks ?? []) {
+    lines.push(`  ⚠ ${SETTINGS_LOCAL_FILE} sets ${m.key}=${JSON.stringify(m.local)}, which MASKS this render's ${m.key}=${JSON.stringify(m.rendered)} (local > project) — the local value wins, so the render is not effective for that key; the local file is the maintainer's and is never written by the kit.`);
+  }
+  for (const b of r.redlineBypass ?? []) {
+    lines.push(`  ⚠ DEGRADE: ${b.source} has a pre-existing allow entry ${b.entry} that would BYPASS the rendered red-line(s) ${b.redlines.join('/')} (a matching allow rule AUTO-APPROVES the command, defeating ask/deny) — remove it by hand; this render never touches permissions.allow.`);
+  }
+  for (const w of r.sandboxWeakenings ?? []) {
+    lines.push(`  ⚠ DEGRADE: ${w.source} has ${w.key} (${w.detail}), which WEAKENS the rendered ${w.weakens} red-line — the render preserves your sandbox tuning (never clobbers it), so remove it by hand if you want the red-line fully enforced.`);
+  }
+  lines.push(AUTONOMY_RESIDUAL_NOTICE);
+  if (!r.wrote) lines.push(`re-run with ${FLAG_APPLY} to write .claude/settings.json (only the render-owned blocks change).`);
+  return lines.join(LF);
+};
+
+// writeAutonomyProfile({ cwd, apply }, deps) → the preview/apply result. Reuses preflightVelocityProfile
+// for the SAFETY bar (refuse bypassPermissions / unsafe mode in either settings file, symlink-safe,
+// stamp gate on apply, resolveEffectiveMode across BOTH files). Refuses an absent policy loudly.
+export const writeAutonomyProfile = ({ cwd, apply = false } = {}, deps = {}) => {
+  const projectDir = cwd ?? deps.cwd ?? process.cwd();
+  const readFile = deps.readFile ?? deps.readFileSync ?? readFileSync;
+  const lstat = deps.lstat ?? deps.lstatSync ?? lstatSync;
+  const { config, source } = loadAutonomy(projectDir, readFile, lstat);
+  if (source === 'none' || config === null) {
+    throw makeVelocityProfileError(
+      VELOCITY_NO_POLICY,
+      `no ${AUTONOMY_REL} to render — seed a policy first (set-autonomy previews, then --write; or hand-edit it), then re-run the autonomy render`,
+    );
+  }
+  const resolved = resolveAutonomy(config);
+  const probe = probeSandboxAvailability(deps);
+  const render = renderAutonomySettings(resolved, probe);
+  const preflight = preflightVelocityProfile({ cwd: projectDir }, deps);
+  // local-mask honesty: a settings.local.json value for ANY render-owned key (defaultMode + the sandbox
+  // enable/auto-allow keys) that differs from the render's MASKS it (local > project). Reported loudly;
+  // the local file is the maintainer's and is never touched.
+  const localMasks = collectLocalMasks(preflight.localSettings?.data, render);
+  // Red-line-bypass honesty: a pre-existing `permissions.allow` entry (in EITHER settings file) that
+  // matches a render-owned command red-line (commit/push/publish) AUTO-APPROVES the command, defeating
+  // the render's ask/deny placement. The render never touches allow, so it cannot fix this — it REPORTS
+  // it loudly (remove the allow entry by hand). Reuse matchesMutatingAllowCommand (the velocity allow-screen
+  // predicate) so the two surfaces agree on what a mutating allow entry is.
+  const settingsSources = [
+    { source: SETTINGS_FILE, data: preflight.projectSettings?.data },
+    { source: SETTINGS_LOCAL_FILE, data: preflight.localSettings?.data },
+  ];
+  const redlineBypass = collectRedlineBypass(settingsSources);
+  const sandboxWeakenings = collectSandboxWeakenings(settingsSources);
+  const resultBase = {
+    autonomy: true,
+    source,
+    probe,
+    ...render,
+    effectiveMode: preflight.effectiveMode,
+    localMasks,
+    redlineBypass,
+    sandboxWeakenings,
+    stamp: preflight.stamp,
+    stampOk: preflight.stampOk,
+  };
+  if (!apply) return { wrote: false, dryRun: true, ...resultBase };
+
+  if (!preflight.stampOk) {
+    throw makeVelocityProfileError(
+      VELOCITY_STAMP,
+      `not a deployed agent-workflow project at lineage ${EXPECTED_WORKFLOW_VERSION} (found ${preflight.stamp ?? 'none'}) - run init/upgrade first`,
+    );
+  }
+  const fs = fsDeps(deps);
+  const settingsPath = join(projectDir, SETTINGS_FILE);
+  if (preflight.claudeDirAbsent) fs.mkdir(join(projectDir, CLAUDE_DIR), { recursive: true });
+  const merged = mergeAutonomySettings(preflight.projectSettings.data, render);
+  fs.writeFile(settingsPath, formatJson(merged, preflight.projectSettings.eol ?? LF), UTF8);
+  return { wrote: true, dryRun: false, settingsPath, mergedSettings: merged, ...resultBase };
+};
+
+// checkAutonomyProfile({ cwd }, deps) → the read-only drift-guard: recompute the render from
+// docs/ai/autonomy.json + the probe, compare against the live .claude/settings.json blocks the render
+// OWNS (sandbox.enabled / sandbox.autoAllowBashIfSandboxed / permissions.defaultMode / the render-owned
+// red-line rules' array placement). Hand-edits OUTSIDE those blocks never flag (merge-don't-clobber
+// boundary); a hand-edit INSIDE a render-owned block flags as drift naming the exact key. Refuses an
+// absent policy loudly (nothing to check against).
+export const checkAutonomyProfile = ({ cwd } = {}, deps = {}) => {
+  const projectDir = cwd ?? deps.cwd ?? process.cwd();
+  const readFile = deps.readFile ?? deps.readFileSync ?? readFileSync;
+  const lstat = deps.lstat ?? deps.lstatSync ?? lstatSync;
+  const { config, source } = loadAutonomy(projectDir, readFile, lstat);
+  if (source === 'none' || config === null) {
+    throw makeVelocityProfileError(VELOCITY_NO_POLICY, `no ${AUTONOMY_REL} to check against — seed a policy first (set-autonomy previews, then --write)`);
+  }
+  const render = renderAutonomySettings(resolveAutonomy(config), probeSandboxAvailability(deps));
+  const settings = readSettingsFile(join(projectDir, SETTINGS_FILE), { ...deps, cwd: projectDir });
+  const data = settings.present ? settings.data : {};
+  const drift = [];
+  const liveSandbox = isJsonObject(data[SANDBOX_KEY]) ? data[SANDBOX_KEY] : {};
+  if (liveSandbox[SANDBOX_ENABLED_KEY] !== true) {
+    drift.push(`${SANDBOX_KEY}.${SANDBOX_ENABLED_KEY}: expected true, found ${JSON.stringify(liveSandbox[SANDBOX_ENABLED_KEY])}`);
+  }
+  if (liveSandbox[SANDBOX_AUTOALLOW_KEY] !== render.sandbox[SANDBOX_AUTOALLOW_KEY]) {
+    drift.push(`${SANDBOX_KEY}.${SANDBOX_AUTOALLOW_KEY}: expected ${render.sandbox[SANDBOX_AUTOALLOW_KEY]}, found ${JSON.stringify(liveSandbox[SANDBOX_AUTOALLOW_KEY])}`);
+  }
+  const perms = getPermissions(data);
+  if (perms[DEFAULT_MODE_KEY] !== render.defaultMode) {
+    drift.push(`permissions.${DEFAULT_MODE_KEY}: expected ${render.defaultMode}, found ${JSON.stringify(perms[DEFAULT_MODE_KEY])}`);
+  }
+  const liveAsk = Array.isArray(perms.ask) ? perms.ask : [];
+  const liveDeny = Array.isArray(perms.deny) ? perms.deny : [];
+  // Count occurrences (not includes()): a DUPLICATE render-owned rule is drift too — the render emits
+  // each owned rule exactly once, so a re-apply would dedup it; the live block no longer matches.
+  const countIn = (arr, rule) => arr.filter((e) => e === rule).length;
+  for (const rl of COMMAND_REDLINES) {
+    const rule = REDLINE_COMMAND_RULES[rl];
+    const expectDeny = render.deny.includes(rule);
+    const want = expectDeny ? 'deny' : 'ask';
+    const other = expectDeny ? 'ask' : 'deny';
+    const inExpected = countIn(expectDeny ? liveDeny : liveAsk, rule);
+    const inOther = countIn(expectDeny ? liveAsk : liveDeny, rule);
+    if (inExpected !== 1) drift.push(`permissions.${want}: expected exactly one ${rule} (redlines.${rl}=${want}), found ${inExpected}`);
+    if (inOther !== 0) drift.push(`permissions.${other}: ${rule} present ${inOther}× but redlines.${rl}=${want} (belongs under ${want})`);
+  }
+  return { inSync: drift.length === 0, drift, source, level: render.level, settingsPresent: settings.present };
+};
+
+export const formatAutonomyCheck = (c) =>
+  c.inSync
+    ? `autonomy --check: IN SYNC — ${SETTINGS_FILE} matches the ${c.source} render (level ${c.level}).`
+    : [
+        `autonomy --check: DRIFT — ${SETTINGS_FILE} diverges from the ${c.source} render (level ${c.level}):`,
+        ...c.drift.map((d) => `  ✗ ${d}`),
+        `re-run \`velocity ${FLAG_AUTONOMY} ${FLAG_APPLY}\` to reconcile (only the render-owned blocks change).`,
+      ].join(LF);
+
 export const parseArgs = (argv) => {
   const parsed = argv.reduce(
     (state, arg, index, allArgs) => {
@@ -765,6 +1203,8 @@ export const parseArgs = (argv) => {
       if (arg === FLAG_APPLY) return { ...state, apply: true };
       if (arg === FLAG_ACCEPT_EDITS) return { ...state, acceptEdits: true };
       if (arg === FLAG_KIT_TOOLS) return { ...state, kitTools: true };
+      if (arg === FLAG_AUTONOMY) return { ...state, autonomy: true };
+      if (arg === FLAG_CHECK) return { ...state, check: true };
       if (arg === FLAG_CWD) {
         const next = allArgs[index + 1];
         if (next === undefined || next.startsWith('-')) throw fail(EXIT_USAGE, `${FLAG_CWD} needs a directory argument`);
@@ -773,16 +1213,26 @@ export const parseArgs = (argv) => {
       if (arg.startsWith('-')) throw fail(EXIT_USAGE, `unknown flag: ${arg}`);
       throw fail(EXIT_USAGE, `unexpected argument: ${arg}`);
     },
-    { help: false, dryRunFlag: false, apply: false, acceptEdits: false, kitTools: false, cwd: undefined, skipNext: false },
+    { help: false, dryRunFlag: false, apply: false, acceptEdits: false, kitTools: false, autonomy: false, check: false, cwd: undefined, skipNext: false },
   );
 
   if (parsed.dryRunFlag && parsed.apply) throw fail(EXIT_USAGE, `${FLAG_DRY_RUN} and ${FLAG_APPLY} cannot be used together`);
+  // The --autonomy render is a SEPARATE mode from the allowlist seeding: the allowlist-only flags
+  // (--accept-edits sets defaultMode; --kit-tools seeds the kit tier) are meaningless under a
+  // policy-driven render (defaultMode comes from the policy; --autonomy never seeds the allowlist).
+  // Reject the mix LOUDLY rather than silently ignoring a flag.
+  if (parsed.autonomy && parsed.acceptEdits) throw fail(EXIT_USAGE, `${FLAG_AUTONOMY} sets ${DEFAULT_MODE_KEY} from the policy — ${FLAG_ACCEPT_EDITS} (an allowlist-mode flag) cannot be combined with it`);
+  if (parsed.autonomy && parsed.kitTools) throw fail(EXIT_USAGE, `${FLAG_KIT_TOOLS} is an allowlist-mode flag — it cannot be combined with ${FLAG_AUTONOMY} (a policy-only render)`);
+  if (parsed.check && !parsed.autonomy) throw fail(EXIT_USAGE, `${FLAG_CHECK} is only valid with ${FLAG_AUTONOMY}`);
+  if (parsed.check && parsed.apply) throw fail(EXIT_USAGE, `${FLAG_CHECK} is read-only — it cannot be combined with ${FLAG_APPLY}`);
   return {
     help: parsed.help,
     dryRun: parsed.apply ? false : true,
     apply: parsed.apply,
     acceptEdits: parsed.acceptEdits,
     kitTools: parsed.kitTools,
+    autonomy: parsed.autonomy,
+    check: parsed.check,
     cwd: parsed.cwd,
   };
 };
@@ -796,8 +1246,21 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
       log(USAGE);
       return EXIT_OK;
     }
+    const cwd = args.cwd ?? deps.cwd ?? process.cwd();
+    // The --autonomy render is a separate mode from the allowlist seeding (policy → the render-owned
+    // settings blocks); --check turns it into a read-only drift gate (exit 1 on drift).
+    if (args.autonomy) {
+      if (args.check) {
+        const check = checkAutonomyProfile({ cwd }, deps);
+        log(formatAutonomyCheck(check));
+        return check.inSync ? EXIT_OK : EXIT_PRECONDITION;
+      }
+      const result = writeAutonomyProfile({ cwd, apply: args.apply }, deps);
+      log(formatAutonomyResult(result));
+      return EXIT_OK;
+    }
     const result = writeVelocityProfile(
-      { cwd: args.cwd ?? deps.cwd ?? process.cwd(), acceptEdits: args.acceptEdits, dryRun: args.dryRun, kitTools: args.kitTools },
+      { cwd, acceptEdits: args.acceptEdits, dryRun: args.dryRun, kitTools: args.kitTools },
       deps,
     );
     log(formatVelocityProfileResult(result));

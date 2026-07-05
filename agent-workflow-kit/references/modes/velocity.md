@@ -31,3 +31,16 @@ Honesty notes: tier entries get **NO PreToolUse-hook residual coverage** — the
 **Invariants:** creates `.claude/` if absent and writes **only** `.claude/settings.json` (no other file); **never** allowlists commit/push/publish; **never** writes `settings.local.json`; never commits; opt-in `acceptEdits`, never silent.
 
 **Exit codes:** `0` done / dry-run; `1` a precondition STOP (stamp not current, unsafe mode, malformed settings, symlinked `.claude` / non-regular target); `2` bad arguments.
+
+---
+
+## The `--autonomy` render (separate mode — AD-044)
+
+`--autonomy` is a **separate mode** from the allowlist seeding above: it renders the per-project autonomy policy (`docs/ai/autonomy.json`, written by `set-autonomy` — `${CLAUDE_SKILL_DIR}/references/modes/set-autonomy.md`) into the `.claude/settings.json` blocks it **owns** — the `sandbox` block, `permissions.ask`/`permissions.deny` red-lines, and `permissions.defaultMode`. It is **policy-only**: it never seeds the read-only allowlist and leaves `permissions.allow` untouched as a value. Run **`node ${CLAUDE_SKILL_DIR}/tools/velocity-profile.mjs --autonomy [--apply] [--cwd <dir>]`**:
+
+1. **Preview by default** (writes nothing); **`--apply`** merges the render-owned blocks into `.claude/settings.json` (merge-don't-clobber — foreign top-level keys, existing `permissions.allow`, and foreign ask/deny entries preserved; a policy flip MOVES a red-line rule between ask/deny rather than duplicating it). It **refuses an absent policy** loudly (seed one first with `set-autonomy`). It **never writes `settings.local.json`**; a `settings.local.json` `defaultMode` that would mask the render is reported (local > project).
+2. **`--autonomy --check`** is a **read-only drift gate**: it recomputes the render and compares against the live render-owned blocks — exit `0` in sync, exit `1` on drift (naming the exact key). A hand-edit OUTSIDE those blocks never flags.
+3. **Version-sensitive (characterized against the real claude 2.1.185).** Sandbox keys are `sandbox.enabled` + `sandbox.autoAllowBashIfSandboxed`; `sandbox` level ⇒ auto-allow + `defaultMode: acceptEdits`, `prompt` level ⇒ auto-allow OFF + `defaultMode: default` (the sandbox stays enabled as a confine floor either way). Red-lines use the argument-matching `:*` wildcard (`Bash(git commit:*)` / `Bash(git push:*)` / `Bash(npm publish:*)`). Where 2.1.185 cannot express a red-line distinctly — a **network hard-block** (regular settings only prompt on egress), **credential denial** (`sandbox.credentials` is 2.1.187+ / mask 2.1.199+), or a **prompt-on-outside-write** — the render **DEGRADES LOUDLY** (never a silent allow, never pretend-security). A missing Linux dependency (`socat`/`bwrap`) or an unsupported platform degrades the WHOLE sandbox to unsandboxed — the render still lands the red-lines + `defaultMode` and caveats that ad-hoc scripts will still prompt.
+4. **`--autonomy` cannot combine** with `--accept-edits` or `--kit-tools` (allowlist-mode flags) — a loud usage error.
+
+**Autonomy invariants:** policy-only (never seeds the allowlist, leaves `permissions.allow` untouched) · writes only `.claude/settings.json` (never `settings.local.json`) · refuses an absent policy · merge-don't-clobber · degrades loudly where 2.1.185 can't enforce · previews by default · never commits.

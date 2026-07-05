@@ -130,7 +130,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //     + tools/seed-gates.mjs + tools/atomic-write.mjs (the consent-gated seeder pair, AD-042)
     //     + tools/bridge-settings.mjs + tools/bridge-settings-read.mjs (the host-level bridge-settings
     //       writer + its read-only core, bridges 2.3.0 / D6; modes/bridge-settings.md is the 17th mode).
-    assert.equal(packed.length, 121, `tarball file count drifted (${packed.length} ≠ 121)`);
+    // 125 = 121 + the 4 autonomy-policy files (AD-044 Plan 1): tools/autonomy-config.mjs (schema/read
+    //       core), tools/autonomy-write.mjs (the one fs-writer), tools/set-autonomy.mjs (the writer CLI),
+    //       references/modes/set-autonomy.md (the 18th mode). The *.test.mjs siblings are stripped by files[].
+    assert.equal(packed.length, 125, `tarball file count drifted (${packed.length} ≠ 125)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
