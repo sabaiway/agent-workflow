@@ -39,7 +39,7 @@ describe('review-ledger schema — the fixture validates + malformed variants re
   });
 
   it('rejects a non-object', () => assert.equal(validateRecord(42).ok, false));
-  it('rejects a bad schema version', () => assert.equal(validateRecord({ ...roundFixture(), schema: 2 }).ok, false));
+  it('rejects an unsupported schema version', () => assert.equal(validateRecord({ ...roundFixture(), schema: 99 }).ok, false));
   it('rejects a missing loop', () => assert.equal(validateRecord({ ...roundFixture(), loop: '' }).ok, false));
   it('rejects a bad activity', () => assert.equal(validateRecord({ ...roundFixture(), activity: 'nope' }).ok, false));
   it('rejects a bad kind', () => assert.equal(validateRecord({ ...roundFixture(), kind: 'nope' }).ok, false));
@@ -142,10 +142,84 @@ describe('review-ledger schema — the fixture validates + malformed variants re
     assert.equal(r.readError, undefined);
   });
 
-  it('accepts a triage classification with an ABSENT testId (Decision 8 defaults null — agy R3)', () => {
+  it('accepts a triage classification with an ABSENT testId (v1 tolerance defaults null — agy R3)', () => {
     const t = triageFixture();
     delete t.classifications[0].testId;
     assert.equal(validateRecord(t).ok, true);
+  });
+});
+
+// ── schema v2 (M2/AD-046): fixable-bug ⟹ non-null well-formed testId; v1 stays tolerant ──────────
+// The test-per-fold binding — a fold recorded as a fixable-bug MUST name the red→green test that pins
+// it. Enforced only under schema 2 so historical/live v1 ledgers never retroactively become malformed
+// (a malformed line cascades fail-closed refusals in the writer teeth AND the --check gate). decideStop
+// never reads testId — this is validation-only (Decision 2).
+describe('review-ledger schema v2 — testId enforcement (M2/AD-046)', () => {
+  // A resolvable testId of the Decision-3 form "<repo-relative test file>#<test-name-pattern>".
+  const WELL_FORMED_TESTID = 'agent-workflow-kit/tools/review-ledger.test.mjs#refuses a round beyond the hard-max';
+  // A v2 triage carrying exactly one classification, over the v1 fixture's shared frame.
+  const v2Triage = (classification) => ({ ...triageFixture(), schema: 2, classifications: [classification] });
+  const cls = (over = {}) => ({ findingKey: 'k', class: 'fixable-bug', accepted: false, testId: WELL_FORMED_TESTID, note: '', ...over });
+
+  it('accepts a schema-2 round (rounds are version-agnostic)', () => {
+    assert.equal(validateRecord({ ...roundFixture(), schema: 2 }).ok, true);
+  });
+
+  it('v2 fixable-bug + a well-formed testId → ok', () => {
+    assert.equal(validateRecord(v2Triage(cls())).ok, true);
+  });
+
+  it('v2 fixable-bug + null testId → rejected, reason names testId', () => {
+    const r = validateRecord(v2Triage(cls({ testId: null })));
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /testId/);
+  });
+
+  it('v2 fixable-bug + ABSENT testId → rejected, reason names testId', () => {
+    const c = cls();
+    delete c.testId;
+    const r = validateRecord(v2Triage(c));
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /testId/);
+  });
+
+  it('v2 fixable-bug + malformed testId (missing "#") → rejected, reason names the failed check', () => {
+    const r = validateRecord(v2Triage(cls({ testId: 'no-separator-here' })));
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /malformed/);
+  });
+
+  it('v2 fixable-bug + malformed testId (empty left half "#pattern") → rejected, reason names the failed check', () => {
+    const r = validateRecord(v2Triage(cls({ testId: '#pattern' })));
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /malformed/);
+  });
+
+  it('v2 fixable-bug + malformed testId (empty right half "file#") → rejected, reason names the failed check', () => {
+    const r = validateRecord(v2Triage(cls({ testId: 'file#' })));
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /malformed/);
+  });
+
+  it('v2 inherent-layer-residual + null testId → ok (a non-fixable class may omit it)', () => {
+    assert.equal(validateRecord(v2Triage(cls({ class: 'inherent-layer-residual', accepted: true, testId: null }))).ok, true);
+  });
+
+  it('v2 escalate + null testId → ok (a non-fixable class may omit it)', () => {
+    assert.equal(validateRecord(v2Triage(cls({ class: 'escalate', accepted: true, testId: null }))).ok, true);
+  });
+
+  it('v1 tolerance — a schema:1 triage with fixable-bug + null testId is still ok', () => {
+    const v1 = { ...triageFixture(), schema: 1, classifications: [cls({ testId: null })] };
+    assert.equal(validateRecord(v1).ok, true);
+  });
+
+  it('a mixed v1 + v2 ledger reads back malformed: 0', () => {
+    const v1Round = FIXTURE.split('\n')[0]; // the schema-1 round line
+    const v2Line = JSON.stringify(v2Triage(cls()));
+    const { records, malformed } = readLedger('X', () => `${v1Round}\n${v2Line}`);
+    assert.equal(malformed, 0);
+    assert.equal(records.length, 2);
   });
 });
 

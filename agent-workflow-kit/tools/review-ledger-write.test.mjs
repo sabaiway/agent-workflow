@@ -9,6 +9,9 @@ import { readLedger } from './review-ledger.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FP = 'a'.repeat(64);
+// A resolvable testId of the Decision-3 form "<repo-relative test file>#<test-name-pattern>" —
+// required on every fixable-bug classification under schema v2 (M2/AD-046).
+const WELL_FORMED_TESTID = 'agent-workflow-kit/tools/review-ledger.test.mjs#refuses a round beyond the hard-max';
 
 // A helper: a round's origins are computed from its findings so the record is internally consistent.
 const originsOf = (findings) => {
@@ -48,7 +51,7 @@ describe('review-ledger-write — append + read back', () => {
   it('appends a triage after a round (JSONL grows, both parse)', () => {
     codexReceiptFile(receiptsPath);
     recordRound({ ...roundParams({ round: 1, backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 1, minors: 0, verdict: 'revise' }], findings: [{ findingKey: 'k', severity: 'major', origin: 'first-draft', backend: 'codex' }] }), cwd: dir, env: {} }, deps());
-    recordTriage({ loop: 'L', round: 1, classifications: [{ findingKey: 'k', class: 'fixable-bug', accepted: false, testId: null, note: '' }], timestamp: 't', cwd: dir, env: {} }, deps());
+    recordTriage({ loop: 'L', round: 1, classifications: [{ findingKey: 'k', class: 'fixable-bug', accepted: false, testId: WELL_FORMED_TESTID, note: '' }], timestamp: 't', cwd: dir, env: {} }, deps());
     const { records } = readLedger(ledgerPath);
     assert.equal(records.length, 2);
     assert.deepEqual(records.map((r) => r.kind), ['round', 'triage']);
@@ -147,7 +150,7 @@ describe('review-ledger-write — R1 folds (fail-closed ledger reads + triage ro
     codexReceiptFile(receiptsPath);
     recordRound({ ...roundParams({ round: 1, backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 1, minors: 0, verdict: 'revise' }], findings: [{ findingKey: 'k', severity: 'major', origin: 'first-draft', backend: 'codex' }] }), cwd: dir, env: {} }, deps());
     assert.throws(
-      () => recordTriage({ loop: 'L', round: 9, classifications: [{ findingKey: 'k', class: 'fixable-bug', accepted: false, testId: null, note: '' }], timestamp: 't', cwd: dir, env: {} }, deps()),
+      () => recordTriage({ loop: 'L', round: 9, classifications: [{ findingKey: 'k', class: 'fixable-bug', accepted: false, testId: WELL_FORMED_TESTID, note: '' }], timestamp: 't', cwd: dir, env: {} }, deps()),
       (e) => e.code === LEDGER_WRITE_STOP && /no such recorded round/.test(e.message),
     );
   });
@@ -156,7 +159,7 @@ describe('review-ledger-write — R1 folds (fail-closed ledger reads + triage ro
     codexReceiptFile(receiptsPath);
     recordRound({ ...roundParams({ round: 1, backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 1, minors: 0, verdict: 'revise' }], findings: [{ findingKey: 'k', severity: 'major', origin: 'first-draft', backend: 'codex' }] }), cwd: dir, env: {} }, deps());
     assert.throws(
-      () => recordTriage({ loop: 'L', round: 1, classifications: [{ findingKey: 'ghost', class: 'fixable-bug', accepted: false, testId: null, note: '' }], timestamp: 't', cwd: dir, env: {} }, deps()),
+      () => recordTriage({ loop: 'L', round: 1, classifications: [{ findingKey: 'ghost', class: 'fixable-bug', accepted: false, testId: WELL_FORMED_TESTID, note: '' }], timestamp: 't', cwd: dir, env: {} }, deps()),
       (e) => e.code === LEDGER_WRITE_STOP && /not a surviving blocking finding/.test(e.message),
     );
   });
@@ -210,14 +213,66 @@ describe('review-ledger-write — round sequentiality (codex R2)', () => {
   });
 });
 
-describe('review-ledger-write — testId/note normalization (agy R3, Decision 8)', () => {
+describe('review-ledger-write — testId/note normalization (absent optional field → filled; agy R3)', () => {
   it('recordTriage normalizes an ABSENT testId/note to null/"" in the stored record', () => {
+    // A non-fixable class may omit testId (v2 requires it only for fixable-bug) — use it to isolate
+    // the normalization behavior (absent optional field → filled) from the M2 enforcement.
     codexReceiptFile(receiptsPath);
     recordRound({ ...roundParams({ round: 1, backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 1, minors: 0, verdict: 'revise' }], findings: [{ findingKey: 'k', severity: 'major', origin: 'first-draft', backend: 'codex' }] }), cwd: dir, env: {} }, deps());
-    recordTriage({ loop: 'L', round: 1, classifications: [{ findingKey: 'k', class: 'fixable-bug', accepted: false }], timestamp: 't', cwd: dir, env: {} }, deps());
+    recordTriage({ loop: 'L', round: 1, classifications: [{ findingKey: 'k', class: 'inherent-layer-residual', accepted: true }], timestamp: 't', cwd: dir, env: {} }, deps());
     const rec = readLedger(ledgerPath).records.find((r) => r.kind === 'triage');
     assert.equal(rec.classifications[0].testId, null, 'absent testId → null');
     assert.equal(rec.classifications[0].note, '', 'absent note → ""');
+  });
+});
+
+describe('review-ledger-write — M2 testId enforcement (a fixable-bug requires a testId)', () => {
+  // Seed a round with a surviving major 'k' so a triage classifying 'k' passes the round-binding.
+  const seedRoundWithMajorK = () => {
+    codexReceiptFile(receiptsPath);
+    recordRound({ ...roundParams({ round: 1, backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 1, minors: 0, verdict: 'revise' }], findings: [{ findingKey: 'k', severity: 'major', origin: 'first-draft', backend: 'codex' }] }), cwd: dir, env: {} }, deps());
+  };
+  const classify = (classification) => recordTriage({ loop: 'L', round: 1, classifications: [classification], timestamp: 't', cwd: dir, env: {} }, deps());
+
+  it('refuses a fixable-bug with no testId — a typed STOP that states the rule + points at the red test', () => {
+    seedRoundWithMajorK();
+    assert.throws(
+      () => classify({ findingKey: 'k', class: 'fixable-bug', accepted: false }),
+      (e) => e.code === LEDGER_WRITE_STOP && /carries no testId/.test(e.message) && /write it first/.test(e.message),
+    );
+    assert.equal(readLedger(ledgerPath).records.filter((r) => r.kind === 'triage').length, 0, 'nothing recorded');
+  });
+
+  it('refuses a fixable-bug with a malformed testId (no "#" separator)', () => {
+    seedRoundWithMajorK();
+    assert.throws(
+      () => classify({ findingKey: 'k', class: 'fixable-bug', accepted: false, testId: 'no-separator-here' }),
+      (e) => e.code === LEDGER_WRITE_STOP && /malformed/.test(e.message),
+    );
+  });
+
+  it('records a fixable-bug with a well-formed testId — and emits schema 2', () => {
+    seedRoundWithMajorK();
+    const { record } = classify({ findingKey: 'k', class: 'fixable-bug', accepted: false, testId: WELL_FORMED_TESTID });
+    assert.equal(record.schema, 2, 'the writer emits schema 2');
+    assert.equal(record.classifications[0].testId, WELL_FORMED_TESTID);
+  });
+
+  it('records inherent-layer-residual / escalate WITHOUT a testId (only fixable-bug requires one)', () => {
+    // Both classify 'k' (a surviving major of round 1); a triage has no teeth, so two triages for the
+    // same round both record — one dir, one seed.
+    seedRoundWithMajorK();
+    for (const cls of ['inherent-layer-residual', 'escalate']) {
+      const { record } = classify({ findingKey: 'k', class: cls, accepted: true });
+      assert.equal(record.schema, 2);
+      assert.equal(record.classifications[0].testId, null, `${cls} may omit testId → normalized to null`);
+    }
+  });
+
+  it('a recorded ROUND also emits schema 2', () => {
+    codexReceiptFile(receiptsPath);
+    const { record } = recordRound({ ...roundParams({ round: 1, backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'SHIP' }] }), cwd: dir, env: {} }, deps());
+    assert.equal(record.schema, 2);
   });
 });
 
