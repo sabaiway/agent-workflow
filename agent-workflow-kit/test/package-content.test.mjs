@@ -92,6 +92,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the AD-038 review-enforcement pair: the read-only receipt checker + the facts assembler
       'tools/review-state.mjs',
       'tools/grounding.mjs',
+      // the AD-045 review-round LEDGER: the read-only checker (schema + decideStop + --check) + the sole writer
+      'tools/review-ledger.mjs',
+      'tools/review-ledger-write.mjs',
       // the consent-gated gates.json seeder + the shared atomic-write core it runs on (AD-042)
       'tools/seed-gates.mjs',
       'tools/atomic-write.mjs',
@@ -103,6 +106,7 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // and the catalog↔modes set-equality guard cover the full set)
       'references/modes/upgrade.md',
       'references/modes/help.md',
+      'references/modes/review-ledger.md',
       'references/shared/report-footer.md',
       'references/shared/composition-handoff.md',
       'references/shared/deploy-tail.md',
@@ -133,7 +137,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 125 = 121 + the 4 autonomy-policy files (AD-044 Plan 1): tools/autonomy-config.mjs (schema/read
     //       core), tools/autonomy-write.mjs (the one fs-writer), tools/set-autonomy.mjs (the writer CLI),
     //       references/modes/set-autonomy.md (the 18th mode). The *.test.mjs siblings are stripped by files[].
-    assert.equal(packed.length, 125, `tarball file count drifted (${packed.length} ≠ 125)`);
+    // 128 = 125 + the 3 review-round LEDGER files (AD-045): tools/review-ledger.mjs (schema + decideStop
+    //       + --check, read-only), tools/review-ledger-write.mjs (the sole writer), and
+    //       references/modes/review-ledger.md (the 19th mode). The *.test.mjs siblings are stripped by files[].
+    assert.equal(packed.length, 128, `tarball file count drifted (${packed.length} ≠ 128)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

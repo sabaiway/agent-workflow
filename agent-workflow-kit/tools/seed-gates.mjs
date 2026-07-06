@@ -44,6 +44,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const KIT_ROOT = resolve(HERE, '..');
 const TEMPLATE_PATH = join(KIT_ROOT, 'references', 'templates', 'gates.json');
 const REVIEW_STATE_TOOL = join(KIT_ROOT, 'tools', 'review-state.mjs');
+const REVIEW_LEDGER_TOOL = join(KIT_ROOT, 'tools', 'review-ledger.mjs');
 const STAMP_REL = join('docs', 'ai', '.workflow-version');
 
 const EXIT_OK = 0;
@@ -205,6 +206,41 @@ export const reviewStateCandidate = (cwd, deps = {}) => {
   }
 };
 
+// The conditional review-LEDGER candidate (AD-045) — the SAME consent + conditional rule as the
+// review-state candidate (offered ONLY when plan-execution.review is reviewed/council), keyed on the
+// same slot, path resolved + QUOTED. It gates the review-ROUND ledger (converged / accepted-residual);
+// review-state gates receipt PRESENCE. Both may be offered together — distinct axes.
+export const reviewLedgerCandidate = (cwd, deps = {}) => {
+  const toolPath = deps.reviewLedgerTool ?? REVIEW_LEDGER_TOOL;
+  try {
+    const { config } = loadConfig(resolve(cwd), deps.readFile ?? readFileSync, deps.lstat ?? lstatSync);
+    const declared = config?.['plan-execution']?.review;
+    if (declared !== 'reviewed' && declared !== 'council') return { candidate: null, note: null };
+    if (DQ_UNSAFE_PATH_PATTERN.test(toolPath)) {
+      return {
+        candidate: null,
+        note:
+          `the review-ledger candidate was withheld: the resolved kit path contains shell ` +
+          `metacharacters that do not survive double-quoting (${toolPath}) — declare the gate ` +
+          `by hand per references/modes/review-ledger.md`,
+      };
+    }
+    return {
+      candidate: {
+        id: 'review-ledger',
+        title: 'Review-round ledger: the in-flight loop is converged or accepted-residual',
+        cmd: `node "${toolPath}" --check`,
+      },
+      note: null,
+    };
+  } catch (err) {
+    return {
+      candidate: null,
+      note: `orchestration config unreadable (${err.message}) — the review-ledger candidate was not evaluated`,
+    };
+  }
+};
+
 // Every --only id must name an OFFERED entry — enforced in BOTH paths (dry-run and apply), before
 // any empty-offer shortcut, so a typo is a loud usage error, never a silent filter or a silent
 // "nothing to offer" success.
@@ -216,13 +252,18 @@ const assertOnlyIdsOffered = (offer, onlyIds = []) => {
   }
 };
 
-// The full offer: script entries + the conditional review-state candidate (last), plus loud notes.
+// The full offer: script entries + the conditional review-state + review-ledger candidates (last),
+// plus loud notes. Both review candidates key on the same slot (plan-execution.review reviewed/council)
+// but gate distinct axes (receipt presence vs review-round convergence) — offered together.
 export const buildOffer = (cwd, deps = {}) => {
   const entries = deriveScriptEntries(cwd, deps);
-  const { candidate, note } = reviewStateCandidate(cwd, deps);
+  const rs = reviewStateCandidate(cwd, deps);
+  const rl = reviewLedgerCandidate(cwd, deps);
+  const candidates = [rs.candidate, rl.candidate].filter(Boolean);
+  const notes = [rs.note, rl.note].filter(Boolean);
   return {
-    entries: candidate ? [...entries, candidate] : entries,
-    notes: note ? [note] : [],
+    entries: [...entries, ...candidates],
+    notes,
   };
 };
 
