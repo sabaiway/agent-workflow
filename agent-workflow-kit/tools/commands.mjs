@@ -175,6 +175,13 @@ const CATALOG = [
     kind: WRITER,
     oneLine: 'Assemble the verified-facts payload a grounded review runs against — the entry-point Hard Constraints plus a plan’s decision sections; prints it, or writes ONE scratch file with --out.',
   },
+  {
+    key: 'review-ledger',
+    invocation: invocationOf('review-ledger'),
+    group: 'Orchestrate',
+    kind: WRITER,
+    oneLine: 'Record each review round and read the computed crossover-stop for the plan-execution loop (converged / accepted-residual / triage-required); --check turns it into a gate exit code and forces a triage before over-running the review.',
+  },
 ];
 
 // Deep-freeze: freeze the array AND every entry, so the catalog is genuinely immutable at runtime

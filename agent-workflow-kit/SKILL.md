@@ -8,7 +8,7 @@ metadata:
 
 # agent-workflow-kit
 
-Deploys a **portable AI-agent memory-and-workflow system** into a project, and upgrades it as the kernel evolves — so any future agent can reconstruct project context in ~60 seconds and avoid repeating past mistakes.
+Deploys a **portable AI-agent memory-and-workflow system** into a project, and upgrades it as the kernel evolves — so any future agent can reconstruct project context fast and avoid repeating past mistakes.
 
 **Posture:** never leak kit internals — translate tool outcomes to plain language; Gotchas: `${CLAUDE_SKILL_DIR}/references/shared/deploy-tail.md`.
 
@@ -23,14 +23,13 @@ when it is present and healthy, and otherwise uses its **own bundled copy** (`re
 `migrations/`) — so the existing one-command install keeps working with **no new dependency on the
 memory substrate**. (The methodology slot is a separate axis: its fragment is read **live from the
 installed `agent-workflow-engine`**, which `npx @sabaiway/agent-workflow-kit@latest init` installs — a
-runtime dependency placed by `init` and read live; see `${CLAUDE_SKILL_DIR}/references/shared/composition-handoff.md`.)
+runtime dependency read live; see `${CLAUDE_SKILL_DIR}/references/shared/composition-handoff.md`.)
 `init` also **refreshes the installed memory substrate** (best-effort — a miss is a loud DEGRADED
-success: a warning with the exact recovery command + exit 0, never silent, never the engine's hard
-STOP; `--no-memory` skips it), so a returning `init` leaves **no stale core member**. The
+success: warn + the exact recovery command + exit 0, never silent, never the engine's hard STOP;
+`--no-memory` skips it), so a returning `init` leaves **no stale core member**. The
 execution-backend bridges are still never **placed** by `init` (placed on demand by `setup`, opt-in);
-**once placed**, `init` **refreshes** them from the kit's own bundled copies (refresh-only, local
-files, never a downgrade; `--no-bridges` skips it) — so a returning `init` leaves no stale placed
-bridge either.
+**once placed**, `init` **refreshes** them from the kit's own bundled copies (refresh-only, never a
+downgrade; `--no-bridges` skips it) — so a returning `init` leaves no stale placed bridge either.
 
 **Detection (kit-owned, decided BEFORE any project write).** Run the kit's **own shipped**
 validator — `node ${CLAUDE_SKILL_DIR}/tools/manifest/validate.mjs <memory-skill-dir>` — never a
@@ -38,9 +37,8 @@ validator shipped by the candidate (which could itself be broken). Delegate only
 hold:
 - result is **valid** and `kind` is `memory-substrate`;
 - **every required asset is present** in the candidate, at its real path:
-  `references/templates/`, **`references/templates/orchestration.json`** (the orchestration-config
-  template — a memory too old to ship it, pre-`1.2.0`, can't seed `docs/ai/orchestration.json`, so it
-  falls back to the kit's own bundled substrate, which does), `references/contracts.md`,
+  `references/templates/`, **`references/templates/orchestration.json`** (a pre-`1.2.0` memory can't
+  ship it, so it falls back to the kit's bundled substrate), `references/contracts.md`,
   `references/scripts/`, `scripts/stamp-takeover.mjs`, `migrations/`, `capability.json`. A partial
   install (manifest + `SKILL.md` only) is treated as **invalid**.
 
@@ -156,6 +154,10 @@ read-only — read `${CLAUDE_SKILL_DIR}/references/modes/review-state.md` before
 ### Mode: grounding
 
 writer — read `${CLAUDE_SKILL_DIR}/references/modes/grounding.md` before acting.
+
+### Mode: review-ledger
+
+writer — read `${CLAUDE_SKILL_DIR}/references/modes/review-ledger.md` before acting.
 
 ---
 

@@ -11,6 +11,7 @@ import {
   kebabIdOf,
   deriveScriptEntries,
   reviewStateCandidate,
+  reviewLedgerCandidate,
   buildOffer,
   formatPreview,
   applySeed,
@@ -213,6 +214,32 @@ describe('seed-gates — the review-state candidate keys on the slot the checker
   });
 });
 
+// ── the review-ledger candidate (AD-045) — same conditional rule, distinct axis ───────
+describe('seed-gates — the review-ledger candidate keys on the same slot (AD-045)', () => {
+  const COUNCIL_ON_EXECUTION = { 'plan-execution': { review: 'council' } };
+
+  it('offered when plan-execution.review declares reviewed/council; cmd is QUOTED and validates', () => {
+    mkProject({ scripts: {}, config: COUNCIL_ON_EXECUTION });
+    const { candidate } = reviewLedgerCandidate(cwd);
+    assert.ok(candidate, 'the candidate must be offered');
+    assert.equal(candidate.id, 'review-ledger');
+    assert.match(candidate.cmd, /^node "[^"]*tools\/review-ledger\.mjs" --check$/, 'resolved + QUOTED path (spaces survive)');
+    assert.deepEqual(validateDeclaration({ gates: [candidate] }), [candidate]);
+  });
+
+  it('a kit path with shell metacharacters is WITHHELD (loud note)', () => {
+    mkProject({ scripts: {}, config: COUNCIL_ON_EXECUTION });
+    const r = reviewLedgerCandidate(cwd, { reviewLedgerTool: '/tmp/kit$dir/tools/review-ledger.mjs' });
+    assert.equal(r.candidate, null);
+    assert.ok(r.note && /by hand/i.test(r.note), 'the withhold is stated with the hand-add recovery');
+  });
+
+  it('NEVER offered on a solo config or a council-on-plan-authoring-ONLY config', () => {
+    mkProject({ scripts: {}, config: { 'plan-authoring': { review: 'council' }, 'plan-execution': { review: 'solo' } } });
+    assert.equal(reviewLedgerCandidate(cwd).candidate, null);
+  });
+});
+
 // ── preview (dry-run) behavior ────────────────────────────────────────────────────────
 
 describe('seed-gates — preview is the default and writes NOTHING', () => {
@@ -400,7 +427,7 @@ describe('seed-gates — import direction + tier absence (structural)', () => {
   it('the offer composes script entries + the conditional review-state candidate (buildOffer)', () => {
     mkProject({ scripts: { test: 'x' }, config: { 'plan-execution': { review: 'council' } } });
     const offer = buildOffer(cwd);
-    assert.deepEqual(offer.entries.map((e) => e.id), ['test', 'review-state']);
+    assert.deepEqual(offer.entries.map((e) => e.id), ['test', 'review-state', 'review-ledger']);
     const preview = formatPreview(offer);
     assert.ok(preview.includes(TRUST_CHAIN_DISCLOSURE));
   });
