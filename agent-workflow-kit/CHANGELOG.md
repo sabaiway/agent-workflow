@@ -4,6 +4,39 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.36.0 — Review-round ledger: the prose crossover-stop becomes a computed signal (AD-045)
+
+A **feature** release (deployment-lineage head stays `1.3.0` — no migration). The review-loop
+crossover-stop that `planning.md` §9 and `procedures.md` describe in prose — "cap ≤2 rounds", the
+crossover, "fold-at-altitude vs residual", "{round N · finding-origin tally · per-backend verdict} …
+a computed signal, not a remembered rule" — was **prose with no checker** and broke under load. This
+ships it as a **mechanism** (DEBT-REVIEW-CAP): a review-round **LEDGER** that protects every consumer
+project's `plan-execution` review loop.
+
+- **`tools/review-ledger.mjs`** (read-only) — the record schema (two kinds, `round` / `triage`,
+  internally-consistency-validated), a tolerant reader (malformed lines counted + surfaced, never
+  dropped), the pure **`decideStop`** truth table returning exactly one state under a fixed precedence
+  (**converged > resolved-residual > triage-required > continue**) from machine fields only, the
+  integrity receipt cross-check, and the **`--check`** gate — **fail-CLOSED** on every unknown state
+  (detector failure · unreadable / malformed ledger · a corrupt round sequence · more than one plan
+  in flight).
+- **`tools/review-ledger-write.mjs`** (the sole writer, over the hardened `atomic-write` core) —
+  `record` / `classify` with **the teeth**: it refuses a round while triage is required, beyond the
+  hard-max ceiling of 3, or without a grounded review receipt, and enforces round-sequence integrity +
+  round-bound classifications. The read/write split is pinned by an import-split test; the ledger lives
+  in the git dir (uncommittable by construction, mirroring the receipts precedent).
+- **Command surface** — a `review-ledger` catalog entry + `### Mode: review-ledger` + its mode
+  reference; the conditional `seed-gates` candidate (offered only when `plan-execution.review` is
+  reviewed / council).
+- **Honest residual** (stated in the tool header, like `review-state`'s): the ledger attests a review
+  occurred and its ship-class is consistent; it does not prove the recorded counts are truthful nor
+  that a self-reported `degraded` is real — a self-discipline mechanism, not a security boundary.
+
+Self-arming dogfood: this release's own review loop was recorded through the ledger it builds
+(`--check` exits 0 via the `converged` branch). The optional per-fold `testId` slot exists but stays
+**unenforced** — enforcement + a fold-completeness signal + the canon-pointer mechanization are the
+next plan (DEBT-TEST-COMPLETENESS).
+
 ## 1.35.0 — Host-level bridge settings surface + Codex Fast tier as configuration (AD-043)
 
 A **feature** release (deployment-lineage head stays `1.3.0` — no migration). Bridge knobs like the

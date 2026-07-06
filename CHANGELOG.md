@@ -7,6 +7,20 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-06 — kit 1.36.0: review-round ledger — the prose crossover-stop becomes a computed signal (AD-045)
+
+The review-loop crossover-stop (`planning.md` §9 / `procedures.md`) was prose with no checker and
+broke under load. Ships as a **mechanism** (DEBT-REVIEW-CAP): `tools/review-ledger.mjs` (read-only —
+schema + tolerant reader + the pure `decideStop` truth table `converged > resolved-residual >
+triage-required > continue` + the fail-closed `--check` gate) and `tools/review-ledger-write.mjs` (the
+sole writer over the `atomic-write` core — `record` / `classify` with the teeth: refuse a round while
+triage is required, beyond hard-max 3, or without a grounded receipt; round-sequence integrity). The
+read/write split is import-split-test pinned; the ledger lives in the git dir (uncommittable). Adds the
+`review-ledger` command + mode + the conditional `seed-gates` candidate. Honest residual (stated): the
+ledger attests a review occurred + its ship-class is consistent, not that counts are truthful — a
+self-discipline mechanism, not a security boundary. `testId` enforcement + a fold-completeness signal +
+the canon-pointer mechanization are the next plan. See `agent-workflow-kit/CHANGELOG.md`.
+
 ## 2026-07-05 — kit 1.35.0 (bundling bridges 2.3.0): host-level bridge settings file + the Codex Fast tier as configuration (AD-043)
 
 Bridge knobs now live in ONE host-level file that survives kit upgrades:
