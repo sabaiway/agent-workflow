@@ -155,9 +155,11 @@ export const recordTriage = (params, deps = {}) => {
   if (ledgerPath == null) throw stop('cannot resolve the ledger path — not a git work tree and AW_REVIEW_LEDGER is unset');
   if (!(Number.isInteger(round) && round >= 1)) throw stop(`round must be an integer >= 1 (got ${round})`);
   const fingerprint = deps.computeFingerprint ? deps.computeFingerprint(cwd) : computeTreeFingerprint(cwd);
-  // Normalize each classification: testId "defaults null" (Decision 8), note defaults to '' — an
-  // absent optional field is FILLED, never rejected as malformed (agy R3). A non-array is left as-is
-  // for validateRecord to reject with a typed STOP (never a raw .map TypeError).
+  // Normalize each classification: an absent testId → null, an absent note → '' — an absent optional
+  // field is FILLED, never rejected as malformed (agy R3). Under schema v2 (M2/AD-046) a fixable-bug
+  // normalized to a null testId then FAILS validateRecord below (a typed STOP naming the rule + the
+  // red-test-first fix) — the test-per-fold binding rides the existing validate path. A non-array is
+  // left as-is for validateRecord to reject with a typed STOP (never a raw .map TypeError).
   const normalized = Array.isArray(classifications) ? classifications.map((c) => ({ ...c, testId: c?.testId ?? null, note: c?.note ?? '' })) : classifications;
   const record = { schema: SCHEMA_VERSION, loop, activity, kind: 'triage', round, fingerprint, classifications: normalized, timestamp: timestamp ?? isoNow() };
   const v = validateRecord(record);
@@ -195,7 +197,9 @@ record   appends one review round. The JSON payload carries { loop, round, origi
          triage is required, beyond the hard-max ceiling of ${HARD_MAX} rounds, or when a non-degraded
          backend lacks a grounded code receipt for the current tree.
 classify appends one triage record. The JSON payload carries { loop, round, classifications } (each
-         { findingKey, class, accepted, testId, note }). This is what permits the next round.
+         { findingKey, class, accepted, testId, note }). A fixable-bug REQUIRES a testId — the
+         red→green test that pins the fold, formatted "<test-file>#<test-name-pattern>" (write it
+         first); inherent-layer-residual / escalate may omit it. This is what permits the next round.
 
 The read-only checker is a SEPARATE tool: node review-ledger.mjs --check / --status / --json.
 Exit codes: 0 written; 1 a typed STOP (teeth / malformed / missing receipt / fs error); 2 usage.`;

@@ -70,7 +70,14 @@ const SLOT = 'review';
 // forces triage. Shared with the writer (which imports it) — the writer-only hard-max ceiling lives
 // there, never here (it is not a decideStop input).
 export const REVIEW_CAP = 2;
-export const SCHEMA_VERSION = 1;
+// SCHEMA_VERSION is what the WRITER emits (M2/AD-046: a fixable-bug triage requires a non-null,
+// well-formed testId — the red→green test that pins the fold). The READER tolerates every
+// SUPPORTED_SCHEMAS version under its own per-version rules, so historical/live v1 ledgers never
+// retroactively become malformed (Decision 2 — a malformed line cascades fail-closed refusals in the
+// writer teeth AND the --check gate). v1 records keep the AD-045 rule (testId optional, unenforced);
+// only v2 enforces the test-per-fold binding. decideStop never reads testId (not a decideStop input).
+export const SCHEMA_VERSION = 2;
+const SUPPORTED_SCHEMAS = new Set([1, 2]);
 
 // The record vocabulary — the single home of every enum the schema validates.
 const ACTIVITIES_SET = new Set(['plan-authoring', 'plan-execution']);
@@ -111,6 +118,17 @@ export const isShipVerdict = (verdict) => {
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isNonEmptyString = (v) => typeof v === 'string' && v.length > 0;
 const isNonNegInt = (v) => Number.isInteger(v) && v >= 0;
+
+// testId FORMAT (Decision 3): "<repo-relative test file>#<test-name-pattern>" — a "#" separator with
+// BOTH halves non-empty. NO file-suffix rule: a suffix check would itself be a special case and would
+// block a consumer's own naming (e.g. `.spec.js`; agy R1). The reader validates FORMAT only (it stays
+// hermetic); the fold-completeness gate validates RESOLVABILITY via a bound-test probe run.
+const TESTID_SEPARATOR = '#';
+const isWellFormedTestId = (v) => {
+  if (typeof v !== 'string') return false;
+  const at = v.indexOf(TESTID_SEPARATOR);
+  return at > 0 && at < v.length - 1; // separator present, both halves non-empty
+};
 
 // validateRound(obj) → { ok, reason }. Structural checks + the two internal-consistency invariants:
 // the per-backend findings-by-severity equal that backend's counts, and the origins tally equals the
@@ -161,16 +179,25 @@ const validateRound = (obj) => {
   return { ok: true };
 };
 
-// validateTriage(obj) → { ok, reason }.
-const validateTriage = (obj) => {
+// validateTriage(obj, schema) → { ok, reason }. `schema` selects the per-version testId rule (v1
+// tolerant / v2 the test-per-fold binding) — the shared structural checks run in both versions.
+const validateTriage = (obj, schema = SCHEMA_VERSION) => {
   if (!Array.isArray(obj.classifications) || obj.classifications.length === 0) return { ok: false, reason: 'triage: classifications must be a non-empty array' };
   for (const c of obj.classifications) {
     if (!isPlainObject(c) || !isNonEmptyString(c.findingKey)) return { ok: false, reason: 'triage: each classification needs a findingKey' };
     if (!CLASSES.has(c.class)) return { ok: false, reason: `triage: classification ${c.findingKey} bad class "${c.class}"` };
     if (typeof c.accepted !== 'boolean') return { ok: false, reason: `triage: classification ${c.findingKey} missing boolean accepted` };
-    // testId "defaults null" (Decision 8) — an ABSENT key is accepted (treated as null), never
-    // rejected as malformed (agy R3). The writer normalizes it to null in the stored record.
+    // Structural (BOTH versions): testId is null/absent or a non-empty string — an ABSENT key is
+    // treated as null, never rejected here (agy R3). The writer normalizes it to null when stored.
     if (!(c.testId === undefined || c.testId === null || isNonEmptyString(c.testId))) return { ok: false, reason: `triage: classification ${c.findingKey} testId must be null/absent or a non-empty string` };
+    // Schema v2 (M2/AD-046) — the test-per-fold binding: a fixable-bug MUST carry a testId (the
+    // red→green test that pins the fold), and ANY present testId must be well-formed. v1 keeps the
+    // AD-045 rule (testId optional, unenforced) so historical/live v1 ledgers never become malformed.
+    if (schema >= 2) {
+      const present = isNonEmptyString(c.testId);
+      if (c.class === 'fixable-bug' && !present) return { ok: false, reason: `triage: classification ${c.findingKey} is a fixable-bug but carries no testId — record the red→green test that pins the fold (write it first)` };
+      if (present && !isWellFormedTestId(c.testId)) return { ok: false, reason: `triage: classification ${c.findingKey} testId "${c.testId}" is malformed — expected "<test-file>#<test-name-pattern>" (a "#" separator, both halves non-empty)` };
+    }
     if (typeof c.note !== 'string') return { ok: false, reason: `triage: classification ${c.findingKey} note must be a string` };
   }
   return { ok: true };
@@ -181,14 +208,14 @@ const validateTriage = (obj) => {
 // malformed-line surface and the per-check named tests can assert it.
 export const validateRecord = (obj) => {
   if (!isPlainObject(obj)) return { ok: false, reason: 'not an object' };
-  if (obj.schema !== SCHEMA_VERSION) return { ok: false, reason: `schema must be ${SCHEMA_VERSION}` };
+  if (!SUPPORTED_SCHEMAS.has(obj.schema)) return { ok: false, reason: `schema must be one of ${[...SUPPORTED_SCHEMAS].join(', ')}` };
   if (!isNonEmptyString(obj.loop)) return { ok: false, reason: 'missing loop' };
   if (!ACTIVITIES_SET.has(obj.activity)) return { ok: false, reason: `bad activity "${obj.activity}"` };
   if (!KINDS_SET.has(obj.kind)) return { ok: false, reason: `bad kind "${obj.kind}"` };
   if (!(Number.isInteger(obj.round) && obj.round >= 1)) return { ok: false, reason: 'round must be an integer >= 1' };
   if (!(obj.fingerprint === null || isNonEmptyString(obj.fingerprint))) return { ok: false, reason: 'fingerprint must be null or a non-empty string' };
   if (!isNonEmptyString(obj.timestamp)) return { ok: false, reason: 'missing timestamp' };
-  return obj.kind === 'round' ? validateRound(obj) : validateTriage(obj);
+  return obj.kind === 'round' ? validateRound(obj) : validateTriage(obj, obj.schema);
 };
 
 // readLedger(path) → { records, malformed, malformedReasons }. Absent file → empty (no review ran).
