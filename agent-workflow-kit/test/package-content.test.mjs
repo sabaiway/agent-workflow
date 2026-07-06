@@ -140,7 +140,11 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 128 = 125 + the 3 review-round LEDGER files (AD-045): tools/review-ledger.mjs (schema + decideStop
     //       + --check, read-only), tools/review-ledger-write.mjs (the sole writer), and
     //       references/modes/review-ledger.md (the 19th mode). The *.test.mjs siblings are stripped by files[].
-    assert.equal(packed.length, 128, `tarball file count drifted (${packed.length} ≠ 128)`);
+    // 130 = 128 + the M3 fold-completeness READ/RUN pair (AD-046, Phase 2): tools/fold-completeness.mjs
+    //       (result schema + read-only --check) + tools/fold-completeness-run.mjs (the sole tree-toucher +
+    //       result writer). Its mode-ref (the 20th mode) lands in Phase 4; the *.test.mjs siblings are
+    //       stripped by files[].
+    assert.equal(packed.length, 130, `tarball file count drifted (${packed.length} ≠ 130)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
