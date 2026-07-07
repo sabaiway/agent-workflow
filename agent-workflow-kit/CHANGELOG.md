@@ -4,6 +4,43 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.37.0 — Fold-safety completion: a fixable-bug requires its test, and a coverage gate attests the fold against the changed code (AD-046)
+
+A **feature** release (deployment-lineage head stays `1.3.0` — no migration). AD-045's ledger computed
+WHEN a review loop stops; this release mechanizes **"a fold carries no new bug"** — M2 + M3a of
+DEBT-TEST-COMPLETENESS. **No mutation testing ships** — that half was researched and shelved (see the
+honest-limits note below).
+
+- **M2 — testId enforcement (ledger schema v2).** A `fixable-bug` triage classification now REQUIRES a
+  `testId` (`<test-file>#<test-name-pattern>` — a `#` separator with both halves non-empty; the writer
+  validates FORMAT only, staying hermetic). Schema 1→2 with per-version validation: historical v1
+  records stay valid on read, a mixed ledger reads back clean; the writer emits v2 only; `decideStop`
+  is untouched.
+- **M3a — the fold-completeness tool pair (read/run split, mirroring the ledger's read/write split).**
+  `tools/fold-completeness-run.mjs` — the SOLE tree-toucher + result writer: ONE suite run under
+  `NODE_V8_COVERAGE` (the coverage dir lives OUTSIDE the work tree), the changed surface classified by
+  a CLOSED extension rule (assessable JS · unsupported TS/JSX fails the gate closed · out-of-domain
+  docs/config listed loudly, never blocking), every bound testId probed shell-free for resolvability +
+  a GREEN baseline, and ONE machine-only record bound to BOTH the tree fingerprint AND the sorted
+  fixable-bug testId set — either moving makes the record stale. `tools/fold-completeness.mjs` — the
+  read-only `--status` / `--check` gate (fail-closed; the normative exit contract lives in its header,
+  the single home) that never imports the runner (import-split test).
+- **Command surface** — the `fold-completeness` catalog entry (a writer) + `### Mode: fold-completeness`
+  + its mode reference. **Consumer seeding is deliberately ON HOLD**: the signal is JS/V8-only in v1,
+  so the consent-gated seeder does not offer this gate yet — wire it by hand (the mode-ref carries the
+  candidate `gates.json` line and the hold's reason).
+- **Activity-aware canon pointer (with engine 1.14.0)** — the procedures advisor renders the ledger
+  pointer (record / `--status` / `--check`) for `plan-execution` ONLY, plus an unconditional
+  triage-classification bullet (`fixable-bug / inherent-layer-residual / escalate`) for every
+  review-backed activity.
+- **Honest limits (stated in the tool headers, like `review-state`'s):** coverage proves EXECUTION, not
+  assertion — the per-fold proof remains the red→green test discipline (M2), the coverage run is the
+  whole-surface prefilter; records/testIds are forgeable (a self-discipline mechanism, not a security
+  boundary); line-entry granularity (same-line branch gaps are out of scope without an AST).
+  **Mutation (M3b) was researched and SHELVED** — bounded local-boundary mutation did not catch the
+  motivating interaction bug and is not language-independent; records carry a reserved EMPTY `mutation`
+  shape and the checker fails CLOSED on any record carrying mutation data.
+
 ## 1.36.0 — Review-round ledger: the prose crossover-stop becomes a computed signal (AD-045)
 
 A **feature** release (deployment-lineage head stays `1.3.0` — no migration). The review-loop

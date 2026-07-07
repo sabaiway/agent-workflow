@@ -7,6 +7,22 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-07 — kit 1.37.0 + engine 1.14.0: fold-safety completion — testId enforcement, the fold-completeness coverage gate, the activity-aware canon pointer (AD-046)
+
+Completes DEBT-TEST-COMPLETENESS (M2 + M3a). The ledger's `fixable-bug` triage now REQUIRES its
+red→green `testId` (schema v2; v1 records tolerated on read), and a NEW kit tool pair attests the
+loop's folds against the changed code — every changed executable line executed, every bound testId
+resolvable with a green baseline: `fold-completeness-run.mjs` (one suite run under
+`NODE_V8_COVERAGE` + shell-free testId probes; the record binds the tree fingerprint AND the sorted
+testId set) with the fail-closed read-only `fold-completeness.mjs --check`. The engine canon names the
+ledger **activity-aware**: the plan-execution review step only, with the triage classification
+vocabulary in both activities, drift-guarded in both directions. **Mutation testing (M3b) was
+researched and SHELVED** (maintainer decision: bounded local mutation missed the empirical anchor and
+is not language-independent) — no mutation testing or mutation evidence ships: records carry only a
+reserved EMPTY `mutation` shape (plus inert budget fields), and the checker fails closed on any
+record carrying mutation data. Consumer seeding of the new gate is deliberately ON HOLD (JS/V8-only
+v1). See the package changelogs.
+
 ## 2026-07-06 — kit 1.36.0: review-round ledger — the prose crossover-stop becomes a computed signal (AD-045)
 
 The review-loop crossover-stop (`planning.md` §9 / `procedures.md`) was prose with no checker and
