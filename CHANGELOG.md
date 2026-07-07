@@ -7,6 +7,15 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-07 — kit 1.37.1: the fold-completeness probe no longer green-vouches a nonexistent testId on Node 18/20
+
+Patch on top of 1.37.0, same day. Node 18/20 emit pattern-filtered tests as `# SKIP` TAP lines and
+the probe parser counted them as executed matches — a nomatch `testId` read as resolvable +
+baseline-green on exactly the Node versions the kit supports (caught by the CI 18/20 matrix on the
+release commit; newer Node omits filtered tests, so local runs were green). `parseProbeOutput` now
+ignores SKIP/TODO-directive result lines (a skipped test did not run — fails closed, never open),
+with the node-18/20 TAP shape pinned as fixtures. See `agent-workflow-kit/CHANGELOG.md`.
+
 ## 2026-07-07 — kit 1.37.0 + engine 1.14.0: fold-safety completion — testId enforcement, the fold-completeness coverage gate, the activity-aware canon pointer (AD-046)
 
 Completes DEBT-TEST-COMPLETENESS (M2 + M3a). The ledger's `fixable-bug` triage now REQUIRES its

@@ -4,6 +4,22 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.37.1 — Fix: the fold-completeness probe on Node 18/20 counted pattern-filtered SKIP lines as executed tests
+
+A **patch** release (one product fix + its pinned fixtures; no other change). On Node 18/20 —
+versions the kit supports — `node --test --test-name-pattern` EMITS every non-matching test as
+`ok N - <name> # SKIP test name does not match pattern` (newer Node omits them), so the 1.37.0
+probe parser counted those lines as real matches: a `testId` whose pattern matches NOTHING was
+reported **resolvable with a green baseline**, and the fold-completeness gate green-vouched a test
+that never ran — defeating the gate's purpose on exactly those Node versions. Caught by the CI
+matrix (node 18 + 20) on the 1.37.0 release commit; invisible on newer local Node.
+
+- `parseProbeOutput` now ignores any TAP result line carrying a **SKIP/TODO directive** — a skipped
+  test was not executed, on any Node version; a real test name containing a literal `# skip` would
+  only fail CLOSED (unresolvable), never open.
+- New pinned fixtures: the node-18/20 pattern-filter TAP shape (nomatch → unresolvable; a matched
+  test among skipped ones still resolves), a lowercase `# skip`, and a `# TODO` directive.
+
 ## 1.37.0 — Fold-safety completion: a fixable-bug requires its test, and a coverage gate attests the fold against the changed code (AD-046)
 
 A **feature** release (deployment-lineage head stays `1.3.0` — no migration). AD-045's ledger computed
