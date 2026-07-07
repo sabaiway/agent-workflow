@@ -81,7 +81,7 @@ Before acting, read `docs/ai/.workflow-version` (the project's stamp) to decide 
 1. **Project deployment** — `docs/ai/.workflow-version` vs the lineage head (`1.3.0`). This is the **only** axis this skill compares.
 2. **Kit freshness** — this skill's own files vs the published npm package. That is the **npx installer's** job: `npx @sabaiway/agent-workflow-kit@latest init` (it refuses a stale-cache downgrade by comparing the version on disk — **no network**). This skill never checks npm, and the package version is **not** the lineage head.
 
-**Refreshed the kit but nothing changed?** The skill you are running is whatever was on disk when the session started. After `npx @sabaiway/agent-workflow-kit@latest init` updates `~/.claude/skills/agent-workflow-kit/`, **restart the session** so the agent reloads the new skill files (the slash command + this `SKILL.md`).
+**Refreshed the kit but nothing changed?** After `npx @sabaiway/agent-workflow-kit@latest init` updates `~/.claude/skills/agent-workflow-kit/`, **restart the session** so the agent reloads the new skill files.
 
 ### Mode: help
 
@@ -159,11 +159,15 @@ writer — read `${CLAUDE_SKILL_DIR}/references/modes/grounding.md` before actin
 
 writer — read `${CLAUDE_SKILL_DIR}/references/modes/review-ledger.md` before acting.
 
+### Mode: fold-completeness
+
+writer — read `${CLAUDE_SKILL_DIR}/references/modes/fold-completeness.md` before acting.
+
 ---
 
 ## References
 
-- [`references/modes/`](${CLAUDE_SKILL_DIR}/references/modes/) — one file per mode (the router lines above point here); [`references/shared/`](${CLAUDE_SKILL_DIR}/references/shared/) — the shared point-of-use contracts (report footer · composition hand-off · deploy tail).
+- [`references/modes/`](${CLAUDE_SKILL_DIR}/references/modes/) — one file per mode; [`references/shared/`](${CLAUDE_SKILL_DIR}/references/shared/) — the shared point-of-use contracts (report footer · composition hand-off · deploy tail).
 - [`references/contracts.md`](${CLAUDE_SKILL_DIR}/references/contracts.md) — the three setup contracts.
 - [`references/templates/`](${CLAUDE_SKILL_DIR}/references/templates/) — the `AGENTS.md` + `docs/ai/` templates + seeded configs; [`references/scripts/`](${CLAUDE_SKILL_DIR}/references/scripts/) — the Node enforcement scripts; [`migrations/`](${CLAUDE_SKILL_DIR}/migrations/) — per-version upgrade steps; [`launchers/`](${CLAUDE_SKILL_DIR}/launchers/) — non-Claude agent launchers.
 - [`tools/`](${CLAUDE_SKILL_DIR}/tools/) — the family-wide tooling; each tool's contract lives with its mode file and its own header; bridge mirrors under [`bridges/`](${CLAUDE_SKILL_DIR}/bridges/).

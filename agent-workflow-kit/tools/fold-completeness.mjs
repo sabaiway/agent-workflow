@@ -17,12 +17,13 @@
 //           and when the in-flight plan-execution loop has a CURRENT run record whose BOTH bindings
 //           match — the tree fingerprint AND the sorted fixable-bug testId set recorded in the run —
 //           with every bound testId resolvable + baseline-green, 0 uncovered changed lines, 0 changed
-//           unsupported-source files, and 0 surviving mutants (budget-skips are STATED in the reason).
+//           unsupported-source files, and the reserved EMPTY mutation shape (v1 ships no mutation).
 //   exit 1  for any DIRTY in-flight plan-execution loop lacking such a current run record — including
 //           the stale-fingerprint case (a tree edit moves the fingerprint) and the same-fingerprint/
 //           new-testId case (a triage recorded after the run moves the bound-testId set, Decision 9) —
 //           or a run naming an unresolvable/red-baseline bound test, an uncovered changed line, a
-//           changed unsupported-source file, or a surviving mutant; when MORE THAN ONE plan is in
+//           changed unsupported-source file, or ANY mutation data (v1 ships no mutation — such a record
+//           was not produced by this runner version; fail closed); when MORE THAN ONE plan is in
 //           flight (ambiguous loop id). Fail-CLOSED (unknown state, never a fail-open pass) on a
 //           detector failure, an unreadable/malformed result or review ledger, or a corrupt run set —
 //           the only detector-independent green is an EXPLICIT configured solo. Changed OUT-OF-DOMAIN
@@ -30,11 +31,12 @@
 //           (Decision 5): guarding what the tool cannot assess with a red gate is a pretend-mechanism.
 //
 // HONEST residuals (accepted, documented — exactly like review-state's / review-ledger's): coverage
-// proves execution, not assertion; the runner's mutation signal is bounded (a surviving mutant is a
-// PROVEN gap, but a bounded operator set can miss mutations); the result records, testIds, and the
-// ledger are forgeable (`git commit --no-verify`, file editing) — a self-discipline mechanism against
-// silent process drift, NOT a security boundary. TS/JSX source is out of scope v1 (a changed
-// unsupported-source file fails the gate closed rather than be vouched for).
+// proves execution, not assertion; NO mutation signal ships in v1 — the researched mutation half was
+// shelved, the record's `mutation` field is a reserved empty shape (a record carrying ANY mutation
+// data fails the check closed); the result records, testIds, and the ledger are forgeable
+// (`git commit --no-verify`, file editing) — a self-discipline mechanism against silent process
+// drift, NOT a security boundary. TS/JSX source is out of scope v1 (a changed unsupported-source
+// file fails the gate closed rather than be vouched for).
 //
 // Read-only: never writes, never commits, never runs a subscription CLI. It DOES spawn read-only
 // `git` queries (via the reused review-state fingerprint reader + a git-dir resolver). Dependency-
@@ -202,6 +204,8 @@ export const buildFoldState = ({ cwd, env = process.env, detect = detectBackends
 };
 
 const sameSet = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+// The reserved (and, in v1, only legal) mutation key set — sorted for the sameSet comparison.
+const RESERVED_MUTATION_KEYS = ['killSetBasis', 'killed', 'skipped', 'survived', 'total'];
 const renderUncovered = (u) => (u.line === null ? `${u.file} (absent from coverage)` : `${u.file}:${u.line}`);
 
 // The normative --check decision (the header contract, in order) → { code, reason }. The checker is
@@ -249,10 +253,21 @@ export const decideCheck = (state) => {
   const redBaseline = latest.testIds.filter((t) => t.resolvable && !t.baselineGreen).map((t) => t.id);
   if (redBaseline.length > 0) return { code: 1, reason: `bound test(s) with a red baseline (the fold is not complete): ${redBaseline.join(', ')}` };
   if (latest.coverage.uncoveredChanged.length > 0) return { code: 1, reason: `uncovered changed line(s) — changed code no test executed: ${latest.coverage.uncoveredChanged.map(renderUncovered).join(', ')}` };
-  if (latest.mutation.survived.length > 0) return { code: 1, reason: `surviving mutant(s) — a proven test gap: ${latest.mutation.survived.join(', ')}` };
+  // v1 ships NO mutation (the mutation half was shelved): the shipped runner only ever writes the
+  // reserved empty shape, so a record carrying ANY mutation data was not produced by this runner
+  // version (forged, or a version-skewed ledger — e.g. an older placed checker reading a newer
+  // runner's ledger) — fail closed rather than vouch for a signal v1 cannot have computed. The rule
+  // is the EXACT reserved shape (key set + empty values): an extra key would smuggle mutation data
+  // past a known-fields-only check.
+  const m = latest.mutation;
+  const emptyReservedShape =
+    sameSet(Object.keys(m).sort(), RESERVED_MUTATION_KEYS) &&
+    m.total === 0 && m.killed === 0 && m.skipped === 0 && m.survived.length === 0 && m.killSetBasis === null;
+  if (!emptyReservedShape) {
+    return { code: 1, reason: `the run record's mutation field is not the reserved empty shape (${m.total} total / ${m.killed} killed / ${m.survived.length} survived / ${m.skipped} skipped) but v1 ships no mutation — not a record this runner version produced; re-run fold-completeness-run.mjs` };
+  }
 
   const notes = [];
-  if (latest.mutation.skipped > 0) notes.push(`${latest.mutation.skipped} mutant(s) skipped by budget`);
   if (latest.outOfDomain.length > 0) notes.push(`out-of-domain changes not assessed (non-blocking): ${latest.outOfDomain.join(', ')}`);
   return { code: 0, reason: `fold-completeness verified for loop "${loop}" (fingerprint + bound-testId set current, coverage + baseline green)${notes.length ? ` — ${notes.join('; ')}` : ''}` };
 };
@@ -304,9 +319,10 @@ fingerprint, and decides whether the in-flight plan-execution loop's changed cod
 --check → the gate exit code. The normative exit contract lives in the tool header (the single home):
   exit 0 for solo / no plan in flight / a clean tree / not-a-git-tree / a CURRENT run whose fingerprint
   AND bound-testId set both match, with resolvable+green bound tests, 0 uncovered changed lines, 0
-  changed unsupported source, and 0 surviving mutants; exit 1 otherwise (stale/missing run, an
-  unresolvable/red bound test, an uncovered line, changed TS/JSX, a surviving mutant, >1 plan, an
-  unreadable/malformed ledger, or a detector failure). Out-of-domain changes are listed, never blocking.
+  changed unsupported source, and the reserved empty mutation shape; exit 1 otherwise (stale/missing
+  run, an unresolvable/red bound test, an uncovered line, changed TS/JSX, any mutation data — v1 ships
+  no mutation, >1 plan, an unreadable/malformed ledger, or a detector failure). Out-of-domain changes
+  are listed, never blocking.
 --json → the structured state + decision.
 
 The runner is a SEPARATE tool (fold-completeness-run.mjs) — this read-only checker never imports it.
