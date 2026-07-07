@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import {
   validateRecord,
   readLedger,
@@ -14,6 +15,8 @@ import {
   roundSequenceIntact,
   buildLedgerState,
   resolveLedgerPath,
+  collectOverrides,
+  main,
   REVIEW_CAP,
 } from './review-ledger.mjs';
 
@@ -220,6 +223,133 @@ describe('review-ledger schema v2 — testId enforcement (M2/AD-046)', () => {
     const { records, malformed } = readLedger('X', () => `${v1Round}\n${v2Line}`);
     assert.equal(malformed, 0);
     assert.equal(records.length, 2);
+  });
+});
+
+// ── schema v3 — the override record kind (BUGFREE-1 / AD-047, D3): the LOUD, durable, auditable
+// waiver — an oracle-change override names tampered test-surface files; a red-proof override names
+// the exact testId whose red is genuinely unestablishable. Loop + payload scoped, never
+// fingerprint-bound (re-affirmation churn trains rubber-stamping). ────────────────────────────────
+
+describe('review-ledger schema v3 — the override record kind', () => {
+  const oracleOverride = (over = {}) => ({
+    schema: 3, loop: 'example-feature', activity: 'plan-execution', kind: 'override', round: 1,
+    fingerprint: 'f'.repeat(64), scope: 'oracle-change', files: ['x.test.mjs'],
+    reason: 'expectation updated deliberately', timestamp: 't', ...over,
+  });
+  const redProofOverride = (over = {}) => ({
+    schema: 3, loop: 'example-feature', activity: 'plan-execution', kind: 'override', round: 1,
+    fingerprint: 'f'.repeat(64), scope: 'red-proof', testId: 'x.test.mjs#p',
+    reason: 'red genuinely unestablishable pre-fold', timestamp: 't', ...over,
+  });
+
+  it('a valid oracle-change override validates; a valid red-proof override validates', () => {
+    assert.equal(validateRecord(oracleOverride()).ok, true, validateRecord(oracleOverride()).reason);
+    assert.equal(validateRecord(redProofOverride()).ok, true, validateRecord(redProofOverride()).reason);
+  });
+
+  it('a schema-3 round and triage stay valid (v3 adds a kind, changes nothing else)', () => {
+    assert.equal(validateRecord({ ...roundFixture(), schema: 3 }).ok, true);
+  });
+
+  it('kind "override" is valid ONLY under schema >= 3 (v1/v2 records never grow new kinds)', () => {
+    for (const s of [1, 2]) {
+      const r = validateRecord(oracleOverride({ schema: s }));
+      assert.equal(r.ok, false, `schema ${s} must reject kind override`);
+      assert.match(r.reason, /kind/);
+    }
+  });
+
+  it('an unknown scope is rejected by name', () => {
+    const r = validateRecord(oracleOverride({ scope: 'because-i-said-so' }));
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /scope/);
+  });
+
+  it('oracle-change: files[] must be a non-empty array of non-empty repo-relative paths', () => {
+    for (const files of [undefined, [], 'x.test.mjs', [''], [42], ['/abs/x.test.mjs']]) {
+      const r = validateRecord(oracleOverride({ files }));
+      assert.equal(r.ok, false, `files ${JSON.stringify(files)} must fail`);
+      assert.match(r.reason, /files/);
+    }
+  });
+
+  it('oracle-change must NOT carry a testId; red-proof must NOT carry files[] (exact payloads)', () => {
+    const a = validateRecord(oracleOverride({ testId: 'x.test.mjs#p' }));
+    assert.equal(a.ok, false);
+    assert.match(a.reason, /testId/);
+    const b = validateRecord(redProofOverride({ files: ['x.test.mjs'] }));
+    assert.equal(b.ok, false);
+    assert.match(b.reason, /files/);
+  });
+
+  it('red-proof: the testId is REQUIRED and must be well-formed', () => {
+    for (const testId of [undefined, null, '', 'no-separator', '#p', 'file#']) {
+      const r = validateRecord(redProofOverride({ testId }));
+      assert.equal(r.ok, false, `testId ${JSON.stringify(testId)} must fail`);
+      assert.match(r.reason, /testId/);
+    }
+  });
+
+  it('an override with an unknown extra key is rejected by name (exact payloads — codex R5)', () => {
+    const a = validateRecord(oracleOverride({ note: 'smuggled' }));
+    assert.equal(a.ok, false);
+    assert.match(a.reason, /unknown key "note"/);
+    const b = validateRecord(redProofOverride({ classifications: [] }));
+    assert.equal(b.ok, false);
+    assert.match(b.reason, /unknown key "classifications"/);
+  });
+
+  it('both scopes require a non-empty reason (never a silent waiver)', () => {
+    for (const rec of [oracleOverride({ reason: '' }), redProofOverride({ reason: undefined })]) {
+      const r = validateRecord(rec);
+      assert.equal(r.ok, false);
+      assert.match(r.reason, /reason/);
+    }
+  });
+
+  it('a mixed v1 + v2 + v3 ledger reads back malformed: 0', () => {
+    const lines = [FIXTURE.split('\n')[0], FIXTURE.split('\n')[1], JSON.stringify(oracleOverride()), JSON.stringify(redProofOverride())].join('\n');
+    const { records, malformed } = readLedger('X', () => lines);
+    assert.equal(malformed, 0);
+    assert.equal(records.length, 4);
+  });
+
+  it('collectOverrides unions the loop’s override payloads (activity + loop scoped)', () => {
+    const records = [
+      oracleOverride(),
+      oracleOverride({ files: ['y.spec.js', 'z/nonstandard-path.mjs'] }),
+      redProofOverride(),
+      oracleOverride({ loop: 'other-loop', files: ['ignored.test.mjs'] }),
+      redProofOverride({ activity: 'plan-authoring', testId: 'ignored.test.mjs#x' }),
+      { ...roundFixture() }, // non-override kinds are ignored
+    ];
+    const o = collectOverrides(records, { activity: 'plan-execution', loop: 'example-feature' });
+    assert.deepEqual([...o.oracleChangeFiles].sort(), ['x.test.mjs', 'y.spec.js', 'z/nonstandard-path.mjs']);
+    assert.deepEqual([...o.redProofTestIds], ['x.test.mjs#p']);
+  });
+
+  it('--status renders override records without crashing (the render path took every non-round record for a triage)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ledger-status-'));
+    const g = (...a) => spawnSync('git', a, { cwd: root, encoding: 'utf8' });
+    g('init', '-q');
+    g('config', 'user.email', 'p@e');
+    g('config', 'user.name', 'p');
+    mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
+    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'council' } }));
+    mkdirSync(join(root, 'docs', 'plans'), { recursive: true });
+    writeFileSync(join(root, 'docs', 'plans', 'example-feature.md'), '# plan\n');
+    writeFileSync(join(root, 'base.txt'), 'base\n');
+    g('add', '-A');
+    g('commit', '-qm', 'base');
+    writeFileSync(join(root, 'pending.txt'), 'dirty\n');
+    const ledger = join(root, '.git', 'rl.jsonl');
+    writeFileSync(ledger, `${JSON.stringify(oracleOverride())}\n${JSON.stringify(redProofOverride())}\n`);
+    const r = main(['--status'], { cwd: root, env: { AW_REVIEW_LEDGER: ledger }, detect: () => [{ name: 'codex-cli-bridge', readiness: 'ready' }, { name: 'antigravity-cli-bridge', readiness: 'ready' }] });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /override @round 1 \[oracle-change\]/);
+    assert.match(r.stdout, /override @round 1 \[red-proof\]/);
   });
 });
 

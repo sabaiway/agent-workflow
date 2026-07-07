@@ -21,13 +21,19 @@
 //           PRECEDING the latest run in ledger order (anti-post-hoc), and content CUSTODY — the run's
 //           recorded test-file hash equals the latest custody-eligible red-probe hash on that file
 //           (eligible = the receipt's own testId is bound AND it precedes the run, D5); plus 0
-//           uncovered changed lines, 0 changed unsupported-source files, and the reserved EMPTY
-//           mutation shape (no mutation ships).
+//           uncovered changed lines, 0 changed unsupported-source files, a recorded tamper surface
+//           with every tampered test-surface file covered by a recorded oracle-change override
+//           (review ledger v3), and the reserved EMPTY mutation shape (no mutation ships). A
+//           recorded red-proof override waives the receipt + custody proof for exactly the testId
+//           it names (D7) — never the N/N-green requirement, never QUARANTINE.
 //   exit 1  for any DIRTY in-flight plan-execution loop lacking such a current run record — including
 //           the stale-fingerprint case (a tree edit moves the fingerprint), the same-fingerprint/
 //           new-testId case (a triage recorded after the run moves the bound-testId set, Decision 9),
-//           and a schema-1 record as the loop's latest run (an older runner — no rerun counts, no
-//           custody hashes; D2) — or a run naming an unresolvable bound test, a QUARANTINED bound
+//           and a schema-1 (or tamper-less) record as the loop's latest run (an older runner; D2) —
+//           or a tampered test-surface file (a removed/modified line in a pre-existing test file,
+//           or a deleted one — the union of test-classified paths and bound-testId file halves)
+//           not covered by a recorded oracle-change override, a run naming an unresolvable bound
+//           test, a QUARANTINED bound
 //           test (mixed or timed-out probe runs — never an N/N verdict, never converted, no override
 //           lane; D4), a red-baseline bound test, a green bound test with NO observed-red receipt /
 //           a post-hoc receipt / broken custody (D5), an uncovered changed line, a changed
@@ -59,7 +65,7 @@ import { detectBackends } from './detect-backends.mjs';
 import { resolveActivityRecipe, planRecipe, DISPLAY_ALIASES } from './recipes.mjs';
 import { CONFIG_REL, fail, loadConfig } from './orchestration-config.mjs';
 import { computeTreeFingerprint, isTreeClean, plansInFlight } from './review-state.mjs';
-import { resolveLedgerPath, readLedger, filterLoopRecords, isWellFormedTestId, splitTestId } from './review-ledger.mjs';
+import { resolveLedgerPath, readLedger, filterLoopRecords, collectOverrides, isWellFormedTestId, splitTestId } from './review-ledger.mjs';
 
 export const RESULTS_BASENAME = 'agent-workflow-fold-completeness.jsonl';
 // SCHEMA v2 (BUGFREE-1 / AD-047): records gain a kind discriminator — `run` (the fold-completeness
@@ -201,7 +207,14 @@ export const validateRunRecord = (obj) => {
   }
   if (obj.kind === 'run') {
     const r = validateRunBody(obj, validateV2Entry);
-    return r ? { ok: false, reason: r } : { ok: true };
+    if (r) return { ok: false, reason: r };
+    // The tamper surface (Phase 2.2) is OPTIONAL on read — a record written by the pre-tamper v2
+    // runner stays readable (never retroactively malformed); the GATE handles the staleness. When
+    // present, the shape is exact.
+    if (obj.tamper !== undefined && (!isPlainObject(obj.tamper) || !isStringArray(obj.tamper.tampered))) {
+      return { ok: false, reason: 'tamper.tampered must be an array of strings (when the tamper surface is recorded)' };
+    }
+    return { ok: true };
   }
   if (obj.kind === 'red-probe') {
     const r = validateRedProbe(obj);
@@ -345,8 +358,10 @@ export const decideCheck = (state) => {
   if (sel == null) return { code: 1, reason: `dirty plan-execution loop "${loop}" but no fold-completeness run recorded — run fold-completeness-run.mjs` };
   const latest = sel.record;
   // D2 — a v1 record as the loop's latest run: the gate now needs the v2 evidence (rerun counts +
-  // custody hashes), which an older runner never recorded. Fail with a named re-run reason.
+  // custody hashes), which an older runner never recorded. Fail with a named re-run reason. The same
+  // rule covers a v2 record with NO recorded tamper surface (the pre-2.2 runner).
   if (latest.schema === 1) return { code: 1, reason: `the loop's latest run is a schema-1 record (an older runner — no rerun counts, no custody hashes) — re-run fold-completeness-run.mjs` };
+  if (latest.tamper === undefined) return { code: 1, reason: `the loop's latest run has no recorded tamper surface (an older runner) — re-run fold-completeness-run.mjs` };
 
   // Decision 9 — the double binding. A tree edit moves the fingerprint; a new fixable-bug triage moves
   // the bound-testId set. Either mismatch is STALE (the run no longer describes the committable tree).
@@ -364,6 +379,21 @@ export const decideCheck = (state) => {
   // cannot assess (TS/JSX out of scope v1, Decision 5).
   if (latest.unsupported.length > 0) return { code: 1, reason: `changed unsupported-source file(s) the signal cannot assess (TS/JSX out of scope v1): ${latest.unsupported.join(', ')}` };
 
+  // The recorded overrides of this loop (review ledger, schema v3): oracle-change lifts named
+  // tampered files; red-proof waives the receipt + custody proof for exactly the testId it names.
+  const overrides = collectOverrides(state.reviewRecords, { activity: ACTIVITY, loop });
+
+  // Approach-3 — the oracle-tamper guard: any tampered test-surface file (a removed/modified line in
+  // a pre-existing test file, or a deleted one) must be covered by a recorded oracle-change
+  // override. Never silent: the override is a durable, auditable ledger entry.
+  const tamperedUncovered = latest.tamper.tampered.filter((f) => !overrides.oracleChangeFiles.has(f));
+  if (tamperedUncovered.length > 0) {
+    return {
+      code: 1,
+      reason: `tampered test-surface file(s) — a fix diff modified/deleted pre-existing test expectations — without a recorded oracle-change override: ${tamperedUncovered.join(', ')}. If the oracle change is deliberate, record it: node review-ledger-write.mjs override --json '{"loop":"${loop}","round":<n>,"scope":"oracle-change","files":${JSON.stringify(tamperedUncovered)},"reason":"<why the expectation legitimately changed>"}'`,
+    };
+  }
+
   // Per-testId enforcement, in bound (sorted) order: the D4 verdict algebra first — QUARANTINE and
   // red/unresolvable are probe-outcome failures regardless of receipts — then, for a green test, the
   // red-proof chain: receipt exists (Approach-1.i) → the receipt PRECEDES the loop's latest run
@@ -378,6 +408,10 @@ export const decideCheck = (state) => {
     if (verdict === 'unresolvable') return { code: 1, reason: `unresolvable bound testId(s) — the pattern selects no test: ${id}` };
     if (verdict === 'quarantine') return { code: 1, reason: `bound test in QUARANTINE — not an N/N verdict (${t.greens} green / ${t.reds} red / ${t.timeouts} timed out of ${t.runs} runs): ${id}. A flaky/timed-out probe proves nothing and has no override lane — replace or speed up the test, then re-run` };
     if (verdict === 'red') return { code: 1, reason: `bound test(s) with a red baseline (the fold is not complete): ${id}` };
+    // D7 — a recorded red-proof override replaces the receipt + custody proof for EXACTLY this
+    // testId (green N/N was already required above; QUARANTINE was already refused — no override
+    // lane converts a flaky probe).
+    if (overrides.redProofTestIds.has(id)) continue;
     // verdict green — the red-proof chain.
     const own = receipts.filter(({ r }) => r.testId === id);
     if (own.length === 0) return { code: 1, reason: `no observed-red receipt for ${id} — a test never seen failing proves nothing about the fix. BEFORE folding a fix, run: node fold-completeness-run.mjs --red "${id}"` };
@@ -469,13 +503,16 @@ fingerprint, and decides whether the in-flight plan-execution loop's changed cod
   exit 0 for solo / no plan in flight / a clean tree / not-a-git-tree / a CURRENT run whose fingerprint
   AND bound-testId set both match, with — per bound testId — an N/N-green probe, an observed-red
   receipt that PRECEDES the run, and content custody (run hash == the latest custody-eligible receipt
-  hash on that file); plus 0 uncovered changed lines, 0 changed unsupported source, and the reserved
-  empty mutation shape; exit 1 otherwise (stale/missing/v1-latest run, an unresolvable bound test, a
-  QUARANTINED bound test — mixed/timeout, never converted, no override lane — a red baseline, a
-  missing/post-hoc receipt, broken custody, an uncovered line, changed TS/JSX, any mutation data,
-  >1 plan, an unreadable/malformed ledger, or a detector failure). Out-of-domain changes are listed,
-  never blocking. The honest fold-time order: classify the fixable-bug with its testId → write the
-  test → fold-completeness-run.mjs --red "<testId>" observes red BEFORE the fix → fold the fix → the
+  hash on that file); plus 0 uncovered changed lines, 0 changed unsupported source, every tampered
+  test-surface file covered by a recorded oracle-change override, and the reserved empty mutation
+  shape. A recorded red-proof override (review-ledger-write override) waives receipt + custody for
+  exactly its testId — never green-N/N, never QUARANTINE. exit 1 otherwise (stale/missing/older-runner
+  run, an unresolvable bound test, a QUARANTINED bound test — mixed/timeout, never converted, no
+  override lane — a red baseline, a missing/post-hoc receipt, broken custody, an uncovered tampered
+  file, an uncovered line, changed TS/JSX, any mutation data, >1 plan, an unreadable/malformed
+  ledger, or a detector failure). Out-of-domain changes are listed, never blocking. The honest
+  fold-time order: classify the fixable-bug with its testId → write the test →
+  fold-completeness-run.mjs --red "<testId>" observes red BEFORE the fix → fold the fix → the
   normal run observes green → --check.
 --json → the structured state + decision.
 

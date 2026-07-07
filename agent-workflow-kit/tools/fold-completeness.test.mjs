@@ -73,11 +73,16 @@ const v2Entry = (id, over = {}) => ({
   id, executed: 1, runs: 3, greens: 3, reds: 0, timeouts: 0, fileHash: HASH_A,
   resolvable: true, baselineGreen: true, ...over,
 });
-const v2Run = (over = {}) => runRecord({ schema: 2, kind: 'run', ...over });
+const v2Run = (over = {}) => runRecord({ schema: 2, kind: 'run', tamper: { tampered: [] }, ...over });
 const redProbe = (over = {}) => ({
   schema: 2, kind: 'red-probe', loop: 'demo-plan', testId: 'x.test.mjs#p', fileHash: HASH_A,
   runs: 3, reds: 3, fingerprint: 'a'.repeat(64), timestamp: 't', ...over,
 });
+// Review-ledger override lines (schema 3) — what the fold gate consumes at check time.
+const oracleOverrideLine = (loop, files) =>
+  `${JSON.stringify({ schema: 3, loop, activity: 'plan-execution', kind: 'override', round: 1, fingerprint: 'b'.repeat(64), scope: 'oracle-change', files, reason: 'deliberate oracle update', timestamp: 't' })}\n`;
+const redProofOverrideLine = (loop, testId) =>
+  `${JSON.stringify({ schema: 3, loop, activity: 'plan-execution', kind: 'override', round: 1, fingerprint: 'b'.repeat(64), scope: 'red-proof', testId, reason: 'red genuinely unestablishable', timestamp: 't' })}\n`;
 const fixableTriage = (loop, testId) =>
   `${JSON.stringify({ schema: 2, loop, activity: 'plan-execution', kind: 'triage', round: 1, fingerprint: 'b'.repeat(64), classifications: [{ findingKey: 'k', class: 'fixable-bug', accepted: false, testId, note: '' }], timestamp: 't' })}\n`;
 
@@ -498,6 +503,80 @@ describe('fold-completeness --check — red-proof enforcement', () => {
     }
   });
 
+  it('a latest run WITHOUT a recorded tamper surface → 1 with a re-run reason (an older runner)', () => {
+    const { root } = makeRepo();
+    const rec = v2Run({ fingerprint: computeTreeFingerprint(root) });
+    delete rec.tamper;
+    seedResult(root, rec);
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /tamper surface/);
+    assert.match(r.stdout, /re-run fold-completeness-run/);
+  });
+
+  it('a tampered test-surface file with NO override → 1 naming the file and the override recovery', () => {
+    const { root } = makeRepo();
+    seedCurrentGreen(root, { tamper: { tampered: ['x.test.mjs'] } });
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /tampered test-surface file/);
+    assert.match(r.stdout, /x\.test\.mjs/);
+    assert.match(r.stdout, /oracle-change/);
+  });
+
+  it('a recorded oracle-change override lifts EXACTLY the named files → 0', () => {
+    const { root } = makeRepo();
+    writeFileSync(REVIEW(root), oracleOverrideLine('demo-plan', ['x.test.mjs']));
+    seedCurrentGreen(root, { tamper: { tampered: ['x.test.mjs'] } });
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 0, r.stdout);
+  });
+
+  it('a tampered file OUTSIDE the override set still fails, naming only the uncovered file', () => {
+    const { root } = makeRepo();
+    writeFileSync(REVIEW(root), oracleOverrideLine('demo-plan', ['x.test.mjs']));
+    seedCurrentGreen(root, { tamper: { tampered: ['x.test.mjs', 'y.spec.js'] } });
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /y\.spec\.js/);
+    assert.doesNotMatch(r.stdout, /x\.test\.mjs,|: x\.test\.mjs/);
+  });
+
+  it('a red-proof override waives receipt + custody for EXACTLY the named testId (D7) → 0', () => {
+    const { root } = makeRepo();
+    writeFileSync(REVIEW(root), fixableTriage('demo-plan', ID) + redProofOverrideLine('demo-plan', ID));
+    // green N/N, NO red-probe receipt anywhere — the override replaces the proof.
+    seedResults(root, boundGreenRun(root, ID, H1));
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 0, r.stdout);
+  });
+
+  it('a red-proof override never converts QUARANTINE (no override lane for flaky probes)', () => {
+    const { root } = makeRepo();
+    writeFileSync(REVIEW(root), fixableTriage('demo-plan', ID) + redProofOverrideLine('demo-plan', ID));
+    const mixed = v2Entry(ID, { greens: 2, reds: 1, resolvable: true, baselineGreen: false });
+    seedResults(root, currentV2Run(root, { boundTestIds: [ID], testIds: [mixed] }));
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /QUARANTINE/);
+  });
+
+  it('a red-proof override for a DIFFERENT testId waives nothing', () => {
+    const { root } = makeRepo();
+    writeFileSync(REVIEW(root), fixableTriage('demo-plan', ID) + redProofOverrideLine('demo-plan', 'other.test.mjs#q'));
+    seedResults(root, boundGreenRun(root, ID, H1));
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /no observed-red receipt/);
+  });
+
   it('--status renders the v2 per-testId dimensions (verdict + counts + receipts)', () => {
     const { root } = makeRepo();
     bindIds(root, ID);
@@ -640,6 +719,16 @@ describe('result schema v2 — per-version validation (D2)', () => {
 
   it('a valid red-probe receipt validates', () => {
     assert.equal(validateRunRecord(redProbe()).ok, true);
+  });
+
+  it('a v2 run tamper field, when present, must be { tampered: string[] } (absent = older v2 runner, tolerated read-only)', () => {
+    assert.equal(validateRunRecord(v2Run()).ok, true); // the fixture carries a valid empty surface
+    const absent = v2Run();
+    delete absent.tamper;
+    assert.equal(validateRunRecord(absent).ok, true, 'absence stays readable (the gate handles staleness)');
+    const bad = validateRunRecord(v2Run({ tamper: { tampered: 'x' } }));
+    assert.equal(bad.ok, false);
+    assert.match(bad.reason, /tamper/);
   });
 
   it('red-probe records: each malformed field fails by name', () => {

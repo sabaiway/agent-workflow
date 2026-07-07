@@ -20,6 +20,8 @@ import {
   runRedProbe,
   classifyChangedPath,
   parseUnifiedDiff,
+  parseDiffOldSide,
+  unquoteDiffPath,
   lineStartOffsets,
   effectiveCount,
   computeUncoveredLines,
@@ -29,6 +31,7 @@ import {
   resolveTestFile,
   hashFileBytes,
   budgetsFromEnv,
+  computeTamperedTests,
   computeChangedSurface,
   main,
   FOLD_RUN_STOP,
@@ -301,6 +304,15 @@ describe('computeChangedSurface — tracked (git diff HEAD) + untracked classifi
     rmSync(root, { recursive: true, force: true });
   });
 
+  it('an unborn branch (no HEAD yet) falls back to the index diff and still classifies untracked files', () => {
+    const root = mkdtempSync(join(tmpdir(), 'fold-surface-unborn-'));
+    gitInit(root); // no commit — HEAD is unborn
+    writeFileSync(join(root, 'fresh.mjs'), 'export const a = 1;\n');
+    const surface = computeChangedSurface(root);
+    assert.deepEqual([...surface.assessable.keys()], ['fresh.mjs']);
+    rmSync(root, { recursive: true, force: true });
+  });
+
   // codex R2 (round 3) fold: a symlinked/non-regular *.mjs in the changed set must NEVER be followed
   // or read (it could read outside the tree or HANG on a FIFO/device). It is routed to `unsupported`
   // (fail closed) — the signal will not vouch for source it cannot safely assess.
@@ -368,11 +380,12 @@ describe('runFoldCompleteness — rich fixture: surface + M3a coverage + schema 
       id: boundId, resolvable: true, executed: 1, baselineGreen: true,
       runs: 2, greens: 2, reds: 0, timeouts: 0, fileHash: testFileHash,
     });
-    // machine-only schema v2 + empty mutation
+    // machine-only schema v2 + empty mutation + the (clean) tamper surface
     assert.equal(record.schema, RESULT_SCHEMA_VERSION);
     assert.equal(record.kind, 'run');
     assert.equal(record.budgets.foldReruns, 2);
     assert.equal(record.budgets.probeTimeoutS, 120);
+    assert.deepEqual(record.tamper, { tampered: [] }, 'untracked test files are additions, never tamper');
     assert.equal(record.loop, 'demo-plan');
     assert.match(record.fingerprint, /^[0-9a-f]{64}$/);
     assert.deepEqual(record.mutation, { total: 0, killed: 0, survived: [], skipped: 0, killSetBasis: null });
@@ -603,6 +616,159 @@ describe('budgetsFromEnv — the D4 probe knobs', () => {
         `AW_FOLD_PROBE_TIMEOUT_S="${bad}" must be refused`,
       );
     }
+  });
+});
+
+// ── the oracle-tamper surface (BUGFREE-1 Phase 2.2): the union of test-classified changed paths and
+// the loop's bound-testId file halves, restricted to files existing at HEAD, classified by hunk
+// line polarity — any removed/modified line is tamper; pure additions and new files are clean. ────
+
+describe('computeTamperedTests — polarity over the tracked working-vs-HEAD diff', () => {
+  it('classifies modified / deleted / added / new / nonstandard-bound paths correctly', () => {
+    const root = mkdtempSync(join(tmpdir(), 'fold-tamper-'));
+    const g = gitInit(root);
+    writeFileSync(join(root, 'a.test.mjs'), 'line one\nline two\nline three\n');
+    writeFileSync(join(root, 'b.spec.js'), 'alpha\nbeta\ngamma\n');
+    writeFileSync(join(root, 'del.test.mjs'), 'doomed\n');
+    writeFileSync(join(root, 'grow.test.mjs'), 'first\n');
+    mkdirSync(join(root, 'checks'));
+    writeFileSync(join(root, 'checks/plain-oracle.mjs'), 'expected value one\n');
+    writeFileSync(join(root, 'src.mjs'), 'export const a = 1;\n');
+    g('add', '-A');
+    g('commit', '-qm', 'base');
+    // Tamper: modify a line, delete a line, delete a file, modify the nonstandard bound file.
+    writeFileSync(join(root, 'a.test.mjs'), 'line one\nline TWO CHANGED\nline three\n');
+    writeFileSync(join(root, 'b.spec.js'), 'alpha\ngamma\n');
+    rmSync(join(root, 'del.test.mjs'));
+    writeFileSync(join(root, 'checks/plain-oracle.mjs'), 'expected value TWO\n');
+    // Clean: pure addition to a pre-existing test file; a brand-new untracked test file.
+    writeFileSync(join(root, 'grow.test.mjs'), 'first\nsecond appended\n');
+    writeFileSync(join(root, 'new.test.mjs'), 'fresh\n');
+    // Out of surface: a modified non-test source file that is not bound.
+    writeFileSync(join(root, 'src.mjs'), 'export const a = 2;\n');
+
+    const { tampered } = computeTamperedTests(root, new Set(['checks/plain-oracle.mjs']));
+    assert.deepEqual(tampered, ['a.test.mjs', 'b.spec.js', 'checks/plain-oracle.mjs', 'del.test.mjs']);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('a brand-new untracked test file never trips the surface (addition, not tamper)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'fold-tamper-new-'));
+    const g = gitInit(root);
+    writeFileSync(join(root, 'base.txt'), 'base\n');
+    g('add', '-A');
+    g('commit', '-qm', 'base');
+    writeFileSync(join(root, 'brand-new.test.mjs'), 'fresh\n');
+    const { tampered } = computeTamperedTests(root, new Set());
+    assert.deepEqual(tampered, []);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  // codex R5 (BUGFREE-1 live loop): the testId file half is user-authored — './checks/x.mjs' probes
+  // and hashes as 'checks/x.mjs', so the tamper surface must compare NORMALIZED halves or a
+  // modified bound file escapes the guard.
+  it('bound file halves are normalized into the tamper surface', () => {
+    const root = mkdtempSync(join(tmpdir(), 'fold-tamper-norm-'));
+    const g = gitInit(root);
+    mkdirSync(join(root, 'checks'));
+    writeFileSync(join(root, 'checks/plain-oracle.mjs'), 'expected value one\n');
+    g('add', '-A');
+    g('commit', '-qm', 'base');
+    writeFileSync(join(root, 'checks/plain-oracle.mjs'), 'expected value TWO\n');
+    const dotSlash = computeTamperedTests(root, new Set(['./checks/plain-oracle.mjs']));
+    assert.deepEqual(dotSlash.tampered, ['checks/plain-oracle.mjs'], './-prefixed bound half must still guard the file');
+    const traversal = computeTamperedTests(root, new Set(['checks/../checks/plain-oracle.mjs']));
+    assert.deepEqual(traversal.tampered, ['checks/plain-oracle.mjs'], 'a lexical-traversal bound half must still guard the file');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  // agy R5 (BUGFREE-1 live loop): git C-quotes diff paths carrying quotes/control/non-ASCII bytes
+  // ("a/\321\202...") — an unparsed quoted path compares unequal to its classifier/testId form and
+  // silently escapes the tamper surface. Space-only paths are NOT quoted but carry a trailing TAB.
+  it('quoted diff paths are unquoted (C-quoting) so they cannot escape the surface', () => {
+    const quoteDiff = [
+      'diff --git "a/quote\\"file.test.mjs" "b/quote\\"file.test.mjs"',
+      'index 1111111..2222222 100644',
+      '--- "a/quote\\"file.test.mjs"',
+      '+++ "b/quote\\"file.test.mjs"',
+      '@@ -1 +1 @@',
+      '-one',
+      '+CHANGED',
+    ].join('\n');
+    const q = parseDiffOldSide(quoteDiff);
+    assert.deepEqual([...q.keys()], ['quote"file.test.mjs']);
+    assert.equal(q.get('quote"file.test.mjs').removals, true);
+    assert.deepEqual([...parseUnifiedDiff(quoteDiff).keys()], ['quote"file.test.mjs'], 'the new-side parser unquotes too');
+
+    const octalDiff = [
+      'diff --git "a/\\321\\202.test.mjs" "b/\\321\\202.test.mjs"',
+      '--- "a/\\321\\202.test.mjs"',
+      '+++ "b/\\321\\202.test.mjs"',
+      '@@ -1 +1 @@',
+      '-one',
+      '+CHANGED',
+    ].join('\n');
+    assert.deepEqual([...parseDiffOldSide(octalDiff).keys()], ['т.test.mjs'], 'octal UTF-8 escapes decode byte-wise');
+
+    const spaceTabDiff = [
+      'diff --git a/my test file.test.mjs b/my test file.test.mjs',
+      '--- a/my test file.test.mjs\t',
+      '+++ b/my test file.test.mjs\t',
+      '@@ -1 +1 @@',
+      '-one',
+      '+CHANGED',
+    ].join('\n');
+    assert.deepEqual([...parseDiffOldSide(spaceTabDiff).keys()], ['my test file.test.mjs'], 'the space-path trailing TAB is trimmed');
+
+    // The helper directly: passthrough, simple escapes, and an UNKNOWN escape (kept literally —
+    // never dropped, never a throw).
+    assert.equal(unquoteDiffPath('plain/path.test.mjs'), 'plain/path.test.mjs');
+    assert.equal(unquoteDiffPath('"a/tab\\there.test.mjs"'), 'a/tab\there.test.mjs');
+    assert.equal(unquoteDiffPath('"a/weird\\qname.test.mjs"'), 'a/weirdqname.test.mjs');
+    // agy R6: an UNESCAPED non-BMP char inside a quoted path (reachable under core.quotepath=false)
+    // must survive — 16-bit-unit iteration would split the surrogate pair into replacement chars.
+    assert.equal(unquoteDiffPath('"a/\u{1F600}\\t.test.mjs"'), 'a/\u{1F600}\t.test.mjs');
+  });
+
+  // agy R6 (non-blocking, folded): a user's global diff.noprefix=true would strip the a/ b/
+  // prefixes and make the parsers eat a real directory named "a" — the invocation pins the
+  // prefixes explicitly, so user git config can never bend the parse.
+  it('the tamper surface survives a user diff.noprefix=true config (a real "a/" directory)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'fold-tamper-noprefix-'));
+    const g = gitInit(root);
+    g('config', 'diff.noprefix', 'true');
+    mkdirSync(join(root, 'a'));
+    writeFileSync(join(root, 'a', 'real.test.mjs'), 'one\ntwo\n');
+    g('add', '-A');
+    g('commit', '-qm', 'base');
+    writeFileSync(join(root, 'a', 'real.test.mjs'), 'one\nTWO CHANGED\n');
+    assert.deepEqual(computeTamperedTests(root, new Set()).tampered, ['a/real.test.mjs'], 'a noprefix header must not eat a REAL directory named "a"');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  // agy R6 (non-blocking, folded): only the git-appended trailing TAB (and a CRLF \r) is stripped —
+  // never a legitimate trailing character of the filename itself.
+  it('only the git-appended trailing TAB/CR is stripped from unquoted header paths', () => {
+    const crlfDiff = [
+      'diff --git a/sp ace.test.mjs b/sp ace.test.mjs',
+      '--- a/sp ace.test.mjs\t\r',
+      '+++ b/sp ace.test.mjs\t\r',
+      '@@ -1 +1 @@',
+      '-one',
+      '+CHANGED',
+    ].join('\n');
+    assert.deepEqual([...parseDiffOldSide(crlfDiff).keys()], ['sp ace.test.mjs']);
+  });
+
+  it('an unborn branch (no HEAD yet) and a non-git dir both read as an empty (clean) surface', () => {
+    const root = mkdtempSync(join(tmpdir(), 'fold-tamper-unborn-'));
+    gitInit(root); // no commit — HEAD is unborn, the diff falls back
+    writeFileSync(join(root, 'x.test.mjs'), 'fresh\n');
+    assert.deepEqual(computeTamperedTests(root, new Set()).tampered, []);
+    const plain = mkdtempSync(join(tmpdir(), 'fold-tamper-nogit-'));
+    assert.deepEqual(computeTamperedTests(plain, new Set()).tampered, []);
+    rmSync(root, { recursive: true, force: true });
+    rmSync(plain, { recursive: true, force: true });
   });
 });
 

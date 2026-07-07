@@ -29,8 +29,9 @@
 import { readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { writeContainedFileAtomic } from './atomic-write.mjs';
-import { computeTreeFingerprint, readReceipts, resolveReceiptsPath } from './review-state.mjs';
+import { computeTreeFingerprint, plansInFlight, readReceipts, resolveReceiptsPath } from './review-state.mjs';
 import {
   REVIEW_CAP,
   SCHEMA_VERSION,
@@ -145,6 +146,50 @@ export const recordRound = (params, deps = {}) => {
   return appendRecord(ledgerPath, record, deps);
 };
 
+// ── recordOverride (BUGFREE-1 / AD-047, D3/D7 — the loud, recorded waiver) ──────────────────────
+
+// A read-only git-root probe for the in-flight tooth (the writer's only other git query is inside
+// computeTreeFingerprint).
+const gitRoot = (cwd) => {
+  const r = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, windowsHide: true });
+  if (r.error || r.status !== 0) return null;
+  return r.stdout.toString('utf8').replace(/\r?\n$/, '');
+};
+
+// recordOverride({ cwd, env, loop, activity, round, scope, files, testId, reason, timestamp }, deps)
+// → { writtenPath, record }. Standard teeth: field validation via the schema (exact per-scope
+// payloads), fail-closed ledger read, and the IN-FLIGHT tooth — an override is a waiver, minted only
+// inside its live loop, never retro-recorded for a finished or foreign one. The fold-completeness
+// gate matches on loop + payload, never on the (audit-only) fingerprint.
+export const recordOverride = (params, deps = {}) => {
+  const { cwd = process.cwd(), env = process.env, loop, activity = DEFAULT_ACTIVITY, round, scope, files, testId, reason, timestamp } = params;
+  const ledgerPath = deps.ledgerPath ?? resolveLedgerPath(cwd, env);
+  if (ledgerPath == null) throw stop('cannot resolve the ledger path — not a git work tree and AW_REVIEW_LEDGER is unset');
+  if (!(Number.isInteger(round) && round >= 1)) throw stop(`round must be an integer >= 1 (got ${round})`);
+  // Exactly ONE in-flight plan, and it must be the named loop (codex+agy R5): a waiver minted while
+  // multiple plans are active could later cover a now-single loop — the ambiguity the rest of the
+  // family refuses everywhere (the single-plan rule).
+  const plans = deps.plansInFlight ? deps.plansInFlight() : plansInFlight(gitRoot(cwd) ?? cwd);
+  if (plans.length !== 1 || plans[0] !== `${loop}.md`) {
+    throw stop(`refusing to record an override for loop "${loop}": an override is minted only inside its SINGLE in-flight loop (in flight: ${plans.length ? plans.join(', ') : 'none'})`);
+  }
+  const fingerprint = deps.computeFingerprint ? deps.computeFingerprint(cwd) : computeTreeFingerprint(cwd);
+  const record = {
+    schema: SCHEMA_VERSION, loop, activity, kind: 'override', round, fingerprint, scope,
+    ...(files !== undefined ? { files } : {}), ...(testId !== undefined ? { testId } : {}),
+    reason, timestamp: timestamp ?? isoNow(),
+  };
+  const v = validateRecord(record);
+  if (!v.ok) throw stop(`refusing to record a malformed override: ${v.reason}`);
+  const { records, malformed, malformedReasons, readError } = readLedger(ledgerPath, deps.readFile);
+  if (readError) throw stop(`cannot read the existing ledger (${readError}) — refusing to append (fail closed)`);
+  if (malformed > 0) throw stop(`the existing ledger has ${malformed} malformed line(s) — refusing to append until they are fixed (fail closed): ${malformedReasons.join('; ')}`);
+  if (!roundSequenceIntact(filterLoopRecords(records, { activity, loop }))) {
+    throw stop(`refusing to record an override for loop "${loop}": its recorded round sequence is corrupt (not 1..n) — fix the ledger by hand first`);
+  }
+  return appendRecord(ledgerPath, record, deps);
+};
+
 // ── recordTriage (the deadlock-breaker — no teeth, no receipt binding) ──────────────────────────
 
 // recordTriage({ cwd, env, loop, activity, round, classifications, timestamp }, deps) →
@@ -186,11 +231,12 @@ export const recordTriage = (params, deps = {}) => {
 
 // ── CLI (record / classify) ──────────────────────────────────────────────────────────────────────
 
-const HELP = `review-ledger-write — the review-round ledger WRITER (agent-workflow family, AD-045).
+const HELP = `review-ledger-write — the review-round ledger WRITER (agent-workflow family, AD-045 + AD-047).
 
 Usage:
-  node review-ledger-write.mjs record   --json '<round-payload>'   [--cwd <dir>]
-  node review-ledger-write.mjs classify --json '<triage-payload>'  [--cwd <dir>]
+  node review-ledger-write.mjs record   --json '<round-payload>'    [--cwd <dir>]
+  node review-ledger-write.mjs classify --json '<triage-payload>'   [--cwd <dir>]
+  node review-ledger-write.mjs override --json '<override-payload>' [--cwd <dir>]
 
 record   appends one review round. The JSON payload carries { loop, round, origins, backends,
          findings } (activity defaults to plan-execution; timestamp defaults to now). REFUSES while
@@ -200,6 +246,12 @@ classify appends one triage record. The JSON payload carries { loop, round, clas
          { findingKey, class, accepted, testId, note }). A fixable-bug REQUIRES a testId — the
          red→green test that pins the fold, formatted "<test-file>#<test-name-pattern>" (write it
          first); inherent-layer-residual / escalate may omit it. This is what permits the next round.
+override appends one override record (schema 3) — the LOUD, durable waiver the fold-completeness
+         gate consumes. The JSON payload carries { loop, round, scope, reason } plus, per scope:
+         scope "oracle-change" → files[] (non-empty repo-relative paths whose tamper flag it lifts);
+         scope "red-proof" → testId (the exact bound testId whose observed-red receipt + custody it
+         waives — for a red that is GENUINELY unestablishable pre-fold, D7). REFUSES for a loop that
+         is not the in-flight plan. QUARANTINE (a flaky/timed-out probe) has NO override lane.
 
 The read-only checker is a SEPARATE tool: node review-ledger.mjs --check / --status / --json.
 Exit codes: 0 written; 1 a typed STOP (teeth / malformed / missing receipt / fs error); 2 usage.`;
@@ -238,14 +290,16 @@ export const main = (argv, ctx = {}) => {
   try {
     if (argv.includes('--help') || argv.includes('-h') || argv.length === 0) return { code: argv.length === 0 ? 2 : 0, stdout: HELP, stderr: '' };
     const sub = argv[0];
-    if (sub !== 'record' && sub !== 'classify') throw usageFail(`unknown subcommand "${sub}" (expected: record | classify)`);
+    if (sub !== 'record' && sub !== 'classify' && sub !== 'override') throw usageFail(`unknown subcommand "${sub}" (expected: record | classify | override)`);
     const opts = parseArgs(argv.slice(1));
     const payload = parsePayload(opts.json);
     const cwd = opts.cwd ?? cwd0;
     const result =
       sub === 'record'
         ? recordRound({ cwd, env, ...payload })
-        : recordTriage({ cwd, env, ...payload });
+        : sub === 'classify'
+          ? recordTriage({ cwd, env, ...payload })
+          : recordOverride({ cwd, env, ...payload });
     return { code: 0, stdout: `review-ledger-write: recorded a ${result.record.kind} for loop "${result.record.loop}" round ${result.record.round} → ${result.writtenPath}`, stderr: '' };
   } catch (err) {
     return { code: err.exitCode ?? 1, stdout: '', stderr: `review-ledger-write: ${err.message}` };
