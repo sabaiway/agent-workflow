@@ -253,8 +253,8 @@ describe('resolveResultsPath + validateRunRecord', () => {
   });
   it('a machine-only run record validates; a missing field is rejected with a named reason', () => {
     const rec = {
-      schema: RESULT_SCHEMA_VERSION, kind: 'run', loop: 'demo', fingerprint: 'a'.repeat(64), boundTestIds: [],
-      testIds: [], unsupported: [], outOfDomain: [], coverage: { uncoveredChanged: [] },
+      schema: RESULT_SCHEMA_VERSION, kind: 'run', loop: 'demo', base: 'h'.repeat(40), fingerprint: 'a'.repeat(64), boundTestIds: [],
+      testIds: [], unsupported: [], outOfDomain: [], coverage: { uncoveredChanged: [] }, tamper: { tampered: [] },
       mutation: { total: 0, killed: 0, survived: [], skipped: 0, killSetBasis: null },
       budgets: { mutantsMax: 200, hunkMutantsMax: 25, timeBudgetS: 600 }, timestamp: 't',
     };
@@ -281,10 +281,12 @@ const fixtureEnv = (root, extra = {}) => {
   return { ...env, AW_REVIEW_LEDGER: join(root, '.git', 'rl.jsonl'), AW_FOLD_RESULTS: join(root, '.git', 'fc.jsonl'), ...extra };
 };
 
-// A valid v2 fixable-bug triage line (the runner reads its testId; the round it references is
-// irrelevant to bound-testId collection). loop must match the in-flight plan stem.
-const triageLine = (loop, testId) =>
-  `${JSON.stringify({ schema: 2, loop, activity: 'plan-execution', kind: 'triage', round: 1, fingerprint: 'a'.repeat(64), classifications: [{ findingKey: 'k', class: 'fixable-bug', accepted: false, testId, note: '' }], timestamp: 't' })}\n`;
+// A valid v4 fixable-bug triage line at the fixture's SEGMENT base (D7: the runner collects the
+// bound set per segment, so the triage must sit at the repo's HEAD). loop must match the in-flight
+// plan stem.
+const triageLine = (loop, testId, base) =>
+  `${JSON.stringify({ schema: 4, loop, activity: 'plan-execution', kind: 'triage', round: 1, base, fingerprint: 'a'.repeat(64), classifications: [{ findingKey: 'k', class: 'fixable-bug', accepted: false, testId, note: '' }], timestamp: 't' })}\n`;
+const headOf = (root) => spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim();
 
 describe('computeChangedSurface — tracked (git diff HEAD) + untracked classification', () => {
   it('derives changed lines for a modified tracked file and classifies each class', () => {
@@ -357,7 +359,7 @@ describe('runFoldCompleteness — rich fixture: surface + M3a coverage + schema 
     );
     // seed the review ledger with a fixable-bug testId pointing at the passing bound test.
     const boundId = 'lib.test.mjs#classify positive';
-    writeFileSync(join(root, '.git', 'rl.jsonl'), triageLine('demo-plan', boundId));
+    writeFileSync(join(root, '.git', 'rl.jsonl'), triageLine('demo-plan', boundId, headOf(root)));
 
     const env = fixtureEnv(root, { AW_FOLD_RERUNS: '2' }); // exercise the D4 N-rerun counts (N=2)
     const before = computeFingerprintPayload(root);
@@ -426,7 +428,7 @@ describe('runFoldCompleteness — testId probe edge cases (Decision 3)', () => {
     const missing = 'ghost.test.mjs#whatever';
     writeFileSync(
       join(root, '.git', 'rl.jsonl'),
-      triageLine('demo-plan', green) + triageLine('demo-plan', red) + triageLine('demo-plan', nomatch) + triageLine('demo-plan', missing),
+      triageLine('demo-plan', green, headOf(root)) + triageLine('demo-plan', red, headOf(root)) + triageLine('demo-plan', nomatch, headOf(root)) + triageLine('demo-plan', missing, headOf(root)),
     );
     const { record } = runFoldCompleteness({ cwd: root, env: fixtureEnv(root, { AW_FOLD_RERUNS: '1' }), suiteCmd: 'node --test --test-reporter tap lib.test.mjs' });
     const byId = Object.fromEntries(record.testIds.map((t) => [t.id, t]));

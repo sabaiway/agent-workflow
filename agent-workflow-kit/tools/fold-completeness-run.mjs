@@ -35,7 +35,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { writeContainedFileAtomic } from './atomic-write.mjs';
 import { computeTreeFingerprint, plansInFlight } from './review-state.mjs';
-import { resolveLedgerPath, readLedger, isWellFormedTestId, splitTestId } from './review-ledger.mjs';
+import { resolveLedgerPath, resolveBase, readLedger, isWellFormedTestId, splitTestId } from './review-ledger.mjs';
 import {
   RESULT_SCHEMA_VERSION,
   resolveResultsPath,
@@ -501,10 +501,13 @@ export const runFoldCompleteness = ({ cwd = process.cwd(), env = process.env, su
     for (const n of computeUncoveredLines({ perProcessRanges: perProc, sourceText: src, changedLines: lines })) uncoveredChanged.push({ file: rel, line: n });
   }
 
-  // Decision 3 / 10 + D4: probe each fixable-bug bound testId N times (shell-free, per-run timeout).
+  // Decision 3 / 10 + D4: probe each of the SEGMENT's fixable-bug bound testIds N times
+  // (shell-free, per-run timeout). Segment scope (D7): a committed phase's folds are closed
+  // obligations — only triages recorded at the current base bind.
   const ledgerPath = resolveLedgerPath(cwd, env);
   const { records: reviewRecords } = ledgerPath ? readLedger(ledgerPath) : { records: [] };
-  const boundTestIds = collectBoundTestIds(reviewRecords, { activity: ACTIVITY, loop });
+  const base = resolveBase(cwd);
+  const boundTestIds = collectBoundTestIds(reviewRecords, { activity: ACTIVITY, loop, base });
   const testIds = boundTestIds.map(
     (id) => probeBound({ id, rootTop, env, boundArgv, reruns: budgets.foldReruns, timeoutS: budgets.probeTimeoutS }).entry,
   );
@@ -517,6 +520,7 @@ export const runFoldCompleteness = ({ cwd = process.cwd(), env = process.env, su
     schema: RESULT_SCHEMA_VERSION,
     kind: 'run',
     loop,
+    base,
     fingerprint,
     boundTestIds,
     testIds,
@@ -588,6 +592,7 @@ export const runRedProbe = ({ cwd = process.cwd(), env = process.env, testId } =
     schema: RESULT_SCHEMA_VERSION,
     kind: 'red-probe',
     loop,
+    base: resolveBase(cwd), // the SEGMENT frame (D7): a receipt attests red within its segment
     testId,
     fileHash: entry.fileHash,
     runs: entry.runs,

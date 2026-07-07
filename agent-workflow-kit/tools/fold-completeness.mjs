@@ -64,7 +64,7 @@ import { detectBackends } from './detect-backends.mjs';
 import { resolveActivityRecipe, planRecipe, DISPLAY_ALIASES } from './recipes.mjs';
 import { CONFIG_REL, fail, loadConfig } from './orchestration-config.mjs';
 import { computeTreeFingerprint, isTreeClean, plansInFlight } from './review-state.mjs';
-import { resolveLedgerPath, readLedger, filterLoopRecords, collectOverrides, isWellFormedTestId, splitTestId } from './review-ledger.mjs';
+import { resolveLedgerPath, resolveBase, readLedger, filterSegmentRecords, collectOverrides, isWellFormedTestId, splitTestId } from './review-ledger.mjs';
 // The fold-ledger locator and the D4 probe-verdict algebra live in the NEUTRAL shared module
 // (BUGFREE-2 / AD-048, D8): review-ledger.mjs telemetry reads the fold ledger through THAT module —
 // importing this checker from there would close an import cycle (this file imports review-ledger).
@@ -74,12 +74,16 @@ import { probeVerdict, RESULTS_BASENAME, resolveResultsPath } from './changed-su
 export { probeVerdict, RESULTS_BASENAME, resolveResultsPath };
 // SCHEMA v2 (BUGFREE-1 / AD-047): records gain a kind discriminator — `run` (the fold-completeness
 // run, now with per-testId rerun counts + the test file's content hash) | `red-probe` (the
-// observed-red receipt --red mints). RESULT_SCHEMA_VERSION is what the WRITER emits; the reader
-// tolerates every SUPPORTED version under its own per-version rules (the review-ledger v1→v2
-// precedent), so v1 ledgers never retroactively become malformed — but a v1 record as the loop's
-// LATEST run fails the gate with a named re-run reason (D2).
-export const RESULT_SCHEMA_VERSION = 2;
-export const SUPPORTED_RESULT_SCHEMAS = new Set([1, 2]);
+// observed-red receipt --red mints). SCHEMA v3 (BUGFREE-2 / AD-048, D7): records carry `base` — the
+// SEGMENT frame — and the gate scopes bound testIds, receipts, custody, and tamper to
+// (loop, base = current HEAD): a committed phase's custody obligations close with its commit (the
+// cross-phase-churn override class dies). RESULT_SCHEMA_VERSION is what the WRITER emits; the
+// reader tolerates every SUPPORTED version under its own per-version rules (the review-ledger
+// v1→v2 precedent), so v1/v2 ledgers never retroactively become malformed — but only a v3 record
+// can enter a segment, so a dirty segment whose loop holds only pre-v3 records fails with a reason
+// naming the schema upgrade (D7 legacy rule).
+export const RESULT_SCHEMA_VERSION = 3;
+export const SUPPORTED_RESULT_SCHEMAS = new Set([1, 2, 3]);
 const ACTIVITY = 'plan-execution';
 const SLOT = 'review';
 
@@ -95,13 +99,15 @@ const gitRoot = (cwd) => gitLine(['rev-parse', '--show-toplevel'], cwd);
 
 // ── the bound fixable-bug testId set (the SINGLE source of truth — runner + checker share it) ────
 
-// collectBoundTestIds(reviewRecords, { activity, loop }) → the sorted, de-duplicated testIds of the
-// loop's fixable-bug classifications. Pure over review-ledger records. Both the runner (which records
-// the set as a binding) and the checker (which recomputes it for the staleness check) call THIS, so
-// the two can never drift (Decision 9: same-fingerprint/new-testId is stale).
-export const collectBoundTestIds = (reviewRecords, { activity = ACTIVITY, loop } = {}) => {
+// collectBoundTestIds(reviewRecords, { activity, loop, base }) → the sorted, de-duplicated testIds
+// of the SEGMENT's fixable-bug classifications (D7: pass base — a committed segment's folds are
+// closed obligations; `base: undefined` would match nothing, never legacy records). Pure over
+// review-ledger records. Both the runner (which records the set as a binding) and the checker
+// (which recomputes it for the staleness check) call THIS, so the two can never drift (Decision 9:
+// same-fingerprint/new-testId is stale).
+export const collectBoundTestIds = (reviewRecords, { activity = ACTIVITY, loop, base } = {}) => {
   const ids = new Set();
-  for (const r of filterLoopRecords(reviewRecords, { activity, loop })) {
+  for (const r of filterSegmentRecords(reviewRecords, { activity, loop, base })) {
     if (r.kind !== 'triage') continue;
     for (const c of r.classifications) if (c.class === 'fixable-bug' && typeof c.testId === 'string' && c.testId.length > 0) ids.add(c.testId);
   }
@@ -117,11 +123,18 @@ const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === 'st
 
 const HASH_RE = /^[0-9a-f]{64}$/; // sha-256 hex — the content-custody hash shape
 
-// The shared record frame (both versions, both kinds).
+// The shared record frame (every version, both kinds). v3 adds the SEGMENT frame: base is REQUIRED
+// (null on an unborn branch); a v1/v2 record never carries it — an old record never grows new
+// surface (the review-ledger D2 discipline).
 const validateFrame = (obj) => {
   if (!isNonEmptyString(obj.loop)) return 'missing loop';
   if (!(obj.fingerprint === null || isNonEmptyString(obj.fingerprint))) return 'fingerprint must be null or a non-empty string';
   if (!isNonEmptyString(obj.timestamp)) return 'missing timestamp';
+  if (obj.schema >= 3) {
+    if (!(obj.base === null || isNonEmptyString(obj.base))) return 'a v3 record requires base — null (unborn branch) or the HEAD commit the dirty tree sits on';
+  } else if (obj.base !== undefined) {
+    return `base is a v3 frame field — a schema-${obj.schema} record never carries it`;
+  }
   return null;
 };
 
@@ -205,9 +218,11 @@ export const validateRunRecord = (obj) => {
   if (obj.kind === 'run') {
     const r = validateRunBody(obj, validateV2Entry);
     if (r) return { ok: false, reason: r };
-    // The tamper surface (Phase 2.2) is OPTIONAL on read — a record written by the pre-tamper v2
-    // runner stays readable (never retroactively malformed); the GATE handles the staleness. When
-    // present, the shape is exact.
+    // The tamper surface is OPTIONAL on a v2 read — a record written by the pre-tamper v2 runner
+    // stays readable (never retroactively malformed); the GATE handles the staleness. A v3 runner
+    // ALWAYS records it, so a v3 run without one is not this runner's output. When present, the
+    // shape is exact.
+    if (obj.schema >= 3 && obj.tamper === undefined) return { ok: false, reason: 'a v3 run records its tamper surface' };
     if (obj.tamper !== undefined && (!isPlainObject(obj.tamper) || !isStringArray(obj.tamper.tampered))) {
       return { ok: false, reason: 'tamper.tampered must be an array of strings (when the tamper surface is recorded)' };
     }
@@ -252,6 +267,12 @@ export const readResults = (path, readFile = readFileSync) => {
 // (latest is last).
 export const filterLoopResults = (records, loop) => records.filter((r) => r.loop === loop);
 
+// filterSegmentResults(records, loop, base) → the result records of ONE segment (D7), order
+// preserved. STRICT: only a v3+ record carries base, so pre-v3 history can never enter a segment
+// (readable, never re-scoped — the review-ledger filterSegmentRecords discipline).
+export const filterSegmentResults = (records, loop, base) =>
+  filterLoopResults(records, loop).filter((r) => r.schema >= 3 && r.base === base);
+
 // ── kind-aware selectors (shared: the runner and the checker read the ledger through THESE) ──────
 
 // A v1 record IS a run (the kindless AD-046 shape); a v2 record is a run only under kind:"run".
@@ -293,6 +314,7 @@ export const buildFoldState = ({ cwd, env = process.env, detect = detectBackends
   const plans = plansInFlight(root);
   const fingerprint = computeTreeFingerprint(cwd);
   const clean = fingerprint == null ? null : isTreeClean(cwd);
+  const base = resolveBase(cwd);
   const resultsPath = resolveResultsPath(cwd, env);
   const resultRead = resultsPath ? readResults(resultsPath) : { records: [], malformed: 0, malformedReasons: [] };
   const reviewPath = resolveLedgerPath(cwd, env);
@@ -304,6 +326,7 @@ export const buildFoldState = ({ cwd, env = process.env, detect = detectBackends
     plans,
     fingerprint,
     clean,
+    base,
     resultsPath,
     resultRecords: resultRead.records,
     resultMalformed: resultRead.malformed,
@@ -342,20 +365,28 @@ export const decideCheck = (state) => {
   if (state.reviewMalformed > 0) return { code: 1, reason: `the review ledger has ${state.reviewMalformed} malformed line(s) — failing closed; inspect ${state.reviewPath}` };
 
   const loop = state.plans[0].replace(/\.md$/, '');
-  const loopResults = filterLoopResults(state.resultRecords, loop);
+  // SEGMENT scope (D7): the gate judges the current segment — (loop, base = the HEAD the dirty
+  // tree sits on). A committed phase's runs, receipts, custody chains, and tamper obligations are
+  // closed history; only v3 records at the current base enter.
+  const loopResults = filterSegmentResults(state.resultRecords, loop, state.base);
   const sel = latestRunRecord(loopResults);
-  if (sel == null) return { code: 1, reason: `dirty plan-execution loop "${loop}" but no fold-completeness run recorded — run fold-completeness-run.mjs` };
+  if (sel == null) {
+    const allLoop = filterLoopResults(state.resultRecords, loop);
+    const legacy = allLoop.length > 0 && allLoop.every((r) => !(r.schema >= 3))
+      ? ' (the loop has only pre-v3 records, which never enter a segment — the schema upgrade requires a fresh run)'
+      : '';
+    return { code: 1, reason: `dirty plan-execution loop "${loop}" but no fold-completeness run recorded for the current segment — run fold-completeness-run.mjs${legacy}` };
+  }
   const latest = sel.record;
-  // D2 — a v1 record as the loop's latest run: the gate now needs the v2 evidence (rerun counts +
-  // custody hashes), which an older runner never recorded. Fail with a named re-run reason. The same
-  // rule covers a v2 record with NO recorded tamper surface (the pre-2.2 runner).
+  // D2 defense — unreachable for a segment member (only v3 enters), kept fail-closed for a
+  // hand-forged record: the gate needs the v2+ evidence (rerun counts + custody hashes + tamper).
   if (latest.schema === 1) return { code: 1, reason: `the loop's latest run is a schema-1 record (an older runner — no rerun counts, no custody hashes) — re-run fold-completeness-run.mjs` };
   if (latest.tamper === undefined) return { code: 1, reason: `the loop's latest run has no recorded tamper surface (an older runner) — re-run fold-completeness-run.mjs` };
 
   // Decision 9 — the double binding. A tree edit moves the fingerprint; a new fixable-bug triage moves
   // the bound-testId set. Either mismatch is STALE (the run no longer describes the committable tree).
   if (latest.fingerprint !== state.fingerprint) return { code: 1, reason: `no fold-completeness run for the current tree (the tree was edited after the run) — re-run fold-completeness-run.mjs after the last edit` };
-  const currentBound = collectBoundTestIds(state.reviewRecords, { activity: ACTIVITY, loop });
+  const currentBound = collectBoundTestIds(state.reviewRecords, { activity: ACTIVITY, loop, base: state.base });
   if (!sameSet(latest.boundTestIds, currentBound)) return { code: 1, reason: `a fixable-bug testId was triaged after the run (the bound-testId set changed) — re-run fold-completeness-run.mjs` };
   // Fail CLOSED if the run's probe set does not cover its bound-testId set EXACTLY. A well-formed
   // runner record always probes every bound testId (one testIds[] entry per boundTestId), but a record
@@ -469,9 +500,9 @@ const formatHuman = (state, check) => {
   lines.push(`  result ledger: ${state.resultsPath ?? '(unresolvable — no git dir)'} (${state.resultRecords.length} record(s)${state.resultMalformed ? `, ${state.resultMalformed} malformed — inspect the file` : ''})`);
   if (state.plans.length === 1) {
     const loop = state.plans[0].replace(/\.md$/, '');
-    const loopResults = filterLoopResults(state.resultRecords, loop);
-    const sel = latestRunRecord(loopResults); // kind-aware: never render a red-probe as "the run"
-    if (sel) lines.push(runLine(sel.record, loopResults.filter(isRedProbeRecord)));
+    const segResults = filterSegmentResults(state.resultRecords, loop, state.base); // the current segment (D7)
+    const sel = latestRunRecord(segResults); // kind-aware: never render a red-probe as "the run"
+    if (sel) lines.push(runLine(sel.record, segResults.filter(isRedProbeRecord)));
   }
   lines.push(`  check: ${check.code === 0 ? 'PASS' : 'FAIL'} — ${check.reason}`);
   return lines.join('\n');
