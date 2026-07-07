@@ -424,6 +424,17 @@ describe('runCli --record — the gate-run receipt via the ledger sole writer', 
     assert.equal(out[out.length - 1], '[run-gates] status=ok gates=2 passed=2 failed=0 failed_ids=-');
   });
 
+  it('exit 7 also shadows a RED run — the record failure outranks the gate verdict (agy Phase-2 nit)', () => {
+    const { code, out } = runHermetic({
+      gates,
+      argv: ['--record'],
+      byCmd: { 'cmd-one': GREEN, 'cmd-two': RED },
+      deps: { record: () => { throw new Error('ledger unwritable'); }, fingerprint: fpSeq('f') },
+    });
+    assert.equal(code, EXIT.recordFailed, 'recordFailed outranks EXIT.fail');
+    assert.equal(out[out.length - 1], '[run-gates] status=fail gates=2 passed=1 failed=1 failed_ids=two', 'the honest gate verdict still lands on stdout');
+  });
+
   it('the sole-writer boundary: run-gates delegates to recordGateRun and never opens the ledger itself (structure pin)', () => {
     const src = readFileSync(join(HERE, 'run-gates.mjs'), 'utf8');
     assert.match(src, /import \{ recordGateRun \} from '\.\/review-ledger-write\.mjs'/, 'the delegation import');

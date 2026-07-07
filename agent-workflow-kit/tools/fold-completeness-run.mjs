@@ -15,8 +15,9 @@
 //   4. probe each of the loop's fixable-bug bound testIds N times (Decision 3 / 10 + D4, shell-free,
 //      per-run timeout) for resolvability + an N/N-green baseline, hashing each bound test file
 //      (the D5 custody anchor);
-//   5. append ONE machine-only v2 run record, bound to BOTH the tree fingerprint AND the sorted
-//      fixable-bug testId set (Decision 9), to <git dir>/agent-workflow-fold-completeness.jsonl.
+//   5. append ONE machine-only v3 run record — segment-framed (base = git rev-parse HEAD, AD-048 D7)
+//      and bound to BOTH the tree fingerprint AND the SEGMENT's sorted fixable-bug testId set
+//      (Decision 9) — to <git dir>/agent-workflow-fold-completeness.jsonl.
 // A SECOND verb, --red "<testId>" (BUGFREE-1 / AD-047), observes a testId RED on the current
 // (pre-fold) tree and mints a red-probe receipt — the observed-red half of the honest red→green
 // proof; observed-green / unresolvable / mixed / timed-out are distinguished refusals, nothing written.
@@ -616,15 +617,17 @@ Usage:
   node fold-completeness-run.mjs --red "<test-file>#<test-name-pattern>" [--cwd <dir>]
 
 The default run: runs the in-flight plan-execution loop's suite ONCE under coverage, maps every
-changed executable line to covered/uncovered, probes each fixable-bug bound testId N times
-(AW_FOLD_RERUNS, default 3) for resolvability + an N/N-green baseline, records each bound test file's
-content hash (custody), and appends one v2 run record to
+changed executable line to covered/uncovered, probes each of the SEGMENT's fixable-bug bound testIds
+N times (AW_FOLD_RERUNS, default 3) for resolvability + an N/N-green baseline, records each bound test
+file's content hash (custody), and appends one v3 run record — segment-framed (base = git rev-parse
+HEAD; the bound set is the current segment's, AD-048 D7) — to
 <git dir>/${'agent-workflow-fold-completeness.jsonl'} (AW_FOLD_RESULTS overrides).
 
 --red observes a testId RED on the CURRENT (pre-fold) tree — the honest fold-time order is: classify
 the fixable-bug with its testId → write the test → --red observes it FAIL (N/N) BEFORE the fix is
 applied → fold the fix → the normal run observes green → the gate checks receipt + order + custody.
-An N/N red mints a red-probe receipt (testId, counts, content hash, fingerprint); observed-green /
+An N/N red mints a red-probe receipt (testId, counts, content hash, fingerprint, and base — the
+current SEGMENT frame: a receipt never crosses a commit boundary); observed-green /
 unresolvable / mixed / timed-out are DISTINGUISHED typed refusals and nothing is written
 (mixed/timeout = QUARANTINE — never converts, no override lane).
 

@@ -946,3 +946,13 @@ describe('runRedProbe / --red — observed-red receipts', () => {
     rmSync(root, { recursive: true, force: true });
   });
 });
+
+describe('the runner HELP states the v3 segment record (codex Phase-3 R1 — no doc-vs-code drift)', () => {
+  it('the runner HELP states the v3 segment record', () => {
+    const r = main(['--help'], {});
+    assert.equal(r.code, 0);
+    assert.match(r.stdout, /v3 run record/, 'the HELP must advertise the v3 record');
+    assert.match(r.stdout, /segment/i, 'the HELP must name the segment frame');
+    assert.doesNotMatch(r.stdout, /v2 run record/, 'the v2 wording is the pre-AD-048 contract');
+  });
+});

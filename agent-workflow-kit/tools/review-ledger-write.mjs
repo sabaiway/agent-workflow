@@ -378,8 +378,10 @@ record   appends one review round. The JSON payload carries { loop, round, origi
          while a blocking finding of the segment's previous round VANISHED unclassified (D6 —
          classify it first, "refuted" is the honest phantom lane); while the changed source surface
          exceeds the ${DEFAULT_DIFF_CAP}-line diff cap (AW_REVIEW_DIFF_CAP) without a recorded
-         segment size-cap override (D4); or when a non-degraded backend lacks a grounded code
-         receipt for the current tree.
+         segment size-cap override (D4); while the segment lacks a quality-green gate-run at the
+         current fingerprint (D5 — run the FULL matrix first: run-gates.mjs --record; a --only
+         subset or a tree-changed run never satisfies; red PROCESS gates never block); or when a
+         non-degraded backend lacks a grounded code receipt for the current tree.
 classify appends one triage record. The JSON payload carries { loop, round, classifications } (each
          { findingKey, class, accepted, testId, note }). A fixable-bug REQUIRES a testId — the
          red→green test that pins the fold, formatted "<test-file>#<test-name-pattern>" (write it

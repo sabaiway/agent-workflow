@@ -714,6 +714,16 @@ describe('result schema v3 — the segment frame (D2 quartet)', () => {
   });
 });
 
+describe('the checker HELP states the segment contract (codex Phase-3 R1 — no doc-vs-code drift)', () => {
+  it('the checker HELP states the segment contract', () => {
+    const r = main(['--help'], { cwd: '/tmp', env: {}, detect: detect() });
+    assert.equal(r.code, 0);
+    assert.match(r.stdout, /segment/i, 'the HELP must name the segment scope');
+    assert.match(r.stdout, /base/, 'the HELP must name the base frame');
+    assert.doesNotMatch(r.stdout, /receipt in this loop/, 'the loop-scoped receipt wording is the pre-v3 contract');
+  });
+});
+
 // ── --status render + decideCheck purity ─────────────────────────────────────────────────────────
 
 describe('fold-completeness --status', () => {
