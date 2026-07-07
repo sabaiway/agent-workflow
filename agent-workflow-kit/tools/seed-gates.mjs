@@ -208,7 +208,7 @@ export const reviewStateCandidate = (cwd, deps = {}) => {
 
 // The conditional review-LEDGER candidate (AD-045) — the SAME consent + conditional rule as the
 // review-state candidate (offered ONLY when plan-execution.review is reviewed/council), keyed on the
-// same slot, path resolved + QUOTED. It gates the review-ROUND ledger (converged / accepted-residual);
+// same slot, path resolved + QUOTED. It gates the review-ROUND ledger (converged / resolved-residual);
 // review-state gates receipt PRESENCE. Both may be offered together — distinct axes.
 export const reviewLedgerCandidate = (cwd, deps = {}) => {
   const toolPath = deps.reviewLedgerTool ?? REVIEW_LEDGER_TOOL;
@@ -228,7 +228,7 @@ export const reviewLedgerCandidate = (cwd, deps = {}) => {
     return {
       candidate: {
         id: 'review-ledger',
-        title: 'Review-round ledger: the in-flight loop is converged or accepted-residual',
+        title: 'Review-round ledger: the in-flight loop is converged or resolved-residual',
         cmd: `node "${toolPath}" --check`,
       },
       note: null,
