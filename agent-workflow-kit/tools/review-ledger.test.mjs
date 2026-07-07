@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -12,10 +12,17 @@ import {
   isShipVerdict,
   receiptCrossCheck,
   filterLoopRecords,
+  filterSegmentRecords,
+  collectSizeCapLimit,
+  isProcessGateCmd,
+  isQualityGreenGateRun,
   roundSequenceIntact,
   buildLedgerState,
   resolveLedgerPath,
+  resolveBase,
   collectOverrides,
+  computeTelemetry,
+  renderTelemetry,
   main,
   REVIEW_CAP,
 } from './review-ledger.mjs';
@@ -46,6 +53,14 @@ describe('review-ledger schema — the fixture validates + malformed variants re
   it('rejects a missing loop', () => assert.equal(validateRecord({ ...roundFixture(), loop: '' }).ok, false));
   it('rejects a bad activity', () => assert.equal(validateRecord({ ...roundFixture(), activity: 'nope' }).ok, false));
   it('rejects a bad kind', () => assert.equal(validateRecord({ ...roundFixture(), kind: 'nope' }).ok, false));
+
+  it('rejects a bad round on a round-framed kind (integer >= 1 required)', () => {
+    for (const round of [0, -1, 1.5, 'one', undefined]) {
+      const r = validateRecord({ ...roundFixture(), round });
+      assert.equal(r.ok, false, `round ${JSON.stringify(round)} must fail`);
+      assert.match(r.reason, /round must be an integer/);
+    }
+  });
 
   it('rejects a bad class in a triage', () => {
     const bad = triageFixture();
@@ -353,6 +368,269 @@ describe('review-ledger schema v3 — the override record kind', () => {
   });
 });
 
+// ── schema v4 — the SEGMENT + the fold-boundary surface (BUGFREE-2 / AD-048): every v4 record
+// carries `base` (the commit the dirty tree sits on; null on an unborn branch); new kind `gate-run`
+// (the D5 green-baseline receipt), new override scope `size-cap` (D4), new triage class `refuted`
+// (D6). The D2 quartet: (i) older versions reject every new surface; (ii) v4 keeps old records
+// valid; (iii) a mixed v1..v4 ledger reads malformed: 0; (iv) the writer emits v4 (pinned in
+// review-ledger-write.test.mjs). ────────────────────────────────────────────────────────────────
+
+const BASE_A = '1'.repeat(40);
+const BASE_B = '2'.repeat(40);
+
+const v4Round = (over = {}) => ({ ...JSON.parse(FIXTURE.split('\n')[0]), schema: 4, base: BASE_A, ...over });
+const v4Triage = (over = {}) => ({ ...JSON.parse(FIXTURE.split('\n')[1]), schema: 4, base: BASE_A, ...over });
+const sizeCapOverride = (over = {}) => ({
+  schema: 4, loop: 'example-feature', activity: 'plan-execution', kind: 'override', round: 1,
+  base: BASE_A, fingerprint: 'f'.repeat(64), scope: 'size-cap', sanctionedLines: 612,
+  reason: 'the ledger layer itself ships as one reviewed unit', timestamp: 't', ...over,
+});
+const gateRun = (over = {}) => ({
+  schema: 4, loop: 'example-feature', activity: 'plan-execution', kind: 'gate-run', base: BASE_A,
+  fingerprint: 'f'.repeat(64), fingerprintAfter: 'f'.repeat(64),
+  declared: [
+    { id: 'unit-tests', cmd: 'node --test pkg/*.test.mjs' },
+    { id: 'review-ledger', cmd: 'node agent-workflow-kit/tools/review-ledger.mjs --check' },
+  ],
+  results: [{ id: 'unit-tests', ok: true, code: 0 }, { id: 'review-ledger', ok: false, code: 1 }],
+  summary: { status: 'fail', gates: 2, passed: 1, failed: 1, failedIds: ['review-ledger'] },
+  timestamp: 't', ...over,
+});
+
+describe('review-ledger schema v4 — the segment frame (base)', () => {
+  it('a v4 round / triage with base validates; base: null (unborn branch) validates', () => {
+    for (const rec of [v4Round(), v4Triage(), v4Round({ base: null })]) {
+      const r = validateRecord(rec);
+      assert.equal(r.ok, true, r.reason);
+    }
+  });
+
+  it('a v4 record with a MISSING base is rejected, reason names base (the segment frame is required)', () => {
+    const bad = v4Round();
+    delete bad.base;
+    const r = validateRecord(bad);
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /base/);
+  });
+
+  it('base on a v1..v3 record is rejected — an old record never grows new surface (D2 i)', () => {
+    for (const s of [1, 2, 3]) {
+      const r = validateRecord({ ...roundFixture(), schema: s, base: BASE_A });
+      assert.equal(r.ok, false, `schema ${s} must reject base`);
+      assert.match(r.reason, /base is a v4 frame field/);
+    }
+  });
+
+  it('kind gate-run is valid ONLY under schema 4 (D2 i)', () => {
+    for (const s of [1, 2, 3]) {
+      const g = gateRun({ schema: s });
+      delete g.base; // isolate the kind check from the base check
+      const r = validateRecord(g);
+      assert.equal(r.ok, false, `schema ${s} must reject kind gate-run`);
+      assert.match(r.reason, /kind/);
+    }
+  });
+
+  it('scope size-cap is valid ONLY under schema 4 (D2 i)', () => {
+    const v3 = sizeCapOverride({ schema: 3 });
+    delete v3.base;
+    const r = validateRecord(v3);
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /scope/);
+    assert.equal(validateRecord(sizeCapOverride()).ok, true, validateRecord(sizeCapOverride()).reason);
+  });
+
+  it('class refuted is valid ONLY under schema 4, and its note is MANDATORY (D6)', () => {
+    const refuted = (schema, note) => {
+      const t = { ...v4Triage(), schema, classifications: [{ findingKey: 'k', class: 'refuted', accepted: false, testId: null, note }] };
+      if (schema < 4) delete t.base;
+      return t;
+    };
+    const v3 = refuted(3, 'grounds cited');
+    assert.equal(validateRecord(v3).ok, false, 'v3 must reject class refuted');
+    const ok = validateRecord(refuted(4, 'the cited line already guards this — see file:42'));
+    assert.equal(ok.ok, true, ok.reason);
+    const noNote = validateRecord(refuted(4, ''));
+    assert.equal(noNote.ok, false);
+    assert.match(noNote.reason, /note/);
+  });
+
+  it('size-cap: sanctionedLines is REQUIRED, a positive integer, and the payload stays EXACT', () => {
+    for (const sanctionedLines of [undefined, 0, -5, 1.5, '400']) {
+      const r = validateRecord(sizeCapOverride({ sanctionedLines }));
+      assert.equal(r.ok, false, `sanctionedLines ${JSON.stringify(sanctionedLines)} must fail`);
+      assert.match(r.reason, /sanctionedLines/);
+    }
+    const stray = validateRecord(sizeCapOverride({ files: ['x.mjs'] }));
+    assert.equal(stray.ok, false);
+    assert.match(stray.reason, /unknown key "files"/);
+  });
+
+  it('a mixed v1 + v2 + v3 + v4 ledger reads back malformed: 0 (D2 iii)', () => {
+    const v2Line = JSON.stringify({ ...triageFixture(), schema: 2, classifications: [{ findingKey: 'k', class: 'fixable-bug', accepted: false, testId: 'x.test.mjs#p', note: '' }] });
+    const v3Line = JSON.stringify({ schema: 3, loop: 'example-feature', activity: 'plan-execution', kind: 'override', round: 1, fingerprint: 'f'.repeat(64), scope: 'red-proof', testId: 'x.test.mjs#p', reason: 'r', timestamp: 't' });
+    const lines = [FIXTURE.split('\n')[0], FIXTURE.split('\n')[1], v2Line, v3Line, JSON.stringify(v4Round()), JSON.stringify(v4Triage()), JSON.stringify(sizeCapOverride()), JSON.stringify(gateRun())].join('\n');
+    const { records, malformed, malformedReasons } = readLedger('X', () => lines);
+    assert.equal(malformed, 0, malformedReasons.join('; '));
+    assert.equal(records.length, 8);
+  });
+});
+
+describe('review-ledger schema v4 — the gate-run record (D5)', () => {
+  it('a valid gate-run validates; round on a gate-run is rejected (per-kind frame)', () => {
+    assert.equal(validateRecord(gateRun()).ok, true, validateRecord(gateRun()).reason);
+    const withRound = validateRecord(gateRun({ round: 1 }));
+    assert.equal(withRound.ok, false);
+    assert.match(withRound.reason, /no round/);
+  });
+
+  it('rejects a missing/invalid fingerprintAfter (pre/post binding is the tree-changed detector)', () => {
+    for (const fingerprintAfter of [undefined, '', 42]) {
+      const r = validateRecord(gateRun({ fingerprintAfter }));
+      assert.equal(r.ok, false, `fingerprintAfter ${JSON.stringify(fingerprintAfter)} must fail`);
+      assert.match(r.reason, /fingerprintAfter/);
+    }
+  });
+
+  it('rejects an unknown key, a result for an undeclared gate, and duplicate ids (exact machine payload)', () => {
+    const unknown = validateRecord(gateRun({ smuggled: true }));
+    assert.equal(unknown.ok, false);
+    assert.match(unknown.reason, /unknown key "smuggled"/);
+    const ghost = validateRecord(gateRun({ results: [{ id: 'ghost', ok: true, code: 0 }], summary: { status: 'ok', gates: 1, passed: 1, failed: 0, failedIds: [] } }));
+    assert.equal(ghost.ok, false);
+    assert.match(ghost.reason, /not in declared/);
+    const dup = validateRecord(gateRun({ declared: [{ id: 'a', cmd: 'x' }, { id: 'a', cmd: 'y' }] }));
+    assert.equal(dup.ok, false);
+    assert.match(dup.reason, /duplicate declared id/);
+  });
+
+  it('rejects a summary inconsistent with results (a forged verdict beside honest evidence)', () => {
+    const badCounts = validateRecord(gateRun({ summary: { status: 'fail', gates: 2, passed: 2, failed: 1, failedIds: ['review-ledger'] } }));
+    assert.equal(badCounts.ok, false);
+    assert.match(badCounts.reason, /summary counts/);
+    const badIds = validateRecord(gateRun({ summary: { status: 'fail', gates: 2, passed: 1, failed: 1, failedIds: ['unit-tests'] } }));
+    assert.equal(badIds.ok, false);
+    assert.match(badIds.reason, /failedIds/);
+  });
+
+  it('ties summary.status to the failing count — the status IS the verdict word (internal sweep)', () => {
+    const lyingOk = validateRecord(gateRun({ summary: { status: 'ok', gates: 2, passed: 1, failed: 1, failedIds: ['review-ledger'] } }));
+    assert.equal(lyingOk.ok, false);
+    assert.match(lyingOk.reason, /status/);
+    const banana = validateRecord(gateRun({
+      declared: [{ id: 'unit-tests', cmd: 'node --test x' }],
+      results: [{ id: 'unit-tests', ok: true, code: 0 }],
+      summary: { status: 'banana', gates: 1, passed: 1, failed: 0, failedIds: [] },
+    }));
+    assert.equal(banana.ok, false);
+    assert.match(banana.reason, /status/);
+  });
+
+  it('gate ids are kebab-case (closes the comma-aliasing of the failedIds compare — internal sweep)', () => {
+    const commaId = validateRecord(gateRun({
+      declared: [{ id: 'a,b', cmd: 'node --test x' }],
+      results: [{ id: 'a,b', ok: false, code: 1 }],
+      summary: { status: 'fail', gates: 1, passed: 0, failed: 1, failedIds: ['a', 'b'] },
+    }));
+    assert.equal(commaId.ok, false);
+    assert.match(commaId.reason, /kebab-case/);
+  });
+});
+
+describe('isProcessGateCmd — the CLOSED process-gate classification (D5)', () => {
+  const PROCESS = [
+    'node agent-workflow-kit/tools/review-state.mjs --check',
+    'node agent-workflow-kit/tools/review-ledger.mjs --check',
+    'node agent-workflow-kit/tools/fold-completeness.mjs --check',
+    'node "${CLAUDE_SKILL_DIR}/tools/review-ledger.mjs" --check',
+  ];
+  const NOT_PROCESS = [
+    'node --test agent-workflow-kit/tools/*.test.mjs',
+    'node agent-workflow-kit/tools/fold-completeness-run.mjs', // the runner is NOT the checker
+    'node agent-workflow-kit/tools/review-ledger.mjs --status', // not the gate form
+    'node agent-workflow-kit/tools/manifest/validate.mjs --strict pkg',
+    'node scripts/check-docs-size.mjs --check-index', // --check-index is not --check
+    // A COMPOUND line is never a process gate: exempting it would forgive the failing quality half
+    // (fail-open against the D5 direction — internal sweep, confirmed by live probe).
+    'node --test pkg/*.test.mjs && node agent-workflow-kit/tools/review-ledger.mjs --check',
+    'node agent-workflow-kit/tools/review-ledger.mjs --check && node --test pkg/*.test.mjs',
+    'node agent-workflow-kit/tools/review-ledger.mjs --check; true',
+    'node agent-workflow-kit/tools/review-ledger.mjs --check --json', // extra flags — not the exact gate form
+  ];
+  for (const cmd of PROCESS) it(`process: ${cmd}`, () => assert.equal(isProcessGateCmd(cmd), true));
+  for (const cmd of NOT_PROCESS) it(`not process: ${cmd}`, () => assert.equal(isProcessGateCmd(cmd), false));
+});
+
+describe('isQualityGreenGateRun — the D5 quality-green rule', () => {
+  it('quality-green: every declared NON-process gate green, tree unchanged (a red PROCESS gate never blocks)', () => {
+    assert.equal(isQualityGreenGateRun(gateRun()), true);
+  });
+
+  it('NOT quality-green: a --only subset missing a declared non-process gate (the R1 subset-bypass)', () => {
+    const subset = gateRun({
+      declared: [{ id: 'unit-tests', cmd: 'node --test x' }, { id: 'release-scan', cmd: 'node tools/release-scan.mjs pkg' }],
+      results: [{ id: 'unit-tests', ok: true, code: 0 }],
+      summary: { status: 'ok', gates: 1, passed: 1, failed: 0, failedIds: [] },
+    });
+    assert.equal(isQualityGreenGateRun(subset), false);
+  });
+
+  it('NOT quality-green: a red non-process gate', () => {
+    const red = gateRun({
+      declared: [{ id: 'unit-tests', cmd: 'node --test x' }],
+      results: [{ id: 'unit-tests', ok: false, code: 1 }],
+      summary: { status: 'fail', gates: 1, passed: 0, failed: 1, failedIds: ['unit-tests'] },
+    });
+    assert.equal(isQualityGreenGateRun(red), false);
+  });
+
+  it('NOT quality-green: the tree changed under the run (fingerprint !== fingerprintAfter) — codex R2', () => {
+    assert.equal(isQualityGreenGateRun(gateRun({ fingerprintAfter: 'e'.repeat(64) })), false);
+  });
+
+  it('NOT quality-green: an unfingerprinted tree (null)', () => {
+    assert.equal(isQualityGreenGateRun(gateRun({ fingerprint: null, fingerprintAfter: null })), false);
+  });
+});
+
+describe('filterSegmentRecords + collectSizeCapLimit — the segment scope (D1/D4)', () => {
+  it('records at baseA are invisible at baseB; pre-v4 records never enter a segment', () => {
+    const records = [v4Round(), v4Round({ base: BASE_B }), roundFixture()];
+    const atA = filterSegmentRecords(records, { activity: 'plan-execution', loop: 'example-feature', base: BASE_A });
+    assert.equal(atA.length, 1);
+    assert.equal(atA[0].base, BASE_A);
+    const atB = filterSegmentRecords(records, { activity: 'plan-execution', loop: 'example-feature', base: BASE_B });
+    assert.equal(atB.length, 1);
+  });
+
+  it('base null (unborn branch) matches only null — never a pre-v4 record with no base', () => {
+    const records = [v4Round({ base: null }), roundFixture()];
+    const seg = filterSegmentRecords(records, { activity: 'plan-execution', loop: 'example-feature', base: null });
+    assert.equal(seg.length, 1);
+    assert.equal(seg[0].schema, 4);
+  });
+
+  it('a pre-v4 record NEVER enters a segment, even for a defensive undefined base (codex R1 minor)', () => {
+    const records = [roundFixture(), v4Round()];
+    assert.deepEqual(filterSegmentRecords(records, { activity: 'plan-execution', loop: 'example-feature', base: undefined }), [], 'undefined base matches nothing — pre-v4 records carry no base and stay out');
+  });
+
+  it('the source carries no raw control bytes (a NUL byte turns the tool binary for grep — codex R1)', () => {
+    for (const f of ['review-ledger.mjs', 'review-ledger-write.mjs', 'changed-surface.mjs']) {
+      const bytes = readFileSync(new URL(`./${f}`, import.meta.url));
+      const bad = [...bytes].filter((b) => b < 0x20 && b !== 0x0a && b !== 0x09 && b !== 0x0d).length;
+      assert.equal(bad, 0, `${f} must contain no raw control bytes (found ${bad})`);
+    }
+  });
+
+  it('collectSizeCapLimit returns the LARGEST sanction of the segment, null when none / other-segment only', () => {
+    const records = [sizeCapOverride({ sanctionedLines: 500 }), sizeCapOverride({ sanctionedLines: 612 }), sizeCapOverride({ base: BASE_B, sanctionedLines: 9999 })];
+    assert.equal(collectSizeCapLimit(records, { activity: 'plan-execution', loop: 'example-feature', base: BASE_A }), 612);
+    assert.equal(collectSizeCapLimit(records, { activity: 'plan-execution', loop: 'example-feature', base: '3'.repeat(40) }), null);
+    assert.equal(collectSizeCapLimit([], { activity: 'plan-execution', loop: 'example-feature', base: BASE_A }), null);
+  });
+});
+
 describe('roundSequenceIntact', () => {
   const rd = (n) => ({ kind: 'round', round: n });
   it('true for 1..n in order', () => assert.equal(roundSequenceIntact([rd(1), rd(2), rd(3)]), true));
@@ -560,6 +838,42 @@ describe('decideStop — exhaustive interaction truth table (the spec)', () => {
   }
 });
 
+// ── ADDITIVE v4 rows (AD-048): the refuted class in decideStop — added beside the frozen truth
+// table, never inside it (D10: every pre-existing row stays green unmodified). Without this arm a
+// phantom blocking finding minted at round HARD_MAX and honestly refuted WEDGES the segment: the
+// immutable round record carries the minting backend's non-0/0 counts (never converged), round 4 is
+// refused per segment, and the only in-band exits would mislabel the phantom (internal sweep,
+// confirmed by live probe). A refuted classification is a documented resolution — grounds
+// mandatory — so it resolves exactly like an inherent-layer-residual.
+describe('decideStop — the refuted class resolves (AD-048 additive rows)', () => {
+  const REFUTED = (findingKey, note = 'refuted against code: the cited guard exists at file:42') => ({ findingKey, class: 'refuted', accepted: false, testId: null, note });
+
+  it('resolved-residual: a REFUTED surviving phantom at the cap, classification at the current tree', () => {
+    const r = [
+      round({ round: 1, backends: [B('codex'), B('agy', 0, 1)], findings: [F('k', 'major', 'agy')] }),
+      round({ round: 2, backends: [B('codex'), B('agy', 0, 1)], findings: [F('k', 'major', 'agy')] }),
+      triage({ round: 2, classifications: [REFUTED('k')] }),
+    ];
+    assert.equal(decideStop(r, { currentFingerprint: FP, requiredBackends: REQ }).state, 'resolved-residual');
+  });
+
+  it('NOT resolved: the refuting triage is STALE (the tree moved after it) → continue', () => {
+    const r = [
+      round({ round: 2, backends: [B('codex'), B('agy', 0, 1)], findings: [F('k', 'major', 'agy')] }),
+      triage({ round: 2, fingerprint: FP, classifications: [REFUTED('k')] }),
+    ];
+    assert.equal(decideStop(r, { currentFingerprint: FP2, requiredBackends: REQ }).state, 'continue');
+  });
+
+  it('under the cap with no recurrence a refuted phantom stays continue (the normal D6 next-round lane)', () => {
+    const r = [
+      round({ round: 1, backends: [B('codex'), B('agy', 0, 1)], findings: [F('k', 'major', 'agy')] }),
+      triage({ round: 1, classifications: [REFUTED('k')] }),
+    ];
+    assert.equal(decideStop(r, { currentFingerprint: FP, requiredBackends: REQ }).state, 'continue');
+  });
+});
+
 describe('decideStop — degraded-backend matrix (Decision 4)', () => {
   it('(i) a degraded backend with a ship-shaped record does NOT by itself produce converged', () => {
     const r = [round({ backends: [B('codex', 0, 0, 0, { degraded: true, reason: 'stall', verdict: 'degraded' })] })];
@@ -579,12 +893,18 @@ describe('decideStop — degraded-backend matrix (Decision 4)', () => {
 
 // ── the --check gate (decideCheck is a pure function of state) ───────────────────────────────────
 
+// The gate judges the SEGMENT since AD-048: the state carries the current base and only v4 records
+// with that base are the segment. GATE_BASE + seg() modernize the fixtures (a pre-v4 record never
+// enters a segment — pinned by its own tests below).
+const GATE_BASE = 'e'.repeat(40);
+const seg4 = (rec) => ({ ...rec, schema: 4, base: GATE_BASE });
 const mkState = (over = {}) => ({
   resolved: { recipe: 'council', source: 'config', degradedFrom: null, reason: null },
   requiredBackends: ['codex', 'agy'],
   plans: ['L.md'],
   fingerprint: FP,
   clean: false,
+  base: GATE_BASE,
   ledgerPath: '/tmp/ledger.jsonl',
   records: [],
   malformed: 0,
@@ -624,35 +944,35 @@ describe('decideCheck — the --check gate exit contract', () => {
   });
 
   it('exit 0 — converged with a grounded ship-class receipt for the current tree', () => {
-    const records = [round({ round: 1, fingerprint: FP, backends: [B('codex'), B('agy', 0, 0, 0, { degraded: true, reason: 'stall', verdict: 'degraded' })], findings: [] })];
+    const records = [seg4(round({ round: 1, fingerprint: FP, backends: [B('codex'), B('agy', 0, 0, 0, { degraded: true, reason: 'stall', verdict: 'degraded' })], findings: [] }))];
     const c = decideCheck(mkState({ records, receipts: [codexReceipt(FP, 'SHIP')] }));
     assert.equal(c.code, 0);
     assert.match(c.reason, /converged/);
   });
 
   it('exit 1 — triage-required loop (valid [1,2] sequence at the cap)', () => {
-    const records = [round({ round: 1, backends: [B('codex', 0, 1), B('agy')], findings: [F('k', 'major', 'codex')] }), round({ round: 2, backends: [B('codex', 0, 1), B('agy')], findings: [F('k', 'major', 'codex')] })];
+    const records = [seg4(round({ round: 1, backends: [B('codex', 0, 1), B('agy')], findings: [F('k', 'major', 'codex')] })), seg4(round({ round: 2, backends: [B('codex', 0, 1), B('agy')], findings: [F('k', 'major', 'codex')] }))];
     const c = decideCheck(mkState({ records }));
     assert.equal(c.code, 1);
     assert.match(c.reason, /triage-required/);
   });
 
   it('exit 1 — continue loop (dirty, non-converged)', () => {
-    const records = [round({ round: 1, backends: [B('codex', 0, 1), B('agy')], findings: [F('k', 'major', 'codex')] })];
+    const records = [seg4(round({ round: 1, backends: [B('codex', 0, 1), B('agy')], findings: [F('k', 'major', 'codex')] }))];
     const c = decideCheck(mkState({ records }));
     assert.equal(c.code, 1);
     assert.match(c.reason, /continue/);
   });
 
   it('exit 1 — converged recorded but a NON-degraded backend lacks a receipt', () => {
-    const records = [round({ round: 1, fingerprint: FP, backends: [B('codex'), B('agy')], findings: [] })];
+    const records = [seg4(round({ round: 1, fingerprint: FP, backends: [B('codex'), B('agy')], findings: [] }))];
     const c = decideCheck(mkState({ records, receipts: [codexReceipt(FP, 'SHIP')] })); // agy receipt missing
     assert.equal(c.code, 1);
     assert.match(c.reason, /no grounded code receipt for agy/);
   });
 
   it('exit 1 — converged recorded 0/0 but the receipt verdict is non-ship (inconsistent)', () => {
-    const records = [round({ round: 1, fingerprint: FP, backends: [B('codex'), B('agy', 0, 0, 0, { degraded: true, reason: 'stall', verdict: 'degraded' })], findings: [] })];
+    const records = [seg4(round({ round: 1, fingerprint: FP, backends: [B('codex'), B('agy', 0, 0, 0, { degraded: true, reason: 'stall', verdict: 'degraded' })], findings: [] }))];
     const c = decideCheck(mkState({ records, receipts: [codexReceipt(FP, 'revise')] }));
     assert.equal(c.code, 1);
     assert.match(c.reason, /not ship-class/);
@@ -677,7 +997,7 @@ describe('decideCheck — the --check gate exit contract', () => {
 
   it('fails CLOSED on malformed ledger lines for a dirty active loop (codex R3)', () => {
     // a dropped malformed line could hide the latest non-converged round → never a fail-open PASS
-    const records = [round({ round: 1, fingerprint: FP, backends: [B('codex'), B('agy', 0, 0, 0, { degraded: true, reason: 'stall', verdict: 'degraded' })], findings: [] })];
+    const records = [seg4(round({ round: 1, fingerprint: FP, backends: [B('codex'), B('agy', 0, 0, 0, { degraded: true, reason: 'stall', verdict: 'degraded' })], findings: [] }))];
     const c = decideCheck(mkState({ records, receipts: [codexReceipt(FP, 'SHIP')], malformed: 1 }));
     assert.equal(c.code, 1);
     assert.match(c.reason, /malformed/);
@@ -689,17 +1009,155 @@ describe('decideCheck — the --check gate exit contract', () => {
   });
 
   it('exit 1 — a corrupt round sequence (not 1..n) fails closed (codex R3)', () => {
-    const records = [round({ round: 2, fingerprint: FP, backends: [B('codex'), B('agy')], findings: [] })]; // [2], no round 1
+    const records = [seg4(round({ round: 2, fingerprint: FP, backends: [B('codex'), B('agy')], findings: [] }))]; // [2], no round 1
     const c = decideCheck(mkState({ records, receipts: [codexReceipt(FP, 'SHIP')] }));
     assert.equal(c.code, 1);
     assert.match(c.reason, /corrupt/);
   });
 
   it('the execution gate IGNORES plan-authoring records (Decision 6)', () => {
-    const authoring = round({ round: 2, activity: 'plan-authoring', backends: [B('codex', 0, 1), B('agy')], findings: [F('k', 'major', 'codex')] });
-    const execConverged = round({ round: 1, activity: 'plan-execution', fingerprint: FP, backends: [B('codex'), B('agy', 0, 0, 0, { degraded: true, reason: 'stall', verdict: 'degraded' })], findings: [] });
+    const authoring = seg4(round({ round: 2, activity: 'plan-authoring', backends: [B('codex', 0, 1), B('agy')], findings: [F('k', 'major', 'codex')] }));
+    const execConverged = seg4(round({ round: 1, activity: 'plan-execution', fingerprint: FP, backends: [B('codex'), B('agy', 0, 0, 0, { degraded: true, reason: 'stall', verdict: 'degraded' })], findings: [] }));
     const c = decideCheck(mkState({ records: [authoring, execConverged], receipts: [codexReceipt(FP, 'SHIP')] }));
     assert.equal(c.code, 0, 'the plan-authoring triage-required round must not block the code gate');
+  });
+});
+
+// ── decideCheck under SEGMENT scope (AD-048 D1): the gate judges (activity, loop, base) ─────────
+
+describe('decideCheck — segment scope (AD-048)', () => {
+  const segRec = (rec, base = BASE_B) => ({ ...rec, schema: 4, base });
+  const deg = { degraded: true, reason: 'stall', verdict: 'degraded' };
+
+  it('converged at baseB while baseA holds an UNCONVERGED history (the multiphase fix)', () => {
+    const records = [
+      segRec(round({ round: 1, backends: [B('codex', 0, 1), B('agy')], findings: [F('k', 'major', 'codex')] }), BASE_A),
+      segRec(round({ round: 2, backends: [B('codex', 0, 1), B('agy')], findings: [F('k', 'major', 'codex')] }), BASE_A),
+      segRec(round({ round: 1, fingerprint: FP, backends: [B('codex'), B('agy', 0, 0, 0, deg)], findings: [] }), BASE_B),
+    ];
+    const c = decideCheck(mkState({ base: BASE_B, records, receipts: [codexReceipt(FP, 'SHIP')] }));
+    assert.equal(c.code, 0, c.reason);
+    assert.match(c.reason, /converged/);
+  });
+
+  it('a dirty tree whose SEGMENT has no round fails with the record-round remedy (other bases do not count)', () => {
+    const records = [segRec(round({ round: 1, fingerprint: FP, backends: [B('codex'), B('agy', 0, 0, 0, deg)], findings: [] }), BASE_A)];
+    const c = decideCheck(mkState({ base: BASE_B, records, receipts: [codexReceipt(FP, 'SHIP')] }));
+    assert.equal(c.code, 1);
+    assert.match(c.reason, /no review round recorded for the current segment/);
+  });
+
+  it('a loop holding ONLY pre-v4 records fails with a reason naming the schema upgrade (D7 legacy)', () => {
+    const records = [round({ round: 1, fingerprint: FP, backends: [B('codex'), B('agy', 0, 0, 0, deg)], findings: [] })]; // schema 1, no base
+    const c = decideCheck(mkState({ base: BASE_B, records, receipts: [codexReceipt(FP, 'SHIP')] }));
+    assert.equal(c.code, 1);
+    assert.match(c.reason, /pre-v4 records/);
+  });
+
+  it('per-segment round numbering: a fresh segment starting at round 1 is a VALID sequence beside old segments', () => {
+    const records = [
+      segRec(round({ round: 1, backends: [B('codex'), B('agy', 0, 0, 0, deg)], findings: [] }), BASE_A),
+      segRec(round({ round: 2, backends: [B('codex'), B('agy', 0, 0, 0, deg)], findings: [] }), BASE_A),
+      segRec(round({ round: 1, fingerprint: FP, backends: [B('codex'), B('agy', 0, 0, 0, deg)], findings: [] }), BASE_B),
+    ];
+    const c = decideCheck(mkState({ base: BASE_B, records, receipts: [codexReceipt(FP, 'SHIP')] }));
+    assert.equal(c.code, 0, `loop-wide [1,2,1] must read as segment [1] — ${c.reason}`);
+  });
+});
+
+// ── telemetry (D8): deterministic counts over a fixture spanning v1..v4 + fold rows ─────────────
+
+describe('computeTelemetry + renderTelemetry — counts only, pinned render (D8)', () => {
+  const reviewFixture = [
+    // v1 history (legacy — counted, never segmented)
+    roundFixture(),
+    triageFixture(),
+    // v4 segment A: one divergent round (codex clean, agy not), a triage with refuted, an override
+    v4Round({
+      base: BASE_A,
+      backends: [
+        { backend: 'codex', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'ship' },
+        { backend: 'agy', degraded: false, blockers: 0, majors: 1, minors: 0, verdict: 'revise' },
+      ],
+      origins: { 'first-draft': 1, 'fold-induced': 0, mechanics: 0 },
+      findings: [{ findingKey: 'phantom', severity: 'major', origin: 'first-draft', backend: 'agy' }],
+    }),
+    v4Triage({ base: BASE_A, classifications: [{ findingKey: 'phantom', class: 'refuted', accepted: false, testId: null, note: 'refuted against file:42' }] }),
+    sizeCapOverride({ base: BASE_A }),
+    gateRun({ base: BASE_A }), // quality-green (the red gate is a process gate) with 1 red result
+    // v4 segment B: a clean round
+    v4Round({ base: BASE_B, round: 1 }),
+  ];
+  const foldRows = [
+    { schema: 3, kind: 'run', loop: 'example-feature', testIds: [{ id: 'a.test.mjs#x', runs: 3, greens: 2, reds: 0, timeouts: 1 }] }, // quarantined entry
+    { schema: 3, kind: 'red-probe', loop: 'example-feature', testId: 'a.test.mjs#x' },
+    { schema: 1, loop: 'example-feature', testIds: [{ id: 'b.test.mjs#y', resolvable: true, baselineGreen: true, executed: 1 }] }, // v1 kindless run — no rerun counts, never quarantine-counted
+    { loop: 42 }, // a half-shaped row: no usable loop → skipped
+  ];
+
+  it('the pinned telemetry render (fixture spanning v1..v4 + fold rows)', () => {
+    const t = computeTelemetry(reviewFixture, foldRows);
+    const out = renderTelemetry(t, { records: reviewFixture.length, malformed: 0, rows: foldRows.length, badLines: 0 });
+    const expected = [
+      'review-ledger telemetry — counts only, no judgment (D8). review ledger: 7 record(s); fold ledger: 4 row(s).',
+      '  plan-execution / example-feature:',
+      '    rounds 3 across 2 segment(s) (+2 pre-v4 record(s)) · divergence rounds 1',
+      '    finding origins — first-draft:3 fold-induced:0 mechanics:0',
+      '    classifications — inherent-layer-residual:1 refuted:1',
+      '    backend verdicts — agy{degraded:2 revise:1} · codex{revise:2 ship:1}',
+      '    overrides — size-cap:1',
+      '    gate-runs 1 (quality-green 1) · red results by gate — review-ledger:1',
+      '    fold runs 2 · observed-red receipts 1 · quarantined probe entries 1',
+    ].join('\n');
+    assert.equal(out, expected);
+  });
+
+  it('renderTelemetry surfaces read errors + malformed counts without judging', () => {
+    const out = renderTelemetry(computeTelemetry([], []), { records: 0, malformed: 2, rows: 0, badLines: 1, readError: 'EACCES', foldReadError: 'EIO' });
+    assert.match(out, /2 malformed/);
+    assert.match(out, /1 unparseable/);
+    assert.match(out, /review ledger unreadable \(EACCES\)/);
+    assert.match(out, /fold ledger unreadable \(EIO\)/);
+    assert.match(out, /no loops recorded/);
+  });
+
+  it('--telemetry refuses to combine with --check / --status / --json (a mixed-mode gate cmd must never silently pass — codex R2)', () => {
+    for (const combo of [['--check', '--telemetry'], ['--telemetry', '--check'], ['--telemetry', '--status'], ['--telemetry', '--json']]) {
+      const r = main(combo, { cwd: '/tmp', env: {}, detect: () => [] });
+      assert.equal(r.code, 2, `${combo.join(' ')} must be a usage error, got ${r.code}`);
+      assert.match(r.stderr, /--telemetry/);
+    }
+  });
+
+  it('a suffix-named tool is not a process gate (path boundary required — codex R2, fold-induced)', () => {
+    for (const cmd of [
+      'node tools/my-review-ledger.mjs --check',
+      'node fake-review-state.mjs --check',
+      'node "x/evil-fold-completeness.mjs" --check',
+    ]) {
+      assert.equal(isProcessGateCmd(cmd), false, `${cmd} must NOT classify as a process gate`);
+    }
+    // The boundary keeps the real forms: bare basename, ./-relative, deep path, quoted path.
+    for (const cmd of [
+      'node review-ledger.mjs --check',
+      'node ./tools/review-state.mjs --check',
+      'node "${CLAUDE_SKILL_DIR}/tools/fold-completeness.mjs" --check',
+    ]) {
+      assert.equal(isProcessGateCmd(cmd), true, `${cmd} must classify as a process gate`);
+    }
+  });
+
+  it('main --telemetry reads both ledgers and exits 0 (report, not a gate)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ledger-telemetry-'));
+    const ledger = join(root, 'rl.jsonl');
+    const fold = join(root, 'fold.jsonl');
+    writeFileSync(ledger, reviewFixture.map((r) => JSON.stringify(r)).join('\n'));
+    writeFileSync(fold, foldRows.map((r) => JSON.stringify(r)).join('\n'));
+    const r = main(['--telemetry'], { cwd: root, env: { AW_REVIEW_LEDGER: ledger, AW_FOLD_RESULTS: fold }, detect: () => [] });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /rounds 3 across 2 segment/);
+    assert.match(r.stdout, /observed-red receipts 1/);
   });
 });
 
@@ -751,5 +1209,61 @@ describe('review-ledger — integration over a scratch git tree', () => {
     assert.equal(state.records.length, 2);
     assert.equal(state.malformed, 1);
     assert.equal(REVIEW_CAP, 2);
+  });
+
+  it('resolveBase: null outside a git tree AND on an unborn branch (a caught refusal, never a crash); the HEAD sha after a commit', () => {
+    assert.equal(resolveBase(cwd), null, 'not a git tree → null');
+    const g = (...a) => spawnSync('git', a, { cwd, encoding: 'utf8' });
+    g('init', '-q');
+    assert.equal(resolveBase(cwd), null, 'an unborn branch has no HEAD commit → null');
+    g('config', 'user.email', 'p@e');
+    g('config', 'user.name', 'p');
+    writeFileSync(join(cwd, 'a.txt'), 'a\n');
+    g('add', '-A');
+    g('commit', '-qm', 'base');
+    const head = g('rev-parse', 'HEAD').stdout.trim();
+    assert.equal(resolveBase(cwd), head, 'base = the commit the dirty tree sits on');
+  });
+
+  it('--status groups the loop records by SEGMENT and renders gate-run lines (v4)', () => {
+    const g = (...a) => spawnSync('git', a, { cwd, encoding: 'utf8' });
+    g('init', '-q');
+    g('config', 'user.email', 'p@e');
+    g('config', 'user.name', 'p');
+    mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
+    writeFileSync(join(cwd, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'council' } }));
+    mkdirSync(join(cwd, 'docs', 'plans'), { recursive: true });
+    writeFileSync(join(cwd, 'docs', 'plans', 'example-feature.md'), '# plan\n');
+    writeFileSync(join(cwd, 'base.txt'), 'base\n');
+    g('add', '-A');
+    g('commit', '-qm', 'base');
+    const head = g('rev-parse', 'HEAD').stdout.trim();
+    writeFileSync(join(cwd, 'pending.txt'), 'dirty\n');
+    const ledger = join(cwd, '.git', 'rl.jsonl');
+    const treeChanged = gateRun({ base: head, fingerprintAfter: 'e'.repeat(64) });
+    const subset = gateRun({
+      base: head,
+      declared: [{ id: 'unit-tests', cmd: 'node --test x' }, { id: 'release-scan', cmd: 'node tools/release-scan.mjs pkg' }],
+      results: [{ id: 'unit-tests', ok: true, code: 0 }],
+      summary: { status: 'ok', gates: 1, passed: 1, failed: 0, failedIds: [] },
+    });
+    const lines = [
+      JSON.stringify(roundFixture()), // pre-v4 history → the legacy group
+      JSON.stringify(v4Round({ base: BASE_A })), // a CLOSED segment (not the current head)
+      JSON.stringify(v4Round({ base: head })), // the CURRENT segment
+      JSON.stringify(gateRun({ base: head })),
+      JSON.stringify(treeChanged),
+      JSON.stringify(subset),
+    ];
+    writeFileSync(ledger, `${lines.join('\n')}\n`);
+    const r = main(['--status'], { cwd, env: { AW_REVIEW_LEDGER: ledger }, detect: () => [{ name: 'codex-cli-bridge', readiness: 'ready' }, { name: 'antigravity-cli-bridge', readiness: 'ready' }] });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /segment base: /, 'the state header names the current base');
+    assert.match(r.stdout, /pre-v4 records \(no segment — readable history\):/);
+    assert.match(r.stdout, new RegExp(`segment @ base ${BASE_A.slice(0, 12)}:`), 'a closed segment renders unmarked');
+    assert.match(r.stdout, new RegExp(`segment @ base ${head.slice(0, 12)} \\(current\\):`), 'the current segment is marked');
+    assert.match(r.stdout, /gate-run — status=fail 1\/2 green of 2 declared — quality-green/, 'a gate-run renders its posture (red process gate never blocks quality-green)');
+    assert.match(r.stdout, /NOT quality-green \(the tree changed under the run\)/, 'a tree-changed run renders its posture');
+    assert.match(r.stdout, /NOT quality-green \(a subset, a red gate, or an unfingerprinted tree\)/, 'a subset run renders its posture');
   });
 });

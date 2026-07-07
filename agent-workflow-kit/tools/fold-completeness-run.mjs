@@ -43,6 +43,13 @@ import {
   collectBoundTestIds,
   probeVerdict,
 } from './fold-completeness.mjs';
+// The changed-surface computation lives in the NEUTRAL shared module (BUGFREE-2 / AD-048, D4): the
+// review-ledger writer's diff-size cap and this runner's coverage domain consume ONE computation,
+// and the writer never imports this runner (the sole-tree-toucher boundary — import-split pinned).
+// Re-exported below so the runner's tests (and any consumer) keep one entry point per concern.
+import { classifyChangedPath, parseUnifiedDiff, unquoteDiffPath, computeChangedSurface, DIFF_FLAGS, parsePositiveIntKnob } from './changed-surface.mjs';
+
+export { classifyChangedPath, parseUnifiedDiff, unquoteDiffPath, computeChangedSurface };
 
 const ACTIVITY = 'plan-execution';
 const GIT_MAX_BUFFER = 256 * 1024 * 1024; // a full-tree diff / full-suite TAP can be large; never truncate
@@ -65,65 +72,6 @@ const childTestEnv = (env, extra = {}) => {
   const out = { ...env, ...extra };
   delete out.NODE_TEST_CONTEXT;
   return out;
-};
-
-// ── Decision 5: the CLOSED changed-path classification rule (no heuristics) ───────────────────────
-
-const TEST_FILE_RE = /\.(test|spec)\.[^./]+$/; // a.test.mjs, b.spec.js, c.test.cjs, d.spec.ts
-const ASSESSABLE_EXT = new Set(['.mjs', '.cjs', '.js']);
-const UNSUPPORTED_EXT = new Set(['.ts', '.tsx', '.jsx', '.mts', '.cts']);
-
-// classifyChangedPath(rel) → 'assessable' | 'unsupported' | 'out-of-domain' | 'excluded-test'.
-export const classifyChangedPath = (rel) => {
-  const base = rel.split('/').pop();
-  if (TEST_FILE_RE.test(base)) return 'excluded-test';
-  const dot = base.lastIndexOf('.');
-  const ext = dot >= 0 ? base.slice(dot) : '';
-  if (ASSESSABLE_EXT.has(ext)) return 'assessable';
-  if (UNSUPPORTED_EXT.has(ext)) return 'unsupported';
-  return 'out-of-domain';
-};
-
-// ── unified-diff → new-side changed line numbers (line numbers only; content lines are ignored) ───
-
-const DIFF_HUNK_RE = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/;
-
-// parseUnifiedDiff(diffText) → Map<rel, number[]>. Robust against a content line that happens to look
-// like a `+++ ` header: a `+++ ` line is a FILE header only in the header region (right after a
-// `diff --git`, before any `@@`); inside a hunk body it is ignored. New-side lines come purely from the
-// `@@` headers, so no content-line disambiguation is needed for the line numbers themselves.
-export const parseUnifiedDiff = (diffText) => {
-  const map = new Map();
-  let current = null;
-  let inHeader = false;
-  for (const line of String(diffText).split('\n')) {
-    if (line.startsWith('diff --git ')) {
-      current = null;
-      inHeader = true;
-      continue;
-    }
-    if (inHeader && line.startsWith('--- ')) continue;
-    if (inHeader && line.startsWith('+++ ')) {
-      const p = unquoteDiffPath(line.slice(4).replace(/[\t\r]+$/, '')); // TAB/CR are git artifacts, never filename bytes (agy R6)
-      current = p === '/dev/null' ? null : p.startsWith('b/') ? p.slice(2) : p;
-      inHeader = false;
-      continue;
-    }
-    const m = DIFF_HUNK_RE.exec(line);
-    if (m) {
-      inHeader = false;
-      if (current == null) continue;
-      const start = Number(m[1]);
-      const count = m[2] === undefined ? 1 : Number(m[2]);
-      if (count > 0) {
-        const arr = map.get(current) ?? [];
-        for (let i = 0; i < count; i += 1) arr.push(start + i);
-        map.set(current, arr);
-      }
-    }
-  }
-  for (const [k, v] of map) map.set(k, [...new Set(v)].sort((a, b) => a - b));
-  return map;
 };
 
 // ── Decision 6: V8 coverage → uncovered changed lines (innermost-range-wins) ──────────────────────
@@ -216,8 +164,12 @@ export const parseProbeOutput = ({ stdout, code, fileArg }) => {
   return { resolvable, executed: matched, baselineGreen: resolvable && code === 0 && fails === 0 };
 };
 
-// defaultBoundArgv(file, pattern) → the shell-free node:test argv (testId content never reaches a shell).
-export const defaultBoundArgv = (file, pattern) => ['node', '--test', '--test-reporter', 'tap', '--test-name-pattern', pattern, file];
+// defaultBoundArgv(file, pattern) → the shell-free node:test argv (testId content never reaches a
+// shell). The pattern rides in the `=`-joined form: as a SEPARATE argv token a pattern beginning
+// with "-"/"--" (a test name like "--telemetry refuses …") parses as an OPTION and the probe
+// silently selects no test — the pattern-half sibling of the AD-047 dash-spawn file fix (found
+// live by this plan's own --red loop).
+export const defaultBoundArgv = (file, pattern) => ['node', '--test', '--test-reporter', 'tap', `--test-name-pattern=${pattern}`, file];
 
 // ── the shared safe test-file resolver (BUGFREE-1, codex R1+R2) ───────────────────────────────────
 // Custody hashing and every probe spawn go through THIS one resolver — the testId format itself is
@@ -291,12 +243,7 @@ export const resolveBoundArgv = (env = process.env) => {
   return (file, pattern) => tmpl.map((a) => a.replace(/\{file\}/g, () => file).replace(/\{pattern\}/g, () => pattern));
 };
 
-// ── the changed surface (git-driven) ──────────────────────────────────────────────────────────────
-
-// The one diff-invocation shape both surface passes use. The a/ b/ prefixes are pinned EXPLICITLY
-// (agy R6): a user's global diff.noprefix=true would otherwise drop them and the parsers would eat
-// a real directory named "a" — user git config must never bend the parse.
-const DIFF_FLAGS = ['--unified=0', '--no-color', '--no-ext-diff', '--no-renames', '--src-prefix=a/', '--dst-prefix=b/'];
+// ── read-only git plumbing (the changed-surface computation itself lives in changed-surface.mjs) ──
 
 const runGit = (args, cwd) => spawnSync('git', args, { cwd, maxBuffer: GIT_MAX_BUFFER, encoding: 'utf8', windowsHide: true });
 const gitStdout = (args, cwd) => {
@@ -317,100 +264,9 @@ const canon = (path) => {
     return path;
   }
 };
-// A changed assessable LEAF is assessed only if it is a REGULAR file. lstat (no-follow): a symlinked
-// or non-regular *.mjs must NEVER be read/canonicalized — following it could read outside the work
-// tree or HANG on a FIFO/device (codex R2). A non-regular leaf fails closed (routed to `unsupported`).
-const isRegularLeaf = (abs) => {
-  try {
-    return lstatSync(abs).isFile();
-  } catch {
-    return false;
-  }
-};
-
-// computeChangedSurface(root) → { assessable: Map<rel, number[]>, unsupported: [rel], outOfDomain: [rel] }.
-// Domain = the review-payload domain (tracked working-vs-HEAD changes + untracked-not-ignored files),
-// classified by the CLOSED rule. Tracked changed lines come from `git diff HEAD -U0`; an untracked file
-// is wholly new, so all its lines are "changed".
-export const computeChangedSurface = (root) => {
-  const trackedDiff = gitStdout(['diff', 'HEAD', ...DIFF_FLAGS], root)
-    ?? gitStdout(['diff', ...DIFF_FLAGS], root) // no HEAD yet (unborn branch)
-    ?? '';
-  const trackedLines = parseUnifiedDiff(trackedDiff);
-  const untrackedZ = gitStdout(['ls-files', '--others', '--exclude-standard', '-z'], root) ?? '';
-  const untracked = untrackedZ.split('\0').filter(Boolean);
-
-  const assessable = new Map();
-  const unsupported = [];
-  const outOfDomain = [];
-  const place = (rel, cls, lines) => {
-    if (cls === 'excluded-test') return;
-    if (cls === 'assessable') {
-      if (isRegularLeaf(join(root, rel))) assessable.set(rel, lines);
-      else unsupported.push(rel); // a symlinked / non-regular source → fail closed, never followed
-      return;
-    }
-    if (cls === 'unsupported') unsupported.push(rel);
-    else outOfDomain.push(rel);
-  };
-  for (const [rel, lines] of trackedLines) place(rel, classifyChangedPath(rel), lines);
-  for (const rel of untracked) {
-    const cls = classifyChangedPath(rel);
-    if (cls !== 'assessable') {
-      place(rel, cls, []);
-      continue;
-    }
-    // Guard the leaf BEFORE reading — never follow a symlink to count an untracked file's lines.
-    const abs = join(root, rel);
-    if (!isRegularLeaf(abs)) {
-      unsupported.push(rel);
-      continue;
-    }
-    const src = readFileSafe(abs);
-    const count = src == null || src.length === 0 ? 0 : src.split('\n').length;
-    assessable.set(rel, Array.from({ length: count }, (_, i) => i + 1));
-  }
-  return { assessable, unsupported: unsupported.sort(), outOfDomain: outOfDomain.sort() };
-};
-
 // ── the oracle-tamper surface (BUGFREE-1 Phase 2.2, Approach-3) ───────────────────────────────────
 
 const DIFF_HUNK_OLD_RE = /^@@ -\d+(?:,(\d+))? \+\d+(?:,\d+)? @@/;
-
-// Git C-quotes diff-header paths carrying quotes/control/non-ASCII bytes ("a/\321\202….mjs") — an
-// unparsed quoted path compares unequal to its classifier/testId form and would silently escape the
-// tamper/coverage surface (agy R5). Strip the quotes and decode escapes BYTE-wise (octal escapes
-// are UTF-8 bytes). Space-only paths are not quoted (they carry a trailing TAB — trimmed upstream).
-const CQUOTE_SIMPLE = { n: 10, t: 9, r: 13, f: 12, v: 11, b: 8, a: 7, '"': 34, '\\': 92 };
-export const unquoteDiffPath = (p) => {
-  if (!(p.length >= 2 && p.startsWith('"') && p.endsWith('"'))) return p;
-  const inner = p.slice(1, -1);
-  const bytes = [];
-  for (let i = 0; i < inner.length; i += 1) {
-    const c = inner[i];
-    if (c !== '\\') {
-      // Consume a full CODE POINT — 16-bit-unit iteration would split a surrogate pair (an
-      // unescaped non-BMP char, reachable under core.quotepath=false) into replacement bytes (agy R6).
-      const ch = String.fromCodePoint(inner.codePointAt(i));
-      for (const b of Buffer.from(ch, 'utf8')) bytes.push(b);
-      i += ch.length - 1;
-      continue;
-    }
-    const rest = inner.slice(i + 1);
-    const oct = /^[0-7]{1,3}/.exec(rest);
-    if (oct) {
-      bytes.push(Number.parseInt(oct[0], 8) & 0xff);
-      i += oct[0].length;
-    } else if (rest[0] in CQUOTE_SIMPLE) {
-      bytes.push(CQUOTE_SIMPLE[rest[0]]);
-      i += 1;
-    } else if (rest[0] !== undefined) {
-      for (const b of Buffer.from(rest[0], 'utf8')) bytes.push(b);
-      i += 1;
-    }
-  }
-  return Buffer.from(bytes).toString('utf8');
-};
 
 // parseDiffOldSide(diffText) → Map<oldRel, { removals: boolean }> — the OLD-side view of a -U0
 // tracked diff: which pre-existing (HEAD) files carry any removed/modified line (a hunk whose
@@ -549,26 +405,15 @@ const appendRecord = (resultsPath, record) => {
 
 // ── the run ───────────────────────────────────────────────────────────────────────────────────────
 
-// The shared fail-closed integer parser for the D4 probe knobs: zero / negative / fractional /
-// non-numeric values are typed refusals by name — the parseInt(...)||default idiom would silently
-// accept bad truthy values (codex R2). Unset → the default; set → a positive integer, exactly.
-const parsePositiveIntKnob = (env, name, fallback) => {
-  const raw = env[name];
-  if (raw === undefined) return fallback;
-  if (!/^\d+$/.test(String(raw).trim()) || Number.parseInt(raw, 10) < 1) {
-    throw stop(`${name} must be a positive integer (got "${raw}") — refusing to guess (fail closed)`);
-  }
-  return Number.parseInt(raw, 10);
-};
-
 export const budgetsFromEnv = (env) => ({
   mutantsMax: Number.parseInt(env.AW_FOLD_MUTANTS_MAX ?? '200', 10) || 200,
   hunkMutantsMax: Number.parseInt(env.AW_FOLD_HUNK_MUTANTS_MAX ?? '25', 10) || 25,
   timeBudgetS: Number.parseInt(env.AW_FOLD_TIME_BUDGET_S ?? '600', 10) || 600,
   // D4: N reruns per probe side; the per-RUN probe timeout (each of the N runs gets its own budget,
-  // never one shared series budget — agy R1). Probes only: the suite run keeps the no-timeout status quo.
-  foldReruns: parsePositiveIntKnob(env, 'AW_FOLD_RERUNS', 3),
-  probeTimeoutS: parsePositiveIntKnob(env, 'AW_FOLD_PROBE_TIMEOUT_S', 120),
+  // never one shared series budget — agy R1). Probes only: the suite run keeps the no-timeout status
+  // quo. The fail-closed parser is the shared one (changed-surface.mjs), thrown as THIS tool's STOP.
+  foldReruns: parsePositiveIntKnob(env, 'AW_FOLD_RERUNS', 3, stop),
+  probeTimeoutS: parsePositiveIntKnob(env, 'AW_FOLD_PROBE_TIMEOUT_S', 120, stop),
 });
 
 // ── the shared N-rerun probe (D4) — ONE helper for both the run's green side and the --red verb ───

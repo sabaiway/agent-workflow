@@ -98,6 +98,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the AD-046 fold-completeness READ/RUN pair: the read-only --check gate + the sole tree-toucher/runner
       'tools/fold-completeness.mjs',
       'tools/fold-completeness-run.mjs',
+      // the AD-048 NEUTRAL shared core: the changed-surface computation (the D4 diff cap + the
+      // coverage domain consume ONE computation) + the D8 telemetry fold-read path
+      'tools/changed-surface.mjs',
       // the consent-gated gates.json seeder + the shared atomic-write core it runs on (AD-042)
       'tools/seed-gates.mjs',
       'tools/atomic-write.mjs',
@@ -149,7 +152,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       result writer). The *.test.mjs siblings are stripped by files[].
     // 131 = 130 + references/modes/fold-completeness.md (the 20th mode-ref — the fold-completeness
     //       command surface, AD-046). The shelved mutation half ships NO file (no tools/fold-mutate.mjs).
-    assert.equal(packed.length, 131, `tarball file count drifted (${packed.length} ≠ 131)`);
+    // 132 = 131 + tools/changed-surface.mjs (AD-048 — the NEUTRAL shared core: ONE changed-surface
+    //       computation for the D4 diff cap + the coverage domain, plus the D8 telemetry fold-read
+    //       path). Its *.test.mjs sibling is stripped by files[].
+    assert.equal(packed.length, 132, `tarball file count drifted (${packed.length} ≠ 132)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

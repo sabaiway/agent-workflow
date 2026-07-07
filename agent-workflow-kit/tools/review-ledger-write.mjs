@@ -7,17 +7,23 @@
 // shared hardened atomic-write core (tools/atomic-write.mjs — exclusive-create tmp + rename, TOCTOU
 // re-check, symlink STOPs). The ledger lives in the git dir (uncommittable by construction).
 //
-// Two record kinds, one JSONL ledger:
+// Record kinds, one JSONL ledger. Every verb evaluates the current SEGMENT — (activity, loop,
+// base = `git rev-parse HEAD`), BUGFREE-2 / AD-048 D1: round numbering, the caps, and every tooth
+// are per segment; a segment closes only through a gated commit, so a counter reset is earned:
 //   recordRound   — one review round: per-backend counts + verdict + degraded, finding-origin tally,
-//                   findings[]. Binds to the canonical tree fingerprint. THE TEETH (Decision 5):
-//                   REFUSES (typed STOP) while decideStop on the existing records is `triage-required`
-//                   (an unclassified surviving blocking finding at/after the cap), and refuses ANY
-//                   round beyond the hard-max ceiling unconditionally. Integrity binding (Decision 7):
+//                   findings[]. Binds to the canonical tree fingerprint + base. THE TEETH (Decision 5
+//                   + AD-048): REFUSES (typed STOP) while decideStop on the segment's records is
+//                   `triage-required`; refuses ANY round beyond the per-segment hard-max ceiling
+//                   unconditionally; refuses while a blocking finding of the segment's previous
+//                   round VANISHED unclassified (D6 — no-repro-no-fold; `refuted` is the honest
+//                   phantom lane); refuses while the changed source surface exceeds the diff cap
+//                   without a recorded segment size-cap override (D4). Integrity binding (Decision 7):
 //                   each NON-degraded backend needs a grounded code receipt for the current tree, so a
 //                   round cannot be recorded for a tree no bridge reviewed.
-//   recordTriage  — the classification that BREAKS the deadlock: each surviving blocking finding
-//                   classified fixable-bug / inherent-layer-residual / escalate. No teeth (a triage is
-//                   exactly what lets the next round proceed), no receipt binding (it reviews nothing).
+//   recordTriage  — the classification that BREAKS the deadlock: each surviving blocking finding of a
+//                   SEGMENT round classified fixable-bug / inherent-layer-residual / escalate /
+//                   refuted (v4). No teeth (a triage is exactly what lets the next round proceed),
+//                   no receipt binding (it reviews nothing).
 //
 // HONEST residual (stated, accepted — like review-state's): the ledger attests a review occurred; it
 // does NOT prove the recorded COUNTS are truthful nor that a self-reported `degraded:true` is real.
@@ -36,16 +42,31 @@ import {
   REVIEW_CAP,
   SCHEMA_VERSION,
   resolveLedgerPath,
+  resolveBase,
   readLedger,
-  filterLoopRecords,
+  filterSegmentRecords,
+  collectSizeCapLimit,
   roundSequenceIntact,
   decideStop,
   validateRecord,
 } from './review-ledger.mjs';
+// The NEUTRAL shared changed-surface computation (BUGFREE-2 / D4): the D4 diff-cap and the
+// fold-completeness coverage gate consume ONE computation, so they can never drift. The writer
+// imports the NEUTRAL module, never the runner (the sole-tree-toucher boundary, codex R2 — an
+// import-split test pins that this file never imports fold-completeness-run.mjs).
+import { computeChangedSurface, countCapLines, parsePositiveIntKnob } from './changed-surface.mjs';
 
 // The absolute WRITER ceiling (Decision 5): hard-max lives ONLY here — it is NOT a decideStop input.
-// Even a fully-classified resolved-residual loop cannot reach a round beyond this.
+// Even a fully-classified resolved-residual loop cannot reach a round beyond this. Since AD-048 it
+// is scoped per SEGMENT (D3 — value unchanged, scope corrected): round numbers restart when a gated
+// commit moves base, so a multiphase plan records fully while round 4 within ONE segment stays
+// refused — that ceiling is the point (the 2026-06-30 six-round incident class).
 export const HARD_MAX = 3;
+// The D4 diff-size review cap (default 400 changed source lines; AW_REVIEW_DIFF_CAP overrides
+// through the shared fail-closed positive-integer parser). Counted classes are pinned in
+// changed-surface.mjs: assessable + unsupported SOURCE lines count; tests and out-of-domain never
+// do; pure deletions are free.
+export const DEFAULT_DIFF_CAP = 400;
 const DEFAULT_ACTIVITY = 'plan-execution';
 
 // A typed STOP — a deliberate refusal we surface (the teeth / a malformed record / a missing
@@ -90,11 +111,13 @@ export const recordRound = (params, deps = {}) => {
   if (ledgerPath == null) throw stop('cannot resolve the ledger path — not a git work tree and AW_REVIEW_LEDGER is unset');
   if (!(Number.isInteger(round) && round >= 1)) throw stop(`round must be an integer >= 1 (got ${round})`);
   // The hard-max ceiling: refuse ANY round beyond it, independent of triage state (Decision 5).
+  // Per SEGMENT since AD-048 (D3): the round number is the segment round number.
   if (round > HARD_MAX) {
-    throw stop(`refusing to record round ${round}: beyond the hard-max ceiling of ${HARD_MAX} rounds — the loop must converge or the surviving finding must escalate, never another round`);
+    throw stop(`refusing to record round ${round}: beyond the hard-max ceiling of ${HARD_MAX} rounds within one segment — the segment must converge (or its surviving finding escalate) and ship through a gated commit; the counter resets only at the commit boundary, never by declaration`);
   }
 
   const fingerprint = deps.computeFingerprint ? deps.computeFingerprint(cwd) : computeTreeFingerprint(cwd);
+  const base = deps.resolveBase ? deps.resolveBase(cwd) : resolveBase(cwd);
 
   // The teeth: refuse a new round WHILE decideStop on the existing records is triage-required. Once
   // the surviving blocking finding is classified (recordTriage), decideStop is no longer
@@ -107,25 +130,79 @@ export const recordRound = (params, deps = {}) => {
   // the teeth OPEN (codex R1). Refuse to append until the ledger is sound.
   if (readError) throw stop(`cannot read the existing ledger (${readError}) — refusing to append (fail closed)`);
   if (malformed > 0) throw stop(`the existing ledger has ${malformed} malformed line(s) — refusing to append until they are fixed (fail closed): ${malformedReasons.join('; ')}`);
-  const existingLoop = filterLoopRecords(records, { activity, loop });
-  // Sequence integrity + sequentiality (codex R2+R3): the EXISTING rounds must already be exactly
-  // 1..n (never trust a hand-corrupted [2]/[1,1]/[2,1] to compute "latest"), AND the incoming round
-  // must be exactly the next (n+1). A duplicate, decreasing, or gapped round would let a fabricated
-  // "later" round become the latest that decideStop reads, bypassing the "latest round" teeth.
-  const priorRounds = existingLoop.filter((r) => r.kind === 'round').map((r) => r.round);
-  if (!roundSequenceIntact(existingLoop)) {
-    throw stop(`refusing to append to loop "${loop}": its recorded round sequence is corrupt (${priorRounds.join(',') || 'empty'}, not 1..n) — fix the ledger by hand before recording another round`);
+  // EVERY tooth below evaluates the current SEGMENT (activity, loop, base) — D1: records of earlier
+  // segments (other bases, or pre-v4 records with no base) are closed history; the field-proven
+  // 11-round / 4-base loop records completely while round 4 within ONE segment stays refused.
+  const segment = filterSegmentRecords(records, { activity, loop, base });
+  // Sequence integrity + sequentiality (codex R2+R3): the EXISTING segment rounds must already be
+  // exactly 1..n (never trust a hand-corrupted [2]/[1,1]/[2,1] to compute "latest"), AND the
+  // incoming round must be exactly the next (n+1). A duplicate, decreasing, or gapped round would
+  // let a fabricated "later" round become the latest that decideStop reads, bypassing the teeth.
+  const priorRounds = segment.filter((r) => r.kind === 'round').map((r) => r.round);
+  if (!roundSequenceIntact(segment)) {
+    throw stop(`refusing to append to loop "${loop}": its recorded round sequence for the current segment is corrupt (${priorRounds.join(',') || 'empty'}, not 1..n) — fix the ledger by hand before recording another round`);
   }
   const nextRound = priorRounds.length + 1;
   if (round !== nextRound) {
-    throw stop(`refusing to record round ${round}: rounds must be sequential — the next round for loop "${loop}" is ${nextRound} (a duplicate, out-of-order, or gapped round would corrupt the crossover computation)`);
+    throw stop(`refusing to record round ${round}: rounds must be sequential within the segment — the next round for loop "${loop}" at the current base is ${nextRound} (a duplicate, out-of-order, or gapped round would corrupt the crossover computation)`);
   }
-  const pre = decideStop(existingLoop, { cap: REVIEW_CAP });
+  const pre = decideStop(segment, { cap: REVIEW_CAP });
   if (pre.state === 'triage-required') {
     throw stop(`refusing to record a new round while triage is required — ${pre.reason}. Classify the surviving blocking finding(s) with the "classify" command first (a fixable-bug classification permits the fix round).`);
   }
 
-  const record = { schema: SCHEMA_VERSION, loop, activity, kind: 'round', round, fingerprint, origins, backends, findings, timestamp: timestamp ?? isoNow() };
+  // D6 — no-repro-no-fold: no blocking finding of the segment's previous round may VANISH
+  // unclassified. Present-again is fine (still live); classified is fine (fixable-bug folded with
+  // its red→green testId at the round it was folded — late binding restored; inherent-layer-residual
+  // documented; escalate handed over; refuted — the honest phantom lane, grounds mandatory). A
+  // silent disappearance is exactly the sycophancy hole this pillar closes. Minors stay exempt.
+  const previous = segment.find((r) => r.kind === 'round' && r.round === nextRound - 1);
+  if (previous) {
+    // "Present" means present AS BLOCKING: a blocker/major re-reported as a minor did not survive —
+    // it was softened, and the silent-soften lane is exactly the bypass D6 closes (codex R1).
+    const incoming = new Set(
+      Array.isArray(findings)
+        ? findings.filter((f) => f && (f.severity === 'blocker' || f.severity === 'major')).map((f) => f.findingKey)
+        : [],
+    );
+    // A classification CLEARS the vanish only when it actually resolves the finding's fate:
+    // fixable-bug (folded, testId bound), inherent-layer-residual (documented), refuted (grounds
+    // cited), or an ACCEPTED escalate — a pending escalate (accepted:false) is still undecided and
+    // must not disappear into a clean round (codex R1).
+    const clearsVanish = (c) =>
+      c.class === 'fixable-bug' || c.class === 'inherent-layer-residual' || c.class === 'refuted' || (c.class === 'escalate' && c.accepted === true);
+    const classified = new Set();
+    for (const t of segment) {
+      if (t.kind === 'triage' && t.round === previous.round) for (const c of t.classifications) if (clearsVanish(c)) classified.add(c.findingKey);
+    }
+    const vanished = [...new Set(
+      previous.findings
+        .filter((f) => f.severity === 'blocker' || f.severity === 'major')
+        .map((f) => f.findingKey)
+        .filter((k) => !incoming.has(k) && !classified.has(k)),
+    )];
+    if (vanished.length > 0) {
+      throw stop(`refusing to record round ${round}: blocking finding(s) of round ${previous.round} vanished without a classification: ${vanished.join(', ')} (D6 — no blocking finding disappears silently). Classify each with the "classify" command first: fixable-bug (bind the red→green testId), inherent-layer-residual, escalate, or refuted (a phantom finding — cite the refuting grounds in note).`);
+    }
+  }
+
+  // D4 — the diff-size cap over the ONE shared changed-surface computation (changed-surface.mjs):
+  // a round is refused while the changed source surface exceeds the cap, unless the SEGMENT carries
+  // a recorded size-cap override sanctioning at least the counted magnitude. Subtractive folds are
+  // free (new-side lines only); tests and out-of-domain files never count.
+  const cap = parsePositiveIntKnob(env, 'AW_REVIEW_DIFF_CAP', DEFAULT_DIFF_CAP, stop);
+  const counted = deps.countChangedLines ? deps.countChangedLines(cwd) : countCapLines(computeChangedSurface(gitRoot(cwd) ?? cwd));
+  if (counted > cap) {
+    const sanctioned = collectSizeCapLimit(records, { activity, loop, base });
+    if (sanctioned === null || counted > sanctioned) {
+      throw stop(
+        `refusing to record round ${round}: the changed source surface is ${counted} lines — over the ${cap}-line review cap (AW_REVIEW_DIFF_CAP)${sanctioned !== null ? ` and over the segment's recorded size-cap sanction of ${sanctioned}` : ''}. ` +
+          `Split the change into reviewable units (commit a converged part first), or record the LOUD waiver: node review-ledger-write.mjs override --json '{"loop":"${loop}","round":${round},"scope":"size-cap","sanctionedLines":${counted},"reason":"<why this surface must review as one unit>"}'`,
+      );
+    }
+  }
+
+  const record = { schema: SCHEMA_VERSION, loop, activity, kind: 'round', round, base, fingerprint, origins, backends, findings, timestamp: timestamp ?? isoNow() };
   const v = validateRecord(record);
   if (!v.ok) throw stop(`refusing to record a malformed round: ${v.reason}`);
 
@@ -162,7 +239,7 @@ const gitRoot = (cwd) => {
 // inside its live loop, never retro-recorded for a finished or foreign one. The fold-completeness
 // gate matches on loop + payload, never on the (audit-only) fingerprint.
 export const recordOverride = (params, deps = {}) => {
-  const { cwd = process.cwd(), env = process.env, loop, activity = DEFAULT_ACTIVITY, round, scope, files, testId, reason, timestamp } = params;
+  const { cwd = process.cwd(), env = process.env, loop, activity = DEFAULT_ACTIVITY, round, scope, files, testId, sanctionedLines, reason, timestamp } = params;
   const ledgerPath = deps.ledgerPath ?? resolveLedgerPath(cwd, env);
   if (ledgerPath == null) throw stop('cannot resolve the ledger path — not a git work tree and AW_REVIEW_LEDGER is unset');
   if (!(Number.isInteger(round) && round >= 1)) throw stop(`round must be an integer >= 1 (got ${round})`);
@@ -174,9 +251,11 @@ export const recordOverride = (params, deps = {}) => {
     throw stop(`refusing to record an override for loop "${loop}": an override is minted only inside its SINGLE in-flight loop (in flight: ${plans.length ? plans.join(', ') : 'none'})`);
   }
   const fingerprint = deps.computeFingerprint ? deps.computeFingerprint(cwd) : computeTreeFingerprint(cwd);
+  const base = deps.resolveBase ? deps.resolveBase(cwd) : resolveBase(cwd);
   const record = {
-    schema: SCHEMA_VERSION, loop, activity, kind: 'override', round, fingerprint, scope,
+    schema: SCHEMA_VERSION, loop, activity, kind: 'override', round, base, fingerprint, scope,
     ...(files !== undefined ? { files } : {}), ...(testId !== undefined ? { testId } : {}),
+    ...(sanctionedLines !== undefined ? { sanctionedLines } : {}),
     reason, timestamp: timestamp ?? isoNow(),
   };
   const v = validateRecord(record);
@@ -184,8 +263,8 @@ export const recordOverride = (params, deps = {}) => {
   const { records, malformed, malformedReasons, readError } = readLedger(ledgerPath, deps.readFile);
   if (readError) throw stop(`cannot read the existing ledger (${readError}) — refusing to append (fail closed)`);
   if (malformed > 0) throw stop(`the existing ledger has ${malformed} malformed line(s) — refusing to append until they are fixed (fail closed): ${malformedReasons.join('; ')}`);
-  if (!roundSequenceIntact(filterLoopRecords(records, { activity, loop }))) {
-    throw stop(`refusing to record an override for loop "${loop}": its recorded round sequence is corrupt (not 1..n) — fix the ledger by hand first`);
+  if (!roundSequenceIntact(filterSegmentRecords(records, { activity, loop, base }))) {
+    throw stop(`refusing to record an override for loop "${loop}": its recorded round sequence for the current segment is corrupt (not 1..n) — fix the ledger by hand first`);
   }
   return appendRecord(ledgerPath, record, deps);
 };
@@ -200,27 +279,31 @@ export const recordTriage = (params, deps = {}) => {
   if (ledgerPath == null) throw stop('cannot resolve the ledger path — not a git work tree and AW_REVIEW_LEDGER is unset');
   if (!(Number.isInteger(round) && round >= 1)) throw stop(`round must be an integer >= 1 (got ${round})`);
   const fingerprint = deps.computeFingerprint ? deps.computeFingerprint(cwd) : computeTreeFingerprint(cwd);
+  const base = deps.resolveBase ? deps.resolveBase(cwd) : resolveBase(cwd);
   // Normalize each classification: an absent testId → null, an absent note → '' — an absent optional
   // field is FILLED, never rejected as malformed (agy R3). Under schema v2 (M2/AD-046) a fixable-bug
   // normalized to a null testId then FAILS validateRecord below (a typed STOP naming the rule + the
-  // red-test-first fix) — the test-per-fold binding rides the existing validate path. A non-array is
-  // left as-is for validateRecord to reject with a typed STOP (never a raw .map TypeError).
+  // red-test-first fix) — the test-per-fold binding rides the existing validate path; a `refuted`
+  // classification normalized to an empty note fails the same way (D6 — the grounds are mandatory).
+  // A non-array is left as-is for validateRecord to reject with a typed STOP (never a raw .map TypeError).
   const normalized = Array.isArray(classifications) ? classifications.map((c) => ({ ...c, testId: c?.testId ?? null, note: c?.note ?? '' })) : classifications;
-  const record = { schema: SCHEMA_VERSION, loop, activity, kind: 'triage', round, fingerprint, classifications: normalized, timestamp: timestamp ?? isoNow() };
+  const record = { schema: SCHEMA_VERSION, loop, activity, kind: 'triage', round, base, fingerprint, classifications: normalized, timestamp: timestamp ?? isoNow() };
   const v = validateRecord(record);
   if (!v.ok) throw stop(`refusing to record a malformed triage: ${v.reason}`);
 
-  // Bind the triage to a REAL round: the referenced round must exist and every classified findingKey
-  // must be a surviving blocking finding (blocker or major) of THAT round — a classification for a
-  // nonexistent/future round, or for a key the round never raised, must not satisfy resolved-residual
-  // downstream (codex R1). Fail CLOSED on an unreadable / malformed ledger.
+  // Bind the triage to a REAL round of the current SEGMENT: the referenced round must exist there
+  // and every classified findingKey must be a surviving blocking finding (blocker or major) of THAT
+  // round — a classification for a nonexistent/future/other-segment round, or for a key the round
+  // never raised, must not satisfy resolved-residual downstream (codex R1; D1 — a committed
+  // segment's rounds are closed, the cross-segment lane is the D7 red-proof override). Fail CLOSED
+  // on an unreadable / malformed ledger.
   const { records, malformed, malformedReasons, readError } = readLedger(ledgerPath, deps.readFile);
   if (readError) throw stop(`cannot read the existing ledger (${readError}) — refusing to append (fail closed)`);
   if (malformed > 0) throw stop(`the existing ledger has ${malformed} malformed line(s) — refusing to append until they are fixed (fail closed): ${malformedReasons.join('; ')}`);
-  const loopRecords = filterLoopRecords(records, { activity, loop });
-  if (!roundSequenceIntact(loopRecords)) throw stop(`refusing to classify loop "${loop}": its recorded round sequence is corrupt (not 1..n) — fix the ledger by hand first`);
-  const targetRound = loopRecords.find((r) => r.kind === 'round' && r.round === round);
-  if (!targetRound) throw stop(`refusing to classify round ${round} of loop "${loop}": no such recorded round — classify a round that exists`);
+  const segment = filterSegmentRecords(records, { activity, loop, base });
+  if (!roundSequenceIntact(segment)) throw stop(`refusing to classify loop "${loop}": its recorded round sequence for the current segment is corrupt (not 1..n) — fix the ledger by hand first`);
+  const targetRound = segment.find((r) => r.kind === 'round' && r.round === round);
+  if (!targetRound) throw stop(`refusing to classify round ${round} of loop "${loop}": no such recorded round in the current segment — classify a round that exists at the current base`);
   const survivingKeys = new Set(targetRound.findings.filter((f) => f.severity === 'blocker' || f.severity === 'major').map((f) => f.findingKey));
   for (const c of classifications) {
     if (!survivingKeys.has(c.findingKey)) throw stop(`refusing to classify "${c.findingKey}": it is not a surviving blocking finding of round ${round} (classify only that round's blockers/majors)`);
@@ -231,29 +314,40 @@ export const recordTriage = (params, deps = {}) => {
 
 // ── CLI (record / classify) ──────────────────────────────────────────────────────────────────────
 
-const HELP = `review-ledger-write — the review-round ledger WRITER (agent-workflow family, AD-045 + AD-047).
+const HELP = `review-ledger-write — the review-round ledger WRITER (agent-workflow family, AD-045 + AD-047 + AD-048).
 
 Usage:
   node review-ledger-write.mjs record   --json '<round-payload>'    [--cwd <dir>]
   node review-ledger-write.mjs classify --json '<triage-payload>'   [--cwd <dir>]
   node review-ledger-write.mjs override --json '<override-payload>' [--cwd <dir>]
 
+Every verb operates on the current SEGMENT — (loop, base = git rev-parse HEAD): round numbers,
+caps, and teeth reset only when a gated commit moves base (schema 4; records carry base).
+
 record   appends one review round. The JSON payload carries { loop, round, origins, backends,
          findings } (activity defaults to plan-execution; timestamp defaults to now). REFUSES while
-         triage is required, beyond the hard-max ceiling of ${HARD_MAX} rounds, or when a non-degraded
-         backend lacks a grounded code receipt for the current tree.
+         triage is required; beyond the hard-max ceiling of ${HARD_MAX} rounds within one segment;
+         while a blocking finding of the segment's previous round VANISHED unclassified (D6 —
+         classify it first, "refuted" is the honest phantom lane); while the changed source surface
+         exceeds the ${DEFAULT_DIFF_CAP}-line diff cap (AW_REVIEW_DIFF_CAP) without a recorded
+         segment size-cap override (D4); or when a non-degraded backend lacks a grounded code
+         receipt for the current tree.
 classify appends one triage record. The JSON payload carries { loop, round, classifications } (each
          { findingKey, class, accepted, testId, note }). A fixable-bug REQUIRES a testId — the
          red→green test that pins the fold, formatted "<test-file>#<test-name-pattern>" (write it
-         first); inherent-layer-residual / escalate may omit it. This is what permits the next round.
-override appends one override record (schema 3) — the LOUD, durable waiver the fold-completeness
-         gate consumes. The JSON payload carries { loop, round, scope, reason } plus, per scope:
+         first); refuted REQUIRES a non-empty note citing the refuting grounds;
+         inherent-layer-residual / escalate may omit the testId. This is what permits the next round.
+override appends one override record — the LOUD, durable waiver the gates consume. The JSON payload
+         carries { loop, round, scope, reason } plus, per scope:
          scope "oracle-change" → files[] (non-empty repo-relative paths whose tamper flag it lifts);
          scope "red-proof" → testId (the exact bound testId whose observed-red receipt + custody it
-         waives — for a red that is GENUINELY unestablishable pre-fold, D7). REFUSES for a loop that
-         is not the in-flight plan. QUARANTINE (a flaky/timed-out probe) has NO override lane.
+         waives — for a red that is GENUINELY unestablishable pre-fold, D7);
+         scope "size-cap" → sanctionedLines (the exact changed-surface magnitude the waiver
+         sanctions, SEGMENT-scoped — it dies at the next commit, D4).
+         REFUSES for a loop that is not the in-flight plan. QUARANTINE (a flaky/timed-out probe)
+         has NO override lane.
 
-The read-only checker is a SEPARATE tool: node review-ledger.mjs --check / --status / --json.
+The read-only checker is a SEPARATE tool: node review-ledger.mjs --check / --status / --json / --telemetry.
 Exit codes: 0 written; 1 a typed STOP (teeth / malformed / missing receipt / fs error); 2 usage.`;
 
 const parseArgs = (argv) => {

@@ -58,7 +58,6 @@
 // free, Node >= 18. No side effects on import (the isDirectRun idiom).
 
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { detectBackends } from './detect-backends.mjs';
@@ -66,8 +65,13 @@ import { resolveActivityRecipe, planRecipe, DISPLAY_ALIASES } from './recipes.mj
 import { CONFIG_REL, fail, loadConfig } from './orchestration-config.mjs';
 import { computeTreeFingerprint, isTreeClean, plansInFlight } from './review-state.mjs';
 import { resolveLedgerPath, readLedger, filterLoopRecords, collectOverrides, isWellFormedTestId, splitTestId } from './review-ledger.mjs';
+// The fold-ledger locator and the D4 probe-verdict algebra live in the NEUTRAL shared module
+// (BUGFREE-2 / AD-048, D8): review-ledger.mjs telemetry reads the fold ledger through THAT module —
+// importing this checker from there would close an import cycle (this file imports review-ledger).
+// Re-exported here so the runner and every existing consumer keep their one entry point.
+import { probeVerdict, RESULTS_BASENAME, resolveResultsPath } from './changed-surface.mjs';
 
-export const RESULTS_BASENAME = 'agent-workflow-fold-completeness.jsonl';
+export { probeVerdict, RESULTS_BASENAME, resolveResultsPath };
 // SCHEMA v2 (BUGFREE-1 / AD-047): records gain a kind discriminator — `run` (the fold-completeness
 // run, now with per-testId rerun counts + the test file's content hash) | `red-probe` (the
 // observed-red receipt --red mints). RESULT_SCHEMA_VERSION is what the WRITER emits; the reader
@@ -88,13 +92,6 @@ const gitLine = (args, cwd) => {
 };
 
 const gitRoot = (cwd) => gitLine(['rev-parse', '--show-toplevel'], cwd);
-
-// The result-ledger path: AW_FOLD_RESULTS overrides (mirrors AW_REVIEW_LEDGER); else <git dir>/basename.
-export const resolveResultsPath = (cwd, env = process.env) => {
-  if (env.AW_FOLD_RESULTS) return env.AW_FOLD_RESULTS;
-  const gitDir = gitLine(['rev-parse', '--absolute-git-dir'], cwd);
-  return gitDir == null ? null : join(gitDir, RESULTS_BASENAME);
-};
 
 // ── the bound fixable-bug testId set (the SINGLE source of truth — runner + checker share it) ────
 
@@ -271,17 +268,9 @@ export const latestRunRecord = (loopRecords) => {
   return null;
 };
 
-// probeVerdict(entry) → 'green' | 'red' | 'quarantine' | 'unresolvable' — the D4 verdict algebra,
-// the SINGLE home shared by the runner (--red mints only on 'red') and the checker (the gate passes
-// only on 'green'). RED/GREEN are strict N/N verdicts; any timeout, mixed outcome, or partial
-// resolution is QUARANTINE — it never converts and has no override lane (a flaky pin proves
-// nothing — replace the test). Zero resolved runs (or a defensive runs=0) reads unresolvable.
-export const probeVerdict = (t) => {
-  const unresolved = t.runs - t.greens - t.reds - t.timeouts;
-  if (unresolved >= t.runs) return 'unresolvable';
-  if (t.timeouts > 0 || unresolved > 0 || (t.greens > 0 && t.reds > 0)) return 'quarantine';
-  return t.greens === t.runs ? 'green' : 'red';
-};
+// probeVerdict — the D4 verdict algebra, ONE home (now the neutral changed-surface.mjs; re-exported
+// above): the runner (--red mints only on 'red'), this checker (the gate passes only on 'green'),
+// and the review-ledger telemetry (quarantine counts) all read the SAME algebra.
 
 // ── the check + report core ─────────────────────────────────────────────────────────────────────
 

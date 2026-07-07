@@ -11,22 +11,27 @@
 //
 // Normative `--check` exit contract (the single home of this list — SKILL.md / the mode file point
 // here). The gate enforces the plan-EXECUTION (code) loop — the loop that produces the committable
-// artifact — filtered to activity==="plan-execution" AND the in-flight plan's filename stem:
+// artifact — filtered to the current SEGMENT: activity==="plan-execution" AND the in-flight plan's
+// filename stem AND base===`git rev-parse HEAD` (BUGFREE-2 / AD-048, D1 — a segment is the
+// uncommitted change set over one base commit; it closes only by a gated commit, so a round-counter
+// reset is earned, never declared):
 //   exit 0  when the resolved plan-execution.review recipe is solo (configured, or degraded there —
 //           no reviewer ready); when no plan is in flight (the review-state naming convention);
 //           when the tree is clean (nothing to review); when the cwd is not a git work tree; and
-//           when the in-flight plan-execution loop is `converged` or `resolved-residual` (its
+//           when the in-flight plan-execution SEGMENT is `converged` or `resolved-residual` (its
 //           latest round's non-degraded backends carry grounded code receipts for the recorded
 //           fingerprint, and a recorded 0/0 is ship-class-consistent with those receipts).
-//   exit 1  for any DIRTY in-flight plan-execution loop that is neither `converged` nor
-//           `resolved-residual` — `triage-required`, `continue`, OR no round/receipt recorded at
-//           all (a dirty active plan with an empty/stale ledger is a FAILURE, not a fail-open pass);
+//   exit 1  for any DIRTY in-flight plan-execution segment that is neither `converged` nor
+//           `resolved-residual` — `triage-required`, `continue`, OR no round/receipt recorded in
+//           the CURRENT segment (a dirty active plan with an empty/stale/other-segment ledger is a
+//           FAILURE, not a fail-open pass; when the loop holds only pre-v4 records the reason names
+//           the schema upgrade — old records never enter a segment, D7);
 //           when MORE THAN ONE plan is in flight (ambiguous loop id); when a recorded ship-class 0/0
 //           coexists with a non-ship receipt verdict, or a non-degraded recorded backend lacks a
 //           grounded receipt for its fingerprint. Fail-CLOSED (unknown state, never a fail-open pass)
 //           on a detector failure, an unreadable (non-ENOENT) ledger, malformed ledger lines the
-//           reader dropped, or a corrupt round sequence (not 1..n) — the only detector-independent
-//           green is an EXPLICIT configured solo.
+//           reader dropped, or a corrupt segment round sequence (not 1..n) — the only
+//           detector-independent green is an EXPLICIT configured solo.
 //
 // The stop decision: `decideStop(records, { cap, currentFingerprint, requiredBackends })` reads the
 // ordered ledger records of ONE loop (both `round` and `triage` kinds) and returns exactly one state
@@ -62,6 +67,10 @@ import {
   readReceipts,
   resolveReceiptsPath,
 } from './review-state.mjs';
+// The NEUTRAL shared core (D4/D8): the D8 telemetry reads the FOLD ledger through the neutral
+// module — never through fold-completeness.mjs, which imports THIS module (the import-cycle
+// invariant, codex R2; an import-split test pins it). probeVerdict is the one D4 algebra home.
+import { probeVerdict, resolveResultsPath, readJsonlRows } from './changed-surface.mjs';
 
 export const LEDGER_BASENAME = 'agent-workflow-review-ledger.jsonl';
 const ACTIVITY = 'plan-execution';
@@ -72,14 +81,21 @@ const SLOT = 'review';
 export const REVIEW_CAP = 2;
 // SCHEMA_VERSION is what the WRITER emits (M2/AD-046: a fixable-bug triage requires a non-null,
 // well-formed testId — the red→green test that pins the fold; BUGFREE-1/AD-047: v3 adds the
-// `override` record kind — the loud, durable waiver the fold-completeness gate consumes). The
-// READER tolerates every SUPPORTED_SCHEMAS version under its own per-version rules, so
-// historical/live v1/v2 ledgers never retroactively become malformed (Decision 2 — a malformed line
-// cascades fail-closed refusals in the writer teeth AND the --check gate). v1 records keep the
-// AD-045 rule (testId optional, unenforced); v2+ enforces the test-per-fold binding; ONLY v3 may
-// carry kind `override`. decideStop never reads testId or overrides (not decideStop inputs).
-export const SCHEMA_VERSION = 3;
-const SUPPORTED_SCHEMAS = new Set([1, 2, 3]);
+// `override` record kind — the loud, durable waiver the fold-completeness gate consumes;
+// BUGFREE-2/AD-048: v4 adds the SEGMENT — every record carries `base` = the commit the dirty tree
+// sits on, and round numbering / caps / teeth / decideCheck all operate per (activity, loop, base) —
+// plus the kind `gate-run` (the D5 green-baseline receipt run-gates --record mints), the override
+// scope `size-cap` (the D4 diff-cap waiver), and the triage class `refuted` (the D6 honest lane for
+// a phantom finding). The READER tolerates every SUPPORTED_SCHEMAS version under its own
+// per-version rules, so historical/live v1..v3 ledgers never retroactively become malformed
+// (Decision 2 — a malformed line cascades fail-closed refusals in the writer teeth AND the --check
+// gate). v1 records keep the AD-045 rule (testId optional, unenforced); v2+ enforces the
+// test-per-fold binding; ONLY v3+ may carry kind `override`; ONLY v4 may carry `base` / kind
+// `gate-run` / scope `size-cap` / class `refuted` (older records never grow new surface).
+// decideStop never reads testId, overrides, gate-runs, or base (not decideStop inputs — the caller
+// passes ONE segment's records, exactly as it passes one loop's; D10: the truth table is untouched).
+export const SCHEMA_VERSION = 4;
+const SUPPORTED_SCHEMAS = new Set([1, 2, 3, 4]);
 
 // The record vocabulary — the single home of every enum the schema validates.
 const ACTIVITIES_SET = new Set(['plan-authoring', 'plan-execution']);
@@ -87,7 +103,14 @@ const KINDS_SET = new Set(['round', 'triage']);
 const SEVERITIES = new Set(['blocker', 'major', 'minor']);
 export const ORIGINS = ['first-draft', 'fold-induced', 'mechanics'];
 const CLASSES = new Set(['fixable-bug', 'inherent-layer-residual', 'escalate']);
+// v4 (BUGFREE-2 / D6): `refuted` — the honest lane for a phantom finding, refuted against code with
+// a MANDATORY non-empty note citing the grounds; never silently dropped, never folded.
+const V4_CLASSES = new Set([...CLASSES, 'refuted']);
 const OVERRIDE_SCOPES = new Set(['oracle-change', 'red-proof']);
+// v4 (BUGFREE-2 / D4): `size-cap` — the recorded waiver for a changed surface beyond the diff cap;
+// exact payload carries the sanctioned magnitude, and it is SEGMENT-scoped (loop + base), unlike
+// the two loop-scoped v3 scopes.
+const V4_OVERRIDE_SCOPES = new Set([...OVERRIDE_SCOPES, 'size-cap']);
 
 // ── git-dir resolution (read-only queries; the ledger lives in the git dir, uncommittable) ──────
 
@@ -106,6 +129,17 @@ export const resolveLedgerPath = (cwd, env = process.env) => {
   const gitDir = gitLine(['rev-parse', '--absolute-git-dir'], cwd);
   return gitDir == null ? null : join(gitDir, LEDGER_BASENAME);
 };
+
+// ── the segment (BUGFREE-2 / AD-048, D1) ─────────────────────────────────────────────────────────
+// A SEGMENT = (activity, loop, base) where base = the commit the dirty tree sits on. Derived, never
+// declared: `git rev-parse HEAD` is computed identically at write time and check time, matches the
+// review's actual domain (the working-tree diff vs HEAD), and its reset is commit-gated — so
+// resetting the round counter REQUIRES shipping a green, converged unit. An amend/rebase mid-loop
+// orphans the segment's rounds — correct: the reviewed tree no longer exists.
+
+// resolveBase(cwd) → the current HEAD commit sha, or null on an unborn branch / outside a git work
+// tree (a caught refusal from git, never a crash — agy R1).
+export const resolveBase = (cwd) => gitLine(['rev-parse', '--verify', '--quiet', 'HEAD'], cwd);
 
 // ── ship-verdict mapping (the single home; a named test pins it) ────────────────────────────────
 
@@ -188,13 +222,18 @@ const validateRound = (obj) => {
   return { ok: true };
 };
 
-// validateTriage(obj, schema) → { ok, reason }. `schema` selects the per-version testId rule (v1
-// tolerant / v2 the test-per-fold binding) — the shared structural checks run in both versions.
+// validateTriage(obj, schema) → { ok, reason }. `schema` selects the per-version rules (v1 tolerant
+// testId / v2 the test-per-fold binding / v4 the `refuted` class) — the shared structural checks
+// run in every version.
 const validateTriage = (obj, schema = SCHEMA_VERSION) => {
   if (!Array.isArray(obj.classifications) || obj.classifications.length === 0) return { ok: false, reason: 'triage: classifications must be a non-empty array' };
+  const classes = schema >= 4 ? V4_CLASSES : CLASSES;
   for (const c of obj.classifications) {
     if (!isPlainObject(c) || !isNonEmptyString(c.findingKey)) return { ok: false, reason: 'triage: each classification needs a findingKey' };
-    if (!CLASSES.has(c.class)) return { ok: false, reason: `triage: classification ${c.findingKey} bad class "${c.class}"` };
+    if (!classes.has(c.class)) return { ok: false, reason: `triage: classification ${c.findingKey} bad class "${c.class}"` };
+    // D6 — `refuted` is the honest phantom-finding lane: the grounds are MANDATORY (a non-empty
+    // note citing what refutes it against code), never a silent drop.
+    if (c.class === 'refuted' && !isNonEmptyString(c.note)) return { ok: false, reason: `triage: classification ${c.findingKey} is refuted but carries no note — cite the grounds that refute it against code (mandatory)` };
     if (typeof c.accepted !== 'boolean') return { ok: false, reason: `triage: classification ${c.findingKey} missing boolean accepted` };
     // Structural (BOTH versions): testId is null/absent or a non-empty string — an ABSENT key is
     // treated as null, never rejected here (agy R3). The writer normalizes it to null when stored.
@@ -212,16 +251,20 @@ const validateTriage = (obj, schema = SCHEMA_VERSION) => {
   return { ok: true };
 };
 
-// validateOverride(obj) → { ok, reason }. v3 only (BUGFREE-1 / AD-047, D3): scope `oracle-change`
+// validateOverride(obj, schema) → { ok, reason }. v3+ (BUGFREE-1 / AD-047, D3): scope `oracle-change`
 // carries non-empty repo-relative files[] + reason; scope `red-proof` carries a REQUIRED
-// well-formed testId + reason, no files[]. Payloads are EXACT — a stray cross-scope field is a
-// forgery smell, rejected. Loop + payload scoped; the fingerprint is recorded for audit only.
-const OVERRIDE_SHARED_KEYS = new Set(['schema', 'loop', 'activity', 'kind', 'round', 'fingerprint', 'timestamp', 'scope', 'reason']);
-const validateOverride = (obj) => {
-  if (!OVERRIDE_SCOPES.has(obj.scope)) return { ok: false, reason: `override: bad scope "${obj.scope}" (expected oracle-change | red-proof)` };
+// well-formed testId + reason, no files[]. v4 (BUGFREE-2 / D4) adds scope `size-cap`: a REQUIRED
+// positive-integer sanctionedLines — the exact magnitude the waiver sanctions, segment-scoped.
+// Payloads are EXACT — a stray cross-scope field is a forgery smell, rejected. The fingerprint is
+// recorded for audit only.
+const OVERRIDE_SHARED_KEYS = new Set(['schema', 'loop', 'activity', 'kind', 'round', 'base', 'fingerprint', 'timestamp', 'scope', 'reason']);
+const OVERRIDE_PAYLOAD_KEY = { 'oracle-change': 'files', 'red-proof': 'testId', 'size-cap': 'sanctionedLines' };
+const validateOverride = (obj, schema = SCHEMA_VERSION) => {
+  const scopes = schema >= 4 ? V4_OVERRIDE_SCOPES : OVERRIDE_SCOPES;
+  if (!scopes.has(obj.scope)) return { ok: false, reason: `override: bad scope "${obj.scope}" (expected ${[...scopes].join(' | ')})` };
   // EXACT per-scope payloads via an allow-list (codex R5): a stray key — a cross-scope field or an
   // arbitrary hand-added one — is a forgery smell, rejected by name (the mutation-shape precedent).
-  const payloadKey = obj.scope === 'oracle-change' ? 'files' : 'testId';
+  const payloadKey = OVERRIDE_PAYLOAD_KEY[obj.scope];
   for (const k of Object.keys(obj)) {
     if (!OVERRIDE_SHARED_KEYS.has(k) && k !== payloadKey) return { ok: false, reason: `override: unknown key "${k}" (exact per-scope payloads: shared frame + ${payloadKey})` };
   }
@@ -233,25 +276,120 @@ const validateOverride = (obj) => {
     }
     return { ok: true };
   }
+  if (obj.scope === 'size-cap') {
+    if (!(Number.isInteger(obj.sanctionedLines) && obj.sanctionedLines >= 1)) return { ok: false, reason: 'override: a size-cap override requires sanctionedLines — the exact positive-integer magnitude it sanctions' };
+    return { ok: true };
+  }
   if (!isWellFormedTestId(obj.testId)) return { ok: false, reason: 'override: a red-proof override requires a well-formed testId "<test-file>#<test-name-pattern>"' };
   return { ok: true };
 };
 
-// validateRecord(obj) → { ok, reason }. The shared frame (schema/loop/activity/kind/round/
+// ── the gate-run record (BUGFREE-2 / D5): the green-baseline receipt run-gates --record mints ────
+
+// Per-kind frame rule: a gate-run carries the SEGMENT frame (loop, base, fingerprint before/after,
+// timestamp) and NO round number. The body is machine-composed by recordGateRun, so the key set is
+// EXACT (the override allow-list precedent): declared[] = the FULL declaration at run time (id +
+// cmd — the cmd is what the process-gate classification reads); results[] = what actually ran (a
+// --only subset records exactly that subset, honestly); summary mirrors the runner's machine
+// summary line, consistency-checked against results[] so a forged verdict cannot ride beside
+// honest-looking evidence.
+const GATE_RUN_KEYS = new Set(['schema', 'loop', 'activity', 'kind', 'base', 'fingerprint', 'fingerprintAfter', 'declared', 'results', 'summary', 'timestamp']);
+const SUMMARY_KEYS = ['failed', 'failedIds', 'gates', 'passed', 'status'];
+// Gate ids are kebab-case — the same closed shape run-gates.mjs enforces on the declaration; it
+// also kills the comma-aliasing class in the failedIds compare (internal sweep).
+const GATE_RUN_ID_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const validateGateRun = (obj) => {
+  for (const k of Object.keys(obj)) {
+    if (!GATE_RUN_KEYS.has(k)) return { ok: false, reason: `gate-run: unknown key "${k}" (exact machine-composed payload)` };
+  }
+  if (!(obj.fingerprintAfter === null || isNonEmptyString(obj.fingerprintAfter))) return { ok: false, reason: 'gate-run: fingerprintAfter must be null or a non-empty string (the post-run tree)' };
+  if (!Array.isArray(obj.declared) || obj.declared.length === 0) return { ok: false, reason: 'gate-run: declared must be a non-empty array of { id, cmd }' };
+  const declaredIds = new Set();
+  for (const d of obj.declared) {
+    if (!isPlainObject(d) || !isNonEmptyString(d.id) || !isNonEmptyString(d.cmd) || Object.keys(d).length !== 2) return { ok: false, reason: 'gate-run: each declared entry must be exactly { id, cmd } (non-empty strings)' };
+    if (!GATE_RUN_ID_RE.test(d.id)) return { ok: false, reason: `gate-run: id "${d.id}" must be kebab-case (the run-gates declaration shape)` };
+    if (declaredIds.has(d.id)) return { ok: false, reason: `gate-run: duplicate declared id "${d.id}"` };
+    declaredIds.add(d.id);
+  }
+  if (!Array.isArray(obj.results) || obj.results.length === 0) return { ok: false, reason: 'gate-run: results must be a non-empty array of { id, ok, code }' };
+  const resultIds = new Set();
+  for (const r of obj.results) {
+    if (!isPlainObject(r) || !isNonEmptyString(r.id) || typeof r.ok !== 'boolean' || !Number.isInteger(r.code) || Object.keys(r).length !== 3) return { ok: false, reason: 'gate-run: each result must be exactly { id, ok, code } (string, boolean, integer)' };
+    if (!declaredIds.has(r.id)) return { ok: false, reason: `gate-run: result id "${r.id}" is not in declared[]` };
+    if (resultIds.has(r.id)) return { ok: false, reason: `gate-run: duplicate result id "${r.id}"` };
+    resultIds.add(r.id);
+  }
+  const s = obj.summary;
+  if (!isPlainObject(s)) return { ok: false, reason: 'gate-run: summary must be an object' };
+  if (Object.keys(s).sort().join(',') !== SUMMARY_KEYS.join(',')) return { ok: false, reason: `gate-run: summary must carry exactly { ${SUMMARY_KEYS.join(', ')} }` };
+  const failing = obj.results.filter((r) => !r.ok);
+  // The status IS the verdict word: a valid gate-run always carries results, so the runner's
+  // vocabulary collapses to ok|fail here — tie it to the failing count (a forged "ok" beside red
+  // results must not validate; internal sweep).
+  const expectedStatus = failing.length === 0 ? 'ok' : 'fail';
+  if (s.status !== expectedStatus) return { ok: false, reason: `gate-run: summary.status must be "${expectedStatus}" for ${failing.length} failing result(s) (got ${JSON.stringify(s.status)})` };
+  if (s.gates !== obj.results.length || s.passed !== obj.results.length - failing.length || s.failed !== failing.length) {
+    return { ok: false, reason: `gate-run: summary counts do not match results (${s.gates}/${s.passed}/${s.failed} vs ${obj.results.length} results, ${failing.length} failing)` };
+  }
+  if (!Array.isArray(s.failedIds) || s.failedIds.length !== failing.length || !s.failedIds.every((id, i) => id === failing[i].id)) return { ok: false, reason: 'gate-run: summary.failedIds must equal the failing result ids, in results order' };
+  return { ok: true };
+};
+
+// isProcessGateCmd(cmd) — the CLOSED, kit-owned process-gate classification (D5): the kit's own
+// process-loop `--check` commands (review-state / review-ledger / fold-completeness) legitimately
+// fail MID-loop, so "quality-green" excludes them — without the carve-out the D5 tooth is
+// unsatisfiable by construction. Closed by the gate's cmd being EXACTLY one `--check` invocation of
+// one of the three checkers (an optionally-quoted path token whose basename is the tool — never a
+// substring: fold-completeness-run.mjs must NOT match). A COMPOUND line (`… && checker --check`)
+// is never process: exempting it would forgive the failing quality half — fail-open against the
+// D5 direction (internal sweep, live-probed). Pinned by its own named test.
+// The tool BASENAME must sit at a path boundary (start-of-token or after a separator): a
+// suffix-named sibling like `my-review-ledger.mjs` is a consumer's own tool, and misclassifying it
+// as process would forgive its red result (codex R2, fold-induced by the R1 exact-form rewrite).
+const PROCESS_GATE_RE = /^node\s+("(?:[^"]*[/\\])?(?:review-state|review-ledger|fold-completeness)\.mjs"|(?:[^\s"]*[/\\])?(?:review-state|review-ledger|fold-completeness)\.mjs)\s+--check$/;
+export const isProcessGateCmd = (cmd) => PROCESS_GATE_RE.test(String(cmd).trim());
+
+// isQualityGreenGateRun(record) → boolean (D5). Quality-green = the run covers EVERY declared
+// NON-process gate with a green result (a `--only` subset is recorded honestly but never satisfies
+// this — the R1 converged subset-bypass hole), AND the tree did not change under the run
+// (fingerprint === fingerprintAfter, both non-null — a mutating gate attests no particular tree,
+// codex R2). Process-gate failures never block.
+export const isQualityGreenGateRun = (record) => {
+  if (record.kind !== 'gate-run') return false;
+  if (record.fingerprint == null || record.fingerprint !== record.fingerprintAfter) return false;
+  const green = new Set(record.results.filter((r) => r.ok).map((r) => r.id));
+  return record.declared.every((d) => isProcessGateCmd(d.cmd) || green.has(d.id));
+};
+
+// validateRecord(obj) → { ok, reason }. The shared frame (schema/loop/activity/kind/round/base/
 // fingerprint/timestamp) then the per-kind body. `reason` names the exact failed check so the
 // malformed-line surface and the per-check named tests can assert it. Kind vocabulary is
-// per-version: `override` exists only under schema >= 3 (older records never grow new kinds).
+// per-version: `override` exists only under schema >= 3, `gate-run` only under schema >= 4, and
+// `base` is a v4-only frame field (older records never grow new kinds OR new fields — D2).
 export const validateRecord = (obj) => {
   if (!isPlainObject(obj)) return { ok: false, reason: 'not an object' };
   if (!SUPPORTED_SCHEMAS.has(obj.schema)) return { ok: false, reason: `schema must be one of ${[...SUPPORTED_SCHEMAS].join(', ')}` };
   if (!isNonEmptyString(obj.loop)) return { ok: false, reason: 'missing loop' };
   if (!ACTIVITIES_SET.has(obj.activity)) return { ok: false, reason: `bad activity "${obj.activity}"` };
-  if (!KINDS_SET.has(obj.kind) && !(obj.schema >= 3 && obj.kind === 'override')) return { ok: false, reason: `bad kind "${obj.kind}"` };
-  if (!(Number.isInteger(obj.round) && obj.round >= 1)) return { ok: false, reason: 'round must be an integer >= 1' };
+  if (!KINDS_SET.has(obj.kind) && !(obj.schema >= 3 && obj.kind === 'override') && !(obj.schema >= 4 && obj.kind === 'gate-run')) return { ok: false, reason: `bad kind "${obj.kind}"` };
+  // The v4 SEGMENT frame (D1/D2): a v4 record REQUIRES base (null on an unborn branch, else the
+  // HEAD sha); a v1..v3 record must NOT carry it — an old record never grows new surface.
+  if (obj.schema >= 4) {
+    if (!(obj.base === null || isNonEmptyString(obj.base))) return { ok: false, reason: 'a v4 record requires base — null (unborn branch) or the HEAD commit the dirty tree sits on' };
+  } else if (obj.base !== undefined) {
+    return { ok: false, reason: `base is a v4 frame field — a schema-${obj.schema} record never carries it` };
+  }
+  // Per-kind frame (D5): a gate-run carries NO round number; every other kind requires one.
+  if (obj.kind === 'gate-run') {
+    if (obj.round !== undefined) return { ok: false, reason: 'gate-run: a gate-run carries no round number (it is segment-framed, not round-framed)' };
+  } else if (!(Number.isInteger(obj.round) && obj.round >= 1)) {
+    return { ok: false, reason: 'round must be an integer >= 1' };
+  }
   if (!(obj.fingerprint === null || isNonEmptyString(obj.fingerprint))) return { ok: false, reason: 'fingerprint must be null or a non-empty string' };
   if (!isNonEmptyString(obj.timestamp)) return { ok: false, reason: 'missing timestamp' };
   if (obj.kind === 'round') return validateRound(obj);
-  if (obj.kind === 'override') return validateOverride(obj);
+  if (obj.kind === 'override') return validateOverride(obj, obj.schema);
+  if (obj.kind === 'gate-run') return validateGateRun(obj);
   return validateTriage(obj, obj.schema);
 };
 
@@ -292,19 +430,41 @@ export const readLedger = (path, readFile = readFileSync) => {
 export const filterLoopRecords = (records, { activity, loop }) =>
   records.filter((r) => r.activity === activity && r.loop === loop);
 
+// filterSegmentRecords(records, { activity, loop, base }) → the records of ONE segment (D1), order
+// preserved. STRICT: only a v4+ record can be a segment member (a v1..v3 record carries no base and
+// never enters one — the D7 legacy rule; the schema guard also keeps a defensive undefined base
+// from matching a pre-v4 record's absent field, codex R1); records at baseA are invisible at baseB;
+// base === null matches only null (an unborn-branch segment).
+export const filterSegmentRecords = (records, { activity, loop, base }) =>
+  filterLoopRecords(records, { activity, loop }).filter((r) => r.schema >= 4 && r.base === base);
+
 // collectOverrides(records, { activity, loop }) → { oracleChangeFiles: Set, redProofTestIds: Set }.
-// The UNION of the loop's recorded override payloads — loop + payload scoped, never fingerprint-
-// bound (D3: re-affirmation churn on every later edit would train rubber-stamping). The
+// The UNION of the loop's recorded v3-scope override payloads — loop + payload scoped, never
+// fingerprint-bound (D3: re-affirmation churn on every later edit would train rubber-stamping). The
 // fold-completeness checker consumes THIS (both modules are read-only — the read/write split holds).
+// The v4 `size-cap` scope is deliberately NOT here: it is SEGMENT-scoped and consumed by the writer
+// tooth via collectSizeCapLimit.
 export const collectOverrides = (records, { activity = ACTIVITY, loop } = {}) => {
   const oracleChangeFiles = new Set();
   const redProofTestIds = new Set();
   for (const r of filterLoopRecords(records, { activity, loop })) {
     if (r.kind !== 'override') continue;
     if (r.scope === 'oracle-change') for (const f of r.files) oracleChangeFiles.add(f);
-    else redProofTestIds.add(r.testId);
+    else if (r.scope === 'red-proof') redProofTestIds.add(r.testId);
   }
   return { oracleChangeFiles, redProofTestIds };
+};
+
+// collectSizeCapLimit(records, { activity, loop, base }) → the LARGEST sanctionedLines among the
+// segment's recorded size-cap overrides, or null when none exists (D4). Segment-scoped by
+// construction: a magnitude sanctioned for one base never leaks into the next segment.
+export const collectSizeCapLimit = (records, { activity = ACTIVITY, loop, base } = {}) => {
+  let limit = null;
+  for (const r of filterSegmentRecords(records, { activity, loop, base })) {
+    if (r.kind !== 'override' || r.scope !== 'size-cap') continue;
+    if (limit === null || r.sanctionedLines > limit) limit = r.sanctionedLines;
+  }
+  return limit;
 };
 
 // roundSequenceIntact(records) → true iff the round records, in file order, number exactly 1,2,…,n
@@ -338,7 +498,12 @@ export const decideStop = (records, { cap = REVIEW_CAP, currentFingerprint = nul
   const classOf = new Map();
   for (const t of triages) if (t.round === latest.round) for (const c of t.classifications) classOf.set(c.findingKey, { ...c, triageFingerprint: t.fingerprint });
   const isClassified = (key) => classOf.has(key);
-  const isResolvedClass = (c) => c && (c.class === 'inherent-layer-residual' || (c.class === 'escalate' && c.accepted === true));
+  // `refuted` (v4, AD-048) resolves like an inherent-layer-residual: a documented, grounds-cited
+  // resolution of a phantom finding. Without this arm a phantom minted at round HARD_MAX and
+  // honestly refuted would WEDGE the segment (the immutable round record keeps the minting
+  // backend's counts non-0/0, and no further round exists to vanish it into). Additive beside the
+  // frozen truth table — every pre-existing row is untouched (D10).
+  const isResolvedClass = (c) => c && (c.class === 'inherent-layer-residual' || c.class === 'refuted' || (c.class === 'escalate' && c.accepted === true));
 
   const survivingBlocking = latest.findings.filter(isBlocking);
 
@@ -445,12 +610,17 @@ export const buildLedgerState = ({ cwd, env = process.env, detect = detectBacken
   const plans = plansInFlight(root);
   const fingerprint = computeTreeFingerprint(cwd);
   const clean = fingerprint == null ? null : isTreeClean(cwd);
+  const base = resolveBase(cwd);
   const ledgerPath = resolveLedgerPath(cwd, env);
   const { records, malformed, malformedReasons, readError } = ledgerPath ? readLedger(ledgerPath) : { records: [], malformed: 0, malformedReasons: [] };
   const receiptsPath = resolveReceiptsPath(cwd, env);
   const { receipts } = receiptsPath ? readReceipts(receiptsPath) : { receipts: [] };
-  return { resolved, requiredBackends, plans, fingerprint, clean, ledgerPath, records, malformed, malformedReasons, readError, receipts, receiptsPath, detectionWarning };
+  return { resolved, requiredBackends, plans, fingerprint, clean, base, ledgerPath, records, malformed, malformedReasons, readError, receipts, receiptsPath, detectionWarning };
 };
+
+// The human label of a segment base (null = an unborn branch; undefined never occurs in a real
+// state — resolveBase returns string | null).
+const baseLabel = (base) => (base === null ? '(unborn branch)' : String(base).slice(0, 12));
 
 // The normative --check decision (the header contract, in order) → { code, reason }.
 export const decideCheck = (state) => {
@@ -476,14 +646,23 @@ export const decideCheck = (state) => {
   if (state.malformed > 0) return { code: 1, reason: `the ledger has ${state.malformed} malformed line(s) — failing closed (a dropped line could hide a non-converged round); inspect ${state.ledgerPath}` };
 
   const loop = state.plans[0].replace(/\.md$/, '');
-  const filtered = filterLoopRecords(state.records, { activity: ACTIVITY, loop });
+  // SEGMENT scope (D1): the gate judges the current segment — (plan-execution, loop, base = the
+  // HEAD the dirty tree sits on). Records of earlier segments (other bases) and pre-v4 records
+  // (no base — they can never enter a segment) are history, not the current loop state.
+  const filtered = filterSegmentRecords(state.records, { activity: ACTIVITY, loop, base: state.base });
   const rounds = filtered.filter((r) => r.kind === 'round');
-  // A dirty active plan with NO round recorded is a FAILURE, not a fail-open pass (codex R2 hole).
+  // A dirty active plan whose SEGMENT has no round is a FAILURE, not a fail-open pass (codex R2
+  // hole) — same failure direction as AD-045, per-segment remedy. When the loop holds only
+  // older-schema records, the reason names the schema upgrade (D7 legacy rule).
   if (rounds.length === 0) {
-    return { code: 1, reason: `dirty plan-execution loop "${loop}" but no review round recorded — record the current round` };
+    const loopAll = filterLoopRecords(state.records, { activity: ACTIVITY, loop });
+    const legacy = loopAll.length > 0 && loopAll.every((r) => !(r.schema >= 4))
+      ? ' (the loop has only pre-v4 records, which never enter a segment — the schema upgrade requires a fresh v4 round)'
+      : '';
+    return { code: 1, reason: `dirty plan-execution loop "${loop}" but no review round recorded for the current segment (base ${baseLabel(state.base)}) — record the current round${legacy}` };
   }
   // A corrupt round sequence (not 1..n) is unknown state → fail closed rather than trust "latest" (codex R3).
-  if (!roundSequenceIntact(rounds)) return { code: 1, reason: `the round sequence for "${loop}" is corrupt (not 1..n) — failing closed; inspect ${state.ledgerPath}` };
+  if (!roundSequenceIntact(rounds)) return { code: 1, reason: `the round sequence for "${loop}" (base ${baseLabel(state.base)}) is corrupt (not 1..n) — failing closed; inspect ${state.ledgerPath}` };
   const decision = decideStop(filtered, { cap: REVIEW_CAP, currentFingerprint: state.fingerprint, requiredBackends: state.requiredBackends });
   if (decision.state === 'converged' || decision.state === 'resolved-residual') {
     // Integrity binding: cross-check the latest round's non-degraded backends against their receipts
@@ -511,8 +690,46 @@ const roundLine = (r) => {
 const triageLine = (t) =>
   `  triage @round ${t.round} — ${t.classifications.map((c) => `${c.findingKey}=${c.class}${c.class === 'escalate' ? `(accepted:${c.accepted})` : ''}`).join(', ')}`;
 
-const overrideLine = (o) =>
-  `  override @round ${o.round} [${o.scope}] — ${o.scope === 'oracle-change' ? o.files.join(', ') : o.testId}: ${o.reason}`;
+const overridePayload = (o) => {
+  if (o.scope === 'oracle-change') return o.files.join(', ');
+  if (o.scope === 'size-cap') return `sanctioned ${o.sanctionedLines} lines`;
+  return o.testId;
+};
+const overrideLine = (o) => `  override @round ${o.round} [${o.scope}] — ${overridePayload(o)}: ${o.reason}`;
+
+const gateRunLine = (g) => {
+  const posture = isQualityGreenGateRun(g)
+    ? 'quality-green'
+    : g.fingerprint !== g.fingerprintAfter
+      ? 'NOT quality-green (the tree changed under the run)'
+      : 'NOT quality-green (a subset, a red gate, or an unfingerprinted tree)';
+  return `  gate-run — status=${g.summary.status} ${g.summary.passed}/${g.summary.gates} green of ${g.declared.length} declared — ${posture}`;
+};
+
+const recordLine = (r) =>
+  r.kind === 'round' ? roundLine(r) : r.kind === 'override' ? overrideLine(r) : r.kind === 'gate-run' ? gateRunLine(r) : triageLine(r);
+
+// The loop's records grouped by SEGMENT (D1): v4 records group by base in order of first
+// appearance; pre-v4 records (no base) group under a legacy header — readable history that never
+// enters a segment.
+const segmentGroups = (forLoop, currentBase) => {
+  const lines = [];
+  const seen = new Set();
+  const legacy = forLoop.filter((r) => !(r.schema >= 4));
+  if (legacy.length > 0) {
+    lines.push('  pre-v4 records (no segment — readable history):');
+    for (const r of legacy) lines.push(`  ${recordLine(r)}`);
+  }
+  for (const r of forLoop) {
+    if (!(r.schema >= 4)) continue;
+    const key = JSON.stringify(r.base);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    lines.push(`  segment @ base ${baseLabel(r.base)}${r.base === currentBase ? ' (current)' : ''}:`);
+    for (const s of forLoop) if (s.schema >= 4 && s.base === r.base) lines.push(`  ${recordLine(s)}`);
+  }
+  return lines;
+};
 
 const formatHuman = (state, check) => {
   const lines = [
@@ -523,41 +740,138 @@ const formatHuman = (state, check) => {
   if (state.fingerprint == null) lines.push('  tree: not a git work tree');
   else if (state.clean === true) lines.push('  tree: clean (nothing to review)');
   else lines.push(`  tree fingerprint: ${state.fingerprint}`);
+  if (state.fingerprint != null) lines.push(`  segment base: ${baseLabel(state.base)}`);
   lines.push(`  ledger: ${state.ledgerPath ?? '(unresolvable — no git dir)'} (${state.records.length} record(s)${state.malformed ? `, ${state.malformed} malformed — inspect the file` : ''})`);
   if (state.plans.length === 1) {
     const loop = state.plans[0].replace(/\.md$/, '');
-    const forLoop = filterLoopRecords(state.records, { activity: ACTIVITY, loop });
-    for (const r of forLoop) lines.push(r.kind === 'round' ? roundLine(r) : r.kind === 'override' ? overrideLine(r) : triageLine(r));
+    lines.push(...segmentGroups(filterLoopRecords(state.records, { activity: ACTIVITY, loop }), state.base));
   }
   lines.push(`  check: ${check.code === 0 ? 'PASS' : 'FAIL'} — ${check.reason}`);
   return lines.join('\n');
 };
 
-const HELP = `review-ledger — read-only review-round LEDGER checker (agent-workflow family, AD-045).
+// ── telemetry (D8): read-only counts across ALL loops and BOTH ledgers — no judgment ─────────────
+
+// computeTelemetry(reviewRecords, foldRows) → { loops: [...] } — deterministic counts with named
+// fields, pinned by a named test. Interpretation (which gates earn their keep) stays with the
+// maintainer. Fold rows come through the TOLERANT reader (readJsonlRows): fields are guarded, a
+// half-shaped row counts only what it provably carries.
+export const computeTelemetry = (reviewRecords, foldRows) => {
+  const loops = new Map();
+  const bump = (obj, key) => { obj[key] = (obj[key] ?? 0) + 1; };
+  const forLoop = (activity, loop) => {
+    const key = JSON.stringify([activity, loop]);
+    if (!loops.has(key)) {
+      loops.set(key, {
+        activity, loop, rounds: 0, segments: new Set(), legacyRecords: 0,
+        origins: { 'first-draft': 0, 'fold-induced': 0, mechanics: 0 },
+        classifications: {}, backendVerdicts: {}, divergenceRounds: 0, overrides: {},
+        gateRuns: 0, qualityGreenGateRuns: 0, redByGateId: {},
+        foldRuns: 0, redProbes: 0, quarantinedProbes: 0,
+      });
+    }
+    return loops.get(key);
+  };
+  for (const r of reviewRecords) {
+    const t = forLoop(r.activity, r.loop);
+    if (r.schema >= 4) t.segments.add(JSON.stringify(r.base));
+    else t.legacyRecords += 1;
+    if (r.kind === 'round') {
+      t.rounds += 1;
+      for (const k of ORIGINS) t.origins[k] += r.origins[k];
+      const nonDegraded = r.backends.filter((b) => !b.degraded);
+      for (const b of r.backends) {
+        const verdicts = (t.backendVerdicts[b.backend] ??= {});
+        bump(verdicts, b.degraded ? 'degraded' : b.verdict);
+      }
+      // Divergence = a round where the non-degraded backends SPLIT on clean (0 blockers + 0 majors)
+      // vs not — the computed crossover signal, counted, never judged.
+      const clean = nonDegraded.filter((b) => b.blockers === 0 && b.majors === 0).length;
+      if (nonDegraded.length >= 2 && clean > 0 && clean < nonDegraded.length) t.divergenceRounds += 1;
+    } else if (r.kind === 'triage') {
+      for (const c of r.classifications) bump(t.classifications, c.class);
+    } else if (r.kind === 'override') {
+      bump(t.overrides, r.scope);
+    } else if (r.kind === 'gate-run') {
+      t.gateRuns += 1;
+      if (isQualityGreenGateRun(r)) t.qualityGreenGateRuns += 1;
+      for (const res of r.results) if (!res.ok) bump(t.redByGateId, res.id);
+    }
+  }
+  for (const row of foldRows) {
+    if (typeof row.loop !== 'string' || row.loop.length === 0) continue;
+    const t = forLoop('plan-execution', row.loop); // the fold ledger is plan-execution-scoped
+    if (row.kind === 'red-probe') t.redProbes += 1;
+    else if (row.kind === 'run' || (row.schema === 1 && row.kind === undefined)) {
+      t.foldRuns += 1;
+      if (Array.isArray(row.testIds)) {
+        for (const e of row.testIds) {
+          const counted = e && [e.runs, e.greens, e.reds, e.timeouts].every(Number.isInteger);
+          if (counted && probeVerdict(e) === 'quarantine') t.quarantinedProbes += 1;
+        }
+      }
+    }
+  }
+  const sorted = [...loops.values()].sort((a, b) => (a.activity + a.loop < b.activity + b.loop ? -1 : 1));
+  return { loops: sorted.map((t) => ({ ...t, segments: t.segments.size })) };
+};
+
+const countsOf = (obj) => {
+  const keys = Object.keys(obj).sort();
+  return keys.length === 0 ? '(none)' : keys.map((k) => `${k}:${obj[k]}`).join(' ');
+};
+
+export const renderTelemetry = (telemetry, meta) => {
+  const lines = [
+    `review-ledger telemetry — counts only, no judgment (D8). review ledger: ${meta.records} record(s)${meta.malformed ? `, ${meta.malformed} malformed` : ''}; fold ledger: ${meta.rows} row(s)${meta.badLines ? `, ${meta.badLines} unparseable` : ''}.`,
+  ];
+  if (meta.readError) lines.push(`  ⚠ review ledger unreadable (${meta.readError}) — counts exclude it`);
+  if (meta.foldReadError) lines.push(`  ⚠ fold ledger unreadable (${meta.foldReadError}) — counts exclude it`);
+  if (telemetry.loops.length === 0) lines.push('  (no loops recorded)');
+  for (const t of telemetry.loops) {
+    lines.push(`  ${t.activity} / ${t.loop}:`);
+    lines.push(`    rounds ${t.rounds} across ${t.segments} segment(s)${t.legacyRecords ? ` (+${t.legacyRecords} pre-v4 record(s))` : ''} · divergence rounds ${t.divergenceRounds}`);
+    lines.push(`    finding origins — ${ORIGINS.map((k) => `${k}:${t.origins[k]}`).join(' ')}`);
+    lines.push(`    classifications — ${countsOf(t.classifications)}`);
+    lines.push(`    backend verdicts — ${Object.keys(t.backendVerdicts).sort().map((b) => `${b}{${countsOf(t.backendVerdicts[b])}}`).join(' · ') || '(none)'}`);
+    lines.push(`    overrides — ${countsOf(t.overrides)}`);
+    lines.push(`    gate-runs ${t.gateRuns} (quality-green ${t.qualityGreenGateRuns}) · red results by gate — ${countsOf(t.redByGateId)}`);
+    lines.push(`    fold runs ${t.foldRuns} · observed-red receipts ${t.redProbes} · quarantined probe entries ${t.quarantinedProbes}`);
+  }
+  return lines.join('\n');
+};
+
+const HELP = `review-ledger — read-only review-round LEDGER checker (agent-workflow family, AD-045 + AD-048).
 
 Usage:
-  node review-ledger.mjs [--check | --status | --json]
+  node review-ledger.mjs [--check | --status | --json | --telemetry]
 
 Reads the review-round ledger the orchestrator records to (<git dir>/${LEDGER_BASENAME};
 AW_REVIEW_LEDGER overrides), resolves the effective ${ACTIVITY}.${SLOT} recipe, recomputes the
 canonical uncommitted-state fingerprint, and computes the crossover-stop decision for the in-flight
-plan-execution loop (decideStop → converged / resolved-residual / triage-required / continue).
+plan-execution loop's current SEGMENT — (activity, loop, base = the HEAD commit the dirty tree sits
+on; schema v4). Round numbering, caps, and the teeth are per segment; a segment closes only by a
+gated commit, so the round-counter reset is earned, never declared.
 
 --status (default) → the human report: resolved recipe, plan-in-flight, per-round tally with
-  findings, per-backend, the decideStop verdict.
+  findings, grouped by segment, the decideStop verdict.
 --check → the gate exit code. The normative exit contract lives in the tool header (the single home):
   exit 0 for solo / no plan in flight / a clean tree / not-a-git-tree / a converged or
-  resolved-residual in-flight loop; exit 1 for a dirty non-converged loop, triage-required, a loop
-  with no round/receipt recorded, more than one plan in flight, or a receipt inconsistency.
+  resolved-residual in-flight SEGMENT; exit 1 for a dirty non-converged segment, triage-required, a
+  segment with no round/receipt recorded, more than one plan in flight, or a receipt inconsistency.
 --json → the structured state + decision.
+--telemetry → read-only counts across ALL loops and BOTH ledgers (D8): rounds/segments per loop,
+  finding origins, classification distribution (incl. refuted), per-backend verdicts + divergence
+  rounds, override usage by scope, gate-run counts (quality-green / red-by-gate), fold runs,
+  observed-red receipts, quarantined probes. Counts only — interpretation stays with you.
 
-The writer is a SEPARATE tool (review-ledger-write.mjs record/classify) — this read-only checker
-never imports it. Human residual: git commit --no-verify, ledger-file editing, and forged counts
-remain possible — a self-discipline mechanism, not a security boundary.
+The writer is a SEPARATE tool (review-ledger-write.mjs record/classify/override) — this read-only
+checker never imports it. Human residual: git commit --no-verify, ledger-file editing, and forged
+counts remain possible — a self-discipline mechanism, not a security boundary.
 
 Exit codes: 0 pass (or plain report); 1 check failed or config error (loud); 2 usage.`;
 
-const KNOWN_ARGS = new Set(['--help', '-h', '--check', '--status', '--json']);
+const KNOWN_ARGS = new Set(['--help', '-h', '--check', '--status', '--json', '--telemetry']);
 
 export const main = (argv, ctx = {}) => {
   const cwd = ctx.cwd ?? process.cwd();
@@ -567,6 +881,19 @@ export const main = (argv, ctx = {}) => {
     if (argv.includes('--help') || argv.includes('-h')) return { code: 0, stdout: HELP, stderr: '' };
     const unknown = argv.find((a) => !KNOWN_ARGS.has(a));
     if (unknown !== undefined) throw fail(2, `unknown argument: ${unknown}`);
+    // --telemetry is a standalone report: combined with --check it would WIN the dispatch and exit
+    // 0 without running decideCheck — a silently passing gate cmd (codex R2). Reject mixed modes.
+    if (argv.includes('--telemetry') && ['--check', '--status', '--json'].some((a) => argv.includes(a))) {
+      throw fail(2, '--telemetry never combines with --check/--status/--json — a mixed-mode invocation would bypass the gate; run them separately');
+    }
+    if (argv.includes('--telemetry')) {
+      const ledgerPath = resolveLedgerPath(cwd, env);
+      const { records, malformed, readError } = ledgerPath ? readLedger(ledgerPath) : { records: [], malformed: 0 };
+      const foldPath = resolveResultsPath(cwd, env);
+      const { rows, badLines, readError: foldReadError } = foldPath ? readJsonlRows(foldPath) : { rows: [], badLines: 0 };
+      const telemetry = computeTelemetry(records, rows);
+      return { code: 0, stdout: renderTelemetry(telemetry, { records: records.length, malformed, rows: rows.length, badLines, readError, foldReadError }), stderr: '' };
+    }
     const state = buildLedgerState({ cwd, env, detect });
     const check = decideCheck(state);
     if (argv.includes('--json')) {
