@@ -10,12 +10,14 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   runFoldCompleteness,
+  runRedProbe,
   classifyChangedPath,
   parseUnifiedDiff,
   lineStartOffsets,
@@ -24,6 +26,9 @@ import {
   parseProbeOutput,
   defaultBoundArgv,
   resolveBoundArgv,
+  resolveTestFile,
+  hashFileBytes,
+  budgetsFromEnv,
   computeChangedSurface,
   main,
   FOLD_RUN_STOP,
@@ -242,7 +247,7 @@ describe('resolveResultsPath + validateRunRecord', () => {
   });
   it('a machine-only run record validates; a missing field is rejected with a named reason', () => {
     const rec = {
-      schema: RESULT_SCHEMA_VERSION, loop: 'demo', fingerprint: 'a'.repeat(64), boundTestIds: [],
+      schema: RESULT_SCHEMA_VERSION, kind: 'run', loop: 'demo', fingerprint: 'a'.repeat(64), boundTestIds: [],
       testIds: [], unsupported: [], outOfDomain: [], coverage: { uncoveredChanged: [] },
       mutation: { total: 0, killed: 0, survived: [], skipped: 0, killSetBasis: null },
       budgets: { mutantsMax: 200, hunkMutantsMax: 25, timeBudgetS: 600 }, timestamp: 't',
@@ -339,7 +344,7 @@ describe('runFoldCompleteness — rich fixture: surface + M3a coverage + schema 
     const boundId = 'lib.test.mjs#classify positive';
     writeFileSync(join(root, '.git', 'rl.jsonl'), triageLine('demo-plan', boundId));
 
-    const env = fixtureEnv(root);
+    const env = fixtureEnv(root, { AW_FOLD_RERUNS: '2' }); // exercise the D4 N-rerun counts (N=2)
     const before = computeFingerprintPayload(root);
     const beforeFp = computeTreeFingerprint(root);
     const { record } = runFoldCompleteness({ cwd: root, env, suiteCmd: 'node --test --test-reporter tap lib.test.mjs' });
@@ -355,12 +360,19 @@ describe('runFoldCompleteness — rich fixture: surface + M3a coverage + schema 
     assert.ok(uncov.some((u) => u.file === 'lib.mjs' && u.line === 8), 'L8 body uncovered');
     assert.ok(uncov.some((u) => u.file === 'orphan.mjs' && u.line === null), 'orphan.mjs absent → file-level');
     assert.equal(uncov.some((u) => u.file === 'lib.test.mjs'), false, 'the test file is never assessed');
-    // testId probe + baseline (Decision 3)
+    // testId probe + baseline (Decision 3) — v2: N-rerun counts + the custody content hash (D4/D5).
+    const testFileHash = createHash('sha256').update(readFileSync(join(root, 'lib.test.mjs'))).digest('hex');
     assert.deepEqual(record.boundTestIds, [boundId]);
     assert.equal(record.testIds.length, 1);
-    assert.deepEqual({ ...record.testIds[0] }, { id: boundId, resolvable: true, executed: 1, baselineGreen: true });
-    // machine-only schema + empty mutation (Phase 2)
+    assert.deepEqual({ ...record.testIds[0] }, {
+      id: boundId, resolvable: true, executed: 1, baselineGreen: true,
+      runs: 2, greens: 2, reds: 0, timeouts: 0, fileHash: testFileHash,
+    });
+    // machine-only schema v2 + empty mutation
     assert.equal(record.schema, RESULT_SCHEMA_VERSION);
+    assert.equal(record.kind, 'run');
+    assert.equal(record.budgets.foldReruns, 2);
+    assert.equal(record.budgets.probeTimeoutS, 120);
     assert.equal(record.loop, 'demo-plan');
     assert.match(record.fingerprint, /^[0-9a-f]{64}$/);
     assert.deepEqual(record.mutation, { total: 0, killed: 0, survived: [], skipped: 0, killSetBasis: null });
@@ -400,15 +412,20 @@ describe('runFoldCompleteness — testId probe edge cases (Decision 3)', () => {
       join(root, '.git', 'rl.jsonl'),
       triageLine('demo-plan', green) + triageLine('demo-plan', red) + triageLine('demo-plan', nomatch) + triageLine('demo-plan', missing),
     );
-    const { record } = runFoldCompleteness({ cwd: root, env: fixtureEnv(root), suiteCmd: 'node --test --test-reporter tap lib.test.mjs' });
+    const { record } = runFoldCompleteness({ cwd: root, env: fixtureEnv(root, { AW_FOLD_RERUNS: '1' }), suiteCmd: 'node --test --test-reporter tap lib.test.mjs' });
     const byId = Object.fromEntries(record.testIds.map((t) => [t.id, t]));
     assert.deepEqual(record.boundTestIds, [green, red, nomatch, missing].sort());
     assert.equal(byId[green].resolvable, true);
     assert.equal(byId[green].baselineGreen, true);
+    assert.equal(byId[green].greens, 1);
+    assert.match(byId[green].fileHash, /^[0-9a-f]{64}$/);
     assert.equal(byId[red].resolvable, true);
     assert.equal(byId[red].baselineGreen, false); // red baseline
+    assert.equal(byId[red].reds, 1);
     assert.equal(byId[nomatch].resolvable, false); // pattern selects nothing
+    assert.equal(byId[nomatch].fileHash, byId[green].fileHash, 'same file → same custody hash, resolvable or not');
     assert.equal(byId[missing].resolvable, false); // file does not exist
+    assert.equal(byId[missing].fileHash, null, 'an unresolvable FILE has no custody hash');
     rmSync(root, { recursive: true, force: true });
   });
 });
@@ -483,6 +500,278 @@ describe('runFoldCompleteness — loop derivation (Decision: single in-flight pl
       () => runFoldCompleteness({ cwd: root, env: fixtureEnv(root), suiteCmd: 'true' }),
       (e) => e.code === FOLD_RUN_STOP && /more than one plan/.test(e.message),
     );
+    rmSync(root, { recursive: true, force: true });
+  });
+});
+
+// ── the shared safe test-file resolver (BUGFREE-1, codex R1+R2): custody hashing and every probe
+// spawn go through THIS — repo-relative only, no-follow lstat, real-path containment under the real
+// repo root (a leaf check alone lets a symlinked PARENT directory escape the work tree). ───────────
+
+describe('resolveTestFile — the shared safe test-file resolver', () => {
+  const makeResolverFixture = () => {
+    const root = mkdtempSync(join(tmpdir(), 'fold-resolve-'));
+    gitInit(root);
+    writeFileSync(join(root, 'real.test.mjs'), 'export const x = 1;\n');
+    mkdirSync(join(root, 'sub'));
+    writeFileSync(join(root, 'sub', 'inner.test.mjs'), 'export const y = 1;\n');
+    symlinkSync('real.test.mjs', join(root, 'leaf-link.test.mjs')); // symlinked leaf
+    const outside = mkdtempSync(join(tmpdir(), 'fold-outside-'));
+    writeFileSync(join(outside, 'escaped.test.mjs'), 'export const z = 1;\n');
+    symlinkSync(outside, join(root, 'linkdir')); // symlinked PARENT directory escaping the tree
+    mkdirSync(join(root, 'dir.test.mjs')); // a directory named like a test file (non-regular)
+    return { root, outside };
+  };
+
+  it('a valid repo-relative regular file resolves ok', () => {
+    const { root, outside } = makeResolverFixture();
+    const r = resolveTestFile(root, 'sub/inner.test.mjs');
+    assert.equal(r.ok, true, r.reason);
+    assert.ok(r.abs.endsWith(join('sub', 'inner.test.mjs')));
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  it('each unsafe path is refused with a named reason', () => {
+    const { root, outside } = makeResolverFixture();
+    const cases = [
+      ['../escape.test.mjs', /escapes the repo root/],
+      [`${outside}/escaped.test.mjs`, /absolute path/],
+      ['leaf-link.test.mjs', /not a regular file/],
+      ['linkdir/escaped.test.mjs', /outside the repo root/],
+      ['dir.test.mjs', /not a regular file/],
+      ['ghost.test.mjs', /does not exist/],
+      ['', /empty file path/],
+    ];
+    for (const [rel, re] of cases) {
+      const r = resolveTestFile(root, rel);
+      assert.equal(r.ok, false, `"${rel}" must be refused`);
+      assert.match(r.reason, re, `"${rel}" reason: ${r.reason}`);
+    }
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  it('a realpath failure (fs race) is a refusal, never a throw (injected deps)', () => {
+    const { root, outside } = makeResolverFixture();
+    const r = resolveTestFile(root, 'real.test.mjs', { realpath: () => { throw new Error('gone'); } });
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /cannot resolve the real path/);
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  it('hashFileBytes: sha-256 hex over bytes; null on an unreadable path (fail closed)', () => {
+    const { root, outside } = makeResolverFixture();
+    const expected = createHash('sha256').update(readFileSync(join(root, 'real.test.mjs'))).digest('hex');
+    assert.equal(hashFileBytes(join(root, 'real.test.mjs')), expected);
+    assert.equal(hashFileBytes(join(root, 'dir.test.mjs')), null); // EISDIR → null, never a throw
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+});
+
+// ── the probe env knobs (D4) — one shared fail-closed integer parser: zero / negative / fractional /
+// non-numeric are refusals by name, never a silent fallback (the parseInt(...)||default idiom would
+// accept bad truthy values; codex R2). ────────────────────────────────────────────────────────────
+
+describe('budgetsFromEnv — the D4 probe knobs', () => {
+  it('defaults: AW_FOLD_RERUNS=3, AW_FOLD_PROBE_TIMEOUT_S=120', () => {
+    const b = budgetsFromEnv({});
+    assert.equal(b.foldReruns, 3);
+    assert.equal(b.probeTimeoutS, 120);
+  });
+  it('valid overrides parse', () => {
+    const b = budgetsFromEnv({ AW_FOLD_RERUNS: '5', AW_FOLD_PROBE_TIMEOUT_S: '30' });
+    assert.equal(b.foldReruns, 5);
+    assert.equal(b.probeTimeoutS, 30);
+  });
+  it('invalid AW_FOLD_RERUNS values are refused by name', () => {
+    for (const bad of ['0', '-1', '1.5', 'abc', '']) {
+      assert.throws(
+        () => budgetsFromEnv({ AW_FOLD_RERUNS: bad }),
+        (e) => e.code === FOLD_RUN_STOP && /AW_FOLD_RERUNS/.test(e.message),
+        `AW_FOLD_RERUNS="${bad}" must be refused`,
+      );
+    }
+  });
+  it('invalid AW_FOLD_PROBE_TIMEOUT_S values are refused by name', () => {
+    for (const bad of ['0', '-5', '2.5', 'soon']) {
+      assert.throws(
+        () => budgetsFromEnv({ AW_FOLD_PROBE_TIMEOUT_S: bad }),
+        (e) => e.code === FOLD_RUN_STOP && /AW_FOLD_PROBE_TIMEOUT_S/.test(e.message),
+        `AW_FOLD_PROBE_TIMEOUT_S="${bad}" must be refused`,
+      );
+    }
+  });
+});
+
+// ── the --red verb (D6): observe RED on the real pre-fold tree, mint the receipt; observed-green /
+// unresolvable / mixed / timeout are DISTINGUISHED refusals and nothing is written (D4). ──────────
+
+describe('runRedProbe / --red — observed-red receipts', () => {
+  const redFixtureRepo = () => {
+    const root = mkdtempSync(join(tmpdir(), 'fold-red-'));
+    const g = gitInit(root);
+    mkdirSync(join(root, 'docs', 'plans'), { recursive: true });
+    writeFileSync(join(root, 'docs', 'plans', 'queue.md'), '# queue\n');
+    writeFileSync(join(root, 'docs', 'plans', 'demo-plan.md'), '# demo\n');
+    writeFileSync(join(root, 'base.txt'), 'base\n');
+    g('add', '-A');
+    g('commit', '-qm', 'base');
+    writeFileSync(
+      join(root, 'lib.test.mjs'),
+      "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('red case', () => { assert.equal(1, 2); });\ntest('green case', () => { assert.equal(1, 1); });\n",
+    );
+    return root;
+  };
+  const ledgerOf = (root) => join(root, '.git', 'fc.jsonl');
+
+  it('an N/N observed red mints a custody receipt (kind red-probe, hash, counts, fingerprint)', () => {
+    const root = redFixtureRepo();
+    const { record } = runRedProbe({ cwd: root, env: fixtureEnv(root, { AW_FOLD_RERUNS: '2' }), testId: 'lib.test.mjs#red case' });
+    assert.equal(record.schema, RESULT_SCHEMA_VERSION);
+    assert.equal(record.kind, 'red-probe');
+    assert.equal(record.loop, 'demo-plan');
+    assert.equal(record.testId, 'lib.test.mjs#red case');
+    assert.equal(record.runs, 2);
+    assert.equal(record.reds, 2);
+    assert.equal(record.fileHash, createHash('sha256').update(readFileSync(join(root, 'lib.test.mjs'))).digest('hex'));
+    assert.match(record.fingerprint, /^[0-9a-f]{64}$/);
+    const { records, malformed } = readResults(ledgerOf(root));
+    assert.equal(malformed, 0);
+    assert.equal(records.length, 1);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('an observed GREEN refuses by name and writes nothing (the fix-theater guard)', () => {
+    const root = redFixtureRepo();
+    assert.throws(
+      () => runRedProbe({ cwd: root, env: fixtureEnv(root, { AW_FOLD_RERUNS: '2' }), testId: 'lib.test.mjs#green case' }),
+      (e) => e.code === FOLD_RUN_STOP && /observed GREEN/.test(e.message),
+    );
+    assert.equal(existsSync(ledgerOf(root)), false, 'a refusal writes nothing');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('an unresolvable FILE refuses, naming the dynamic-import authoring pattern (D7), and writes nothing', () => {
+    const root = redFixtureRepo();
+    assert.throws(
+      () => runRedProbe({ cwd: root, env: fixtureEnv(root, { AW_FOLD_RERUNS: '1' }), testId: 'ghost.test.mjs#whatever' }),
+      (e) => e.code === FOLD_RUN_STOP && /unresolvable/.test(e.message) && /dynamic import/.test(e.message),
+    );
+    assert.equal(existsSync(ledgerOf(root)), false);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('a pattern selecting no test refuses as unresolvable and writes nothing', () => {
+    const root = redFixtureRepo();
+    assert.throws(
+      () => runRedProbe({ cwd: root, env: fixtureEnv(root, { AW_FOLD_RERUNS: '1' }), testId: 'lib.test.mjs#no such test here' }),
+      (e) => e.code === FOLD_RUN_STOP && /unresolvable/.test(e.message),
+    );
+    assert.equal(existsSync(ledgerOf(root)), false);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('a MIXED outcome (deterministic state-file alternator) refuses as QUARANTINE and writes nothing', () => {
+    const root = redFixtureRepo();
+    writeFileSync(
+      join(root, 'flaky.test.mjs'),
+      [
+        "import { test } from 'node:test';",
+        "import { readFileSync, writeFileSync } from 'node:fs';",
+        "let n = 0; try { n = Number(readFileSync(new URL('./flaky-state.txt', import.meta.url), 'utf8')); } catch {}",
+        "writeFileSync(new URL('./flaky-state.txt', import.meta.url), String(n + 1));",
+        "test('flaky case', () => { if (n % 2 === 0) throw new Error('even run'); });",
+      ].join('\n'),
+    );
+    assert.throws(
+      () => runRedProbe({ cwd: root, env: fixtureEnv(root, { AW_FOLD_RERUNS: '2' }), testId: 'flaky.test.mjs#flaky case' }),
+      (e) => e.code === FOLD_RUN_STOP && /QUARANTINE/.test(e.message) && /1 green \/ 1 red/.test(e.message),
+    );
+    assert.equal(existsSync(ledgerOf(root)), false);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('a TIMED-OUT probe run refuses as QUARANTINE naming the timeout and writes nothing', () => {
+    const root = redFixtureRepo();
+    writeFileSync(
+      join(root, 'slow.test.mjs'),
+      "import { test } from 'node:test';\ntest('slow case', async () => { await new Promise((r) => setTimeout(r, 30000)); });\n",
+    );
+    assert.throws(
+      () => runRedProbe({ cwd: root, env: fixtureEnv(root, { AW_FOLD_RERUNS: '1', AW_FOLD_PROBE_TIMEOUT_S: '1' }), testId: 'slow.test.mjs#slow case' }),
+      (e) => e.code === FOLD_RUN_STOP && /timed out/.test(e.message),
+    );
+    assert.equal(existsSync(ledgerOf(root)), false);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  // codex R1 (BUGFREE-1 live loop): the resolver validates+hashes the file, but the spawn passed the
+  // RAW file half — node parses a leading-dash filename as an option and runs different tests than
+  // the hashed file (a custody forgery vector). The spawn must use a ./-prefixed relpath.
+  it('a leading-dash test file is spawned safely (node must not parse it as an option)', () => {
+    const root = redFixtureRepo();
+    writeFileSync(
+      join(root, '-dash.test.mjs'),
+      "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('dash red case', () => { assert.equal(1, 2); });\n",
+    );
+    const { record } = runRedProbe({ cwd: root, env: fixtureEnv(root, { AW_FOLD_RERUNS: '1' }), testId: '-dash.test.mjs#dash red case' });
+    assert.equal(record.reds, 1, 'the dash file itself was executed and observed red');
+    assert.equal(record.fileHash, createHash('sha256').update(readFileSync(join(root, '-dash.test.mjs'))).digest('hex'), 'the executed file IS the hashed file');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  // codex R2 (BUGFREE-1 live loop, blocker): the resolver normalizes LEXICALLY ('linkdir/../x' →
+  // 'x') and hashes the in-repo target, but a raw spawn lets the RUNNER resolve the path its own
+  // way — node's built-in runner happens to normalize lexically too (safe by accident), while a
+  // custom AW_FOLD_BOUND_CMD runner (or plain `node file`) OS-resolves THROUGH the symlinked dir to
+  // a DIFFERENT filesystem file. The executed file must always be the hashed file, independent of
+  // runner path semantics — so the spawn uses the resolver's canonical path for every input.
+  it('a traversal path is spawned as its normalized in-repo target', () => {
+    // Node-based runners resolve paths LEXICALLY (URL dot-segment collapse), so the divergence
+    // needs an OS-resolving runner — the probe contract is runner-agnostic (TAP + exit code), so
+    // the minimal one is `cat` over TAP-text "test files": what `cat` prints IS the probe result.
+    const root = redFixtureRepo();
+    // In-repo target (what the resolver hashes): RED TAP.
+    writeFileSync(join(root, 'trap.test.mjs'), 'TAP version 13\nnot ok 1 - trap red case\n1..1\n# tests 1\n# pass 0\n# fail 1\n');
+    // OS-level target of the raw path linkdir/../trap.test.mjs: a GREEN impostor OUTSIDE the repo
+    // (hermetic: linkdir → base/sub, so linkdir/../trap.test.mjs OS-resolves to base/trap.test.mjs).
+    const base = mkdtempSync(join(tmpdir(), 'fold-trap-outside-'));
+    mkdirSync(join(base, 'sub'));
+    writeFileSync(join(base, 'trap.test.mjs'), 'TAP version 13\nok 1 - trap red case\n1..1\n# tests 1\n# pass 1\n# fail 0\n');
+    symlinkSync(join(base, 'sub'), join(root, 'linkdir'));
+    const env = fixtureEnv(root, { AW_FOLD_RERUNS: '1', AW_FOLD_BOUND_CMD: '["cat","{file}"]' });
+    const { record } = runRedProbe({ cwd: root, env, testId: 'linkdir/../trap.test.mjs#trap red case' });
+    assert.equal(record.reds, 1, 'the executed file is the hashed IN-REPO target (red), not the impostor the OS-resolved raw path names');
+    assert.equal(record.fileHash, createHash('sha256').update(readFileSync(join(root, 'trap.test.mjs'))).digest('hex'));
+    rmSync(base, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  // agy R1 (BUGFREE-1 live loop): containment via realRoot+sep breaks for a repo at the filesystem
+  // root ('/'+sep === '//'), and prefix containment must stay segment-safe ('/a' vs '/ab'). The
+  // helper is imported DYNAMICALLY — the D7 authoring pattern: this test must LOAD (and fail) on the
+  // pre-fold tree even though the export it tests does not exist yet.
+  it('containsPath: segment-safe containment incl. a filesystem-root repo', async () => {
+    const mod = await import('./fold-completeness-run.mjs');
+    assert.equal(typeof mod.containsPath, 'function', 'containsPath must be exported');
+    assert.equal(mod.containsPath('/repo', '/repo/x.test.mjs'), true);
+    assert.equal(mod.containsPath('/repo', '/repository/x.test.mjs'), false); // '/a' never contains '/ab'
+    assert.equal(mod.containsPath('/', '/x.test.mjs'), true); // a repo at the fs root
+    assert.equal(mod.containsPath('/repo', '/repo'), false); // the root itself is not inside
+  });
+
+  it('CLI: --red mints and reports; a malformed testId or a missing value is a usage error', () => {
+    const root = redFixtureRepo();
+    const ok = main(['--red', 'lib.test.mjs#red case'], { cwd: root, env: fixtureEnv(root, { AW_FOLD_RERUNS: '1' }) });
+    assert.equal(ok.code, 0, ok.stderr);
+    assert.match(ok.stdout, /red-probe receipt/);
+    const malformed = main(['--red', 'no-separator'], { cwd: root, env: fixtureEnv(root) });
+    assert.equal(malformed.code, 2);
+    const missing = main(['--red'], { cwd: root, env: fixtureEnv(root) });
+    assert.equal(missing.code, 2);
     rmSync(root, { recursive: true, force: true });
   });
 });

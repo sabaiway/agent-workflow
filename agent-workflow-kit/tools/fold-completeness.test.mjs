@@ -13,7 +13,15 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { main, decideCheck, validateRunRecord } from './fold-completeness.mjs';
+import {
+  main,
+  decideCheck,
+  validateRunRecord,
+  isRunRecord,
+  isRedProbeRecord,
+  latestRunRecord,
+  probeVerdict,
+} from './fold-completeness.mjs';
 import { computeTreeFingerprint } from './review-state.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -57,14 +65,33 @@ const runRecord = (over = {}) => ({
   budgets: { mutantsMax: 200, hunkMutantsMax: 25, timeBudgetS: 600 }, timestamp: 't', ...over,
 });
 const seedResult = (root, record) => writeFileSync(RESULTS(root), `${JSON.stringify(record)}\n`);
+
+// v2 fixtures (BUGFREE-1 / AD-047): a run record carries a kind discriminator + per-testId rerun
+// counts + the test file's content hash; a red-probe record is the observed-red receipt.
+const HASH_A = 'f'.repeat(64);
+const v2Entry = (id, over = {}) => ({
+  id, executed: 1, runs: 3, greens: 3, reds: 0, timeouts: 0, fileHash: HASH_A,
+  resolvable: true, baselineGreen: true, ...over,
+});
+const v2Run = (over = {}) => runRecord({ schema: 2, kind: 'run', ...over });
+const redProbe = (over = {}) => ({
+  schema: 2, kind: 'red-probe', loop: 'demo-plan', testId: 'x.test.mjs#p', fileHash: HASH_A,
+  runs: 3, reds: 3, fingerprint: 'a'.repeat(64), timestamp: 't', ...over,
+});
 const fixableTriage = (loop, testId) =>
   `${JSON.stringify({ schema: 2, loop, activity: 'plan-execution', kind: 'triage', round: 1, fingerprint: 'b'.repeat(64), classifications: [{ findingKey: 'k', class: 'fixable-bug', accepted: false, testId, note: '' }], timestamp: 't' })}\n`;
 
 const check = (root, { readiness = READY, args = ['--check'] } = {}) => main(args, { cwd: root, env: envFor(root), detect: detect(readiness) });
 const done = (root) => rmSync(root, { recursive: true, force: true });
 
-// A record that matches the CURRENT tree + an empty review ledger (the all-green baseline).
-const seedCurrentGreen = (root, over = {}) => seedResult(root, runRecord({ fingerprint: computeTreeFingerprint(root), ...over }));
+// Seed MANY result records in ledger order (receipts + runs — the D5 order/custody fixtures).
+const seedResults = (root, ...records) => writeFileSync(RESULTS(root), records.map((r) => `${JSON.stringify(r)}\n`).join(''));
+// Bind fixable-bug testIds in the review ledger (the bound set the checker recomputes).
+const bindIds = (root, ...ids) => writeFileSync(REVIEW(root), ids.map((id) => fixableTriage('demo-plan', id)).join(''));
+
+// A v2 run record that matches the CURRENT tree + an empty review ledger (the all-green baseline).
+const seedCurrentGreen = (root, over = {}) => seedResult(root, v2Run({ fingerprint: computeTreeFingerprint(root), ...over }));
+const currentV2Run = (root, over = {}) => v2Run({ fingerprint: computeTreeFingerprint(root), ...over });
 
 // ── exit-0 branches ───────────────────────────────────────────────────────────────────────────────
 
@@ -158,7 +185,7 @@ describe('fold-completeness --check — fail branches', () => {
 
   it('a run for a STALE fingerprint (tree edited after the run) → 1', () => {
     const { root } = makeRepo();
-    seedResult(root, runRecord({ fingerprint: 'c'.repeat(64) })); // not the current tree
+    seedResult(root, v2Run({ fingerprint: 'c'.repeat(64) })); // not the current tree
     const r = check(root);
     done(root);
     assert.equal(r.code, 1);
@@ -186,8 +213,9 @@ describe('fold-completeness --check — fail branches', () => {
 
   it('an unresolvable bound testId → 1', () => {
     const { root } = makeRepo();
-    writeFileSync(REVIEW(root), fixableTriage('demo-plan', 'x.test.mjs#p'));
-    seedCurrentGreen(root, { boundTestIds: ['x.test.mjs#p'], testIds: [{ id: 'x.test.mjs#p', resolvable: false, executed: 0, baselineGreen: false }] });
+    bindIds(root, 'x.test.mjs#p');
+    const entry = v2Entry('x.test.mjs#p', { executed: 0, greens: 0, reds: 0, timeouts: 0, fileHash: null, resolvable: false, baselineGreen: false });
+    seedCurrentGreen(root, { boundTestIds: ['x.test.mjs#p'], testIds: [entry] });
     const r = check(root);
     done(root);
     assert.equal(r.code, 1);
@@ -196,8 +224,9 @@ describe('fold-completeness --check — fail branches', () => {
 
   it('a red-baseline bound test → 1', () => {
     const { root } = makeRepo();
-    writeFileSync(REVIEW(root), fixableTriage('demo-plan', 'x.test.mjs#p'));
-    seedCurrentGreen(root, { boundTestIds: ['x.test.mjs#p'], testIds: [{ id: 'x.test.mjs#p', resolvable: true, executed: 1, baselineGreen: false }] });
+    bindIds(root, 'x.test.mjs#p');
+    const entry = v2Entry('x.test.mjs#p', { greens: 0, reds: 3, resolvable: true, baselineGreen: false });
+    seedCurrentGreen(root, { boundTestIds: ['x.test.mjs#p'], testIds: [entry] });
     const r = check(root);
     done(root);
     assert.equal(r.code, 1);
@@ -288,6 +317,200 @@ describe('fold-completeness --check — fail branches', () => {
   });
 });
 
+// ── the red-proof chain (BUGFREE-1: receipt → order → N/N green → custody, D5/D6) ────────────────
+
+describe('fold-completeness --check — red-proof enforcement', () => {
+  const ID = 'x.test.mjs#p';
+  const H1 = '1'.repeat(64);
+  const H2 = '2'.repeat(64);
+  // A green v2 entry whose hash is the CURRENT file content (the run is fingerprint-bound).
+  const greenEntry = (id, hash) => v2Entry(id, { fileHash: hash });
+  const boundGreenRun = (root, id, hash, over = {}) =>
+    currentV2Run(root, { boundTestIds: [id], testIds: [greenEntry(id, hash)], ...over });
+
+  it('a v1 record as the loop’s latest run → 1 with a named re-run reason (D2)', () => {
+    const { root } = makeRepo();
+    seedResult(root, runRecord({ fingerprint: computeTreeFingerprint(root) }));
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /schema-1|older runner/);
+    assert.match(r.stdout, /re-run fold-completeness-run/);
+  });
+
+  it('a green bound test with NO observed-red receipt → 1, naming the exact --red command', () => {
+    const { root } = makeRepo();
+    bindIds(root, ID);
+    seedResults(root, boundGreenRun(root, ID, H1));
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /no observed-red receipt/);
+    assert.match(r.stdout, new RegExp(`--red "${ID.replace('.', '\\.')}"`));
+  });
+
+  it('a receipt minted AFTER the loop’s latest run → 1 (anti-post-hoc), naming the fresh-run recovery', () => {
+    const { root } = makeRepo();
+    bindIds(root, ID);
+    seedResults(root, boundGreenRun(root, ID, H1), redProbe({ testId: ID, fileHash: H1 }));
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /AFTER the loop's latest run|post-hoc/);
+    assert.match(r.stdout, /fold-completeness-run/);
+  });
+
+  it('receipt before the run + matching custody hash → 0 (the honest red→fix→green order)', () => {
+    const { root } = makeRepo();
+    bindIds(root, ID);
+    seedResults(root, redProbe({ testId: ID, fileHash: H1 }), boundGreenRun(root, ID, H1));
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 0, r.stdout);
+  });
+
+  it('a mixed green-side (not N/N) → 1 QUARANTINE naming the testId and the counts', () => {
+    const { root } = makeRepo();
+    bindIds(root, ID);
+    const mixed = v2Entry(ID, { greens: 2, reds: 1, resolvable: true, baselineGreen: false });
+    seedResults(root, redProbe({ testId: ID, fileHash: H1 }), currentV2Run(root, { boundTestIds: [ID], testIds: [mixed] }));
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /QUARANTINE/);
+    assert.match(r.stdout, /2 green \/ 1 red/);
+    assert.match(r.stdout, new RegExp(ID.replace('.', '\\.')));
+  });
+
+  it('a timed-out probe run on the green side → 1 QUARANTINE', () => {
+    const { root } = makeRepo();
+    bindIds(root, ID);
+    const timed = v2Entry(ID, { greens: 2, reds: 0, timeouts: 1, resolvable: false, baselineGreen: false });
+    seedResults(root, redProbe({ testId: ID, fileHash: H1 }), currentV2Run(root, { boundTestIds: [ID], testIds: [timed] }));
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /QUARANTINE/);
+  });
+
+  it('custody mismatch (test edited after its observed red) → 1, naming re-observe vs override recovery', () => {
+    const { root } = makeRepo();
+    bindIds(root, ID);
+    seedResults(root, redProbe({ testId: ID, fileHash: H1 }), boundGreenRun(root, ID, H2));
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /custody broken/);
+    assert.match(r.stdout, /re-observe red/);
+    assert.match(r.stdout, /red-proof override/);
+  });
+
+  it('the append-second-test flow passes WITHOUT an override (the second red re-attests the file)', () => {
+    const { root } = makeRepo();
+    const A = 'x.test.mjs#first case';
+    const B = 'x.test.mjs#second case';
+    bindIds(root, A, B);
+    seedResults(
+      root,
+      redProbe({ testId: A, fileHash: H1 }), // A observed red at H1
+      redProbe({ testId: B, fileHash: H2 }), // B appended to the same file → observed red at H2
+      currentV2Run(root, { boundTestIds: [A, B].sort(), testIds: [greenEntry(A, H2), greenEntry(B, H2)] }),
+    );
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 0, r.stdout);
+  });
+
+  it('an UNBOUND same-file receipt does NOT restore custody (D5 eligibility, codex R3)', () => {
+    const { root } = makeRepo();
+    bindIds(root, ID); // only ID is bound
+    seedResults(
+      root,
+      redProbe({ testId: ID, fileHash: H1 }),
+      redProbe({ testId: 'x.test.mjs#throwaway', fileHash: H2 }), // NOT in the bound set
+      boundGreenRun(root, ID, H2),
+    );
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /custody broken/);
+  });
+
+  it('a POST-RUN same-file receipt does NOT restore custody (D5 eligibility, codex R3)', () => {
+    const { root } = makeRepo();
+    bindIds(root, ID);
+    seedResults(
+      root,
+      redProbe({ testId: ID, fileHash: H1 }),
+      boundGreenRun(root, ID, H2),
+      redProbe({ testId: ID, fileHash: H2 }), // minted after the run — a fresh run must follow
+    );
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /custody broken/);
+  });
+
+  // The D5 same-file residual, CHARACTERIZED (codex R2 triage): weakening an ALREADY-GREEN test
+  // behind a newer same-file receipt passes through — post-green tamper is the self-discipline
+  // boundary AD-045/AD-046 already state. This test documents exactly that pass-through.
+  it('characterization: a weakened already-green test behind a newer same-file receipt passes (stated residual)', () => {
+    const { root } = makeRepo();
+    const A = 'x.test.mjs#first case';
+    const B = 'x.test.mjs#second case';
+    bindIds(root, A, B);
+    seedResults(
+      root,
+      redProbe({ testId: A, fileHash: H1 }), // A honestly red at H1
+      redProbe({ testId: B, fileHash: H2 }), // file edited (A weakened + B added) → B red at H2
+      currentV2Run(root, { boundTestIds: [A, B].sort(), testIds: [greenEntry(A, H2), greenEntry(B, H2)] }),
+    );
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 0, 'the pass-through IS the documented residual');
+  });
+
+  it('interaction truth-table over {receipt, order, green-N/N, custody} → verdict', () => {
+    const rows = [
+      // [receipt?, orderOk?, greenNN?, custodyOk?] → [exitCode, reasonRe]
+      [[false, null, true, null], [1, /no observed-red receipt/]],
+      [[true, false, true, null], [1, /AFTER the loop's latest run/]],
+      [[true, true, false, null], [1, /QUARANTINE/]],
+      [[true, true, true, false], [1, /custody broken/]],
+      [[true, true, true, true], [0, /PASS|fold-completeness verified/]],
+    ];
+    for (const [[receipt, orderOk, greenNN, custodyOk], [code, re]] of rows) {
+      const { root } = makeRepo();
+      bindIds(root, ID);
+      const entry = greenNN
+        ? greenEntry(ID, custodyOk === false ? H2 : H1)
+        : v2Entry(ID, { greens: 1, reds: 2, resolvable: true, baselineGreen: false, fileHash: H1 });
+      const run = currentV2Run(root, { boundTestIds: [ID], testIds: [entry] });
+      const records = [];
+      if (receipt && orderOk !== false) records.push(redProbe({ testId: ID, fileHash: H1 }));
+      records.push(run);
+      if (receipt && orderOk === false) records.push(redProbe({ testId: ID, fileHash: H1 }));
+      seedResults(root, ...records);
+      const r = check(root);
+      done(root);
+      assert.equal(r.code, code, `row ${JSON.stringify([receipt, orderOk, greenNN, custodyOk])}: ${r.stdout}`);
+      assert.match(r.stdout, re, `row ${JSON.stringify([receipt, orderOk, greenNN, custodyOk])}`);
+    }
+  });
+
+  it('--status renders the v2 per-testId dimensions (verdict + counts + receipts)', () => {
+    const { root } = makeRepo();
+    bindIds(root, ID);
+    seedResults(root, redProbe({ testId: ID, fileHash: H1 }), boundGreenRun(root, ID, H1));
+    const r = main(['--status'], { cwd: root, env: envFor(root), detect: detect() });
+    done(root);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /3\/3|✓/);
+    assert.match(r.stdout, /red-probe receipt/);
+    assert.match(r.stdout, /PASS/);
+  });
+});
+
 // ── --status render + decideCheck purity ─────────────────────────────────────────────────────────
 
 describe('fold-completeness --status', () => {
@@ -320,5 +543,198 @@ describe('import-split guard — the checker never imports the runner', () => {
   it('validateRunRecord + decideCheck are exported (the schema + decision are the read module’s API)', () => {
     assert.equal(typeof validateRunRecord, 'function');
     assert.equal(typeof decideCheck, 'function');
+  });
+});
+
+// ── result schema v2 — per-version validation (D2: kind discriminator, v1 tolerated) ─────────────
+
+describe('result schema v2 — per-version validation (D2)', () => {
+  it('a v1 record (no kind, single-run fields) stays valid — tolerance', () => {
+    assert.equal(validateRunRecord(runRecord()).ok, true);
+    // …including a populated v1 testIds entry (the AD-046 single-run shape).
+    const v1Entry = { id: 'x.test.mjs#p', resolvable: true, executed: 1, baselineGreen: true };
+    assert.equal(validateRunRecord(runRecord({ testIds: [v1Entry] })).ok, true);
+    // …and each malformed v1-entry field still fails by name under the v1 rules.
+    const cases = [
+      [{ ...v1Entry, id: '' }, /needs an id/],
+      [{ ...v1Entry, resolvable: 'yes' }, /boolean resolvable/],
+      [{ ...v1Entry, executed: -1 }, /executed must be a non-negative integer/],
+    ];
+    for (const [entry, re] of cases) {
+      const v = validateRunRecord(runRecord({ testIds: [entry] }));
+      assert.equal(v.ok, false);
+      assert.match(v.reason, re);
+    }
+  });
+
+  it('a malformed mutation shape fails by name in both versions', () => {
+    for (const rec of [runRecord({ mutation: { total: 'x' } }), v2Run({ mutation: { total: 'x' } })]) {
+      const v = validateRunRecord(rec);
+      assert.equal(v.ok, false);
+      assert.match(v.reason, /mutation must be/);
+    }
+    const bad = validateRunRecord(v2Run({ mutation: { total: 0, killed: 0, survived: [], skipped: 0, killSetBasis: 42 } }));
+    assert.equal(bad.ok, false);
+    assert.match(bad.reason, /killSetBasis/);
+  });
+
+  it('a v1 record carrying kind fails closed by name (kind is a v2 discriminator)', () => {
+    const v = validateRunRecord(runRecord({ kind: 'run' }));
+    assert.equal(v.ok, false);
+    assert.match(v.reason, /v1 record must not carry kind/);
+  });
+
+  it('an unknown/forged schema fails closed by name', () => {
+    for (const s of [0, 3, '2', null]) {
+      const v = validateRunRecord(runRecord({ schema: s }));
+      assert.equal(v.ok, false, `schema ${JSON.stringify(s)} must fail`);
+      assert.match(v.reason, /schema must be one of 1, 2/);
+    }
+  });
+
+  it('a v2 record needs the kind discriminator ("run" | "red-probe")', () => {
+    const missing = validateRunRecord(runRecord({ schema: 2 }));
+    assert.equal(missing.ok, false);
+    assert.match(missing.reason, /kind must be "run" or "red-probe"/);
+    const bogus = validateRunRecord(runRecord({ schema: 2, kind: 'probe' }));
+    assert.equal(bogus.ok, false);
+    assert.match(bogus.reason, /kind must be "run" or "red-probe"/);
+  });
+
+  it('a v2 run with per-testId rerun counts + content hash validates', () => {
+    const v = validateRunRecord(v2Run({ boundTestIds: ['x.test.mjs#p'], testIds: [v2Entry('x.test.mjs#p')] }));
+    assert.equal(v.ok, true, v.reason);
+  });
+
+  it('a v2 run entry with a null fileHash (unresolvable file) validates', () => {
+    const entry = v2Entry('x.test.mjs#p', { executed: 0, greens: 0, reds: 0, timeouts: 0, fileHash: null, resolvable: false, baselineGreen: false });
+    assert.equal(validateRunRecord(v2Run({ testIds: [entry] })).ok, true);
+  });
+
+  it('v2 run entries: each malformed field fails by name', () => {
+    const cases = [
+      [{ runs: 0 }, /runs must be a positive integer/],
+      [{ runs: 2.5 }, /runs must be a positive integer/],
+      [{ greens: 'x' }, /rerun counts/],
+      [{ greens: -1 }, /rerun counts/],
+      [{ greens: 2, reds: 2 }, /exceed runs/],
+      [{ fileHash: 'nothex' }, /fileHash must be null or a 64-hex/],
+      [{ resolvable: false }, /resolvable must equal/],
+      [{ greens: 0, reds: 3, baselineGreen: true, resolvable: true }, /baselineGreen must equal/],
+    ];
+    for (const [over, re] of cases) {
+      const v = validateRunRecord(v2Run({ testIds: [v2Entry('x.test.mjs#p', over)] }));
+      assert.equal(v.ok, false, `entry ${JSON.stringify(over)} must fail`);
+      assert.match(v.reason, re);
+    }
+  });
+
+  // codex R1 (BUGFREE-1 live loop): a forged N/N verdict with zero-match evidence must not validate —
+  // greens/reds imply at least one matched (executed) test result.
+  it('executed must be positive when any run resolved', () => {
+    const forged = v2Entry('x.test.mjs#p', { executed: 0 });
+    const v = validateRunRecord(v2Run({ testIds: [forged] }));
+    assert.equal(v.ok, false);
+    assert.match(v.reason, /executed must be positive when a run resolved/);
+  });
+
+  it('a valid red-probe receipt validates', () => {
+    assert.equal(validateRunRecord(redProbe()).ok, true);
+  });
+
+  it('red-probe records: each malformed field fails by name', () => {
+    const cases = [
+      [{ testId: 'no-separator' }, /red-probe testId/],
+      [{ testId: '#nofile' }, /red-probe testId/],
+      [{ fileHash: null }, /red-probe fileHash must be a 64-hex/],
+      [{ fileHash: 'short' }, /red-probe fileHash must be a 64-hex/],
+      [{ runs: 0 }, /red-probe runs must be a positive integer/],
+      [{ reds: 2 }, /reds must equal runs/],
+      [{ loop: '' }, /missing loop/],
+      [{ fingerprint: 42 }, /fingerprint/],
+      [{ timestamp: '' }, /missing timestamp/],
+    ];
+    for (const [over, re] of cases) {
+      const v = validateRunRecord(redProbe(over));
+      assert.equal(v.ok, false, `red-probe ${JSON.stringify(over)} must fail`);
+      assert.match(v.reason, re);
+    }
+  });
+});
+
+// ── kind-aware selectors (codex R2: a red-probe appended after a run is never the "latest run") ──
+
+describe('kind-aware result selectors', () => {
+  it('isRunRecord: v1 records and v2 kind:"run" are runs; red-probes are not', () => {
+    assert.equal(isRunRecord(runRecord()), true);
+    assert.equal(isRunRecord(v2Run()), true);
+    assert.equal(isRunRecord(redProbe()), false);
+  });
+
+  it('isRedProbeRecord requires schema >= 2 AND kind red-probe', () => {
+    assert.equal(isRedProbeRecord(redProbe()), true);
+    assert.equal(isRedProbeRecord(v2Run()), false);
+    assert.equal(isRedProbeRecord(runRecord()), false);
+  });
+
+  it('latestRunRecord over [run, red-probe] picks the run (not the appended probe)', () => {
+    const run = v2Run();
+    const sel = latestRunRecord([run, redProbe()]);
+    assert.equal(sel.index, 0);
+    assert.equal(sel.record, run);
+  });
+
+  it('latestRunRecord over [red-probe, run] picks the run', () => {
+    const run = v2Run();
+    const sel = latestRunRecord([redProbe(), run]);
+    assert.equal(sel.index, 1);
+    assert.equal(sel.record, run);
+  });
+
+  it('latestRunRecord treats a v1 record as a run', () => {
+    const v1 = runRecord();
+    const sel = latestRunRecord([v1, redProbe()]);
+    assert.equal(sel.index, 0);
+    assert.equal(sel.record, v1);
+  });
+
+  it('latestRunRecord over probes only (no run yet) is null', () => {
+    assert.equal(latestRunRecord([redProbe()]), null);
+    assert.equal(latestRunRecord([]), null);
+  });
+});
+
+// ── the D4 verdict algebra: RED/GREEN are N/N verdicts; mixed/timeout = QUARANTINE ────────────────
+
+describe('probeVerdict — the D4 verdict-algebra truth table', () => {
+  const V = (greens, reds, timeouts, runs = 3) => probeVerdict({ runs, greens, reds, timeouts });
+
+  it('GREEN and RED are N/N verdicts only', () => {
+    assert.equal(V(3, 0, 0), 'green');
+    assert.equal(V(0, 3, 0), 'red');
+    assert.equal(probeVerdict({ runs: 1, greens: 1, reds: 0, timeouts: 0 }), 'green');
+    assert.equal(probeVerdict({ runs: 1, greens: 0, reds: 1, timeouts: 0 }), 'red');
+  });
+
+  it('any mixed green/red outcome is QUARANTINE (never converts)', () => {
+    assert.equal(V(2, 1, 0), 'quarantine');
+    assert.equal(V(1, 2, 0), 'quarantine');
+    assert.equal(V(1, 1, 0), 'quarantine'); // 1 run unresolved + mixed — still quarantine
+  });
+
+  it('any timeout taints the verdict — QUARANTINE, even beside N-1 greens or reds', () => {
+    assert.equal(V(2, 0, 1), 'quarantine');
+    assert.equal(V(0, 2, 1), 'quarantine');
+    assert.equal(V(0, 0, 3), 'quarantine'); // all-timeout: neither red nor green
+  });
+
+  it('nothing resolved on any run → unresolvable; a PARTIAL resolution is quarantine', () => {
+    assert.equal(V(0, 0, 0), 'unresolvable');
+    assert.equal(V(1, 0, 0), 'quarantine'); // resolved once, unresolved twice — flaky resolution
+    assert.equal(V(0, 1, 0), 'quarantine'); // a partial red is NOT an honest N/N red
+  });
+
+  it('runs=0 is defensively unresolvable, never green (a forged zero-run record proves nothing)', () => {
+    assert.equal(probeVerdict({ runs: 0, greens: 0, reds: 0, timeouts: 0 }), 'unresolvable');
   });
 });

@@ -12,10 +12,14 @@
 //      TS-JSX / out-of-domain) and derive per-file changed line ranges;
 //   3. M3a — run the suite ONCE under NODE_V8_COVERAGE (a dir OUTSIDE the work tree, Decision 8) and
 //      map every changed executable line to covered/uncovered via V8 innermost-range-wins (Decision 6);
-//   4. probe each of the loop's fixable-bug bound testIds once (Decision 3 / 10, shell-free) for
-//      resolvability + a green baseline;
-//   5. append ONE machine-only result record, bound to BOTH the tree fingerprint AND the sorted
+//   4. probe each of the loop's fixable-bug bound testIds N times (Decision 3 / 10 + D4, shell-free,
+//      per-run timeout) for resolvability + an N/N-green baseline, hashing each bound test file
+//      (the D5 custody anchor);
+//   5. append ONE machine-only v2 run record, bound to BOTH the tree fingerprint AND the sorted
 //      fixable-bug testId set (Decision 9), to <git dir>/agent-workflow-fold-completeness.jsonl.
+// A SECOND verb, --red "<testId>" (BUGFREE-1 / AD-047), observes a testId RED on the current
+// (pre-fold) tree and mints a red-probe receipt — the observed-red half of the honest red→green
+// proof; observed-green / unresolvable / mixed / timed-out are distinguished refusals, nothing written.
 // The researched mutation half (M3b) was SHELVED — bounded local-boundary mutation adds too little
 // over coverage and is not language-independent — so the `mutation` field stays the reserved empty shape.
 //
@@ -24,18 +28,20 @@
 // TS/JSX source is out of scope v1. Dependency-free, Node >= 18. No side effects on import.
 
 import { readFileSync, readdirSync, mkdtempSync, rmSync, realpathSync, lstatSync } from 'node:fs';
-import { join, dirname, basename } from 'node:path';
+import { join, dirname, basename, isAbsolute, normalize, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { writeContainedFileAtomic } from './atomic-write.mjs';
 import { computeTreeFingerprint, plansInFlight } from './review-state.mjs';
-import { resolveLedgerPath, readLedger } from './review-ledger.mjs';
+import { resolveLedgerPath, readLedger, isWellFormedTestId, splitTestId } from './review-ledger.mjs';
 import {
   RESULT_SCHEMA_VERSION,
   resolveResultsPath,
   validateRunRecord,
   collectBoundTestIds,
+  probeVerdict,
 } from './fold-completeness.mjs';
 
 const ACTIVITY = 'plan-execution';
@@ -213,6 +219,59 @@ export const parseProbeOutput = ({ stdout, code, fileArg }) => {
 // defaultBoundArgv(file, pattern) → the shell-free node:test argv (testId content never reaches a shell).
 export const defaultBoundArgv = (file, pattern) => ['node', '--test', '--test-reporter', 'tap', '--test-name-pattern', pattern, file];
 
+// ── the shared safe test-file resolver (BUGFREE-1, codex R1+R2) ───────────────────────────────────
+// Custody hashing and every probe spawn go through THIS one resolver — the testId format itself is
+// deliberately suffix-free and format-only (review-ledger.mjs), so path safety lives here: the file
+// half must be repo-relative (absolute + parent-escaping refused), a REGULAR file under the no-follow
+// lstat discipline, and its RESOLVED real path must be contained under the REAL repo root — a leaf
+// check alone would let a symlinked PARENT directory escape the work tree.
+
+// resolveTestFile(rootTop, rel, deps?) → { ok: true, abs } | { ok: false, reason } (never throws).
+// deps.{lstat,realpath} are injectable so the defensive fs-race catch is unit-testable (the family
+// deps idiom — review-ledger-write.mjs).
+export const resolveTestFile = (rootTop, rel, deps = {}) => {
+  const lstat = deps.lstat ?? lstatSync;
+  const realpath = deps.realpath ?? realpathSync;
+  if (typeof rel !== 'string' || rel.length === 0) return { ok: false, reason: 'empty file path' };
+  if (isAbsolute(rel)) return { ok: false, reason: `absolute path "${rel}" — the testId file half must be repo-relative` };
+  const norm = normalize(rel);
+  if (norm === '..' || norm.startsWith(`..${sep}`)) return { ok: false, reason: `path "${rel}" escapes the repo root` };
+  const abs = join(rootTop, norm);
+  let st;
+  try {
+    st = lstat(abs);
+  } catch {
+    return { ok: false, reason: `file "${rel}" does not exist` };
+  }
+  if (!st.isFile()) return { ok: false, reason: `"${rel}" is not a regular file (a symlink/directory/device is never followed — fail closed)` };
+  let realAbs;
+  let realRoot;
+  try {
+    realAbs = realpath(abs);
+    realRoot = realpath(rootTop);
+  } catch {
+    return { ok: false, reason: `cannot resolve the real path of "${rel}"` };
+  }
+  if (!containsPath(realRoot, realAbs)) return { ok: false, reason: `"${rel}" resolves outside the repo root (a symlinked parent directory) — fail closed` };
+  return { ok: true, abs: realAbs };
+};
+
+// containsPath(realRoot, realAbs) → realAbs is strictly INSIDE realRoot. Segment-safe ('/a' never
+// contains '/ab') and correct for a repo at the filesystem root, where realRoot already ends with
+// the separator ('/'+sep would be '//' and reject every valid path — agy R1).
+export const containsPath = (realRoot, realAbs) => realAbs.startsWith(realRoot.endsWith(sep) ? realRoot : realRoot + sep);
+
+// The D5 custody hash: sha-256 over the file's BYTES (no encoding normalization). null on a read
+// failure — the caller reads that as an unresolvable file (exported for the unit test of exactly
+// that fail-closed edge).
+export const hashFileBytes = (abs) => {
+  try {
+    return createHash('sha256').update(readFileSync(abs)).digest('hex');
+  } catch {
+    return null;
+  }
+};
+
 // resolveBoundArgv(env) → (file, pattern) => argv[]. Default = the node:test shape; AW_FOLD_BOUND_CMD
 // overrides with a JSON array of argv strings using {file}/{pattern} placeholders (the universality
 // escape hatch — a consumer on another runner). A malformed override is a typed refusal, never a
@@ -382,11 +441,70 @@ const appendRecord = (resultsPath, record) => {
 
 // ── the run ───────────────────────────────────────────────────────────────────────────────────────
 
-const budgetsFromEnv = (env) => ({
+// The shared fail-closed integer parser for the D4 probe knobs: zero / negative / fractional /
+// non-numeric values are typed refusals by name — the parseInt(...)||default idiom would silently
+// accept bad truthy values (codex R2). Unset → the default; set → a positive integer, exactly.
+const parsePositiveIntKnob = (env, name, fallback) => {
+  const raw = env[name];
+  if (raw === undefined) return fallback;
+  if (!/^\d+$/.test(String(raw).trim()) || Number.parseInt(raw, 10) < 1) {
+    throw stop(`${name} must be a positive integer (got "${raw}") — refusing to guess (fail closed)`);
+  }
+  return Number.parseInt(raw, 10);
+};
+
+export const budgetsFromEnv = (env) => ({
   mutantsMax: Number.parseInt(env.AW_FOLD_MUTANTS_MAX ?? '200', 10) || 200,
   hunkMutantsMax: Number.parseInt(env.AW_FOLD_HUNK_MUTANTS_MAX ?? '25', 10) || 25,
   timeBudgetS: Number.parseInt(env.AW_FOLD_TIME_BUDGET_S ?? '600', 10) || 600,
+  // D4: N reruns per probe side; the per-RUN probe timeout (each of the N runs gets its own budget,
+  // never one shared series budget — agy R1). Probes only: the suite run keeps the no-timeout status quo.
+  foldReruns: parsePositiveIntKnob(env, 'AW_FOLD_RERUNS', 3),
+  probeTimeoutS: parsePositiveIntKnob(env, 'AW_FOLD_PROBE_TIMEOUT_S', 120),
 });
+
+// ── the shared N-rerun probe (D4) — ONE helper for both the run's green side and the --red verb ───
+
+// probeBound({ id, rootTop, env, boundArgv, reruns, timeoutS }) → { entry, resolveReason }. The entry
+// is the v2 per-testId record shape: rerun counts (evidence) + the custody content hash + the derived
+// booleans. The custody hash is taken BEFORE the runs (the content the observation attests). A
+// timed-out or signal-killed run is neither red nor green — it lands in `timeouts` (quarantine fuel).
+const probeBound = ({ id, rootTop, env, boundArgv, reruns, timeoutS }) => {
+  const { file, pattern } = splitTestId(id);
+  const resolved = resolveTestFile(rootTop, file);
+  const fileHash = resolved.ok ? hashFileBytes(resolved.abs) : null;
+  let executed = 0;
+  let greens = 0;
+  let reds = 0;
+  let timeouts = 0;
+  if (resolved.ok && fileHash != null) {
+    // ALWAYS spawn the resolver's canonical absolute path — the executed file must be the hashed
+    // file independent of runner path semantics (codex R1+R2, BUGFREE-1 live loop): a raw
+    // leading-dash filename parses as an OPTION (and a ./-prefix does not survive node's runner
+    // normalization), and a raw traversal path like linkdir/../x lets an OS-resolving runner
+    // execute a different filesystem target than the lexically-normalized file the hash covers.
+    const argv = boundArgv(resolved.abs, pattern);
+    for (let i = 0; i < reruns; i += 1) {
+      const res = spawnSync(argv[0], argv.slice(1), {
+        cwd: rootTop, env: childTestEnv(env), encoding: 'utf8', maxBuffer: GIT_MAX_BUFFER, timeout: timeoutS * 1000,
+      });
+      if ((res.error && res.error.code === 'ETIMEDOUT') || res.signal != null) {
+        timeouts += 1;
+        continue;
+      }
+      const p = parseProbeOutput({ stdout: res.stdout ?? '', code: res.error ? 1 : res.status ?? 1, fileArg: file });
+      executed = Math.max(executed, p.executed);
+      if (!p.resolvable) continue; // an unresolved run (the pattern selected nothing)
+      if (p.baselineGreen) greens += 1;
+      else reds += 1;
+    }
+  }
+  const entry = {
+    id, executed, runs: reruns, greens, reds, timeouts, fileHash,
+    resolvable: greens + reds === reruns, baselineGreen: greens === reruns,
+  };
+  return { entry, resolveReason: resolved.ok ? (fileHash == null ? `cannot read "${file}"` : null) : resolved.reason };
+};
 
 // runFoldCompleteness({ cwd, env, suiteCmd }) → { writtenPath, record }. THROWS a typed STOP (loop
 // derivation / suite discovery / a malformed record / an fs error) or a native fs error.
@@ -430,21 +548,17 @@ export const runFoldCompleteness = ({ cwd = process.cwd(), env = process.env, su
     for (const n of computeUncoveredLines({ perProcessRanges: perProc, sourceText: src, changedLines: lines })) uncoveredChanged.push({ file: rel, line: n });
   }
 
-  // Decision 3 / 10: probe each fixable-bug bound testId once (shell-free).
+  // Decision 3 / 10 + D4: probe each fixable-bug bound testId N times (shell-free, per-run timeout).
   const ledgerPath = resolveLedgerPath(cwd, env);
   const { records: reviewRecords } = ledgerPath ? readLedger(ledgerPath) : { records: [] };
   const boundTestIds = collectBoundTestIds(reviewRecords, { activity: ACTIVITY, loop });
-  const testIds = boundTestIds.map((id) => {
-    const at = id.indexOf('#');
-    const file = id.slice(0, at);
-    const pattern = id.slice(at + 1);
-    const argv = boundArgv(file, pattern);
-    const res = spawnSync(argv[0], argv.slice(1), { cwd: rootTop, env: childTestEnv(env), encoding: 'utf8', maxBuffer: GIT_MAX_BUFFER });
-    return { id, ...parseProbeOutput({ stdout: res.stdout ?? '', code: res.error ? 1 : res.status ?? 1, fileArg: file }) };
-  });
+  const testIds = boundTestIds.map(
+    (id) => probeBound({ id, rootTop, env, boundArgv, reruns: budgets.foldReruns, timeoutS: budgets.probeTimeoutS }).entry,
+  );
 
   const record = {
     schema: RESULT_SCHEMA_VERSION,
+    kind: 'run',
     loop,
     fingerprint,
     boundTestIds,
@@ -464,28 +578,106 @@ export const runFoldCompleteness = ({ cwd = process.cwd(), env = process.env, su
   return appendRecord(resultsPath, record);
 };
 
+// ── the --red verb (D6): observe RED when it actually happens, mint the custody receipt ──────────
+
+// runRedProbe({ cwd, env, testId }) → { writtenPath, record }. Observes `testId` on the CURRENT
+// (pre-fold) tree: resolvable + failing on N/N runs → appends a red-probe receipt (testId, counts,
+// the test file's content hash, fingerprint, timestamp) to the fold results ledger. Observed green,
+// unresolvable, mixed, or timed out → a typed refusal DISTINGUISHED by name, and NOTHING is written
+// (D4: mixed/timeout is QUARANTINE — it never converts and has no override lane). No triage-order
+// requirement: the checker joins receipts to the bound set at gate time (D6).
+export const runRedProbe = ({ cwd = process.cwd(), env = process.env, testId } = {}) => {
+  if (!isWellFormedTestId(testId)) {
+    throw usageFail(`--red needs a well-formed testId "<test-file>#<test-name-pattern>" (a "#" separator, both halves non-empty; got ${JSON.stringify(testId)})`);
+  }
+  const root = gitStdout(['rev-parse', '--show-toplevel'], cwd);
+  if (root == null) throw stop('not a git work tree — nothing to observe');
+  const rootTop = root.replace(/\r?\n$/, '');
+  const plans = plansInFlight(rootTop);
+  if (plans.length === 0) throw stop('no plan in flight (docs/plans/ holds no active plan) — nothing to observe');
+  if (plans.length > 1) throw stop(`more than one plan in flight (${plans.join(', ')}) — ambiguous loop id; resolve to one active plan`);
+  const loop = plans[0].replace(/\.md$/, '');
+
+  const boundArgv = resolveBoundArgv(env);
+  const budgets = budgetsFromEnv(env);
+  const { entry, resolveReason } = probeBound({ id: testId, rootTop, env, boundArgv, reruns: budgets.foldReruns, timeoutS: budgets.probeTimeoutS });
+  const verdict = probeVerdict(entry);
+  const counts = `${entry.greens} green / ${entry.reds} red / ${entry.timeouts} timed out / ${entry.runs - entry.greens - entry.reds - entry.timeouts} unresolved of ${entry.runs} run(s)`;
+  if (verdict === 'unresolvable') {
+    throw stop(
+      `--red refused for "${testId}": unresolvable — ${resolveReason ?? 'the pattern selects no test'} (${counts}). ` +
+        `If the test cannot even LOAD pre-fold (it imports an export the fix introduces), author it with a dynamic import() so it loads and FAILS pre-fold; ` +
+        `if the red is genuinely unestablishable, the loud escape is a recorded red-proof override (review-ledger-write override). Nothing was recorded.`,
+    );
+  }
+  if (verdict === 'green') {
+    throw stop(
+      `--red refused for "${testId}": observed GREEN on ${entry.greens}/${entry.runs} runs — the test does not fail on the current (pre-fold) tree, so it proves nothing about the fix. ` +
+        `Write a test that FAILS before the fix is applied, then re-run --red BEFORE folding the fix. Nothing was recorded.`,
+    );
+  }
+  if (verdict === 'quarantine') {
+    const flavor = entry.timeouts > 0
+      ? `${entry.timeouts} of ${entry.runs} probe run(s) timed out (AW_FOLD_PROBE_TIMEOUT_S=${budgets.probeTimeoutS}) — a timed-out run is neither red nor green`
+      : `mixed outcomes (${counts}) — a flaky test can launder a fake red`;
+    throw stop(
+      `--red refused for "${testId}": QUARANTINE — ${flavor}. QUARANTINE never converts and has no override lane: ` +
+        `${entry.timeouts > 0 ? 'raise the timeout or make the test faster' : 'replace the flaky test'}, then re-observe. Nothing was recorded.`,
+    );
+  }
+
+  const record = {
+    schema: RESULT_SCHEMA_VERSION,
+    kind: 'red-probe',
+    loop,
+    testId,
+    fileHash: entry.fileHash,
+    runs: entry.runs,
+    reds: entry.reds,
+    fingerprint: computeTreeFingerprint(cwd),
+    timestamp: isoNow(),
+  };
+  const v = validateRunRecord(record);
+  if (!v.ok) throw stop(`refusing to write a malformed red-probe record: ${v.reason}`);
+  const resultsPath = resolveResultsPath(cwd, env);
+  if (resultsPath == null) throw stop('cannot resolve the result-ledger path — not a git work tree and AW_FOLD_RESULTS is unset');
+  return appendRecord(resultsPath, record);
+};
+
 // ── CLI ───────────────────────────────────────────────────────────────────────────────────────────
 
-const HELP = `fold-completeness-run — the M3 fold-completeness RUNNER (agent-workflow family, AD-046).
+const HELP = `fold-completeness-run — the M3 fold-completeness RUNNER (agent-workflow family, AD-046 + AD-047).
 
 Usage:
   node fold-completeness-run.mjs [--suite "<cmd>"] [--cwd <dir>]
+  node fold-completeness-run.mjs --red "<test-file>#<test-name-pattern>" [--cwd <dir>]
 
-Runs the in-flight plan-execution loop's suite ONCE under coverage, maps every changed executable line
-to covered/uncovered, probes each fixable-bug bound testId for resolvability + a green baseline, and
-appends one result record to <git dir>/${'agent-workflow-fold-completeness.jsonl'} (AW_FOLD_RESULTS
-overrides). The read-only gate is a SEPARATE tool: node fold-completeness.mjs --check / --status / --json.
+The default run: runs the in-flight plan-execution loop's suite ONCE under coverage, maps every
+changed executable line to covered/uncovered, probes each fixable-bug bound testId N times
+(AW_FOLD_RERUNS, default 3) for resolvability + an N/N-green baseline, records each bound test file's
+content hash (custody), and appends one v2 run record to
+<git dir>/${'agent-workflow-fold-completeness.jsonl'} (AW_FOLD_RESULTS overrides).
+
+--red observes a testId RED on the CURRENT (pre-fold) tree — the honest fold-time order is: classify
+the fixable-bug with its testId → write the test → --red observes it FAIL (N/N) BEFORE the fix is
+applied → fold the fix → the normal run observes green → the gate checks receipt + order + custody.
+An N/N red mints a red-probe receipt (testId, counts, content hash, fingerprint); observed-green /
+unresolvable / mixed / timed-out are DISTINGUISHED typed refusals and nothing is written
+(mixed/timeout = QUARANTINE — never converts, no override lane).
 
 Suite command: --suite "<cmd>" or AW_FOLD_SUITE_CMD, else the unit-tests gate cmd in docs/ai/gates.json.
-Bound-test runs default to node --test --test-name-pattern (shell-free); AW_FOLD_BOUND_CMD overrides
-with a JSON argv array using {file}/{pattern}. Budgets: AW_FOLD_MUTANTS_MAX / AW_FOLD_HUNK_MUTANTS_MAX /
-AW_FOLD_TIME_BUDGET_S (recorded but inert — the mutation half is not shipped).
+Bound-test probes default to node --test --test-name-pattern (shell-free); AW_FOLD_BOUND_CMD overrides
+with a JSON argv array using {file}/{pattern}. Probe knobs (fail-closed positive integers):
+AW_FOLD_RERUNS (default 3) · AW_FOLD_PROBE_TIMEOUT_S (default 120, per probe RUN, probes only).
+Inert budgets: AW_FOLD_MUTANTS_MAX / AW_FOLD_HUNK_MUTANTS_MAX / AW_FOLD_TIME_BUDGET_S (mutation shelved).
 
-Exit codes: 0 written; 1 a typed STOP (loop derivation / suite discovery / malformed record / fs error);
-2 usage.`;
+The read-only gate is a SEPARATE tool: node fold-completeness.mjs --check / --status / --json.
+
+Exit codes: 0 written; 1 a typed STOP (loop derivation / suite discovery / a --red refusal / malformed
+record / fs error); 2 usage.`;
 
 const parseArgs = (argv) => {
-  const opts = { cwd: undefined, suite: undefined };
+  const opts = { cwd: undefined, suite: undefined, red: undefined };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--cwd') {
@@ -495,6 +687,10 @@ const parseArgs = (argv) => {
     } else if (a === '--suite') {
       opts.suite = argv[i + 1];
       if (opts.suite === undefined) throw usageFail('--suite needs a command');
+      i += 1;
+    } else if (a === '--red') {
+      opts.red = argv[i + 1];
+      if (opts.red === undefined) throw usageFail('--red needs a testId ("<test-file>#<test-name-pattern>")');
       i += 1;
     } else {
       throw usageFail(`unknown argument: ${a}`);
@@ -509,7 +705,16 @@ export const main = (argv, ctx = {}) => {
   try {
     if (argv.includes('--help') || argv.includes('-h')) return { code: 0, stdout: HELP, stderr: '' };
     const opts = parseArgs(argv);
-    const { writtenPath, record } = runFoldCompleteness({ cwd: opts.cwd ?? cwd0, env, suiteCmd: opts.suite });
+    const cwd = opts.cwd ?? cwd0;
+    if (opts.red !== undefined) {
+      const { writtenPath, record } = runRedProbe({ cwd, env, testId: opts.red });
+      return {
+        code: 0,
+        stdout: `fold-completeness-run: minted a red-probe receipt for "${record.testId}" (loop "${record.loop}", ${record.reds}/${record.runs} observed red, hash ${record.fileHash.slice(0, 12)}…) → ${writtenPath}`,
+        stderr: '',
+      };
+    }
+    const { writtenPath, record } = runFoldCompleteness({ cwd, env, suiteCmd: opts.suite });
     const uncovered = record.coverage.uncoveredChanged.length;
     const unresolved = record.testIds.filter((t) => !t.resolvable || !t.baselineGreen).length;
     return {
