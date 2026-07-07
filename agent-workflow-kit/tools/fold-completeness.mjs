@@ -14,10 +14,12 @@
 // here). The gate is plan-EXECUTION-scoped, filtered to the in-flight plan's filename stem:
 //   exit 0  when the resolved plan-execution.review recipe is solo (configured, or degraded there);
 //           when no plan is in flight; when the tree is clean; when the cwd is not a git work tree;
-//           and when the in-flight plan-execution loop has a CURRENT run record (kind-aware: the
-//           latest RUN, never a later red-probe) whose BOTH bindings match — the tree fingerprint AND
-//           the sorted fixable-bug testId set recorded in the run — with, per bound testId: an
-//           N/N-green probe (D4), an observed-red receipt in this loop (Approach-1.i), that receipt
+//           and when the in-flight plan-execution SEGMENT — (loop, base = git rev-parse HEAD),
+//           schema v3, AD-048 D7 — has a CURRENT run record (kind-aware: the latest RUN, never a
+//           later red-probe) whose BOTH bindings match — the tree fingerprint AND the SEGMENT's
+//           sorted fixable-bug testId set recorded in the run — with, per bound testId: an
+//           N/N-green probe (D4), an observed-red receipt in this SEGMENT (a committed phase's
+//           obligations closed with its commit; a receipt never crosses a commit boundary), that receipt
 //           PRECEDING the latest run in ledger order (anti-post-hoc), and content CUSTODY — the run's
 //           recorded test-file hash equals the latest custody-eligible red-probe hash on that file
 //           (eligible = the receipt's own testId is bound AND it precedes the run, D5); plus 0
@@ -26,7 +28,7 @@
 //           (review ledger v3), and the reserved EMPTY mutation shape (no mutation ships). A
 //           recorded red-proof override waives the receipt + custody proof for exactly the testId
 //           it names (D7) — never the N/N-green requirement, never QUARANTINE.
-//   exit 1  for any DIRTY in-flight plan-execution loop lacking such a current run record — including
+//   exit 1  for any DIRTY in-flight plan-execution segment lacking such a current run record — including
 //           the stale-fingerprint case (a tree edit moves the fingerprint), the same-fingerprint/
 //           new-testId case (a triage recorded after the run moves the bound-testId set, Decision 9),
 //           and a schema-1 (or tamper-less) record as the loop's latest run (an older runner; D2) —
@@ -378,10 +380,10 @@ export const decideCheck = (state) => {
     return { code: 1, reason: `dirty plan-execution loop "${loop}" but no fold-completeness run recorded for the current segment — run fold-completeness-run.mjs${legacy}` };
   }
   const latest = sel.record;
-  // D2 defense — unreachable for a segment member (only v3 enters), kept fail-closed for a
-  // hand-forged record: the gate needs the v2+ evidence (rerun counts + custody hashes + tamper).
-  if (latest.schema === 1) return { code: 1, reason: `the loop's latest run is a schema-1 record (an older runner — no rerun counts, no custody hashes) — re-run fold-completeness-run.mjs` };
-  if (latest.tamper === undefined) return { code: 1, reason: `the loop's latest run has no recorded tamper surface (an older runner) — re-run fold-completeness-run.mjs` };
+  // No per-record schema re-checks here (agy Phase-2 nit): only a VALID v3 record can be a segment
+  // member — the reader binned anything older or tamper-less before this point (a v1 never carries
+  // base; a v3 run without a tamper surface is malformed), and a malformed line already failed the
+  // gate closed above.
 
   // Decision 9 — the double binding. A tree edit moves the fingerprint; a new fixable-bug triage moves
   // the bound-testId set. Either mismatch is STALE (the run no longer describes the committable tree).
@@ -515,15 +517,18 @@ Usage:
 
 Reads the result ledger the runner writes (<git dir>/${RESULTS_BASENAME}; AW_FOLD_RESULTS overrides),
 resolves the effective ${ACTIVITY}.${SLOT} recipe, recomputes the canonical uncommitted-state
-fingerprint, and decides whether the in-flight plan-execution loop's changed code is pinned by tests.
+fingerprint, and decides whether the in-flight plan-execution SEGMENT's changed code is pinned by
+tests — (loop, base = git rev-parse HEAD), schema v3 (AD-048 D7): bound testIds, receipts, custody,
+and tamper all filter to the current segment; a committed phase's obligations close with its commit.
 
 --status (default) → the human report: resolved recipe, plan-in-flight, the latest run summary
   (per-testId D4 verdicts + rerun counts), the loop's red-probe receipts, verdict.
 --check → the gate exit code. The normative exit contract lives in the tool header (the single home):
-  exit 0 for solo / no plan in flight / a clean tree / not-a-git-tree / a CURRENT run whose fingerprint
-  AND bound-testId set both match, with — per bound testId — an N/N-green probe, an observed-red
-  receipt that PRECEDES the run, and content custody (run hash == the latest custody-eligible receipt
-  hash on that file); plus 0 uncovered changed lines, 0 changed unsupported source, every tampered
+  exit 0 for solo / no plan in flight / a clean tree / not-a-git-tree / a CURRENT segment run whose
+  fingerprint AND segment bound-testId set both match, with — per bound testId — an N/N-green probe,
+  an observed-red receipt in this segment that PRECEDES the run, and content custody (run hash == the
+  latest custody-eligible receipt hash on that file); plus 0 uncovered changed lines, 0 changed
+  unsupported source, every tampered
   test-surface file covered by a recorded oracle-change override, and the reserved empty mutation
   shape. A recorded red-proof override (review-ledger-write override) waives receipt + custody for
   exactly its testId — never green-N/N, never QUARANTINE. exit 1 otherwise (stale/missing/older-runner

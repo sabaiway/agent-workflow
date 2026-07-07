@@ -212,7 +212,7 @@ const reviewLoopAdvice = (slots, activity) =>
         '  • At the cap, classify every surviving blocking finding: fixable-bug (fold ONCE as a red→green test, re-review) / inherent-layer-residual (document + raise to an acceptance criterion) / escalate (the maintainer decides); a minor never forces triage.',
         ...(activity === 'plan-execution'
           ? [
-              '  • The computed instrument for THIS loop: record each round + triage via review-ledger (record / classify); read the stop with review-ledger --status (its render replaces the hand-composed tally); gate the commit with review-ledger --check.',
+              '  • The computed instrument for THIS loop: run the FULL gate matrix with run-gates --record BEFORE recording a round (the green-baseline receipt the writer demands), then record each round + triage via review-ledger (record / classify); rounds, caps, and teeth are per SEGMENT (base = HEAD — the counter resets only at a gated commit); read the stop with review-ledger --status (its render replaces the hand-composed tally); gate the commit with review-ledger --check.',
             ]
           : []),
       ]

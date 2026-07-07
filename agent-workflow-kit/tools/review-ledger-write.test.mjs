@@ -851,3 +851,12 @@ describe('review-ledger-write — the D5 green-baseline tooth (2.3)', () => {
     assert.equal(record.round, 1, 'a mid-loop red process gate is exactly the carve-out');
   });
 });
+
+describe('the writer HELP names the D5 quality-green prerequisite (codex Phase-3 R2 — help matches recordRound)', () => {
+  it('the writer HELP names the D5 quality-green prerequisite', () => {
+    const r = main(['--help'], {});
+    assert.equal(r.code, 0);
+    assert.match(r.stdout, /quality-green gate-run/, 'the record verb must state the D5 prerequisite');
+    assert.match(r.stdout, /run-gates\.mjs --record|--record/, 'the HELP must name the remedy');
+  });
+});

@@ -205,7 +205,8 @@ describe('formatHelp — the Tune tail (opt-in accelerators)', () => {
     const one = commandFor('gates').oneLine;
     assert.match(one, /consent-gated/, 'the one-liner must name the consent-gated seeding helper');
     assert.match(one, /preview/i, 'the one-liner states preview-first');
-    assert.match(one, /writes nothing/, 'the one-liner keeps the mode-writes-nothing honesty');
+    // AD-048: --record mints a gate-run record, so the honest claim is writes-nothing-BY-DEFAULT.
+    assert.match(one, /[Ww]rites nothing by default/, 'the one-liner keeps the writes-nothing-by-default honesty');
     assert.equal(kindOf('gates'), PROJECT_EXEC, 'the kind stays PROJECT_EXEC — no re-kind');
   });
 });

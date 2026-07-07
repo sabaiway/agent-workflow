@@ -96,7 +96,7 @@ const CATALOG = [
     invocation: invocationOf('gates'),
     group: 'Inspect',
     kind: PROJECT_EXEC,
-    oneLine: 'Run the project’s own declared gate commands (docs/ai/gates.json) as one batch — a PASS/FAIL table, one summary line. The mode itself writes nothing; a separate consent-gated seeder can propose entries from your project’s own scripts (preview first, written only on your yes).',
+    oneLine: 'Run the project’s own declared gate commands (docs/ai/gates.json) as one batch — a PASS/FAIL table, one summary line. Writes nothing by default; opt-in --record mints a gate-run record via the review-ledger writer (the segment’s green-baseline receipt). A separate consent-gated seeder can propose entries from your project’s own scripts (preview first, written only on your yes).',
   },
   {
     key: 'setup',
@@ -180,14 +180,14 @@ const CATALOG = [
     invocation: invocationOf('review-ledger'),
     group: 'Orchestrate',
     kind: WRITER,
-    oneLine: 'Record each review round, its triage, and recorded overrides (oracle-change / red-proof waivers) and read the computed crossover-stop for the plan-execution loop; --check turns it into a gate exit code and forces a triage before over-running the review.',
+    oneLine: 'Record each review round, its triage, and recorded overrides (oracle-change / red-proof / size-cap waivers) and read the computed crossover-stop for the plan-execution loop — per SEGMENT since v4 (base = HEAD; caps and teeth reset only at a gated commit; class refuted is the honest phantom lane); --check turns it into a gate exit code, --telemetry renders counts-only gate-efficacy data.',
   },
   {
     key: 'fold-completeness',
     invocation: invocationOf('fold-completeness'),
     group: 'Orchestrate',
     kind: WRITER,
-    oneLine: 'Verify the review loop’s folded fixes are pinned by HONEST tests — every changed executable line executed, and each bound test carries an observed-red receipt (--red, minted BEFORE the fix), N/N-green probes, and content custody (waivable per-testId only by a recorded red-proof override), over a test surface whose tampered files carry recorded oracle-change overrides; --check turns the result into a gate exit code.',
+    oneLine: 'Verify the review loop’s folded fixes are pinned by HONEST tests — every changed executable line executed, and each bound test carries an observed-red receipt (--red, minted BEFORE the fix), N/N-green probes, and content custody (waivable per-testId only by a recorded red-proof override), over a test surface whose tampered files carry recorded oracle-change overrides; SEGMENT-scoped since v3 (a committed phase’s custody obligations close with its commit); --check turns the result into a gate exit code.',
   },
 ];
 
