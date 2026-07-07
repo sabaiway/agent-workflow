@@ -180,14 +180,14 @@ const CATALOG = [
     invocation: invocationOf('review-ledger'),
     group: 'Orchestrate',
     kind: WRITER,
-    oneLine: 'Record each review round and read the computed crossover-stop for the plan-execution loop (converged / accepted-residual / triage-required); --check turns it into a gate exit code and forces a triage before over-running the review.',
+    oneLine: 'Record each review round, its triage, and recorded overrides (oracle-change / red-proof waivers) and read the computed crossover-stop for the plan-execution loop; --check turns it into a gate exit code and forces a triage before over-running the review.',
   },
   {
     key: 'fold-completeness',
     invocation: invocationOf('fold-completeness'),
     group: 'Orchestrate',
     kind: WRITER,
-    oneLine: 'Verify the review loop’s folded fixes are pinned by tests — one recorded coverage run proves every changed executable line is executed and each bound test starts green; --check turns the result into a gate exit code.',
+    oneLine: 'Verify the review loop’s folded fixes are pinned by HONEST tests — every changed executable line executed, and each bound test carries an observed-red receipt (--red, minted BEFORE the fix), N/N-green probes, and content custody (waivable per-testId only by a recorded red-proof override), over a test surface whose tampered files carry recorded oracle-change overrides; --check turns the result into a gate exit code.',
   },
 ];
 
