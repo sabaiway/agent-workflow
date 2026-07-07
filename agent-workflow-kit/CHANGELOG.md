@@ -4,6 +4,75 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.39.0 — Fold boundaries: commit-anchored segments, the diff-size cap, the green-baseline receipt, no-repro-no-fold, and gate telemetry (AD-048)
+
+A **feature** release (deployment-lineage head stays `1.3.0` — no migration; engine/memory/bridges
+untouched). AD-047's own execution loop field-proved the next gap twice: the ledger hard-capped a
+MULTIPHASE plan at 3 rounds total (11 real council rounds across 4 commit boundaries went
+unrecordable, their late fixable-bugs unbindable), and custody obligations spanning the whole plan
+forced a waiver for every later-phase edit of an earlier-bound test file (4 of 5 recorded
+overrides). One structural move fixes both and gives the three most-replicated fold-boundary
+effects in the review literature real teeth: **the SEGMENT**.
+
+- **The segment (review-ledger schema v4)** — every new record carries `base` = the commit the
+  dirty tree sits on (`git rev-parse HEAD`; null on an unborn branch); a segment = (activity,
+  loop, base). Round numbering, `REVIEW_CAP`/`HARD_MAX` (values unchanged — scope corrected),
+  every writer tooth, and `--check` operate **per segment**; a segment closes ONLY through a
+  gated commit, so a round-counter reset is **earned, never declared**. The field-proven
+  11-round/4-base shape records completely while round 4 within one segment stays refused.
+  `--status` groups rounds by segment; v1..v3 records stay readable and never enter one (the
+  failure reason names the schema upgrade).
+- **The diff-size cap (D4, writer tooth)** — `recordRound` refuses a round whose changed source
+  surface exceeds `AW_REVIEW_DIFF_CAP` (default 400 new-side lines; fail-closed parser) without a
+  recorded segment-scoped **`size-cap`** override carrying the EXACT sanctioned magnitude (it dies
+  at the next commit — a grown surface needs a fresh recorded sanction). Counted classes are
+  pinned: assessable + unsupported SOURCE lines count (excluding TS would gift a bypass); tests
+  and out-of-domain never count; pure deletions are free. The computation lives in the NEW
+  NEUTRAL `tools/changed-surface.mjs` — one home shared with the coverage domain (the runner and
+  the writer can never drift; the writer never imports the runner).
+- **The green-baseline receipt (D5)** — `run-gates --record` mints a v4 **`gate-run`** record via
+  the ledger's NEW sole-writer API `recordGateRun` (the runner never opens the ledger itself):
+  the FULL declaration + exactly what ran + the tree fingerprint BEFORE and AFTER the run; a red
+  run records honestly; a failed record is its own loud **exit 7**. `recordRound` then refuses
+  without a **quality-green** gate-run at the current fingerprint — gates-before-review is
+  computed, not remembered: a subset that omits a declared non-process gate (any `--only` run
+  short of the full quality set) or a tree-changed run never satisfies, while the kit's own
+  `--check` loop gates (a CLOSED whole-command classification — compound lines and suffix-named
+  tools never match) legitimately fail mid-loop and never block — omitting THOSE is fine. The velocity tier
+  auto-approves only the exact no-`--record` form. Revert-first beyond this ships as protocol +
+  telemetry visibility — stated plainly, never pretend-teeth.
+- **No-repro-no-fold (D6)** — a blocking finding of the previous segment round may not VANISH
+  unclassified: present means present-AS-BLOCKING (a severity downgrade does not survive), a
+  pending `escalate` never clears, and the new v4 triage class **`refuted`** is the honest
+  phantom lane (mandatory grounds in `note`; it also resolves in `decideStop` — additive rows
+  beside the untouched truth table — so an honestly refuted phantom minted at the hard-max round
+  can never wedge a segment). Minors stay exempt. Every fixable-bug fold therefore binds its
+  red→green `testId` at the round it folded — late binding on multiphase plans restored.
+- **Segment-scoped fold custody (D7, fold ledger v3)** — run and observed-red records carry
+  `base`; bound testIds, receipts, custody chains, and tamper all filter to the current segment.
+  A committed phase's custody obligations **close with its commit** — the cross-phase churn class
+  that forced 4 of BUGFREE-1's 5 overrides is dead (regression-pinned); a receipt never crosses a
+  commit boundary, so a cross-segment fold still takes the recorded `red-proof` lane (the stated
+  residual).
+- **Gate telemetry (D8)** — `review-ledger --telemetry`: read-only COUNTS across all loops and
+  both ledgers (rounds/segments, finding origins, classification distribution incl. `refuted`,
+  per-backend verdicts + divergence rounds, override usage by scope, gate-run quality-green and
+  red-results-by-gate, fold runs, observed-red receipts, quarantined probes). Counts only —
+  which gates earn their keep stays the maintainer's judgment. Never combined with `--check`.
+- Bound-test probes now pass the pattern in the `=`-joined `--test-name-pattern=` form — a test
+  name beginning with `-`/`--` no longer parses as a node option and silently selects no test
+  (the pattern-half sibling of AD-047's dash-spawn fix; found live by this release's own `--red`
+  loop).
+- Surfaces in lockstep: both mode-refs + `gates.md` (the runner's claim is now "writes nothing
+  BY DEFAULT"), README rows, catalog one-liners, the procedures advisor (run `run-gates --record`
+  BEFORE recording a round; per-segment wording), velocity notes; the surface test pins every
+  token.
+
+Dogfooded live on its own three-segment execution loop (the AD-047 precedent): the cap fired on
+the plan's own 792-line Phase-1 surface (exact re-sanctions recorded), the quality-green receipt
+was consumed by the D5 tooth at the very first segment-2 round, and segment closure was exercised
+end-to-end at each phase commit.
+
 ## 1.38.0 — Honest red→green: observed-red receipts, flaky quarantine, content custody, and the oracle-tamper guard (AD-047)
 
 A **feature** release (deployment-lineage head stays `1.3.0` — no migration; engine/memory/bridges

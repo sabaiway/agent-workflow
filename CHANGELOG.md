@@ -7,6 +7,30 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-07 — kit 1.39.0: fold boundaries — commit-anchored segments, the diff-size cap, the green-baseline receipt, no-repro-no-fold, gate telemetry (AD-048)
+
+**agent-workflow-kit 1.39.0** (engine/memory/bridges unchanged). AD-047's own execution loop
+field-proved the gap: the review ledger hard-capped a MULTIPHASE plan at 3 rounds total (11 real
+rounds across 4 commit boundaries unrecordable; late fixable-bugs unbindable), and whole-plan
+custody forced a waiver for every later-phase edit of an earlier-bound test file. One structural
+move fixes both and gives the three most-replicated fold-boundary effects real teeth: **the
+SEGMENT** — every record carries `base` = the HEAD commit; round numbering, the caps, every writer
+tooth, and both `--check` gates operate per (activity, loop, base); a segment closes ONLY through a
+gated commit, so a round-counter reset is earned, never declared. Review-ledger schema **v4**
+(kind `gate-run`, override scope `size-cap`, triage class `refuted`) + fold ledger **v3**, each
+with the per-version quartet — old ledgers never retroactively malformed. New teeth: the
+**diff-size cap** (`AW_REVIEW_DIFF_CAP` 400, one shared changed-surface computation in the new
+neutral `tools/changed-surface.mjs`), the **green-baseline receipt** (`run-gates --record` →
+`recordGateRun`; a round records only over a gate-run proving every declared NON-process gate green
+at the current fingerprint — a subset omitting a declared non-process gate, or a tree-changed run,
+never satisfies; red process gates never block), and
+**no-repro-no-fold** (a blocking finding never vanishes unclassified; `refuted` is the honest
+phantom lane, grounds mandatory). The fold gate's custody obligations now **close with each
+commit** (the cross-phase churn class is dead); `review-ledger --telemetry` renders counts-only
+gate-efficacy data. Dogfooded live on its own three-segment loop: the cap fired on the plan's own
+Phase-1 surface, the D5 tooth consumed a real quality-green receipt at first use, and segment
+closure ran end-to-end at every phase commit.
+
 ## 2026-07-07 — kit 1.38.0: honest red→green — observed-red receipts, flaky quarantine, content custody, oracle-tamper guard (AD-047)
 
 BUGFREE-1. The fold-completeness gate now demands proof a bound test ever FAILED before its fix —

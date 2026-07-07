@@ -120,6 +120,19 @@ describe('segment surface (AD-048) — mode-refs, README, one-liners, advisor', 
     for (const span of exactSpans) assert.ok(!span.includes('--record'), `the exact byte-string must not carry --record (got: ${span})`);
   });
 
+  it('the 1.39.0 changelog entries state the subset rule precisely', () => {
+    // codex release R1: "--only never satisfies" oversells — a subset omitting only PROCESS gates
+    // IS quality-green (the shipped carve-out). The claim must carry the non-process qualifier.
+    const kitLog = readFileSync(new URL('../CHANGELOG.md', import.meta.url), 'utf8');
+    const entry = kitLog.split('\n## ').find((s) => s.startsWith('1.39.0'));
+    assert.ok(entry, 'the 1.39.0 entry exists');
+    assert.match(entry, /subset that omits a declared non-process gate|subset omitting a declared non-process gate/, 'the kit entry qualifies the subset rule');
+    const rootLog = readFileSync(new URL('../../CHANGELOG.md', import.meta.url), 'utf8');
+    const rootEntry = rootLog.split('\n## ').find((s) => s.includes('kit 1.39.0'));
+    assert.ok(rootEntry, 'the root 1.39.0 entry exists');
+    assert.match(rootEntry, /non-process/, 'the root entry qualifies the subset rule');
+  });
+
   it('the procedures advisor renders gates-before-round + the segment wording for plan-execution', () => {
     assert.match(proceduresSrc, /run-gates --record BEFORE recording a round/, 'the advisor names the D5 order');
     assert.match(proceduresSrc, /per SEGMENT \(base = HEAD/, 'the advisor names the segment scope');
