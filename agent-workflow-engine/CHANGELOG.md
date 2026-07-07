@@ -4,6 +4,25 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.14.0 — The review canon names its computed instrument, activity-aware (AD-046)
+
+A **feature** release (canon content + guards; installer unchanged; deployment-lineage head stays
+`1.3.0` — no migration). The kit's review-round ledger (AD-045 / AD-046) is now NAMED by the canon,
+at the right activity scope:
+
+- **`references/procedures.md`** — the plan-**execution** review step names the ledger (record ·
+  `--status` · `--check` as the loop's gate; the exit contract stays in the tool's own header —
+  point, don't restate); the review steps of BOTH activities gain the triage classification
+  vocabulary (`fixable-bug / inherent-layer-residual / escalate`; a minor never forces triage);
+  plan-**authoring** carries NO tool pointer — the ledger is plan-execution-scoped.
+- **`references/planning.md` §9** — a new **"Computed instrument (plan-execution)"** paragraph: the
+  stop decision is READ from the ledger, never remembered; stated neutrally that the same per-round
+  tally + classification discipline governs plan-authoring review.
+- **Drift-guards in BOTH directions** — `test/procedures-canon.test.mjs` pins the pointer INSIDE the
+  plan-execution review step (a step extractor, not a whole-section match) and its ABSENCE from
+  plan-authoring; `test/planning-canon.test.mjs` pins §9's ledger naming + the exact scope phrase.
+  Lens files untouched (the 22 discipline tokens unchanged).
+
 ## 1.13.0 — The agent-rules lens gets its ONE canonical home here (slot-render, AD-041)
 
 A **feature** release (canon content + its guard; installer unchanged; deployment-lineage head
