@@ -7,6 +7,19 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-07 — kit 1.38.0: honest red→green — observed-red receipts, flaky quarantine, content custody, oracle-tamper guard (AD-047)
+
+BUGFREE-1. The fold-completeness gate now demands proof a bound test ever FAILED before its fix —
+"fix theater" (a test written green beside the fix) no longer passes. A new `--red` verb observes a
+test failing on the real pre-fold tree and mints a custody receipt (fold ledger schema v2); RED and
+GREEN are strict N/N verdicts (`AW_FOLD_RERUNS`, per-run `AW_FOLD_PROBE_TIMEOUT_S`) with
+mixed/timeout QUARANTINED (no override lane); the gate then requires, per bound test, receipt → order → N/N green →
+per-FILE byte-identical custody (the latest custody-eligible receipt on that test file), over an
+untampered test surface (hunk-polarity tamper pass;
+recorded, auditable `oracle-change` / `red-proof` overrides — review-ledger schema v3, exact
+payloads, single-in-flight-loop teeth). Engine/memory/bridges untouched. See
+`agent-workflow-kit/CHANGELOG.md`.
+
 ## 2026-07-07 — kit 1.37.1: the fold-completeness probe no longer green-vouches a nonexistent testId on Node 18/20
 
 Patch on top of 1.37.0, same day. Node 18/20 emit pattern-filtered tests as `# SKIP` TAP lines and

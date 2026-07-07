@@ -4,6 +4,50 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.38.0 — Honest red→green: observed-red receipts, flaky quarantine, content custody, and the oracle-tamper guard (AD-047)
+
+A **feature** release (deployment-lineage head stays `1.3.0` — no migration; engine/memory/bridges
+untouched). AD-046 verified each bound test is resolvable and green — this release closes its one
+named hole: **nothing proved the test ever FAILED before the fix**. A test written green beside the
+fix ("fix theater") passed every shipped check. Now the gate demands the whole honest sequence:
+red observed → fix folded → green observed — with the test's bytes in custody in between.
+
+- **Observed-red receipts** — a new runner verb, `fold-completeness-run.mjs --red "<testId>"`,
+  observes a test on the REAL pre-fold tree: failing on N/N runs → it mints a receipt (testId,
+  rerun counts, the test file's sha-256, fingerprint) into the fold ledger (schema **v2**: records
+  carry a kind, `run` | `red-probe`; v1 records stay readable, a v1 record as the loop's latest run
+  fails with a re-run reason). Observed-green / unresolvable / mixed / timed-out are DISTINGUISHED
+  refusals — nothing is written. A test that cannot even load pre-fold is authored with a dynamic
+  `import()` (the refusal says so).
+- **The N/N verdict algebra** — every probe side runs `AW_FOLD_RERUNS` times (default 3): RED and
+  GREEN are strict N/N verdicts; anything mixed or timed out is **QUARANTINE** — never converted,
+  no override lane (a flaky pin proves nothing — replace the test). Probes gain the kit's first
+  spawn timeout (`AW_FOLD_PROBE_TIMEOUT_S`, default 120, per RUN, probes only); both knobs go
+  through one fail-closed positive-integer parser.
+- **Content custody** — the gate requires, per bound testId: the receipt, the receipt PRECEDING the
+  loop's latest run (a post-hoc red proves nothing), N/N-green probes, and that the green test is
+  **byte-identical** to the test seen failing (per-FILE hash custody; appending the next fold's red
+  test re-attests its file without ceremony). Probes always spawn the safe resolver's canonical
+  absolute path — a leading-dash or OS-resolved traversal path would execute a different file than
+  the hashed one.
+- **Oracle-tamper guard + recorded overrides** — the runner records a tamper surface over the
+  tracked diff (test-classified paths + bound-testId file halves at HEAD, by hunk old-side
+  polarity; pure additions and new test files never trip it; parsing is config/platform-proof).
+  The gate fails closed on a tampered file without a recorded **`oracle-change`** override; a
+  **`red-proof`** override waives receipt+custody for exactly one testId (the loud escape for a
+  genuinely unestablishable red). Overrides are a new review-ledger record kind (schema **v3**;
+  v1/v2 records stay valid; exact per-scope payloads), written only by
+  `review-ledger-write override --json '…'` with the standard teeth plus a strict
+  single-in-flight-loop rule. **Never silent: every waiver is a durable, auditable ledger entry.**
+- **Honest limits (stated):** insertion-only weakening inside a pre-existing test body,
+  expectation artifacts outside test files (snapshots/goldens), and weakening an already-green
+  test behind a newer same-file receipt (characterization-pinned) remain in the stated
+  self-discipline residual class; ledgers stay forgeable — this is a self-discipline mechanism,
+  not a security boundary. No mutation testing ships (still shelved); the checker still fails
+  closed on any mutation data.
+- Dogfooded live on its own development loop: ten pre-fix receipts, six council-found bugs folded
+  strictly red→fix→green, and the guard's own refusals caught one premature fix mid-plan.
+
 ## 1.37.1 — Fix: the fold-completeness probe on Node 18/20 counted pattern-filtered SKIP lines as executed tests
 
 A **patch** release (one product fix + its pinned fixtures; no other change). On Node 18/20 —
