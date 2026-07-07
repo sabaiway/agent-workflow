@@ -180,15 +180,20 @@ export const computeUncoveredLines = ({ perProcessRanges, sourceText, changedLin
 
 const PROBE_RESULT_RE = /^(?:ok|not ok) \d+ - (.*)$/; // a column-0 TAP result line
 const PROBE_FAIL_RE = /^# fail (\d+)$/;
+const PROBE_DIRECTIVE_RE = /#\s*(?:skip|todo)\b/i; // a TAP SKIP/TODO directive — the test did NOT run
 
 // parseProbeOutput({ stdout, code, fileArg }) → { resolvable, executed, baselineGreen }. A node:test
 // run with a pattern that matches NOTHING emits only a file-wrapper result whose description is the
-// file path itself (`ok N - <file>`); a real match emits the test NAME. So `resolvable` = at least one
-// column-0 result whose description is not the file we passed; `baselineGreen` = resolvable AND the run
-// was green (exit 0 and `# fail 0`). The wrapper is matched by BASENAME, not literally: node normalizes
-// the echoed path ('./x' → 'x', or an absolute path), so a literal desc===fileArg compare would count
-// the wrapper as a real match and falsely report resolvable/green (codex R1). A basename compare is
-// invariant to ./ / abs / rel; a real test name colliding with the file's basename is absurd and would
+// file path itself (`ok N - <file>`) on newer node — but node 18/20 ALSO emit every pattern-FILTERED
+// test as `ok N - <name> # SKIP test name does not match pattern`, so a result line carrying a TAP
+// SKIP/TODO directive must never count: the test was not executed, and counting it green-vouches a
+// nonexistent testId on exactly the node versions the kit supports (caught by CI's 18/20 matrix).
+// So `resolvable` = at least one column-0, directive-free result whose description is not the file we
+// passed; `baselineGreen` = resolvable AND the run was green (exit 0 and `# fail 0`). The wrapper is
+// matched by BASENAME, not literally: node normalizes the echoed path ('./x' → 'x', or an absolute
+// path), so a literal desc===fileArg compare would count the wrapper as a real match and falsely
+// report resolvable/green (codex R1). A basename compare is invariant to ./ / abs / rel; a real test
+// name colliding with the file's basename — or containing a literal "# skip" — is absurd and would
 // only fail CLOSED (mark unresolvable), never open.
 export const parseProbeOutput = ({ stdout, code, fileArg }) => {
   let matched = 0;
@@ -196,7 +201,7 @@ export const parseProbeOutput = ({ stdout, code, fileArg }) => {
   const wanted = basename(String(fileArg).trim());
   for (const line of String(stdout).split('\n')) {
     const m = PROBE_RESULT_RE.exec(line);
-    if (m && basename(m[1].trim()) !== wanted) matched += 1;
+    if (m && !PROBE_DIRECTIVE_RE.test(m[1]) && basename(m[1].trim()) !== wanted) matched += 1;
     const f = PROBE_FAIL_RE.exec(line.trim());
     if (f) failCount = Number(f[1]);
   }

@@ -184,6 +184,36 @@ describe('parseProbeOutput — resolvable + baselineGreen from node:test TAP', (
     const matchDotSlash = ['TAP version 13', 'ok 1 - real case', '# fail 0'].join('\n');
     assert.deepEqual(parseProbeOutput({ stdout: matchDotSlash, code: 0, fileArg: './lib.test.mjs' }), { resolvable: true, executed: 1, baselineGreen: true });
   });
+
+  // Node 18/20 EMIT pattern-filtered tests as `ok N - <name> # SKIP test name does not match pattern`
+  // (newer node omits them entirely) — a skipped test was NOT executed, so a SKIP-directive result
+  // line must never count as a match: without this filter the probe reports a nonexistent testId as
+  // resolvable + baseline-green on node 18/20 and the gate green-vouches a test that never ran
+  // (caught by CI's node-18/20 matrix on the 1.37.0 release commit; shipped as the 1.37.1 fix).
+  it('parseProbeOutput never counts SKIP-directive result lines (the node-18/20 pattern-filter shape)', () => {
+    const node18Nomatch = [
+      'TAP version 13',
+      '# Subtest: green one',
+      'ok 1 - green one # SKIP test name does not match pattern',
+      '# Subtest: red one',
+      'ok 2 - red one # SKIP test name does not match pattern',
+      '1..2',
+      '# tests 2',
+      '# pass 0',
+      '# fail 0',
+      '# skipped 2',
+    ].join('\n');
+    assert.deepEqual(parseProbeOutput({ stdout: node18Nomatch, code: 0, fileArg: 'lib.test.mjs' }), { resolvable: false, executed: 0, baselineGreen: false });
+    // lowercase directive (TAP allows any case) + an explicitly skipped real test — still not a match.
+    const lowercaseSkip = ['TAP version 13', 'ok 1 - some case # skip manual', '1..1', '# fail 0'].join('\n');
+    assert.deepEqual(parseProbeOutput({ stdout: lowercaseSkip, code: 0, fileArg: 'lib.test.mjs' }), { resolvable: false, executed: 0, baselineGreen: false });
+    // a MATCHED test on node 18/20 (no directive) still resolves — the filter only drops directives.
+    const node18Match = ['TAP version 13', '# Subtest: green one', 'ok 1 - green one', 'ok 2 - red one # SKIP test name does not match pattern', '1..2', '# fail 0'].join('\n');
+    assert.deepEqual(parseProbeOutput({ stdout: node18Match, code: 0, fileArg: 'lib.test.mjs' }), { resolvable: true, executed: 1, baselineGreen: true });
+    // a TODO directive is equally not-executed-as-asserted — fail closed the same way.
+    const todoLine = ['TAP version 13', 'ok 1 - future case # TODO later', '1..1', '# fail 0'].join('\n');
+    assert.deepEqual(parseProbeOutput({ stdout: todoLine, code: 0, fileArg: 'lib.test.mjs' }), { resolvable: false, executed: 0, baselineGreen: false });
+  });
 });
 
 // ── Decision 10: bound-run argv (default node:test shape + the escape hatch) ──────────────────────
