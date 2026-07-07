@@ -16,7 +16,8 @@
 //      resolvability + a green baseline;
 //   5. append ONE machine-only result record, bound to BOTH the tree fingerprint AND the sorted
 //      fixable-bug testId set (Decision 9), to <git dir>/agent-workflow-fold-completeness.jsonl.
-// The mutation half (M3b) is Phase 3 — the `mutation` field stays the empty shape here.
+// The researched mutation half (M3b) was SHELVED — bounded local-boundary mutation adds too little
+// over coverage and is not language-independent — so the `mutation` field stays the reserved empty shape.
 //
 // HONEST residuals (see fold-completeness.mjs header for the full list): coverage proves execution not
 // assertion; testIds/records are forgeable (a self-discipline mechanism, not a security boundary);
@@ -155,8 +156,9 @@ export const effectiveCount = (ranges, offset) => {
 // when the line's leading statement executed — flagging it would need branch/AST analysis, and a naive
 // "any count-0 char on the line" rule would FALSE-POSITIVE on an inline uncalled-function definition
 // (`const f = () => never()`, whose body span is count-0 though the assignment ran), i.e. exactly the
-// churn the plan's PRIMARY RISK warns against. Same-line branch gaps are the DESIGNED job of M3b bounded
-// mutation (Phase 3), not M3a. Chasing sub-line precision here without an AST is explicitly out of scope.
+// churn the plan's PRIMARY RISK warns against. Same-line branch gaps would need branch-level analysis
+// (the shelved mutation half / a future parser-backed signal), not M3a line coverage. Chasing sub-line
+// precision here without an AST is explicitly out of scope — a stated residual.
 export const computeUncoveredLines = ({ perProcessRanges, sourceText, changedLines }) => {
   const offs = lineStartOffsets(sourceText);
   const total = sourceText.length;
@@ -445,7 +447,7 @@ export const runFoldCompleteness = ({ cwd = process.cwd(), env = process.env, su
     unsupported,
     outOfDomain,
     coverage: { uncoveredChanged },
-    mutation: { total: 0, killed: 0, survived: [], skipped: 0, killSetBasis: null }, // M3b lands in Phase 3
+    mutation: { total: 0, killed: 0, survived: [], skipped: 0, killSetBasis: null }, // reserved — mutation not shipped (shelved)
     budgets,
     timestamp: isoNow(),
   };
@@ -472,7 +474,7 @@ overrides). The read-only gate is a SEPARATE tool: node fold-completeness.mjs --
 Suite command: --suite "<cmd>" or AW_FOLD_SUITE_CMD, else the unit-tests gate cmd in docs/ai/gates.json.
 Bound-test runs default to node --test --test-name-pattern (shell-free); AW_FOLD_BOUND_CMD overrides
 with a JSON argv array using {file}/{pattern}. Budgets: AW_FOLD_MUTANTS_MAX / AW_FOLD_HUNK_MUTANTS_MAX /
-AW_FOLD_TIME_BUDGET_S (M3b, Phase 3).
+AW_FOLD_TIME_BUDGET_S (recorded but inert — the mutation half is not shipped).
 
 Exit codes: 0 written; 1 a typed STOP (loop derivation / suite discovery / malformed record / fs error);
 2 usage.`;

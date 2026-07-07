@@ -127,14 +127,6 @@ describe('fold-completeness --check — pass branches', () => {
     assert.match(r.stdout, /out-of-domain/);
   });
 
-  it('all green with budget-skipped mutants → 0, the skip STATED', () => {
-    const { root } = makeRepo();
-    seedCurrentGreen(root, { mutation: { total: 10, killed: 7, survived: [], skipped: 3, killSetBasis: 'bound' } });
-    const r = check(root);
-    done(root);
-    assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /skip/i);
-  });
 });
 
 // ── exit-1 branches ───────────────────────────────────────────────────────────────────────────────
@@ -243,14 +235,37 @@ describe('fold-completeness --check — fail branches', () => {
     assert.match(r.stdout, /orphan\.mjs/);
   });
 
-  it('a surviving mutant → 1, naming the stable mutant id', () => {
+  // v1 ships NO mutation (the mutation half was shelved): the shipped runner only ever writes the
+  // reserved empty shape, so a current record carrying ANY mutation data was not produced by this
+  // runner version (forged, or a version-skewed ledger) — fail closed, never vouch for a signal v1
+  // cannot have computed (a survivors-only check would silently PASS killed/skipped counts).
+  it('a record carrying mutation data with 0 survivors → 1 (v1 ships no mutation — fail closed)', () => {
+    const { root } = makeRepo();
+    seedCurrentGreen(root, { mutation: { total: 10, killed: 7, survived: [], skipped: 3, killSetBasis: 'bound' } });
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /v1 ships no mutation/);
+  });
+
+  it('a record carrying mutation data with survivors → 1 (the same v1 empty-shape rule)', () => {
     const { root } = makeRepo();
     seedCurrentGreen(root, { mutation: { total: 3, killed: 2, survived: ['lib.mjs:5:9:cmp-eq'], skipped: 0, killSetBasis: 'bound' } });
     const r = check(root);
     done(root);
     assert.equal(r.code, 1);
-    assert.match(r.stdout, /surviving mutant/);
-    assert.match(r.stdout, /lib\.mjs:5:9:cmp-eq/);
+    assert.match(r.stdout, /v1 ships no mutation/);
+  });
+
+  // The reserved shape is the exact key SET, not just empty known values — an extra key smuggles
+  // mutation data past a fields-only check (a forged/version-skewed record must not pass).
+  it('a mutation object with an extra key (known fields empty) → 1 (exact reserved shape enforced)', () => {
+    const { root } = makeRepo();
+    seedCurrentGreen(root, { mutation: { total: 0, killed: 0, survived: [], skipped: 0, killSetBasis: null, operators: ['cmp-eq'] } });
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /v1 ships no mutation/);
   });
 
   it('a malformed result-ledger line → 1, fail closed', () => {

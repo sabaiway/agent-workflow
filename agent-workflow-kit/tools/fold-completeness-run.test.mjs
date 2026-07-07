@@ -2,7 +2,7 @@
 // Phase 2 scope: changed-surface classification (Decision 5, closed rule), M3a coverage mapping
 // (Decision 6, innermost-range-wins), the testId probe + baseline (Decision 3 / 10), the machine-only
 // result record, the restore + no-artifacts invariants (Decision 8), and loop derivation. The
-// mutation half (M3b) is Phase 3 — here `mutation` stays the empty shape.
+// mutation half (M3b) is shelved, not shipped — here `mutation` stays the reserved empty shape.
 //
 // Pure helpers are unit-tested directly; the integration cases drive the real runner over hermetic
 // git fixture repos (the review-state.test.mjs makeRepo idiom) with REAL `node --test` subprocesses

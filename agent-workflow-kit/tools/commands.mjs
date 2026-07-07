@@ -182,6 +182,13 @@ const CATALOG = [
     kind: WRITER,
     oneLine: 'Record each review round and read the computed crossover-stop for the plan-execution loop (converged / accepted-residual / triage-required); --check turns it into a gate exit code and forces a triage before over-running the review.',
   },
+  {
+    key: 'fold-completeness',
+    invocation: invocationOf('fold-completeness'),
+    group: 'Orchestrate',
+    kind: WRITER,
+    oneLine: 'Verify the review loop’s folded fixes are pinned by tests — one recorded coverage run proves every changed executable line is executed and each bound test starts green; --check turns the result into a gate exit code.',
+  },
 ];
 
 // Deep-freeze: freeze the array AND every entry, so the catalog is genuinely immutable at runtime

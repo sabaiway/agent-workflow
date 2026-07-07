@@ -95,6 +95,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the AD-045 review-round LEDGER: the read-only checker (schema + decideStop + --check) + the sole writer
       'tools/review-ledger.mjs',
       'tools/review-ledger-write.mjs',
+      // the AD-046 fold-completeness READ/RUN pair: the read-only --check gate + the sole tree-toucher/runner
+      'tools/fold-completeness.mjs',
+      'tools/fold-completeness-run.mjs',
       // the consent-gated gates.json seeder + the shared atomic-write core it runs on (AD-042)
       'tools/seed-gates.mjs',
       'tools/atomic-write.mjs',
@@ -107,6 +110,7 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'references/modes/upgrade.md',
       'references/modes/help.md',
       'references/modes/review-ledger.md',
+      'references/modes/fold-completeness.md',
       'references/shared/report-footer.md',
       'references/shared/composition-handoff.md',
       'references/shared/deploy-tail.md',
@@ -142,9 +146,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       references/modes/review-ledger.md (the 19th mode). The *.test.mjs siblings are stripped by files[].
     // 130 = 128 + the M3 fold-completeness READ/RUN pair (AD-046, Phase 2): tools/fold-completeness.mjs
     //       (result schema + read-only --check) + tools/fold-completeness-run.mjs (the sole tree-toucher +
-    //       result writer). Its mode-ref (the 20th mode) lands in Phase 4; the *.test.mjs siblings are
-    //       stripped by files[].
-    assert.equal(packed.length, 130, `tarball file count drifted (${packed.length} ≠ 130)`);
+    //       result writer). The *.test.mjs siblings are stripped by files[].
+    // 131 = 130 + references/modes/fold-completeness.md (the 20th mode-ref — the fold-completeness
+    //       command surface, AD-046). The shelved mutation half ships NO file (no tools/fold-mutate.mjs).
+    assert.equal(packed.length, 131, `tarball file count drifted (${packed.length} ≠ 131)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
