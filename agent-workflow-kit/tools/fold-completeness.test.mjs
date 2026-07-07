@@ -17,6 +17,7 @@ import {
   main,
   decideCheck,
   validateRunRecord,
+  readResults,
   isRunRecord,
   isRedProbeRecord,
   latestRunRecord,
@@ -33,7 +34,10 @@ const detect = (readiness = READY) => () => [
   { name: 'antigravity-cli-bridge', readiness },
 ];
 
-// A dirty git fixture with a single in-flight plan (council recipe by default).
+// A dirty git fixture with a single in-flight plan (council recipe by default). Sets CURRENT_BASE
+// (the fixture's HEAD) so the v3/v4 record factories below stamp the SEGMENT frame without every
+// call site threading root — node:test runs a file's tests serially, so the module slot is safe.
+let CURRENT_BASE = null;
 const makeRepo = ({ config = COUNCIL, plans = ['demo-plan.md'], pending = true } = {}) => {
   const root = mkdtempSync(join(tmpdir(), 'fold-check-'));
   const g = (...a) => spawnSync('git', a, { cwd: root, encoding: 'utf8' });
@@ -50,6 +54,7 @@ const makeRepo = ({ config = COUNCIL, plans = ['demo-plan.md'], pending = true }
   for (const p of plans) writeFileSync(join(root, 'docs', 'plans', p), `# ${p}\n`);
   g('add', '-A');
   g('commit', '-qm', 'base');
+  CURRENT_BASE = g('rev-parse', 'HEAD').stdout.trim();
   if (pending) writeFileSync(join(root, 'pending.txt'), 'uncommitted\n');
   return { root, g };
 };
@@ -66,25 +71,29 @@ const runRecord = (over = {}) => ({
 });
 const seedResult = (root, record) => writeFileSync(RESULTS(root), `${JSON.stringify(record)}\n`);
 
-// v2 fixtures (BUGFREE-1 / AD-047): a run record carries a kind discriminator + per-testId rerun
-// counts + the test file's content hash; a red-probe record is the observed-red receipt.
+// SEGMENT fixtures (BUGFREE-2 / AD-048, D7): a run/red-probe record carries the v2 evidence shape
+// (kind + rerun counts + custody hash) PLUS the v3 segment frame (base = the fixture's HEAD).
+// Explicit-legacy tests override { schema: 2, base: undefined } — JSON.stringify drops the
+// undefined, so the seeded line is a faithful pre-v3 record.
 const HASH_A = 'f'.repeat(64);
 const v2Entry = (id, over = {}) => ({
   id, executed: 1, runs: 3, greens: 3, reds: 0, timeouts: 0, fileHash: HASH_A,
   resolvable: true, baselineGreen: true, ...over,
 });
-const v2Run = (over = {}) => runRecord({ schema: 2, kind: 'run', tamper: { tampered: [] }, ...over });
+const segRun = (over = {}) => runRecord({ schema: 3, kind: 'run', tamper: { tampered: [] }, base: CURRENT_BASE, ...over });
 const redProbe = (over = {}) => ({
-  schema: 2, kind: 'red-probe', loop: 'demo-plan', testId: 'x.test.mjs#p', fileHash: HASH_A,
+  schema: 3, kind: 'red-probe', loop: 'demo-plan', base: CURRENT_BASE, testId: 'x.test.mjs#p', fileHash: HASH_A,
   runs: 3, reds: 3, fingerprint: 'a'.repeat(64), timestamp: 't', ...over,
 });
-// Review-ledger override lines (schema 3) — what the fold gate consumes at check time.
+// Review-ledger override lines — what the fold gate consumes at check time (collectOverrides stays
+// LOOP-scoped, AD-047 semantics: v3 override lines keep working).
 const oracleOverrideLine = (loop, files) =>
   `${JSON.stringify({ schema: 3, loop, activity: 'plan-execution', kind: 'override', round: 1, fingerprint: 'b'.repeat(64), scope: 'oracle-change', files, reason: 'deliberate oracle update', timestamp: 't' })}\n`;
 const redProofOverrideLine = (loop, testId) =>
   `${JSON.stringify({ schema: 3, loop, activity: 'plan-execution', kind: 'override', round: 1, fingerprint: 'b'.repeat(64), scope: 'red-proof', testId, reason: 'red genuinely unestablishable', timestamp: 't' })}\n`;
+// The bound set is SEGMENT-scoped (D7) — the triage rides the v4 frame at the fixture's base.
 const fixableTriage = (loop, testId) =>
-  `${JSON.stringify({ schema: 2, loop, activity: 'plan-execution', kind: 'triage', round: 1, fingerprint: 'b'.repeat(64), classifications: [{ findingKey: 'k', class: 'fixable-bug', accepted: false, testId, note: '' }], timestamp: 't' })}\n`;
+  `${JSON.stringify({ schema: 4, loop, activity: 'plan-execution', kind: 'triage', round: 1, base: CURRENT_BASE, fingerprint: 'b'.repeat(64), classifications: [{ findingKey: 'k', class: 'fixable-bug', accepted: false, testId, note: '' }], timestamp: 't' })}\n`;
 
 const check = (root, { readiness = READY, args = ['--check'] } = {}) => main(args, { cwd: root, env: envFor(root), detect: detect(readiness) });
 const done = (root) => rmSync(root, { recursive: true, force: true });
@@ -95,8 +104,8 @@ const seedResults = (root, ...records) => writeFileSync(RESULTS(root), records.m
 const bindIds = (root, ...ids) => writeFileSync(REVIEW(root), ids.map((id) => fixableTriage('demo-plan', id)).join(''));
 
 // A v2 run record that matches the CURRENT tree + an empty review ledger (the all-green baseline).
-const seedCurrentGreen = (root, over = {}) => seedResult(root, v2Run({ fingerprint: computeTreeFingerprint(root), ...over }));
-const currentV2Run = (root, over = {}) => v2Run({ fingerprint: computeTreeFingerprint(root), ...over });
+const seedCurrentGreen = (root, over = {}) => seedResult(root, segRun({ fingerprint: computeTreeFingerprint(root), ...over }));
+const currentSegRun = (root, over = {}) => segRun({ fingerprint: computeTreeFingerprint(root), ...over });
 
 // ── exit-0 branches ───────────────────────────────────────────────────────────────────────────────
 
@@ -190,7 +199,7 @@ describe('fold-completeness --check — fail branches', () => {
 
   it('a run for a STALE fingerprint (tree edited after the run) → 1', () => {
     const { root } = makeRepo();
-    seedResult(root, v2Run({ fingerprint: 'c'.repeat(64) })); // not the current tree
+    seedResult(root, segRun({ fingerprint: 'c'.repeat(64) })); // not the current tree
     const r = check(root);
     done(root);
     assert.equal(r.code, 1);
@@ -331,16 +340,16 @@ describe('fold-completeness --check — red-proof enforcement', () => {
   // A green v2 entry whose hash is the CURRENT file content (the run is fingerprint-bound).
   const greenEntry = (id, hash) => v2Entry(id, { fileHash: hash });
   const boundGreenRun = (root, id, hash, over = {}) =>
-    currentV2Run(root, { boundTestIds: [id], testIds: [greenEntry(id, hash)], ...over });
+    currentSegRun(root, { boundTestIds: [id], testIds: [greenEntry(id, hash)], ...over });
 
-  it('a v1 record as the loop’s latest run → 1 with a named re-run reason (D2)', () => {
+  it('a loop holding ONLY pre-v3 records → 1 naming the schema upgrade (D7 legacy: v1 never enters a segment)', () => {
     const { root } = makeRepo();
     seedResult(root, runRecord({ fingerprint: computeTreeFingerprint(root) }));
     const r = check(root);
     done(root);
     assert.equal(r.code, 1);
-    assert.match(r.stdout, /schema-1|older runner/);
-    assert.match(r.stdout, /re-run fold-completeness-run/);
+    assert.match(r.stdout, /pre-v3 records/);
+    assert.match(r.stdout, /run fold-completeness-run/);
   });
 
   it('a green bound test with NO observed-red receipt → 1, naming the exact --red command', () => {
@@ -378,7 +387,7 @@ describe('fold-completeness --check — red-proof enforcement', () => {
     const { root } = makeRepo();
     bindIds(root, ID);
     const mixed = v2Entry(ID, { greens: 2, reds: 1, resolvable: true, baselineGreen: false });
-    seedResults(root, redProbe({ testId: ID, fileHash: H1 }), currentV2Run(root, { boundTestIds: [ID], testIds: [mixed] }));
+    seedResults(root, redProbe({ testId: ID, fileHash: H1 }), currentSegRun(root, { boundTestIds: [ID], testIds: [mixed] }));
     const r = check(root);
     done(root);
     assert.equal(r.code, 1);
@@ -391,7 +400,7 @@ describe('fold-completeness --check — red-proof enforcement', () => {
     const { root } = makeRepo();
     bindIds(root, ID);
     const timed = v2Entry(ID, { greens: 2, reds: 0, timeouts: 1, resolvable: false, baselineGreen: false });
-    seedResults(root, redProbe({ testId: ID, fileHash: H1 }), currentV2Run(root, { boundTestIds: [ID], testIds: [timed] }));
+    seedResults(root, redProbe({ testId: ID, fileHash: H1 }), currentSegRun(root, { boundTestIds: [ID], testIds: [timed] }));
     const r = check(root);
     done(root);
     assert.equal(r.code, 1);
@@ -419,7 +428,7 @@ describe('fold-completeness --check — red-proof enforcement', () => {
       root,
       redProbe({ testId: A, fileHash: H1 }), // A observed red at H1
       redProbe({ testId: B, fileHash: H2 }), // B appended to the same file → observed red at H2
-      currentV2Run(root, { boundTestIds: [A, B].sort(), testIds: [greenEntry(A, H2), greenEntry(B, H2)] }),
+      currentSegRun(root, { boundTestIds: [A, B].sort(), testIds: [greenEntry(A, H2), greenEntry(B, H2)] }),
     );
     const r = check(root);
     done(root);
@@ -468,7 +477,7 @@ describe('fold-completeness --check — red-proof enforcement', () => {
       root,
       redProbe({ testId: A, fileHash: H1 }), // A honestly red at H1
       redProbe({ testId: B, fileHash: H2 }), // file edited (A weakened + B added) → B red at H2
-      currentV2Run(root, { boundTestIds: [A, B].sort(), testIds: [greenEntry(A, H2), greenEntry(B, H2)] }),
+      currentSegRun(root, { boundTestIds: [A, B].sort(), testIds: [greenEntry(A, H2), greenEntry(B, H2)] }),
     );
     const r = check(root);
     done(root);
@@ -490,7 +499,7 @@ describe('fold-completeness --check — red-proof enforcement', () => {
       const entry = greenNN
         ? greenEntry(ID, custodyOk === false ? H2 : H1)
         : v2Entry(ID, { greens: 1, reds: 2, resolvable: true, baselineGreen: false, fileHash: H1 });
-      const run = currentV2Run(root, { boundTestIds: [ID], testIds: [entry] });
+      const run = currentSegRun(root, { boundTestIds: [ID], testIds: [entry] });
       const records = [];
       if (receipt && orderOk !== false) records.push(redProbe({ testId: ID, fileHash: H1 }));
       records.push(run);
@@ -503,16 +512,16 @@ describe('fold-completeness --check — red-proof enforcement', () => {
     }
   });
 
-  it('a latest run WITHOUT a recorded tamper surface → 1 with a re-run reason (an older runner)', () => {
+  it('a pre-tamper v2 run as the loop’s only record → 1 naming the schema upgrade (it never enters a segment)', () => {
     const { root } = makeRepo();
-    const rec = v2Run({ fingerprint: computeTreeFingerprint(root) });
-    delete rec.tamper;
+    const rec = segRun({ schema: 2, base: undefined, fingerprint: computeTreeFingerprint(root) });
+    delete rec.tamper; // the pre-tamper v2 runner shape — readable, never a segment member
     seedResult(root, rec);
     const r = check(root);
     done(root);
     assert.equal(r.code, 1);
-    assert.match(r.stdout, /tamper surface/);
-    assert.match(r.stdout, /re-run fold-completeness-run/);
+    assert.match(r.stdout, /pre-v3 records/);
+    assert.match(r.stdout, /run fold-completeness-run/);
   });
 
   it('a tampered test-surface file with NO override → 1 naming the file and the override recovery', () => {
@@ -560,7 +569,7 @@ describe('fold-completeness --check — red-proof enforcement', () => {
     const { root } = makeRepo();
     writeFileSync(REVIEW(root), fixableTriage('demo-plan', ID) + redProofOverrideLine('demo-plan', ID));
     const mixed = v2Entry(ID, { greens: 2, reds: 1, resolvable: true, baselineGreen: false });
-    seedResults(root, currentV2Run(root, { boundTestIds: [ID], testIds: [mixed] }));
+    seedResults(root, currentSegRun(root, { boundTestIds: [ID], testIds: [mixed] }));
     const r = check(root);
     done(root);
     assert.equal(r.code, 1);
@@ -587,6 +596,121 @@ describe('fold-completeness --check — red-proof enforcement', () => {
     assert.match(r.stdout, /3\/3|✓/);
     assert.match(r.stdout, /red-probe receipt/);
     assert.match(r.stdout, /PASS/);
+  });
+});
+
+// ── the SEGMENT scope (BUGFREE-2 / AD-048, D7): custody obligations close with the commit ────────
+
+describe('fold-completeness --check — segment scope (D7)', () => {
+  const ID = 'x.test.mjs#p';
+  const H1 = '1'.repeat(64);
+  const H2 = '2'.repeat(64);
+  const greenEntry = (id, hash) => v2Entry(id, { fileHash: hash });
+
+  it('the custody-churn regression: a custody file edited in a LATER segment no longer fails the CLOSED earlier segment — no override needed', () => {
+    const { root, g } = makeRepo({ pending: false });
+    const baseA = CURRENT_BASE;
+    // Segment A: the fold happened honestly — triage binds ID, red observed, the run green.
+    writeFileSync(REVIEW(root), fixableTriage('demo-plan', ID));
+    const segARecords = [
+      redProbe({ testId: ID, fileHash: H1, base: baseA }),
+      segRun({ base: baseA, fingerprint: 'a'.repeat(64), boundTestIds: [ID], testIds: [greenEntry(ID, H1)] }),
+    ];
+    seedResults(root, ...segARecords);
+    // The phase COMMITS — the segment closes; the loop continues on a new base.
+    writeFileSync(join(root, 'phase-a.txt'), 'shipped\n');
+    g('add', '-A');
+    g('commit', '-qm', 'phase A shipped');
+    const baseB = g('rev-parse', 'HEAD').stdout.trim();
+    // The NEXT phase edits the custody file — pre-AD-048 this forced a red-proof waiver (4 of
+    // BUGFREE-1's 5 overrides were exactly this class).
+    writeFileSync(join(root, 'x.test.mjs'), 'extended by the later phase\n');
+    // A fresh segment-B run over the new surface: the bound set at baseB is EMPTY (the fold closed).
+    seedResults(root, ...segARecords, segRun({ base: baseB, fingerprint: computeTreeFingerprint(root), boundTestIds: [], testIds: [] }));
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 0, `the closed segment's custody must not bite: ${r.stdout}`);
+    assert.doesNotMatch(r.stdout, /custody|red-proof/, 'no waiver ceremony for a closed segment');
+  });
+
+  it('the SAME edit within ONE segment still demands custody (the intra-segment half stays honest)', () => {
+    const { root } = makeRepo();
+    writeFileSync(REVIEW(root), fixableTriage('demo-plan', ID));
+    // The receipt attests H1; the file then changed (the run re-hashed it as H2) — same base.
+    seedResults(root, redProbe({ testId: ID, fileHash: H1 }), currentSegRun(root, { boundTestIds: [ID], testIds: [greenEntry(ID, H2)] }));
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /custody broken/);
+  });
+
+  it('a cross-segment fold still demands red-proof: a receipt from the PREVIOUS segment never satisfies the current one (the D7 residual, pinned)', () => {
+    const { root, g } = makeRepo({ pending: false });
+    const baseA = CURRENT_BASE;
+    const receiptA = redProbe({ testId: ID, fileHash: H1, base: baseA }); // red observed in segment A
+    writeFileSync(join(root, 'phase-a.txt'), 'shipped\n');
+    g('add', '-A');
+    g('commit', '-qm', 'phase A shipped');
+    const baseB = g('rev-parse', 'HEAD').stdout.trim();
+    writeFileSync(join(root, 'pending.txt'), 'dirty at B\n');
+    // The fix lands in segment B: the triage binds ID HERE, but the red was observed in A.
+    writeFileSync(REVIEW(root), `${JSON.stringify({ schema: 4, loop: 'demo-plan', activity: 'plan-execution', kind: 'triage', round: 1, base: baseB, fingerprint: 'b'.repeat(64), classifications: [{ findingKey: 'k', class: 'fixable-bug', accepted: false, testId: ID, note: '' }], timestamp: 't' })}\n`);
+    seedResults(root, receiptA, segRun({ base: baseB, fingerprint: computeTreeFingerprint(root), boundTestIds: [ID], testIds: [greenEntry(ID, H1)] }));
+    const noOverride = check(root);
+    assert.equal(noOverride.code, 1);
+    assert.match(noOverride.stdout, /no observed-red receipt/, 'the other segment’s receipt is closed history');
+    // The loud escape stays the recorded red-proof override (loop-scoped, AD-047 semantics).
+    writeFileSync(REVIEW(root), readFileSync(REVIEW(root), 'utf8') + redProofOverrideLine('demo-plan', ID));
+    const withOverride = check(root);
+    done(root);
+    assert.equal(withOverride.code, 0, withOverride.stdout);
+  });
+
+  it('runs of ANOTHER segment are invisible: a current-fingerprint run at the WRONG base never satisfies the gate', () => {
+    const { root } = makeRepo();
+    seedResult(root, segRun({ base: 'f'.repeat(40), fingerprint: computeTreeFingerprint(root) })); // right tree, wrong segment
+    const r = check(root);
+    done(root);
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /no fold-completeness run recorded for the current segment/);
+  });
+});
+
+// ── result schema v3 — the D2 quartet for the segment frame ──────────────────────────────────────
+
+describe('result schema v3 — the segment frame (D2 quartet)', () => {
+  it('a v3 run/red-probe with base validates; base: null (unborn branch) validates', () => {
+    for (const rec of [segRun({ base: 'h'.repeat(40) }), redProbe({ base: 'h'.repeat(40) }), segRun({ base: null })]) {
+      const v = validateRunRecord(rec);
+      assert.equal(v.ok, true, v.reason);
+    }
+  });
+
+  it('a v3 record with a MISSING base is rejected naming base (i: the new surface is required on v3)', () => {
+    const rec = segRun({ base: 'h'.repeat(40) });
+    delete rec.base;
+    const v = validateRunRecord(rec);
+    assert.equal(v.ok, false);
+    assert.match(v.reason, /base/);
+  });
+
+  it('base on a v1/v2 record is rejected — an old record never grows new surface (i)', () => {
+    for (const rec of [runRecord({ base: 'h'.repeat(40) }), segRun({ schema: 2, base: 'h'.repeat(40) })]) {
+      const v = validateRunRecord(rec);
+      assert.equal(v.ok, false, `schema ${rec.schema} must reject base`);
+      assert.match(v.reason, /base is a v3 frame field/);
+    }
+  });
+
+  it('a mixed v1 + v2 + v3 ledger reads back malformed: 0 (ii + iii: old records stay valid)', () => {
+    const v1 = runRecord();
+    const v2 = segRun({ schema: 2, base: undefined });
+    const v3run = segRun({ base: 'h'.repeat(40) });
+    const v3probe = redProbe({ base: 'h'.repeat(40) });
+    const lines = [v1, v2, v3run, v3probe].map((r) => JSON.stringify(r)).join('\n');
+    const { records, malformed, malformedReasons } = readResults('X', () => lines);
+    assert.equal(malformed, 0, malformedReasons.join('; '));
+    assert.equal(records.length, 4);
   });
 });
 
@@ -647,12 +771,12 @@ describe('result schema v2 — per-version validation (D2)', () => {
   });
 
   it('a malformed mutation shape fails by name in both versions', () => {
-    for (const rec of [runRecord({ mutation: { total: 'x' } }), v2Run({ mutation: { total: 'x' } })]) {
+    for (const rec of [runRecord({ mutation: { total: 'x' } }), segRun({ mutation: { total: 'x' } })]) {
       const v = validateRunRecord(rec);
       assert.equal(v.ok, false);
       assert.match(v.reason, /mutation must be/);
     }
-    const bad = validateRunRecord(v2Run({ mutation: { total: 0, killed: 0, survived: [], skipped: 0, killSetBasis: 42 } }));
+    const bad = validateRunRecord(segRun({ mutation: { total: 0, killed: 0, survived: [], skipped: 0, killSetBasis: 42 } }));
     assert.equal(bad.ok, false);
     assert.match(bad.reason, /killSetBasis/);
   });
@@ -664,10 +788,10 @@ describe('result schema v2 — per-version validation (D2)', () => {
   });
 
   it('an unknown/forged schema fails closed by name', () => {
-    for (const s of [0, 3, '2', null]) {
+    for (const s of [0, 4, '2', null]) {
       const v = validateRunRecord(runRecord({ schema: s }));
       assert.equal(v.ok, false, `schema ${JSON.stringify(s)} must fail`);
-      assert.match(v.reason, /schema must be one of 1, 2/);
+      assert.match(v.reason, /schema must be one of 1, 2, 3/);
     }
   });
 
@@ -681,13 +805,13 @@ describe('result schema v2 — per-version validation (D2)', () => {
   });
 
   it('a v2 run with per-testId rerun counts + content hash validates', () => {
-    const v = validateRunRecord(v2Run({ boundTestIds: ['x.test.mjs#p'], testIds: [v2Entry('x.test.mjs#p')] }));
+    const v = validateRunRecord(segRun({ boundTestIds: ['x.test.mjs#p'], testIds: [v2Entry('x.test.mjs#p')] }));
     assert.equal(v.ok, true, v.reason);
   });
 
   it('a v2 run entry with a null fileHash (unresolvable file) validates', () => {
     const entry = v2Entry('x.test.mjs#p', { executed: 0, greens: 0, reds: 0, timeouts: 0, fileHash: null, resolvable: false, baselineGreen: false });
-    assert.equal(validateRunRecord(v2Run({ testIds: [entry] })).ok, true);
+    assert.equal(validateRunRecord(segRun({ testIds: [entry] })).ok, true);
   });
 
   it('v2 run entries: each malformed field fails by name', () => {
@@ -702,7 +826,7 @@ describe('result schema v2 — per-version validation (D2)', () => {
       [{ greens: 0, reds: 3, baselineGreen: true, resolvable: true }, /baselineGreen must equal/],
     ];
     for (const [over, re] of cases) {
-      const v = validateRunRecord(v2Run({ testIds: [v2Entry('x.test.mjs#p', over)] }));
+      const v = validateRunRecord(segRun({ testIds: [v2Entry('x.test.mjs#p', over)] }));
       assert.equal(v.ok, false, `entry ${JSON.stringify(over)} must fail`);
       assert.match(v.reason, re);
     }
@@ -712,7 +836,7 @@ describe('result schema v2 — per-version validation (D2)', () => {
   // greens/reds imply at least one matched (executed) test result.
   it('executed must be positive when any run resolved', () => {
     const forged = v2Entry('x.test.mjs#p', { executed: 0 });
-    const v = validateRunRecord(v2Run({ testIds: [forged] }));
+    const v = validateRunRecord(segRun({ testIds: [forged] }));
     assert.equal(v.ok, false);
     assert.match(v.reason, /executed must be positive when a run resolved/);
   });
@@ -721,12 +845,17 @@ describe('result schema v2 — per-version validation (D2)', () => {
     assert.equal(validateRunRecord(redProbe()).ok, true);
   });
 
-  it('a v2 run tamper field, when present, must be { tampered: string[] } (absent = older v2 runner, tolerated read-only)', () => {
-    assert.equal(validateRunRecord(v2Run()).ok, true); // the fixture carries a valid empty surface
-    const absent = v2Run();
-    delete absent.tamper;
-    assert.equal(validateRunRecord(absent).ok, true, 'absence stays readable (the gate handles staleness)');
-    const bad = validateRunRecord(v2Run({ tamper: { tampered: 'x' } }));
+  it('the tamper field: absent stays readable on a v2 record ONLY (a v3 run always records it); a bad shape fails by name', () => {
+    assert.equal(validateRunRecord(segRun({ base: 'h'.repeat(40) })).ok, true); // the fixture carries a valid empty surface
+    const absentV2 = segRun({ schema: 2, base: undefined });
+    delete absentV2.tamper;
+    assert.equal(validateRunRecord(absentV2).ok, true, 'a pre-tamper v2 record stays readable (never retroactively malformed)');
+    const absentV3 = segRun({ base: 'h'.repeat(40) });
+    delete absentV3.tamper;
+    const v3 = validateRunRecord(absentV3);
+    assert.equal(v3.ok, false, 'a v3 run without a tamper surface is not this runner’s output');
+    assert.match(v3.reason, /tamper/);
+    const bad = validateRunRecord(segRun({ base: 'h'.repeat(40), tamper: { tampered: 'x' } }));
     assert.equal(bad.ok, false);
     assert.match(bad.reason, /tamper/);
   });
@@ -756,25 +885,25 @@ describe('result schema v2 — per-version validation (D2)', () => {
 describe('kind-aware result selectors', () => {
   it('isRunRecord: v1 records and v2 kind:"run" are runs; red-probes are not', () => {
     assert.equal(isRunRecord(runRecord()), true);
-    assert.equal(isRunRecord(v2Run()), true);
+    assert.equal(isRunRecord(segRun()), true);
     assert.equal(isRunRecord(redProbe()), false);
   });
 
   it('isRedProbeRecord requires schema >= 2 AND kind red-probe', () => {
     assert.equal(isRedProbeRecord(redProbe()), true);
-    assert.equal(isRedProbeRecord(v2Run()), false);
+    assert.equal(isRedProbeRecord(segRun()), false);
     assert.equal(isRedProbeRecord(runRecord()), false);
   });
 
   it('latestRunRecord over [run, red-probe] picks the run (not the appended probe)', () => {
-    const run = v2Run();
+    const run = segRun();
     const sel = latestRunRecord([run, redProbe()]);
     assert.equal(sel.index, 0);
     assert.equal(sel.record, run);
   });
 
   it('latestRunRecord over [red-probe, run] picks the run', () => {
-    const run = v2Run();
+    const run = segRun();
     const sel = latestRunRecord([redProbe(), run]);
     assert.equal(sel.index, 1);
     assert.equal(sel.record, run);

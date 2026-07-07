@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { recordRound, recordTriage, recordOverride, main, HARD_MAX, DEFAULT_DIFF_CAP, LEDGER_WRITE_STOP } from './review-ledger-write.mjs';
+import { recordRound, recordTriage, recordOverride, recordGateRun, main, HARD_MAX, DEFAULT_DIFF_CAP, LEDGER_WRITE_STOP } from './review-ledger-write.mjs';
 import { readLedger } from './review-ledger.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -35,6 +35,22 @@ let receiptsPath;
 // cap tests inject real magnitudes.
 const deps = () => ({ ledgerPath, receiptsPath, computeFingerprint: () => FP, resolveBase: () => BASE, countChangedLines: () => 0 });
 
+// The D5 green-baseline receipt (2.3): a SUCCESSFUL recordRound needs a quality-green gate-run at
+// the segment + fingerprint it records against. Fixture seeding APPENDS (order in the ledger is
+// irrelevant to the tooth); refusal-path tests that stop before D5 never need it.
+const gateRunLine = (over = {}) => JSON.stringify({
+  schema: 4, loop: 'L', activity: 'plan-execution', kind: 'gate-run', base: BASE,
+  fingerprint: FP, fingerprintAfter: FP,
+  declared: [{ id: 'unit-tests', cmd: 'node --test x' }],
+  results: [{ id: 'unit-tests', ok: true, code: 0 }],
+  summary: { status: 'ok', gates: 1, passed: 1, failed: 0, failedIds: [] },
+  timestamp: 't', ...over,
+});
+const seedGateRun = (over = {}) => {
+  const existing = readdirSync(dir).includes('ledger.jsonl') ? readFileSync(ledgerPath, 'utf8') : '';
+  writeFileSync(ledgerPath, `${existing}${gateRunLine(over)}\n`);
+};
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'ledger-write-'));
   ledgerPath = join(dir, 'ledger.jsonl');
@@ -45,23 +61,25 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 describe('review-ledger-write — append + read back', () => {
   it('appends a round and reads it back through the read module', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     const params = roundParams({ backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'SHIP' }], findings: [] });
     const { record } = recordRound({ ...params, cwd: dir, env: {} }, deps());
     assert.equal(record.kind, 'round');
     assert.equal(record.fingerprint, FP);
     const { records, malformed } = readLedger(ledgerPath);
     assert.equal(malformed, 0);
-    assert.equal(records.length, 1);
-    assert.equal(records[0].round, 1);
+    const rounds = records.filter((r) => r.kind === 'round');
+    assert.equal(rounds.length, 1);
+    assert.equal(rounds[0].round, 1);
   });
 
   it('appends a triage after a round (JSONL grows, both parse)', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     recordRound({ ...roundParams({ round: 1, backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 1, minors: 0, verdict: 'revise' }], findings: [{ findingKey: 'k', severity: 'major', origin: 'first-draft', backend: 'codex' }] }), cwd: dir, env: {} }, deps());
     recordTriage({ loop: 'L', round: 1, classifications: [{ findingKey: 'k', class: 'fixable-bug', accepted: false, testId: WELL_FORMED_TESTID, note: '' }], timestamp: 't', cwd: dir, env: {} }, deps());
     const { records } = readLedger(ledgerPath);
-    assert.equal(records.length, 2);
-    assert.deepEqual(records.map((r) => r.kind), ['round', 'triage']);
+    assert.deepEqual(records.map((r) => r.kind), ['gate-run', 'round', 'triage']);
   });
 });
 
@@ -82,6 +100,7 @@ describe('review-ledger-write — the teeth', () => {
     const r2 = { ...r1, round: 2 };
     writeFileSync(ledgerPath, `${JSON.stringify(r1)}\n${JSON.stringify(r2)}\n`);
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     const params = roundParams({ round: 3, backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'SHIP' }] });
     assert.throws(
       () => recordRound({ ...params, cwd: dir, env: {} }, deps()),
@@ -95,6 +114,7 @@ describe('review-ledger-write — the teeth', () => {
     const cls = { schema: 4, loop: 'L', activity: 'plan-execution', kind: 'triage', round: 2, base: BASE, fingerprint: FP, classifications: [{ findingKey: 'k', class: 'fixable-bug', accepted: false, testId: WELL_FORMED_TESTID, note: '' }], timestamp: 't' };
     writeFileSync(ledgerPath, `${JSON.stringify(r1)}\n${JSON.stringify(r2)}\n${JSON.stringify(cls)}\n`);
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     const params = roundParams({ round: 3, backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'SHIP' }] });
     const { record } = recordRound({ ...params, cwd: dir, env: {} }, deps());
     assert.equal(record.round, 3, 'a classified loop permits the fix/re-review round');
@@ -112,22 +132,23 @@ describe('review-ledger-write — integrity binding (receipts)', () => {
   });
 
   it('a DEGRADED backend needs no receipt (it ran no real review)', () => {
+    seedGateRun(); // the D5 receipt is orthogonal to the review receipts
     const params = roundParams({ backends: [{ backend: 'agy', degraded: true, reason: 'Issue-001 stall', blockers: 0, majors: 0, minors: 0, verdict: 'degraded' }] });
     const { record } = recordRound({ ...params, cwd: dir, env: {} }, deps());
     assert.equal(record.backends[0].degraded, true);
-    assert.equal(readLedger(ledgerPath).records.length, 1);
+    assert.equal(readLedger(ledgerPath).records.filter((r) => r.kind === 'round').length, 1);
   });
 });
 
 describe('review-ledger-write — atomic-write hardening', () => {
   it('refuses a SYMLINKED ledger leaf (a write would clobber the link target)', () => {
     const target = join(dir, 'real.jsonl');
-    writeFileSync(target, '');
+    writeFileSync(target, `${gateRunLine()}\n`); // the D5 receipt lives in the target; the append itself must STOP
     symlinkSync(target, ledgerPath);
     codexReceiptFile(receiptsPath);
     const params = roundParams({ backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'SHIP' }] });
     assert.throws(() => recordRound({ ...params, cwd: dir, env: {} }, deps()), /symlink/);
-    assert.equal(readFileSync(target, 'utf8'), '', 'the link target is untouched');
+    assert.equal(readFileSync(target, 'utf8'), `${gateRunLine()}\n`, 'the link target is untouched');
   });
 });
 
@@ -135,6 +156,7 @@ describe('review-ledger-write — R1 folds (fail-closed ledger reads + triage ro
   it('recordRound refuses to append while the ledger has malformed lines (fail closed, codex R1)', () => {
     writeFileSync(ledgerPath, '{not json\n');
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     const params = roundParams({ backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'SHIP' }] });
     assert.throws(
       () => recordRound({ ...params, cwd: dir, env: {} }, deps()),
@@ -156,6 +178,7 @@ describe('review-ledger-write — R1 folds (fail-closed ledger reads + triage ro
 
   it('recordTriage rejects a nonexistent target round (codex R1)', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     recordRound({ ...roundParams({ round: 1, backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 1, minors: 0, verdict: 'revise' }], findings: [{ findingKey: 'k', severity: 'major', origin: 'first-draft', backend: 'codex' }] }), cwd: dir, env: {} }, deps());
     assert.throws(
       () => recordTriage({ loop: 'L', round: 9, classifications: [{ findingKey: 'k', class: 'fixable-bug', accepted: false, testId: WELL_FORMED_TESTID, note: '' }], timestamp: 't', cwd: dir, env: {} }, deps()),
@@ -165,6 +188,7 @@ describe('review-ledger-write — R1 folds (fail-closed ledger reads + triage ro
 
   it('recordTriage rejects classifying a key that is not a surviving blocker of the round (codex R1)', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     recordRound({ ...roundParams({ round: 1, backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 1, minors: 0, verdict: 'revise' }], findings: [{ findingKey: 'k', severity: 'major', origin: 'first-draft', backend: 'codex' }] }), cwd: dir, env: {} }, deps());
     assert.throws(
       () => recordTriage({ loop: 'L', round: 1, classifications: [{ findingKey: 'ghost', class: 'fixable-bug', accepted: false, testId: WELL_FORMED_TESTID, note: '' }], timestamp: 't', cwd: dir, env: {} }, deps()),
@@ -178,6 +202,7 @@ describe('review-ledger-write — round sequentiality (codex R2)', () => {
 
   it('requires the FIRST round to be 1 (a round-2 on an empty ledger is refused)', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     assert.throws(
       () => recordRound({ ...codexRound(2), cwd: dir, env: {} }, deps()),
       (e) => e.code === LEDGER_WRITE_STOP && /sequential/.test(e.message),
@@ -186,6 +211,7 @@ describe('review-ledger-write — round sequentiality (codex R2)', () => {
 
   it('rejects a DUPLICATE round number', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     recordRound({ ...codexRound(1), cwd: dir, env: {} }, deps());
     assert.throws(
       () => recordRound({ ...codexRound(1), cwd: dir, env: {} }, deps()),
@@ -195,6 +221,7 @@ describe('review-ledger-write — round sequentiality (codex R2)', () => {
 
   it('rejects a GAPPED / out-of-order round (round 3 after round 1)', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     recordRound({ ...codexRound(1), cwd: dir, env: {} }, deps());
     assert.throws(
       () => recordRound({ ...codexRound(3), cwd: dir, env: {} }, deps()),
@@ -204,14 +231,16 @@ describe('review-ledger-write — round sequentiality (codex R2)', () => {
 
   it('accepts strictly sequential rounds (1 then 2)', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     recordRound({ ...codexRound(1), cwd: dir, env: {} }, deps());
     const { record } = recordRound({ ...codexRound(2), cwd: dir, env: {} }, deps());
     assert.equal(record.round, 2);
-    assert.equal(readLedger(ledgerPath).records.length, 2);
+    assert.equal(readLedger(ledgerPath).records.filter((r) => r.kind === 'round').length, 2);
   });
 
   it('refuses to append onto a CORRUPT existing sequence ([2] with no round 1) — codex R3', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     const corrupt = { schema: 4, loop: 'L', activity: 'plan-execution', kind: 'round', round: 2, base: BASE, fingerprint: FP, origins: originsOf([]), backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'SHIP' }], findings: [], timestamp: 't' };
     writeFileSync(ledgerPath, `${JSON.stringify(corrupt)}\n`);
     assert.throws(
@@ -226,6 +255,7 @@ describe('review-ledger-write — testId/note normalization (absent optional fie
     // A non-fixable class may omit testId (v2 requires it only for fixable-bug) — use it to isolate
     // the normalization behavior (absent optional field → filled) from the M2 enforcement.
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     recordRound({ ...roundParams({ round: 1, backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 1, minors: 0, verdict: 'revise' }], findings: [{ findingKey: 'k', severity: 'major', origin: 'first-draft', backend: 'codex' }] }), cwd: dir, env: {} }, deps());
     recordTriage({ loop: 'L', round: 1, classifications: [{ findingKey: 'k', class: 'inherent-layer-residual', accepted: true }], timestamp: 't', cwd: dir, env: {} }, deps());
     const rec = readLedger(ledgerPath).records.find((r) => r.kind === 'triage');
@@ -238,6 +268,7 @@ describe('review-ledger-write — M2 testId enforcement (a fixable-bug requires 
   // Seed a round with a surviving major 'k' so a triage classifying 'k' passes the round-binding.
   const seedRoundWithMajorK = () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     recordRound({ ...roundParams({ round: 1, backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 1, minors: 0, verdict: 'revise' }], findings: [{ findingKey: 'k', severity: 'major', origin: 'first-draft', backend: 'codex' }] }), cwd: dir, env: {} }, deps());
   };
   const classify = (classification) => recordTriage({ loop: 'L', round: 1, classifications: [classification], timestamp: 't', cwd: dir, env: {} }, deps());
@@ -280,6 +311,7 @@ describe('review-ledger-write — M2 testId enforcement (a fixable-bug requires 
 
   it('a recorded ROUND also emits schema 4 with the segment base', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     const { record } = recordRound({ ...roundParams({ round: 1, backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'SHIP' }] }), cwd: dir, env: {} }, deps());
     assert.equal(record.schema, 4);
     assert.equal(record.base, BASE);
@@ -416,11 +448,13 @@ describe('review-ledger-write — segments (D1/D3): the field-gap regression', (
     // Segments A, B: 3 clean rounds each (1..3 — at, never beyond, the per-segment ceiling).
     for (const b of [bases[0], bases[1]]) {
       currentBase = b;
+      seedGateRun({ base: b });
       for (const n of [1, 2, 3]) recordRound({ ...cleanRound(n), cwd: dir, env: {} }, segDeps());
     }
     // Segment C: rounds 1..2 clean, round 3 raises the LATE finding — the 9th round of the loop
     // (unrecordable under the pre-AD-048 loop-wide HARD_MAX; its bug then unbindable).
     currentBase = bases[2];
+    seedGateRun({ base: bases[2] });
     recordRound({ ...cleanRound(1), cwd: dir, env: {} }, segDeps());
     recordRound({ ...cleanRound(2), cwd: dir, env: {} }, segDeps());
     recordRound({ ...majorRound(3, 'late-bug'), cwd: dir, env: {} }, segDeps());
@@ -429,6 +463,7 @@ describe('review-ledger-write — segments (D1/D3): the field-gap regression', (
     assert.equal(triage.base, bases[2]);
     // Segment D: rounds 1..2 → the loop totals 11 recorded rounds.
     currentBase = bases[3];
+    seedGateRun({ base: bases[3] });
     recordRound({ ...cleanRound(1), cwd: dir, env: {} }, segDeps());
     recordRound({ ...cleanRound(2), cwd: dir, env: {} }, segDeps());
     const { records, malformed } = readLedger(ledgerPath);
@@ -439,6 +474,7 @@ describe('review-ledger-write — segments (D1/D3): the field-gap regression', (
 
   it('round 4 within ONE segment is still refused (D3 — the ceiling is the point)…', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     for (const n of [1, 2, 3]) recordRound({ ...cleanRound(n), cwd: dir, env: {} }, deps());
     assert.throws(
       () => recordRound({ ...cleanRound(4), cwd: dir, env: {} }, deps()),
@@ -448,7 +484,9 @@ describe('review-ledger-write — segments (D1/D3): the field-gap regression', (
 
   it('…while a COMMIT (base moved) reopens at round 1 — the reset is earned, never declared', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     for (const n of [1, 2, 3]) recordRound({ ...cleanRound(n), cwd: dir, env: {} }, deps());
+    seedGateRun({ base: BASE2 });
     const { record } = recordRound({ ...cleanRound(1), cwd: dir, env: {} }, { ...deps(), resolveBase: () => BASE2 });
     assert.equal(record.round, 1);
     assert.equal(record.base, BASE2);
@@ -456,6 +494,7 @@ describe('review-ledger-write — segments (D1/D3): the field-gap regression', (
 
   it('recordTriage binds to SEGMENT rounds: a round of a closed (other-base) segment is not a target', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     recordRound({ ...majorRound(1, 'k'), cwd: dir, env: {} }, deps());
     assert.throws(
       () => recordTriage({ loop: 'L', round: 1, classifications: [{ findingKey: 'k', class: 'fixable-bug', accepted: false, testId: WELL_FORMED_TESTID, note: '' }], timestamp: 't', cwd: dir, env: {} }, { ...deps(), resolveBase: () => BASE2 }),
@@ -480,6 +519,7 @@ describe('review-ledger-write — the D4 diff-size cap', () => {
 
   it('an over-cap round is ACCEPTED once the segment carries a size-cap override sanctioning the magnitude', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     recordOverride(
       { cwd: dir, env: {}, loop: 'L', round: 1, scope: 'size-cap', sanctionedLines: 450, reason: 'one reviewed unit', timestamp: 't' },
       { ...deps(), plansInFlight: () => ['L.md'] },
@@ -490,6 +530,7 @@ describe('review-ledger-write — the D4 diff-size cap', () => {
 
   it('a surface LARGER than the sanctioned magnitude is still refused (the sanction is exact, not a blank check)', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     recordOverride(
       { cwd: dir, env: {}, loop: 'L', round: 1, scope: 'size-cap', sanctionedLines: 450, reason: 'one reviewed unit', timestamp: 't' },
       { ...deps(), plansInFlight: () => ['L.md'] },
@@ -502,6 +543,7 @@ describe('review-ledger-write — the D4 diff-size cap', () => {
 
   it("a size-cap override of ANOTHER segment never sanctions this one (segment-scoped, dies at the commit)", () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     recordOverride(
       { cwd: dir, env: {}, loop: 'L', round: 1, scope: 'size-cap', sanctionedLines: 9999, reason: 'r', timestamp: 't' },
       { ...deps(), plansInFlight: () => ['L.md'], resolveBase: () => BASE2 },
@@ -514,6 +556,7 @@ describe('review-ledger-write — the D4 diff-size cap', () => {
 
   it('the AW_REVIEW_DIFF_CAP knob rescopes the cap and stays fail-closed on garbage', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     assert.throws(
       () => recordRound({ ...cleanRound(), cwd: dir, env: { AW_REVIEW_DIFF_CAP: '10' } }, { ...deps(), countChangedLines: () => 11 }),
       (e) => e.code === LEDGER_WRITE_STOP && /over the 10-line review cap/.test(e.message),
@@ -529,6 +572,7 @@ describe('review-ledger-write — the D4 diff-size cap', () => {
 
   it('an under-cap round never consults the override lane (subtractive/small folds stay free)', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     const { record } = recordRound({ ...cleanRound(), cwd: dir, env: {} }, { ...deps(), countChangedLines: () => DEFAULT_DIFF_CAP });
     assert.equal(record.round, 1, 'exactly at the cap is within the cap');
   });
@@ -550,6 +594,7 @@ describe('review-ledger-write — the D6 vanished-finding tooth', () => {
 
   it('a blocking finding that VANISHES between rounds without a classification refuses the next round', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     recordRound({ ...majorRound(1, 'k'), cwd: dir, env: {} }, deps());
     assert.throws(
       () => recordRound({ ...cleanRound(2), cwd: dir, env: {} }, deps()),
@@ -559,6 +604,7 @@ describe('review-ledger-write — the D6 vanished-finding tooth', () => {
 
   it('the refuted lane clears a phantom finding — with the grounds MANDATORY in note', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     recordRound({ ...majorRound(1, 'k'), cwd: dir, env: {} }, deps());
     // An empty note is refused (the writer normalizes an absent note to "" and the schema rejects it).
     assert.throws(
@@ -572,6 +618,7 @@ describe('review-ledger-write — the D6 vanished-finding tooth', () => {
 
   it('a fixable-bug classification (testId bound) also clears the vanish — the fold binds at the round it folded', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     recordRound({ ...majorRound(1, 'k'), cwd: dir, env: {} }, deps());
     recordTriage({ loop: 'L', round: 1, classifications: [{ findingKey: 'k', class: 'fixable-bug', accepted: false, testId: WELL_FORMED_TESTID, note: '' }], timestamp: 't', cwd: dir, env: {} }, deps());
     const { record } = recordRound({ ...cleanRound(2), cwd: dir, env: {} }, deps());
@@ -580,6 +627,7 @@ describe('review-ledger-write — the D6 vanished-finding tooth', () => {
 
   it('a blocking finding DOWNGRADED to minor counts as vanished (the severity-downgrade bypass, codex R1)', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     recordRound({ ...majorRound(1, 'k'), cwd: dir, env: {} }, deps());
     // Round 2 re-reports k as a MINOR: the blocking finding did not survive as blocking — without a
     // classification this is exactly the silent-soften lane D6 closes.
@@ -591,6 +639,7 @@ describe('review-ledger-write — the D6 vanished-finding tooth', () => {
 
   it('a PENDING escalate never clears the vanish; an ACCEPTED one does (codex R1)', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     recordRound({ ...majorRound(1, 'k'), cwd: dir, env: {} }, deps());
     recordTriage({ loop: 'L', round: 1, classifications: [{ findingKey: 'k', class: 'escalate', accepted: false, note: 'maintainer decision pending' }], timestamp: 't', cwd: dir, env: {} }, deps());
     assert.throws(
@@ -605,6 +654,7 @@ describe('review-ledger-write — the D6 vanished-finding tooth', () => {
 
   it('a finding still PRESENT in the next round is never a vanish (fold pending is honest)', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     recordRound({ ...majorRound(1, 'k'), cwd: dir, env: {} }, deps());
     const { record } = recordRound({ ...majorRound(2, 'k'), cwd: dir, env: {} }, deps());
     assert.equal(record.round, 2, 'a live finding rides into the next round');
@@ -612,6 +662,7 @@ describe('review-ledger-write — the D6 vanished-finding tooth', () => {
 
   it('non-array findings survive the D6 pass and land in the schema refusal (never a TypeError)', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     recordRound({ ...cleanRound(1), cwd: dir, env: {} }, deps());
     const params = { ...cleanRound(2), findings: undefined };
     assert.throws(
@@ -622,6 +673,7 @@ describe('review-ledger-write — the D6 vanished-finding tooth', () => {
 
   it('minors are exempt (forcing repro ceremony on nits trains rubber-stamping)', () => {
     codexReceiptFile(receiptsPath);
+    seedGateRun();
     recordRound({ ...minorRound(1, 'nit'), cwd: dir, env: {} }, deps());
     const { record } = recordRound({ ...cleanRound(2), cwd: dir, env: {} }, deps());
     assert.equal(record.round, 2, 'a vanished minor never blocks');
@@ -664,5 +716,138 @@ describe('import-split guard — review-ledger.mjs never imports the writer', ()
     const src = readFileSync(join(HERE, 'changed-surface.mjs'), 'utf8');
     const familyImports = [...src.matchAll(/from\s+['"](\.[^'"]+)['"]/g)].map((m) => m[1]);
     assert.deepEqual(familyImports, [], `the neutral module must not import family modules (found: ${familyImports.join(', ')})`);
+  });
+});
+
+// ── recordGateRun (2.2) + the D5 green-baseline tooth (2.3) — BUGFREE-2 / AD-048 ─────────────────
+
+describe('review-ledger-write — recordGateRun (the D5 receipt writer)', () => {
+  const grDeps = () => ({ ...deps(), plansInFlight: () => ['L.md'] });
+  const payload = (over = {}) => ({
+    cwd: dir, env: {},
+    declared: [{ id: 'unit-tests', cmd: 'node --test x' }],
+    results: [{ id: 'unit-tests', ok: true, code: 0 }],
+    summary: { status: 'ok', gates: 1, passed: 1, failed: 0, failedIds: [] },
+    fingerprintBefore: FP, fingerprintAfter: FP, timestamp: 't', ...over,
+  });
+
+  it('records a gate-run: schema 4, the segment frame, NO round, the loop DERIVED from the in-flight plan', () => {
+    const { record } = recordGateRun(payload(), grDeps());
+    assert.equal(record.schema, 4);
+    assert.equal(record.kind, 'gate-run');
+    assert.equal(record.loop, 'L', 'the loop is derived, never passed');
+    assert.equal(record.base, BASE);
+    assert.equal(record.round, undefined, 'a gate-run carries no round number');
+    const { records, malformed } = readLedger(ledgerPath);
+    assert.equal(malformed, 0);
+    assert.equal(records.length, 1);
+  });
+
+  it('refuses outside a SINGLE in-flight loop (the recordOverride precedent)', () => {
+    for (const plans of [[], ['A.md', 'B.md']]) {
+      assert.throws(
+        () => recordGateRun(payload(), { ...deps(), plansInFlight: () => plans }),
+        (e) => e.code === LEDGER_WRITE_STOP && /SINGLE in-flight/.test(e.message),
+      );
+    }
+    assert.equal(readdirSync(dir).includes('ledger.jsonl'), false, 'nothing written');
+  });
+
+  it('a forged summary rides the validate path (a lying status is refused by name)', () => {
+    assert.throws(
+      () => recordGateRun(payload({ results: [{ id: 'unit-tests', ok: false, code: 1 }] }), grDeps()),
+      (e) => e.code === LEDGER_WRITE_STOP && /status/.test(e.message),
+    );
+  });
+
+  it('refuses while the existing ledger has malformed lines (fail closed)', () => {
+    writeFileSync(ledgerPath, '{not json\n');
+    assert.throws(
+      () => recordGateRun(payload(), grDeps()),
+      (e) => e.code === LEDGER_WRITE_STOP && /malformed/.test(e.message),
+    );
+  });
+
+  it('refuses onto a CORRUPT segment round sequence + on a non-ENOENT read error (the standard integrity teeth)', () => {
+    const corrupt = { schema: 4, loop: 'L', activity: 'plan-execution', kind: 'round', round: 2, base: BASE, fingerprint: FP, origins: originsOf([]), backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'SHIP' }], findings: [], timestamp: 't' };
+    writeFileSync(ledgerPath, `${JSON.stringify(corrupt)}\n`);
+    assert.throws(
+      () => recordGateRun(payload(), grDeps()),
+      (e) => e.code === LEDGER_WRITE_STOP && /corrupt/.test(e.message),
+    );
+    const badRead = () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); };
+    assert.throws(
+      () => recordGateRun(payload(), { ...grDeps(), readFile: badRead }),
+      (e) => e.code === LEDGER_WRITE_STOP && /fail closed/.test(e.message),
+    );
+  });
+});
+
+describe('review-ledger-write — the D5 green-baseline tooth (2.3)', () => {
+  const cleanRound = (round = 1) => roundParams({ round, backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'SHIP' }] });
+
+  it('refused with NO gate-run in the segment — the remedy names run-gates --record', () => {
+    codexReceiptFile(receiptsPath);
+    assert.throws(
+      () => recordRound({ ...cleanRound(), cwd: dir, env: {} }, deps()),
+      (e) => e.code === LEDGER_WRITE_STOP && /quality-green gate-run/.test(e.message) && /run-gates\.mjs --record/.test(e.message),
+    );
+  });
+
+  it('refused with a RED gate-run (a red non-process gate is never quality-green)', () => {
+    codexReceiptFile(receiptsPath);
+    seedGateRun({
+      results: [{ id: 'unit-tests', ok: false, code: 1 }],
+      summary: { status: 'fail', gates: 1, passed: 0, failed: 1, failedIds: ['unit-tests'] },
+    });
+    assert.throws(
+      () => recordRound({ ...cleanRound(), cwd: dir, env: {} }, deps()),
+      (e) => e.code === LEDGER_WRITE_STOP && /quality-green gate-run/.test(e.message),
+    );
+  });
+
+  it('refused with a green --only SUBSET (the R1 converged subset-bypass — a subset never satisfies)', () => {
+    codexReceiptFile(receiptsPath);
+    seedGateRun({
+      declared: [{ id: 'unit-tests', cmd: 'node --test x' }, { id: 'release-scan', cmd: 'node tools/release-scan.mjs pkg' }],
+      results: [{ id: 'unit-tests', ok: true, code: 0 }],
+      summary: { status: 'ok', gates: 1, passed: 1, failed: 0, failedIds: [] },
+    });
+    assert.throws(
+      () => recordRound({ ...cleanRound(), cwd: dir, env: {} }, deps()),
+      (e) => e.code === LEDGER_WRITE_STOP && /quality-green gate-run/.test(e.message),
+    );
+  });
+
+  it('refused with a TREE-CHANGED run (fingerprint !== fingerprintAfter attests no particular tree — codex R2)', () => {
+    codexReceiptFile(receiptsPath);
+    seedGateRun({ fingerprintAfter: 'e'.repeat(64) });
+    assert.throws(
+      () => recordRound({ ...cleanRound(), cwd: dir, env: {} }, deps()),
+      (e) => e.code === LEDGER_WRITE_STOP && /quality-green gate-run/.test(e.message),
+    );
+  });
+
+  it('refused when the gate-run is for ANOTHER fingerprint (gates ran, then the tree moved)', () => {
+    codexReceiptFile(receiptsPath);
+    seedGateRun({ fingerprint: 'e'.repeat(64), fingerprintAfter: 'e'.repeat(64) });
+    assert.throws(
+      () => recordRound({ ...cleanRound(), cwd: dir, env: {} }, deps()),
+      (e) => e.code === LEDGER_WRITE_STOP && /quality-green gate-run/.test(e.message),
+    );
+  });
+
+  it('ACCEPTED with a full quality-green run; a red PROCESS gate never blocks (the closed carve-out)', () => {
+    codexReceiptFile(receiptsPath);
+    seedGateRun({
+      declared: [
+        { id: 'unit-tests', cmd: 'node --test x' },
+        { id: 'review-ledger', cmd: 'node agent-workflow-kit/tools/review-ledger.mjs --check' },
+      ],
+      results: [{ id: 'unit-tests', ok: true, code: 0 }, { id: 'review-ledger', ok: false, code: 1 }],
+      summary: { status: 'fail', gates: 2, passed: 1, failed: 1, failedIds: ['review-ledger'] },
+    });
+    const { record } = recordRound({ ...cleanRound(), cwd: dir, env: {} }, deps());
+    assert.equal(record.round, 1, 'a mid-loop red process gate is exactly the carve-out');
   });
 });

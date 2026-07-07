@@ -46,6 +46,7 @@ import {
   readLedger,
   filterSegmentRecords,
   collectSizeCapLimit,
+  isQualityGreenGateRun,
   roundSequenceIntact,
   decideStop,
   validateRecord,
@@ -220,6 +221,53 @@ export const recordRound = (params, deps = {}) => {
     }
   }
 
+  // D5 — the green-baseline tooth (armed at Step 2.3, AFTER run-gates --record exists — the
+  // bootstrap order): a round records only over a tree whose FULL declared non-process gate set
+  // was proven green by a recorded gate-run at the CURRENT fingerprint. "Gates ran before review"
+  // is now computed, never remembered. A `--only` subset is recorded honestly but never satisfies
+  // this (the R1 converged subset-bypass hole); a run whose tree changed under it attests no
+  // particular tree (codex R2); process-gate failures never block (the closed carve-out).
+  const gateRuns = segment.filter((r) => r.kind === 'gate-run');
+  if (!gateRuns.some((g) => g.fingerprint === fingerprint && isQualityGreenGateRun(g))) {
+    throw stop(`refusing to record round ${round}: no quality-green gate-run for the current tree in this segment (D5 — gates run before review is computed, not remembered). Run the FULL declared matrix with a recorded receipt first: node agent-workflow-kit/tools/run-gates.mjs --record (a --only subset never satisfies this; a run whose tree changed under it never counts).`);
+  }
+
+  return appendRecord(ledgerPath, record, deps);
+};
+
+// ── recordGateRun (BUGFREE-2 / AD-048, D5 — the green-baseline receipt run-gates --record mints) ──
+
+// recordGateRun({ cwd, env, activity, declared, results, summary, fingerprintBefore,
+// fingerprintAfter, timestamp }, deps) → { writtenPath, record }. The SOLE ledger entry point for
+// run-gates (`--record` DELEGATES here — the runner never opens the ledger file itself; an
+// import/structure pin holds the boundary). The loop is DERIVED from the single in-flight plan
+// (the recordOverride precedent — a gate-run is minted only inside its live loop, never
+// retro-recorded); the record carries the segment frame and NO round number (per-kind frame, D5).
+// A red run records honestly (telemetry fuel — consecutive red gate-runs are the revert-first
+// visibility); quality-green is judged at read time, never stored.
+export const recordGateRun = (params, deps = {}) => {
+  const { cwd = process.cwd(), env = process.env, activity = DEFAULT_ACTIVITY, declared, results, summary, fingerprintBefore, fingerprintAfter, timestamp } = params;
+  const ledgerPath = deps.ledgerPath ?? resolveLedgerPath(cwd, env);
+  if (ledgerPath == null) throw stop('cannot resolve the ledger path — not a git work tree and AW_REVIEW_LEDGER is unset');
+  const plans = deps.plansInFlight ? deps.plansInFlight() : plansInFlight(gitRoot(cwd) ?? cwd);
+  if (plans.length !== 1) {
+    throw stop(`refusing to record a gate-run: it is minted only inside the SINGLE in-flight loop (in flight: ${plans.length ? plans.join(', ') : 'none'})`);
+  }
+  const loop = plans[0].replace(/\.md$/, '');
+  const base = deps.resolveBase ? deps.resolveBase(cwd) : resolveBase(cwd);
+  const record = {
+    schema: SCHEMA_VERSION, loop, activity, kind: 'gate-run', base,
+    fingerprint: fingerprintBefore, fingerprintAfter, declared, results, summary,
+    timestamp: timestamp ?? isoNow(),
+  };
+  const v = validateRecord(record);
+  if (!v.ok) throw stop(`refusing to record a malformed gate-run: ${v.reason}`);
+  const { records, malformed, malformedReasons, readError } = readLedger(ledgerPath, deps.readFile);
+  if (readError) throw stop(`cannot read the existing ledger (${readError}) — refusing to append (fail closed)`);
+  if (malformed > 0) throw stop(`the existing ledger has ${malformed} malformed line(s) — refusing to append until they are fixed (fail closed): ${malformedReasons.join('; ')}`);
+  if (!roundSequenceIntact(filterSegmentRecords(records, { activity, loop, base }))) {
+    throw stop(`refusing to record a gate-run for loop "${loop}": its recorded round sequence for the current segment is corrupt (not 1..n) — fix the ledger by hand first`);
+  }
   return appendRecord(ledgerPath, record, deps);
 };
 

@@ -18,16 +18,25 @@
 // Honest outcomes — each distinct, never a silent green (the exit-code table + the summary-line
 // schema are pinned by run-gates.test.mjs):
 //   0 ok · 1 gate failure · 2 usage · 3 missing declaration · 4 empty gates list ·
-//   5 malformed/invalid declaration · 6 bash unavailable. Gate `cmd` lines are BASH command
-//   lines (brace/glob expansion); a host without bash gets the loud exit-6 preflight error,
-//   never a silent reinterpretation under another shell.
+//   5 malformed/invalid declaration · 6 bash unavailable · 7 --record asked but the gate-run
+//   record could not be written. Gate `cmd` lines are BASH command lines (brace/glob expansion);
+//   a host without bash gets the loud exit-6 preflight error, never a silent reinterpretation
+//   under another shell.
 //
-// The runner itself WRITES NOTHING. Dependency-free, Node >= 18. No side effects on import.
+// The runner itself WRITES NOTHING by default. `--record` (BUGFREE-2 / AD-048, D5) mints ONE
+// v4 `gate-run` record — the green-baseline receipt the review-ledger writer's D5 tooth consumes —
+// by DELEGATING to the ledger's sole writer (recordGateRun in review-ledger-write.mjs): this
+// runner never opens the ledger file itself (an import/structure pin holds the boundary). The
+// record carries the FULL declaration + exactly what ran (a --only subset records honestly as a
+// subset — it never satisfies quality-green) + the tree fingerprint BEFORE and AFTER the run (a
+// mutating gate attests no particular tree). Dependency-free, Node >= 18. No side effects on import.
 
 import { readFileSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { computeTreeFingerprint } from './review-state.mjs';
+import { recordGateRun } from './review-ledger-write.mjs';
 
 // The per-project declaration (strict JSON, hand-editable). cwd-relative — errors show a path the
 // user can open (the orchestration-config CONFIG_REL idiom).
@@ -42,6 +51,10 @@ export const EXIT = Object.freeze({
   empty: 4,
   malformed: 5,
   noBash: 6,
+  // --record was asked for but the gate-run record could not be written (no in-flight loop, a
+  // malformed ledger, an fs refusal): the invocation's contract included a ledger receipt — not
+  // delivering it is its own loud outcome, never folded into ok/fail.
+  recordFailed: 7,
 });
 
 // A tagged failure carrying its process exit code (the shared orchestration-config idiom).
@@ -54,12 +67,15 @@ const SPAWN_FAILED_CODE = -1;
 const MAX_GATE_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 const USAGE = [
-  'usage: run-gates.mjs [--cwd <dir>] [--only <id>]... [--help]',
+  'usage: run-gates.mjs [--cwd <dir>] [--only <id>]... [--record] [--help]',
   '',
   `Runs the gates declared in <cwd>/${GATES_REL} (one bash command line each, project root as cwd).`,
   'Prints a per-gate PASS/FAIL table + one machine-readable summary line; exit 0 iff all green.',
+  '--record additionally mints ONE v4 gate-run record into the review ledger via its sole writer',
+  '(the D5 green-baseline receipt; needs a single in-flight plan): the full declaration + what ran',
+  '+ the pre/post tree fingerprints. A red run records honestly; a --only subset records as a subset.',
   `Exit codes: 0 ok · 1 gate failure · 2 usage · 3 missing declaration · 4 empty gates list ·`,
-  '5 malformed/invalid declaration · 6 bash unavailable.',
+  '5 malformed/invalid declaration · 6 bash unavailable · 7 --record asked but the record failed.',
 ].join('\n');
 
 // ── declaration validation (malformed → exit 5, loud `path: reason`) ─────────────────
@@ -218,7 +234,7 @@ export const composeSummaryLine = ({ status, results = [] }) => {
 // ── CLI ───────────────────────────────────────────────────────────────────────────────
 
 const parseArgs = (argv) => {
-  const opts = { cwd: null, only: [], help: false };
+  const opts = { cwd: null, only: [], record: false, help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') {
@@ -231,6 +247,8 @@ const parseArgs = (argv) => {
       i += 1;
       if (argv[i] === undefined) throw fail(EXIT.usage, '--only requires a gate id argument');
       opts.only.push(argv[i]);
+    } else if (arg === '--record') {
+      opts.record = true;
     } else {
       throw fail(EXIT.usage, `unknown argument "${arg}"\n${USAGE}`);
     }
@@ -244,12 +262,15 @@ const parseArgs = (argv) => {
 export const runCli = (argv, deps = {}) => {
   const {
     cwd = process.cwd(),
+    env = process.env,
     log = console.log,
     logError = console.error,
     spawn = spawnGateViaBash,
     readFile,
     lstat,
     now,
+    record = recordGateRun,
+    fingerprint = computeTreeFingerprint,
   } = deps;
   try {
     const opts = parseArgs(argv);
@@ -283,10 +304,40 @@ export const runCli = (argv, deps = {}) => {
       log(composeSummaryLine({ status: 'no-bash' }));
       return EXIT.noBash;
     }
+    const fingerprintBefore = opts.record ? fingerprint(projectDir) : null;
     const results = runGates(selected, { cwd: projectDir, spawn, log, now });
     for (const line of formatTable(results)) log(line);
     const allGreen = results.every((result) => result.ok);
+    // The gate-run record (D5): minted for green AND red runs alike (an honest red is telemetry
+    // fuel), via the ledger's sole writer. Emitted BEFORE the summary line — the machine summary
+    // stays the LAST line of every non-usage outcome (pinned).
+    let recordError = null;
+    if (opts.record) {
+      const failing = results.filter((result) => !result.ok);
+      try {
+        const { writtenPath } = record({
+          cwd: projectDir,
+          env,
+          declared: declaration.gates.map(({ id, cmd }) => ({ id, cmd })),
+          results: results.map(({ id, ok, code }) => ({ id, ok, code })),
+          summary: {
+            status: allGreen ? 'ok' : 'fail',
+            gates: results.length,
+            passed: results.length - failing.length,
+            failed: failing.length,
+            failedIds: failing.map((result) => result.id),
+          },
+          fingerprintBefore,
+          fingerprintAfter: fingerprint(projectDir),
+        });
+        log(`[run-gates] gate-run recorded → ${writtenPath}`);
+      } catch (err) {
+        recordError = err;
+        logError(`[run-gates] --record failed: ${err.message}`);
+      }
+    }
     log(composeSummaryLine({ status: allGreen ? 'ok' : 'fail', results }));
+    if (recordError) return EXIT.recordFailed;
     return allGreen ? EXIT.ok : EXIT.fail;
   } catch (err) {
     logError(`[run-gates] ${err.message}`);

@@ -46,7 +46,7 @@ const scriptedSpawn = (byCmd, calls = []) => (cmd, cwd) => {
   return res;
 };
 
-const runHermetic = ({ gates, argv = [], byCmd = {}, files = null }) => {
+const runHermetic = ({ gates, argv = [], byCmd = {}, files = null, deps = {} }) => {
   const out = [];
   const err = [];
   const calls = [];
@@ -65,6 +65,7 @@ const runHermetic = ({ gates, argv = [], byCmd = {}, files = null }) => {
         return tick;
       };
     })(),
+    ...deps,
   });
   return { code, out, err, calls, text: out.join('\n'), errText: err.join('\n') };
 };
@@ -351,5 +352,83 @@ describe('stale memory — the feature self-heals from the kit template twin', (
     writeFileSync(dest, '{ "gates": [{ "id": "custom", "title": "Mine", "cmd": "true" }] }\n');
     ensureGates();
     assert.match(readFileSync(dest, 'utf8'), /custom/, 'an existing declaration is preserved byte-for-byte');
+  });
+});
+
+// ── --record: the D5 gate-run receipt (BUGFREE-2 / AD-048) — delegation, honesty, exit 7 ─────────
+
+describe('runCli --record — the gate-run receipt via the ledger sole writer', () => {
+  const gates = [
+    { id: 'one', title: 'First', cmd: 'cmd-one' },
+    { id: 'two', title: 'Second', cmd: 'cmd-two' },
+  ];
+  const RED = { status: 1, stdout: 'boom\n', stderr: '' };
+  const fpSeq = (...values) => {
+    let i = 0;
+    return () => values[Math.min(i++, values.length - 1)];
+  };
+
+  it('record written ONLY under --record (a plain run never touches the writer)', () => {
+    const recorded = [];
+    const { code } = runHermetic({
+      gates,
+      byCmd: { 'cmd-one': GREEN, 'cmd-two': GREEN },
+      deps: { record: (params) => { recorded.push(params); return { writtenPath: '/L' }; }, fingerprint: fpSeq('f1') },
+    });
+    assert.equal(code, EXIT.ok);
+    assert.equal(recorded.length, 0, 'no --record → the writer is never called');
+  });
+
+  it('--record mirrors the machine summary: full declaration + what ran + pre/post fingerprints', () => {
+    const recorded = [];
+    const { code, out } = runHermetic({
+      gates,
+      argv: ['--record'],
+      byCmd: { 'cmd-one': GREEN, 'cmd-two': RED },
+      deps: { record: (params) => { recorded.push(params); return { writtenPath: '/L' }; }, fingerprint: fpSeq('fp-before', 'fp-after') },
+    });
+    assert.equal(code, EXIT.fail, 'the gate verdict still rules the exit when the record succeeded');
+    assert.equal(recorded.length, 1, 'a RED run records too (telemetry fuel)');
+    const p = recorded[0];
+    assert.deepEqual(p.declared, [{ id: 'one', cmd: 'cmd-one' }, { id: 'two', cmd: 'cmd-two' }]);
+    assert.deepEqual(p.results, [{ id: 'one', ok: true, code: 0 }, { id: 'two', ok: false, code: 1 }]);
+    assert.deepEqual(p.summary, { status: 'fail', gates: 2, passed: 1, failed: 1, failedIds: ['two'] });
+    assert.equal(p.fingerprintBefore, 'fp-before');
+    assert.equal(p.fingerprintAfter, 'fp-after');
+    assert.match(out.join('\n'), /gate-run recorded → \/L/);
+    assert.equal(out[out.length - 1], '[run-gates] status=fail gates=2 passed=1 failed=1 failed_ids=two', 'the machine summary stays the LAST line');
+  });
+
+  it('a --only subset records HONESTLY as a subset: declared stays full, results shrink', () => {
+    const recorded = [];
+    const { code } = runHermetic({
+      gates,
+      argv: ['--record', '--only', 'one'],
+      byCmd: { 'cmd-one': GREEN },
+      deps: { record: (params) => { recorded.push(params); return { writtenPath: '/L' }; }, fingerprint: fpSeq('f') },
+    });
+    assert.equal(code, EXIT.ok);
+    assert.equal(recorded[0].declared.length, 2, 'the FULL declaration is recorded');
+    assert.deepEqual(recorded[0].results.map((r) => r.id), ['one'], 'only what ran is a result');
+  });
+
+  it('a record failure is its own LOUD outcome — exit 7, stderr names it, the summary line still lands', () => {
+    const { code, out, errText } = runHermetic({
+      gates,
+      argv: ['--record'],
+      byCmd: { 'cmd-one': GREEN, 'cmd-two': GREEN },
+      deps: { record: () => { throw new Error('no in-flight plan'); }, fingerprint: fpSeq('f') },
+    });
+    assert.equal(code, EXIT.recordFailed);
+    assert.match(errText, /--record failed: no in-flight plan/);
+    assert.equal(out[out.length - 1], '[run-gates] status=ok gates=2 passed=2 failed=0 failed_ids=-');
+  });
+
+  it('the sole-writer boundary: run-gates delegates to recordGateRun and never opens the ledger itself (structure pin)', () => {
+    const src = readFileSync(join(HERE, 'run-gates.mjs'), 'utf8');
+    assert.match(src, /import \{ recordGateRun \} from '\.\/review-ledger-write\.mjs'/, 'the delegation import');
+    assert.ok(!/atomic-write/.test(src), 'never the atomic-write core directly');
+    assert.ok(!/agent-workflow-review-ledger/.test(src), 'never the ledger basename/path');
+    assert.ok(!/appendRecord/.test(src), 'never the append primitive');
   });
 });
