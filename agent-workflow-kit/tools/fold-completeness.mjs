@@ -97,8 +97,9 @@ const isNonNegInt = (v) => Number.isInteger(v) && v >= 0;
 const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
 
 // validateRunRecord(obj) → { ok, reason }. The `reason` names the exact failed check so the
-// malformed-line surface and the per-check named tests can assert it. Mutation stays the empty shape
-// until Phase 3 populates it; the schema already carries the fields so v1 records stay valid.
+// malformed-line surface and the per-check named tests can assert it. Mutation is reserved and must
+// stay the empty shape in v1 (the mutation half is shelved); the schema carries the fields so a
+// record validates uniformly and decideCheck enforces the exact reserved shape.
 export const validateRunRecord = (obj) => {
   if (!isPlainObject(obj)) return { ok: false, reason: 'not an object' };
   if (obj.schema !== RESULT_SCHEMA_VERSION) return { ok: false, reason: `schema must be ${RESULT_SCHEMA_VERSION}` };
@@ -264,7 +265,7 @@ export const decideCheck = (state) => {
     sameSet(Object.keys(m).sort(), RESERVED_MUTATION_KEYS) &&
     m.total === 0 && m.killed === 0 && m.skipped === 0 && m.survived.length === 0 && m.killSetBasis === null;
   if (!emptyReservedShape) {
-    return { code: 1, reason: `the run record's mutation field is not the reserved empty shape (${m.total} total / ${m.killed} killed / ${m.survived.length} survived / ${m.skipped} skipped) but v1 ships no mutation — not a record this runner version produced; re-run fold-completeness-run.mjs` };
+    return { code: 1, reason: `the run record's mutation field is not the reserved empty shape (${m.total} total / ${m.killed} killed / ${m.survived?.length ?? '?'} survived / ${m.skipped} skipped) but v1 ships no mutation — not a record this runner version produced; re-run fold-completeness-run.mjs` };
   }
 
   const notes = [];
