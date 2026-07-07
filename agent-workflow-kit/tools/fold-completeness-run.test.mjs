@@ -227,9 +227,12 @@ describe('parseProbeOutput — resolvable + baselineGreen from node:test TAP', (
 // ── Decision 10: bound-run argv (default node:test shape + the escape hatch) ──────────────────────
 
 describe('bound-run argv (Decision 10)', () => {
-  it('the default shape is the shell-free node --test --test-name-pattern form', () => {
+  it('the default shape is the shell-free node --test --test-name-pattern form (=-joined: a leading-dash pattern must never parse as an option)', () => {
     assert.deepEqual(defaultBoundArgv('a/b.test.mjs', 'my pattern'), [
-      'node', '--test', '--test-reporter', 'tap', '--test-name-pattern', 'my pattern', 'a/b.test.mjs',
+      'node', '--test', '--test-reporter', 'tap', '--test-name-pattern=my pattern', 'a/b.test.mjs',
+    ]);
+    assert.deepEqual(defaultBoundArgv('a/b.test.mjs', '--telemetry refuses'), [
+      'node', '--test', '--test-reporter', 'tap', '--test-name-pattern=--telemetry refuses', 'a/b.test.mjs',
     ]);
   });
   it('AW_FOLD_BOUND_CMD overrides with a JSON argv template ({file}/{pattern} substitution)', () => {
