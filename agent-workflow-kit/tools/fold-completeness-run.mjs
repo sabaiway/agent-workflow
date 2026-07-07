@@ -28,7 +28,7 @@
 // TS/JSX source is out of scope v1. Dependency-free, Node >= 18. No side effects on import.
 
 import { readFileSync, readdirSync, mkdtempSync, rmSync, realpathSync, lstatSync } from 'node:fs';
-import { join, dirname, basename, isAbsolute, normalize, sep } from 'node:path';
+import { join, dirname, basename, isAbsolute, normalize, posix, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -104,7 +104,7 @@ export const parseUnifiedDiff = (diffText) => {
     }
     if (inHeader && line.startsWith('--- ')) continue;
     if (inHeader && line.startsWith('+++ ')) {
-      const p = line.slice(4).trim();
+      const p = unquoteDiffPath(line.slice(4).replace(/[\t\r]+$/, '')); // TAB/CR are git artifacts, never filename bytes (agy R6)
       current = p === '/dev/null' ? null : p.startsWith('b/') ? p.slice(2) : p;
       inHeader = false;
       continue;
@@ -293,6 +293,11 @@ export const resolveBoundArgv = (env = process.env) => {
 
 // ── the changed surface (git-driven) ──────────────────────────────────────────────────────────────
 
+// The one diff-invocation shape both surface passes use. The a/ b/ prefixes are pinned EXPLICITLY
+// (agy R6): a user's global diff.noprefix=true would otherwise drop them and the parsers would eat
+// a real directory named "a" — user git config must never bend the parse.
+const DIFF_FLAGS = ['--unified=0', '--no-color', '--no-ext-diff', '--no-renames', '--src-prefix=a/', '--dst-prefix=b/'];
+
 const runGit = (args, cwd) => spawnSync('git', args, { cwd, maxBuffer: GIT_MAX_BUFFER, encoding: 'utf8', windowsHide: true });
 const gitStdout = (args, cwd) => {
   const r = runGit(args, cwd);
@@ -328,8 +333,8 @@ const isRegularLeaf = (abs) => {
 // classified by the CLOSED rule. Tracked changed lines come from `git diff HEAD -U0`; an untracked file
 // is wholly new, so all its lines are "changed".
 export const computeChangedSurface = (root) => {
-  const trackedDiff = gitStdout(['diff', 'HEAD', '--unified=0', '--no-color', '--no-ext-diff', '--no-renames'], root)
-    ?? gitStdout(['diff', '--unified=0', '--no-color', '--no-ext-diff', '--no-renames'], root) // no HEAD yet (unborn branch)
+  const trackedDiff = gitStdout(['diff', 'HEAD', ...DIFF_FLAGS], root)
+    ?? gitStdout(['diff', ...DIFF_FLAGS], root) // no HEAD yet (unborn branch)
     ?? '';
   const trackedLines = parseUnifiedDiff(trackedDiff);
   const untrackedZ = gitStdout(['ls-files', '--others', '--exclude-standard', '-z'], root) ?? '';
@@ -366,6 +371,109 @@ export const computeChangedSurface = (root) => {
     assessable.set(rel, Array.from({ length: count }, (_, i) => i + 1));
   }
   return { assessable, unsupported: unsupported.sort(), outOfDomain: outOfDomain.sort() };
+};
+
+// ── the oracle-tamper surface (BUGFREE-1 Phase 2.2, Approach-3) ───────────────────────────────────
+
+const DIFF_HUNK_OLD_RE = /^@@ -\d+(?:,(\d+))? \+\d+(?:,\d+)? @@/;
+
+// Git C-quotes diff-header paths carrying quotes/control/non-ASCII bytes ("a/\321\202….mjs") — an
+// unparsed quoted path compares unequal to its classifier/testId form and would silently escape the
+// tamper/coverage surface (agy R5). Strip the quotes and decode escapes BYTE-wise (octal escapes
+// are UTF-8 bytes). Space-only paths are not quoted (they carry a trailing TAB — trimmed upstream).
+const CQUOTE_SIMPLE = { n: 10, t: 9, r: 13, f: 12, v: 11, b: 8, a: 7, '"': 34, '\\': 92 };
+export const unquoteDiffPath = (p) => {
+  if (!(p.length >= 2 && p.startsWith('"') && p.endsWith('"'))) return p;
+  const inner = p.slice(1, -1);
+  const bytes = [];
+  for (let i = 0; i < inner.length; i += 1) {
+    const c = inner[i];
+    if (c !== '\\') {
+      // Consume a full CODE POINT — 16-bit-unit iteration would split a surrogate pair (an
+      // unescaped non-BMP char, reachable under core.quotepath=false) into replacement bytes (agy R6).
+      const ch = String.fromCodePoint(inner.codePointAt(i));
+      for (const b of Buffer.from(ch, 'utf8')) bytes.push(b);
+      i += ch.length - 1;
+      continue;
+    }
+    const rest = inner.slice(i + 1);
+    const oct = /^[0-7]{1,3}/.exec(rest);
+    if (oct) {
+      bytes.push(Number.parseInt(oct[0], 8) & 0xff);
+      i += oct[0].length;
+    } else if (rest[0] in CQUOTE_SIMPLE) {
+      bytes.push(CQUOTE_SIMPLE[rest[0]]);
+      i += 1;
+    } else if (rest[0] !== undefined) {
+      for (const b of Buffer.from(rest[0], 'utf8')) bytes.push(b);
+      i += 1;
+    }
+  }
+  return Buffer.from(bytes).toString('utf8');
+};
+
+// parseDiffOldSide(diffText) → Map<oldRel, { removals: boolean }> — the OLD-side view of a -U0
+// tracked diff: which pre-existing (HEAD) files carry any removed/modified line (a hunk whose
+// old-count > 0). A file ADDED by the diff (--- /dev/null) has no old side and never appears; a
+// DELETED file's hunks remove every line, so it reads removals: true. Renames under --no-renames
+// read as delete+add — the delete side lands here (stated).
+export const parseDiffOldSide = (diffText) => {
+  const map = new Map();
+  let current = null;
+  let inHeader = false;
+  for (const line of String(diffText).split('\n')) {
+    if (line.startsWith('diff --git ')) {
+      current = null;
+      inHeader = true;
+      continue;
+    }
+    if (inHeader && line.startsWith('--- ')) {
+      // Strip ONLY the git-appended trailing TAB (space-carrying paths) and a CRLF \r — never a
+      // legitimate trailing character of the filename itself (agy R6; a raw TAB in a name is
+      // C-quoted anyway, so [\t\r]+$ can only match git artifacts).
+      const p = unquoteDiffPath(line.slice(4).replace(/[\t\r]+$/, ''));
+      current = p === '/dev/null' ? null : p.startsWith('a/') ? p.slice(2) : p;
+      if (current != null && !map.has(current)) map.set(current, { removals: false });
+      continue;
+    }
+    if (inHeader && line.startsWith('+++ ')) {
+      inHeader = false;
+      continue;
+    }
+    const m = DIFF_HUNK_OLD_RE.exec(line);
+    if (m) {
+      inHeader = false;
+      if (current == null) continue;
+      const oldCount = m[1] === undefined ? 1 : Number(m[1]);
+      if (oldCount > 0) map.get(current).removals = true;
+    }
+  }
+  return map;
+};
+
+// computeTamperedTests(root, boundFiles) → { tampered: [rel...] } — the tamper surface is the union
+// of test-classified paths (TEST_FILE_RE) and the loop's bound-testId file halves (the testId format
+// carries no suffix rule, so a bound test at a nonstandard path must not escape the guard),
+// restricted to files that exist at HEAD (having an old side in the tracked diff IS existing at
+// HEAD). Tampered = any removed/modified line; pure additions and new/untracked files never trip it
+// (widening to any-change-is-tamper would flag the standard append-a-new-test flow — the FP churn
+// this series exists to kill).
+export const computeTamperedTests = (root, boundFiles = new Set()) => {
+  const trackedDiff = gitStdout(['diff', 'HEAD', ...DIFF_FLAGS], root)
+    ?? gitStdout(['diff', ...DIFF_FLAGS], root) // no HEAD yet (unborn branch)
+    ?? '';
+  // The file halves are user-authored — './checks/x.mjs' probes and hashes as 'checks/x.mjs', so
+  // the surface compares NORMALIZED halves or a modified bound file escapes the guard (codex R5).
+  // Normalization happens in GIT/POSIX path space (codex+agy R6): node's OS-local normalize emits
+  // backslashes on Windows while git diff paths stay slash-separated — the compare must never
+  // depend on the host separator.
+  const boundSet = new Set([...boundFiles].map((f) => posix.normalize(f)));
+  const tampered = [];
+  for (const [rel, info] of parseDiffOldSide(trackedDiff)) {
+    if (!info.removals) continue;
+    if (classifyChangedPath(rel) === 'excluded-test' || boundSet.has(rel)) tampered.push(rel);
+  }
+  return { tampered: tampered.sort() };
 };
 
 // ── coverage (run the suite once under NODE_V8_COVERAGE, outside the tree) ─────────────────────────
@@ -556,6 +664,10 @@ export const runFoldCompleteness = ({ cwd = process.cwd(), env = process.env, su
     (id) => probeBound({ id, rootTop, env, boundArgv, reruns: budgets.foldReruns, timeoutS: budgets.probeTimeoutS }).entry,
   );
 
+  // Approach-3: the oracle-tamper pass over the tracked working-vs-HEAD diff, restricted to the
+  // test surface ∪ the bound-testId file halves. Recorded; the checker enforces overrides.
+  const tamper = computeTamperedTests(rootTop, new Set(boundTestIds.map((id) => splitTestId(id).file)));
+
   const record = {
     schema: RESULT_SCHEMA_VERSION,
     kind: 'run',
@@ -566,6 +678,7 @@ export const runFoldCompleteness = ({ cwd = process.cwd(), env = process.env, su
     unsupported,
     outOfDomain,
     coverage: { uncoveredChanged },
+    tamper,
     mutation: { total: 0, killed: 0, survived: [], skipped: 0, killSetBasis: null }, // reserved — mutation not shipped (shelved)
     budgets,
     timestamp: isoNow(),

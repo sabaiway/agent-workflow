@@ -71,13 +71,15 @@ const SLOT = 'review';
 // there, never here (it is not a decideStop input).
 export const REVIEW_CAP = 2;
 // SCHEMA_VERSION is what the WRITER emits (M2/AD-046: a fixable-bug triage requires a non-null,
-// well-formed testId — the red→green test that pins the fold). The READER tolerates every
-// SUPPORTED_SCHEMAS version under its own per-version rules, so historical/live v1 ledgers never
-// retroactively become malformed (Decision 2 — a malformed line cascades fail-closed refusals in the
-// writer teeth AND the --check gate). v1 records keep the AD-045 rule (testId optional, unenforced);
-// only v2 enforces the test-per-fold binding. decideStop never reads testId (not a decideStop input).
-export const SCHEMA_VERSION = 2;
-const SUPPORTED_SCHEMAS = new Set([1, 2]);
+// well-formed testId — the red→green test that pins the fold; BUGFREE-1/AD-047: v3 adds the
+// `override` record kind — the loud, durable waiver the fold-completeness gate consumes). The
+// READER tolerates every SUPPORTED_SCHEMAS version under its own per-version rules, so
+// historical/live v1/v2 ledgers never retroactively become malformed (Decision 2 — a malformed line
+// cascades fail-closed refusals in the writer teeth AND the --check gate). v1 records keep the
+// AD-045 rule (testId optional, unenforced); v2+ enforces the test-per-fold binding; ONLY v3 may
+// carry kind `override`. decideStop never reads testId or overrides (not decideStop inputs).
+export const SCHEMA_VERSION = 3;
+const SUPPORTED_SCHEMAS = new Set([1, 2, 3]);
 
 // The record vocabulary — the single home of every enum the schema validates.
 const ACTIVITIES_SET = new Set(['plan-authoring', 'plan-execution']);
@@ -85,6 +87,7 @@ const KINDS_SET = new Set(['round', 'triage']);
 const SEVERITIES = new Set(['blocker', 'major', 'minor']);
 export const ORIGINS = ['first-draft', 'fold-induced', 'mechanics'];
 const CLASSES = new Set(['fixable-bug', 'inherent-layer-residual', 'escalate']);
+const OVERRIDE_SCOPES = new Set(['oracle-change', 'red-proof']);
 
 // ── git-dir resolution (read-only queries; the ledger lives in the git dir, uncommittable) ──────
 
@@ -209,19 +212,47 @@ const validateTriage = (obj, schema = SCHEMA_VERSION) => {
   return { ok: true };
 };
 
+// validateOverride(obj) → { ok, reason }. v3 only (BUGFREE-1 / AD-047, D3): scope `oracle-change`
+// carries non-empty repo-relative files[] + reason; scope `red-proof` carries a REQUIRED
+// well-formed testId + reason, no files[]. Payloads are EXACT — a stray cross-scope field is a
+// forgery smell, rejected. Loop + payload scoped; the fingerprint is recorded for audit only.
+const OVERRIDE_SHARED_KEYS = new Set(['schema', 'loop', 'activity', 'kind', 'round', 'fingerprint', 'timestamp', 'scope', 'reason']);
+const validateOverride = (obj) => {
+  if (!OVERRIDE_SCOPES.has(obj.scope)) return { ok: false, reason: `override: bad scope "${obj.scope}" (expected oracle-change | red-proof)` };
+  // EXACT per-scope payloads via an allow-list (codex R5): a stray key — a cross-scope field or an
+  // arbitrary hand-added one — is a forgery smell, rejected by name (the mutation-shape precedent).
+  const payloadKey = obj.scope === 'oracle-change' ? 'files' : 'testId';
+  for (const k of Object.keys(obj)) {
+    if (!OVERRIDE_SHARED_KEYS.has(k) && k !== payloadKey) return { ok: false, reason: `override: unknown key "${k}" (exact per-scope payloads: shared frame + ${payloadKey})` };
+  }
+  if (!isNonEmptyString(obj.reason)) return { ok: false, reason: 'override: a non-empty reason is required (never a silent waiver)' };
+  if (obj.scope === 'oracle-change') {
+    if (!Array.isArray(obj.files) || obj.files.length === 0) return { ok: false, reason: 'override: oracle-change files[] must be a non-empty array' };
+    for (const f of obj.files) {
+      if (!isNonEmptyString(f) || f.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(f)) return { ok: false, reason: `override: files[] entries must be non-empty repo-relative paths (got ${JSON.stringify(f)})` };
+    }
+    return { ok: true };
+  }
+  if (!isWellFormedTestId(obj.testId)) return { ok: false, reason: 'override: a red-proof override requires a well-formed testId "<test-file>#<test-name-pattern>"' };
+  return { ok: true };
+};
+
 // validateRecord(obj) → { ok, reason }. The shared frame (schema/loop/activity/kind/round/
 // fingerprint/timestamp) then the per-kind body. `reason` names the exact failed check so the
-// malformed-line surface and the per-check named tests can assert it.
+// malformed-line surface and the per-check named tests can assert it. Kind vocabulary is
+// per-version: `override` exists only under schema >= 3 (older records never grow new kinds).
 export const validateRecord = (obj) => {
   if (!isPlainObject(obj)) return { ok: false, reason: 'not an object' };
   if (!SUPPORTED_SCHEMAS.has(obj.schema)) return { ok: false, reason: `schema must be one of ${[...SUPPORTED_SCHEMAS].join(', ')}` };
   if (!isNonEmptyString(obj.loop)) return { ok: false, reason: 'missing loop' };
   if (!ACTIVITIES_SET.has(obj.activity)) return { ok: false, reason: `bad activity "${obj.activity}"` };
-  if (!KINDS_SET.has(obj.kind)) return { ok: false, reason: `bad kind "${obj.kind}"` };
+  if (!KINDS_SET.has(obj.kind) && !(obj.schema >= 3 && obj.kind === 'override')) return { ok: false, reason: `bad kind "${obj.kind}"` };
   if (!(Number.isInteger(obj.round) && obj.round >= 1)) return { ok: false, reason: 'round must be an integer >= 1' };
   if (!(obj.fingerprint === null || isNonEmptyString(obj.fingerprint))) return { ok: false, reason: 'fingerprint must be null or a non-empty string' };
   if (!isNonEmptyString(obj.timestamp)) return { ok: false, reason: 'missing timestamp' };
-  return obj.kind === 'round' ? validateRound(obj) : validateTriage(obj, obj.schema);
+  if (obj.kind === 'round') return validateRound(obj);
+  if (obj.kind === 'override') return validateOverride(obj);
+  return validateTriage(obj, obj.schema);
 };
 
 // readLedger(path) → { records, malformed, malformedReasons }. Absent file → empty (no review ran).
@@ -255,11 +286,26 @@ export const readLedger = (path, readFile = readFileSync) => {
   return { records, malformed: malformedReasons.length, malformedReasons };
 };
 
-// filterLoopRecords(records, { activity, loop }) → the records of ONE loop (both kinds), order
+// filterLoopRecords(records, { activity, loop }) → the records of ONE loop (all kinds), order
 // preserved. The gate filters to activity==="plan-execution" AND loop===the in-flight plan stem;
 // authoring rounds (and other plans' rounds) never enter the code gate.
 export const filterLoopRecords = (records, { activity, loop }) =>
   records.filter((r) => r.activity === activity && r.loop === loop);
+
+// collectOverrides(records, { activity, loop }) → { oracleChangeFiles: Set, redProofTestIds: Set }.
+// The UNION of the loop's recorded override payloads — loop + payload scoped, never fingerprint-
+// bound (D3: re-affirmation churn on every later edit would train rubber-stamping). The
+// fold-completeness checker consumes THIS (both modules are read-only — the read/write split holds).
+export const collectOverrides = (records, { activity = ACTIVITY, loop } = {}) => {
+  const oracleChangeFiles = new Set();
+  const redProofTestIds = new Set();
+  for (const r of filterLoopRecords(records, { activity, loop })) {
+    if (r.kind !== 'override') continue;
+    if (r.scope === 'oracle-change') for (const f of r.files) oracleChangeFiles.add(f);
+    else redProofTestIds.add(r.testId);
+  }
+  return { oracleChangeFiles, redProofTestIds };
+};
 
 // roundSequenceIntact(records) → true iff the round records, in file order, number exactly 1,2,…,n
 // (no duplicate, gap, or out-of-order round). Checks the EXISTING sequence, not just the incoming
@@ -465,6 +511,9 @@ const roundLine = (r) => {
 const triageLine = (t) =>
   `  triage @round ${t.round} — ${t.classifications.map((c) => `${c.findingKey}=${c.class}${c.class === 'escalate' ? `(accepted:${c.accepted})` : ''}`).join(', ')}`;
 
+const overrideLine = (o) =>
+  `  override @round ${o.round} [${o.scope}] — ${o.scope === 'oracle-change' ? o.files.join(', ') : o.testId}: ${o.reason}`;
+
 const formatHuman = (state, check) => {
   const lines = [
     `review-ledger — ${ACTIVITY}.${SLOT} = ${state.resolved.recipe} (${state.resolved.source === 'config' ? `from ${CONFIG_REL}` : 'computed default'})${state.requiredBackends.length ? ` → ${state.requiredBackends.join(' + ')}` : ''}`,
@@ -478,7 +527,7 @@ const formatHuman = (state, check) => {
   if (state.plans.length === 1) {
     const loop = state.plans[0].replace(/\.md$/, '');
     const forLoop = filterLoopRecords(state.records, { activity: ACTIVITY, loop });
-    for (const r of forLoop) lines.push(r.kind === 'round' ? roundLine(r) : triageLine(r));
+    for (const r of forLoop) lines.push(r.kind === 'round' ? roundLine(r) : r.kind === 'override' ? overrideLine(r) : triageLine(r));
   }
   lines.push(`  check: ${check.code === 0 ? 'PASS' : 'FAIL'} — ${check.reason}`);
   return lines.join('\n');

@@ -1,10 +1,11 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, symlinkSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, symlinkSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { recordRound, recordTriage, HARD_MAX, LEDGER_WRITE_STOP } from './review-ledger-write.mjs';
+import { recordRound, recordTriage, recordOverride, main, HARD_MAX, LEDGER_WRITE_STOP } from './review-ledger-write.mjs';
 import { readLedger } from './review-ledger.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -251,10 +252,10 @@ describe('review-ledger-write — M2 testId enforcement (a fixable-bug requires 
     );
   });
 
-  it('records a fixable-bug with a well-formed testId — and emits schema 2', () => {
+  it('records a fixable-bug with a well-formed testId — and emits schema 3', () => {
     seedRoundWithMajorK();
     const { record } = classify({ findingKey: 'k', class: 'fixable-bug', accepted: false, testId: WELL_FORMED_TESTID });
-    assert.equal(record.schema, 2, 'the writer emits schema 2');
+    assert.equal(record.schema, 3, 'the writer emits schema 3 (v3 adds the override kind; triage rules are unchanged)');
     assert.equal(record.classifications[0].testId, WELL_FORMED_TESTID);
   });
 
@@ -264,15 +265,128 @@ describe('review-ledger-write — M2 testId enforcement (a fixable-bug requires 
     seedRoundWithMajorK();
     for (const cls of ['inherent-layer-residual', 'escalate']) {
       const { record } = classify({ findingKey: 'k', class: cls, accepted: true });
-      assert.equal(record.schema, 2);
+      assert.equal(record.schema, 3);
       assert.equal(record.classifications[0].testId, null, `${cls} may omit testId → normalized to null`);
     }
   });
 
-  it('a recorded ROUND also emits schema 2', () => {
+  it('a recorded ROUND also emits schema 3', () => {
     codexReceiptFile(receiptsPath);
     const { record } = recordRound({ ...roundParams({ round: 1, backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'SHIP' }] }), cwd: dir, env: {} }, deps());
-    assert.equal(record.schema, 2);
+    assert.equal(record.schema, 3);
+  });
+});
+
+// ── the override verb (BUGFREE-1 / AD-047, D3/D7): the loud, recorded waiver — standard teeth
+// (field validation via the schema, fail-closed ledger read, an in-flight loop). ─────────────────
+
+describe('review-ledger-write — the override verb', () => {
+  const overDeps = () => ({ ...deps(), plansInFlight: () => ['L.md'] });
+
+  it('records an oracle-change override (schema 3, kind override) and reads back clean', () => {
+    const { record } = recordOverride(
+      { cwd: dir, env: {}, loop: 'L', round: 1, scope: 'oracle-change', files: ['x.test.mjs', 'y.spec.js'], reason: 'expectation deliberately updated', timestamp: 't' },
+      overDeps(),
+    );
+    assert.equal(record.schema, 3);
+    assert.equal(record.kind, 'override');
+    assert.equal(record.fingerprint, FP, 'the fingerprint is recorded for audit');
+    const { records, malformed } = readLedger(ledgerPath);
+    assert.equal(malformed, 0);
+    assert.equal(records.length, 1);
+    assert.deepEqual(records[0].files, ['x.test.mjs', 'y.spec.js']);
+  });
+
+  it('records a red-proof override carrying the REQUIRED testId', () => {
+    const { record } = recordOverride(
+      { cwd: dir, env: {}, loop: 'L', round: 1, scope: 'red-proof', testId: 'x.test.mjs#p', reason: 'red genuinely unestablishable', timestamp: 't' },
+      overDeps(),
+    );
+    assert.equal(record.scope, 'red-proof');
+    assert.equal(record.testId, 'x.test.mjs#p');
+  });
+
+  it('refuses when the named loop is not the in-flight plan (an override is minted only inside its live loop)', () => {
+    assert.throws(
+      () => recordOverride({ cwd: dir, env: {}, loop: 'ghost', round: 1, scope: 'oracle-change', files: ['x.test.mjs'], reason: 'r' }, overDeps()),
+      (e) => e.code === LEDGER_WRITE_STOP && /in-flight/.test(e.message),
+    );
+    assert.equal(readLedger(ledgerPath).records.length, 0, 'nothing recorded');
+  });
+
+  // codex R5 + agy R5 (BUGFREE-1 live loop, found independently by both backends): includes() let a
+  // waiver be minted while MULTIPLE plans were in flight — the ambiguity the rest of the family
+  // refuses everywhere (the single-plan rule). Exactly one in-flight plan, and it must be the loop.
+  it('the in-flight tooth requires exactly ONE in-flight plan', () => {
+    assert.throws(
+      () => recordOverride(
+        { cwd: dir, env: {}, loop: 'L', round: 1, scope: 'oracle-change', files: ['x.test.mjs'], reason: 'r' },
+        { ...deps(), plansInFlight: () => ['L.md', 'M.md'] },
+      ),
+      (e) => e.code === LEDGER_WRITE_STOP && /SINGLE in-flight/.test(e.message),
+    );
+    assert.equal(readLedger(ledgerPath).records.length, 0, 'nothing recorded');
+  });
+
+  it('refuses malformed payloads by name (the schema teeth ride the validate path)', () => {
+    const cases = [
+      [{ scope: 'whatever', files: ['x'], reason: 'r' }, /scope/],
+      [{ scope: 'oracle-change', files: [], reason: 'r' }, /files/],
+      [{ scope: 'oracle-change', files: ['x.test.mjs'], reason: '' }, /reason/],
+      [{ scope: 'red-proof', reason: 'r' }, /testId/],
+      [{ scope: 'red-proof', testId: 'no-separator', reason: 'r' }, /testId/],
+    ];
+    for (const [payload, re] of cases) {
+      assert.throws(
+        () => recordOverride({ cwd: dir, env: {}, loop: 'L', round: 1, ...payload }, overDeps()),
+        (e) => e.code === LEDGER_WRITE_STOP && re.test(e.message),
+        `${JSON.stringify(payload)} must be refused by ${re}`,
+      );
+    }
+  });
+
+  it('refuses while the existing ledger has malformed lines (fail closed)', () => {
+    writeFileSync(ledgerPath, '{not json\n');
+    assert.throws(
+      () => recordOverride({ cwd: dir, env: {}, loop: 'L', round: 1, scope: 'oracle-change', files: ['x.test.mjs'], reason: 'r' }, overDeps()),
+      (e) => e.code === LEDGER_WRITE_STOP && /malformed/.test(e.message),
+    );
+  });
+
+  it('refuses to append onto a CORRUPT round sequence (the standard integrity tooth)', () => {
+    const corrupt = { schema: 1, loop: 'L', activity: 'plan-execution', kind: 'round', round: 2, fingerprint: FP, origins: originsOf([]), backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'SHIP' }], findings: [], timestamp: 't' };
+    writeFileSync(ledgerPath, `${JSON.stringify(corrupt)}\n`);
+    assert.throws(
+      () => recordOverride({ cwd: dir, env: {}, loop: 'L', round: 1, scope: 'oracle-change', files: ['x.test.mjs'], reason: 'r' }, overDeps()),
+      (e) => e.code === LEDGER_WRITE_STOP && /corrupt/.test(e.message),
+    );
+  });
+
+  it('CLI: the override subcommand records via --json; a missing payload is a usage error', () => {
+    // main() has no deps injection — drive it through env overrides + a real fixture git repo.
+    const root = mkdtempSync(join(tmpdir(), 'ledger-override-cli-'));
+    const g = (...a) => spawnSync('git', a, { cwd: root, encoding: 'utf8' });
+    g('init', '-q');
+    g('config', 'user.email', 'p@e');
+    g('config', 'user.name', 'p');
+    mkdirSync(join(root, 'docs', 'plans'), { recursive: true });
+    writeFileSync(join(root, 'docs', 'plans', 'demo-plan.md'), '# demo\n');
+    writeFileSync(join(root, 'base.txt'), 'base\n');
+    g('add', '-A');
+    g('commit', '-qm', 'base');
+    const env = { AW_REVIEW_LEDGER: join(root, '.git', 'rl.jsonl') };
+    // Seed a round with a surviving major so the classify dispatch can run through the same CLI.
+    const seededRound = { schema: 1, loop: 'demo-plan', activity: 'plan-execution', kind: 'round', round: 1, fingerprint: FP, origins: originsOf([{ origin: 'first-draft' }]), backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 1, minors: 0, verdict: 'revise' }], findings: [{ findingKey: 'k', severity: 'major', origin: 'first-draft', backend: 'codex' }], timestamp: 't' };
+    writeFileSync(join(root, '.git', 'rl.jsonl'), `${JSON.stringify(seededRound)}\n`);
+    const classified = main(['classify', '--json', JSON.stringify({ loop: 'demo-plan', round: 1, classifications: [{ findingKey: 'k', class: 'fixable-bug', accepted: false, testId: WELL_FORMED_TESTID, note: '' }] }), '--cwd', root], { env });
+    assert.equal(classified.code, 0, classified.stderr);
+    assert.match(classified.stdout, /triage/);
+    const ok = main(['override', '--json', JSON.stringify({ loop: 'demo-plan', round: 1, scope: 'oracle-change', files: ['x.test.mjs'], reason: 'deliberate' }), '--cwd', root], { env });
+    assert.equal(ok.code, 0, ok.stderr);
+    assert.match(ok.stdout, /override/);
+    const bad = main(['override'], { env });
+    assert.equal(bad.code, 2);
+    rmSync(root, { recursive: true, force: true });
   });
 });
 
