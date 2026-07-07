@@ -97,4 +97,18 @@ describe('planning.md — right-altitude/code-grounded canon', () => {
     assert.match(section9, /diff-review/i); // M5-b — thin plan + diff-review for all-mechanics/prose-only
     assert.match(section9, /self-consistency/i); // M4 — self-consistency read before every re-review
   });
+
+  // AD-046: §9 names the review-round LEDGER as the plan-execution computed instrument for the
+  // crossover-stop (point, don't restate — the exit contract's single home stays the tool header),
+  // and states the same tally + classification discipline for plan-authoring neutrally.
+  it('carries the §9 ledger naming (the plan-execution computed instrument) + the classification vocabulary', () => {
+    const section9 = sectionOf(planning, /^## 9\..*$/im);
+    assert.match(section9, /review-ledger/); // the computed instrument, named
+    // The SCOPE semantics, not just token co-presence: the ledger is pinned as plan-execution-scoped,
+    // so a future edit widening it to plan-authoring cannot stay green.
+    assert.match(section9, /ledger itself is plan-execution-scoped/, '§9 pins the plan-execution-only scope');
+    for (const token of ['fixable-bug', 'inherent-layer-residual', 'escalate']) {
+      assert.ok(section9.includes(token), `§9 carries the classification token "${token}"`);
+    }
+  });
 });

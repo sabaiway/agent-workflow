@@ -198,7 +198,10 @@ const backendSetLabel = (backends) =>
 // REQUIRED per-round structured emission {round N · finding-origin tally · per-backend verdict}. Only a
 // review slot can resolve reviewed|council (execute floors at solo|delegated), so gate on the recipe.
 const REVIEW_RECIPES = new Set(['reviewed', 'council']);
-const reviewLoopAdvice = (slots) =>
+// activity-aware (AD-046): the triage classification vocabulary rides EVERY review-backed activity;
+// the LEDGER pointer renders ONLY for plan-execution — the ledger is plan-execution-scoped (AD-045),
+// and pointing plan-authoring at it would send rounds of the wrong activity into the code loop's gate.
+const reviewLoopAdvice = (slots, activity) =>
   slots.some((s) => REVIEW_RECIPES.has(s.recipe))
     ? [
         'Review-loop economics (planning.md §9 · orchestration.md §4) — the review this recipe runs:',
@@ -206,6 +209,12 @@ const reviewLoopAdvice = (slots) =>
         '  • Backend divergence (one backend grounded-ships while another keeps revising mechanics) IS the crossover stop.',
         '  • Route an all-mechanics/CI or prose-only artifact to a thin plan + diff-review; run a self-consistency read before every re-review.',
         '  • Each round MUST emit {round N · finding-origin tally (first-draft / fold-induced / mechanics) · per-backend verdict} so the crossover is a computed signal.',
+        '  • At the cap, classify every surviving blocking finding: fixable-bug (fold ONCE as a red→green test, re-review) / inherent-layer-residual (document + raise to an acceptance criterion) / escalate (the maintainer decides); a minor never forces triage.',
+        ...(activity === 'plan-execution'
+          ? [
+              '  • The computed instrument for THIS loop: record each round + triage via review-ledger (record / classify); read the stop with review-ledger --status (its render replaces the hand-composed tally); gate the commit with review-ledger --check.',
+            ]
+          : []),
       ]
     : [];
 
@@ -302,7 +311,7 @@ const formatHuman = ({ activity, section, slots, warnings, plans }) => {
   }
   const grounding = groundingPreStepAdvice(activity, slots, plans);
   if (grounding.length) lines.push('', ...grounding);
-  const advice = reviewLoopAdvice(slots);
+  const advice = reviewLoopAdvice(slots, activity);
   if (advice.length) lines.push('', ...advice);
   lines.push('', ...costLanesAdvice());
   if (warnings.length) {
@@ -320,7 +329,7 @@ const buildJson = ({ activity, section, slots, configSource, warnings, plans }) 
     // `contracts` is the ADDITIVE per-dispatch driving-contract field (empty for solo).
     slots.map((s) => [s.slot, { recipe: s.recipe, source: s.source, degradedFrom: s.degradedFrom, reason: s.reason, backends: s.backends, contracts: s.contracts }]),
   ),
-  reviewLoop: reviewLoopAdvice(slots),
+  reviewLoop: reviewLoopAdvice(slots, activity),
   // ADDITIVE (AD-038): the populated grounding pre-step, structured (empty when agy is not dispatched).
   groundingPreStep: groundingPreStepAdvice(activity, slots, plans),
   // ADDITIVE (cost-tiered execution): the unconditional cost-lane advisory, structured.

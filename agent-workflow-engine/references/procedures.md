@@ -69,7 +69,10 @@ Produce a self-contained, cold-readable plan, reviewed to the configured depth b
    exhausting the strictest backend. Run a **self-consistency** read before every re-review and route an
    all-mechanics/CI or prose-only artifact to a **thin plan + diff-review** ([`planning.md`](planning.md)
    §9). Each round MUST emit **{round N · finding-origin tally (first-draft / fold-induced / mechanics) ·
-   per-backend verdict}** so the crossover is a computed signal, not a remembered rule.
+   per-backend verdict}** so the crossover is a computed signal, not a remembered rule. At the cap,
+   classify every surviving blocking finding — **fixable-bug** (fold ONCE as a red→green test, re-review)
+   / **inherent-layer-residual** (document + raise to an acceptance criterion) / **escalate** (the
+   maintainer decides); a minor never forces triage.
 6. **Present for approval** — surface the finished plan to the user; do not begin execution here. A
    harness "approved — start coding" prompt (**ExitPlanMode**) authorizes the PLAN only
    ([`planning.md`](planning.md) §6); continuing into `plan-execution` is a deliberate transition taken
@@ -106,7 +109,11 @@ Execute an approved plan Step by Step; each Step is one logical commit.
    runs every named backend **every round** (recipe fidelity, [`orchestration.md`](orchestration.md) §4);
    loop to **0 blockers + 0 majors** from every backend before the gate. Each round MUST emit
    **{round N · finding-origin tally · per-backend verdict}**; when backends diverge, that is the
-   crossover — resolve at altitude, not by exhausting the strictest backend.
+   crossover — resolve at altitude, not by exhausting the strictest backend. Classify survivors at the
+   cap the same way (**fixable-bug / inherent-layer-residual / escalate**). This loop's computed
+   instrument is the **review-ledger**: record each round + triage, read the stop from its `--status`
+   render (it replaces the hand-composed tally), and wire `review-ledger --check` as the gate — the
+   exit contract lives in the tool's own header, never restated here.
 6. **Gates** — run the project's verification gate (tests + checks) to green before committing.
 7. **Commit boundary** — the orchestrator makes the single commit for the Step; a backend never
    commits. The project's commit-approval policy (e.g. ask first) lives in the project's own rules.

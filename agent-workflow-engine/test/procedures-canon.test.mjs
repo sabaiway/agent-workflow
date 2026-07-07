@@ -107,6 +107,40 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     }
   });
 
+  // The activity-aware LEDGER pointer (AD-046): the review-round ledger is plan-EXECUTION-scoped
+  // (AD-045), so the canon points at it from the plan-execution review step ONLY — the plan-authoring
+  // step keeps the tally + the triage classification vocabulary with NO tool pointer. Pinned in BOTH
+  // directions so neither a silent deletion nor a scope-creeping copy into plan-authoring survives.
+  // Extract numbered step N of a section (the "N. **…**" line up to the next "M. " line) — the
+  // ledger pointer must live in the REVIEW step itself, not merely somewhere in the section.
+  const stepOf = (section, n) => {
+    const lines = section.split('\n');
+    const start = lines.findIndex((l) => new RegExp(`^${n}\\. `).test(l));
+    assert.notEqual(start, -1, `numbered step ${n} exists`);
+    let end = lines.length;
+    for (let i = start + 1; i < lines.length; i += 1) {
+      if (/^\d+\. /.test(lines[i])) { end = i; break; }
+    }
+    return lines.slice(start, end).join('\n');
+  };
+
+  it('the plan-execution review STEP (5) names the review-ledger (incl. --check); plan-authoring never does', () => {
+    const execStep5 = stepOf(sectionOf(procedures, 'plan-execution'), 5);
+    assert.match(execStep5, /review-ledger/, 'plan-execution step 5 names the ledger');
+    assert.match(execStep5, /--check/, 'plan-execution step 5 names the ledger gate');
+    const auth = sectionOf(procedures, 'plan-authoring');
+    assert.ok(!auth.includes('review-ledger'), 'plan-authoring must not point at the plan-execution ledger');
+  });
+
+  it('BOTH review steps (5) carry the triage classification vocabulary', () => {
+    for (const activity of ['plan-authoring', 'plan-execution']) {
+      const step5 = stepOf(sectionOf(procedures, activity), 5);
+      for (const token of ['fixable-bug', 'inherent-layer-residual', 'escalate']) {
+        assert.ok(step5.includes(token), `${activity} step 5 carries the classification token "${token}"`);
+      }
+    }
+  });
+
   // Cost lanes (cost-tiered execution): the kit advisor renders an unconditional cost-lane block
   // that PARAPHRASES orchestration.md §5 — pin the same distinctive tokens in the CANON here
   // (the kit side pins them in the advisor output, procedures.test.mjs), so the paraphrase and

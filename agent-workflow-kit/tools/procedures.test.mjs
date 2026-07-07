@@ -375,6 +375,51 @@ describe('procedures CLI — review-loop economics block (§2.2, M1/M6): prints 
   });
 });
 
+describe('procedures CLI — activity-aware ledger pointer (AD-046): plan-execution names the ledger, plan-authoring never does', () => {
+  it('plan-execution (council) names review-ledger with record / --status / --check', () => {
+    // The structured reviewLoop is the assertion target (the verbatim canon section also names the
+    // ledger, so a bare stdout match could stay green with the advice bullet deleted).
+    const j = JSON.parse(run(['plan-execution', '--override', 'review=council', '--json'], { codex: READY, agy: READY }).stdout);
+    const ledgerLine = j.reviewLoop.find((l) => l.includes('review-ledger'));
+    assert.ok(ledgerLine, 'plan-execution reviewLoop carries the ledger line');
+    for (const token of ['record', '--status', '--check']) {
+      assert.ok(ledgerLine.includes(token), `the ledger line carries "${token}"`);
+    }
+  });
+
+  it('plan-authoring (council) does NOT name review-ledger (the ledger is plan-execution-scoped)', () => {
+    const r = run(['plan-authoring', '--override', 'review=council'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!r.stdout.includes('review-ledger'), 'plan-authoring must not point at the plan-execution ledger');
+  });
+
+  it('BOTH activities carry the triage classification vocabulary (fixable-bug / inherent-layer-residual / escalate)', () => {
+    // Assert on the structured reviewLoop, NOT the human stdout — the verbatim canon section also
+    // carries these tokens, so a stdout match could stay green with the advice bullet deleted.
+    for (const activity of ['plan-authoring', 'plan-execution']) {
+      const j = JSON.parse(run([activity, '--override', 'review=council', '--json'], { codex: READY, agy: READY }).stdout);
+      for (const token of ['fixable-bug', 'inherent-layer-residual', 'escalate']) {
+        assert.ok(j.reviewLoop.some((l) => l.includes(token)), `${activity} reviewLoop carries the classification token "${token}"`);
+      }
+    }
+  });
+
+  it('solo omits the ledger pointer and the classification bullet with the whole block (non-vacuous)', () => {
+    // The canon SECTION (rendered verbatim above the advice) legitimately names the ledger for
+    // plan-execution — the solo invariant lives in the structured ADVICE block, which must be empty.
+    const r = JSON.parse(run(['plan-execution', '--override', 'review=solo', '--json'], { codex: READY, agy: READY }).stdout);
+    assert.deepEqual(r.reviewLoop, [], 'solo → empty reviewLoop (no ledger pointer, no classification bullet)');
+  });
+
+  it('--json reviewLoop mirrors the activity split (ledger line present for plan-execution, absent for plan-authoring)', () => {
+    const exec = JSON.parse(run(['plan-execution', '--override', 'review=council', '--json'], { codex: READY, agy: READY }).stdout);
+    assert.ok(exec.reviewLoop.some((l) => /review-ledger/.test(l)), 'plan-execution reviewLoop carries the ledger line');
+    const auth = JSON.parse(run(['plan-authoring', '--override', 'review=council', '--json'], { codex: READY, agy: READY }).stdout);
+    assert.ok(!auth.reviewLoop.some((l) => /review-ledger/.test(l)), 'plan-authoring reviewLoop carries no ledger line');
+    assert.ok(auth.reviewLoop.some((l) => /fixable-bug/.test(l)), 'plan-authoring reviewLoop keeps the classification line');
+  });
+});
+
 describe('procedures CLI — cost-lane advisory block (cost-tiered execution): unconditional, canon-token-guarded', () => {
   const SENTINEL = /Cost lanes \(orchestration\.md §5\)/;
   // The distinctive tokens shared with the canon (orchestration.md §5) — pinned on BOTH sides so
