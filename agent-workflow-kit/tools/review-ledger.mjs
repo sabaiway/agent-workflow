@@ -122,12 +122,18 @@ const isNonNegInt = (v) => Number.isInteger(v) && v >= 0;
 // testId FORMAT (Decision 3): "<repo-relative test file>#<test-name-pattern>" — a "#" separator with
 // BOTH halves non-empty. NO file-suffix rule: a suffix check would itself be a special case and would
 // block a consumer's own naming (e.g. `.spec.js`; agy R1). The reader validates FORMAT only (it stays
-// hermetic); the fold-completeness gate validates RESOLVABILITY via a bound-test probe run.
+// hermetic); the fold-completeness gate validates RESOLVABILITY via a bound-test probe run. Exported
+// (with the splitter) as the single home of the format — the fold-completeness pair validates and
+// splits testIds through THESE, so the format can never fork (BUGFREE-1 / AD-047).
 const TESTID_SEPARATOR = '#';
-const isWellFormedTestId = (v) => {
+export const isWellFormedTestId = (v) => {
   if (typeof v !== 'string') return false;
   const at = v.indexOf(TESTID_SEPARATOR);
   return at > 0 && at < v.length - 1; // separator present, both halves non-empty
+};
+export const splitTestId = (v) => {
+  const at = v.indexOf(TESTID_SEPARATOR);
+  return { file: v.slice(0, at), pattern: v.slice(at + 1) };
 };
 
 // validateRound(obj) → { ok, reason }. Structural checks + the two internal-consistency invariants:
