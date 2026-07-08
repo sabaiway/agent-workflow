@@ -189,6 +189,13 @@ const CATALOG = [
     kind: WRITER,
     oneLine: 'Verify the review loop’s folded fixes are pinned by HONEST tests — every changed executable line executed, and each bound test carries an observed-red receipt (--red, minted BEFORE the fix), N/N-green probes, and content custody (waivable per-testId only by a recorded red-proof override), over a test surface whose tampered files carry recorded oracle-change overrides; SEGMENT-scoped since v3 (a committed phase’s custody obligations close with its commit); --check turns the result into a gate exit code.',
   },
+  {
+    key: 'doc-parity',
+    invocation: invocationOf('doc-parity'),
+    group: 'Orchestrate',
+    kind: READ_ONLY,
+    oneLine: 'Check that the documented contract values (review caps, schema versions, ledger vocabulary) still match the live code constants they describe — a read-only lint that fails closed on drift; --check turns it into a gate exit code.',
+  },
 ];
 
 // Deep-freeze: freeze the array AND every entry, so the catalog is genuinely immutable at runtime

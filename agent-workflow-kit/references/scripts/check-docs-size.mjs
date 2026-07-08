@@ -15,6 +15,8 @@
 //
 // CLI overrides:
 //   --today=YYYY-MM-DD (default today UTC) — useful for tests / reproducible runs
+//   --root=<dir>       run against another project root (default this deployment) — the ADR-rotation
+//                      hook passes it so a rotation regenerates the right project's index
 //   --quiet            print only failures (and final summary)
 
 import { readFile, writeFile, readdir, stat } from 'node:fs/promises';
@@ -27,6 +29,12 @@ const __dirname = dirname(__filename);
 const ROOT = resolve(__dirname, '..');
 const DOCS_DIR = resolve(ROOT, 'docs/ai');
 const INDEX_PATH = resolve(DOCS_DIR, 'index.md');
+
+// Root-parameterized (BUGFREE-3 / AD-049, item (h)): the module ROOT constants are the CLI DEFAULT
+// (this deployment's own root); `--root=<dir>` and the exported `regenerateIndex(root, today)`
+// override them so the ADR-rotation hook (archive-decisions.mjs) and hermetic tests can regenerate
+// an arbitrary root's index without ever touching the real repo tree.
+const pathsFor = (root) => ({ root, docsDir: resolve(root, 'docs/ai'), indexPath: resolve(root, 'docs/ai/index.md') });
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -56,18 +64,18 @@ const walkForName = async (dir, name, acc = [], depth = 0) => {
   return acc;
 };
 
-export const discoverMeta = async () => {
-  let projectName = basename(ROOT);
+export const discoverMeta = async (root = ROOT) => {
+  let projectName = basename(root);
   try {
-    const pkg = JSON.parse(await readFile(resolve(ROOT, 'package.json'), 'utf8'));
+    const pkg = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
     if (pkg.name) projectName = pkg.name;
   } catch {
     /* no package.json — keep dir basename */
   }
-  const agentsFiles = await walkForName(ROOT, 'AGENTS.md');
-  const claudeFiles = await walkForName(ROOT, 'CLAUDE.md');
-  const rootAgents = resolve(ROOT, 'AGENTS.md');
-  const rootClaude = resolve(ROOT, 'CLAUDE.md');
+  const agentsFiles = await walkForName(root, 'AGENTS.md');
+  const claudeFiles = await walkForName(root, 'CLAUDE.md');
+  const rootAgents = resolve(root, 'AGENTS.md');
+  const rootClaude = resolve(root, 'CLAUDE.md');
   // A subdir typically holds AGENTS.md plus a CLAUDE.md symlink to it — list each
   // dir once (prefer AGENTS.md, drop its sibling CLAUDE.md alias).
   const agentsDirs = new Set(agentsFiles.map((file) => dirname(resolve(file))));
@@ -78,12 +86,12 @@ export const discoverMeta = async () => {
     ),
   ];
   const hierarchicalLinks = nestedFiles
-    .map((file) => relative(ROOT, file))
+    .map((file) => relative(root, file))
     .sort()
     .map((rel) => `[\`${rel}\`](../../${rel})`);
   let onDemandLinks = [];
   try {
-    const skillDirs = await readdir(resolve(ROOT, '.agents/skills'), { withFileTypes: true });
+    const skillDirs = await readdir(resolve(root, '.agents/skills'), { withFileTypes: true });
     onDemandLinks = skillDirs
       .filter((dirent) => dirent.isDirectory() && /-(patterns|commands)$/.test(dirent.name))
       .map((dirent) => dirent.name)
@@ -97,16 +105,17 @@ export const discoverMeta = async () => {
 
 const parseArgs = (argv) => {
   const flags = { report: false, writeIndex: false, checkIndex: false, quiet: false };
-  const opts = { today: null };
+  const opts = { today: null, root: null };
   for (const arg of argv.slice(2)) {
     if (arg === '--report') flags.report = true;
     else if (arg === '--write-index') flags.writeIndex = true;
     else if (arg === '--check-index') flags.checkIndex = true;
     else if (arg === '--quiet') flags.quiet = true;
     else if (arg.startsWith('--today=')) opts.today = arg.slice('--today='.length);
+    else if (arg.startsWith('--root=')) opts.root = arg.slice('--root='.length);
     else if (arg === '--help' || arg === '-h') {
       console.log(
-        'Usage: check-docs-size.mjs [--report|--write-index|--check-index] [--today=YYYY-MM-DD] [--quiet]',
+        'Usage: check-docs-size.mjs [--report|--write-index|--check-index] [--today=YYYY-MM-DD] [--root=<dir>] [--quiet]',
       );
       process.exit(0);
     } else {
@@ -161,11 +170,11 @@ export const computeToday = (todayStr) =>
     ? new Date(`${todayStr}T00:00:00Z`)
     : new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00Z');
 
-export const inspectFile = async (filePath, today) => {
+export const inspectFile = async (filePath, today, root = ROOT) => {
   const text = await readFile(filePath, 'utf8');
   const lineCount = text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
   const fm = parseFrontmatter(text);
-  const rel = relative(ROOT, filePath);
+  const rel = relative(root, filePath);
 
   if (!fm) {
     return {
@@ -301,24 +310,41 @@ export const checkIndexFreshness = (rows, onDiskText, meta = {}) => {
   return { fresh: expected === onDiskText, expected };
 };
 
-const writeIndex = async (rows, today, meta) => {
+const writeIndex = async (rows, today, meta, indexPath = INDEX_PATH) => {
   const body = buildIndex(rows, today.toISOString().slice(0, 10), meta);
-  await writeFile(INDEX_PATH, body, 'utf8');
+  await writeFile(indexPath, body, 'utf8');
+};
+
+// regenerateIndex(root, todayStr) — the ONE reused generator, root-parameterized (item (h)). It runs
+// the SAME walk → inspect → discoverMeta → writeIndex pipeline as `--write-index`, against `root`
+// (default this deployment). The ADR-rotation hook reaches it via the CLI (`--write-index --root=…`);
+// hermetic tests call it directly. `todayStr` is 'YYYY-MM-DD' (null → today). Returns the written
+// index path + row count. No second index implementation exists.
+export const regenerateIndex = async (root, todayStr = null) => {
+  const { docsDir, indexPath } = pathsFor(root);
+  const today = computeToday(todayStr);
+  const files = (await walkMarkdownFiles(docsDir)).sort();
+  const inspected = await Promise.all(files.map((f) => inspectFile(f, today, root)));
+  const rows = inspected.map(formatRow);
+  const meta = await discoverMeta(root);
+  await writeIndex(rows, today, meta, indexPath);
+  return { indexPath, files: rows.length };
 };
 
 const main = async () => {
   const { flags, opts } = parseArgs(process.argv);
+  const { root, docsDir, indexPath } = pathsFor(opts.root ? resolve(opts.root) : ROOT);
   const today = computeToday(opts.today);
-  const files = (await walkMarkdownFiles(DOCS_DIR)).sort();
-  const inspected = await Promise.all(files.map((f) => inspectFile(f, today)));
+  const files = (await walkMarkdownFiles(docsDir)).sort();
+  const inspected = await Promise.all(files.map((f) => inspectFile(f, today, root)));
   const rows = inspected.map(formatRow);
 
-  const meta = flags.writeIndex || flags.checkIndex ? await discoverMeta() : null;
+  const meta = flags.writeIndex || flags.checkIndex ? await discoverMeta(root) : null;
 
   if (flags.writeIndex) {
-    await writeIndex(rows, today, meta);
-    console.log(`Wrote ${relative(ROOT, INDEX_PATH)}`);
-    const after = await stat(INDEX_PATH);
+    await writeIndex(rows, today, meta, indexPath);
+    console.log(`Wrote ${relative(root, indexPath)}`);
+    const after = await stat(indexPath);
     if (after.size === 0) {
       console.error('index.md was written empty');
       process.exit(2);
@@ -326,16 +352,16 @@ const main = async () => {
   }
 
   if (flags.checkIndex) {
-    const onDisk = existsSync(INDEX_PATH) ? await readFile(INDEX_PATH, 'utf8') : null;
+    const onDisk = existsSync(indexPath) ? await readFile(indexPath, 'utf8') : null;
     const { fresh } = checkIndexFreshness(rows, onDisk, meta);
     if (!fresh) {
       console.error(
-        `[check-docs-size] FAIL: ${relative(ROOT, INDEX_PATH)} is stale (out of sync with source frontmatter). Regenerate the index (--write-index) and commit the regenerated file.`,
+        `[check-docs-size] FAIL: ${relative(root, indexPath)} is stale (out of sync with source frontmatter). Regenerate the index (--write-index) and commit the regenerated file.`,
       );
       process.exit(1);
     }
     console.log(
-      `[check-docs-size] OK — ${relative(ROOT, INDEX_PATH)} is in sync with source frontmatter.`,
+      `[check-docs-size] OK — ${relative(root, indexPath)} is in sync with source frontmatter.`,
     );
     return;
   }

@@ -14,6 +14,7 @@ import {
   planRotation,
   updateRangeTokens,
   runCli,
+  defaultRegenerateIndex,
 } from './archive-decisions.mjs';
 
 // Hermetic by design: this test ships as deploy payload and runs inside CONSUMER repos via the
@@ -67,10 +68,14 @@ const seedProject = (root, { hotIds, warmIds, coldIds, hotCapDelta = 100, warmCa
   };
 };
 
+// The existing rotation tests are about ROTATION, not the index-regen hook (item (h)) — inject a
+// no-op regenerator so they stay hermetic + fast (no real check-docs-size subprocess). The hook's
+// own firing/degrade behavior is pinned by the dedicated (h) describe below; the real end-to-end
+// spawn is isolated to one integration test there.
 const run = (argv, root) => {
   const out = [];
   const err = [];
-  const code = runCli(argv, { root, log: (l) => out.push(l), logError: (l) => err.push(l) });
+  const code = runCli(argv, { root, log: (l) => out.push(l), logError: (l) => err.push(l), regenerateIndex: () => ({ ok: true, detail: '' }) });
   return { code, out, err, text: out.join('\n'), errText: err.join('\n') };
 };
 
@@ -361,5 +366,117 @@ describe('created tiers (a consumer with no history files yet)', () => {
     const { code, errText } = run(['--frobnicate'], makeRoot());
     assert.equal(code, 2);
     assert.match(errText, /Unknown argument/);
+  });
+});
+
+// ── (h) — a rotation regenerates docs/ai/index.md (BUGFREE-3 / AD-049) ─────────────────
+describe('(h) index regeneration after rotation', () => {
+  const spyRun = (argv, root, regen) => {
+    const out = [];
+    const err = [];
+    const code = runCli(argv, { root, log: (l) => out.push(l), logError: (l) => err.push(l), regenerateIndex: regen });
+    return { code, out, err, text: out.join('\n'), errText: err.join('\n') };
+  };
+
+  it('calls the regenerator once with (root, today) AFTER a successful rotation write', () => {
+    const root = makeRoot();
+    seedProject(root, { hotIds: ['005', '006', '007', '008'], warmIds: ['003', '004'], coldIds: ['001', '002'], hotCapDelta: -1 });
+    const calls = [];
+    const { code } = spyRun(['--today=2026-01-02'], root, (r, t) => { calls.push([r, t]); return { ok: true, detail: '' }; });
+    assert.equal(code, 0);
+    assert.deepEqual(calls, [[root, '2026-01-02']], 'exactly one regen, with the rotation root + today');
+  });
+
+  it('does NOT regenerate on a no-op, --check, --dry-run, or a pre-write refusal', () => {
+    let called = 0;
+    const spy = () => { called += 1; return { ok: true, detail: '' }; };
+    // no-op (under cap)
+    const r1 = makeRoot(); seedProject(r1, { hotIds: ['005'], warmIds: ['003'], coldIds: ['001'] });
+    spyRun([], r1, spy);
+    // --check
+    spyRun(['--check'], r1, spy);
+    // --dry-run over a real rotation plan
+    const r2 = makeRoot(); seedProject(r2, { hotIds: ['005', '006'], warmIds: [], coldIds: [], hotCapDelta: -1 });
+    spyRun(['--dry-run'], r2, spy);
+    // a pre-write refusal (COLD exhausted)
+    const r3 = makeRoot(); seedProject(r3, { hotIds: ['005', '006', '007'], warmIds: ['003', '004'], coldIds: ['001', '002'], hotCapDelta: -1, warmCapDelta: 3, coldCapDelta: 3 });
+    spyRun(['--today=2026-01-02'], r3, spy);
+    assert.equal(called, 0, 'the hook fires only AFTER a real write — never on no-op/check/dry-run/refusal');
+  });
+
+  it('a NORMALIZE-ONLY rewrite (stampLastUpdated bumps lastUpdated, zero moves) still triggers regeneration', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'docs', 'ai', 'history'), { recursive: true });
+    const blocks = [entryBlock('001'), entryBlock('002'), entryBlock('003')];
+    const body = blocks.join('\n\n---\n\n'); // the template separator shape: raw > cap, normalized fits
+    const probe = `${fm(999)}\n# ADRs\n\n${body}\n`;
+    writeFileSync(join(root, HOT_REL), `${fm(lineCountOf(probe) - 2)}\n# ADRs\n\n${body}\n`);
+    let called = 0;
+    const { code, text } = spyRun(['--today=2026-01-02'], root, () => { called += 1; return { ok: true, detail: '' }; });
+    assert.equal(code, 0, text);
+    assert.match(text, /normalize-only rewrite/);
+    assert.equal(called, 1, 'a normalize-only rewrite still leaves the index stale → regenerate');
+  });
+
+  it('degrades LOUDLY to an instruct when regeneration fails — the rotation still succeeds (exit 0)', () => {
+    const root = makeRoot();
+    seedProject(root, { hotIds: ['005', '006'], warmIds: [], coldIds: [], hotCapDelta: -1 });
+    const { code, errText } = spyRun(['--today=2026-01-02'], root, () => ({ ok: false, detail: 'the index generator is not beside this script — run `node scripts/check-docs-size.mjs --write-index` to refresh docs/ai/index.md' }));
+    assert.equal(code, 0, 'the rotation itself succeeded — regen is best-effort');
+    assert.match(errText, /NOT regenerated/);
+    assert.match(errText, /check-docs-size\.mjs --write-index/, 'the loud instruct names the recovery command');
+  });
+
+  it('the REAL default regenerator writes docs/ai/index.md end-to-end (no injection)', () => {
+    const root = makeRoot();
+    seedProject(root, { hotIds: ['005', '006', '007', '008'], warmIds: ['003', '004'], coldIds: ['001', '002'], hotCapDelta: -1 });
+    const out = [];
+    const code = runCli(['--today=2026-01-02'], { root, log: (l) => out.push(l), logError: (l) => out.push(l) });
+    assert.equal(code, 0, out.join('\n'));
+    assert.ok(existsSync(join(root, 'docs', 'ai', 'index.md')), 'the index was regenerated by the sibling check-docs-size.mjs');
+    const idx = readFileSync(join(root, 'docs', 'ai', 'index.md'), 'utf8');
+    assert.match(idx, /decisions\.md/, 'the regenerated index lists the rotated ADR file');
+    assert.match(out.join('\n'), /regenerated docs\/ai\/index\.md/, 'the success log line fires');
+  });
+
+  // The index-write outcome must be ISOLATED from the docs-cap-CHECK outcome: check-docs-size
+  // --write-index exits 1 on ANY over-cap co-located doc even after writing the index correctly, so
+  // a benign over-cap sibling must NEVER read as an index-regeneration failure (cry-wolf on the very
+  // loud-degrade channel item (h) is built around). The regen spawns --write-index --report.
+  it('the REAL regenerator succeeds even when an UNRELATED co-located doc is over its cap (no cry-wolf)', () => {
+    const root = makeRoot();
+    seedProject(root, { hotIds: ['005', '006', '007', '008'], warmIds: ['003', '004'], coldIds: ['001', '002'], hotCapDelta: -1 });
+    // An unrelated doc over its OWN maxLines cap: --write-index writes the index fine, but without
+    // --report it would exit 1 on this file → a false "NOT regenerated" instruct.
+    writeFileSync(join(root, 'docs', 'ai', 'handover.md'), `---\ntype: state\nlastUpdated: 2026-01-02\nscope: session\nstaleAfter: 7d\nowner: none\nmaxLines: 3\n---\n\n# H\nl1\nl2\nl3\nl4\nl5\n`);
+    const out = [];
+    const err = [];
+    const code = runCli(['--today=2026-01-02'], { root, log: (l) => out.push(l), logError: (l) => err.push(l) });
+    assert.equal(code, 0);
+    assert.match(out.join('\n'), /regenerated docs\/ai\/index\.md/, 'a benign over-cap sibling must NOT read as a regen failure');
+    assert.ok(!err.join('\n').includes('NOT regenerated'), 'no false cry-wolf on the loud-degrade channel');
+    assert.ok(existsSync(join(root, 'docs', 'ai', 'index.md')), 'the index was actually written');
+  });
+
+  describe('defaultRegenerateIndex — the loud-degrade branches', () => {
+    it('an absent index generator sibling → a loud instruct (ok:false)', () => {
+      const r = defaultRegenerateIndex('/tmp/anyroot', '2026-01-02', { sibling: '/nonexistent/check-docs-size.mjs' });
+      assert.equal(r.ok, false);
+      assert.match(r.detail, /not beside this script/);
+      assert.match(r.detail, /check-docs-size\.mjs --write-index/);
+    });
+
+    it('a regeneration subprocess that exits nonzero → a loud instruct (ok:false)', () => {
+      const r = defaultRegenerateIndex('/tmp/anyroot', '2026-01-02', { existsSync: () => true, spawnSync: () => ({ status: 1 }) });
+      assert.equal(r.ok, false);
+      assert.match(r.detail, /index regeneration failed/);
+      assert.match(r.detail, /check-docs-size\.mjs --write-index/);
+    });
+
+    it('a successful subprocess (status 0) → ok:true with the trimmed stdout', () => {
+      const r = defaultRegenerateIndex('/tmp/anyroot', '2026-01-02', { existsSync: () => true, spawnSync: () => ({ status: 0, stdout: 'Wrote docs/ai/index.md\n' }) });
+      assert.equal(r.ok, true);
+      assert.match(r.detail, /Wrote docs\/ai\/index\.md/);
+    });
   });
 });

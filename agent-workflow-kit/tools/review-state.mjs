@@ -52,6 +52,11 @@ export const PLANS_REL = 'docs/plans';
 const ACTIVITY = 'plan-execution';
 const SLOT = 'review';
 const GIT_MAX_BUFFER = 256 * 1024 * 1024; // a full-tree diff can be large; never truncate silently
+// --await (BUGFREE-3 / AD-049, item (d)) bounds + poll cadence. The default timeout is generous —
+// a real grounded bridge review can take minutes — and every value is overridable (--timeout / the
+// injectable clock) so hermetic tests never spend wall-clock.
+export const DEFAULT_AWAIT_TIMEOUT_S = 900;
+export const AWAIT_POLL_MS = 5000;
 
 // ── git plumbing (read-only queries; injectable for tests) ─────────────────────────
 
@@ -387,11 +392,72 @@ export const main = (argv, ctx = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) {
-  const r = main(process.argv.slice(2));
+// ── --await: block until every recipe-named backend has receipted the current tree ─────
+// (BUGFREE-3 / AD-049, item (d)). It waits for ALL recipe-named backends — review-state has NO
+// durable degraded-backend source before a round is recorded (degraded is a review-LEDGER round
+// field, not a review-state input), so "non-degraded" is not knowable here; awaiting a backend the
+// operator KNOWS is degraded is the operator's call (don't --await it). The completion signal is the
+// RECEIPT (i.e. `--check` would PASS), NEVER a process event — a harness "completed" notification
+// fires early and a bridge's output late-flushes, so polling a pid/receipt-file is the durable
+// mechanization of receipts-not-pgrep. Stays read-only (it only re-reads state); the clock is
+// injectable (ctx.now / ctx.sleep / ctx.pollMs) so hermetic tests never spend wall-clock.
+
+const AWAIT_ALLOWED_ARGS = new Set(['--await', '--timeout']);
+
+const parseAwaitTimeoutS = (argv) => {
+  const i = argv.indexOf('--timeout');
+  if (i === -1) return DEFAULT_AWAIT_TIMEOUT_S;
+  const raw = argv[i + 1];
+  if (!raw || !/^\d+$/.test(raw) || Number(raw) < 1) throw fail(2, '--timeout requires a positive integer number of seconds');
+  return Number(raw);
+};
+
+export const mainAwait = async (argv, ctx = {}) => {
+  const cwd = ctx.cwd ?? process.cwd();
+  const env = ctx.env ?? process.env;
+  const detect = ctx.detect ?? detectBackends;
+  const now = ctx.now ?? (() => Date.now());
+  const sleep = ctx.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const pollMs = ctx.pollMs ?? AWAIT_POLL_MS;
+  try {
+    for (let i = 0; i < argv.length; i += 1) {
+      const a = argv[i];
+      if (a === '--timeout') { i += 1; continue; } // its value is consumed by parseAwaitTimeoutS
+      if (!AWAIT_ALLOWED_ARGS.has(a)) throw fail(2, `--await accepts only --timeout <s> (got ${a})`);
+    }
+    const timeoutS = parseAwaitTimeoutS(argv);
+    const timeoutMs = timeoutS * 1000;
+    const start = now();
+    // Poll the SAME normative decision --check computes: ready == `--check` would pass (solo / no
+    // plan / a clean tree / not-a-git-tree all resolve instantly — nothing to await). Re-read state
+    // every poll so a landed receipt (or a tree edit that re-staled one) is seen fresh. The DEADLINE
+    // is checked BEFORE readiness (codex council R2): once elapsed reaches the timeout the await is
+    // over, so a receipt that only lands AT/after the deadline never flips it to READY; and each
+    // sleep is BOUNDED to the remaining time so a full poll interval can never overshoot the timeout.
+    let lastReason = 'no poll completed before the deadline';
+    for (;;) {
+      const elapsed = now() - start;
+      if (elapsed >= timeoutMs) return { code: 1, stdout: '', stderr: `review-state --await: TIMEOUT after ${timeoutS}s — ${lastReason}` };
+      const check = decideCheck(buildState({ cwd, env, detect }));
+      lastReason = check.reason;
+      if (check.code === 0) return { code: 0, stdout: `review-state --await: READY — ${check.reason}`, stderr: '' };
+      await sleep(Math.min(pollMs, timeoutMs - elapsed));
+    }
+  } catch (err) {
+    return { code: err.exitCode ?? 1, stdout: '', stderr: `review-state: ${err.message}` };
+  }
+};
+
+const emitResult = (r) => {
   // Exact writes + a natural exit: process.exit() can truncate unflushed piped stdio (codex R2).
   if (r.stdout) process.stdout.write(r.stdout.endsWith('\n') ? r.stdout : `${r.stdout}\n`);
   if (r.stderr) process.stderr.write(r.stderr.endsWith('\n') ? r.stderr : `${r.stderr}\n`);
   process.exitCode = r.code;
+};
+
+const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isDirectRun) {
+  const argv = process.argv.slice(2);
+  if (argv.includes('--await')) mainAwait(argv).then(emitResult);
+  else emitResult(main(argv));
 }

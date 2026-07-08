@@ -22,8 +22,8 @@ This kit is the **composition root** of the `agent-workflow` family. The memory 
 when it is present and healthy, and otherwise uses its **own bundled copy** (`references/`,
 `migrations/`) — so the existing one-command install keeps working with **no new dependency on the
 memory substrate**. (The methodology slot is a separate axis: its fragment is read **live from the
-installed `agent-workflow-engine`**, which `npx @sabaiway/agent-workflow-kit@latest init` installs — a
-runtime dependency read live; see `${CLAUDE_SKILL_DIR}/references/shared/composition-handoff.md`.)
+installed `agent-workflow-engine`**, which `npx @sabaiway/agent-workflow-kit@latest init` installs;
+see `${CLAUDE_SKILL_DIR}/references/shared/composition-handoff.md`.)
 `init` also **refreshes the installed memory substrate** (best-effort — a miss is a loud DEGRADED
 success: warn + the exact recovery command + exit 0, never silent, never the engine's hard STOP;
 `--no-memory` skips it), so a returning `init` leaves **no stale core member**. The
@@ -162,6 +162,10 @@ writer — read `${CLAUDE_SKILL_DIR}/references/modes/review-ledger.md` before a
 ### Mode: fold-completeness
 
 writer — read `${CLAUDE_SKILL_DIR}/references/modes/fold-completeness.md` before acting.
+
+### Mode: doc-parity
+
+read-only — read `${CLAUDE_SKILL_DIR}/references/modes/doc-parity.md` before acting.
 
 ---
 

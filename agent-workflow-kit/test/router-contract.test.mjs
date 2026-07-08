@@ -192,14 +192,19 @@ describe('router contract — D4 pointer audits over the whole split corpus (d)'
 // ── (e) the D6 byte budgets, read sets from the parsed Requires: lines ───────
 const BUDGET = {
   router: 10240, // router alone
-  routerPlusMode: 30720, // router + any single mode file (28672 → 29696: the AD-042 documented
+  routerPlusMode: 31744, // router + any single mode file (28672 → 29696: the AD-042 documented
   // AD-039 amendment — the F11 both-blocks batching caveat is +422 B of new upgrade.md contract
   // content against 154 B of headroom; then 29696 → 30720 (30 KB): AD-043 adds the bridge-settings
   // reconcile paragraph + its step-4/8 report mentions to upgrade.md, ~628 B of new contract content
-  // that overflows the 29696 pair by 90 B — a documented KB-multiple bump, never a silent re-pin. The
-  // router itself stayed FLAT ≤ 10240 for the new mode: the stamp==head reconcile enumeration was
-  // trimmed to its step-3 pointer to make room.)
-  fullReadSet: 53248, // router + mode + its declared shared files
+  // that overflows the 29696 pair by 90 B — a documented KB-multiple bump, never a silent re-pin;
+  // then 30720 → 31744 (31 KB): AD-049 adds the doc-parity mode to the router (offset by a router
+  // trim to stay FLAT ≤ 10240) AND the carry-in `verification-profile.json` clause to upgrade.md's
+  // equal-head report checklist, which overflows the 30720 pair by 120 B — another documented
+  // KB-multiple bump. The router itself stays FLAT ≤ 10240 for the new mode.)
+  fullReadSet: 54272, // router + mode + its declared shared files. 53248 → 54272 (53 KB): AD-049 —
+  // the heaviest read set (upgrade + its 3 shared files) sat 6 B under the 52 KB budget, so the new
+  // doc-parity router line (present in EVERY mode's read set) plus the carry-in verification-profile
+  // clause on upgrade.md overflow it by 190 B — a documented KB-multiple bump, never a silent re-pin.
   daily: 16384, // the no-shared daily modes (help/backends/recipes/procedures/gates)
 };
 const DAILY = ['help', 'backends', 'recipes', 'procedures', 'gates'];
