@@ -36,19 +36,30 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { writeContainedFileAtomic } from './atomic-write.mjs';
 import { computeTreeFingerprint, plansInFlight } from './review-state.mjs';
-import { resolveLedgerPath, resolveBase, readLedger, isWellFormedTestId, splitTestId } from './review-ledger.mjs';
+import { resolveLedgerPath, resolveBase, readLedger, isWellFormedTestId, splitTestId, collectOverrides } from './review-ledger.mjs';
 import {
   RESULT_SCHEMA_VERSION,
+  REATTEST_KIND,
   resolveResultsPath,
   validateRunRecord,
   collectBoundTestIds,
   probeVerdict,
+  readResults,
+  filterSegmentResults,
+  isRedProbeRecord,
+  isReattestRecord,
 } from './fold-completeness.mjs';
 // The changed-surface computation lives in the NEUTRAL shared module (BUGFREE-2 / AD-048, D4): the
 // review-ledger writer's diff-size cap and this runner's coverage domain consume ONE computation,
 // and the writer never imports this runner (the sole-tree-toucher boundary — import-split pinned).
 // Re-exported below so the runner's tests (and any consumer) keep one entry point per concern.
 import { classifyChangedPath, parseUnifiedDiff, unquoteDiffPath, computeChangedSurface, DIFF_FLAGS, parsePositiveIntKnob } from './changed-surface.mjs';
+// The verification PROFILE (BUGFREE-3 / AD-049): the read-core generalizes the coverage SOURCE and
+// the single-test RESULT FORMAT so this runner drives the fold gate on another language/runner. An
+// absent profile reproduces today's exact behaviour (V8 + node:test TAP on stdout).
+import { loadProfile, resolveCoverage, resolveSingleTest, resolveSarifPath, FILE_BASED_FORMATS } from './verification-profile.mjs';
+import { lcovCoveredMap, uncoveredChangedFromLcov } from './lcov.mjs';
+import { parseSarif, renderSarifFindings } from './sarif.mjs';
 
 export { classifyChangedPath, parseUnifiedDiff, unquoteDiffPath, computeChangedSurface };
 
@@ -69,7 +80,7 @@ const isoNow = () => new Date().toISOString();
 // runner is itself invoked from within a test context (e.g. this kit's own fold-completeness-run
 // tests, or a consumer's), the child runs nothing and every file reads as uncovered. Unset in normal
 // (non-test) invocation, so stripping is a no-op there.
-const childTestEnv = (env, extra = {}) => {
+export const childTestEnv = (env, extra = {}) => {
   const out = { ...env, ...extra };
   delete out.NODE_TEST_CONTEXT;
   return out;
@@ -133,36 +144,91 @@ export const computeUncoveredLines = ({ perProcessRanges, sourceText, changedLin
 
 // ── Decision 3 / 10: the bound-test probe ─────────────────────────────────────────────────────────
 
-const PROBE_RESULT_RE = /^(?:ok|not ok) \d+ - (.*)$/; // a column-0 TAP result line
+const PROBE_RESULT_RE = /^(ok|not ok) \d+ - (.*)$/; // a column-0 TAP result line (verb, description)
 const PROBE_FAIL_RE = /^# fail (\d+)$/;
 const PROBE_DIRECTIVE_RE = /#\s*(?:skip|todo)\b/i; // a TAP SKIP/TODO directive — the test did NOT run
 
-// parseProbeOutput({ stdout, code, fileArg }) → { resolvable, executed, baselineGreen }. A node:test
-// run with a pattern that matches NOTHING emits only a file-wrapper result whose description is the
-// file path itself (`ok N - <file>`) on newer node — but node 18/20 ALSO emit every pattern-FILTERED
-// test as `ok N - <name> # SKIP test name does not match pattern`, so a result line carrying a TAP
-// SKIP/TODO directive must never count: the test was not executed, and counting it green-vouches a
-// nonexistent testId on exactly the node versions the kit supports (caught by CI's 18/20 matrix).
-// So `resolvable` = at least one column-0, directive-free result whose description is not the file we
-// passed; `baselineGreen` = resolvable AND the run was green (exit 0 and `# fail 0`). The wrapper is
-// matched by BASENAME, not literally: node normalizes the echoed path ('./x' → 'x', or an absolute
-// path), so a literal desc===fileArg compare would count the wrapper as a real match and falsely
-// report resolvable/green (codex R1). A basename compare is invariant to ./ / abs / rel; a real test
-// name colliding with the file's basename — or containing a literal "# skip" — is absurd and would
-// only fail CLOSED (mark unresolvable), never open.
+// parseProbeOutput({ stdout, code, fileArg }) → { resolvable, executed, baselineGreen }. The TAP
+// strategy (both tap-stdout and tap-file — a tap-file is this SAME parser applied to the file's text).
+// A node:test run with a pattern that matches NOTHING emits only a file-wrapper result whose
+// description is the file path itself (`ok N - <file>`) on newer node — but node 18/20 ALSO emit every
+// pattern-FILTERED test as `ok N - <name> # SKIP test name does not match pattern`, so a result line
+// carrying a TAP SKIP/TODO directive must never count: the test was not executed, and counting it
+// green-vouches a nonexistent testId on exactly the node versions the kit supports (caught by CI's
+// 18/20 matrix). So `resolvable` = at least one column-0, directive-free result whose description is
+// not the file we passed; `baselineGreen` = resolvable AND the run was green — exit 0, NO directive-free
+// `not ok` result, and `# fail 0` (a `not ok` is counted directly, so a generic TAP producer that
+// omits the `# fail N` summary yet exits 0 still reads RED — the fail-closed posture, BUGFREE-3). The
+// wrapper is matched by BASENAME, not literally: node normalizes the echoed path ('./x' → 'x', or an
+// absolute path), so a literal desc===fileArg compare would count the wrapper as a real match and
+// falsely report resolvable/green (codex R1). A basename compare is invariant to ./ / abs / rel.
 export const parseProbeOutput = ({ stdout, code, fileArg }) => {
   let matched = 0;
+  let notOk = 0;
   let failCount = null;
   const wanted = basename(String(fileArg).trim());
   for (const line of String(stdout).split('\n')) {
     const m = PROBE_RESULT_RE.exec(line);
-    if (m && !PROBE_DIRECTIVE_RE.test(m[1]) && basename(m[1].trim()) !== wanted) matched += 1;
+    if (m && !PROBE_DIRECTIVE_RE.test(m[2]) && basename(m[2].trim()) !== wanted) {
+      matched += 1;
+      if (m[1] === 'not ok') notOk += 1;
+    }
     const f = PROBE_FAIL_RE.exec(line.trim());
     if (f) failCount = Number(f[1]);
   }
   const resolvable = matched > 0;
-  const fails = failCount ?? (code === 0 ? 0 : 1);
+  const fails = (failCount ?? 0) + notOk; // either signal marks a fail (only the ===0 green check matters)
   return { resolvable, executed: matched, baselineGreen: resolvable && code === 0 && fails === 0 };
+};
+
+// parseJunitXml({ resultText }) → { resolvable, executed, baselineGreen }. A dependency-free JUnit-XML
+// reader (regex over well-formed testcase elements — no XML lib): a <testcase> carrying <skipped> did
+// NOT run (excluded, the TAP SKIP/TODO analogue); a <testcase> carrying <failure> or <error> is red.
+// resolvable = at least one NON-skipped testcase (so an empty report / tests="0" reads UNRESOLVABLE,
+// never green — the "0 tests never green" invariant); baselineGreen = resolvable AND no non-skipped
+// failure/error. The XML report is authoritative (fail-closed: a failure element is red regardless of
+// the process exit code — a reporter that exits 0 while recording failures still reads RED).
+// CDATA + comment CONTENT is arbitrary text (a test's captured stdout may legally contain '<skipped',
+// '<failure>', or even a literal '</testcase>'). Stripped BEFORE the regex scan so it can never
+// fabricate a skip/failure match nor desync the lazy body capture (the fail-closed posture: a real
+// <failure> is never dropped, a real element boundary is never truncated).
+const stripXmlNoise = (xml) => String(xml).replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '').replace(/<!--[\s\S]*?-->/g, '');
+export const parseJunitXml = ({ resultText }) => {
+  let executed = 0;
+  let failed = 0;
+  const text = stripXmlNoise(resultText ?? '');
+  // The /g regex is LOCAL per call: a fresh matcher owns its own lastIndex — no shared
+  // module-level state to reset, no reentrancy risk under any future refactor.
+  const caseRe = /<testcase\b[^>]*?(\/>|>([\s\S]*?)<\/testcase>)/g;
+  let m;
+  while ((m = caseRe.exec(text)) !== null) {
+    const body = m[2] ?? '';
+    if (/<skipped\b/.test(body)) continue; // skipped → did not run
+    executed += 1;
+    if (/<(?:failure|error)\b/.test(body)) failed += 1;
+  }
+  const resolvable = executed > 0;
+  return { resolvable, executed, baselineGreen: resolvable && failed === 0 };
+};
+
+// parseProbeResult({ format, stdout, code, fileArg, resultText }) → the SAME
+// { resolvable, executed, baselineGreen } shape, dispatched by the profile's singleTest.resultFormat.
+// A file-based format whose result file was NOT written (resultText == null — the probe crashed or the
+// pattern selected nothing) reads UNRESOLVABLE (never green): the freshness invariant (a fresh
+// out-of-tree path per probe run — see probeBound) means a stale file can never be re-read as green.
+export const parseProbeResult = ({ format = 'tap-stdout', stdout, code, fileArg, resultText }) => {
+  if (format === 'tap-file') {
+    if (resultText == null) return { resolvable: false, executed: 0, baselineGreen: false };
+    return parseProbeOutput({ stdout: resultText, code, fileArg });
+  }
+  if (format === 'junit-xml') {
+    if (resultText == null) return { resolvable: false, executed: 0, baselineGreen: false };
+    const r = parseJunitXml({ resultText });
+    // Fail-closed + symmetric with tap-file: an all-pass report with a NONZERO process exit reads RED
+    // (a report may be written before a post-test hook/crash fails the process). Internal sweep fold.
+    return { ...r, baselineGreen: r.baselineGreen && code === 0 };
+  }
+  return parseProbeOutput({ stdout, code, fileArg }); // tap-stdout (default) — unchanged
 };
 
 // defaultBoundArgv(file, pattern) → the shell-free node:test argv (testId content never reaches a
@@ -225,23 +291,36 @@ export const hashFileBytes = (abs) => {
   }
 };
 
-// resolveBoundArgv(env) → (file, pattern) => argv[]. Default = the node:test shape; AW_FOLD_BOUND_CMD
-// overrides with a JSON array of argv strings using {file}/{pattern} placeholders (the universality
-// escape hatch — a consumer on another runner). A malformed override is a typed refusal, never a
-// silent fallback to a shell. Substitution uses function replacers so a `$` in a testId is literal.
-export const resolveBoundArgv = (env = process.env) => {
+// resolveBoundArgv(env, profile?) → (file, pattern, resultPath?) => argv[]. PRECEDENCE (env WINS,
+// Decision 3): AW_FOLD_BOUND_CMD (a JSON argv array — the universality escape hatch) beats the
+// profile's singleTest.argv template, which beats the built-in node:test shape. Placeholders
+// {file}/{pattern} are always substituted; {resultPath} is the FILE-BASED-format placeholder (the
+// runner substitutes a fresh out-of-tree path per probe — see probeBound; validateProfile requires it
+// for a file-based profile argv). A malformed override is a typed refusal, never a silent fall to a
+// shell. Substitution uses function replacers so a `$` in a testId/path is literal.
+export const resolveBoundArgv = (env = process.env, profile = null) => {
   const raw = env.AW_FOLD_BOUND_CMD;
-  if (!raw) return (file, pattern) => defaultBoundArgv(file, pattern);
-  let tmpl;
-  try {
-    tmpl = JSON.parse(raw);
-  } catch (err) {
-    throw stop(`AW_FOLD_BOUND_CMD is not valid JSON (${err.message}) — expected a JSON array of argv strings`);
+  let tmpl = null;
+  if (raw) {
+    try {
+      tmpl = JSON.parse(raw);
+    } catch (err) {
+      throw stop(`AW_FOLD_BOUND_CMD is not valid JSON (${err.message}) — expected a JSON array of argv strings`);
+    }
+    if (!Array.isArray(tmpl) || tmpl.length === 0 || !tmpl.every((a) => typeof a === 'string')) {
+      throw stop('AW_FOLD_BOUND_CMD must be a non-empty JSON array of argv strings with {file}/{pattern} placeholders');
+    }
+  } else if (Array.isArray(profile?.singleTest?.argv) && profile.singleTest.argv.length > 0) {
+    tmpl = profile.singleTest.argv;
   }
-  if (!Array.isArray(tmpl) || tmpl.length === 0 || !tmpl.every((a) => typeof a === 'string')) {
-    throw stop('AW_FOLD_BOUND_CMD must be a non-empty JSON array of argv strings with {file}/{pattern} placeholders');
-  }
-  return (file, pattern) => tmpl.map((a) => a.replace(/\{file\}/g, () => file).replace(/\{pattern\}/g, () => pattern));
+  if (!tmpl) return (file, pattern) => defaultBoundArgv(file, pattern);
+  return (file, pattern, resultPath) =>
+    tmpl.map((a) =>
+      a
+        .replace(/\{file\}/g, () => file)
+        .replace(/\{pattern\}/g, () => pattern)
+        .replace(/\{resultPath\}/g, () => resultPath ?? ''),
+    );
 };
 
 // ── read-only git plumbing (the changed-surface computation itself lives in changed-surface.mjs) ──
@@ -423,34 +502,49 @@ export const budgetsFromEnv = (env) => ({
 // is the v2 per-testId record shape: rerun counts (evidence) + the custody content hash + the derived
 // booleans. The custody hash is taken BEFORE the runs (the content the observation attests). A
 // timed-out or signal-killed run is neither red nor green — it lands in `timeouts` (quarantine fuel).
-const probeBound = ({ id, rootTop, env, boundArgv, reruns, timeoutS }) => {
+const probeBound = ({ id, rootTop, env, boundArgv, resultFormat = 'tap-stdout', reruns, timeoutS }) => {
   const { file, pattern } = splitTestId(id);
   const resolved = resolveTestFile(rootTop, file);
   const fileHash = resolved.ok ? hashFileBytes(resolved.abs) : null;
+  const fileBased = FILE_BASED_FORMATS.has(resultFormat);
   let executed = 0;
   let greens = 0;
   let reds = 0;
   let timeouts = 0;
   if (resolved.ok && fileHash != null) {
-    // ALWAYS spawn the resolver's canonical absolute path — the executed file must be the hashed
-    // file independent of runner path semantics (codex R1+R2, BUGFREE-1 live loop): a raw
-    // leading-dash filename parses as an OPTION (and a ./-prefix does not survive node's runner
-    // normalization), and a raw traversal path like linkdir/../x lets an OS-resolving runner
-    // execute a different filesystem target than the lexically-normalized file the hash covers.
-    const argv = boundArgv(resolved.abs, pattern);
     for (let i = 0; i < reruns; i += 1) {
-      const res = spawnSync(argv[0], argv.slice(1), {
-        cwd: rootTop, env: childTestEnv(env), encoding: 'utf8', maxBuffer: GIT_MAX_BUFFER, timeout: timeoutS * 1000,
-      });
-      if ((res.error && res.error.code === 'ETIMEDOUT') || res.signal != null) {
-        timeouts += 1;
-        continue;
+      // FILE-BASED formats (tap-file / junit-xml): a FRESH out-of-tree result path PER probe run (the
+      // mkdtempSync-outside-tree precedent) — this realizes the freshness invariant: a stale green
+      // file from a previous run / a crashed or zero-match probe can never be re-read as green.
+      let resultDir = null;
+      let resultPath = null;
+      if (fileBased) {
+        resultDir = mkdtempSync(join(tmpdir(), 'agent-workflow-fold-probe-'));
+        resultPath = join(resultDir, resultFormat === 'junit-xml' ? 'result.xml' : 'result.tap');
       }
-      const p = parseProbeOutput({ stdout: res.stdout ?? '', code: res.error ? 1 : res.status ?? 1, fileArg: file });
-      executed = Math.max(executed, p.executed);
-      if (!p.resolvable) continue; // an unresolved run (the pattern selected nothing)
-      if (p.baselineGreen) greens += 1;
-      else reds += 1;
+      try {
+        // ALWAYS spawn the resolver's canonical absolute path — the executed file must be the hashed
+        // file independent of runner path semantics (codex R1+R2, BUGFREE-1 live loop): a raw
+        // leading-dash filename parses as an OPTION (and a ./-prefix does not survive node's runner
+        // normalization), and a raw traversal path like linkdir/../x lets an OS-resolving runner
+        // execute a different filesystem target than the lexically-normalized file the hash covers.
+        const argv = boundArgv(resolved.abs, pattern, resultPath);
+        const res = spawnSync(argv[0], argv.slice(1), {
+          cwd: rootTop, env: childTestEnv(env), encoding: 'utf8', maxBuffer: GIT_MAX_BUFFER, timeout: timeoutS * 1000,
+        });
+        if ((res.error && res.error.code === 'ETIMEDOUT') || res.signal != null) {
+          timeouts += 1;
+          continue;
+        }
+        const resultText = fileBased ? readFileSafe(resultPath) : null;
+        const p = parseProbeResult({ format: resultFormat, stdout: res.stdout ?? '', code: res.error ? 1 : res.status ?? 1, fileArg: file, resultText });
+        executed = Math.max(executed, p.executed);
+        if (!p.resolvable) continue; // an unresolved run (the pattern selected nothing / no result file)
+        if (p.baselineGreen) greens += 1;
+        else reds += 1;
+      } finally {
+        if (resultDir) rmSync(resultDir, { recursive: true, force: true });
+      }
     }
   }
   const entry = {
@@ -475,31 +569,78 @@ export const runFoldCompleteness = ({ cwd = process.cwd(), env = process.env, su
 
   const fingerprint = computeTreeFingerprint(cwd);
   const cmd = resolveSuiteCmd(rootTop, env, suiteCmd);
-  const boundArgv = resolveBoundArgv(env); // resolves BEFORE any spawn (a malformed override refuses loudly)
+  // The verification profile (BUGFREE-3 / AD-049) decides the coverage SOURCE and the single-test
+  // RESULT FORMAT + argv template. Absent → today's V8 + node:test-TAP-on-stdout. Loaded BEFORE any
+  // spawn so a malformed profile / unsafe declared path (Decision 4) — and a malformed
+  // AW_FOLD_BOUND_CMD — both refuse loudly before the suite runs.
+  const { profile } = loadProfile(rootTop);
+  const boundArgv = resolveBoundArgv(env, profile);
+  const { resultFormat } = resolveSingleTest(profile);
   const budgets = budgetsFromEnv(env);
 
   const { assessable, unsupported, outOfDomain } = computeChangedSurface(rootTop);
 
-  // M3a: run the suite once under coverage in a dir OUTSIDE the work tree (Decision 8), then map.
-  const covDir = mkdtempSync(join(tmpdir(), 'agent-workflow-fold-cov-'));
-  let coverage;
+  // Coverage SOURCE: absent / kind "v8" → today's V8 path; kind "lcov" → the consumer's suite leaves
+  // an LCOV file at the declared path (validated gitignored/out-of-tree by loadProfile — Decision 4).
+  const { kind: coverageKind, lcovPath } = resolveCoverage(profile);
+  const lcovAbs = coverageKind === 'lcov' ? (isAbsolute(lcovPath) ? lcovPath : join(rootTop, lcovPath)) : null;
+  // FRESHNESS: remove any STALE LCOV before the suite runs — symmetric with
+  // the V8 fresh mkdtemp covDir. A suite that fails/is misconfigured and does NOT re-emit LCOV then reads
+  // ABSENT (a loud STOP below), never a leftover file that could mask an uncovered changed line as green.
+  if (coverageKind === 'lcov') rmSync(lcovAbs, { force: true });
+
+  // M3a: run the suite ONCE, then map every changed executable line to covered/uncovered. V8 injects
+  // NODE_V8_COVERAGE into a dir OUTSIDE the work tree (Decision 8); LCOV runs the suite clean and
+  // reads the file the suite itself wrote (the env stays untouched). Either source resolves to the
+  // SAME canonical-abs key space, so the ONE per-file loop below consumes both.
+  const covDir = coverageKind === 'v8' ? mkdtempSync(join(tmpdir(), 'agent-workflow-fold-cov-')) : null;
+  let coverage; // v8 → Map<absKey, Array<Array<range>>>; lcov → Map<absKey, Map<line, hits>>
+  let suiteExit = null; // (a) v4: the suite exit code — the credit fires only on exit 0
   try {
-    const suite = spawnSync('bash', ['-c', cmd], { cwd: rootTop, env: childTestEnv(env, { NODE_V8_COVERAGE: covDir }), encoding: 'utf8', maxBuffer: GIT_MAX_BUFFER });
+    const suiteEnv = coverageKind === 'v8' ? childTestEnv(env, { NODE_V8_COVERAGE: covDir }) : childTestEnv(env);
+    const suite = spawnSync('bash', ['-c', cmd], { cwd: rootTop, env: suiteEnv, encoding: 'utf8', maxBuffer: GIT_MAX_BUFFER });
     if (suite.error && suite.error.code === 'ENOENT') throw stop('bash is unavailable — the suite command is a bash command line');
-    coverage = readCoverage(covDir);
+    suiteExit = suite.status; // number, or null when signal-killed (a null exit never credits — like nonzero)
+    if (coverageKind === 'lcov') {
+      const lcovText = readFileSafe(lcovAbs);
+      if (lcovText == null) {
+        throw stop(`coverage.kind is "lcov" but no LCOV file was found at "${lcovPath}" after the suite ran — ensure the suite writes LCOV there (see docs/ai/verification-profile.json)`);
+      }
+      coverage = lcovCoveredMap(lcovText, rootTop, { canon });
+    } else {
+      coverage = readCoverage(covDir);
+    }
   } finally {
-    rmSync(covDir, { recursive: true, force: true });
+    if (covDir) rmSync(covDir, { recursive: true, force: true });
   }
+  // (a) v4 suite-execution evidence: the ONE suite spawn per fingerprint, recorded so run-gates
+  // --record can CREDIT the unit-tests gate from it (fingerprint-bound + tree-unchanged + cmd-identity
+  // + exit-0 — the ledger writer enforces that). The POST fingerprint proves the suite left the tree
+  // unchanged (coverage went out-of-tree / to a gitignored LCOV path).
+  const fingerprintAfter = computeTreeFingerprint(cwd);
+  const suite = { cmd, exit: suiteExit ?? null, fingerprintBefore: fingerprint, fingerprintAfter };
   const uncoveredChanged = [];
   for (const [rel, lines] of assessable) {
-    const perProc = coverage.get(canon(join(rootTop, rel)));
-    if (!perProc || perProc.length === 0) {
-      uncoveredChanged.push({ file: rel, line: null }); // absent from coverage → file-level RED (Decision 6)
-      continue;
+    const key = canon(join(rootTop, rel));
+    if (coverageKind === 'lcov') {
+      // LCOV supplies the per-file uncovered set directly (computeUncoveredLines stays the V8-only
+      // path — D10); a file absent from the LCOV → a file-level RED, exactly like the V8 case.
+      const uncov = uncoveredChangedFromLcov(coverage, key, lines);
+      if (uncov === null) {
+        uncoveredChanged.push({ file: rel, line: null });
+        continue;
+      }
+      for (const n of uncov) uncoveredChanged.push({ file: rel, line: n });
+    } else {
+      const perProc = coverage.get(key);
+      if (!perProc || perProc.length === 0) {
+        uncoveredChanged.push({ file: rel, line: null }); // absent from coverage → file-level RED (Decision 6)
+        continue;
+      }
+      const src = readFileSafe(join(rootTop, rel));
+      if (src == null) continue;
+      for (const n of computeUncoveredLines({ perProcessRanges: perProc, sourceText: src, changedLines: lines })) uncoveredChanged.push({ file: rel, line: n });
     }
-    const src = readFileSafe(join(rootTop, rel));
-    if (src == null) continue;
-    for (const n of computeUncoveredLines({ perProcessRanges: perProc, sourceText: src, changedLines: lines })) uncoveredChanged.push({ file: rel, line: n });
   }
 
   // Decision 3 / 10 + D4: probe each of the SEGMENT's fixable-bug bound testIds N times
@@ -510,7 +651,7 @@ export const runFoldCompleteness = ({ cwd = process.cwd(), env = process.env, su
   const base = resolveBase(cwd);
   const boundTestIds = collectBoundTestIds(reviewRecords, { activity: ACTIVITY, loop, base });
   const testIds = boundTestIds.map(
-    (id) => probeBound({ id, rootTop, env, boundArgv, reruns: budgets.foldReruns, timeoutS: budgets.probeTimeoutS }).entry,
+    (id) => probeBound({ id, rootTop, env, boundArgv, resultFormat, reruns: budgets.foldReruns, timeoutS: budgets.probeTimeoutS }).entry,
   );
 
   // Approach-3: the oracle-tamper pass over the tracked working-vs-HEAD diff, restricted to the
@@ -529,6 +670,7 @@ export const runFoldCompleteness = ({ cwd = process.cwd(), env = process.env, su
     outOfDomain,
     coverage: { uncoveredChanged },
     tamper,
+    suite, // (a) v4 suite-execution evidence
     mutation: { total: 0, killed: 0, survived: [], skipped: 0, killSetBasis: null }, // reserved — mutation not shipped (shelved)
     budgets,
     timestamp: isoNow(),
@@ -561,9 +703,11 @@ export const runRedProbe = ({ cwd = process.cwd(), env = process.env, testId } =
   if (plans.length > 1) throw stop(`more than one plan in flight (${plans.join(', ')}) — ambiguous loop id; resolve to one active plan`);
   const loop = plans[0].replace(/\.md$/, '');
 
-  const boundArgv = resolveBoundArgv(env);
+  const { profile } = loadProfile(rootTop);
+  const boundArgv = resolveBoundArgv(env, profile);
+  const { resultFormat } = resolveSingleTest(profile);
   const budgets = budgetsFromEnv(env);
-  const { entry, resolveReason } = probeBound({ id: testId, rootTop, env, boundArgv, reruns: budgets.foldReruns, timeoutS: budgets.probeTimeoutS });
+  const { entry, resolveReason } = probeBound({ id: testId, rootTop, env, boundArgv, resultFormat, reruns: budgets.foldReruns, timeoutS: budgets.probeTimeoutS });
   const verdict = probeVerdict(entry);
   const counts = `${entry.greens} green / ${entry.reds} red / ${entry.timeouts} timed out / ${entry.runs - entry.greens - entry.reds - entry.timeouts} unresolved of ${entry.runs} run(s)`;
   if (verdict === 'unresolvable') {
@@ -608,6 +752,223 @@ export const runRedProbe = ({ cwd = process.cwd(), env = process.env, testId } =
   return appendRecord(resultsPath, record);
 };
 
+// ── the --reattest verb (c): re-anchor custody at a bound test file's CURRENT bytes ────────────────
+
+// runReattest({ cwd, env, testId }) → { writtenPath, record }. Records the test file's CURRENT hash as
+// a custody anchor after a green-only append — the honest replacement for mis-using a red-proof waiver
+// (a green append has no red to observe). Operator-ASSERTED, never auto-detected: "additions-only" is
+// unsafe to auto-relax (an in-body `return;` is additions-only yet weakening). Re-attest ONLY re-anchors
+// custody — the N/N-green probe and observed-red receipt requirements are unchanged, so a red test
+// still fails the gate, and the custody guard still fails closed on any un-reattested change.
+export const runReattest = ({ cwd = process.cwd(), env = process.env, testId } = {}) => {
+  if (!isWellFormedTestId(testId)) {
+    throw usageFail(`--reattest needs a well-formed testId "<test-file>#<test-name-pattern>" (a "#" separator, both halves non-empty; got ${JSON.stringify(testId)})`);
+  }
+  const root = gitStdout(['rev-parse', '--show-toplevel'], cwd);
+  if (root == null) throw stop('not a git work tree — nothing to re-attest');
+  const rootTop = root.replace(/\r?\n$/, '');
+  const plans = plansInFlight(rootTop);
+  if (plans.length === 0) throw stop('no plan in flight (docs/plans/ holds no active plan) — nothing to re-attest');
+  if (plans.length > 1) throw stop(`more than one plan in flight (${plans.join(', ')}) — ambiguous loop id; resolve to one active plan`);
+  const loop = plans[0].replace(/\.md$/, '');
+
+  const { file } = splitTestId(testId);
+  const resolved = resolveTestFile(rootTop, file);
+  if (!resolved.ok) throw stop(`--reattest refused for "${testId}": ${resolved.reason} — cannot anchor custody to a file that does not resolve safely`);
+  const fileHash = hashFileBytes(resolved.abs);
+  if (fileHash == null) throw stop(`--reattest refused for "${testId}": cannot read "${file}" — nothing to anchor`);
+
+  const record = {
+    schema: RESULT_SCHEMA_VERSION,
+    kind: REATTEST_KIND,
+    loop,
+    base: resolveBase(cwd), // the SEGMENT frame (D7): a re-attest never crosses a commit boundary
+    testId,
+    fileHash,
+    fingerprint: computeTreeFingerprint(cwd),
+    timestamp: isoNow(),
+  };
+  const v = validateRunRecord(record);
+  if (!v.ok) throw stop(`refusing to write a malformed re-attest record: ${v.reason}`);
+  const resultsPath = resolveResultsPath(cwd, env);
+  if (resultsPath == null) throw stop('cannot resolve the result-ledger path — not a git work tree and AW_FOLD_RESULTS is unset');
+  return appendRecord(resultsPath, record);
+};
+
+// ── the --preflight verb (f): the CHEAP half — the overrides/re-attests to record BEFORE coverage ──
+
+// runPreflight({ cwd, env }) → { loop, base, fingerprint, boundTestIds, tamper, actions }. Read-only:
+// runs only the cheap set (ledger reads + tamper + per-bound-file custody hashing) and returns the
+// actions to RECORD before the expensive coverage/probe pass, routed by kind — `oracle-change` for a
+// tampered test file, `reattest` for a green-only custody delta, `red` for a bound testId with no
+// observed-red receipt. Coverage is never predicted, the suite is never spawned, nothing is written.
+export const runPreflight = ({ cwd = process.cwd(), env = process.env } = {}) => {
+  const root = gitStdout(['rev-parse', '--show-toplevel'], cwd);
+  if (root == null) throw stop('not a git work tree — nothing to preflight');
+  const rootTop = root.replace(/\r?\n$/, '');
+  const plans = plansInFlight(rootTop);
+  if (plans.length === 0) throw stop('no plan in flight (docs/plans/ holds no active plan) — nothing to preflight');
+  if (plans.length > 1) throw stop(`more than one plan in flight (${plans.join(', ')}) — ambiguous loop id; resolve to one active plan`);
+  const loop = plans[0].replace(/\.md$/, '');
+  const base = resolveBase(cwd);
+  const fingerprint = computeTreeFingerprint(cwd);
+
+  // Cheap reads only — the ledgers + the git diff. No suite, no probes, no coverage (the reorder note:
+  // these live AFTER the coverage block in runFoldCompleteness; the preflight pulls them forward).
+  const ledgerPath = resolveLedgerPath(cwd, env);
+  // Fail CLOSED on an unreadable/malformed review ledger — the SAME posture decideCheck takes (a
+  // dropped line could hide a bound testId / an override); never a false all-clear.
+  const reviewRead = ledgerPath ? readLedger(ledgerPath) : { records: [], malformed: 0 };
+  if (reviewRead.readError) throw stop(`cannot read the review ledger (${reviewRead.readError}) — failing closed; inspect ${ledgerPath}`);
+  if (reviewRead.malformed > 0) throw stop(`the review ledger has ${reviewRead.malformed} malformed line(s) — failing closed; inspect ${ledgerPath}`);
+  const reviewRecords = reviewRead.records;
+  const boundTestIds = collectBoundTestIds(reviewRecords, { activity: ACTIVITY, loop, base });
+  const boundSet = new Set(boundTestIds);
+  const boundFiles = new Set(boundTestIds.map((id) => splitTestId(id).file));
+  const tamper = computeTamperedTests(rootTop, boundFiles); // the SAME tamper surface the run records
+  const tamperedSet = new Set(tamper.tampered);
+  const overrides = collectOverrides(reviewRecords, { activity: ACTIVITY, loop });
+
+  const resultsPath = resolveResultsPath(cwd, env);
+  const resultRead = resultsPath ? readResults(resultsPath) : { records: [], malformed: 0 };
+  if (resultRead.readError) throw stop(`cannot read the result ledger (${resultRead.readError}) — failing closed; inspect ${resultsPath}`);
+  if (resultRead.malformed > 0) throw stop(`the result ledger has ${resultRead.malformed} malformed line(s) — failing closed; inspect ${resultsPath}`);
+  const segRecords = filterSegmentResults(resultRead.records, loop, base);
+  const anchors = segRecords.filter((r) => isRedProbeRecord(r) || isReattestRecord(r)); // custody anchors
+  const receipts = segRecords.filter((r) => isRedProbeRecord(r)); // observed-red receipts only
+
+  const actions = [];
+  // 1. tampered test-surface files → oracle-change (unless already covered). ORTHOGONAL to the
+  //    per-testId chain below: decideCheck's tamper guard and its per-testId observed-red + custody
+  //    chain are independent guards — a tampered bound file needs BOTH an oracle-change AND a
+  //    current-bytes custody anchor for each of its bound testIds.
+  for (const f of tamper.tampered) {
+    if (overrides.oracleChangeFiles.has(f)) continue;
+    actions.push({
+      kind: 'oracle-change',
+      file: f,
+      command: `node review-ledger-write.mjs override --json '{"loop":"${loop}","round":<n>,"scope":"oracle-change","files":${JSON.stringify([f])},"reason":"<why the expectation legitimately changed>"}'`,
+    });
+  }
+  // 2. per bound testId — mirror decideCheck's per-testId requirements. There is NO tamper skip: a
+  //    tampered file's bound testIds STILL face the receipt + custody chain, so skipping them read as a
+  //    false all-clear. Ordered as decideCheck evaluates: unresolvable (a hard fail before any override
+  //    lane) → missing receipt → custody delta.
+  const reattestedFiles = new Set(); // one re-attest re-anchors the whole file (decideCheck keys custody by file) — dedup
+  const unresolvableFiles = new Set(); // recovery is file-level (restore / re-triage) — dedup
+  for (const id of boundTestIds) {
+    const { file } = splitTestId(id);
+    const resolved = resolveTestFile(rootTop, file);
+    const currentHash = resolved.ok ? hashFileBytes(resolved.abs) : null;
+    if (currentHash == null) {
+      // the bound file does not resolve → decideCheck fails `unresolvable` UNCONDITIONALLY, BEFORE the
+      // red-proof / oracle-change lanes (probeVerdict `unresolvable` precedes the red-proof `continue`) —
+      // no override lifts it. This check MUST precede the red-proof skip below, else a red-proof'd deleted
+      // bound file reads clear here yet fails decideCheck. A deleted file is also tampered (the
+      // oracle-change above fires), but that does NOT rescue a deletion; surface the blocker.
+      if (!unresolvableFiles.has(file)) {
+        unresolvableFiles.add(file);
+        actions.push({
+          kind: 'unresolvable',
+          testId: id,
+          file,
+          note: `the bound test file ${file} does not resolve — the probe reads unresolvable and no override (oracle-change / red-proof / re-attest) lifts it; restore the file or re-triage the fixable-bug binding`,
+        });
+      }
+      continue;
+    }
+    if (overrides.redProofTestIds.has(id)) continue; // red-proof waives the receipt + custody proof — but ONLY for a resolvable file (the unresolvable guard above runs first, per decideCheck)
+    const own = receipts.filter((r) => r.testId === id);
+    if (own.length === 0) {
+      // no observed-red receipt — strictly per-testId (never deduped by file).
+      actions.push({
+        kind: 'red',
+        testId: id,
+        command: `node fold-completeness-run.mjs --red ${JSON.stringify(id)}`,
+        note: tamperedSet.has(file)
+          ? 'the test file was modified (tampered) — observe red at the modified expectations before folding; if the red is genuinely unestablishable, record a red-proof override instead'
+          : 'observe red BEFORE folding the fix; if the red is genuinely unestablishable, record a red-proof override instead',
+      });
+      continue;
+    }
+    const fileAnchors = anchors.filter((r) => boundSet.has(r.testId) && splitTestId(r.testId).file === file);
+    const latestAnchor = fileAnchors[fileAnchors.length - 1];
+    if (latestAnchor && latestAnchor.fileHash === currentHash) continue; // custody intact → no action
+    if (tamperedSet.has(file)) {
+      // a tampered (modified/removed old-side) file → re-observe red: the prior red-probe proved the OLD
+      // oracle and is now stale; --reattest is scoped to a green-only append and cannot honestly anchor a
+      // real edit (decideCheck's own recovery for a real edit is to re-observe red).
+      actions.push({
+        kind: 'red',
+        testId: id,
+        command: `node fold-completeness-run.mjs --red ${JSON.stringify(id)}`,
+        note: 're-observe red at the modified (tampered) expectations — --reattest is scoped to a green-only append and cannot anchor a real edit',
+      });
+    } else if (!reattestedFiles.has(file)) {
+      // an additions-only custody delta (NOT tampered — no old-side removal) → CANDIDATE for re-attest.
+      // The tamper flag catches removed/modified old-side lines, but an additions-only edit can still
+      // WEAKEN a bound test (an inserted early `return;` before the assertions) — undetectable without
+      // AST (the AD-047 residual). So preflight only SUGGESTS re-attest, with a caveat: re-attest is
+      // honest for a genuine green-only APPEND (a new sibling test); for an in-body insertion, re-observe
+      // red (--red) instead. The custody guard stays fail-closed until the operator records one or other.
+      reattestedFiles.add(file);
+      actions.push({
+        kind: 'reattest',
+        testId: id,
+        file,
+        command: `node fold-completeness-run.mjs --reattest ${JSON.stringify(id)}`,
+        note: 'valid only for a genuine green-only APPEND (a new sibling test); if the change INSERTS into an existing bound test body (an additions-only edit can still weaken it), re-observe red instead: node fold-completeness-run.mjs --red ' + JSON.stringify(id),
+      });
+    }
+  }
+  return { loop, base, fingerprint, boundTestIds, tamper, actions };
+};
+
+// renderPreflight(state) → a human block: the loop/base + the routed actions (or an all-clear note).
+export const renderPreflight = ({ loop, boundTestIds, tamper, actions }) => {
+  const lines = [
+    `fold-completeness preflight — loop "${loop}" (cheap half; the suite was NOT run, nothing was written)`,
+    `  bound testIds: ${boundTestIds.length ? boundTestIds.join(', ') : '(none)'}`,
+    `  tampered test-surface files: ${tamper.tampered.length ? tamper.tampered.join(', ') : 'none'}`,
+  ];
+  if (actions.length === 0) {
+    lines.push('  ✓ no overrides / re-attests needed before the coverage pass — run: node fold-completeness-run.mjs');
+    return lines.join('\n');
+  }
+  lines.push(`  ${actions.length} action(s) to resolve BEFORE the coverage pass:`);
+  const head = (a) => {
+    if (a.kind === 'oracle-change') return `oracle-change for ${a.file}`;
+    if (a.kind === 'reattest') return `re-attest ${a.testId} (green-only custody delta)`;
+    if (a.kind === 'unresolvable') return `unresolvable bound file ${a.file} — restore or re-triage`;
+    return `observe red for ${a.testId}`;
+  };
+  for (const a of actions) {
+    lines.push(`    [${a.kind}] ${head(a)}`);
+    if (a.command) lines.push(`      ${a.command}`);
+    if (a.note) lines.push(`      (${a.note})`);
+  }
+  return lines.join('\n');
+};
+
+// ── the --findings verb (1.4): OPTIONAL SARIF advisory intake — print-only, NEVER recorded ────────
+
+// runFindings({ cwd, env }) → { findings, note }. Reads the profile's findings.sarifPath, ADVISORY
+// ONLY: nothing is written and the fold gate never reads SARIF, so it can never block a fold. Absent
+// path / missing file → a no-op note; a malformed SARIF throws (a loud advisory failure), --check
+// unaffected.
+export const runFindings = ({ cwd = process.cwd(), env = process.env } = {}) => {
+  const root = gitStdout(['rev-parse', '--show-toplevel'], cwd);
+  const rootTop = root == null ? cwd : root.replace(/\r?\n$/, '');
+  const { profile } = loadProfile(rootTop);
+  const sarifPath = resolveSarifPath(profile);
+  if (!sarifPath) return { findings: [], note: 'no findings.sarifPath declared in the verification profile — nothing to read (SARIF advisory is opt-in)' };
+  const abs = isAbsolute(sarifPath) ? sarifPath : join(rootTop, sarifPath);
+  const text = readFileSafe(abs);
+  if (text == null) return { findings: [], note: `no SARIF file at "${sarifPath}" — the suite may not have written it yet (advisory, non-blocking)` };
+  const { findings } = parseSarif(text); // throws on malformed → the CLI exits nonzero (advisory-loud)
+  return { findings, note: null };
+};
+
 // ── CLI ───────────────────────────────────────────────────────────────────────────────────────────
 
 const HELP = `fold-completeness-run — the M3 fold-completeness RUNNER (agent-workflow family, AD-046 + AD-047).
@@ -615,11 +976,15 @@ const HELP = `fold-completeness-run — the M3 fold-completeness RUNNER (agent-w
 Usage:
   node fold-completeness-run.mjs [--suite "<cmd>"] [--cwd <dir>]
   node fold-completeness-run.mjs --red "<test-file>#<test-name-pattern>" [--cwd <dir>]
+  node fold-completeness-run.mjs --reattest "<test-file>#<test-name-pattern>" [--cwd <dir>]
+  node fold-completeness-run.mjs --preflight [--cwd <dir>]
+  node fold-completeness-run.mjs --findings [--cwd <dir>]
 
 The default run: runs the in-flight plan-execution loop's suite ONCE under coverage, maps every
 changed executable line to covered/uncovered, probes each of the SEGMENT's fixable-bug bound testIds
 N times (AW_FOLD_RERUNS, default 3) for resolvability + an N/N-green baseline, records each bound test
-file's content hash (custody), and appends one v3 run record — segment-framed (base = git rev-parse
+file's content hash (custody), the suite-execution evidence (cmd + exit + pre/post fingerprints), and
+appends one v4 run record — segment-framed (base = git rev-parse
 HEAD; the bound set is the current segment's, AD-048 D7) — to
 <git dir>/${'agent-workflow-fold-completeness.jsonl'} (AW_FOLD_RESULTS overrides).
 
@@ -631,19 +996,44 @@ current SEGMENT frame: a receipt never crosses a commit boundary); observed-gree
 unresolvable / mixed / timed-out are DISTINGUISHED typed refusals and nothing is written
 (mixed/timeout = QUARANTINE — never converts, no override lane).
 
+--reattest re-anchors a bound test FILE's custody at its CURRENT bytes WITHOUT observing red — the
+honest replacement for a red-proof waiver after a GREEN-ONLY test-file append (there is no red to
+observe). It mints a fold-v4 re-attest receipt (testId + the current file hash). It is
+operator-asserted (self-discipline, the same trust model as the recorded overrides), NOT auto-detected:
+the custody guard still fails CLOSED on any un-reattested change, and re-attest never converts a red
+baseline or waives the observed-red proof (a weakened/red test still fails the gate).
+
 Suite command: --suite "<cmd>" or AW_FOLD_SUITE_CMD, else the unit-tests gate cmd in docs/ai/gates.json.
 Bound-test probes default to node --test --test-name-pattern (shell-free); AW_FOLD_BOUND_CMD overrides
 with a JSON argv array using {file}/{pattern}. Probe knobs (fail-closed positive integers):
 AW_FOLD_RERUNS (default 3) · AW_FOLD_PROBE_TIMEOUT_S (default 120, per probe RUN, probes only).
 Inert budgets: AW_FOLD_MUTANTS_MAX / AW_FOLD_HUNK_MUTANTS_MAX / AW_FOLD_TIME_BUDGET_S (mutation shelved).
 
+The VERIFICATION PROFILE (docs/ai/verification-profile.json, BUGFREE-3) generalizes the coverage
+SOURCE (coverage.kind v8|lcov + lcovPath) and the single-test RESULT FORMAT (singleTest.argv +
+resultFormat tap-stdout|tap-file|junit-xml; a file-based format's argv carries {resultPath}). Absent →
+today's exact behaviour (V8 + node:test TAP on stdout). Env knobs still override (AW_FOLD_SUITE_CMD /
+AW_FOLD_BOUND_CMD win over the profile).
+
+--preflight runs ONLY the cheap half (the tamper surface + custody deltas from the git diff + the
+ledgers, seconds) WITHOUT the coverage suite run: it prints the overrides / re-attests to RECORD
+BEFORE the expensive pass — routed by kind: oracle-change for a tampered test file, --reattest for a
+green-only custody delta, --red (or a red-proof override if the red is unestablishable) for a bound
+testId with no observed-red receipt yet. It spawns no suite, runs no probe, predicts no coverage, and
+writes nothing.
+
+--findings reads the profile's OPTIONAL findings.sarifPath and PRINTS the SARIF findings — ADVISORY
+ONLY: nothing is recorded, and the fold gate (fold-completeness --check) never reads SARIF, so it can
+never block a fold. Absent path / missing file → a stated no-op; a malformed SARIF exits nonzero (a
+loud advisory failure) but leaves --check unaffected.
+
 The read-only gate is a SEPARATE tool: node fold-completeness.mjs --check / --status / --json.
 
-Exit codes: 0 written; 1 a typed STOP (loop derivation / suite discovery / a --red refusal / malformed
-record / fs error); 2 usage.`;
+Exit codes: 0 written / advisory printed; 1 a typed STOP (loop derivation / suite discovery / a --red
+or --reattest refusal / a malformed SARIF on --findings / malformed record / fs error); 2 usage.`;
 
 const parseArgs = (argv) => {
-  const opts = { cwd: undefined, suite: undefined, red: undefined };
+  const opts = { cwd: undefined, suite: undefined, red: undefined, reattest: undefined, findings: false, preflight: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--cwd') {
@@ -658,6 +1048,14 @@ const parseArgs = (argv) => {
       opts.red = argv[i + 1];
       if (opts.red === undefined) throw usageFail('--red needs a testId ("<test-file>#<test-name-pattern>")');
       i += 1;
+    } else if (a === '--reattest') {
+      opts.reattest = argv[i + 1];
+      if (opts.reattest === undefined) throw usageFail('--reattest needs a testId ("<test-file>#<test-name-pattern>")');
+      i += 1;
+    } else if (a === '--findings') {
+      opts.findings = true;
+    } else if (a === '--preflight') {
+      opts.preflight = true;
     } else {
       throw usageFail(`unknown argument: ${a}`);
     }
@@ -672,11 +1070,26 @@ export const main = (argv, ctx = {}) => {
     if (argv.includes('--help') || argv.includes('-h')) return { code: 0, stdout: HELP, stderr: '' };
     const opts = parseArgs(argv);
     const cwd = opts.cwd ?? cwd0;
+    if (opts.preflight) {
+      return { code: 0, stdout: renderPreflight(runPreflight({ cwd, env })), stderr: '' };
+    }
+    if (opts.findings) {
+      const { findings, note } = runFindings({ cwd, env });
+      return { code: 0, stdout: note ?? renderSarifFindings(findings), stderr: '' };
+    }
     if (opts.red !== undefined) {
       const { writtenPath, record } = runRedProbe({ cwd, env, testId: opts.red });
       return {
         code: 0,
         stdout: `fold-completeness-run: minted a red-probe receipt for "${record.testId}" (loop "${record.loop}", ${record.reds}/${record.runs} observed red, hash ${record.fileHash.slice(0, 12)}…) → ${writtenPath}`,
+        stderr: '',
+      };
+    }
+    if (opts.reattest !== undefined) {
+      const { writtenPath, record } = runReattest({ cwd, env, testId: opts.reattest });
+      return {
+        code: 0,
+        stdout: `fold-completeness-run: minted a custody re-attest for "${record.testId}" (loop "${record.loop}", hash ${record.fileHash.slice(0, 12)}…) → ${writtenPath}`,
         stderr: '',
       };
     }

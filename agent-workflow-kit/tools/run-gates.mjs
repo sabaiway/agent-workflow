@@ -37,6 +37,13 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { computeTreeFingerprint } from './review-state.mjs';
 import { recordGateRun } from './review-ledger-write.mjs';
+// (a) BUGFREE-3 / AD-049: the one-suite-run credit. The fold runner already spawned the `unit-tests`
+// suite under coverage; --record can CREDIT that gate from the recorded evidence instead of
+// re-spawning it minutes later — read-only (the read core, never the tree-toucher).
+import { foldSuiteCredit } from './fold-completeness.mjs';
+
+// The gate id the (a) credit applies to — the SAME command the fold runner resolves as its suite.
+export const UNIT_TESTS_GATE_ID = 'unit-tests';
 
 // The per-project declaration (strict JSON, hand-editable). cwd-relative — errors show a path the
 // user can open (the orchestration-config CONFIG_REL idiom).
@@ -74,6 +81,9 @@ const USAGE = [
   '--record additionally mints ONE v4 gate-run record into the review ledger via its sole writer',
   '(the D5 green-baseline receipt; needs a single in-flight plan): the full declaration + what ran',
   '+ the pre/post tree fingerprints. A red run records honestly; a --only subset records as a subset.',
+  'In --record mode the unit-tests gate is CREDITED (not re-spawned) when it is the FIRST declared gate',
+  'AND the fold-completeness runner already ran that EXACT command green at the current tree',
+  '(fingerprint-bound + exit-0 + cmd-identity); positioned after another gate, it always re-spawns.',
   `Exit codes: 0 ok · 1 gate failure · 2 usage · 3 missing declaration · 4 empty gates list ·`,
   '5 malformed/invalid declaration · 6 bash unavailable · 7 --record asked but the record failed.',
 ].join('\n');
@@ -174,8 +184,16 @@ export const selectGates = (gates, onlyIds) => {
 // Spawn one gate cmd via bash from the project root. `cmd` is a BASH command line by contract
 // (the declaration's _README states it): this repo's own gate matrix needs brace+glob expansion,
 // which /bin/sh does not perform — hence bash explicitly, never the platform default shell.
-export const spawnGateViaBash = (cmd, cwd) =>
-  spawnSync('bash', ['-c', cmd], { cwd, encoding: 'utf8', maxBuffer: MAX_GATE_OUTPUT_BYTES });
+// NODE_TEST_CONTEXT is stripped (mirroring the fold suite's childTestEnv): a `node --test` gate spawned
+// while run-gates is itself running under a parent test context would otherwise inherit it, hit Node's
+// recursive-run guard, silently skip every file, and exit 0 — a vacuous false green. Stripping it also
+// makes the plain gate env-equivalent to the fold suite, so the (a) suite-run credit's exit-0 truthfully
+// predicts a plain-spawn exit-0 (the one remaining, documented residual is NODE_V8_COVERAGE).
+export const spawnGateViaBash = (cmd, cwd) => {
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  return spawnSync('bash', ['-c', cmd], { cwd, env, encoding: 'utf8', maxBuffer: MAX_GATE_OUTPUT_BYTES });
+};
 
 // The command the bash preflight runs before ANY gate: proves bash itself spawns on this host,
 // so "no bash" is one loud exit-6 error up front — never a per-gate spawn-failure cascade.
@@ -188,10 +206,19 @@ const trimTrailingNewline = (text) => text.replace(/\n$/, '');
 
 // Run the selected gates sequentially (declaration order). A green gate logs one PASS line; a
 // failing gate logs FAIL + its captured stdout/stderr VERBATIM (triage without re-running).
-export const runGates = (gates, { cwd, spawn = spawnGateViaBash, now = Date.now, log = console.log }) => {
+export const runGates = (gates, { cwd, spawn = spawnGateViaBash, now = Date.now, log = console.log, credit = null }) => {
   const results = [];
   for (const gate of gates) {
     log(`── ${gate.id} — ${gate.title}`);
+    // (a) the one-suite-run credit: for the unit-tests gate, if the fold runner already ran this exact
+    // command green at the current tree, CREDIT it instead of re-spawning (no quality loss — same
+    // execution, same tree, recorded once). Any mismatch → credit is null → the normal spawn below.
+    const credited = credit ? credit(gate) : null;
+    if (credited) {
+      log('   PASS (credited from the fold-completeness suite run — no re-spawn)');
+      results.push({ id: gate.id, title: gate.title, ok: true, code: 0, elapsedMs: 0, credited: true });
+      continue;
+    }
     const startedAt = now();
     const res = spawn(gate.cmd, cwd);
     const elapsedMs = now() - startedAt;
@@ -271,6 +298,7 @@ export const runCli = (argv, deps = {}) => {
     now,
     record = recordGateRun,
     fingerprint = computeTreeFingerprint,
+    foldCredit = foldSuiteCredit,
   } = deps;
   try {
     const opts = parseArgs(argv);
@@ -305,7 +333,18 @@ export const runCli = (argv, deps = {}) => {
       return EXIT.noBash;
     }
     const fingerprintBefore = opts.record ? fingerprint(projectDir) : null;
-    const results = runGates(selected, { cwd: projectDir, spawn, log, now });
+    // (a) the one-suite-run credit — ONLY in --record mode (the fold-loop flow), ONLY the unit-tests
+    // gate, ONLY when it is the FIRST selected gate (a gate that ran BEFORE it could have side-effected
+    // an ignored/out-of-tree artifact unit-tests depends on WITHOUT moving the fingerprint, so a
+    // later-positioned unit-tests must re-spawn — never credit a state the real matrix might fail), and
+    // ONLY when the fold evidence is fingerprint-bound + exit-0 (foldCredit) AND its recorded cmd EQUALS
+    // this gate's cmd (the --only-subset defense). Any mismatch → credit is null → the normal spawn.
+    let credit = null;
+    if (opts.record && selected[0]?.id === UNIT_TESTS_GATE_ID) {
+      const fold = foldCredit({ cwd: projectDir, env, fingerprint: fingerprintBefore });
+      credit = (gate) => (gate.id === UNIT_TESTS_GATE_ID && fold.credited && fold.evidence.cmd === gate.cmd ? fold : null);
+    }
+    const results = runGates(selected, { cwd: projectDir, spawn, log, now, credit });
     for (const line of formatTable(results)) log(line);
     const allGreen = results.every((result) => result.ok);
     // The gate-run record (D5): minted for green AND red runs alike (an honest red is telemetry

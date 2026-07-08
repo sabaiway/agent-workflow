@@ -1,0 +1,10 @@
+{
+  "_README": "Optional per-project VERIFICATION PROFILE for the fold-completeness gate (the language-independence contract). DELETE this file to reproduce the exact default behaviour (V8 line coverage + node:test TAP on stdout) — an absent profile is fully supported. Present, it GENERALIZES three inputs so a consumer on another language/runner can drive the same gate: (1) coverage.kind is \"v8\" (default) or \"lcov\" — with lcov, set coverage.lcovPath to where your suite leaves an LCOV file; (2) singleTest.argv is the shell-free command template for probing ONE test (placeholders {file} and {pattern} are required; a file-based resultFormat also requires {resultPath}), and singleTest.resultFormat is \"tap-stdout\" (default), \"tap-file\", or \"junit-xml\"; (3) findings.sarifPath (optional) points at a SARIF file for advisory-only findings (never gate-blocking). The suite COMMAND is NOT declared here — it stays your docs/ai/gates.json unit-tests gate (so the fold run and the gate share command-identity). Every DECLARED path (coverage.lcovPath, findings.sarifPath) MUST be gitignored or outside the repo (a symlink is refused): an in-tree, non-ignored file the suite writes would move the review fingerprint. Env knobs still override (AW_FOLD_SUITE_CMD / AW_FOLD_BOUND_CMD / AW_FOLD_RESULTS). Strict JSON — no comments.",
+  "schema": 1,
+  "coverage": { "kind": "v8" },
+  "singleTest": {
+    "argv": ["node", "--test", "--test-reporter", "tap", "--test-name-pattern={pattern}", "{file}"],
+    "resultFormat": "tap-stdout"
+  },
+  "findings": {}
+}

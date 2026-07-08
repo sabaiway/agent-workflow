@@ -798,20 +798,20 @@ describe('result schema v2 — per-version validation (D2)', () => {
   });
 
   it('an unknown/forged schema fails closed by name', () => {
-    for (const s of [0, 4, '2', null]) {
+    for (const s of [0, 5, '2', null]) {
       const v = validateRunRecord(runRecord({ schema: s }));
       assert.equal(v.ok, false, `schema ${JSON.stringify(s)} must fail`);
-      assert.match(v.reason, /schema must be one of 1, 2, 3/);
+      assert.match(v.reason, /schema must be one of 1, 2, 3, 4/);
     }
   });
 
-  it('a v2 record needs the kind discriminator ("run" | "red-probe")', () => {
+  it('a v2 record needs the kind discriminator ("run" | "red-probe" | "reattest")', () => {
     const missing = validateRunRecord(runRecord({ schema: 2 }));
     assert.equal(missing.ok, false);
-    assert.match(missing.reason, /kind must be "run" or "red-probe"/);
+    assert.match(missing.reason, /kind must be "run", "red-probe", or "reattest"/);
     const bogus = validateRunRecord(runRecord({ schema: 2, kind: 'probe' }));
     assert.equal(bogus.ok, false);
-    assert.match(bogus.reason, /kind must be "run" or "red-probe"/);
+    assert.match(bogus.reason, /kind must be "run", "red-probe", or "reattest"/);
   });
 
   it('a v2 run with per-testId rerun counts + content hash validates', () => {

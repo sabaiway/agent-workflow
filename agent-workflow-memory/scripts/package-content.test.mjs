@@ -135,6 +135,7 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
       'SKILL.md',
       'scripts/stamp-takeover.mjs',
       'references/templates/gates.json',
+      'references/templates/verification-profile.json',
     ];
     const missing = required.filter((p) => !packed.includes(p));
     assert.deepEqual(missing, [], 'a runtime payload file or entry point was dropped from the tarball');
@@ -149,6 +150,9 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
   // a surprise change means over/under-exclusion. After an intentional change, run `npm pack
   // ./agent-workflow-memory --dry-run --json` and set the new count here in the same commit.
   it('ships exactly the expected number of files', () => {
-    assert.equal(packed.length, 40, `tarball file count drifted (${packed.length} ≠ 40)`);
+    // 41 = 40 + references/templates/verification-profile.json (BUGFREE-3 / AD-049 — the seeded
+    //      verification profile template, the language-independence contract; kit mirror is pinned by
+    //      the kit's own package-content test + template-parity.test.mjs).
+    assert.equal(packed.length, 41, `tarball file count drifted (${packed.length} ≠ 41)`);
   });
 });

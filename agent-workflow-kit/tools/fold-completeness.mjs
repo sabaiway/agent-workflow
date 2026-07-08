@@ -15,14 +15,16 @@
 //   exit 0  when the resolved plan-execution.review recipe is solo (configured, or degraded there);
 //           when no plan is in flight; when the tree is clean; when the cwd is not a git work tree;
 //           and when the in-flight plan-execution SEGMENT — (loop, base = git rev-parse HEAD),
-//           schema v3, AD-048 D7 — has a CURRENT run record (kind-aware: the latest RUN, never a
-//           later red-probe) whose BOTH bindings match — the tree fingerprint AND the SEGMENT's
+//           schema v3+ (v4 adds the (a) suite-execution evidence + the (c) reattest custody anchor,
+//           BUGFREE-3/AD-049), AD-048 D7 — has a CURRENT run record (kind-aware: the latest RUN, never a
+//           later red-probe or reattest) whose BOTH bindings match — the tree fingerprint AND the SEGMENT's
 //           sorted fixable-bug testId set recorded in the run — with, per bound testId: an
 //           N/N-green probe (D4), an observed-red receipt in this SEGMENT (a committed phase's
 //           obligations closed with its commit; a receipt never crosses a commit boundary), that receipt
 //           PRECEDING the latest run in ledger order (anti-post-hoc), and content CUSTODY — the run's
-//           recorded test-file hash equals the latest custody-eligible red-probe hash on that file
-//           (eligible = the receipt's own testId is bound AND it precedes the run, D5); plus 0
+//           recorded test-file hash equals the latest custody-eligible red-probe OR reattest hash on that
+//           file (eligible = its own testId is bound AND it precedes the run, D5; a green-only append is
+//           re-anchored by a recorded --reattest, not a red-proof waiver); plus 0
 //           uncovered changed lines, 0 changed unsupported-source files, a recorded tamper surface
 //           with every tampered test-surface file covered by a recorded oracle-change override
 //           (review ledger v3), and the reserved EMPTY mutation shape (no mutation ships). A
@@ -84,8 +86,17 @@ export { probeVerdict, RESULTS_BASENAME, resolveResultsPath };
 // v1→v2 precedent), so v1/v2 ledgers never retroactively become malformed — but only a v3 record
 // can enter a segment, so a dirty segment whose loop holds only pre-v3 records fails with a reason
 // naming the schema upgrade (D7 legacy rule).
-export const RESULT_SCHEMA_VERSION = 3;
-export const SUPPORTED_RESULT_SCHEMAS = new Set([1, 2, 3]);
+// SCHEMA v4 (BUGFREE-3 / AD-049): a v4 run record carries a `suite` execution-evidence block (the (a)
+// one-suite-run credit — cmd + exit + pre/post fingerprints) AND a new record kind `reattest` joins
+// `run`/`red-probe`: an operator-minted, RECORDED custody re-attestation that anchors a bound test
+// file's custody at its CURRENT bytes WITHOUT fabricating a red-observe (the honest replacement for
+// mis-using red-proof on a green-only test-file append, item (c)). A placed pre-v4 checker (SUPPORTED
+// = {1,2,3}) rejects a v4 record outright — the version-skew guard; v1/v2/v3 rules are untouched.
+export const RESULT_SCHEMA_VERSION = 4;
+export const SUPPORTED_RESULT_SCHEMAS = new Set([1, 2, 3, 4]);
+// The v4 record kind (c): a recorded re-attestation. Named as a const so the runner, the checker, and
+// the doc-parity lint share one token (no drift).
+export const REATTEST_KIND = 'reattest';
 const ACTIVITY = 'plan-execution';
 const SLOT = 'review';
 
@@ -202,6 +213,30 @@ const validateRedProbe = (obj) => {
   return null;
 };
 
+// The (c) re-attest receipt (v4 only): the operator asserts a bound test file's CURRENT bytes are a
+// legitimate custody anchor (a green-only append after a --red receipt — there is no red to observe).
+// It mirrors the red-probe receipt MINUS the observation counts: testId + the file's current hash.
+// Minted only by the runner's --reattest verb (self-discipline, the same trust model as the overrides).
+const validateReattest = (obj) => {
+  if (!isWellFormedTestId(obj.testId)) return 'reattest testId must be "<test-file>#<test-name-pattern>" (a "#" separator, both halves non-empty)';
+  if (!(typeof obj.fileHash === 'string' && HASH_RE.test(obj.fileHash))) return 'reattest fileHash must be a 64-hex content hash';
+  return null;
+};
+
+// The (a) suite-execution evidence (v4 run records): the ONE suite spawn per fingerprint, recorded so
+// run-gates --record can CREDIT the unit-tests gate from it instead of re-spawning. Here only the SHAPE
+// is checked (a non-empty cmd, an integer-or-null exit, null-or-string before/after fingerprints); the
+// credit's fingerprint/tree/cmd-identity/exit-0 conditions live in the ledger writer (review-ledger.mjs).
+const validateSuiteEvidence = (suite) => {
+  if (!isPlainObject(suite)) return 'a v4 run records its suite-execution evidence ({ cmd, exit, fingerprintBefore, fingerprintAfter })';
+  if (!isNonEmptyString(suite.cmd)) return 'suite.cmd must be a non-empty string';
+  if (!(suite.exit === null || Number.isInteger(suite.exit))) return 'suite.exit must be an integer or null';
+  for (const k of ['fingerprintBefore', 'fingerprintAfter']) {
+    if (!(suite[k] === null || isNonEmptyString(suite[k]))) return `suite.${k} must be null or a non-empty fingerprint string`;
+  }
+  return null;
+};
+
 // validateRunRecord(obj) → { ok, reason }. Per-version, per-kind (D2): v1 records (no kind) keep the
 // AD-046 single-run rules; v2 records carry the kind discriminator. The `reason` names the exact
 // failed check so the malformed-line surface and the per-check named tests can assert it. Mutation
@@ -228,13 +263,27 @@ export const validateRunRecord = (obj) => {
     if (obj.tamper !== undefined && (!isPlainObject(obj.tamper) || !isStringArray(obj.tamper.tampered))) {
       return { ok: false, reason: 'tamper.tampered must be an array of strings (when the tamper surface is recorded)' };
     }
+    // v4 (a): a v4 runner ALWAYS records the suite-execution evidence, so a v4 run without one is not
+    // this runner's output (the tamper-on-v3 precedent). v1/v2/v3 runs never carry it.
+    if (obj.schema >= 4) {
+      const sr = validateSuiteEvidence(obj.suite);
+      if (sr) return { ok: false, reason: sr };
+    } else if (obj.suite !== undefined) {
+      return { ok: false, reason: `suite is a v4 field — a schema-${obj.schema} run never carries it` };
+    }
     return { ok: true };
   }
   if (obj.kind === 'red-probe') {
     const r = validateRedProbe(obj);
     return r ? { ok: false, reason: r } : { ok: true };
   }
-  return { ok: false, reason: `kind must be "run" or "red-probe" (got ${JSON.stringify(obj.kind)})` };
+  if (obj.kind === REATTEST_KIND) {
+    // (c): a v4-only record kind — a v1/v2/v3 record never carries it (the version-skew guard).
+    if (!(obj.schema >= 4)) return { ok: false, reason: `${REATTEST_KIND} is a v4 record kind — a schema-${obj.schema} record never carries it` };
+    const r = validateReattest(obj);
+    return r ? { ok: false, reason: r } : { ok: true };
+  }
+  return { ok: false, reason: `kind must be "run", "red-probe", or "${REATTEST_KIND}" (got ${JSON.stringify(obj.kind)})` };
 };
 
 // readResults(path) → { records, malformed, malformedReasons, readError }. Absent file → empty (no run
@@ -280,6 +329,9 @@ export const filterSegmentResults = (records, loop, base) =>
 // A v1 record IS a run (the kindless AD-046 shape); a v2 record is a run only under kind:"run".
 export const isRunRecord = (r) => r.schema === 1 || r.kind === 'run';
 export const isRedProbeRecord = (r) => r.schema >= 2 && r.kind === 'red-probe';
+// (c) v4: a recorded custody re-attestation. Never read as "the latest run" (latestRunRecord uses
+// isRunRecord); consumed by the custody chain as a valid anchor for exactly the file it names.
+export const isReattestRecord = (r) => r.schema >= 4 && r.kind === REATTEST_KIND;
 
 // latestRunRecord(loopRecords) → { record, index } | null over ONE loop's ordered records. Kind-aware
 // (codex R2): a red-probe appended after a run must never be read as the loop's "latest run" — the
@@ -294,6 +346,40 @@ export const latestRunRecord = (loopRecords) => {
 // probeVerdict — the D4 verdict algebra, ONE home (now the neutral changed-surface.mjs; re-exported
 // above): the runner (--red mints only on 'red'), this checker (the gate passes only on 'green'),
 // and the review-ledger telemetry (quarantine counts) all read the SAME algebra.
+
+// foldSuiteCredit({ cwd, env, fingerprint }) → { credited, evidence, reason }. Read half of the (a)
+// credit: may run-gates --record credit the unit-tests gate from the latest segment fold run's suite
+// evidence instead of re-spawning? STRICT — the evidence must be fingerprint-bound (before === after
+// === the current fingerprint, which also proves the tree unchanged) and exit 0. The cmd-identity check
+// (suite.cmd === the gate cmd — the --only-subset defense) is the caller's. Any mismatch → credited:false.
+// ENV residual (bounded, documented — maintainer-signed against Decision 7): the fold V8 suite runs under
+// NODE_V8_COVERAGE, a plain gate spawn does not. Both now strip NODE_TEST_CONTEXT (run-gates.mjs
+// spawnGateViaBash mirrors the fold suite's childTestEnv), so that divergence — the real vacuous-skip
+// false-green — is closed. The ONE remaining delta is NODE_V8_COVERAGE: a test that FAILS under coverage
+// exits nonzero and never credits (the exit-0 gate above), so only a test that PASSES *only* under
+// coverage instrumentation (e.g. asserting process.env.NODE_V8_COVERAGE is set) could credit a green the
+// plain gate would fail — an AD-047-class residual, unclosable without the double spawn (a) removes.
+export const foldSuiteCredit = ({ cwd = process.cwd(), env = process.env, fingerprint } = {}) => {
+  const plans = plansInFlight(gitRoot(cwd) ?? cwd);
+  if (plans.length !== 1) return { credited: false, reason: 'no single in-flight plan (cannot resolve the loop)' };
+  const loop = plans[0].replace(/\.md$/, '');
+  const base = resolveBase(cwd);
+  const resultsPath = resolveResultsPath(cwd, env);
+  // Fail CLOSED on an unreadable / malformed fold ledger — the SAME posture decideCheck takes (a dropped
+  // line could hide a defect); a partially-trusted ledger never credits.
+  const read = resultsPath ? readResults(resultsPath) : { records: [], malformed: 0 };
+  if (read.readError) return { credited: false, reason: `the fold ledger is unreadable (${read.readError}) — fail closed, re-spawn` };
+  if (read.malformed > 0) return { credited: false, reason: `the fold ledger has ${read.malformed} malformed line(s) — a partially-read ledger never credits (fail closed), re-spawn` };
+  const sel = latestRunRecord(filterSegmentResults(read.records, loop, base));
+  if (sel == null) return { credited: false, reason: 'no fold run recorded for the current segment' };
+  const { suite } = sel.record;
+  if (!suite) return { credited: false, reason: 'the fold run carries no suite evidence (a pre-v4 record)' };
+  if (fingerprint == null || suite.fingerprintBefore !== fingerprint || suite.fingerprintAfter !== fingerprint) {
+    return { credited: false, reason: 'the fold suite evidence is not bound to the current tree (the tree moved) — re-spawn' };
+  }
+  if (suite.exit !== 0) return { credited: false, reason: `the fold suite exited ${suite.exit} (a nonzero/red suite never credits a green gate-run) — re-spawn` };
+  return { credited: true, evidence: suite };
+};
 
 // ── the check + report core ─────────────────────────────────────────────────────────────────────
 
@@ -424,6 +510,10 @@ export const decideCheck = (state) => {
   const probes = new Map(latest.testIds.map((t) => [t.id, t]));
   const boundSet = new Set(latest.boundTestIds);
   const receipts = loopResults.map((r, i) => ({ r, i })).filter(({ r }) => isRedProbeRecord(r));
+  // Custody ANCHORS (c): a red-probe OR a recorded re-attestation on the file re-anchors custody at
+  // its hash — the honest replacement for a red-proof waiver on a green-only append. The OBSERVED-RED
+  // requirement below stays red-probe-only (a re-attest is not a red observation).
+  const custodyAnchors = loopResults.map((r, i) => ({ r, i })).filter(({ r }) => isRedProbeRecord(r) || isReattestRecord(r));
   for (const id of latest.boundTestIds) {
     const t = probes.get(id);
     const verdict = probeVerdict(t);
@@ -439,13 +529,14 @@ export const decideCheck = (state) => {
     if (own.length === 0) return { code: 1, reason: `no observed-red receipt for ${id} — a test never seen failing proves nothing about the fix. BEFORE folding a fix, run: node fold-completeness-run.mjs --red "${id}"` };
     if (!own.some(({ i }) => i < sel.index)) return { code: 1, reason: `the observed-red receipt for ${id} was minted AFTER the loop's latest run — a post-hoc red proves nothing; run fold-completeness-run.mjs once more (a fresh run after the receipt)` };
     const { file } = splitTestId(id);
-    // Custody eligibility (D5, codex R3): the anchor is the LATEST receipt on that FILE whose own
-    // testId is in the bound set AND which precedes the latest run — an unbound throwaway receipt,
-    // or one minted post-run, never re-attests a file.
-    const eligible = receipts.filter(({ r, i }) => i < sel.index && boundSet.has(r.testId) && splitTestId(r.testId).file === file);
+    // Custody eligibility (D5, codex R3): the anchor is the LATEST red-probe OR re-attest on that FILE
+    // whose own testId is in the bound set AND which precedes the latest run — an unbound throwaway
+    // receipt, or one minted post-run, never re-attests a file. A green-only append after a red-probe
+    // re-anchors here via a recorded --reattest (item (c)), not a red-proof waiver.
+    const eligible = custodyAnchors.filter(({ r, i }) => i < sel.index && boundSet.has(r.testId) && splitTestId(r.testId).file === file);
     const anchor = eligible[eligible.length - 1];
     if (!anchor || t.fileHash == null || anchor.r.fileHash !== t.fileHash) {
-      return { code: 1, reason: `custody broken for ${id}: the test file ${file} no longer matches its last observed-red content — re-observe red after the edit (node fold-completeness-run.mjs --red "<the file's newest testId>"), or record a red-proof override if the red is genuinely unestablishable` };
+      return { code: 1, reason: `custody broken for ${id}: the test file ${file} no longer matches its last observed-red/re-attested content — after a green-only append, re-attest the file (node fold-completeness-run.mjs --reattest "<a bound testId in ${file}>"); after a real edit, re-observe red (--red "<the file's newest testId>"), or record a red-proof override if the red is genuinely unestablishable` };
     }
   }
   if (latest.coverage.uncoveredChanged.length > 0) return { code: 1, reason: `uncovered changed line(s) — changed code no test executed: ${latest.coverage.uncoveredChanged.map(renderUncovered).join(', ')}` };
@@ -518,8 +609,9 @@ Usage:
 Reads the result ledger the runner writes (<git dir>/${RESULTS_BASENAME}; AW_FOLD_RESULTS overrides),
 resolves the effective ${ACTIVITY}.${SLOT} recipe, recomputes the canonical uncommitted-state
 fingerprint, and decides whether the in-flight plan-execution SEGMENT's changed code is pinned by
-tests — (loop, base = git rev-parse HEAD), schema v3 (AD-048 D7): bound testIds, receipts, custody,
-and tamper all filter to the current segment; a committed phase's obligations close with its commit.
+tests — (loop, base = git rev-parse HEAD), schema v3+ (v4 adds the suite-execution evidence + the
+reattest custody anchor, BUGFREE-3/AD-049; AD-048 D7): bound testIds, receipts, custody, and tamper
+all filter to the current segment; a committed phase's obligations close with its commit.
 
 --status (default) → the human report: resolved recipe, plan-in-flight, the latest run summary
   (per-testId D4 verdicts + rerun counts), the loop's red-probe receipts, verdict.
@@ -527,7 +619,8 @@ and tamper all filter to the current segment; a committed phase's obligations cl
   exit 0 for solo / no plan in flight / a clean tree / not-a-git-tree / a CURRENT segment run whose
   fingerprint AND segment bound-testId set both match, with — per bound testId — an N/N-green probe,
   an observed-red receipt in this segment that PRECEDES the run, and content custody (run hash == the
-  latest custody-eligible receipt hash on that file); plus 0 uncovered changed lines, 0 changed
+  latest custody-eligible red-probe OR reattest hash on that file — a green-only append is re-anchored
+  by a recorded --reattest, not a red-proof waiver); plus 0 uncovered changed lines, 0 changed
   unsupported source, every tampered
   test-surface file covered by a recorded oracle-change override, and the reserved empty mutation
   shape. A recorded red-proof override (review-ledger-write override) waives receipt + custody for
