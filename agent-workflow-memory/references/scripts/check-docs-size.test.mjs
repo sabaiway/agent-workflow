@@ -1,8 +1,11 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import { expect } from './_expect-shim.mjs';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir, readFile, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   parseFrontmatter,
   parseStaleAfter,
@@ -11,6 +14,7 @@ import {
   buildIndex,
   checkIndexFreshness,
   walkMarkdownFiles,
+  regenerateIndex,
 } from './check-docs-size.mjs';
 
 describe('parseFrontmatter', () => {
@@ -200,5 +204,73 @@ describe('checkIndexFreshness', () => {
     const onDisk = buildIndex(rows, '2026-05-01'); // index regenerated weeks ago
     // Same source rows, "today" is later — content unchanged, so it must stay fresh.
     expect(checkIndexFreshness(rows, onDisk).fresh).toBe(true);
+  });
+});
+
+// ── (h) — root-parameterization: the ADR-rotation hook regenerates ANOTHER root's index ────
+// The generator's module ROOT is the CLI default only; --root / regenerateIndex(root) target an
+// arbitrary tree so the rotation hook (and hermetic tests) never touch the real repo.
+describe('root parameterization (item (h))', () => {
+  let root;
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'check-docs-root-'));
+    await mkdir(join(root, 'docs', 'ai'), { recursive: true });
+  });
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const seedDoc = (name, extra = '') =>
+    writeFile(join(root, 'docs', 'ai', name), `---\ntype: reference\nlastUpdated: 2026-07-08\nscope: permanent\nstaleAfter: 30d\nowner: none\nmaxLines: 100\n---\n\n# ${name}\n${extra}`);
+
+  it('inspectFile computes the file path RELATIVE to the passed root (not the module ROOT)', async () => {
+    await seedDoc('handover.md');
+    const result = await inspectFile(join(root, 'docs', 'ai', 'handover.md'), computeToday('2026-07-08'), root);
+    expect(result.path).toBe('docs/ai/handover.md');
+  });
+
+  it('regenerateIndex(root, today) writes THAT root\'s docs/ai/index.md from its frontmatter', async () => {
+    await seedDoc('a.md');
+    await seedDoc('b.md');
+    const res = await regenerateIndex(root, '2026-07-08');
+    expect(res.indexPath).toBe(join(root, 'docs', 'ai', 'index.md'));
+    expect(existsSync(res.indexPath)).toBe(true);
+    const index = await readFile(res.indexPath, 'utf8');
+    expect(index).toMatch(/lastUpdated: 2026-07-08/); // header date is the argument
+    expect(index).toMatch(/a\.md/);
+    expect(index).toMatch(/b\.md/);
+    expect(index).not.toMatch(/\[`index\.md`\]/); // the index never lists itself
+  });
+
+  it('a re-run with unchanged sources is byte-identical (deterministic, --check-index safe)', async () => {
+    await seedDoc('a.md');
+    const first = await regenerateIndex(root, '2026-07-08');
+    const bytesA = await readFile(first.indexPath, 'utf8');
+    await regenerateIndex(root, '2026-07-08');
+    const bytesB = await readFile(first.indexPath, 'utf8');
+    expect(bytesB).toBe(bytesA);
+  });
+
+  // The CLI entry (main) over --root — a subprocess smoke so the --help usage + the --check-index
+  // fresh/stale branches (root-parameterized) are exercised end-to-end.
+  const SCRIPT = fileURLToPath(new URL('./check-docs-size.mjs', import.meta.url));
+  const runCli = (args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' });
+
+  it('--help prints the usage (naming --root) and exits 0', () => {
+    const r = runCli(['--help']);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/--root=/);
+  });
+
+  it('--check-index --root: a fresh index is OK (exit 0); a drifted one is stale (exit 1)', async () => {
+    await seedDoc('a.md');
+    expect(runCli(['--write-index', `--root=${root}`]).status).toBe(0);
+    const fresh = runCli(['--check-index', `--root=${root}`]);
+    expect(fresh.status).toBe(0);
+    expect(fresh.stdout).toMatch(/in sync/);
+    await seedDoc('b.md'); // a new source row drifts the on-disk index
+    const stale = runCli(['--check-index', `--root=${root}`]);
+    expect(stale.status).toBe(1);
+    expect(stale.stderr).toMatch(/stale/);
   });
 });

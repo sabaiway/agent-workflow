@@ -30,6 +30,13 @@ import { resolve, join, relative, isAbsolute, dirname, basename } from 'node:pat
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { fail } from './orchestration-config.mjs';
+// (e) --ledger-summary (BUGFREE-3 / AD-049): a computed, loop/base-SCOPED review-ledger digest for
+// the facts payload. The review ledger is read-only here — grounding never writes it. ORIGINS +
+// computeTelemetry give the counts; the segment filter gives the scope.
+import { ORIGINS, computeTelemetry, filterSegmentRecords, readLedger, resolveLedgerPath, resolveBase } from './review-ledger.mjs';
+import { plansInFlight } from './review-state.mjs';
+
+const PLAN_EXECUTION = 'plan-execution';
 
 // The agy single-argv byte contract (mirrors agy-review.sh — the wrapper is the enforcement home).
 export const DEFAULT_MAX_PROMPT_BYTES = 120000;
@@ -104,6 +111,73 @@ export const trimToBudget = (payload, budget) => {
   return { text, trimmedBytes: bytes - keep };
 };
 
+// ── (e) --ledger-summary: a loop/base-SCOPED review-ledger digest (read-only, computed) ─────────
+// `computeTelemetry` aggregates ALL loops and is not per-round-facts-shaped, so this renders the
+// in-flight SEGMENT only (plan-execution, loop, base) — the telemetry COUNTS filtered to that
+// segment, plus a terse per-round/triage/override render. Deliberately compact + distinct from the
+// review-ledger `--status` human view (that one is indented + segment-grouped): this is a byte-
+// budgeted FACTS block that agy/codex review against, so unrelated loops are excluded by construction.
+
+const baseTag = (base) => (base === null ? '(unborn branch)' : String(base).slice(0, 12));
+const countsOf = (obj) => {
+  const keys = Object.keys(obj).sort();
+  return keys.length === 0 ? '(none)' : keys.map((k) => `${k}:${obj[k]}`).join(' ');
+};
+const summaryRoundLine = (r) =>
+  `round ${r.round} — ${r.backends.map((b) => `${b.backend} ${b.degraded ? `degraded(${b.reason})` : `${b.blockers}/${b.majors}/${b.minors} ${b.verdict}`}`).join(', ')}` +
+  (r.findings.length ? ` [${r.findings.map((f) => `${f.findingKey}(${f.severity})`).join(', ')}]` : '');
+const summaryTriageLine = (t) => `triage @round ${t.round} — ${t.classifications.map((c) => `${c.findingKey}=${c.class}`).join(', ')}`;
+const summaryOverrideLine = (o) =>
+  `override @round ${o.round} [${o.scope}] — ${o.scope === 'oracle-change' ? o.files.join(', ') : o.scope === 'size-cap' ? `sanctioned ${o.sanctionedLines} lines` : o.testId}: ${o.reason}`;
+const summaryGateRunLine = (g) => `gate-run — status=${g.summary.status} ${g.summary.passed}/${g.summary.gates} green`;
+const summaryRecordLine = (r) =>
+  r.kind === 'round' ? summaryRoundLine(r) : r.kind === 'triage' ? summaryTriageLine(r) : r.kind === 'override' ? summaryOverrideLine(r) : summaryGateRunLine(r);
+
+// renderLedgerSummary(records, { loop, base }) → the scoped facts section, or '' when the segment
+// holds no records (empty/absent → nothing to ground). Pure: the caller does the I/O.
+export const renderLedgerSummary = (records, { loop, base }) => {
+  const segment = filterSegmentRecords(records, { activity: PLAN_EXECUTION, loop, base });
+  if (segment.length === 0) return '';
+  const t = computeTelemetry(segment, []).loops[0];
+  const lines = [
+    `## Review-ledger summary — loop ${loop} @ base ${baseTag(base)}`,
+    '',
+    `rounds ${t.rounds} · divergence-rounds ${t.divergenceRounds}`,
+    `finding origins — ${ORIGINS.map((k) => `${k}:${t.origins[k]}`).join(' ')}`,
+    `classifications — ${countsOf(t.classifications)}`,
+    `backend verdicts — ${Object.keys(t.backendVerdicts).sort().map((b) => `${b}{${countsOf(t.backendVerdicts[b])}}`).join(' · ') || '(none)'}`,
+    `overrides — ${countsOf(t.overrides)}`,
+    '',
+    ...segment.map(summaryRecordLine),
+  ];
+  return `${lines.join('\n')}\n`;
+};
+
+// resolveLedgerSummary({ cwd, env }) → the scoped section text for the SINGLE in-flight plan-execution
+// segment. A loud STOP unless exactly one plan is in flight (the family's single-plan discipline —
+// never guess which loop to ground). Reads the ledger read-only.
+const gitTop = (cwd) => {
+  const r = gitLine(['rev-parse', '--show-toplevel'], cwd);
+  return r && r.status === 0 ? r.stdout.replace(/\r?\n$/, '') : cwd;
+};
+export const resolveLedgerSummary = ({ cwd, env }) => {
+  const root = gitTop(cwd);
+  const plans = plansInFlight(root);
+  if (plans.length !== 1) {
+    throw fail(1, `--ledger-summary needs exactly one in-flight plan (in flight: ${plans.length ? plans.join(', ') : 'none'}) — resolve to one active plan`);
+  }
+  const loop = plans[0].replace(/\.md$/, '');
+  const base = resolveBase(cwd);
+  const ledgerPath = resolveLedgerPath(cwd, env);
+  const { records, readError, malformed, malformedReasons } = ledgerPath ? readLedger(ledgerPath) : { records: [], malformed: 0 };
+  // Fail CLOSED like every sibling ledger reader (No-silent-failures): an unreadable OR malformed
+  // ledger must never silently render an empty/partial digest the reviewer then grounds against — an
+  // empty section would be indistinguishable from a legitimately-empty segment.
+  if (readError) throw fail(1, `--ledger-summary cannot read the ledger (${readError}) — failing closed; inspect ${ledgerPath}`);
+  if (malformed > 0) throw fail(1, `--ledger-summary: the ledger has ${malformed} malformed line(s) — failing closed (a dropped line could hide a round/finding): ${malformedReasons.join('; ')}`);
+  return renderLedgerSummary(records, { loop, base });
+};
+
 // ── the --out destination guard (gitignored / out-of-repo scratch ONLY) ────────────────
 
 const gitLine = (args, cwd) => {
@@ -157,13 +231,17 @@ export const assertScratchDestination = (outPath, cwd) => {
 const HELP = `grounding — grounded-review facts assembler for the agent-workflow family (AD-038).
 
 Usage:
-  node grounding.mjs [--constraints] [--plan <path>] [--reserve-bytes <n>] [--out <path>]
+  node grounding.mjs [--constraints] [--plan <path>] [--ledger-summary] [--reserve-bytes <n>] [--out <path>]
 
   --constraints        slice the root AGENTS.md "Hard Constraints" section verbatim
                        (exactly one matching heading, else a loud STOP)
   --plan <path>        extract the plan's decision-bearing sections verbatim + whole:
                        "## Approach" + "## Verification" (REQUIRED — STOP if missing),
                        "## Decisions (locked)" when present; a duplicate heading is a STOP
+  --ledger-summary     append a COMPUTED review-ledger digest for the SINGLE in-flight
+                       plan-execution segment (rounds · origins · classifications · verdicts ·
+                       overrides + a per-round render) — "computed, not remembered" facts; a
+                       loud STOP unless exactly one plan is in flight
   --reserve-bytes <n>  the artifact share agy-review will add around these facts — the output
                        budget becomes AGY_MAX_PROMPT_BYTES − n (loud tail-trim on overflow)
   --out <path>         write instead of stdout — gitignored / out-of-repo scratch ONLY
@@ -181,9 +259,11 @@ const parseArgs = (argv) => {
   let plan = null;
   let out = null;
   let reserve = 0;
+  let ledgerSummary = false;
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--constraints') constraints = true;
+    else if (a === '--ledger-summary') ledgerSummary = true;
     else if (a === '--plan') {
       plan = argv[i + 1];
       if (!plan || plan.startsWith('--')) throw fail(2, '--plan requires a <path>');
@@ -199,8 +279,8 @@ const parseArgs = (argv) => {
       i += 1;
     } else throw fail(2, `unknown argument: ${a}`);
   }
-  if (!constraints && plan == null) throw fail(2, 'nothing to assemble — pass --constraints and/or --plan <path>');
-  return { constraints, plan, out, reserve };
+  if (!constraints && plan == null && !ledgerSummary) throw fail(2, 'nothing to assemble — pass --constraints, --plan <path>, and/or --ledger-summary');
+  return { constraints, plan, out, reserve, ledgerSummary };
 };
 
 const resolveBudget = (env, reserve) => {
@@ -220,7 +300,7 @@ export const main = (argv, ctx = {}) => {
   const env = ctx.env ?? process.env;
   try {
     if (argv.includes('--help') || argv.includes('-h')) return { code: 0, stdout: HELP, stderr: '' };
-    const { constraints, plan, out, reserve } = parseArgs(argv);
+    const { constraints, plan, out, reserve, ledgerSummary } = parseArgs(argv);
     const budget = resolveBudget(env, reserve);
 
     const readOrStop = (path, label) => {
@@ -233,7 +313,14 @@ export const main = (argv, ctx = {}) => {
     const constraintsText = constraints ? readOrStop('AGENTS.md', 'root AGENTS.md') : null;
     const planText = plan != null ? readOrStop(plan, 'plan file') : null;
 
-    const payload = assembleGrounding({ constraintsText, planText, planLabel: plan ?? 'plan' });
+    const parts = [];
+    const assembled = assembleGrounding({ constraintsText, planText, planLabel: plan ?? 'plan' });
+    if (assembled) parts.push(assembled);
+    if (ledgerSummary) {
+      const summary = resolveLedgerSummary({ cwd, env });
+      if (summary) parts.push(summary);
+    }
+    const payload = parts.join('\n');
     const { text, trimmedBytes } = trimToBudget(payload, budget);
     const stderr = trimmedBytes > 0
       ? `[grounding] TRIM: assembled ${Buffer.byteLength(payload, 'utf8')} bytes > budget ${budget} (AGY_MAX_PROMPT_BYTES minus --reserve-bytes ${reserve}) — dropped ${trimmedBytes} tail bytes; the cut is marked in-band.`

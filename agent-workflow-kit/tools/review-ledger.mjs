@@ -104,13 +104,15 @@ const SEVERITIES = new Set(['blocker', 'major', 'minor']);
 export const ORIGINS = ['first-draft', 'fold-induced', 'mechanics'];
 const CLASSES = new Set(['fixable-bug', 'inherent-layer-residual', 'escalate']);
 // v4 (BUGFREE-2 / D6): `refuted` — the honest lane for a phantom finding, refuted against code with
-// a MANDATORY non-empty note citing the grounds; never silently dropped, never folded.
-const V4_CLASSES = new Set([...CLASSES, 'refuted']);
+// a MANDATORY non-empty note citing the grounds; never silently dropped, never folded. Exported as
+// the code-side vocabulary source the doc-parity lint (BUGFREE-3 / AD-049) checks the contract docs
+// against — so the mode files can never drift from the schema's own class/scope lexicon.
+export const V4_CLASSES = new Set([...CLASSES, 'refuted']);
 const OVERRIDE_SCOPES = new Set(['oracle-change', 'red-proof']);
 // v4 (BUGFREE-2 / D4): `size-cap` — the recorded waiver for a changed surface beyond the diff cap;
 // exact payload carries the sanctioned magnitude, and it is SEGMENT-scoped (loop + base), unlike
 // the two loop-scoped v3 scopes.
-const V4_OVERRIDE_SCOPES = new Set([...OVERRIDE_SCOPES, 'size-cap']);
+export const V4_OVERRIDE_SCOPES = new Set([...OVERRIDE_SCOPES, 'size-cap']);
 
 // ── git-dir resolution (read-only queries; the ledger lives in the git dir, uncommittable) ──────
 

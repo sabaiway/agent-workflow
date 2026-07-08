@@ -10,7 +10,8 @@
 // oldest (lowest AD id, top of file) first; an entry's lines move verbatim.
 //
 // Modes:
-//   (default)   rotate, mutate files in place (only when something is over cap)
+//   (default)   rotate, mutate files in place (only when something is over cap), then regenerate
+//               docs/ai/index.md so the rotation never leaves the index stale (item (h))
 //   --dry-run   print the planned move-set, change nothing
 //   --check     report per-tier lines/cap; exit 1 if any tier is over its cap
 //   --today=YYYY-MM-DD  pin the lastUpdated stamp (tests / reproducible runs)
@@ -41,9 +42,39 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = resolve(__dirname, '..');
+
+// (h) — after a rotation write, docs/ai/index.md would silently go stale (a moved ADR, or just the
+// bumped lastUpdated), tripping the SEPARATE `--check-index` gate mid-release-matrix. So the
+// rotation regenerates the index by REUSING the ONE generator in the sibling check-docs-size.mjs
+// (spawned with --write-index --root=<root>). The subprocess bridges that script's ASYNC generator,
+// so this runCli stays SYNCHRONOUS (spawnSync) — the existing sync callers/tests never ripple. It
+// DEGRADES LOUDLY to an instruct (never a silent failure) when the sibling is absent or the
+// regeneration fails; the --check-index gate still catches a stale index. Injectable for tests.
+const CHECK_DOCS_SIBLING = resolve(__dirname, 'check-docs-size.mjs');
+const INDEX_INSTRUCT = 'run `node scripts/check-docs-size.mjs --write-index` to refresh docs/ai/index.md';
+// Exported + its filesystem edges injectable (deps) so BOTH degrade branches are unit-testable.
+export const defaultRegenerateIndex = (root, today, deps = {}) => {
+  const exists = deps.existsSync ?? existsSync;
+  const spawn = deps.spawnSync ?? spawnSync;
+  const sibling = deps.sibling ?? CHECK_DOCS_SIBLING;
+  if (!exists(sibling)) {
+    return { ok: false, detail: `the index generator is not beside this script — ${INDEX_INSTRUCT}` };
+  }
+  // `--report` ISOLATES the index-WRITE outcome from the docs-cap-CHECK outcome: check-docs-size
+  // --write-index still WRITES the index (and still exits 2 on an empty write / rejects a genuine
+  // throw), but --report suppresses its exit-1 on an unrelated over-cap co-located doc — otherwise a
+  // benign over-cap sibling would read as an index-regeneration FAILURE (a cry-wolf on this very
+  // loud-degrade channel).
+  const r = spawn(process.execPath, [sibling, '--write-index', '--report', `--root=${root}`, `--today=${today}`], { encoding: 'utf8' });
+  if (r.error || r.status !== 0) {
+    return { ok: false, detail: `index regeneration failed (${(r.error && r.error.message) || `exit ${r.status}`}) — ${INDEX_INSTRUCT}` };
+  }
+  return { ok: true, detail: (r.stdout || '').trim() };
+};
 
 export const HOT_REL = 'docs/ai/decisions.md';
 export const WARM_REL = 'docs/ai/history/decisions-archive.md';
@@ -295,7 +326,7 @@ const parseArgs = (argv) => {
 };
 
 export const runCli = (argv, deps = {}) => {
-  const { root = DEFAULT_ROOT, log = console.log, logError = console.error } = deps;
+  const { root = DEFAULT_ROOT, log = console.log, logError = console.error, regenerateIndex = defaultRegenerateIndex } = deps;
   try {
     const { flags, today: todayOpt } = parseArgs(argv);
     if (flags.help) {
@@ -406,6 +437,10 @@ export const runCli = (argv, deps = {}) => {
       mkdirSync(dirname(tier.path), { recursive: true });
       writeFileSync(tier.path, renderTier(updated, entries), 'utf8');
     }
+    // (h) — the write loop completed (a full successful rotation OR a normalize-only rewrite): the
+    // docs index is now stale, so regenerate it here (never on --check / --dry-run / the
+    // nothing-to-rotate no-op / a pre-write refusal — those return before this point).
+    const regen = regenerateIndex(root, today);
     log('[archive-decisions] rotated:');
     log(`  HOT→WARM: ${summary.hotToWarm.join(', ') || '(none)'}`);
     log(`  WARM→COLD: ${summary.warmToCold.join(', ') || '(none)'}`);
@@ -413,6 +448,8 @@ export const runCli = (argv, deps = {}) => {
       log(`  normalize-only rewrite (over cap on raw lines, no entry moves): ${summary.normalizeOnly.join(', ')}`);
     }
     log(`  now: HOT ${summary.after.hot} · WARM ${summary.after.warm} · COLD ${summary.after.cold}`);
+    if (regen.ok) log('  regenerated docs/ai/index.md (the rotation kept the index fresh)');
+    else logError(`[archive-decisions] docs/ai/index.md NOT regenerated — ${regen.detail}`);
     return 0;
   } catch (err) {
     logError(`[archive-decisions] ${err.message}`);

@@ -37,7 +37,7 @@ import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { writeContainedFileAtomic } from './atomic-write.mjs';
-import { computeTreeFingerprint, plansInFlight, readReceipts, resolveReceiptsPath } from './review-state.mjs';
+import { buildState, computeTreeFingerprint, plansInFlight, readReceipts, resolveReceiptsPath } from './review-state.mjs';
 import {
   REVIEW_CAP,
   SCHEMA_VERSION,
@@ -99,6 +99,52 @@ const appendRecord = (ledgerPath, record, deps = {}) => {
   const root = dirname(ledgerPath);
   writeContainedFileAtomic(root, ledgerPath, body, deps, { stop, label: ledgerPath });
   return { writtenPath: ledgerPath, record };
+};
+
+// ── (g) record --from-receipts: draft the backends[] from the current-fingerprint receipts ────────
+// (BUGFREE-3 / AD-049). The orchestrator hand-maintained each backend's { backend, verdict } beside
+// the counts every round — drift-prone busywork. --from-receipts DRAFTS the backends[] instead: for
+// each recipe-named backend it reads the review-state receipt status (verdict from the fresh grounded
+// code receipt) and computes the counts from the orchestrator's OWN supplied findings; `origins` and
+// `findings` stay explicit input. It NEVER invents a backend — a recipe-named backend with no fresh
+// grounded receipt is a LOUD STOP (run its review, or supply it explicitly as a degraded backend).
+// The assembled backends[] then rides the normal recordRound teeth (validateRound re-checks that
+// findings-by-severity equals the drafted counts — true by construction).
+export const draftBackendsFromReceipts = ({ state, findings = [], explicitBackends = [] }, deps = {}) => {
+  const stopFn = deps.stop ?? stop;
+  const explicitByName = new Map((Array.isArray(explicitBackends) ? explicitBackends : []).filter((b) => b && typeof b.backend === 'string').map((b) => [b.backend, b]));
+  const findingsArr = Array.isArray(findings) ? findings : [];
+  const countFor = (name) => {
+    const own = findingsArr.filter((f) => f && f.backend === name);
+    return {
+      blockers: own.filter((f) => f.severity === 'blocker').length,
+      majors: own.filter((f) => f.severity === 'major').length,
+      minors: own.filter((f) => f.severity === 'minor').length,
+    };
+  };
+  return state.requiredBackends.map((name) => {
+    const explicit = explicitByName.get(name);
+    if (explicit) {
+      // An explicit row is honored verbatim ONLY for a DEGRADED backend (a bridge the operator knows
+      // is down, which minted no receipt). A NON-degraded explicit row would BYPASS the
+      // receipt-derived verdict --from-receipts exists to compute (a stale hand-composed row silently
+      // winning) — a loud STOP, fail-closed (codex council R1). Drop --from-receipts to compose a
+      // non-degraded row by hand, or mark the backend degraded.
+      if (explicit.degraded !== true) {
+        throw stopFn(
+          `refusing --from-receipts: an explicit non-degraded backends[] row for ${name} would bypass the receipt-derived verdict this flag computes — mark it degraded (a bridge that is down), or drop --from-receipts and compose the round by hand`,
+        );
+      }
+      return explicit;
+    }
+    const status = state.backends.find((b) => b.backend === name);
+    if (!status || status.state !== 'current') {
+      throw stopFn(
+        `refusing --from-receipts: no fresh grounded code receipt for ${name} (state: ${status?.state ?? 'missing'}) — run its review wrapper (codex-review code / agy-review code --facts @f) first, or supply it explicitly as a degraded backend in the payload's backends[]`,
+      );
+    }
+    return { backend: name, degraded: false, ...countFor(name), verdict: status.verdict };
+  });
 };
 
 // ── recordRound (the teeth + the integrity binding) ─────────────────────────────────────────────
@@ -365,7 +411,7 @@ export const recordTriage = (params, deps = {}) => {
 const HELP = `review-ledger-write — the review-round ledger WRITER (agent-workflow family, AD-045 + AD-047 + AD-048).
 
 Usage:
-  node review-ledger-write.mjs record   --json '<round-payload>'    [--cwd <dir>]
+  node review-ledger-write.mjs record   --json '<round-payload>' [--from-receipts] [--cwd <dir>]
   node review-ledger-write.mjs classify --json '<triage-payload>'   [--cwd <dir>]
   node review-ledger-write.mjs override --json '<override-payload>' [--cwd <dir>]
 
@@ -373,7 +419,11 @@ Every verb operates on the current SEGMENT — (loop, base = git rev-parse HEAD)
 caps, and teeth reset only when a gated commit moves base (schema 4; records carry base).
 
 record   appends one review round. The JSON payload carries { loop, round, origins, backends,
-         findings } (activity defaults to plan-execution; timestamp defaults to now). REFUSES while
+         findings } (activity defaults to plan-execution; timestamp defaults to now). With
+         --from-receipts the backends[] is DRAFTED from the current-fingerprint grounded code
+         receipts (verdict per backend) with counts computed from the supplied findings — origins /
+         findings stay explicit; a recipe-named backend with no receipt is a LOUD stop (run its
+         review, or supply it explicitly as a degraded backend). REFUSES while
          triage is required; beyond the hard-max ceiling of ${HARD_MAX} rounds within one segment;
          while a blocking finding of the segment's previous round VANISHED unclassified (D6 —
          classify it first, "refuted" is the honest phantom lane); while the changed source surface
@@ -401,7 +451,7 @@ The read-only checker is a SEPARATE tool: node review-ledger.mjs --check / --sta
 Exit codes: 0 written; 1 a typed STOP (teeth / malformed / missing receipt / fs error); 2 usage.`;
 
 const parseArgs = (argv) => {
-  const opts = { cwd: undefined, json: undefined };
+  const opts = { cwd: undefined, json: undefined, fromReceipts: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--cwd') {
@@ -412,6 +462,8 @@ const parseArgs = (argv) => {
       opts.json = argv[i + 1];
       if (opts.json === undefined) throw usageFail('--json needs a JSON payload');
       i += 1;
+    } else if (a === '--from-receipts') {
+      opts.fromReceipts = true;
     } else {
       throw usageFail(`unknown argument: ${a}`);
     }
@@ -436,8 +488,15 @@ export const main = (argv, ctx = {}) => {
     const sub = argv[0];
     if (sub !== 'record' && sub !== 'classify' && sub !== 'override') throw usageFail(`unknown subcommand "${sub}" (expected: record | classify | override)`);
     const opts = parseArgs(argv.slice(1));
+    if (opts.fromReceipts && sub !== 'record') throw usageFail('--from-receipts applies only to `record`');
     const payload = parsePayload(opts.json);
     const cwd = opts.cwd ?? cwd0;
+    if (opts.fromReceipts) {
+      // Draft backends[] from the current-fingerprint receipts + the supplied findings; origins /
+      // findings stay explicit. The drafted array then rides the normal recordRound teeth.
+      const state = buildState({ cwd, env });
+      payload.backends = draftBackendsFromReceipts({ state, findings: payload.findings, explicitBackends: payload.backends ?? [] });
+    }
     const result =
       sub === 'record'
         ? recordRound({ cwd, env, ...payload })

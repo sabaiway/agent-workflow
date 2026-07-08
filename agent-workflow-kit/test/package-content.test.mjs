@@ -181,7 +181,12 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 135 = 134 + tools/lcov.mjs (the dependency-free LCOV parser — the coverage.kind:"lcov" branch).
     // 136 = 135 + tools/sarif.mjs (the dependency-free SARIF reader — the optional advisory findings
     //       surface, never gate-blocking; the --findings verb prints, never records).
-    assert.equal(packed.length, 136, `tarball file count drifted (${packed.length} ≠ 136)`);
+    // 138 = 136 + the BUGFREE-3 Segment 2 doc-parity lint (AD-049): tools/doc-parity.mjs (the closed
+    //       constant⟷contract-doc parity checker) + references/modes/doc-parity.md (the 21st mode-ref).
+    //       Its *.test.mjs sibling — and the new colocated review-state-await / from-receipts /
+    //       grounding-ledger-summary tests — are stripped by files[]. The (d)/(e)/(g)/(h) verbs added
+    //       no new shipped file (they extend existing tools + the shipped reference-scripts mirror).
+    assert.equal(packed.length, 138, `tarball file count drifted (${packed.length} ≠ 138)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
