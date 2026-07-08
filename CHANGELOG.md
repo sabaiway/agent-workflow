@@ -7,6 +7,23 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-08 — kit 1.40.0 + memory 1.12.0: universal verification profile + session-loop economics (a)–(h) (BUGFREE-3, AD-049)
+
+**agent-workflow-kit 1.40.0 + agent-workflow-memory 1.12.0** (engine/bridges unchanged). BUGFREE-3
+closes the AD-046 language-independence residual and folds the BUGFREE-2 retro's eight session-loop
+cycle-costs (a)–(h). A new optional `docs/ai/verification-profile.json` (`schema:1`; memory template
++ a kit read-core tool) declares WHERE a suite leaves coverage (V8 or **LCOV**) + the single-test
+format (**TAP stdout/file, JUnit-XML**) + an optional SARIF path — so a non-JS/V8 consumer can
+finally use the fold-completeness gate (an absent profile reproduces today's behaviour exactly). The
+economics: (a) one suite run per fingerprint **credits** the `unit-tests` gate; (b) a `doc-parity`
+lint pins mode-contract docs to live code constants; (c) a same-segment re-attest replaces mis-using
+`red-proof` for a green-only test append; (d) `review-state --await` blocks on receipts, not a pid;
+(e) `grounding --ledger-summary` renders a loop-scoped ledger digest for `--facts`; (f) a
+`--preflight` verb; (g) `record --from-receipts`; and (h) an ADR rotation regenerates
+`docs/ai/index.md` so it never trips the freshness gate mid-release-matrix (**dogfooded on this very
+release**). Stated Option-A residual: the (a) credit rides `NODE_V8_COVERAGE` (bounded, documented,
+tested); the Node ≥22 + LCOV-reporter closure is queued.
+
 ## 2026-07-07 — kit 1.39.0: fold boundaries — commit-anchored segments, the diff-size cap, the green-baseline receipt, no-repro-no-fold, gate telemetry (AD-048)
 
 **agent-workflow-kit 1.39.0** (engine/memory/bridges unchanged). AD-047's own execution loop

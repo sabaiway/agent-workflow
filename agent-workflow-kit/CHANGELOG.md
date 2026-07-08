@@ -4,6 +4,45 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.40.0 — Universal verification profile + session-loop economics (a)–(h) (BUGFREE-3, AD-049)
+
+A **feature** release (deployment-lineage head stays `1.3.0` — no migration; co-released with
+`@sabaiway/agent-workflow-memory` 1.12.0; engine/bridges untouched). BUGFREE-3 closes two residuals
+AD-046/AD-048 left open: the fold-completeness signal was **JS/V8-only** (coverage read solely from
+`NODE_V8_COVERAGE`, the single-test probe parsed node:test TAP from stdout — no consumer on another
+runner could use the gate), and the BUGFREE-2 retro left **eight kit-level cycle-costs** unfolded.
+
+- **Verification profile** — a new, optional, versionable `docs/ai/verification-profile.json`
+  (`schema:1`; memory-canon template + kit mirror + a read-core kit tool) declares WHERE the suite
+  leaves coverage (`coverage.kind ∈ {v8,lcov}` + `lcovPath`), the single-test template
+  (`resultFormat ∈ {tap-stdout,tap-file,junit-xml}`), and an optional SARIF findings path. Env knobs
+  override; an **absent profile reproduces today's V8 + node:test behaviour exactly**. Every declared
+  path is realpath-guarded gitignored/out-of-tree. LCOV branches at `readCoverage` (the V8 path is
+  byte-unchanged); the single-test strategy preserves `resolvable = matched>0` across every format;
+  SARIF is advisory, never on the blocking path.
+- **(a) one suite run per fingerprint** — fold RESULT schema v3→v4 carries suite-execution evidence,
+  and `run-gates --record` **credits** the `unit-tests` gate from it instead of re-spawning (strictly
+  fingerprint-bound + tree-unchanged + command-identity + exit-0; no "recent enough" cache).
+  **(c) same-segment re-attest** — a recorded `reattest` receipt anchors custody at a new file hash
+  for a green-only test append without fabricating a red-observe (the honest replacement for
+  mis-using `red-proof`). **(f) `--preflight`** — the cheap set only, actions routed by kind, no
+  suite/probe spawn.
+- **(b) doc-parity** — a new read-only lint + mode: a closed, live-imported registry pins each
+  mode-contract doc token to its code constant (caps, schema versions, the ledger vocabulary),
+  fail-closed on drift. **(d) `review-state --await`** — block until every recipe-named backend has
+  a fresh grounded receipt for the current tree (receipts-not-pgrep; deadline-first, bounded sleep).
+  **(e) `grounding --ledger-summary`** — a loop/base-scoped review-ledger digest for `--facts`,
+  fail-closed on an unreadable/malformed ledger. **(g) `record --from-receipts`** — draft
+  `backends[]` from the current-fingerprint receipts; an explicit non-degraded row is a loud STOP.
+- **(h) a rotation regenerates `docs/ai/index.md`** (the memory-canon `archive-decisions.mjs` reuses
+  the root-parameterized `check-docs-size.mjs --write-index --report`) — so an ADR rotation never
+  leaves the index stale mid-release-matrix; **dogfooded on this very release** (AD-049's rotation
+  regenerated the index automatically, zero mid-matrix trip).
+
+**Stated residual (Option A).** The (a) credit rides `NODE_V8_COVERAGE`, an observable env var — a
+test reading it could flip; bounded (fails-under-coverage caught by exit-0), documented, and tested.
+The clean closure (Node ≥22 + `--test-reporter=lcov`) is queued.
+
 ## 1.39.0 — Fold boundaries: commit-anchored segments, the diff-size cap, the green-baseline receipt, no-repro-no-fold, and gate telemetry (AD-048)
 
 A **feature** release (deployment-lineage head stays `1.3.0` — no migration; engine/memory/bridges
