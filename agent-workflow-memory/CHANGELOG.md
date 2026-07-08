@@ -4,6 +4,26 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
 
+## 1.12.0 — Verification-profile template + the docs-index-on-rotation regen (BUGFREE-3, AD-049)
+
+A **minor** release (deployment-lineage head stays `1.3.0` — no migration; co-released with the
+workflow kit 1.40.0). The memory substrate gains the optional verification-profile config and closes
+the docs-index-goes-stale-on-rotation cost (economics item (h)).
+
+- **Verification-profile template** — a new seeded `references/templates/verification-profile.json`
+  (`schema:1`; the kit reads it, kit 1.40.0) is created on bootstrap and ensured-if-missing on
+  upgrade (the `gates.json` / `orchestration.json` twin); `SKILL.md`'s bootstrap/ensure prose now
+  names it. An **absent profile reproduces today's V8 + node:test behaviour exactly** — it only ADDS
+  an opt-in default a consumer edits for its own language/runner.
+- **(h) a rotation regenerates `docs/ai/index.md`** — `references/scripts/archive-decisions.mjs`
+  regenerates the docs index after a successful rotation write (moves OR a normalize-only rewrite) by
+  reusing the now **root-parameterized** `check-docs-size.mjs --write-index --report` (the `--report`
+  isolates the index-write outcome from the docs-cap-check, so a benign over-cap sibling never reads
+  as a regeneration failure), with a loud instruct on absence/failure. An ADR rotation no longer
+  leaves the index stale to trip the `--check-index` gate mid-release-matrix.
+- **§2.2 minimal-comments** — the `agent_rules` template states comments as minimal / only-vital,
+  a BASELINE a consumer project may tighten (e.g. comments forbidden entirely).
+
 ## 1.11.1 — One batched setup prompt (the F11 ask reword; AD-042)
 
 A **patch** release (prose reword only; deployment-lineage head stays `1.3.0` — no migration).
