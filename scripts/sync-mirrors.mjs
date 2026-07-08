@@ -51,7 +51,7 @@ const KIT_DIR = 'agent-workflow-kit';
 const SCRIPTS_REL = 'references/scripts';
 const TEMPLATES_REL = 'references/templates';
 
-// The byte-identical template set (12 top-level + 3 pages/). One explicit list, consumed by
+// The byte-identical template set (13 top-level + 3 pages/). One explicit list, consumed by
 // BOTH the sync below and template-parity.test.mjs — never two lists that can drift apart.
 export const MIRROR_TEMPLATE_FILES = Object.freeze([
   'AGENTS.md',
@@ -66,6 +66,7 @@ export const MIRROR_TEMPLATE_FILES = Object.freeze([
   'orchestration.json',
   'tech_reference.md',
   'technical_specification.md',
+  'verification-profile.json',
   'pages/PAGE_TEMPLATE.md',
   'pages/index.md',
   'pages/shared-patterns.md',

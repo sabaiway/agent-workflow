@@ -53,6 +53,7 @@ Before proposing changes or committing, review against:
 ### 2.2. Clean Code
 - **No magic literals** — extract string/numeric constants to named consts at module level.
 - **DRY** — no duplicated logic.
+- **Minimal comments (a BASELINE this project may tighten)** — if this project sets a stricter rule (e.g. comments forbidden entirely), that stricter rule ALWAYS wins; this is only a floor. Otherwise comment only where vitally necessary (a non-obvious invariant, a fail-closed rationale, a subtle edge). Make the code self-explaining first — clear variable/function names and compact-but-unambiguous test descriptions replace most comments; never restate what the code already says.
 
 ### 2.3. Strict Compliance
 - Only `const` (no `let`); no classes — pure functions, closures, modules.

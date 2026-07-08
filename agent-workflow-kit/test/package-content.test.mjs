@@ -1,6 +1,7 @@
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -81,6 +82,14 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the generic gate runner + its project-declaration seed (cost-tiered execution)
       'tools/run-gates.mjs',
       'references/templates/gates.json',
+      // the BUGFREE-3 verification-profile read-core + its seeded template (the language-independence
+      // contract, AD-049) — the memory-canon template's kit mirror (byte-parity: template-parity.test.mjs)
+      'tools/verification-profile.mjs',
+      'references/templates/verification-profile.json',
+      // the dependency-free LCOV parser (the coverage.kind:"lcov" branch — M3a goes any-language)
+      'tools/lcov.mjs',
+      // the dependency-free SARIF reader (the OPTIONAL advisory findings surface — never gate-blocking)
+      'tools/sarif.mjs',
       // the cheap-lane subagent writer + its bundled vehicles
       'tools/cheap-agents.mjs',
       'references/agents/mechanical-sweep.md',
@@ -122,6 +131,17 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     assert.deepEqual(missing, [], 'a runtime payload file or entry point was dropped from the tarball');
   });
 
+  // NUL-byte guard (BUGFREE-3): no shipped TEXT source file may contain a NUL byte — a stray \0 (e.g. an
+  // editor artifact in a string literal) makes the file read as BINARY, hiding it from rg-based scans,
+  // release-scan, and review tooling. Cheap, prevents the class from recurring.
+  it('ships no NUL byte in any text source file (.mjs / .json / .md / .sh)', () => {
+    const textShipped = packed
+      .filter((p) => /\.(mjs|cjs|js|json|md|sh)$/.test(p))
+      .map((p) => p.replace(/^package\//, ''));
+    const withNul = textShipped.filter((rel) => readFileSync(join(ROOT, rel)).indexOf(0) >= 0);
+    assert.deepEqual(withNul, [], 'a shipped text file contains a NUL byte (reads as binary) — remove it');
+  });
+
   it('ships no fixtures anywhere (neither `fixtures/` nor the inline-fixtures `__fixtures__/`)', () => {
     // The manifest validator's `fixtures/` dir is stripped by files[]. The presenter modules use
     // INLINE fixtures (never a tools/__fixtures__/ dir) — defense-in-depth: reject either spelling so a
@@ -155,7 +175,13 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 132 = 131 + tools/changed-surface.mjs (AD-048 — the NEUTRAL shared core: ONE changed-surface
     //       computation for the D4 diff cap + the coverage domain, plus the D8 telemetry fold-read
     //       path). Its *.test.mjs sibling is stripped by files[].
-    assert.equal(packed.length, 132, `tarball file count drifted (${packed.length} ≠ 132)`);
+    // 134 = 132 + the BUGFREE-3 verification profile (AD-049): tools/verification-profile.mjs (the
+    //       read-core: schema + loadProfile + declared-path safety) + references/templates/
+    //       verification-profile.json (the memory-canon template's kit mirror). *.test.mjs stripped.
+    // 135 = 134 + tools/lcov.mjs (the dependency-free LCOV parser — the coverage.kind:"lcov" branch).
+    // 136 = 135 + tools/sarif.mjs (the dependency-free SARIF reader — the optional advisory findings
+    //       surface, never gate-blocking; the --findings verb prints, never records).
+    assert.equal(packed.length, 136, `tarball file count drifted (${packed.length} ≠ 136)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

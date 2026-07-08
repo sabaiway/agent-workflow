@@ -49,6 +49,7 @@ What this substrate owns vs what it only points at. The methodology + orchestrat
 | Orchestration recipes (Solo / Reviewed / Council / Delegated) | **methodology engine** (not this skill) | the empty `workflow:orchestration` slot — filled by the composition root |
 | Per-project recipe **CONFIG** (which recipe each activity/slot uses) | **memory** seeds an *editable default* | `docs/ai/orchestration.json` (agent-writable via the composition root's `set-recipe` writer, or hand-edited; the recipe **canon** + the slot **vocabulary** live in the engine / composition root, never here) |
 | Per-project **gate declaration** (which verification commands must be green) | **memory** seeds an *editable default* | `docs/ai/gates.json` (hand-editable; an empty list as shipped — the project declares its own commands; the **runner** lives in the composition root, never here) |
+| Per-project **verification profile** (optional; the fold-completeness language-independence contract) | **memory** seeds an *editable default* | `docs/ai/verification-profile.json` (hand-editable; the seeded default reproduces the composition root's default V8 + node:test behaviour — delete it for exactly that; declares coverage source / single-test format / optional SARIF path; the **runner** lives in the composition root, never here) |
 
 ---
 
@@ -99,11 +100,14 @@ bootstrapping over a live system, but the user makes the final call.
    (`ln -s AGENTS.md CLAUDE.md`). **Leave BOTH pointer slots (`workflow:methodology` +
    `workflow:orchestration`) exactly as shipped — empty.** Filling them is the composition root's job.
 6. **Deploy `docs/ai/`.** Create the files + `pages/` from
-   `${CLAUDE_SKILL_DIR}/references/templates/` (every non-`AGENTS.md` template, including the two
+   `${CLAUDE_SKILL_DIR}/references/templates/` (every non-`AGENTS.md` template, including the three
    seeded, **user-editable** strict-JSON configs: `docs/ai/orchestration.json` — the per-project
-   recipe defaults the composition root's `procedures` advisor reads — and `docs/ai/gates.json` —
+   recipe defaults the composition root's `procedures` advisor reads — `docs/ai/gates.json` —
    the project's gate declaration, an empty list to fill with its own verification commands,
-   consumed by the composition root's gate runner). Keep each `.md` file's frontmatter.
+   consumed by the composition root's gate runner — and `docs/ai/verification-profile.json` — the
+   OPTIONAL fold-completeness verification profile (the language-independence contract; the seeded
+   default reproduces the composition root's default V8 + node:test behaviour, delete it for exactly
+   that)). Keep each `.md` file's frontmatter.
 7. **Fill templates** per the table below.
 8. **Install enforcement (Node projects).** Copy `${CLAUDE_SKILL_DIR}/references/scripts/*.mjs`
    (+ `*.test.mjs`) into the project's `scripts/`. **No Node runtime** → skip this + the hook;
@@ -171,13 +175,16 @@ Fill strategy:
    **untracked AND not ignored** → **AMBIGUOUS** → **ASK** the user before writing. This visibility check
    runs on **every** in-range upgrade, even at head — it is not gated by the stamp delta, but it is gated
    **behind** the never-downgrade STOP above. **Also stamp-independent (same gate, before the equal-head
-   short-circuit): ensure BOTH seeded `.json` configs** — for `docs/ai/orchestration.json` AND
-   `docs/ai/gates.json`, **create the file from its
+   short-circuit): ensure the THREE seeded `.json` configs** — for `docs/ai/orchestration.json`,
+   `docs/ai/gates.json`, AND `docs/ai/verification-profile.json`, **create the file from its
    `${CLAUDE_SKILL_DIR}/references/templates/` template if missing**, **preserve it byte-for-byte
    if it already exists** (a user may have edited it; never clobber it). The shipped
    `orchestration.json` template's `_README` already frames that config as agent-writable (set it
    with the `set-recipe` writer) and still hand-editable; `gates.json` is the project's own gate
-   declaration (what to verify — consumed by the composition root's gate runner). (Refreshing the
+   declaration (what to verify — consumed by the composition root's gate runner);
+   `verification-profile.json` is the OPTIONAL fold-completeness verification profile — the seeded
+   default reproduces the composition root's default V8 + node:test behaviour, so a project deletes
+   it to fall back to exactly that, or edits it for another language/runner. (Refreshing the
    orchestration `_README` note in place on an existing file is the **composition root's** job on
    its own reconcile — this substrate is standalone and only seeds-or-preserves; it owns no
    cross-package refresh helper. The gates declaration gets no note-refresh at all — authored

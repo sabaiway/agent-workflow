@@ -255,12 +255,14 @@ describe('resolveResultsPath + validateRunRecord', () => {
     const rec = {
       schema: RESULT_SCHEMA_VERSION, kind: 'run', loop: 'demo', base: 'h'.repeat(40), fingerprint: 'a'.repeat(64), boundTestIds: [],
       testIds: [], unsupported: [], outOfDomain: [], coverage: { uncoveredChanged: [] }, tamper: { tampered: [] },
+      suite: { cmd: 'node --test', exit: 0, fingerprintBefore: 'a'.repeat(64), fingerprintAfter: 'a'.repeat(64) },
       mutation: { total: 0, killed: 0, survived: [], skipped: 0, killSetBasis: null },
       budgets: { mutantsMax: 200, hunkMutantsMax: 25, timeBudgetS: 600 }, timestamp: 't',
     };
     assert.equal(validateRunRecord(rec).ok, true);
     assert.equal(validateRunRecord({ ...rec, coverage: undefined }).ok, false);
     assert.equal(validateRunRecord({ ...rec, loop: '' }).ok, false);
+    assert.equal(validateRunRecord({ ...rec, suite: undefined }).ok, false, 'a v4 run without suite-evidence is malformed');
   });
 });
 
@@ -947,12 +949,14 @@ describe('runRedProbe / --red — observed-red receipts', () => {
   });
 });
 
-describe('the runner HELP states the v3 segment record (codex Phase-3 R1 — no doc-vs-code drift)', () => {
-  it('the runner HELP states the v3 segment record', () => {
+describe('the runner HELP states the v4 segment record (codex Phase-3 R1 — no doc-vs-code drift)', () => {
+  it('the runner HELP states the v4 run record + the new verbs', () => {
     const r = main(['--help'], {});
     assert.equal(r.code, 0);
-    assert.match(r.stdout, /v3 run record/, 'the HELP must advertise the v3 record');
+    assert.match(r.stdout, /v4 run record/, 'the HELP must advertise the v4 record (BUGFREE-3)');
     assert.match(r.stdout, /segment/i, 'the HELP must name the segment frame');
+    assert.match(r.stdout, /--reattest/, 'the HELP must document the re-attest verb');
+    assert.match(r.stdout, /--findings/, 'the HELP must document the SARIF advisory verb');
     assert.doesNotMatch(r.stdout, /v2 run record/, 'the v2 wording is the pre-AD-048 contract');
   });
 });
