@@ -76,15 +76,18 @@ describe('draftBackendsFromReceipts', () => {
   });
 
   // The CLI wiring for `record --from-receipts` — a subprocess smoke so parseArgs' flag + the
-  // buildState → draft path in main() run end-to-end. With no receipts in a council repo the draft
-  // loudly stops (exit 1) — which is the point: the wiring reached the draft, and it never invented one.
-  it('CLI: `record --from-receipts` reaches the draft and loudly stops when no receipts exist', () => {
+  // buildState → draft path in main() run end-to-end. It uses an EXPLICIT solo recipe so the outcome
+  // is deterministic regardless of whether the review backends are installed (a real detectBackends
+  // runs in the subprocess): solo → no recipe-named backends → the draft returns [] and recordRound
+  // loudly refuses the empty round. The council no-receipt STOP is covered in-process above with an
+  // injected state.
+  it('CLI: `record --from-receipts` reaches the draft (subprocess smoke; loud refusal, exit 1)', () => {
     const root = mkdtempSync(join(tmpdir(), 'from-receipts-cli-'));
     const g = (...a) => spawnSync('git', a, { cwd: root, encoding: 'utf8' });
     g('init', '-q'); g('config', 'user.email', 'p@e.com'); g('config', 'user.name', 'p');
     writeFileSync(join(root, 'base.txt'), 'base\n'); g('add', '-A'); g('commit', '-qm', 'base');
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
-    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'council' } }));
+    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'solo' } }));
     mkdirSync(join(root, 'docs', 'plans'), { recursive: true });
     writeFileSync(join(root, 'docs', 'plans', 'active-plan.md'), '# plan\n');
     writeFileSync(join(root, 'pending.txt'), 'work\n');
@@ -93,6 +96,6 @@ describe('draftBackendsFromReceipts', () => {
     const r = spawnSync(process.execPath, [script, 'record', '--from-receipts', '--json', payload, '--cwd', root], { cwd: root, env: { ...process.env }, encoding: 'utf8' });
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.status, 1, r.stdout);
-    assert.match(r.stderr, /no fresh grounded code receipt/);
+    assert.match(r.stderr, /refusing/);
   });
 });

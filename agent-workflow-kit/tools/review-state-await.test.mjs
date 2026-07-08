@@ -155,14 +155,17 @@ describe('review-state --await', () => {
   });
 
   // The CLI entry (isDirectRun) dispatches --await to mainAwait and everything else to main — a
-  // subprocess smoke so both dispatch arms + the shared emitResult run end-to-end.
-  it('CLI entry: --await dispatches to the await path (bounded timeout → loud TIMEOUT exit 1)', () => {
-    const root = makeRepo();
+  // subprocess smoke so both dispatch arms + the shared emitResult run end-to-end. It uses an
+  // EXPLICIT solo recipe so the outcome is deterministic regardless of whether the review backends
+  // are installed on the machine (a real `detectBackends` runs in the subprocess) — solo resolves
+  // instantly READY. The council TIMEOUT path is covered in-process above with an injected detector.
+  it('CLI entry: --await dispatches to the await path (isDirectRun → mainAwait → READY under solo)', () => {
+    const root = makeRepo({ config: SOLO_CONFIG });
     const script = fileURLToPath(new URL('./review-state.mjs', import.meta.url));
     const r = spawnSync(process.execPath, [script, '--await', '--timeout', '1'], { cwd: root, env: { ...process.env }, encoding: 'utf8' });
     rmSync(root, { recursive: true, force: true });
-    assert.equal(r.status, 1, r.stderr);
-    assert.match(r.stderr, /TIMEOUT after 1s/);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /review-state --await: READY/);
   });
 
   it('CLI entry: a non-await invocation dispatches to main (--json exits 0)', () => {
