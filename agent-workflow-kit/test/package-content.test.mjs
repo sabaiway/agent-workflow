@@ -104,6 +104,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the AD-045 review-round LEDGER: the read-only checker (schema + decideStop + --check) + the sole writer
       'tools/review-ledger.mjs',
       'tools/review-ledger-write.mjs',
+      // the AD-050 NEUTRAL ledger read-core: the validated read path (path/base + schema + reader +
+      // filters) both read-only checkers share without a cycle (review-state reads it for the degraded exemption)
+      'tools/review-ledger-core.mjs',
       // the AD-046 fold-completeness READ/RUN pair: the read-only --check gate + the sole tree-toucher/runner
       'tools/fold-completeness.mjs',
       'tools/fold-completeness-run.mjs',
@@ -186,7 +189,11 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       Its *.test.mjs sibling — and the new colocated review-state-await / from-receipts /
     //       grounding-ledger-summary tests — are stripped by files[]. The (d)/(e)/(g)/(h) verbs added
     //       no new shipped file (they extend existing tools + the shipped reference-scripts mirror).
-    assert.equal(packed.length, 138, `tarball file count drifted (${packed.length} ≠ 138)`);
+    // 139 = 138 + tools/review-ledger-core.mjs (AD-050 — the NEUTRAL ledger read-core: the validated
+    //       read path both read-only checkers share, extracted so review-state.mjs reads the ledger
+    //       for the degraded exemption without an import cycle). Its *.test.mjs coverage rides in the
+    //       existing review-ledger / review-state suites; no new colocated test file ships.
+    assert.equal(packed.length, 139, `tarball file count drifted (${packed.length} ≠ 139)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
