@@ -270,6 +270,31 @@ const formatIndexRow = (row) => {
   return `| ${link} | ${fm.type ?? '—'} | ${row.lineCount}/${fm.maxLines ?? '—'} | ${fm.lastUpdated ?? '—'} | ${fm.staleAfter ?? '—'} |`;
 };
 
+// The one-file-per-ADR store (docs/ai/adr/) grows O(n) forever, so its rows would blow the index's
+// own 80-line cap. It COLLAPSES to a single aggregate row (link → the navigator adr/log.md, record
+// count + numeric id range) — while walkMarkdownFiles still finds + cap-checks every individual body
+// (a body over its own cap still fails in the main flow; only the index RENDERING is collapsed).
+const ADR_DIR_PREFIX = 'docs/ai/adr/';
+const ADR_RECORD_RE = /\/AD-(\d{3,})-[^/]*\.md$/;
+const ADR_NAV_PATH = 'docs/ai/adr/log.md';
+
+// Only genuine records + the navigator collapse into the aggregate row; an UNEXPECTED file under
+// adr/ (a stray README.md, AD-foo.md) renders as its OWN visible index row — never silently hidden
+// by the collapse (it also fails archive-decisions' own store-integrity check).
+const isCollapsibleAdr = (path) => path.startsWith(ADR_DIR_PREFIX) && (ADR_RECORD_RE.test(path) || path === ADR_NAV_PATH);
+
+const formatAdrCollapseRow = (adrRows) => {
+  const recs = adrRows
+    .map((r) => {
+      const m = r.path.match(ADR_RECORD_RE);
+      return m ? { idStr: m[1], idNum: Number(m[1]) } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.idNum - b.idNum); // NUMERIC id ordering (AD-200 before AD-1000), never lexical
+  const range = recs.length > 0 ? `AD-${recs[0].idStr} … AD-${recs[recs.length - 1].idStr}` : '—';
+  return `| [\`adr/\`](./adr/log.md) | adr | ${recs.length} records | ${range} | — |`;
+};
+
 // Pure index renderer — given inspected rows + the date to stamp in the header,
 // returns the exact bytes `docs/ai/index.md` should contain. Shared by
 // `--write-index` (writes it) and `--check-index` (diffs against on-disk).
@@ -277,13 +302,18 @@ export const buildIndex = (rows, todayStr, meta = {}) => {
   const projectName = meta.projectName ?? DEFAULT_PROJECT_NAME;
   const onDemandLinks = meta.onDemandLinks ?? [];
   const hierarchicalLinks = meta.hierarchicalLinks ?? [];
-  const sorted = [...rows].sort((a, b) => a.path.localeCompare(b.path));
   const header = INDEX_HEADER.replace('__TODAY__', todayStr).replace('__PROJECT__', projectName);
   const tableHeader = `| File | Type | Lines/Max | Updated | Stale after |\n|------|------|-----------|---------|-------------|`;
-  const tableRows = sorted
-    .filter((r) => r.path !== 'docs/ai/index.md')
-    .map(formatIndexRow)
-    .join('\n');
+  const nonAdr = [];
+  const adrRows = [];
+  for (const r of rows) {
+    if (r.path === 'docs/ai/index.md') continue;
+    (isCollapsibleAdr(r.path) ? adrRows : nonAdr).push(r);
+  }
+  const tableEntries = nonAdr.map((r) => ({ sortPath: r.path, md: formatIndexRow(r) }));
+  if (adrRows.length > 0) tableEntries.push({ sortPath: ADR_DIR_PREFIX, md: formatAdrCollapseRow(adrRows) });
+  tableEntries.sort((a, b) => a.sortPath.localeCompare(b.sortPath));
+  const tableRows = tableEntries.map((e) => e.md).join('\n');
   const onDemandSection =
     onDemandLinks.length > 0
       ? `\n\n## Skills (on-demand)\n\n${onDemandLinks.map((link) => `- ${link}`).join('\n')}`

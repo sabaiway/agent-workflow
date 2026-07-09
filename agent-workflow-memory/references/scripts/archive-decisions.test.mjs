@@ -1,24 +1,33 @@
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   HOT_REL,
   WARM_REL,
   COLD_REL,
+  ADR_DIR_REL,
+  NAV_REL,
+  HEADING_RE,
+  RECORD_CAP,
   parseDecisionsText,
-  loadTiers,
-  renderTier,
+  slugify,
+  recordFileName,
+  explode,
+  blockHash,
+  verifyConservation,
+  computeSupersededSet,
+  buildNavigator,
+  loadAdrStore,
   lineCountOf,
-  planRotation,
-  updateRangeTokens,
   runCli,
   defaultRegenerateIndex,
 } from './archive-decisions.mjs';
 
-// Hermetic by design: this test ships as deploy payload and runs inside CONSUMER repos via the
-// pre-commit `node --test scripts/*.test.mjs` — it must never read the host repo's docs/ai.
+// Hermetic: this test ships as deploy payload and runs inside CONSUMER repos via the pre-commit
+// `node --test scripts/*.test.mjs` — it must never read the host repo's docs/ai. Every fixture lives
+// in a fresh temp root; the index-regen hook + the git-dir snapshot are always injected.
 
 const tempDirs = [];
 const makeRoot = () => {
@@ -33,74 +42,123 @@ afterEach(() => {
 const fm = (cap) =>
   `---\ntype: reference\nlastUpdated: 2026-01-01\nscope: permanent\nstaleAfter: never\nowner: none\nmaxLines: ${cap}\n---\n`;
 
-// One canonical entry block: 3 fixed lines + extraLines body lines.
-const entryBlock = (id, extraLines = 2) =>
-  [`## AD-${id} — Decision ${id}`, '', '**Date:** 2026-01-01', ...Array.from({ length: extraLines }, (_, i) => `body ${i + 1} of AD-${id}`)].join('\n');
+// One canonical ADR block. `status: null` omits the status line (the 6-of-9-active default case);
+// `separate: true` writes Date and Status on their own lines (the AD-001/AD-043 shape).
+const adrBlock = (id, { title = `Decision ${id}`, date = '2026-01-01', status = 'Accepted', body = 2, separate = false } = {}) => {
+  const lines = [`## AD-${id} — ${title}`, ''];
+  if (separate) {
+    if (date) lines.push(`**Date:** ${date}`);
+    if (status) lines.push(`**Status:** ${status}`);
+  } else if (date || status) {
+    lines.push(`**Date:** ${date}${status ? ` · **Status:** ${status}` : ''}`);
+  }
+  lines.push('');
+  for (let i = 0; i < body; i += 1) lines.push(`body ${i + 1} of AD-${id}`);
+  return lines.join('\n');
+};
 
 const tierText = (cap, preamble, blocks) => `${fm(cap)}\n${preamble}\n\n${blocks.join('\n\n')}\n`;
 
 const HOT_PREAMBLE = [
   '# Architecture Decision Records (ADRs)',
   '',
-  '> Newest at the bottom.',
+  '> Newest at the bottom. Link related ADRs with `[[AD-XXX]]`.',
   '>',
-  '> **Archive:** the stable ADRs **AD-003 … AD-004** now live in [`history/decisions-archive.md`](./history/decisions-archive.md) (the earliest **AD-001 … AD-002** rolled further to the COLD [`history/decisions-archive-early.md`](./history/decisions-archive-early.md)); this file carries the active set (AD-005 onward).',
+  '> **Archive:** the stable **AD-003 … AD-004** now live in [`history/decisions-archive.md`](./history/decisions-archive.md) (the earliest **AD-001 … AD-002** rolled further to the COLD [`history/decisions-archive-early.md`](./history/decisions-archive-early.md)); this file carries the active set (AD-005 onward).',
 ].join('\n');
-
-const WARM_PREAMBLE = '# ADR Archive (AD-003 … AD-004)\n\n> WARM tier. The earliest (AD-001 … AD-002) are COLD.';
+const WARM_PREAMBLE = '# ADR Archive (AD-003 … AD-004)\n\n> WARM tier.';
 const COLD_PREAMBLE = '# ADR Early Archive (AD-001 … AD-002)\n\n> COLD tier.';
 
-// Seed a project: HOT with `hotIds`, WARM with `warmIds`, COLD with `coldIds`; caps computed
-// from the measured rendered size + a delta (so fixtures stay robust to formatting arithmetic).
-const seedProject = (root, { hotIds, warmIds, coldIds, hotCapDelta = 100, warmCapDelta = 100, coldCapDelta = 100 }) => {
+// Seed a legacy 3-tier tree (pre-migration). Caps generous so nothing overflows unless asked.
+const seedLegacy = (root, { hot, warm = [], cold = [], hotCapDelta = 200 }) => {
   mkdirSync(join(root, 'docs', 'ai', 'history'), { recursive: true });
-  const write = (rel, preamble, ids, capDelta) => {
-    const blocks = ids.map((id) => entryBlock(id));
-    const probe = tierText(999, preamble, blocks);
+  const writeTier = (rel, preamble, blocks, capDelta) => {
+    const probe = tierText(9999, preamble, blocks);
     const cap = lineCountOf(probe) + capDelta;
     writeFileSync(join(root, rel), tierText(cap, preamble, blocks));
     return cap;
   };
+  const hotBlocks = hot.map((spec) => (typeof spec === 'string' ? adrBlock(spec) : adrBlock(spec.id, spec)));
+  const warmBlocks = warm.map((spec) => (typeof spec === 'string' ? adrBlock(spec) : adrBlock(spec.id, spec)));
+  const coldBlocks = cold.map((spec) => (typeof spec === 'string' ? adrBlock(spec) : adrBlock(spec.id, spec)));
   return {
-    hotCap: write(HOT_REL, HOT_PREAMBLE, hotIds, hotCapDelta),
-    warmCap: write(WARM_REL, WARM_PREAMBLE, warmIds, warmCapDelta),
-    coldCap: write(COLD_REL, COLD_PREAMBLE, coldIds, coldCapDelta),
+    hotCap: writeTier(HOT_REL, HOT_PREAMBLE, hotBlocks, hotCapDelta),
+    warmCap: warm.length ? writeTier(WARM_REL, WARM_PREAMBLE, warmBlocks, 200) : null,
+    coldCap: cold.length ? writeTier(COLD_REL, COLD_PREAMBLE, coldBlocks, 200) : null,
   };
 };
 
-// The existing rotation tests are about ROTATION, not the index-regen hook (item (h)) — inject a
-// no-op regenerator so they stay hermetic + fast (no real check-docs-size subprocess). The hook's
-// own firing/degrade behavior is pinned by the dedicated (h) describe below; the real end-to-end
-// spawn is isolated to one integration test there.
-const run = (argv, root) => {
+const fakeGit = (root) => (cmd) => (cmd === 'git' ? { status: 0, stdout: `${join(root, '.git')}\n` } : { status: 1 });
+const noGit = () => ({ status: 1 });
+
+const run = (argv, root, opts = {}) => {
   const out = [];
   const err = [];
-  const code = runCli(argv, { root, log: (l) => out.push(l), logError: (l) => err.push(l), regenerateIndex: () => ({ ok: true, detail: '' }) });
-  return { code, out, err, text: out.join('\n'), errText: err.join('\n') };
+  const calls = [];
+  const regen = opts.regen ?? ((r, t) => { calls.push([r, t]); return { ok: true, detail: '' }; });
+  const code = runCli(argv, {
+    root,
+    log: (l) => out.push(l),
+    logError: (l) => err.push(l),
+    regenerateIndex: regen,
+    stamp: opts.stamp ?? 'STAMP',
+    snapshotFallbackBase: opts.fallbackBase,
+    spawnSync: opts.spawnSync ?? fakeGit(root),
+  });
+  return { code, out, err, text: out.join('\n'), errText: err.join('\n'), regenCalls: calls };
 };
 
+const adrFiles = (root) => (existsSync(join(root, ADR_DIR_REL)) ? readdirSync(join(root, ADR_DIR_REL)).filter((n) => /^AD-\d{3,}-/.test(n)).sort() : []);
 const idsIn = (root, rel) => parseDecisionsText(readFileSync(join(root, rel), 'utf8'), rel).entries.map((e) => e.id);
 
-// ── parsing: strict canonical headings (the Issue-009 lesson) ─────────────────────────
+// ── 1.1 — the widened grammar + real-corpus parser + status/date/lifecycle extraction ──
 
-describe('parseDecisionsText — fail-loud on non-canonical headings', () => {
-  it('parses canonical entries with ids, titles, and per-entry line counts', () => {
-    const parsed = parseDecisionsText(tierText(500, HOT_PREAMBLE, [entryBlock('005'), entryBlock('006', 4)]), 'x');
-    assert.deepEqual(parsed.entries.map((e) => e.id), ['005', '006']);
-    assert.equal(parsed.entries[0].lineCount, 5);
-    assert.equal(parsed.entries[1].lineCount, 7);
-    assert.equal(parsed.cap, 500);
+describe('1.1 parser — real-corpus formats, widened grammar, verbatim blocks', () => {
+  it('parses AD-001 (separate Date/Status lines), a same-line + wrapped-rich status, and AD-1000', () => {
+    const wrapped = ['## AD-042 — Same-line rich', '', '**Date:** 2026-07-04 · **Status:** Accepted (ships kit `1.34.0`;', 'wrapped continuation of the status prose)', '', 'body'].join('\n');
+    const text = tierText(500, '# T', [
+      adrBlock('001', { separate: true }),
+      wrapped,
+      adrBlock('1000', { title: 'Four digits' }),
+    ]);
+    const p = parseDecisionsText(text, 'x');
+    assert.deepEqual(p.entries.map((e) => e.id), ['001', '042', '1000']);
+    assert.equal(p.entries[1].status, 'accepted', 'the leading Status word wins even when the prose wraps');
+    assert.match(p.entries[1].block, /wrapped continuation of the status prose/, 'the block is preserved VERBATIM');
+    assert.equal(p.entries[0].date, '2026-01-01');
+  });
+
+  it('a MISSING status line defaults to accepted (6 of 9 active HOT ADRs carry none)', () => {
+    const noStatus = ['## AD-045 — No status line', '', '**Problem.** starts straight in.', '', 'body'].join('\n');
+    const p = parseDecisionsText(tierText(500, '# T', [noStatus]), 'x');
+    assert.equal(p.entries[0].status, 'accepted');
+    assert.equal(p.entries[0].date, null, 'no Date line → null');
+  });
+
+  it('backfills supersedes / supersededBy from the real corpus link forms', () => {
+    const blocks = [
+      adrBlock('006', { status: 'Amended by [[AD-014]] (later refinement)' }),
+      adrBlock('007', { status: 'Superseded by [[AD-011]] (Plan B realized)' }),
+      adrBlock('018', { status: 'Accepted — realized in kit 1.7.0. Supersedes [[AD-007]].' }),
+    ];
+    const p = parseDecisionsText(tierText(500, '# T', blocks), 'x');
+    assert.deepEqual(p.entries[0].supersededBy, ['014']);
+    assert.equal(p.entries[0].status, 'amended');
+    assert.deepEqual(p.entries[1].supersededBy, ['011']);
+    assert.equal(p.entries[1].status, 'superseded');
+    assert.deepEqual(p.entries[2].supersedes, ['007']);
+    assert.equal(p.entries[2].status, 'accepted');
   });
 
   const badHeadings = [
     ['a hyphen instead of the em-dash', '## AD-024 - Title'],
-    ['a 2-digit id', '## AD-24 — Title'],
+    ['a 2-digit id (below the AD-\\d{3,} floor)', '## AD-24 — Title'],
     ['a missing title', '## AD-024 — '],
     ['an unrelated H2', '## Notes'],
   ];
   for (const [name, heading] of badHeadings) {
     it(`rejects ${name} naming file:line — never a silent merge`, () => {
-      const text = `${fm(500)}\n# T\n\n${entryBlock('001')}\n\n${heading}\nbody\n`;
+      const text = `${fm(500)}\n# T\n\n${adrBlock('001')}\n\n${heading}\nbody\n`;
       assert.throws(() => parseDecisionsText(text, 'docs/ai/decisions.md'), (e) => {
         assert.equal(e.exitCode, 1);
         assert.match(e.message, /docs\/ai\/decisions\.md:\d+/);
@@ -110,373 +168,655 @@ describe('parseDecisionsText — fail-loud on non-canonical headings', () => {
     });
   }
 
-  it('rejects disordered ids (oldest must be at the top)', () => {
-    const text = tierText(500, '# T', [entryBlock('007'), entryBlock('005')]);
-    assert.throws(() => parseDecisionsText(text, 'x'), /strictly ascending/);
+  it('rejects disordered ids (oldest at the top, NUMERIC order)', () => {
+    assert.throws(() => parseDecisionsText(tierText(500, '# T', [adrBlock('007'), adrBlock('005')]), 'x'), /strictly ascending/);
+  });
+
+  it('AD-200 precedes AD-1000 numerically (never lexically — Decision 10)', () => {
+    const ok = parseDecisionsText(tierText(500, '# T', [adrBlock('200'), adrBlock('1000')]), 'x');
+    assert.deepEqual(ok.entries.map((e) => e.id), ['200', '1000']);
+    assert.throws(() => parseDecisionsText(tierText(500, '# T', [adrBlock('1000'), adrBlock('200')]), 'x'), /strictly ascending/, 'AD-1000 before AD-200 is descending numerically');
   });
 });
 
-describe('loadTiers — cross-tier integrity', () => {
-  it('rejects a duplicate id across tiers', () => {
-    const root = makeRoot();
-    seedProject(root, { hotIds: ['005'], warmIds: ['005'], coldIds: [] });
-    assert.throws(() => loadTiers(root, '2026-01-02'), /duplicate id across tiers/);
+describe('slugify + recordFileName', () => {
+  it('lowercases, replaces non-alphanumerics, trims to a bounded length', () => {
+    assert.equal(slugify('Host-level bridge settings surface'), 'host-level-bridge-settings-surface');
+    assert.equal(slugify('Onboarding UX: batched asks (the seeding↔hook chain)'), 'onboarding-ux-batched-asks-the-seeding-hook-chain');
+    assert.ok(slugify('x'.repeat(200)).length <= 60);
+  });
+  it('the filename encodes the id (the O(1) by-id glob key)', () => {
+    assert.equal(recordFileName('042', 'a-slug'), 'AD-042-a-slug.md');
   });
 });
 
-// ── the cascade ───────────────────────────────────────────────────────────────────────
+// ── 1.2 — explode + conservation (pure) ────────────────────────────────────────────────
 
-describe('rotation — simple HOT→WARM roll', () => {
-  it('rolls the OLDEST whole entries until HOT fits; ids + line counts conserved', () => {
+describe('1.2 explode — one immutable record per id, verbatim block, lifecycle frontmatter', () => {
+  it('builds a record per entry with inline lifecycle frontmatter and the verbatim block', () => {
+    const p = parseDecisionsText(tierText(500, '# T', [adrBlock('003', { status: 'Superseded by [[AD-009]]' })]), 'x');
+    const [rec] = explode(p.entries, '2026-07-09');
+    assert.equal(rec.fileName, 'AD-003-decision-003.md');
+    assert.match(rec.frontmatter, /type: adr/);
+    assert.match(rec.frontmatter, new RegExp(`maxLines: ${RECORD_CAP}`));
+    assert.match(rec.frontmatter, /status: superseded/);
+    assert.match(rec.frontmatter, /supersededBy: \[AD-009\]/);
+    assert.equal(rec.block, p.entries[0].block, 'the block is carried VERBATIM');
+  });
+});
+
+describe('1.2 verifyConservation — partition-preserving, extra-aware, fail-loud', () => {
+  const items = (pairs) => pairs.map(([id, block]) => ({ id, block }));
+  it('passes when the NEW side is exactly the OLD multiset', () => {
+    const old = items([['001', 'a'], ['002', 'b']]);
+    assert.doesNotThrow(() => verifyConservation(old, items([['001', 'a'], ['002', 'b']])));
+  });
+  it('fails on a DROPPED id (an ADR would be lost)', () => {
+    assert.throws(() => verifyConservation(items([['001', 'a'], ['002', 'b']]), items([['001', 'a']])), /absent from the migrated store/);
+  });
+  it('fails on an EDITED block (hash mismatch — the block must move verbatim)', () => {
+    assert.throws(() => verifyConservation(items([['001', 'a']]), items([['001', 'a-edited']])), /block changed during migration/);
+  });
+  it('fails on a STRAY new id absent from the OLD tiers (invented history)', () => {
+    assert.throws(() => verifyConservation(items([['001', 'a']]), items([['001', 'a'], ['009', 'x']])), /stray\/invented/);
+  });
+  it('fails on a RENUMBER (old 002 lost, new 003 stray)', () => {
+    assert.throws(() => verifyConservation(items([['001', 'a'], ['002', 'b']]), items([['001', 'a'], ['003', 'b']])), /lost|absent from the migrated store/);
+  });
+  it('blockHash is stable + content-addressed', () => {
+    assert.equal(blockHash('x'), blockHash('x'));
+    assert.notEqual(blockHash('x'), blockHash('y'));
+  });
+});
+
+// ── 1.3 — --migrate + snapshot + retire monoliths + idempotence + legacy guard ─────────
+
+describe('1.3 --migrate dry-run writes nothing', () => {
+  it('prints the file set + conservation proof, mutates no file, creates no adr/ tree', () => {
     const root = makeRoot();
-    seedProject(root, { hotIds: ['005', '006', '007', '008'], warmIds: ['003', '004'], coldIds: ['001', '002'], hotCapDelta: -1 });
-    const before = loadTiers(root, '2026-01-02');
-    const allBefore = [before.hot, before.warm, before.cold].flatMap((t) => t.entries.map((e) => `${e.id}:${e.lineCount}`)).sort();
-
-    const { code, text } = run(['--today=2026-01-02'], root);
+    seedLegacy(root, { hot: ['005', '006'], warm: ['003', '004'], cold: ['001', '002'] });
+    const before = readFileSync(join(root, HOT_REL), 'utf8');
+    const { code, text } = run(['--migrate', '--today=2026-07-09'], root);
     assert.equal(code, 0, text);
-    assert.deepEqual(idsIn(root, HOT_REL), ['006', '007', '008'], 'the oldest HOT entry rolled');
-    assert.deepEqual(idsIn(root, WARM_REL), ['003', '004', '005'], 'appended to the WARM end');
-    assert.deepEqual(idsIn(root, COLD_REL), ['001', '002'], 'COLD untouched');
+    assert.match(text, /DRY-RUN/);
+    assert.match(text, /conserved/);
+    assert.equal(readFileSync(join(root, HOT_REL), 'utf8'), before, 'HOT untouched');
+    assert.ok(existsSync(join(root, WARM_REL)) && existsSync(join(root, COLD_REL)), 'monoliths untouched');
+    assert.ok(!existsSync(join(root, ADR_DIR_REL)), 'no adr/ tree created on a dry-run');
+  });
+});
 
-    const after = loadTiers(root, '2026-01-02');
-    const allAfter = [after.hot, after.warm, after.cold].flatMap((t) => t.entries.map((e) => `${e.id}:${e.lineCount}`)).sort();
-    assert.deepEqual(allAfter, allBefore, 'id multiset + per-entry line counts conserved');
-    assert.ok(lineCountOf(renderTier(after.hot, after.hot.entries)) <= after.hot.cap, 'HOT now fits its cap');
+describe('1.3 --migrate --apply — records + snapshot + retire monoliths + HOT rewrite', () => {
+  it('writes one record per archived id, a git-dir snapshot, a nav, retires monoliths, rewrites the HOT preamble', () => {
+    const root = makeRoot();
+    seedLegacy(root, { hot: ['005', '006', '007', '008'], warm: ['003', '004'], cold: ['001', '002'] });
+    const { code, text } = run(['--migrate', '--apply', '--today=2026-07-09'], root);
+    assert.equal(code, 0, text);
+
+    assert.deepEqual(adrFiles(root), ['AD-001-decision-001.md', 'AD-002-decision-002.md', 'AD-003-decision-003.md', 'AD-004-decision-004.md']);
+    assert.deepEqual(idsIn(root, HOT_REL), ['005', '006', '007', '008'], 'HOT keeps the active window');
+    assert.ok(!existsSync(join(root, WARM_REL)) && !existsSync(join(root, COLD_REL)), 'both monoliths retired');
+    assert.ok(existsSync(join(root, NAV_REL)), 'navigator generated');
+
+    const hotText = readFileSync(join(root, HOT_REL), 'utf8');
+    assert.match(hotText, /adr\/log\.md/, 'the HOT preamble now points at the navigator');
+    assert.doesNotMatch(hotText, /decisions-archive/, 'the dead monolith links are dropped');
+    assert.match(hotText, /AD-005 onward/, 'the active-window token is rewritten to the retained oldest');
+
+    const snapDir = join(root, '.git', 'agent-workflow-adr-migration-snapshot-STAMP');
+    assert.ok(existsSync(snapDir), 'the snapshot landed under the git dir (never the work tree)');
+    assert.equal(readdirSync(snapDir).sort().length, 3, 'snapshot captured decisions.md + both monoliths');
   });
 
-  it('a tree already under cap is a no-op (nothing written)', () => {
+  it('the snapshot captures the ORIGINAL decisions.md + monolith BYTES (recoverable content, not just names)', () => {
     const root = makeRoot();
-    seedProject(root, { hotIds: ['005'], warmIds: ['003'], coldIds: ['001'] });
-    const bytesBefore = readFileSync(join(root, HOT_REL), 'utf8');
-    const { code, text } = run([], root);
+    seedLegacy(root, { hot: ['005', '006'], warm: ['003'], cold: ['001'] });
+    const hotBefore = readFileSync(join(root, HOT_REL), 'utf8');
+    const warmBefore = readFileSync(join(root, WARM_REL), 'utf8');
+    const coldBefore = readFileSync(join(root, COLD_REL), 'utf8');
+    run(['--migrate', '--apply', '--today=2026-07-09'], root);
+    const snapDir = join(root, '.git', 'agent-workflow-adr-migration-snapshot-STAMP');
+    assert.equal(readFileSync(join(snapDir, 'docs__ai__decisions.md'), 'utf8'), hotBefore, 'the ORIGINAL HOT is recoverable verbatim');
+    assert.equal(readFileSync(join(snapDir, 'docs__ai__history__decisions-archive.md'), 'utf8'), warmBefore, 'the ORIGINAL WARM monolith is recoverable verbatim');
+    assert.equal(readFileSync(join(snapDir, 'docs__ai__history__decisions-archive-early.md'), 'utf8'), coldBefore, 'the ORIGINAL COLD monolith is recoverable verbatim');
+  });
+
+  it('migrating an OVER-CAP HOT explodes the HOT overflow into records too (not only the monoliths)', () => {
+    const root = makeRoot();
+    seedLegacy(root, { hot: ['005', '006', '007', '008'], warm: ['003'], cold: ['001'], hotCapDelta: -1 });
+    const { code } = run(['--migrate', '--apply', '--today=2026-07-09'], root);
+    assert.equal(code, 0);
+    assert.ok(adrFiles(root).includes('AD-005-decision-005.md'), 'the HOT overflow AD-005 exploded to a record');
+    assert.ok(!idsIn(root, HOT_REL).includes('005'), 'AD-005 left the HOT window');
+    assert.equal(run(['--check', '--today=2026-07-09'], root).code, 0, 'the migrated over-cap tree is green');
+  });
+
+  it('a second --apply no-ops (monoliths already retired → already-migrated)', () => {
+    const root = makeRoot();
+    seedLegacy(root, { hot: ['005', '006'], warm: ['003'], cold: ['001'] });
+    run(['--migrate', '--apply', '--today=2026-07-09'], root);
+    const snapshotBefore = readdirSync(join(root, '.git'));
+    const { code, text } = run(['--migrate', '--apply', '--today=2026-07-10'], root);
+    assert.equal(code, 0);
+    assert.match(text, /already migrated/);
+    assert.deepEqual(readdirSync(join(root, '.git')), snapshotBefore, 'no second snapshot');
+  });
+
+  it('the migrated tree passes --check (green end-to-end)', () => {
+    const root = makeRoot();
+    seedLegacy(root, { hot: ['005', '006', '007'], warm: ['003', '004'], cold: ['001', '002'] });
+    run(['--migrate', '--apply', '--today=2026-07-09'], root);
+    const { code, text } = run(['--check', '--today=2026-07-09'], root);
+    assert.equal(code, 0, text);
+    assert.match(text, /OK — HOT within cap, store integrity intact, navigator fresh/);
+  });
+
+  it('a stray adr record NEWER than the HOT window fails exit 1 (partition) BEFORE any snapshot/delete', () => {
+    const root = makeRoot();
+    seedLegacy(root, { hot: ['005'], warm: ['003'], cold: ['001'] });
+    mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
+    // AD-099 is newer than the HOT window (AD-005) → not a legitimate archived record → refuse.
+    writeFileSync(join(root, ADR_DIR_REL, 'AD-099-stray.md'), `${fm(RECORD_CAP)}\n${adrBlock('099')}\n`);
+    const { code, errText } = run(['--migrate', '--apply', '--today=2026-07-09'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /partition violated/);
+    assert.ok(existsSync(join(root, WARM_REL)) && existsSync(join(root, COLD_REL)), 'monoliths NOT deleted on a refused migration');
+    assert.ok(!existsSync(join(root, '.git', 'agent-workflow-adr-migration-snapshot-STAMP')), 'no snapshot on a refusal (the integrity check precedes the snapshot)');
+  });
+
+  it('resumes after a post-writeHot / post-partial-delete crash without wedging (idempotent) — internal-sweep major', () => {
+    const root = makeRoot();
+    // Reconstruct a post-crash state: HOT ALREADY trimmed to [006,007,008] (AD-005 was the exploded
+    // overflow, its source no longer in HOT); adr/ holds records 001..005; monoliths STILL present
+    // (crash before rmSync). A naive conservation would accuse AD-005 of being "invented history".
+    seedLegacy(root, { hot: ['006', '007', '008'], warm: ['003', '004'], cold: ['001', '002'] });
+    mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
+    const recEntries = ['001', '002', '003', '004', '005'].map((id) => parseDecisionsText(tierText(999, '# T', [adrBlock(id)]), 'x').entries[0]);
+    for (const rec of explode(recEntries, '2026-07-09')) writeFileSync(join(root, ADR_DIR_REL, rec.fileName), `${rec.frontmatter}\n${rec.block}\n`);
+    const { code } = run(['--migrate', '--apply', '--today=2026-07-09'], root);
+    assert.equal(code, 0, 'the resume completes — it never accuses its own migrated records of being stray');
+    assert.deepEqual(adrFiles(root), ['AD-001-decision-001.md', 'AD-002-decision-002.md', 'AD-003-decision-003.md', 'AD-004-decision-004.md', 'AD-005-decision-005.md']);
+    assert.deepEqual(idsIn(root, HOT_REL), ['006', '007', '008']);
+    assert.ok(!existsSync(join(root, WARM_REL)) && !existsSync(join(root, COLD_REL)), 'monoliths retired on the completed resume');
+    assert.equal(run(['--check', '--today=2026-07-09'], root).code, 0, 'the resumed tree passes --check');
+  });
+
+  it('refuses when a pre-existing adr/ record duplicates an ADR that stays in HOT (never two places — codex R4)', () => {
+    const root = makeRoot();
+    seedLegacy(root, { hot: ['005', '006'], warm: ['003'], cold: ['001'] });
+    mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
+    // AD-006 stays in the HOT window, but a store record for it already exists (a corrupt partial state).
+    const rec = explode(parseDecisionsText(tierText(999, '# T', [adrBlock('006')]), 'x').entries, '2026-07-09')[0];
+    writeFileSync(join(root, ADR_DIR_REL, rec.fileName), `${rec.frontmatter}\n${rec.block}\n`);
+    const { code, errText } = run(['--migrate', '--apply', '--today=2026-07-09'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /duplicate ADR id AD-006/);
+    assert.ok(existsSync(join(root, WARM_REL)), 'monoliths NOT deleted on the refused migration');
+  });
+
+  it('resumes a half-migrated tree (a byte-identical record is skipped, the rest complete)', () => {
+    const root = makeRoot();
+    seedLegacy(root, { hot: ['005', '006'], warm: ['003', '004'], cold: ['001', '002'] });
+    run(['--migrate', '--today=2026-07-09'], root); // dry-run to observe (no writes)
+    // Simulate a crash mid-write: AD-001's record already on disk, monoliths still present.
+    const partial = explode(parseDecisionsText(readFileSync(join(root, COLD_REL), 'utf8'), COLD_REL).entries, '2026-07-09')[0];
+    mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
+    writeFileSync(join(root, ADR_DIR_REL, partial.fileName), `${partial.frontmatter}\n${partial.block}\n`);
+    const { code } = run(['--migrate', '--apply', '--today=2026-07-09'], root);
+    assert.equal(code, 0, 'the resume completes');
+    assert.deepEqual(adrFiles(root), ['AD-001-decision-001.md', 'AD-002-decision-002.md', 'AD-003-decision-003.md', 'AD-004-decision-004.md']);
+    assert.ok(!existsSync(join(root, WARM_REL)), 'monoliths retired on the completed resume');
+  });
+
+  it('a corrupt crash-resume record (same id, DIFFERENT body) fails loud before any write (conservation is not bypassed)', () => {
+    const root = makeRoot();
+    seedLegacy(root, { hot: ['005', '006'], warm: ['003', '004'], cold: ['001', '002'] });
+    mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
+    // An AD-003 record exists on disk but with a TAMPERED body (≠ the WARM monolith's AD-003).
+    writeFileSync(join(root, ADR_DIR_REL, 'AD-003-decision-003.md'), `${fm(RECORD_CAP)}\n## AD-003 — Decision 003\n\n**Date:** 2026-01-01\n\nTAMPERED body not in the monolith\n`);
+    const { code, errText } = run(['--migrate', '--apply', '--today=2026-07-09'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /DIFFERENT body|corrupt or hand-edited/);
+    assert.ok(existsSync(join(root, WARM_REL)) && existsSync(join(root, COLD_REL)), 'monoliths NOT deleted — the edited record is never silently overwritten');
+    assert.ok(!existsSync(join(root, '.git', 'agent-workflow-adr-migration-snapshot-STAMP')), 'no snapshot on a refused migration (conservation precedes the snapshot)');
+  });
+
+  it('off git, the snapshot falls back to a stated out-of-tree base (never the work tree)', () => {
+    const root = makeRoot();
+    const fallback = makeRoot();
+    seedLegacy(root, { hot: ['005'], warm: ['003'], cold: ['001'] });
+    const { code } = run(['--migrate', '--apply', '--today=2026-07-09'], root, { spawnSync: noGit, fallbackBase: fallback });
+    assert.equal(code, 0);
+    assert.ok(existsSync(join(fallback, 'agent-workflow-adr-migration-snapshot-STAMP')), 'off-git snapshot landed in the fallback base');
+    assert.ok(!existsSync(join(root, '.git')), 'nothing written under a non-existent git dir');
+  });
+});
+
+describe('1.3 legacy-substrate guard (Decision 6) — never half-explodes, never green on a monolith', () => {
+  it('a default rotate with a monolith present fails LOUD (run --migrate first)', () => {
+    const root = makeRoot();
+    seedLegacy(root, { hot: ['005'], warm: ['003'], cold: ['001'] });
+    const { code, errText } = run(['--today=2026-07-09'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /legacy monolith present/);
+    assert.match(errText, /--migrate --apply/);
+  });
+  it('--check with a monolith present fails LOUD (half-migrated), never reports green', () => {
+    const root = makeRoot();
+    seedLegacy(root, { hot: ['005'], warm: ['003'], cold: ['001'] });
+    const { code, errText } = run(['--check'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /half-migrated/);
+  });
+
+  it('a LONE monolith (HOT and adr/ both absent) fails the legacy guard, never a clean substrate-absent skip', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'docs', 'ai', 'history'), { recursive: true });
+    writeFileSync(join(root, WARM_REL), tierText(500, WARM_PREAMBLE, [adrBlock('003')]));
+    const { code, errText } = run(['--check'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /legacy monolith present/);
+  });
+});
+
+// ── 1.4 — --check + default rotate + item-(h) regen ────────────────────────────────────
+
+// A fully-migrated tree (post-migration substrate) built directly for the check/rotate tests.
+const seedMigrated = (root, { hotIds, storeIds = [], hotCapDelta = 200, today = '2026-07-09' }) => {
+  mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
+  const hotBlocks = hotIds.map((id) => adrBlock(id));
+  const probe = tierText(9999, HOT_PREAMBLE.replace(/> \*\*Archive:\*\*.*/, ''), hotBlocks);
+  const cap = lineCountOf(probe) + hotCapDelta;
+  const preamble = ['# ADRs', '', '> Newest at the bottom.'].join('\n');
+  writeFileSync(join(root, HOT_REL), tierText(cap, preamble, hotBlocks));
+  const storeEntries = storeIds.map((id) => (typeof id === 'string' ? { id } : id));
+  const records = explode(storeEntries.map((s) => parseDecisionsText(tierText(999, '# T', [adrBlock(s.id, s)]), 'x').entries[0]), today);
+  for (const rec of records) writeFileSync(join(root, ADR_DIR_REL, rec.fileName), `${rec.frontmatter}\n${rec.block}\n`);
+  // A fresh navigator so --check is green from the start.
+  run(['--write-navigator', `--today=${today}`], root);
+  return { cap };
+};
+
+describe('1.4 --check', () => {
+  it('a green migrated tree → exit 0', () => {
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['005', '006'], storeIds: ['001', '002'] });
+    assert.equal(run(['--check', '--today=2026-07-09'], root).code, 0);
+  });
+
+  it('a duplicate id across HOT and adr/ → exit 1', () => {
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['002', '005'], storeIds: ['001', '002'] }); // AD-002 in BOTH
+    const { code, errText } = run(['--check', '--today=2026-07-09'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /duplicate ADR id AD-002/);
+  });
+
+  it('a decisions.md with NO maxLines cap fails loud (never operates against an unknown budget — codex R4)', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
+    const noCapFm = '---\ntype: reference\nlastUpdated: 2026-01-01\nscope: permanent\nstaleAfter: never\nowner: none\n---\n';
+    writeFileSync(join(root, HOT_REL), `${noCapFm}\n# ADRs\n\n${adrBlock('005')}\n`);
+    const { code, errText } = run(['--check', '--today=2026-07-09'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /no maxLines cap/);
+  });
+
+  it('NO substrate (neither decisions.md nor adr/) → exit 0 with a STATED skip', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
+    const { code, text } = run(['--check'], root);
+    assert.equal(code, 0);
+    assert.match(text, /SKIP — no ADR substrate/);
+  });
+
+  it('an adr/ record NEWER than a HOT entry fails store integrity (partition — the once-dead check is live)', () => {
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['005'], storeIds: ['001'] });
+    const rec = explode(parseDecisionsText(tierText(999, '# T', [adrBlock('010')]), 'x').entries, '2026-07-09')[0];
+    writeFileSync(join(root, ADR_DIR_REL, rec.fileName), `${rec.frontmatter}\n${rec.block}\n`); // AD-010 > HOT AD-005
+    const { code, errText } = run(['--check', '--today=2026-07-09'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /partition violated/);
+  });
+
+  it('an UNEXPECTED markdown file in adr/ fails loud (never silently hidden from the store)', () => {
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['005'], storeIds: ['001'] });
+    writeFileSync(join(root, ADR_DIR_REL, 'notes.md'), '# stray notes with no frontmatter\n');
+    const { code, errText } = run(['--check', '--today=2026-07-09'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /unexpected markdown file/);
+  });
+
+  it('TWO files for one id (a corrupt duplicate-filled store) fail loud at the SOURCE — never deduped away (council R3)', () => {
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['005'], storeIds: ['001'] });
+    writeFileSync(join(root, ADR_DIR_REL, 'AD-001-divergent-slug.md'), `${fm(RECORD_CAP)}\n${adrBlock('001')}\n`); // a 2nd file for AD-001
+    const { code, errText } = run(['--check', '--today=2026-07-09'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /two records for AD-001/);
+  });
+
+  it('a rotate over a duplicate-filled store fails loud (the R2 crash-resume dedup no longer hides pre-existing dups — council R3)', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
+    const blocks = ['005', '006', '007', '008'].map((id) => adrBlock(id));
+    const preamble = '# ADRs\n\n> HOT.';
+    const probe = tierText(9999, preamble, blocks);
+    writeFileSync(join(root, HOT_REL), tierText(lineCountOf(probe) - 1, preamble, blocks)); // over cap → rotate proceeds
+    for (const r of explode(['001'].map((id) => parseDecisionsText(tierText(999, '# T', [adrBlock(id)]), 'x').entries[0]), '2026-07-09')) {
+      writeFileSync(join(root, ADR_DIR_REL, r.fileName), `${r.frontmatter}\n${r.block}\n`);
+    }
+    writeFileSync(join(root, ADR_DIR_REL, 'AD-001-second.md'), `${fm(RECORD_CAP)}\n${adrBlock('001')}\n`); // duplicate id
+    const { code, errText } = run(['--today=2026-07-09'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /two records for AD-001/);
+  });
+
+  it('a NESTED subdirectory in adr/ fails loud (the store is a flat directory — codex R2)', () => {
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['005'], storeIds: ['001'] });
+    mkdirSync(join(root, ADR_DIR_REL, 'nested'), { recursive: true });
+    writeFileSync(join(root, ADR_DIR_REL, 'nested', 'AD-002-x.md'), `${fm(RECORD_CAP)}\n${adrBlock('002')}\n`);
+    const { code, errText } = run(['--check', '--today=2026-07-09'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /FLAT directory/);
+  });
+
+  it('adr/ present but HOT absent → integrity is STILL checked (not skipped): a stale nav → exit 1', () => {
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['005'], storeIds: ['001', '002'] });
+    rmSync(join(root, HOT_REL));
+    writeFileSync(join(root, NAV_REL), readFileSync(join(root, NAV_REL), 'utf8') + '\nstale junk\n');
+    const { code, errText } = run(['--check', '--today=2026-07-09'], root);
+    assert.equal(code, 1, 'the check runs (does not skip) even with HOT absent');
+    assert.match(errText, /stale/);
+  });
+});
+
+describe('1.4 default rotate — explode the oldest beyond cap + regenerate the index (item h)', () => {
+  it('a HOT one line over cap explodes EXACTLY the oldest entry, keeps the rest, calls the index regen once', () => {
+    const root = makeRoot();
+    // 4 HOT entries, cap = rendered - 1 → exactly one must roll out.
+    mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
+    const blocks = ['005', '006', '007', '008'].map((id) => adrBlock(id));
+    const preamble = '# ADRs\n\n> Newest at the bottom.';
+    const probe = tierText(9999, preamble, blocks);
+    writeFileSync(join(root, HOT_REL), tierText(lineCountOf(probe) - 1, preamble, blocks));
+    run(['--write-navigator', '--today=2026-07-09'], root); // seed a fresh nav
+    const { code, regenCalls } = run(['--today=2026-07-09'], root);
+    assert.equal(code, 0);
+    assert.deepEqual(idsIn(root, HOT_REL), ['006', '007', '008'], 'exactly the oldest rolled out');
+    assert.deepEqual(adrFiles(root), ['AD-005-decision-005.md'], 'AD-005 exploded to a record');
+    assert.deepEqual(regenCalls, [[root, '2026-07-09']], 'the index regen fired once with (root, today)');
+  });
+
+  it('an under-cap migrated tree is a no-op (nothing written, no regen)', () => {
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['005', '006'], storeIds: ['001'] });
+    const { code, text, regenCalls } = run(['--today=2026-07-09'], root);
     assert.equal(code, 0);
     assert.match(text, /nothing to rotate/);
-    assert.equal(readFileSync(join(root, HOT_REL), 'utf8'), bytesBefore);
+    assert.equal(regenCalls.length, 0, 'a no-op never regenerates the index');
   });
-});
 
-describe('rotation — the CHAINED roll (WARM near cap rolls WARM→COLD first)', () => {
-  it('an incoming HOT entry that would overflow WARM pushes the oldest WARM entry to COLD', () => {
+  it('is crash-resumable: a byte-identical record from a crashed prior rotate is deduped, not a fatal duplicate (codex R2)', () => {
     const root = makeRoot();
-    seedProject(root, {
-      hotIds: ['005', '006', '007'],
-      warmIds: ['003', '004'],
-      coldIds: ['001', '002'],
-      hotCapDelta: -1, // force one HOT roll
-      warmCapDelta: 3, // the incoming 6-line append does NOT fit → chain
-    });
-    const { code } = run(['--today=2026-01-02'], root);
-    assert.equal(code, 0);
-    assert.deepEqual(idsIn(root, HOT_REL), ['006', '007']);
-    assert.deepEqual(idsIn(root, WARM_REL), ['004', '005'], 'AD-003 chained out, AD-005 appended');
-    assert.deepEqual(idsIn(root, COLD_REL), ['001', '002', '003'], 'the chained entry landed in COLD');
+    mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
+    const blocks = ['005', '006', '007', '008'].map((id) => adrBlock(id));
+    const preamble = '# ADRs\n\n> Newest at the bottom.';
+    const probe = tierText(9999, preamble, blocks);
+    writeFileSync(join(root, HOT_REL), tierText(lineCountOf(probe) - 1, preamble, blocks)); // AD-005 overflows
+    // Crash after writeRecords, before writeHot: AD-005 already exploded, HOT untrimmed; plus archived AD-001.
+    for (const r of explode(['001', '005'].map((id) => parseDecisionsText(tierText(999, '# T', [adrBlock(id)]), 'x').entries[0]), '2026-07-09')) {
+      writeFileSync(join(root, ADR_DIR_REL, r.fileName), `${r.frontmatter}\n${r.block}\n`);
+    }
+    const { code } = run(['--today=2026-07-09'], root);
+    assert.equal(code, 0, 'the crashed rotate resumes cleanly — no fatal duplicate on the already-written record');
+    assert.deepEqual(idsIn(root, HOT_REL), ['006', '007', '008']);
+    assert.deepEqual(adrFiles(root), ['AD-001-decision-001.md', 'AD-005-decision-005.md']);
+    assert.equal(run(['--check', '--today=2026-07-09'], root).code, 0);
   });
-});
 
-describe('rotation — COLD exhaustion fails LOUD before ANY write', () => {
-  it('a roll that does not fit COLD headroom leaves all three files byte-identical', () => {
+  it('a no-op rotate still REFUSES a corrupt store (partition) — never a silent green no-op (codex R2)', () => {
     const root = makeRoot();
-    seedProject(root, {
-      hotIds: ['005', '006', '007'],
-      warmIds: ['003', '004'],
-      coldIds: ['001', '002'],
-      hotCapDelta: -1, // force a HOT roll
-      warmCapDelta: 3, // force the chain into COLD
-      coldCapDelta: 3, // the chained 6-line entry does NOT fit COLD
-    });
-    const snapshot = () => [HOT_REL, WARM_REL, COLD_REL].map((rel) => readFileSync(join(root, rel), 'utf8'));
-    const before = snapshot();
-    const { code, errText } = run(['--today=2026-01-02'], root);
+    seedMigrated(root, { hotIds: ['005'], storeIds: ['001'] }); // under cap
+    const rec = explode(parseDecisionsText(tierText(999, '# T', [adrBlock('010')]), 'x').entries, '2026-07-09')[0];
+    writeFileSync(join(root, ADR_DIR_REL, rec.fileName), `${rec.frontmatter}\n${rec.block}\n`); // AD-010 > HOT AD-005
+    const { code, errText } = run(['--today=2026-07-09'], root);
     assert.equal(code, 1);
-    assert.match(errText, /refusing BEFORE any write/);
-    assert.match(errText, /maintainer\/agent decision/);
-    assert.deepEqual(snapshot(), before, 'no file changed on the refused plan');
+    assert.match(errText, /partition violated/);
+  });
+
+  it('degrades LOUDLY when the index regen fails — the rotation itself still succeeds (exit 0)', () => {
+    const root = makeRoot();
+    const blocks = ['005', '006', '007', '008'].map((id) => adrBlock(id));
+    const preamble = '# ADRs\n\n> Newest at the bottom.';
+    const probe = tierText(9999, preamble, blocks);
+    mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
+    writeFileSync(join(root, HOT_REL), tierText(lineCountOf(probe) - 1, preamble, blocks));
+    run(['--write-navigator', '--today=2026-07-09'], root);
+    const { code, errText } = run(['--today=2026-07-09'], root, { regen: () => ({ ok: false, detail: 'the index generator is not beside this script' }) });
+    assert.equal(code, 0, 'the rotation succeeded — regen is best-effort');
+    assert.match(errText, /NOT regenerated/);
   });
 });
 
-describe('rotation — determinism + dry-run', () => {
-  it('the same input yields the same move-set (planRotation is pure)', () => {
+// ── 1.5 — navigator generator + --write-navigator ──────────────────────────────────────
+
+describe('1.5 navigator — governing heads (computed), superseded drop out but stay reachable', () => {
+  it('a superseded ADR is absent from the governing list but present by filename + in the recent window', () => {
     const root = makeRoot();
-    seedProject(root, { hotIds: ['005', '006', '007', '008'], warmIds: ['003'], coldIds: ['001'], hotCapDelta: -1 });
-    const tiers = loadTiers(root, '2026-01-02');
-    const planA = planRotation(tiers);
-    const planB = planRotation(loadTiers(root, '2026-01-02'));
-    assert.deepEqual(planA.moves, planB.moves);
+    // AD-002 is superseded by AD-005 (self-declared); it must drop out of governing.
+    seedMigrated(root, { hotIds: ['005', '006'], storeIds: [{ id: '001' }, { id: '002', status: 'Superseded by [[AD-005]]' }] });
+    const nav = readFileSync(join(root, NAV_REL), 'utf8');
+    const governingSection = nav.split('## Recent')[0];
+    assert.doesNotMatch(governingSection, /AD-002/, 'the superseded ADR is NOT a governing head');
+    assert.match(governingSection, /AD-001/, 'a governing ADR is listed');
+    assert.ok(adrFiles(root).some((f) => f.startsWith('AD-002-')), 'the superseded ADR is still reachable by filename');
+    assert.match(nav, /AD-002.*superseded/s, 'the recent window still surfaces it, marked superseded');
   });
 
-  it('--dry-run prints the move-set and writes nothing', () => {
+  it('governance is computed across the corpus via inference (no predecessor mutation needed)', () => {
+    const corpus = [
+      { id: '001', idNum: 1, title: 'A', status: 'accepted', supersedes: [], supersededBy: [], fileName: 'AD-001-a.md' },
+      { id: '002', idNum: 2, title: 'B', status: 'accepted', supersedes: ['001'], supersededBy: [], fileName: 'AD-002-b.md' },
+    ];
+    const superseded = computeSupersededSet(corpus);
+    assert.ok(superseded.has('001'), 'AD-001 is inferred superseded because AD-002 declares Supersedes [[AD-001]]');
+    assert.ok(!superseded.has('002'));
+    const nav = buildNavigator(corpus, '2026-07-09');
+    assert.match(nav, /Governing \(1\)/);
+    assert.match(nav, /AD-001 … AD-002/, 'the navigator range is numeric min…max');
+  });
+
+  it('a Proposed head is NOT governing; a non-accepted Supersedes does NOT retire an accepted predecessor', () => {
+    const corpus = [
+      { id: '001', idNum: 1, title: 'A', status: 'accepted', supersedes: [], supersededBy: [], fileName: 'AD-001-a.md' },
+      { id: '002', idNum: 2, title: 'B', status: 'proposed', supersedes: ['001'], supersededBy: [], fileName: 'AD-002-b.md' },
+    ];
+    const superseded = computeSupersededSet(corpus);
+    assert.ok(!superseded.has('001'), 'a Proposed ADR does not effectively supersede its accepted predecessor');
+    const gov = buildNavigator(corpus, '2026-07-09').split('## Recent')[0];
+    assert.match(gov, /AD-001/, 'the accepted predecessor stays governing');
+    assert.doesNotMatch(gov, /\| AD-002 \|/, 'the Proposed ADR is NOT a governing head (accepted & not-superseded only)');
+  });
+
+  it('authoring a new HOT ADR then --write-navigator keeps --check green; a stale nav with NO write → exit 1, then --write-navigator fixes it', () => {
     const root = makeRoot();
-    seedProject(root, { hotIds: ['005', '006'], warmIds: [], coldIds: [], hotCapDelta: -1 });
+    seedMigrated(root, { hotIds: ['005', '006'], storeIds: ['001'] });
+    assert.equal(run(['--check', '--today=2026-07-09'], root).code, 0, 'starts green');
+
+    // Corrupt the navigator without regenerating → --check must flag it stale.
+    writeFileSync(join(root, NAV_REL), readFileSync(join(root, NAV_REL), 'utf8') + '\n<!-- drift -->\n');
+    const stale = run(['--check', '--today=2026-07-09'], root);
+    assert.equal(stale.code, 1);
+    assert.match(stale.errText, /navigator|stale|log\.md/i);
+
+    // --write-navigator is the deterministic fix (never a fixless false-block).
+    assert.equal(run(['--write-navigator', '--today=2026-07-09'], root).code, 0);
+    assert.equal(run(['--check', '--today=2026-07-09'], root).code, 0, '--write-navigator restored freshness');
+  });
+
+  it('--write-navigator refuses a duplicate-id store (never emits a corrupt / duplicate-row navigator)', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
+    writeFileSync(join(root, HOT_REL), tierText(500, '# ADRs\n\n> HOT.', [adrBlock('002'), adrBlock('005')]));
+    const rec = explode(parseDecisionsText(tierText(999, '# T', [adrBlock('002')]), 'x').entries, '2026-07-09')[0];
+    writeFileSync(join(root, ADR_DIR_REL, rec.fileName), `${rec.frontmatter}\n${rec.block}\n`); // AD-002 in adr/ AND HOT
+    const { code, errText } = run(['--write-navigator', '--today=2026-07-09'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /duplicate ADR id AD-002/);
+  });
+
+  it('--check does NOT false-block on a mere day-rollover (uses the on-disk nav lastUpdated)', () => {
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['005'], storeIds: ['001'], today: '2026-07-01' });
+    // "Today" is much later, but the corpus is unchanged → the nav must stay fresh.
+    assert.equal(run(['--check', '--today=2026-07-31'], root).code, 0);
+  });
+});
+
+// ── item (h) degrade branches on the REAL default regenerator (no injection) ───────────
+
+describe('defaultRegenerateIndex — loud-degrade branches', () => {
+  it('an absent index generator sibling → ok:false with a recovery instruct', () => {
+    const r = defaultRegenerateIndex('/tmp/anyroot', '2026-07-09', { sibling: '/nonexistent/check-docs-size.mjs' });
+    assert.equal(r.ok, false);
+    assert.match(r.detail, /not beside this script/);
+  });
+  it('a subprocess that exits nonzero → ok:false with the recovery instruct', () => {
+    const r = defaultRegenerateIndex('/tmp/anyroot', '2026-07-09', { existsSync: () => true, spawnSync: () => ({ status: 1 }) });
+    assert.equal(r.ok, false);
+    assert.match(r.detail, /index regeneration failed/);
+  });
+});
+
+// ── coverage: defensive fail-loud branches + success/degrade paths (M3a) ───────────────
+
+describe('defensive branches + success/degrade paths', () => {
+  it('a non-markdown stray in adr/ is IGNORED by the store (never an error)', () => {
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['005'], storeIds: ['001'] });
+    writeFileSync(join(root, ADR_DIR_REL, 'notes.txt'), 'not markdown — ignored\n');
+    assert.equal(run(['--check', '--today=2026-07-09'], root).code, 0);
+  });
+
+  it('a record file holding TWO ADR blocks fails loud', () => {
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['005'], storeIds: [] });
+    writeFileSync(join(root, ADR_DIR_REL, 'AD-001-two.md'), `${fm(RECORD_CAP)}\n${adrBlock('001')}\n\n${adrBlock('002')}\n`);
+    const { code, errText } = run(['--check', '--today=2026-07-09'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /exactly one ADR block/);
+  });
+
+  it('a record whose filename id mismatches its heading id fails loud', () => {
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['005'], storeIds: [] });
+    writeFileSync(join(root, ADR_DIR_REL, 'AD-001-mismatch.md'), `${fm(RECORD_CAP)}\n${adrBlock('002')}\n`);
+    const { code, errText } = run(['--check', '--today=2026-07-09'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /does not match the heading id/);
+  });
+
+  it('a migration with NO writable snapshot base fails loud, monoliths untouched', () => {
+    const root = makeRoot();
+    seedLegacy(root, { hot: ['005'], warm: ['003'], cold: ['001'] });
+    const fileAsBase = join(makeRoot(), 'i-am-a-file');
+    writeFileSync(fileAsBase, 'x'); // mkdir UNDER a file → ENOTDIR → both bases fail
+    const { code, errText } = run(['--migrate', '--apply', '--today=2026-07-09'], root, { spawnSync: noGit, fallbackBase: fileAsBase });
+    assert.equal(code, 1);
+    assert.match(errText, /no writable snapshot location/);
+    assert.ok(existsSync(join(root, WARM_REL)), 'monoliths untouched when the snapshot cannot be written');
+  });
+
+  it('defaultRegenerateIndex: a successful subprocess (status 0) → ok:true with the trimmed stdout', () => {
+    const r = defaultRegenerateIndex('/tmp/anyroot', '2026-07-09', { existsSync: () => true, spawnSync: () => ({ status: 0, stdout: 'Wrote docs/ai/index.md\n' }) });
+    assert.equal(r.ok, true);
+    assert.match(r.detail, /Wrote docs\/ai\/index\.md/);
+  });
+
+  it('migrate on a tree with NO monolith and NO store → a stated "nothing to migrate"', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
+    writeFileSync(join(root, HOT_REL), tierText(500, '# ADRs', [adrBlock('005')]));
+    const { code, text } = run(['--migrate', '--today=2026-07-09'], root);
+    assert.equal(code, 0);
+    assert.match(text, /nothing to migrate/);
+  });
+
+  it('migrate --apply with a FAILING index regen degrades loudly (migration still exit 0)', () => {
+    const root = makeRoot();
+    seedLegacy(root, { hot: ['005'], warm: ['003'], cold: ['001'] });
+    const { code, errText } = run(['--migrate', '--apply', '--today=2026-07-09'], root, { regen: () => ({ ok: false, detail: 'boom' }) });
+    assert.equal(code, 0);
+    assert.match(errText, /NOT regenerated/);
+  });
+
+  it('--write-navigator on an empty tree → a stated skip', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
+    const { code, text } = run(['--write-navigator'], root);
+    assert.equal(code, 0);
+    assert.match(text, /SKIP — no ADR substrate/);
+  });
+
+  it('--write-navigator with a FAILING index regen degrades loudly (exit 0)', () => {
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['005'], storeIds: ['001'] });
+    const { code, errText } = run(['--write-navigator', '--today=2026-07-09'], root, { regen: () => ({ ok: false, detail: 'boom' }) });
+    assert.equal(code, 0);
+    assert.match(errText, /NOT regenerated/);
+  });
+
+  it('a SINGLE HOT entry over cap fails loud (cannot be reduced below one)', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
+    const block = adrBlock('005', { body: 12 });
+    const probe = tierText(9999, '# ADRs', [block]);
+    writeFileSync(join(root, HOT_REL), tierText(lineCountOf(probe) - 1, '# ADRs', [block]));
+    const { code, errText } = run(['--today=2026-07-09'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /cannot be reduced/);
+  });
+
+  it('rotate refuses a DIVERGENT-body crash-resume record', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
+    const blocks = ['005', '006', '007', '008'].map((id) => adrBlock(id));
+    const probe = tierText(9999, '# ADRs', blocks);
+    writeFileSync(join(root, HOT_REL), tierText(lineCountOf(probe) - 1, '# ADRs', blocks)); // AD-005 overflows
+    writeFileSync(join(root, ADR_DIR_REL, 'AD-005-decision-005.md'), `${fm(RECORD_CAP)}\n## AD-005 — Decision 005\n\n**Date:** 2026-01-01\n\nDIVERGENT body\n`);
+    const { code, errText } = run(['--today=2026-07-09'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /diverges from the freshly-exploded block/);
+  });
+
+  it('rotate --dry-run prints the move-set and writes nothing', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
+    const blocks = ['005', '006', '007', '008'].map((id) => adrBlock(id));
+    const probe = tierText(9999, '# ADRs', blocks);
+    writeFileSync(join(root, HOT_REL), tierText(lineCountOf(probe) - 1, '# ADRs', blocks));
     const before = readFileSync(join(root, HOT_REL), 'utf8');
-    const { code, text } = run(['--dry-run'], root);
+    const { code, text } = run(['--dry-run', '--today=2026-07-09'], root);
     assert.equal(code, 0);
     assert.match(text, /DRY-RUN/);
-    assert.match(text, /AD-005/);
     assert.equal(readFileSync(join(root, HOT_REL), 'utf8'), before);
   });
 });
 
-describe('preamble range tokens', () => {
-  it('updates the recognizable range/onward tokens after a rotation', () => {
-    const root = makeRoot();
-    seedProject(root, { hotIds: ['005', '006', '007'], warmIds: ['003', '004'], coldIds: ['001', '002'], hotCapDelta: -1 });
-    const { code } = run(['--today=2026-01-02'], root);
-    assert.equal(code, 0);
-    const hotText = readFileSync(join(root, HOT_REL), 'utf8');
-    assert.match(hotText, /\*\*AD-003 … AD-005\*\*/, 'WARM range token updated in HOT');
-    assert.match(hotText, /\(AD-006 onward\)/, 'active-set token updated');
-    const warmText = readFileSync(join(root, WARM_REL), 'utf8');
-    assert.match(warmText, /AD-003 … AD-005/, 'WARM file H1 range updated');
-  });
-
-  it('a preamble without tokens is left untouched (consumer wording preserved)', () => {
-    const updated = updateRangeTokens('# My own ADR file\n\n> no tokens here', 'hot', {
-      hotEntries: [{ id: '010' }],
-      warmEntries: [{ id: '001' }, { id: '002' }],
-      coldEntries: [],
-    });
-    assert.equal(updated, '# My own ADR file\n\n> no tokens here');
-  });
-});
-
-// ── --check + the absent-substrate divergence ─────────────────────────────────────────
-
-describe('--check', () => {
-  it('all tiers within caps → exit 0 with a per-tier usage report', () => {
-    const root = makeRoot();
-    seedProject(root, { hotIds: ['005'], warmIds: ['003'], coldIds: ['001'] });
-    const { code, text } = run(['--check'], root);
-    assert.equal(code, 0);
-    assert.match(text, /decisions\.md: \d+\/\d+/);
-    assert.match(text, /OK — every tier is within its cap/);
-  });
-
-  it('an over-cap HOT → exit 1 naming the rotation recovery', () => {
-    const root = makeRoot();
-    seedProject(root, { hotIds: ['005', '006'], warmIds: [], coldIds: [], hotCapDelta: -1 });
-    const { code, errText } = run(['--check'], root);
-    assert.equal(code, 1);
-    assert.match(errText, /decisions\.md is over its cap/);
-    assert.match(errText, /archive-decisions\.mjs` to rotate/);
-  });
-
-  it('an over-cap COLD → exit 1 naming the maintainer decision (rotation cannot fix it)', () => {
-    const root = makeRoot();
-    seedProject(root, { hotIds: ['005'], warmIds: ['003'], coldIds: ['001', '002'], coldCapDelta: -1 });
-    const { code, errText } = run(['--check'], root);
-    assert.equal(code, 1);
-    assert.match(errText, /maintainer\/agent decision/);
-  });
-
-  it('ABSENT decisions.md → --check exits 0 with a STATED skip (deliberate divergence from archive-changelog)', () => {
-    const root = makeRoot();
-    mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
-    const { code, text } = run(['--check'], root);
-    assert.equal(code, 0);
-    assert.match(text, /SKIP — docs\/ai\/decisions\.md not found/);
-  });
-
-  it('an absent decisions.md WITHOUT --check is still a loud non-zero (rotation has nothing to do)', () => {
-    const root = makeRoot();
-    mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
-    const { code, errText } = run([], root);
-    assert.equal(code, 1);
-    assert.match(errText, /not found/);
-  });
-});
-
-describe('cap accounting is on RAW file lines (the template-shaped `---` separator case)', () => {
-  // A consumer file born from the shipped template joins entries with `\n\n---\n\n`. Normalized
-  // rendering drops those separator lines, so a render-based count would false-green a file the
-  // docs cap-validator (raw lines) fails. --check and the write trigger must count RAW lines.
-  const seedSeparatorShaped = (root, { capDelta }) => {
-    mkdirSync(join(root, 'docs', 'ai', 'history'), { recursive: true });
-    const blocks = [entryBlock('001'), entryBlock('002'), entryBlock('003')];
-    const body = blocks.join('\n\n---\n\n'); // the template separator shape
-    const probe = `${fm(999)}\n# ADRs\n\n${body}\n`;
-    const cap = lineCountOf(probe) + capDelta;
-    writeFileSync(join(root, HOT_REL), `${fm(cap)}\n# ADRs\n\n${body}\n`);
-    return { cap, rawLines: lineCountOf(probe) };
-  };
-
-  it('--check fails on raw-over-cap even when the normalized render would fit', () => {
-    const root = makeRoot();
-    // 3 separators × 2 lines = 6 lines the render drops; cap sits 2 under raw → render fits, raw does not.
-    seedSeparatorShaped(root, { capDelta: -2 });
-    const { code, errText } = run(['--check'], root);
-    assert.equal(code, 1, 'raw lines are what the docs cap-validator counts — never false-green');
-    assert.match(errText, /decisions\.md is over its cap/);
-  });
-
-  it('rotation performs a NORMALIZE-ONLY rewrite when raw is over cap but the render fits (no moves)', () => {
-    const root = makeRoot();
-    seedSeparatorShaped(root, { capDelta: -2 });
-    const { code, text } = run(['--today=2026-01-02'], root);
-    assert.equal(code, 0, text);
-    assert.match(text, /normalize-only rewrite/);
-    assert.match(text, /HOT→WARM: \(none\)/);
-    const after = parseDecisionsText(readFileSync(join(root, HOT_REL), 'utf8'), HOT_REL);
-    assert.deepEqual(after.entries.map((e) => e.id), ['001', '002', '003'], 'ids conserved, nothing moved');
-    const { code: recheck } = run(['--check'], root);
-    assert.equal(recheck, 0, 'the normalized file now fits its cap on raw lines');
-  });
-
-  it('a tier STILL over cap after the planned rewrite refuses BEFORE any write (a normalized rewrite is not a licence)', () => {
-    const root = makeRoot();
-    // COLD legitimately exceeds its cap (entries, not formatting): no move can fix it and a
-    // normalize-only rewrite would still be over budget — the run must refuse with files untouched.
-    seedProject(root, { hotIds: ['005'], warmIds: ['003'], coldIds: ['001', '002'], coldCapDelta: -3 });
-    const snapshot = () => [HOT_REL, WARM_REL, COLD_REL].map((rel) => readFileSync(join(root, rel), 'utf8'));
-    const before = snapshot();
-    const { code, errText } = run(['--today=2026-01-02'], root);
-    assert.equal(code, 1);
-    assert.match(errText, /would still be over its cap after rotation/);
-    assert.match(errText, /maintainer\/agent decision/);
-    assert.deepEqual(snapshot(), before, 'no file changed on the refused plan');
-  });
-
-  it('a normalize-only rewrite NEVER materializes absent WARM/COLD files (no premature archives)', () => {
-    const root = makeRoot();
-    seedSeparatorShaped(root, { capDelta: -2 }); // HOT only — no history files exist
-    const { code } = run(['--today=2026-01-02'], root);
-    assert.equal(code, 0);
-    assert.ok(!existsSync(join(root, WARM_REL)), 'an absent WARM with zero entries is not created');
-    assert.ok(!existsSync(join(root, COLD_REL)), 'an absent COLD with zero entries is not created');
-  });
-});
-
-describe('created tiers (a consumer with no history files yet)', () => {
-  it('rolling into an absent WARM creates it with frontmatter + preamble', () => {
-    const root = makeRoot();
-    mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
-    const blocks = [entryBlock('001'), entryBlock('002')];
-    const probe = tierText(999, '# ADRs', blocks);
-    writeFileSync(join(root, HOT_REL), tierText(lineCountOf(probe) - 1, '# ADRs', blocks));
-    const { code } = run(['--today=2026-01-02'], root);
-    assert.equal(code, 0);
-    assert.ok(existsSync(join(root, WARM_REL)), 'WARM created');
-    const warm = parseDecisionsText(readFileSync(join(root, WARM_REL), 'utf8'), WARM_REL);
-    assert.deepEqual(warm.entries.map((e) => e.id), ['001']);
-    assert.equal(warm.cap, 500, 'created WARM carries the default cap');
-    assert.match(warm.preamble, /AD-001 … AD-001/, 'created preamble range filled');
-  });
-
-  it('usage errors are loud (exit 2)', () => {
+describe('usage', () => {
+  it('an unknown argument is a loud exit 2', () => {
     const { code, errText } = run(['--frobnicate'], makeRoot());
     assert.equal(code, 2);
     assert.match(errText, /Unknown argument/);
   });
-});
-
-// ── (h) — a rotation regenerates docs/ai/index.md (BUGFREE-3 / AD-049) ─────────────────
-describe('(h) index regeneration after rotation', () => {
-  const spyRun = (argv, root, regen) => {
-    const out = [];
-    const err = [];
-    const code = runCli(argv, { root, log: (l) => out.push(l), logError: (l) => err.push(l), regenerateIndex: regen });
-    return { code, out, err, text: out.join('\n'), errText: err.join('\n') };
-  };
-
-  it('calls the regenerator once with (root, today) AFTER a successful rotation write', () => {
-    const root = makeRoot();
-    seedProject(root, { hotIds: ['005', '006', '007', '008'], warmIds: ['003', '004'], coldIds: ['001', '002'], hotCapDelta: -1 });
-    const calls = [];
-    const { code } = spyRun(['--today=2026-01-02'], root, (r, t) => { calls.push([r, t]); return { ok: true, detail: '' }; });
+  it('--help prints usage and exits 0', () => {
+    const { code, text } = run(['--help'], makeRoot());
     assert.equal(code, 0);
-    assert.deepEqual(calls, [[root, '2026-01-02']], 'exactly one regen, with the rotation root + today');
-  });
-
-  it('does NOT regenerate on a no-op, --check, --dry-run, or a pre-write refusal', () => {
-    let called = 0;
-    const spy = () => { called += 1; return { ok: true, detail: '' }; };
-    // no-op (under cap)
-    const r1 = makeRoot(); seedProject(r1, { hotIds: ['005'], warmIds: ['003'], coldIds: ['001'] });
-    spyRun([], r1, spy);
-    // --check
-    spyRun(['--check'], r1, spy);
-    // --dry-run over a real rotation plan
-    const r2 = makeRoot(); seedProject(r2, { hotIds: ['005', '006'], warmIds: [], coldIds: [], hotCapDelta: -1 });
-    spyRun(['--dry-run'], r2, spy);
-    // a pre-write refusal (COLD exhausted)
-    const r3 = makeRoot(); seedProject(r3, { hotIds: ['005', '006', '007'], warmIds: ['003', '004'], coldIds: ['001', '002'], hotCapDelta: -1, warmCapDelta: 3, coldCapDelta: 3 });
-    spyRun(['--today=2026-01-02'], r3, spy);
-    assert.equal(called, 0, 'the hook fires only AFTER a real write — never on no-op/check/dry-run/refusal');
-  });
-
-  it('a NORMALIZE-ONLY rewrite (stampLastUpdated bumps lastUpdated, zero moves) still triggers regeneration', () => {
-    const root = makeRoot();
-    mkdirSync(join(root, 'docs', 'ai', 'history'), { recursive: true });
-    const blocks = [entryBlock('001'), entryBlock('002'), entryBlock('003')];
-    const body = blocks.join('\n\n---\n\n'); // the template separator shape: raw > cap, normalized fits
-    const probe = `${fm(999)}\n# ADRs\n\n${body}\n`;
-    writeFileSync(join(root, HOT_REL), `${fm(lineCountOf(probe) - 2)}\n# ADRs\n\n${body}\n`);
-    let called = 0;
-    const { code, text } = spyRun(['--today=2026-01-02'], root, () => { called += 1; return { ok: true, detail: '' }; });
-    assert.equal(code, 0, text);
-    assert.match(text, /normalize-only rewrite/);
-    assert.equal(called, 1, 'a normalize-only rewrite still leaves the index stale → regenerate');
-  });
-
-  it('degrades LOUDLY to an instruct when regeneration fails — the rotation still succeeds (exit 0)', () => {
-    const root = makeRoot();
-    seedProject(root, { hotIds: ['005', '006'], warmIds: [], coldIds: [], hotCapDelta: -1 });
-    const { code, errText } = spyRun(['--today=2026-01-02'], root, () => ({ ok: false, detail: 'the index generator is not beside this script — run `node scripts/check-docs-size.mjs --write-index` to refresh docs/ai/index.md' }));
-    assert.equal(code, 0, 'the rotation itself succeeded — regen is best-effort');
-    assert.match(errText, /NOT regenerated/);
-    assert.match(errText, /check-docs-size\.mjs --write-index/, 'the loud instruct names the recovery command');
-  });
-
-  it('the REAL default regenerator writes docs/ai/index.md end-to-end (no injection)', () => {
-    const root = makeRoot();
-    seedProject(root, { hotIds: ['005', '006', '007', '008'], warmIds: ['003', '004'], coldIds: ['001', '002'], hotCapDelta: -1 });
-    const out = [];
-    const code = runCli(['--today=2026-01-02'], { root, log: (l) => out.push(l), logError: (l) => out.push(l) });
-    assert.equal(code, 0, out.join('\n'));
-    assert.ok(existsSync(join(root, 'docs', 'ai', 'index.md')), 'the index was regenerated by the sibling check-docs-size.mjs');
-    const idx = readFileSync(join(root, 'docs', 'ai', 'index.md'), 'utf8');
-    assert.match(idx, /decisions\.md/, 'the regenerated index lists the rotated ADR file');
-    assert.match(out.join('\n'), /regenerated docs\/ai\/index\.md/, 'the success log line fires');
-  });
-
-  // The index-write outcome must be ISOLATED from the docs-cap-CHECK outcome: check-docs-size
-  // --write-index exits 1 on ANY over-cap co-located doc even after writing the index correctly, so
-  // a benign over-cap sibling must NEVER read as an index-regeneration failure (cry-wolf on the very
-  // loud-degrade channel item (h) is built around). The regen spawns --write-index --report.
-  it('the REAL regenerator succeeds even when an UNRELATED co-located doc is over its cap (no cry-wolf)', () => {
-    const root = makeRoot();
-    seedProject(root, { hotIds: ['005', '006', '007', '008'], warmIds: ['003', '004'], coldIds: ['001', '002'], hotCapDelta: -1 });
-    // An unrelated doc over its OWN maxLines cap: --write-index writes the index fine, but without
-    // --report it would exit 1 on this file → a false "NOT regenerated" instruct.
-    writeFileSync(join(root, 'docs', 'ai', 'handover.md'), `---\ntype: state\nlastUpdated: 2026-01-02\nscope: session\nstaleAfter: 7d\nowner: none\nmaxLines: 3\n---\n\n# H\nl1\nl2\nl3\nl4\nl5\n`);
-    const out = [];
-    const err = [];
-    const code = runCli(['--today=2026-01-02'], { root, log: (l) => out.push(l), logError: (l) => err.push(l) });
-    assert.equal(code, 0);
-    assert.match(out.join('\n'), /regenerated docs\/ai\/index\.md/, 'a benign over-cap sibling must NOT read as a regen failure');
-    assert.ok(!err.join('\n').includes('NOT regenerated'), 'no false cry-wolf on the loud-degrade channel');
-    assert.ok(existsSync(join(root, 'docs', 'ai', 'index.md')), 'the index was actually written');
-  });
-
-  describe('defaultRegenerateIndex — the loud-degrade branches', () => {
-    it('an absent index generator sibling → a loud instruct (ok:false)', () => {
-      const r = defaultRegenerateIndex('/tmp/anyroot', '2026-01-02', { sibling: '/nonexistent/check-docs-size.mjs' });
-      assert.equal(r.ok, false);
-      assert.match(r.detail, /not beside this script/);
-      assert.match(r.detail, /check-docs-size\.mjs --write-index/);
-    });
-
-    it('a regeneration subprocess that exits nonzero → a loud instruct (ok:false)', () => {
-      const r = defaultRegenerateIndex('/tmp/anyroot', '2026-01-02', { existsSync: () => true, spawnSync: () => ({ status: 1 }) });
-      assert.equal(r.ok, false);
-      assert.match(r.detail, /index regeneration failed/);
-      assert.match(r.detail, /check-docs-size\.mjs --write-index/);
-    });
-
-    it('a successful subprocess (status 0) → ok:true with the trimmed stdout', () => {
-      const r = defaultRegenerateIndex('/tmp/anyroot', '2026-01-02', { existsSync: () => true, spawnSync: () => ({ status: 0, stdout: 'Wrote docs/ai/index.md\n' }) });
-      assert.equal(r.ok, true);
-      assert.match(r.detail, /Wrote docs\/ai\/index\.md/);
-    });
+    assert.match(text, /Usage: archive-decisions/);
   });
 });

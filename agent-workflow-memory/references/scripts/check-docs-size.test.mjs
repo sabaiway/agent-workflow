@@ -164,6 +164,61 @@ const makeRow = (path, overrides = {}) => ({
   ...overrides,
 });
 
+// The one-file-per-ADR store collapses to a SINGLE aggregate index row so the index stays under its
+// own 80-line cap no matter how many records accumulate — while every body is still cap-checked.
+describe('buildIndex — docs/ai/adr/ directory collapse (Decision 11)', () => {
+  it('200 synthetic AD-*.md records collapse to ONE aggregate row; the index stays ≤ 80 lines', () => {
+    const adr = Array.from({ length: 200 }, (_, i) => makeRow(`docs/ai/adr/AD-${String(i + 1).padStart(3, '0')}-record-${i}.md`, { frontmatter: { type: 'adr', maxLines: '400', lastUpdated: '2026-07-09', staleAfter: 'never' } }));
+    const rows = [makeRow('docs/ai/handover.md'), makeRow('docs/ai/adr/log.md', { frontmatter: { type: 'reference', maxLines: '200' } }), ...adr];
+    const out = buildIndex(rows, '2026-07-09');
+    const adrRowLines = out.split('\n').filter((l) => l.includes('](./adr/log.md)'));
+    expect(adrRowLines.length).toBe(1); // exactly one row references the whole adr/ tree
+    expect(out).not.toMatch(/AD-001-record-0\.md/); // individual records are NOT listed
+    expect(out.split('\n').length <= 80).toBe(true);
+  });
+
+  it('a stray adr/ markdown file renders as its OWN visible row (never collapsed/hidden)', () => {
+    const rows = [
+      makeRow('docs/ai/adr/AD-001-a.md', { frontmatter: { type: 'adr', maxLines: '400' } }),
+      makeRow('docs/ai/adr/log.md', { frontmatter: { type: 'reference', maxLines: '200' } }),
+      makeRow('docs/ai/adr/notes.md', { frontmatter: { type: 'reference', maxLines: '100' } }),
+    ];
+    const out = buildIndex(rows, '2026-07-09');
+    expect(out).toMatch(/adr\/notes\.md/); // the stray is a visible row, not swallowed by the collapse
+    const aggregateRows = out.split('\n').filter((l) => l.includes('](./adr/log.md)'));
+    expect(aggregateRows.length).toBe(1); // exactly one aggregate row for the real record(s)
+  });
+
+  it('the aggregate row shows the record count and a NUMERIC id range (AD-200 … AD-1000)', () => {
+    const rows = [
+      makeRow('docs/ai/adr/AD-200-a.md', { frontmatter: { type: 'adr', maxLines: '400' } }),
+      makeRow('docs/ai/adr/AD-1000-b.md', { frontmatter: { type: 'adr', maxLines: '400' } }),
+      makeRow('docs/ai/adr/log.md', { frontmatter: { type: 'reference', maxLines: '200' } }),
+    ];
+    const out = buildIndex(rows, '2026-07-09');
+    expect(out).toMatch(/\[`adr\/`\]\(\.\/adr\/log\.md\) \| adr \| 2 records \| AD-200 … AD-1000/);
+  });
+
+  it('adding a record drifts the collapse row → checkIndexFreshness flags it stale', () => {
+    const base = [makeRow('docs/ai/adr/AD-001-a.md', { frontmatter: { type: 'adr', maxLines: '400' } }), makeRow('docs/ai/adr/log.md', { frontmatter: { type: 'reference', maxLines: '200' } })];
+    const onDisk = buildIndex(base, '2026-07-09');
+    const grown = [...base, makeRow('docs/ai/adr/AD-002-b.md', { frontmatter: { type: 'adr', maxLines: '400' } })];
+    expect(checkIndexFreshness(grown, onDisk).fresh).toBe(false);
+  });
+
+  it('a single adr record OVER its own cap still fails inspectFile (the collapse never hides a fat body)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'adr-cap-'));
+    try {
+      const path = join(dir, 'AD-001-huge.md');
+      await writeFile(path, `---\ntype: adr\nlastUpdated: 2026-07-09\nscope: permanent\nstaleAfter: never\nowner: none\nmaxLines: 5\n---\n\n## AD-001 — Huge\n${'x\n'.repeat(20)}`);
+      const result = await inspectFile(path, computeToday('2026-07-09'));
+      expect(result.errors.some((e) => /lines > maxLines/.test(e))).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('buildIndex', () => {
   it('is deterministic, sorts rows by path, and excludes index.md itself', () => {
     const rows = [
