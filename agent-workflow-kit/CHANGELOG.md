@@ -4,6 +4,39 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.41.0 — review-state degraded lane: align the presence gate with the review-ledger (AD-050)
+
+A **feature** release (kit-only; deployment-lineage head stays `1.3.0` — no migration;
+memory/engine/bridges untouched). Closes the AD-049 residual: the family shipped two read-only review
+gates that **disagreed** on the same tree when a ready backend genuinely can't review a diff.
+`review-ledger --check` (convergence) already excused a recorded-degraded backend; `review-state
+--check` (presence) had no degraded model, so a legitimately degraded agy (stalled → no receipt) read
+missing/stale → exit 1. On BUGFREE-3 S2 the loop converged codex-only with agy recorded degraded, yet
+review-ledger PASSED and review-state FAILED — a consumer wiring review-state into a pre-commit hook
+was blocked on an honest degrade.
+
+- **A neutral read-core (`review-ledger-core.mjs`)** — the validated review-ledger read/schema core
+  (path/base resolvers, `validateRecord` + its validators + schema constants, loop/segment filters)
+  moves VERBATIM into a new node-built-ins-only module both read-only checkers import; `review-ledger.mjs`
+  re-exports every symbol for back-compat. It breaks the `review-ledger ↔ review-state` import cycle so
+  review-state can read the ledger without a back-import (the `changed-surface.mjs` precedent). Pure
+  mechanical move — no behaviour change, pinned by the full pre-existing suite + import-split pins.
+- **The `review-state` degraded exemption** — `review-state --check` now exempts a recipe-named backend
+  without a current grounded receipt when the in-flight segment's LATEST review-ledger round records it
+  `degraded:true` at the current tree fingerprint, with ≥1 non-degraded recipe-named backend present in
+  that round and grounded, the loop unambiguous, and the ledger clean. It **mirrors review-ledger's
+  `decideStop`** exactly (allPresent + presence) and stays **verdict-blind** — presence, not unanimity:
+  the two gates now AGREE on an honestly-converged-with-degrade tree, and still intentionally differ on
+  a non-converged one. `--await` inherits the exemption.
+- **Fail-closed, exemption-scoped** — an unreadable/malformed ledger DENIES the exemption but never
+  fails a tree whose receipts independently satisfy the gate (all-current stays exit 0, the ledger issue
+  surfaced). More than one plan in flight suppresses the exemption without adding a fail-closed arm.
+
+Contract surfaces moved in lockstep (the tool header, `--help`, the human render, the `--await`
+comment, `references/modes/review-state.md`). Council-converged both segments (S1 codex + agy SHIP; S2
+codex R1 revise → allPresent fold → R2 both SHIP), the two-gate agreement dogfooded live + pinned by a
+detector-independent `two-gate-agreement.test.mjs` + a 17-case matrix; full suite 2969 green.
+
 ## 1.40.0 — Universal verification profile + session-loop economics (a)–(h) (BUGFREE-3, AD-049)
 
 A **feature** release (deployment-lineage head stays `1.3.0` — no migration; co-released with
