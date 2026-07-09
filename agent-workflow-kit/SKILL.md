@@ -8,7 +8,7 @@ metadata:
 
 # agent-workflow-kit
 
-Deploys a **portable AI-agent memory-and-workflow system** into a project, and upgrades it as the kernel evolves — so any future agent can reconstruct project context fast and avoid repeating past mistakes.
+Deploys and upgrades a **portable AI-agent memory-and-workflow system** in a project.
 
 **Posture:** never leak kit internals — translate tool outcomes to plain language; Gotchas: `${CLAUDE_SKILL_DIR}/references/shared/deploy-tail.md`.
 
@@ -130,6 +130,10 @@ writer — read `${CLAUDE_SKILL_DIR}/references/modes/set-autonomy.md` before ac
 ### Mode: uninstall
 
 guarded — read `${CLAUDE_SKILL_DIR}/references/modes/uninstall.md` before acting.
+
+### Mode: migrate-adr-store
+
+guarded — read `${CLAUDE_SKILL_DIR}/references/modes/migrate-adr-store.md` before acting.
 
 ### Mode: velocity
 

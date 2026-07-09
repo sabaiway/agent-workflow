@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { dirname, join, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { assertContainedRealPath, tildify } from './install.mjs';
+import { assertContainedRealPath, tildify, shouldAdviseAdrMigration, maybeAdviseAdrMigration } from './install.mjs';
 
 const INSTALLER = join(dirname(fileURLToPath(import.meta.url)), 'install.mjs');
 const MEMORY_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -105,6 +105,28 @@ describe('memory installer — Issue-004 regressions (exported helpers, in-proce
     assert.equal(tildify(`${homedir()}${sep}skills${sep}x`), `~${sep}skills${sep}x`, 'leading home → ~');
     const midPath = `${sep}tmp${homedir()}${sep}x`;
     assert.equal(tildify(midPath), midPath, 'a mid-path home occurrence is left untouched');
+  });
+
+  // The generic ADR-store-migration advisory (AD-051) fires EXACTLY on a major-crossing update into
+  // the ADR-store major (2), and never on a fresh install, a same-major update, or a downgrade.
+  it('shouldAdviseAdrMigration fires only when crossing UP through the ADR-store major', () => {
+    assert.equal(shouldAdviseAdrMigration('1.12.0', '2.0.0'), true, '1.x → 2.0.0 crosses the major (advise)');
+    assert.equal(shouldAdviseAdrMigration('1.12.0', '1.13.0'), false, 'a same-major update never advises');
+    assert.equal(shouldAdviseAdrMigration('2.0.0', '2.1.0'), false, 'already on the new major — nothing to migrate');
+    assert.equal(shouldAdviseAdrMigration('2.1.0', '2.0.0'), false, 'a downgrade never advises');
+    assert.equal(shouldAdviseAdrMigration(null, '2.0.0'), false, 'a fresh install (no prior version) never advises');
+  });
+
+  it('maybeAdviseAdrMigration prints the GENERIC advisory on a major crossing, and NEVER names a kit command', () => {
+    const logs = [];
+    maybeAdviseAdrMigration('1.12.0', '2.0.0', (m) => logs.push(m));
+    assert.equal(logs.length, 1, 'a major crossing prints exactly one advisory');
+    assert.match(logs[0], /retired the 3-tier ADR archive/);
+    assert.match(logs[0], /your workflow toolkit/, 'the advisory uses the generic "workflow toolkit" phrasing');
+    assert.doesNotMatch(logs[0], /migrate-adr-store/, 'the memory advisory never names the concrete kit command (knows-nobody DAG)');
+    logs.length = 0;
+    maybeAdviseAdrMigration('2.0.0', '2.1.0', (m) => logs.push(m));
+    assert.equal(logs.length, 0, 'a same-major update advises nothing');
   });
 });
 

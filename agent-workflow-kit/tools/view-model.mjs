@@ -111,6 +111,7 @@ const projectVm = (p) =>
         dir: p.dir,
         deployed: p.deployed,
         docsAi: p.docsAi,
+        adrLayout: p.adrLayout ?? null,
         deployStamps: (p.deployStamps ?? []).map((st) => ({ display: st.display, version: st.version ?? null })),
         visibility: visibilityVm(p.visibility),
         settings: settingsVm(p.settings),
