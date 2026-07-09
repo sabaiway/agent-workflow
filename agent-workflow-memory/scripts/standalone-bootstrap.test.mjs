@@ -68,7 +68,10 @@ const bootstrap = (project) => {
   const docsAi = join(project, 'docs', 'ai');
   mkdirSync(docsAi, { recursive: true });
   for (const entry of readdirSync(TEMPLATES)) {
-    if (entry === 'AGENTS.md') continue;
+    // AGENTS.md is the entry point (placed at the root above); adr-record.md is a skill-home
+    // authoring reference (never deployed — it would be a stray in docs/ai and, under adr/, would
+    // fail the ADR store's integrity guard). Both are excluded from the docs/ai copy loop.
+    if (entry === 'AGENTS.md' || entry === 'adr-record.md') continue;
     cpSync(join(TEMPLATES, entry), join(docsAi, entry), { recursive: true });
   }
 
@@ -99,6 +102,26 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
     const hook = join(project, '.git', 'hooks', 'pre-commit');
     assert.ok(existsSync(hook), 'pre-commit hook installed');
     assert.match(readFileSync(hook, 'utf8'), /install-git-hooks\.mjs/, 'hook carries the installer marker');
+  });
+
+  // The one-file-per-ADR store seeds a HOT window (decisions.md) + the seed navigator
+  // (docs/ai/adr/log.md) but NOT the adr-record.md authoring reference; a fresh bootstrap must pass
+  // archive-decisions.mjs --check on first commit (the seed navigator == the generator over the seed).
+  it('seeds the ADR store (decisions.md + adr/log.md, no stray adr-record.md) and --check is green', () => {
+    const project = makeProject();
+    const docsAi = bootstrap(project);
+
+    assert.ok(existsSync(join(docsAi, 'decisions.md')), 'the HOT ADR window is seeded');
+    assert.ok(existsSync(join(docsAi, 'adr', 'log.md')), 'the seed ADR navigator is deployed under adr/');
+    assert.ok(!existsSync(join(docsAi, 'adr-record.md')), 'the authoring reference is NOT deployed (skill-home only)');
+    assert.ok(!existsSync(join(docsAi, 'adr', 'adr-record.md')), 'the authoring reference is NOT placed in the adr/ store');
+
+    // The deployed rotator (project/scripts/) resolves its root from its own location → the project.
+    const check = execFileSync(process.execPath, [join(project, 'scripts', 'archive-decisions.mjs'), '--check'], {
+      cwd: project,
+      encoding: 'utf8',
+    });
+    assert.match(check, /OK — HOT within cap, store integrity intact, navigator fresh/, 'fresh-bootstrap --check is green');
   });
 
   it('stamps .memory-version (lineage head) ONLY — no second stamp', async () => {

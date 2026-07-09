@@ -325,9 +325,31 @@ const hasHiddenFence = (projectDir, deps = {}) => {
   }
 };
 
+// The retired 3-tier ADR monoliths (AD-051): their presence is the old-layout signal a consumer must
+// migrate away from via the opt-in `migrate-adr-store` mode. Stable relative paths (a status probe
+// never imports the rotator).
+const DECISIONS_MONOLITHS = ['docs/ai/history/decisions-archive.md', 'docs/ai/history/decisions-archive-early.md'];
+const ADR_STORE_DIR = 'docs/ai/adr';
+
+// The ADR-store layout axis: 'old' (a retired decisions-archive monolith is still on disk — needs
+// the opt-in migration), 'migrated' (the one-file-per-ADR adr/ store is in place), or 'none' (no ADR
+// substrate at all). Keys on the monolith presence, NOT on the stamp/head (Decision 6/13).
+const surveyAdrLayout = (dir, exists) => {
+  const safe = (rel) => {
+    try {
+      return exists(join(dir, rel));
+    } catch {
+      return false;
+    }
+  };
+  if (DECISIONS_MONOLITHS.some(safe)) return 'old';
+  if (safe(ADR_STORE_DIR)) return 'migrated';
+  return 'none';
+};
+
 // surveyProject → the deploy axis for a target project dir: the per-member deployment stamps, whether
-// docs/ai/ exists, and whether the hidden-mode fence is present. Pure (fs reads only, all injectable),
-// no git subprocess — the read-only `status` view must never mutate or spawn anything.
+// docs/ai/ exists, the ADR-store layout, and whether the hidden-mode fence is present. Pure (fs reads
+// only, all injectable), no git subprocess — the read-only `status` view must never mutate or spawn.
 export const surveyProject = (projectDir, deps = {}) => {
   const exists = deps.exists ?? existsSync;
   const dir = resolve(projectDir);
@@ -342,7 +364,7 @@ export const surveyProject = (projectDir, deps = {}) => {
     }
   })();
   const deployed = stamps.some((s) => s.version != null) || docsAiPresent;
-  return { dir, deployed, docsAiPresent, hiddenFence: hasHiddenFence(dir, deps), stamps };
+  return { dir, deployed, docsAiPresent, adrLayout: surveyAdrLayout(dir, exists), hiddenFence: hasHiddenFence(dir, deps), stamps };
 };
 
 // ── report ───────────────────────────────────────────────────────────────────────
@@ -579,6 +601,7 @@ export const buildEnvelope = (family, project = null, extras = {}) => {
       dir: project.dir,
       deployed: project.deployed,
       docsAi: project.docsAiPresent,
+      adrLayout: project.adrLayout, // 'old' | 'migrated' | 'none' — a user-safe token, never a raw path
       // member + display + version only — never the internal stamp FILENAME (s.file).
       deployStamps: project.stamps.map((s) => ({ member: s.name, display: displayOf(s.name), version: s.version ?? null })),
     };

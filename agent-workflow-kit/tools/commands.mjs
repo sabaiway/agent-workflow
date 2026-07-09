@@ -71,6 +71,13 @@ const CATALOG = [
     oneLine: 'Remove only what setup placed; it never deletes your notes and always previews before changing anything.',
   },
   {
+    key: 'migrate-adr-store',
+    invocation: invocationOf('migrate-adr-store'),
+    group: 'Lifecycle',
+    kind: GUARDED,
+    oneLine: 'Migrate an older project’s ADR store to the one-file-per-ADR layout; it previews first, snapshots, and never commits.',
+  },
+  {
     key: 'status',
     invocation: invocationOf('status'),
     group: 'Inspect',
@@ -221,7 +228,7 @@ export const kindOf = (key) => byKey.get(key)?.kind ?? null;
 // and trailing args are ignored. Precise semantics:
 //   undefined / null / '' / whitespace-only / the exact bare invocation → 'bootstrap'
 //   a known first token (upgrade/status/setup/backends/recipes/procedures/velocity/agents/hook/
-//     gates/set-recipe/uninstall/help) → that mode
+//     gates/set-recipe/uninstall/migrate-adr-store/help) → that mode
 //   anything else (unrecognized / ambiguous) → 'help'  (read-only — NEVER a writer/guarded mode)
 export const routeInvocation = (token) => {
   if (token == null) return BARE_INVOCATION_MODE;

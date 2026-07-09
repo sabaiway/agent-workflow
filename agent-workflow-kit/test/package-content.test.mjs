@@ -116,6 +116,11 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the consent-gated gates.json seeder + the shared atomic-write core it runs on (AD-042)
       'tools/seed-gates.mjs',
       'tools/atomic-write.mjs',
+      // the opt-in one-file-per-ADR store migration writer + its mode + the seeded templates (AD-051)
+      'tools/migrate-adr-store.mjs',
+      'references/modes/migrate-adr-store.md',
+      'references/templates/adr-record.md',
+      'references/templates/adr/log.md',
       // the lens-region reconcile — invoked from upgrade/bootstrap prose (a count alone would not
       // catch its accidental exclusion)
       'tools/lens-region.mjs',
@@ -193,7 +198,12 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       read path both read-only checkers share, extracted so review-state.mjs reads the ledger
     //       for the degraded exemption without an import cycle). Its *.test.mjs coverage rides in the
     //       existing review-ledger / review-state suites; no new colocated test file ships.
-    assert.equal(packed.length, 139, `tarball file count drifted (${packed.length} ≠ 139)`);
+    // 143 = 139 + the one-file-per-ADR store migration (AD-051, Phase 2): tools/migrate-adr-store.mjs
+    //       (the opt-in migration writer) + references/modes/migrate-adr-store.md (the 22nd mode-ref) +
+    //       references/templates/adr-record.md (the MADR authoring reference) + references/templates/
+    //       adr/log.md (the seed navigator, mirrored from memory). The *.test.mjs sibling is stripped by
+    //       files[]; the retargeted decisions.md HOT seed is count-neutral (an in-place mirror update).
+    assert.equal(packed.length, 143, `tarball file count drifted (${packed.length} ≠ 143)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

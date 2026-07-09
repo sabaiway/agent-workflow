@@ -77,6 +77,10 @@ const renderProject = (vm, { color }) => {
   }
   for (const s of p.deployStamps) lines.push(`  ${pad(s.display, STAMP_COL)}${s.version ?? '—'}`);
   lines.push(`  ${pad('docs/ai present', STAMP_COL)}${p.docsAi ? 'yes' : 'no'}`);
+  // Only the actionable 'old' layout renders a line — a migrated/none store needs no note (AD-051).
+  if (p.adrLayout === 'old') {
+    lines.push(`  ${pad('ADR store', STAMP_COL)}old layout — run /agent-workflow-kit migrate-adr-store`);
+  }
   if (p.visibility) {
     const v = p.visibility.error ? `error: ${p.visibility.error}` : p.visibility.phrase;
     lines.push(`  ${pad('visibility', STAMP_COL)}${v}`);

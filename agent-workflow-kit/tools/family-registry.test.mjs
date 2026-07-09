@@ -272,6 +272,23 @@ describe('surveyProject', () => {
     assert.equal(r.deployed, false);
     assert.equal(r.hiddenFence, false);
     assert.ok(r.stamps.every((s) => s.version === null));
+    assert.equal(r.adrLayout, 'none', 'no ADR substrate → none');
+  });
+
+  it('the ADR-layout probe never throws — an exists() error degrades to none (read-only invariant)', () => {
+    const r = surveyProject('/proj', { exists: () => { throw new Error('EACCES'); } });
+    assert.equal(r.adrLayout, 'none', 'a failing fs probe degrades to none, never crashes the status read');
+  });
+
+  it('reports the ADR-store layout: old (monolith present) / migrated (adr/ present) / none (AD-051)', () => {
+    const dir = '/proj';
+    const old = surveyProject(dir, projectDeps({ files: { [join(dir, 'docs/ai/history/decisions-archive.md')]: '' } }));
+    assert.equal(old.adrLayout, 'old', 'a retired decisions-archive monolith → old (needs migration)');
+    const migrated = surveyProject(dir, projectDeps({ files: { [join(dir, 'docs/ai/adr')]: '' } }));
+    assert.equal(migrated.adrLayout, 'migrated', 'the one-file-per-ADR adr/ store, no monolith → migrated');
+    // A monolith present WINS over an adr/ dir (a half-migrated tree still needs the migration to finish).
+    const half = surveyProject(dir, projectDeps({ files: { [join(dir, 'docs/ai/history/decisions-archive-early.md')]: '', [join(dir, 'docs/ai/adr')]: '' } }));
+    assert.equal(half.adrLayout, 'old', 'a monolith still on disk keeps the layout old even beside adr/');
   });
 });
 
@@ -533,11 +550,12 @@ describe('buildEnvelope — no-leak --json envelope', () => {
     assert.deepEqual(codex.refresh, { behind: true, recommend: '/agent-workflow-kit setup', freshness: 'behind' });
   });
 
-  it('the project block exposes member/display/version stamps — NEVER the internal stamp filename', () => {
+  it('the project block exposes member/display/version stamps + adrLayout — NEVER the internal stamp filename', () => {
     const project = {
       dir: '/p',
       deployed: true,
       docsAiPresent: true,
+      adrLayout: 'old',
       hiddenFence: true,
       stamps: [
         { name: 'agent-workflow-kit', file: 'docs/ai/.workflow-version', version: '1.3.0' },
@@ -548,6 +566,7 @@ describe('buildEnvelope — no-leak --json envelope', () => {
     assert.equal(env.project.dir, '/p');
     assert.equal(env.project.deployed, true);
     assert.equal(env.project.docsAi, true);
+    assert.equal(env.project.adrLayout, 'old', 'the ADR-store layout is a user-safe token on the envelope');
     for (const s of env.project.deployStamps) {
       assert.deepEqual(Object.keys(s).sort(), ['display', 'member', 'version'].sort());
       assert.equal('file' in s, false, 'the internal stamp filename must never appear');

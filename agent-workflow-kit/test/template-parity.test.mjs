@@ -38,7 +38,7 @@ describe('kit ⟷ memory template parity — every manifest-listed template byte
 
 describe('the mirror manifest itself — reverse pins (the sync and this guard govern ONE set)', () => {
   it('keeps the load-bearing seeds IN the manifest', () => {
-    for (const required of ['AGENTS.md', 'orchestration.json', 'gates.json']) {
+    for (const required of ['AGENTS.md', 'orchestration.json', 'gates.json', 'adr-record.md', 'adr/log.md']) {
       assert.ok(
         MIRROR_TEMPLATE_FILES.includes(required),
         `${required} must stay in the mirror manifest — dropping it would silently stop both the sync and this parity guard`,
@@ -57,6 +57,19 @@ describe('the mirror manifest itself — reverse pins (the sync and this guard g
         `${required} must never enter the whole-file mirror manifest — a full-file sync would clobber the deliberate divergence`,
       );
     }
+  });
+});
+
+describe('seed adr/log.md — the generator run over the seeded HOT decisions.md (Decision 8)', () => {
+  it('the seed navigator equals buildNavigator over the seeded HOT window (fresh-bootstrap --check is green)', async () => {
+    const { parseDecisionsText, buildNavigator } = await import('../references/scripts/archive-decisions.mjs');
+    const seedHot = readFileSync(join(KIT_TEMPLATES, 'decisions.md'), 'utf8');
+    const seedNav = readFileSync(join(KIT_TEMPLATES, 'adr', 'log.md'), 'utf8');
+    const { entries } = parseDecisionsText(seedHot, 'references/templates/decisions.md');
+    // The seed carries the literal {{DATE}} placeholder; buildNavigator stamps whatever `today` it is
+    // handed, so the navigator body (governing table + recent window) is what this pins — a hand-edited
+    // seed navigator that drifts from the generator would red here BEFORE it ships a stale first commit.
+    assert.equal(buildNavigator(entries, '{{DATE}}'), seedNav, 'seed adr/log.md must equal the generator over the seeded HOT');
   });
 });
 

@@ -143,6 +143,15 @@ describe('renderers — branch coverage (every replaced-function branch)', () =>
     assert.match(out, /no agent-workflow deployment detected here/);
   });
 
+  it('an OLD ADR layout renders the migration line; migrated/none render nothing (AD-051)', () => {
+    const old = renderPlain({ installed: [], project: { dir: '/p', deployed: true, adrLayout: 'old', deployStamps: [] } });
+    assert.match(old, /ADR store\s+old layout — run \/agent-workflow-kit migrate-adr-store/);
+    const migrated = renderPlain({ installed: [], project: { dir: '/p', deployed: true, adrLayout: 'migrated', deployStamps: [] } });
+    assert.doesNotMatch(migrated, /ADR store/, 'a migrated store shows no note');
+    const none = renderPlain({ installed: [], project: { dir: '/p', deployed: true, adrLayout: 'none', deployStamps: [] } });
+    assert.doesNotMatch(none, /ADR store/, 'no ADR substrate shows no note');
+  });
+
   it('a member with TWO notes (engine missing both fragments) prints both as ↳ sub-lines', () => {
     const out = renderPlain({
       installed: [{ member: 'agent-workflow-engine', display: 'engine', version: '1.1.0', state: 'installed', notes: ['engine present but does not supply the recipes pointer', 'engine present but does not ship the activity-procedures canon'], refresh: { behind: true, recommend: 'npx @sabaiway/agent-workflow-engine@latest init' } }],
