@@ -15,11 +15,18 @@
 //           EXECUTE- / FEEDBACK-, or a name containing PROMPT / prompt / handoff); when the tree is
 //           clean (nothing to review); when the cwd is not a git work tree (nothing to fingerprint);
 //           and when EVERY recipe-named backend has a current-fingerprint receipt with acceptable
-//           grounding (fresh:true, artifact "code", grounded:true).
-//   exit 1  when a recipe-named backend has no current-fingerprint receipt — including the
-//           stale-after-edit case (any tracked/untracked change after the review moves the
-//           fingerprint) — or when its only current receipts carry grounded:false (an ungrounded
-//           agy review under reviewed/council never satisfies the gate).
+//           grounding (fresh:true, artifact "code", grounded:true) OR is degraded-exempt: the current
+//           plan-execution SEGMENT's latest review-ledger round records that backend degraded:true at
+//           the current tree fingerprint, with >= 1 non-degraded recipe-named backend present with a
+//           current grounded receipt and the ledger reading clean (AD-050; MIRRORS review-ledger
+//           decideStop's degraded handling — presence, not unanimity, never a 0/0-counts gate).
+//   exit 1  when a recipe-named backend has no current-fingerprint receipt AND is not degraded-exempt —
+//           including the stale-after-edit case (any tracked/untracked change after the review moves the
+//           fingerprint) — or when its only current receipts carry grounded:false AND it is not
+//           degraded-exempt (an ungrounded agy review under reviewed/council never satisfies the gate on
+//           its own — but a recorded current-tree degrade still exempts it). An unreadable/malformed
+//           review-ledger DENIES the degraded exemption (fail-closed) but NEVER fails a tree whose
+//           receipts independently satisfy the gate (that stays exit 0, the ledger issue surfaced).
 // Informational receipts NEVER satisfy (nor fail) the tree check: plan/diff-mode receipts
 // (artifact ≠ "code") and continuations (fresh:false — agy --continue/--conversation cannot attest
 // a folded tree; only a fresh grounded re-run mints a gate-satisfying receipt).
@@ -46,6 +53,9 @@ import { createHash } from 'node:crypto';
 import { detectBackends } from './detect-backends.mjs';
 import { resolveActivityRecipe, planRecipe, DISPLAY_ALIASES } from './recipes.mjs';
 import { CONFIG_REL, fail, loadConfig } from './orchestration-config.mjs';
+// The NEUTRAL ledger read-core (AD-050): review-state reads the review-ledger ONLY for the degraded
+// exemption, through the neutral core — never review-ledger.mjs (which imports THIS module, the cycle).
+import { resolveLedgerPath, resolveBase, readLedger, filterSegmentRecords, roundSequenceIntact } from './review-ledger-core.mjs';
 
 export const RECEIPTS_BASENAME = 'agent-workflow-review-receipts.jsonl';
 export const PLANS_REL = 'docs/plans';
@@ -236,6 +246,45 @@ export const backendReceiptStatus = (receipts, backend, fingerprint) => {
   return { state: own.length > 0 ? 'stale' : 'missing', verdict: null, grounded: null, timestamp: null };
 };
 
+// ── the degraded exemption (AD-050): read the review-ledger for a recorded current-tree degrade ────
+
+// degradedExemptSet(args) → the Set of recipe-named backends EXEMPT from --check because the current
+// segment's LATEST round records them degraded at the current tree fingerprint. It MIRRORS review-ledger
+// decideStop's degraded handling: a backend WITHOUT a current grounded code receipt is exempt IFF
+// (i) exactly one plan is in flight (else the loop is ambiguous — the exempt set is empty, NO fail-closed
+// exit-1 arm) AND the ledger reads clean (a readError / malformed line DENIES the exemption, fail-closed);
+// (ii) the segment (activity=plan-execution, loop, base=resolveBase) has >=1 round with an intact
+// sequence; (iii) its LATEST round records THAT backend degraded; (iv) that round's fingerprint equals
+// the CURRENT tree (the degrade attests THIS tree); (v) >=1 NON-degraded recipe-named backend is present
+// with a current grounded receipt (never everyone degraded). It is VERDICT-BLIND — it mirrors only the
+// PRESENCE half of decideStop (nonDegradedReq >= 1), never its 0/0 counts (Decision 7).
+export const degradedExemptSet = ({ records, readError, malformed, base, plans, currentFingerprint, requiredBackends, backends }) => {
+  const empty = new Set();
+  if (plans.length !== 1) return empty; // (i) ambiguous loop → exemption suppressed (no fail-closed exit-1 arm)
+  if (readError || malformed > 0) return empty; // fail-closed: a corrupt ledger denies the exemption
+  if (currentFingerprint == null) return empty;
+  const loop = plans[0].replace(/\.md$/, '');
+  const rounds = filterSegmentRecords(records, { activity: ACTIVITY, loop, base }).filter((r) => r.kind === 'round');
+  if (rounds.length === 0) return empty; // (ii) empty segment → nothing recorded yet
+  if (!roundSequenceIntact(rounds)) return empty; // (ii) corrupt sequence → fail closed
+  const latest = rounds[rounds.length - 1];
+  if (latest.fingerprint !== currentFingerprint) return empty; // (iv) the degrade must attest THIS tree
+  // Mirror decideStop's PRESENCE discipline (review-ledger.mjs): EVERY recipe-named backend must be IN
+  // the latest round (allPresent) — a backend absent from the round reviewed nothing there, so a stray
+  // current receipt for a NON-recorded backend can never justify the exemption (codex R1: else a
+  // degrade-only round `[{agy degraded}]` + any current codex receipt would exempt agy, disagreeing
+  // with review-ledger, whose decideStop fails allPresent on the absent codex).
+  const entryFor = (rb) => latest.backends.find((b) => b.backend === rb);
+  if (!requiredBackends.every((rb) => entryFor(rb) !== undefined)) return empty;
+  const receiptCurrent = new Set(backends.filter((b) => b.state === 'current').map((b) => b.backend));
+  // (v) >=1 non-degraded recipe-named backend PRESENT in the latest round with a current grounded
+  // receipt — never all degraded (mirrors decideStop's nonDegradedReq >= 1, plus review-state's own
+  // "it really reviewed" = a current receipt).
+  if (!requiredBackends.some((rb) => { const e = entryFor(rb); return e && !e.degraded && receiptCurrent.has(rb); })) return empty;
+  // (iii) exempt each recipe-named backend the latest round records degraded.
+  return new Set(requiredBackends.filter((rb) => { const e = entryFor(rb); return e && e.degraded === true; }));
+};
+
 // ── the check + report core ─────────────────────────────────────────────────────────
 
 // buildState({ cwd, env, detect }) → everything both renders need. Pure I/O at the edges.
@@ -262,6 +311,13 @@ export const buildState = ({ cwd, env = process.env, detect = detectBackends } =
   const receiptsPath = resolveReceiptsPath(cwd, env);
   const { receipts, malformed } = receiptsPath ? readReceipts(receiptsPath) : { receipts: [], malformed: 0 };
   const backends = requiredBackends.map((b) => ({ backend: b, ...backendReceiptStatus(receipts, b, fingerprint) }));
+  // The degraded exemption (AD-050): read the review-ledger ONLY here, ONLY for the exemption — the
+  // whole gate never depends on the ledger (a corrupt ledger fails the exemption CLOSED, never a tree
+  // whose receipts independently satisfy the gate; Decision 3). base/ledger locate the current segment.
+  const base = resolveBase(cwd);
+  const ledgerPath = resolveLedgerPath(cwd, env);
+  const { records, malformed: ledgerMalformed, readError: ledgerReadError } = ledgerPath ? readLedger(ledgerPath) : { records: [], malformed: 0 };
+  const degradedExempt = [...degradedExemptSet({ records, readError: ledgerReadError, malformed: ledgerMalformed, base, plans, currentFingerprint: fingerprint, requiredBackends, backends })];
   return {
     resolved,
     configSource,
@@ -273,6 +329,11 @@ export const buildState = ({ cwd, env = process.env, detect = detectBackends } =
     receiptsPath,
     receiptCount: receipts.length,
     malformed,
+    base,
+    ledgerPath,
+    ledgerMalformed: ledgerMalformed ?? 0,
+    ledgerReadError: ledgerReadError ?? null,
+    degradedExempt,
     detectionWarning,
   };
 };
@@ -302,16 +363,31 @@ export const decideCheck = (state) => {
   // cannot fail the gate by itself (a forged/corrupt line must not brick commits), but the check
   // line always names it so a PASS over a partially-corrupt file is visible.
   const malformedNote = state.malformed > 0 ? ` — ${state.malformed} malformed receipt line(s) ignored; inspect ${state.receiptsPath}` : '';
-  const failing = state.backends.filter((b) => b.state !== 'current');
+  // The review-ledger is consulted ONLY for the degraded exemption; a corrupt ledger DENIES it
+  // (fail-closed) but never fails a tree the receipts independently satisfy — surfaced either way
+  // (No-silent-failures; Decision 3).
+  const ledgerNote = state.ledgerReadError
+    ? ` — review ledger unreadable (${state.ledgerReadError}); degraded exemption unavailable (fail-closed) — inspect ${state.ledgerPath}`
+    : state.ledgerMalformed > 0
+      ? ` — review ledger has ${state.ledgerMalformed} malformed line(s); degraded exemption unavailable (fail-closed) — inspect ${state.ledgerPath}`
+      : '';
+  // The degraded exemption (AD-050): a backend recorded degraded for the current tree is excluded from
+  // `failing` (it reviewed nothing to receipt — MIRRORS decideStop excluding a degraded backend). It
+  // stays verdict-blind: the exemption proves the degrade was RECORDED, never that the tree converged.
+  const exempt = new Set(state.degradedExempt);
+  const failing = state.backends.filter((b) => b.state !== 'current' && !exempt.has(b.backend));
   if (failing.length === 0) {
-    return { code: 0, reason: `every recipe-named backend has a fresh grounded receipt for the current tree (${state.requiredBackends.join(' + ')})${malformedNote}` };
+    if (exempt.size === 0) {
+      return { code: 0, reason: `every recipe-named backend has a fresh grounded receipt for the current tree (${state.requiredBackends.join(' + ')})${malformedNote}${ledgerNote}` };
+    }
+    return { code: 0, reason: `every recipe-named backend reviewed the current tree (${state.requiredBackends.join(' + ')}) — degraded-exempt (recorded degraded for the current tree in the review ledger): ${[...exempt].join(', ')}${malformedNote}${ledgerNote}` };
   }
   const parts = failing.map((b) => {
     if (b.state === 'ungrounded') return `${b.backend}: only ungrounded receipts for the current tree — re-run grounded (--facts)`;
     if (b.state === 'stale') return `${b.backend}: receipts exist but none matches the current tree (edited after review) — run a fresh review`;
     return `${b.backend}: no receipt — run its review wrapper`;
   });
-  return { code: 1, reason: `${parts.join('; ')}${malformedNote}` };
+  return { code: 1, reason: `${parts.join('; ')}${malformedNote}${ledgerNote}` };
 };
 
 // ── rendering ───────────────────────────────────────────────────────────────────────
@@ -329,7 +405,11 @@ const formatHuman = (state, check) => {
   else if (state.clean === true) lines.push('  tree: clean (nothing to review)');
   else lines.push(`  tree fingerprint: ${state.fingerprint}`);
   lines.push(`  receipts: ${state.receiptsPath ?? '(unresolvable — no git dir)'} (${state.receiptCount} line(s)${state.malformed ? `, ${state.malformed} malformed — inspect the file` : ''})`);
+  if (state.ledgerReadError) lines.push(`  ⚠ review ledger unreadable (${state.ledgerReadError}) — degraded exemption unavailable`);
+  else if (state.ledgerMalformed) lines.push(`  ⚠ review ledger: ${state.ledgerMalformed} malformed line(s) — degraded exemption unavailable`);
+  const exempt = new Set(state.degradedExempt);
   for (const b of state.backends) {
+    const exemptTag = exempt.has(b.backend) ? ' — degraded-exempt (recorded degraded in the review ledger for the current tree)' : '';
     const detail =
       b.state === 'current'
         ? `current (verdict: ${b.verdict}, grounded, ${b.timestamp ?? '?'})`
@@ -338,7 +418,7 @@ const formatHuman = (state, check) => {
           : b.state === 'stale'
             ? 'stale — no receipt matches the current tree (edited after review)'
             : 'missing — no receipt from this backend';
-    lines.push(`    ${STATE_GLYPH[b.state]} ${b.backend}: ${detail}`);
+    lines.push(`    ${exempt.has(b.backend) ? '⊘' : STATE_GLYPH[b.state]} ${b.backend}: ${detail}${exemptTag}`);
   }
   lines.push(`  check: ${check.code === 0 ? 'PASS' : 'FAIL'} — ${check.reason}`);
   return lines.join('\n');
@@ -357,9 +437,10 @@ presence + verdict + grounding for the CURRENT tree. Plan/diff-mode receipts and
 (fresh:false) are informational-only — they never satisfy the tree check.
 
 --check exits 0/1 per the normative contract in the tool header: 0 for solo / no plan in flight /
-a clean tree / not-a-git-tree / all recipe-named backends receipted-current-and-grounded; 1 when a
-recipe-named backend is missing, stale (edited after review), or grounded:false under
-reviewed/council. Declare it as a project gate by hand (docs/ai/gates.json) or via the
+a clean tree / not-a-git-tree / all recipe-named backends receipted-current-and-grounded OR
+degraded-exempt (a recorded current-tree degrade in the review-ledger for that backend; AD-050); 1 when
+a recipe-named backend is missing, stale (edited after review), or grounded:false under reviewed/council
+AND is not degraded-exempt. Declare it as a project gate by hand (docs/ai/gates.json) or via the
 explicit-consent seeder (tools/seed-gates.mjs) — never without consent.
 
 Read-only: never writes, never commits, never runs a subscription CLI; spawns read-only git queries.
@@ -393,14 +474,16 @@ export const main = (argv, ctx = {}) => {
 };
 
 // ── --await: block until every recipe-named backend has receipted the current tree ─────
-// (BUGFREE-3 / AD-049, item (d)). It waits for ALL recipe-named backends — review-state has NO
-// durable degraded-backend source before a round is recorded (degraded is a review-LEDGER round
-// field, not a review-state input), so "non-degraded" is not knowable here; awaiting a backend the
-// operator KNOWS is degraded is the operator's call (don't --await it). The completion signal is the
-// RECEIPT (i.e. `--check` would PASS), NEVER a process event — a harness "completed" notification
-// fires early and a bridge's output late-flushes, so polling a pid/receipt-file is the durable
-// mechanization of receipts-not-pgrep. Stays read-only (it only re-reads state); the clock is
-// injectable (ctx.now / ctx.sleep / ctx.pollMs) so hermetic tests never spend wall-clock.
+// (BUGFREE-3 / AD-049, item (d)). It waits for every recipe-named backend to be SATISFIED — a fresh
+// grounded current-tree receipt, OR (AD-050) the degraded exemption: once a current-tree degrade is
+// RECORDED in the review-ledger, --await stops waiting for that backend and returns READY (before,
+// it waited forever for a receipt that never comes). It inherits the exemption for FREE — it polls
+// the SAME decideCheck(buildState()) `--check` computes. The completion signal is the RECEIPT (i.e.
+// `--check` would PASS), NEVER a process event — a harness "completed" notification fires early and a
+// bridge's output late-flushes, so polling a pid/receipt-file is the durable mechanization of
+// receipts-not-pgrep. Stays read-only (it only re-reads state — now the ledger too, a few KB per
+// tick); the clock is injectable (ctx.now / ctx.sleep / ctx.pollMs) so hermetic tests never spend
+// wall-clock.
 
 const AWAIT_ALLOWED_ARGS = new Set(['--await', '--timeout']);
 

@@ -409,3 +409,222 @@ describe('backendReceiptStatus — the latest grounded receipt wins', () => {
     assert.equal(s.verdict, 'SHIP');
   });
 });
+
+// ── the degraded exemption (AD-050 Segment 2) — MIRRORS review-ledger decideStop's degraded handling:
+// a recipe-named backend WITHOUT a current grounded code receipt is EXEMPT from --check IFF the current
+// segment's LATEST round records THAT backend degraded at the CURRENT tree fingerprint, ≥1 non-degraded
+// recipe-named backend is present with a current grounded receipt, and the ledger reads clean. It stays
+// VERDICT-BLIND (presence, not unanimity — Decision 7). Fail-closed (exemption denied) on an ambiguous
+// loop, an unreadable/malformed ledger, an empty segment, or a corrupt round sequence. ────────────────
+
+// Seed a v4 review-ledger via the AW_REVIEW_LEDGER override (out of the work tree so it never moves the
+// fingerprint). Each line is a record object; a raw string rides verbatim (the malformed-line case).
+const seedLedger = (lines) => {
+  const dir = mkdtempSync(join(tmpdir(), 'review-state-ledger-'));
+  const path = join(dir, 'ledger.jsonl');
+  writeFileSync(path, `${lines.map((l) => (typeof l === 'string' ? l : JSON.stringify(l))).join('\n')}\n`);
+  return { path, dir };
+};
+const v4Round = ({ loop = 'active-plan', base, fingerprint, round = 1, backends, findings = [], origins = { 'first-draft': 0, 'fold-induced': 0, mechanics: 0 } }) =>
+  ({ schema: 4, loop, activity: 'plan-execution', kind: 'round', round, base, fingerprint, origins, backends, findings, timestamp: '2026-07-09T00:00:00Z' });
+const CODEX_SHIP = { backend: 'codex', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'ship' };
+const CODEX_REVISE = { backend: 'codex', degraded: false, blockers: 1, majors: 0, minors: 0, verdict: 'revise' };
+const AGY_DEGRADED = { backend: 'agy', degraded: true, blockers: 0, majors: 0, minors: 0, verdict: 'degraded', reason: 'Issue-001 stall on a large diff' };
+const headOf = (g) => g('rev-parse', 'HEAD').stdout.trim();
+
+describe('review-state --check — the degraded exemption (AD-050)', () => {
+  it('no receipt but a current-fp degraded round → 0 (exempt; the reason names the degraded backend)', () => {
+    const { root, g } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'ship' });
+    const { path, dir } = seedLedger([v4Round({ base: headOf(g), fingerprint: fp, backends: [CODEX_SHIP, AGY_DEGRADED] })]);
+    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stdout);
+    assert.match(r.stdout, /degraded-exempt/);
+    assert.match(r.stdout, /agy/);
+  });
+
+  it('a STALE prior receipt AND a current-fp degraded round → 0 (the exemption is receipt-state-independent)', () => {
+    const { root, g } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    mint(root, { backend: 'agy', fingerprint: 'stale'.repeat(12) }); // agy has a receipt, none current → 'stale'
+    const { path, dir } = seedLedger([v4Round({ base: headOf(g), fingerprint: fp, backends: [CODEX_SHIP, AGY_DEGRADED] })]);
+    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stdout);
+  });
+
+  it('VERDICT-BLIND: the non-degraded backend receipted "revise" (blockers>0 in the round) + the other degraded at the current fp → 0 (presence, not unanimity)', () => {
+    const { root, g } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'revise' });
+    const round = v4Round({
+      base: headOf(g), fingerprint: fp,
+      backends: [CODEX_REVISE, AGY_DEGRADED],
+      findings: [{ findingKey: 'x', severity: 'blocker', origin: 'first-draft', backend: 'codex' }],
+      origins: { 'first-draft': 1, 'fold-induced': 0, mechanics: 0 },
+    });
+    const { path, dir } = seedLedger([round]);
+    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stdout); // review-state does not adjudicate ship/revise — the backend reviewed + the other is degraded-exempt
+  });
+
+  it('the same degrade at an OLD/other fingerprint → 1 (stale, not exempt)', () => {
+    const { root, g } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    const { path, dir } = seedLedger([v4Round({ base: headOf(g), fingerprint: 'old'.repeat(21) + 'x', backends: [CODEX_SHIP, AGY_DEGRADED] })]);
+    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /agy: no receipt|agy: /);
+  });
+
+  it('a two-round segment where an EARLIER round records the backend degraded but the LATEST does not → 1 (the latest governs)', () => {
+    const { root, g } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    const base = headOf(g);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    const r1 = v4Round({ base, fingerprint: fp, round: 1, backends: [CODEX_SHIP, AGY_DEGRADED] });
+    const r2 = v4Round({ base, fingerprint: fp, round: 2, backends: [CODEX_SHIP, { backend: 'agy', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'ship' }] });
+    const { path, dir } = seedLedger([r1, r2]);
+    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'the latest round has agy non-degraded → not exempt → agy missing');
+  });
+
+  it('a missing backend with NO degrade record → 1 (unchanged)', () => {
+    const { root, g } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    // a round exists but records BOTH backends non-degraded (agy just has no receipt) → no exemption
+    const round = v4Round({ base: headOf(g), fingerprint: fp, backends: [CODEX_SHIP, { backend: 'agy', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'ship' }] });
+    const { path, dir } = seedLedger([round]);
+    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+  });
+
+  it('all degraded / no non-degraded current receipt → 1 (condition v — ≥1 real review required)', () => {
+    const { root, g } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    // NO codex receipt; both backends recorded degraded
+    const round = v4Round({ base: headOf(g), fingerprint: fp, backends: [
+      { backend: 'codex', degraded: true, blockers: 0, majors: 0, minors: 0, verdict: 'degraded', reason: 'codex unreachable' },
+      AGY_DEGRADED,
+    ] });
+    const { path, dir } = seedLedger([round]);
+    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'never everyone degraded — at least one real grounded review is required');
+  });
+
+  it('the non-degraded backend is ABSENT from the latest round (only the degraded one recorded) + a stray current receipt → 1 (mirrors decideStop allPresent)', () => {
+    const { root, g } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp }); // codex has a current receipt...
+    // ...but the latest round records ONLY agy degraded (codex absent) — not a valid council round; a
+    // stray receipt for a NON-recorded backend must never justify the exemption (else the two gates
+    // disagree: review-ledger fails allPresent on the absent codex).
+    const { path, dir } = seedLedger([v4Round({ base: headOf(g), fingerprint: fp, backends: [AGY_DEGRADED] })]);
+    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'a degrade-only round with the non-degraded backend absent never exempts');
+  });
+
+  it('a degrade recorded under a DIFFERENT base than the in-flight one → 1 (segment isolation)', () => {
+    const { root, g } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    const { path, dir } = seedLedger([v4Round({ base: 'a'.repeat(40), fingerprint: fp, backends: [CODEX_SHIP, AGY_DEGRADED] })]);
+    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+  });
+
+  it('a degrade recorded under a DIFFERENT loop than the in-flight one → 1 (segment isolation)', () => {
+    const { root, g } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    const { path, dir } = seedLedger([v4Round({ loop: 'some-other-plan', base: headOf(g), fingerprint: fp, backends: [CODEX_SHIP, AGY_DEGRADED] })]);
+    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+  });
+
+  it('>1 plan in flight + a degraded backend → 1 (ambiguous loop → exemption suppressed)', () => {
+    const { root, g } = makeRepo();
+    writeFileSync(join(root, 'docs', 'plans', 'second-plan.md'), '# second\n');
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    const { path, dir } = seedLedger([v4Round({ base: headOf(g), fingerprint: fp, backends: [CODEX_SHIP, AGY_DEGRADED] })]);
+    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'two plans in flight → the loop is ambiguous → no exemption');
+  });
+
+  it('>1 plan in flight + all backends receipt-current + no degrade → 0 (REGRESSION: multi-plan suppresses ONLY the exemption, adds no fail-closed arm)', () => {
+    const { root } = makeRepo();
+    writeFileSync(join(root, 'docs', 'plans', 'second-plan.md'), '# second\n');
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    mint(root, { backend: 'agy', fingerprint: fp });
+    const r = check(root); // no ledger at all
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, 'an all-current >1-plan tree must stay exit 0 — the exemption suppression must not add an exit-1 arm');
+  });
+
+  it('a corrupt round sequence in the current segment + a current-fp degrade + a backend needing the exemption → 1 (fail-closed)', () => {
+    const { root, g } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    const base = headOf(g);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    // rounds numbered [1,1] — a corrupt sequence (reachable only by hand-editing the git-dir file)
+    const r1 = v4Round({ base, fingerprint: fp, round: 1, backends: [CODEX_SHIP, AGY_DEGRADED] });
+    const r1dup = v4Round({ base, fingerprint: fp, round: 1, backends: [CODEX_SHIP, AGY_DEGRADED] });
+    const { path, dir } = seedLedger([r1, r1dup]);
+    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'a corrupt round sequence is unknown state → the exemption is denied');
+  });
+
+  it('an unreadable / malformed ledger while a backend NEEDS the exemption → 1 (fail-closed, exemption denied, surfaced)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    const { path, dir } = seedLedger(['{ this is not valid json']);
+    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /malformed|ledger/);
+  });
+
+  it('an unreadable / malformed ledger + ALL backends receipt-current → 0 with the ledger corruption SURFACED (exemption-scoped fail-closed)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    mint(root, { backend: 'agy', fingerprint: fp });
+    const { path, dir } = seedLedger(['{ not valid json at all']);
+    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, 0, 'a corrupt ledger must never fail a tree whose receipts independently satisfy the gate');
+    assert.match(r.stdout, /ledger/, 'the ledger corruption is surfaced even on the exit-0 path');
+  });
+});

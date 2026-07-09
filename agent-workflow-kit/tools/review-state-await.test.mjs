@@ -177,3 +177,62 @@ describe('review-state --await', () => {
     assert.match(r.stdout, /"fingerprint"/);
   });
 });
+
+// The degraded exemption (AD-050 Segment 2) reaches --await for FREE via the shared decideCheck: once a
+// current-tree degrade is RECORDED, --await stops waiting for that backend and returns READY (before,
+// it waited forever for a receipt that never comes). Before the round is recorded, or at a stale/old
+// fingerprint, it still waits.
+const headOf = (root) => spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim();
+const seedDegradeLedger = (base, fingerprint) => {
+  const dir = mkdtempSync(join(tmpdir(), 'await-ledger-'));
+  const path = join(dir, 'ledger.jsonl');
+  const round = {
+    schema: 4, loop: 'active-plan', activity: 'plan-execution', kind: 'round', round: 1, base, fingerprint,
+    origins: { 'first-draft': 0, 'fold-induced': 0, mechanics: 0 },
+    backends: [
+      { backend: 'codex', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'ship' },
+      { backend: 'agy', degraded: true, blockers: 0, majors: 0, minors: 0, verdict: 'degraded', reason: 'Issue-001 stall on a large diff' },
+    ],
+    findings: [], timestamp: '2026-07-09T00:00:00Z',
+  };
+  writeFileSync(path, `${JSON.stringify(round)}\n`);
+  return { path, dir };
+};
+
+describe('review-state --await — the degraded exemption (AD-050)', () => {
+  it('a recorded current-fingerprint degrade → READY immediately (no sleep) — the exemption reaches --await', async () => {
+    const root = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    const { path, dir } = seedDegradeLedger(headOf(root), fp);
+    let slept = 0;
+    const r = await mainAwait(['--await'], { cwd: root, env: { AW_REVIEW_LEDGER: path }, detect: detect(), ...fakeClock(() => { slept += 1; }) });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(slept, 0, 'the recorded current-tree degrade exempts agy immediately — never waits for a receipt that never comes');
+    assert.match(r.stdout, /READY/);
+  });
+
+  it('BEFORE the degrade round is recorded → still waits (TIMEOUT)', async () => {
+    const root = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    const r = await mainAwait(['--await', '--timeout', '10'], { cwd: root, env: {}, detect: detect(), ...fakeClock() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'no recorded degrade → agy is not exempt → waits');
+    assert.match(r.stderr, /TIMEOUT/);
+  });
+
+  it('a degrade at a STALE/old fingerprint → still waits (TIMEOUT) — the degrade must attest THIS tree', async () => {
+    const root = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    const { path, dir } = seedDegradeLedger(headOf(root), `${'old'.repeat(21)}x`);
+    const r = await mainAwait(['--await', '--timeout', '10'], { cwd: root, env: { AW_REVIEW_LEDGER: path }, detect: detect(), ...fakeClock() });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'a degrade at an old fingerprint does not exempt the current tree');
+    assert.match(r.stderr, /TIMEOUT/);
+  });
+});
