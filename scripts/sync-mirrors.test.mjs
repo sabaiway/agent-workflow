@@ -9,6 +9,7 @@ import {
   MIRROR_TEMPLATE_FILES,
   TEMPLATE_HARD_EXCLUDES,
   planAllMirrors,
+  planRootSubsetSync,
   syncBridgeMirror,
   runCli,
 } from './sync-mirrors.mjs';
@@ -242,12 +243,58 @@ describe('syncBridgeMirror — the root-parameterized --bump hook (D5)', () => {
   });
 });
 
-describe('planAllMirrors covers the three families', () => {
-  it('reports one plan per bridge + reference-scripts + templates', () => {
+describe('planAllMirrors covers every family', () => {
+  it('reports one plan per bridge + reference-scripts + templates + root-scripts', () => {
     const root = makeRoot();
     seedFamily(root);
     const families = planAllMirrors(root).map((plan) => plan.family);
-    assert.deepEqual(families, [`bridge:${BRIDGE_DIRS[0]}`, `bridge:${BRIDGE_DIRS[1]}`, 'reference-scripts', 'templates']);
+    assert.deepEqual(families, [`bridge:${BRIDGE_DIRS[0]}`, `bridge:${BRIDGE_DIRS[1]}`, 'reference-scripts', 'templates', 'root-scripts']);
+  });
+});
+
+// Decision 12 — the root-scripts subset is DIRECTIONAL: memory canon → this repo's root scripts/.
+// A canon script whose basename is also at root is kept byte+exec-identical; root-only tooling
+// (sync-mirrors*, release/*, any non-canon script) is never flagged or deleted; a canon file absent
+// from root is never added. It is NOT planTreeSync set-equality (which would delete release/*).
+describe('root-scripts subset (Decision 12) — directional, never destructive to root-only tooling', () => {
+  const seedRoot = (root) => {
+    // A canon whose members are: tool.mjs (present at root, drifted) + canon-only.mjs (absent at root).
+    const canon = join(root, 'agent-workflow-memory', 'references', 'scripts');
+    writeFileSync(join(canon, 'canon-only.mjs'), 'export const x = 1;\n');
+    // The root subset the consumer dogfoods, plus root-ONLY tooling that must be immune.
+    const rootScripts = join(root, 'scripts', 'release');
+    mkdirSync(rootScripts, { recursive: true });
+    writeFileSync(join(root, 'scripts', 'tool.mjs'), 'export const tool = 999; // drifted at root\n');
+    writeFileSync(join(root, 'scripts', 'sync-mirrors.mjs'), '// root-only tool\n');
+    writeFileSync(join(rootScripts, 'dispatch-publish.mjs'), '// root-only release tool\n');
+  };
+
+  it('--check flags a drifted root subset file but NEVER touches release/* or sync-mirrors.mjs', () => {
+    const root = makeRoot();
+    seedFamily(root);
+    seedRoot(root);
+    const { code, text } = run(['--check'], root);
+    assert.equal(code, 1, 'a drifted root subset file is a would-be change');
+    assert.match(text, /root-scripts: would copy scripts\/tool\.mjs/);
+    assert.doesNotMatch(text, /release/, 'release/* is never a root-scripts change');
+    assert.doesNotMatch(text, /root-scripts: would (copy|delete) scripts\/sync-mirrors\.mjs/, 'sync-mirrors.mjs is never flagged');
+  });
+
+  it('a missing memory canon scripts dir fails loud (never treats a missing canon as empty)', () => {
+    const root = makeRoot();
+    assert.throws(() => planRootSubsetSync(root), /canon dir is missing/);
+  });
+
+  it('apply COPIES the canon into the root subset, never adds a canon-only file, never deletes root-only tooling', () => {
+    const root = makeRoot();
+    seedFamily(root);
+    seedRoot(root);
+    const { code } = run([], root);
+    assert.equal(code, 0);
+    assert.equal(readFileSync(join(root, 'scripts', 'tool.mjs'), 'utf8'), 'export const tool = 1;\n', 'the root subset file is now the canon version');
+    assert.ok(!existsSync(join(root, 'scripts', 'canon-only.mjs')), 'a canon file absent from root is NOT added');
+    assert.ok(existsSync(join(root, 'scripts', 'release', 'dispatch-publish.mjs')), 'root-only release/* is never deleted');
+    assert.ok(existsSync(join(root, 'scripts', 'sync-mirrors.mjs')), 'root-only sync-mirrors.mjs is never deleted');
   });
 });
 
