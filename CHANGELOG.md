@@ -7,6 +7,24 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-09 — kit 1.41.0: review-state degraded lane — align the presence gate with the ledger (AD-050)
+
+**agent-workflow-kit 1.41.0** (memory/engine/bridges unchanged). Closes the AD-049 residual: the
+family's two read-only review gates **disagreed** on a tree the orchestrator honestly converged
+codex-only with agy recorded degraded — `review-ledger --check` (convergence) excused the degraded
+backend, but `review-state --check` (presence) had no degraded model and failed on the missing
+receipt, blocking a consumer that wires review-state into a pre-commit hook. The fix lands in two
+reviewed segments: (1) the validated review-ledger read/schema core is extracted VERBATIM into a
+neutral node-built-ins-only `review-ledger-core.mjs` (re-exported for back-compat) so review-state can
+read the ledger without the `review-ledger ↔ review-state` import cycle — a pure mechanical move, no
+behaviour change; (2) `review-state` gains the SAME degraded exemption, mirroring review-ledger's
+`decideStop` (allPresent + a non-degraded present-in-round backend with a current grounded receipt) and
+staying **verdict-blind** — presence, not unanimity. Fail-closed is exemption-scoped: a corrupt ledger
+denies the exemption but never fails a receipt-satisfied tree. The two gates now agree on a
+converged-with-degrade tree (dogfooded live + pinned by a detector-independent two-gate-agreement test
++ a 17-case matrix), and still intentionally differ on a non-converged one. Council-converged both
+segments; full suite 2969 green.
+
 ## 2026-07-08 — kit 1.40.0 + memory 1.12.0: universal verification profile + session-loop economics (a)–(h) (BUGFREE-3, AD-049)
 
 **agent-workflow-kit 1.40.0 + agent-workflow-memory 1.12.0** (engine/bridges unchanged). BUGFREE-3
