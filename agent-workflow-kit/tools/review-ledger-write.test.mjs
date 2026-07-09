@@ -717,6 +717,23 @@ describe('import-split guard — review-ledger.mjs never imports the writer', ()
     const familyImports = [...src.matchAll(/from\s+['"](\.[^'"]+)['"]/g)].map((m) => m[1]);
     assert.deepEqual(familyImports, [], `the neutral module must not import family modules (found: ${familyImports.join(', ')})`);
   });
+
+  // AD-050: the ledger read-core is the SECOND neutral module — the seam that lets review-state.mjs
+  // read the ledger for its degraded exemption without importing review-ledger.mjs back (the cycle:
+  // review-ledger.mjs already imports review-state.mjs). It imports NO family module, and
+  // review-ledger.mjs consumes+re-exports it (so every pre-existing importer resolves unchanged).
+  it('review-ledger-core.mjs imports no family module (neutral — node built-ins only)', () => {
+    const src = readFileSync(join(HERE, 'review-ledger-core.mjs'), 'utf8');
+    const familyImports = [...src.matchAll(/from\s+['"](\.[^'"]+)['"]/g)].map((m) => m[1]);
+    assert.deepEqual(familyImports, [], `the neutral read-core must not import family modules (found: ${familyImports.join(', ')})`);
+  });
+
+  it('review-ledger.mjs consumes the neutral read-core (the seam), and review-state.mjs never imports review-ledger.mjs (the cycle)', () => {
+    const ledger = readFileSync(join(HERE, 'review-ledger.mjs'), 'utf8');
+    assert.match(ledger, /from '\.\/review-ledger-core\.mjs'/, 'review-ledger.mjs must consume + re-export the neutral read-core');
+    const state = readFileSync(join(HERE, 'review-state.mjs'), 'utf8');
+    assert.ok(!/from\s+['"][^'"]*review-ledger\.mjs['"]/.test(state), 'review-state.mjs must never import review-ledger.mjs (it reads the neutral core instead — no cycle)');
+  });
 });
 
 // ── recordGateRun (2.2) + the D5 green-baseline tooth (2.3) — BUGFREE-2 / AD-048 ─────────────────
