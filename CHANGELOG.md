@@ -7,6 +7,25 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-10 — kit 1.43.0: closed-world gate seeding — lifecycle hooks die by construction (AD-052)
+
+**agent-workflow-kit 1.43.0** (kit-only feature; memory/engine/bridges unchanged, lineage head stays
+`2.0.0`). The consent-gated `gates.json` seeder moves from BLOCKLIST body screening to a
+**closed-world** offer derivation — the structural fix for **Issue-011**, whose three residuals the
+AD-042 council could only push one gap further each round, never close. Because a declared gate is
+hook-auto-approvable, the offer is now conservative BY CONSTRUCTION (worst case = a legit command
+not offered, add-by-hand; never a dangerous one offered). The seeded cmd is the uniform hook-free
+`COREPACK_ENABLE_NETWORK=0 <pm> exec -- <allowlisted-body>` for the detected package manager — `exec`
+runs a command, not a named script, so no `pre`/`post` lifecycle hook fires on **npm, pnpm, or
+yarn** (never `<pm> run <name>`); the body must be a member of a 9-entry literal runner allowlist
+after a pinned ASCII normalization (an injected `curl | sh` / release alias / env-body is rejected
+by non-membership); per-PM hardening keeps a missing runner from fetching (npm `--offline`, the
+Corepack env prefix, pnpm/yarn native fail-closed), and an unverifiable package manager is withheld
+loudly. A companion `assertDocsAiDeployment` parent-chain preflight refuses a symlinked `docs`
+parent across all four write consumers. Safe-by-construction is the OFFER DERIVATION, not a runtime
+sandbox — a gate runs the project's own tooling, the disclosed residual bounded by the two-consent
+trust chain. See [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-07-10 — memory 2.0.0 (MAJOR) + kit 1.42.0 + engine 1.14.1: one-file-per-ADR store — the 3-tier decisions cascade retired (AD-051)
 
 **agent-workflow-memory 2.0.0 (BREAKING) + agent-workflow-kit 1.42.0 + agent-workflow-engine

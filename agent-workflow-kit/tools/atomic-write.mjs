@@ -53,6 +53,19 @@ export const assertDocsAiDeployment = (cwd, deps = {}, opts = {}) => {
   const noun = opts.noun ?? 'a file';
   const rel = opts.rel ?? 'under docs/ai';
   const docsAi = join(cwd, 'docs', 'ai');
+  // Parent-chain preflight (AD-052, Issue-011 residual 3): refuse a symlinked cwd ROOT or a
+  // symlinked `docs` PARENT before any read — the walk the write path already enforces
+  // (writeContainedFileAtomic), aligned onto the gate every consumer runs first. The walk covers
+  // the PARENT chain only (the linkManaged precedent, fs-safe.mjs): the docs/ai LEAF keeps the
+  // dedicated checks below, whose exact STOP messages each consumer's tests pin. ENOENT-safe —
+  // an absent component is a no-op walk, so a brand-new project still reaches the normal
+  // "no deployment" STOP below. The walk throws a plain Error; re-throw as the CALLER's typed
+  // stop so every consumer's `.code` contract holds.
+  try {
+    assertContainedRealPath(cwd, join(cwd, 'docs'), { lstat });
+  } catch (err) {
+    throw stop(String(err?.message ?? err).replace(/^\[agent-workflow-kit\] /, ''));
+  }
   const docsAiStat = lstatNoFollow(docsAi, lstat);
   if (docsAiStat === null) {
     throw stop(`no agent-workflow deployment here (docs/ai is absent) — run init/bootstrap before writing ${rel}`);
