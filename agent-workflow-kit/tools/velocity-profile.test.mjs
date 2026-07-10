@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +20,7 @@ import {
   WORKFLOW_STAMP,
   deriveKitToolsAllowlist,
   discoverGateCandidates,
+  isExecutableFile,
   main,
   parseArgs,
   screenAllowlistEntry,
@@ -88,6 +89,43 @@ const assertCorePresentOnce = (allow) => {
     assert.equal(allow.filter((candidate) => candidate === entry).length, 1, entry);
   }
 };
+
+// Characterization of the real statSync primitive (AD-044 Plan 2, characterize-first): the probe's
+// injectable seam is pinned elsewhere with fake predicates — THIS pins the default predicate itself
+// against a real temp tree, before autonomy-doctor promotes it to the trusted-dir execution gate.
+describe('isExecutableFile — real-fs characterization', () => {
+  it('0755 regular file → true; 0644 regular file → false', (t) => {
+    const dir = makeTempProject(t);
+    const exec = join(dir, 'bwrap');
+    const plain = join(dir, 'socat');
+    writeText(exec, '#!/bin/sh\n');
+    writeText(plain, 'not a binary\n');
+    chmodSync(exec, 0o755);
+    chmodSync(plain, 0o644);
+    assert.equal(isExecutableFile(exec), true);
+    assert.equal(isExecutableFile(plain), false);
+  });
+
+  it('a DIRECTORY named socat → false', (t) => {
+    const dir = makeTempProject(t);
+    mkdirSync(join(dir, 'socat'));
+    assert.equal(isExecutableFile(join(dir, 'socat')), false);
+  });
+
+  it('a symlink to an executable → true (statSync follows the link)', (t) => {
+    const dir = makeTempProject(t);
+    const target = join(dir, 'socat1');
+    writeText(target, '#!/bin/sh\n');
+    chmodSync(target, 0o755);
+    symlinkSync(target, join(dir, 'socat'));
+    assert.equal(isExecutableFile(join(dir, 'socat')), true);
+  });
+
+  it('ENOENT → false (never throws)', (t) => {
+    const dir = makeTempProject(t);
+    assert.equal(isExecutableFile(join(dir, 'absent')), false);
+  });
+});
 
 describe('UNIVERSAL_READONLY_ALLOWLIST', () => {
   it('matches the frozen expected set + count', () => {

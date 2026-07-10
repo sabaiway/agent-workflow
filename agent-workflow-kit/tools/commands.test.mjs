@@ -78,6 +78,20 @@ describe('commands catalog — drift-guard vs SKILL.md ### Mode: headers', () =>
     assert.match(section, /snapshot/i, 'the mode file states the pre-migration snapshot');
   });
 
+  // AD-044 Plan 2: the guarded privileged provisioner — header presence ≠ runnable; pin the
+  // dispatch line + the preview/apply consent contract + the stated D8 stamp exemption.
+  it('the autonomy-doctor mode file carries the runnable dispatch line + the consent contract + the stamp exemption', () => {
+    const section = readFileSync(join(MODES_DIR, 'autonomy-doctor.md'), 'utf8');
+    assert.match(section, /node \$\{CLAUDE_SKILL_DIR\}\/tools\/autonomy-doctor\.mjs/, 'the mode file must carry the runnable dispatch line');
+    assert.match(section, /--verify/, 'the mode file documents the diagnostic lane');
+    assert.match(section, /--apply <pm>:<pkg\[,pkg\.\.\.\]>/, 'the mode file documents the consent-tuple apply lane');
+    assert.match(section, /preview/i, 'the mode file states preview-first');
+    assert.match(section, /never auto-runs/, 'the mode file states the never-auto-runs posture');
+    assert.match(section, /never commits/i, 'the mode file states the mode never commits');
+    assert.match(section, /NO `\.workflow-version` stamp gate/, 'the D8 stamp exemption is stated explicitly');
+    assert.match(section, /docs\/ai presence gate/, 'the deployment gate is stated alongside the exemption');
+  });
+
   // F08a (AD-040): the standing-consent advisory at the --write success moment — wording-only in
   // the mode file, the set-recipe.mjs tool echo untouched. Pin its stable tokens.
   it('the set-recipe mode file carries the standing-consent advisory (hand-adds, quota honesty, solo-silent)', () => {

@@ -3,7 +3,7 @@ name: agent-workflow-kit
 description: Deploy or upgrade a portable AI-agent memory-and-workflow system in any project. Use when the user wants to bootstrap `docs/ai/` + an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) + cap/archive/index enforcement in a new or existing repo, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-kit` / `/agent-workflow-kit upgrade`. Triggers on phrases like "set up the memory system", "deploy the AI workflow here", "bootstrap docs/ai", "upgrade the workflow".
 disable-model-invocation: true
 metadata:
-  version: '1.43.0'
+  version: '1.44.0'
 ---
 
 # agent-workflow-kit
@@ -20,8 +20,7 @@ This kit is the **composition root** of the `agent-workflow` family. The memory 
 (`docs/ai/`, the entry-point doc, caps / archive / index, the setup contracts) is owned by
 **`agent-workflow-memory`**. The kit **prefers to delegate** substrate deployment to that skill
 when it is present and healthy, and otherwise uses its **own bundled copy** (`references/`,
-`migrations/`) — so the existing one-command install keeps working with **no new dependency on the
-memory substrate**. (The methodology slot is a separate axis: its fragment is read **live from the
+`migrations/`) — the one-command install stays **dependency-free**. (The methodology slot is a separate axis: its fragment is read **live from the
 installed `agent-workflow-engine`**, which `npx @sabaiway/agent-workflow-kit@latest init` installs;
 see `${CLAUDE_SKILL_DIR}/references/shared/composition-handoff.md`.)
 `init` also **refreshes the installed memory substrate** (best-effort — a miss is a loud DEGRADED
@@ -50,7 +49,7 @@ made: a partial/broken memory install discovered mid-flow must not disable the w
 > [`tools/delegation.mjs`](${CLAUDE_SKILL_DIR}/tools/delegation.mjs): `detectMemory(<memory-dir>)` runs the validator +
 > the required-asset check and returns `delegate` / fallback with a reason; `handoffPlan(delegate)`
 > returns who writes what, which stamps end up present, and that the commit gate is kit-only. Both
-> are unit-tested, so the contract below is pinned by code, not agent interpretation.
+> are unit-tested — the contract below is pinned by code.
 
 **Hand-off contract & bounded pointer reconciliation** — `${CLAUDE_SKILL_DIR}/references/shared/composition-handoff.md` (read at the bootstrap/upgrade point of use).
 
@@ -63,25 +62,26 @@ ever deleted.
 
 ## Modes
 
-Pick the mode from the user's invocation — the mapping is pinned by `tools/commands.mjs` `routeInvocation` (unit-tested; safe-routing rule below). An existing `docs/ai/` guards against bootstrapping over a live system — the user makes the final call.
+Pick the mode from the user's invocation — the mapping is pinned by `tools/commands.mjs` `routeInvocation` (safe-routing rule below). An existing `docs/ai/` guards against bootstrapping over a live system.
 
 ### Version status & the two axes — the internal routing check
 
-**Safe-routing rule (which mode did the user invoke?).** Map the invocation token with `tools/commands.mjs` `routeInvocation`: a **known** subcommand → its mode; the **bare/empty** invocation → `bootstrap` — the one writer reachable without a token, and only on an undeployed project (if `docs/ai/` already exists, **ask upgrade-vs-bootstrap**, never overwrite); **any unrecognized/ambiguous** token → `help`, which is **read-only**. The invariant: **no unrecognized/garbage invocation ever triggers a write** (only an explicit known token or the acknowledged bare-bootstrap exception can). The mapping is unit-tested, so it is not left to interpretation.
+**Safe-routing rule (which mode did the user invoke?).** Map the invocation token with `tools/commands.mjs` `routeInvocation`: a **known** subcommand → its mode; the **bare/empty** invocation → `bootstrap` — the one writer reachable without a token, and only on an undeployed project (if `docs/ai/` already exists, **ask upgrade-vs-bootstrap**, never overwrite); **any unrecognized/ambiguous** token → `help`, which is **read-only**. The invariant: **no unrecognized/garbage invocation ever triggers a write** (only an explicit known token or the acknowledged bare-bootstrap exception can).
 
-Before acting, read `docs/ai/.workflow-version` (the project's stamp) to decide the route — this is an **internal** routing decision, **not** a line you print to the user (the number itself is shown only per *Version disclosure* in `${CLAUDE_SKILL_DIR}/references/shared/report-footer.md`). Route:
+Before acting, read `docs/ai/.workflow-version` (the project's stamp) to decide the route — an **internal** routing decision, **not** a line you print (version display: *Version disclosure* in `${CLAUDE_SKILL_DIR}/references/shared/report-footer.md`). Route:
 
 - **absent** → bootstrap (a fresh deployment).
 - **stamp < `2.0.0`** (the deployment-lineage head) → `upgrade`.
 - **stamp == `2.0.0`** → already current; only the stamp-independent reconciles may run — the FULL set lives in `${CLAUDE_SKILL_DIR}/references/modes/upgrade.md` step 3; run step 3 (never enumerate the reconciles from memory).
 - **stamp > head / unparseable** → STOP — never-downgrade gate (see `${CLAUDE_SKILL_DIR}/references/modes/upgrade.md` step 2).
+- **Exempt:** `autonomy-doctor` provisions the OS, not the deployment — stamp-independent (stated in its mode file).
 
 **Two independent version axes — never conflate them:**
 
 1. **Project deployment** — `docs/ai/.workflow-version` vs the lineage head (`2.0.0`). This is the **only** axis this skill compares.
 2. **Kit freshness** — this skill's own files vs the published npm package. That is the **npx installer's** job: `npx @sabaiway/agent-workflow-kit@latest init` (it refuses a stale-cache downgrade by comparing the version on disk — **no network**). This skill never checks npm, and the package version is **not** the lineage head.
 
-**Refreshed the kit but nothing changed?** After `npx @sabaiway/agent-workflow-kit@latest init` updates `~/.claude/skills/agent-workflow-kit/`, **restart the session** so the agent reloads the new skill files.
+**Refreshed the kit but nothing changed?** After the npx installer updates `~/.claude/skills/agent-workflow-kit/`, **restart the session** so the agent reloads the new skill files.
 
 ### Mode: help
 
@@ -126,6 +126,10 @@ writer — read `${CLAUDE_SKILL_DIR}/references/modes/set-recipe.md` before acti
 ### Mode: set-autonomy
 
 writer — read `${CLAUDE_SKILL_DIR}/references/modes/set-autonomy.md` before acting.
+
+### Mode: autonomy-doctor
+
+guarded — read `${CLAUDE_SKILL_DIR}/references/modes/autonomy-doctor.md` before acting.
 
 ### Mode: uninstall
 

@@ -26,11 +26,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { SCHEMA_VERSION, REVIEW_CAP, V4_CLASSES, V4_OVERRIDE_SCOPES } from './review-ledger.mjs';
 import { HARD_MAX, DEFAULT_DIFF_CAP } from './review-ledger-write.mjs';
 import { RESULT_SCHEMA_VERSION } from './fold-completeness.mjs';
+import { EXIT as DOCTOR_EXIT, STATUS as DOCTOR_STATUS, TRUSTED_DIRS as DOCTOR_TRUSTED_DIRS } from './autonomy-doctor.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const REVIEW_LEDGER_DOC = 'references/modes/review-ledger.md';
 const FOLD_DOC = 'references/modes/fold-completeness.md';
+const AUTONOMY_DOCTOR_DOC = 'references/modes/autonomy-doctor.md';
 
 // A typed usage failure (exit 2) for the CLI parser — the codebase's typed-error idiom (no classes).
 const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 });
@@ -45,6 +47,19 @@ const valueBinding = (constant, value, phrase, files) => ({ constant, value, tok
 // so the closed set can never disagree with the code. Every word must appear in the ledger contract.
 const LEDGER_VOCAB = [...V4_CLASSES, ...V4_OVERRIDE_SCOPES, 'gate-run'];
 
+// The autonomy-doctor D7 contract (AD-044 Plan 2): the live EXIT table + every status token must
+// render into the mode's contract doc. `usage` is skipped as a bare-word token (trivially present
+// everywhere) — its exit-code phrase below pins that outcome instead.
+const DOCTOR_EXIT_PHRASES = [
+  ['ready', `\`${DOCTOR_EXIT.ready}\` ready`],
+  ['stop', `\`${DOCTOR_EXIT.stop}\` precondition STOP`],
+  ['usage', `\`${DOCTOR_EXIT.usage}\` usage`],
+  ['notReady', `\`${DOCTOR_EXIT.notReady}\` not-ready diagnosis`],
+  ['installFailed', `\`${DOCTOR_EXIT.installFailed}\` install failed`],
+  ['verifyFailed', `\`${DOCTOR_EXIT.verifyFailed}\` verify failed`],
+  ['unsupported', `\`${DOCTOR_EXIT.unsupported}\` unsupported / untrusted`],
+];
+
 export const BINDINGS = Object.freeze([
   valueBinding('SCHEMA_VERSION', SCHEMA_VERSION, `schema v${SCHEMA_VERSION}`, [REVIEW_LEDGER_DOC]),
   valueBinding('HARD_MAX', HARD_MAX, `hard-max ceiling of ${HARD_MAX}`, [REVIEW_LEDGER_DOC]),
@@ -52,6 +67,11 @@ export const BINDINGS = Object.freeze([
   valueBinding('REVIEW_CAP', REVIEW_CAP, `cap ≤${REVIEW_CAP}`, [REVIEW_LEDGER_DOC]),
   valueBinding('RESULT_SCHEMA_VERSION', RESULT_SCHEMA_VERSION, `schema v${RESULT_SCHEMA_VERSION}`, [FOLD_DOC]),
   ...LEDGER_VOCAB.map((word) => valueBinding(`vocab:${word}`, word, word, [REVIEW_LEDGER_DOC])),
+  ...DOCTOR_EXIT_PHRASES.map(([key, phrase]) => valueBinding(`doctor-exit:${key}`, DOCTOR_EXIT[key], phrase, [AUTONOMY_DOCTOR_DOC])),
+  ...Object.values(DOCTOR_STATUS)
+    .filter((token) => token !== DOCTOR_STATUS.usage)
+    .map((token) => valueBinding(`doctor-status:${token}`, token, token, [AUTONOMY_DOCTOR_DOC])),
+  valueBinding('doctor-trusted-dirs', DOCTOR_TRUSTED_DIRS.join(':'), DOCTOR_TRUSTED_DIRS.join(':'), [AUTONOMY_DOCTOR_DOC]),
 ].map((b) => Object.freeze(b)));
 
 // ── the pure checker (readText is injectable for hermetic tests) ────────────────────────
@@ -96,8 +116,9 @@ Usage:
   node doc-parity.mjs [--check | --json]
 
 A CLOSED, exported registry binds each live code constant (review-ledger SCHEMA_VERSION / REVIEW_CAP,
-review-ledger-write HARD_MAX / DEFAULT_DIFF_CAP, fold-completeness RESULT_SCHEMA_VERSION) and the
-ledger vocabulary (V4_CLASSES / V4_OVERRIDE_SCOPES + gate-run) to the exact token its
+review-ledger-write HARD_MAX / DEFAULT_DIFF_CAP, fold-completeness RESULT_SCHEMA_VERSION), the
+ledger vocabulary (V4_CLASSES / V4_OVERRIDE_SCOPES + gate-run), and the autonomy-doctor contract
+(the EXIT table, the status tokens, the trusted-dir allowlist) to the exact token its
 references/modes/*.md contract must carry, and asserts the CURRENT value renders into every bound
 file. A drifted doc, an unreadable bound file, or an absent token FAILS CLOSED.
 

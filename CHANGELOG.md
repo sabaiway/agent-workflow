@@ -7,6 +7,23 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-11 — kit 1.44.0: autonomy provisioner — the consent-gated sandbox doctor (AD-044 Plan 2)
+
+**agent-workflow-kit 1.44.0** (kit-only feature; memory/engine/bridges unchanged, lineage head
+stays `2.0.0`). New routable GUARDED mode **`autonomy-doctor`** — the cross-platform provisioner
+that makes the AD-044 checkpoint-bounded-autonomy sandbox actually initializable on consumer hosts
+(macOS Seatbelt built-in / Linux + WSL2 `bwrap` + `socat` / native Windows → WSL2 redirect). Three
+explicit lanes: a FS-only flagless preview that spawns NOTHING and never claims ready; `--verify`,
+the only source of a Linux "ready (verified)" (pinned bwrap user-namespace smoke + `socat -V`);
+and the consent-tuple `--apply <pm>:<pkgs>` install that refuses any mismatch with the previewed
+plan. The kit's FIRST privileged spawn ships with a closed-world doctrine: absolute trusted-dir
+paths for every executed token (including through `env`), a frozen 4-family package-manager map
+(apt env-trampoline / dnf / pacman / apk), a scrubbed child env, an enforced no-TTY print-handoff
+at the sudo boundary, root-refusal honesty (`root-unproven`), a frozen EXIT/status contract, and
+disclosed residuals. Host-proven end-to-end on WSL2: the ad-hoc prompt-delta drops 1 → 0 in a
+fresh session while the commit/push/publish red-lines and network egress still prompt. See
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-07-10 — kit 1.43.0: closed-world gate seeding — lifecycle hooks die by construction (AD-052)
 
 **agent-workflow-kit 1.43.0** (kit-only feature; memory/engine/bridges unchanged, lineage head stays

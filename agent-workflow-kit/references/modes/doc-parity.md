@@ -9,7 +9,8 @@ The DOC-PARITY lint (BUGFREE-3 / AD-049, session-economics item (b)) — the det
 
 **What it checks (the closed registry).** The numeric/version tokens are IMPORTED live from the tools — never re-typed in the lint — so the registry itself can never go stale:
 - `references/modes/review-ledger.md` carries `SCHEMA_VERSION` (schema v4), `HARD_MAX` (the hard-max ceiling of 3), `DEFAULT_DIFF_CAP` (the default 400 diff cap), `REVIEW_CAP` (cap ≤2), and the ledger vocabulary sourced from the schema's own `V4_CLASSES` / `V4_OVERRIDE_SCOPES` Sets plus the `gate-run` kind (`size-cap`, `refuted`, `gate-run`, `red-proof`, `oracle-change`, `fixable-bug`, `inherent-layer-residual`, `escalate`);
-- `references/modes/fold-completeness.md` carries `RESULT_SCHEMA_VERSION` (fold RESULT schema v4).
+- `references/modes/fold-completeness.md` carries `RESULT_SCHEMA_VERSION` (fold RESULT schema v4);
+- `references/modes/autonomy-doctor.md` carries the doctor's frozen D7 contract (AD-044 Plan 2): every live EXIT-table phrase (`` `0` ready `` … `` `6` unsupported / untrusted ``), every status token (sourced from the exported `STATUS`), and the trusted-dir allowlist (`TRUSTED_DIRS`).
 
 **Why the modes/*.md docs and NOT the tool HELP strings.** Every tool's HELP INTERPOLATES the same constant (`the ${DEFAULT_DIFF_CAP}-line diff cap`), so it can never drift from the code — there is nothing to check there. The hand-authored contract prose in `references/modes/*.md` is the surface that DOES drift, so that is exactly what this lint pins. Change a constant and the current-value token stops appearing in the lagging doc → the gate fails, forcing the doc update **in the same edit as the code** (the §2.6 "contract docs change in the same edit as code" rule, mechanized).
 
