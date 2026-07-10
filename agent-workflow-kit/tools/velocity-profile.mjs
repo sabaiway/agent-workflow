@@ -15,7 +15,7 @@ import { AUTONOMY_REL, loadAutonomy, resolveAutonomy, COMMAND_REDLINES } from '.
 
 // Deployment-lineage head this velocity build targets; bump together with agent-workflow-memory
 // LINEAGE_HEAD when the deployed docs/ai structure changes.
-export const EXPECTED_WORKFLOW_VERSION = '1.3.0';
+export const EXPECTED_WORKFLOW_VERSION = '2.0.0';
 export const SETTINGS_FILE = '.claude/settings.json';
 export const SETTINGS_LOCAL_FILE = '.claude/settings.local.json';
 export const CLAUDE_DIR = '.claude';

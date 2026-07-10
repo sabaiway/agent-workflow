@@ -3,7 +3,7 @@ name: agent-workflow-memory
 description: Deploy or upgrade a portable AI-agent memory substrate in any project — an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) and a structured `docs/ai/` context store with cap/archive/index enforcement. Use when the user wants to bootstrap `docs/ai/`, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-memory` / `/agent-workflow-memory upgrade`. Triggers on "set up the memory system", "deploy the AI memory here", "bootstrap docs/ai", "upgrade the memory substrate". This is the substrate only — the workflow methodology (plan→execute→review, queue, Cleanup) is owned elsewhere and injected into AGENTS.md by the family composition root.
 disable-model-invocation: true
 metadata:
-  version: '1.12.0'
+  version: '2.0.0'
 ---
 
 # agent-workflow-memory
@@ -122,7 +122,7 @@ bootstrapping over a live system, but the user makes the final call.
    append-only (never duplicate an existing line), then **verify `git status` shows them ignored**.
    Never the machine-global excludes; never edit `package.json`.
 10. **Stamp the deployment lineage.** Write the **deployment-lineage head** into
-    `docs/ai/.memory-version` (one semver line). The lineage head is **`1.3.0`** (the
+    `docs/ai/.memory-version` (one semver line). The lineage head is **`2.0.0`** (the
     `LINEAGE_HEAD` constant in `scripts/stamp-takeover.mjs`) — the shared `agent-workflow`
     lineage, a **separate axis** from this package's npm version (the two may even coincide by
     accident; see *Stamp = lineage head, not package version*). Use the atomic writer in
@@ -161,7 +161,7 @@ Fill strategy:
    `scripts/stamp-takeover.mjs` decides the action per state; the Markdown migration is the
    no-Node manual fallback. If **no** stamp exists at all, offer a conservative re-bootstrap.
 2. **Never-downgrade gate FIRST, then the stamp-independent hidden-mode reconcile (D14).** Compare the
-   stamp to the **deployment-lineage head** (`LINEAGE_HEAD`, `1.3.0`). **Greater than the head, or
+   stamp to the **deployment-lineage head** (`LINEAGE_HEAD`, `2.0.0`). **Greater than the head, or
    unparseable → STOP and report immediately, before ANY write** (never downgrade or guess, and never
    touch `.git/info/exclude`). This STOP is one of the only two places the number is shown (see
    *Version disclosure* below): tell the user **the `docs/ai` structure version** their deployment
@@ -191,13 +191,23 @@ Fill strategy:
    orchestration `_README` note in place on an existing file is the **composition root's** job on
    its own reconcile — this substrate is standalone and only seeds-or-preserves; it owns no
    cross-package refresh helper. The gates declaration gets no note-refresh at all — authored
-   content, seed-or-preserve only.) This is why an equal-head (`1.3.0`) deployment still gains the
+   content, seed-or-preserve only.) This is why an equal-head (`2.0.0`) deployment still gains the
    config seeds **without a lineage-head bump or a migration file** (the
    stamp-independent-reconcile precedent — like the pointer slots + the hidden-mode footprint).
-   **Same gate, also stamp-independent: ensure the ADR-cascade enforcement pair** — copy
+   **Same gate, also stamp-independent: ensure the ADR-store enforcement pair** — copy
    `archive-decisions.mjs` + `archive-decisions.test.mjs` from
    `${CLAUDE_SKILL_DIR}/references/scripts/` into the project's `scripts/` **if missing**
-   (preserve an existing file byte-for-byte; skip on a No-Node project). The deployed pre-commit
+   (preserve an existing file byte-for-byte; skip on a No-Node project). **Legacy-monolith
+   gate:** if a retired `docs/ai/history/decisions-archive*.md` monolith is still on disk, do
+   **NOT** copy the pair as a silent ensure — the new-scheme rotator must **never sit beside
+   un-migrated monoliths** (its default/`--check` runs refuse such a tree). Instead ASK the
+   user; with their explicit consent copy the pair AND run the one-time conservation-checked
+   migration in the same step (`node scripts/archive-decisions.mjs --migrate` preview, then
+   `--migrate --apply` — it writes a durable pre-delete snapshot first); if the preview or the
+   apply FAILS, remove the just-copied pair (the pair was copied only because it was missing, so
+   removal restores the exact pre-ensure state) and report — the forbidden state (the new-scheme
+   rotator beside un-migrated monoliths) must never persist; without consent leave
+   the tree untouched and report the pending migration. The deployed pre-commit
    hook gains its `archive-decisions.mjs --check` line only when the hook is next refreshed via
    `node scripts/install-git-hooks.mjs`; an old hook without the line stays consistent-safe (the
    decisions gate is simply not enforced yet — never a broken hook). **Then**, if the stamp **equals** the head → the substrate is
@@ -267,7 +277,7 @@ memory substrate has none, so it relies on the STOP + the explicit ask — never
 - **Source vs target directory.** Templates/scripts are read from the skill's own dir; the
   **working directory is the target project** — never write substrate files back into the skill.
 - **Stamp = lineage head, not package version.** `.memory-version` carries the **deployment-lineage
-  head** (`1.3.0`, the shared `agent-workflow` lineage) — a **separate axis** from this package's npm
+  head** (`2.0.0`, the shared `agent-workflow` lineage) — a **separate axis** from this package's npm
   version (the two may even coincide by accident). They move independently.
 - **Both pointer slots ship empty and stay the user's.** Never author methodology or orchestration
   text into them; on upgrade, preserve their content byte-for-byte. The composition root is their only

@@ -9,6 +9,9 @@ Run `node ${CLAUDE_SKILL_DIR}/tools/migrate-adr-store.mjs [--dry-run | --apply] 
 - **`--dry-run`** (default) — prints the plan and writes NOTHING: the monoliths to be exploded + retired, the pre-migration snapshot location, which deployed enforcement scripts will be refreshed (naming any that differ locally), and the rotator's conservation proof (every archived ADR accounted for).
 - **`--apply`** — performs it in order: (1) write a durable pre-migration **snapshot** (`decisions.md` + both monoliths + the pre-refresh `scripts/` copies) to the project's git dir (uncommittable), with a stated out-of-tree fallback off git — fail loud if neither base is writable; (2) **force-refresh** the deployed enforcement scripts (the directional subset — only kit-canon basenames the project already has) so the project's own gates run the new rotator + collapse rule; (3) run the conservation-checked **rotation** that explodes the monoliths into `adr/` records, retires them, and regenerates the navigator + `docs/ai/index.md`. Idempotent / crash-resumable.
 
-After it runs, review the migrated `docs/ai/` tree and commit it yourself.
+After a successful `--apply`, run the normal **`upgrade`** immediately — **before any
+review/commit ask** — so the deployment-lineage stamp advances to the current head (this mode
+**never writes stamps**); then review the migrated `docs/ai/` tree and the re-stamp together and
+commit them yourself in ONE gated commit.
 
 **Invariants:** guarded (mandatory `--dry-run` preview → explicit consent → `--apply`) · a durable pre-delete snapshot is written before any remove/overwrite (a locally-edited script is snapshotted, never silently clobbered) · the remove is gated on conservation passing AND the snapshot existing · a project with no old-layout monolith is a stated no-op · **never commits**.

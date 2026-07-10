@@ -88,7 +88,9 @@ describe('engine package content — DAG guard (knows nobody)', () => {
     ].sort();
     const res = spawnSync('npm', ['pack', '--dry-run', '--json'], { cwd: ROOT, encoding: 'utf8' });
     assert.equal(res.status, 0, `npm pack failed: ${res.stderr}`);
-    const actual = JSON.parse(res.stdout)[0].files.map((f) => f.path).sort();
+    // npm ≤11 prints a JSON array; npm ≥12 prints an object keyed by package name — accept both.
+    const parsed = JSON.parse(res.stdout);
+    const actual = (Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0]).files.map((f) => f.path).sort();
     assert.deepEqual(actual, EXPECTED_TARBALL, 'the published tarball drifted from the expected payload');
     assert.ok(!actual.some((p) => /(^|\/)test\//.test(p) || p === 'test'), 'no test/ file may ship in the tarball');
   });

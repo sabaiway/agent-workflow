@@ -6,7 +6,7 @@
 // The deployment lineage is a SINGLE shared sequence; its current head is LINEAGE_HEAD.
 // Both `.memory-version` and the kit-fallback `.workflow-version` track THAT sequence —
 // never their package versions. So this substrate's package may be 1.0.0 while the stamp
-// it writes is the lineage head (1.3.0 today).
+// it writes is the lineage head (2.0.0 today).
 //
 // `decideTakeover` is a PURE function (stamp state in → action out) so the state machine is
 // unit-testable per row. `applyTakeover` is the thin fs wrapper; stamp writes are ATOMIC
@@ -22,7 +22,7 @@ import { pathToFileURL } from 'node:url';
 
 // The shared agent-workflow deployment-lineage head. Bumped only when a project-migration
 // changes the deployed docs/ai structure — NOT on a packaging-only release.
-export const LINEAGE_HEAD = '1.3.0';
+export const LINEAGE_HEAD = '2.0.0';
 
 const SEMVER_RE = /^v?(\d+)\.(\d+)\.(\d+)$/;
 

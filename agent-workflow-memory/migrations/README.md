@@ -13,7 +13,7 @@ releases add files/templates, which `upgrade` reconciles without a migration.
    `.memory-version` verbatim — see that migration.
 2. Select every migration whose `<version>` is **strictly newer** than the stamp.
 3. Apply them in **ascending semver order**.
-4. Re-stamp `docs/ai/.memory-version` to the deployment-lineage head (`1.3.0` today — the shared
+4. Re-stamp `docs/ai/.memory-version` to the deployment-lineage head (`2.0.0` today — the shared
    lineage sequence, **not** this package's npm version). The legacy `.workflow-version`, if present,
    is never deleted.
 

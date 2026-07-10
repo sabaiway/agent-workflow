@@ -93,7 +93,9 @@ const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const packMemory = () => {
   const res = spawnSync('npm', ['pack', '--dry-run', '--json'], { cwd: PKG_ROOT, encoding: 'utf8' });
   assert.equal(res.status, 0, `npm pack failed: ${res.stderr}`);
-  return JSON.parse(res.stdout)[0].files.map((f) => f.path);
+  // npm ≤11 prints a JSON array; npm ≥12 prints an object keyed by package name — accept both.
+  const parsed = JSON.parse(res.stdout);
+  return (Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0]).files.map((f) => f.path);
 };
 
 describe('memory package content — tarball guard (no own-test leak; deploy payload retained)', () => {

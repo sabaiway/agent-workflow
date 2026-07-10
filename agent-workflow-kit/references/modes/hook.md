@@ -10,7 +10,7 @@ The opt-in **gate-approval PreToolUse hook** — the family's third `.claude/` w
 
 **Trust posture (state it plainly when asking consent):** the hook removes the PROMPT only for commands the human already declared in `docs/ai/gates.json` — the same trust boundary as the `gates` runner, which executes them with the caller's privileges. **gates.json thereby becomes a privileged file**: whoever can edit it can get its commands auto-approved. An invalid declaration approves NOTHING (strict parse, exact validation parity with the runner).
 
-**Version-status routing** like the other writer modes (stamp head `1.3.0`; `--apply` enforces it in code).
+**Version-status routing** like the other writer modes (stamp head `2.0.0`; `--apply` enforces it in code).
 
 Run `node ${CLAUDE_SKILL_DIR}/tools/gate-hook.mjs [--dry-run | --apply] [--cwd <dir>]`:
 

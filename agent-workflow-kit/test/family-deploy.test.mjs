@@ -46,7 +46,7 @@ const FRAGMENT =
 // The shared deployment-lineage head the composition root stamps in BOTH paths. The root knows it
 // independently of the substrate package version (SKILL.md bootstrap step 10) — hard-coded here so
 // the fallback path asserts it without importing the substrate (which, in fallback, is absent).
-const LINEAGE_HEAD = '1.3.0';
+const LINEAGE_HEAD = '2.0.0';
 
 // A realistic pre-slot ("markerless") deployment: it carries the Session-Protocols ANCHOR line the
 // reconcile inserts the slot after, but no slot markers yet (it predates the methodology slot).

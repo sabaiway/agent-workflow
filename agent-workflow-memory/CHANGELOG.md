@@ -2,7 +2,58 @@
 
 All notable changes to the memory substrate. Versions are this **package's** npm versions;
 they are distinct from the **deployment-lineage** stamp written into a project's
-`docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `1.3.0`).
+`docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `2.0.0`).
+
+## 2.0.0 — One-file-per-ADR store: the 3-tier decisions cascade retired (AD-051)
+
+A **MAJOR** release (BREAKING; co-released with the workflow kit 1.42.0). The deployment-lineage
+head bumps `1.3.0` → `2.0.0` — the first structural `docs/ai` change (a new `docs/ai/adr/` tree;
+the WARM/COLD decisions-archive monolith tiers retired). **Nothing auto-migrates:** an existing
+deployment keeps working on its old layout, old rotator included, until it opts in (below).
+
+**Breaking.**
+- `references/scripts/archive-decisions.mjs` is REPURPOSED in place (same path, same pre-commit
+  hook slot, same `decisions-rotation` gate id): instead of rotating HOT `decisions.md` → WARM
+  `history/decisions-archive.md` → a single COLD monolith whose cap was raised release after
+  release, the rotator now EXPLODES the oldest ADRs beyond the HOT cap into one immutable MADR
+  record per ADR at `docs/ai/adr/AD-NNN-slug.md` (body verbatim; inline 6-field frontmatter +
+  `status`/`date`/`supersedes`/`supersededBy` lifecycle keys; slug frozen at creation). A record
+  is O(1) forever — no archive cap is ever raised again, and there is no COLD tier to exhaust.
+- A default or `--check` run that finds a legacy `history/decisions-archive*.md` monolith fails
+  LOUD ("run `--migrate` first") — the new rotator never half-explodes an un-migrated tree and
+  never reports green over one.
+- The ADR id grammar widens to `AD-\d{3,}` with NUMERIC ordering everywhere (AD-200 precedes
+  AD-1000 — never lexical).
+
+**Migration (opt-in, never automatic).**
+- The one-time `--migrate` (dry-run by default; `--migrate --apply` to write) explodes the
+  monolith tiers into `adr/` records under a fail-loud conservation check: the full ADR corpus —
+  the union HOT ∪ monolith tiers ∪ any already-written `adr/` records (the crash-resumable core;
+  a same-id BODY CONFLICT across sources is refused) — must repartition EXACTLY into retained-HOT
+  ∪ written records, nothing lost, added, double-counted, or edited. Before any destructive write
+  it stores a durable timestamped snapshot of `decisions.md` + both monoliths into the GIT DIR
+  (a stated out-of-tree fallback on a non-git deployment; fails loud if neither is writable).
+  `docs/ai` is commonly git-ignored, so git history alone can NOT recover a deleted monolith —
+  the snapshot is the recovery path. The apply is idempotent and crash-resumable; removal never
+  precedes conservation + the snapshot.
+- On an upgrade crossing this major, `bin/install.mjs` prints a GENERIC one-time advisory: run
+  your workflow toolkit's ADR-store migration command in each already-deployed project (it
+  snapshots, refreshes the enforcement scripts, and migrates in one consent-gated step). This
+  installer targets the global skill dir and never touches a project itself.
+
+**New.**
+- `docs/ai/adr/log.md` — the ON-DEMAND active-set navigator: currently-governing heads
+  (supersession COMPUTED corpus-wide from the two-way `supersedes`/`supersededBy` chain — a new
+  superseding ADR needs no predecessor-file edit) + a recent window; a superseded record drops out
+  of the list but stays reachable by filename, grep, and the chain. `--write-navigator`
+  regenerates it AND re-triggers the docs-index regen. No committed full O(n) ledger.
+- `references/scripts/check-docs-size.mjs` — `docs/ai/adr/` collapses to ONE aggregate `index.md`
+  row (`adr/ — N records (AD-001 … AD-NNN)`), while every record body stays individually
+  cap-checked; `docs/ai/index.md` stays bounded at O(1) as records accumulate.
+- Seeded templates: the new-scheme `decisions.md` HOT-window seed, the `adr-record.md` MADR
+  authoring reference (a skill-side reference — never copied into a project's `docs/ai/`), and a
+  seed `adr/log.md` byte-equal to the generator over the seeded HOT — a fresh bootstrap is
+  `--check`-green on its first commit.
 
 ## 1.12.0 — Verification-profile template + the docs-index-on-rotation regen (BUGFREE-3, AD-049)
 
