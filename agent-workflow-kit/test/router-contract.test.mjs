@@ -205,7 +205,12 @@ const BUDGET = {
   // the heaviest read set (upgrade + its 3 shared files) sat 6 B under the 52 KB budget, so the new
   // doc-parity router line (present in EVERY mode's read set) plus the carry-in verification-profile
   // clause on upgrade.md overflow it by 190 B — a documented KB-multiple bump, never a silent re-pin.
-  daily: 16384, // the no-shared daily modes (help/backends/recipes/procedures/gates)
+  daily: 17408, // the no-shared daily modes (help/backends/recipes/procedures/gates). 16384 →
+  // 17408 (17 KB): AD-052 replaces gates.md's one-sentence offer description with the closed-world
+  // contract paragraph (allowlist membership + the uniform `<pm> exec` hook-free form + the per-PM
+  // fail-closed floor + the runtime-residual disclosure), 738 B of new contract content against
+  // 471 B of headroom, overflowing by 267 B after trimming — a documented KB-multiple bump, never
+  // a silent re-pin.
 };
 const DAILY = ['help', 'backends', 'recipes', 'procedures', 'gates'];
 

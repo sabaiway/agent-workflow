@@ -4,6 +4,41 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.43.0 — Closed-world gate seeding: lifecycle hooks die by construction (AD-052)
+
+A **feature** release (kit-only; memory/engine/bridges unchanged, lineage head stays `2.0.0`). The
+consent-gated `gates.json` seeder (`seed-gates.mjs`) moves from BLOCKLIST screening to a
+**closed-world** offer derivation — the structural fix for **Issue-011**, whose three residuals the
+AD-042 council could only ever push one gap further, never close. Since a declared gate is
+hook-auto-approvable, the offer is now conservative BY CONSTRUCTION: the worst case is a legit
+command not offered (add it by hand), never a dangerous one offered.
+
+- **Uniform hook-free exec form.** The seeded cmd is
+  `COREPACK_ENABLE_NETWORK=0 <pm> exec -- <allowlisted-body>` for the detected package manager.
+  `exec` runs a command, not a named script, so no `pre<name>`/`post<name>` lifecycle hook can fire
+  — structurally and uniformly across **npm, pnpm, and yarn** (classic + berry). Never `<pm> run
+  <name>`, which would re-expose hooks and let a later `package.json` edit change what a byte-exact
+  approved gate runs.
+- **Body allowlist, not blocklist.** The script body must be a string member of a 9-entry literal
+  runner allowlist (`node --test`, `vitest run`, `jest`, `jest --ci`, `eslint .`,
+  `prettier --check .`, `tsc --noEmit`, `tsc -p . --noEmit`, `vite build`) after a pinned
+  ASCII-only normalization; anything else — an injected `curl … | sh`, a `release:npm` alias, an
+  env/path body — is not offered, by non-membership. Editing the allowlist ADDS a test-guarded
+  entry; it can never weaken a filter.
+- **Per-PM fail-closed floor.** npm is pinned `--offline --script-shell /bin/sh` (no registry fetch
+  of a missing runner; a hostile `.npmrc script-shell` loses); the `COREPACK_ENABLE_NETWORK=0`
+  prefix blocks a Corepack-shimmed PM from fetching a hostile `packageManager` pin before exec;
+  pnpm/yarn fail closed natively; a package manager whose exec contract cannot be verified is
+  WITHHELD with a loud note. Screened-out gate-class scripts are counted and named — never silently
+  absent (preview and apply alike).
+- **Preflight parent-chain guard.** `assertDocsAiDeployment` (`atomic-write.mjs`) now walks the
+  `docs` parent chain (refusing a symlinked `docs` parent or cwd root) before any read, closing the
+  seeder's preview-path escape; all four write consumers inherit it. ENOENT-safe — a brand-new
+  project still gets the normal no-deployment stop.
+- **Scoped safety claim.** Safe-by-construction is the OFFER DERIVATION, not a runtime sandbox: a
+  script gate runs the project's own tooling (project-controlled code), the disclosed residual
+  bounded by the two-consent trust chain. The preview discloses it.
+
 ## 1.42.0 — Opt-in ADR-store migration mode + old-layout detection (AD-051)
 
 A **feature** release, co-released with **memory 2.0.0 (MAJOR)** — the one-file-per-ADR store that

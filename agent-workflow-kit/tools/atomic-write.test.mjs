@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { writeHostConfigFileAtomic, writeContainedFileAtomic, ATOMIC_WRITE_STOP } from './atomic-write.mjs';
+import { writeHostConfigFileAtomic, writeContainedFileAtomic, assertDocsAiDeployment, ATOMIC_WRITE_STOP } from './atomic-write.mjs';
 
 const isStop = (e) => e && e.code === ATOMIC_WRITE_STOP;
 const enoent = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
@@ -63,6 +63,47 @@ describe('host-config gate — injected deps', () => {
   it('a symlinked dir → STOP', () => {
     const deps = { ...noopFs(), lstat: (p) => (p === '/d' ? fakeStat('symlink') : (() => { throw enoent(); })()) };
     assert.throws(() => writeHostConfigFileAtomic('/d', 'x.conf', 'b', deps), (e) => isStop(e) && /symlink/.test(e.message));
+  });
+});
+
+// T7 unit cases (Decision 5): the deployment gate walks the PARENT chain (cwd root + the docs
+// component) before any read, re-throwing the fs-safe walk error as the CALLER's typed stop — a
+// bare Error would break each consumer's `.code` contract. The docs/ai LEAF keeps its existing
+// checks and messages; an ABSENT docs/ai stays the normal "no deployment" STOP (ENOENT-safe walk).
+describe('assertDocsAiDeployment — parent-chain preflight (Decision 5)', () => {
+  const callerStop = (message) => Object.assign(new Error(message), { code: 'CALLER_STOP' });
+
+  it('a symlinked cwd ROOT throws the CALLER typed stop, before any read', () => {
+    const lstat = (p) => (p === '/proj' ? fakeStat('symlink') : (() => { throw enoent(); })());
+    assert.throws(
+      () => assertDocsAiDeployment('/proj', { lstat }, { stop: callerStop }),
+      (e) => e.code === 'CALLER_STOP' && /symlink/.test(e.message),
+    );
+  });
+
+  it('a symlinked INTERMEDIATE docs component throws the CALLER typed stop naming it', () => {
+    const lstat = (p) => {
+      if (p === '/proj') return fakeStat('dir');
+      if (p === join('/proj', 'docs')) return fakeStat('symlink');
+      throw enoent();
+    };
+    assert.throws(
+      () => assertDocsAiDeployment('/proj', { lstat }, { stop: callerStop }),
+      (e) => e.code === 'CALLER_STOP' && /docs/.test(e.message) && /symlink/.test(e.message),
+    );
+  });
+
+  it('contained happy path: real dirs all the way down → no throw', () => {
+    const lstat = () => fakeStat('dir');
+    assertDocsAiDeployment('/proj', { lstat }, { stop: callerStop });
+  });
+
+  it('T7b: an ABSENT docs/ai (brand-new project) yields the EXISTING no-deployment STOP, never a symlink STOP', () => {
+    const lstat = (p) => (p === '/proj' ? fakeStat('dir') : (() => { throw enoent(); })());
+    assert.throws(
+      () => assertDocsAiDeployment('/proj', { lstat }, { stop: callerStop }),
+      (e) => e.code === 'CALLER_STOP' && /docs\/ai is absent/.test(e.message) && !/symlink/.test(e.message),
+    );
   });
 });
 
