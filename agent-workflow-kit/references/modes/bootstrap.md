@@ -30,7 +30,7 @@ Requires: ${CLAUDE_SKILL_DIR}/references/shared/report-footer.md · ${CLAUDE_SKI
      - Report the result plainly (what is now hidden). **No Node on the agent host** → write the one managed block into `.git/info/exclude` by hand from the contract's path list, and report the manual step. **Windows is supported.**
    - **Do not edit `package.json`** in hidden mode — a tracked change leaks the whole system.
 10. **Stamp the deployment lineage.** Write the **deployment-lineage head** into
-    `docs/ai/.workflow-version` (one semver line). The lineage head is **`1.3.0`** — the shared
+    `docs/ai/.workflow-version` (one semver line). The lineage head is **`2.0.0`** — the shared
     `agent-workflow` deployment lineage, **NOT** this kit's npm package version (see
     `package.json` / `CHANGELOG.md`). The two are
     independent axes: a packaging-only release bumps the package but leaves the lineage head until a

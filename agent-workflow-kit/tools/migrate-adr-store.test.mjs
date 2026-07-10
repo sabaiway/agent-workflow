@@ -257,3 +257,22 @@ describe('migrate-adr-store — parseArgs', () => {
     assert.equal(parseArgs(['--help']).help, true);
   });
 });
+
+describe('migrate-adr-store — the mode reference contract (post-apply re-stamp ordering)', () => {
+  it('orders the normal upgrade immediately after --apply, BEFORE the review/commit ask (the mode never writes stamps)', () => {
+    const doc = readFileSync(resolve(HERE, '..', 'references', 'modes', 'migrate-adr-store.md'), 'utf8');
+    assert.match(doc, /after a successful `--apply`, run the normal \*\*`upgrade`\*\* immediately/i, 'the re-stamp step is instructed');
+    assert.match(doc, /before any\s+review\/commit ask/i, 'the ordering beats the commit gate — one gated commit covers layout + re-stamp');
+    assert.match(doc, /never writes stamps/, 'the mode itself stays stamp-free (one consented action per surface)');
+  });
+});
+
+describe('migrate-adr-store — the --apply success output matches the mode contract', () => {
+  it('the success output instructs the normal upgrade BEFORE review/commit (never a commit-first instruct)', () => {
+    mkOldLayout({ git: true });
+    const io = quiet();
+    assert.equal(run(['--apply'], io), 0);
+    assert.match(io.out(), /run the normal upgrade/i, 'the success output routes to upgrade first (the re-stamp)');
+    assert.match(io.out(), /never commits/, 'the no-commit invariant stays stated');
+  });
+});

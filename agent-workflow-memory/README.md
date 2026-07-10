@@ -7,7 +7,7 @@ future agent — including a fresh session of yourself — can reconstruct proje
 ~60 seconds, find the current task, and avoid repeating past mistakes.
 
 This is the **memory layer** of the `agent-workflow` family.
-It owns the substrate only — `docs/ai/`, the entry point, caps / 3-tier archive / index gate,
+It owns the substrate only — `docs/ai/`, the entry point, caps / rolling changelog archive / the one-file-per-ADR store / index gate,
 the Node enforcement scripts, the pre-commit hook, the templates, and the three setup
 contracts (visibility / conversational language / agent attribution). It deliberately **knows
 nobody else** in the `agent-workflow` family: the **workflow methodology** (plan → execute →
@@ -44,7 +44,7 @@ Open your agent inside a project and run the skill:
 
 Two independent axes: this package's **npm version** vs the **deployment-lineage** stamp the
 substrate writes into a project. They are not the same number. `.memory-version` tracks the
-shared `agent-workflow` deployment lineage (head `1.3.0` today), **not** this package's
+shared `agent-workflow` deployment lineage (head `2.0.0` today), **not** this package's
 version. A project bootstrapped by the kit's fallback carries a `.workflow-version`; when this
 substrate is later installed, `migrations/legacy-stamp-takeover.md` copies that value verbatim
 into `.memory-version` and never deletes the legacy stamp. See `migrations/README.md`.

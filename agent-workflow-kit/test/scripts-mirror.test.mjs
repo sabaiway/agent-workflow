@@ -43,7 +43,7 @@ describe('reference-scripts mirror — kit fallback copies stay byte-identical t
     }
   });
 
-  it('the mirror includes the ADR cascade (reverse pin — a deleted pair must not pass silently)', () => {
+  it('the mirror includes the ADR-store enforcement pair (reverse pin — a deleted pair must not pass silently)', () => {
     const files = listFiles(MEMORY_SCRIPTS);
     for (const required of ['archive-decisions.mjs', 'archive-decisions.test.mjs']) {
       assert.ok(files.includes(required), `references/scripts must ship ${required}`);

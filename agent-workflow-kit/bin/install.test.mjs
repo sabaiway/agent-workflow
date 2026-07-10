@@ -703,7 +703,9 @@ describe('kit installer — published tarball bundles the bridges + the live-rea
     // tree, so a dropped `bridges/` entry in package.json fails here (not silently at install time).
     const res = spawnSync('npm', ['pack', '--dry-run', '--json'], { cwd: KIT_ROOT, encoding: 'utf8' });
     assert.equal(res.status, 0, res.stderr || res.error?.message);
-    const paths = JSON.parse(res.stdout)[0].files.map((f) => f.path);
+    // npm ≤11 prints a JSON array; npm ≥12 prints an object keyed by package name — accept both.
+    const parsed = JSON.parse(res.stdout);
+    const paths = (Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0]).files.map((f) => f.path);
     assert.ok(paths.includes('bridges/codex-cli-bridge/SKILL.md'), 'codex bridge SKILL.md not packed');
     assert.ok(paths.includes('bridges/antigravity-cli-bridge/bin/agy.sh'), 'antigravity agy.sh not packed');
     assert.ok(paths.includes('bridges/antigravity-cli-bridge/bin/agy-review.sh'), 'antigravity agy-review.sh not packed');

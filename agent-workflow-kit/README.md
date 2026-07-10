@@ -87,7 +87,7 @@ WITH the kit · boots from memory, cost flat
 | **Cross-session memory** | none | `handover` (where we left off) |
 | **Past decisions** | re-litigated | `decisions.md` (ADRs) — settled once |
 | **Known bugs** | re-discovered | `known_issues.md` — impact + workaround |
-| **Doc growth** | unbounded sprawl | frontmatter caps + 3-tier rolling archive |
+| **Doc growth** | unbounded sprawl | frontmatter caps + rolling changelog archive + one-file-per-ADR store |
 | **Drift** | docs ≠ code over time | pre-commit gate keeps them honest |
 | **Cross-agent** | re-explain the project to each tool | one `AGENTS.md`, read by 20+ agents |
 
@@ -109,13 +109,14 @@ your-repo/
     ├── current_state.md   ← snapshot of the codebase now
     ├── architecture.md    ← layers & boundaries
     ├── technical_specification.md
-    ├── decisions.md       ← ADRs — settled once
+    ├── decisions.md       ← ADRs — the HOT window (newest)
+    ├── adr/               ← one file per archived ADR + log.md navigator
     ├── known_issues.md    ← bugs + workarounds
     ├── changelog.md       ← rolling, then archived
     ├── env_commands.md    ← daily commands
     ├── tech_reference.md  ← configs & patterns
     ├── pages/             ← one spec per page/route
-    └── history/           ← archive (HOT→WARM→COLD)
+    └── history/           ← changelog archive (HOT→WARM→COLD)
   + scripts/               ← caps · index · archive (Node path)
   + pre-commit hook        ← keeps it all honest    (Node path)
 ```

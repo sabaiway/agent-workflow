@@ -13,13 +13,13 @@ any other migration.
 
 The deployment stamp moved from `.workflow-version` (owned by the kit) to `.memory-version`
 (owned by this substrate). They track the **same** shared deployment-lineage sequence — never
-their package versions. The current lineage head is **`1.3.0`** (`LINEAGE_HEAD`). This migration
+their package versions. The current lineage head is **`2.0.0`** (`LINEAGE_HEAD`). This migration
 adopts an existing legacy stamp into the new file **without** changing the lineage value and
 **without** deleting the legacy stamp (both may coexist; each tool migrates from its own stamp).
 
 ## State table (idempotent)
 
-Look at `docs/ai/` and act by row. `V` is the legacy stamp's value; `head` = `1.3.0`.
+Look at `docs/ai/` and act by row. `V` is the legacy stamp's value; `head` = `2.0.0`.
 
 | `docs/ai/` state | Action |
 |---|---|
@@ -42,7 +42,7 @@ Look at `docs/ai/` and act by row. `V` is the legacy stamp's value; `head` = `1.
    done
    ```
 2. **Validate** each value that exists: it must be `MAJOR.MINOR.PATCH`, non-empty, and **not** greater
-   than `1.3.0`. If any present stamp is empty, unparseable, or in the future → **STOP and report**;
+   than `2.0.0`. If any present stamp is empty, unparseable, or in the future → **STOP and report**;
    do nothing else.
 3. **Apply** the matching row above. For the "only `.workflow-version=V`" row, copy verbatim and
    write **atomically** — create an exclusive randomized temp in `docs/ai/` (so a planted temp-name

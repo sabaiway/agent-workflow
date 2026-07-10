@@ -4,6 +4,33 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.42.0 — Opt-in ADR-store migration mode + old-layout detection (AD-051)
+
+A **feature** release, co-released with **memory 2.0.0 (MAJOR)** — the one-file-per-ADR store that
+retires the 3-tier decisions cascade (engine 1.14.1 rides along as a housekeeping patch; bridges
+unchanged). The deployment-lineage head bumps
+`1.3.0` → `2.0.0` in lockstep (`EXPECTED_WORKFLOW_VERSION`; the cross-package drift guard pins it
+to memory's `LINEAGE_HEAD`) — the first structural `docs/ai` migration in the lineage.
+
+- **`/agent-workflow-kit migrate-adr-store`** — the consent-gated, opt-in crossing for an EXISTING
+  deployment (`references/modes/migrate-adr-store.md` + `tools/migrate-adr-store.mjs`; dry-run →
+  apply, the velocity/seed-gates writer pattern). It force-refreshes the WHOLE consumer
+  `references/scripts` enforcement set atomically (`archive-decisions.mjs` + `check-docs-size.mjs`
+  + their tests — so the consumer's own docs-cap gate can't red against the new scheme), writes
+  the durable git-dir snapshot FIRST (docs + the pre-refresh scripts; a PROVEN out-of-tree
+  fallback; a locally-EDITED enforcement script is snapshotted or the apply refuses — never
+  silently clobbered), then runs the idempotent, conservation-checked `--migrate --apply` and
+  regenerates navigator + index. Previews first; never commits.
+- **Old-layout detection lives in the kit's project-aware surfaces** (the memory installer is a
+  global, knows-nobody skill installer): `status` gains the `adrLayout` axis (old / migrated /
+  none) via `family-registry`'s project survey; `upgrade` DETECTS a legacy
+  `docs/ai/history/decisions-archive*.md` monolith and LOUDLY instructs the migration mode
+  INSTEAD of seeding the new-scheme rotator into an un-migrated tree — an un-migrated consumer
+  keeps their old rotator + old layout fully working until they opt in.
+- **Kit fallback templates retargeted in lockstep** with memory's (`references/templates/` —
+  `decisions.md` HOT-window seed + the seed `adr/log.md`): a kit-fallback fresh bootstrap seeds
+  the new scheme, never the old; pinned by `template-parity` + the scripts-mirror guard.
+
 ## 1.41.0 — review-state degraded lane: align the presence gate with the review-ledger (AD-050)
 
 A **feature** release (kit-only; deployment-lineage head stays `1.3.0` — no migration;

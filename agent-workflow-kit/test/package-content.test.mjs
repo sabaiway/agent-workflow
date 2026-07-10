@@ -22,7 +22,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const packFull = () => {
   const res = spawnSync('npm', ['pack', '--dry-run', '--json'], { cwd: ROOT, encoding: 'utf8' });
   assert.equal(res.status, 0, `npm pack failed: ${res.stderr}`);
-  return JSON.parse(res.stdout)[0].files;
+  // npm ≤11 prints a JSON array; npm ≥12 prints an object keyed by package name — accept both.
+  const parsed = JSON.parse(res.stdout);
+  return (Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0]).files;
 };
 const pack = () => packFull().map((f) => f.path);
 

@@ -2,7 +2,16 @@
 
 All notable changes to the methodology engine. Versions are this **package's** npm versions;
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
-(which tracks the shared `agent-workflow` lineage, head `1.3.0`).
+(which tracks the shared `agent-workflow` lineage, head `2.0.0`).
+
+## 1.14.1 — npm 12 tarball-guard compat + the lineage-head preamble correction
+
+A **patch** release (no canon content change; co-released with memory 2.0.0 + kit 1.42.0 — the
+one-file-per-ADR store, AD-051). Two housekeeping fixes: the monorepo tarball-guard test now
+accepts both `npm pack --json` output shapes (an array on npm ≤11, an object keyed by package name
+on npm ≥12 — environment compat, assertions unchanged), and this changelog's standing preamble
+tracks the deployment-lineage head bumped by the co-released memory MAJOR (`1.3.0` → `2.0.0`; the
+head lives in the family's shared stamps, not in this package's version).
 
 ## 1.14.0 — The review canon names its computed instrument, activity-aware (AD-046)
 

@@ -66,7 +66,7 @@ layer fixes the **mechanism**, not just the symptom.
 | **Cross-session memory** | none | `handover.md` — where we left off |
 | **Past decisions** | re-litigated | `decisions.md` (ADRs) — settled once |
 | **Known bugs** | re-discovered | `known_issues.md` — impact + workaround |
-| **Doc growth** | unbounded sprawl | frontmatter caps + 3-tier rolling archive |
+| **Doc growth** | unbounded sprawl | frontmatter caps + rolling changelog archive + one-file-per-ADR store |
 | **Drift** | docs ≠ code over time | pre-commit gate keeps them honest |
 | **Cross-agent** | re-explain the project to each tool | one `AGENTS.md`, read by 20+ agents |
 
@@ -125,10 +125,11 @@ your-repo/
     ├── index.md           <- auto-generated navigator
     ├── handover.md        <- where we left off
     ├── active_plan.md     <- current task
-    ├── decisions.md       <- ADRs — settled once
+    ├── decisions.md       <- ADRs — the HOT window (newest)
+    ├── adr/               <- one file per archived ADR + log.md navigator
     ├── known_issues.md    <- bugs + workarounds
     ├── architecture.md · current_state.md · changelog.md · …
-    └── history/           <- archive (HOT -> WARM -> COLD)
+    └── history/           <- changelog archive (HOT -> WARM -> COLD)
   + scripts/               <- caps · index · archive   (Node path)
   + pre-commit hook        <- keeps it all honest       (Node path)
 ```

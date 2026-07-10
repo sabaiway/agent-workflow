@@ -30,7 +30,7 @@ beforeEach(() => {
 afterEach(() => rmSync(cwd, { recursive: true, force: true }));
 
 // A full project fixture: docs/ai + stamp + package.json (+ optional lockfile / config / gates).
-const mkProject = ({ scripts = {}, lockfile, packageManager, config, gates, stamp = '1.3.0' } = {}) => {
+const mkProject = ({ scripts = {}, lockfile, packageManager, config, gates, stamp = '2.0.0' } = {}) => {
   mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
   if (stamp) writeFileSync(join(cwd, 'docs', 'ai', '.workflow-version'), `${stamp}\n`);
   writeFileSync(
@@ -274,7 +274,7 @@ describe('seed-gates — preview is the default and writes NOTHING', () => {
     const evil = mkdtempSync(join(tmpdir(), 'seed-gates-$evil-'));
     try {
       mkdirSync(join(evil, 'docs', 'ai'), { recursive: true });
-      writeFileSync(join(evil, 'docs', 'ai', '.workflow-version'), '1.3.0\n');
+      writeFileSync(join(evil, 'docs', 'ai', '.workflow-version'), '2.0.0\n');
       writeFileSync(join(evil, 'package.json'), JSON.stringify({ scripts: { test: 'x' } }));
       const io = quiet();
       assert.equal(main(['--cwd', evil, '--dry-run'], io), 0);
@@ -381,7 +381,7 @@ describe('seed-gates — --apply appends exactly the consented entries', () => {
     assert.match(dry.out.join('\n'), /offered/i, 'the error lists what IS offered');
     // An empty offer + a --only typo must fail as usage, not return the silent "nothing to offer".
     mkdirSync(join(cwd, 'empty', 'docs', 'ai'), { recursive: true });
-    writeFileSync(join(cwd, 'empty', 'docs', 'ai', '.workflow-version'), '1.3.0\n');
+    writeFileSync(join(cwd, 'empty', 'docs', 'ai', '.workflow-version'), '2.0.0\n');
     writeFileSync(join(cwd, 'empty', 'package.json'), JSON.stringify({ scripts: { dev: 'x' } }));
     const io = quiet();
     assert.equal(main(['--cwd', join(cwd, 'empty'), '--apply', '--only', 'test'], io), 2);

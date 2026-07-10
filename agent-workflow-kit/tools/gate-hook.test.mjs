@@ -88,7 +88,7 @@ const memFs = ({ files = {}, dirs = [], symlinks = [] } = {}) => {
 };
 
 const deployedFs = (extra = {}) =>
-  memFs({ ...extra, files: { [STAMP_ABS]: '1.3.0\n', ...(extra.files ?? {}) } });
+  memFs({ ...extra, files: { [STAMP_ABS]: '2.0.0\n', ...(extra.files ?? {}) } });
 
 const wiredSettings = (extra = {}) =>
   JSON.stringify({ hooks: { PreToolUse: [buildHookSettingsEntry()] }, ...extra });

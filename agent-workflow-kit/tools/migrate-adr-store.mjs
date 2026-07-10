@@ -258,7 +258,8 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
     log('[migrate-adr-store] migrated the 3-tier ADR cascade → one-file-per-ADR store:');
     log(`  snapshot: ${snapshot.dir} (${snapshot.viaGitDir ? 'git dir' : 'out-of-tree fallback'}, ${snapshot.fileCount} file(s))`);
     log(`  refreshed ${refresh.length} enforcement script(s) to this kit's version`);
-    log('  review the migrated docs/ai/ tree and commit it yourself — this command never commits.');
+    log('  next: run the normal upgrade (it re-stamps the deployment lineage to the current head),');
+    log('  then review the migrated docs/ai/ tree and the re-stamp together and commit them yourself — this command never commits.');
     return EXIT_OK;
   } catch (err) {
     error(err.message);

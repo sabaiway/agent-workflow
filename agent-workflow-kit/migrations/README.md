@@ -10,7 +10,7 @@ releases add files/templates, which `upgrade` reconciles without a migration.
 1. Read the project's stamped version from `docs/ai/.workflow-version`.
 2. Select every migration whose `<version>` is **strictly newer** than the stamp.
 3. Apply them in **ascending semver order**.
-4. Re-stamp `docs/ai/.workflow-version` to the **deployment-lineage head** (`1.3.0` today — the
+4. Re-stamp `docs/ai/.workflow-version` to the **deployment-lineage head** (`2.0.0` today — the
    shared lineage, **not** this skill's npm package version). A stamp greater than the head → STOP.
 
 ## Authoring rules

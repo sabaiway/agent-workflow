@@ -7,6 +7,36 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-10 — memory 2.0.0 (MAJOR) + kit 1.42.0 + engine 1.14.1: one-file-per-ADR store — the 3-tier decisions cascade retired (AD-051)
+
+**agent-workflow-memory 2.0.0 (BREAKING) + agent-workflow-kit 1.42.0 + agent-workflow-engine
+1.14.1** (a housekeeping patch — npm-12 tarball-guard compat + the lineage-head preamble; no canon
+change; bridges unchanged).
+ADRs accumulate monotonically, and the 3-tier cascade (HOT `decisions.md` → WARM archive → one COLD
+monolith) turned that O(n) growth into a recurring release cost — the COLD cap was raised
+800→1000→1100→1200 across four releases and stood exhausted again. Every ADR now lives as its own
+immutable MADR record `docs/ai/adr/AD-NNN-slug.md`; `decisions.md` stays the bounded HOT authoring
+window; `archive-decisions.mjs` is repurposed IN PLACE (same path/hook slot/gate id) to explode the
+oldest entries beyond the cap into per-file records — a record is O(1) forever, no cap is ever
+raised again. Retrieval never routes through an O(n) artifact (filename by id · grep by topic · the
+two-way supersession chain by lifecycle); the ONE generated navigator `adr/log.md` lists governing
+heads only (supersession computed corpus-wide) and `index.md` carries a single `adr/`
+directory-collapse row. Every destructive migrate writes a durable git-dir snapshot first
+(`docs/ai` is git-ignored here — git history can NOT recover the monoliths) under a fail-loud
+partition-preserving conservation check. **The deployment-lineage head bumps `1.3.0` → `2.0.0`**
+(the first structural `docs/ai` migration; `LINEAGE_HEAD` / `EXPECTED_WORKFLOW_VERSION` in
+lockstep). **Consumer path is repo-first + OPT-IN:** fresh bootstraps (memory and kit-fallback
+alike) seed the new scheme; an existing deployment keeps its old layout + old rotator fully working
+until the consent-gated `/agent-workflow-kit migrate-adr-store` (whole-set script refresh →
+snapshot → conservation-checked migrate); the kit's `status`/`upgrade` surfaces detect an
+old layout and point at the mode, while memory's global installer prints only a generic advisory
+(knows-nobody). Dogfooded on this repo: 41 records exploded, both monoliths retired behind a
+verified snapshot, all gates green. Design consult + plan council both ran pre-execution (codex
+`revise` + agy `REWORK` on the brief; codex `revise` + agy `SHIP-WITH-NITS` on the plan; a
+12-finding internal pre-sweep) — every finding folded into 17 locked decisions (AD-051). Dev-infra:
+the four `npm pack --json` tarball-guard tests now accept both npm ≤11 (array) and npm ≥12
+(name-keyed object) output shapes.
+
 ## 2026-07-09 — kit 1.41.0: review-state degraded lane — align the presence gate with the ledger (AD-050)
 
 **agent-workflow-kit 1.41.0** (memory/engine/bridges unchanged). Closes the AD-049 residual: the
