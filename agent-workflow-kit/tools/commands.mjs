@@ -28,7 +28,7 @@ const invocationOf = (token) => `${BARE_INVOCATION}${token ? ` ${token}` : ''}`;
 // ── kinds ────────────────────────────────────────────────────────────────────────
 // read-only    — never writes, never commits, never runs a subscription CLI.
 // writer       — writes files (a project deployment or a settings/skill placement).
-// guarded      — a destructive teardown gated behind a mandatory dry-run-first + explicit consent.
+// guarded      — consent-gated destructive/privileged actions (dry-run-first + explicit consent).
 // project-exec — the kit itself writes nothing, but the mode RUNS the project's own declared
 //                commands with the caller's privileges (the `gates` runner) — honest-tagged so a
 //                user never reads "read-only" on a surface that executes their gate matrix.
@@ -139,6 +139,13 @@ const CATALOG = [
     group: 'Configure',
     kind: GUARDED,
     oneLine: 'Read or change the host-level bridge settings (e.g. the codex Fast tier) — a KEY=VALUE file that survives kit upgrades; previews first, and the Fast tier carries its extra-cost caveat.',
+  },
+  {
+    key: 'autonomy-doctor',
+    invocation: invocationOf('autonomy-doctor'),
+    group: 'Configure',
+    kind: GUARDED,
+    oneLine: 'Check whether this machine can run the Claude sandbox and, only with your explicit consent, install what is missing — privileged, preview-first, consent-per-run; it never auto-runs and never commits.',
   },
   {
     key: 'recipes',
@@ -274,7 +281,7 @@ export const formatHelp = () => {
   const lines = [
     `${SKILL_NAME} — command index (this list is read-only)`,
     '',
-    'Each command is tagged read-only · writer (makes changes) · guarded (destructive, previews first) · runs project cmds (executes your own declared commands).',
+    'Each command is tagged read-only · writer (makes changes) · guarded (consent-gated destructive/privileged actions, previews first) · runs project cmds (executes your own declared commands).',
   ];
   for (const group of GROUP_ORDER) {
     const inGroup = COMMANDS.filter((c) => c.group === group);

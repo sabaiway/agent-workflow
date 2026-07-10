@@ -123,6 +123,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'references/modes/migrate-adr-store.md',
       'references/templates/adr-record.md',
       'references/templates/adr/log.md',
+      // the guarded autonomy provisioner doctor + its mode contract (AD-044 Plan 2)
+      'tools/autonomy-doctor.mjs',
+      'references/modes/autonomy-doctor.md',
       // the lens-region reconcile — invoked from upgrade/bootstrap prose (a count alone would not
       // catch its accidental exclusion)
       'tools/lens-region.mjs',
@@ -205,7 +208,11 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       references/templates/adr-record.md (the MADR authoring reference) + references/templates/
     //       adr/log.md (the seed navigator, mirrored from memory). The *.test.mjs sibling is stripped by
     //       files[]; the retargeted decisions.md HOT seed is count-neutral (an in-place mirror update).
-    assert.equal(packed.length, 143, `tarball file count drifted (${packed.length} ≠ 143)`);
+    // 145 = 143 + the autonomy provisioner doctor (AD-044 Plan 2): tools/autonomy-doctor.mjs (the
+    //       guarded consent-per-run OS provisioner — detect → consent-gated install → verify) +
+    //       references/modes/autonomy-doctor.md (the 23rd mode-ref). The *.test.mjs sibling is
+    //       stripped by files[].
+    assert.equal(packed.length, 145, `tarball file count drifted (${packed.length} ≠ 145)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

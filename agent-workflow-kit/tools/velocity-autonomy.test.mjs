@@ -159,6 +159,10 @@ describe('velocity --autonomy — red-lines render for both ask AND deny (Decisi
   it('sandbox-unavailable → a LOUD degrade caveat (ad-hoc still prompts); available → no availability degrade', () => {
     const degraded = renderAutonomySettings(resolvedWith({}), probeSandboxAvailability(LINUX_NO_SOCAT));
     assert.match(degradesText(degraded), /sandbox UNAVAILABLE.*still PROMPT/);
+    // AD-044 Plan 2 drift guard: the degrade names the CONCRETE doctor invocation (the shipped
+    // remediation), never a plan-number promise.
+    assert.match(degradesText(degraded), /\/agent-workflow-kit autonomy-doctor/);
+    assert.ok(!/Plan 2/.test(degradesText(degraded)), 'no plan-number promise in the shipped degrade');
     // red-lines + defaultMode still land on the degraded branch
     assert.equal(degraded.defaultMode, 'acceptEdits');
     assert.deepEqual(degraded.ask, ['Bash(git commit:*)', 'Bash(git push:*)', 'Bash(npm publish:*)']);

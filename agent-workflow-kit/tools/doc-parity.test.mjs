@@ -85,6 +85,23 @@ describe('the REAL registry is consistent with the shipped contract docs (dogfoo
       assert.ok(names.includes(`vocab:${word}`), `registry must bind the vocab word ${word}`);
     }
   });
+
+  // AD-044 Plan 2: the autonomy-doctor D7 exit/status contract is bound to its mode doc.
+  it('the registry binds the autonomy-doctor EXIT table + every non-usage status token', () => {
+    const names = BINDINGS.map((b) => b.constant);
+    for (const key of ['ready', 'stop', 'usage', 'notReady', 'installFailed', 'verifyFailed', 'unsupported']) {
+      assert.ok(names.includes(`doctor-exit:${key}`), `registry must bind doctor-exit:${key}`);
+    }
+    for (const token of ['ready-verified', 'ready-assumed', 'no-deployment', 'missing-binaries', 'present-unverified', 'handoff-required', 'install-failed', 'verify-failed', 'indeterminate', 'root-unproven', 'unsupported-platform', 'unknown-pm', 'untrusted-path']) {
+      assert.ok(names.includes(`doctor-status:${token}`), `registry must bind doctor-status:${token}`);
+    }
+    const doctorBindings = BINDINGS.filter((b) => b.constant.startsWith('doctor-'));
+    assert.ok(doctorBindings.every((b) => b.files.includes('references/modes/autonomy-doctor.md')));
+    // The D2 trusted-dir allowlist is bound as the joined LITERAL — a widened allowlist (e.g.
+    // +/usr/local/bin) makes the doc token drift and this pin plus the gate go red.
+    const trusted = BINDINGS.find((b) => b.constant === 'doctor-trusted-dirs');
+    assert.equal(trusted.token, '/usr/bin:/bin:/usr/sbin:/sbin');
+  });
 });
 
 describe('doc-parity CLI surface', () => {

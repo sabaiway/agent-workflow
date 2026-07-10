@@ -4,6 +4,53 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.44.0 — Autonomy provisioner: the consent-gated sandbox doctor (AD-044 Plan 2)
+
+A **feature** release (kit-only; memory/engine/bridges unchanged, lineage head stays `2.0.0`). New
+routable GUARDED mode **`autonomy-doctor`** — the cross-platform system provisioner that makes the
+AD-044 sandbox actually initializable on consumer hosts: detect → consent-gated install → verify →
+loud degrade, over the locked matrix (macOS Seatbelt built-in / Linux + WSL2 `bwrap` + `socat` /
+native Windows → WSL2 redirect). This is the kit's FIRST tool that can run a privileged command,
+so the consent and honesty contract is the release:
+
+- **Three explicit lanes.** Flagless = FS-only preview (ZERO subprocesses): the diagnosis, the
+  exact install command it WOULD run, and the exact `--apply <pm>:<pkg,…>` consent line — never a
+  "ready" claim (Linux flagless is `present-unverified`, exit 3, by design). `--verify` = the only
+  source of a Linux "ready (verified)": a pinned bwrap user-namespace smoke + `socat -V`.
+  `--apply <pm>:<pkgs>` = consent bound to the previewed tuple — any mismatch vs the re-derived
+  plan refuses (exit 2) and runs nothing; a successful install auto-verifies.
+- **Privileged execution, closed world.** Every executed token — package manager, sudo, and the
+  binary `env` execs — resolves to an ABSOLUTE path inside the fixed trusted-dir allowlist
+  `/usr/bin:/bin:/usr/sbin:/sbin` (`/usr/local/bin` deliberately excluded); a PATH-shadowed
+  binary triggers a loud advisory, never execution. Frozen 4-family map: apt via the
+  env-trampoline (`sudo /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y …`, so
+  non-interactivity survives sudo `env_reset`) · dnf `-y` · pacman `--needed --noconfirm` ·
+  apk `add`; package names come from a frozen internal map — no repo/config/user input ever
+  enters the command line. Unknown PM or untrusted location → stated degrade (exit 6), never a
+  guess.
+- **Sudo boundary, honestly.** `sudo -n true` preflight; passwordless success is LOUDLY stated;
+  no TTY + a password required → the ENFORCED print-handoff (the doctor runs NOTHING and prints
+  the exact command to run in your own terminal) — the designed primary path under an agent
+  harness. Root callers (`euid 0` / `SUDO_UID`) are refused a "verified" claim — a green smoke
+  under root can't prove unprivileged user namespaces (`root-unproven`, exit 5).
+- **Frozen output contract.** Exported EXIT/status table (Linux exit 0 ONLY via the verify
+  oracle) + a machine-parseable summary LAST line in every diagnosis outcome (`--help` prints the
+  help text alone); `doc-parity` bindings pin the contract to the mode doc. The docs/ai
+  deployment gate runs after arg parsing, ahead of every diagnosis/verify/apply lane; the
+  `.workflow-version` stamp gate is a stated EXEMPTION (the doctor mutates the OS, never
+  lineage-bound repo content).
+- **Host-proven where it counts.** The bwrap smoke fixture and the apt env-trampoline descriptor
+  are host-proven (the trampoline crossed a real sudo boundary with zero apt prompts); a fresh
+  Claude Code session on the newly-ready host shows the series payoff — an ad-hoc command's
+  prompt-delta drops 1 → 0 while the commit/push/publish red-lines still ask (content-scoped
+  `ask` rules pierce `autoAllowBashIfSandboxed`; the render's exact rule form is load-bearing)
+  and network egress still prompts. The sandbox is picked up at session START — the doctor's
+  success output always states the restart step.
+- **Registration + guards.** The GUARDED legend now reads "consent-gated destructive/privileged
+  actions (dry-run-first)"; the velocity render's sandbox-unavailable degrade message points at
+  the doctor; the doctor stays OUTSIDE every velocity auto-approve tier; tarball sentinel
+  143 → 145 (`tools/autonomy-doctor.mjs` + `references/modes/autonomy-doctor.md`).
+
 ## 1.43.0 — Closed-world gate seeding: lifecycle hooks die by construction (AD-052)
 
 A **feature** release (kit-only; memory/engine/bridges unchanged, lineage head stays `2.0.0`). The

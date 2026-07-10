@@ -838,7 +838,8 @@ const AUTONOMY_RESIDUAL_NOTICE =
 // isExecutableFile — true iff `p` is a REGULAR file with an execute bit (statSync FOLLOWS a symlink, so
 // a symlinked binary resolves to its target). A directory or a non-executable file NAMED bwrap/socat
 // must NOT count as the binary (else the loud sandbox-unavailable degrade would be wrongly suppressed).
-const isExecutableFile = (p) => {
+// Exported (AD-044 Plan 2): autonomy-doctor.mjs promotes this to its trusted-dir execution gate.
+export const isExecutableFile = (p) => {
   try {
     const st = statSync(p);
     return st.isFile() && (st.mode & 0o111) !== 0;
@@ -929,7 +930,7 @@ export const renderAutonomySettings = (resolved, probe) => {
   // sandbox availability (Step 3.3 probe) — a LOUD degrade where the OS can't sandbox; the red-lines +
   // defaultMode still land (they are permission rules, sandbox-independent).
   if (!probe.available) {
-    degrades.push(`sandbox UNAVAILABLE on this host (${probe.reason}) — claude renders the sandbox block but WARNS and runs UNSANDBOXED: ad-hoc scripts will still PROMPT and network/fs confinement is NOT enforced until it is available (Plan 2 offers to install the missing dependency). The red-lines + defaultMode still apply. failIfUnavailable is left UNSET so the session is never bricked.`);
+    degrades.push(`sandbox UNAVAILABLE on this host (${probe.reason}) — claude renders the sandbox block but WARNS and runs UNSANDBOXED: ad-hoc scripts will still PROMPT and network/fs confinement is NOT enforced until it is available (run /agent-workflow-kit autonomy-doctor to diagnose and, with your consent, install the missing dependency). The red-lines + defaultMode still apply. failIfUnavailable is left UNSET so the session is never bricked.`);
   }
   return { level, activities: resolved.activities, sandbox, defaultMode, ask, deny, notes, degrades };
 };
