@@ -6,6 +6,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // it never imports the policy fs-writer (autonomy-write.mjs) — the render owns the settings file, not
 // the policy file.
 import { AUTONOMY_REL, loadAutonomy, resolveAutonomy, COMMAND_REDLINES } from './autonomy-config.mjs';
+// The bridge-wrappers tier's placement probe (AD-044 Plan 4, Decision 2): a tier entry derives ONLY
+// for a PLACED bridge wrapper — findOnPath is the same read-only PATH scan the backend detector uses.
+import { findOnPath } from './detect-backends.mjs';
 
 // Velocity-profile core + writer: a fixed, audited read-only allowlist that an onboarding step seeds
 // into `.claude/settings.json` so routine read-only commands stop idling on approval prompts.
@@ -156,6 +159,71 @@ const KIT_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const KIT_TOOL_INVOKER = 'node';
 const RUN_GATES_CWD_FLAG = '--cwd';
 
+// ── the opt-in --bridge-tier (AD-044 Plan 4, Decision 2) ────────────────────────────────
+// The FROZEN membership source: review-role wrapper NAMES only, spelled bare — that is how the
+// wrappers are invoked (setup-backends places them as symlinks in ~/.local/bin). Roles come from
+// THIS constant, never from the detector's wrapperCmds (which carries no role labels):
+// codex-exec (execution role) and agy-run (probe role) are deliberately ABSENT — delegated
+// execution keeps its human prompt; the velocity pain this tier closes is council REVIEW runs.
+export const BRIDGE_REVIEW_WRAPPERS = Object.freeze(['codex-review', 'agy-review']);
+// Only the `code` review mode is auto-allowed (codex R2, Segment A): a bare `Bash(<wrapper>:*)`
+// prefix would also cover the plan/diff file-argument modes, whose targets can point OUTSIDE the
+// repo — the tier's stated surface is the unattended council CODE review, so the seeded prefix is
+// `<wrapper> code`. Plan/diff invocations keep their prompt.
+export const BRIDGE_REVIEW_MODE = 'code';
+// The grounding pre-step tool (the reviews' facts assembler). Its tier entry is seeded in the
+// EXACT byte-form the procedures advisor renders — a DOUBLE-QUOTED absolute path (deliberate
+// there: a skill dir with a space must stay copy-pasteable) — so seeded↔rendered byte-parity
+// holds; the screen accepts the quoted form ONLY for this one tool (a tier-scoped acceptance,
+// never a general quote allowance).
+export const KIT_GROUNDING_TOOL = 'tools/grounding.mjs';
+const WRAPPER_PLACED = 'present';
+
+// The quoted-grounding token: "<seedable-abs-path>/tools/grounding.mjs" — quotes stripped, the
+// inner path must itself be seedable and end on the grounding tail. No other node tool may ride
+// this class (a NEGATIVE screen pin).
+const isQuotedGroundingToken = (token) => {
+  if (typeof token !== 'string' || token.length < 3 || !token.startsWith('"') || !token.endsWith('"')) return false;
+  const inner = token.slice(1, -1);
+  return isSeedablePathToken(inner) && inner.endsWith(`/${KIT_GROUNDING_TOOL}`);
+};
+
+/**
+ * Derive the opt-in bridge-wrappers tier: one bare-name wildcard allow rule per PLACED review
+ * wrapper (the frozen constant is the membership source; placement is a probe, never a role
+ * source), the SAME wrapper names for sandbox.excludedCommands (the harness runs an excluded
+ * command OUTSIDE the sandbox, so a plain allowlisted invocation needs no sandbox-bypass
+ * approval — the zero-prompt wiring), and the grounding pre-step rule in its rendered quoted
+ * byte-form (derived only when ≥1 review bridge is placed; an unseedable kit path is a stated
+ * skip). An absent bridge is a stated skip — its entry never derives.
+ */
+export const deriveBridgeTierAllowlist = ({ findWrapper, groundingAbsPath } = {}) => {
+  const probe = findWrapper ?? ((cmd) => findOnPath(cmd).state === WRAPPER_PLACED);
+  const placed = BRIDGE_REVIEW_WRAPPERS.filter((cmd) => probe(cmd));
+  const skips = BRIDGE_REVIEW_WRAPPERS.filter((cmd) => !placed.includes(cmd)).map((cmd) => ({
+    entry: cmd,
+    reason: `bridge wrapper "${cmd}" is not placed on PATH — its allow rule is not seeded (place the bridge with /agent-workflow-kit setup, then re-run)`,
+  }));
+  const allow = placed.map((cmd) => `Bash(${cmd} ${BRIDGE_REVIEW_MODE}:*)`);
+  const excludedCommands = [...placed];
+  // The grounding pre-step exists FOR agy (its grounded --facts reviews; codex grounds natively via
+  // the AGENTS.md auto-merge) — a codex-only install must not auto-allow an unused writer (codex R9).
+  if (placed.includes('agy-review')) {
+    // groundingAbsPath is a TEST seam only (an unseedable kit path — spaces — is not constructible
+    // from a test against the real checkout); production callers never pass it.
+    const groundingAbs = groundingAbsPath ?? join(KIT_ROOT, KIT_GROUNDING_TOOL);
+    if (isSeedablePathToken(groundingAbs)) {
+      allow.push(`Bash(${KIT_TOOL_INVOKER} "${groundingAbs}":*)`);
+    } else {
+      skips.push({
+        entry: groundingAbs,
+        reason: 'the kit path is not a POSIX absolute path free of spaces/metacharacters/quoting — the grounding pre-step rule is not seeded (its prompt stays); add a hand-picked entry if you accept the spelling',
+      });
+    }
+  }
+  return Object.freeze({ allow: Object.freeze(allow), excludedCommands: Object.freeze(excludedCommands), skips: Object.freeze(skips), placed: Object.freeze(placed) });
+};
+
 // Characters that make a pattern NOT a single read-only command, so the screen rejects them.
 // Per current Claude Code permission semantics: the recognized command SEPARATORS are
 // `&& || ; | |& &` plus newline (each segment must be independently permitted, so a chained
@@ -228,6 +296,7 @@ const FLAG_DRY_RUN = '--dry-run';
 const FLAG_APPLY = '--apply';
 const FLAG_ACCEPT_EDITS = '--accept-edits';
 const FLAG_KIT_TOOLS = '--kit-tools';
+const FLAG_BRIDGE_TIER = '--bridge-tier';
 const FLAG_AUTONOMY = '--autonomy';
 const FLAG_CHECK = '--check';
 const FLAG_CWD = '--cwd';
@@ -244,7 +313,7 @@ const MUTATING_ALLOW_COMMAND_PATTERN = /^(?:git\s+(?:commit|push)|npm\s+publish)
 const RESIDUAL_NOTICE =
   'residual: seeded read-only allow entries are a trust-posture convenience, NOT a sandbox; settings-level rules cannot inspect runtime redirection/command-substitution/--output writes; commit/push/publish are never allowlisted (a DIRECT invocation still ASKs, but the runtime residual is not closed here); the residual guard ships as the opt-in PreToolUse hook — Mode: hook (/agent-workflow-kit hook). floor (never auto-approved, with or without the tier): every writer --apply/--write/--yes still prompts; clobber-protection STOPs still stop; the three release asks (commit/push/publish) stay maintainer-owned.';
 
-const USAGE = `usage: velocity-profile [--dry-run | --apply] [--kit-tools] [--accept-edits] [--cwd <dir>] [--help]
+const USAGE = `usage: velocity-profile [--dry-run | --apply] [--kit-tools] [--bridge-tier] [--accept-edits] [--cwd <dir>] [--help]
        velocity-profile --autonomy [--apply] [--cwd <dir>]        (render the autonomy policy)
        velocity-profile --autonomy --check [--cwd <dir>]          (read-only drift gate)
 
@@ -254,12 +323,19 @@ Default is --dry-run. --apply writes; --accept-edits only sets defaultMode when 
 absolute path (args wildcard), run-gates.mjs as ONE exact project-root-pinned byte-string
 (project-exec - it runs YOUR declared gates.json), and the writers' exact arg-free dry-run
 preview byte-strings. Never touches settings.local.json.
+--bridge-tier (own consent) seeds the bridge REVIEW wrappers' CODE mode for PLACED bridges
+(codex-review code, agy-review code - never the execution/probe wrappers, never plan/diff modes)
++ the quoted grounding pre-step rule, and the wrapper names into sandbox.excludedCommands (they
+need network - the harness runs them outside the sandbox). Consented posture: an auto-allowed
+review wrapper runs UNATTENDED and sends the assembled repo payload to its subscription backend
+(see the printed tier notice).
 
 --autonomy renders docs/ai/autonomy.json into the settings blocks it OWNS — the sandbox block +
 permissions.ask/deny red-lines + permissions.defaultMode. POLICY-ONLY: never seeds the allowlist and
 leaves permissions.allow untouched. Preview by default; --apply writes; --check is a read-only drift
-gate (exit 1 on drift). --autonomy cannot combine with --accept-edits or --kit-tools (allowlist-mode
-flags). Refuses an absent policy (seed one first with set-autonomy). Never touches settings.local.json.`;
+gate (exit 1 on drift). --autonomy cannot combine with --accept-edits, --kit-tools, or --bridge-tier
+(allowlist-mode flags). Refuses an absent policy (seed one first with set-autonomy). Never touches
+settings.local.json.`;
 
 const fail = (exitCode, message) => Object.assign(new Error(message), { exitCode });
 
@@ -327,6 +403,12 @@ const validateSettingsShape = (data, relPath) => {
   }
   if (data.sandbox !== undefined && !isJsonObject(data.sandbox)) {
     throw makeVelocityProfileError(VELOCITY_MALFORMED, `${relPath}: sandbox must be a JSON object`);
+  }
+  // The bridge tier merges into sandbox.excludedCommands — a malformed (non-array) value is a STOP
+  // with ZERO writes (the same fail-closed posture as permissions.allow above), never a silent
+  // treat-as-empty overwrite (codex R1, Segment A).
+  if (isJsonObject(data.sandbox) && data.sandbox.excludedCommands !== undefined && !Array.isArray(data.sandbox.excludedCommands)) {
+    throw makeVelocityProfileError(VELOCITY_MALFORMED, `${relPath}: sandbox.excludedCommands must be an array`);
   }
   return data;
 };
@@ -464,13 +546,31 @@ const isKitToolShapedCommand = (entry) => {
   return cmd !== undefined && tokenizeCommand(cmd)[0] === KIT_TOOL_INVOKER;
 };
 
-const collectPreExistingNonReadonly = (sources, derivedTier = []) =>
+// A bridge-tier-SHAPED entry (a bare frozen-tier wrapper wildcard, or the quoted-grounding form)
+// passes the shape screen — but only the entries the tier derives for THIS host (its PLACED
+// bridges + this kit's grounding path) are audited; an absent-bridge or foreign-path spelling
+// stays flagged for hand review (the same derived-set discipline as the kit-tools tier).
+const isBridgeTierShapedCommand = (entry) => {
+  const cmd = getBashAllowCommand(entry);
+  if (cmd === undefined) return false;
+  const tokens = tokenizeCommand(cmd);
+  return (
+    BRIDGE_REVIEW_WRAPPERS.includes(tokens[0]) ||
+    (tokens[0] === KIT_TOOL_INVOKER && tokens.length === 2 && isQuotedGroundingToken(tokens[1]))
+  );
+};
+
+const collectPreExistingNonReadonly = (sources, derivedTier = [], derivedBridgeAllow = []) =>
   sources.flatMap(({ source, data }) =>
     getAllowEntries(data)
       .filter((entry) => typeof entry === 'string' && BASH_PERMISSION_PATTERN.test(entry))
       .filter(
         (entry) =>
-          !screenAllowlistEntry(entry) || (isKitToolShapedCommand(entry) && !derivedTier.includes(entry)),
+          !screenAllowlistEntry(entry) ||
+          // The quoted grounding rule is node-shaped AND bridge-tier-shaped: membership in EITHER
+          // derived set exempts it — the advisory never flags an entry a tier itself seeds.
+          (isKitToolShapedCommand(entry) && !derivedTier.includes(entry) && !derivedBridgeAllow.includes(entry)) ||
+          (isBridgeTierShapedCommand(entry) && !derivedBridgeAllow.includes(entry)),
       )
       .map((entry) => ({ source, entry })),
   );
@@ -488,7 +588,7 @@ const assertTargetWritable = (absPath, deps = {}) => {
 
 const formatJson = (data, eol) => `${JSON.stringify(data, null, SETTINGS_JSON_INDENT).replace(JSON_NEWLINE_PATTERN, eol)}${eol}`;
 
-const mergeProjectSettings = (projectData, toAdd, acceptEdits) => {
+const mergeProjectSettings = (projectData, toAdd, acceptEdits, excludedToAdd = []) => {
   const base = projectData ?? {};
   const permissions = getPermissions(base);
   const allow = getAllowEntries(base);
@@ -498,7 +598,16 @@ const mergeProjectSettings = (projectData, toAdd, acceptEdits) => {
     allow: mergedAllow,
     ...(acceptEdits === true ? { defaultMode: ACCEPT_EDITS_MODE } : {}),
   };
-  return { ...base, permissions: mergedPermissions };
+  // The bridge tier's second surface: sandbox.excludedCommands (merge-don't-clobber — foreign
+  // entries and sandbox sub-keys preserved; only the tier's wrapper names append, deduped). The
+  // flagless/kit-tools paths pass no entries, so the sandbox block stays untouched for them.
+  const existingSandbox = isJsonObject(base.sandbox) ? base.sandbox : {};
+  const existingExcluded = Array.isArray(existingSandbox.excludedCommands) ? existingSandbox.excludedCommands : [];
+  const newExcluded = excludedToAdd.filter((cmd) => !existingExcluded.includes(cmd));
+  const sandboxBlock = newExcluded.length
+    ? { sandbox: { ...existingSandbox, excludedCommands: [...existingExcluded, ...newExcluded] } }
+    : {};
+  return { ...base, permissions: mergedPermissions, ...sandboxBlock };
 };
 
 const formatEntryList = (entries) => (entries.length ? entries.map((entry) => `  - ${entry}`) : ['  - (none)']);
@@ -521,6 +630,25 @@ const formatKitTier = (result) =>
         ...formatEntryList(result.tierToAdd),
         `already present (tier): ${result.tierAlreadyPresent.length}`,
         KIT_TIER_NOTICE,
+      ]
+    : [];
+
+// The bridge tier's honest posture, printed on EVERY --bridge-tier run (test-pinned — the codex-R2
+// informed-consent resolution): the exfiltration surface is stated, never pretended away.
+export const KIT_BRIDGE_TIER_NOTICE =
+  'bridge-wrappers tier: seeds the REVIEW wrappers only, and only their CODE mode (`codex-review code`, `agy-review code` — never codex-exec/agy-run: delegated execution keeps its human prompt; never the plan/diff modes: their file arguments can point outside the repo, so they keep their prompt), each derived ONLY when its bridge is PLACED on PATH, plus the grounding pre-step rule in its rendered quoted byte-form. POSTURE (what this consent covers): an auto-allowed review wrapper runs UNATTENDED — it reads any repo file it is pointed at and sends the assembled payload to its subscription backend, and prefix rules cannot inspect arguments, so a code-mode argument that names a readable file (agy\'s --facts/--decided) rides the same consent — the same documented residual class as the autonomy red-line rules; that is the tier\'s PURPOSE (unattended council review runs) and its residual — tier entries get NO PreToolUse-hook coverage. The grounding entry\'s writer surface is bounded by grounding.mjs\'s OWN scratch-destination guard (a tracked or in-repo-not-ignored --out is refused by the tool). The wrapper names are ALSO seeded into sandbox.excludedCommands IN THE PROJECT settings.json (an exclusion only in settings.local.json was live-observed NOT to route — the wrapper then runs sandboxed and dies on a read-only HOME): the harness runs an excluded command OUTSIDE the sandbox (the wrappers need network), so a plain allowlisted invocation triggers no sandbox-bypass approval. INVOCATION SHAPE: a prefix rule matches only a PLAIN invocation starting with the wrapper name — an env-var prefix or a compound chain never matches (redirects are fine).';
+
+const formatBridgeTier = (result) =>
+  result.bridgeTier
+    ? [
+        `${result.wrote ? 'added' : 'would add'} bridge-wrappers tier allow entries: ${result.bridgeToAdd.length}`,
+        ...formatEntryList(result.bridgeToAdd),
+        `already present (bridge tier): ${result.bridgeAlreadyPresent.length}`,
+        `${result.wrote ? 'added' : 'would add'} sandbox.excludedCommands entries: ${result.excludedToAdd.length}`,
+        ...formatEntryList(result.excludedToAdd),
+        `already present (excludedCommands): ${result.excludedAlreadyPresent.length}`,
+        ...result.bridgeSkips.map((s) => `  skipped: ${s.reason}`),
+        KIT_BRIDGE_TIER_NOTICE,
       ]
     : [];
 
@@ -549,6 +677,7 @@ const formatVelocityProfileResult = (result) =>
     result.dryRun ? 'agent-workflow velocity profile - DRY RUN (no changes)' : 'agent-workflow velocity profile - APPLY',
     ...formatAllowlist(result),
     ...formatKitTier(result),
+    ...formatBridgeTier(result),
     formatDefaultMode(result),
     ...formatGateAdvisory(result.gateCandidates),
     ...formatPreExistingAdvisory(result.preExistingNonReadonly),
@@ -572,7 +701,15 @@ export const screenAllowlistEntry = (pattern) => {
     if (tokens[0] === NPM_COMMAND) return NPM_READONLY_SUBCOMMANDS.includes(getSubcommand(tokens));
     // Kit-tool wildcard class: `node <abs kit tool>` + args wildcard. run-gates is deliberately NOT
     // here (Decision 3: only its exact root-pinned form below — a wildcard would cover `--cwd <any>`).
-    if (tokens[0] === KIT_TOOL_INVOKER) return tokens.length === 2 && isKitToolPathToken(tokens[1], KIT_WILDCARD_TOOLS);
+    // The quoted-grounding form is the bridge tier's ONE quoted acceptance (never a general quote
+    // allowance): `node "<abs>/tools/grounding.mjs"` exactly.
+    if (tokens[0] === KIT_TOOL_INVOKER) {
+      return tokens.length === 2 && (isKitToolPathToken(tokens[1], KIT_WILDCARD_TOOLS) || isQuotedGroundingToken(tokens[1]));
+    }
+    // Bridge-review-wrapper class (AD-044 Plan 4): EXACTLY `<frozen-tier wrapper> code` + the args
+    // wildcard — never codex-exec/agy-run, never the bare or plan/diff spellings (those file-argument
+    // modes can read outside the repo; codex R2).
+    if (BRIDGE_REVIEW_WRAPPERS.includes(tokens[0])) return tokens.length === 2 && tokens[1] === BRIDGE_REVIEW_MODE;
     return isSingleShellToken(wildcardCmd, tokens) && SHELL_READONLY.includes(wildcardCmd);
   }
   const exactCmd = getBashExactCommand(pattern);
@@ -721,12 +858,22 @@ export const preflightVelocityProfile = ({ cwd }, deps = {}) => {
       return [];
     }
   })();
+  // Same defensive posture for the bridge tier: a probe failure falls back to flagging every
+  // bridge-shaped entry — over-flagging is the safe direction for a read-only advisory.
+  const derivedBridge = (() => {
+    try {
+      return deriveBridgeTierAllowlist({ findWrapper: deps.findWrapper }).allow;
+    } catch {
+      return [];
+    }
+  })();
   const preExistingNonReadonly = collectPreExistingNonReadonly(
     [
       { source: SETTINGS_FILE, data: projectSettings.data },
       { source: SETTINGS_LOCAL_FILE, data: localSettings.data },
     ],
     derivedTier,
+    derivedBridge,
   );
   const gateCandidates = discoverGateCandidates(readPackageJson(projectDir, deps));
 
@@ -744,20 +891,40 @@ export const preflightVelocityProfile = ({ cwd }, deps = {}) => {
   };
 };
 
-export const planVelocityProfile = (preflight, { acceptEdits, kitTools } = {}) => {
+export const planVelocityProfile = (preflight, { acceptEdits, kitTools, bridgeTier, findWrapper } = {}) => {
   const projectAllow = getAllowEntries(preflight.projectSettings?.data);
   const toAdd = UNIVERSAL_READONLY_ALLOWLIST.filter((entry) => !projectAllow.includes(entry));
   const alreadyPresent = UNIVERSAL_READONLY_ALLOWLIST.filter((entry) => projectAllow.includes(entry));
   const tier = kitTools === true ? deriveKitToolsAllowlist({ projectDir: preflight.cwd }) : [];
   const tierToAdd = tier.filter((entry) => !projectAllow.includes(entry));
   const tierAlreadyPresent = tier.filter((entry) => projectAllow.includes(entry));
-  return { toAdd, alreadyPresent, tierToAdd, tierAlreadyPresent, kitTools: kitTools === true, setsDefaultMode: acceptEdits === true };
+  const bridge = bridgeTier === true ? deriveBridgeTierAllowlist({ findWrapper }) : { allow: [], excludedCommands: [], skips: [], placed: [] };
+  const bridgeToAdd = bridge.allow.filter((entry) => !projectAllow.includes(entry));
+  const bridgeAlreadyPresent = bridge.allow.filter((entry) => projectAllow.includes(entry));
+  const existingSandbox = isJsonObject(preflight.projectSettings?.data?.sandbox) ? preflight.projectSettings.data.sandbox : {};
+  const existingExcluded = Array.isArray(existingSandbox.excludedCommands) ? existingSandbox.excludedCommands : [];
+  const excludedToAdd = bridge.excludedCommands.filter((cmd) => !existingExcluded.includes(cmd));
+  const excludedAlreadyPresent = bridge.excludedCommands.filter((cmd) => existingExcluded.includes(cmd));
+  return {
+    toAdd,
+    alreadyPresent,
+    tierToAdd,
+    tierAlreadyPresent,
+    kitTools: kitTools === true,
+    bridgeTier: bridgeTier === true,
+    bridgeToAdd,
+    bridgeAlreadyPresent,
+    bridgeSkips: bridge.skips,
+    excludedToAdd,
+    excludedAlreadyPresent,
+    setsDefaultMode: acceptEdits === true,
+  };
 };
 
-export const writeVelocityProfile = ({ cwd, acceptEdits = false, dryRun = true, kitTools = false } = {}, deps = {}) => {
+export const writeVelocityProfile = ({ cwd, acceptEdits = false, dryRun = true, kitTools = false, bridgeTier = false } = {}, deps = {}) => {
   const projectDir = cwd ?? deps.cwd ?? process.cwd();
   const preflight = preflightVelocityProfile({ cwd: projectDir }, deps);
-  const plan = planVelocityProfile(preflight, { acceptEdits, kitTools });
+  const plan = planVelocityProfile(preflight, { acceptEdits, kitTools, bridgeTier, findWrapper: deps.findWrapper });
   // Drift guard runs on BOTH dry-run and apply (so a dry-run faithfully predicts the apply) and
   // validates the FULL audited core, not just the to-add delta — a drifted core entry is caught even
   // when it is already present in the user's allow list (and toAdd is a subset of the core anyway).
@@ -767,6 +934,13 @@ export const writeVelocityProfile = ({ cwd, acceptEdits = false, dryRun = true, 
   if (kitTools === true) {
     const tier = deriveKitToolsAllowlist({ projectDir });
     validateProfile(tier, [...UNIVERSAL_READONLY_ALLOWLIST, ...tier]);
+  }
+  // A --bridge-tier run validates the DERIVED bridge entries the same way — the third audit point
+  // (Decision 2): every seeded bridge entry passes the screen AND sits in the audited set, so the
+  // flagless advisory can never flag an entry the tier itself seeded.
+  if (bridgeTier === true) {
+    const bridge = deriveBridgeTierAllowlist({ findWrapper: deps.findWrapper });
+    validateProfile(bridge.allow, [...UNIVERSAL_READONLY_ALLOWLIST, ...bridge.allow]);
   }
   const resultBase = { ...preflight, ...plan };
   if (dryRun) return { wrote: false, dryRun: true, ...resultBase };
@@ -781,7 +955,12 @@ export const writeVelocityProfile = ({ cwd, acceptEdits = false, dryRun = true, 
   const fs = fsDeps(deps);
   const settingsPath = join(projectDir, SETTINGS_FILE);
   if (preflight.claudeDirAbsent) fs.mkdir(join(projectDir, CLAUDE_DIR), { recursive: true });
-  const merged = mergeProjectSettings(preflight.projectSettings.data, [...plan.toAdd, ...plan.tierToAdd], acceptEdits);
+  const merged = mergeProjectSettings(
+    preflight.projectSettings.data,
+    [...plan.toAdd, ...plan.tierToAdd, ...plan.bridgeToAdd],
+    acceptEdits,
+    plan.excludedToAdd,
+  );
   fs.writeFile(settingsPath, formatJson(merged, preflight.projectSettings.eol ?? LF), UTF8);
   return { wrote: true, dryRun: false, settingsPath, ...resultBase };
 };
@@ -1002,8 +1181,18 @@ const collectRedlineBypass = (sources) =>
 // escape the sandbox entirely. The render owns only enabled/autoAllow and preserves other sandbox
 // sub-keys (merge-don't-clobber, never a silent clobber of the user's sandbox tuning), so a pre-existing
 // weakening sub-key is REPORTED loudly (remove it by hand) — never silently carried as security.
-const collectSandboxWeakenings = (sources) =>
-  sources.flatMap(({ source, data }) => {
+const collectSandboxWeakenings = (sources) => {
+  // Tier-known PROOF (codex R4): an excludedCommands entry is downgraded to a note ONLY when it is
+  // demonstrably the consented tier's own output — it lives in the PROJECT settings.json (the file
+  // the tier writes; a local-file exclusion is never tier output) AND the matching derived
+  // code-mode allow rule is present there. A bare name match alone proves nothing.
+  const project = sources.find((s) => s.source === SETTINGS_FILE);
+  const projectAllow = getAllowEntries(project?.data);
+  const isTierKnownExclusion = (source, cmd) =>
+    source === SETTINGS_FILE &&
+    BRIDGE_REVIEW_WRAPPERS.includes(cmd) &&
+    projectAllow.includes(`Bash(${cmd} ${BRIDGE_REVIEW_MODE}:*)`);
+  return sources.flatMap(({ source, data }) => {
     const sb = isJsonObject(data?.[SANDBOX_KEY]) ? data[SANDBOX_KEY] : {};
     const out = [];
     const net = isJsonObject(sb.network) ? sb.network : {};
@@ -1018,10 +1207,22 @@ const collectSandboxWeakenings = (sources) =>
       out.push({ source, key: `${SANDBOX_KEY}.allowUnsandboxedCommands`, weakens: 'every sandbox red-line', detail: 'commands may run unsandboxed' });
     }
     if (Array.isArray(sb.excludedCommands) && sb.excludedCommands.length) {
-      out.push({ source, key: `${SANDBOX_KEY}.excludedCommands`, weakens: 'every sandbox red-line', detail: `${sb.excludedCommands.length} command(s) run UNSANDBOXED (network/fs confinement not applied to them)` });
+      // The bridge tier's OWN wrapper names are tier-known ONLY with the proof above (the
+      // --bridge-tier consent covers exactly this posture — the wrappers need network and
+      // genuinely run unsandboxed); then they are an informational note, never a weakening flag
+      // (the Decision-2 self-consistency bar). Every OTHER excluded command — hand-added names,
+      // local-file exclusions, tier names without their allow rules — stays a loud weakening.
+      const tierKnown = sb.excludedCommands.filter((c) => isTierKnownExclusion(source, c));
+      const foreign = sb.excludedCommands.filter((c) => !tierKnown.includes(c));
+      if (foreign.length) {
+        out.push({ source, key: `${SANDBOX_KEY}.excludedCommands`, weakens: 'every sandbox red-line', detail: `${foreign.length} command(s) run UNSANDBOXED (network/fs confinement not applied to them)${tierKnown.length ? `; ${tierKnown.length} bridge-review wrapper exclusion(s) are tier-known and not flagged` : ''}` });
+      } else if (tierKnown.length) {
+        out.push({ source, key: `${SANDBOX_KEY}.excludedCommands`, weakens: null, tierKnown: true, detail: `${tierKnown.length} bridge-review wrapper exclusion(s) (${tierKnown.join(', ')}) — tier-known: the consented bridge-wrappers tier runs them outside the sandbox (network), and its allow rules are present in the project settings` });
+      }
     }
     return out;
   });
+};
 
 // collectLocalMasks(localData, render) → the render-owned keys a settings.local.json value MASKS
 // (local > project, so a differing local value defeats the rendered one silently). The render owns
@@ -1071,7 +1272,8 @@ export const formatAutonomyResult = (r) => {
     lines.push(`  ⚠ DEGRADE: ${b.source} has a pre-existing allow entry ${b.entry} that would BYPASS the rendered red-line(s) ${b.redlines.join('/')} (a matching allow rule AUTO-APPROVES the command, defeating ask/deny) — remove it by hand; this render never touches permissions.allow.`);
   }
   for (const w of r.sandboxWeakenings ?? []) {
-    lines.push(`  ⚠ DEGRADE: ${w.source} has ${w.key} (${w.detail}), which WEAKENS the rendered ${w.weakens} red-line — the render preserves your sandbox tuning (never clobbers it), so remove it by hand if you want the red-line fully enforced.`);
+    if (w.tierKnown) lines.push(`  note: ${w.source} has ${w.key} (${w.detail}).`);
+    else lines.push(`  ⚠ DEGRADE: ${w.source} has ${w.key} (${w.detail}), which WEAKENS the rendered ${w.weakens} red-line — the render preserves your sandbox tuning (never clobbers it), so remove it by hand if you want the red-line fully enforced.`);
   }
   lines.push(AUTONOMY_RESIDUAL_NOTICE);
   if (!r.wrote) lines.push(`re-run with ${FLAG_APPLY} to write .claude/settings.json (only the render-owned blocks change).`);
@@ -1204,6 +1406,7 @@ export const parseArgs = (argv) => {
       if (arg === FLAG_APPLY) return { ...state, apply: true };
       if (arg === FLAG_ACCEPT_EDITS) return { ...state, acceptEdits: true };
       if (arg === FLAG_KIT_TOOLS) return { ...state, kitTools: true };
+      if (arg === FLAG_BRIDGE_TIER) return { ...state, bridgeTier: true };
       if (arg === FLAG_AUTONOMY) return { ...state, autonomy: true };
       if (arg === FLAG_CHECK) return { ...state, check: true };
       if (arg === FLAG_CWD) {
@@ -1214,7 +1417,7 @@ export const parseArgs = (argv) => {
       if (arg.startsWith('-')) throw fail(EXIT_USAGE, `unknown flag: ${arg}`);
       throw fail(EXIT_USAGE, `unexpected argument: ${arg}`);
     },
-    { help: false, dryRunFlag: false, apply: false, acceptEdits: false, kitTools: false, autonomy: false, check: false, cwd: undefined, skipNext: false },
+    { help: false, dryRunFlag: false, apply: false, acceptEdits: false, kitTools: false, bridgeTier: false, autonomy: false, check: false, cwd: undefined, skipNext: false },
   );
 
   if (parsed.dryRunFlag && parsed.apply) throw fail(EXIT_USAGE, `${FLAG_DRY_RUN} and ${FLAG_APPLY} cannot be used together`);
@@ -1224,6 +1427,7 @@ export const parseArgs = (argv) => {
   // Reject the mix LOUDLY rather than silently ignoring a flag.
   if (parsed.autonomy && parsed.acceptEdits) throw fail(EXIT_USAGE, `${FLAG_AUTONOMY} sets ${DEFAULT_MODE_KEY} from the policy — ${FLAG_ACCEPT_EDITS} (an allowlist-mode flag) cannot be combined with it`);
   if (parsed.autonomy && parsed.kitTools) throw fail(EXIT_USAGE, `${FLAG_KIT_TOOLS} is an allowlist-mode flag — it cannot be combined with ${FLAG_AUTONOMY} (a policy-only render)`);
+  if (parsed.autonomy && parsed.bridgeTier) throw fail(EXIT_USAGE, `${FLAG_BRIDGE_TIER} is an allowlist-mode flag — it cannot be combined with ${FLAG_AUTONOMY} (a policy-only render)`);
   if (parsed.check && !parsed.autonomy) throw fail(EXIT_USAGE, `${FLAG_CHECK} is only valid with ${FLAG_AUTONOMY}`);
   if (parsed.check && parsed.apply) throw fail(EXIT_USAGE, `${FLAG_CHECK} is read-only — it cannot be combined with ${FLAG_APPLY}`);
   return {
@@ -1232,6 +1436,7 @@ export const parseArgs = (argv) => {
     apply: parsed.apply,
     acceptEdits: parsed.acceptEdits,
     kitTools: parsed.kitTools,
+    bridgeTier: parsed.bridgeTier,
     autonomy: parsed.autonomy,
     check: parsed.check,
     cwd: parsed.cwd,
@@ -1261,7 +1466,7 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
       return EXIT_OK;
     }
     const result = writeVelocityProfile(
-      { cwd, acceptEdits: args.acceptEdits, dryRun: args.dryRun, kitTools: args.kitTools },
+      { cwd, acceptEdits: args.acceptEdits, dryRun: args.dryRun, kitTools: args.kitTools, bridgeTier: args.bridgeTier },
       deps,
     );
     log(formatVelocityProfileResult(result));

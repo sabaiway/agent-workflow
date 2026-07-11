@@ -414,6 +414,8 @@ Usage:
   node review-ledger-write.mjs record   --json '<round-payload>' [--from-receipts] [--cwd <dir>]
   node review-ledger-write.mjs classify --json '<triage-payload>'   [--cwd <dir>]
   node review-ledger-write.mjs override --json '<override-payload>' [--cwd <dir>]
+  (every verb also accepts --json @<file> — the payload read from a file, keeping the command
+   line PLAIN: an inline JSON argv falls outside plain-invocation allow heuristics and prompts)
 
 Every verb operates on the current SEGMENT — (loop, base = git rev-parse HEAD): round numbers,
 caps, and teeth reset only when a gated commit moves base (schema 4; records carry base).
@@ -461,6 +463,18 @@ const parseArgs = (argv) => {
     } else if (a === '--json') {
       opts.json = argv[i + 1];
       if (opts.json === undefined) throw usageFail('--json needs a JSON payload');
+      // `--json @<file>` reads the payload from a file: a large inline JSON argv (quotes, braces)
+      // falls outside every plain-invocation allow heuristic and prompts, and hand-composing it on
+      // a command line is exactly the error-prone class --from-receipts exists to shrink — the
+      // file form keeps the COMMAND plain while the payload stays explicit (AD-044 Plan 4).
+      if (opts.json.startsWith('@')) {
+        const payloadPath = opts.json.slice(1);
+        try {
+          opts.json = readFileSync(payloadPath, 'utf8');
+        } catch (err) {
+          throw usageFail(`--json @${payloadPath}: unreadable payload file (${err.code ?? err.message})`);
+        }
+      }
       i += 1;
     } else if (a === '--from-receipts') {
       opts.fromReceipts = true;

@@ -13,8 +13,9 @@
 #
 # For `code`, the wrapper PRECOMPUTES the full change set (repo map, git status,
 # staged + unstaged diffs, untracked file CONTENTS — binaries skipped, symlinks
-# shown as targets, other non-regular paths skipped) and feeds it in, so codex does
-# not burn a run rediscovering it by roaming the filesystem. A clean tree exits 0
+# shown as targets, directories/vanished paths noted; never-committable untracked
+# paths (devices/FIFOs/sockets) are excluded from the review domain entirely) and
+# feeds it in, so codex does not burn a run rediscovering it. A clean tree exits 0
 # BEFORE a run is spent; an oversized payload goes via a git-dir-local temp file
 # (never silently truncated). Optionally (CODEX_REVIEW_SCHEMA=1) the findings come
 # back as a validated JSON object, with a raw-text fallback.
@@ -56,7 +57,9 @@ Receipt:
   side effect — a successful review appends one JSON receipt line to
   <git dir>/agent-workflow-review-receipts.jsonl (AW_REVIEW_RECEIPTS overrides): fingerprint =
   sha256 over the canonical uncommitted-state payload (staged diff + unstaged diff +
-  untracked-not-ignored contents — the review-payload domain) in code mode, the artifact-file
+  untracked-not-ignored contents — the review-payload domain; never-committable untracked paths —
+  character/block devices, FIFOs, sockets — are excluded from the domain entirely, untracked
+  symlinks/directories ride as name-only notes) in code mode, the artifact-file
   sha256 in plan mode; verdict parsed from the mandated literal verdict line (schema mode: the
   verdict field); always fresh:true (one-shot) + grounded:true (native AGENTS.md auto-merge,
   factsHash null); a write failure warns, never fails the review
@@ -292,11 +295,76 @@ sha256_stdin() {
   fi
 }
 
+# Never-committable untracked stat class (Decision 1, AD-044 Plan 4): character/block devices,
+# FIFOs, sockets — git content can never carry them, so they are excluded from the ENTIRE review
+# domain (fingerprint payload, assembled change set, status section, no-diff preflight). Symlinks
+# (checked first, never followed) and directories (an embedded repo lists as `dir/` — a committable
+# gitlink) STAY in the domain. The class surfaces where a sandbox injects device masks whose dirent
+# LIES to git's walk; the stat here sees the truth.
+is_never_committable_untracked() {
+  [[ ! -L "$1" && ( -p "$1" || -S "$1" || -c "$1" || -b "$1" ) ]]
+}
+
+# The ONE untracked-not-ignored walk every review-domain surface iterates (fingerprint payload,
+# assembled change set, no-diff preflight): NUL-delimited paths with the never-committable classes
+# filtered out.
+emit_untracked_paths_z() {
+  local path
+  while IFS= read -r -d '' path; do
+    if is_never_committable_untracked "$path"; then continue; fi
+    printf '%s\0' "$path"
+  done < <(git ls-files --others --exclude-standard -z)
+}
+
+# True when at least one untracked-not-ignored path survives the never-committable filter — the
+# no-diff preflight twin of the fingerprint walk (a tree whose ONLY untracked paths are
+# device/FIFO/socket masks reads clean).
+has_reviewable_untracked() {
+  [[ "$(emit_untracked_paths_z | wc -c)" -gt 0 ]]
+}
+
+# `git status --porcelain=v1` with never-committable untracked records dropped, so the assembled
+# review payload is byte-identical with and without a device mask (the fingerprint==payload domain
+# identity). Quote/space-safe: each filtered path's DISPLAYED line comes from git itself (never a
+# re-implemented C-quoting), then exact whole-line removal — only untracked (??) records can match
+# by construction. A mask nested in an otherwise-empty untracked directory leaves the collapsed
+# `?? dir/` record (a directory is not in the filtered class); the real sandbox masks land beside
+# tracked content, where status lists them individually.
+emit_status_porcelain_filtered() {
+  local path line drop=""
+  while IFS= read -r -d '' path; do
+    if is_never_committable_untracked "$path"; then
+      line="$(git status --porcelain=v1 -- ":(literal)$path")"
+      if [[ -n "$line" ]]; then drop+="$line"$'\n'; fi
+    fi
+  done < <(git ls-files --others --exclude-standard -z)
+  if [[ -z "$drop" ]]; then
+    git status --porcelain=v1
+  else
+    git status --porcelain=v1 | grep -Fvxf <(printf '%s' "$drop") || true
+  fi
+}
+
+# ONE non-failing advisory when the walk observes never-committable untracked paths: they are
+# ignored by the review domain BY CONSTRUCTION; the kit's sandbox-masks lane can hide them from
+# `git status` too. Never an error, never a detector.
+warn_never_committable_untracked() {
+  local path n=0
+  while IFS= read -r -d '' path; do
+    if is_never_committable_untracked "$path"; then n=$((n + 1)); fi
+  done < <(git ls-files --others --exclude-standard -z)
+  if (( n > 0 )); then
+    echo "notice: $n never-committable untracked path(s) (device/FIFO/socket) ignored by the review domain — for a clean 'git status' see the kit's sandbox-masks lane (/agent-workflow-kit sandbox-masks)." >&2
+  fi
+}
+
 # The canonical uncommitted-state fingerprint payload (code mode). Domain == the review payload:
-# tracked staged + unstaged changes + untracked-not-ignored file contents (binary/symlink/non-regular
-# untracked paths ride as name-only notes, mirroring the assembled change set). The prose definition
-# lives in capability.json roles.review.contract.receipt (both bridges, lockstep); the kit checker
-# (tools/review-state.mjs) implements the SAME serialization in node — cross-checked by the kit's
+# tracked staged + unstaged changes + untracked-not-ignored file contents (binary untracked files,
+# symlinks, and directories/gitlinks ride as name-only notes, mirroring the assembled change set;
+# never-committable untracked paths — devices/FIFOs/sockets — are EXCLUDED entirely, see
+# emit_untracked_paths_z). The prose definition lives in capability.json
+# roles.review.contract.receipt (both bridges, lockstep); the kit checker (tools/review-state.mjs)
+# implements the SAME serialization in node — cross-checked by the kit's
 # review-fingerprint-parity.test.mjs.
 emit_fingerprint_payload() {
   git diff --cached --no-ext-diff
@@ -313,7 +381,7 @@ emit_fingerprint_payload() {
       printf 'untracked:%s\n' "$path"
       cat -- "$path"
     fi
-  done < <(git ls-files --others --exclude-standard -z)
+  done < <(emit_untracked_paths_z)
 }
 
 # sha256 of the canonical payload, emitted from the work-tree ROOT (a subdir invocation hashes the
@@ -355,17 +423,18 @@ write_review_receipt() {
   fi
 }
 
-# Emit the full review surface to stdout: repo map, status, staged + unstaged
-# diffs, and the CONTENTS of every untracked REGULAR file (NUL-safe iteration).
-# Symlinks are shown as their target (never followed — no out-of-repo leak); other
-# non-regular paths (FIFO/socket/device) are skipped (a `cat` on a FIFO would hang
-# BEFORE the codex hard timeout applies).
+# Emit the full review surface to stdout: repo map, status (never-committable untracked records
+# filtered), staged + unstaged diffs, and the CONTENTS of every untracked REGULAR file (NUL-safe
+# iteration over the SAME filtered walk as the fingerprint — the payload is byte-identical with
+# and without a device mask). Symlinks are shown as their target (never followed — no out-of-repo
+# leak); directories/vanished paths are noted, never read (a `cat` on a FIFO would hang BEFORE the
+# hard timeout applies — that class never reaches this loop).
 assemble_code_diff() {
   echo "=== repo file map (git ls-files) ==="
   git ls-files
   echo
   echo "=== git status (porcelain) ==="
-  git status --porcelain=v1
+  emit_status_porcelain_filtered
   echo
   echo "=== staged diff (git diff --cached) ==="
   git diff --cached --no-ext-diff
@@ -387,7 +456,7 @@ assemble_code_diff() {
       cat -- "$path"
       printf '\n'
     fi
-  done < <(git ls-files --others --exclude-standard -z)
+  done < <(emit_untracked_paths_z)
 }
 
 mode="${1:-}"
@@ -416,12 +485,14 @@ case "$mode" in
     prompt="${directive}"$'\n\nPLAN:\n'"$(cat -- "$target")"
     ;;
   code)
-    # No-diff preflight — never spend a subscription run on a clean tree.
-    if git diff --quiet && git diff --cached --quiet \
-       && [[ -z "$(git ls-files --others --exclude-standard)" ]]; then
+    # No-diff preflight — never spend a subscription run on a clean tree. Never-committable
+    # untracked masks do not count: the FILTERED domain is the review surface.
+    if git diff --quiet && git diff --cached --quiet && ! has_reviewable_untracked; then
       echo "codex-review: no uncommitted changes to review — the working tree is clean." >&2
+      warn_never_committable_untracked
       exit 0
     fi
+    warn_never_committable_untracked
     # The canonical fingerprint of the tree codex is about to review — computed at assembly time
     # (BEFORE the EXIT trap can fire), so the receipt attests exactly the reviewed state.
     REVIEW_ARTIFACT="code"

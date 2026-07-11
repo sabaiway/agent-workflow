@@ -39,7 +39,7 @@
         ],
         "grounding": "automatic — the wrapper precomputes the full working-tree change set (repo map, status, diffs, untracked contents) and codex auto-merges the root AGENTS.md; no grounding flags",
         "continue": [],
-        "receipt": "side effect — a successful review appends one JSON receipt line to <git dir>/agent-workflow-review-receipts.jsonl (AW_REVIEW_RECEIPTS overrides): fingerprint = sha256 over the canonical uncommitted-state payload (staged diff + unstaged diff + untracked-not-ignored contents — the review-payload domain) in code mode, the artifact-file sha256 in plan mode; verdict parsed from the mandated literal verdict line (schema mode: the verdict field); always fresh:true (one-shot) + grounded:true (native AGENTS.md auto-merge, factsHash null); a write failure warns, never fails the review"
+        "receipt": "side effect — a successful review appends one JSON receipt line to <git dir>/agent-workflow-review-receipts.jsonl (AW_REVIEW_RECEIPTS overrides): fingerprint = sha256 over the canonical uncommitted-state payload (staged diff + unstaged diff + untracked-not-ignored contents — the review-payload domain; never-committable untracked paths — character/block devices, FIFOs, sockets — are excluded from the domain entirely, untracked symlinks/directories ride as name-only notes) in code mode, the artifact-file sha256 in plan mode; verdict parsed from the mandated literal verdict line (schema mode: the verdict field); always fresh:true (one-shot) + grounded:true (native AGENTS.md auto-merge, factsHash null); a write failure warns, never fails the review"
       }
     }
   },

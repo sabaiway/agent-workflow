@@ -7,7 +7,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { main, sliceSection, trimToBudget, DEFAULT_MAX_PROMPT_BYTES } from './grounding.mjs';
@@ -117,6 +117,17 @@ describe('grounding --plan — the canonical §7 heading policy', () => {
     assert.match(r.stdout, /^## Approach\n/m);
     assert.match(r.stdout, /^## Verification\n/m);
     assert.doesNotMatch(r.stdout, /Decisions \(locked\)/);
+  });
+
+  it('--plan outside the work tree → loud STOP, nothing read into the payload (codex R4: the tier auto-allows this tool)', () => {
+    const root = makeDir();
+    const outside = makeDir({ plan: PLAN_MD });
+    const r = run(root, ['--plan', join(outside, 'plan.md')]);
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /resolves outside the git work tree/);
+    assert.equal(r.stdout, '', 'no outside-tree content reaches stdout');
   });
 
   it('required section missing (no Verification) → STOP', () => {
@@ -302,6 +313,150 @@ describe('grounding --out — scratch-only writer honesty', () => {
     rmSync(root, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
     assert.equal(rOutside.code, 0, rOutside.stderr);
+  });
+});
+
+describe('grounding --out — outside-repo scratch is TEMP-ONLY (codex R8 blocker: the tier auto-allows this writer)', () => {
+  it('an outside-repo non-temp destination (a home-dir file) is refused loudly BEFORE any write; a temp one writes', () => {
+    const root = makeDir();
+    const underTemp = mkdtempSync(join(tmpdir(), 'grounding-temp-ok-'));
+    // The refusal fires before any write, so the target only needs an EXISTING parent — the real
+    // home dir is the exact victim class the blocker names (~/.bashrc).
+    const target = join(homedir(), `grounding-victim-${process.pid}.txt`);
+    const refused = run(root, ['--constraints', '--out', target]);
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /not under a system temp root/);
+    assert.equal(existsSync(target), false, 'nothing is written outside the temp surface');
+    const ok = run(root, ['--constraints', '--out', join(underTemp, 'facts.md')]);
+    rmSync(underTemp, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(ok.code, 0, ok.stderr);
+  });
+});
+
+describe('grounding — coverage of the defensive arms (fold-completeness)', () => {
+  it('an --out leaf whose lstat fails (EACCES via an unreadable parent) refuses fail-closed', () => {
+    const root = makeDir();
+    const locked = join(root, 'locked');
+    mkdirSync(locked);
+    spawnSync('chmod', ['000', locked], { encoding: 'utf8' });
+    const r = run(root, ['--constraints', '--out', join(locked, 'facts.md')]);
+    spawnSync('chmod', ['700', locked], { encoding: 'utf8' });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /cannot inspect the destination|parent directory does not exist/);
+  });
+
+  it('a nonexistent TMPDIR temp root is silently skipped by the temp-root derivation (realpath catch)', () => {
+    const root = makeDir();
+    const underTemp = mkdtempSync(join(tmpdir(), 'grounding-badtmpdir-'));
+    const saved = process.env.TMPDIR;
+    process.env.TMPDIR = '/no-such-temp-root-xyz';
+    const r = run(root, ['--constraints', '--out', join(underTemp, 'facts.md')]);
+    if (saved === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = saved;
+    rmSync(underTemp, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, `${r.stderr} (os.tmpdir() still qualifies the destination)`);
+  });
+
+  it('--plan pointing at a MISSING file is a loud unreadable STOP (the realpath arm)', () => {
+    const root = makeDir();
+    const r = run(root, ['--plan', join(root, 'no-such-plan.md')]);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /unreadable/);
+  });
+
+  it('a LOST create-only race (EEXIST at write time) is a loud refusal (the wx arm)', () => {
+    const root = makeDir();
+    const g = (...a) => spawnSync('git', a, { cwd: root, encoding: 'utf8' });
+    g('init', '-q');
+    g('config', 'user.email', 'p@e');
+    g('config', 'user.name', 'p');
+    writeFileSync(join(root, '.gitignore'), 'facts-*.md\n');
+    g('add', '-A');
+    g('commit', '-qm', 'base');
+    const eexist = () => { const e = new Error('EEXIST'); e.code = 'EEXIST'; throw e; };
+    const r = main(['--constraints', '--out', join(root, 'facts-race.md')], { cwd: root, writeFile: eexist });
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /lost the create-only race/);
+    // Any NON-EEXIST write failure rethrows loudly (never a silent skip).
+    const eacces = () => { const e = new Error('EACCES: denied'); e.code = 'EACCES'; throw e; };
+    const r2 = main(['--constraints', '--out', join(root, 'facts-race2.md')], { cwd: root, writeFile: eacces });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r2.code, 1);
+    assert.match(r2.stderr, /EACCES/);
+  });
+});
+
+describe('grounding --out — an in-repo destination is CREATE-ONLY (codex R10: the .env clobber class)', () => {
+  it('an EXISTING gitignored in-repo file refuses; a fresh gitignored path writes; temp overwrites fine', () => {
+    const root = makeDir();
+    const g = (...a) => spawnSync('git', a, { cwd: root, encoding: 'utf8' });
+    g('init', '-q');
+    g('config', 'user.email', 'p@e');
+    g('config', 'user.name', 'p');
+    writeFileSync(join(root, '.gitignore'), '.env\nfacts-*.md\n');
+    writeFileSync(join(root, '.env'), 'SECRET=1\n');
+    g('add', '-A');
+    g('commit', '-qm', 'base');
+    const refused = run(root, ['--constraints', '--out', join(root, '.env')]);
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /refuses to OVERWRITE an existing in-repo file/);
+    assert.equal(readFileSync(join(root, '.env'), 'utf8'), 'SECRET=1\n', 'the project file is untouched');
+    const fresh = run(root, ['--constraints', '--out', join(root, 'facts-a.md')]);
+    assert.equal(fresh.code, 0, fresh.stderr);
+    const tempDir = mkdtempSync(join(tmpdir(), 'grounding-rewrite-'));
+    const tempOut = join(tempDir, 'facts.md');
+    assert.equal(run(root, ['--constraints', '--out', tempOut]).code, 0);
+    assert.equal(run(root, ['--constraints', '--out', tempOut]).code, 0, 'temp scratch stays rewritable');
+    rmSync(tempDir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  });
+});
+
+describe('grounding --out — an existing non-regular leaf refuses (codex R9: the write would hang on a FIFO)', () => {
+  it('a FIFO under the temp surface is refused FAST, before any write', () => {
+    const root = makeDir();
+    const dir = mkdtempSync(join(tmpdir(), 'grounding-fifo-'));
+    const fifo = join(dir, 'facts.md');
+    const mk = spawnSync('mkfifo', [fifo], { encoding: 'utf8' });
+    assert.equal(mk.status, 0, mk.stderr);
+    const started = Date.now();
+    const r = run(root, ['--constraints', '--out', fifo]);
+    const elapsed = Date.now() - started;
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /non-regular destination/);
+    assert.ok(elapsed < 2000, `returned fast (${elapsed}ms) — the FIFO write never started`);
+  });
+});
+
+describe('grounding --out — the segment-safe outside test (Issue-004 class, codex R5)', () => {
+  it('an in-repo gitignored file literally named "..facts" is IN-repo (the ignored check runs) and writes fine', () => {
+    const root = makeDir();
+    const g = (...a) => spawnSync('git', a, { cwd: root, encoding: 'utf8' });
+    g('init', '-q');
+    g('config', 'user.email', 'p@e');
+    g('config', 'user.name', 'p');
+    writeFileSync(join(root, '.gitignore'), '..facts\n');
+    g('add', '-A');
+    g('commit', '-qm', 'base');
+    const ok = run(root, ['--constraints', '--out', join(root, '..facts')]);
+    assert.equal(ok.code, 0, ok.stderr);
+    assert.equal(existsSync(join(root, '..facts')), true, 'the gitignored ..-named scratch writes');
+    // The same name NOT gitignored → the in-repo refusal fires (before the fix it was misread as
+    // outside the tree and BYPASSED both refusals).
+    rmSync(join(root, '..facts'));
+    writeFileSync(join(root, '.gitignore'), 'other\n');
+    g('add', '-A');
+    g('commit', '-qm', 'unignore');
+    const refused = run(root, ['--constraints', '--out', join(root, '..facts')]);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /not gitignored/, 'the in-repo refusal reaches a ..-named path');
   });
 });
 

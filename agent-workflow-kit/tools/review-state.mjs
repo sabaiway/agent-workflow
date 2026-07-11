@@ -32,10 +32,16 @@
 // a folded tree; only a fresh grounded re-run mints a gate-satisfying receipt).
 //
 // The fingerprint is the ONE canonical uncommitted-state identity — sha256 over: staged diff +
-// unstaged diff + untracked-not-ignored file contents (binary/symlink/non-regular untracked paths
-// ride as name-only notes). Domain == the review-payload domain the wrappers assemble; the prose
-// definition lives in each bridge's capability.json roles.review.contract.receipt, and the bash
-// twin lives in both wrappers — cross-checked by test/review-fingerprint-parity.test.mjs.
+// unstaged diff + untracked-not-ignored file contents (binary untracked files, symlinks, and
+// directories/gitlinks ride as name-only notes). NEVER-COMMITTABLE untracked stat classes —
+// character/block devices, FIFOs, sockets — are EXCLUDED from the domain entirely (no note): a
+// sandbox that injects device masks into the work tree can no longer move the fingerprint or dirty
+// the clean check (AD-044 Plan 4; the class is lstat-keyed because a lying dirent is exactly how
+// the masks surface). Untracked SYMLINKS and DIRECTORIES stay in the domain — both are committable
+// (a directory listed by `git ls-files --others` as `dir/` is an embedded repo, i.e. a gitlink).
+// Domain == the review-payload domain the wrappers assemble; the prose definition lives in each
+// bridge's capability.json roles.review.contract.receipt, and the bash twin lives in both
+// wrappers — cross-checked by test/review-fingerprint-parity.test.mjs.
 //
 // HUMAN residual (accepted, documented): `git commit --no-verify` skips any pre-commit gate, and
 // deleting/editing the receipt file forges state — receipts live in the git dir (never committable)
@@ -46,8 +52,8 @@
 // Node >= 18. No side effects on import (the isDirectRun idiom).
 
 import { readFileSync, readdirSync, lstatSync, readlinkSync, openSync, readSync, closeSync } from 'node:fs';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { join, dirname } from 'node:path';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { detectBackends } from './detect-backends.mjs';
@@ -102,10 +108,23 @@ const isBinaryFile = (path) => {
   }
 };
 
+// The never-committable untracked stat classes (Decision 1, AD-044 Plan 4): character/block
+// devices, FIFOs, sockets — git content can never carry them, so they are excluded from the ENTIRE
+// review domain (fingerprint payload, clean check; the wrappers' bash twin filters the assembled
+// payload identically). lstat-keyed by design: the sandbox mask class surfaces exactly where the
+// dirent LIES (readdir says file, lstat says char device). A null stat (vanished path) is NOT in
+// the class — it keeps its name-only note, like directories (gitlinks) and symlinks.
+export const isNeverCommittableStat = (stat) =>
+  stat != null &&
+  (stat.isCharacterDevice() || stat.isBlockDevice() || stat.isFIFO() || stat.isSocket());
+
 // The canonical payload bytes: staged diff + unstaged diff + the untracked-not-ignored section —
 // byte-identical to the wrappers' emit_fingerprint_payload (same git invocations, same headers,
 // same ls-files ordering), emitted from the work-tree ROOT. Returns null outside a git work tree.
-export const computeFingerprintPayload = (cwd) => {
+// The lstat is injectable ONLY so tests can prove the never-committable filter non-vacuously (a
+// lying lstat over a git-visible fixture path — the sandbox mechanism itself); production callers
+// never pass it.
+export const computeFingerprintPayload = (cwd, { lstat = lstatSync } = {}) => {
   const top = gitLine(['rev-parse', '--show-toplevel'], cwd);
   if (top == null) return null;
   const staged = gitBuf(['diff', '--cached', '--no-ext-diff'], top);
@@ -117,10 +136,11 @@ export const computeFingerprintPayload = (cwd) => {
     const full = join(top, rel);
     let stat = null;
     try {
-      stat = lstatSync(full);
+      stat = lstat(full);
     } catch {
       stat = null;
     }
+    if (isNeverCommittableStat(stat)) continue;
     if (stat?.isSymbolicLink()) {
       let target = '?';
       try {
@@ -142,25 +162,74 @@ export const computeFingerprintPayload = (cwd) => {
 };
 
 // sha256 hex of the canonical payload, or null outside a git work tree.
-export const computeTreeFingerprint = (cwd) => {
-  const payload = computeFingerprintPayload(cwd);
+export const computeTreeFingerprint = (cwd, fsx) => {
+  const payload = computeFingerprintPayload(cwd, fsx);
   return payload == null ? null : createHash('sha256').update(payload).digest('hex');
 };
 
-// Clean = nothing staged, nothing unstaged, no untracked-not-ignored paths (the wrappers' no-diff
-// preflight). null when not decidable (not a git work tree). Anchored at the work-tree ROOT like
-// the fingerprint: `git ls-files --others` is cwd-SCOPED, so a subdirectory invocation would
-// otherwise miss root/sibling untracked paths and report a dirty tree as clean (codex R1 finding).
-export const isTreeClean = (cwd) => {
+// Clean = nothing staged, nothing unstaged, no REVIEWABLE untracked-not-ignored paths (the
+// wrappers' no-diff preflight). Never-committable untracked paths (device/FIFO/socket) do not
+// count as dirty — same filter as the fingerprint, so the two can never disagree about a
+// masks-only tree. An lstat failure keeps the path in the domain (dirty), mirroring the
+// fingerprint's null-stat note. null when not decidable (not a git work tree). Anchored at the
+// work-tree ROOT like the fingerprint: `git ls-files --others` is cwd-SCOPED, so a subdirectory
+// invocation would otherwise miss root/sibling untracked paths and report a dirty tree as clean
+// (codex R1 finding).
+export const isTreeClean = (cwd, { lstat = lstatSync } = {}) => {
   const top = gitLine(['rev-parse', '--show-toplevel'], cwd);
   if (top == null) return null;
   const staged = gitRaw(['diff', '--cached', '--quiet'], top);
   const unstaged = gitRaw(['diff', '--quiet'], top);
   if (staged.error || unstaged.error || staged.status > 1 || unstaged.status > 1) return null;
-  const untracked = gitBuf(['ls-files', '--others', '--exclude-standard'], top);
-  if (untracked == null) return null;
-  return staged.status === 0 && unstaged.status === 0 && untracked.toString('utf8').trim() === '';
+  const untrackedZ = gitBuf(['ls-files', '--others', '--exclude-standard', '-z'], top);
+  if (untrackedZ == null) return null;
+  const reviewable = untrackedZ
+    .toString('utf8')
+    .split('\0')
+    .filter(Boolean)
+    .filter((rel) => {
+      try {
+        return !isNeverCommittableStat(lstat(join(top, rel)));
+      } catch {
+        return true;
+      }
+    });
+  return staged.status === 0 && unstaged.status === 0 && reviewable.length === 0;
 };
+
+// ── the sandbox-masks advisory (D lane, AD-044 Plan 4 Phase 1.5) ────────────────────
+
+// Count the never-committable untracked paths the STANDARD walk still shows. The review domain
+// ignores them by construction; this count only feeds ONE non-failing advisory line naming the
+// cosmetic sandbox-masks apply — an applied managed block hides the paths from --exclude-standard,
+// so the advisory disappears exactly when the status noise does (no standing detector).
+export const countNeverCommittableUntracked = (cwd, { lstat = lstatSync } = {}) => {
+  const top = gitLine(['rev-parse', '--show-toplevel'], cwd);
+  if (top == null) return 0;
+  const untrackedZ = gitBuf(['ls-files', '--others', '--exclude-standard', '-z'], top);
+  if (untrackedZ == null) return 0;
+  return untrackedZ
+    .toString('utf8')
+    .split('\0')
+    .filter(Boolean)
+    .filter((rel) => {
+      try {
+        return isNeverCommittableStat(lstat(join(top, rel)));
+      } catch {
+        return false;
+      }
+    }).length;
+};
+
+// Shell-quote one argument for a COPY-PASTE advisory command: plain safe tokens stay bare; anything
+// else rides single quotes (a space/metacharacter path must never render a dead or unsafe paste —
+// codex R1). Exported for the sandbox-masks probe, which renders the same apply one-liner.
+export const shellQuoteArg = (s) => (/^[A-Za-z0-9_/.\-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`);
+
+const maskAdvisoryLine = (state) =>
+  state.maskedUntracked > 0
+    ? `notice: ${state.maskedUntracked} never-committable untracked path(s) (device/FIFO/socket) are ignored by the review domain — hide them from git status: node ${shellQuoteArg(join(dirname(fileURLToPath(import.meta.url)), 'sandbox-masks.mjs'))} --cwd ${shellQuoteArg(state.root)} --apply`
+    : '';
 
 // ── plan-in-flight detector (the AD-038 naming convention; documented in queue.md) ─────
 
@@ -292,7 +361,7 @@ export const degradedExemptSet = ({ records, readError, malformed, base, plans, 
 // work-tree ROOT when one exists — the fingerprint is root-anchored, so a subdirectory invocation
 // must read the same config/plans or a dirty unreceipted tree could false-PASS as "no plan in
 // flight" (codex R1 finding). Outside a git tree the cwd is the only anchor (and --check exits 0).
-export const buildState = ({ cwd, env = process.env, detect = detectBackends } = {}) => {
+export const buildState = ({ cwd, env = process.env, detect = detectBackends, lstat = lstatSync } = {}) => {
   const root = gitLine(['rev-parse', '--show-toplevel'], cwd) ?? cwd;
   const { config, source: configSource } = loadConfig(root);
   let detection = [];
@@ -306,8 +375,10 @@ export const buildState = ({ cwd, env = process.env, detect = detectBackends } =
   const { dispatch } = planRecipe(resolved.recipe, detection);
   const requiredBackends = dispatch.map((d) => DISPLAY_ALIASES[d.backend] ?? d.backend);
   const plans = plansInFlight(root);
-  const fingerprint = computeTreeFingerprint(cwd);
-  const clean = fingerprint == null ? null : isTreeClean(cwd);
+  // The injected lstat threads through EVERY stat-dependent computation (fingerprint, clean, the
+  // mask count) — a partial injection would let a test observe an inconsistent state (codex R3).
+  const fingerprint = computeTreeFingerprint(cwd, { lstat });
+  const clean = fingerprint == null ? null : isTreeClean(cwd, { lstat });
   const receiptsPath = resolveReceiptsPath(cwd, env);
   const { receipts, malformed } = receiptsPath ? readReceipts(receiptsPath) : { receipts: [], malformed: 0 };
   const backends = requiredBackends.map((b) => ({ backend: b, ...backendReceiptStatus(receipts, b, fingerprint) }));
@@ -324,6 +395,7 @@ export const buildState = ({ cwd, env = process.env, detect = detectBackends } =
     requiredBackends,
     backends,
     plans,
+    root,
     fingerprint,
     clean,
     receiptsPath,
@@ -334,6 +406,7 @@ export const buildState = ({ cwd, env = process.env, detect = detectBackends } =
     ledgerMalformed: ledgerMalformed ?? 0,
     ledgerReadError: ledgerReadError ?? null,
     degradedExempt,
+    maskedUntracked: countNeverCommittableUntracked(cwd, { lstat }),
     detectionWarning,
   };
 };
@@ -459,15 +532,18 @@ export const main = (argv, ctx = {}) => {
     if (argv.includes('--help') || argv.includes('-h')) return { code: 0, stdout: HELP, stderr: '' };
     const unknown = argv.find((a) => !KNOWN_ARGS.has(a));
     if (unknown !== undefined) throw fail(2, `unknown argument: ${unknown}`);
-    const state = buildState({ cwd, env, detect });
+    const state = buildState({ cwd, env, detect, lstat: ctx.lstat });
     const check = decideCheck(state);
+    // The mask advisory is NON-FAILING by contract: one notice line, never an exit-code arm.
+    const advisory = maskAdvisoryLine(state);
     if (argv.includes('--json')) {
       return { code: argv.includes('--check') ? check.code : 0, stdout: JSON.stringify({ ...state, check }, null, 2), stderr: '' };
     }
     if (argv.includes('--check')) {
-      return { code: check.code, stdout: `review-state check: ${check.code === 0 ? 'PASS' : 'FAIL'} — ${check.reason}`, stderr: '' };
+      const line = `review-state check: ${check.code === 0 ? 'PASS' : 'FAIL'} — ${check.reason}`;
+      return { code: check.code, stdout: advisory ? `${line}\n${advisory}` : line, stderr: '' };
     }
-    return { code: 0, stdout: formatHuman(state, check), stderr: '' };
+    return { code: 0, stdout: advisory ? `${formatHuman(state, check)}\n${advisory}` : formatHuman(state, check), stderr: '' };
   } catch (err) {
     return { code: err.exitCode ?? 1, stdout: '', stderr: `review-state: ${err.message}` };
   }

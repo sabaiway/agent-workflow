@@ -22,9 +22,11 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  BRIDGE_REVIEW_WRAPPERS,
   KIT_READONLY_TOOLS,
   KIT_RUN_GATES_TOOL,
   KIT_WRITER_PREVIEW_TOOLS,
+  deriveBridgeTierAllowlist,
   deriveKitToolsAllowlist,
 } from '../tools/velocity-profile.mjs';
 import { kindOf, READ_ONLY, WRITER, PROJECT_EXEC } from '../tools/commands.mjs';
@@ -146,5 +148,43 @@ describe('dead-rule prevention — velocity.md tier dispatch lines match the see
     for (const line of documentedLines) {
       assert.doesNotMatch(line, /["']/u, `quoted spelling in "${line}" would seed a dead rule`);
     }
+  });
+});
+
+// ── (c2) dead-rule prevention, bridge tier (AD-044 Plan 4): documented byte-form ⇄ seeded form ──
+// A SEPARATE pin from (c): the bridge subsection lives OUTSIDE the kit-tools extraction range (the
+// quoted grounding form is accepted ONLY here — the kit-tools UNQUOTED invariant above stays
+// untouched). Every seeded bridge byte-form must appear verbatim in the velocity.md bridge
+// subsection — a mismatched documented spelling would teach users a silently-dead rule.
+describe('dead-rule prevention — velocity.md bridge-tier byte-forms match the seeded forms', () => {
+  const sectionStart = VELOCITY_MODE.indexOf('`--bridge-tier`');
+  assert.notEqual(sectionStart, -1, 'velocity.md must carry the --bridge-tier subsection');
+  const bridgeSection = VELOCITY_MODE.slice(sectionStart);
+  const derived = deriveBridgeTierAllowlist({ findWrapper: () => true });
+
+  it('the bridge subsection sits AFTER the kit-tools Invariants (outside the (c) extraction range)', () => {
+    assert.ok(sectionStart > VELOCITY_MODE.indexOf('**Invariants:**'), 'the quoted grounding line must never enter the kit-tools UNQUOTED scan');
+  });
+
+  it('each seeded code-mode wrapper rule appears verbatim, and each wrapper name is documented for excludedCommands', () => {
+    for (const wrapper of BRIDGE_REVIEW_WRAPPERS) {
+      assert.ok(bridgeSection.includes(`\`Bash(${wrapper} code:*)\``), `documented allow byte-form for ${wrapper}`);
+      assert.ok(bridgeSection.includes(`\`${wrapper}\` in \`sandbox.excludedCommands\``), `documented excludedCommands entry for ${wrapper}`);
+      assert.ok(derived.allow.includes(`Bash(${wrapper} code:*)`), `the seeded form matches for ${wrapper}`);
+      assert.ok(!derived.allow.includes(`Bash(${wrapper}:*)`), `the BARE prefix (covers plan/diff file args) is never seeded for ${wrapper}`);
+    }
+  });
+
+  it('the documented grounding byte-form (with ${CLAUDE_SKILL_DIR} substituted) equals the seeded rule', () => {
+    const documented = `Bash(node "${SKILL_DIR_VAR}/tools/grounding.mjs":*)`;
+    assert.ok(bridgeSection.includes(`\`${documented}\``), 'velocity.md documents the quoted grounding byte-form');
+    const substituted = documented.replaceAll(SKILL_DIR_VAR, kitRoot);
+    assert.ok(derived.allow.includes(substituted), 'the seeded grounding rule equals the documented spelling');
+  });
+
+  it('the non-review wrappers are documented as excluded and never seeded', () => {
+    assert.match(bridgeSection, /codex-exec/, 'the boundary is stated in the docs');
+    assert.match(bridgeSection, /agy-run/, 'the boundary is stated in the docs');
+    for (const entry of derived.allow) assert.doesNotMatch(entry, /codex-exec|agy-run/);
   });
 });

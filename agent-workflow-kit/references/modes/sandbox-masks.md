@@ -1,0 +1,15 @@
+### Mode: sandbox-masks
+
+**Cosmetic exclude lane for sandbox-injected device masks** (AD-044). An OS sandbox (Claude Code) injects character-device masks into the work tree (`.bashrc`, `.gitconfig`, `.vscode`, …); git lists them as untracked noise. The **review domain already ignores them by construction** — never-committable untracked classes (character/block devices, FIFOs, sockets) are excluded from the fingerprint, the assembled review payload, and the clean checks in both bridge wrappers and the kit checker. This mode is the optional **cosmetic** half: it hides the masks from `git status` (and every other `--exclude-standard` untracked walk) via **one managed fenced block** in the file `git rev-parse --git-path info/exclude` names.
+
+Run `node ${CLAUDE_SKILL_DIR}/tools/sandbox-masks.mjs [--cwd <project-root>]`:
+
+1. **Flagless → READ-ONLY probe/preview.** Derives the CURRENT mask set from the **unfiltered** untracked walk (`git ls-files --others -z`, without standard excludes — an already-hidden mask stays visible to a rerun) plus lstat classification. Only the never-committable classes are ever candidates; tracked / regular / directory / symlink / gitlink / missing paths can never enter the block **by construction**. The probe also **revalidates** the existing fenced entries and loudly flags any that became a REAL path. It prints the exact apply one-liner.
+2. **`--apply` → consent-gated FULL-BLOCK REPLACE** from a fresh derivation — stale masks drop by construction, never append-only. Run it **inside the sandbox** (masks are visible only there). An apply whose derivation is EMPTY while a non-empty block exists refuses loudly (you are probably outside the sandbox) unless `--clear` is also given; an empty derivation with no block is a stated no-op.
+3. **Writes ONLY its own fenced block** — never `.gitignore`, never a global excludesFile, never outside the fence. A malformed fence (start without end, duplicated markers) **fails closed**: loud report, file untouched. The fence is separate from the hidden-mode reconcile's block.
+
+**Where the need surfaces on its own (no standing detector):** `review-state --check` prints one non-failing notice with this mode's apply one-liner whenever it observes filtered-class untracked paths — a NEW mask appearing after a sandbox update surfaces its own fix at the next check.
+
+**Watch note (D5):** exclude hides a path from `git status`, **NOT** from `git add`, and `.git/info/exclude` never warns. Before creating a REAL file at a masked path (e.g. a real `.vscode/`), delete the matching line from the managed block first — the probe flags exactly this case.
+
+**Invariants:** flagless run is read-only · `--apply` writes only the managed block in the repo-local exclude file · probe-derived membership, never a hardcoded list · fail-closed on a malformed fence · never commits, never touches `.gitignore` or any global git config.

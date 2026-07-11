@@ -1,7 +1,8 @@
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -20,7 +21,28 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const packFull = () => {
-  const res = spawnSync('npm', ['pack', '--dry-run', '--json'], { cwd: ROOT, encoding: 'utf8' });
+  // The npm cache rides under $TMPDIR (cleaned after the run — agy R1) and every network
+  // side-channel (update-notifier / audit / fund) is off: a sandboxed run (read-only ~/.npm, no
+  // network) must stay green and must not fire a network prompt — neither is relevant to what
+  // this guard asserts (the D4 sandbox-safe command shape).
+  const cacheDir = mkdtempSync(join(tmpdir(), 'pack-cache-'));
+  let res;
+  try {
+    res = spawnSync('npm', ['pack', '--dry-run', '--json'], {
+      cwd: ROOT,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        npm_config_cache: cacheDir,
+        npm_config_update_notifier: 'false',
+        npm_config_audit: 'false',
+        npm_config_fund: 'false',
+        NO_UPDATE_NOTIFIER: '1',
+      },
+    });
+  } finally {
+    rmSync(cacheDir, { recursive: true, force: true });
+  }
   assert.equal(res.status, 0, `npm pack failed: ${res.stderr}`);
   // npm ≤11 prints a JSON array; npm ≥12 prints an object keyed by package name — accept both.
   const parsed = JSON.parse(res.stdout);
@@ -212,7 +234,12 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       guarded consent-per-run OS provisioner — detect → consent-gated install → verify) +
     //       references/modes/autonomy-doctor.md (the 23rd mode-ref). The *.test.mjs sibling is
     //       stripped by files[].
-    assert.equal(packed.length, 145, `tarball file count drifted (${packed.length} ≠ 145)`);
+    // 147 = 145 + the Phase-1.5 cosmetic exclude lane (AD-044 Plan 4): tools/sandbox-masks.mjs (the
+    //       guarded probe/apply device-mask hider — full-block replace in info/exclude) +
+    //       references/modes/sandbox-masks.md (the 24th mode-ref). The *.test.mjs sibling is
+    //       stripped by files[]. (The Plan-4 Segment B additions — recommendations tool + mode doc
+    //       + the autonomy.json template mirror — take this to 150.)
+    assert.equal(packed.length, 147, `tarball file count drifted (${packed.length} ≠ 147)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

@@ -148,6 +148,13 @@ const CATALOG = [
     oneLine: 'Check whether this machine can run the Claude sandbox and, only with your explicit consent, install what is missing — privileged, preview-first, consent-per-run; it never auto-runs and never commits.',
   },
   {
+    key: 'sandbox-masks',
+    invocation: invocationOf('sandbox-masks'),
+    group: 'Configure',
+    kind: GUARDED,
+    oneLine: 'Hide the sandbox’s injected device masks from git status via one managed block in the repo’s local exclude file — probe-derived (never a frozen list), preview first, full-block replace on your yes; reviews already ignore the masks by construction.',
+  },
+  {
     key: 'recipes',
     invocation: invocationOf('recipes'),
     group: 'Orchestrate',

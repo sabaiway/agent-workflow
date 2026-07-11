@@ -2,7 +2,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, rm, mkdir, symlink, readdir, readFile, writeFile, chmod, cp } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -701,7 +701,26 @@ describe('kit installer — published tarball bundles the bridges + the live-rea
   it('npm pack ships bridges/<name>/ and tools/engine-source.mjs', () => {
     // The real `files` whitelist decides what publishes — assert against `npm pack`, not the source
     // tree, so a dropped `bridges/` entry in package.json fails here (not silently at install time).
-    const res = spawnSync('npm', ['pack', '--dry-run', '--json'], { cwd: KIT_ROOT, encoding: 'utf8' });
+    // Sandbox-safe npm shape (D4): cache under $TMPDIR (cleaned after the run), network
+    // side-channels off — a sandboxed run (read-only ~/.npm, no network) stays green and prompt-free.
+    const cacheDir = mkdtempSync(join(tmpdir(), 'pack-cache-'));
+    let res;
+    try {
+      res = spawnSync('npm', ['pack', '--dry-run', '--json'], {
+        cwd: KIT_ROOT,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          npm_config_cache: cacheDir,
+          npm_config_update_notifier: 'false',
+          npm_config_audit: 'false',
+          npm_config_fund: 'false',
+          NO_UPDATE_NOTIFIER: '1',
+        },
+      });
+    } finally {
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
     assert.equal(res.status, 0, res.stderr || res.error?.message);
     // npm ≤11 prints a JSON array; npm ≥12 prints an object keyed by package name — accept both.
     const parsed = JSON.parse(res.stdout);

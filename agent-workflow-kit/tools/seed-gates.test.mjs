@@ -36,7 +36,12 @@ const YARN_EXEC = (body) => `${CN} yarn exec -- ${body}`;
 
 // pnpm/yarn spawn cases skip-if-absent during dev; the release lane provisions all three via
 // corepack and runs them mandatory (Phase 5 of the shipping plan — never ship on skips).
-const canRunPm = (pm) => spawnSync(pm, ['--version'], { encoding: 'utf8' }).status === 0;
+// COREPACK_ENABLE_NETWORK=0 on the probe itself (AD-044 Plan 4): an unprovisioned corepack shim
+// would otherwise fetch the PM from the registry AT MODULE LOAD — a network prompt under a
+// sandboxed run — and then be skipped anyway when the fetch is denied. Offline: provisioned PMs
+// still answer; unprovisioned ones fail fast and their lanes skip loudly, same behavior no prompt.
+const canRunPm = (pm) =>
+  spawnSync(pm, ['--version'], { encoding: 'utf8', env: { ...process.env, COREPACK_ENABLE_NETWORK: '0' } }).status === 0;
 const PNPM_AVAILABLE = canRunPm('pnpm');
 const YARN_AVAILABLE = canRunPm('yarn');
 
@@ -91,6 +96,14 @@ const spawnSeeded = (cmd, dir = cwd, { isolatePrefix = true } = {}) =>
       ...process.env,
       npm_config_cache: join(dir, '.isolated-npm-cache'),
       ...(isolatePrefix ? { npm_config_prefix: join(dir, '.isolated-npm-prefix') } : {}),
+      // No network side-channels under a sandboxed suite run (the D4 sandbox-safe shape): a
+      // missing-runner npm/pnpm resolution must fail OFFLINE (the same fail-closed outcome the
+      // negative lanes assert), never reach for the registry.
+      npm_config_offline: 'true',
+      npm_config_audit: 'false',
+      npm_config_fund: 'false',
+      npm_config_update_notifier: 'false',
+      NO_UPDATE_NOTIFIER: '1',
     },
   });
 

@@ -191,7 +191,9 @@ describe('router contract — D4 pointer audits over the whole split corpus (d)'
 
 // ── (e) the D6 byte budgets, read sets from the parsed Requires: lines ───────
 const BUDGET = {
-  router: 10240, // router alone
+  router: 11264, // router alone. 10240 → 11264 (11 KB): AD-044 Plan 4 adds the sandbox-masks and
+  // recommendations modes to the router (~110 B each) against 27 B of headroom — a documented
+  // KB-multiple bump, never a silent re-pin.
   routerPlusMode: 32768, // router + any single mode file (28672 → 29696: the AD-042 documented
   // AD-039 amendment — the F11 both-blocks batching caveat is +422 B of new upgrade.md contract
   // content against 154 B of headroom; then 29696 → 30720 (30 KB): AD-043 adds the bridge-settings
@@ -205,7 +207,11 @@ const BUDGET = {
   // THREE pointers (the autonomy slot: step-3 wording, the (a)(iii) anchor-absent soft-skip lane,
   // the No-Node walk, the step-4/8 report row) — ~575 B of new contract content over 179 B of
   // headroom; a documented KB-multiple bump, never a silent re-pin.)
-  fullReadSet: 55296, // router + mode + its declared shared files. 53248 → 54272 (53 KB): AD-049 —
+  fullReadSet: 56320, // router + mode + its declared shared files. 55296 → 56320 (55 KB): AD-044
+  // Plan 4 — the new router mode lines (sandbox-masks, recommendations) ride EVERY mode's read set
+  // and upgrade.md gains the Recommendations final section + the autonomy-seed ensure row against
+  // 12 B of headroom — a documented KB-multiple bump, never a silent re-pin.
+  // History: 53248 → 54272 (53 KB): AD-049 —
   // the heaviest read set (upgrade + its 3 shared files) sat 6 B under the 52 KB budget, so the new
   // doc-parity router line (present in EVERY mode's read set) plus the carry-in verification-profile
   // clause on upgrade.md overflow it by 190 B — a documented KB-multiple bump, never a silent re-pin.

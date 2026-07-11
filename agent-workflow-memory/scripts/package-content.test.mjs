@@ -1,7 +1,8 @@
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, mkdtempSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { dirname, join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -91,7 +92,28 @@ describe('memory package content — DAG guard (knows nobody)', () => {
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const packMemory = () => {
-  const res = spawnSync('npm', ['pack', '--dry-run', '--json'], { cwd: PKG_ROOT, encoding: 'utf8' });
+  // The npm cache rides under $TMPDIR (cleaned after the run) and every network side-channel
+  // (update-notifier / audit / fund) is off: a sandboxed run (read-only ~/.npm, no network) must
+  // stay green and prompt-free — neither is relevant to what this guard asserts (the D4
+  // sandbox-safe command shape).
+  const cacheDir = mkdtempSync(join(tmpdir(), 'pack-cache-'));
+  let res;
+  try {
+    res = spawnSync('npm', ['pack', '--dry-run', '--json'], {
+      cwd: PKG_ROOT,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        npm_config_cache: cacheDir,
+        npm_config_update_notifier: 'false',
+        npm_config_audit: 'false',
+        npm_config_fund: 'false',
+        NO_UPDATE_NOTIFIER: '1',
+      },
+    });
+  } finally {
+    rmSync(cacheDir, { recursive: true, force: true });
+  }
   assert.equal(res.status, 0, `npm pack failed: ${res.stderr}`);
   // npm ≤11 prints a JSON array; npm ≥12 prints an object keyed by package name — accept both.
   const parsed = JSON.parse(res.stdout);
