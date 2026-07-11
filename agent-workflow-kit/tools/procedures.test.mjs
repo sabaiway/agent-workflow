@@ -234,7 +234,7 @@ describe('procedures CLI — grounding pre-step population (AD-038, all three di
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /Grounding pre-step \(agy is dispatched/);
     // Path arguments render shell-QUOTED (a skill dir / plan name with a space stays copy-pasteable).
-    assert.match(r.stdout, /node "[^"]*grounding\.mjs" --constraints --plan "docs\/plans\/my-feature\.md" --out/);
+    assert.match(r.stdout, /node "[^"]*grounding\.mjs" --constraints --autonomy --plan "docs\/plans\/my-feature\.md" --out/);
     assert.match(r.stdout, /agy-review code --facts @/);
     assert.doesNotMatch(r.stdout, /plan discovery:/, 'a unique plan needs no discovery caveat');
   });
@@ -243,8 +243,9 @@ describe('procedures CLI — grounding pre-step population (AD-038, all three di
     councilConfig();
     const r = run(['plan-execution'], { codex: READY, agy: READY });
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /grounding\.mjs" --constraints --plan <path> --out/);
+    assert.match(r.stdout, /grounding\.mjs" --constraints --autonomy --plan <path> --out/);
     assert.match(r.stdout, /plan discovery: no plan in flight/);
+    assert.match(r.stdout, /drop --plan for constraints\+autonomy facts/, 'the no-plan caveat names the constraints+autonomy fallback');
   });
 
   it('SEVERAL plans in flight → the placeholder + the pick-one caveat naming them', () => {
@@ -253,7 +254,7 @@ describe('procedures CLI — grounding pre-step population (AD-038, all three di
     addPlan('feature-b.md');
     const r = run(['plan-execution'], { codex: READY, agy: READY });
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /grounding\.mjs" --constraints --plan <path> --out/);
+    assert.match(r.stdout, /grounding\.mjs" --constraints --autonomy --plan <path> --out/);
     assert.match(r.stdout, /plan discovery: 2 plans in flight .*feature-a\.md, feature-b\.md/);
   });
 

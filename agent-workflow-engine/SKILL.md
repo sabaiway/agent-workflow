@@ -34,6 +34,14 @@ slot fill is needed but the engine is absent, the kit's reconcile **fails loudly
   orchestration fragment the composition root injects into a deployed `AGENTS.md`, between the
   `<!-- workflow:orchestration:start -->` / `<!-- workflow:orchestration:end -->` markers. It names the
   four recipes and routes to `/agent-workflow-kit recipes`, never to this engine-internal reference.
+- [`references/autonomy-slot.md`](references/autonomy-slot.md) — the **bounded** one-line autonomy
+  fragment the composition root injects into a deployed `AGENTS.md`, between the
+  `<!-- workflow:autonomy:start -->` / `<!-- workflow:autonomy:end -->` markers. It carries the
+  cross-agent READ CONTRACT for the per-project autonomy policy (`docs/ai/autonomy.json`): read at
+  session start, the canonical default floor when the file is absent, STOP on malformed — plus the
+  honesty note that the policy is informational for delegated backends (enforcement stays the OS
+  sandbox + the orchestrator). It routes to the kit's `set-autonomy` / `autonomy-doctor` surfaces,
+  never to any engine-internal reference.
 - [`references/procedures.md`](references/procedures.md) — the canonical **activity-procedures** canon:
   the ordered steps of the named activities (`plan-authoring`, `plan-execution`) with **typed recipe
   slots** that bind to the orchestration recipes, composing with `planning.md` without restating it. It

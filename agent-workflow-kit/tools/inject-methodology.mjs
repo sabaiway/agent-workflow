@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 // Marker-slot injection + reconciliation — the composition root's only mutation of a deployed
-// AGENTS.md. A deployed entry point carries TWO reconciled marker slots, each filled LIVE from the
+// AGENTS.md. A deployed entry point carries THREE reconciled marker slots, each filled LIVE from the
 // installed agent-workflow-engine (the family's one source of truth, no bundled mirror):
 //   1. workflow:methodology  — the plan→execute→review pointer (references/methodology-slot.md).
 //   2. workflow:orchestration — the recipe-vocabulary pointer  (references/orchestration-slot.md).
+//   3. workflow:autonomy     — the autonomy-policy read contract (references/autonomy-slot.md).
 //
-// Both share ONE generic marker engine (a slot DESCRIPTOR parameterizes the markers / anchor /
+// All share ONE generic marker engine (a slot DESCRIPTOR parameterizes the markers / anchor /
 // empty-slot / leading-blank). The methodology exports (findSlot / injectMethodology / ensureSlot /
 // reconcileSlot / slotNeedsFill / extractSlot) delegate to it byte-for-byte, so the methodology
-// contract is unchanged; the orchestration slot is the SAME engine with a different descriptor.
+// contract is unchanged; the later slots are the SAME engine with different descriptors.
 //
 // Contract per slot, strictly enforced:
 //   exactly one ordered start→end pair → replace only the bytes between them;
@@ -31,6 +32,8 @@ export const START_MARKER = '<!-- workflow:methodology:start -->';
 export const END_MARKER = '<!-- workflow:methodology:end -->';
 export const ORCH_START_MARKER = '<!-- workflow:orchestration:start -->';
 export const ORCH_END_MARKER = '<!-- workflow:orchestration:end -->';
+export const AUTONOMY_START_MARKER = '<!-- workflow:autonomy:start -->';
+export const AUTONOMY_END_MARKER = '<!-- workflow:autonomy:end -->';
 export const AGENTS_MD_CAP = 100; // the deployed AGENTS.md line budget (its own footer rule)
 
 const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -59,11 +62,16 @@ export const METHODOLOGY_ANCHOR = /^.*Read it before any code change\..*$/m;
 // The orchestration pair lands right BELOW the methodology end marker — so its anchor is that line.
 // A well-formed entry point carries exactly one methodology end marker → exactly one anchor.
 export const ORCH_ANCHOR = new RegExp(`^.*${escapeRegExp(END_MARKER)}.*$`, 'm');
+// The autonomy pair chains right below the orchestration pair — its anchor is the orchestration end
+// marker line. The anchor can legitimately be ABSENT (a legacy file whose orchestration pair was
+// itself skipped) — the chained CLI classifies that as a soft skip, never a hard STOP (D4).
+export const AUTONOMY_ANCHOR = new RegExp(`^.*${escapeRegExp(ORCH_END_MARKER)}.*$`, 'm');
 
 // The canonical empty slots (an ordered start→end pair, nothing between) — what a fresh template
 // ships and what ensureSlot inserts. LF form; ensureSlot rewrites the newline to match the document.
 export const EMPTY_SLOT = `${START_MARKER}\n${END_MARKER}`;
 export const ORCH_EMPTY_SLOT = `${ORCH_START_MARKER}\n${ORCH_END_MARKER}`;
+export const AUTONOMY_EMPTY_SLOT = `${AUTONOMY_START_MARKER}\n${AUTONOMY_END_MARKER}`;
 
 // ── known-prior canonical fragments (drift-guarded, APPEND-ONLY per slot) ───────
 // The EXACT content a PREVIOUS release's engine fragment shipped (what a filled slot would carry today).
@@ -112,6 +120,21 @@ export const ORCHESTRATION_DESCRIPTOR = {
   upgradeSignature: '/agent-workflow-kit set-recipe',
   upgradeAdvice:
     'the orchestration-recipes pointer predates the read-at-start clause — add "read `docs/ai/orchestration.json` at session start; set it with /agent-workflow-kit set-recipe", or set your preference now with /agent-workflow-kit set-recipe.',
+};
+// The autonomy-policy slot (AD-044 Plan 3) — first canon, so no known priors yet: any future
+// fragment change must append the outgoing content to a KNOWN_PRIOR_AUTONOMY_SLOT store first.
+export const AUTONOMY_DESCRIPTOR = {
+  startMarker: AUTONOMY_START_MARKER,
+  endMarker: AUTONOMY_END_MARKER,
+  anchor: AUTONOMY_ANCHOR,
+  emptySlot: AUTONOMY_EMPTY_SLOT,
+  leadingBlank: false,
+  markerName: 'autonomy',
+  anchorLabel: 'autonomy anchor (the orchestration end-marker line)',
+  knownPriorCanonicals: [],
+  upgradeSignature: 'docs/ai/autonomy.json',
+  upgradeAdvice:
+    'the autonomy pointer does not name the per-project policy file — add "read `docs/ai/autonomy.json` at session start; set it with /agent-workflow-kit set-autonomy", or refresh the slot to the current canon.',
 };
 
 // ── generic marker-slot engine (descriptor-parameterized) ──────────────────────
@@ -283,15 +306,22 @@ export const markerSlotUpgradeHint = (text, descriptor) => {
 // stable "(cap N)" substring both cap messages carry, so the dual-slot reconcile can skip the
 // orchestration pointer (loud) while keeping the methodology fill, instead of aborting both.
 const isCapRefusal = (errorMessage) => typeof errorMessage === 'string' && errorMessage.includes('(cap ');
+// The autonomy lane distinguishes the TWO cap messages "(cap " conflates (D4 cap-lane honesty):
+// only a FILL-overflow from an in-cap input (injectIntoSlot's "injection would push …") is the soft
+// skip — the pointer was genuinely withheld. An ALREADY-over-cap custom file (reconcileMarkerSlot's
+// "AGENTS.md is N lines … trim the file") keeps its distinct over-cap report as a hard refusal,
+// never a mislabeled "skipped". Exported so the split is pinned against the real messages.
+export const isFillCapRefusal = (errorMessage) =>
+  isCapRefusal(errorMessage) && errorMessage.includes('injection would push');
 
 const main = async (argv) => {
   const { readFile, writeFile, rename, rm } = await import('node:fs/promises');
   const { dirname, basename, join, resolve } = await import('node:path');
   const { homedir } = await import('node:os');
-  const { resolveEngineDir, readEngineFragment, detectEngine, ENGINE_FRAGMENT_REL, ORCHESTRATION_FRAGMENT_REL } = await import('./engine-source.mjs');
+  const { resolveEngineDir, readEngineFragment, detectEngine, ENGINE_FRAGMENT_REL, ORCHESTRATION_FRAGMENT_REL, AUTONOMY_FRAGMENT_REL } = await import('./engine-source.mjs');
 
   // `reconcile <AGENTS.md> [fragment.md]` = ensure-slot + inject-if-empty + cap (bootstrap/upgrade) for
-  // BOTH slots; `<AGENTS.md> [fragment.md]` = the legacy inject-into-existing-(methodology)-slot mode.
+  // ALL THREE slots; `<AGENTS.md> [fragment.md]` = the legacy inject-into-existing-(methodology)-slot mode.
   const mode = argv[0] === 'reconcile' ? 'reconcile' : 'inject';
   const rest = mode === 'reconcile' ? argv.slice(1) : argv;
   const agentsPath = rest[0];
@@ -323,36 +353,32 @@ const main = async (argv) => {
     }
   };
 
-  // The orchestration fragment is the SECOND (less-critical) pointer. Source it lazily, but DISTINGUISH
-  // two failures keyed off the engine's own detection (not message text): an engine that is VALID but
-  // simply TOO OLD to ship `orchestration-slot.md` (e.g. <1.2.0) is a SOFT skip — the methodology fill
-  // is kept and the recipes pointer is reported as withheld (parallel to the cap-skip); only a FULLY
-  // absent/invalid engine (it cannot supply EITHER pointer) is a hard STOP. Returns
-  // { fragment } on success, { skip } for the soft case, or process.exit(1) for the hard STOP.
-  const sourceOrchestrationFragment = async () => {
+  // The orchestration + autonomy fragments are the CHAINED (less-critical) pointers. Source each
+  // lazily, but DISTINGUISH two failures keyed off the engine's own detection (not message text): an
+  // engine that is VALID but simply TOO OLD to ship the requested fragment is a SOFT skip — the prior
+  // fills are kept and the pointer is reported as withheld (parallel to the cap-skip); only a FULLY
+  // absent/invalid engine (it cannot supply ANY pointer) is a hard STOP. A read error on a PRESENT
+  // fragment is a real corruption STOP, NEVER a "too old" skip (don't mislabel a current engine with
+  // an unreadable fragment). Returns { fragment } on success, { skip } for the soft case, or
+  // process.exit(1) for the hard STOP.
+  const sourceChainedFragment = async (rel) => {
     const { dir, source } = resolveEngineDir({ env: process.env, home: homedir() });
     const stop = (err) => {
       console.error(`[inject-methodology] reconcile STOP — ${err.message}`);
       process.exit(1);
     };
-    // The orchestration fragment FILE is present + the engine is valid → read it. A read error on a
-    // PRESENT fragment is a real corruption STOP, NEVER a "too old" skip (don't mislabel a current
-    // engine with an unreadable fragment).
-    if (detectEngine(dir, { source, rel: ORCHESTRATION_FRAGMENT_REL }).ok) {
+    if (detectEngine(dir, { source, rel }).ok) {
       try {
-        return { fragment: readEngineFragment(dir, { source, rel: ORCHESTRATION_FRAGMENT_REL }) };
+        return { fragment: readEngineFragment(dir, { source, rel }) };
       } catch (err) {
         stop(err);
       }
     }
-    // The orchestration fragment is NOT a usable file. SOFT-skip ONLY when the engine is otherwise
-    // valid (it can still supply the methodology fragment) — a genuine too-old (<1.2.0) engine. A
-    // fully absent/invalid engine cannot supply EITHER fragment → hard STOP with the install command.
     if (detectEngine(dir, { source }).ok) {
       return { skip: 'the installed engine is too old to supply it — refresh with `npx @sabaiway/agent-workflow-engine@latest init`' };
     }
     try {
-      readEngineFragment(dir, { source, rel: ORCHESTRATION_FRAGMENT_REL }); // throws the canonical install-me error
+      readEngineFragment(dir, { source, rel }); // throws the canonical install-me error
     } catch (err) {
       stop(err);
     }
@@ -398,7 +424,7 @@ const main = async (argv) => {
       for (const n of notes) console.log(`[inject-methodology] note: ${n}`);
     };
 
-    // ── Explicit [fragment.md] binds methodology ONLY → skip the orchestration reconcile ──
+    // ── Explicit [fragment.md] binds methodology ONLY → skip the orchestration + autonomy reconciles ──
     if (explicitFragmentArg) {
       if (afterMeth === text) {
         console.log('[inject-methodology] methodology slot already present and filled — nothing to do (zero-diff).');
@@ -416,7 +442,7 @@ const main = async (argv) => {
     let orchSkipped = false;
 
     const orchSource = markerSlotNeedsFill(afterMeth, ORCHESTRATION_DESCRIPTOR)
-      ? await sourceOrchestrationFragment()
+      ? await sourceChainedFragment(ORCHESTRATION_FRAGMENT_REL)
       : { fragment: '' };
     if (orchSource.skip) {
       // Engine too old to supply the recipes pointer → SOFT skip, parallel to the cap-skip: the
@@ -453,16 +479,79 @@ const main = async (argv) => {
       }
     }
 
-    // ── One atomic write of the final (both-slot) text ──
+    // ── Slot 3: autonomy, chained on the orchestration-reconciled text (same combined ≤100 guard).
+    //    D4 invariant: every failure lane SPECIFIC to this slot is a LOUD soft skip that preserves
+    //    the prior fills and exits 0 — (i) a too-old engine (no autonomy fragment), (ii) a
+    //    fill-overflow cap refusal, (iii) an ABSENT anchor (the orchestration pair is absent or was
+    //    itself skipped above — a 0-anchors ensure error must not discard the methodology fill).
+    //    Malformed autonomy markers, an already-over-cap custom file, a present-but-unreadable
+    //    fragment, and a fully absent/invalid engine stay hard STOPs. ──
+    let describeAut;
+    let autSkipped = false;
+    const autSlot = findMarkerSlot(finalText, AUTONOMY_DESCRIPTOR);
+    if (autSlot.state === 'malformed') {
+      // Malformed markers are a hard STOP on EVERY lane — validated before the soft-skip
+      // short-circuits so a duplicate/reversed autonomy pair can never ride out as a "skip"
+      // alongside a partial (methodology) write.
+      console.error(`[inject-methodology] reconcile refused (autonomy) — ${autSlot.reason}`);
+      process.exit(1);
+    }
+    if (orchSkipped) {
+      // The chain is CAUSAL, not merely positional: a pointer never lands in a run that withheld
+      // the pointer it chains below (cap or too-old) — otherwise a partially-shipped engine could
+      // fill autonomy under an unfilled recipes pointer, and a near-cap file could spend its last
+      // lines on the less-critical pointer. LOUD soft skip. This branch also subsumes the D4 (iii)
+      // anchor-absent lane: after a non-skipped orchestration reconcile the orchestration pair —
+      // the autonomy anchor — is present by construction, so orchSkipped is the ONLY route to a
+      // missing anchor (a separate anchor check would be dead code; coverage proved it).
+      autSkipped = true;
+      describeAut =
+        'autonomy pointer skipped — chained below the orchestration pointer, which was itself skipped this run; re-run once it lands';
+    } else {
+      const autSource = markerSlotNeedsFill(finalText, AUTONOMY_DESCRIPTOR)
+        ? await sourceChainedFragment(AUTONOMY_FRAGMENT_REL)
+        : { fragment: '' };
+      if (autSource.skip) {
+        autSkipped = true;
+        describeAut = `autonomy pointer skipped — ${autSource.skip}`;
+      } else {
+        const autResult = reconcileMarkerSlot(finalText, AUTONOMY_DESCRIPTOR, autSource.fragment, { maxLines: AGENTS_MD_CAP });
+        if (autResult.status === 'error') {
+          if (isFillCapRefusal(autResult.error)) {
+            // SOFT skip — only the genuine fill-overflow withholds the pointer; an already-over-cap
+            // custom file keeps its distinct over-cap report via the hard-STOP branch below.
+            autSkipped = true;
+            describeAut = `autonomy pointer skipped — ${autResult.error}`;
+          } else {
+            console.error(`[inject-methodology] reconcile refused (autonomy) — ${autResult.error}`);
+            process.exit(1);
+          }
+        } else {
+          finalText = autResult.text;
+          describeAut = {
+            'reconciled-inserted': 'inserted the autonomy pointer below it and filled it',
+            'reconciled-filled': 'filled the empty autonomy pointer',
+            'reconciled-refreshed': 'refreshed the autonomy pointer to the current canon',
+            'present-filled': 'autonomy pointer already present',
+          }[autResult.status];
+          if (autResult.status === 'present-filled') {
+            const u = markerSlotUpgradeHint(finalText, AUTONOMY_DESCRIPTOR);
+            if (u) notes.push(u);
+          }
+        }
+      }
+    }
+
+    // ── One atomic write of the final (three-slot) text ──
     if (finalText === text) {
-      // Byte-unchanged. Still report a cap-skip (it is not "nothing to do" — a pointer was withheld).
-      if (orchSkipped) console.log(`[inject-methodology] reconcile: ${describeMeth}; ${describeOrch}.`);
-      else console.log('[inject-methodology] reconcile: both pointers already present and filled — nothing to do (zero-diff).');
+      // Byte-unchanged. Still report a skip (it is not "nothing to do" — a pointer was withheld).
+      if (orchSkipped || autSkipped) console.log(`[inject-methodology] reconcile: ${describeMeth}; ${describeOrch}; ${describeAut}.`);
+      else console.log('[inject-methodology] reconcile: all three pointers already present and filled — nothing to do (zero-diff).');
       reportNotes();
       return;
     }
     await writeAtomic(finalText);
-    console.log(`[inject-methodology] reconcile: ${describeMeth}; ${describeOrch}.`);
+    console.log(`[inject-methodology] reconcile: ${describeMeth}; ${describeOrch}; ${describeAut}.`);
     reportNotes();
     return;
   }

@@ -57,6 +57,8 @@ Start-of-session, during-work, and task-completion procedures live in [`docs/ai/
 <!-- workflow:methodology:end -->
 <!-- workflow:orchestration:start -->
 <!-- workflow:orchestration:end -->
+<!-- workflow:autonomy:start -->
+<!-- workflow:autonomy:end -->
 
 ---
 
@@ -68,7 +70,6 @@ Start-of-session, during-work, and task-completion procedures live in [`docs/ai/
 | No `any` / no unsafe casts | Linter / type-checker |
 | Functional style (no mutation in app code) | Linter |
 | Interactive elements semantic (button/link, not div+onClick) | Linter / a11y |
-| No hardcoded colors — design tokens only | Code review |
 | No business logic in components → hooks/services | Architecture review |
 | No changes without tests (TDD) | Required |
 | Check page docs before changes; update them after | Process |

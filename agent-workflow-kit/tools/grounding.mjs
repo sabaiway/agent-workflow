@@ -35,6 +35,9 @@ import { fail } from './orchestration-config.mjs';
 // computeTelemetry give the counts; the segment filter gives the scope.
 import { ORIGINS, computeTelemetry, filterSegmentRecords, readLedger, resolveLedgerPath, resolveBase } from './review-ledger.mjs';
 import { plansInFlight } from './review-state.mjs';
+// (f) --autonomy (AD-044 Plan 3): the effective per-project autonomy policy for the facts payload.
+// READ core only — never autonomy-write.mjs (the import-split invariant).
+import { AUTONOMY_REL, loadAutonomy, resolveAutonomy } from './autonomy-config.mjs';
 
 const PLAN_EXECUTION = 'plan-execution';
 
@@ -82,11 +85,15 @@ export const sliceSection = (text, heading, { optional = false, label = 'documen
 
 // ── assembly ───────────────────────────────────────────────────────────────────────
 
-export const assembleGrounding = ({ constraintsText = null, planText = null, planLabel = 'plan' } = {}) => {
+export const assembleGrounding = ({ constraintsText = null, autonomyText = null, planText = null, planLabel = 'plan' } = {}) => {
   const parts = [];
   if (constraintsText != null) {
     parts.push(sliceSection(constraintsText, CONSTRAINTS_HEADING, { label: 'AGENTS.md' }));
   }
+  // The autonomy block is COMPUTED (resolveAutonomy over the policy file), not sliced — it rides
+  // between the constraints and the plan sections: the natural read order (what always binds →
+  // how autonomous this session is → what this plan decides).
+  if (autonomyText != null) parts.push(autonomyText);
   if (planText != null) {
     for (const { heading, optional } of PLAN_SECTIONS) {
       const section = sliceSection(planText, heading, { optional, label: planLabel });
@@ -178,6 +185,33 @@ export const resolveLedgerSummary = ({ cwd, env }) => {
   return renderLedgerSummary(records, { loop, base });
 };
 
+// ── (f) --autonomy: the effective autonomy policy as a computed facts block (AD-044 Plan 3) ─────
+// The ONE shared resolver (resolveAutonomy) renders the FULL effective policy — every red-line and
+// every activity resolved, no key undefined — with a stated source line. The policy file resolves
+// from the GIT TOP of cwd (the --ledger-summary gitTop precedent): a cwd-relative read from a
+// subdir would silently emit computed defaults for a policy-carrying repo, the exact silent failure
+// grounding exists to kill. Malformed/unreadable policy fails CLOSED (loadAutonomy throws exit 1);
+// an ABSENT file is NOT an error — the computed defaults ARE the effective policy (deliberately
+// diverging from `velocity-profile --autonomy`'s refuse-on-absent: that surface WRITES settings and
+// demands a declared policy; this one emits informational facts). Enforcement honesty: these facts
+// INFORM a review; enforcement stays the OS sandbox + the orchestrator process (AD-044 D1).
+
+export const renderAutonomyFacts = (config, source) => {
+  const resolved = resolveAutonomy(config);
+  const head =
+    source === 'none'
+      ? `## Autonomy policy — ${AUTONOMY_REL} absent; the computed defaults ARE the effective policy`
+      : `## Autonomy policy — ${AUTONOMY_REL}`;
+  const redlines = Object.entries(resolved.redlines).map(([k, v]) => `${k}:${v}`).join(' ');
+  const activities = Object.entries(resolved.activities).map(([a, v]) => `${a}:${v.autonomy}`).join(' ');
+  return `${head}\n\nred-lines — ${redlines}\nactivities — ${activities}\n`;
+};
+
+const resolveAutonomyFacts = ({ cwd }) => {
+  const { config, source } = loadAutonomy(gitTop(cwd));
+  return renderAutonomyFacts(config, source);
+};
+
 // ── the --out destination guard (gitignored / out-of-repo scratch ONLY) ────────────────
 
 const gitLine = (args, cwd) => {
@@ -231,10 +265,15 @@ export const assertScratchDestination = (outPath, cwd) => {
 const HELP = `grounding — grounded-review facts assembler for the agent-workflow family (AD-038).
 
 Usage:
-  node grounding.mjs [--constraints] [--plan <path>] [--ledger-summary] [--reserve-bytes <n>] [--out <path>]
+  node grounding.mjs [--constraints] [--autonomy] [--plan <path>] [--ledger-summary] [--reserve-bytes <n>] [--out <path>]
 
   --constraints        slice the root AGENTS.md "Hard Constraints" section verbatim
                        (exactly one matching heading, else a loud STOP)
+  --autonomy           append the COMPUTED effective autonomy policy (resolveAutonomy over the
+                       git-top docs/ai/autonomy.json): every red-line + per-activity level, with a
+                       stated source line; absent file → the computed defaults ARE the policy
+                       (exit 0); malformed/unreadable → fail-closed STOP (exit 1); informational —
+                       enforcement stays the sandbox + the orchestrator
   --plan <path>        extract the plan's decision-bearing sections verbatim + whole:
                        "## Approach" + "## Verification" (REQUIRED — STOP if missing),
                        "## Decisions (locked)" when present; a duplicate heading is a STOP
@@ -256,6 +295,7 @@ Exit codes: 0 success; 2 usage; 1 STOP (missing/duplicate section, unreadable fi
 
 const parseArgs = (argv) => {
   let constraints = false;
+  let autonomy = false;
   let plan = null;
   let out = null;
   let reserve = 0;
@@ -263,6 +303,7 @@ const parseArgs = (argv) => {
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--constraints') constraints = true;
+    else if (a === '--autonomy') autonomy = true;
     else if (a === '--ledger-summary') ledgerSummary = true;
     else if (a === '--plan') {
       plan = argv[i + 1];
@@ -279,8 +320,10 @@ const parseArgs = (argv) => {
       i += 1;
     } else throw fail(2, `unknown argument: ${a}`);
   }
-  if (!constraints && plan == null && !ledgerSummary) throw fail(2, 'nothing to assemble — pass --constraints, --plan <path>, and/or --ledger-summary');
-  return { constraints, plan, out, reserve, ledgerSummary };
+  if (!constraints && !autonomy && plan == null && !ledgerSummary) {
+    throw fail(2, 'nothing to assemble — pass --constraints, --autonomy, --plan <path>, and/or --ledger-summary');
+  }
+  return { constraints, autonomy, plan, out, reserve, ledgerSummary };
 };
 
 const resolveBudget = (env, reserve) => {
@@ -300,7 +343,7 @@ export const main = (argv, ctx = {}) => {
   const env = ctx.env ?? process.env;
   try {
     if (argv.includes('--help') || argv.includes('-h')) return { code: 0, stdout: HELP, stderr: '' };
-    const { constraints, plan, out, reserve, ledgerSummary } = parseArgs(argv);
+    const { constraints, autonomy, plan, out, reserve, ledgerSummary } = parseArgs(argv);
     const budget = resolveBudget(env, reserve);
 
     const readOrStop = (path, label) => {
@@ -311,10 +354,11 @@ export const main = (argv, ctx = {}) => {
       }
     };
     const constraintsText = constraints ? readOrStop('AGENTS.md', 'root AGENTS.md') : null;
+    const autonomyText = autonomy ? resolveAutonomyFacts({ cwd }) : null;
     const planText = plan != null ? readOrStop(plan, 'plan file') : null;
 
     const parts = [];
-    const assembled = assembleGrounding({ constraintsText, planText, planLabel: plan ?? 'plan' });
+    const assembled = assembleGrounding({ constraintsText, autonomyText, planText, planLabel: plan ?? 'plan' });
     if (assembled) parts.push(assembled);
     if (ledgerSummary) {
       const summary = resolveLedgerSummary({ cwd, env });

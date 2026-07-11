@@ -32,14 +32,16 @@ const SKILL_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const TEMPLATES = join(SKILL_ROOT, 'references', 'templates');
 const ENFORCEMENT = join(SKILL_ROOT, 'references', 'scripts');
 
-// The empty delimited slot the substrate ships in its entry point. Hard-coded (not imported
+// The empty delimited slots the substrate ships in its entry point. Hard-coded (not imported
 // from the composition root) so this substrate test stays self-contained and dependency-free.
 const SLOT_START = '<!-- workflow:methodology:start -->';
 const SLOT_END = '<!-- workflow:methodology:end -->';
 const ORCH_START = '<!-- workflow:orchestration:start -->';
 const ORCH_END = '<!-- workflow:orchestration:end -->';
-// The deployed AGENTS.md line budget the composition root fills BOTH pointers inside (D-CAP). A
-// representative single-line fragment per slot models what the composition root injects.
+const AUT_START = '<!-- workflow:autonomy:start -->';
+const AUT_END = '<!-- workflow:autonomy:end -->';
+// The deployed AGENTS.md line budget the composition root fills ALL THREE pointers inside (D-CAP).
+// A representative single-line fragment per slot models what the composition root injects.
 const AGENTS_MD_CAP = 100;
 const lineCount = (text) => text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
 const extractPair = (text, start, end) => {
@@ -133,17 +135,20 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
     assert.ok(!existsSync(join(docsAi, '.workflow-version')), 'no composition-root stamp in a standalone bootstrap');
   });
 
-  it('ships BOTH pointer slots present-but-empty (methodology + orchestration)', () => {
+  it('ships ALL THREE pointer slots present-but-empty (methodology + orchestration + autonomy)', () => {
     const project = makeProject();
     bootstrap(project);
 
     const entry = readFileSync(join(project, 'AGENTS.md'), 'utf8');
     const meth = extractPair(entry, SLOT_START, SLOT_END);
     const orch = extractPair(entry, ORCH_START, ORCH_END);
+    const aut = extractPair(entry, AUT_START, AUT_END);
     assert.notEqual(meth, null, 'an ordered methodology marker pair is present');
     assert.equal(meth.trim(), '', 'the methodology slot is empty as shipped');
     assert.notEqual(orch, null, 'an ordered orchestration marker pair is present');
     assert.equal(orch.trim(), '', 'the orchestration slot is empty as shipped');
+    assert.notEqual(aut, null, 'an ordered autonomy marker pair is present');
+    assert.equal(aut.trim(), '', 'the autonomy slot is empty as shipped');
   });
 
   it('seeds docs/ai/orchestration.json from the template (the bootstrap loop deploys it)', () => {
@@ -255,7 +260,7 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
     assert.equal(readFileSync(dest, 'utf8'), readFileSync(join(TEMPLATES, 'orchestration.json'), 'utf8'));
   });
 
-  it('stays ≤ the cap when the composition root fills BOTH pointer slots (D-CAP headroom)', () => {
+  it('stays STRICTLY under the cap when the composition root fills ALL THREE pointer slots (D-CAP headroom)', () => {
     const project = makeProject();
     bootstrap(project);
     const entry = readFileSync(join(project, 'AGENTS.md'), 'utf8');
@@ -268,6 +273,9 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
     };
     let filled = fill(entry, SLOT_START, SLOT_END, '> methodology pointer (one line)');
     filled = fill(filled, ORCH_START, ORCH_END, '> orchestration recipes pointer (one line)');
-    assert.ok(lineCount(filled) <= AGENTS_MD_CAP, `dual-filled AGENTS.md is ${lineCount(filled)} lines (cap ${AGENTS_MD_CAP})`);
+    filled = fill(filled, AUT_START, AUT_END, '> autonomy policy pointer (one line)');
+    // STRICT (< cap): the third pair once landed the triple-fill exactly AT 100 — only a
+    // genuinely-trimmed template passes, so the headroom trim can never silently regress.
+    assert.ok(lineCount(filled) < AGENTS_MD_CAP, `triple-filled AGENTS.md is ${lineCount(filled)} lines — must stay STRICTLY under the cap ${AGENTS_MD_CAP}`);
   });
 });

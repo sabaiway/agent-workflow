@@ -26,7 +26,7 @@ import { resolveDir, detectBackends, findOnPath } from './detect-backends.mjs';
 import { parseSemver, compareSemver } from './semver-lite.mjs';
 import { validateManifest, readAuthoritativeVersion, UNSUPPORTED, INVALID } from './manifest/validate.mjs';
 import { START_MARKER, excludePath, inferVisibility } from './hide-footprint.mjs';
-import { readEngineFragment, ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL, LENS_FRAGMENT_REL, LENS_PRIORS_REL } from './engine-source.mjs';
+import { readEngineFragment, ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL, AUTONOMY_FRAGMENT_REL, LENS_FRAGMENT_REL, LENS_PRIORS_REL } from './engine-source.mjs';
 import { ACTIVITIES, resolveActivityRecipe } from './recipes.mjs';
 // The config reader lives in orchestration-config.mjs (the single config contract). The read-only status
 // settings-survey reuses THIS reader (one strict-JSON + loud-on-malformed contract), not a second copy.
@@ -182,6 +182,7 @@ export const classifyMember = (member, deps = {}) => {
 // caveat keys on both — an engine missing only the prior store must never report healthy.
 const ENGINE_FRAGMENT_CAVEATS = [
   { rels: [ORCHESTRATION_FRAGMENT_REL], caveat: 'engine present but does not supply the recipes pointer (too old / incomplete) — run `npx @sabaiway/agent-workflow-engine@latest init`' },
+  { rels: [AUTONOMY_FRAGMENT_REL], caveat: 'engine present but does not supply the autonomy pointer (too old / incomplete) — run `npx @sabaiway/agent-workflow-engine@latest init`' },
   { rels: [PROCEDURES_FRAGMENT_REL], caveat: 'engine present but does not ship the activity-procedures canon (too old / incomplete) — run `npx @sabaiway/agent-workflow-engine@latest init`' },
   { rels: [LENS_FRAGMENT_REL, LENS_PRIORS_REL], caveat: 'engine present but does not ship the agent-rules lens canon (the fragment + its prior store; too old / incomplete — engine >= 1.13.0) — run `npx @sabaiway/agent-workflow-engine@latest init`' },
 ];
