@@ -242,11 +242,11 @@ const groundingPreStepAdvice = (activity, slots, plans) => {
   // Path arguments are double-quoted — a skill dir or plan name with a space must stay copy-pasteable.
   const lines = [
     'Grounding pre-step (agy is dispatched — assemble the verified facts BEFORE the review; grounding.mjs slices verbatim, judgment additions stay yours):',
-    `  run:  node "${GROUNDING_TOOL}" --constraints ${planArg} --out ${GROUNDING_FACTS_OUT}`,
+    `  run:  node "${GROUNDING_TOOL}" --constraints --autonomy ${planArg} --out ${GROUNDING_FACTS_OUT}`,
     `  then: ${reviewForm} --facts @${GROUNDING_FACTS_OUT}`,
   ];
   if (plans.length === 0) {
-    lines.push(`  ↳ plan discovery: no plan in flight under ${PLANS_REL} — substitute the plan file you are reviewing against, or drop --plan for constraints-only facts.`);
+    lines.push(`  ↳ plan discovery: no plan in flight under ${PLANS_REL} — substitute the plan file you are reviewing against, or drop --plan for constraints+autonomy facts.`);
   } else if (plans.length > 1) {
     lines.push(`  ↳ plan discovery: ${plans.length} plans in flight under ${PLANS_REL} (${plans.join(', ')}) — populate --plan with the one under review.`);
   }

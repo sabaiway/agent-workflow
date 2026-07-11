@@ -187,7 +187,7 @@ const CATALOG = [
     invocation: invocationOf('grounding'),
     group: 'Orchestrate',
     kind: WRITER,
-    oneLine: 'Assemble the verified-facts payload a grounded review runs against — the entry-point Hard Constraints plus a plan’s decision sections; prints it, or writes ONE scratch file with --out.',
+    oneLine: 'Assemble the verified-facts payload a grounded review runs against — the entry-point Hard Constraints, the effective autonomy policy, plus a plan’s decision sections; prints it, or writes ONE scratch file with --out.',
   },
   {
     key: 'review-ledger',

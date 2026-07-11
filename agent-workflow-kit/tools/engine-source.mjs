@@ -31,6 +31,12 @@ export const ORCHESTRATION_FRAGMENT_REL = 'references/orchestration-slot.md';
 // CLI fail loudly on — an engine too old to ship it. readEngineFragment accepts an arbitrary `rel`
 // (no whitelist), so no further plumbing is needed beyond this constant.
 export const PROCEDURES_FRAGMENT_REL = 'references/procedures.md';
+// The autonomy-policy slot fragment — the THIRD bounded fragment the kit injects (AD-044 Plan 3),
+// the cross-agent read contract for docs/ai/autonomy.json. An engine released before it does not
+// ship it; detectEngine({ rel }) lets the chained reconcile soft-skip that too-old engine (and
+// `status` caveat it) instead of discarding the methodology/orchestration fills. readEngineFragment
+// accepts an arbitrary `rel`, so no further plumbing is needed beyond this constant.
+export const AUTONOMY_FRAGMENT_REL = 'references/autonomy-slot.md';
 // The agent-rules lens pair — the canonical lens block + its append-only prior store (engine
 // >= 1.13.0; an older engine ships neither). The kit's lens-region reconcile live-reads BOTH via
 // readEngineFragment({ rel }); detectEngine({ rel }) lets it soft-skip a too-old engine (and

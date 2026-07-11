@@ -51,6 +51,10 @@ the canonical methodology reference on disk:
 - [`references/orchestration-slot.md`](references/orchestration-slot.md) — the **bounded** one-line
   orchestration fragment the composition root injects into a deployed `AGENTS.md`, routing to the
   in-project recipes surface.
+- [`references/autonomy-slot.md`](references/autonomy-slot.md) — the **bounded** one-line autonomy
+  fragment the composition root injects into a deployed `AGENTS.md`: the cross-agent read contract
+  for `docs/ai/autonomy.json` (read at session start; the canonical default floor when absent; STOP
+  on malformed), routing to the in-project `set-autonomy` / `autonomy-doctor` surfaces.
 - [`references/procedures.md`](references/procedures.md) — the canonical **activity-procedures** canon:
   the named activities (`plan-authoring`, `plan-execution`) as ordered steps with typed recipe slots,
   read live and rendered by the read-only `/agent-workflow-kit procedures <activity>`.

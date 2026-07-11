@@ -126,8 +126,11 @@ describe('handoffPlan — stamp sets + single commit gate', () => {
     assert.equal(p.memoryRaisesCommitGate, false);
     assert.equal(p.commitGate, 'kit-only-after-injection');
     assert.ok(p.memoryWrites.includes('docs/ai/.memory-version'));
-    // Delegate is the ONLY branch with a real slot (memory ships it empty; the kit injects).
-    assert.ok(p.kitWrites.some((w) => w.includes('slot')), 'delegate kitWrites should name the methodology slot');
+    // Delegate is the ONLY branch with real slots (memory ships them empty; the kit injects).
+    assert.ok(
+      p.kitWrites.some((w) => w.includes('slot') && w.includes('methodology') && w.includes('orchestration') && w.includes('autonomy')),
+      'delegate kitWrites should name the bounded reconcile of all three pointer slots',
+    );
     assert.ok(
       p.kitWrites.some((w) => w.includes('agent_rules.md lens region')),
       'delegate kitWrites must name the lens-region refresh (it converges a stale-memory seed)',
@@ -140,11 +143,12 @@ describe('handoffPlan — stamp sets + single commit gate', () => {
     assert.deepEqual(p.memoryWrites, []);
     assert.equal(p.memoryRaisesCommitGate, false);
     assert.equal(p.commitGate, 'kit-only-after-injection');
-    // Fallback now ships the kit's own AGENTS.md with the EMPTY methodology slot, which the kit
+    // Fallback now ships the kit's own AGENTS.md with the EMPTY pointer slots, which the kit
     // reconciles + fills — the same slot mechanism as the delegate path (Plan 2).
     assert.ok(
-      p.kitWrites.some((w) => w.includes('slot')) && !p.kitWrites.some((w) => w.includes('inline')),
-      'fallback kitWrites should describe the methodology slot, not inline methodology',
+      p.kitWrites.some((w) => w.includes('slot') && w.includes('methodology') && w.includes('orchestration') && w.includes('autonomy')) &&
+        !p.kitWrites.some((w) => w.includes('inline')),
+      'fallback kitWrites should describe all three pointer slots, not inline methodology',
     );
     assert.ok(
       p.kitWrites.some((w) => w.includes('agent_rules.md lens region')),

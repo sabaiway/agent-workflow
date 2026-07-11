@@ -192,7 +192,7 @@ describe('router contract — D4 pointer audits over the whole split corpus (d)'
 // ── (e) the D6 byte budgets, read sets from the parsed Requires: lines ───────
 const BUDGET = {
   router: 10240, // router alone
-  routerPlusMode: 31744, // router + any single mode file (28672 → 29696: the AD-042 documented
+  routerPlusMode: 32768, // router + any single mode file (28672 → 29696: the AD-042 documented
   // AD-039 amendment — the F11 both-blocks batching caveat is +422 B of new upgrade.md contract
   // content against 154 B of headroom; then 29696 → 30720 (30 KB): AD-043 adds the bridge-settings
   // reconcile paragraph + its step-4/8 report mentions to upgrade.md, ~628 B of new contract content
@@ -200,11 +200,18 @@ const BUDGET = {
   // then 30720 → 31744 (31 KB): AD-049 adds the doc-parity mode to the router (offset by a router
   // trim to stay FLAT ≤ 10240) AND the carry-in `verification-profile.json` clause to upgrade.md's
   // equal-head report checklist, which overflows the 30720 pair by 120 B — another documented
-  // KB-multiple bump. The router itself stays FLAT ≤ 10240 for the new mode.)
-  fullReadSet: 54272, // router + mode + its declared shared files. 53248 → 54272 (53 KB): AD-049 —
+  // KB-multiple bump. The router itself stays FLAT ≤ 10240 for the new mode.
+  // Then 31744 → 32768 (32 KB): AD-044 Plan 3 takes upgrade.md's two-pointer reconcile contract to
+  // THREE pointers (the autonomy slot: step-3 wording, the (a)(iii) anchor-absent soft-skip lane,
+  // the No-Node walk, the step-4/8 report row) — ~575 B of new contract content over 179 B of
+  // headroom; a documented KB-multiple bump, never a silent re-pin.)
+  fullReadSet: 55296, // router + mode + its declared shared files. 53248 → 54272 (53 KB): AD-049 —
   // the heaviest read set (upgrade + its 3 shared files) sat 6 B under the 52 KB budget, so the new
   // doc-parity router line (present in EVERY mode's read set) plus the carry-in verification-profile
   // clause on upgrade.md overflow it by 190 B — a documented KB-multiple bump, never a silent re-pin.
+  // Then 54272 → 55296 (54 KB): AD-044 Plan 3 — the same three-pointer contract also lands in
+  // composition-handoff.md (a shared file in upgrade's read set), overflowing the pair by ~949 B;
+  // the same documented KB-multiple bump.
   daily: 17408, // the no-shared daily modes (help/backends/recipes/procedures/gates). 16384 →
   // 17408 (17 KB): AD-052 replaces gates.md's one-sentence offer description with the closed-world
   // contract paragraph (allowlist membership + the uniform `<pm> exec` hook-free form + the per-PM

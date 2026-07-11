@@ -144,6 +144,89 @@ describe('grounding --plan — the canonical §7 heading policy', () => {
   });
 });
 
+// ── (f) --autonomy — the computed effective-policy block (AD-044 Plan 3) ─────────────────────
+describe('grounding --autonomy — effective policy from the git-top docs/ai/autonomy.json', () => {
+  const POLICY = `${JSON.stringify({ 'plan-authoring': { autonomy: 'sandbox' }, 'plan-execution': { autonomy: 'sandbox' } }, null, 2)}\n`;
+  // The policy fixture dir is a REAL git repo (gitTop resolution is the contract under test) —
+  // a marker fixture is not needed: the autonomy block never reads AGENTS.md.
+  const makePolicyRepo = ({ policy = POLICY } = {}) => {
+    const root = mkdtempSync(join(tmpdir(), 'grounding-autonomy-'));
+    const g = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+    g('init', '-q');
+    writeFileSync(join(root, 'AGENTS.md'), AGENTS_MD);
+    mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
+    if (policy != null) writeFileSync(join(root, 'docs', 'ai', 'autonomy.json'), policy);
+    mkdirSync(join(root, 'sub', 'dir'), { recursive: true });
+    return root;
+  };
+
+  const FILE_BACKED_BLOCK = [
+    '## Autonomy policy — docs/ai/autonomy.json',
+    '',
+    'red-lines — commit:ask push:ask publish:ask network:deny credentials:deny fs_outside_repo:deny',
+    'activities — plan-authoring:sandbox plan-execution:sandbox',
+    '',
+  ].join('\n');
+
+  it('present policy → the byte-stable effective block, sourced from the policy file (exit 0)', () => {
+    const root = makePolicyRepo();
+    const r = run(root, ['--autonomy']);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.stdout, FILE_BACKED_BLOCK, 'the FULL effective policy, byte-stable, with the file-backed source line');
+  });
+
+  it('absent policy → the computed-defaults block with the stated absent-source line (exit 0 — defaults ARE the policy)', () => {
+    const root = makeDir(); // no git repo, no policy file — gitTop falls back to cwd
+    const r = run(root, ['--autonomy']);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /^## Autonomy policy — docs\/ai\/autonomy\.json absent; the computed defaults ARE the effective policy\n/, 'the source line states the absence');
+    assert.match(r.stdout, /red-lines — commit:ask push:ask publish:ask network:deny credentials:deny fs_outside_repo:deny/);
+    assert.match(r.stdout, /activities — plan-authoring:prompt plan-execution:prompt/, 'absent activities floor at prompt');
+  });
+
+  it('malformed policy JSON → fail-closed STOP (exit 1), nothing emitted', () => {
+    const root = makePolicyRepo({ policy: '{ nope' });
+    const r = run(root, ['--autonomy']);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /autonomy\.json: malformed JSON/);
+    assert.equal(r.stdout, '');
+  });
+
+  it('schema-invalid policy (bad value) → fail-closed STOP (exit 1), never silent defaults', () => {
+    const root = makePolicyRepo({ policy: '{ "redlines": { "commit": "maybe" } }\n' });
+    const r = run(root, ['--autonomy']);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /invalid value "maybe"/);
+  });
+
+  it('subdir cwd in a policy-carrying repo → the FILE-BACKED block (gitTop resolution), never silent defaults', () => {
+    const root = makePolicyRepo();
+    const r = run(join(root, 'sub', 'dir'), ['--autonomy']);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.stdout, FILE_BACKED_BLOCK, 'a subdir cwd still reads the git-top policy (sandbox, not the prompt defaults)');
+  });
+
+  it('--autonomy alone satisfies "nothing to assemble"; compose order is constraints → autonomy → plan', () => {
+    const root = makePolicyRepo();
+    writeFileSync(join(root, 'plan.md'), PLAN_MD);
+    const alone = run(root, ['--autonomy']);
+    assert.equal(alone.code, 0, alone.stderr);
+    const composed = run(root, ['--constraints', '--autonomy', '--plan', 'plan.md']);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(composed.code, 0, composed.stderr);
+    const atConstraints = composed.stdout.indexOf('Hard Constraints');
+    const atAutonomy = composed.stdout.indexOf('## Autonomy policy');
+    const atPlan = composed.stdout.indexOf('## Approach');
+    assert.ok(atConstraints !== -1 && atAutonomy !== -1 && atPlan !== -1, 'all three sections present');
+    assert.ok(atConstraints < atAutonomy && atAutonomy < atPlan, 'constraints → autonomy → plan');
+  });
+});
+
 describe('grounding --out — scratch-only writer honesty', () => {
   const makeRepo = () => {
     const root = mkdtempSync(join(tmpdir(), 'grounding-repo-'));

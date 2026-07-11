@@ -33,11 +33,12 @@ Open your agent inside a project and run the skill:
 - **`/agent-workflow-memory`** — bootstrap a new or empty project. Asks the three setup
   questions (visibility, conversational language, agent attribution), then writes `docs/ai/`,
   `AGENTS.md`, the enforcement scripts + pre-commit hook, and stamps
-  `docs/ai/.memory-version`. The two pointer slots in `AGENTS.md` (the **methodology** and
-  **orchestration** pointers, filled later by the family composition root) are left **empty**.
+  `docs/ai/.memory-version`. The three pointer slots in `AGENTS.md` (the **methodology**,
+  **orchestration** and **autonomy** pointers, filled later by the family composition root) are
+  left **empty**.
 - **`/agent-workflow-memory upgrade`** — migrate an existing deployment to the skill's current
   version. Reads `docs/ai/.memory-version`, runs only newer migrations in semver order, and
-  **preserves** anything already in either pointer slot (extract-and-reinsert — it never
+  **preserves** anything already in every pointer slot (extract-and-reinsert — it never
   regenerates `AGENTS.md` wholesale).
 
 ## Stamps & lineage

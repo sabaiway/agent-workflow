@@ -80,6 +80,7 @@ describe('engine package content — DAG guard (knows nobody)', () => {
       'package.json', // npm always includes the manifest, even though files[] does not list it
       'references/agent-rules-lens.md',
       'references/agent-rules-lens-priors.md',
+      'references/autonomy-slot.md',
       'references/methodology-slot.md',
       'references/orchestration-slot.md',
       'references/orchestration.md',

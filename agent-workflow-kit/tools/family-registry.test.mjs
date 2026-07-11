@@ -32,7 +32,7 @@ import {
 import { VALID, INVALID, UNSUPPORTED } from './manifest/validate.mjs';
 import { INTERNAL_RENDER_FORBIDDEN } from './labels.mjs';
 import { START_MARKER } from './hide-footprint.mjs';
-import { ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL, LENS_FRAGMENT_REL, LENS_PRIORS_REL } from './engine-source.mjs';
+import { ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL, AUTONOMY_FRAGMENT_REL, LENS_FRAGMENT_REL, LENS_PRIORS_REL } from './engine-source.mjs';
 import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
 import { READY, NEEDS_SKILL } from './detect-backends.mjs';
 
@@ -148,9 +148,10 @@ describe('surveyFamily', () => {
   // dir + everything else is a 'dir'. readFileSync returns content for a present fragment.
   // Pin the mock to the AUTHORITATIVE engine-source constants (mirrors engine-source.test.mjs), so a
   // fragment-path rename follows here instead of silently passing against the old basename.
-  const fragmentStat = ({ orch = 'file', proc = 'file', lens = 'file', lensPriors = 'file' }) => (p) => {
+  const fragmentStat = ({ orch = 'file', aut = 'file', proc = 'file', lens = 'file', lensPriors = 'file' }) => (p) => {
     const s = String(p);
     if (s.endsWith(ORCHESTRATION_FRAGMENT_REL)) return orch;
+    if (s.endsWith(AUTONOMY_FRAGMENT_REL)) return aut;
     if (s.endsWith(PROCEDURES_FRAGMENT_REL)) return proc;
     if (s.endsWith(LENS_PRIORS_REL)) return lensPriors;
     if (s.endsWith(LENS_FRAGMENT_REL)) return lens;
@@ -174,6 +175,19 @@ describe('surveyFamily', () => {
     const caveats = caveatsOf(rows);
     assert.equal(caveats.length, 1);
     assert.match(caveats[0], /recipes pointer/i);
+  });
+
+  it('an OK engine MISSING the autonomy fragment gets the autonomy caveat (only) — the reconcile would soft-skip it', () => {
+    // The realistic post-release case: every published engine predates references/autonomy-slot.md
+    // until the AD-044 Plan-4 release — status must caveat what the chained reconcile soft-skips.
+    const rows = surveyFamily(engineDeps({
+      readVersion: () => ({ version: '1.14.1' }),
+      statType: fragmentStat({ aut: null }), // autonomy fragment ABSENT, everything else present
+      readFileSync: () => '> a bounded fragment',
+    }));
+    const caveats = caveatsOf(rows);
+    assert.equal(caveats.length, 1);
+    assert.match(caveats[0], /autonomy pointer/i);
   });
 
   it('an OK engine MISSING the procedures canon gets the activity-procedures caveat (only)', () => {
@@ -213,28 +227,29 @@ describe('surveyFamily', () => {
   it('an engine MISSING every fragment surfaces EVERY caveat (none overwrites another)', () => {
     const rows = surveyFamily(engineDeps({
       readVersion: () => ({ version: '1.1.0' }),
-      statType: fragmentStat({ orch: null, proc: null, lens: null }),
+      statType: fragmentStat({ orch: null, aut: null, proc: null, lens: null }),
     }));
     const caveats = caveatsOf(rows);
-    assert.equal(caveats.length, 3, 'every missing fragment is reported');
+    assert.equal(caveats.length, 4, 'every missing fragment is reported');
     assert.ok(caveats.some((c) => /recipes pointer/i.test(c)));
+    assert.ok(caveats.some((c) => /autonomy pointer/i.test(c)));
     assert.ok(caveats.some((c) => /activity-procedures|procedures canon/i.test(c)));
     assert.ok(caveats.some((c) => /agent-rules lens/i.test(c)));
   });
 
   it('a broken engine whose fragments are DIRECTORIES is NOT a false "ok"', () => {
     const rows = surveyFamily(engineDeps({ statType: () => 'dir' })); // every fragment path is a dir
-    assert.equal(caveatsOf(rows).length, 3, 'non-file fragments are caveated');
+    assert.equal(caveatsOf(rows).length, 4, 'non-file fragments are caveated');
   });
 
   it('a fragment PRESENT but UNREADABLE is NOT a false "ok" (mirrors the consumer STOP)', () => {
     const rows = surveyFamily(engineDeps({
-      statType: fragmentStat({}), // both present as files
+      statType: fragmentStat({}), // all present as files
       readFileSync: () => {
         throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); // but unreadable
       },
     }));
-    assert.equal(caveatsOf(rows).length, 3, 'unreadable fragments are caveated, not reported clean');
+    assert.equal(caveatsOf(rows).length, 4, 'unreadable fragments are caveated, not reported clean');
   });
 });
 

@@ -26,6 +26,7 @@ import {
   extractSlot,
   extractMarkerSlot,
   ORCHESTRATION_DESCRIPTOR,
+  AUTONOMY_DESCRIPTOR,
   AGENTS_MD_CAP,
   START_MARKER,
   END_MARKER,
@@ -310,7 +311,7 @@ describe('composition root — CLI-backed reconcile + config seed (real engine, 
   const withEngine = { ...process.env, AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR };
   const lineCount = (t) => t.split('\n').length - (t.endsWith('\n') ? 1 : 0);
 
-  it('fallback deploy: CLI reconcile fills BOTH pointers live — methodology carries the /agent-workflow-kit procedures route', () => {
+  it('fallback deploy: CLI reconcile fills ALL THREE pointers live — methodology routes to procedures, autonomy carries the policy read contract', () => {
     const { project } = makeProject();
     cpSync(KIT_ENTRY_TEMPLATE, join(project, 'AGENTS.md'));
     execFileSync(process.execPath, [INJECT, 'reconcile', join(project, 'AGENTS.md')], { stdio: 'pipe', env: withEngine });
@@ -318,7 +319,24 @@ describe('composition root — CLI-backed reconcile + config seed (real engine, 
     assert.match(extractSlot(entry), /\/agent-workflow-kit procedures/, 'the methodology pointer routes to the procedures advisor');
     const orch = extractMarkerSlot(entry, ORCHESTRATION_DESCRIPTOR);
     assert.match(orch, /Solo|Reviewed|Council|Delegated/, 'the orchestration pointer carries the recipe vocabulary');
-    assert.ok(lineCount(entry) <= AGENTS_MD_CAP, `dual-filled entry point within ${AGENTS_MD_CAP} lines (got ${lineCount(entry)})`);
+    const autonomy = extractMarkerSlot(entry, AUTONOMY_DESCRIPTOR);
+    assert.match(autonomy, /docs\/ai\/autonomy\.json/, 'the autonomy pointer names the per-project policy file');
+    assert.match(autonomy, /set-autonomy/, 'the autonomy pointer routes to the kit writer');
+    assert.ok(lineCount(entry) <= AGENTS_MD_CAP, `triple-filled entry point within ${AGENTS_MD_CAP} lines (got ${lineCount(entry)})`);
+  });
+
+  it('delegated deploy: the real CLI reconcile fills ALL THREE pointers on the INSTALLED substrate template (real engine), under the cap', () => {
+    // The delegate seam end to end: the substrate's own installed template (three empty pairs) +
+    // the kit's real reconcile CLI + the real local engine — not the pure helpers.
+    const { project } = makeProject();
+    cpSync(join(substrateDir, 'references', 'templates', 'AGENTS.md'), join(project, 'AGENTS.md'));
+    execFileSync(process.execPath, [INJECT, 'reconcile', join(project, 'AGENTS.md')], { stdio: 'pipe', env: withEngine });
+    const entry = readFileSync(join(project, 'AGENTS.md'), 'utf8');
+    assert.match(extractSlot(entry), /\/agent-workflow-kit procedures/, 'methodology pointer filled from the real engine');
+    assert.match(extractMarkerSlot(entry, ORCHESTRATION_DESCRIPTOR), /Solo|Reviewed|Council|Delegated/, 'orchestration pointer filled');
+    const autonomy = extractMarkerSlot(entry, AUTONOMY_DESCRIPTOR);
+    assert.match(autonomy, /docs\/ai\/autonomy\.json/, 'autonomy pointer carries the policy read contract');
+    assert.ok(lineCount(entry) <= AGENTS_MD_CAP, `delegated triple-filled entry point within ${AGENTS_MD_CAP} lines (got ${lineCount(entry)})`);
   });
 
   it('fallback deploy: the kit seeds docs/ai/orchestration.json; the kit-owned ensure seeds-or-refreshes (preserving recipes + a customized note)', () => {
