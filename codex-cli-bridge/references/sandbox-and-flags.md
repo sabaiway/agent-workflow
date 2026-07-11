@@ -108,8 +108,9 @@ This is defence-in-depth beside the prompt contract; the orchestrator still revi
 
 `code` mode does NOT make codex discover the diff. The wrapper assembles the full surface — repo file
 map (`git ls-files`), `git status`, staged + unstaged diff, and the **contents** of every untracked
-regular file (NUL-safe; binaries noted but skipped, symlinks shown as targets, other non-regular paths
-skipped) — into a git-dir-local temp file (600 perms), then feeds it in. A **clean tree exits 0** before
+regular file (NUL-safe; binaries noted but skipped, symlinks shown as targets; never-committable
+untracked paths — devices/FIFOs/sockets — excluded from the review domain entirely) — into a
+git-dir-local temp file (600 perms), then feeds it in. A **clean tree exits 0** before
 a run is spent. If the assembled payload exceeds `CODEX_REVIEW_MAX_TOTAL_BYTES` (default `1500000`) it is
 passed **by path** (read-fence carve-out) instead of inline — **never truncated**. `-s read-only` is
 kept so codex may still read surrounding in-repo files for context.

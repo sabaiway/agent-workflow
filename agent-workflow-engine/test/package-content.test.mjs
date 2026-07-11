@@ -1,7 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, mkdtempSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { dirname, join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -87,7 +88,26 @@ describe('engine package content — DAG guard (knows nobody)', () => {
       'references/planning.md',
       'references/procedures.md',
     ].sort();
-    const res = spawnSync('npm', ['pack', '--dry-run', '--json'], { cwd: ROOT, encoding: 'utf8' });
+    // Sandbox-safe npm shape (D4): cache under $TMPDIR (cleaned after the run), network
+    // side-channels off — a sandboxed run (read-only ~/.npm, no network) stays green and prompt-free.
+    const cacheDir = mkdtempSync(join(tmpdir(), 'pack-cache-'));
+    let res;
+    try {
+      res = spawnSync('npm', ['pack', '--dry-run', '--json'], {
+        cwd: ROOT,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          npm_config_cache: cacheDir,
+          npm_config_update_notifier: 'false',
+          npm_config_audit: 'false',
+          npm_config_fund: 'false',
+          NO_UPDATE_NOTIFIER: '1',
+        },
+      });
+    } finally {
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
     assert.equal(res.status, 0, `npm pack failed: ${res.stderr}`);
     // npm ≤11 prints a JSON array; npm ≥12 prints an object keyed by package name — accept both.
     const parsed = JSON.parse(res.stdout);

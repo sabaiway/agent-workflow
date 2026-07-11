@@ -33,9 +33,25 @@ const extractBashFn = (source, name) => {
 };
 
 // The shared helper set both wrappers must carry byte-identically (write_review_receipt included —
-// the receipt line shape is part of the cross-wrapper contract).
-const SHARED_FNS = ['is_binary', 'sha256_stdin', 'emit_fingerprint_payload', 'compute_tree_fingerprint', 'receipt_json_scalar', 'write_review_receipt'];
-const FINGERPRINT_FNS = ['is_binary', 'sha256_stdin', 'emit_fingerprint_payload', 'compute_tree_fingerprint'];
+// the receipt line shape is part of the cross-wrapper contract; the never-committable filter
+// family + assemble_code_diff joined with AD-044 Plan 4 — the whole review domain is lockstep).
+const SHARED_FNS = [
+  'is_binary',
+  'sha256_stdin',
+  'is_never_committable_untracked',
+  'emit_untracked_paths_z',
+  'has_reviewable_untracked',
+  'emit_status_porcelain_filtered',
+  'warn_never_committable_untracked',
+  'emit_fingerprint_payload',
+  'compute_tree_fingerprint',
+  'receipt_json_scalar',
+  'write_review_receipt',
+  'assemble_code_diff',
+];
+const FINGERPRINT_FNS = ['is_binary', 'sha256_stdin', 'is_never_committable_untracked', 'emit_untracked_paths_z', 'emit_fingerprint_payload', 'compute_tree_fingerprint'];
+const ASSEMBLE_FNS = ['is_binary', 'is_never_committable_untracked', 'emit_untracked_paths_z', 'emit_status_porcelain_filtered', 'assemble_code_diff'];
+const PREFLIGHT_FNS = ['is_never_committable_untracked', 'emit_untracked_paths_z', 'has_reviewable_untracked'];
 
 const fnsFrom = (wrapperPath, names) => {
   const source = readFileSync(wrapperPath, 'utf8');
@@ -114,7 +130,7 @@ describe('fingerprint parity — one fixture state, three implementations, one h
 
 describe('fingerprint domain == review-payload domain (behavioral proof)', () => {
   // The review payload as the wrappers assemble it (assemble_code_diff extracted from the source).
-  const reviewPayload = () => bashEval(`${fnsFrom(CODEX_WRAPPER, ['is_binary', 'assemble_code_diff'])}\nassemble_code_diff`, root);
+  const reviewPayload = () => bashEval(`${fnsFrom(CODEX_WRAPPER, ASSEMBLE_FNS)}\nassemble_code_diff`, root);
 
   it('an IN-domain edit (untracked content) moves BOTH the review payload and the fingerprint', () => {
     const payloadBefore = reviewPayload();
@@ -148,5 +164,121 @@ describe('fingerprint domain == review-payload domain (behavioral proof)', () =>
     const fromBash = bashEval(`${fnsFrom(CODEX_WRAPPER, FINGERPRINT_FNS)}\nemit_fingerprint_payload`, root);
     const fromNode = computeFingerprintPayload(root).toString('utf8').replace(/\n$/, '');
     assert.equal(fromNode, fromBash);
+  });
+});
+
+// ── the never-committable review-domain filter, wrapper level (AD-044 Plan 4, Decision 1) ────────
+// Probe-proven constraint: on a regular filesystem git's own dir walk does NOT list FIFOs/devices
+// as untracked — the mask class exists only where the sandbox's dirent LIES to git. So these tests
+// SHADOW `git` with a bash function that injects a crafted path into the walk (and the porcelain
+// status) while the path on disk is a REAL FIFO — the real predicate (`-p`) classifies it, the real
+// filter drops it. Non-vacuity: the same shadow injecting a REGULAR file MOVES the fingerprint, so
+// the injection demonstrably reaches the domain. The true end-to-end mask proof is the in-sandbox
+// behavioral verify after release (the plan's Verification).
+describe('never-committable filter — both wrappers, shadowed git walk, real FIFO on disk', () => {
+  let mroot;
+  const FIFO_NAME = 'ctl-mask.fifo';
+  const FIFO_SPACES = 'ctl-mask with spaces';
+  const REG_NAME = 'ctl-regular.txt';
+  const QUOTED_NAME = 'wei"rd name.txt';
+
+  // A `git` shadow: the real git PLUS the injected path in the untracked walk + the status output +
+  // the per-path status probe — exactly what the sandbox's lying dirent makes real git do.
+  const shadow = (injectPath) => `INJECT_PATH=${JSON.stringify(injectPath)}
+git() {
+  case "$*" in
+    'ls-files --others --exclude-standard -z')
+      command git "$@"
+      printf '%s\\0' "$INJECT_PATH"
+      ;;
+    'status --porcelain=v1')
+      command git "$@"
+      printf '?? %s\\n' "$INJECT_PATH"
+      ;;
+    "status --porcelain=v1 -- :(literal)$INJECT_PATH")
+      printf '?? %s\\n' "$INJECT_PATH"
+      ;;
+    *) command git "$@" ;;
+  esac
+}`;
+
+  before(() => {
+    mroot = mkdtempSync(join(tmpdir(), 'fp-mask-'));
+    const g = (...args) => {
+      const r = spawnSync('git', args, { cwd: mroot, encoding: 'utf8' });
+      assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+    };
+    g('init', '-q');
+    g('config', 'user.email', 'probe@example.com');
+    g('config', 'user.name', 'probe');
+    writeFileSync(join(mroot, 'tracked.txt'), 'tracked v1\n');
+    writeFileSync(join(mroot, '.gitignore'), 'ctl-*\n'); // ctl-* stays OUT of the real walk — only the shadow injects it
+    g('add', '-A');
+    g('commit', '-qm', 'base');
+    writeFileSync(join(mroot, 'tracked.txt'), 'tracked v2 — a real tracked change\n');
+    writeFileSync(join(mroot, 'plain.txt'), 'plain untracked\n');
+    writeFileSync(join(mroot, QUOTED_NAME), 'a real untracked file with a quoted+spaced name\n');
+    writeFileSync(join(mroot, REG_NAME), 'regular control body — must move the domain when injected\n');
+    for (const fifo of [FIFO_NAME, FIFO_SPACES]) {
+      const r = spawnSync('mkfifo', [join(mroot, fifo)], { encoding: 'utf8' });
+      assert.equal(r.status, 0, `mkfifo ${fifo}: ${r.stderr}`);
+    }
+  });
+  after(() => rmSync(mroot, { recursive: true, force: true }));
+
+  const fingerprintShadowed = (wrapper, injectPath) =>
+    bashEval(`${shadow(injectPath)}\n${fnsFrom(wrapper, FINGERPRINT_FNS)}\ncompute_tree_fingerprint`, mroot);
+  const assembleShadowed = (wrapper, injectPath) =>
+    bashEval(`${shadow(injectPath)}\n${fnsFrom(wrapper, ASSEMBLE_FNS)}\nassemble_code_diff`, mroot);
+
+  it('(i) the fingerprint is byte-identical with and without an injected FIFO — both wrappers (+ node agrees)', () => {
+    for (const wrapper of [CODEX_WRAPPER, AGY_WRAPPER]) {
+      const baseline = bashFingerprint(wrapper, mroot);
+      assert.equal(fingerprintShadowed(wrapper, FIFO_NAME), baseline, 'a walk-visible FIFO leaves the fingerprint unmoved');
+      assert.equal(fingerprintShadowed(wrapper, FIFO_SPACES), baseline, 'spaces in the mask name change nothing');
+      assert.notEqual(fingerprintShadowed(wrapper, REG_NAME), baseline, 'NON-VACUOUS: the same shadow injecting a REGULAR file moves the fingerprint');
+      assert.equal(baseline, computeTreeFingerprint(mroot), 'bash ⟷ node parity holds on this fixture');
+    }
+  });
+
+  it('(iii) a tree whose ONLY untracked path is filtered-class reads clean/no-diff in BOTH wrappers', () => {
+    const clean = mkdtempSync(join(tmpdir(), 'fp-clean-'));
+    const g = (...args) => spawnSync('git', args, { cwd: clean, encoding: 'utf8' });
+    g('init', '-q');
+    g('config', 'user.email', 'probe@example.com');
+    g('config', 'user.name', 'probe');
+    writeFileSync(join(clean, 'a.txt'), 'committed\n');
+    writeFileSync(join(clean, '.gitignore'), 'ctl-*\n');
+    g('add', '-A');
+    g('commit', '-qm', 'base');
+    spawnSync('mkfifo', [join(clean, FIFO_NAME)], { encoding: 'utf8' });
+    writeFileSync(join(clean, REG_NAME), 'regular control\n');
+    const preflight = (wrapper, injectPath) =>
+      bashEval(
+        `${shadow(injectPath)}\n${fnsFrom(wrapper, PREFLIGHT_FNS)}\nif git diff --quiet && git diff --cached --quiet && ! has_reviewable_untracked; then echo CLEAN; else echo DIRTY; fi`,
+        clean,
+      );
+    for (const wrapper of [CODEX_WRAPPER, AGY_WRAPPER]) {
+      assert.equal(preflight(wrapper, FIFO_NAME), 'CLEAN', 'the masks-only tree reads clean (no subscription run spent)');
+      assert.equal(preflight(wrapper, REG_NAME), 'DIRTY', 'NON-VACUOUS: an injected regular file keeps the tree reviewable');
+    }
+    rmSync(clean, { recursive: true, force: true });
+  });
+
+  it('(vii) the ASSEMBLED payload (porcelain section included) is byte-identical with and without a mask — both wrappers', () => {
+    for (const wrapper of [CODEX_WRAPPER, AGY_WRAPPER]) {
+      const baseline = bashEval(`${fnsFrom(wrapper, ASSEMBLE_FNS)}\nassemble_code_diff`, mroot);
+      assert.equal(assembleShadowed(wrapper, FIFO_NAME), baseline, 'the mask leaves NO trace anywhere in the assembled payload');
+      assert.equal(assembleShadowed(wrapper, FIFO_SPACES), baseline, 'a spaced mask name filters quote/space-safely');
+      assert.notEqual(assembleShadowed(wrapper, REG_NAME), baseline, 'NON-VACUOUS: an injected regular file changes the payload');
+    }
+  });
+
+  it('the status filter touches ONLY the filtered ?? records — tracked changes and quoted-name untracked files survive', () => {
+    const masked = assembleShadowed(CODEX_WRAPPER, FIFO_NAME);
+    assert.match(masked, / M tracked\.txt/, 'the tracked-change record survives the filter');
+    assert.match(masked, /\?\? plain\.txt/, 'a plain untracked record survives');
+    assert.match(masked, /\?\? "wei\\"rd name\.txt"/, 'the C-quoted untracked record survives byte-exactly');
+    assert.doesNotMatch(masked, /ctl-mask/, 'no filtered-class record leaks into the payload');
   });
 });

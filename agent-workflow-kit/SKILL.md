@@ -131,6 +131,10 @@ writer — read `${CLAUDE_SKILL_DIR}/references/modes/set-autonomy.md` before ac
 
 guarded — read `${CLAUDE_SKILL_DIR}/references/modes/autonomy-doctor.md` before acting.
 
+### Mode: sandbox-masks
+
+guarded — read `${CLAUDE_SKILL_DIR}/references/modes/sandbox-masks.md` before acting.
+
 ### Mode: uninstall
 
 guarded — read `${CLAUDE_SKILL_DIR}/references/modes/uninstall.md` before acting.

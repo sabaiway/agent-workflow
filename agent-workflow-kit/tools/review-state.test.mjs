@@ -7,13 +7,17 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, rmSync, lstatSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   main,
   computeTreeFingerprint,
+  computeFingerprintPayload,
+  countNeverCommittableUntracked,
+  isNeverCommittableStat,
+  isTreeClean,
   isScratchPlanName,
   plansInFlight,
   backendReceiptStatus,
@@ -626,5 +630,147 @@ describe('review-state --check — the degraded exemption (AD-050)', () => {
     rmSync(dir, { recursive: true, force: true });
     assert.equal(r.code, 0, 'a corrupt ledger must never fail a tree whose receipts independently satisfy the gate');
     assert.match(r.stdout, /ledger/, 'the ledger corruption is surfaced even on the exit-0 path');
+  });
+});
+
+// ── the never-committable review-domain filter (AD-044 Plan 4, Decision 1) ──────────────────────
+// Test strategy (probe-proven): on a regular filesystem git's dir walk does NOT list FIFOs/devices
+// as untracked at all — the real mask class surfaces only where the sandbox's dirent LIES (readdir
+// says file, lstat says char device). So these tests assert through the FILTER PREDICATE with a
+// LYING injected lstat over a git-visible regular fixture file — the sandbox mechanism itself —
+// plus a true-lstat control proving non-vacuity. char/block devices are not creatable
+// unprivileged; injected stats cover all four classes.
+
+// A fake lstat result: exactly one type flag true, every other false (a real lstat has one type).
+const fakeStat = (type) => ({
+  isFile: () => type === 'file',
+  isDirectory: () => type === 'dir',
+  isSymbolicLink: () => type === 'symlink',
+  isCharacterDevice: () => type === 'char',
+  isBlockDevice: () => type === 'block',
+  isFIFO: () => type === 'fifo',
+  isSocket: () => type === 'socket',
+});
+
+describe('isNeverCommittableStat — the filtered class is EXACTLY char/block/FIFO/socket', () => {
+  it('all four never-committable classes are in', () => {
+    for (const type of ['char', 'block', 'fifo', 'socket']) {
+      assert.equal(isNeverCommittableStat(fakeStat(type)), true, `${type} is filtered`);
+    }
+  });
+
+  it('regular files, directories (gitlinks), symlinks, and a null stat stay IN the domain', () => {
+    for (const type of ['file', 'dir', 'symlink']) {
+      assert.equal(isNeverCommittableStat(fakeStat(type)), false, `${type} is never filtered`);
+    }
+    assert.equal(isNeverCommittableStat(null), false, 'a vanished path keeps its name-only note');
+  });
+});
+
+describe('review-domain filter — fingerprint + isTreeClean over a lying lstat (the sandbox mechanism)', () => {
+  // A repo whose ONLY untracked path is the git-visible mask fixture; the lying lstat reports it
+  // as the given class while git (dirent) lists it — exactly the in-sandbox divergence.
+  const makeMaskRepo = () => {
+    const { root, g } = makeRepo({ config: null, plan: null, pending: false });
+    g('add', '-A');
+    g('commit', '-qm', 'docs committed');
+    const baselinePayload = computeFingerprintPayload(root).toString('latin1');
+    const baselineFp = computeTreeFingerprint(root);
+    writeFileSync(join(root, 'mask.txt'), 'sandbox mask body\n');
+    const liar = (p) => (p.endsWith('mask.txt') ? fakeStat('char') : lstatSync(p));
+    return { root, baselinePayload, baselineFp, liar };
+  };
+
+  it('(i) the payload and fingerprint are byte-identical WITH and WITHOUT a filtered-class untracked path', () => {
+    const { root, baselinePayload, baselineFp, liar } = makeMaskRepo();
+    const maskedPayload = computeFingerprintPayload(root, { lstat: liar }).toString('latin1');
+    const maskedFp = computeTreeFingerprint(root, { lstat: liar });
+    const controlFp = computeTreeFingerprint(root); // true lstat: mask.txt is a regular file
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(maskedPayload, baselinePayload, 'a filtered-class path leaves NO trace in the payload');
+    assert.equal(maskedFp, baselineFp, 'the fingerprint cannot move');
+    assert.notEqual(controlFp, baselineFp, 'NON-VACUOUS: the fixture path IS seen pre-filter (true lstat moves the fingerprint)');
+  });
+
+  it('(ii) isTreeClean is true when the ONLY untracked path is filtered-class (and false under the true lstat)', () => {
+    const { root, liar } = makeMaskRepo();
+    const cleanMasked = isTreeClean(root, { lstat: liar });
+    const cleanControl = isTreeClean(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(cleanMasked, true, 'a masks-only tree reads clean');
+    assert.equal(cleanControl, false, 'NON-VACUOUS: the same tree under the true lstat is dirty');
+  });
+
+  it('every one of the four classes filters identically (payload level)', () => {
+    const { root, baselineFp } = makeMaskRepo();
+    for (const type of ['char', 'block', 'fifo', 'socket']) {
+      const liar = (p) => (p.endsWith('mask.txt') ? fakeStat(type) : lstatSync(p));
+      assert.equal(computeTreeFingerprint(root, { lstat: liar }), baselineFp, `${type} filtered from the fingerprint`);
+      assert.equal(isTreeClean(root, { lstat: liar }), true, `${type} filtered from the clean check`);
+    }
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('(iv) an untracked SYMLINK still moves the fingerprint (committable — stays in the domain)', () => {
+    const { root, baselineFp } = makeMaskRepo();
+    rmSync(join(root, 'mask.txt'));
+    symlinkSync('base.txt', join(root, 'a-link'));
+    const fp = computeTreeFingerprint(root);
+    const clean = isTreeClean(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.notEqual(fp, baselineFp, 'the symlink note moves the fingerprint');
+    assert.equal(clean, false, 'a symlink-only tree is reviewable, never clean');
+  });
+
+  it('isTreeClean: a THROWING lstat keeps the path in the domain (dirty — fail-safe)', () => {
+    const { root } = makeMaskRepo();
+    const throwing = () => { throw new Error('EACCES'); };
+    const clean = isTreeClean(root, { lstat: throwing });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(clean, false, 'an unverifiable untracked path can never read clean');
+  });
+
+  it('countNeverCommittableUntracked: non-git cwd → 0; a throwing lstat counts nothing (fail-safe arms)', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'rs-nongit-'));
+    assert.equal(countNeverCommittableUntracked(outside), 0, 'not a git tree — nothing to count');
+    rmSync(outside, { recursive: true, force: true });
+    const { root } = makeMaskRepo();
+    const throwing = () => { throw new Error('EACCES'); };
+    assert.equal(countNeverCommittableUntracked(root, { lstat: throwing }), 0, 'an unverifiable path never inflates the advisory count');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('the D-lane advisory: ONE non-failing notice line names the exact sandbox-masks apply when masks are visible', () => {
+    const { root, liar } = makeMaskRepo();
+    const withMasks = main(['--check'], { cwd: root, env: {}, detect: detect(READY, READY), lstat: liar });
+    const withoutMasks = main(['--check'], { cwd: root, env: {}, detect: detect(READY, READY) });
+    rmSync(root, { recursive: true, force: true });
+    assert.match(withMasks.stdout, /notice: 1 never-committable untracked path/, 'the advisory names the count');
+    assert.match(withMasks.stdout, /sandbox-masks\.mjs --cwd .* --apply/, 'the exact apply one-liner rides the line');
+    assert.equal((withMasks.stdout.match(/notice:/g) ?? []).length, 1, 'exactly ONE advisory line');
+    assert.equal(withMasks.code, 0, 'non-failing: a masks-only tree is CLEAN and the advisory never arms an exit code');
+    assert.doesNotMatch(withoutMasks.stdout, /sandbox-masks/, 'no masks → no advisory');
+  });
+
+  it('buildState threads the injected lstat into fingerprint + clean + mask count — one consistent state (codex R3)', () => {
+    const { root, baselineFp, liar } = makeMaskRepo();
+    const r = main(['--json'], { cwd: root, env: {}, detect: detect(READY, READY), lstat: liar });
+    const state = JSON.parse(r.stdout);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(state.clean, true, 'clean sees the lying lstat');
+    assert.equal(state.fingerprint, baselineFp, 'the fingerprint sees the SAME lying lstat');
+    assert.equal(state.maskedUntracked, 1, 'and the mask count agrees');
+  });
+
+  it('(vi) an untracked DIRECTORY (embedded git repo — a gitlink) still moves the fingerprint AND reads dirty', () => {
+    const { root, baselineFp } = makeMaskRepo();
+    rmSync(join(root, 'mask.txt'));
+    mkdirSync(join(root, 'embedded'));
+    spawnSync('git', ['init', '-q'], { cwd: join(root, 'embedded'), encoding: 'utf8' });
+    const fp = computeTreeFingerprint(root);
+    const clean = isTreeClean(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.notEqual(fp, baselineFp, 'the embedded-repo `dir/` note moves the fingerprint (codex R1 gitlink pin)');
+    assert.equal(clean, false, 'a new embedded repo can never read clean');
   });
 });

@@ -38,8 +38,9 @@ mis-ordered steps, scope creep, missing gates).
 
 Use **`codex-review code`** for advisory, severity-tagged findings on uncommitted changes. The wrapper
 **precomputes the whole change set** — repo map, `git status`, staged + unstaged diff, and the
-**contents of untracked files** (binaries noted but skipped, symlinks shown as targets, other
-non-regular paths skipped) — and feeds it in, so codex does not burn a run roaming the filesystem to
+**contents of untracked files** (binaries noted but skipped, symlinks shown as targets;
+never-committable untracked paths — devices/FIFOs/sockets — excluded from the review domain
+entirely) — and feeds it in, so codex does not burn a run roaming the filesystem to
 rediscover it. A clean tree exits 0 *before* a run is spent. An oversized payload (over
 `CODEX_REVIEW_MAX_TOTAL_BYTES`, default 1.5 MB) is written to a git-dir temp file and referenced by
 path — never silently truncated. Set `CODEX_REVIEW_SCHEMA=1` to get findings back as a validated JSON

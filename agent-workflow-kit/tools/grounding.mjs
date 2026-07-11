@@ -19,14 +19,15 @@
 // in-band marker + stderr report (never a silent cut).
 //
 // Catalog honesty: this is a WRITER — `--out <path>` writes a file. Invariant: `--out` accepts
-// only gitignored / out-of-repo scratch destinations and REFUSES a tracked path AND an in-repo
+// only system-temp destinations or a FRESH gitignored in-repo path and REFUSES a tracked/in-repo
 // not-ignored path (a new untracked file would itself move the review fingerprint the facts are
 // about to ground). stdout is the default. It never commits and never runs a subscription CLI.
 //
 // Dependency-free, Node >= 18. No side effects on import (the isDirectRun idiom).
 
 import { readFileSync, writeFileSync, lstatSync, realpathSync } from 'node:fs';
-import { resolve, join, relative, isAbsolute, dirname, basename } from 'node:path';
+import { resolve, join, relative, isAbsolute, dirname, basename, sep } from 'node:path';
+import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { fail } from './orchestration-config.mjs';
@@ -219,23 +220,34 @@ const gitLine = (args, cwd) => {
   return r.error || r.status == null ? null : { status: r.status, stdout: r.stdout ?? '' };
 };
 
-// STOP unless `outPath` is a safe scratch destination: outside any git work tree, or gitignored
-// inside one. A TRACKED path and an in-repo NOT-ignored path are both refused (a facts file must
-// never enter the tree it grounds — it would move the fingerprint and could be committed). The
-// check runs on the REAL destination, never the lexical path (codex R1 finding): a symlink leaf is
-// refused outright, and the parent directory is realpath-resolved first, so a gitignored or
-// out-of-repo symlink can never route the write onto a tracked/in-repo file. Returns the resolved
-// real path the caller must write to.
+// STOP unless `outPath` is a safe scratch destination — the CLOSED surface (this writer is
+// bridge-tier auto-allowable): (a) under a SYSTEM TEMP root outside the repo ($TMPDIR /
+// os.tmpdir() / /tmp — rewritable), or (b) a FRESH gitignored in-repo path (create-only; an
+// EXISTING in-repo file, even gitignored, is a project file — the .env clobber class). Refused:
+// tracked paths, in-repo not-ignored paths (a new untracked file would move the fingerprint),
+// every other outside-repo destination, symlink and existing non-regular leaves, and any
+// unverifiable lstat. The check runs on the REAL destination, never the lexical path (codex R1):
+// the parent directory is realpath-resolved first, so a symlink can never route the write onto a
+// tracked/in-repo file. Returns { path, kind: 'temp' | 'repo-fresh' } — a repo-fresh caller MUST
+// write with the exclusive flag ('wx'), sealing the guard→write race (codex R11).
 export const assertScratchDestination = (outPath, cwd) => {
   const lexical = isAbsolute(outPath) ? outPath : resolve(cwd, outPath);
   let leaf = null;
   try {
     leaf = lstatSync(lexical);
-  } catch {
+  } catch (err) {
+    // ONLY an absent leaf is a fresh file; any other lstat failure fails CLOSED (codex R9 — this
+    // writer is bridge-tier auto-allowable, so an unverifiable leaf must never be written).
+    if (err?.code !== 'ENOENT') {
+      throw fail(1, `--out cannot inspect the destination (${outPath}: ${err?.code ?? err?.message ?? err}) — refusing to write an unverifiable leaf`);
+    }
     leaf = null; // absent → a fresh file; the parent still gets realpath-checked below
   }
   if (leaf?.isSymbolicLink()) {
     throw fail(1, `--out refuses a symlink destination (${outPath}) — the write would follow it onto another file; name the real scratch path`);
+  }
+  if (leaf != null && !leaf.isFile()) {
+    throw fail(1, `--out refuses an existing non-regular destination (${outPath}) — a FIFO/device/directory write would hang or land on a non-file (codex R9); name a fresh or regular scratch path`);
   }
   let realParent;
   try {
@@ -244,11 +256,31 @@ export const assertScratchDestination = (outPath, cwd) => {
     throw fail(1, `--out parent directory does not exist (${dirname(lexical)}) — create the scratch dir first`);
   }
   const full = join(realParent, basename(lexical));
+  // An out-of-repo (or no-repo) destination is scratch ONLY under a system temp root (codex R8
+  // blocker): the bridge tier auto-allows this tool with an args wildcard, so "anything outside
+  // the repo is scratch" would let an unattended run overwrite e.g. ~/.bashrc promptless.
+  // $TMPDIR / os.tmpdir() / /tmp are the scratch surface; everything else refuses loudly.
+  const assertTempScratch = () => {
+    const tempRoots = [...new Set([tmpdir(), process.env.TMPDIR, '/tmp'].filter(Boolean).map((p) => {
+      try {
+        return realpathSync(p);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean))];
+    if (!tempRoots.some((t) => full === t || full.startsWith(`${t}${sep}`))) {
+      throw fail(1, `--out refuses an outside-repo destination that is not under a system temp root (${full}) — grounding output is scratch: use $TMPDIR//tmp, or a fresh gitignored in-repo path (temp roots checked: ${tempRoots.join(', ')})`);
+    }
+    return { path: full, kind: 'temp' };
+  };
   const top = gitLine(['rev-parse', '--show-toplevel'], cwd);
-  if (top == null || top.status !== 0) return full; // no git tree → plain scratch, fine
+  if (top == null || top.status !== 0) return { path: assertTempScratch().path, kind: 'temp' }; // no git tree → temp-only scratch
   const root = top.stdout.replace(/\r?\n$/, '');
   const rel = relative(root, full);
-  if (rel.startsWith('..') || isAbsolute(rel)) return full; // really outside the work tree → scratch
+  // Segment-safe outside test (the Issue-004 class, codex R5): an in-repo file literally named
+  // `..facts` has rel `..facts` — `startsWith('..')` would misread it as outside and BYPASS the
+  // tracked/ignored refusals below. Only `..` exactly or a `..${sep}`-prefixed rel is outside.
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return { path: assertTempScratch().path, kind: 'temp' };
   const tracked = gitLine(['ls-files', '--error-unmatch', '--', rel], root);
   if (tracked != null && tracked.status === 0) {
     throw fail(1, `--out refuses a TRACKED path (${rel}) — grounding output is scratch; write it to a gitignored path or outside the repo`);
@@ -257,7 +289,15 @@ export const assertScratchDestination = (outPath, cwd) => {
   if (ignored == null || ignored.status !== 0) {
     throw fail(1, `--out refuses an in-repo path that is not gitignored (${rel}) — a new untracked file would move the review fingerprint; use a gitignored path or a location outside the repo`);
   }
-  return full;
+  // An in-repo destination must be a FRESH file (codex R10): even a gitignored existing file is a
+  // project file (.env is the canonical victim) — an auto-allowable writer must never clobber one.
+  // The rewritable scratch surface is the system temp; in-repo gitignored writes are create-only —
+  // the CALLER must open with the exclusive flag ('wx'): the kind seals the pre-check against the
+  // guard→write race (codex R11).
+  if (leaf != null) {
+    throw fail(1, `--out refuses to OVERWRITE an existing in-repo file (${rel}) — even gitignored, it is a project file (the .env class); write rewritable scratch under $TMPDIR//tmp, or remove the file first`);
+  }
+  return { path: full, kind: 'repo-fresh' };
 };
 
 // ── CLI ────────────────────────────────────────────────────────────────────────────
@@ -283,7 +323,8 @@ Usage:
                        loud STOP unless exactly one plan is in flight
   --reserve-bytes <n>  the artifact share agy-review will add around these facts — the output
                        budget becomes AGY_MAX_PROMPT_BYTES − n (loud tail-trim on overflow)
-  --out <path>         write instead of stdout — gitignored / out-of-repo scratch ONLY
+  --out <path>         write instead of stdout — system-temp scratch (rewritable), or a FRESH
+                       gitignored in-repo path (create-only); everything else refuses
                        (a tracked or in-repo not-ignored path is refused)
 
 Feed the output to the review wrapper: agy-review code --facts @<out>. AGY_MAX_PROMPT_BYTES
@@ -355,6 +396,24 @@ export const main = (argv, ctx = {}) => {
     };
     const constraintsText = constraints ? readOrStop('AGENTS.md', 'root AGENTS.md') : null;
     const autonomyText = autonomy ? resolveAutonomyFacts({ cwd }) : null;
+    // --plan is CONFINED to the git work tree (codex R4): the bridge tier auto-allows this tool
+    // with an args wildcard, so an unattended invocation could otherwise point --plan at ANY
+    // readable file and ship it into the facts payload. Plans are in-repo by contract
+    // (docs/plans); an outside-tree path is a loud refusal, never a silent read.
+    if (plan != null) {
+      const top = gitTop(cwd);
+      const planReal = (() => {
+        try {
+          return realpathSync(resolve(cwd, plan));
+        } catch (err) {
+          throw fail(1, `plan file '${plan}' is unreadable (${(err && err.code) || err}) — STOP`);
+        }
+      })();
+      const topReal = realpathSync(top);
+      if (planReal !== topReal && !planReal.startsWith(`${topReal}${sep}`)) {
+        throw fail(1, `--plan '${plan}' resolves outside the git work tree (${planReal}) — plans live in-repo (docs/plans); refusing to read outside-tree content into the facts payload`);
+      }
+    }
     const planText = plan != null ? readOrStop(plan, 'plan file') : null;
 
     const parts = [];
@@ -371,8 +430,17 @@ export const main = (argv, ctx = {}) => {
       : '';
 
     if (out != null) {
-      const realOut = assertScratchDestination(out, cwd);
-      writeFileSync(realOut, text);
+      const dest = assertScratchDestination(out, cwd);
+      // repo-fresh writes are EXCLUSIVE ('wx'): the create-only pre-check would otherwise race a
+      // file created between the guard and this write (codex R11); temp scratch stays rewritable.
+      // ctx.writeFile is a TEST seam (the EEXIST race arm is not constructible without it).
+      const writeFile = ctx.writeFile ?? writeFileSync;
+      try {
+        writeFile(dest.path, text, dest.kind === 'repo-fresh' ? { flag: 'wx' } : {});
+      } catch (err) {
+        if (err?.code === 'EEXIST') throw fail(1, `--out lost the create-only race: ${out} appeared between the guard and the write — an in-repo destination is never overwritten; re-run with a fresh path or temp scratch`);
+        throw err;
+      }
       return { code: 0, stdout: `[grounding] wrote ${Buffer.byteLength(text, 'utf8')} bytes to ${out} — pass it as: agy-review code --facts @${out}`, stderr };
     }
     return { code: 0, stdout: text, stderr };

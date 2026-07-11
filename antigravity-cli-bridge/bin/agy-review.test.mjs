@@ -101,6 +101,9 @@ const run = (sb, { args, env = {}, cwd } = {}) => {
     env: {
       HOME: home,
       PATH: `${bin}:${farm}`,
+      // Keep the wrapper's mktemp working when the suite runs inside an OS sandbox whose /tmp is
+      // read-only (only $TMPDIR is writable there).
+      TMPDIR: process.env.TMPDIR ?? '/tmp',
       AGY_FAKE_ARGV: cap.argv, AGY_FAKE_ENV: cap.env, AGY_FAKE_PROMPT: cap.prompt,
       AGY_FAKE_SENTINEL: cap.sentinel, AGY_FAKE_ADDDIR: cap.adddir, AGY_FAKE_ADDDIR_MODE: cap.adddirMode,
       AGY_FAKE_ARTIFACT_MODE: cap.artifactMode, AGY_FAKE_ARTIFACT_COPY: cap.artifactCopy,

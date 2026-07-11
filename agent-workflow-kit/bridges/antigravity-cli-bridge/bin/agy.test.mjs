@@ -24,7 +24,9 @@ const makeSandbox = (stubBody) => {
 
 const runWrapper = (home, env, prompt = 'hello') =>
   spawnSync('bash', [WRAPPER, prompt], {
-    env: { HOME: home, PATH: `${join(home, '.local', 'bin')}:${process.env.PATH}`, ...env },
+    // TMPDIR rides along so the wrapper's mktemp keeps working when the suite itself runs inside
+    // an OS sandbox whose /tmp is read-only (only $TMPDIR is writable there).
+    env: { HOME: home, PATH: `${join(home, '.local', 'bin')}:${process.env.PATH}`, TMPDIR: process.env.TMPDIR ?? '/tmp', ...env },
     encoding: 'utf8',
     timeout: 20000,
   });
@@ -73,7 +75,7 @@ const RECORDING_STUB = [
 // and optional stdin. AGY_MODEL='' drops --model so the stub argv stays clean.
 const runArgs = (home, { args, env = {}, input } = {}) =>
   spawnSync('bash', [WRAPPER, ...args], {
-    env: { HOME: home, PATH: `${join(home, '.local', 'bin')}:${process.env.PATH}`, AGY_MODEL: '', ...env },
+    env: { HOME: home, PATH: `${join(home, '.local', 'bin')}:${process.env.PATH}`, TMPDIR: process.env.TMPDIR ?? '/tmp', AGY_MODEL: '', ...env },
     encoding: 'utf8',
     timeout: 20000,
     input,

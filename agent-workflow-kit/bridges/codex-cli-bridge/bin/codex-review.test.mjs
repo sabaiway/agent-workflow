@@ -106,6 +106,10 @@ const run = ({ repo, bin }, { args = ['code'], env = {}, path, cwd } = {}) => {
     env: {
       PATH: path || `${bin}:${process.env.PATH}`,
       HOME: repo,
+      // The wrapper's mktemp must keep working when the suite itself runs inside an OS sandbox
+      // whose /tmp is read-only (only $TMPDIR is writable there) — the built-from-scratch env
+      // would otherwise drop it and fail every spawn.
+      TMPDIR: process.env.TMPDIR ?? '/tmp',
       CODEX_HOME: codexHome,
       CODEX_FAKE_ARGV: argvFile,
       CODEX_FAKE_ENV: envFile,

@@ -430,6 +430,15 @@ describe('review-ledger-write — the override verb', () => {
     assert.match(ok.stdout, /override/);
     const bad = main(['override'], { env });
     assert.equal(bad.code, 2);
+    // `--json @<file>` reads the payload from a file — the PLAIN-command form (AD-044 Plan 4): an
+    // inline JSON argv falls outside plain-invocation allow heuristics and prompts.
+    const payloadFile = join(root, 'payload.json');
+    writeFileSync(payloadFile, JSON.stringify({ loop: 'demo-plan', round: 1, scope: 'size-cap', sanctionedLines: 999, reason: 'from-file payload form' }));
+    const fromFile = main(['override', '--json', `@${payloadFile}`, '--cwd', root], { env });
+    assert.equal(fromFile.code, 0, fromFile.stderr);
+    assert.match(fromFile.stdout, /override/);
+    const missing = main(['override', '--json', `@${join(root, 'no-such.json')}`, '--cwd', root], { env });
+    assert.equal(missing.code, 2, 'an unreadable payload file is a loud usage error');
     rmSync(root, { recursive: true, force: true });
   });
 });

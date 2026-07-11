@@ -224,7 +224,10 @@ const reviewLoopAdvice = (slots, activity) =>
 // (the review-state plan-in-flight detector): exactly ONE plan in flight → render it populated;
 // zero or several → the explicit `--plan <path>` placeholder + a one-line discovery caveat. The
 // suggested --out lives OUTSIDE the repo (/tmp) — grounding.mjs refuses a non-scratch destination.
-const GROUNDING_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'grounding.mjs');
+// Exported for the bridge-tier byte-parity pin (AD-044 Plan 4): the velocity tier seeds the
+// grounding rule in EXACTLY this rendered spelling — `node "${GROUNDING_TOOL}"` — so seeded and
+// rendered forms can never drift apart.
+export const GROUNDING_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'grounding.mjs');
 const GROUNDING_FACTS_OUT = '/tmp/review-facts.md';
 const groundingPreStepAdvice = (activity, slots, plans) => {
   if (!slots.some((s) => (s.backends ?? []).includes('agy-review'))) return [];

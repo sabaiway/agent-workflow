@@ -107,6 +107,9 @@ const run = ({ repo, bin }, { args = ['-'], input = 'do the thing', env = {}, pa
     env: {
       PATH: path || `${bin}:${process.env.PATH}`,
       HOME: repo,
+      // Keep the wrapper's mktemp working when the suite runs inside an OS sandbox whose /tmp is
+      // read-only (only $TMPDIR is writable there).
+      TMPDIR: process.env.TMPDIR ?? '/tmp',
       CODEX_FAKE_ARGV: argvFile,
       CODEX_FAKE_ENV: envFile,
       CODEX_FAKE_STDIN: stdinFile,

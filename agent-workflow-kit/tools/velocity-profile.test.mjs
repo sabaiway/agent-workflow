@@ -6,8 +6,10 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ACCEPT_EDITS_MODE,
+  BRIDGE_REVIEW_WRAPPERS,
   CLAUDE_DIR,
   EXPECTED_WORKFLOW_VERSION,
+  KIT_BRIDGE_TIER_NOTICE,
   KIT_READONLY_TOOLS,
   KIT_RUN_GATES_TOOL,
   KIT_WRITER_PREVIEW_TOOLS,
@@ -18,6 +20,7 @@ import {
   VELOCITY_INVALID_ARGUMENT,
   VELOCITY_OFFCORE,
   WORKFLOW_STAMP,
+  deriveBridgeTierAllowlist,
   deriveKitToolsAllowlist,
   discoverGateCandidates,
   isExecutableFile,
@@ -26,6 +29,7 @@ import {
   screenAllowlistEntry,
   validateProfile,
 } from './velocity-profile.mjs';
+import { GROUNDING_TOOL } from './procedures.mjs';
 
 const UTF8 = 'utf8';
 const TEMP_PREFIX = 'velocity-profile-';
@@ -654,12 +658,15 @@ describe('velocity profile writer + CLI', () => {
       apply: false,
       acceptEdits: false,
       kitTools: false,
+      bridgeTier: false,
       autonomy: false,
       check: false,
       cwd: undefined,
     });
     assert.equal(parseArgs(['--kit-tools']).kitTools, true);
     assert.equal(parseArgs(['--kit-tools', '--apply']).apply, true);
+    assert.equal(parseArgs(['--bridge-tier']).bridgeTier, true);
+    assert.equal(parseArgs(['--bridge-tier', '--apply']).apply, true);
   });
 
   it('is idempotent on a second apply', (t) => {
@@ -858,5 +865,193 @@ describe('velocity profile CLI — the opt-in --kit-tools tier', () => {
     assert.match(dry.stdout, /pre-existing non-read-only Bash allow entries/);
     assert.match(dry.stdout, /\/tmp\/malicious\/tools\/recipes\.mjs/);
     assert.match(dry.stdout, /--cwd \/some\/other\/project/);
+  });
+});
+
+// ── the --bridge-tier (AD-044 Plan 4, Decision 2) ────────────────────────────────────
+// Placement is injected (deps.findWrapper) — a hermetic test never depends on what the HOST has
+// on PATH. The frozen constant is the membership source; the derivation only ever consults the
+// probe for placement.
+describe('bridge-wrappers tier — frozen membership, derivation, screen, audit self-consistency', () => {
+  const allPlaced = () => true;
+  const nonePlaced = () => false;
+  const GROUNDING_RULE = `Bash(node "${GROUNDING_TOOL}":*)`;
+  const runBridgeMain = (argv, cwd, findWrapper) => {
+    const stdout = [];
+    const stderr = [];
+    const code = main([...argv, '--cwd', cwd], {
+      log: (line) => stdout.push(line),
+      errlog: (line) => stderr.push(line),
+      findWrapper,
+    });
+    return { code, stdout: stdout.join('\n'), stderr: stderr.join('\n') };
+  };
+
+  it('the FROZEN tier constant is exactly the two review wrappers (count sentinel)', () => {
+    assert.deepEqual([...BRIDGE_REVIEW_WRAPPERS], ['codex-review', 'agy-review']);
+    assert.equal(BRIDGE_REVIEW_WRAPPERS.length, 2, 'growing the tier is a reviewed decision, never a drive-by');
+  });
+
+  it('derivation (all placed): code-mode wildcards + the quoted grounding rule + excludedCommands; NEVER codex-exec/agy-run', () => {
+    const bridge = deriveBridgeTierAllowlist({ findWrapper: allPlaced });
+    assert.deepEqual([...bridge.allow], ['Bash(codex-review code:*)', 'Bash(agy-review code:*)', GROUNDING_RULE]);
+    assert.deepEqual([...bridge.excludedCommands], ['codex-review', 'agy-review']);
+    assert.deepEqual(bridge.skips, []);
+    for (const entry of [...bridge.allow, ...bridge.excludedCommands]) {
+      assert.doesNotMatch(entry, /codex-exec|agy-run/, 'non-review wrappers are NEVER seeded (delegated execution keeps its human prompt)');
+    }
+  });
+
+  it('the grounding rule byte-equals the procedures-rendered spelling (seeded↔rendered parity)', () => {
+    const bridge = deriveBridgeTierAllowlist({ findWrapper: allPlaced });
+    assert.equal(bridge.allow.includes(`Bash(node "${GROUNDING_TOOL}":*)`), true, 'the seeded rule wraps exactly the rendered `node "${GROUNDING_TOOL}"` prefix');
+  });
+
+  it('an absent bridge is a STATED skip with zero entries for it; grounding derives ONLY with agy (codex R9)', () => {
+    const onlyCodex = deriveBridgeTierAllowlist({ findWrapper: (cmd) => cmd === 'codex-review' });
+    assert.deepEqual([...onlyCodex.allow], ['Bash(codex-review code:*)'], 'a codex-only install never auto-allows the agy facts pre-step writer');
+    assert.deepEqual([...onlyCodex.excludedCommands], ['codex-review']);
+    assert.equal(onlyCodex.skips.length, 1);
+    assert.match(onlyCodex.skips[0].reason, /agy-review.*not placed/);
+    const onlyAgy = deriveBridgeTierAllowlist({ findWrapper: (cmd) => cmd === 'agy-review' });
+    assert.deepEqual([...onlyAgy.allow], ['Bash(agy-review code:*)', GROUNDING_RULE], 'the grounding rule rides the agy placement');
+    const none = deriveBridgeTierAllowlist({ findWrapper: nonePlaced });
+    assert.deepEqual([...none.allow], [], 'no placed bridge → no allow entries (grounding included)');
+    assert.deepEqual([...none.excludedCommands], []);
+    assert.equal(none.skips.length, 2);
+  });
+
+  it('the screen accepts EXACTLY the seeded code-mode forms and rejects every near-miss spelling', () => {
+    assert.equal(screenAllowlistEntry('Bash(codex-review code:*)'), true);
+    assert.equal(screenAllowlistEntry('Bash(agy-review code:*)'), true);
+    assert.equal(screenAllowlistEntry(GROUNDING_RULE), true);
+    // Near-misses: non-review wrappers, bare/plan/diff spellings, exact (non-wildcard) forms — the
+    // file-argument modes can read outside the repo, so they must keep their prompt (codex R2).
+    assert.equal(screenAllowlistEntry('Bash(codex-exec:*)'), false, 'the execution wrapper never passes');
+    assert.equal(screenAllowlistEntry('Bash(agy-run:*)'), false, 'the probe wrapper never passes');
+    assert.equal(screenAllowlistEntry('Bash(codex-review:*)'), false, 'the BARE wrapper prefix covers plan mode — not the tier form');
+    assert.equal(screenAllowlistEntry('Bash(agy-review:*)'), false, 'the BARE wrapper prefix covers plan/diff modes — not the tier form');
+    assert.equal(screenAllowlistEntry('Bash(codex-review plan:*)'), false, 'plan mode keeps its prompt');
+    assert.equal(screenAllowlistEntry('Bash(agy-review diff:*)'), false, 'diff mode keeps its prompt');
+    assert.equal(screenAllowlistEntry('Bash(codex-review code extra:*)'), false, 'an argument-bearing spelling is not the tier form');
+    assert.equal(screenAllowlistEntry('Bash(codex-review code)'), false, 'the exact form is not the tier form');
+  });
+
+  it('NEGATIVE: no other node tool rides the quoted-grounding class', () => {
+    assert.equal(screenAllowlistEntry(`Bash(node "${join(KIT_ROOT, 'tools/velocity-profile.mjs')}":*)`), false, 'a quoted WRITER path never passes');
+    assert.equal(screenAllowlistEntry(`Bash(node "${join(KIT_ROOT, 'tools/recipes.mjs')}":*)`), false, 'the kit-tools tier stays UNQUOTED — quoted spellings are dead rules there');
+    assert.equal(screenAllowlistEntry(`Bash(node ${GROUNDING_TOOL}:*)`), false, 'the UNQUOTED grounding spelling is not the seeded byte-form (grounding is a writer, not a kit-readonly tool)');
+  });
+
+  it('tier entries stay OFFCORE without the flag (flagless semantics unchanged)', () => {
+    assert.throws(() => validateProfile(['Bash(codex-review code:*)']), (err) => err.code === VELOCITY_OFFCORE);
+    assert.throws(() => validateProfile([GROUNDING_RULE]), (err) => err.code === VELOCITY_OFFCORE);
+  });
+
+  it('the tier notice states the informed-consent posture EXPLICITLY (codex R2 resolution, pinned)', () => {
+    assert.match(KIT_BRIDGE_TIER_NOTICE, /runs UNATTENDED/);
+    assert.match(KIT_BRIDGE_TIER_NOTICE, /reads any repo file it is pointed at and sends the assembled payload to its subscription backend/);
+    assert.match(KIT_BRIDGE_TIER_NOTICE, /never codex-exec\/agy-run/);
+    assert.match(KIT_BRIDGE_TIER_NOTICE, /never the plan\/diff modes/);
+    assert.match(KIT_BRIDGE_TIER_NOTICE, /--facts\/--decided\) rides the same consent/);
+    assert.match(KIT_BRIDGE_TIER_NOTICE, /scratch-destination guard/);
+    assert.match(KIT_BRIDGE_TIER_NOTICE, /sandbox\.excludedCommands/);
+    assert.match(KIT_BRIDGE_TIER_NOTICE, /PLAIN invocation starting with the wrapper name/);
+  });
+
+  it('a tiered apply seeds BOTH surfaces; a second apply is idempotent (merge-don’t-clobber)', (t) => {
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    ensureClaudeDir(cwd);
+    writeJson(settingsPath(cwd), { sandbox: { enabled: true, excludedCommands: ['user-tool'] }, permissions: { allow: [] } });
+    const first = runBridgeMain(['--apply', '--bridge-tier'], cwd, allPlaced);
+    assert.equal(first.code, EXIT_OK, first.stderr);
+    const settings = readJson(settingsPath(cwd));
+    for (const rule of ['Bash(codex-review code:*)', 'Bash(agy-review code:*)', GROUNDING_RULE]) {
+      assert.equal(settings.permissions.allow.includes(rule), true, rule);
+    }
+    assert.deepEqual(settings.sandbox.excludedCommands, ['user-tool', 'codex-review', 'agy-review'], 'foreign exclusions preserved, tier names appended');
+    assert.equal(settings.sandbox.enabled, true, 'foreign sandbox sub-keys preserved');
+    const bytes = readText(settingsPath(cwd));
+    const second = runBridgeMain(['--apply', '--bridge-tier'], cwd, allPlaced);
+    assert.equal(second.code, EXIT_OK);
+    assert.equal(readText(settingsPath(cwd)), bytes, 'a second tiered apply changes nothing');
+    assert.match(first.stdout, /runs UNATTENDED/, 'the notice prints on every tiered run');
+  });
+
+  it('audit self-consistency: the flagless advisory flags NONE of the tier’s own entries — and DOES flag them for an absent bridge', (t) => {
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    runBridgeMain(['--apply', '--bridge-tier'], cwd, allPlaced);
+    const samehost = runBridgeMain(['--dry-run'], cwd, allPlaced);
+    assert.equal(samehost.code, EXIT_OK);
+    assert.doesNotMatch(samehost.stdout, /pre-existing non-read-only Bash allow entries/, 'no self-contradiction: seeded tier entries are tier-known to the audit');
+    const otherhost = runBridgeMain(['--dry-run'], cwd, nonePlaced);
+    assert.match(otherhost.stdout, /pre-existing non-read-only Bash allow entries/, 'NON-VACUOUS: the same entries flag where their bridges are NOT placed');
+    assert.match(otherhost.stdout, /codex-review/);
+  });
+
+  it('a NON-ARRAY sandbox.excludedCommands is a fail-closed STOP — never treated as empty and overwritten (codex R1)', (t) => {
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    ensureClaudeDir(cwd);
+    writeJson(settingsPath(cwd), { sandbox: { excludedCommands: 'codex-review' } });
+    const original = readText(settingsPath(cwd));
+    const dry = runBridgeMain(['--dry-run', '--bridge-tier'], cwd, allPlaced);
+    const apply = runBridgeMain(['--apply', '--bridge-tier'], cwd, allPlaced);
+    assert.equal(dry.code, EXIT_PRECONDITION, 'the dry-run already STOPs (it must faithfully predict the apply)');
+    assert.equal(apply.code, EXIT_PRECONDITION);
+    assert.match(apply.stderr, /excludedCommands must be an array/);
+    assert.equal(readText(settingsPath(cwd)), original, 'zero writes on the malformed STOP');
+  });
+
+  it('flagless runs never touch the sandbox block (no excludedCommands without the consent flag)', (t) => {
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    const r = runBridgeMain(['--apply'], cwd, allPlaced);
+    assert.equal(r.code, EXIT_OK, r.stderr);
+    const settings = readJson(settingsPath(cwd));
+    assert.equal(settings.sandbox, undefined, 'no sandbox block appears without --bridge-tier');
+  });
+
+  it('--bridge-tier cannot combine with --autonomy (allowlist-mode flag)', () => {
+    assert.equal(runMainWithoutCwd(['--autonomy', '--bridge-tier']).code, EXIT_USAGE);
+  });
+
+  it('an UNSEEDABLE grounding path is a STATED skip, never a broken rule (the spaces class)', () => {
+    const bridge = deriveBridgeTierAllowlist({ findWrapper: allPlaced, groundingAbsPath: '/kit with spaces/tools/grounding.mjs' });
+    assert.deepEqual([...bridge.allow], ['Bash(codex-review code:*)', 'Bash(agy-review code:*)'], 'no grounding rule seeds');
+    assert.equal(bridge.skips.some((s) => /grounding pre-step rule is not seeded/.test(s.reason)), true, 'the skip is stated');
+  });
+
+  it('a THROWING placement probe degrades the flagless advisory to over-flagging (defensive derive)', (t) => {
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    ensureClaudeDir(cwd);
+    writeJson(settingsPath(cwd), { permissions: { allow: ['Bash(codex-review code:*)'] } });
+    const r = runBridgeMain(['--dry-run'], cwd, () => { throw new Error('probe exploded'); });
+    assert.equal(r.code, EXIT_OK, r.stderr);
+    assert.match(r.stdout, /pre-existing non-read-only Bash allow entries/, 'over-flagging is the safe direction when the probe fails');
+  });
+
+  it('tier-known excludedCommands suppression demands PROOF — project file + the derived allow rules (codex R4)', (t) => {
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
+    writeJson(join(cwd, 'docs', 'ai', 'autonomy.json'), { 'plan-execution': { autonomy: 'sandbox' } });
+    ensureClaudeDir(cwd);
+    // (a) hand-added exclusion WITHOUT the tier allow rules → stays a loud weakening.
+    writeJson(settingsPath(cwd), { sandbox: { excludedCommands: ['codex-review'] } });
+    const bare = runBridgeMain(['--autonomy'], cwd, allPlaced);
+    assert.match(bare.stdout, /⚠ DEGRADE: .*excludedCommands/, 'a name-only match proves nothing');
+    // (b) the tier's own output (allow rules + exclusion, project file) → an informational note.
+    runBridgeMain(['--apply', '--bridge-tier'], cwd, allPlaced);
+    const tiered = runBridgeMain(['--autonomy'], cwd, allPlaced);
+    assert.doesNotMatch(tiered.stdout, /⚠ DEGRADE: .*excludedCommands/, 'the proven tier output is never flagged');
+    assert.match(tiered.stdout, /note: .*tier-known/, 'it is surfaced as a note instead');
+    // (c) the same exclusion in settings.LOCAL.json → a loud weakening (never tier output).
+    writeJson(localSettingsPath(cwd), { sandbox: { excludedCommands: ['agy-review'] } });
+    const local = runBridgeMain(['--autonomy'], cwd, allPlaced);
+    assert.match(local.stdout, /⚠ DEGRADE: settings\.local.*excludedCommands|⚠ DEGRADE: \.claude\/settings\.local\.json.*excludedCommands/, 'a local-file exclusion is never tier-known');
   });
 });
