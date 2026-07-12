@@ -50,7 +50,7 @@ echoes `session: <id>` to stderr. On a missing/empty final-message file it falls
 
 ## Quality-first guard (pinned model & effort)
 
-The wrappers default `CODEX_MODEL=gpt-5.5` and `CODEX_EFFORT=xhigh` and **refuse** (exit 2, loud) any
+The wrappers default `CODEX_MODEL=gpt-5.6-sol` and `CODEX_EFFORT=xhigh` and **refuse** (exit 2, loud) any
 non-default — delegated work always uses the frontier model at max effort; quality is never traded for
 quota. `CODEX_PROBE=1` relaxes this for a throwaway, effort-independent probe only (echoed loudly), and
 a probe still runs on the subscription, in the sandbox, with clean capture.
@@ -186,7 +186,7 @@ exec` over the precomputed diff instead, keeping every invariant intact.
 | `-o, --output-last-message <f>` | write ONLY the final message (clean capture) |
 | `--json` | structured event stream (`thread.started` ⇒ session id) |
 | `--output-schema <f>` | constrain output to a JSON schema (`CODEX_REVIEW_SCHEMA=1`) |
-| `-m <model>` | model (wrapper default `gpt-5.5`, pinned via `CODEX_MODEL`) |
+| `-m <model>` | model (wrapper default `gpt-5.6-sol`, pinned via `CODEX_MODEL`) |
 | `-c model_reasoning_effort=<effort>` | reasoning effort (wrapper default `xhigh`, pinned via `CODEX_EFFORT`) |
 | `--ignore-user-config` | do NOT load `$CODEX_HOME/config.toml`; auth still uses `CODEX_HOME` |
 | `--color never` | disable ANSI colour in output |

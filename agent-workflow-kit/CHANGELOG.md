@@ -4,6 +4,17 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.45.1 — codex frontier pin moves to gpt-5.6-sol (bridge 2.5.0)
+
+A **patch** release (the kit surface is unchanged; the bundled `codex-cli-bridge` moves 2.4.0 →
+**2.5.0**). Both codex wrappers' quality-first pin advances to the new frontier:
+`DEFAULT_CODEX_MODEL` `gpt-5.5` → **`gpt-5.6-sol`** ("Latest frontier agentic coding model",
+catalog priority 1 — verified against the codex CLI's own server model catalog on 2026-07-12),
+effort stays **`xhigh`** (supported: low…ultra), the service tier stays STANDARD by default (the
+`priority`/Fast spend knob is unchanged: consented, never a default). The refuse-on-non-default
+guard, `CODEX_PROBE=1` escape, and every other wrapper contract are untouched; SKILL/references
+prose follows the pin in lockstep.
+
 ## 1.45.0 — Autonomy series close: upgrade Recommendations, bridge-wrappers tier, review-domain mask fix (AD-044 Plan 4)
 
 A **feature** release closing the AD-044 autonomy series (ships with memory 2.1.0, engine 1.15.0,

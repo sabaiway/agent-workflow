@@ -20,7 +20,7 @@ judgment.
 
 ## Quality-first: model & effort are pinned
 
-Delegated codex work ALWAYS runs on the frontier model at max effort: `gpt-5.5` / `xhigh` are **pinned**
+Delegated codex work ALWAYS runs on the frontier model at max effort: `gpt-5.6-sol` / `xhigh` are **pinned**
 and a non-default `CODEX_MODEL`/`CODEX_EFFORT` is **refused** (exit 2). Do not try to "tune down" the
 model or effort for a real run — the wrapper will stop you. Quota is metered in **messages** (rolling
 5h + weekly), so economy comes from removing waste (clean capture, the precomputed review diff, resume),
@@ -77,7 +77,7 @@ codex-exec --resume <session-id> <file|->  # explicit session id
 
 Resume continues the SAME codex session, so you avoid re-sending the original context. It runs through
 the wrapper, which **re-establishes every invariant** (subscription-only `*_API_KEY` scrub,
-`--ignore-user-config`, the pinned `gpt-5.5`/`xhigh`) and **restates the full posture via `-c`** —
+`--ignore-user-config`, the pinned `gpt-5.6-sol`/`xhigh`) and **restates the full posture via `-c`** —
 because `codex exec resume` resets the sandbox/approval/network posture and rejects `-s`/`--add-dir`/`-C`,
 the wrapper passes `-c sandbox_mode=workspace-write -c approval_policy=never -c
 sandbox_workspace_write.network_access=false` explicitly. A resume takes no passthrough flags and an

@@ -69,7 +69,7 @@ Guarded passthrough after '--':
 
 Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):
   ${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf
-  CODEX_SERVICE_TIER — service tier: 'priority' (Fast — ~1.5x speed at a 2.5x credit rate on gpt-5.5); a consented SPEND knob, default off (standard tier)
+  CODEX_SERVICE_TIER — service tier: 'priority' (Fast — ~1.5x speed at a 2.5x credit rate on gpt-5.6-sol); a consented SPEND knob, default off (standard tier)
   CODEX_HARD_TIMEOUT — hard wall-clock cap, integer seconds 1..86400 (built-in default 3600)
 
 Environment: CODEX_HARD_TIMEOUT (seconds, default 3600), CODEX_PROBE=1 (throwaway probe only).
@@ -169,7 +169,7 @@ aw_apply_settings() {
 }
 aw_apply_settings
 
-DEFAULT_CODEX_MODEL="gpt-5.5"   # frontier coding model (verified locally) — pinned
+DEFAULT_CODEX_MODEL="gpt-5.6-sol"   # frontier coding model (verified locally) — pinned
 DEFAULT_CODEX_EFFORT="xhigh"    # maximum reasoning effort — pinned
 CODEX_MODEL="${CODEX_MODEL:-$DEFAULT_CODEX_MODEL}"
 CODEX_EFFORT="${CODEX_EFFORT:-$DEFAULT_CODEX_EFFORT}"
@@ -180,7 +180,7 @@ CODEX_HARD_TIMEOUT="${CODEX_HARD_TIMEOUT:-3600}"
 # Codex service tier (quality-neutral speed knob; live-probed 2026-07-05): default EMPTY ⇒ no
 # service_tier flag (standard tier) — enabling Fast is a consented per-host SPEND act, never a
 # silent default. The only server-catalog tier id on this subscription is 'priority' (catalog
-# display name "Fast": ~1.5x token speed at a 2.5x credit rate on gpt-5.5; quality-neutral —
+# display name "Fast": ~1.5x token speed at a 2.5x credit rate on gpt-5.6-sol; quality-neutral —
 # same model). codex itself accepts ANY -c service_tier string silently (probe-verified), so
 # the wrapper validates the effective value: an unsupported one warns and runs on the standard
 # tier — a typo can never silently masquerade as Fast.
