@@ -339,6 +339,44 @@ export const validateManifest = (skillDir) => {
     }
   }
 
+  // `writableDirs` (REC-UX-REWORK, D6): the backend CLI's writable state-dir declarations —
+  // {env, default} entries the Recommendations advisor RESOLVES at run time (a NON-EMPTY env
+  // value wins, else the default) and renders into the sandbox-lane recipe. Like `networkHosts`
+  // this is a DOCUMENTATION source (the kit never seeds filesystem allowances), and a malformed
+  // list FAILS --strict for the same reason: the resolved dir is rendered into a hand-applied line.
+  const writableDirs = manifest.writableDirs;
+  if (writableDirs != null) {
+    if (!Array.isArray(writableDirs) || writableDirs.length === 0) {
+      errors.push('`writableDirs` must be a non-empty array of {env, default} entries');
+    } else {
+      const seenDefaults = new Set();
+      writableDirs.forEach((entry, i) => {
+        const at = `\`writableDirs[${i}]\``;
+        if (entry == null || typeof entry !== 'object' || Array.isArray(entry)) {
+          errors.push(`${at} must be an {env, default} object`);
+          return;
+        }
+        if (entry.env !== null && (typeof entry.env !== 'string' || !/^[A-Z][A-Z0-9_]*$/.test(entry.env))) {
+          errors.push(`${at}.env must be null or an UPPER_SNAKE_CASE env-var name (${JSON.stringify(entry.env)})`);
+        }
+        const dir = entry.default;
+        if (typeof dir !== 'string' || !(dir.startsWith('~/') || dir.startsWith('/'))) {
+          errors.push(`${at}.default must be a \`~/\`-anchored or absolute POSIX path (${JSON.stringify(dir)})`);
+          return;
+        }
+        if (/[*?[\]]/.test(dir)) errors.push(`${at}.default must not carry glob characters ("${dir}")`);
+        // The resolved dir is rendered into a ONE-LINE hand-applied recipe — a control character
+        // (newline, CR, NUL, …) would break the line or the shell paste.
+        // eslint-disable-next-line no-control-regex
+        if (/[\x00-\x1f\x7f]/.test(dir)) errors.push(`${at}.default must not carry control characters (${JSON.stringify(dir)})`);
+        if (dir.endsWith('/')) errors.push(`${at}.default must not end with a trailing slash ("${dir}")`);
+        if (hasTraversal(dir)) errors.push(`${at}.default must not contain ".." traversal ("${dir}")`);
+        if (seenDefaults.has(dir)) errors.push(`duplicate writableDirs default "${dir}" (${at})`);
+        else seenDefaults.add(dir);
+      });
+    }
+  }
+
   if (!isStub) {
     const auth = readAuthoritativeVersion(skillDir);
     if (auth.version == null) errors.push(`could not resolve an authoritative version (${auth.from})`);

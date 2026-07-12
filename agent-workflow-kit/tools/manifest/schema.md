@@ -19,6 +19,7 @@ expansion), never via the shell. The validator is [`validate.mjs`](./validate.mj
 | `detect` | object | no | `installed` (skill on the machine) + `deployed` (substrate set up in cwd) |
 | `settings` | array | no | the bridge's **settings-file surface** (typed; see *Settings*). Unlike `contract`, a malformed entry **fails** `--strict`. |
 | `networkHosts` | string[] | no | the backend CLI's **observed egress host families** (see *Network hosts*). A malformed list **fails** `--strict`. |
+| `writableDirs` | object[] | no | the backend CLI's **writable state-dir declarations** — `{env, default}` entries (see *Writable dirs*). A malformed list **fails** `--strict`. |
 | `install` / `uninstall` | object | no | `install.npm` is a package name, not a path |
 | `cost` / `quota` / `provenance` | misc | no | informational |
 | `available` | boolean | no | `false` = a declared-but-not-installed stub; skips fs/version checks |
@@ -105,10 +106,36 @@ source** for a hand-applied sandbox/network allowlist (session sandbox config, o
 - Observed-minimal, honestly incomplete: a blocked host names itself at run time — extend the
   hand-applied list by hand; the manifest list records what was actually observed.
 
+## Writable dirs (REC-UX-REWORK, D6)
+
+`writableDirs` declares the backend CLI's **writable state dirs** (credentials, session state) as
+`{env, default}` entries — a bare string cannot be truthful, because a wrapper resolves its state
+dir from an env override first (e.g. `CODEX_HOME` as `~`, `~/…`, absolute or relative), so the
+declared path is only the **default under no override**. Rules:
+
+- Each entry: `env` is `null` or an **UPPER_SNAKE_CASE env-var name**; `default` is a
+  **`~/`-anchored or absolute POSIX path** — no globs, no trailing slash, no `..` traversal.
+  Defaults must be unique. A malformed list **fails** `--strict` (the resolved dir is rendered
+  into a hand-applied recipe line by the Recommendations advisor).
+- **Resolution is the advisor's, at run time, mirroring the wrapper's byte-semantics:** a
+  NON-EMPTY env value wins (an EMPTY env value ≡ unset — the `${VAR:-default}` form); the
+  wrapper's exact case-arms apply — `~`, `~/…` and absolute forms ride as-given, EVERY other
+  form (including `~user/…`, which the wrappers never resolve as a home path) anchors like a
+  relative path. The advisor anchors those to the **target project root** (its pinned `--cwd`),
+  matching what a wrapper invoked from the project root resolves — the documented dispatch form
+  (the wrapper itself anchors to its invocation `$PWD`); else the `default` applies.
+- Like `networkHosts`, this is a **documentation source**: the kit never seeds
+  `sandbox.filesystem.allowWrite` or any other filesystem allowance — the entries feed the
+  sandbox-lane discoverability item (session/host sandbox config is hand-applied territory).
+
 ## Path-field rules (Windows-safe, traversal-safe)
 
-- **No absolute paths**, **no `..` traversal**, **no unresolved placeholders** (`{{…}}` / `${…}`)
-  in any field.
+These rules govern the **repo/project-relative path fields** enumerated below (`source`,
+`template`, `detect.*`) — NOT `writableDirs`, whose `default` entries are deliberately
+`~/`-anchored or absolute **host** paths under their own section's rules above.
+
+- **No absolute paths**, **no `..` traversal** in the fields below; **no unresolved placeholders**
+  (`{{…}}` / `${…}`) in any field.
 - `source`, `template`, `detect.installed.file` — repo-relative **within the skill**; must exist
   (skipped for `available:false` stubs).
 - `detect.installed.default` — may be **home-relative** (`~/…`); resolved by the installer.

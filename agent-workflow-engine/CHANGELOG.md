@@ -4,6 +4,26 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `2.0.0`).
 
+## 1.16.0 — Prompt-economy canon: the cost lanes learn autonomy-preserving dispatch (REC-UX-REWORK D7, AD-053)
+
+A **feature** release (ships with kit 1.46.0 / memory 2.2.0). The cost-lanes canon
+(`references/orchestration.md` §5) gains the **prompt-economy clause**: (a) read-only fan-out
+(research / sweeps / extraction) runs ONLY on restricted-tool vehicles — a full-tool subagent for
+read-only work is a forbidden lane downgrade (an invisible prompt-flood plus blast radius, not just
+tokens), and a subagent is never instructed to shell out for facts obtainable read-only; (b) the
+orchestrator's own shell form is ONE plain pipeline per call (a `;`/`&&` chain or env-prefixed
+invocation never matches a prefix allow rule); (c) a fan-out LAUNCHER that gates per call yields to
+the agent-spawn lane — **capability-gated**: without restricted-tool vehicles (a host offering only
+full-tool agents included), read-only research stays in the orchestrator's own context, never a
+vehicle mandate a host cannot satisfy.
+The quality/speed guard rides in canon (the clause narrows TOOLS for read-only work only —
+judgment, code, synthesis stay at the frontier lane) with the honest limit stated (no deterministic
+gate classifies a dispatch — enforcement is canon at the point of use + placed vehicles + the retro
+loop). The `agent-rules-lens.md` cost-lanes line carries the same clause (the outgoing body is
+appended to the append-only prior store, so unmodified in-the-wild deployments converge on first
+touch); one distinctive token per invariant is drift-guarded on all three surfaces (canon · the kit
+advisor render · the lens).
+
 ## 1.15.0 — Canon autonomy prose + the sandbox cost-lane (AD-044 Plan 4)
 
 A **feature** release (ships with kit 1.45.0 / memory 2.1.0). This publish delivers the Plan-3

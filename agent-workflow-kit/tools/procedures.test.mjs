@@ -424,8 +424,15 @@ describe('procedures CLI — activity-aware ledger pointer (AD-046): plan-execut
 describe('procedures CLI — cost-lane advisory block (cost-tiered execution): unconditional, canon-token-guarded', () => {
   const SENTINEL = /Cost lanes \(orchestration\.md §5\)/;
   // The distinctive tokens shared with the canon (orchestration.md §5) — pinned on BOTH sides so
-  // the advisor paraphrase and the canon cannot silently drift apart.
-  const CANON_TOKENS = ['cheapest adequate executor', 'no named guardrail', 'L0', 'L1', 'L2', 'L3', 'red lines never move'];
+  // the advisor paraphrase and the canon cannot silently drift apart. The last five are the D7
+  // prompt-economy invariants (REC-UX-REWORK) — ONE distinctive token per invariant
+  // (a fan-out vehicles · b shell form · c capability-gated launcher · quality/speed guard ·
+  // honest limit), also pinned on the lens side (engine lens-fragment.test.mjs).
+  const CANON_TOKENS = [
+    'cheapest adequate executor', 'no named guardrail', 'L0', 'L1', 'L2', 'L3', 'red lines never move',
+    'forbidden lane downgrade', 'plain pipeline per call', 'vehicle mandate a host cannot satisfy',
+    'stay at the frontier lane', 'no deterministic gate classifies a dispatch',
+  ];
 
   it('PRINTS for a review-backed activity (council) with the canon tokens', () => {
     const r = run(['plan-authoring', '--override', 'review=council'], { codex: READY, agy: READY });

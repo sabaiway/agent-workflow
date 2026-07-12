@@ -51,6 +51,12 @@ describe('validateManifest — result classes', () => {
     assert.equal(r.result, VALID, r.errors.join('; '));
     assert.deepEqual(r.errors, []);
   });
+
+  it('a well-formed `writableDirs` list (env-overridable tilde default + env-less absolute) → valid', () => {
+    const r = validateManifest(at('writable-dirs-valid'));
+    assert.equal(r.result, VALID, r.errors.join('; '));
+    assert.deepEqual(r.errors, []);
+  });
 });
 
 describe('validateManifest — negative fixtures MUST fail (strict)', () => {
@@ -79,6 +85,17 @@ describe('validateManifest — negative fixtures MUST fail (strict)', () => {
     ['network-hosts-bad-entry', /`networkHosts\[0\]` must be a bare hostname or a \*\.family wildcard/],
     ['network-hosts-duplicate', /duplicate networkHosts entry "\*\.chatgpt\.com"/],
     ['network-hosts-empty', /`networkHosts` must be a non-empty array of host strings/],
+    // `writableDirs` (REC-UX-REWORK, D6): {env, default} entries the advisor RESOLVES and renders
+    // into the sandbox-lane recipe — malformed entries fail --strict like networkHosts.
+    ['writable-dirs-bad-entry', /`writableDirs\[0\]`\.default must be a `~\/`-anchored or absolute POSIX path/],
+    ['writable-dirs-bad-entry', /`writableDirs\[0\]`\.env must be null or an UPPER_SNAKE_CASE env-var name/],
+    ['writable-dirs-bad-path', /`writableDirs\[0\]`\.default must not carry glob characters/],
+    ['writable-dirs-bad-path', /`writableDirs\[1\]`\.default must not end with a trailing slash/],
+    ['writable-dirs-bad-path', /`writableDirs\[2\]`\.default must not contain "\.\." traversal/],
+    ['writable-dirs-bad-path', /`writableDirs\[3\]` must be an \{env, default\} object/],
+    ['writable-dirs-bad-path', /`writableDirs\[4\]`\.default must not carry control characters/],
+    ['writable-dirs-duplicate', /duplicate writableDirs default "~\/\.fixture"/],
+    ['writable-dirs-empty', /`writableDirs` must be a non-empty array of \{env, default\} entries/],
   ];
   for (const [name, pattern] of mustFail) {
     it(`${name} → invalid`, () => {

@@ -7,6 +7,25 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-12 — memory 2.2.0 · engine 1.16.0 · kit 1.46.0: Recommendations UX rework — verdict-first, in the user's language (REC-UX-REWORK, AD-053)
+
+**Family release** (bridges 2.6.0/2.5.0 ship inside the kit tarball; the deployment lineage head
+stays `2.0.0`). The upgrade Recommendations section is reworked end-to-end after its first
+consumer-side report: a composed **verdict line now opens every render** (severity-classed items —
+`attention` vs `optional` — with `nothing is broken` claimed only when nothing needs attention and
+no probe was skipped); every registry string is **shape-capped frozen data** (one line, 140 chars,
+banned risk/hedge tokens — a static gate that enumerated and killed 9 prose-wall violators);
+posture/risk prose moved to the mode doc's per-item notes at the **informed-consent moment**; the
+hedged `network-allowlist` item became the **`sandbox-lane` discoverability item** — the
+manifest-declared session-sandbox recipe (`networkHosts` ∪ the new validated **`writableDirs`**
+field) converging on a neutral, machine-portable fingerprint acknowledgement, never a security
+key; and the paste-verbatim contract is retired for **presentation in the user's conversational
+language** (facts complete, commands byte-exact, raw block on request — the AD-032 lane). The
+engine canon gains the **prompt-economy clause** (read-only fan-out on restricted-tool vehicles;
+one plain pipeline per call; capability-gated launcher guidance; frontier lane guarded; honest
+limit stated), rendered by the kit advisor and the §2.6 lens, drift-guarded three ways. Council:
+codex revise (6 major + 1 minor, all consult-verified folds) → agy SHIP; full record in AD-053.
+
 ## 2026-07-12 — memory 2.1.0 · engine 1.15.0 · kit 1.45.0: the autonomy series closes (AD-044 Plan 4)
 
 **Family release** (bridges 2.4.0 ship inside the kit tarball; the deployment lineage head stays
