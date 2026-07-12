@@ -3,7 +3,7 @@
   "schema": 1,
   "name": "antigravity-cli-bridge",
   "kind": "execution-backend",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "provides": ["review", "probe"],
   "roles": {
     "review": {
@@ -50,6 +50,7 @@
     }
   ],
   "networkHosts": ["*.googleapis.com", "accounts.google.com", "antigravity-unleash.goog", "lh3.googleusercontent.com"],
+  "writableDirs": [{ "env": null, "default": "~/.gemini/antigravity-cli" }],
   "detect": {
     "installed": {
       "env": "ANTIGRAVITY_CLI_BRIDGE_DIR",

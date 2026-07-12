@@ -1,0 +1,19 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "fixture-writable-dirs-bad-path",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["review"],
+  "roles": {
+    "review": { "cmd": "fixture-review", "source": "bin/run.sh", "output": "advisory" }
+  },
+  "writableDirs": [
+    { "env": null, "default": "~/state/*" },
+    { "env": null, "default": "/var/lib/fixture/" },
+    { "env": null, "default": "~/../outside" },
+    "not-an-entry-object",
+    { "env": null, "default": "~/bad\nline" }
+  ],
+  "cost": "subscription"
+}

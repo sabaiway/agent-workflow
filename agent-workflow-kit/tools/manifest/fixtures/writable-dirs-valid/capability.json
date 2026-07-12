@@ -1,0 +1,16 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "fixture-writable-dirs-valid",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["review"],
+  "roles": {
+    "review": { "cmd": "fixture-review", "source": "bin/run.sh", "output": "advisory" }
+  },
+  "writableDirs": [
+    { "env": "FIXTURE_HOME", "default": "~/.fixture" },
+    { "env": null, "default": "/var/lib/fixture" }
+  ],
+  "cost": "subscription"
+}

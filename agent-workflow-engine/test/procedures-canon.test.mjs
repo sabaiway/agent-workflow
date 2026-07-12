@@ -147,7 +147,13 @@ describe('procedures.md — canonical activity-procedures reference', () => {
   // the canon cannot silently drift apart.
   it('the orchestration.md §5 canon carries the cost-lane tokens the kit advisor paraphrases', () => {
     const orchestration = readFileSync(join(ROOT, 'references', 'orchestration.md'), 'utf8');
-    for (const token of ['cheapest adequate executor', 'no named guardrail', 'L0', 'L1', 'L2', 'L3', 'red lines never move']) {
+    // The last five are the D7 prompt-economy invariants (REC-UX-REWORK) — one distinctive token
+    // per invariant, pinned on all three surfaces (canon here · kit advisor · lens fragment).
+    for (const token of [
+      'cheapest adequate executor', 'no named guardrail', 'L0', 'L1', 'L2', 'L3', 'red lines never move',
+      'forbidden lane downgrade', 'plain pipeline per call', 'vehicle mandate a host cannot satisfy',
+      'stay at the frontier lane', 'no deterministic gate classifies a dispatch',
+    ]) {
       assert.ok(orchestration.includes(token), `orchestration.md carries the "${token}" canon token`);
     }
   });

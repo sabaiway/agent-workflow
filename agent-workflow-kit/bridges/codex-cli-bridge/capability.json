@@ -3,7 +3,7 @@
   "schema": 1,
   "name": "codex-cli-bridge",
   "kind": "execution-backend",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "provides": ["execute", "review"],
   "roles": {
     "execute": {
@@ -72,6 +72,7 @@
     }
   ],
   "networkHosts": ["chatgpt.com", "*.chatgpt.com"],
+  "writableDirs": [{ "env": "CODEX_HOME", "default": "~/.codex" }],
   "detect": {
     "installed": {
       "env": "CODEX_CLI_BRIDGE_DIR",

@@ -66,6 +66,13 @@ const DISCIPLINE_TOKENS = [
   'no named guardrail does not move down',
   'red lines never move down',
   'salvage recorded state first',
+  // prompt-economy disciplines (D7, REC-UX-REWORK) — one token per invariant, pinned on all
+  // three surfaces (canon · kit advisor render · this lens fragment)
+  'forbidden lane downgrade',
+  'plain pipeline per call',
+  'vehicle mandate a host cannot satisfy',
+  'stay at the frontier lane',
+  'no deterministic gate classifies a dispatch',
 ];
 
 // The pre-E4 intro line (the outgoing body differs from the current fragment ONLY by the
@@ -126,16 +133,27 @@ describe('agent-rules-lens-priors — append-only prior store shape', () => {
     }
   });
 
-  it('the pre-E4 outgoing body IS an entry (unmodified in-the-wild deploys converge on first touch)', () => {
-    assert.ok(fragment.includes(CURRENT_INTRO), 'sanity: the fragment carries the current intro');
-    const outgoing = normalize(fragment.replace(CURRENT_INTRO, PRE_E4_INTRO));
-    assert.notEqual(outgoing, normalize(fragment), 'sanity: the computed outgoing body differs from the fragment');
-    assert.ok(priors.includes(outgoing), 'the pre-E4 body (current bullets + the pre-provenance intro) must be a priors entry');
+  it('the OUTGOING body of the previous release IS the newest entry — exact normalized equality', () => {
+    // The current fragment differs from the previous release's body by EXACTLY the appended
+    // prompt-economy sentence-suffix on the cost-lanes line (REC-UX-REWORK D7) — so the exact
+    // expected outgoing body is computable, and a typo in the prior entry goes red instead of
+    // sliding past a token spot-check.
+    const outgoing = normalize(fragment.replace(/ \*\*Prompt economy:\*\*[^\n]*/, ''));
+    assert.notEqual(outgoing, normalize(fragment), 'sanity: the strip actually removes the extension');
+    assert.ok(outgoing.includes(CURRENT_INTRO), 'the outgoing body carries the provenance intro (post-E4)');
+    assert.equal(priors[priors.length - 1], outgoing, 'the newest prior byte-equals the pre-prompt-economy fragment (normalized)');
   });
 
-  it('non-vacuity: dropping the pre-E4 entry from an in-memory copy goes red (injected)', () => {
-    const outgoing = normalize(fragment.replace(CURRENT_INTRO, PRE_E4_INTRO));
-    const withoutLast = parsePriors(priorsText).filter((e) => e !== outgoing);
-    assert.ok(!withoutLast.includes(outgoing), 'the membership check must go RED when the pre-E4 entry is removed');
+  it('the pre-E4 body REMAINS an entry (append-only: a deployment seeded from any past release keeps converging)', () => {
+    assert.ok(
+      priors.some((e) => e.includes(PRE_E4_INTRO) && e.toLowerCase().includes('cheapest adequate executor')),
+      'a pre-provenance-intro cost-lanes body stays in the store forever',
+    );
+  });
+
+  it('non-vacuity: dropping the newest entry from an in-memory copy goes red (injected)', () => {
+    const newest = priors[priors.length - 1];
+    const withoutNewest = parsePriors(priorsText).filter((e) => e !== newest);
+    assert.ok(!withoutNewest.includes(newest), 'the membership check must go RED when the newest entry is removed');
   });
 });

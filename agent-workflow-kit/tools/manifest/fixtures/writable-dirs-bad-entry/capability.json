@@ -1,0 +1,15 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "fixture-writable-dirs-bad-entry",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["review"],
+  "roles": {
+    "review": { "cmd": "fixture-review", "source": "bin/run.sh", "output": "advisory" }
+  },
+  "writableDirs": [
+    { "env": "codex_home", "default": "relative/dir" }
+  ],
+  "cost": "subscription"
+}

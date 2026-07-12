@@ -4,6 +4,54 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.46.0 — Recommendations UX rework: verdict-first, shape-capped, user-language; sandbox-lane discoverability (REC-UX-REWORK, AD-053)
+
+A **feature** release (ships with engine 1.16.0, memory 2.2.0, bridges 2.6.0/2.5.0 bundled)
+reworking the upgrade Recommendations section after its first consumer-side report drew a
+readability verdict — the section now LEADS with an answer instead of a wall of caveats:
+
+- **Verdict-first render (D1).** Items carry a frozen two-class severity (`attention` — a
+  configured declaration broken/drifted/degrading/invalid; `optional` — an offer to enable an
+  unconfigured capability). The optimal state stays the byte-identical empty-state line; every
+  other state opens with ONE composed verdict line from frozen, doc-parity-bound templates
+  (`{K} item(s) need attention` / `nothing is broken` ONLY when nothing needs attention AND no
+  probe was skipped / `{N} optional recommendation(s), apply any you want` / `optimality NOT
+  attested — {M} probe check(s) skipped`). Items render attention-first with severity tags.
+- **Shape is contract (D2).** Every benefit string and static WHAT template lives in frozen
+  exported registries (`BENEFITS` + the new `WHATS`, per-site variants included) pinned by a
+  static gate: one line, 140-char cap, banned tokens (RISK/CAVEAT/IF-hedges/dates); dynamic parts
+  cap by truncation-with-count; `add()` backstops composed items into the stated-skip lane; skip
+  reasons normalize to one capped line. The first RED run enumerated 9 violators — all rewritten.
+- **Risk moved to the consent moment (D3).** Posture/risk prose lives in the mode doc's per-item
+  notes (closed, bidirectionally test-pinned via `RISK_NOTED_KEYS`); the apply lane is an explicit
+  informed-consent checkpoint: select → posture note inline → explicit confirm → run EXACTLY the
+  rendered one-liner.
+- **`network-allowlist` → `sandbox-lane` (D4, merges REC-SANDBOX-LANE).** The unknowable-condition
+  hedge is gone: the item surfaces the manifest-declared observed session-sandbox recipe
+  (`networkHosts` ∪ resolved `writableDirs`) for wired review wrappers and converges on a NEUTRAL
+  fingerprint acknowledgement (`agentWorkflow.sandboxLaneAck`, either settings scope; home-symbolic
+  normalization keeps a committed ack machine-portable; a changed recipe re-fires). Security keys
+  are never read as an ack and never recommended as a fix; the mode doc's sandbox-lanes section
+  routes per host class by a narrowest-scope ladder.
+- **User-language presentation (D5).** The paste-verbatim contract is retired: the agent PRESENTS
+  the section in the user's conversational language — every fact and count, nothing added or
+  dropped; commands/paths/hosts byte-exact; raw tool block on request (the AD-032 lane). A static
+  language-contract test pins the new tokens present and the retired phrases absent on every live
+  surface (both mode docs, README row, tool header, doc-parity comments).
+- **Manifests: `writableDirs` (D6).** New optional validated field — `{env, default}` entries
+  (validate `--strict`, fixtures ×4, kit mirrors re-synced); the advisor resolves at run time
+  mirroring the wrapper byte-semantics (non-empty env wins; empty ≡ unset; only `~`, `~/…`,
+  absolute forms ride as-given — anything else anchors to the project root).
+- **Prompt-economy render (D7).** The cost-lanes advisory (`procedures.mjs`) gains the
+  prompt-economy clause rendered from the engine canon (read-only fan-out on restricted-tool
+  vehicles only; one plain pipeline per call; capability-gated launcher guidance; the
+  quality/speed guard + honest limit), drift-guarded by one distinctive token per invariant on all
+  three surfaces.
+
+Bundled bridges: **codex-cli-bridge 2.6.0**, **antigravity-cli-bridge 2.5.0** — each manifest
+gains its `writableDirs` declaration (codex `{CODEX_HOME, ~/.codex}`; agy
+`{null, ~/.gemini/antigravity-cli}`); wrapper behavior unchanged.
+
 ## 1.45.1 — codex frontier pin moves to gpt-5.6-sol (bridge 2.5.0)
 
 A **patch** release (the kit surface is unchanged; the bundled `codex-cli-bridge` moves 2.4.0 →

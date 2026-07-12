@@ -4,6 +4,17 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `2.0.0`).
 
+## 2.2.0 — agent_rules template re-render: the lens gains the prompt-economy clause (REC-UX-REWORK D7, AD-053)
+
+A **feature** release (ships with kit 1.46.0 / engine 1.16.0; the deployment lineage head stays
+`2.0.0` — no deployed-`docs/ai` structure change). The bundled
+`references/templates/agent_rules.md` §2.6 lens block is re-rendered to the current engine canon:
+its cost-lanes line now carries the **prompt-economy clause** (read-only fan-out on restricted-tool
+vehicles only; one plain pipeline per call; capability-gated launcher guidance; judgment, code and
+synthesis stay at the frontier lane; the stated honest limit). Template-only — seeding, upgrade and
+every other substrate behavior are unchanged; the render is byte-parity-pinned against the engine
+fragment by the kit's lens-mirror guard.
+
 ## 2.1.0 — Autonomy template seed (AD-044 Plan 4)
 
 A **feature** release (ships with kit 1.45.0 / engine 1.15.0; the deployment lineage head stays

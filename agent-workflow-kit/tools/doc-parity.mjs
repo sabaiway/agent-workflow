@@ -27,7 +27,14 @@ import { SCHEMA_VERSION, REVIEW_CAP, V4_CLASSES, V4_OVERRIDE_SCOPES } from './re
 import { HARD_MAX, DEFAULT_DIFF_CAP } from './review-ledger-write.mjs';
 import { RESULT_SCHEMA_VERSION } from './fold-completeness.mjs';
 import { EXIT as DOCTOR_EXIT, STATUS as DOCTOR_STATUS, TRUSTED_DIRS as DOCTOR_TRUSTED_DIRS } from './autonomy-doctor.mjs';
-import { RECOMMENDATIONS_SECTION_HEADER, RECOMMENDATIONS_EMPTY_LINE } from './recommendations.mjs';
+import {
+  RECOMMENDATIONS_SECTION_HEADER,
+  RECOMMENDATIONS_EMPTY_LINE,
+  VERDICT_ATTENTION_TEMPLATE,
+  VERDICT_NOTHING_BROKEN,
+  VERDICT_OPTIONAL_TEMPLATE,
+  VERDICT_SKIPS_TEMPLATE,
+} from './recommendations.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -75,11 +82,16 @@ export const BINDINGS = Object.freeze([
     .filter((token) => token !== DOCTOR_STATUS.usage)
     .map((token) => valueBinding(`doctor-status:${token}`, token, token, [AUTONOMY_DOCTOR_DOC])),
   valueBinding('doctor-trusted-dirs', DOCTOR_TRUSTED_DIRS.join(':'), DOCTOR_TRUSTED_DIRS.join(':'), [AUTONOMY_DOCTOR_DOC]),
-  // The upgrade Recommendations section contract (AD-044 Plan 4): the section header and the
-  // exact empty-state line must render in BOTH the mode doc and upgrade.md (both exits reference
-  // them) — a reworded doc would silently break the paste-verbatim contract.
+  // The upgrade Recommendations section contract (AD-044 Plan 4 + REC-UX-REWORK D1): the section
+  // header, the exact empty-state line, and the frozen verdict templates must render in BOTH the
+  // mode doc and upgrade.md (both exits reference them) — a reworded doc would silently break the
+  // presentation contract (facts/counts complete, commands byte-exact).
   valueBinding('recommendations-header', RECOMMENDATIONS_SECTION_HEADER, RECOMMENDATIONS_SECTION_HEADER, [RECOMMENDATIONS_DOC, UPGRADE_DOC]),
   valueBinding('recommendations-empty-line', RECOMMENDATIONS_EMPTY_LINE, RECOMMENDATIONS_EMPTY_LINE, [RECOMMENDATIONS_DOC, UPGRADE_DOC]),
+  valueBinding('verdict-attention', VERDICT_ATTENTION_TEMPLATE, VERDICT_ATTENTION_TEMPLATE, [RECOMMENDATIONS_DOC, UPGRADE_DOC]),
+  valueBinding('verdict-nothing-broken', VERDICT_NOTHING_BROKEN, VERDICT_NOTHING_BROKEN, [RECOMMENDATIONS_DOC, UPGRADE_DOC]),
+  valueBinding('verdict-optional', VERDICT_OPTIONAL_TEMPLATE, VERDICT_OPTIONAL_TEMPLATE, [RECOMMENDATIONS_DOC, UPGRADE_DOC]),
+  valueBinding('verdict-skips', VERDICT_SKIPS_TEMPLATE, VERDICT_SKIPS_TEMPLATE, [RECOMMENDATIONS_DOC, UPGRADE_DOC]),
 ].map((b) => Object.freeze(b)));
 
 // ── the pure checker (readText is injectable for hermetic tests) ────────────────────────

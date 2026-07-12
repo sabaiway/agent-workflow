@@ -131,6 +131,24 @@ approval asks (commit / push / publish — cost tiering never touches approval g
 **Asymmetric pairing** is the default composition: the cheap lane drafts, a deterministic tool or
 the frontier verifies and signs — never the reverse.
 
+**Prompt economy (autonomy-preserving dispatch).** Under a zero-prompt autonomy bar the lanes also
+bound the TOOLS a dispatch may carry: **(a)** read-only fan-out — research, sweeps, extraction —
+runs ONLY on **restricted-tool vehicles** (read-only tools, no shell); handing a full-tool
+subagent to read-only work is a **forbidden lane downgrade** — an invisible prompt-flood plus
+blast radius, not just tokens — and a subagent is never instructed to run a shell command for
+facts obtainable read-only. **(b)** The orchestrator's own shell form: ONE plain pipeline per call
+— a `;`/`&&` chain or an env-prefixed invocation never matches a prefix allow rule, so each such
+call is a prompt. **(c)** A fan-out LAUNCHER tool may itself gate per call — under a
+zero-prompt bar prefer the agent-spawn lane with placed vehicles. This clause is
+**capability-gated** (route by what the host HAS): on a harness with restricted-tool subagent
+vehicles, use them; WITHOUT restricted-tool vehicles — whether or not generic full-tool spawning
+exists — read-only research stays in the orchestrator's own context —
+never a vehicle mandate a host cannot satisfy. The clause narrows
+TOOLS for read-only work only — judgment, code, and synthesis stay at the frontier lane, and a
+task that genuinely needs to run or write keeps a full-tool subagent. **Honest limit:**
+no deterministic gate classifies a dispatch — enforcement is this canon at the point of use,
+the placed vehicles, and the retro loop.
+
 **Sandbox lanes.** Under an OS sandbox the lanes split once more by **surface class**: the L0
 surfaces are **sandbox-safe** (gate/ledger/state/fold checks, git reads, plain no-network tests);
 the bridge wrappers are **genuinely unsandboxed** (they need network); npm-cache-touching commands
