@@ -7,6 +7,24 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-12 — memory 2.1.0 · engine 1.15.0 · kit 1.45.0: the autonomy series closes (AD-044 Plan 4)
+
+**Family release** (bridges 2.4.0 ship inside the kit tarball; the deployment lineage head stays
+`2.0.0`). The AD-044 checkpoint-bounded-autonomy series closes with the UX/velocity layer on top of
+the Plans 1–3 mechanism: every kit `upgrade` now ends with a mandatory read-only
+**Recommendations** section (frozen 12-item registry, exact consent-gated apply one-liners, honest
+probe degradation, the HAND-APPLY network item derived from the new manifest `networkHosts`); the
+consent-gated **`--bridge-tier`** velocity lane seeds promptless COUNCIL review runs (code mode
+only — delegated execution keeps its human prompt) and registers with the audit at all three
+points; the sandbox **device-mask fingerprint-divergence class dies by construction**
+(never-committable stat classes filtered from the whole review domain across node + both bash
+twins) with the GUARDED `sandbox-masks` cosmetic lane on top; autonomy becomes VISIBLE everywhere
+(recipes status/active lines, set-recipe echo, procedures per-activity block — malformed-loud on
+every paste surface, project-root-resolved, structural seed detection) and SEEDED everywhere
+(memory's sparse defaults-equivalent `autonomy.json` template); the engine publish delivers the
+`workflow:autonomy` slot to the install base (the Plan-3 D7 residual clears). Per-package detail
+in the three package CHANGELOGs.
+
 ## 2026-07-11 — kit 1.44.0: autonomy provisioner — the consent-gated sandbox doctor (AD-044 Plan 2)
 
 **agent-workflow-kit 1.44.0** (kit-only feature; memory/engine/bridges unchanged, lineage head

@@ -4,6 +4,19 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `2.0.0`).
 
+## 2.1.0 — Autonomy template seed (AD-044 Plan 4)
+
+A **feature** release (ships with kit 1.45.0 / engine 1.15.0; the deployment lineage head stays
+`2.0.0` — the seed is ensure-if-missing, stamp-independent). `references/templates/autonomy.json`
+— the sparse, defaults-equivalent autonomy-policy seed (`_README` only): resolving it equals
+resolving no file at all, TEST-PINNED, so the seed can never drift from the computed defaults
+(commit/push/publish `ask`; network/credentials/fs-outside-repo `deny`; absent activities floor at
+`prompt`); it is STRUCTURALLY a seed (meta keys only) — an explicit policy declaring the same
+values reads as a real declaration on every kit surface. Lifecycle follows gates.json: bootstrap
+seeds it, upgrade ensures-if-missing (byte-preserving), hand-editable; the kit mirrors it via the
+template manifest. Tarball sentinel 43→44. Deliberately NOT a delegated-bootstrap required asset
+(the AD-044 Plan-3 no-gate decision holds).
+
 ## 2.0.0 — One-file-per-ADR store: the 3-tier decisions cascade retired (AD-051)
 
 A **MAJOR** release (BREAKING; co-released with the workflow kit 1.42.0). The deployment-lineage

@@ -4,6 +4,58 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.45.0 — Autonomy series close: upgrade Recommendations, bridge-wrappers tier, review-domain mask fix (AD-044 Plan 4)
+
+A **feature** release closing the AD-044 autonomy series (ships with memory 2.1.0, engine 1.15.0,
+bridges 2.4.0; the deployment lineage head stays `2.0.0` — the new seed is ensure-if-missing,
+stamp-independent). Three maintainer pains land as product:
+
+- **`recommendations` mode — the mandatory upgrade advisor.** Read-only `recommendations.mjs`
+  renders a frozen 12-item registry as `{what is sub-optimal · one-line fact-true benefit · exact
+  apply one-liner}`; every `upgrade` run now ENDS with the section on BOTH exits (equal-head and
+  re-stamp), present-even-when-empty ("no recommendations — flow optimal."), BEFORE the report
+  footer and commit ask. Apply lines are PURE executable commands, cwd-independent (absolute
+  paths, pinned `--cwd`); probes degrade to stated skipped-item lines — an unreadable bundled
+  manifest or an uncaveated unknown-freshness row is a stated skip, a stray bundle-root file is
+  ignored, a duplicate-carrying bridge-settings file renders fix-duplicates-first instead of the
+  writer command it would refuse. The network-allowlist item is HAND-APPLY by design: the kit
+  never seeds `sandbox.network.allowedDomains`; hosts derive from the bridges' manifest
+  `networkHosts`, the paste value is PROJECT scope ∪ missing (a local-scope allowance counts
+  toward coverage but never widens into the committed file), and the item renders only on the
+  full two-surface tier proof. Autonomy facts resolve from the PROJECT ROOT on every paste
+  surface, and seed detection is STRUCTURAL via the shared `isSparseSeedConfig` predicate on all
+  four surfaces (an explicit declared-defaults policy still gets its render nudge — the red-line
+  ask rules ride the render).
+- **`--bridge-tier` velocity lane — unattended council runs.** A frozen tier seeds, behind its own
+  consent flag, BOTH surfaces a promptless review run needs: `permissions.allow` prefix rules for
+  the review wrappers' CODE mode only (`Bash(codex-review code:*)`, `Bash(agy-review code:*)` —
+  plan/diff modes and the exec wrappers keep their human prompt) + the wrapper names in
+  `sandbox.excludedCommands` (the harness runs those outside the sandbox — no agent-side bypass).
+  The grounding pre-step rule seeds in the EXACT double-quoted byte-form the procedures advisor
+  renders (byte-parity pinned; derives only when agy-review is placed). Tier entries register at
+  all three audit points — the audit never flags an entry the tier itself seeded. The
+  exfiltration posture is INFORMED CONSENT, notice-pinned; the invocation-shape contract is
+  stated (prefix rules match only PLAIN invocations). `grounding --out` hardened: temp-only
+  outside-repo, create-only + exclusive fresh in-repo, non-regular-leaf refusals.
+- **Review-domain device-mask fix + `sandbox-masks` lane.** Never-committable stat classes
+  (char/block devices, FIFOs, sockets) are filtered out of the ENTIRE review domain in lockstep —
+  node fingerprint/isTreeClean + both bash twins' payload, diff assembly and preflights + parity —
+  so the sandbox-mask fingerprint-divergence class is dead BY CONSTRUCTION (untracked symlinks and
+  directories/gitlinks stay in the domain). The GUARDED `sandbox-masks` tool adds the cosmetic
+  lane: read-only probe (derives/revalidates, refuses every non-mask class) + consent-gated
+  `--apply` full-block REPLACE of its own fence in `git-path info/exclude` (a stale-real-only
+  fence renders the `--clear` form on every surface); `review-state --check` advises the exact
+  one-liner when masks are visible. Honest residual: REGULAR fake-file injection is a new design
+  round if it appears.
+- **Autonomy surfacing + seeds.** `recipes --status-line/--json/--active-line`, `set-recipe` echo
+  and `procedures` gained autonomy segments rendered from `resolveAutonomy` (MALFORMED-loud on
+  every paste surface; `procedures` also exits 1 on a malformed policy while still rendering);
+  the sparse defaults-equivalent `autonomy.json` template mirrors from memory; bootstrap seeds it,
+  upgrade ensures-if-missing. Manifests gained consult-locked `networkHosts` (observed-minimal
+  INCLUDING apex domains; validated by `--strict`; synthetic examples in schema.md); velocity.md
+  carries the honesty matrix (settings sandbox keys are INERT under harness-managed sandboxes —
+  live-observed). Tarball sentinel 145→150; router/read-set budgets took documented KB bumps.
+
 ## 1.44.0 — Autonomy provisioner: the consent-gated sandbox doctor (AD-044 Plan 2)
 
 A **feature** release (kit-only; memory/engine/bridges unchanged, lineage head stays `2.0.0`). New

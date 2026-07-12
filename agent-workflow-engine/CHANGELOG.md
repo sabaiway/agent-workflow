@@ -4,6 +4,20 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `2.0.0`).
 
+## 1.15.0 — Canon autonomy prose + the sandbox cost-lane (AD-044 Plan 4)
+
+A **feature** release (ships with kit 1.45.0 / memory 2.1.0). This publish delivers the Plan-3
+`autonomy-slot.md` fragment to the install base — the third AGENTS.md `workflow:autonomy` slot
+finally fills everywhere, so the kit's `ENGINE_FRAGMENT_CAVEATS` soft-skip residual retires on
+refresh. Canon additions, appended without renumbering: orchestration.md trailing **§7
+Checkpoint-bounded autonomy** (sandbox-as-floor, red-lines always-ask, informational for delegated
+backends — enforcement stays the OS sandbox + the orchestrator); planning.md trailing **§10**
+(autonomy at plan/execution checkpoints); procedures.md gains the read-at-start clause beside its
+preamble. orchestration.md §5 gains the sandbox cost-lane token (sandbox-safe L0 surfaces ·
+genuinely-unsandboxed bridge wrappers · command-shape-dependent npm-cache commands; move only the
+failing command out of the sandbox, batch consecutive unsandboxed calls) — parity-pinned on both
+the engine and kit sides.
+
 ## 1.14.1 — npm 12 tarball-guard compat + the lineage-head preamble correction
 
 A **patch** release (no canon content change; co-released with memory 2.0.0 + kit 1.42.0 — the
