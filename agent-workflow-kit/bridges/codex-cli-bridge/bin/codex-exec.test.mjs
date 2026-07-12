@@ -346,7 +346,7 @@ describe('codex-exec.sh — preflight (unchanged invariants)', () => {
 
 describe('codex-exec.sh — resume entrypoint restates every invariant (3.1)', () => {
   const RESUME_INVARIANTS = [
-    /(^|\n)resume(\n|$)/, /(^|\n)--ignore-user-config(\n|$)/, /(^|\n)gpt-5\.5(\n|$)/,
+    /(^|\n)resume(\n|$)/, /(^|\n)--ignore-user-config(\n|$)/, /(^|\n)gpt-5\.6-sol(\n|$)/,
     /model_reasoning_effort=xhigh/, /sandbox_mode=workspace-write/,
     /approval_policy=never/, /sandbox_workspace_write\.network_access=false/,
   ];

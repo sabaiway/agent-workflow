@@ -3,7 +3,7 @@
   "schema": 1,
   "name": "codex-cli-bridge",
   "kind": "execution-backend",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "provides": ["execute", "review"],
   "roles": {
     "execute": {
@@ -50,7 +50,7 @@
       "values": ["priority"],
       "default": null,
       "appliesTo": ["codex-exec", "codex-review"],
-      "effect": "codex service tier; 'priority' (catalog display name Fast) = ~1.5x token speed at a 2.5x credit rate on gpt-5.5 — quality-neutral (same model), live-probed 2026-07-05. Unset/empty ⇒ no service_tier flag (standard tier). SPEND KNOB: enabling it is a consented per-host act, never a default. codex itself accepts any -c service_tier string silently, so the wrapper validates the value."
+      "effect": "codex service tier; 'priority' (catalog display name Fast) = ~1.5x token speed at a 2.5x credit rate on gpt-5.6-sol — quality-neutral (same model), live-probed 2026-07-05. Unset/empty ⇒ no service_tier flag (standard tier). SPEND KNOB: enabling it is a consented per-host act, never a default. codex itself accepts any -c service_tier string silently, so the wrapper validates the value."
     },
     {
       "key": "CODEX_HARD_TIMEOUT",

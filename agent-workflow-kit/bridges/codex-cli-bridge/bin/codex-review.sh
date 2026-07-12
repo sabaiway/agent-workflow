@@ -66,7 +66,7 @@ Receipt:
 
 Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):
   ${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf
-  CODEX_SERVICE_TIER — service tier: 'priority' (Fast — ~1.5x speed at a 2.5x credit rate on gpt-5.5); a consented SPEND knob, default off (standard tier)
+  CODEX_SERVICE_TIER — service tier: 'priority' (Fast — ~1.5x speed at a 2.5x credit rate on gpt-5.6-sol); a consented SPEND knob, default off (standard tier)
   CODEX_HARD_TIMEOUT — hard wall-clock cap, integer seconds 1..86400 (built-in default 1800)
   CODEX_REVIEW_MAX_TOTAL_BYTES — inline-payload cap, integer bytes 1..100000000 (default 1500000); above it the diff rides via a git-dir temp file
 
@@ -167,12 +167,12 @@ aw_apply_settings() {
 }
 aw_apply_settings
 
-DEFAULT_CODEX_MODEL="gpt-5.5"
+DEFAULT_CODEX_MODEL="gpt-5.6-sol"
 DEFAULT_CODEX_EFFORT="xhigh"
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by codex-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="codex"
-AW_BRIDGE_VERSION="2.4.0"
+AW_BRIDGE_VERSION="2.5.0"
 CODEX_MODEL="${CODEX_MODEL:-$DEFAULT_CODEX_MODEL}"
 CODEX_EFFORT="${CODEX_EFFORT:-$DEFAULT_CODEX_EFFORT}"
 # Generous hard cap for a slow xhigh review (subscription latency varies).
@@ -183,7 +183,7 @@ CODEX_REVIEW_MAX_TOTAL_BYTES="${CODEX_REVIEW_MAX_TOTAL_BYTES:-1500000}"
 # Codex service tier (quality-neutral speed knob; live-probed 2026-07-05): default EMPTY ⇒ no
 # service_tier flag (standard tier) — enabling Fast is a consented per-host SPEND act, never a
 # silent default. The only server-catalog tier id on this subscription is 'priority' (catalog
-# display name "Fast": ~1.5x token speed at a 2.5x credit rate on gpt-5.5; quality-neutral —
+# display name "Fast": ~1.5x token speed at a 2.5x credit rate on gpt-5.6-sol; quality-neutral —
 # same model). codex itself accepts ANY -c service_tier string silently (probe-verified), so
 # the wrapper validates the effective value: an unsupported one warns and runs on the standard
 # tier — a typo can never silently masquerade as Fast.
