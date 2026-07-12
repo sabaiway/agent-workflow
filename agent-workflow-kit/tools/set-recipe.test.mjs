@@ -82,6 +82,23 @@ describe('set-recipe — preview by default (writes NOTHING)', () => {
   });
 });
 
+describe('set-recipe — the --write echo carries the autonomy levels (codex R1, Segment B)', () => {
+  it('the echoed active-line includes the per-activity autonomy level like recipes --active-line', () => {
+    const r = run(['--set', 'plan-authoring.review=council', '--write'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /autonomy prompt/, 'the pasted handover line must not omit the autonomy levels');
+  });
+});
+
+describe('set-recipe — a malformed autonomy policy surfaces loudly on the echoed line', () => {
+  it('the echo carries the MALFORMED segment instead of silently dropping levels', () => {
+    writeFileSync(join(cwd, 'docs', 'ai', 'autonomy.json'), '{ not json');
+    const r = run(['--set', 'plan-authoring.review=council', '--write'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /autonomy: MALFORMED policy — /, 'the STOP signal rides the paste surface');
+  });
+});
+
 describe('set-recipe — --write applies (atomic) with the same degradation note', () => {
   it('writes a new config (seeding _README) and reports the effective recipe', () => {
     const r = run(['--set', 'plan-authoring.review=council', '--write'], { codex: READY, agy: READY });
@@ -174,7 +191,7 @@ describe('set-recipe — post-write active-recipe echo (AD-038 discovery)', () =
     const r = run(['--set', 'plan-execution.review=council', '--write'], { codex: READY, agy: READY });
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /active recipes \(from docs\/ai\/orchestration\.json\): /);
-    assert.match(r.stdout, /plan-execution\.review = council \(configured\)/);
+    assert.match(r.stdout, /plan-execution\.review = council \(configured; autonomy prompt\)/);
     assert.match(r.stdout, /refresh the "Active recipes:" slot line in docs\/ai\/handover\.md/);
   });
 

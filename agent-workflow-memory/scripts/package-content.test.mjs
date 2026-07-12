@@ -181,6 +181,8 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
     //      HOT decisions.md). The one-file-per-ADR store retargets decisions.md IN PLACE (count-neutral);
     //      only these two new seeds add to the total. Kit mirrors are pinned by the kit's own
     //      package-content test + template-parity.test.mjs.
-    assert.equal(packed.length, 43, `tarball file count drifted (${packed.length} ≠ 43)`);
+    // 44 = 43 + references/templates/autonomy.json (AD-044 Plan 4: the sparse, defaults-equivalent
+    //      per-project autonomy-policy seed — _README only; the kit mirrors it via sync-mirrors).
+    assert.equal(packed.length, 44, `tarball file count drifted (${packed.length} ≠ 44)`);
   });
 });

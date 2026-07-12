@@ -71,6 +71,7 @@
       "effect": "codex-review code: above this assembled-payload size (bytes) the diff rides via a git-dir temp file instead of inline — never truncated."
     }
   ],
+  "networkHosts": ["chatgpt.com", "*.chatgpt.com"],
   "detect": {
     "installed": {
       "env": "CODEX_CLI_BRIDGE_DIR",

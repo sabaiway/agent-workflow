@@ -63,6 +63,10 @@ export const settingValueValid = (entry, value) => {
 const hasTraversal = (p) => p.split(/[\\/]/).includes('..');
 const isUnresolved = (s) => /\{\{|\}\}|\$\{/.test(s);
 
+// A `networkHosts` entry: a bare dotted hostname, optionally a `*.` family wildcard — never a
+// scheme, a path, a port, or whitespace (the entry is pasted verbatim into an allowlist line).
+export const NETWORK_HOST_RE = /^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
+
 // Cross-platform "absolute-like": POSIX root (/x), Windows drive (C:\ or C:/), UNC (\\host),
 // or a leading backslash. node:path.isAbsolute() alone is platform-dependent, so a Windows path
 // would slip through unchecked on a POSIX CI runner — Windows-safety requires rejecting both.
@@ -309,6 +313,28 @@ export const validateManifest = (skillDir) => {
             && (typeof entry.default !== 'string' || !settingValueValid(entry, entry.default))) {
           errors.push(`${at}.default must be null or a string value that passes the ${entry.kind} validation`);
         }
+      });
+    }
+  }
+
+  // `networkHosts` (AD-044 Plan 4, consult-locked): the backend CLI's OBSERVED egress host
+  // families — a DOCUMENTATION source for hand-applied sandbox/network allowlists. The kit never
+  // seeds these into settings (exclusion stays primary; a network pre-allow widens egress for
+  // EVERY sandboxed command), but a malformed list FAILS --strict like `settings`: the
+  // Recommendations advisor renders it verbatim, so a bad entry would corrupt a pasted line.
+  const networkHosts = manifest.networkHosts;
+  if (networkHosts != null) {
+    if (!Array.isArray(networkHosts) || networkHosts.length === 0) {
+      errors.push('`networkHosts` must be a non-empty array of host strings');
+    } else {
+      const seenHosts = new Set();
+      networkHosts.forEach((host, i) => {
+        if (typeof host !== 'string' || !NETWORK_HOST_RE.test(host)) {
+          errors.push(`\`networkHosts[${i}]\` must be a bare hostname or a *.family wildcard (${JSON.stringify(host)})`);
+          return;
+        }
+        if (seenHosts.has(host)) errors.push(`duplicate networkHosts entry "${host}" (\`networkHosts[${i}]\`)`);
+        else seenHosts.add(host);
       });
     }
   }

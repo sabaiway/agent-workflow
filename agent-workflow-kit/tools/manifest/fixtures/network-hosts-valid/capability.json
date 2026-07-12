@@ -1,0 +1,13 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "fixture-network-hosts-valid",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["review"],
+  "roles": {
+    "review": { "cmd": "fixture-review", "source": "bin/run.sh", "output": "advisory" }
+  },
+  "networkHosts": ["*.chatgpt.com", "oauth2.googleapis.com", "accounts.google.com"],
+  "cost": "subscription"
+}

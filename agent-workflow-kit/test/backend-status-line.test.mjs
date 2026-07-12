@@ -67,6 +67,10 @@ describe('backend-status line — machine-composed, paste-verbatim (deterministi
     assert.ok(!shared.includes('tools/detect-backends.mjs'), 'the agent no longer drives the raw detector here');
   });
 
+  it('the placeholder template carries the appended autonomy segment (the composer emits it — the contract must match the pasted surface)', () => {
+    assert.match(shared, /· autonomy: <per-activity levels> \(<policy state>\)/, 'the autonomy segment is part of the documented line shape');
+  });
+
   it('carries a placeholder-only template, exactly once across the whole split corpus (router + modes + shared)', () => {
     assert.match(shared, /never copy this example/i, 'the template is explicitly a placeholder');
     const TEMPLATE = /backends: <alias>/g;

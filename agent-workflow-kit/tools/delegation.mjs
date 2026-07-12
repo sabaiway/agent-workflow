@@ -27,6 +27,10 @@ export const EXPECTED_MEMORY_NAME = 'agent-workflow-memory';
 // DOES seed orchestration.json (Mode: upgrade step 3). This closes the stale-memory trap that the
 // read-only family-registry note (MEMORY_ORCH_TEMPLATE_REL) only INFORMS about — the gate ACTS. The
 // two key on the same asset; a cross-tool parity test pins them in lockstep.
+// The autonomy seed (AD-044 Plan 4) is deliberately NOT here: the Plan-3 decision stands — no
+// detectMemory autonomy-marker gate. A memory too old to ship references/templates/autonomy.json
+// stays delegable; the kit-side upgrade ensure seeds the policy from the kit's own template twin,
+// and the family-registry caveat INFORMS about the stale memory (inform, never gate).
 export const REQUIRED_MEMORY_ASSETS = [
   { path: 'references/templates', type: 'dir' },
   { path: 'references/templates/orchestration.json', type: 'file' },

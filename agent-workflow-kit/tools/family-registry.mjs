@@ -193,10 +193,16 @@ const ENGINE_FRAGMENT_CAVEATS = [
 // adds a parity drift-guard tying this path to that required-asset set, so the note and the gate can
 // never key on different files (until then they are kept in lockstep by review).
 export const MEMORY_ORCH_TEMPLATE_REL = 'references/templates/orchestration.json';
+// The autonomy-policy seed (AD-044 Plan 4) gets the SAME inform-never-gate treatment: the
+// delegation gate deliberately does NOT key on it (the Plan-3 decision), so this caveat is the
+// discovery mechanism — the recommendations advisor surfaces it via surveyFamily.
+export const MEMORY_AUTONOMY_TEMPLATE_REL = 'references/templates/autonomy.json';
 // Worded as an honest OBSERVATION, not a diagnosis (absence can mean old OR incomplete), and it makes
 // NO claim about an orchestration.json seeding outcome (that depends on delegate-vs-fallback).
 const MEMORY_BEHIND_NOTE =
   "the memory installed here doesn't include the current orchestration template — refresh it with `npx @sabaiway/agent-workflow-memory@latest init`, then restart the session.";
+const MEMORY_AUTONOMY_BEHIND_NOTE =
+  "the memory installed here doesn't include the current autonomy-policy template — refresh it with `npx @sabaiway/agent-workflow-memory@latest init`, then restart the session.";
 
 // ── the bridge freshness probe (deterministic-first — INV-A / INV-B) ─────────────
 // The bridges are not npm packages: their ONLY delivery channel is the copy bundled inside this kit
@@ -262,12 +268,19 @@ export const surveyFamily = (deps = {}) =>
     // Only attach when it is provably ABSENT (a non-ENOENT probe error → 'unknown' → skip, never a
     // false "missing" claim). Mirrors the engine-caveat SHAPE; keyed on the Step-2.4 required asset.
     if (row.kind === 'memory-substrate' && row.manifestState === OK && row.skillDir) {
-      const templateProbe = probeMarker(join(row.skillDir, MEMORY_ORCH_TEMPLATE_REL), deps);
-      if (templateProbe === 'absent') {
-        row.caveats = [...(row.caveats ?? []), MEMORY_BEHIND_NOTE];
-      } else if (templateProbe === 'unknown') {
-        // Could not verify → this row must not be counted "checked, current" by the verdict (INV-B).
-        row.freshness = FRESH_UNKNOWN;
+      // Two required-template probes, same shape: orchestration (Step 2.4) + autonomy (AD-044
+      // Plan 4 — inform, never gate). Each attaches its own caveat on provable absence only.
+      for (const [rel, note] of [
+        [MEMORY_ORCH_TEMPLATE_REL, MEMORY_BEHIND_NOTE],
+        [MEMORY_AUTONOMY_TEMPLATE_REL, MEMORY_AUTONOMY_BEHIND_NOTE],
+      ]) {
+        const templateProbe = probeMarker(join(row.skillDir, rel), deps);
+        if (templateProbe === 'absent') {
+          row.caveats = [...(row.caveats ?? []), note];
+        } else if (templateProbe === 'unknown') {
+          // Could not verify → this row must not be counted "checked, current" by the verdict (INV-B).
+          row.freshness = FRESH_UNKNOWN;
+        }
       }
     }
     // Bridge freshness probe (INV-A / INV-B): only for a provably-OURS placed bridge (manifestState

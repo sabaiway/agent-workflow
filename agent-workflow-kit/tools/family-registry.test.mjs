@@ -344,6 +344,27 @@ describe('surveyFamily — memory offline caveat (orchestration template probe)'
     assert.equal(memoryRow(rows).caveats, undefined);
   });
 
+  it('an OK memory MISSING the autonomy template gets its own offline caveat — inform, never gate (AD-044 Plan 4)', () => {
+    // The Plan-3 decision holds: detectMemory never gates on the autonomy seed; the registry
+    // caveat is the discovery mechanism instead (the recommendations advisor surfaces it).
+    const deps = {
+      stat: (p) => {
+        if (String(p).endsWith('references/templates/autonomy.json')) return ENOENT();
+        return { isFile: () => true };
+      },
+      getenv: {},
+      home: '/home/test',
+      validate: memoryValidate,
+      readVersion: () => ({ version: '1.0.0' }),
+    };
+    const rows = surveyFamily(deps);
+    const caveats = memoryRow(rows).caveats ?? [];
+    assert.equal(caveats.length, 1, 'exactly the autonomy-template caveat');
+    assert.match(caveats[0], /autonomy/i, 'names the missing autonomy template');
+    assert.match(caveats[0], /@latest init/, 'names the refresh command');
+    assert.ok(!/seed/i.test(caveats[0]), 'makes NO autonomy.json seeding-outcome claim');
+  });
+
   it('an UNCHECKABLE probe (EACCES) makes NO false "missing" claim (caveat skipped)', () => {
     const rows = surveyFamily(memoryDeps(EACCES));
     assert.equal(memoryRow(rows).caveats, undefined, 'a non-ENOENT probe error must not assert absence');

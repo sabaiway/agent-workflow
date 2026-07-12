@@ -37,7 +37,7 @@ const SKILL_DIR_VAR = '${CLAUDE_SKILL_DIR}';
 const PROJECT_ROOT_VAR = '${PROJECT_ROOT}';
 
 // ── (a) the hand-maintained frozen tool→mode partition map ──────────────────
-// 7 mode-backed tier tools; the 2 validator/scanner tools have no catalog entry (checked in (b)).
+// 8 mode-backed tier tools; the 2 validator/scanner tools have no catalog entry (checked in (b)).
 const MODE_BACKED_TOOL_TO_MODE = Object.freeze({
   'tools/recipes.mjs': 'recipes',
   'tools/procedures.mjs': 'procedures',
@@ -45,6 +45,7 @@ const MODE_BACKED_TOOL_TO_MODE = Object.freeze({
   'tools/detect-backends.mjs': 'backends',
   'tools/commands.mjs': 'help',
   'tools/review-state.mjs': 'review-state',
+  'tools/recommendations.mjs': 'recommendations',
   'tools/run-gates.mjs': 'gates',
 });
 const NON_MODE_BACKED = Object.freeze(['tools/manifest/validate.mjs', 'tools/release-scan.mjs']);
@@ -56,7 +57,7 @@ const PREVIEW_TOOL_TO_MODE = Object.freeze({
 });
 
 describe('kit-tools tier ↔ commands.mjs catalog partition', () => {
-  it('the tier is exactly the 7 mode-backed tools + the 2 non-mode-backed validators (set equality)', () => {
+  it('the tier is exactly the 8 mode-backed tools + the 2 non-mode-backed validators (set equality)', () => {
     const expected = [...Object.keys(MODE_BACKED_TOOL_TO_MODE), ...NON_MODE_BACKED].sort();
     assert.deepEqual([...KIT_READONLY_TOOLS].sort(), expected);
   });

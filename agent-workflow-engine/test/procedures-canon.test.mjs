@@ -218,6 +218,16 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.match(procedures, /set-recipe/, 'points at the set-recipe writer');
   });
 
+  it('tells the agent to READ the autonomy policy at the same session-start moment (AD-044 Plan 4)', () => {
+    const flat = procedures.replace(/\s+/g, ' ');
+    assert.match(flat, /Read the \*\*autonomy policy\*\* the same way and at the same moment/i, 'the autonomy read-at-start clause');
+    assert.match(procedures, /docs\/ai\/autonomy\.json/, 'names the policy file to read');
+    assert.match(flat, /computed defaults ARE the policy/i, 'absent-file semantics stated');
+    assert.match(flat, /malformed\s+→ STOP loudly, never guess/i, 'malformed is a loud STOP');
+    assert.match(procedures, /set-autonomy/, 'points at the set-autonomy writer');
+    assert.match(flat, /orchestration\.md.*§7/, 'points at the §7 policy canon, never restates it');
+  });
+
   it('pins the plan-authoring Definition of Done (plan + next-session execution prompt, unprompted)', () => {
     const flat = procedures.replace(/\s+/g, ' ');
     assert.match(flat, /Definition of Done/i);

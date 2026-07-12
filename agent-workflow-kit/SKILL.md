@@ -111,6 +111,10 @@ writer — read `${CLAUDE_SKILL_DIR}/references/modes/setup.md` before acting.
 
 read-only — read `${CLAUDE_SKILL_DIR}/references/modes/status.md` before acting.
 
+### Mode: recommendations
+
+read-only — read `${CLAUDE_SKILL_DIR}/references/modes/recommendations.md` before acting.
+
 ### Mode: recipes
 
 read-only — read `${CLAUDE_SKILL_DIR}/references/modes/recipes.md` before acting.

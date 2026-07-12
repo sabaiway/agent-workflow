@@ -9,7 +9,11 @@ The tool runs the backend detector and appends the recipe recommendation itself
 recipe clause of its own, ever.
 
 - **Placeholder template (structure only — never copy this example; paste the tool's line):**
-  `backends: <alias> <✓|✗> <readiness> · <alias> <✓|✗> <readiness> — run /agent-workflow-kit backends · recipes: <recommendation clause> — see /agent-workflow-kit recipes`
+  `backends: <alias> <✓|✗> <readiness> · <alias> <✓|✗> <readiness> — run /agent-workflow-kit backends · recipes: <recommendation clause> — see /agent-workflow-kit recipes · autonomy: <per-activity levels> (<policy state>)`
+- The **`autonomy:` segment is appended by the composer itself** (`composeAutonomyFacts`, AD-044) —
+  per-activity levels + the policy state (computed defaults / declared / MALFORMED, loud) — the
+  agent never types it; the composer resolves the policy from the project root, so the line is
+  correct from any working directory inside the project.
 - The **`recipes:` clause is appended after** the `— run /agent-workflow-kit backends` pointer (never
   replacing it) and routes to the read-only `recipes` mode (`see /agent-workflow-kit recipes`). It is
   **never blank**: both backends ready → *"Council available, Reviewed the everyday default"*; one

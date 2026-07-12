@@ -1,9 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import {
   RECIPES,
   BACKEND_ROLES,
@@ -16,6 +17,8 @@ import {
   resolveActivityRecipe,
   formatRecipes,
   composeStatusLine,
+  composeActiveRecipeLine,
+  composeAutonomyFacts,
   buildReport,
 } from './recipes.mjs';
 import { READY, NEEDS_SKILL, NEEDS_CLI, NEEDS_CREDENTIALS, DEGRADED } from './detect-backends.mjs';
@@ -587,6 +590,168 @@ describe('composeStatusLine — the tool speaks, the agent pastes', () => {
     assert.ok(!line.includes('\n'), 'a newline in a raw env value never breaks the one-line contract');
     assert.match(line, /settings: CODEX_HARD_TIMEOUT=2h INJECTED: pwned/);
   });
+
+  it('autonomy segment (AD-044 Plan 4): appended ONLY when the facts are supplied; the default line stays byte-identical', () => {
+    const det = detect(READY, READY);
+    const base = composeStatusLine(det, { clause: 'x' });
+    assert.equal(composeStatusLine(det, { clause: 'x' }, null, null), base, 'an omitted param keeps the line byte-identical');
+    const declared = composeStatusLine(det, { clause: 'x' }, null, {
+      source: 'docs/ai/autonomy.json',
+      activities: { 'plan-authoring': { autonomy: 'prompt' }, 'plan-execution': { autonomy: 'sandbox' } },
+      renderState: 'in sync',
+    });
+    assert.equal(declared, `${base} · autonomy: plan-authoring=prompt, plan-execution=sandbox (declared; render in sync)`);
+    const defaults = composeStatusLine(det, { clause: 'x' }, null, {
+      source: 'none',
+      activities: { 'plan-authoring': { autonomy: 'prompt' }, 'plan-execution': { autonomy: 'prompt' } },
+      renderState: null,
+    });
+    assert.match(defaults, /autonomy: .*\(computed defaults — no policy file; declare with \/agent-workflow-kit set-autonomy\)$/);
+    const sparse = composeStatusLine(det, { clause: 'x' }, null, {
+      source: 'docs/ai/autonomy.json',
+      defaultsEquivalent: true,
+      activities: { 'plan-authoring': { autonomy: 'prompt' }, 'plan-execution': { autonomy: 'prompt' } },
+      renderState: null,
+    });
+    assert.match(sparse, /\(declared, defaults-equivalent — computed defaults apply; declare levels with \/agent-workflow-kit set-autonomy\)$/, 'the sparse seed never reads as DRIFT');
+  });
+
+  it('autonomy segment: a MALFORMED policy surfaces loudly and never breaks the one-line contract', () => {
+    const det = detect(READY, READY);
+    const line = composeStatusLine(det, { clause: 'x' }, null, { error: 'docs/ai/autonomy.json: malformed JSON\n(details)' });
+    assert.ok(!line.includes('\n'), 'a newline-carrying error message never breaks the single line');
+    assert.match(line, /autonomy: MALFORMED policy — docs\/ai\/autonomy\.json: malformed JSON \(details\)/);
+  });
+});
+
+describe('the autonomy segment rides EVERY machine-composed surface (codex R1, Segment B)', () => {
+  it('buildReport statusLine carries the SAME autonomy segment when the facts are supplied', () => {
+    const det = detect(READY, READY);
+    const facts = {
+      source: 'none',
+      activities: { 'plan-authoring': { autonomy: 'prompt' }, 'plan-execution': { autonomy: 'prompt' } },
+      renderState: null,
+    };
+    const report = buildReport(det, null, facts);
+    assert.match(report.statusLine, /· autonomy: /, 'the --json envelope must not expose a stale status line');
+    assert.equal(report.statusLine, composeStatusLine(det, report.recommendation, null, facts));
+  });
+
+  it('composeActiveRecipeLine surfaces a MALFORMED policy loudly on the line', () => {
+    const det = detect(READY, READY);
+    const line = composeActiveRecipeLine({ config: {}, source: 'none' }, det, { error: 'docs/ai/autonomy.json: malformed JSON\n(x)' });
+    assert.ok(!line.includes('\n'), 'still exactly one line');
+    assert.match(line, /autonomy: MALFORMED policy — docs\/ai\/autonomy\.json: malformed JSON \(x\)/, 'never a silent drop of the STOP signal');
+  });
+});
+
+describe('composeAutonomyFacts — the fact source behind the autonomy segments (AD-044 Plan 4)', () => {
+  const makeCwd = () => {
+    const root = mkdtempSync(join(tmpdir(), 'autonomy-facts-'));
+    mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
+    return root;
+  };
+
+  it('no policy file → source none, computed defaults, no render check', async () => {
+    const root = makeCwd();
+    const facts = await composeAutonomyFacts(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(facts.source, 'none');
+    assert.equal(facts.renderState, null);
+    assert.equal(facts.activities['plan-execution'].autonomy, 'prompt');
+    assert.equal(facts.redlines.commit, 'ask');
+  });
+
+  it('the SPARSE defaults-equivalent seed reads as computed defaults — never a false DRIFT (codex, Segment B)', async () => {
+    const root = makeCwd();
+    writeFileSync(join(root, 'docs', 'ai', 'autonomy.json'), '{ "_README": "note" }\n');
+    const facts = await composeAutonomyFacts(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(facts.source, 'docs/ai/autonomy.json');
+    assert.equal(facts.defaultsEquivalent, true);
+    assert.equal(facts.renderState, null, 'no render check until real policy content is declared');
+  });
+
+  it('a REAL declared policy with NO rendered settings → renderState DRIFT', async () => {
+    const root = makeCwd();
+    writeFileSync(join(root, 'docs', 'ai', 'autonomy.json'), JSON.stringify({ 'plan-execution': { autonomy: 'sandbox' } }));
+    const facts = await composeAutonomyFacts(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(facts.source, 'docs/ai/autonomy.json');
+    assert.match(facts.renderState, /^DRIFT/);
+  });
+
+  it('a REAL declared policy whose render matches the live settings → renderState in sync', async () => {
+    const root = makeCwd();
+    writeFileSync(
+      join(root, 'docs', 'ai', 'autonomy.json'),
+      JSON.stringify({ 'plan-authoring': { autonomy: 'sandbox' }, 'plan-execution': { autonomy: 'sandbox' } }),
+    );
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    writeFileSync(
+      join(root, '.claude', 'settings.json'),
+      JSON.stringify({
+        sandbox: { enabled: true, autoAllowBashIfSandboxed: true },
+        permissions: { defaultMode: 'acceptEdits', ask: ['Bash(git commit:*)', 'Bash(git push:*)', 'Bash(npm publish:*)'] },
+      }),
+    );
+    const facts = await composeAutonomyFacts(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(facts.renderState, 'in sync');
+  });
+
+  it('a REAL declared policy + UNREADABLE settings → renderState unchecked (loud reason, never a throw)', async () => {
+    const root = makeCwd();
+    writeFileSync(join(root, 'docs', 'ai', 'autonomy.json'), JSON.stringify({ 'plan-execution': { autonomy: 'sandbox' } }));
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'settings.json'), '{ not json');
+    const facts = await composeAutonomyFacts(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.match(facts.renderState, /^unchecked \(/);
+  });
+
+  it('a MALFORMED policy → { error }, never a throw', async () => {
+    const root = makeCwd();
+    writeFileSync(join(root, 'docs', 'ai', 'autonomy.json'), '{ not json');
+    const facts = await composeAutonomyFacts(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.match(facts.error, /malformed JSON/);
+  });
+
+  it('an EXPLICIT declared-defaults policy is NOT the seed — the render check runs (structural seed detection)', async () => {
+    const root = makeCwd();
+    writeFileSync(join(root, 'docs', 'ai', 'autonomy.json'), JSON.stringify({ 'plan-execution': { autonomy: 'prompt' } }));
+    const facts = await composeAutonomyFacts(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!facts.defaultsEquivalent, 'resolved-equality must not conflate a real declaration with the _README-only seed');
+    assert.ok(facts.renderState != null, 'the render-sync state is computed for a real declaration');
+  });
+
+  it('resolves the PROJECT ROOT from a subdirectory — the paste surfaces never read a subdir-relative policy', async () => {
+    // The report-footer invokes --status-line without --cwd; an agent shell sitting in a subdir
+    // must still read the root docs/ai/autonomy.json (codex terminal, Segment B closing).
+    const root = makeCwd();
+    mkdirSync(join(root, '.git'), { recursive: true });
+    writeFileSync(join(root, 'docs', 'ai', 'autonomy.json'), JSON.stringify({ 'plan-execution': { autonomy: 'sandbox' } }));
+    const facts = await composeAutonomyFacts(join(root, 'docs', 'ai'));
+    rmSync(root, { recursive: true, force: true });
+    assert.notEqual(facts.source, 'none', 'the root policy is found from the subdirectory');
+    assert.equal(facts.activities['plan-execution'].autonomy, 'sandbox', 'the DECLARED root level renders, not a computed default');
+  });
+});
+
+describe('composeActiveRecipeLine — the per-activity autonomy level beside the recipe cells (AD-044 Plan 4)', () => {
+  it('an omitted autonomy param keeps the line byte-identical; supplied facts add "; autonomy <level>" per cell', () => {
+    const det = detect(READY, READY);
+    const base = composeActiveRecipeLine({ config: {}, source: 'none' }, det);
+    assert.equal(composeActiveRecipeLine({ config: {}, source: 'none' }, det, null), base);
+    const withLevels = composeActiveRecipeLine({ config: {}, source: 'none' }, det, {
+      activities: { 'plan-authoring': { autonomy: 'sandbox' }, 'plan-execution': { autonomy: 'prompt' } },
+    });
+    assert.ok(!withLevels.includes('\n'), 'still exactly one line');
+    assert.match(withLevels, /plan-authoring\.review = [a-z]+ \(computed default; autonomy sandbox\)/);
+    assert.match(withLevels, /plan-execution\.review = [a-z]+ \(computed default; autonomy prompt\)/);
+  });
 });
 
 describe('buildReport — additive statusLine field', () => {
@@ -622,14 +787,17 @@ describe('recipes.mjs CLI — --status-line + strict args (no silent fallthrough
     return env;
   };
 
-  it('--status-line emits exactly one line matching the composed contract', () => {
-    const out = execFileSync(process.execPath, [SCRIPT, '--status-line'], { encoding: 'utf8', env: cleanEnv() });
+  it('--status-line emits exactly one line matching the composed contract (incl. the autonomy segment)', () => {
+    // cwd = system temp (no docs/ai): the autonomy segment must state the computed-defaults origin
+    // honestly — and the line stays hermetic (this repo's own policy file never leaks into the pin).
+    const out = execFileSync(process.execPath, [SCRIPT, '--status-line'], { encoding: 'utf8', env: cleanEnv(), cwd: tmpdir() });
     assert.ok(out.endsWith('\n'), 'ends with the single trailing newline');
     const line = out.slice(0, -1);
     assert.ok(!line.includes('\n'), 'exactly one line');
     assert.match(line, /^backends: /);
     assert.match(line, / — run \/agent-workflow-kit backends · recipes: /);
-    assert.match(line, / — see \/agent-workflow-kit recipes$/);
+    assert.match(line, / — see \/agent-workflow-kit recipes · autonomy: /);
+    assert.match(line, /autonomy: plan-authoring=prompt, plan-execution=prompt \(computed defaults — no policy file; declare with \/agent-workflow-kit set-autonomy\)$/);
   });
 
   it('rejects an unknown/mistyped argument loudly — never the silent multi-line human render', () => {

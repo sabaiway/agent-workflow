@@ -18,6 +18,7 @@ expansion), never via the shell. The validator is [`validate.mjs`](./validate.mj
 | `roles` | object | yes | keys ⊆ `provides`; see *Roles* |
 | `detect` | object | no | `installed` (skill on the machine) + `deployed` (substrate set up in cwd) |
 | `settings` | array | no | the bridge's **settings-file surface** (typed; see *Settings*). Unlike `contract`, a malformed entry **fails** `--strict`. |
+| `networkHosts` | string[] | no | the backend CLI's **observed egress host families** (see *Network hosts*). A malformed list **fails** `--strict`. |
 | `install` / `uninstall` | object | no | `install.npm` is a package name, not a path |
 | `cost` / `quota` / `provenance` | misc | no | informational |
 | `available` | boolean | no | `false` = a declared-but-not-installed stub; skips fs/version checks |
@@ -84,6 +85,25 @@ this block). Each entry:
 Wrappers never parse JSON at run time: each carries its own shell registry/validation constants,
 drift-guarded set-equal to this block by the bridge `bin/*.test.mjs` suites (help section keys,
 `aw_settings_known` registry, `AW_SETTINGS_APPLIED` subset, `aw_settings_valid` typed arms).
+
+## Network hosts (AD-044 Plan 4, consult-locked)
+
+`networkHosts` declares the hosts the backend CLI is **observed** to contact (synthetic examples:
+`*.api.backend.example`, `accounts.backend.example`; the real observed lists live in each bridge's
+`capability.json`) — the **single documentation
+source** for a hand-applied sandbox/network allowlist (session sandbox config, or a hand-pasted
+`sandbox.network.allowedDomains` entry). Rules:
+
+- Each entry is a bare dotted hostname or a `*.family` wildcard — never a scheme/path/port.
+  Entries must be unique. A malformed list **fails** `--strict` (the entries are pasted verbatim
+  into allowlist lines by the Recommendations advisor).
+- **The kit never seeds these into settings** (bridge council 2026-07-11, both backends concur):
+  a network pre-allow widens egress for **every** sandboxed command, so running the wrappers
+  **outside** the sandbox (`sandbox.excludedCommands`, the `--bridge-tier` wiring) stays the
+  primary lane; the hosts list exists for the **hand-apply** fallback under harness-managed
+  sandboxes where settings-level exclusions are inert.
+- Observed-minimal, honestly incomplete: a blocked host names itself at run time — extend the
+  hand-applied list by hand; the manifest list records what was actually observed.
 
 ## Path-field rules (Windows-safe, traversal-safe)
 

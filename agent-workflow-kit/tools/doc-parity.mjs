@@ -27,12 +27,15 @@ import { SCHEMA_VERSION, REVIEW_CAP, V4_CLASSES, V4_OVERRIDE_SCOPES } from './re
 import { HARD_MAX, DEFAULT_DIFF_CAP } from './review-ledger-write.mjs';
 import { RESULT_SCHEMA_VERSION } from './fold-completeness.mjs';
 import { EXIT as DOCTOR_EXIT, STATUS as DOCTOR_STATUS, TRUSTED_DIRS as DOCTOR_TRUSTED_DIRS } from './autonomy-doctor.mjs';
+import { RECOMMENDATIONS_SECTION_HEADER, RECOMMENDATIONS_EMPTY_LINE } from './recommendations.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const REVIEW_LEDGER_DOC = 'references/modes/review-ledger.md';
 const FOLD_DOC = 'references/modes/fold-completeness.md';
 const AUTONOMY_DOCTOR_DOC = 'references/modes/autonomy-doctor.md';
+const RECOMMENDATIONS_DOC = 'references/modes/recommendations.md';
+const UPGRADE_DOC = 'references/modes/upgrade.md';
 
 // A typed usage failure (exit 2) for the CLI parser — the codebase's typed-error idiom (no classes).
 const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 });
@@ -72,6 +75,11 @@ export const BINDINGS = Object.freeze([
     .filter((token) => token !== DOCTOR_STATUS.usage)
     .map((token) => valueBinding(`doctor-status:${token}`, token, token, [AUTONOMY_DOCTOR_DOC])),
   valueBinding('doctor-trusted-dirs', DOCTOR_TRUSTED_DIRS.join(':'), DOCTOR_TRUSTED_DIRS.join(':'), [AUTONOMY_DOCTOR_DOC]),
+  // The upgrade Recommendations section contract (AD-044 Plan 4): the section header and the
+  // exact empty-state line must render in BOTH the mode doc and upgrade.md (both exits reference
+  // them) — a reworded doc would silently break the paste-verbatim contract.
+  valueBinding('recommendations-header', RECOMMENDATIONS_SECTION_HEADER, RECOMMENDATIONS_SECTION_HEADER, [RECOMMENDATIONS_DOC, UPGRADE_DOC]),
+  valueBinding('recommendations-empty-line', RECOMMENDATIONS_EMPTY_LINE, RECOMMENDATIONS_EMPTY_LINE, [RECOMMENDATIONS_DOC, UPGRADE_DOC]),
 ].map((b) => Object.freeze(b)));
 
 // ── the pure checker (readText is injectable for hermetic tests) ────────────────────────

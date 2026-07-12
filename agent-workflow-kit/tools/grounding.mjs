@@ -38,7 +38,7 @@ import { ORIGINS, computeTelemetry, filterSegmentRecords, readLedger, resolveLed
 import { plansInFlight } from './review-state.mjs';
 // (f) --autonomy (AD-044 Plan 3): the effective per-project autonomy policy for the facts payload.
 // READ core only — never autonomy-write.mjs (the import-split invariant).
-import { AUTONOMY_REL, loadAutonomy, resolveAutonomy } from './autonomy-config.mjs';
+import { AUTONOMY_REL, loadAutonomy, resolveAutonomy, isSparseSeedConfig } from './autonomy-config.mjs';
 
 const PLAN_EXECUTION = 'plan-execution';
 
@@ -199,10 +199,15 @@ export const resolveLedgerSummary = ({ cwd, env }) => {
 
 export const renderAutonomyFacts = (config, source) => {
   const resolved = resolveAutonomy(config);
+  // The STRUCTURAL seed (_README only) reads as computed defaults; an EXPLICIT declared-defaults
+  // policy reads as a declared policy (the shared predicate — same contract on every surface).
+  const defaultsEquivalent = source !== 'none' && isSparseSeedConfig(config);
   const head =
     source === 'none'
       ? `## Autonomy policy — ${AUTONOMY_REL} absent; the computed defaults ARE the effective policy`
-      : `## Autonomy policy — ${AUTONOMY_REL}`;
+      : defaultsEquivalent
+        ? `## Autonomy policy — ${AUTONOMY_REL} present but defaults-equivalent (the sparse seed); the computed defaults ARE the effective policy`
+        : `## Autonomy policy — ${AUTONOMY_REL}`;
   const redlines = Object.entries(resolved.redlines).map(([k, v]) => `${k}:${v}`).join(' ');
   const activities = Object.entries(resolved.activities).map(([a, v]) => `${a}:${v.autonomy}`).join(' ');
   return `${head}\n\nred-lines — ${redlines}\nactivities — ${activities}\n`;

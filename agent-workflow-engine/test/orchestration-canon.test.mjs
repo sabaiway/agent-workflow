@@ -135,4 +135,30 @@ describe('engine orchestration.md — canonical recipe reference', () => {
     assert.match(section5, /gates\.json/, 'the L0 example names the generic gate-declaration surface');
     assert.ok(!/dispatch-publish|smoke-init|version-sync/.test(section5), 'canon stays generic — no project publish mechanics');
   });
+
+  // Sandbox lanes (AD-044 Plan 4, D4): §5 carries the surface classification + the two driving
+  // rules the kit's procedures advisor paraphrases at its point of use (both sides pinned).
+  it('pins the §5 sandbox-lane note — surface classification + the two driving rules (AD-044 Plan 4)', () => {
+    const flat = sectionFrom(reference, /^## 5\. /).replace(/\s+/g, ' ');
+    assert.match(flat, /Sandbox lanes/, '§5 names the sandbox-lane split');
+    assert.match(flat, /sandbox-safe/i, 'the L0 surfaces are classified sandbox-safe');
+    assert.match(flat, /genuinely unsandboxed/i, 'the bridge wrappers are classified honestly (network)');
+    assert.match(flat, /COMMAND-SHAPE dependent/, 'npm-cache commands are shape-classified, never blanket-moved');
+    assert.match(flat, /move ONLY the failing command out of the sandbox, never its class/i, 'driving rule 1');
+    assert.match(flat, /BATCH consecutive unsandboxed calls/i, 'driving rule 2');
+  });
+
+  // §7 (AD-044 Plan 4): checkpoint-bounded autonomy — appended, never renumbering earlier sections.
+  it('carries the trailing §7 checkpoint-bounded-autonomy canon (AD-044 Plan 4)', () => {
+    const section7 = sectionFrom(reference, /^## 7\. /);
+    const flat = section7.replace(/\s+/g, ' ');
+    assert.match(flat, /Checkpoint-bounded autonomy/i, 'the §7 heading names the policy');
+    assert.match(flat, /docs\/ai\/autonomy\.json/, 'names the per-project policy file');
+    assert.match(flat, /computed defaults ARE the policy/i, 'the absent-file semantics are pinned');
+    assert.match(flat, /malformed.*STOP/i, 'a malformed policy is a loud STOP, never guessed around');
+    assert.match(flat, /sandbox is the floor, not the permission/i, 'sandbox-as-floor is pinned');
+    assert.match(flat, /delegated backends the policy is informational/i, 'the informational-for-backends honesty note');
+    assert.match(flat, /set-autonomy/, 'routes to the policy writer');
+    assert.match(flat, /red-line commands keep their asks at every level/i, 'red-lines never move');
+  });
 });

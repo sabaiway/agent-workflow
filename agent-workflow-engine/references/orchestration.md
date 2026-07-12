@@ -131,6 +131,14 @@ approval asks (commit / push / publish — cost tiering never touches approval g
 **Asymmetric pairing** is the default composition: the cheap lane drafts, a deterministic tool or
 the frontier verifies and signs — never the reverse.
 
+**Sandbox lanes.** Under an OS sandbox the lanes split once more by **surface class**: the L0
+surfaces are **sandbox-safe** (gate/ledger/state/fold checks, git reads, plain no-network tests);
+the bridge wrappers are **genuinely unsandboxed** (they need network); npm-cache-touching commands
+are **COMMAND-SHAPE dependent** — first try the sandbox-safe shape (cache under `$TMPDIR`,
+offline/notifier off) before moving anything out. Two driving rules: **move ONLY the failing
+command out of the sandbox, never its class**, and **BATCH consecutive unsandboxed calls** — a
+blanket unsandbox after one failure is the canonical over-reaction.
+
 **Incident repair (your own error) defaults down-lane:** salvage recorded state first (journals,
 transcripts, git), replay it deterministically (L0), hand the leftovers to L1 in one batch —
 frontier re-derivation of recoverable state is the expensive failure mode, and the maintainer
@@ -156,3 +164,20 @@ default; it **never executes** a recipe and **never runs a subscription CLI**. T
 executes the chosen recipe through the bridge skills, accepts or rejects every edit, runs the
 verification gate, and makes the **one** commit — exactly as the plan lifecycle (`planning.md`)
 requires.
+
+## 7. Checkpoint-bounded autonomy (the policy every recipe runs under)
+
+Autonomy is **checkpoint-bounded**: between human checkpoints the orchestrator runs as autonomously
+as the project declares, and the checkpoints themselves never move. The policy is declared per
+project in `docs/ai/autonomy.json` — **red-lines** (always in force: `commit`/`push`/`publish` ask;
+`network`/`credentials`/`fs_outside_repo` deny) plus a **per-activity autonomy level**: `sandbox`
+(the OS sandbox confines and auto-allows confined commands — work runs to the next checkpoint
+without per-command prompts) or `prompt` (every non-allowlisted command prompts; the sandbox, where
+enabled, still confines). **Read it at session start.** An **absent** file means the computed
+defaults ARE the policy (every activity floors at `prompt`); a **malformed** file is a loud STOP —
+never guess around it. The **sandbox is the floor, not the permission**: red-line commands keep
+their asks at every level, and cost tiering (§5) never touches an approval gate. For **delegated
+backends the policy is informational** — enforcement stays the OS sandbox plus the orchestrator
+process (a backend never gains autonomy the orchestrator itself does not have). Declare and edit
+the policy with `/agent-workflow-kit set-autonomy` (previews first; hand-editing stays supported);
+render it into the harness settings with the kit's velocity `--autonomy` mode.

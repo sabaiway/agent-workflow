@@ -285,7 +285,7 @@ describe('procedures CLI — --json schema (§2.0)', () => {
     const r = run(['plan-execution', '--json'], { codex: READY, agy: NEEDS_SKILL });
     assert.equal(r.code, 0, r.stderr);
     const j = JSON.parse(r.stdout);
-    assert.deepEqual(Object.keys(j).sort(), ['activity', 'configSource', 'costLanes', 'groundingPreStep', 'reviewLoop', 'section', 'slots', 'warnings'].sort());
+    assert.deepEqual(Object.keys(j).sort(), ['activity', 'autonomy', 'configSource', 'costLanes', 'groundingPreStep', 'reviewLoop', 'section', 'slots', 'warnings'].sort());
     assert.equal(j.activity, 'plan-execution');
     assert.match(j.section, /## plan-execution/);
     for (const slot of ['execute', 'review']) {
@@ -454,6 +454,64 @@ describe('procedures CLI — cost-lane advisory block (cost-tiered execution): u
       assert.ok(Array.isArray(j.costLanes) && j.costLanes.length > 0, 'costLanes present + non-empty');
       assert.ok(j.costLanes.some((l) => /cheapest adequate executor/.test(l)), 'the routing rule is in the structured block');
     }
+  });
+
+  it('carries the D4 sandbox-lane bullet (AD-044 Plan 4) — surface classification + the two driving rules', () => {
+    const r = run(['plan-execution'], { codex: READY, agy: READY });
+    assert.match(r.stdout, /Sandbox lanes \(under an OS sandbox\)/, 'the bullet names its scope');
+    assert.match(r.stdout, /genuinely unsandboxed \(network\)/, 'the bridge wrappers are honestly classified');
+    assert.match(r.stdout, /COMMAND-SHAPE dependent/, 'npm-cache commands are shape-classified, not blanket-moved');
+    assert.match(r.stdout, /Move ONLY the failing command out of the sandbox, never its class/, 'driving rule 1');
+    assert.match(r.stdout, /BATCH consecutive unsandboxed calls/, 'driving rule 2');
+  });
+
+  // The SECOND Decision-5 point of use (AD-044 Plan 4): the L0 checker tools each state their
+  // sandbox-lane contract line on their own HELP/header surface (the canon-side twin lives in the
+  // engine's orchestration-canon test — both sides pinned, neither can silently drop it).
+  it('the four L0 checker tools carry the sandbox-lane contract line on their own surfaces', () => {
+    for (const rel of ['run-gates.mjs', 'review-state.mjs', 'review-ledger.mjs', 'fold-completeness-run.mjs']) {
+      const src = readFileSync(join(HERE, rel), 'utf8');
+      assert.match(src, /Sandbox-safe/, `${rel} states its sandbox-lane contract line`);
+    }
+  });
+});
+
+describe('procedures CLI — the per-activity autonomy block (AD-044 Plan 4)', () => {
+  it('renders the computed-defaults origin honestly when no policy file exists', () => {
+    const r = run(['plan-execution'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /Autonomy for "plan-execution" \(computed defaults — no docs\/ai\/autonomy\.json\): prompt — every non-allowlisted command prompts/);
+    assert.match(r.stdout, /red-lines \(always\): commit=ask, push=ask, publish=ask, network=deny, credentials=deny, fs_outside_repo=deny/);
+    assert.match(r.stdout, /commit\/push\/publish keep their maintainer asks regardless of level/);
+  });
+
+  it('renders the DECLARED level for THIS activity from the policy file (never a retyped constant)', () => {
+    writeFileSync(join(cwd, 'docs', 'ai', 'autonomy.json'), JSON.stringify({ 'plan-execution': { autonomy: 'sandbox' } }));
+    const r = run(['plan-execution'], { codex: READY, agy: READY });
+    assert.match(r.stdout, /Autonomy for "plan-execution" \(from docs\/ai\/autonomy\.json\): sandbox — the OS sandbox confines and auto-allows/);
+    const auth = run(['plan-authoring'], { codex: READY, agy: READY });
+    assert.match(auth.stdout, /Autonomy for "plan-authoring" \(from docs\/ai\/autonomy\.json\): prompt/, 'an undeclared activity floors at prompt');
+  });
+
+  it('the SPARSE defaults-equivalent seed reads as computed defaults — never as a declared policy', () => {
+    writeFileSync(join(cwd, 'docs', 'ai', 'autonomy.json'), '{ "_README": "note" }');
+    const r = run(['plan-execution'], { codex: READY, agy: READY });
+    assert.match(r.stdout, /Autonomy for "plan-execution" \(computed defaults — docs\/ai\/autonomy\.json is the sparse defaults-equivalent seed\): prompt/);
+  });
+
+  it('a MALFORMED policy surfaces LOUDLY in the block AND flips the exit code (config error)', () => {
+    writeFileSync(join(cwd, 'docs', 'ai', 'autonomy.json'), '{ not json');
+    const r = run(['plan-execution'], { codex: READY, agy: READY });
+    assert.equal(r.code, 1, 'a scripted caller must not read a malformed policy as success');
+    assert.match(r.stdout, /Autonomy \(docs\/ai\/autonomy\.json\): MALFORMED — .*STOP and fix the policy file, never guess/);
+    assert.match(r.stderr, /malformed docs\/ai\/autonomy\.json/, 'stderr names the config error');
+    assert.match(r.stdout, /resolved recipes for "plan-execution"/, 'the recipes/contracts still render — only the exit code flips');
+  });
+
+  it('--json carries the ADDITIVE structured autonomy counterpart', () => {
+    const j = JSON.parse(run(['plan-execution', '--json'], { codex: READY, agy: READY }).stdout);
+    assert.ok(Array.isArray(j.autonomy) && j.autonomy.length > 0, 'autonomy block present + non-empty');
+    assert.ok(j.autonomy.some((l) => /Autonomy for "plan-execution"/.test(l)));
   });
 });
 
