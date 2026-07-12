@@ -99,6 +99,13 @@ const CATALOG = [
     oneLine: 'List every command, grouped, marking each as read-only or as one that makes changes.',
   },
   {
+    key: 'recommendations',
+    invocation: invocationOf('recommendations'),
+    group: 'Inspect',
+    kind: READ_ONLY,
+    oneLine: 'See what in this deployment is configured sub-optimally — each item with a one-line benefit and the exact consent-gated command that applies it; renders even when everything is optimal.',
+  },
+  {
     key: 'gates',
     invocation: invocationOf('gates'),
     group: 'Inspect',

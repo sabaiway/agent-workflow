@@ -38,7 +38,7 @@ describe('kit ⟷ memory template parity — every manifest-listed template byte
 
 describe('the mirror manifest itself — reverse pins (the sync and this guard govern ONE set)', () => {
   it('keeps the load-bearing seeds IN the manifest', () => {
-    for (const required of ['AGENTS.md', 'orchestration.json', 'gates.json', 'adr-record.md', 'adr/log.md']) {
+    for (const required of ['AGENTS.md', 'orchestration.json', 'gates.json', 'autonomy.json', 'adr-record.md', 'adr/log.md']) {
       assert.ok(
         MIRROR_TEMPLATE_FILES.includes(required),
         `${required} must stay in the mirror manifest — dropping it would silently stop both the sync and this parity guard`,
@@ -122,6 +122,27 @@ describe('orchestration.json seed — strict JSON valid against the kit schema',
       if (activity === '_README') continue;
       for (const recipe of Object.values(slots)) assert.equal(recipe, 'solo', `${activity} ships solo by default`);
     }
+  });
+});
+
+describe('autonomy.json seed — sparse, schema-valid, DEFAULTS-EQUIVALENT (AD-044 Plan 4, Decision 4)', () => {
+  const raw = readFileSync(join(KIT_TEMPLATES, 'autonomy.json'), 'utf8');
+
+  it('parses as strict JSON (no comments — loadAutonomy JSON.parses it)', () => {
+    assert.doesNotThrow(() => JSON.parse(raw));
+  });
+
+  it('is _README-only and validates against validateAutonomy', async () => {
+    const { validateAutonomy, AUTONOMY_README } = await import('../tools/autonomy-config.mjs');
+    const parsed = JSON.parse(raw);
+    assert.deepEqual(Object.keys(parsed), ['_README'], 'the seed is SPARSE — the onboarding note only, no policy keys');
+    assert.equal(parsed._README, AUTONOMY_README, 'the note is the canonical AUTONOMY_README — never a drifting retype');
+    assert.doesNotThrow(() => validateAutonomy(parsed));
+  });
+
+  it('resolveAutonomy(template) ≡ resolveAutonomy(null) — the seed can never drift from the computed defaults', async () => {
+    const { resolveAutonomy } = await import('../tools/autonomy-config.mjs');
+    assert.deepEqual(resolveAutonomy(JSON.parse(raw)), resolveAutonomy(null));
   });
 });
 

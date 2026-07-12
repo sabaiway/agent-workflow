@@ -1,0 +1,3 @@
+{
+  "_README": "Per-project autonomy policy: red-lines (always) + per-activity autonomy level. Hand-editable; or use the set-autonomy writer (previews, then writes valid JSON). Strict JSON — no comments."
+}

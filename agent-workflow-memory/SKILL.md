@@ -52,6 +52,7 @@ pointers are the **three empty slots** the composition root fills — never auth
 | Per-project recipe **CONFIG** (which recipe each activity/slot uses) | **memory** seeds an *editable default* | `docs/ai/orchestration.json` (agent-writable via the composition root's `set-recipe` writer, or hand-edited; the recipe **canon** + the slot **vocabulary** live in the engine / composition root, never here) |
 | Per-project **gate declaration** (which verification commands must be green) | **memory** seeds an *editable default* | `docs/ai/gates.json` (hand-editable; an empty list as shipped — the project declares its own commands; the **runner** lives in the composition root, never here) |
 | Per-project **verification profile** (optional; the fold-completeness language-independence contract) | **memory** seeds an *editable default* | `docs/ai/verification-profile.json` (hand-editable; the seeded default reproduces the composition root's default V8 + node:test behaviour — delete it for exactly that; declares coverage source / single-test format / optional SARIF path; the **runner** lives in the composition root, never here) |
+| Per-project **autonomy policy** (red-lines + per-activity autonomy level) | **memory** seeds an *editable default* | `docs/ai/autonomy.json` (hand-editable, or agent-writable via the composition root's `set-autonomy` writer; the seed is SPARSE — the onboarding note only, defaults-equivalent, so deploying it never changes behavior; the policy **canon** + the render live in the engine / composition root, never here) |
 
 ---
 
@@ -106,13 +107,15 @@ bootstrapping over a live system, but the user makes the final call.
    `${CLAUDE_SKILL_DIR}/references/templates/` (every non-`AGENTS.md`, non-`adr-record.md` template —
    the latter is a skill-home authoring reference, never deployed). This deploys the HOT ADR window
    `docs/ai/decisions.md` **and** the seed navigator `docs/ai/adr/log.md` (its `adr/` subdir copies
-   in wholesale), plus the three seeded, **user-editable** strict-JSON configs:
+   in wholesale), plus the four seeded, **user-editable** strict-JSON configs:
    `docs/ai/orchestration.json` — the per-project recipe defaults the composition root's `procedures`
    advisor reads — `docs/ai/gates.json` — the project's gate declaration, an empty list to fill with
-   its own verification commands, consumed by the composition root's gate runner — and
+   its own verification commands, consumed by the composition root's gate runner —
    `docs/ai/verification-profile.json` — the OPTIONAL fold-completeness verification profile (the
    language-independence contract; the seeded default reproduces the composition root's default V8 +
-   node:test behaviour, delete it for exactly that). Keep each `.md` file's frontmatter.
+   node:test behaviour, delete it for exactly that) — and `docs/ai/autonomy.json` — the per-project
+   autonomy policy, seeded SPARSE (the onboarding note only, defaults-equivalent — behavior changes
+   only when the user declares levels). Keep each `.md` file's frontmatter.
 7. **Fill templates** per the table below.
 8. **Install enforcement (Node projects).** Copy `${CLAUDE_SKILL_DIR}/references/scripts/*.mjs`
    (+ `*.test.mjs`) into the project's `scripts/`. **No Node runtime** → skip this + the hook;
@@ -181,8 +184,9 @@ Fill strategy:
    **untracked AND not ignored** → **AMBIGUOUS** → **ASK** the user before writing. This visibility check
    runs on **every** in-range upgrade, even at head — it is not gated by the stamp delta, but it is gated
    **behind** the never-downgrade STOP above. **Also stamp-independent (same gate, before the equal-head
-   short-circuit): ensure the THREE seeded `.json` configs** — for `docs/ai/orchestration.json`,
-   `docs/ai/gates.json`, AND `docs/ai/verification-profile.json`, **create the file from its
+   short-circuit): ensure the FOUR seeded `.json` configs** — for `docs/ai/orchestration.json`,
+   `docs/ai/gates.json`, `docs/ai/verification-profile.json`, AND `docs/ai/autonomy.json`,
+   **create the file from its
    `${CLAUDE_SKILL_DIR}/references/templates/` template if missing**, **preserve it byte-for-byte
    if it already exists** (a user may have edited it; never clobber it). The shipped
    `orchestration.json` template's `_README` already frames that config as agent-writable (set it
@@ -190,7 +194,9 @@ Fill strategy:
    declaration (what to verify — consumed by the composition root's gate runner);
    `verification-profile.json` is the OPTIONAL fold-completeness verification profile — the seeded
    default reproduces the composition root's default V8 + node:test behaviour, so a project deletes
-   it to fall back to exactly that, or edits it for another language/runner. (Refreshing the
+   it to fall back to exactly that, or edits it for another language/runner; `autonomy.json` is the
+   per-project autonomy policy, seeded SPARSE (the onboarding note only, defaults-equivalent —
+   agent-writable via the composition root's `set-autonomy` writer, hand-editing supported). (Refreshing the
    orchestration `_README` note in place on an existing file is the **composition root's** job on
    its own reconcile — this substrate is standalone and only seeds-or-preserves; it owns no
    cross-package refresh helper. The gates declaration gets no note-refresh at all — authored
@@ -313,8 +319,8 @@ The three setup choices each have a full contract in
 - [`references/contracts.md`](references/contracts.md) — the three setup contracts in full.
 - [`references/templates/`](references/templates/) — stack-agnostic `AGENTS.md` (with the three empty
   pointer slots — methodology + orchestration + autonomy), `agent_rules.md`, the seeded user-editable
-  `orchestration.json` config, the `adr-record.md` ADR authoring reference + the seed `adr/log.md`
-  navigator, and all `docs/ai/` files to deploy.
+  `orchestration.json` + `autonomy.json` configs, the `adr-record.md` ADR authoring reference + the
+  seed `adr/log.md` navigator, and all `docs/ai/` files to deploy.
 - [`references/scripts/`](references/scripts/) — the Node enforcement scripts (caps + staleness +
   index-freshness gate, one-file-per-ADR archive, hook installer) and their unit tests.
 - [`scripts/stamp-takeover.mjs`](scripts/stamp-takeover.mjs) — the upgrade-time lineage state

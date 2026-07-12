@@ -194,7 +194,12 @@ const BUDGET = {
   router: 11264, // router alone. 10240 → 11264 (11 KB): AD-044 Plan 4 adds the sandbox-masks and
   // recommendations modes to the router (~110 B each) against 27 B of headroom — a documented
   // KB-multiple bump, never a silent re-pin.
-  routerPlusMode: 32768, // router + any single mode file (28672 → 29696: the AD-042 documented
+  routerPlusMode: 35840, // router + any single mode file. 32768 → 35840 (35 KB): AD-044 Plan 4
+  // Segment B — upgrade.md gains the mandatory Recommendations section contract on BOTH exits
+  // (~1.1 KB: the section render, the pinned order, the apply lane) PLUS the autonomy-declaration
+  // ensure paragraph + its step-4/8 outcome rows (~1.2 KB) against a pair already at its 32 KB
+  // ceiling — a documented KB-multiple bump, never a silent re-pin. (History: 28672 → 29696: the
+  // AD-042 documented
   // AD-039 amendment — the F11 both-blocks batching caveat is +422 B of new upgrade.md contract
   // content against 154 B of headroom; then 29696 → 30720 (30 KB): AD-043 adds the bridge-settings
   // reconcile paragraph + its step-4/8 report mentions to upgrade.md, ~628 B of new contract content
@@ -207,10 +212,19 @@ const BUDGET = {
   // THREE pointers (the autonomy slot: step-3 wording, the (a)(iii) anchor-absent soft-skip lane,
   // the No-Node walk, the step-4/8 report row) — ~575 B of new contract content over 179 B of
   // headroom; a documented KB-multiple bump, never a silent re-pin.)
-  fullReadSet: 56320, // router + mode + its declared shared files. 55296 → 56320 (55 KB): AD-044
+  fullReadSet: 59392, // router + mode + its declared shared files. 58368 → 59392 (58 KB): AD-044
+  // Plan 4 Segment B closing (codex cycle-10 fold) — report-footer.md documents the autonomy
+  // segment on the backend-status placeholder (the composer appends it; the contract must match
+  // the pasted surface), ~340 B of new shared contract content vs 86 B over the 57 KB budget —
+  // the same documented KB-multiple bump, never a silent re-pin.
+  // History: 55296 → 56320 (55 KB): AD-044
   // Plan 4 — the new router mode lines (sandbox-masks, recommendations) ride EVERY mode's read set
   // and upgrade.md gains the Recommendations final section + the autonomy-seed ensure row against
-  // 12 B of headroom — a documented KB-multiple bump, never a silent re-pin.
+  // 12 B of headroom — a documented KB-multiple bump, never a silent re-pin. Then 56320 → 58368
+  // (57 KB): the LANDED Segment-B upgrade.md contract measures ~2.3 KB — the Recommendations
+  // section on both exits (~1.1 KB) + the autonomy-declaration ensure paragraph with its step-4/8
+  // outcome rows (~1.2 KB) — vs the ~0.5 KB anticipated at Segment A; the same documented
+  // KB-multiple bump.
   // History: 53248 → 54272 (53 KB): AD-049 —
   // the heaviest read set (upgrade + its 3 shared files) sat 6 B under the 52 KB budget, so the new
   // doc-parity router line (present in EVERY mode's read set) plus the carry-in verification-profile

@@ -517,6 +517,7 @@ AND is not degraded-exempt. Declare it as a project gate by hand (docs/ai/gates.
 explicit-consent seeder (tools/seed-gates.mjs) — never without consent.
 
 Read-only: never writes, never commits, never runs a subscription CLI; spawns read-only git queries.
+Sandbox-safe: runs fully inside an OS sandbox (fs + git reads, no network) — the D4 sandbox lane.
 Human residual: git commit --no-verify and receipt-file deletion remain possible — this is a
 self-discipline mechanism, not a security boundary.
 

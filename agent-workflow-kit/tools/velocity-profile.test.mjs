@@ -253,7 +253,7 @@ const RUN_GATES_EXACT = `Bash(node ${join(KIT_ROOT, 'tools/run-gates.mjs')} --cw
 const PREVIEW_FORBIDDEN_FLAGS = ['--apply', '--write', '--yes', '--refresh-placed'];
 
 describe('KIT_READONLY_TOOLS tier — frozen membership + derivation', () => {
-  it('matches the frozen 9-member tool list + count sentinel', () => {
+  it('matches the frozen 10-member tool list + count sentinel', () => {
     const expected = [
       'tools/recipes.mjs',
       'tools/procedures.mjs',
@@ -261,12 +261,14 @@ describe('KIT_READONLY_TOOLS tier — frozen membership + derivation', () => {
       'tools/detect-backends.mjs',
       'tools/commands.mjs',
       'tools/review-state.mjs',
+      'tools/recommendations.mjs',
       'tools/run-gates.mjs',
       'tools/manifest/validate.mjs',
       'tools/release-scan.mjs',
     ];
     assert.equal(Object.isFrozen(KIT_READONLY_TOOLS), true);
-    assert.equal(KIT_READONLY_TOOLS.length, 9, 'kit-tools tier count sentinel - edit deliberately');
+    // 9 → 10: AD-044 Plan 4 Phase 3 — the recommendations advisor joins the tier.
+    assert.equal(KIT_READONLY_TOOLS.length, 10, 'kit-tools tier count sentinel - edit deliberately');
     assert.deepEqual([...KIT_READONLY_TOOLS], expected);
     assert.equal(KIT_RUN_GATES_TOOL, 'tools/run-gates.mjs');
   });
@@ -281,12 +283,13 @@ describe('KIT_READONLY_TOOLS tier — frozen membership + derivation', () => {
     for (const rel of KIT_WRITER_PREVIEW_TOOLS) assert.equal(KIT_READONLY_TOOLS.includes(rel), false, rel);
   });
 
-  it('derives 8 wildcard entries + the exact run-gates entry + 3 exact previews (count sentinel 12)', () => {
+  it('derives 9 wildcard entries + the exact run-gates entry + 3 exact previews (count sentinel 13)', () => {
     const derived = tierEntries();
     assert.equal(Object.isFrozen(derived), true);
-    assert.equal(derived.length, 12, 'derived tier count sentinel - edit deliberately');
+    // 12 → 13: AD-044 Plan 4 Phase 3 — the recommendations advisor joins KIT_READONLY_TOOLS.
+    assert.equal(derived.length, 13, 'derived tier count sentinel - edit deliberately');
     const wildcards = derived.filter((e) => e.endsWith(':*)'));
-    assert.equal(wildcards.length, 8);
+    assert.equal(wildcards.length, 9);
     for (const rel of KIT_READONLY_TOOLS) {
       if (rel === KIT_RUN_GATES_TOOL) continue;
       assert.equal(derived.includes(wildcardEntryOf(rel)), true, rel);
@@ -785,7 +788,7 @@ describe('velocity profile CLI — the opt-in --kit-tools tier', () => {
     const dry = runMain(['--kit-tools'], cwd);
 
     assert.equal(dry.code, EXIT_OK);
-    assert.match(dry.stdout, /would add kit-tools tier entries: 12/);
+    assert.match(dry.stdout, /would add kit-tools tier entries: 13/);
     assert.equal(existsSync(settingsPath(cwd)), false);
     assert.equal(existsSync(pathOf(cwd, CLAUDE_DIR)), false);
   });

@@ -125,7 +125,7 @@ export const SHELL_READONLY = Object.freeze([
 // seed time from the RUNNING tool's own location — resolved-absolute, so a moved or reinstalled
 // skill leaves a stale rule that FAIL-SAFE prompts again (never a silent widening).
 //
-// Membership (9, frozen): the read-only kit tools plus run-gates.mjs — which is NOT read-only but
+// Membership (10, frozen): the read-only kit tools plus run-gates.mjs — which is NOT read-only but
 // project-exec (it runs the project's OWN declared gates.json commands), so it seeds as ONE exact
 // byte-string pinned to this project root (`--cwd <resolved root>`): a wildcard would be BROADER
 // than the AD-037 hook boundary (`--cwd <dir>` executes an arbitrary OTHER project's gates.json)
@@ -139,6 +139,7 @@ export const KIT_READONLY_TOOLS = Object.freeze([
   'tools/detect-backends.mjs',
   'tools/commands.mjs',
   'tools/review-state.mjs',
+  'tools/recommendations.mjs',
   KIT_RUN_GATES_TOOL,
   'tools/manifest/validate.mjs',
   'tools/release-scan.mjs',
@@ -319,7 +320,7 @@ const USAGE = `usage: velocity-profile [--dry-run | --apply] [--kit-tools] [--br
 
 Allowlist mode (default): seeds the fixed read-only Claude Code allowlist into .claude/settings.json.
 Default is --dry-run. --apply writes; --accept-edits only sets defaultMode when applying.
---kit-tools additionally seeds the audited kit-tool tier: 8 read-only kit tools by resolved
+--kit-tools additionally seeds the audited kit-tool tier: 9 read-only kit tools by resolved
 absolute path (args wildcard), run-gates.mjs as ONE exact project-root-pinned byte-string
 (project-exec - it runs YOUR declared gates.json), and the writers' exact arg-free dry-run
 preview byte-strings. Never touches settings.local.json.
@@ -728,7 +729,7 @@ export const screenAllowlistEntry = (pattern) => {
 };
 
 /**
- * Derive the opt-in kit-tools tier for a project: 8 wildcard entries (resolved-absolute script
+ * Derive the opt-in kit-tools tier for a project: 9 wildcard entries (resolved-absolute script
  * path + args wildcard), ONE exact run-gates entry pinned to the resolved project root, and the
  * writer-preview exact dry-run byte-strings. Pure derivation — a stale path simply prompts again.
  */

@@ -197,6 +197,14 @@ describe('grounding --autonomy — effective policy from the git-top docs/ai/aut
     assert.match(r.stdout, /activities — plan-authoring:prompt plan-execution:prompt/, 'absent activities floor at prompt');
   });
 
+  it('the SPARSE defaults-equivalent seed renders the computed-defaults heading — never a declared policy (codex, Segment B)', () => {
+    const root = makePolicyRepo({ policy: '{ "_README": "note" }' });
+    const r = run(root, ['--autonomy']);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /present but defaults-equivalent \(the sparse seed\); the computed defaults ARE the effective policy/);
+  });
+
   it('malformed policy JSON → fail-closed STOP (exit 1), nothing emitted', () => {
     const root = makePolicyRepo({ policy: '{ nope' });
     const r = run(root, ['--autonomy']);

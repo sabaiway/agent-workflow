@@ -19,6 +19,7 @@ import {
   toExcludePattern,
   findMasksFence,
   revalidateFence,
+  needsMasksApply,
   MASKS_FENCE_START,
   MASKS_FENCE_END,
 } from './sandbox-masks.mjs';
@@ -242,6 +243,32 @@ describe('sandbox-masks — outside-sandbox / empty-derivation behavior', () => 
     assert.ok(!exclude.includes(MASKS_FENCE_START), 'the managed block is gone');
   });
 
+  it('--apply --clear takes PRECEDENCE over a NON-EMPTY derivation: the block is removed, never re-written', () => {
+    const root = makeRepo();
+    main(['--cwd', root, '--apply'], { deps: maskDeps({ '.bashrc': 'char' }) });
+    const r = main(['--cwd', root, '--apply', '--clear'], { deps: maskDeps({ '.bashrc': 'char' }) });
+    const exclude = readFileSync(join(root, '.git', 'info', 'exclude'), 'utf8');
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /managed block removed/, 'the requested clear happens — never a silent block re-write');
+    assert.ok(!exclude.includes(MASKS_FENCE_START), 'the block is gone even though masks are visible');
+  });
+
+  it('--apply --clear with NO managed block is a stated no-op — nothing is written', () => {
+    const root = makeRepo();
+    const before = existsSync(join(root, '.git', 'info', 'exclude'))
+      ? readFileSync(join(root, '.git', 'info', 'exclude'), 'utf8')
+      : null;
+    const r = main(['--cwd', root, '--apply', '--clear'], { deps: maskDeps({ '.bashrc': 'char' }) });
+    const after = existsSync(join(root, '.git', 'info', 'exclude'))
+      ? readFileSync(join(root, '.git', 'info', 'exclude'), 'utf8')
+      : null;
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /nothing to clear/);
+    assert.equal(after, before, 'the exclude file is untouched');
+  });
+
   it('--clear without --apply is a usage error', () => {
     const root = makeRepo();
     const r = main(['--cwd', root, '--clear'], { deps: maskDeps({}) });
@@ -419,6 +446,30 @@ describe('sandbox-masks — unsafe fence fails CLOSED', () => {
   });
 });
 
+describe('sandbox-masks — needsMasksApply (the Recommendations advisor fire condition)', () => {
+  it('fires on visible masks with NO managed block; quiet when the fenced set matches; fires again on divergence', () => {
+    const root = makeRepo();
+    const deps = maskDeps({ '.bashrc': 'char' });
+    assert.equal(needsMasksApply(probeSandboxMasks({ cwd: root, ...deps })), true, 'absent block + visible masks → apply');
+    main(['--cwd', root, '--apply'], { deps });
+    assert.equal(needsMasksApply(probeSandboxMasks({ cwd: root, ...deps })), false, 'fenced set == derived set → quiet');
+    const grown = maskDeps({ '.bashrc': 'char', '.gitconfig': 'char' });
+    assert.equal(needsMasksApply(probeSandboxMasks({ cwd: root, ...grown })), true, 'a NEW mask diverges the sets → apply');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('fires on a stale-real fenced entry even with zero visible masks; null probe and malformed fence stay quiet', () => {
+    const root = makeRepo();
+    main(['--cwd', root, '--apply'], { deps: maskDeps({ 'was-a-mask.txt': 'char' }) });
+    writeFileSync(join(root, 'was-a-mask.txt'), 'now a real file\n');
+    assert.equal(needsMasksApply(probeSandboxMasks({ cwd: root, listUntracked: () => ['was-a-mask.txt'] })), true, 'stale-real → apply (the fresh derivation drops it)');
+    writeFileSync(join(root, '.git', 'info', 'exclude'), `${MASKS_FENCE_START}\n${MASKS_FENCE_START}\n${MASKS_FENCE_END}\n`);
+    assert.equal(needsMasksApply(probeSandboxMasks({ cwd: root, ...maskDeps({ '.bashrc': 'char' }) })), false, 'a malformed fence needs a hand fix, not an apply item');
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(needsMasksApply(null), false, 'off-git (null probe) is N/A, never an item');
+  });
+});
+
 describe('sandbox-masks — probe (read-only) + revalidation (the D5 watch)', () => {
   it('the flagless probe never writes', () => {
     const root = makeRepo();
@@ -436,7 +487,7 @@ describe('sandbox-masks — probe (read-only) + revalidation (the D5 watch)', ()
     const r = main(['--cwd', root], { deps: { listUntracked: () => ['was-a-mask.txt'] } });
     rmSync(root, { recursive: true, force: true });
     assert.match(r.stdout, /became a REAL path: was-a-mask\.txt/);
-    assert.match(r.stdout, /NOT from git add/, 'the watch note rides the flag');
+    assert.match(r.stdout, /silently skipped by bulk staging/, 'the watch note states the REAL danger — bulk git add skips excluded paths');
   });
 
   it('a CRLF-saved fence body still revalidates (the trailing CR never rides into the rel name — agy R5)', () => {
@@ -466,6 +517,17 @@ describe('sandbox-masks — probe (read-only) + revalidation (the D5 watch)', ()
     const flagged = probeSandboxMasks({ cwd: root, deps: undefined, listUntracked: () => ['trailing '] });
     rmSync(root, { recursive: true, force: true });
     assert.deepEqual(flagged.staleReal, ['trailing '], 'a real file at the trailing-space path IS flagged (the parse sees the true name)');
+  });
+
+  it('the FLAGLESS probe renders the --clear form for a stale-real-only fence (the plain apply would refuse)', () => {
+    const root = makeRepo();
+    main(['--cwd', root, '--apply'], { deps: maskDeps({ 'was-mask': 'char' }) });
+    writeFileSync(join(root, 'was-mask'), 'now a real file\n');
+    const r = main(['--cwd', root], { deps: { listUntracked: () => [] } });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /became a REAL path: was-mask/, 'the stale-real warning renders');
+    assert.ok(r.stdout.includes('--apply --clear'), 'the rendered one-liner is the form planApply actually accepts here');
   });
 
   it('the rendered apply one-liner shell-quotes a root with spaces/metacharacters (codex R1)', () => {

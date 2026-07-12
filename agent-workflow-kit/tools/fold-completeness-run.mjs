@@ -1029,6 +1029,11 @@ loud advisory failure) but leaves --check unaffected.
 
 The read-only gate is a SEPARATE tool: node fold-completeness.mjs --check / --status / --json.
 
+Sandbox-safe: the RUNNER itself needs no network and writes only repo-local state (the D4 sandbox
+lane). The spawned suite/bound commands are COMMAND-SHAPE dependent — --suite / AW_FOLD_SUITE_CMD /
+AW_FOLD_BOUND_CMD / the verification profile can name project-defined commands; the default
+(node --test on stdout TAP) is plain and no-network — keep overrides sandbox-safe by shape.
+
 Exit codes: 0 written / advisory printed; 1 a typed STOP (loop derivation / suite discovery / a --red
 or --reattest refusal / a malformed SARIF on --findings / malformed record / fs error); 2 usage.`;
 

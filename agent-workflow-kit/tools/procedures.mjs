@@ -36,6 +36,7 @@ import { plansInFlight, PLANS_REL } from './review-state.mjs';
 // (an import-split test pins it). CONFIG_REL is RE-EXPORTED so existing importers (procedures.test.mjs,
 // historically) keep their import site working.
 import { CONFIG_REL, fail, loadConfig, assertSlotRecipe } from './orchestration-config.mjs';
+import { AUTONOMY_REL, loadAutonomy, resolveAutonomy, isSparseSeedConfig } from './autonomy-config.mjs';
 export { CONFIG_REL };
 
 // ── argument + override parsing (usage errors → exit 2) ─────────────────────────────
@@ -256,6 +257,31 @@ const groundingPreStepAdvice = (activity, slots, plans) => {
   return lines;
 };
 
+// The per-activity autonomy block (AD-044 Plan 4): the resolved level for THIS activity + what it
+// implies, rendered from resolveAutonomy — never retyped constants. Read at session start beside
+// the resolved recipes (the AGENTS.md autonomy pointer's read contract). A malformed policy
+// surfaces LOUDLY here (the session-start read is exactly where "malformed → STOP, never guess"
+// must be visible); an absent file states the computed-defaults origin honestly.
+const autonomyAdvice = (activity, facts) => {
+  if (facts == null) return [];
+  if (facts.error) return [`Autonomy (${AUTONOMY_REL}): MALFORMED — ${facts.error} — STOP and fix the policy file, never guess around it.`];
+  const level = facts.activities?.[activity]?.autonomy;
+  if (!level) return [];
+  const origin = facts.source === 'none'
+    ? `computed defaults — no ${AUTONOMY_REL}`
+    : facts.defaultsEquivalent
+      ? `computed defaults — ${AUTONOMY_REL} is the sparse defaults-equivalent seed`
+      : `from ${facts.source}`;
+  const redlines = Object.entries(facts.redlines).map(([k, v]) => `${k}=${v}`).join(', ');
+  const implies = level === 'sandbox'
+    ? 'the OS sandbox confines and auto-allows confined commands — work runs to the next checkpoint without per-command prompts'
+    : 'every non-allowlisted command prompts (the sandbox, where enabled, still confines)';
+  return [
+    `Autonomy for "${activity}" (${origin}): ${level} — ${implies}.`,
+    `  red-lines (always): ${redlines} — commit/push/publish keep their maintainer asks regardless of level.`,
+  ];
+};
+
 // The cost-lane advisory block (cost-tiered execution — orchestration.md §5 canon, paraphrased
 // at the point of use like reviewLoopAdvice paraphrases §9/§4). Rendered UNCONDITIONALLY for
 // every activity — the lanes route EVERY step, review-backed or not (unlike reviewLoopAdvice,
@@ -270,6 +296,7 @@ const costLanesAdvice = () => [
   '  • L2 subscription bridge (codex / agy) — reviews per the resolved recipe above, on frontier bridge models (quality-first).',
   '  • L3 frontier — judgment: plan/fold/synthesis, ADR/handover/changelog-entry wording, persuasive copy, go/no-go, real code.',
   '  • A step with no named guardrail does not move down a lane; red lines never move down (council review models · real code · memory/copy wording · the maintainer approval asks).',
+  '  • Sandbox lanes (under an OS sandbox): the L0 surfaces are sandbox-safe — gates/ledger/state/fold checks, git reads, plain no-network tests; the bridge wrappers are genuinely unsandboxed (network); npm-cache-touching commands are COMMAND-SHAPE dependent — first try the sandbox-safe shape (cache under $TMPDIR, offline/notifier off). Move ONLY the failing command out of the sandbox, never its class; BATCH consecutive unsandboxed calls.',
 ];
 
 // The verbatim per-backend DRIVING CONTRACT block (M-contract): the exact invocation descriptor(s),
@@ -300,7 +327,7 @@ const contractLines = ({ cmd, contract, settings }) => {
   return lines;
 };
 
-const formatHuman = ({ activity, section, slots, warnings, plans }) => {
+const formatHuman = ({ activity, section, slots, warnings, plans, autonomy }) => {
   const lines = [
     section,
     '',
@@ -312,6 +339,8 @@ const formatHuman = ({ activity, section, slots, warnings, plans }) => {
     if (s.reason) lines.push(`      ↳ ${s.reason}`);
     for (const c of s.contracts ?? []) lines.push(...contractLines(c));
   }
+  const autonomyBlock = autonomyAdvice(activity, autonomy);
+  if (autonomyBlock.length) lines.push('', ...autonomyBlock);
   const grounding = groundingPreStepAdvice(activity, slots, plans);
   if (grounding.length) lines.push('', ...grounding);
   const advice = reviewLoopAdvice(slots, activity);
@@ -324,7 +353,7 @@ const formatHuman = ({ activity, section, slots, warnings, plans }) => {
   return lines.join('\n');
 };
 
-const buildJson = ({ activity, section, slots, configSource, warnings, plans }) => ({
+const buildJson = ({ activity, section, slots, configSource, warnings, plans, autonomy }) => ({
   activity,
   section,
   slots: Object.fromEntries(
@@ -337,6 +366,8 @@ const buildJson = ({ activity, section, slots, configSource, warnings, plans }) 
   groundingPreStep: groundingPreStepAdvice(activity, slots, plans),
   // ADDITIVE (cost-tiered execution): the unconditional cost-lane advisory, structured.
   costLanes: costLanesAdvice(),
+  // ADDITIVE (AD-044 Plan 4): the per-activity autonomy block, structured (empty when unresolvable).
+  autonomy: autonomyAdvice(activity, autonomy),
   configSource,
   warnings,
 });
@@ -357,7 +388,8 @@ ${CONFIG_REL} + the read-only backend detector, and prints both. A per-run
 Read-only: never writes, never commits, never runs a subscription CLI.
 
 Exit codes: 0 success (an unsatisfiable override degrades loudly, still 0);
-            2 usage (unknown activity / bad --override); 1 config or engine error.`;
+            2 usage (unknown activity / bad --override); 1 config or engine error
+            (incl. a malformed ${AUTONOMY_REL} — the advisory still renders, the exit flips).`;
 
 // ── main ───────────────────────────────────────────────────────────────────────────
 
@@ -390,9 +422,27 @@ export const main = (argv, ctx = {}) => {
     const slots = resolveAllSlots({ activity, config, detection, overrides });
     const warnings = [...detectWarnings, ...collectWarnings(slots)];
     const plans = plansInFlight(cwd);
+    // The autonomy facts (AD-044 Plan 4): resolved levels + red-lines from the policy file. A
+    // malformed policy renders LOUDLY in the block AND flips the exit to 1 (config error) — the
+    // recipes and contracts still print, only the code changes.
+    const autonomy = (() => {
+      try {
+        const { config: autonomyConfig, source } = loadAutonomy(cwd, readFile, lstat);
+        const resolved = resolveAutonomy(autonomyConfig);
+        // Structural seed detection (shared predicate) — a declared-defaults policy reads as
+        // "from docs/ai/autonomy.json", never as the seed (codex, Segment B closing).
+        const defaultsEquivalent = source !== 'none' && isSparseSeedConfig(autonomyConfig);
+        return { source, defaultsEquivalent, ...resolved };
+      } catch (err) {
+        return { error: (err && err.message) || String(err) };
+      }
+    })();
     const stdout = json
-      ? JSON.stringify(buildJson({ activity, section, slots, configSource, warnings, plans }), null, 2)
-      : formatHuman({ activity, section, slots, warnings, plans });
+      ? JSON.stringify(buildJson({ activity, section, slots, configSource, warnings, plans, autonomy }), null, 2)
+      : formatHuman({ activity, section, slots, warnings, plans, autonomy });
+    if (autonomy?.error) {
+      return { code: 1, stdout, stderr: `procedures: malformed ${AUTONOMY_REL} — ${autonomy.error}` };
+    }
     return { code: 0, stdout, stderr: '' };
   } catch (err) {
     return { code: err.exitCode ?? 1, stdout: '', stderr: `procedures: ${err.message}` };

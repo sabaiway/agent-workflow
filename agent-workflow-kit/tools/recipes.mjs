@@ -14,6 +14,8 @@
 // orchestrator (the main agent) executes it via the bridge skills and always makes the single commit;
 // a backend is advisory or delegated, never autonomous. Dependency-free, Node >= 18.
 
+import { existsSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 // The host-level bridge-settings snapshot (fact-only, best-effort). READ-ONLY core only — never the
 // writer — so this read-only advisor never pulls in the atomic-write core.
@@ -296,7 +298,7 @@ export const resolveActivityRecipe = ({ config = {}, readiness = [], activity, s
 // DISPLAY_ALIASES — the ONE alias table the recommendation clause already uses; ordering is the
 // deterministic BACKEND_PRIORITY (codex before agy), independent of detection emission order.
 // Always exactly one line: no part may carry a newline (pinned by tests).
-export const composeStatusLine = (detection, recommendation, settings = null) => {
+export const composeStatusLine = (detection, recommendation, settings = null, autonomy = null) => {
   const backends = [...detection]
     .sort((a, b) => priorityIndex(a.name) - priorityIndex(b.name))
     .map((b) => `${DISPLAY_ALIASES[b.name] ?? b.name} ${b.readiness === READY ? '✓' : '✗'} ${b.readiness}`)
@@ -308,7 +310,71 @@ export const composeStatusLine = (detection, recommendation, settings = null) =>
   const oneLine = (s) => String(s).replace(/[\s]+/g, ' ').trim();
   const active = settings?.active ?? [];
   const suffix = active.length ? ` · settings: ${active.map((s) => `${oneLine(s.key)}=${oneLine(s.value)}`).join(' · ')}` : '';
-  return base + suffix;
+  // The autonomy segment (AD-044 Plan 4): rendered ONLY when the caller supplies the computed
+  // facts (composeAutonomyFacts) — an omitted param keeps the line byte-identical (the settings-
+  // suffix precedent). Fact-only: effective per-activity levels + the render-sync state; an absent
+  // policy says "computed defaults" honestly; a malformed policy surfaces LOUDLY, never omitted.
+  const autonomySegment = autonomy == null ? '' : ` · autonomy: ${oneLine(formatAutonomySegment(autonomy))}`;
+  return base + suffix + autonomySegment;
+};
+
+// The one-segment autonomy renderer behind composeStatusLine's 4th param.
+const formatAutonomySegment = (a) => {
+  if (a.error) return `MALFORMED policy — ${a.error}`;
+  const levels = Object.entries(a.activities ?? {}).map(([k, v]) => `${k}=${v.autonomy}`).join(', ');
+  const state = a.source === 'none'
+    ? 'computed defaults — no policy file; declare with /agent-workflow-kit set-autonomy'
+    : a.defaultsEquivalent
+      ? 'declared, defaults-equivalent — computed defaults apply; declare levels with /agent-workflow-kit set-autonomy'
+      : `declared; render ${a.renderState}`;
+  return `${levels} (${state})`;
+};
+
+// composeAutonomyFacts(cwd) → the fact object the status/active lines render (AD-044 Plan 4):
+// { source, redlines, activities, renderState } or { error }. Lazy imports — autonomy-config
+// statically imports THIS module (ACTIVITIES) and velocity-profile is heavy, so both load at call
+// time only (the loadConfig precedent). Never throws: a malformed policy becomes { error } so the
+// one-line surfaces render it loudly instead of dying.
+// The policy lives at the PROJECT root; the report-footer invokes the paste surfaces without
+// --cwd, so a subdirectory shell must still find it. Nearest-.git walk-up (dir or worktree file),
+// fs-only — this advisor stays spawn-free; no repo found → the cwd itself (fixture behavior).
+const projectTopOf = (cwd) => {
+  let dir = resolve(cwd);
+  for (;;) {
+    if (existsSync(join(dir, '.git'))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return resolve(cwd);
+    dir = parent;
+  }
+};
+
+export const composeAutonomyFacts = async (cwd) => {
+  try {
+    const root = projectTopOf(cwd);
+    const { loadAutonomy, resolveAutonomy, isSparseSeedConfig } = await import('./autonomy-config.mjs');
+    const { config, source } = loadAutonomy(root);
+    const resolved = resolveAutonomy(config);
+    if (source === 'none') return { source, redlines: resolved.redlines, activities: resolved.activities, renderState: null };
+    // The STRUCTURAL seed (_README only) is a fresh-deployment NORMAL — treating it as "declared"
+    // would report "render DRIFT" on every fresh upgrade (codex, Segment B). An EXPLICIT policy
+    // declaring the default values is a real declaration — its render state IS computed
+    // (structural detection, codex Segment B closing).
+    if (isSparseSeedConfig(config)) {
+      return { source, defaultsEquivalent: true, redlines: resolved.redlines, activities: resolved.activities, renderState: null };
+    }
+    let renderState;
+    try {
+      const { checkAutonomyProfile } = await import('./velocity-profile.mjs');
+      renderState = checkAutonomyProfile({ cwd: root }).inSync
+        ? 'in sync'
+        : 'DRIFT — re-run the velocity --autonomy render';
+    } catch (err) {
+      renderState = `unchecked (${err?.message ?? err})`;
+    }
+    return { source, redlines: resolved.redlines, activities: resolved.activities, renderState };
+  } catch (err) {
+    return { error: err?.message ?? String(err) };
+  }
 };
 
 // ── the one-line ACTIVE-recipe line (the discovery line — configured, never recommended) ───────────
@@ -321,17 +387,21 @@ export const composeStatusLine = (detection, recommendation, settings = null) =>
 // session-start checklist + the handover "Active recipes:" slot paste it verbatim, so no agent composes
 // the configured-recipe facts by hand. `{ config, source }` is exactly what loadConfig returns (source
 // 'none' when no config file exists). Always exactly one line: no part may carry a newline (pinned).
-export const composeActiveRecipeLine = ({ config, source } = {}, detection) => {
+export const composeActiveRecipeLine = ({ config, source } = {}, detection, autonomy = null) => {
   const cells = [];
   for (const [activity, def] of Object.entries(ACTIVITIES)) {
+    // The per-activity autonomy level rides each cell when the caller supplies the facts (AD-044
+    // Plan 4) — an omitted param keeps the line byte-identical (the composeStatusLine precedent).
+    const level = autonomy?.activities?.[activity]?.autonomy;
+    const auto = level ? `; autonomy ${level}` : '';
     for (const slot of Object.keys(def.slots)) {
       const r = resolveActivityRecipe({ config: config ?? {}, readiness: detection, activity, slot });
       const { dispatch } = planRecipe(r.recipe, detection);
       const wrappers = dispatch.map((d) => wrapperCmdFor(d.backend, d.role)).filter(Boolean);
       const srcLabel = r.source === 'config' ? 'configured' : 'computed default';
       const head = r.degradedFrom
-        ? `${activity}.${slot} = ${r.degradedFrom} (${srcLabel}; degrades here to ${r.recipe} — ${r.reason})`
-        : `${activity}.${slot} = ${r.recipe} (${srcLabel})`;
+        ? `${activity}.${slot} = ${r.degradedFrom} (${srcLabel}; degrades here to ${r.recipe} — ${r.reason}${auto})`
+        : `${activity}.${slot} = ${r.recipe} (${srcLabel}${auto})`;
       const suffix =
         wrappers.length >= 2
           ? ` → every backend every round: ${wrappers.join(' + ')}`
@@ -343,14 +413,19 @@ export const composeActiveRecipeLine = ({ config, source } = {}, detection) => {
   }
   const rec = recommendRecipe(detection);
   const origin = source === 'none' || config == null ? 'no config file — computed defaults apply' : `from ${source}`;
-  return `active recipes (${origin}): ${cells.join(' · ')} — the configured recipes above are what runs; readiness-recommended here: ${rec.recipe} (informational)`;
+  // A MALFORMED policy must surface LOUDLY on this paste surface too — silently rendering cells
+  // without levels would hide the required STOP signal (codex R1, Segment B). One line always.
+  const malformed = autonomy?.error
+    ? ` · autonomy: MALFORMED policy — ${String(autonomy.error).replace(/[\s]+/g, ' ').trim()}`
+    : '';
+  return `active recipes (${origin}): ${cells.join(' · ')} — the configured recipes above are what runs; readiness-recommended here: ${rec.recipe} (informational)${malformed}`;
 };
 
 // ── report + CLI ─────────────────────────────────────────────────────────────────
 
 // The structured report behind `--json` — the recipes, the recommendation, a plan per recipe, and
 // (additive) the pasteable one-line backend status composed from the same detection.
-export const buildReport = (detection, settings = null) => {
+export const buildReport = (detection, settings = null, autonomy = null) => {
   const recommendation = recommendRecipe(detection);
   return {
     recipes: RECIPES.map(({ id, title, role, minBackends, degradesTo, summary }) => ({
@@ -363,7 +438,9 @@ export const buildReport = (detection, settings = null) => {
     })),
     recommendation,
     plans: RECIPES.map((r) => planRecipe(r.id, detection)),
-    statusLine: composeStatusLine(detection, recommendation, settings),
+    // The SAME autonomy facts the --status-line surface renders — the --json envelope must never
+    // expose a stale machine-composed status line (codex R1, Segment B).
+    statusLine: composeStatusLine(detection, recommendation, settings, autonomy),
   };
 };
 
@@ -404,10 +481,12 @@ Usage:
 
 Lists the four recipes (Solo / Reviewed / Council / Delegated) and, from the read-only backend
 detector, plans + recommends one for the current environment. --status-line prints exactly ONE
-line — the machine-composed backend-status summary the bootstrap/upgrade reports paste verbatim.
---active-line prints exactly ONE line — the CONFIGURED recipe per activity/slot, resolved from the
-per-project docs/ai/orchestration.json (read from the current directory) + live readiness, with
-degradation stated; paste it verbatim at session start / into the handover "Active recipes:" slot.
+line — the machine-composed backend-status summary the bootstrap/upgrade reports paste verbatim
+(incl. the per-activity autonomy segment: effective levels + render-sync state, honest
+computed-defaults wording when no policy file exists). --active-line prints exactly ONE line — the
+CONFIGURED recipe per activity/slot, resolved from the per-project docs/ai/orchestration.json (read
+from the current directory) + live readiness, with degradation stated and each activity's autonomy
+level beside its cells; paste it verbatim at session start / into the handover "Active recipes:" slot.
 --json emits the structured report (incl. the same line as \`statusLine\`); the three are mutually
 exclusive. Detection only — never writes, never commits, never runs a subscription CLI.`);
     return;
@@ -428,13 +507,13 @@ exclusive. Detection only — never writes, never commits, never runs a subscrip
     // so the config reader is pulled in at run time only — no static import cycle.
     const { loadConfig } = await import('./orchestration-config.mjs');
     try {
-      console.log(composeActiveRecipeLine(loadConfig(process.cwd()), detection));
+      console.log(composeActiveRecipeLine(loadConfig(process.cwd()), detection, await composeAutonomyFacts(process.cwd())));
     } catch (err) {
       console.error(`[agent-workflow-kit] ${err.message}`);
       return err.exitCode ?? 1;
     }
-  } else if (argv.includes('--status-line')) console.log(composeStatusLine(detection, recommendRecipe(detection), settingsSnapshot()));
-  else if (argv.includes('--json')) console.log(JSON.stringify(buildReport(detection, settingsSnapshot()), null, 2));
+  } else if (argv.includes('--status-line')) console.log(composeStatusLine(detection, recommendRecipe(detection), settingsSnapshot(), await composeAutonomyFacts(process.cwd())));
+  else if (argv.includes('--json')) console.log(JSON.stringify(buildReport(detection, settingsSnapshot(), await composeAutonomyFacts(process.cwd())), null, 2));
   else console.log(formatRecipes(detection));
   return 0;
 };

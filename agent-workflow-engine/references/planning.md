@@ -134,3 +134,18 @@ These disciplines keep a plan converging instead of churning, and keep a fold or
 **Convergence heuristic.** When a review round keeps finding code-mechanism issues on a stable architecture, STOP refining prose — either raise the spec to invariant + acceptance altitude, or hand the mechanics to Execute. Do not re-litigate code mechanics in the plan.
 
 **Computed instrument (plan-execution).** The **review-ledger** computes the crossover-stop for the plan-execution (code) loop: each round and each triage classification — **fixable-bug** (a fold pinned by a red→green test) / **inherent-layer-residual** (raised to an acceptance criterion) / **escalate** (a maintainer decision) — is recorded, and the stop decision is READ from the ledger, never remembered; its `--check` is the loop's gate (the exit contract lives in the tool's own header — point, don't restate). The same per-round tally + classification discipline governs plan-authoring review; the ledger itself is plan-execution-scoped.
+
+## 10. Autonomy at the plan checkpoints
+
+The plan lifecycle's human checkpoints — plan **approval** (plan-authoring ends there), each
+**gated commit** (plan-execution commits per Step), and any push/publish ask — are **fixed points
+the autonomy policy never moves** (`orchestration.md` §7). What the per-activity level changes is
+the texture *between* them: under `sandbox` autonomy the executor runs a whole working stretch —
+edits, tests, gates, review dispatches — to the next checkpoint without per-command prompts (the
+OS sandbox confines the blast radius); under `prompt` it asks along the way. **Read the policy at
+session start** (`docs/ai/autonomy.json`; absent → the computed defaults ARE the policy; malformed
+→ STOP loudly) alongside the standing recipe preference, and state the effective level in the
+session's opening summary so the human knows which texture to expect. A plan itself never needs to
+restate the policy — it is per-project configuration, not plan content; a plan names an autonomy
+requirement only when a Step genuinely departs from the declared level (e.g. a consent-gated
+privileged install), and that departure is always an explicit ask, never a silent widening.

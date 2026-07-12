@@ -569,8 +569,9 @@ gated commit, so the round-counter reset is earned, never declared.
   observed-red receipts, quarantined probes. Counts only — interpretation stays with you.
 
 The writer is a SEPARATE tool (review-ledger-write.mjs record/classify/override) — this read-only
-checker never imports it. Human residual: git commit --no-verify, ledger-file editing, and forged
-counts remain possible — a self-discipline mechanism, not a security boundary.
+checker never imports it. Sandbox-safe: runs fully inside an OS sandbox (fs + git reads, no
+network) — the D4 sandbox lane. Human residual: git commit --no-verify, ledger-file editing, and
+forged counts remain possible — a self-discipline mechanism, not a security boundary.
 
 Exit codes: 0 pass (or plain report); 1 check failed or config error (loud); 2 usage.`;
 

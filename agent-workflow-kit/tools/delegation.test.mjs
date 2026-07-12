@@ -93,6 +93,16 @@ describe('detectMemory — decision matrix', () => {
     assert.match(d.reason, /orchestration\.json/);
   });
 
+  // The Plan-3 decision HOLDS (agy R1 blocker, Segment B): detectMemory carries NO autonomy-marker
+  // gate — an old memory missing the autonomy seed stays delegable; the kit-side upgrade ensure +
+  // the family-registry caveat (inform, never gate) cover the stale-memory case instead.
+  it('autonomy.json is NOT a required memory asset — the Plan-3 no-gate decision holds', () => {
+    assert.ok(
+      !REQUIRED_MEMORY_ASSETS.some((a) => String(a.path).includes('autonomy.json')),
+      'the delegation gate must never key on the autonomy seed (inform via the registry caveat instead)',
+    );
+  });
+
   it('required assets use real (references/) paths', () => {
     const paths = REQUIRED_MEMORY_ASSETS.map((a) => a.path);
     assert.ok(paths.includes('references/templates'));

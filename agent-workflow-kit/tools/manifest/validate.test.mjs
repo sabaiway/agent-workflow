@@ -45,6 +45,12 @@ describe('validateManifest — result classes', () => {
     assert.equal(r.result, VALID, r.errors.join('; '));
     assert.deepEqual(r.errors, []);
   });
+
+  it('a well-formed `networkHosts` list (wildcard family + exact hosts) → valid', () => {
+    const r = validateManifest(at('network-hosts-valid'));
+    assert.equal(r.result, VALID, r.errors.join('; '));
+    assert.deepEqual(r.errors, []);
+  });
 });
 
 describe('validateManifest — negative fixtures MUST fail (strict)', () => {
@@ -68,6 +74,11 @@ describe('validateManifest — negative fixtures MUST fail (strict)', () => {
     ['settings-bad-appliesto', /`settings\[0\]`\.appliesTo names "not-a-declared-cmd" which is no roles\.\*\.cmd/],
     ['settings-missing-default', /`settings\[0\]`\.default is required/],
     ['settings-zero-duration', /`settings\[0\]`\.default must be null or a string value that passes the duration validation/],
+    // `networkHosts` (AD-044 Plan 4): entries are pasted verbatim into hand-applied allowlist
+    // lines, so a malformed list fails --strict like `settings` — never a tolerated extra.
+    ['network-hosts-bad-entry', /`networkHosts\[0\]` must be a bare hostname or a \*\.family wildcard/],
+    ['network-hosts-duplicate', /duplicate networkHosts entry "\*\.chatgpt\.com"/],
+    ['network-hosts-empty', /`networkHosts` must be a non-empty array of host strings/],
   ];
   for (const [name, pattern] of mustFail) {
     it(`${name} → invalid`, () => {

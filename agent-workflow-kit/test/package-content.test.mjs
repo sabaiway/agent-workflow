@@ -237,9 +237,12 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 147 = 145 + the Phase-1.5 cosmetic exclude lane (AD-044 Plan 4): tools/sandbox-masks.mjs (the
     //       guarded probe/apply device-mask hider — full-block replace in info/exclude) +
     //       references/modes/sandbox-masks.md (the 24th mode-ref). The *.test.mjs sibling is
-    //       stripped by files[]. (The Plan-4 Segment B additions — recommendations tool + mode doc
-    //       + the autonomy.json template mirror — take this to 150.)
-    assert.equal(packed.length, 147, `tarball file count drifted (${packed.length} ≠ 147)`);
+    //       stripped by files[].
+    // 150 = 147 + the Plan-4 Segment B additions: tools/recommendations.mjs (the read-only upgrade
+    //       Recommendations advisor) + references/modes/recommendations.md (the 25th mode-ref) +
+    //       references/templates/autonomy.json (the sparse defaults-equivalent policy seed, mirrored
+    //       from memory). The *.test.mjs siblings are stripped by files[].
+    assert.equal(packed.length, 150, `tarball file count drifted (${packed.length} ≠ 150)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

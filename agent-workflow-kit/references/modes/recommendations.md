@@ -1,0 +1,14 @@
+### Mode: recommendations
+
+The **read-only deployment advisor** — the deterministic section every `upgrade` run ends with, also invocable on its own. It computes what in THIS deployment is configured sub-optimally (allowlist not seeded, autonomy render drifted, sandbox unavailable, gates undeclared, bridge friction, sandbox-mask clutter) and renders each item as **{what is sub-optimal · the benefit in ONE plain line · the exact consent-gated apply one-liner}**. The tool computes; **you paste the section VERBATIM** (the `composeStatusLine` precedent) — you compose nothing factual.
+
+Run `node ${CLAUDE_SKILL_DIR}/tools/recommendations.mjs --cwd <project-root> [--json]`:
+
+1. **`--cwd` is REQUIRED** — the target project is explicit, never inferred from the shell's current directory (a subdirectory invocation still advises on the named root).
+2. **Paste the whole rendered section verbatim**, starting at its `## Recommendations (agent-workflow)` header. It renders **present-even-when-empty**: with everything optimal the body is exactly `no recommendations — flow optimal.` A failed probe renders as a stated `⚠ skipped item …` line — never a crash, never a fabricated item.
+3. **The apply-through-agent lane (consent-first):** after pasting, OFFER to apply; the user picks items in plain language; you run **EXACTLY the rendered one-liners — no improvisation** (each writer keeps its own consent semantics: previews, `--apply` flags, refusals). An item marked **HAND-APPLY** (the network-allowlist item) is **never run by you and never written by the kit** — the user pastes it by hand if they accept the stated risk; the hosts come from each bridge's `capability.json` `networkHosts` (the single documentation source).
+4. Benefit lines are frozen tool data, fact-true: the dual velocity+security wording (`safer — blast radius bounded by the OS sandbox, not human attention`) rides ONLY the items with a real security delta (the autonomy render, the sandbox provisioning); the bridge-wrappers item claims **velocity only**, and risk-bearing items state their risk in the same line.
+
+**Invariants:** read-only (never writes, never commits, never runs a subscription CLI) · `--cwd` required · present-even-when-empty · probe failures degrade to stated skip lines · apply one-liners are cwd-independent (absolute tool paths + a pinned `--cwd`; the sandbox-provision item pins via a `cd <root> &&` prefix — the doctor reads its cwd; the ONE exception is the `set-autonomy` item, a conversational skill invocation explicitly labeled *run IN the target project*) · the kit never seeds `sandbox.network.allowedDomains` / `sandbox.filesystem.allowWrite` (hand-apply territory, risk stated).
+
+**Exit codes:** `0` report rendered (items or the empty state); `1` error (e.g. `--cwd` is not a directory); `2` usage.

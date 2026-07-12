@@ -84,6 +84,9 @@ const USAGE = [
   'In --record mode the unit-tests gate is CREDITED (not re-spawned) when it is the FIRST declared gate',
   'AND the fold-completeness runner already ran that EXACT command green at the current tree',
   '(fingerprint-bound + exit-0 + cmd-identity); positioned after another gate, it always re-spawns.',
+  'Sandbox-safe: the runner itself needs no network and writes only repo-local state — the D4 sandbox',
+  'lane; each DECLARED gate command is the project\'s own, so ITS sandbox-safety is command-shape',
+  'dependent (first try the sandbox-safe shape — cache under $TMPDIR, offline/notifier off).',
   `Exit codes: 0 ok · 1 gate failure · 2 usage · 3 missing declaration · 4 empty gates list ·`,
   '5 malformed/invalid declaration · 6 bash unavailable · 7 --record asked but the record failed.',
 ].join('\n');

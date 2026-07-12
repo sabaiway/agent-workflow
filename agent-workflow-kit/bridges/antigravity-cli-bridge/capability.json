@@ -49,6 +49,7 @@
       "effect": "1 ⇒ an oversized code review offloads the change set to a private --add-dir staging dir (re-enables the Issue-001 stall risk; the hard timeout bounds it). Default 0: an oversized prompt refuses instead."
     }
   ],
+  "networkHosts": ["*.googleapis.com", "accounts.google.com", "antigravity-unleash.goog"],
   "detect": {
     "installed": {
       "env": "ANTIGRAVITY_CLI_BRIDGE_DIR",

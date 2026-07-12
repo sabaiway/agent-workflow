@@ -26,6 +26,7 @@ import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { detectBackends } from './detect-backends.mjs';
 import { resolveActivityRecipe, composeActiveRecipeLine } from './recipes.mjs';
+import { loadAutonomy, resolveAutonomy } from './autonomy-config.mjs';
 import {
   CONFIG_REL,
   fail,
@@ -208,7 +209,18 @@ export const main = (argv, ctx = {}) => {
     validateConfig(after); // defensive re-validate immediately before the write
     const { writtenPath } = writeConfig(cwd, after, ctx);
     const fileBody = serializeConfig(after);
-    const activeLine = composeActiveRecipeLine({ config: after, source: CONFIG_REL }, detection);
+    // The echoed handover line carries the SAME autonomy levels recipes --active-line renders —
+    // sync facts (no render-check needed for the cells; codex R1, Segment B). A malformed policy
+    // surfaces loudly through the line's own MALFORMED segment.
+    const autonomyFacts = (() => {
+      try {
+        const { config: autonomyConfig, source } = loadAutonomy(cwd, ctx.readFileSync ?? readFileSync, ctx.lstatSync ?? lstatSync);
+        return { source, ...resolveAutonomy(autonomyConfig) };
+      } catch (err) {
+        return { error: (err && err.message) || String(err) };
+      }
+    })();
+    const activeLine = composeActiveRecipeLine({ config: after, source: CONFIG_REL }, detection, autonomyFacts);
     const stdout = json
       ? JSON.stringify(buildJson({ changed, unchanged, warnings, writtenPath, noop: false, activeLine }), null, 2)
       : formatHuman({ changed, unchanged, warnings, wrote: true, fileBody, activeLine });

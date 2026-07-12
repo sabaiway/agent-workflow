@@ -111,4 +111,17 @@ describe('planning.md — right-altitude/code-grounded canon', () => {
       assert.ok(section9.includes(token), `§9 carries the classification token "${token}"`);
     }
   });
+
+  // AD-044 Plan 4: the trailing §10 — autonomy at the plan checkpoints. Appended, never
+  // renumbering; the checkpoints are FIXED and the policy only changes the texture between them.
+  it('carries the trailing §10 autonomy-at-checkpoints canon (AD-044 Plan 4)', () => {
+    const flat = sectionOf(planning, /^## 10\..*$/im).replace(/\s+/g, ' ');
+    assert.match(flat, /Autonomy at the plan checkpoints/i);
+    assert.match(flat, /fixed points the autonomy policy never moves/i, 'the checkpoints never move');
+    assert.match(flat, /orchestration\.md.*§7/, 'points at the orchestration §7 policy canon, never restates it');
+    assert.match(flat, /Read the policy at session start/i, 'the read-at-start clause');
+    assert.match(flat, /computed defaults ARE the policy/i, 'absent-file semantics');
+    assert.match(flat, /never needs to restate the policy/i, 'a plan never restates per-project configuration');
+    assert.match(flat, /explicit ask, never a silent widening/i, 'a departure from the level is an explicit ask');
+  });
 });

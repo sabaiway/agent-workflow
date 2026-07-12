@@ -28,6 +28,11 @@ single project's stages.
 project's standing recipe preference in `docs/ai/orchestration.json` (set it in plain language with
 `/agent-workflow-kit set-recipe` — it previews then writes; hand-editing the file stays supported); the
 kit resolves it against backend readiness. Do not re-ask each session what is already configured there.
+Read the **autonomy policy** the same way and at the same moment: `docs/ai/autonomy.json` declares the
+red-lines and the per-activity autonomy level (absent → the computed defaults ARE the policy; malformed
+→ STOP loudly, never guess; set it with `/agent-workflow-kit set-autonomy`) — the per-activity
+procedures below run UNDER that policy (`orchestration.md` §7), and the kit's `procedures` advisor
+prints the resolved level beside each activity's recipes.
 
 **Communication contract.** Every user-facing message delivers the artifact **inline** — the plan, the
 next-session prompt, the diff, the value asked for — never a bare pointer ("see §X / open the file") as a

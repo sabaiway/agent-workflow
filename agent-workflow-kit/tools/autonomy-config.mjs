@@ -236,6 +236,15 @@ export const resolveAutonomy = (config) => {
   return { redlines, activities };
 };
 
+// isSparseSeedConfig(config) → true when the policy file is STRUCTURALLY the deploy seed: meta keys
+// only (`_README` today) — no red-lines section, no activity entry. Seed detection must be
+// structural, never resolved-equality: an EXPLICIT policy that declares exactly the default values
+// is a real DECLARATION (its render — the red-line ask rules included — must not be suppressed as
+// "just the seed"), while the seed declares nothing (codex, Segment B closing). Shared by every
+// autonomy read surface (advisor / recipes / procedures / grounding) so the four can never diverge.
+export const isSparseSeedConfig = (config) =>
+  isJsonObject(config) && Object.keys(config).every((k) => k.startsWith('_'));
+
 // ── pure merge + canonical serialization ────────────────────────────────────────────
 
 // A pure deep-equal over the JSON-ish policy shape (plain objects + string values). Used only for the
@@ -288,9 +297,10 @@ export const serializeAutonomy = (config) => {
 
 // ── the canonical seed (Decision 5) ──────────────────────────────────────────────────
 // AUTONOMY_README is the onboarding note; SEED_AUTONOMY is the Decision-5 fixture the set-autonomy
-// writer seeds and the config tests copy/validate verbatim. Plan 1 ships NO references/templates/
-// autonomy.json and NO template-parity test (both Plan 4) — SEED_AUTONOMY's Plan-1 consumers are the
-// autonomy-config tests and the render's "seed one first" guidance.
+// WRITER seeds (opinionated sandbox levels) and the config tests copy/validate verbatim. DISTINCT
+// from the Plan-4 deploy template `references/templates/autonomy.json` (bootstrap/upgrade ensure):
+// that seed is SPARSE — `_README` only, defaults-equivalent by the template-parity pin
+// (resolveAutonomy(template) ≡ resolveAutonomy(null)) — so deploying it never changes behavior.
 export const AUTONOMY_README =
   'Per-project autonomy policy: red-lines (always) + per-activity autonomy level. Hand-editable; or ' +
   'use the set-autonomy writer (previews, then writes valid JSON). Strict JSON — no comments.';

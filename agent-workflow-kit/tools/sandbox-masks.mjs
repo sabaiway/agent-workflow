@@ -15,16 +15,16 @@
 //                 SAME class set as the review-domain filter) are ever candidates; tracked /
 //                 regular / directory / symlink / gitlink / missing paths can never enter the
 //                 block by construction. The probe also REVALIDATES the existing fenced entries
-//                 and loudly flags any that became a REAL path (delete that line before creating
-//                 the real file — exclude hides it from `git status`, NOT from `git add`, and
-//                 `.git/info/exclude` never warns). No standing detector: the flags ride probe runs.
+//                 and loudly flags any that became a REAL path (delete that line first — an
+//                 excluded real file is silently skipped by bulk staging, `git add -A`/`git add .`,
+//                 and `.git/info/exclude` never warns). No standing detector: the flags ride probe runs.
 //   --apply       consent-gated FULL-BLOCK REPLACE from a fresh derivation (stale masks drop by
 //                 construction — never append-only). An apply whose derivation is EMPTY while a
 //                 non-empty block exists (e.g. accidentally run outside the sandbox) REFUSES
 //                 unless --clear is also given; an empty derivation with no existing block
 //                 reports "0 masks visible" and no-ops.
-//   --clear       (only with --apply) allow the full-block replace to EMPTY — i.e. remove the
-//                 managed block entirely.
+//   --clear       (only with --apply) remove the managed block entirely. Takes PRECEDENCE over
+//                 the derivation — with masks still visible the block is removed, never re-written.
 //
 // Writes ONLY its own fenced block in the file `git rev-parse --git-path info/exclude` names —
 // never .gitignore, never a global excludesFile, never outside the fence. The fence is SEPARATE
@@ -127,8 +127,8 @@ const patternToRel = (line) => {
 };
 
 // Revalidate the CURRENT fence body against the disk: an entry whose path now exists as anything
-// OTHER than a never-committable class is a STALE-REAL flag — the D5 watch (exclude hides it from
-// `git status`, not from `git add`; delete the line before creating the real file).
+// OTHER than a never-committable class is a STALE-REAL flag — the D5 watch (a real file at an
+// excluded path is silently skipped by bulk staging; delete the line before trusting git with it).
 export const revalidateFence = (bodyLines, { root, lstat = lstatSync } = {}) => {
   const staleReal = [];
   for (const line of bodyLines) {
@@ -201,22 +201,41 @@ export const probeSandboxMasks = ({ cwd = process.cwd(), lstat = lstatSync, list
   return { root, excludeFile, gitCommonDir, content, lines, fence, masks, unrenderable, staleReal, applyCmd };
 };
 
+// needsMasksApply(probe) → whether the CURRENT derivation diverges from the fenced block — the
+// Recommendations advisor's fire condition (Phase 3, AD-044 Plan 4). True when any fenced entry
+// became a real path (stale-real), or when visible masks exist and the derived set ≠ the fenced
+// set. A malformed fence is NOT an apply item (the apply would fail closed — it needs a hand fix,
+// which the probe render itself flags loudly). Pure over the probe result.
+export const needsMasksApply = (probe) => {
+  if (probe == null) return false;
+  if (probe.staleReal.length > 0) return true;
+  if (probe.fence.state === 'malformed') return false;
+  const fenced = probe.fence.state === 'ok' ? probe.fence.body.map(patternToRel).filter((r) => r != null) : [];
+  return probe.masks.length > 0 && [...probe.masks].sort().join('\0') !== [...fenced].sort().join('\0');
+};
+
 // ── the apply plan (pure: probe → new file content or a refusal) ───────────────────
 
 export const planApply = (probe, { clear = false } = {}) => {
   if (probe.fence.state === 'malformed') {
     return { action: 'refuse', reason: `malformed managed block in ${probe.excludeFile} (${probe.fence.reason}) — fix it by hand; the file was left unchanged` };
   }
+  // --clear takes PRECEDENCE over the derivation (codex, Segment-A receipt): it means "remove the
+  // managed block", even while masks are visible — re-writing the block instead of the requested
+  // clear would be a silent divergence. An EMPTY fence (markers, no entries) clears too (codex R8);
+  // no fence at all is a stated no-op.
+  if (clear && probe.fence.state !== 'ok') {
+    return { action: 'noop', reason: 'no managed block present — nothing to clear' };
+  }
   const hasBlock = probe.fence.state === 'ok' && probe.fence.body.some((l) => patternToRel(l) != null);
-  if (probe.masks.length === 0 && hasBlock && !clear) {
+  if (!clear && probe.masks.length === 0 && hasBlock) {
     return { action: 'refuse', reason: '0 masks visible but a non-empty managed block exists — you are probably OUTSIDE the sandbox (the masks are in-sandbox only). Re-run inside the sandbox, or pass --apply --clear to intentionally remove the block' };
   }
-  // A zero-mask run is a no-op UNLESS --clear can still remove an existing fence — an EMPTY
-  // managed block (markers with no entries) must be clearable too (codex R8).
-  if (probe.masks.length === 0 && !hasBlock && !(clear && probe.fence.state === 'ok')) {
+  if (!clear && probe.masks.length === 0 && !hasBlock) {
     return { action: 'noop', reason: '0 masks visible (outside the sandbox or clean) — nothing to write' };
   }
-  const block = probe.masks.length === 0 ? [] : [MASKS_FENCE_START, ...probe.masks.map(toExcludePattern), MASKS_FENCE_END];
+  const masks = clear ? [] : probe.masks;
+  const block = masks.length === 0 ? [] : [MASKS_FENCE_START, ...masks.map(toExcludePattern), MASKS_FENCE_END];
   // EVERY hand byte outside the managed fence is preserved EXACTLY (codex R5+R6): the first-apply
   // append adds at most ONE separator newline, and the existing-block replace splices via RAW
   // string offsets around the fence lines — a split/join('\n') rebuild would silently normalize
@@ -233,7 +252,7 @@ export const planApply = (probe, { clear = false } = {}) => {
     const head = probe.content === '' ? '' : probe.content.endsWith('\n') ? probe.content : `${probe.content}\n`;
     content = `${head}${rendered}`;
   }
-  return { action: probe.masks.length === 0 ? 'cleared' : 'replaced', content, count: probe.masks.length };
+  return { action: masks.length === 0 ? 'cleared' : 'replaced', content, count: masks.length };
 };
 
 // ── rendering ───────────────────────────────────────────────────────────────────────
@@ -248,13 +267,17 @@ const formatProbe = (probe) => {
   lines.push(`  masks visible now: ${probe.masks.length === 0 ? '0 (outside the sandbox or clean)' : ''}`);
   for (const m of probe.masks) lines.push(`    · ${m}`);
   for (const rel of probe.staleReal) {
-    lines.push(`  ⚠ fenced entry became a REAL path: ${rel} — delete its line from the managed block BEFORE creating the real file (exclude hides it from git status, NOT from git add; .git/info/exclude never warns)`);
+    lines.push(`  ⚠ fenced entry became a REAL path: ${rel} — delete its line from the managed block BEFORE relying on git for this path: an excluded real file is silently skipped by bulk staging (git add -A / git add .), so it stays OUT of your commits, and an explicit git add refuses it without -f; .git/info/exclude never warns`);
   }
   for (const rel of probe.unrenderable) {
     lines.push(`  ⚠ mask name carries a newline or ends with a tab and cannot be expressed as ONE exclude rule — NOT written (the review domain already ignores the mask itself): ${JSON.stringify(rel)}`);
   }
+  // A stale-real-only fence (empty derivation over a non-empty block) makes the plain --apply
+  // REFUSE — the rendered one-liner must be the form planApply actually accepts (--clear), the
+  // same rule the Recommendations item applies (codex terminal).
+  const applyLine = probe.masks.length === 0 && probe.staleReal.length > 0 ? `${probe.applyCmd} --clear` : probe.applyCmd;
   lines.push('', probe.masks.length > 0 || probe.fence.state === 'ok'
-    ? `  apply (consent-gated, full-block replace): ${probe.applyCmd}`
+    ? `  apply (consent-gated, full-block replace): ${applyLine}`
     : '  nothing to apply.');
   return lines.join('\n');
 };
@@ -271,8 +294,11 @@ from \`git status\` via one managed fenced block in \`git rev-parse --git-path i
 Only that block is ever written — never .gitignore, never a global excludesFile. --apply REPLACES
 the whole block from a fresh derivation (stale masks drop by construction); an EMPTY derivation
 over a non-empty block refuses unless --clear is given (you are probably outside the sandbox).
-Watch note: exclude hides a path from git status, NOT from git add — the probe flags any fenced
-entry that became a real path; delete that line before creating the real file.
+--clear always means REMOVE the managed block — it takes precedence over the derivation.
+Watch note: an exclude rule hides a path from git status AND from bulk staging — a real file at
+an excluded path is silently skipped by \`git add -A\`/\`git add .\` (explicit \`git add\` refuses
+without -f), so it would stay out of your commits. The probe flags any fenced entry that became a
+real path; delete that line first.
 
 Exit codes: 0 ok (probe / applied / no-op); 1 refusal or error (loud); 2 usage.`;
 
