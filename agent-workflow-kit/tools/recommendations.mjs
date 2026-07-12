@@ -48,7 +48,7 @@ import { surveyFamily, surveyGateHook } from './family-registry.mjs';
 import { probeSandboxMasks, needsMasksApply } from './sandbox-masks.mjs';
 import { shellQuoteArg } from './review-state.mjs';
 import { loadConfig } from './orchestration-config.mjs';
-import { DEFAULT_BUNDLE_ROOT, SETTINGS_FILENAME, settingsPath, parseSettings } from './bridge-settings-read.mjs';
+import { DEFAULT_BUNDLE_ROOT, SETTINGS_FILENAME, settingsPath, parseSettings, duplicateKeys } from './bridge-settings-read.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const toolPath = (rel) => join(HERE, rel);
@@ -260,6 +260,9 @@ const probeAgyAdddir = ({ deps, add, skip }) => {
     const env = deps.getenv ?? process.env;
     if (env.AGY_REVIEW_ALLOW_ADDDIR != null) {
       if (isValidBool(env.AGY_REVIEW_ALLOW_ADDDIR)) return; // an explicit valid env choice — respected
+      // A SET-BUT-EMPTY env var is the wrapper's opt-out shape (${!key+x}: it shadows the file
+      // and falls back to the built-in refuse default) — a user CHOICE, never nagged (codex).
+      if (env.AGY_REVIEW_ALLOW_ADDDIR === '') return;
       // env > file: while ANY env value is set the wrapper ignores the settings file, so the file
       // writer cannot fix an invalid env — the honest apply is to fix/unset the env var (codex).
       add('agy-adddir', `AGY_REVIEW_ALLOW_ADDDIR is set to an INVALID value (${JSON.stringify(env.AGY_REVIEW_ALLOW_ADDDIR)}) — the wrapper falls back to refuse-mode and the settings file is shadowed while the env var is set`, 'HAND-APPLY: unset AGY_REVIEW_ALLOW_ADDDIR in the environment (or export it as 1), THEN configure it durably via the bridge-settings writer');
@@ -279,7 +282,15 @@ const probeAgyAdddir = ({ deps, add, skip }) => {
     const fileEntries = parsed.byKey.get('AGY_REVIEW_ALLOW_ADDDIR');
     const fileValue = fileEntries?.length ? fileEntries[fileEntries.length - 1].value : null;
     if (fileValue != null && isValidBool(fileValue)) return; // env is absent here — a valid file value governs
-    add('agy-adddir', `agy-review is placed but AGY_REVIEW_ALLOW_ADDDIR is not set (${SETTINGS_FILENAME}) — an oversized code review refuses instead of offloading`, `node ${q(toolPath('bridge-settings.mjs'))} --set AGY_REVIEW_ALLOW_ADDDIR=1 --apply`);
+    // The settings writer REFUSES a duplicate-carrying file — rendering its command would hand
+    // the user a guaranteed failure; the honest apply is fix-duplicates-first (codex terminal).
+    const dups = duplicateKeys(parsed);
+    const what = `agy-review is placed but AGY_REVIEW_ALLOW_ADDDIR is not set (${SETTINGS_FILENAME}) — an oversized code review refuses instead of offloading`;
+    if (dups.length > 0) {
+      add('agy-adddir', what, `HAND-APPLY: ${SETTINGS_FILENAME} carries duplicate key(s) (${dups.join(', ')}) and the settings writer refuses to edit it — remove the duplicate lines by hand, THEN run: node ${q(toolPath('bridge-settings.mjs'))} --set AGY_REVIEW_ALLOW_ADDDIR=1 --apply`);
+      return;
+    }
+    add('agy-adddir', what, `node ${q(toolPath('bridge-settings.mjs'))} --set AGY_REVIEW_ALLOW_ADDDIR=1 --apply`);
   } catch (err) {
     skip('agy-adddir', err);
   }

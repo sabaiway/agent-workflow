@@ -239,6 +239,30 @@ describe('recommendations — item probes over fixtures', () => {
     assert.ok(!explicit.items.some((i) => i.key === 'agy-adddir'), 'an explicit valid 0 is a user CHOICE — never nagged');
   });
 
+  it('an EMPTY env AGY_REVIEW_ALLOW_ADDDIR is the wrapper opt-out shape — never nagged as invalid', () => {
+    // The wrapper's ${!key+x} check: a set-but-empty env var shadows the file and falls back to
+    // the built-in refuse default — an explicit user CHOICE (codex, Segment C opening).
+    const root = makeProject();
+    const deps = hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review', getenv: { AGY_REVIEW_ALLOW_ADDDIR: '' } });
+    const { items } = buildRecommendations({ cwd: root, deps });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!items.some((i) => i.key === 'agy-adddir'), 'an explicit empty-env opt-out is respected');
+  });
+
+  it('a DUPLICATE-carrying bridge-settings file renders fix-duplicates-first HAND-APPLY — never the writer command it would refuse', () => {
+    const root = makeProject();
+    mkdirSync(join(root, '.config', 'agent-workflow'), { recursive: true });
+    writeFileSync(join(root, '.config', 'agent-workflow', 'bridge-settings.conf'), 'CODEX_SERVICE_TIER=priority\nCODEX_SERVICE_TIER=priority\n');
+    const deps = hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review', getenv: { XDG_CONFIG_HOME: join(root, '.config') } });
+    const { items } = buildRecommendations({ cwd: root, deps });
+    rmSync(root, { recursive: true, force: true });
+    const item = items.find((i) => i.key === 'agy-adddir');
+    assert.ok(item, 'the unset knob still fires the item');
+    assert.ok(item.apply.startsWith('HAND-APPLY'), 'the writer command would refuse a duplicate-carrying file — hand-fix first');
+    assert.match(item.apply, /CODEX_SERVICE_TIER/, 'the duplicates are named');
+    assert.match(item.apply, /--set AGY_REVIEW_ALLOW_ADDDIR=1 --apply/, 'the writer line follows the hand-fix');
+  });
+
   it('an EXPLICIT policy declaring exactly the default values is a DECLARATION — the render item still fires', () => {
     // Resolved-equality conflated a declared-defaults policy with the _README-only seed and
     // suppressed the render nudge — but the render carries the red-line ask rules, a real
