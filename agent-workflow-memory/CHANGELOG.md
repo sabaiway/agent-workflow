@@ -4,6 +4,19 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `2.0.0`).
 
+## 2.3.0 — agent_rules template: a report-facts Communication bullet + the writer-batch lens re-render (REPORT-FACTS train, AD-054)
+
+A **feature** release (ships with kit 1.47.0 / engine 1.17.0 / bridges 2.7.0+2.6.0; the deployment
+lineage head stays `2.0.0` — no deployed-`docs/ai` structure change). The bundled `agent_rules.md`
+template gains:
+- **§2.5 Communication — a report-facts bullet.** Any claim about the current host or session state
+  (prompts fired, sandbox scope, whether a bypass was needed, network reachability, approval counts)
+  must trace to **live tool output** from **this session**; a memory/handover snapshot is **context,
+  never report facts**, and an unbacked claim is **omitted or explicitly marked unverified**. The
+  report-facts twin lands in the memory template only (the kit template carries no §2.5 Communication).
+- **§2.6 lens re-render.** The planning/review lens gains the writer-economy clause, kept in parity
+  with the engine lens fragment by the lens-mirror guard.
+
 ## 2.2.0 — agent_rules template re-render: the lens gains the prompt-economy clause (REC-UX-REWORK D7, AD-053)
 
 A **feature** release (ships with kit 1.46.0 / engine 1.16.0; the deployment lineage head stays

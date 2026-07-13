@@ -3,7 +3,7 @@
   "schema": 1,
   "name": "codex-cli-bridge",
   "kind": "execution-backend",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "provides": ["execute", "review"],
   "roles": {
     "execute": {
@@ -24,7 +24,10 @@
           "policy": "guarded",
           "blocked": ["-c*", "--config*", "-s*", "--sandbox*", "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust", "--full-auto", "--oss", "--local-provider*", "-p*", "--profile*", "-m*", "--model*", "-o*", "--output-last-message*", "--json*", "--color*", "--output-schema*", "--ephemeral*"],
           "probeRelaxed": ["--add-dir*", "-C*", "--cd*", "--skip-git-repo-check", "--ignore-rules", "--enable*", "--disable*"]
-        }
+        },
+        "notes": [
+          "nested-sandbox limit: codex-exec ships its OWN OS sandbox (bwrap workspace-write) and cannot run nested inside a harness sandbox (the FS turns read-only) — route it OUTSIDE the harness sandbox (excludedCommands / a per-run consented bypass) on the OBSERVED bwrap/EPERM failure, never a preemptive blanket"
+        ]
       }
     },
     "review": {

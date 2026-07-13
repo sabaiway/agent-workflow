@@ -432,6 +432,8 @@ describe('procedures CLI — cost-lane advisory block (cost-tiered execution): u
     'cheapest adequate executor', 'no named guardrail', 'L0', 'L1', 'L2', 'L3', 'red lines never move',
     'forbidden lane downgrade', 'plain pipeline per call', 'vehicle mandate a host cannot satisfy',
     'stay at the frontier lane', 'no deterministic gate classifies a dispatch',
+    // writer economy (D6 batch verb) + sandbox lanes (host-diff + nested-sandbox honesty), AD-054
+    'one writer call at a time', 'host-diff', 'nested inside a harness sandbox',
   ];
 
   it('PRINTS for a review-backed activity (council) with the canon tokens', () => {
@@ -439,6 +441,15 @@ describe('procedures CLI — cost-lane advisory block (cost-tiered execution): u
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, SENTINEL);
     for (const token of CANON_TOKENS) assert.ok(r.stdout.includes(token), `advisor carries the canon token "${token}"`);
+  });
+
+  it('the advisor RENDERS bridge contract.notes (a typed key that must not silently disappear — AD-054)', () => {
+    // agy review contract note (host-diff) renders under a council review
+    const council = run(['plan-execution', '--override', 'review=council'], { codex: READY, agy: READY });
+    assert.match(council.stdout, /note: pre-dispatch host-diff/, 'agy review contract.notes renders in the advisor');
+    // codex execute contract note (nested-sandbox) renders under delegated execution
+    const delegated = run(['plan-execution', '--override', 'execute=delegated'], { codex: READY, agy: READY });
+    assert.match(delegated.stdout, /note: nested-sandbox limit/, 'codex execute contract.notes renders in the advisor');
   });
 
   it('PRINTS for solo too — the block is UNCONDITIONAL (lanes route every step, review-backed or not)', () => {

@@ -4,6 +4,21 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `2.0.0`).
 
+## 1.17.0 — Prompt-economy canon gains a writer-batch clause + two sandbox-lane sentences (REPORT-FACTS train D5/D6, AD-054)
+
+A **feature** release (ships with kit 1.47.0 / memory 2.3.0 / bridges 2.7.0+2.6.0). The cost-lanes
+canon (`references/orchestration.md` §5) and the agent-rules lens gain:
+- **Writer economy** — a stage's repeated WRITER commands batch into ONE invocation (the review-ledger
+  triad rides one batched write, other stage writers combine via one launcher per stage); never one
+  writer call at a time. Rendered on all three prompt-economy surfaces (orchestration §5, the lens
+  fragment, the kit cost-lanes advisor), the lens re-rendered into both templates, and the outgoing
+  lens body appended to the append-only prior store.
+- **Sandbox lanes** — two sentences under the sandbox-lanes block: (i) a **pre-dispatch host-diff**
+  (before the first dispatch of each bridge, diff its manifest `networkHosts` against the live sandbox
+  allow-list — a missing host is surfaced to the maintainer, never fired into a known prompt); (ii)
+  **nested-sandbox honesty** (a backend CLI shipping its own OS sandbox cannot run nested inside a
+  harness sandbox — route it outside on the OBSERVED failure, never a preemptive blanket).
+
 ## 1.16.0 — Prompt-economy canon: the cost lanes learn autonomy-preserving dispatch (REC-UX-REWORK D7, AD-053)
 
 A **feature** release (ships with kit 1.46.0 / memory 2.2.0). The cost-lanes canon

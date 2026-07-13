@@ -73,6 +73,8 @@ const DISCIPLINE_TOKENS = [
   'vehicle mandate a host cannot satisfy',
   'stay at the frontier lane',
   'no deterministic gate classifies a dispatch',
+  // writer-economy (D6 batch verb, AD-054) — the ledger triad batches, stage writers combine
+  'one writer call at a time',
 ];
 
 // The pre-E4 intro line (the outgoing body differs from the current fragment ONLY by the
@@ -134,11 +136,11 @@ describe('agent-rules-lens-priors — append-only prior store shape', () => {
   });
 
   it('the OUTGOING body of the previous release IS the newest entry — exact normalized equality', () => {
-    // The current fragment differs from the previous release's body by EXACTLY the appended
-    // prompt-economy sentence-suffix on the cost-lanes line (REC-UX-REWORK D7) — so the exact
+    // The current fragment differs from the IMMEDIATELY-previous release's body by EXACTLY the
+    // appended writer-economy sentence-suffix on the cost-lanes line (AD-054) — so the exact
     // expected outgoing body is computable, and a typo in the prior entry goes red instead of
     // sliding past a token spot-check.
-    const outgoing = normalize(fragment.replace(/ \*\*Prompt economy:\*\*[^\n]*/, ''));
+    const outgoing = normalize(fragment.replace(/ \*\*Writer economy:\*\*[^\n]*/, ''));
     assert.notEqual(outgoing, normalize(fragment), 'sanity: the strip actually removes the extension');
     assert.ok(outgoing.includes(CURRENT_INTRO), 'the outgoing body carries the provenance intro (post-E4)');
     assert.equal(priors[priors.length - 1], outgoing, 'the newest prior byte-equals the pre-prompt-economy fragment (normalized)');

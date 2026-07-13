@@ -7,6 +7,28 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-13 — memory 2.3.0 · engine 1.17.0 · kit 1.47.0 · bridges 2.7.0/2.6.0: REPORT-FACTS train — live-fact report contract, batched ledger writer, version-sync wrapper lane, sandbox-lanes canon & bridge contract twins (AD-054)
+
+**Family release** (bridges 2.7.0/2.6.0 ship inside the kit tarball; the deployment lineage head
+stays `2.0.0`). Three top-of-queue items plus this session's own live prompt-defects, fixed
+kit-level for all consumers: a **report-facts contract** binds every report claim about the current
+host/session (prompts, sandbox, bypass, network reachability, approvals) to **live tool output from
+this session** — no live signal → omitted or marked unverified, a snapshot is context not fact
+(single-home clause + point-of-use binding lines + a new contract test); a **`batch` verb** in the
+review-ledger writer collapses a records stage's ~13 writer calls into one two-pass invocation
+(structural preflight with zero writes, then sequential fail-fast, append-only partial-success);
+**version-sync `--bump`** now moves the bridges' `AW_BRIDGE_VERSION` wrapper constant under a closed
+one-anchor rule and the verify pass checks it across all four constants (each wrapper + its kit
+mirror) — dogfooded on this release; both bridges gain a typed **contract `notes[]`** (codex execute
+= the nested-sandbox limit; agy review = the pre-dispatch host-diff) rendered in the advisor and each
+wrapper `--help`, and **`codex-exec.sh` detects the nested-sandbox failure class** (a
+sandbox-mechanism token AND a permission/read-only failure token together) and states a recovery hint
+— route codex-exec outside the harness sandbox ON the observed failure, never a preemptive blanket;
+the **prompt-economy canon** gains a writer-batch clause plus two sandbox-lane sentences (pre-dispatch
+host-diff, nested-sandbox honesty). The velocity bridge-tier stays REVIEW-wrappers-only — delegated
+execution keeps its human prompt. Council on the code: 5 rounds, 14 real codex findings all folded,
+agy shipped R2–R5; full record in AD-054.
+
 ## 2026-07-12 — memory 2.2.0 · engine 1.16.0 · kit 1.46.0: Recommendations UX rework — verdict-first, in the user's language (REC-UX-REWORK, AD-053)
 
 **Family release** (bridges 2.6.0/2.5.0 ship inside the kit tarball; the deployment lineage head

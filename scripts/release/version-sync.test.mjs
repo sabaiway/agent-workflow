@@ -12,6 +12,7 @@ import {
   makeChangelogStubHeading,
   collectSources,
   checkPackage,
+  findBridgeVersionAnchors,
   runCli,
 } from './version-sync.mjs';
 
@@ -46,6 +47,36 @@ const run = (argv, root, extraDeps = {}) => {
   const err = [];
   const code = runCli([...argv, '--root', root], { log: (l) => out.push(l), logError: (l) => err.push(l), ...extraDeps });
   return { code, out, err, text: out.join('\n'), errText: err.join('\n') };
+};
+
+// A review wrapper with the AW_BRIDGE_VERSION anchor; and a sibling wrapper carrying no anchor.
+const SH = (backend, version) => `#!/usr/bin/env bash\nAW_RECEIPT_BACKEND="${backend}"\nAW_BRIDGE_VERSION="${version}"\necho review\n`;
+const NO_ANCHOR_SH = '#!/usr/bin/env bash\necho no version anchor here\n';
+const BACKEND = { 'codex-cli-bridge': 'codex', 'antigravity-cli-bridge': 'agy' };
+
+// Seed a bridge (canonical + byte-identical kit mirror): capability.json + SKILL.md + a
+// bin/<backend>-review.sh carrying the AW_BRIDGE_VERSION anchor, plus the mirror under
+// agent-workflow-kit/bridges/<dir>. Each surface is overridable so a test can inject drift.
+const seedBridge = (root, dir, {
+  cap = '1.2.0', skill = '1.2.0', canonWrapper = '1.2.0', mirrorWrapper = '1.2.0',
+  canonAnchor = true, mirrorAnchor = true, extraCanonSh = null, extraMirrorSh = null,
+} = {}) => {
+  const backend = BACKEND[dir];
+  const wrapperName = `${backend}-review.sh`;
+  seedPackage(root, dir, { pkg: null, changelog: null, cap, skill });
+  const canonBin = join(root, dir, 'bin');
+  mkdirSync(canonBin, { recursive: true });
+  writeFileSync(join(canonBin, wrapperName), canonAnchor ? SH(backend, canonWrapper) : NO_ANCHOR_SH);
+  if (extraCanonSh) writeFileSync(join(canonBin, `${backend}-exec.sh`), extraCanonSh);
+
+  const mirrorDir = join(root, 'agent-workflow-kit', 'bridges', dir);
+  const mirrorBin = join(mirrorDir, 'bin');
+  mkdirSync(mirrorBin, { recursive: true });
+  writeFileSync(join(mirrorDir, 'capability.json'), readFileSync(join(root, dir, 'capability.json')));
+  writeFileSync(join(mirrorDir, 'SKILL.md'), readFileSync(join(root, dir, 'SKILL.md')));
+  writeFileSync(join(mirrorBin, wrapperName), mirrorAnchor ? SH(backend, mirrorWrapper) : NO_ANCHOR_SH);
+  if (extraMirrorSh) writeFileSync(join(mirrorBin, `${backend}-exec.sh`), extraMirrorSh);
+  return { backend, wrapperName, canonBin, mirrorBin, mirrorDir };
 };
 
 describe('source parsers', () => {
@@ -224,20 +255,22 @@ describe('--bump writer — happy path', () => {
     assert.equal(text.match(/RELEASE-STUB/g).length, 1);
   });
 
-  it('a bridge bump writes its 2 canon sources AND re-syncs the kit mirror byte-identical (D5)', () => {
+  it('a bridge bump moves its 2 sources AND the AW_BRIDGE_VERSION wrapper anchor on BOTH the canonical and the kit mirror (D5 + 4.1)', () => {
     const root = makeRoot();
-    const canon = seedPackage(root, 'codex-cli-bridge', { pkg: null, changelog: null });
-    const mirror = join(root, 'agent-workflow-kit', 'bridges', 'codex-cli-bridge');
-    mkdirSync(mirror, { recursive: true });
-    writeFileSync(join(mirror, 'capability.json'), 'stale mirror\n');
-    writeFileSync(join(mirror, 'SKILL.md'), 'stale mirror\n');
+    const canon = join(root, 'codex-cli-bridge');
+    const { canonBin, mirrorBin, mirrorDir, wrapperName } = seedBridge(root, 'codex-cli-bridge');
     const { code, text } = run(['--bump', 'codex=1.3.0'], root, { today: TODAY });
-    assert.equal(code, 0);
-    assert.match(text, /codex-cli-bridge: kit bridge mirror re-synced \(2 file\(s\) changed\)/);
-    for (const file of ['capability.json', 'SKILL.md']) {
-      assert.deepEqual(readFileSync(join(mirror, file)), readFileSync(join(canon, file)), `${file} mirror byte-identical`);
-    }
+    assert.equal(code, 0, text);
+    assert.match(text, /codex-cli-bridge\/bin\/codex-review\.sh: AW_BRIDGE_VERSION 1\.2\.0 → 1\.3\.0/);
+    assert.match(text, /codex-cli-bridge: kit bridge mirror re-synced \(3 file\(s\) changed\)/);
     assert.match(readFileSync(join(canon, 'capability.json'), 'utf8'), /"version": "1\.3\.0"/);
+    // The wrapper anchor moved on BOTH constants — the canonical wrapper and its kit mirror.
+    assert.match(readFileSync(join(canonBin, wrapperName), 'utf8'), /AW_BRIDGE_VERSION="1\.3\.0"/);
+    assert.match(readFileSync(join(mirrorBin, wrapperName), 'utf8'), /AW_BRIDGE_VERSION="1\.3\.0"/, 'the mirror wrapper moved via syncBridgeMirror');
+    for (const rel of ['capability.json', 'SKILL.md', `bin/${wrapperName}`]) {
+      assert.deepEqual(readFileSync(join(mirrorDir, rel)), readFileSync(join(canon, rel)), `${rel} mirror byte-identical`);
+    }
+    assert.equal(checkPackage(root, 'codex-cli-bridge').inSync, true, 'the bridge verify converges — wrapper + mirror included');
   });
 
   it('repair: a source already at the target is skipped with a stated note; only lagging sources written', () => {
@@ -301,6 +334,205 @@ describe('writeSkillMetadataVersion mirrors the reader scoping (decoy-proof)', (
     const afterDedent = `---\nmetadata:\n  version: 2.3.4\nother:\n  version: 8.8.8\n---\nbody 9.9.9\n`;
     assert.equal(writeSkillMetadataVersion(afterDedent, '3.0.0'), `---\nmetadata:\n  version: 3.0.0\nother:\n  version: 8.8.8\n---\nbody 9.9.9\n`);
     assert.equal(writeSkillMetadataVersion('no frontmatter\nversion: 1.0.0', '3.0.0'), null);
+  });
+});
+
+// ── the AW_BRIDGE_VERSION wrapper constant lane (Phase 4 — the AD-053 drift class) ──────
+// The wrapper's OWN receipt-emits-the-manifest-version pin lives in the bridge bin tests
+// (codex-review.test.mjs / agy-review.test.mjs) — cited, never duplicated here. This block owns the
+// version-sync side: the bump moves the anchor + the verify catches its drift (canonical + mirror).
+describe('the AW_BRIDGE_VERSION wrapper constant lane (Phase 4)', () => {
+  it('a fully-synced bridge (wrapper + kit-mirror anchors == base) is in sync', () => {
+    const root = makeRoot();
+    seedBridge(root, 'codex-cli-bridge');
+    const report = checkPackage(root, 'codex-cli-bridge');
+    assert.equal(report.inSync, true, report.problems.join('; '));
+  });
+
+  it('a CANONICAL wrapper drift reds verify, naming the file and both values', () => {
+    const root = makeRoot();
+    seedBridge(root, 'codex-cli-bridge', { canonWrapper: '1.1.0' });
+    const report = checkPackage(root, 'codex-cli-bridge');
+    assert.equal(report.inSync, false);
+    assert.ok(report.problems.some((p) => /codex-cli-bridge\/bin\/codex-review\.sh: AW_BRIDGE_VERSION 1\.1\.0 ≠ 1\.2\.0/.test(p)), report.problems.join('; '));
+  });
+
+  it('a MIRROR-ONLY wrapper drift also reds verify (the AD-053 defect spanned the mirror too)', () => {
+    const root = makeRoot();
+    seedBridge(root, 'codex-cli-bridge', { mirrorWrapper: '1.1.0' });
+    const report = checkPackage(root, 'codex-cli-bridge');
+    assert.equal(report.inSync, false);
+    assert.ok(report.problems.some((p) => /agent-workflow-kit\/bridges\/codex-cli-bridge\/bin\/codex-review\.sh: AW_BRIDGE_VERSION 1\.1\.0/.test(p)), report.problems.join('; '));
+  });
+
+  it('a MISSING anchor reds verify (expected exactly one, found 0)', () => {
+    const root = makeRoot();
+    seedBridge(root, 'codex-cli-bridge', { canonAnchor: false });
+    const report = checkPackage(root, 'codex-cli-bridge');
+    assert.equal(report.inSync, false);
+    assert.ok(report.problems.some((p) => /codex-cli-bridge\/bin\/\*\.sh: expected EXACTLY ONE AW_BRIDGE_VERSION anchor, found 0/.test(p)), report.problems.join('; '));
+  });
+
+  it('a DUPLICATE anchor across two bin/*.sh reds verify (found 2)', () => {
+    const root = makeRoot();
+    seedBridge(root, 'codex-cli-bridge', { extraCanonSh: SH('codex', '1.2.0') });
+    const report = checkPackage(root, 'codex-cli-bridge');
+    assert.equal(report.inSync, false);
+    assert.ok(report.problems.some((p) => /found 2/.test(p)), report.problems.join('; '));
+  });
+
+  it('findBridgeVersionAnchors counts one entry per anchor OCCURRENCE (two in ONE file are not undercounted to 1)', () => {
+    const root = makeRoot();
+    const bin = join(root, 'codex-cli-bridge', 'bin');
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, 'codex-review.sh'), '#!/usr/bin/env bash\nAW_BRIDGE_VERSION="1.2.0"\nAW_BRIDGE_VERSION="1.3.0"\n');
+    assert.equal(findBridgeVersionAnchors(join(root, 'codex-cli-bridge')).length, 2);
+  });
+
+  it('a multi-.sh bridge bump changes ONLY the anchored review wrapper; a sibling bin/*.sh is byte-identical', () => {
+    const root = makeRoot();
+    const { canonBin } = seedBridge(root, 'codex-cli-bridge', { extraCanonSh: NO_ANCHOR_SH, extraMirrorSh: NO_ANCHOR_SH });
+    const execBefore = readFileSync(join(canonBin, 'codex-exec.sh'), 'utf8');
+    assert.equal(run(['--bump', 'codex=1.3.0'], root, { today: TODAY }).code, 0);
+    assert.match(readFileSync(join(canonBin, 'codex-review.sh'), 'utf8'), /AW_BRIDGE_VERSION="1\.3\.0"/);
+    assert.equal(readFileSync(join(canonBin, 'codex-exec.sh'), 'utf8'), execBefore, 'the non-anchored sibling wrapper is untouched');
+  });
+
+  it('a MISSING-anchor bump refuses with ZERO writes across every target (a co-bumped npm package + the mirror untouched)', () => {
+    const root = makeRoot();
+    const kit = seedPackage(root, 'agent-workflow-kit');
+    const { mirrorBin, wrapperName } = seedBridge(root, 'codex-cli-bridge', { canonAnchor: false });
+    const kitPkgBefore = readFileSync(join(kit, 'package.json'), 'utf8');
+    const mirrorBefore = readFileSync(join(mirrorBin, wrapperName), 'utf8');
+    const { code, errText } = run(['--bump', 'kit=1.3.0', '--bump', 'codex=1.3.0'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /found 0 — refusing the bump/);
+    assert.equal(readFileSync(join(kit, 'package.json'), 'utf8'), kitPkgBefore, 'global preflight: the co-bumped kit saw zero writes');
+    assert.equal(readFileSync(join(mirrorBin, wrapperName), 'utf8'), mirrorBefore, 'the mirror wrapper is untouched (refusal precedes syncBridgeMirror)');
+  });
+
+  it('a DUPLICATE-anchor bump refuses with ZERO writes (found 2)', () => {
+    const root = makeRoot();
+    const { canonBin, wrapperName } = seedBridge(root, 'codex-cli-bridge', { extraCanonSh: SH('codex', '1.2.0') });
+    const reviewBefore = readFileSync(join(canonBin, wrapperName), 'utf8');
+    const { code, errText } = run(['--bump', 'codex=1.3.0'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /found 2 — refusing the bump/);
+    assert.equal(readFileSync(join(canonBin, wrapperName), 'utf8'), reviewBefore, 'zero writes on the duplicate-anchor refusal');
+  });
+
+  it('a non-bridge (npm) bump never fires the wrapper lane — a stray bin/*.sh is ignored', () => {
+    const root = makeRoot();
+    seedPackage(root, 'agent-workflow-kit');
+    const bin = join(root, 'agent-workflow-kit', 'bin');
+    mkdirSync(bin, { recursive: true });
+    const strayBefore = '#!/usr/bin/env bash\nAW_BRIDGE_VERSION="9.9.9"\n';
+    writeFileSync(join(bin, 'stray.sh'), strayBefore);
+    const { code, text } = run(['--bump', 'kit=1.3.0'], root, { today: TODAY });
+    assert.equal(code, 0);
+    assert.ok(!/AW_BRIDGE_VERSION/.test(text), 'the wrapper lane never fires for an npm package');
+    assert.equal(readFileSync(join(bin, 'stray.sh'), 'utf8'), strayBefore, 'the stray bin/*.sh is untouched');
+  });
+
+  it('R1 fold: the wrapper-drift message names capability.json (the true comparison source), never a misleading "authoritative" label', () => {
+    const root = makeRoot();
+    seedBridge(root, 'codex-cli-bridge', { canonWrapper: '1.1.0' });
+    const drift = checkPackage(root, 'codex-cli-bridge').problems.find((p) => /AW_BRIDGE_VERSION 1\.1\.0/.test(p));
+    assert.ok(drift, 'the drift is reported');
+    assert.match(drift, /\(capability\.json\)$/, 'the message names capability.json as the compared source');
+    assert.doesNotMatch(drift, /authoritative capability\.json/, 'no misleading "authoritative capability.json" label');
+  });
+
+  it('R2 fold: a SHADOWING assignment (a canonical anchor + a later malformed one) is caught — anchors count BOTH, bump AND verify red', () => {
+    const root = makeRoot();
+    const { canonBin, wrapperName } = seedBridge(root, 'codex-cli-bridge');
+    // Append a second, non-canonical assignment: bash uses the LAST, so the receipt would drift — the
+    // check must count EVERY assignment, not only well-formed ones.
+    writeFileSync(join(canonBin, wrapperName), `${readFileSync(join(canonBin, wrapperName), 'utf8')}AW_BRIDGE_VERSION=9.9.9\n`);
+    assert.equal(findBridgeVersionAnchors(join(root, 'codex-cli-bridge')).length, 2, 'both assignments counted, not just the canonical one');
+    assert.ok(checkPackage(root, 'codex-cli-bridge').problems.some((p) => /found 2/.test(p)), 'verify reds on the shadowing pair');
+    const { code, errText } = run(['--bump', 'codex=1.3.0'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /found 2 — refusing the bump/);
+  });
+
+  it('#5 fold: an EXPORT-prefixed shadow (export/declare/readonly/…) is counted too — not only a bare statement-start assignment', () => {
+    const root = makeRoot();
+    const { canonBin, wrapperName } = seedBridge(root, 'codex-cli-bridge');
+    // `export AW_BRIDGE_VERSION="9.9.9"` is a valid shell shadow bash resolves LAST; a bare-only
+    // regex missed it, so verify stayed green while the receipt drifted. It must count as a second anchor.
+    writeFileSync(join(canonBin, wrapperName), `${readFileSync(join(canonBin, wrapperName), 'utf8')}export AW_BRIDGE_VERSION="9.9.9"\n`);
+    assert.equal(findBridgeVersionAnchors(join(root, 'codex-cli-bridge')).length, 2, 'the export-prefixed shadow is detected, not skipped');
+    assert.ok(checkPackage(root, 'codex-cli-bridge').problems.some((p) => /found 2/.test(p)), 'verify reds on the export shadow');
+  });
+
+  it('#5 R2/R3 fold: append (+=), option-terminator (export --), and +x-flag (declare/typeset +x) shadows are all counted', () => {
+    for (const shadow of ['AW_BRIDGE_VERSION+=".1"', 'export -- AW_BRIDGE_VERSION="9.9.9"', 'declare +x AW_BRIDGE_VERSION="9.9.9"', 'typeset +x AW_BRIDGE_VERSION="9.9.9"']) {
+      const root = makeRoot();
+      const { canonBin, wrapperName } = seedBridge(root, 'codex-cli-bridge');
+      writeFileSync(join(canonBin, wrapperName), `${readFileSync(join(canonBin, wrapperName), 'utf8')}${shadow}\n`);
+      assert.equal(findBridgeVersionAnchors(join(root, 'codex-cli-bridge')).length, 2, `the shadow "${shadow}" is detected, not skipped`);
+      assert.ok(checkPackage(root, 'codex-cli-bridge').problems.some((p) => /found 2/.test(p)), `verify reds on "${shadow}"`);
+    }
+  });
+
+  it('#5 R2/R3 fold: a SINGLE non-canonical anchor via +=/terminator/+x-flag reds as not canonical (detected then rejected, never rewritten)', () => {
+    for (const form of ['#!/usr/bin/env bash\nAW_BRIDGE_VERSION+="1.2.0"\necho x\n', '#!/usr/bin/env bash\nexport -- AW_BRIDGE_VERSION="1.2.0"\necho x\n', '#!/usr/bin/env bash\ndeclare +x AW_BRIDGE_VERSION="1.2.0"\necho x\n']) {
+      const root = makeRoot();
+      const { canonBin, wrapperName } = seedBridge(root, 'codex-cli-bridge');
+      writeFileSync(join(canonBin, wrapperName), form);
+      const before = readFileSync(join(canonBin, wrapperName), 'utf8');
+      const report = checkPackage(root, 'codex-cli-bridge');
+      assert.ok(report.problems.some((p) => /not a canonical/.test(p)), `${form.split('\n')[1]} → not canonical: ${report.problems.join('; ')}`);
+      const { code } = run(['--bump', 'codex=1.5.0'], root);
+      assert.equal(code, 1);
+      assert.equal(readFileSync(join(canonBin, wrapperName), 'utf8'), before, 'a non-canonical anchor is never rewritten');
+    }
+  });
+
+  it('R2 fold: a single NON-CANONICAL AW_BRIDGE_VERSION (unquoted) reds verify as not canonical', () => {
+    const root = makeRoot();
+    const { canonBin, wrapperName } = seedBridge(root, 'codex-cli-bridge');
+    writeFileSync(join(canonBin, wrapperName), '#!/usr/bin/env bash\nAW_BRIDGE_VERSION=1.2.0\necho x\n');
+    const report = checkPackage(root, 'codex-cli-bridge');
+    assert.equal(report.inSync, false);
+    assert.ok(report.problems.some((p) => /not a canonical/.test(p)), report.problems.join('; '));
+  });
+
+  it('R4 fold: a bump REFUSES a non-canonical (unquoted) anchor — never canonicalizes it down (the downgrade-bypass hole)', () => {
+    const root = makeRoot();
+    const { canonBin, wrapperName } = seedBridge(root, 'codex-cli-bridge');
+    // An unquoted anchor AHEAD of the target: shell-valid (9.9.9) but not canonical — the bump must
+    // never rewrite it (rewriting down to 1.5.0 would be a silent downgrade past the valid-only guard).
+    writeFileSync(join(canonBin, wrapperName), '#!/usr/bin/env bash\nAW_BRIDGE_VERSION=9.9.9\necho x\n');
+    const before = readFileSync(join(canonBin, wrapperName), 'utf8');
+    const { code, errText } = run(['--bump', 'codex=1.5.0'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /not a canonical/);
+    assert.equal(readFileSync(join(canonBin, wrapperName), 'utf8'), before, 'zero writes — a non-canonical anchor is never rewritten');
+  });
+
+  it('R3 fold: a bump that would DOWNGRADE the wrapper anchor (anchor ahead of target) is refused, zero writes', () => {
+    const root = makeRoot();
+    const { canonBin, wrapperName } = seedBridge(root, 'codex-cli-bridge', { canonWrapper: '2.0.0', mirrorWrapper: '2.0.0' });
+    const before = readFileSync(join(canonBin, wrapperName), 'utf8');
+    const { code, errText } = run(['--bump', 'codex=1.5.0'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /downgrade refused/i);
+    assert.equal(readFileSync(join(canonBin, wrapperName), 'utf8'), before, 'zero writes on the wrapper-downgrade refusal');
+  });
+
+  it('R2 fold: the wrapper bump + verify cover BOTH bridges (the agy/antigravity path is exercised too)', () => {
+    for (const [dir, alias] of [['codex-cli-bridge', 'codex'], ['antigravity-cli-bridge', 'agy']]) {
+      const root = makeRoot();
+      const { canonBin, mirrorBin, wrapperName } = seedBridge(root, dir);
+      assert.equal(run(['--bump', `${alias}=1.3.0`], root, { today: TODAY }).code, 0, `${dir} bump succeeds`);
+      assert.match(readFileSync(join(canonBin, wrapperName), 'utf8'), /AW_BRIDGE_VERSION="1\.3\.0"/, `${dir} canonical wrapper moved`);
+      assert.match(readFileSync(join(mirrorBin, wrapperName), 'utf8'), /AW_BRIDGE_VERSION="1\.3\.0"/, `${dir} kit-mirror wrapper moved`);
+      assert.equal(checkPackage(root, dir).inSync, true, `${dir} verify converges`);
+      writeFileSync(join(canonBin, wrapperName), readFileSync(join(canonBin, wrapperName), 'utf8').replace('1.3.0', '1.1.0'));
+      assert.equal(checkPackage(root, dir).inSync, false, `${dir} wrapper drift reds verify`);
+    }
   });
 });
 

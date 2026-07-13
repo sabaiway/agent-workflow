@@ -550,6 +550,12 @@ describe('agy-review.sh — --help contract (manifest-pinned)', () => {
     assert.equal(norm(helpSection(help, 'Grounding:').join(' ')), norm(REVIEW_CONTRACT.grounding));
   });
 
+  it('Notes renders the manifest contract.notes verbatim (a typed contract key that MUST surface)', () => {
+    const help = runHelp('--help').stdout;
+    assert.ok(REVIEW_CONTRACT.notes.length > 0, 'manifest notes must be non-empty');
+    assert.equal(norm(helpSection(help, 'Notes:').join(' ')), norm(REVIEW_CONTRACT.notes.join(' ')));
+  });
+
   it('Round-2 / resume set-EQUALS the manifest continue descriptors', () => {
     const help = runHelp('--help').stdout;
     const got = helpSection(help, 'Round-2 / resume:').filter((l) => l.startsWith('agy-review')).map(norm);

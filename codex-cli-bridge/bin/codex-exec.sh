@@ -67,6 +67,12 @@ Guarded passthrough after '--':
   blocked always: -c* --config* -s* --sandbox* --dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust --full-auto --oss --local-provider* -p* --profile* -m* --model* -o* --output-last-message* --json* --color* --output-schema* --ephemeral*
   relaxed only under CODEX_PROBE=1: --add-dir* -C* --cd* --skip-git-repo-check --ignore-rules --enable* --disable*
 
+Notes:
+  nested-sandbox limit: codex-exec ships its OWN OS sandbox (bwrap workspace-write) and cannot run
+  nested inside a harness sandbox (the FS turns read-only) — route it OUTSIDE the harness sandbox
+  (excludedCommands / a per-run consented bypass) on the OBSERVED bwrap/EPERM failure, never a
+  preemptive blanket
+
 Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):
   ${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf
   CODEX_SERVICE_TIER — service tier: 'priority' (Fast — ~1.5x speed at a 2.5x credit rate on gpt-5.6-sol); a consented SPEND knob, default off (standard tier)
@@ -557,6 +563,20 @@ fi
 if [[ $rc -ne 0 ]]; then
   echo "error: codex exec failed (exit $rc). Last lines of the run trace:" >&2
   tail -n 40 "$trace" >&2
+  # Nested-sandbox detection: codex ships its OWN OS sandbox (bwrap); run nested inside a harness
+  # sandbox the FS is read-only and codex's own sandbox setup fails. Fire the STATED recovery hint
+  # only on a COMBINATION — a sandbox MECHANISM token AND a permission/read-only FAILURE token in the
+  # trace — so a lone 'bwrap' banner, or a lone 'permission denied' from unrelated code, is NOT enough
+  # (never a preemptive blanket). grep is line-oriented, so a plain alternation stays within a line —
+  # the old `[^\n]*` between the two halves was wrong twice over (it excluded the letter 'n', and grep
+  # never spans lines anyway), so the split into two `-q` passes both fixes it and states the intent.
+  if grep -qiE 'bwrap|landlock|user namespace|pivot_root|unshare|seccomp' "$trace" 2>/dev/null \
+     && grep -qiE 'read-only file system|erofs|operation not permitted|permission denied|eperm' "$trace" 2>/dev/null; then
+    echo "hint: this looks like a NESTED-SANDBOX failure — codex-exec ships its own OS sandbox (bwrap)," >&2
+    echo "      which cannot run nested inside a harness sandbox (the FS is read-only). Route codex-exec" >&2
+    echo "      OUTSIDE the harness sandbox: add it to the harness sandbox excludedCommands, or dispatch" >&2
+    echo "      this one run via a per-run consented bypass. Do NOT blanket-disable the sandbox." >&2
+  fi
   exit $rc
 fi
 

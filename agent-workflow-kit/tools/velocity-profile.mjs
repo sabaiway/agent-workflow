@@ -163,9 +163,12 @@ const RUN_GATES_CWD_FLAG = '--cwd';
 // ── the opt-in --bridge-tier (AD-044 Plan 4, Decision 2) ────────────────────────────────
 // The FROZEN membership source: review-role wrapper NAMES only, spelled bare — that is how the
 // wrappers are invoked (setup-backends places them as symlinks in ~/.local/bin). Roles come from
-// THIS constant, never from the detector's wrapperCmds (which carries no role labels):
-// codex-exec (execution role) and agy-run (probe role) are deliberately ABSENT — delegated
-// execution keeps its human prompt; the velocity pain this tier closes is council REVIEW runs.
+// THIS constant, never from the detector's wrapperCmds (which carries no role labels): codex-exec
+// (execution role) and agy-run (probe role) are deliberately ABSENT. The velocity pain this tier
+// closes is council REVIEW runs; codex-exec's nested-sandbox recovery is handled the canon way —
+// route it outside ON the OBSERVED failure (orchestration.md §5), NOT a preemptive tier seed (AD-054
+// final council: a blanket exclusion at opt-in contradicts «never a preemptive blanket»), guided by
+// codex-exec.sh's own nested-sandbox detection hint.
 export const BRIDGE_REVIEW_WRAPPERS = Object.freeze(['codex-review', 'agy-review']);
 // Only the `code` review mode is auto-allowed (codex R2, Segment A): a bare `Bash(<wrapper>:*)`
 // prefix would also cover the plan/diff file-argument modes, whose targets can point OUTSIDE the
@@ -190,13 +193,12 @@ const isQuotedGroundingToken = (token) => {
 };
 
 /**
- * Derive the opt-in bridge-wrappers tier: one bare-name wildcard allow rule per PLACED review
- * wrapper (the frozen constant is the membership source; placement is a probe, never a role
- * source), the SAME wrapper names for sandbox.excludedCommands (the harness runs an excluded
- * command OUTSIDE the sandbox, so a plain allowlisted invocation needs no sandbox-bypass
- * approval — the zero-prompt wiring), and the grounding pre-step rule in its rendered quoted
- * byte-form (derived only when ≥1 review bridge is placed; an unseedable kit path is a stated
- * skip). An absent bridge is a stated skip — its entry never derives.
+ * Derive the opt-in bridge-wrappers tier: one code-mode allow rule per PLACED review wrapper (the
+ * frozen constant is the membership source; placement is a probe, never a role source), the SAME
+ * wrapper names for sandbox.excludedCommands (the harness runs an excluded command OUTSIDE the
+ * sandbox, so a plain allowlisted invocation needs no sandbox-bypass approval — the zero-prompt
+ * wiring), and the grounding pre-step rule in its rendered quoted byte-form (derived only when
+ * agy-review is placed; an unseedable kit path is a stated skip). An absent bridge is a stated skip.
  */
 export const deriveBridgeTierAllowlist = ({ findWrapper, groundingAbsPath } = {}) => {
   const probe = findWrapper ?? ((cmd) => findOnPath(cmd).state === WRAPPER_PLACED);

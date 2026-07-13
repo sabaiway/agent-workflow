@@ -568,7 +568,7 @@ gated commit, so the round-counter reset is earned, never declared.
   rounds, override usage by scope, gate-run counts (quality-green / red-by-gate), fold runs,
   observed-red receipts, quarantined probes. Counts only — interpretation stays with you.
 
-The writer is a SEPARATE tool (review-ledger-write.mjs record/classify/override) — this read-only
+The writer is a SEPARATE tool (review-ledger-write.mjs record/classify/override/batch) — this read-only
 checker never imports it. Sandbox-safe: runs fully inside an OS sandbox (fs + git reads, no
 network) — the D4 sandbox lane. Human residual: git commit --no-verify, ledger-file editing, and
 forged counts remain possible — a self-discipline mechanism, not a security boundary.

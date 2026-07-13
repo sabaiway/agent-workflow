@@ -143,7 +143,10 @@ zero-prompt bar prefer the agent-spawn lane with placed vehicles. This clause is
 **capability-gated** (route by what the host HAS): on a harness with restricted-tool subagent
 vehicles, use them; WITHOUT restricted-tool vehicles — whether or not generic full-tool spawning
 exists — read-only research stays in the orchestrator's own context —
-never a vehicle mandate a host cannot satisfy. The clause narrows
+never a vehicle mandate a host cannot satisfy. **(d)** a stage that fires repeated WRITER commands
+batches them — the review-ledger triad (records / classifications / overrides) rides ONE batched
+write, and the remaining stage writers combine via one launcher per stage; never
+one writer call at a time (each write is its own prompt). The clause narrows
 TOOLS for read-only work only — judgment, code, and synthesis stay at the frontier lane, and a
 task that genuinely needs to run or write keeps a full-tool subagent. **Honest limit:**
 no deterministic gate classifies a dispatch — enforcement is this canon at the point of use,
@@ -155,7 +158,12 @@ the bridge wrappers are **genuinely unsandboxed** (they need network); npm-cache
 are **COMMAND-SHAPE dependent** — first try the sandbox-safe shape (cache under `$TMPDIR`,
 offline/notifier off) before moving anything out. Two driving rules: **move ONLY the failing
 command out of the sandbox, never its class**, and **BATCH consecutive unsandboxed calls** — a
-blanket unsandbox after one failure is the canonical over-reaction.
+blanket unsandbox after one failure is the canonical over-reaction. **Pre-dispatch host-diff:**
+before the FIRST dispatch of each bridge, diff its manifest `networkHosts` against the live
+sandbox's allowed hosts — a missing host is surfaced to the maintainer BEFORE dispatching, never
+fired into a known prompt. **Nested-sandbox honesty:** a backend CLI that ships its OWN OS sandbox
+cannot run nested inside a harness sandbox — route it outside (an excluded command / a per-run
+consented bypass) on the OBSERVED failure, never a preemptive blanket.
 
 **Incident repair (your own error) defaults down-lane:** salvage recorded state first (journals,
 transcripts, git), replay it deterministically (L0), hand the leftovers to L1 in one batch —

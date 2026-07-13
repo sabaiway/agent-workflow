@@ -296,8 +296,9 @@ const costLanesAdvice = () => [
   '  • L2 subscription bridge (codex / agy) — reviews per the resolved recipe above, on frontier bridge models (quality-first).',
   '  • L3 frontier — judgment: plan/fold/synthesis, ADR/handover/changelog-entry wording, persuasive copy, go/no-go, real code.',
   '  • A step with no named guardrail does not move down a lane; red lines never move down (council review models · real code · memory/copy wording · the maintainer approval asks).',
-  '  • Sandbox lanes (under an OS sandbox): the L0 surfaces are sandbox-safe — gates/ledger/state/fold checks, git reads, plain no-network tests; the bridge wrappers are genuinely unsandboxed (network); npm-cache-touching commands are COMMAND-SHAPE dependent — first try the sandbox-safe shape (cache under $TMPDIR, offline/notifier off). Move ONLY the failing command out of the sandbox, never its class; BATCH consecutive unsandboxed calls.',
+  '  • Sandbox lanes (under an OS sandbox): the L0 surfaces are sandbox-safe — gates/ledger/state/fold checks, git reads, plain no-network tests; the bridge wrappers are genuinely unsandboxed (network); npm-cache-touching commands are COMMAND-SHAPE dependent — first try the sandbox-safe shape (cache under $TMPDIR, offline/notifier off). Move ONLY the failing command out of the sandbox, never its class; BATCH consecutive unsandboxed calls. Pre-dispatch host-diff: before the FIRST dispatch of each bridge, diff its manifest networkHosts against the live sandbox allow-list — a missing host is surfaced to the maintainer BEFORE dispatching, never fired into a known prompt. Nested-sandbox honesty: a backend CLI shipping its OWN OS sandbox cannot run nested inside a harness sandbox — route it outside (excludedCommands / a per-run consented bypass) on the OBSERVED failure, never a preemptive blanket.',
   '  • Prompt economy (autonomy-preserving dispatch): read-only fan-out (research/sweeps/extraction) runs ONLY on restricted-tool vehicles — a full-tool subagent for read-only work is a forbidden lane downgrade (invisible prompt-flood + blast radius), and a subagent is never told to shell out for facts obtainable read-only; the orchestrator\'s own shell form is ONE plain pipeline per call (a ;/&& chain or env-prefixed invocation never matches a prefix allow rule); a fan-out LAUNCHER that gates per call yields to the agent-spawn lane. Capability-gated: on a host with restricted-tool subagent vehicles use them; without restricted-tool vehicles (a host offering only full-tool agents included), read-only research stays in the orchestrator\'s own context — never a vehicle mandate a host cannot satisfy.',
+  '  • Writer economy (autonomy-preserving dispatch): a stage\'s repeated WRITER commands batch into ONE invocation — combine a stage\'s writers via one batched write or one launcher per stage; never one writer call at a time (each write is its own prompt).',
   '  • The prompt-economy clause narrows TOOLS for read-only work only — judgment, code, synthesis stay at the frontier lane; a task that genuinely needs to run or write keeps a full-tool subagent. Honest limit: no deterministic gate classifies a dispatch — enforcement is the canon at the point of use + the placed vehicles + the retro loop.',
 ];
 
@@ -320,6 +321,10 @@ const contractLines = ({ cmd, contract, settings }) => {
   if (contract.passthrough) {
     lines.push(`        passthrough after '--' is ${contract.passthrough.policy}: blocked always: ${contract.passthrough.blocked.join(' ')}; relaxed only under CODEX_PROBE=1: ${contract.passthrough.probeRelaxed.join(' ')}`);
   }
+  // Contract notes — a TYPED renderer (AD-054): a manifest note MUST render here, else adding a
+  // notes[] key would silently disappear (the manifest validator tolerates unknown keys). Drift-
+  // guarded both directions against the manifest AND each wrapper's --help.
+  for (const note of contract.notes ?? []) lines.push(`        note: ${note}`);
   // Host-level settings knobs this wrapper honors (fact-only, from the bundled manifests; explicit
   // branch — contractLines drops any contract key it does not name, so this must be enumerated here).
   if ((settings ?? []).length) {

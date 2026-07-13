@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { recordRound, recordTriage, recordOverride, recordGateRun, main, HARD_MAX, DEFAULT_DIFF_CAP, LEDGER_WRITE_STOP } from './review-ledger-write.mjs';
+import { recordRound, recordTriage, recordOverride, recordGateRun, main, HARD_MAX, DEFAULT_DIFF_CAP, LEDGER_WRITE_STOP, runBatch, validateBatchEnvelope, draftBackendsFromReceipts, SUBCOMMANDS } from './review-ledger-write.mjs';
 import { readLedger } from './review-ledger.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -885,5 +885,169 @@ describe('the writer HELP names the D5 quality-green prerequisite (codex Phase-3
     assert.equal(r.code, 0);
     assert.match(r.stdout, /quality-green gate-run/, 'the record verb must state the D5 prerequisite');
     assert.match(r.stdout, /run-gates\.mjs --record|--record/, 'the HELP must name the remedy');
+  });
+});
+
+// ── the batch verb (WRITER-BURST-BATCH / D4 + D5): one invocation, an ordered op list ────────────
+describe('review-ledger-write — the batch verb (D4/D5)', () => {
+  const codexReceipt = { schema: 1, artifact: 'code', fresh: true, fingerprint: FP, backend: 'codex', verdict: 'SHIP', grounded: true, timestamp: 't' };
+  // A fromReceipts op drafts backends[] from this injected state (the single verb builds it from the
+  // receipts file; the draft path itself is shared, so the injected state is equivalent).
+  const currentState = { requiredBackends: ['codex'], backends: [{ backend: 'codex', state: 'current', verdict: 'SHIP' }] };
+  const cleanBackends = [{ backend: 'codex', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'SHIP' }];
+  // A fully-seeded environment (own ledger + code receipt + D5 gate-run) so a batch and the
+  // single-verb replay start from byte-identical state.
+  const freshEnv = () => {
+    const d = mkdtempSync(join(tmpdir(), 'ledger-batch-'));
+    const lp = join(d, 'ledger.jsonl');
+    const rp = join(d, 'receipts.jsonl');
+    writeFileSync(rp, `${JSON.stringify(codexReceipt)}\n`);
+    writeFileSync(lp, `${gateRunLine()}\n`);
+    const envDeps = { ledgerPath: lp, receiptsPath: rp, computeFingerprint: () => FP, resolveBase: () => BASE, countChangedLines: () => 0, plansInFlight: () => ['L.md'], buildState: () => currentState };
+    return { d, lp, deps: envDeps };
+  };
+  // A representative triad: an override, a fromReceipts round (D4 per-op lane), and an explicit round.
+  const triad = () => [
+    { verb: 'override', loop: 'L', round: 1, scope: 'size-cap', sanctionedLines: 450, reason: 'one reviewed unit', timestamp: 't' },
+    { verb: 'record', fromReceipts: true, loop: 'L', round: 1, origins: originsOf([]), findings: [], timestamp: 't' },
+    { verb: 'record', loop: 'L', round: 2, backends: cleanBackends, origins: originsOf([]), findings: [], timestamp: 't' },
+  ];
+
+  it('D5 equivalence: a batch of N ops == the same N single-verb invocations (field-equal, fromReceipts op included)', () => {
+    const A = freshEnv();
+    recordOverride({ cwd: A.d, env: {}, loop: 'L', round: 1, scope: 'size-cap', sanctionedLines: 450, reason: 'one reviewed unit', timestamp: 't' }, A.deps);
+    const drafted = draftBackendsFromReceipts({ state: currentState, findings: [], explicitBackends: [] });
+    recordRound({ cwd: A.d, env: {}, loop: 'L', round: 1, origins: originsOf([]), findings: [], backends: drafted, timestamp: 't' }, A.deps);
+    recordRound({ cwd: A.d, env: {}, loop: 'L', round: 2, backends: cleanBackends, origins: originsOf([]), findings: [], timestamp: 't' }, A.deps);
+
+    const B = freshEnv();
+    const { count } = runBatch({ cwd: B.d, env: {}, operations: triad() }, B.deps);
+    assert.equal(count, 3, 'all three ops applied');
+    assert.deepEqual(readLedger(B.lp).records, readLedger(A.lp).records, 'the batch ledger is record-equivalent to the single-verb ledger');
+    rmSync(A.d, { recursive: true, force: true });
+    rmSync(B.d, { recursive: true, force: true });
+  });
+
+  it('mid-batch fail-fast: a domain STOP stops the batch, the op already applied stays recorded, the message names the op index + applied count', () => {
+    const A = freshEnv();
+    const bad = [
+      { verb: 'record', loop: 'L', round: 1, backends: cleanBackends, origins: originsOf([]), findings: [], timestamp: 't' },
+      { verb: 'record', loop: 'L', round: 1, backends: cleanBackends, origins: originsOf([]), findings: [], timestamp: 't' }, // duplicate round → sequential STOP
+    ];
+    assert.throws(
+      () => runBatch({ cwd: A.d, env: {}, operations: bad }, A.deps),
+      (e) => e.code === LEDGER_WRITE_STOP && /operation \[1\]/.test(e.message) && /1 of 2/.test(e.message) && /sequential/.test(e.message),
+    );
+    assert.equal(readLedger(A.lp).records.filter((r) => r.kind === 'round').length, 1, 'op[0] is durable (append-only ledger)');
+    rmSync(A.d, { recursive: true, force: true });
+  });
+
+  it('D5 preflight: every structural envelope error is a usage failure (exit 2) — validated with ZERO writes', () => {
+    const cases = [
+      [undefined, /must be an object/],
+      [null, /must be an object/],
+      [[], /must be an object/],
+      [{}, /operations must be an array/],
+      [{ operations: 'x' }, /operations must be an array/],
+      [{ operations: [] }, /empty/],
+      [{ operations: [null] }, /operation \[0\] must be an object/],
+      [{ operations: ['x'] }, /operation \[0\] must be an object/],
+      [{ operations: [{ verb: 'nope' }] }, /unknown verb "nope"/],
+      [{ operations: [{ verb: 'classify', fromReceipts: true }] }, /fromReceipts on "classify"/],
+    ];
+    for (const [payload, re] of cases) {
+      assert.throws(() => validateBatchEnvelope(payload), (e) => e.exitCode === 2 && re.test(e.message), `${JSON.stringify(payload)} must be a usage failure`);
+    }
+  });
+
+  it('D4 per-op fromReceipts: a record op whose recipe-named backend has no fresh receipt is a LOUD stop (the draft never invents)', () => {
+    const d = mkdtempSync(join(tmpdir(), 'ledger-batch-'));
+    const downState = { requiredBackends: ['codex'], backends: [{ backend: 'codex', state: 'missing' }] };
+    assert.throws(
+      () => runBatch({ cwd: d, env: {}, operations: [{ verb: 'record', fromReceipts: true, loop: 'L', round: 1, origins: originsOf([]), findings: [], timestamp: 't' }] },
+        { ledgerPath: join(d, 'ledger.jsonl'), buildState: () => downState }),
+      (e) => e.code === LEDGER_WRITE_STOP && /no fresh grounded code receipt/.test(e.message) && /operation \[0\]/.test(e.message),
+    );
+    assert.equal(readdirSync(d).includes('ledger.jsonl'), false, 'the draft fails before any write');
+    rmSync(d, { recursive: true, force: true });
+  });
+
+  it('CLI: batch applies a triad via --json @file (the plain-command form); a preflight-bad envelope is exit 2 with ZERO writes', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ledger-batch-cli-'));
+    const g = (...a) => spawnSync('git', a, { cwd: root, encoding: 'utf8' });
+    g('init', '-q');
+    g('config', 'user.email', 'p@e');
+    g('config', 'user.name', 'p');
+    mkdirSync(join(root, 'docs', 'plans'), { recursive: true });
+    writeFileSync(join(root, 'docs', 'plans', 'demo-plan.md'), '# demo\n');
+    writeFileSync(join(root, 'base.txt'), 'base\n');
+    g('add', '-A');
+    g('commit', '-qm', 'base');
+    const head = g('rev-parse', 'HEAD').stdout.trim();
+    const ledger = join(root, '.git', 'rl.jsonl');
+    const env = { AW_REVIEW_LEDGER: ledger };
+    // Seed a round with a surviving major so classify + override (neither needs a receipt/gate-run) apply.
+    const seededRound = { schema: 4, loop: 'demo-plan', activity: 'plan-execution', kind: 'round', round: 1, base: head, fingerprint: FP, origins: originsOf([{ origin: 'first-draft' }]), backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 1, minors: 0, verdict: 'revise' }], findings: [{ findingKey: 'k', severity: 'major', origin: 'first-draft', backend: 'codex' }], timestamp: 't' };
+    writeFileSync(ledger, `${JSON.stringify(seededRound)}\n`);
+    const payloadFile = join(root, 'batch.json');
+    writeFileSync(payloadFile, JSON.stringify({ operations: [
+      { verb: 'classify', loop: 'demo-plan', round: 1, classifications: [{ findingKey: 'k', class: 'fixable-bug', accepted: false, testId: WELL_FORMED_TESTID, note: '' }] },
+      { verb: 'override', loop: 'demo-plan', round: 1, scope: 'oracle-change', files: ['x.test.mjs'], reason: 'deliberate' },
+    ] }));
+    const ok = main(['batch', '--json', `@${payloadFile}`, '--cwd', root], { env });
+    assert.equal(ok.code, 0, ok.stderr);
+    assert.match(ok.stdout, /recorded 2 operation\(s\) in one batch/);
+    assert.deepEqual(readLedger(ledger).records.map((r) => r.kind), ['round', 'triage', 'override']);
+    // A preflight-bad envelope: exit 2, and nothing appended (the ledger is byte-unchanged).
+    const before = readFileSync(ledger, 'utf8');
+    const badFile = join(root, 'bad.json');
+    writeFileSync(badFile, JSON.stringify({ operations: [] }));
+    const bad = main(['batch', '--json', `@${badFile}`, '--cwd', root], { env });
+    assert.equal(bad.code, 2, bad.stderr);
+    assert.equal(readFileSync(ledger, 'utf8'), before, 'a preflight failure writes nothing');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('Phase 2.3 doc-contract pin: the documented writer-line verb list == the dispatch SUBCOMMANDS (docs cannot lag)', () => {
+    const modeDoc = readFileSync(join(HERE, '..', 'references', 'modes', 'review-ledger.md'), 'utf8');
+    const writerLine = modeDoc.split('\n').find((l) => /review-ledger-write\.mjs\s+[a-z|]+\s+--json/.test(l));
+    assert.ok(writerLine, 'the writer-contract line exists in review-ledger.md');
+    const listed = writerLine.match(/review-ledger-write\.mjs\s+([a-z|]+)\s+--json/);
+    assert.deepEqual(listed[1].split('|').sort(), [...SUBCOMMANDS].sort(), 'the documented verb list == the dispatch');
+    const readme = readFileSync(join(HERE, '..', 'README.md'), 'utf8');
+    assert.ok(readme.includes('`batch`'), 'the README review-ledger row names the batch verb at the point of use');
+  });
+
+  // ── R1 council folds ──────────────────────────────────────────────────────
+  it('R1 fold: a batch op carrying cwd/env is rejected at preflight (no per-op project redirect)', () => {
+    for (const field of ['cwd', 'env']) {
+      assert.throws(
+        () => validateBatchEnvelope({ operations: [{ verb: 'record', [field]: '/evil', loop: 'L', round: 1 }] }),
+        (e) => e.exitCode === 2 && new RegExp(`"${field}" field`).test(e.message),
+        `an op carrying ${field} must be a preflight usage failure`,
+      );
+    }
+  });
+
+  it('R1 fold: a non-boolean fromReceipts is rejected (a string "false" no longer silently enables the draft)', () => {
+    assert.throws(
+      () => validateBatchEnvelope({ operations: [{ verb: 'record', fromReceipts: 'false', loop: 'L', round: 1 }] }),
+      (e) => e.exitCode === 2 && /non-boolean fromReceipts/.test(e.message),
+    );
+    assert.equal(validateBatchEnvelope({ operations: [{ verb: 'record', fromReceipts: true, loop: 'L', round: 1 }] }).length, 1,
+      'a real boolean fromReceipts still passes preflight');
+  });
+
+  it('R4 fold: fromReceipts on a non-record op is rejected by PRESENCE (even the literal fromReceipts:false on classify)', () => {
+    assert.throws(
+      () => validateBatchEnvelope({ operations: [{ verb: 'classify', fromReceipts: false, loop: 'L', round: 1 }] }),
+      (e) => e.exitCode === 2 && /fromReceipts on "classify"/.test(e.message),
+    );
+  });
+
+  it('R4 fold: the read-only checker (review-ledger.mjs) help lists every writer verb too (batch discoverable there)', () => {
+    const readChecker = readFileSync(join(HERE, 'review-ledger.mjs'), 'utf8');
+    assert.ok(readChecker.includes(SUBCOMMANDS.join('/')),
+      `the read checker help must list the writer verbs as "${SUBCOMMANDS.join('/')}" (batch included)`);
   });
 });
