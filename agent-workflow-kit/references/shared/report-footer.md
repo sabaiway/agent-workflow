@@ -125,3 +125,17 @@ token. Pair it with **one plain-language line** telling the two axes apart, on d
 
 **Never** print this two-axes line on a successful equal-head exit — only at the STOP, the status view,
 or on an explicit ask.
+
+### Live host/session facts — tool-composed only
+
+Any claim a report makes about the **current host or session state** — whether a permission prompt
+fired, what the session sandbox allows or blocks, whether a bypass was needed, which network hosts
+are reachable, how many approvals happened — must trace to **live tool output** produced **this
+session**: a status / recipe / recommendations line the composer emitted on this run, or a probe you
+ran and observed this session. It is never asserted from recollection. A memory or handover note is
+**context, never report facts** — it records what was true when written, not the live state, and is
+never the source of a current-state claim. When no live signal backs such a claim, the claim is
+**omitted or explicitly marked unverified** — never stated as fact and never back-filled from a
+snapshot. This binds **every** report surface (the bootstrap / upgrade exits, the recommendations
+advisor, any ad-hoc status summary); the mode files carry a one-line pointer to this clause, never
+their own copy of it.

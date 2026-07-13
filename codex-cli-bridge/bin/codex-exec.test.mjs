@@ -21,6 +21,7 @@ const FAKE_CODEX = [
   '#!/usr/bin/env bash',
   'set -u',
   'if [[ "${1:-}" == "login" ]]; then echo "${CODEX_FAKE_LOGIN:-Logged in using ChatGPT}"; exit 0; fi',
+  'if [[ -n "${CODEX_FAKE_STDERR:-}" ]]; then echo "$CODEX_FAKE_STDERR" >&2; fi',
   ': "${CODEX_FAKE_ARGV:=/dev/null}"',
   ': "${CODEX_FAKE_ENV:=/dev/null}"',
   ': "${CODEX_FAKE_STDIN:=/dev/null}"',
@@ -274,6 +275,49 @@ describe('codex-exec.sh — clean output + session capture (1.2)', () => {
     assert.equal(r.status, 7);
     assert.match(r.stderr, /codex exec failed \(exit 7\)/);
     assert.match(r.stderr, /thread\.started/, 'failure should surface the trace tail');
+    assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'a plain failure (no bwrap signature) never triggers the hint');
+  });
+
+  it('on a NESTED-SANDBOX failure (bwrap/read-only trace) surfaces the stated recovery hint', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_FAKE_EXIT: '1', CODEX_FAKE_STDERR: 'bwrap: setting up sandbox: mkdir /newroot: Read-only file system' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /NESTED-SANDBOX/, 'names the failure class');
+    assert.match(r.stderr, /excludedCommands|per-run consented bypass/, 'states the recovery route');
+    assert.match(r.stderr, /Do NOT blanket-disable/, 'warns against a preemptive blanket');
+  });
+
+  it('a NON-nested codex failure does NOT emit the nested-sandbox hint (no false positive)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_FAKE_EXIT: '3', CODEX_FAKE_STDERR: 'model error: rate limited, try again later' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 3);
+    assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'a generic failure never triggers the hint');
+  });
+
+  it('#6 fold: a mechanism+failure trace whose message contains the letter n (mkdir /newroot) still fires — the old [^\\n]* wrongly excluded n', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_FAKE_EXIT: '1', CODEX_FAKE_STDERR: 'bwrap: mkdir /newroot: operation not permitted' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /NESTED-SANDBOX/, 'bwrap (mechanism) + operation not permitted (failure) fire even through n-bearing words');
+  });
+
+  it('#6 fold: a LONE mechanism token (a bwrap banner, no failure) does NOT fire — a combination is required', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_FAKE_EXIT: '2', CODEX_FAKE_STDERR: 'bwrap version 0.11.0' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 2);
+    assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'a mechanism token without a permission/read-only failure is not nested-sandbox proof');
+  });
+
+  it('#6 fold: a LONE failure token (permission denied, no sandbox mechanism) does NOT fire', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_FAKE_EXIT: '2', CODEX_FAKE_STDERR: 'curl: (7) permission denied' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 2);
+    assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'a permission failure from unrelated code is not nested-sandbox proof');
   });
 
   it('warns (never silently) when the session sidecar cannot be written', () => {
@@ -732,6 +776,12 @@ describe('codex-exec.sh — --help contract (manifest-pinned)', () => {
     assert.ok(EXEC_CONTRACT.passthrough.probeRelaxed.length > 0, 'manifest probe tier must be non-empty');
     setEq(tier('blocked always:'), EXEC_CONTRACT.passthrough.blocked, 'help tier-1 ⟷ manifest blocked');
     setEq(tier('relaxed only under CODEX_PROBE=1:'), EXEC_CONTRACT.passthrough.probeRelaxed, 'help tier-2 ⟷ manifest probeRelaxed');
+  });
+
+  it('Notes renders the manifest contract.notes verbatim (a typed contract key that MUST surface)', () => {
+    const help = runHelp('--help').stdout;
+    assert.ok(EXEC_CONTRACT.notes.length > 0, 'manifest notes must be non-empty');
+    assert.equal(norm(helpSection(help, 'Notes:').join(' ')), norm(EXEC_CONTRACT.notes.join(' ')));
   });
 
   it('--help after the -- separator is passthrough payload, never intercepted', () => {

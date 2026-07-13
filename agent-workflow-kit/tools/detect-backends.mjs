@@ -80,6 +80,9 @@ const RAW_BACKENDS = [
           blocked: ['-c*', '--config*', '-s*', '--sandbox*', '--dangerously-bypass-approvals-and-sandbox', '--dangerously-bypass-hook-trust', '--full-auto', '--oss', '--local-provider*', '-p*', '--profile*', '-m*', '--model*', '-o*', '--output-last-message*', '--json*', '--color*', '--output-schema*', '--ephemeral*'],
           probeRelaxed: ['--add-dir*', '-C*', '--cd*', '--skip-git-repo-check', '--ignore-rules', '--enable*', '--disable*'],
         },
+        notes: [
+          'nested-sandbox limit: codex-exec ships its OWN OS sandbox (bwrap workspace-write) and cannot run nested inside a harness sandbox (the FS turns read-only) — route it OUTSIDE the harness sandbox (excludedCommands / a per-run consented bypass) on the OBSERVED bwrap/EPERM failure, never a preemptive blanket',
+        ],
       },
       review: {
         invocations: [
@@ -122,6 +125,9 @@ const RAW_BACKENDS = [
           'agy-review --conversation <id> [--decided @f] [--focus "…"]',
         ],
         receipt: "side effect — a successful review appends one JSON receipt line to <git dir>/agent-workflow-review-receipts.jsonl (AW_REVIEW_RECEIPTS overrides; plan/diff outside a git tree: warn + skip unless overridden): fingerprint = sha256 over the canonical uncommitted-state payload (staged diff + unstaged diff + untracked-not-ignored contents — the review-payload domain; never-committable untracked paths — character/block devices, FIFOs, sockets — are excluded from the domain entirely, untracked symlinks/directories ride as name-only notes) in code mode, the artifact-file sha256 in plan/diff mode; verdict recorded verbatim from the mandated '### Verdict' section (SHIP / SHIP WITH NITS / REWORK); grounded = whether a NON-EMPTY --facts payload was supplied (an empty payload records grounded:false — fail-closed, the state gate rejects it), factsHash = sha256 of the facts payload; a continuation receipt is fresh:false (informational-only — it cannot attest the folded tree); a write failure warns, never fails the review",
+        notes: [
+          'pre-dispatch host-diff: before the FIRST dispatch of this bridge, diff its declared networkHosts against the live sandbox allow-list — a missing host is surfaced to the maintainer BEFORE dispatching, never fired into a known prompt',
+        ],
       },
     },
     bin: 'agy',

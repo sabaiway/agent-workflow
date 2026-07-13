@@ -194,7 +194,11 @@ const BUDGET = {
   router: 11264, // router alone. 10240 → 11264 (11 KB): AD-044 Plan 4 adds the sandbox-masks and
   // recommendations modes to the router (~110 B each) against 27 B of headroom — a documented
   // KB-multiple bump, never a silent re-pin.
-  routerPlusMode: 35840, // router + any single mode file. 32768 → 35840 (35 KB): AD-044 Plan 4
+  routerPlusMode: 37888, // router + any single mode file. 35840 → 37888 (37 KB): the REPORT-FACTS
+  // train (Item A, AD-054) adds the report-facts binding line to upgrade.md steps 4 AND 8 (the
+  // single-home pointer + the four pinned tokens on each exit) — the pair measures 36931 B, over the
+  // 35 KB ceiling; a documented KB-multiple bump, never a silent re-pin.
+  // History: 32768 → 35840 (35 KB): AD-044 Plan 4
   // Segment B — upgrade.md gains the mandatory Recommendations section contract on BOTH exits
   // (~1.1 KB: the section render, the pinned order, the apply lane) PLUS the autonomy-declaration
   // ensure paragraph + its step-4/8 outcome rows (~1.2 KB) against a pair already at its 32 KB
@@ -212,7 +216,12 @@ const BUDGET = {
   // THREE pointers (the autonomy slot: step-3 wording, the (a)(iii) anchor-absent soft-skip lane,
   // the No-Node walk, the step-4/8 report row) — ~575 B of new contract content over 179 B of
   // headroom; a documented KB-multiple bump, never a silent re-pin.)
-  fullReadSet: 59392, // router + mode + its declared shared files. 58368 → 59392 (58 KB): AD-044
+  fullReadSet: 61440, // router + mode + its declared shared files. 59392 → 61440 (60 KB): the
+  // REPORT-FACTS train (Item A, AD-054) — the report-facts full clause lands in report-footer.md
+  // (~1 KB, in upgrade.md's read set) and the two binding lines grow upgrade.md itself; the heaviest
+  // read set (upgrade + its 3 shared files) measures 61367 B, over the 58 KB budget — a documented
+  // KB-multiple bump, never a silent re-pin.
+  // History: 58368 → 59392 (58 KB): AD-044
   // Plan 4 Segment B closing (codex cycle-10 fold) — report-footer.md documents the autonomy
   // segment on the backend-status placeholder (the composer appends it; the contract must match
   // the pasted surface), ~340 B of new shared contract content vs 86 B over the 57 KB budget —

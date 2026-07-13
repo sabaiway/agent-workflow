@@ -153,6 +153,8 @@ describe('procedures.md — canonical activity-procedures reference', () => {
       'cheapest adequate executor', 'no named guardrail', 'L0', 'L1', 'L2', 'L3', 'red lines never move',
       'forbidden lane downgrade', 'plain pipeline per call', 'vehicle mandate a host cannot satisfy',
       'stay at the frontier lane', 'no deterministic gate classifies a dispatch',
+      // writer economy (D6 batch verb) + sandbox lanes (host-diff + nested-sandbox honesty), AD-054
+      'one writer call at a time', 'host-diff', 'nested inside a harness sandbox',
     ]) {
       assert.ok(orchestration.includes(token), `orchestration.md carries the "${token}" canon token`);
     }

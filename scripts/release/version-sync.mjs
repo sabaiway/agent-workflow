@@ -3,6 +3,8 @@
 //
 // Each family package carries its version in up to FOUR places: package.json, capability.json,
 // SKILL.md frontmatter `metadata.version`, and the newest `## X.Y.Z` heading of its CHANGELOG.md.
+// A bridge ALSO carries a FIFTH constant the four miss — `AW_BRIDGE_VERSION` in its `bin/*.sh`
+// review wrapper (and the kit mirror) — verified and bumped by the dedicated lane below.
 // A release bump used to be ~12-20 hand-edits, and the old failure mode is one source silently
 // left behind. This script IS the deterministic check the release cycle runs instead of a
 // frontier re-read: for every package dir it collects each source THE PACKAGE ACTUALLY CARRIES
@@ -20,7 +22,8 @@
 // `--bump` (repeatable) WRITES an intended bump across every source the package must carry:
 // an npm package (memory / engine / kit) carries all four sources — an ABSENT one is a loud
 // refusal (absence is invisible to the verify pass, so the writer must catch it); a bridge
-// carries capability.json + SKILL.md only, and a bridge bump re-syncs that bridge's kit mirror
+// carries capability.json + SKILL.md PLUS the `AW_BRIDGE_VERSION` wrapper constant in `bin/*.sh`
+// (rewritten under a closed one-anchor rule), and a bridge bump re-syncs that bridge's kit mirror
 // via scripts/sync-mirrors.mjs. Discipline: preflight-then-mutate (every target source parses
 // BEFORE any write), per-source idempotent apply (a source already at the target is skipped
 // with a stated note — a killed half-write is repaired by re-running), never a downgrade (an
@@ -35,8 +38,8 @@
 // parsed here independently — the cross-source comparison is the whole point of this script.
 // Dependency-free, Node >= 18. No side effects on import.
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
+import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { join, resolve, dirname, basename } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readAuthoritativeVersion } from '../../agent-workflow-kit/tools/manifest/validate.mjs';
 import { syncBridgeMirror, BRIDGE_DIRS } from '../sync-mirrors.mjs';
@@ -115,6 +118,79 @@ export const readChangelogHeadingVersion = (text) => {
   return match ? match[1] : null;
 };
 
+// ── the AW_BRIDGE_VERSION wrapper constant (the AD-053 defect: a FIFTH source, invisible above) ──
+
+// A bridge review wrapper carries `AW_BRIDGE_VERSION="X.Y.Z"` (the receipt identity, AD-038) — a
+// version constant the four-source verify pass never collected, so a bump silently left it behind
+// (2 real release blockers on AD-053, hand-fixed). The kit mirror carries a byte-identical copy, so
+// the drift class spans FOUR constants (each bridge's canonical wrapper + its kit mirror). The
+// closed rule: across a bridge's bin/*.sh there is EXACTLY ONE such anchored assignment (today the
+// review wrapper). Match ANY assignment line (canonical or not) and count EVERY occurrence — a valid
+// line plus a later malformed/unquoted one would pass a canonical-only match while bash actually uses
+// the LAST assignment (receipt drift); its canonical form is validated separately. The detection
+// spans every shell assignment FORM that sets the scalar, not only a bare statement-start one, so a
+// canonical anchor plus a later shadow must count as TWO (else verify stays green while bash uses the
+// shadow — R2 fold). The forms recognized: a declaration-keyword prefix
+// (`export`/`declare`/`readonly`/`typeset`/`local`) with any flags — BOTH `-x`-style (set) and
+// `+x`-style (unset, e.g. `declare +x AW_BRIDGE_VERSION=…`) — AND the bare `--` option terminator
+// (`export -- AW_BRIDGE_VERSION=…`); and the append form `AW_BRIDGE_VERSION+=…` (a `+=` shadow bash
+// resolves LAST). The `[+-][A-Za-z]+` flag class closes the flag dimension entirely (no per-flag
+// enumeration — R3 fold). Only the bare canonical spelling is accepted as VALID (below), so every
+// recognized non-bare form is DETECTED (counted) then rejected as non-canonical. Residual out-of-scope
+// forms (an array element, an eval-constructed name) are not scalar shadows here.
+const AW_BRIDGE_VERSION_ASSIGN = /^[ \t]*(?:(?:export|declare|readonly|typeset|local)(?:[ \t]+(?:--|[+-][A-Za-z]+))*[ \t]+)?AW_BRIDGE_VERSION\+?=.*$/gm;
+const AW_BRIDGE_VERSION_CANONICAL = /^[ \t]*AW_BRIDGE_VERSION="(\d+\.\d+\.\d+)"[ \t]*$/;
+
+export const findBridgeVersionAnchors = (pkgDir) => {
+  const binDir = join(pkgDir, 'bin');
+  if (!existsSync(binDir)) return [];
+  return readdirSync(binDir)
+    .filter((name) => name.endsWith('.sh'))
+    .sort()
+    .flatMap((name) => {
+      const path = join(binDir, name);
+      const text = readFileSync(path, 'utf8');
+      return (text.match(AW_BRIDGE_VERSION_ASSIGN) ?? []).map((raw) => {
+        const m = raw.match(AW_BRIDGE_VERSION_CANONICAL);
+        return { path, text, raw, current: m ? m[1] : null, valid: m !== null };
+      });
+    });
+};
+
+// The two surfaces a bridge's AW_BRIDGE_VERSION lives on — the canonical wrapper and its kit mirror.
+const bridgeWrapperSurfaces = (root, dir) => [
+  { where: `${dir}/bin`, pkgDir: join(root, dir) },
+  { where: `agent-workflow-kit/bridges/${dir}/bin`, pkgDir: join(root, 'agent-workflow-kit', 'bridges', dir) },
+];
+
+// Verify AW_BRIDGE_VERSION ⟷ capability.json (plan 4.2) on BOTH surfaces (mirror included): exactly
+// one anchor each, its value == the bridge's capability.json version. The comparison source is
+// capability.json DIRECTLY (not the authoritative base, which is SKILL.md-derived for a bridge) so
+// the diagnostic names the true source; an unparseable capability.json is the
+// source pass's problem, not this one. Any drift, a missing anchor, or a duplicate is a named
+// problem (a mirror-only drift reds too).
+export const checkBridgeWrapperVersion = (root, dir) => {
+  const problems = [];
+  const capVersion = readJsonVersion(join(root, dir, 'capability.json'));
+  if (capVersion === null) return problems;
+  for (const { where, pkgDir } of bridgeWrapperSurfaces(root, dir)) {
+    const anchors = findBridgeVersionAnchors(pkgDir);
+    if (anchors.length !== 1) {
+      problems.push(`${where}/*.sh: expected EXACTLY ONE AW_BRIDGE_VERSION anchor, found ${anchors.length}`);
+      continue;
+    }
+    const anchor = anchors[0];
+    if (!anchor.valid) {
+      problems.push(`${where}/${basename(anchor.path)}: AW_BRIDGE_VERSION is not a canonical "X.Y.Z" assignment (${anchor.raw.trim()})`);
+      continue;
+    }
+    if (anchor.current !== capVersion) {
+      problems.push(`${where}/${basename(anchor.path)}: AW_BRIDGE_VERSION ${anchor.current} ≠ ${capVersion} (capability.json)`);
+    }
+  }
+  return problems;
+};
+
 // ── per-package collection + comparison ───────────────────────────────────────────────
 
 // Collect every version source the package dir actually carries. Each entry: { file, version }
@@ -155,6 +231,11 @@ export const checkPackage = (root, dir) => {
       problems.push(`${source.file}: ${source.version} ≠ ${base} (authoritative ${authoritative.from})`);
     }
   }
+  // A bridge carries a FIFTH constant the four sources miss — AW_BRIDGE_VERSION in bin/*.sh, on the
+  // canonical wrapper AND its kit mirror. Verify both against capability.json (4.2 — AD-053 drift).
+  if (BRIDGE_DIRS.includes(dir)) {
+    problems.push(...checkBridgeWrapperVersion(root, dir));
+  }
   return { dir, base, sources, inSync: problems.length === 0, problems };
 };
 
@@ -173,7 +254,8 @@ export const checkExpectation = (report, expectedVersion) => {
 
 // The source set a package MUST carry for a bump (stricter than the verify pass, whose
 // collectSources is existence-driven and therefore blind to an absent file): npm packages carry
-// all four sources; only bridges legitimately carry just capability.json + SKILL.md.
+// all four sources; only bridges legitimately carry just capability.json + SKILL.md (their
+// AW_BRIDGE_VERSION wrapper constant is a SEPARATE lane, appended to the bump plan below).
 const NPM_SOURCE_FILES = Object.freeze(['package.json', 'capability.json', 'SKILL.md', 'CHANGELOG.md']);
 const BRIDGE_SOURCE_FILES = Object.freeze(['capability.json', 'SKILL.md']);
 export const expectedSourceFiles = (dir) => (BRIDGE_DIRS.includes(dir) ? BRIDGE_SOURCE_FILES : NPM_SOURCE_FILES);
@@ -263,6 +345,39 @@ const prepareChangelogWrite = (path, label, target, today) => {
   };
 };
 
+// The bridge wrapper's AW_BRIDGE_VERSION bump (4.1): rewrite the ONE anchored assignment across the
+// bridge's bin/*.sh under the closed rule — zero or >1 anchors is a loud preflight refusal, zero
+// writes. Only the CANONICAL wrapper is rewritten here; the kit mirror is re-synced from it by
+// syncBridgeMirror after the applies (buildBumpPlan's caller), so the mirror moves byte-identical.
+const prepareBridgeVersionWrite = (pkgDir, dir, target) => {
+  const anchors = findBridgeVersionAnchors(pkgDir);
+  const label = `${dir}/bin/*.sh (AW_BRIDGE_VERSION)`;
+  if (anchors.length !== 1) {
+    throw fail(1, `${label}: expected EXACTLY ONE anchored AW_BRIDGE_VERSION="X.Y.Z" across bin/*.sh, found ${anchors.length} — refusing the bump (zero writes)`);
+  }
+  const { path, text, current, valid, raw } = anchors[0];
+  const relLabel = `${dir}/bin/${basename(path)}`;
+  // Never REWRITE a non-canonical anchor: an unquoted `AW_BRIDGE_VERSION=9.9.9` is shell-valid, so
+  // canonicalizing it down to a lower target would be a silent downgrade the valid-only guard misses.
+  // Refuse it — the operator fixes a malformed anchor by hand (the verify pass already flags it).
+  if (!valid) {
+    throw fail(1, `${relLabel}: AW_BRIDGE_VERSION is not a canonical "X.Y.Z" assignment (${raw.trim()}) — fix it by hand first; the bump never rewrites a non-canonical anchor (it could hide a downgrade)`);
+  }
+  // A canonical anchor can still drift AHEAD of the authoritative source (which is all the outer
+  // downgrade check guards), so guard the anchor itself against a downgrade too.
+  if (compareSemver(current, target) > 0) {
+    throw fail(1, `${relLabel}: AW_BRIDGE_VERSION ${current} is ABOVE --bump ${target} — wrapper downgrade refused (repair an uncommitted wrong bump with git, never a downgrade flag)`);
+  }
+  if (current === target) return { label: relLabel, path, action: 'skip', note: `AW_BRIDGE_VERSION already at ${target}` };
+  return {
+    label: relLabel,
+    path,
+    action: 'write',
+    note: `AW_BRIDGE_VERSION ${current} → ${target}`,
+    nextText: text.replace(/^[ \t]*AW_BRIDGE_VERSION=.*$/m, `AW_BRIDGE_VERSION="${target}"`),
+  };
+};
+
 // Preflight ONE bump target: existence of every required source, downgrade refusal, and a
 // prepared (parsed, not yet applied) write per source. Throws loud, exit-1 refusals; the CLI
 // runs every plan's preflight before applying ANY of them.
@@ -289,6 +404,9 @@ export const buildBumpPlan = (root, dir, targetVersion, today) => {
     if (file === 'CHANGELOG.md') return prepareChangelogWrite(path, label, targetVersion, today);
     return prepareJsonVersionWrite(path, label, targetVersion);
   });
+  // A bridge carries the AW_BRIDGE_VERSION wrapper constant too — bump it under the closed one-anchor
+  // rule (part of THIS preflight, so a bad anchor refuses before any write across every target).
+  if (BRIDGE_DIRS.includes(dir)) writes.push(prepareBridgeVersionWrite(pkgDir, dir, targetVersion));
   return { dir, targetVersion, writes };
 };
 

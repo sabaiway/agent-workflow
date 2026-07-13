@@ -406,7 +406,91 @@ export const recordTriage = (params, deps = {}) => {
   return appendRecord(ledgerPath, record, deps);
 };
 
-// ── CLI (record / classify) ──────────────────────────────────────────────────────────────────────
+// ── batch (D4/D5 — one invocation applies an ordered list of record/classify/override ops) ────────
+// The prompt-economy lane (WRITER-BURST-BATCH): the ledger triad a records stage would otherwise
+// fire one writer call at a time — records, classifications, overrides — rides ONE `batch`
+// invocation. Every op runs the SAME single-verb code path (no forked validator, D4), so a batch of
+// N ops is record-equivalent to the same N single-verb invocations. TWO passes (D5): pass 1
+// validates the WHOLE envelope structurally with ZERO writes (a bad envelope stops before any op
+// runs); pass 2 applies the ops sequentially — a DOMAIN failure (a tooth, a missing receipt, a
+// malformed record) stops the batch with an honest report, and the ops already applied stay recorded
+// (the ledger is append-only — no rollback pretense).
+
+// The verbs a batch operation may carry — the SAME functions the single verbs dispatch.
+const BATCH_VERBS = new Set(['record', 'classify', 'override']);
+
+// Pass 1 — structural envelope validation, ZERO writes (a usage failure, exit 2). Deep per-op payload
+// validity is NOT checked here (that is pass 2's single-verb code path — checking it here would fork
+// the validator); pass 1 proves only the envelope shape + a known verb per op, so no raw TypeError
+// and no silent success reaches pass 2.
+export const validateBatchEnvelope = (payload) => {
+  if (payload == null || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw usageFail('batch payload must be an object of the form { "operations": [ … ] }');
+  }
+  const operations = payload.operations;
+  if (!Array.isArray(operations)) throw usageFail('batch payload.operations must be an array of operations');
+  if (operations.length === 0) throw usageFail('batch payload.operations is empty — nothing to record');
+  operations.forEach((op, i) => {
+    if (op == null || typeof op !== 'object' || Array.isArray(op)) {
+      throw usageFail(`batch operation [${i}] must be an object of the form { "verb": …, … }`);
+    }
+    if (!BATCH_VERBS.has(op.verb)) {
+      throw usageFail(`batch operation [${i}] names an unknown verb "${op.verb}" (expected: record | classify | override)`);
+    }
+    // The batch resolves cwd/env from the INVOCATION, never per operation — a per-op override could
+    // read one project's state and write another's ledger. Reject it loudly.
+    for (const forbidden of ['cwd', 'env']) {
+      if (forbidden in op) {
+        throw usageFail(`batch operation [${i}] carries a "${forbidden}" field — the batch resolves cwd/env from the invocation, never per operation`);
+      }
+    }
+    // fromReceipts must be a real boolean: a string "false" is truthy and would silently enable the
+    // draft. Reject any non-boolean when the field is present.
+    if ('fromReceipts' in op && typeof op.fromReceipts !== 'boolean') {
+      throw usageFail(`batch operation [${i}] has a non-boolean fromReceipts (${JSON.stringify(op.fromReceipts)}) — it must be the literal true or false`);
+    }
+    if ('fromReceipts' in op && op.verb !== 'record') {
+      throw usageFail(`batch operation [${i}] sets fromReceipts on "${op.verb}" — it applies only to record (even the literal false does not belong here)`);
+    }
+  });
+  return operations;
+};
+
+// Apply ONE operation through the SAME single-verb code path main() dispatches (including the
+// --from-receipts backends[] draft for a record op). deps is threaded so a batch is as hermetic as
+// the single verbs.
+const applyOperation = (op, { cwd, env }, deps = {}) => {
+  const { verb, fromReceipts, ...payload } = op;
+  // The invocation's cwd/env WIN (spread last) — validateBatchEnvelope already forbids them in the
+  // payload, so this is defense-in-depth against a direct runBatch call bypassing the preflight.
+  if (verb === 'classify') return recordTriage({ ...payload, cwd, env }, deps);
+  if (verb === 'override') return recordOverride({ ...payload, cwd, env }, deps);
+  const params = { ...payload };
+  if (fromReceipts) {
+    const state = deps.buildState ? deps.buildState({ cwd, env }) : buildState({ cwd, env });
+    params.backends = draftBackendsFromReceipts({ state, findings: params.findings, explicitBackends: params.backends ?? [] }, deps);
+  }
+  return recordRound({ ...params, cwd, env }, deps);
+};
+
+// runBatch({ cwd, env, operations }, deps) → { applied: [ per-op results ], count }. Pass 2: apply
+// sequentially, fail-fast on the first typed STOP; the ops already appended stay recorded.
+export const runBatch = ({ cwd = process.cwd(), env = process.env, operations }, deps = {}) => {
+  const applied = [];
+  for (const [i, operation] of operations.entries()) {
+    try {
+      applied.push(applyOperation(operation, { cwd, env }, deps));
+    } catch (err) {
+      // Honest partial-success (D5): the STOP itself names the failing op index + the applied count.
+      // The ledger is append-only, so those ops are durable — resume by re-running the REMAINING ops.
+      err.message = `${err.message} [batch stopped at operation [${i}]: ${applied.length} of ${operations.length} operation(s) recorded before the stop and durable (append-only ledger); re-run the remaining operations]`;
+      throw err;
+    }
+  }
+  return { applied, count: applied.length };
+};
+
+// ── CLI (record / classify / override / batch) ─────────────────────────────────────────────────────
 
 const HELP = `review-ledger-write — the review-round ledger WRITER (agent-workflow family, AD-045 + AD-047 + AD-048).
 
@@ -414,6 +498,7 @@ Usage:
   node review-ledger-write.mjs record   --json '<round-payload>' [--from-receipts] [--cwd <dir>]
   node review-ledger-write.mjs classify --json '<triage-payload>'   [--cwd <dir>]
   node review-ledger-write.mjs override --json '<override-payload>' [--cwd <dir>]
+  node review-ledger-write.mjs batch    --json '<{ "operations": [ … ] }>' [--cwd <dir>]
   (every verb also accepts --json @<file> — the payload read from a file, keeping the command
    line PLAIN: an inline JSON argv falls outside plain-invocation allow heuristics and prompts)
 
@@ -448,9 +533,23 @@ override appends one override record — the LOUD, durable waiver the gates cons
          sanctions, SEGMENT-scoped — it dies at the next commit, D4).
          REFUSES for a loop that is not the in-flight plan. QUARANTINE (a flaky/timed-out probe)
          has NO override lane.
+batch    applies an ordered list of record / classify / override operations in ONE invocation — the
+         prompt-economy lane for a records stage (one writer call, not one per op). The payload is
+         { "operations": [ { "verb": "record"|"classify"|"override", …that verb's payload } ] }; a
+         record op may carry "fromReceipts": true (the SAME draft as --from-receipts). Each op runs
+         the SAME per-verb code path (no forked validator), so a batch of N ops is record-equivalent
+         to the same N single invocations. TWO passes: the WHOLE envelope is validated structurally
+         first with ZERO writes (a bad envelope stops before any op runs); then ops apply sequentially
+         and fail-fast on the first typed STOP — the ops already applied stay recorded (the ledger is
+         append-only, no rollback), and the STOP names the failing op index + the applied count.
+         Resume by re-running the REMAINING operations.
 
 The read-only checker is a SEPARATE tool: node review-ledger.mjs --check / --status / --json / --telemetry.
 Exit codes: 0 written; 1 a typed STOP (teeth / malformed / missing receipt / fs error); 2 usage.`;
+
+// The CLI subcommand set — the SINGLE source the dispatch and the doc-contract pin both read, so a
+// documented verb list can never lag the dispatch (Phase 2.3 — the contract-test class).
+export const SUBCOMMANDS = ['record', 'classify', 'override', 'batch'];
 
 const parseArgs = (argv) => {
   const opts = { cwd: undefined, json: undefined, fromReceipts: false };
@@ -500,11 +599,18 @@ export const main = (argv, ctx = {}) => {
   try {
     if (argv.includes('--help') || argv.includes('-h') || argv.length === 0) return { code: argv.length === 0 ? 2 : 0, stdout: HELP, stderr: '' };
     const sub = argv[0];
-    if (sub !== 'record' && sub !== 'classify' && sub !== 'override') throw usageFail(`unknown subcommand "${sub}" (expected: record | classify | override)`);
+    if (!SUBCOMMANDS.includes(sub)) throw usageFail(`unknown subcommand "${sub}" (expected: ${SUBCOMMANDS.join(' | ')})`);
     const opts = parseArgs(argv.slice(1));
-    if (opts.fromReceipts && sub !== 'record') throw usageFail('--from-receipts applies only to `record`');
+    if (opts.fromReceipts && sub !== 'record') throw usageFail('--from-receipts applies only to `record` (a batch carries fromReceipts per operation)');
     const payload = parsePayload(opts.json);
     const cwd = opts.cwd ?? cwd0;
+    if (sub === 'batch') {
+      // Pass 1 (structural, ZERO writes) → pass 2 (sequential apply, fail-fast — prior ops durable).
+      const operations = validateBatchEnvelope(payload);
+      const { applied, count } = runBatch({ cwd, env, operations });
+      const writtenPath = applied.length ? applied[applied.length - 1].writtenPath : '(none)';
+      return { code: 0, stdout: `review-ledger-write: recorded ${count} operation(s) in one batch → ${writtenPath}`, stderr: '' };
+    }
     if (opts.fromReceipts) {
       // Draft backends[] from the current-fingerprint receipts + the supplied findings; origins /
       // findings stay explicit. The drafted array then rides the normal recordRound teeth.
@@ -513,10 +619,10 @@ export const main = (argv, ctx = {}) => {
     }
     const result =
       sub === 'record'
-        ? recordRound({ cwd, env, ...payload })
+        ? recordRound({ ...payload, cwd, env })
         : sub === 'classify'
-          ? recordTriage({ cwd, env, ...payload })
-          : recordOverride({ cwd, env, ...payload });
+          ? recordTriage({ ...payload, cwd, env })
+          : recordOverride({ ...payload, cwd, env });
     return { code: 0, stdout: `review-ledger-write: recorded a ${result.record.kind} for loop "${result.record.loop}" round ${result.record.round} → ${result.writtenPath}`, stderr: '' };
   } catch (err) {
     return { code: err.exitCode ?? 1, stdout: '', stderr: `review-ledger-write: ${err.message}` };

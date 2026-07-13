@@ -1,6 +1,15 @@
 ### Mode: recommendations
 
+Requires: ${CLAUDE_SKILL_DIR}/references/shared/report-footer.md
+
 The **read-only deployment advisor** — the deterministic section every `upgrade` run ends with, also invocable on its own. It computes what in THIS deployment is configured sub-optimally (allowlist not seeded, autonomy render drifted, sandbox unavailable, gates undeclared, bridge friction, sandbox-mask clutter, an unacknowledged sandbox recipe) and renders **verdict-first**: one composed verdict line, then each item as **{severity · what is sub-optimal · the benefit in ONE plain line · the exact consent-gated apply one-liner}**. The tool computes deterministic English DATA; **you PRESENT the section in the user's conversational language** — every fact, count and item from the tool, nothing added or dropped; commands, paths, hosts and rule strings stay **byte-exact**; show the raw tool block on request (the AD-032 report-contract lane — the tool cannot know the dialogue language, so the language rendering is your presentation layer).
+
+**Live host/session facts are tool-composed only.** Every fact this section states about the current
+host or session — prompts fired, sandbox scope, whether a bypass was needed, network reachability,
+approval counts — is **live tool output** from **this session** (the tool computed it on this run); a
+memory/handover snapshot is **context, never report facts**, and a claim with no live signal is
+**omitted or explicitly marked unverified**, never asserted from recollection. Full clause: *Live
+host/session facts* in `${CLAUDE_SKILL_DIR}/references/shared/report-footer.md`.
 
 Run `node ${CLAUDE_SKILL_DIR}/tools/recommendations.mjs --cwd <project-root> [--json]`:
 

@@ -4,6 +4,40 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.47.0 — REPORT-FACTS train: live-fact report contract · batched ledger writer · version-sync wrapper lane · sandbox-lanes canon & bridge contract twins (AD-054)
+
+A **feature** release (ships with engine 1.17.0, memory 2.3.0, bridges 2.7.0/2.6.0 bundled) that
+bundles three top-of-queue items plus this session's own live prompt-defects into one train, all
+fixed kit-level:
+
+- **Report-facts contract (D1/D2).** A binding clause at the point of use: any claim a report makes
+  about the CURRENT host or session state — prompts fired, sandbox scope, whether a bypass was
+  needed, network reachability, approval counts — must trace to **live tool output** run **this
+  session**; with no live signal the claim is **omitted or explicitly marked unverified**; a
+  memory/handover snapshot is **context, never report facts**. The full clause lives in
+  `references/shared/report-footer.md` (single home); upgrade steps 4/8 and the recommendations
+  advisor carry one binding line each, pinned by the new `report-facts-contract.test.mjs`.
+- **Batched ledger writer (D3).** `review-ledger-write.mjs` gains a `batch` verb — one invocation
+  applies an ordered record/classify/override list through the SAME single-verb code paths (no forked
+  validator). Two passes: the whole envelope is validated structurally first with ZERO writes, then
+  ops apply sequentially and fail-fast on the first typed STOP with an honest partial-success report
+  (prior ops stay recorded, append-only). One writer call for a records stage instead of ~13.
+- **version-sync wrapper lane (D4).** `version-sync --bump` for a bridge now also rewrites the
+  line-anchored `AW_BRIDGE_VERSION` in `bin/*.sh` (closed one-anchor rule — every assignment counted,
+  so a shadowing malformed line is caught; a non-canonical anchor or a downgrade is refused with zero
+  writes), and the no-flag verify checks it across all four constants (each wrapper + its kit mirror).
+  The bridge version constant is now first-class — dogfooded on this very release.
+- **Bridge contract twins + codex-exec detection (D7).** Both bridge manifests gain a typed `notes[]`
+  (codex execute = the nested-sandbox limit; agy review = the pre-dispatch host-diff), rendered in the
+  `procedures` advisor and each wrapper `--help`, bidirectionally drift-guarded. `codex-exec.sh` now
+  detects the nested-sandbox failure class (a sandbox-mechanism token AND a permission/read-only
+  failure token together) and emits a stated recovery hint — route codex-exec OUTSIDE the harness
+  sandbox ON the observed failure, never a preemptive blanket. The velocity bridge-tier stays
+  REVIEW-wrappers-only; delegated execution keeps its human prompt.
+- **Canon twins (D5/D6).** The prompt-economy canon gains a writer-batch clause and two sandbox-lane
+  sentences (pre-dispatch host-diff + nested-sandbox honesty), rendered across `orchestration.md` §5,
+  the agent-rules lens (re-rendered into both templates), and the kit cost-lanes advisor.
+
 ## 1.46.0 — Recommendations UX rework: verdict-first, shape-capped, user-language; sandbox-lane discoverability (REC-UX-REWORK, AD-053)
 
 A **feature** release (ships with engine 1.16.0, memory 2.2.0, bridges 2.6.0/2.5.0 bundled)
