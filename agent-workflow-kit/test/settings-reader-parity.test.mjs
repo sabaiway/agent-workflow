@@ -27,7 +27,9 @@ const WRAPPERS = [
 ];
 
 // The reader functions that carry the shared settings contract, byte-identical across all wrappers.
-const SHARED_FNS = ['aw_settings_file', 'aw_settings_known', 'aw_settings_valid', 'aw_apply_settings'];
+// aw_int_in_range is the shared overflow-safe integer bound aw_settings_valid delegates to (Issue-012);
+// it lives in the same byte-identical span and its behavioral shell↔JS parity is settings-valid-parity.test.mjs.
+const SHARED_FNS = ['aw_settings_file', 'aw_settings_known', 'aw_int_in_range', 'aw_settings_valid', 'aw_apply_settings'];
 
 // Extract a top-level `name() {` … column-0 `}` bash function from a wrapper source, verbatim.
 const extractBashFn = (source, name) => {

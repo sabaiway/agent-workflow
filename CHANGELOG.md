@@ -7,6 +7,33 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-14 — kit 1.49.0 + bridges 2.7.1/2.6.1: honesty/robustness bundle (AD-056)
+
+**Kit MINOR** (carrying codex-cli-bridge 2.7.1 + antigravity-cli-bridge 2.6.1 PATCH in-tarball;
+engine 1.17.0 / memory 2.3.0 unchanged; lineage head stays `2.0.0`) **plus a repo-only dispatcher
+fix** on the same commit. Three small, live-observed defects, one theme — *a blocked environment must
+produce a STATED degrade, never a false red; a real failure stays loud*:
+
+- **kit — refresh under a read-only skills dir.** `--refresh-placed` re-syncs even at the current
+  version (repair-on-rerun); under the harness sandbox `~/.claude/skills` is read-only, so that write
+  EROFSed into a false *"could not refresh — recover with setup"* (both versions current; `setup` hits
+  the same read-only dir). It now reports a new **`skipped-readonly`** outcome (exit 0) naming the
+  version, the skipped/incomplete re-sync and the read-only cause — never claiming a re-sync ran. A
+  version-behind or non-read-only failure stays loud; the opt-in `setup` lane stays loud.
+- **bridges — settings integer parity (Issue-012, Resolved).** The four wrappers' shared
+  `aw_settings_valid` integer arms wrapped modulo 2^64 on a 19+ digit string, so the shell accepted a
+  value the kit's safe-integer `settingValueValid` rejected. A shared overflow-safe `aw_int_in_range`
+  helper (byte-identical across all four wrappers) closes the gap; a leading-zero in-range value still
+  passes on both sides — pinned by a behavioral shell↔JS parity test.
+- **repo — the publish dispatcher's post-publish verify (`scripts/release/dispatch-publish.mjs`).** A
+  network-blocked in-sandbox verify hit two false-red paths (a transport-rejected npm fetch → exit 1
+  "fetch failed"; a gh transport failure at the Release lookup → "treating as missing") though the
+  publish concluded success. The production adapters now type the transport outcome (keying on the
+  response shape, not the exit code), and a transport failure/timeout classifies as **UNREACHABLE — a
+  new distinct exit `9`** (inconclusive, not a failed release). A new **`--verify-only`** lane re-runs
+  only the verify (zero dispatches) so a degraded in-run verify is recovered outside the sandbox
+  without re-dispatching. Every verify lookup carries a bounded transport deadline. Full record in AD-056.
+
 ## 2026-07-14 — kit 1.48.0: family-owned neutral ack store + read-prompt-economy hook lane (AD-055, the CLAUDE-CODE-HARNESS-FRICTION cluster)
 
 **Kit-only release** (engine 1.17.0, memory 2.3.0, bridges 2.7.0/2.6.0 unchanged; lineage head stays

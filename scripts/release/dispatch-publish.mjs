@@ -42,7 +42,10 @@
 //   • Post-publish verification is bounded-retry (registry `@latest` can lag), with a loud timeout.
 //
 // Distinct exit codes: 0 ok · 2 usage · 3 preflight · 4 dispatch · 5 correlation · 6 poll
-// timeout · 7 run concluded non-success · 8 post-publish verification failure.
+// timeout · 7 run concluded non-success · 8 post-publish verification failure (reachable — a real
+// red) · 9 post-publish verification UNREACHABLE (inconclusive — the publish itself concluded
+// success but a verify endpoint could not be reached, e.g. a network-blocked sandbox; re-run the
+// verify OUTSIDE the sandbox with the printed `--verify-only` command — NOT a failed release).
 // Dependency-free, Node >= 18 (global fetch). No side effects on import.
 
 import { readFileSync } from 'node:fs';
@@ -62,6 +65,7 @@ export const EXIT = Object.freeze({
   pollTimeout: 6,
   runFailed: 7,
   verify: 8,
+  unreachable: 9,
 });
 
 export const fail = (exitCode, message) => Object.assign(new Error(message), { exitCode });
@@ -90,6 +94,10 @@ export const RUN_POLL_MS = 15_000;
 export const NPM_VERIFY_ATTEMPTS = 10;
 export const NPM_VERIFY_BACKOFF_MS = 10_000;
 export const DEFAULT_POLL_TIMEOUT_S = 1200;
+// D3a: every verify-stage lookup (npm fetch + gh Release) carries this per-attempt transport deadline,
+// so a network-blocked endpoint classifies as UNREACHABLE instead of hanging. The retry loop's TOTAL
+// worst case is bounded by NPM_VERIFY_ATTEMPTS × (this + NPM_VERIFY_BACKOFF_MS) — a finite ceiling.
+export const VERIFY_TRANSPORT_DEADLINE_MS = 30_000;
 
 // ── tag derivation: READ from _publish-one.yml, never assumed ─────────────────────────
 
@@ -123,12 +131,26 @@ const firstLine = (text) => String(text ?? '').split('\n')[0].trim();
 // Signatures of an AUTHENTICATION failure specifically (vs network / outage / permission). Only an
 // auth failure earns the GH_TOKEN recovery — anything else keeps its raw error so a real outage is
 // never mislabeled a "skipped token" (a wrong diagnosis is exactly the class this fix exists to end).
-const GH_AUTH_FAILURE_RE = /auth|login|401|unauthenti|credential|token|bad credentials/i;
-export const assertGitHubAuth = (ghApi) => {
+// A PRECISE auth-failure signature — narrow enough NOT to match a stray substring like "unknown
+// authority" (an x509 TRANSPORT error) or a "token" mention in a non-auth message. A structurally
+// observed HTTP 401 is the primary signal; these are the exact credential/login phrasings gh emits.
+const GH_AUTH_FAILURE_RE = /bad credentials|not logged in|requires authentication|unauthenticated|gh auth login|http 401|\b401\b/i;
+// The auth preflight (kept in EVERY mode — the Release lookup needs it). Mode-specific transport
+// semantics (D2): an AUTH-shaped failure (structural 401 / precise credential+login signatures) is
+// LOUD in every mode; a TYPED TRANSPORT failure (no HTTP response — nothing conclusive observed) is a
+// loud preflight red in live/dry, but INCONCLUSIVE (EXIT.unreachable) in `--verify-only` — that lane
+// exists precisely to be re-run when a sandbox blocked the network, so it must not paint a transport
+// blip red. Transport is decided STRUCTURALLY (err.transport), never a broad message-text match.
+export const assertGitHubAuth = (ghApi, { verifyOnly = false, deadlineMs, reRunCommand } = {}) => {
   try {
-    ghApi({ path: 'user' });
+    // The auth preflight is itself a verify-stage lookup — bound it with the transport deadline so it
+    // cannot hang before the main bounded verify (M1/D3a); a deadline timeout classifies as transport.
+    ghApi({ path: 'user' }, deadlineMs ? { deadlineMs } : undefined);
   } catch (err) {
-    if (GH_AUTH_FAILURE_RE.test(err.message ?? '')) {
+    // Structural 401 or a precise credential/login signature ⇒ AUTH. A typed transport error (x509 /
+    // DNS / reset — whose message may merely CONTAIN "auth"ority) is NOT auth and falls through.
+    const authShaped = err.ghStatus === 401 || GH_AUTH_FAILURE_RE.test(err.message ?? '');
+    if (authShaped) {
       // Looks like missing auth → the project-specific recovery, and deliberately WITHOUT gh's raw
       // "run gh auth login" line (it contradicts this repo's GH_TOKEN mechanism and misled a session).
       throw fail(
@@ -138,6 +160,17 @@ export const assertGitHubAuth = (ghApi) => {
           '  (a PAT), NOT `gh auth login`. Load it, then re-run — see docs/ai/env_commands.md, the\n' +
           '  "## Access / gh" block (export GH_TOKEN=$(… your PAT file …); export GH_TOKEN). An empty\n' +
           '  `gh auth status` here means the token was never exported this session, not that it is missing.',
+      );
+    }
+    if (verifyOnly && err.transport) {
+      // Nothing conclusive was observed — the verify-only lane degrades to inconclusive, not a red, and
+      // prints the CANONICAL --verify-only recovery command (targets + --expect + --repo) so a degraded
+      // auth preflight recovers exactly like a degraded verify.
+      throw fail(
+        EXIT.unreachable,
+        `GitHub auth preflight could not REACH GitHub (${firstLine(err.message)}) — the --verify-only\n` +
+          '  lane is INCONCLUSIVE (no HTTP response was observed, so nothing was verified). Re-run OUTSIDE\n' +
+          `  the sandbox once the network is reachable:\n    ${reRunCommand ?? '(the --verify-only command)'}`,
       );
     }
     // NOT obviously auth (network / GitHub outage / permission) — keep the raw failure honest, never
@@ -151,22 +184,80 @@ export const assertGitHubAuth = (ghApi) => {
   }
 };
 
-// gh REST (GH_TOKEN per docs/ai/env_commands.md). method GET → parsed JSON; POST with fields.
-const ghApiDefault = ({ method = 'GET', path, fields = {} }) => {
+// Typed transport classification (D3). The signal that separates "the server responded" from "we
+// never reached it" is the OUTPUT SHAPE, never the exit code alone: a gh HTTP 404 and a gh DNS
+// failure BOTH exit nonzero. An OBSERVED HTTP status ⇒ reachable (loud path); a process that ran and
+// exited nonzero with NO observed status ⇒ no HTTP response was received ⇒ transport ⇒ UNREACHABLE.
+const GH_HTTP_STATUS_RE = /HTTP (\d{3})/;
+
+// gh REST (GH_TOKEN per docs/ai/env_commands.md). method GET → parsed JSON; POST with fields. A
+// failure is thrown TYPED: `.transport` true ⇒ no HTTP response was observed (DNS/connection/reset/
+// TLS/timeout); `.localError` true ⇒ a LOCAL/process failure (gh not installed/executable, output
+// too large) — loud, never "unreachable"; `.ghStatus` carries an observed HTTP status when present.
+// Non-verify callers keep the loud EXIT.dispatch; the verify stage reads `.transport` to degrade to
+// UNREACHABLE. `deadlineMs` bounds the spawn (D3a). `spawnImpl` is injectable so T2e/T2g drive the
+// classifier with low-level fixtures.
+export const ghApiDefault = ({ method = 'GET', path, fields = {} } = {}, { deadlineMs, spawnImpl = spawnSync } = {}) => {
   const args = ['api', '-X', method, path];
   for (const [key, value] of Object.entries(fields)) args.push('-f', `${key}=${value}`);
-  const res = spawnSync('gh', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+  const res = spawnImpl('gh', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, ...(deadlineMs ? { timeout: deadlineMs } : {}) });
+  // A DEADLINE timeout ⇒ transport (unreachable). A NON-timeout spawn error (gh not on PATH / not
+  // executable / output too large) is a LOCAL/process failure — LOUD, never "unreachable" (M3): the
+  // degrade must not tell the user to leave the sandbox for a broken local install.
+  const timedOut = (res.error && res.error.code === 'ETIMEDOUT') || (deadlineMs && res.signal === 'SIGTERM');
+  if (timedOut) {
+    throw Object.assign(fail(EXIT.dispatch, `gh api ${method} ${path} timed out after ${deadlineMs}ms — endpoint unreachable`), { transport: true, ghStatus: null });
+  }
+  if (res.error) {
+    throw Object.assign(
+      fail(EXIT.dispatch, `gh api ${method} ${path} could not run LOCALLY (${res.error.code ?? res.error.message}) — a local/process error (gh not installed / not executable / output too large), NOT a network transport failure`),
+      { transport: false, localError: true, ghStatus: null },
+    );
+  }
   if (res.status !== 0) {
-    throw fail(EXIT.dispatch, `gh api ${method} ${path} failed: ${(res.stderr || res.stdout || '').trim()}`);
+    const out = `${res.stderr || ''}\n${res.stdout || ''}`;
+    const statusMatch = out.match(GH_HTTP_STATUS_RE);
+    const observedStatus = statusMatch ? Number(statusMatch[1]) : null;
+    // The process RAN and exited nonzero: an OBSERVED HTTP status ⇒ reachable (the server answered —
+    // a 404 / permission red stays loud); NO observed status ⇒ no HTTP response was received ⇒
+    // TRANSPORT (M2 — classify by response-SHAPE, never an allowlist of error phrasings: a
+    // `connection reset` / `x509` / `TLS handshake` failure carries no status and IS transport).
+    const transport = observedStatus === null;
+    throw Object.assign(
+      fail(EXIT.dispatch, `gh api ${method} ${path} failed: ${(res.stderr || res.stdout || '').trim()}`),
+      { transport, ghStatus: observedStatus },
+    );
   }
   const body = (res.stdout || '').trim();
   return body === '' ? null : JSON.parse(body);
 };
 
-const fetchJsonDefault = async (url) => {
-  const res = await fetch(url);
-  if (!res.ok) return { httpError: res.status };
-  return res.json();
+// npm registry read, typed (D3). Envelope (flat — a success is the parsed JSON object, which carries
+// `.version`): `{transportError}` (no response — DNS/connection/timeout/abort) · `{httpError}` (a
+// status WAS observed — reachable) · `{parseError}` (reachable but malformed body) · the parsed JSON.
+// `deadlineMs` bounds the fetch via an AbortController (D3a); `fetchImpl` is injectable for T2e/T2g.
+export const fetchJsonDefault = async (url, { deadlineMs, fetchImpl = fetch } = {}) => {
+  const controller = deadlineMs ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), deadlineMs) : null;
+  try {
+    const res = await fetchImpl(url, controller ? { signal: controller.signal } : {});
+    if (!res.ok) return { httpError: res.status };
+    try {
+      return await res.json();
+    } catch (err) {
+      // res.json() rejected AFTER headers: a genuine malformed body is a SyntaxError → parseError
+      // (reachable red). An abort (the deadline fired mid-body) or a dropped body stream is NOT
+      // malformed JSON — it is a TRANSPORT failure, never a false reachable red.
+      if (err && err.name === 'SyntaxError') return { parseError: err.message || 'invalid JSON' };
+      const isAbort = err && (err.name === 'AbortError' || err.code === 'ABORT_ERR');
+      return { transportError: isAbort ? `timeout after ${deadlineMs}ms` : `response body unreadable (${(err && err.message) || 'stream failure'})` };
+    }
+  } catch (err) {
+    const isAbort = err && (err.name === 'AbortError' || err.code === 'ABORT_ERR');
+    return { transportError: isAbort ? `timeout after ${deadlineMs}ms` : ((err && err.message) || 'network failure') };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 };
 
 const sleepDefault = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
@@ -174,14 +265,15 @@ const sleepDefault = (ms) => new Promise((resolveSleep) => setTimeout(resolveSle
 // ── arg parsing (usage → exit 2) ──────────────────────────────────────────────────────
 
 const USAGE =
-  'usage: dispatch-publish.mjs all | <pkg>... [--expect <pkg>=X.Y.Z]... [--ref <ref>] [--live] [--poll-timeout <seconds>] [--repo <owner/name>]';
+  'usage: dispatch-publish.mjs all | <pkg>... [--expect <pkg>=X.Y.Z]... [--ref <ref>] [--live | --verify-only] [--poll-timeout <seconds>] [--repo <owner/name>]';
 
 export const parseArgs = (argv) => {
-  const opts = { packages: [], expect: {}, ref: 'main', live: false, pollTimeoutS: DEFAULT_POLL_TIMEOUT_S, repo: null, help: false };
+  const opts = { packages: [], expect: {}, ref: 'main', live: false, verifyOnly: false, pollTimeoutS: DEFAULT_POLL_TIMEOUT_S, repo: null, help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') opts.help = true;
     else if (arg === '--live') opts.live = true;
+    else if (arg === '--verify-only') opts.verifyOnly = true;
     else if (arg === '--ref') {
       i += 1;
       if (argv[i] === undefined) throw fail(EXIT.usage, '--ref requires a ref argument');
@@ -189,6 +281,9 @@ export const parseArgs = (argv) => {
     } else if (arg === '--repo') {
       i += 1;
       if (argv[i] === undefined) throw fail(EXIT.usage, '--repo requires an owner/name argument');
+      // Validated to a plain owner/name: it is rendered into a copy-paste `--verify-only` recovery
+      // command, so a shell metacharacter (`;` `&&` `|` `$()` backtick, whitespace) must never reach it.
+      if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(argv[i])) throw fail(EXIT.usage, `--repo must be a plain owner/name with no shell metacharacters (got "${argv[i]}")`);
       opts.repo = argv[i];
     } else if (arg === '--poll-timeout') {
       i += 1;
@@ -213,6 +308,7 @@ export const parseArgs = (argv) => {
     }
   }
   if (opts.help) return opts;
+  if (opts.verifyOnly && opts.live) throw fail(EXIT.usage, '--verify-only and --live are mutually exclusive — verify-only performs ZERO dispatches and only re-runs the post-publish verify');
   if (opts.packages.length === 0) throw fail(EXIT.usage, `no packages given\n${USAGE}`);
   if (opts.packages.includes('all')) {
     // `all` is accepted ONLY alone — mixed with named packages the intent is ambiguous (the
@@ -230,16 +326,32 @@ export const parseArgs = (argv) => {
       throw fail(EXIT.usage, 'kit must be LAST in the ordered list (it composes on memory + engine — Issue-007 ordering)');
     }
   }
-  if (opts.live) {
-    // For `all`, every family package needs an expectation — an unchanged package's expectation
-    // is simply its current, already-published version (stale-expect + verify both hold for it).
+  if (opts.live || opts.verifyOnly) {
+    // Both --live and --verify-only need an expectation for every target — verify-only compares the
+    // published artifact to --expect, so it is as required there as it is for --live. For `all`, every
+    // family package needs one (an unchanged package's expectation is its already-published version).
     const required = opts.packages.includes('all') ? ALL_PACKAGES : opts.packages;
     const missing = required.filter((pkg) => !opts.expect[pkg]);
     if (missing.length > 0) {
-      throw fail(EXIT.usage, `--live requires --expect <pkg>=X.Y.Z for every ${opts.packages.includes('all') ? 'family package (all = memory + engine + kit)' : 'dispatched package'} (missing: ${missing.join(', ')})`);
+      const flag = opts.verifyOnly ? '--verify-only' : '--live';
+      throw fail(EXIT.usage, `${flag} requires --expect <pkg>=X.Y.Z for every ${opts.packages.includes('all') ? 'family package (all = memory + engine + kit)' : 'target package'} (missing: ${missing.join(', ')})`);
     }
   }
   return opts;
+};
+
+// The canonical `--verify-only` re-run render (D2/D3b) — preserves every `--expect` and an explicit
+// `--repo`. Without `pkgs` it preserves the original target shape (`all` vs the named list). With an
+// explicit `pkgs` subset (M-B — after a partial flow, only the packages actually published +
+// inconclusive need re-verification) it renders that NAMED list, never `all`: listing an un-published
+// tail package would guarantee a false verify-red on the re-run.
+export const renderVerifyOnlyCommand = (opts, pkgs = null) => {
+  const isAll = opts.packages.includes('all');
+  const targetPkgs = pkgs ?? (isAll ? ALL_PACKAGES : opts.packages);
+  const target = !pkgs && isAll ? 'all' : targetPkgs.join(' ');
+  const expects = targetPkgs.map((pkg) => `--expect ${pkg}=${opts.expect[pkg]}`).join(' ');
+  const repoFlag = opts.repo ? ` --repo ${opts.repo}` : '';
+  return `node scripts/release/dispatch-publish.mjs ${target} --verify-only ${expects}${repoFlag}`;
 };
 
 export const parseOriginRepo = (originUrl) => {
@@ -333,6 +445,14 @@ const dispatchAndAwait = async ({ pkg, dryRun, ctx }) => {
 // Post-publish verification: npm `@latest` equals the expected version (bounded retry — the
 // registry read-through cache can lag) and the GitHub Release exists, is published (not a
 // draft), and carries EXACTLY ONE asset — at the tag _publish-one.yml derives.
+//
+// RETURNS a typed outcome, never throws (D3b — the caller collects per-package outcomes + continues):
+//   { outcome: 'verified', name }
+//   { outcome: 'unreachable', name, endpoint, cause }  — a TRANSPORT failure (npm or gh); the publish
+//        concluded success, only the verify endpoint was unreachable → inconclusive, not a red.
+//   { outcome: 'failed', name, detail }                — a REACHABLE red (wrong version after the
+//        bounded retry, missing/draft Release, wrong asset count, or a parse-error body) → loud.
+// Every lookup carries VERIFY_TRANSPORT_DEADLINE_MS (D3a) so a network-blocked endpoint cannot hang.
 export const verifyPublished = async ({ pkg, ctx }) => {
   const { ghApi, repo, expect, tagFor, fetchJson, readFile, root, sleep, log } = ctx;
   const dir = PKG_DIRS[pkg];
@@ -342,7 +462,13 @@ export const verifyPublished = async ({ pkg, ctx }) => {
   let lastSeen = null;
   let verified = false;
   for (let attempt = 1; attempt <= NPM_VERIFY_ATTEMPTS && !verified; attempt += 1) {
-    const latest = await fetchJson(`https://registry.npmjs.org/${encoded}/latest`);
+    const latest = await fetchJson(`https://registry.npmjs.org/${encoded}/latest`, { deadlineMs: VERIFY_TRANSPORT_DEADLINE_MS });
+    if (latest && latest.transportError) {
+      return { outcome: 'unreachable', pkg, name, endpoint: `npm registry (${name}@latest)`, cause: latest.transportError };
+    }
+    if (latest && latest.parseError) {
+      return { outcome: 'failed', pkg, name, detail: `npm @latest for ${name} returned an unparseable body (${latest.parseError}) — reachable but malformed` };
+    }
     lastSeen = latest && latest.version ? latest.version : `http ${latest && latest.httpError}`;
     if (lastSeen === expected) {
       verified = true;
@@ -352,21 +478,53 @@ export const verifyPublished = async ({ pkg, ctx }) => {
     }
   }
   if (!verified) {
-    throw fail(EXIT.verify, `npm @latest for ${name} is "${lastSeen}", expected ${expected} — verification timed out after ${NPM_VERIFY_ATTEMPTS} attempts`);
+    return { outcome: 'failed', pkg, name, detail: `npm @latest for ${name} is "${lastSeen}", expected ${expected} — verification timed out after ${NPM_VERIFY_ATTEMPTS} attempts` };
   }
   const tag = tagFor(dir, expected);
-  // A missing Release surfaces as a gh api 404 THROW (not a null return) — classify any failure
-  // of this lookup as the precise verification exit code, never the generic dispatch one.
+  // A missing Release is a gh 404 (a status observed → reachable → loud); a TRANSPORT failure (no
+  // HTTP response) is `.transport` → UNREACHABLE, never mislabeled "missing Release".
   let release = null;
   try {
-    release = ghApi({ path: `repos/${repo}/releases/tags/${tag}` });
+    release = ghApi({ path: `repos/${repo}/releases/tags/${tag}` }, { deadlineMs: VERIFY_TRANSPORT_DEADLINE_MS });
   } catch (err) {
-    throw fail(EXIT.verify, `GitHub Release ${tag} could not be fetched (${err.message}) — treating as missing`);
+    if (err.transport) return { outcome: 'unreachable', pkg, name, endpoint: `GitHub Release ${tag}`, cause: firstLine(err.message) };
+    return { outcome: 'failed', pkg, name, detail: `GitHub Release ${tag} could not be fetched (${firstLine(err.message)})` };
   }
-  if (!release || release.draft !== false) throw fail(EXIT.verify, `GitHub Release ${tag} is missing or still a draft`);
+  if (!release || release.draft !== false) return { outcome: 'failed', pkg, name, detail: `GitHub Release ${tag} is missing or still a draft` };
   const assetCount = (release.assets ?? []).length;
-  if (assetCount !== 1) throw fail(EXIT.verify, `GitHub Release ${tag} carries ${assetCount} assets, expected exactly 1 (the published tarball)`);
+  if (assetCount !== 1) return { outcome: 'failed', pkg, name, detail: `GitHub Release ${tag} carries ${assetCount} assets, expected exactly 1 (the published tarball)` };
   log(`   ✓ verified ${name}@${expected} on npm + Release ${tag} (1 asset)`);
+  return { outcome: 'verified', pkg, name };
+};
+
+// Collapse collected verify outcomes into an exit code + one enumerating message (D3b). Priority: a
+// captured DISPATCH failure's exit code dominates (M5 — preserved, never lost to the outer catch);
+// else a reachable FAILED anywhere → EXIT.verify; else any UNREACHABLE → EXIT.unreachable (with the
+// --verify-only recovery); else all verified → EXIT.ok. The message names EXACTLY what concluded,
+// what verified, and what is inconclusive — never more than what ran. `verifyOnly` mode (M6) never
+// claims a publish it did not perform.
+export const finalizeVerify = (outcomes, ctx, renderRecovery, { verifyOnly = false, dispatchFailure = null } = {}) => {
+  const { log } = ctx;
+  const verified = outcomes.filter((o) => o.outcome === 'verified');
+  const unreachable = outcomes.filter((o) => o.outcome === 'unreachable');
+  const failed = outcomes.filter((o) => o.outcome === 'failed');
+  if (!dispatchFailure && !failed.length && !unreachable.length) {
+    log(verifyOnly ? `✓ verified: ${verified.map((o) => o.name).join(' · ')}` : `✓ published + verified: ${verified.map((o) => o.name).join(' · ')}`);
+    return EXIT.ok;
+  }
+  const parts = [];
+  if (verified.length) parts.push(`${verifyOnly ? 'verified' : 'concluded + verified'}: ${verified.map((o) => o.name).join(', ')}`);
+  if (dispatchFailure) parts.push(`dispatch FAILED: ${dispatchFailure.message}`);
+  if (failed.length) parts.push(`verify FAILED (reachable red): ${failed.map((o) => `${o.name} — ${o.detail}`).join('; ')}`);
+  if (unreachable.length) {
+    parts.push(`verify INCONCLUSIVE (${verifyOnly ? 'endpoint unreachable' : 'publish concluded success; endpoint unreachable'}): ${unreachable.map((o) => `${o.name} @ ${o.endpoint} — ${o.cause}`).join('; ')}`);
+    // M-B: the recovery re-verifies ONLY the inconclusive packages (the ones actually published) —
+    // never an un-published tail package, which would false-red on the re-run.
+    parts.push(`re-run the verify OUTSIDE the sandbox: ${renderRecovery(unreachable.map((o) => o.pkg))}`);
+  }
+  const label = verifyOnly ? 'verify' : 'post-publish verification';
+  const exitCode = dispatchFailure ? (dispatchFailure.exitCode ?? 1) : (failed.length ? EXIT.verify : EXIT.unreachable);
+  throw fail(exitCode, `${label} incomplete — ${parts.join(' · ')}`);
 };
 
 // ── the orchestrated flow ─────────────────────────────────────────────────────────────
@@ -398,9 +556,27 @@ export const runDispatch = async (argv, deps = {}) => {
     const dispatchTargets = isAll ? ['all'] : opts.packages;
     const verifyTargets = isAll ? [...ALL_PACKAGES] : opts.packages;
 
-    // Preflight — everything that can refuse does so BEFORE any dispatch.
+    // Shared, dispatch-independent preflight: the tag mapper (local workflow read) + the repo (a git
+    // config read or --repo). Both the dispatch lane and the verify-only lane need these.
     const tagFor = readTagTemplate(readFile(join(root, WORKFLOW_ONE_REL), 'utf8'));
     const repo = opts.repo ?? parseOriginRepo(runGit(['remote', 'get-url', 'origin']));
+    // The recovery render is a function of the packages to re-verify — finalizeVerify scopes it to the
+    // inconclusive ones (M-B); the default (no subset) preserves the original target shape.
+    const renderRecovery = (pkgs) => renderVerifyOnlyCommand(opts, pkgs);
+
+    // ── verify-only lane (D2): re-run ONLY the post-publish verify — ZERO dispatches, NO dry-run. It
+    // SKIPS the dispatch-only preflights (ls-remote / clean-tree / stale-expect / stub gate — none
+    // apply when nothing is dispatched) but KEEPS the gh auth preflight (the Release lookup needs it),
+    // with the verify-only transport semantics (a transport auth failure is inconclusive, not a red).
+    if (opts.verifyOnly) {
+      assertGitHubAuth(ghApi, { verifyOnly: true, deadlineMs: VERIFY_TRANSPORT_DEADLINE_MS, reRunCommand: renderRecovery(null) });
+      const ctx = { ghApi, repo, expect: opts.expect, tagFor, fetchJson, readFile, root, sleep, log };
+      const outcomes = [];
+      for (const pkg of verifyTargets) outcomes.push(await verifyPublished({ pkg, ctx }));
+      return finalizeVerify(outcomes, ctx, renderRecovery, { verifyOnly: true });
+    }
+
+    // Dispatch preflight — everything that can refuse a dispatch does so BEFORE any dispatch.
     const lsRemote = runGit(['ls-remote', 'origin', opts.ref]).trim();
     const expectedSha = lsRemote.split(/\s/)[0];
     if (!expectedSha) throw fail(EXIT.preflight, `git ls-remote origin ${opts.ref} returned nothing — unknown ref`);
@@ -440,7 +616,8 @@ export const runDispatch = async (argv, deps = {}) => {
 
     // GitHub auth is required for BOTH dry-run and live (every phase drives `gh api`) — prove it
     // ONCE here so a missing token fails with the project-specific recovery, never gh's generic hint.
-    assertGitHubAuth(ghApi);
+    // Bounded (M1/D3a): a transport timeout here is a loud preflight red in live/dry.
+    assertGitHubAuth(ghApi, { deadlineMs: VERIFY_TRANSPORT_DEADLINE_MS });
 
     const ctx = { ghApi, repo, ref: opts.ref, expectedSha, expect: opts.expect, tagFor, fetchJson, readFile, root, pollTimeoutS: opts.pollTimeoutS, now, sleep, log };
 
@@ -453,18 +630,34 @@ export const runDispatch = async (argv, deps = {}) => {
       return EXIT.ok;
     }
 
-    // Phase 2 — live. Named lists dispatch in order (kit last enforced at parse) and verify
-    // after each package; `all` is ONE live run (ordering lives in the workflow's
-    // `kit needs: [memory, engine]`) verified for every family package afterwards.
+    // Phase 2 — live. Named lists dispatch in order (kit last enforced at parse) and verify after
+    // each package; `all` is ONE live run (ordering lives in the workflow's `kit needs`) verified for
+    // every family package afterwards. D3b: verify outcomes are COLLECTED — an UNREACHABLE verify
+    // (transport failure; the publish itself concluded success) never aborts the remaining work; a
+    // reachable-red or a dispatch failure dominates the final exit code.
+    const outcomes = [];
+    let dispatchFailure = null;
     for (const pkg of dispatchTargets) {
-      await dispatchAndAwait({ pkg, dryRun: false, ctx });
-      if (!isAll) await verifyPublished({ pkg, ctx });
+      try {
+        await dispatchAndAwait({ pkg, dryRun: false, ctx });
+      } catch (err) {
+        // M5: a dispatch failure mid-flow is finalized WITH the accumulated outcomes (prior
+        // publishes/inconclusives), preserving its hard exit code — never lost to the outer catch.
+        dispatchFailure = err;
+        break;
+      }
+      if (!isAll) {
+        const outcome = await verifyPublished({ pkg, ctx });
+        outcomes.push(outcome);
+        // M4: a REACHABLE verify red stops the named flow before the next live dispatch — don't publish
+        // more after a confirmed-bad publish (continuation is only for an inconclusive transport degrade).
+        if (outcome.outcome === 'failed') break;
+      }
     }
-    if (isAll) {
-      for (const pkg of verifyTargets) await verifyPublished({ pkg, ctx });
+    if (isAll && !dispatchFailure) {
+      for (const pkg of verifyTargets) outcomes.push(await verifyPublished({ pkg, ctx }));
     }
-    log(`✓ published + verified: ${verifyTargets.map((pkg) => `${pkg}@${opts.expect[pkg]}`).join(' · ')}`);
-    return EXIT.ok;
+    return finalizeVerify(outcomes, ctx, renderRecovery, { verifyOnly: false, dispatchFailure });
   } catch (err) {
     logError(`[dispatch-publish] ${err.message}`);
     return err.exitCode ?? 1;

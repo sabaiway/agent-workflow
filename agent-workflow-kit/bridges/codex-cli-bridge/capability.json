@@ -3,7 +3,7 @@
   "schema": 1,
   "name": "codex-cli-bridge",
   "kind": "execution-backend",
-  "version": "2.7.0",
+  "version": "2.7.1",
   "provides": ["execute", "review"],
   "roles": {
     "execute": {

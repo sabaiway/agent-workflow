@@ -12,6 +12,7 @@ import {
   removeTreeManaged,
   unlinkManaged,
   MANAGED_LINK_CONFLICT,
+  isReadonlyWriteBoundary,
 } from './fs-safe.mjs';
 
 // All three primitives are SYNC and operate on real tmp dirs here (the symlink behaviours are
@@ -124,6 +125,100 @@ describe('copyTreeRefresh', () => {
     writeFileSync(src, 'x');
     assert.throws(() => copyTreeRefresh(src, join(root, 'sub', 'f.txt'), root), /symlink/i);
     assert.equal(existsSync(join(elsewhere, 'f.txt')), false); // no leak
+  });
+});
+
+// ── copyTreeRefresh — read-only write-boundary tagging (REFRESH-EROFS-HONESTY / AD-056) ──
+// A destination-side write failure of the read-only class (EROFS/EACCES/EPERM) at one of the three
+// write primitives is TAGGED (err.readonlyWriteBoundary) so the refresh-only driver can classify an
+// equal-version repair-on-rerun that cannot write as a STATED skip — never a false red. A READ-side
+// failure, a source-side copyFile failure, or a non-read-only errno is NEVER tagged (it stays loud).
+describe('copyTreeRefresh — read-only write-boundary tagging', () => {
+  const errno = (code) => () => { throw Object.assign(new Error(`${code}: injected`), { code }); };
+  const catchErr = (fn) => { try { fn(); return null; } catch (e) { return e; } };
+
+  const fileSrcDest = () => {
+    const src = join(dir, 'src.txt');
+    const root = join(dir, 'dest');
+    mkdirSync(root);
+    writeFileSync(src, 'payload');
+    return { src, root, dest: join(root, 'f.txt') };
+  };
+
+  for (const code of ['EROFS', 'EACCES', 'EPERM']) {
+    it(`copyFile ${code} with a READABLE source → tagged (destination-side), original errno preserved`, () => {
+      const { src, root, dest } = fileSrcDest();
+      const err = catchErr(() => copyTreeRefresh(src, dest, root, { copyFile: errno(code) }));
+      assert.ok(err, 'the copy threw');
+      assert.equal(err.code, code, 'the original errno is preserved (never message-matched)');
+      assert.equal(err.readonlyWriteBoundary, true, `${code} at the copyFile write boundary with a readable source is tagged`);
+    });
+  }
+
+  it('copyFile EACCES with an UNREADABLE source → NOT tagged (source-side stays loud)', () => {
+    const { src, root, dest } = fileSrcDest();
+    const err = catchErr(() => copyTreeRefresh(src, dest, root, {
+      copyFile: errno('EACCES'),
+      readFile: () => { throw Object.assign(new Error('EACCES: src unreadable'), { code: 'EACCES' }); },
+    }));
+    assert.ok(err);
+    assert.notEqual(err.readonlyWriteBoundary, true, 'an unreadable source is a source-side failure, never a write-boundary skip');
+  });
+
+  it('EROFS is destination-side by nature — copyFile EROFS never probes/needs the source', () => {
+    const { src, root, dest } = fileSrcDest();
+    let probed = false;
+    const err = catchErr(() => copyTreeRefresh(src, dest, root, {
+      copyFile: errno('EROFS'),
+      readFile: () => { probed = true; throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); },
+    }));
+    assert.equal(err.readonlyWriteBoundary, true, 'EROFS tags regardless of source readability');
+    assert.equal(probed, false, 'a read-only-filesystem error needs no source-side disambiguation');
+  });
+
+  it('mkdir EROFS (a nested dir tree) → tagged (mkdir writes only the dest)', () => {
+    const src = join(dir, 'src');
+    const root = join(dir, 'dest');
+    mkdirSync(join(src, 'a'), { recursive: true });
+    writeFileSync(join(src, 'a', 'deep.txt'), 'D');
+    mkdirSync(root);
+    const err = catchErr(() => copyTreeRefresh(src, join(root, 'src'), root, { mkdir: errno('EROFS') }));
+    assert.equal(err.readonlyWriteBoundary, true);
+  });
+
+  it('symlink EROFS (mirroring a symlink src to an absent dest) → tagged (symlink writes only the dest)', () => {
+    const root = join(dir, 'dest');
+    mkdirSync(root);
+    const linkSrc = join(dir, 'link');
+    symlinkSync(join(dir, 'target'), linkSrc);
+    const err = catchErr(() => copyTreeRefresh(linkSrc, join(root, 'f'), root, { symlink: errno('EROFS') }));
+    assert.equal(err.readonlyWriteBoundary, true);
+  });
+
+  it('a NON-read-only errno (EIO) at a write is NOT tagged (a real I/O failure stays loud)', () => {
+    const { src, root, dest } = fileSrcDest();
+    const err = catchErr(() => copyTreeRefresh(src, dest, root, { copyFile: errno('EIO') }));
+    assert.notEqual(err.readonlyWriteBoundary, true);
+  });
+
+  it('a READ-side EROFS (readdir) is NOT tagged (only the write primitives carry the tag)', () => {
+    const src = join(dir, 'src');
+    const root = join(dir, 'dest');
+    mkdirSync(src);
+    writeFileSync(join(src, 'x.txt'), 'x');
+    mkdirSync(root);
+    // mkdir(dest) succeeds (real), then readdir(src) throws EROFS — a read, never tagged.
+    const err = catchErr(() => copyTreeRefresh(src, join(root, 'src'), root, { readdir: errno('EROFS') }));
+    assert.ok(err);
+    assert.notEqual(err.readonlyWriteBoundary, true, 'a read-side EROFS must stay a loud failure');
+  });
+
+  it('isReadonlyWriteBoundary reflects the tag (and is false for a bare/plain error)', () => {
+    const { src, root, dest } = fileSrcDest();
+    const tagged = catchErr(() => copyTreeRefresh(src, dest, root, { copyFile: errno('EROFS') }));
+    assert.equal(isReadonlyWriteBoundary(tagged), true);
+    assert.equal(isReadonlyWriteBoundary(new Error('plain')), false);
+    assert.equal(isReadonlyWriteBoundary(null), false);
   });
 });
 

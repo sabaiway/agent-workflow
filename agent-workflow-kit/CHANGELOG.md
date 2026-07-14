@@ -4,6 +4,33 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.49.0 — Honesty/robustness bundle: refresh EROFS stated skip · settings integer-overflow parity (AD-056)
+
+A small **honesty/robustness** release (kit MINOR carrying the two bridge PATCH bumps in-tarball —
+codex-cli-bridge 2.7.1 + antigravity-cli-bridge 2.6.1; engine 1.17.0 / memory 2.3.0 unchanged; lineage
+head stays `2.0.0`). Two kit/bridge fixes ship here (a third, repo-only dispatcher fix, rides the same
+commit); all three share one theme: **a blocked environment must produce a STATED degrade, never a
+false red — and a real failure stays loud.**
+
+- **Refresh under a read-only skills dir is a stated skip, not a false failure.** Under the harness
+  session sandbox `~/.claude/skills` is read-only, yet `--refresh-placed` re-syncs even at the current
+  version (repair-on-rerun). That write EROFSed into the generic catch → *"could not refresh — … recover
+  with setup"*, though both versions were already current AND `setup` hits the same read-only dir. It now
+  reports a new **`skipped-readonly`** outcome (exit 0): it names the current version, states the re-sync
+  was skipped/incomplete, and names the read-only cause — never claiming a re-sync ran or file integrity
+  (a partial copy may precede the block). Only a read-only-class write failure at the copy-write boundary,
+  at an equal version, degrades; a read-side / source-side / `linkWrappers` / real-I/O failure, or a
+  version-**behind** refresh, stays a loud *could not refresh* (its recovery pointing at a writable
+  rerun). The opt-in `setup` placement lane keeps its loud failure. Any drift persists until a writable
+  rerun (converge-on-re-run).
+- **Settings integer validation is now shell↔JS exact (Issue-012, Resolved).** The four bridge wrappers'
+  shared `aw_settings_valid` integer arms did `(( 10#$v … ))`, which wraps modulo 2^64 on a 19+ digit
+  string — the shell **accepted** `18446744073709551916` (2^64+300) while the kit's `settingValueValid`
+  (safe-integer) **rejected** it. A shared overflow-safe `aw_int_in_range` helper (byte-identical across
+  all four wrappers) strips leading zeros then rejects on a digit count exceeding the max's — never
+  running arithmetic on a huge string. A leading-zero **in-range** value (e.g. `000…086400`) still
+  passes on both sides; the value is pinned by a new behavioral shell↔JS parity test.
+
 ## 1.48.0 — Family-owned neutral ack store + read-prompt-economy hook lane (AD-055, the CLAUDE-CODE-HARNESS-FRICTION cluster)
 
 A **feature** release (kit-only — engine 1.17.0, memory 2.3.0, bridges 2.7.0/2.6.0 unchanged) that

@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, readlinkSync, readFileSync, existsSync, lstatSync, readdirSync,
+  mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, readlinkSync, readFileSync, existsSync, lstatSync, readdirSync, copyFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -851,7 +851,7 @@ describe('refreshPlacedBridges — overwrite honesty (D5)', () => {
     assert.ok(!/overwrote|locally-changed/.test(res.line), 'a version upgrade never claims the version delta was a local edit');
   });
 
-  it('the drift scan never reads THROUGH a symlinked placed file (codex R2 — lstat no-follow first)', () => {
+  it('the drift scan never reads THROUGH a symlinked placed file (lstat no-follow first)', () => {
     // A placed bundle-owned path that is a symlink is "could not compare" WITHOUT a read-through
     // (copyTreeRefresh would refuse to overwrite it; reading its target would be unsafe + moot).
     const bundleDir = writeBundle(join(tmp, 'bundles')); // SKILL.md + capability.json + bin/*
@@ -890,6 +890,118 @@ describe('refreshPlacedBridges — overwrite honesty (D5)', () => {
     assert.match(res.line, /could not compare 1 file/i, 'the honest degrade is stated, never silently swallowed');
     assert.match(res.line, /SKILL\.md/, 'and names the file it could not verify');
     assert.equal(readFileSync(placedSkillMd, 'utf8'), skillMd('codex-cli-bridge', '1.0.0'), 'the file is refreshed to the bundle regardless');
+  });
+});
+
+// ── §2.x REFRESH-EROFS-HONESTY — a read-only skills dir degrades to a stated skip (D1/D1a/D1b) ──
+describe('refreshPlacedBridges — read-only refresh degrades to skipped-readonly (AD-056)', () => {
+  const roErr = (code) => () => { throw Object.assign(new Error(`${code}: read-only file system`), { code }); };
+  // equal-version pristine placed bridge (bundle 1.0.0 + placed 1.0.0, real valid manifest).
+  const seedEqual = () => {
+    writeBundle(join(tmp, 'bundles'));
+    return seedPlaced('1.0.0');
+  };
+
+  it('T1a equal-version re-sync + a read-only (EROFS) write → skipped-readonly, honest line, exit 0', () => {
+    const skillDir = seedEqual();
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir, rest: { copyFile: roErr('EROFS') } }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'skipped-readonly');
+    assert.match(res.line, /v1\.0\.0/, 'names the current version');
+    assert.match(res.line, /skipped|incomplete/i, 'states the re-sync was skipped/incomplete');
+    assert.match(res.line, /read-only/i, 'names the read-only cause');
+    assert.ok(!/re-synced from the bundled copy/.test(res.line), 'never claims a re-sync ran (that is already-current’s line)');
+    assert.ok(!/no mutation|nothing was written|left unchanged/i.test(res.line), 'never claims file integrity (a partial copy may have happened)');
+    const { code } = capturedMain(['--refresh-placed', 'codex'], baseDeps({ skillDir, rest: { copyFile: roErr('EROFS') } }));
+    assert.equal(code, 0, 'a stated read-only skip is not a failure');
+  });
+
+  it('T1b version-BEHIND refresh + a read-only write → stays failed (exit 1), read-only-aware recovery', () => {
+    writeBundle(join(tmp, 'bundles')); // bundle 1.0.0
+    const skillDir = seedPlaced('0.9.0'); // placed behind → this is an upgrade, not an equal re-sync
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir, rest: { copyFile: roErr('EROFS') } }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'failed');
+    assert.match(res.line, /could not refresh/);
+    assert.match(res.line, /read-only/i, 'names the read-only cause honestly');
+    assert.match(res.line, /writable|outside/i, 'points at re-running outside the read-only session, not only "setup"');
+    const { code } = capturedMain(['--refresh-placed', 'codex'], baseDeps({ skillDir, rest: { copyFile: roErr('EROFS') } }));
+    assert.equal(code, 1);
+  });
+
+  it('T1c errno table: EROFS/EACCES/EPERM at equal version all degrade; EIO stays failed (never absorbed)', () => {
+    for (const code of ['EROFS', 'EACCES', 'EPERM']) {
+      const skillDir = seedEqual();
+      const [res] = refreshPlacedBridges(baseDeps({ skillDir, rest: { copyFile: roErr(code) } }), ['codex-cli-bridge']);
+      assert.equal(res.outcome, 'skipped-readonly', `${code} at equal version is a stated skip`);
+    }
+    const skillDir = seedEqual();
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir, rest: { copyFile: roErr('EIO') } }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'failed', 'EIO is a real failure class — the degrade never absorbs it');
+  });
+
+  it('T1d TOCTOU: plan sees EQUAL, apply-time re-inspection sees BEHIND, write EROFS → stays failed', () => {
+    writeBundle(join(tmp, 'bundles')); // bundle 1.0.0
+    const skillDir = seedPlaced('1.0.0'); // proven-managed, equal at seed
+    let reads = 0;
+    const readVersion = () => { reads += 1; return { version: reads === 1 ? '1.0.0' : '0.9.0' }; };
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir, rest: { readVersion, copyFile: roErr('EROFS') } }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'failed', 'classification keys on the apply-time fresh version, never the stale plan');
+    assert.ok(reads >= 2, 'the apply-time re-inspection really re-read the placed version (non-vacuous)');
+  });
+
+  it('T1e UNKNOWN placed version + EROFS → stays failed (two unknowns are never "equal")', () => {
+    writeBundle(join(tmp, 'bundles')); // bundle 1.0.0
+    const skillDir = join(tmp, 'skill');
+    mkdirSync(join(skillDir, 'bin'), { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), '# legacy, no frontmatter\n'); // readAuthoritativeVersion → null
+    writeFileSync(join(skillDir, 'capability.json'), '{}');
+    for (const r of Object.values(CODEX_ROLES)) writeFileSync(join(skillDir, r.source), '#!/bin/sh\n');
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir, validate: okValidate(), rest: { copyFile: roErr('EROFS') } }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'failed', 'a null placed version is not "equal" to the bundle — no skip');
+  });
+
+  it('T1f read-side EROFS is NOT absorbed by the degrade → stays failed', () => {
+    const skillDir = seedEqual();
+    // A read failure anywhere in the pipeline (here the manifest/drift read) is a real failure — a catch
+    // around the WHOLE copy would wrongly absorb it; the tag lives only at the write primitives.
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir, rest: { readFile: () => { throw roErr('EROFS')(); } } }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'failed');
+    assert.notEqual(res.outcome, 'skipped-readonly');
+  });
+
+  it('T1f TOCTOU source-side: bundle file readable during the drift scan, unreadable at the copy → failed', () => {
+    const skillDir = seedEqual();
+    const bundleSkill = join(tmp, 'bundles', 'codex-cli-bridge', 'SKILL.md');
+    let scanned = false;
+    // The drift scan reads the bundle SKILL.md first (comparison); AFTER that the copyFile source-probe
+    // sees it unreadable (a TOCTOU race). copyFile throws EACCES ONLY for that source → source-side → loud.
+    const readFile = (p, enc) => {
+      if (p === bundleSkill) {
+        if (scanned) throw roErr('EACCES')();
+        scanned = true;
+      }
+      return readFileSync(p, enc);
+    };
+    const copyFile = (src, dest) => { if (src === bundleSkill) throw roErr('EACCES')(); return copyFileSync(src, dest); };
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir, rest: { readFile, copyFile } }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'failed', 'a source-side EACCES at the copy stays loud even at equal version');
+    assert.notEqual(res.outcome, 'skipped-readonly');
+  });
+
+  it('T1f a linkWrappers failure AFTER a successful copy → failed, never skipped-readonly (a masked missing wrapper is a real defect)', () => {
+    const skillDir = seedEqual();
+    const bindir = join(tmp, 'bin');
+    mkdirSync(bindir, { recursive: true });
+    writeFileSync(join(bindir, 'codex-exec'), 'a real conflicting file'); // linkWrappers will STOP on it
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir, bindir }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'failed', 'a wrapper-link failure is a real defect, not a read-only skip');
+  });
+
+  it('T1g setup (opt-in placement) hitting the same EROFS class → loud failure, never skipped-readonly', () => {
+    writeBundle(join(tmp, 'bundles'));
+    const skillDir = join(tmp, 'skill'); // absent → setup PLACES (the opt-in write lane)
+    const { code, text } = capturedMain(['codex'], baseDeps({ skillDir, rest: { copyFile: roErr('EROFS') } }));
+    assert.notEqual(code, 0, 'setup keeps its loud failure — placement is a user-invoked write');
+    assert.ok(!/skipped-readonly/.test(text), 'the read-only degrade is refresh-only, never the opt-in setup lane');
   });
 });
 
