@@ -7,6 +7,27 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-14 — kit 1.48.0: family-owned neutral ack store + read-prompt-economy hook lane (AD-055, the CLAUDE-CODE-HARNESS-FRICTION cluster)
+
+**Kit-only release** (engine 1.17.0, memory 2.3.0, bridges 2.7.0/2.6.0 unchanged; lineage head stays
+`2.0.0`). Two sibling defects where the kit fought the Claude Code host surface, one ADR, two
+commit-anchored segments. **Part I:** the `sandbox-lane` recommendation's neutral fingerprint ack
+relocates out of `.claude/settings.local.json` (a host that blocks the write twice — the settings
+validator rejects the unknown key, the command sandbox EROFS-denies the file) into a family-owned
+`docs/ai/acks.json` no host validator guards, written by a new consent-gated ack writer; the legacy
+key is read for one deprecation window. **Part II:** the placed gate hook gains an **opt-in read-lane**
+(rung c) — with `docs/ai/lanes.json` `{ "readLane": true }` (read live, fail-closed), a command whose
+every `;`/`&&`/`|`-split segment is a plain frozen read-only core command with **zero shell
+metaprogramming** is auto-approved, killing the read-side compound prompts a prefix allow rule can
+never match; `lanes.json` is a separate file so the `gates.json` chain stays byte-untouched. The
+residual guard for settings-allowed singles additionally trips bash-5.3 funsub openers, a
+backslash-newline line-continuation splice, and a de-spliced `--output` word-construction re-scan.
+`gate-hook --read-lane` enables the lane only after a hook currency + wired + stamp check (a pre-1.48
+hook never reads `lanes.json`), and the upgrade Recommendations advisor surfaces the read-lane offer
+(RISK_NOTED; stale/missing-hook ATTENTION variants). Council: codex+agy across three rounds, agy
+SHIP ×3, every fixable fold red-first; the word-construction-on-a-single residual is a documented
+inherent-layer-residual (rung b is a trust-posture convenience, not a sandbox). Full record in AD-055.
+
 ## 2026-07-13 — memory 2.3.0 · engine 1.17.0 · kit 1.47.0 · bridges 2.7.0/2.6.0: REPORT-FACTS train — live-fact report contract, batched ledger writer, version-sync wrapper lane, sandbox-lanes canon & bridge contract twins (AD-054)
 
 **Family release** (bridges 2.7.0/2.6.0 ship inside the kit tarball; the deployment lineage head
