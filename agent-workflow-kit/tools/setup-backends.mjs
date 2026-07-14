@@ -31,7 +31,7 @@ import { join, resolve, relative, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import os from 'node:os';
 import { KNOWN_BACKENDS, detectBackend, detectBackends, resolveDir, guideFor, READY } from './detect-backends.mjs';
-import { copyTreeRefresh, linkManaged } from './fs-safe.mjs';
+import { copyTreeRefresh, linkManaged, isReadonlyWriteBoundary } from './fs-safe.mjs';
 import { validateManifest, readAuthoritativeVersion, UNSUPPORTED, INVALID } from './manifest/validate.mjs';
 import { compareSemver } from './semver-lite.mjs';
 
@@ -53,6 +53,12 @@ const registryEntry = (name) => KNOWN_BACKENDS.find((b) => b.name === resolveBac
 export const SETUP_STOP = 'SETUP_STOP';
 const stop = (message, fields = {}) =>
   Object.assign(new Error(`[agent-workflow-kit] ${message}`), { name: 'SetupStop', code: SETUP_STOP, ...fields });
+
+// A refresh-only outcome (REFRESH-EROFS-HONESTY / AD-056): an equal-version repair-on-rerun whose
+// write hit a READ-ONLY skills dir. A STATED skip (exit 0), never a false "could not refresh" — the
+// versions are already current and `setup` would hit the same read-only dir. Doc-parity binds this
+// token into references/modes/setup.md + upgrade.md so the mode contracts track the constant.
+export const SKIPPED_READONLY = 'skipped-readonly';
 
 // ── injectable fs ──────────────────────────────────────────────────────────────
 
@@ -557,12 +563,41 @@ const refreshSkillOnly = (entry, deps = {}) => {
   const fresh = inspectSkillDir(entry, deps);
   if (fresh.action !== 'refresh') return { refreshed: false, drift: null };
   assertNoDowngrade(fresh, deps);
-  const drift = copyBridgeWithHonesty('refresh', fresh.bundleDir, fresh.skillDir, deps);
-  return { refreshed: true, drift };
+  // D1b: version equality for the read-only degrade is decided from the APPLY-TIME fresh inspection's
+  // fields (never the stale pre-apply plan) — both versions KNOWN and equal; two unknowns are not equal.
+  // assertNoDowngrade just read the bundled manifest, so this read cannot throw here; a versionless
+  // manifest yields null (never "equal" → no false skip).
+  const bundledManifest = readBundledManifest(fresh.bundleDir, deps);
+  const bundledVersion = typeof bundledManifest.version === 'string' ? bundledManifest.version : null;
+  const placedVersion = readPlacedVersionSafe(fresh.skillDir, deps);
+  const currentEqual = bundledVersion !== null && placedVersion === bundledVersion;
+  try {
+    const drift = copyBridgeWithHonesty('refresh', fresh.bundleDir, fresh.skillDir, deps);
+    return { refreshed: true, drift };
+  } catch (err) {
+    // D1/D1a: ONLY a read-only WRITE-boundary failure at an EQUAL version is a repair-on-rerun that
+    // cannot run — a STATED skip, never a false "could not refresh". Every other failure stays loud
+    // (a read-side / source-side / EIO failure, or a version-behind upgrade, re-throws here).
+    if (currentEqual && isReadonlyWriteBoundary(err)) return { refreshed: false, skippedReadonly: true, version: bundledVersion };
+    throw err;
+  }
 };
 
 const NOT_PLACED_LINE = 'skipped — not placed (placement is opt-in: /agent-workflow-kit setup)';
 const stripPrefix = (message) => message.replace('[agent-workflow-kit] ', '');
+
+// The read-only degrade wording (D1). The STATED-skip line: version current + the re-sync
+// skipped/incomplete + the read-only cause + the residual — it never claims a re-sync RAN (that is
+// already-current's line) nor file integrity (a partial copy may have happened before the throw). The
+// FAILED line (a version-behind upgrade blocked by the same read-only dir) stays loud, but its
+// recovery points at a writable rerun — the in-session `setup` would hit the same read-only dir.
+const READONLY_RERUN_HINT = 're-run the refresh from a writable session (e.g. outside the read-only sandbox)';
+const skippedReadonlyLine = (name, version) =>
+  `  ${name}: already current${version ? ` (v${version})` : ''} — the re-sync was skipped/incomplete: ` +
+  `the skills directory is read-only this session (the tree may be PARTIALLY updated). Repair-on-rerun cannot ` +
+  `run here; any remaining drift persists until you ${READONLY_RERUN_HINT}.`;
+const readonlyRefreshFailedLine = (name, message) =>
+  `  ${name}: could not refresh — ${stripPrefix(message)}; the skills directory is read-only this session — ${READONLY_RERUN_HINT}`;
 
 // Refresh every ALREADY-PLACED bridge from the kit's bundled copies and re-link its wrappers (a newer
 // bridge can add one). One reported outcome per backend — never a crash; a per-backend STOP/error
@@ -592,6 +627,11 @@ export const refreshPlacedBridges = (deps = {}, names = KNOWN_BACKENDS.map((b) =
         return { name: plan.name, outcome: 'failed', line: `  ${plan.name}: could not refresh — ${stripPrefix(plan.reason)}; recover with /agent-workflow-kit setup` };
       }
       const refresh = refreshSkillOnly(registryEntry(plan.name), deps);
+      // A read-only skills dir at an EQUAL version is a STATED skip (repair-on-rerun cannot run here) —
+      // never a false "could not refresh" and never a failure exit (D1/AD-056).
+      if (refresh.skippedReadonly) {
+        return { name: plan.name, outcome: SKIPPED_READONLY, line: skippedReadonlyLine(plan.name, refresh.version) };
+      }
       if (!refresh.refreshed) {
         return { name: plan.name, outcome: 'not-placed', line: `  ${plan.name}: ${NOT_PLACED_LINE}` };
       }
@@ -614,6 +654,11 @@ export const refreshPlacedBridges = (deps = {}, names = KNOWN_BACKENDS.map((b) =
       // is the same stated skip as the planned one — classified structurally via the typed field.
       if (err.wouldDowngrade) {
         return { name: canonical, outcome: 'kept-newer', line: `  ${canonical}: skipped — ${stripPrefix(err.message)}` };
+      }
+      // A read-only WRITE failure on a version-BEHIND (upgrade) refresh stays a loud failure — but the
+      // in-session "recover with setup" would hit the same read-only dir, so point at a writable rerun.
+      if (isReadonlyWriteBoundary(err)) {
+        return { name: canonical, outcome: 'failed', line: readonlyRefreshFailedLine(canonical, err.message) };
       }
       return { name: canonical, outcome: 'failed', line: `  ${canonical}: could not refresh — ${stripPrefix(err.message)}; recover with /agent-workflow-kit setup` };
     }

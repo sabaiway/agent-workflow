@@ -11,8 +11,13 @@ Run `node ${CLAUDE_SKILL_DIR}/tools/setup-backends.mjs [<backend>] [--bindir <pa
   runs as its fourth stamp-independent reconcile): refresh every bridge `setup` **already placed**
   from the kit's bundled copies + re-link its wrappers; an absent bridge is a stated skip (**never**
   placed), a placed bridge newer than the bundle is a stated skip naming the kit update (**never**
-  downgraded), and every outcome line is composed by the tool — paste verbatim. Does not combine
-  with `--dry-run`.
+  downgraded), and every outcome line is composed by the tool — paste verbatim. When the skills dir
+  is **read-only this session** and the placed bridge is already at the bundled version, the
+  equal-version re-sync it would run cannot write: that outcome is `skipped-readonly` — a **stated
+  skip** (exit 0, not a failure) naming the current version, the skipped/incomplete re-sync, and the
+  read-only cause; it never claims a re-sync ran, and any local drift persists until a writable rerun.
+  (A version-**behind** refresh blocked by the same read-only dir stays a loud `could not refresh`,
+  its recovery pointing at a writable rerun.) Does not combine with `--dry-run`.
 - `--help`, `-h` — usage.
 
 For each backend it:

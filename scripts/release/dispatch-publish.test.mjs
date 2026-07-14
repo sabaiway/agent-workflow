@@ -12,6 +12,10 @@ import {
   newestChangelogEntry,
   RELEASE_STUB_MARKER,
   NPM_VERIFY_ATTEMPTS,
+  fetchJsonDefault,
+  ghApiDefault,
+  renderVerifyOnlyCommand,
+  VERIFY_TRANSPORT_DEADLINE_MS,
 } from './dispatch-publish.mjs';
 
 const SHA = 'a'.repeat(40);
@@ -34,14 +38,20 @@ const makeWorld = ({
   neverCreateRun = false,
   stallRuns = false,
   ghAuthFails = false, // the auth preflight (`gh api user`) cannot authenticate
+  ghUserTransport = false, // the auth preflight fails at the TRANSPORT layer (typed .transport)
+  npmTransport = false, // the npm /latest lookup fails at the TRANSPORT layer (typed transportError)
+  npmParseError = false, // the npm /latest lookup returns a reachable-but-unparseable body
+  releaseTransport = false, // the GitHub Release lookup fails at the TRANSPORT layer (typed .transport)
 } = {}) => {
-  const calls = { dispatches: [], gitArgs: [], fetches: [] };
+  const calls = { dispatches: [], gitArgs: [], fetches: [], fetchOpts: [], ghReqs: [] };
   const runs = [];
   let nextRunId = 100;
   let pendingRun = null;
 
-  const ghApi = ({ method = 'GET', path, fields = {} }) => {
+  const ghApi = ({ method = 'GET', path, fields = {} } = {}, opts) => {
+    calls.ghReqs.push({ path, opts });
     if (path === 'user') {
+      if (ghUserTransport) throw Object.assign(new Error(typeof ghUserTransport === 'string' ? ghUserTransport : 'dial tcp: lookup api.github.com: no such host'), { transport: true });
       if (ghAuthFails === 'network') throw new Error('dial tcp: lookup api.github.com: no such host\nsecond line');
       if (ghAuthFails) throw new Error('gh: To get started with GitHub CLI, please run:  gh auth login\nsecond line');
       return { login: 'coder-tool' };
@@ -71,6 +81,7 @@ const makeWorld = ({
       return { id: run.id, status: run.status, conclusion: run.status === 'completed' ? run.conclusion : null, html_url: `https://runs/${id}` };
     }
     if (path.includes('/releases/tags/')) {
+      if (releaseTransport) throw Object.assign(new Error('dial tcp: lookup api.github.com: no such host'), { transport: true });
       const tag = path.split('/releases/tags/')[1];
       const release = releases[tag];
       if (!release) return null;
@@ -89,9 +100,15 @@ const makeWorld = ({
     throw new Error(`unscripted git: ${head}`);
   };
 
-  const fetchJson = async (url) => {
+  const fetchJson = async (url, opts) => {
     calls.fetches.push(url);
+    calls.fetchOpts.push(opts);
     const name = decodeURIComponent(url.split('registry.npmjs.org/')[1].replace('/latest', '')).replace('%2F', '/');
+    // npmTransport: true (all lookups) or a Set of names (per-package) — a typed transport failure.
+    if (npmTransport === true || (npmTransport && typeof npmTransport.has === 'function' && npmTransport.has(name))) {
+      return { transportError: 'dial tcp: registry.npmjs.org: no such host' };
+    }
+    if (npmParseError) return { parseError: 'Unexpected token < in JSON' };
     const version = npmVersions[name];
     return version ? { version } : { httpError: 404 };
   };
@@ -528,7 +545,354 @@ describe('runDispatch — post-publish verification', () => {
 });
 
 describe('exit codes are distinct per failure class', () => {
-  it('dispatch/correlation/poll-timeout/verify are four different codes', () => {
-    assert.equal(new Set([EXIT.dispatch, EXIT.correlation, EXIT.pollTimeout, EXIT.verify]).size, 4);
+  it('dispatch/correlation/poll-timeout/verify/unreachable are five different codes', () => {
+    assert.equal(new Set([EXIT.dispatch, EXIT.correlation, EXIT.pollTimeout, EXIT.verify, EXIT.unreachable]).size, 5);
+  });
+});
+
+// ── DISPATCHER-NPM-VERIFY-SANDBOX (AD-056): typed transport → UNREACHABLE inconclusive + --verify-only ──
+
+describe('T2a live concluded + UNREACHABLE npm verify → inconclusive (EXIT.unreachable) + recovery', () => {
+  it('all: npm registry unreachable in-sandbox → inconclusive, publish itself concluded success', async () => {
+    const { deps, calls } = makeWorld({
+      npmTransport: true,
+      localVersions: { 'agent-workflow-memory': '2.0.0', 'agent-workflow-engine': '2.1.0', 'agent-workflow-kit': '1.5.0' },
+    });
+    const code = await runDispatch(['all', '--live', '--expect', 'memory=2.0.0', '--expect', 'engine=2.1.0', '--expect', 'kit=1.5.0'], deps);
+    assert.equal(code, EXIT.unreachable, 'the publish concluded; only the verify endpoint was unreachable');
+    assert.ok(calls.dispatches.some((d) => !d.dry), 'the live dispatch actually ran (not a preflight refusal)');
+    assert.match(calls.lastError, /INCONCLUSIVE/i);
+    assert.match(calls.lastError, /concluded/i, 'names that the runs concluded success');
+    assert.match(calls.lastError, /dial tcp|no such host|unreachable/i, 'names the unreachable endpoint cause');
+    assert.match(calls.lastError, /--verify-only/, 'prints the verify-only recovery');
+  });
+
+  it('renderVerifyOnlyCommand is canonical for all three shapes (all · named list · explicit --repo)', () => {
+    assert.equal(
+      renderVerifyOnlyCommand(parseArgs(['all', '--expect', 'memory=2.0.0', '--expect', 'engine=2.1.0', '--expect', 'kit=1.5.0'])),
+      'node scripts/release/dispatch-publish.mjs all --verify-only --expect memory=2.0.0 --expect engine=2.1.0 --expect kit=1.5.0',
+    );
+    assert.equal(
+      renderVerifyOnlyCommand(parseArgs(['engine', 'kit', '--expect', 'engine=2.1.0', '--expect', 'kit=1.5.0'])),
+      'node scripts/release/dispatch-publish.mjs engine kit --verify-only --expect engine=2.1.0 --expect kit=1.5.0',
+    );
+    assert.equal(
+      renderVerifyOnlyCommand(parseArgs(['memory', '--repo', 'me/repo', '--expect', 'memory=2.0.0'])),
+      'node scripts/release/dispatch-publish.mjs memory --verify-only --expect memory=2.0.0 --repo me/repo',
+    );
+  });
+});
+
+describe('T2b gh Release lookup transport failure at verify → the SAME inconclusive degrade', () => {
+  it('never mislabels a transport failure as "missing Release"', async () => {
+    const { deps, calls } = makeWorld({
+      npmVersions: { '@sabaiway/agent-workflow-memory': '1.0.0' },
+      releaseTransport: true,
+      localVersions: { 'agent-workflow-memory': '1.0.0' },
+    });
+    const code = await runDispatch(['memory', '--live', '--expect', 'memory=1.0.0'], deps);
+    assert.equal(code, EXIT.unreachable);
+    assert.match(calls.lastError, /INCONCLUSIVE/i);
+    assert.doesNotMatch(calls.lastError, /missing or still a draft|treating as missing/i, 'a transport failure is never "missing Release"');
+  });
+});
+
+describe('T2c reachable verify failures stay LOUD (exit 8), never inconclusive', () => {
+  it('a reachable version mismatch stays the bounded-retry path → exit 8', async () => {
+    const { deps, calls } = makeWorld({
+      npmVersions: { '@sabaiway/agent-workflow-memory': '0.0.1' },
+      releases: { 'agent-workflow-memory-v1.0.0': { assets: 1 } },
+      localVersions: { 'agent-workflow-memory': '1.0.0' },
+    });
+    const code = await runDispatch(['memory', '--live', '--expect', 'memory=1.0.0'], deps);
+    assert.equal(code, EXIT.verify);
+    assert.equal(calls.fetches.length, NPM_VERIFY_ATTEMPTS, 'a reachable mismatch retries to the bound (never short-circuits to unreachable)');
+  });
+
+  it('a reachable-but-malformed body (parse failure) is a LOUD verify failure, not unreachable', async () => {
+    const { deps, calls } = makeWorld({ npmParseError: true, localVersions: { 'agent-workflow-memory': '1.0.0' } });
+    const code = await runDispatch(['memory', '--live', '--expect', 'memory=1.0.0'], deps);
+    assert.equal(code, EXIT.verify);
+    assert.doesNotMatch(calls.lastError, /INCONCLUSIVE/i, 'a parse error is reachable — never inconclusive');
+  });
+});
+
+describe('T2d --verify-only contract (D2)', () => {
+  it('performs ZERO dispatches, no dry-run, skips the dispatch-only preflights (a reachable pkg → ok)', async () => {
+    const { deps, calls } = makeWorld({
+      npmVersions: { '@sabaiway/agent-workflow-memory': '1.0.0' },
+      releases: { 'agent-workflow-memory-v1.0.0': { assets: 1 } },
+      dirtyTree: ' M dirty\n', // would block --live; verify-only must SKIP the clean-tree gate
+      localHead: OTHER_SHA, // would block --live; verify-only must SKIP ls-remote/head
+    });
+    const code = await runDispatch(['memory', '--verify-only', '--expect', 'memory=1.0.0'], deps);
+    assert.equal(code, EXIT.ok, 'a reachable verified package → ok');
+    assert.deepEqual(calls.dispatches, [], 'zero workflow dispatches in verify-only (no dry-run either)');
+    assert.ok(!calls.gitArgs.some((a) => a.startsWith('ls-remote')), 'ls-remote (dispatch correlation) is skipped');
+    assert.ok(!calls.gitArgs.some((a) => a === 'status --porcelain'), 'the clean-tree gate is skipped');
+  });
+
+  it('requires --expect for every verify target (like --live)', () => {
+    assert.throws(() => parseArgs(['memory', '--verify-only']), (e) => e.exitCode === EXIT.usage && /--expect/.test(e.message));
+    assert.throws(
+      () => parseArgs(['all', '--verify-only', '--expect', 'memory=1.0.0', '--expect', 'engine=1.0.0']),
+      (e) => e.exitCode === EXIT.usage && /missing: kit/.test(e.message),
+    );
+  });
+
+  it('refuses --verify-only combined with --live (mutually exclusive)', () => {
+    assert.throws(
+      () => parseArgs(['memory', '--verify-only', '--live', '--expect', 'memory=1.0.0']),
+      (e) => e.exitCode === EXIT.usage && /verify-only/i.test(e.message) && /live/i.test(e.message),
+    );
+  });
+
+  it('a reachable verify failure in verify-only is still a LOUD exit 8', async () => {
+    const { deps } = makeWorld({ npmVersions: { '@sabaiway/agent-workflow-memory': '0.0.1' } });
+    const code = await runDispatch(['memory', '--verify-only', '--expect', 'memory=1.0.0'], deps);
+    assert.equal(code, EXIT.verify);
+  });
+
+  it('an unreachable endpoint in verify-only is inconclusive (EXIT.unreachable)', async () => {
+    const { deps } = makeWorld({ npmTransport: true });
+    const code = await runDispatch(['memory', '--verify-only', '--expect', 'memory=1.0.0'], deps);
+    assert.equal(code, EXIT.unreachable);
+  });
+
+  it('keeps the gh auth preflight; a TRANSPORT auth failure is INCONCLUSIVE in verify-only', async () => {
+    const { deps, calls } = makeWorld({ ghUserTransport: true });
+    const code = await runDispatch(['memory', '--verify-only', '--expect', 'memory=1.0.0'], deps);
+    assert.equal(code, EXIT.unreachable, 'nothing conclusive was observed → inconclusive, not a red');
+    assert.deepEqual(calls.dispatches, []);
+  });
+
+  it('an auth TRANSPORT failure stays a LOUD preflight red in live/dry', async () => {
+    const { deps } = makeWorld({ ghUserTransport: true, localVersions: { 'agent-workflow-memory': '1.0.0' } });
+    const code = await runDispatch(['memory'], deps); // dry-run
+    assert.equal(code, EXIT.preflight, 'live/dry keep the loud auth preflight even for a transport failure');
+  });
+
+  it('an auth-shaped (401/login) failure is LOUD in EVERY mode incl. verify-only', async () => {
+    const { deps } = makeWorld({ ghAuthFails: true });
+    const code = await runDispatch(['memory', '--verify-only', '--expect', 'memory=1.0.0'], deps);
+    assert.equal(code, EXIT.preflight, 'a 401/auth failure is never inconclusive');
+  });
+});
+
+describe('T2e production adapters — typed transport classification (low-level injection)', () => {
+  it('fetchJsonDefault types transport vs HTTP-status vs parse vs success', async () => {
+    const dns = await fetchJsonDefault('https://x', { fetchImpl: async () => { throw Object.assign(new Error('getaddrinfo ENOTFOUND x'), { code: 'ENOTFOUND' }); } });
+    assert.ok(dns.transportError, 'a transport rejection is typed transportError');
+    const http404 = await fetchJsonDefault('https://x', { fetchImpl: async () => ({ ok: false, status: 404 }) });
+    assert.equal(http404.httpError, 404, 'an HTTP status is typed httpError (reachable), never transport');
+    assert.ok(!http404.transportError);
+    const malformed = await fetchJsonDefault('https://x', { fetchImpl: async () => ({ ok: true, json: async () => { throw new SyntaxError('Unexpected token < in JSON'); } }) });
+    assert.ok(malformed.parseError, 'a reachable-but-unparseable body (SyntaxError) is typed parseError, never transport');
+    assert.ok(!malformed.transportError);
+    const okRes = await fetchJsonDefault('https://x', { fetchImpl: async () => ({ ok: true, json: async () => ({ version: '9.9.9' }) }) });
+    assert.equal(okRes.version, '9.9.9');
+  });
+
+  it('ghApiDefault keys on response-shape, not the exit code — DNS and HTTP-404 BOTH exit nonzero', () => {
+    const dns = () => ghApiDefault({ path: 'repos/x/y/releases/tags/t' }, { spawnImpl: () => ({ status: 1, stdout: '', stderr: 'dial tcp: lookup api.github.com: no such host' }) });
+    assert.throws(dns, (e) => e.transport === true, 'a gh transport failure (no HTTP response) is typed .transport');
+    const notFound = () => ghApiDefault({ path: 'repos/x/y/releases/tags/t' }, { spawnImpl: () => ({ status: 1, stdout: '', stderr: 'gh: Not Found (HTTP 404)' }) });
+    assert.throws(notFound, (e) => !e.transport, 'a gh HTTP 404 (a status WAS observed) is reachable, never transport');
+    const okRes = ghApiDefault({ path: 'repos/x/y/releases/tags/t' }, { spawnImpl: () => ({ status: 0, stdout: '{"draft":false,"assets":[]}' }) });
+    assert.deepEqual(okRes, { draft: false, assets: [] });
+  });
+});
+
+describe('T2f verify continuation + mixed outcomes (D3b)', () => {
+  it('named list: an UNREACHABLE verify does NOT abort the next dispatch; inconclusive-only → inconclusive exit', async () => {
+    const { deps, calls } = makeWorld({
+      npmTransport: new Set(['@sabaiway/agent-workflow-memory']), // memory unreachable, engine reachable
+      npmVersions: { '@sabaiway/agent-workflow-engine': '2.1.0' },
+      releases: { 'agent-workflow-engine-v2.1.0': { assets: 1 } },
+      localVersions: { 'agent-workflow-memory': '2.0.0', 'agent-workflow-engine': '2.1.0' },
+    });
+    const code = await runDispatch(['memory', 'engine', '--live', '--expect', 'memory=2.0.0', '--expect', 'engine=2.1.0'], deps);
+    assert.equal(code, EXIT.unreachable, 'inconclusive-only → inconclusive exit');
+    assert.deepEqual(
+      calls.dispatches.filter((d) => !d.dry).map((d) => d.pkg),
+      ['memory', 'engine'],
+      'engine was STILL dispatched after memory verify was unreachable',
+    );
+    assert.match(calls.lastError, /--verify-only/, 'the recovery is printed');
+  });
+
+  it('all mode: remaining verifies STILL run after an unreachable; a later REACHABLE-RED dominates (exit 8)', async () => {
+    const { deps, calls } = makeWorld({
+      npmTransport: new Set(['@sabaiway/agent-workflow-memory']), // memory unreachable...
+      npmVersions: { '@sabaiway/agent-workflow-engine': '9.9.9', '@sabaiway/agent-workflow-kit': '1.5.0' }, // engine wrong (red), kit ok
+      releases: { 'agent-workflow-kit-v1.5.0': { assets: 1 } },
+      localVersions: { 'agent-workflow-memory': '2.0.0', 'agent-workflow-engine': '2.1.0', 'agent-workflow-kit': '1.5.0' },
+    });
+    const code = await runDispatch(['all', '--live', '--expect', 'memory=2.0.0', '--expect', 'engine=2.1.0', '--expect', 'kit=1.5.0'], deps);
+    assert.equal(code, EXIT.verify, 'a reachable-verify red dominates the inconclusive code');
+    const verifiedNames = calls.fetches.map((u) => decodeURIComponent(u.split('registry.npmjs.org/')[1].replace('/latest', '')));
+    assert.ok(verifiedNames.includes('@sabaiway/agent-workflow-kit'), 'kit was STILL verified after memory unreachable + engine red');
+    assert.match(calls.lastError, /INCONCLUSIVE/i, 'the message still enumerates the inconclusive memory');
+    assert.match(calls.lastError, /--verify-only/, 'and the recovery');
+  });
+});
+
+describe('T2g verify-stage transport deadlines (D3a)', () => {
+  it('fetchJsonDefault: a hanging fetch hits the deadline → transportError (never a hang)', async () => {
+    const hangingFetch = (url, { signal } = {}) => new Promise((_, reject) => {
+      if (signal) signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+    });
+    const res = await fetchJsonDefault('https://x', { deadlineMs: 5, fetchImpl: hangingFetch });
+    assert.ok(res.transportError, 'a hung fetch is bounded → transportError');
+    assert.match(res.transportError, /timeout/i);
+  });
+
+  it('ghApiDefault: a spawn timeout (SIGTERM/ETIMEDOUT) classifies as transport (never a hang)', () => {
+    const timedOutSpawn = () => ({ status: null, signal: 'SIGTERM', error: Object.assign(new Error('ETIMEDOUT'), { code: 'ETIMEDOUT' }), stdout: '', stderr: '' });
+    assert.throws(() => ghApiDefault({ path: 'repos/x/y/releases/tags/t' }, { deadlineMs: 5, spawnImpl: timedOutSpawn }), (e) => e.transport === true);
+  });
+
+  it('every verify-stage lookup carries a transport deadline; the retry loop has a finite total bound', async () => {
+    const { deps, calls } = makeWorld({
+      npmVersions: { '@sabaiway/agent-workflow-memory': '1.0.0' },
+      releases: { 'agent-workflow-memory-v1.0.0': { assets: 1 } },
+    });
+    await runDispatch(['memory', '--verify-only', '--expect', 'memory=1.0.0'], deps);
+    assert.ok(calls.fetchOpts.length > 0 && calls.fetchOpts.every((o) => o && o.deadlineMs > 0), 'every npm fetch carries a transport deadline');
+    const releaseReq = calls.ghReqs.find((r) => r.path.includes('/releases/tags/'));
+    assert.ok(releaseReq && releaseReq.opts && releaseReq.opts.deadlineMs > 0, 'the gh Release lookup carries a transport deadline');
+    assert.ok(Number.isFinite(NPM_VERIFY_ATTEMPTS * VERIFY_TRANSPORT_DEADLINE_MS) && VERIFY_TRANSPORT_DEADLINE_MS > 0, 'the retry loop has a finite total transport bound');
+  });
+});
+
+// ── R2 folds (first-round review majors on dispatch-publish.mjs, RED-first) ─────────────
+describe('R2 folds — first-round review majors on the dispatcher', () => {
+  it('R2-M1 verify-only auth preflight carries a transport deadline', async () => {
+    const { deps, calls } = makeWorld({
+      npmVersions: { '@sabaiway/agent-workflow-memory': '1.0.0' },
+      releases: { 'agent-workflow-memory-v1.0.0': { assets: 1 } },
+    });
+    await runDispatch(['memory', '--verify-only', '--expect', 'memory=1.0.0'], deps);
+    const userReq = calls.ghReqs.find((r) => r.path === 'user');
+    assert.ok(userReq, 'the auth preflight was called');
+    assert.ok(userReq.opts && userReq.opts.deadlineMs > 0, 'the verify-only auth preflight passes a transport deadline (cannot hang)');
+  });
+
+  it('R2-M2 transport classification keys on absent HTTP status', () => {
+    // A nonzero gh with NO observed HTTP status is a TRANSPORT failure regardless of the error phrasing —
+    // never a narrow allowlist of error strings (a connection-reset / x509 failure has no status).
+    const reset = () => ghApiDefault({ path: 'x' }, { spawnImpl: () => ({ status: 1, stdout: '', stderr: 'connection reset by peer' }) });
+    assert.throws(reset, (e) => e.transport === true, 'connection-reset (no HTTP status) is transport, not a false loud red');
+    const x509 = () => ghApiDefault({ path: 'x' }, { spawnImpl: () => ({ status: 1, stdout: '', stderr: 'x509: certificate signed by unknown authority' }) });
+    assert.throws(x509, (e) => e.transport === true, 'x509 (no HTTP status) is transport');
+    const notFound = () => ghApiDefault({ path: 'x' }, { spawnImpl: () => ({ status: 1, stdout: '', stderr: 'gh: Not Found (HTTP 404)' }) });
+    assert.throws(notFound, (e) => e.transport !== true, 'an observed HTTP status is reachable, never transport');
+  });
+
+  it('R2-M3 a local gh spawn error is loud not unreachable', () => {
+    const enoent = () => ghApiDefault({ path: 'x' }, { spawnImpl: () => ({ error: Object.assign(new Error('spawnSync gh ENOENT'), { code: 'ENOENT' }), status: null }) });
+    assert.throws(enoent, (e) => e.transport !== true, 'gh-not-found is a LOCAL error, never a network transport failure (would falsely say UNREACHABLE)');
+  });
+
+  it('R2-M4 a reachable verify red stops the named-list dispatch', async () => {
+    const { deps, calls } = makeWorld({
+      npmVersions: { '@sabaiway/agent-workflow-memory': '0.0.1' }, // memory published WRONG version → reachable red
+      localVersions: { 'agent-workflow-memory': '2.0.0', 'agent-workflow-engine': '2.1.0' },
+    });
+    const code = await runDispatch(['memory', 'engine', '--live', '--expect', 'memory=2.0.0', '--expect', 'engine=2.1.0'], deps);
+    assert.equal(code, EXIT.verify);
+    assert.deepEqual(
+      calls.dispatches.filter((d) => !d.dry).map((d) => d.pkg),
+      ['memory'],
+      'engine is NOT dispatched after memory verify failed — a reachable red stops the named flow (continuation was for inconclusive only)',
+    );
+  });
+
+  it('R2-M5 a dispatch failure finalizes with accumulated outcomes', async () => {
+    const { deps, calls } = makeWorld({
+      npmTransport: new Set(['@sabaiway/agent-workflow-memory']), // memory verify UNREACHABLE (accumulated)
+      conclusions: { 'engine:live': 'failure' }, // engine LIVE dispatch then fails
+      localVersions: { 'agent-workflow-memory': '2.0.0', 'agent-workflow-engine': '2.1.0' },
+    });
+    const code = await runDispatch(['memory', 'engine', '--live', '--expect', 'memory=2.0.0', '--expect', 'engine=2.1.0'], deps);
+    assert.equal(code, EXIT.runFailed, 'the dispatch-failure exit code dominates and is preserved');
+    assert.match(calls.lastError, /memory/, 'the accumulated inconclusive is enumerated, never lost to the outer catch');
+    assert.match(calls.lastError, /--verify-only/, 'the --verify-only recovery is preserved');
+  });
+
+  it('R2-M6 verify-only finalizer wording never claims publish', async () => {
+    const logs = [];
+    const { deps } = makeWorld({
+      npmVersions: { '@sabaiway/agent-workflow-memory': '1.0.0' },
+      releases: { 'agent-workflow-memory-v1.0.0': { assets: 1 } },
+    });
+    deps.log = (line) => logs.push(line);
+    const code = await runDispatch(['memory', '--verify-only', '--expect', 'memory=1.0.0'], deps);
+    assert.equal(code, EXIT.ok);
+    const text = logs.join('\n');
+    assert.doesNotMatch(text, /published|publish concluded/i, 'verify-only never claims a publish it did not perform');
+    assert.match(text, /verif/i, 'it states the verify result');
+  });
+});
+
+// ── R3 folds (second-round review majors on the dispatcher, RED-first) ──────────────────
+describe('R3 folds — second-round review majors on the dispatcher', () => {
+  it('R3-B recovery command lists only inconclusive packages', async () => {
+    // named list [memory, engine, kit]: memory verify UNREACHABLE, engine LIVE dispatch then FAILS,
+    // kit never dispatched. The recovery must re-verify ONLY memory (published + inconclusive) — listing
+    // engine/kit (un-published tail) would guarantee false verify-reds on the re-run.
+    const { deps, calls } = makeWorld({
+      npmTransport: new Set(['@sabaiway/agent-workflow-memory']),
+      conclusions: { 'engine:live': 'failure' },
+      localVersions: { 'agent-workflow-memory': '2.0.0', 'agent-workflow-engine': '2.1.0', 'agent-workflow-kit': '1.5.0' },
+    });
+    const code = await runDispatch(['memory', 'engine', 'kit', '--live', '--expect', 'memory=2.0.0', '--expect', 'engine=2.1.0', '--expect', 'kit=1.5.0'], deps);
+    assert.equal(code, EXIT.runFailed);
+    const recovery = calls.lastError.match(/dispatch-publish\.mjs [^\n·]*--verify-only[^\n·]*/);
+    assert.ok(recovery, 'a --verify-only recovery command is printed');
+    assert.match(recovery[0], /memory --verify-only --expect memory=2\.0\.0/, 'lists memory (the published + inconclusive package)');
+    assert.doesNotMatch(recovery[0], /\bengine\b|\bkit\b/, 'never lists the un-published tail packages');
+  });
+
+  it('R3-C a --repo with shell metacharacters is rejected', () => {
+    for (const bad of ['me/repo;echo evil', 'me/repo && evil', 'me/repo`evil`', 'me/$(evil)', 'me repo', 'me/repo|cat']) {
+      assert.throws(
+        () => parseArgs(['memory', '--repo', bad, '--verify-only', '--expect', 'memory=1.0.0']),
+        (e) => e.exitCode === EXIT.usage,
+        `rejects --repo "${bad}" (it is rendered into a copy-paste recovery command)`,
+      );
+    }
+    const ok = parseArgs(['memory', '--repo', 'sabaiway/agent-workflow', '--verify-only', '--expect', 'memory=1.0.0']);
+    assert.equal(ok.repo, 'sabaiway/agent-workflow', 'a plain owner/name is accepted');
+  });
+
+  it('R4-A a transport error whose message merely contains auth is inconclusive not an auth red', async () => {
+    // x509 "…unknown authority" / a DNS error is a TYPED transport failure — a broad /auth/ substring
+    // match must never mislabel it an auth red (exit 3) instead of the verify-only inconclusive (exit 9).
+    const { deps, calls } = makeWorld({ ghUserTransport: 'x509: certificate signed by unknown authority' });
+    const code = await runDispatch(['memory', '--verify-only', '--expect', 'memory=1.0.0'], deps);
+    assert.equal(code, EXIT.unreachable, 'a typed transport error is never mislabeled auth by a broad substring');
+    assert.doesNotMatch(calls.lastError, /SKIPPED SETUP STEP|GH_TOKEN/, 'not the auth recovery message');
+  });
+
+  it('R4-B the auth-preflight transport inconclusive prints the canonical --verify-only recovery command', async () => {
+    const { deps, calls } = makeWorld({ ghUserTransport: true });
+    const code = await runDispatch(['memory', '--verify-only', '--expect', 'memory=1.0.0'], deps);
+    assert.equal(code, EXIT.unreachable);
+    assert.match(calls.lastError, /node scripts\/release\/dispatch-publish\.mjs memory --verify-only --expect memory=1\.0\.0/, 'the exact recovery command with target + --expect');
+  });
+
+  it('R3-D fetchJsonDefault classifies a mid-body abort or stream failure as transport not parseError', async () => {
+    // res.json() rejecting AFTER headers — the deadline fired mid-body (AbortError), or the body stream
+    // dropped — is a TRANSPORT failure, never a false reachable parseError (exit 8). Only a genuine
+    // malformed body (SyntaxError) stays parseError.
+    const abort = await fetchJsonDefault('https://x', { deadlineMs: 5, fetchImpl: async () => ({ ok: true, json: async () => { throw Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }); } }) });
+    assert.ok(abort.transportError, 'a mid-body abort is transport, not a malformed-body parseError');
+    assert.ok(!abort.parseError);
+    const streamDrop = await fetchJsonDefault('https://x', { fetchImpl: async () => ({ ok: true, json: async () => { throw Object.assign(new Error('terminated'), { code: 'UND_ERR_SOCKET' }); } }) });
+    assert.ok(streamDrop.transportError, 'a body-stream drop after headers is transport');
+    const malformed = await fetchJsonDefault('https://x', { fetchImpl: async () => ({ ok: true, json: async () => { throw new SyntaxError('Unexpected token < in JSON'); } }) });
+    assert.ok(malformed.parseError, 'a genuine JSON SyntaxError stays parseError (reachable red)');
+    assert.ok(!malformed.transportError);
   });
 });

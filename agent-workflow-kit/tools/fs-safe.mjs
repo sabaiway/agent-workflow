@@ -17,7 +17,7 @@
 
 import {
   lstatSync, existsSync, mkdirSync, readdirSync, copyFileSync, readlinkSync, symlinkSync,
-  rmSync, unlinkSync,
+  rmSync, unlinkSync, readFileSync,
 } from 'node:fs';
 import { dirname, join, resolve, relative, sep, isAbsolute } from 'node:path';
 
@@ -68,6 +68,27 @@ export const assertContainedRealPath = (root, dest, deps = {}) => {
   rel.split(sep).filter(Boolean).reduce(walk, root);
 };
 
+// Read-only write-boundary tagging (REFRESH-EROFS-HONESTY / AD-056). A DESTINATION-side write failure
+// of the read-only class is TAGGED (err.readonlyWriteBoundary) so the refresh-only driver can classify
+// an equal-version repair-on-rerun that cannot write as a STATED skip — never a false red. The tag is
+// applied ONLY around the three write primitives, so a READ-side failure (bundle read / dir listing)
+// is never absorbed: the degrade classifies at the write boundary, not by a broad err.code sniff over
+// the whole copy. EROFS is destination-side by nature; mkdir/symlink write only the dest; an
+// EACCES/EPERM at copyFile (which also READS the source) is destination-provable ONLY when the source
+// is readable — else it is a source-side read failure that must stay loud.
+const READONLY_WRITE_ERRNOS = new Set(['EROFS', 'EACCES', 'EPERM']);
+export const isReadonlyWriteBoundary = (err) => Boolean(err && err.readonlyWriteBoundary);
+const throwTaggedReadonly = (err, primitive, src, readFile) => {
+  if (err && READONLY_WRITE_ERRNOS.has(err.code)) {
+    let destinationSide = err.code === 'EROFS' || primitive !== 'copyFile';
+    if (!destinationSide) {
+      try { readFile(src); destinationSide = true; } catch { destinationSide = false; }
+    }
+    if (destinationSide) err.readonlyWriteBoundary = true;
+  }
+  throw err;
+};
+
 // Recursive refresh copy. Guards every dest via assertContainedRealPath first, then:
 //   symlink src   → additive: skip if dest exists, else mirror the link target.
 //   directory src → mkdir -p dest, recurse.
@@ -80,20 +101,22 @@ export const copyTreeRefresh = (src, dest, root, deps = {}) => {
   const copyFile = deps.copyFile ?? copyFileSync;
   const readlink = deps.readlink ?? readlinkSync;
   const symlink = deps.symlink ?? symlinkSync;
+  const readFile = deps.readFile ?? readFileSync;
 
   assertContainedRealPath(root, dest, deps);
   const stat = lstat(src);
   if (stat.isSymbolicLink()) {
     if (exists(dest)) return;
-    symlink(readlink(src), dest);
+    const target = readlink(src); // read-side (a readlink failure is never tagged as a write boundary)
+    try { symlink(target, dest); } catch (err) { throwTaggedReadonly(err, 'symlink', src, readFile); }
   } else if (stat.isDirectory()) {
-    mkdir(dest);
+    try { mkdir(dest); } catch (err) { throwTaggedReadonly(err, 'mkdir', src, readFile); }
     for (const entry of readdir(src)) {
       copyTreeRefresh(join(src, entry), join(dest, entry), root, deps);
     }
   } else {
-    mkdir(dirname(dest));
-    copyFile(src, dest);
+    try { mkdir(dirname(dest)); } catch (err) { throwTaggedReadonly(err, 'mkdir', src, readFile); }
+    try { copyFile(src, dest); } catch (err) { throwTaggedReadonly(err, 'copyFile', src, readFile); }
   }
 };
 

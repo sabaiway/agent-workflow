@@ -132,12 +132,22 @@ aw_settings_known() {
     *) return 1 ;;
   esac
 }
+aw_int_in_range() {
+  # All-digits $1 vs [min,max] WITHOUT 64-bit wrap (Issue-012): strip leading zeros, then a longer
+  # digit count than max's is unconditionally out of range — never do the arithmetic on a huge string.
+  # A leading-zero in-range value still passes (its stripped count is small); all-zeros collapses to
+  # "0" (below min>=1). Mirrors the JS settingValueValid safe-integer bound, verified by parity test.
+  local n="${1#"${1%%[!0]*}"}" min="$2" max="$3"
+  n="${n:-0}"
+  (( ${#n} > ${#max} )) && return 1
+  (( n >= min && n <= max ))
+}
 aw_settings_valid() {
   local k="$1" v="$2" int_re='^[0-9]+$' dur_re='^[0-9]+(\.[0-9]+)?[smhd]$' zero_re='^0+(\.0+)?[smhd]$'
   case "$k" in
     CODEX_SERVICE_TIER) [[ "$v" == "priority" ]] ;;
-    CODEX_HARD_TIMEOUT) [[ "$v" =~ $int_re ]] && (( 10#$v >= 1 && 10#$v <= 86400 )) ;;
-    CODEX_REVIEW_MAX_TOTAL_BYTES) [[ "$v" =~ $int_re ]] && (( 10#$v >= 1 && 10#$v <= 100000000 )) ;;
+    CODEX_HARD_TIMEOUT) [[ "$v" =~ $int_re ]] && aw_int_in_range "$v" 1 86400 ;;
+    CODEX_REVIEW_MAX_TOTAL_BYTES) [[ "$v" =~ $int_re ]] && aw_int_in_range "$v" 1 100000000 ;;
     AGY_HARD_TIMEOUT) [[ "$v" =~ $dur_re && ! "$v" =~ $zero_re ]] ;;
     AGY_REVIEW_ALLOW_ADDDIR) [[ "$v" == "0" || "$v" == "1" ]] ;;
     *) return 1 ;;
@@ -189,6 +199,14 @@ aw_apply_settings() {
       fi
       continue
     fi
+    # Normalize an all-digit (integer) value to DECIMAL before export: a leading-zero value the integer
+    # arms legitimately accept (000…086400 == 86400) would otherwise read as OCTAL in downstream Bash
+    # arithmetic ("value too great for base"). Strip leading zeros, floor "0"; enum/duration (non-digit)
+    # and boolean 0/1 are unaffected.
+    if [[ "$value" =~ ^[0-9]+$ ]]; then
+      value="${value#"${value%%[!0]*}"}"
+      value="${value:-0}"
+    fi
     export "$key=$value"
   done
   return 0
@@ -199,7 +217,7 @@ DEFAULT_AGY_REVIEW_MODEL="Gemini 3.1 Pro (High)"
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by agy-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="agy"
-AW_BRIDGE_VERSION="2.6.0"
+AW_BRIDGE_VERSION="2.6.1"
 # `-` not `:-` so an EXPLICIT empty AGY_MODEL= survives (drop --model, use settings.json — agy.sh:52).
 AGY_MODEL="${AGY_MODEL-$DEFAULT_AGY_REVIEW_MODEL}"
 # Frontier review models. ANY model is allowed; a sub-frontier one only earns a soft, silenceable warning.

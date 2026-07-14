@@ -36,6 +36,7 @@ import {
   VERDICT_SKIPS_TEMPLATE,
   ACKS_FILE,
 } from './recommendations.mjs';
+import { SKIPPED_READONLY } from './setup-backends.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -45,6 +46,7 @@ const AUTONOMY_DOCTOR_DOC = 'references/modes/autonomy-doctor.md';
 const RECOMMENDATIONS_DOC = 'references/modes/recommendations.md';
 const UPGRADE_DOC = 'references/modes/upgrade.md';
 const VELOCITY_DOC = 'references/modes/velocity.md';
+const SETUP_DOC = 'references/modes/setup.md';
 
 // A typed usage failure (exit 2) for the CLI parser — the codebase's typed-error idiom (no classes).
 const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 });
@@ -99,6 +101,11 @@ export const BINDINGS = Object.freeze([
   // (the incident's "mode-doc apply text stays in lockstep" acceptance as a mechanism, not prose).
   // Bound in BOTH docs that name the path (recommendations.md + velocity.md).
   valueBinding('acks-file', ACKS_FILE, ACKS_FILE, [RECOMMENDATIONS_DOC, VELOCITY_DOC]),
+  // The refresh read-only degrade outcome (REFRESH-EROFS-HONESTY / AD-056): the new skipped-readonly
+  // token must render in BOTH mode contracts that enumerate the placed-bridge refresh outcomes
+  // (setup.md owns --refresh-placed; upgrade.md pastes its lines) — a reworded doc dropping the
+  // outcome fails this pin plus the gate. The token tracks the exported SETUP constant.
+  valueBinding('refresh-skipped-readonly', SKIPPED_READONLY, SKIPPED_READONLY, [SETUP_DOC, UPGRADE_DOC]),
 ].map((b) => Object.freeze(b)));
 
 // ── the pure checker (readText is injectable for hermetic tests) ────────────────────────

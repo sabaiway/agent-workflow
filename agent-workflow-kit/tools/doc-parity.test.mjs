@@ -95,6 +95,15 @@ describe('the REAL registry is consistent with the shipped contract docs (dogfoo
     assert.deepEqual([...acks.files].sort(), ['references/modes/recommendations.md', 'references/modes/velocity.md']);
   });
 
+  // AD-056: the refresh read-only degrade outcome (skipped-readonly) is doc-pinned to the setup +
+  // upgrade mode contracts, so a reworded doc cannot silently drop the new outcome token.
+  it('the registry binds SKIPPED_READONLY (skipped-readonly) to the setup AND upgrade mode docs', () => {
+    const binding = BINDINGS.find((b) => b.constant === 'refresh-skipped-readonly');
+    assert.ok(binding, 'registry must bind the skipped-readonly refresh outcome (the read-only degrade doc pin)');
+    assert.equal(binding.token, 'skipped-readonly', 'the token is the exported outcome constant');
+    assert.deepEqual([...binding.files].sort(), ['references/modes/setup.md', 'references/modes/upgrade.md']);
+  });
+
   // AD-044 Plan 2: the autonomy-doctor D7 exit/status contract is bound to its mode doc.
   it('the registry binds the autonomy-doctor EXIT table + every non-usage status token', () => {
     const names = BINDINGS.map((b) => b.constant);
