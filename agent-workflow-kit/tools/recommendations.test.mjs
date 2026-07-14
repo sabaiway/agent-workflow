@@ -11,7 +11,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, lstatSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, lstatSync, chmodSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,6 +37,8 @@ import {
   VERDICT_OPTIONAL_TEMPLATE,
   VERDICT_SKIPS_TEMPLATE,
   recipeFingerprint,
+  ACKS_FILE,
+  ACKS_LANE_KEY,
   SANDBOX_LANE_ACK_PARENT,
   SANDBOX_LANE_ACK_KEY,
   RISK_NOTED_KEYS,
@@ -78,6 +80,21 @@ describe('recommendations — section contract', () => {
     assert.equal(out, `${RECOMMENDATIONS_SECTION_HEADER}\n\n${RECOMMENDATIONS_EMPTY_LINE}`);
   });
 
+  it('an item with a `detail` renders a `recipe:` line BETWEEN benefit and apply', () => {
+    const out = formatRecommendations({ items: [{ key: 'sandbox-lane', severity: SEVERITY_OPTIONAL, what: 'w', benefit: 'b', apply: 'a', detail: 'egress hosts [h1, h2]' }], skips: [] });
+    const lines = out.split('\n');
+    const bi = lines.findIndex((l) => l.includes('benefit:'));
+    const ri = lines.findIndex((l) => l.includes('recipe:'));
+    const ai = lines.findIndex((l) => l.includes('apply:'));
+    assert.ok(bi >= 0 && ri > bi && ai > ri, 'recipe: renders between benefit: and apply:');
+    assert.match(out, /recipe: egress hosts \[h1, h2\]/);
+  });
+
+  it('an item WITHOUT detail renders NO recipe: line', () => {
+    const out = formatRecommendations({ items: [{ key: 'gate-hook', severity: SEVERITY_OPTIONAL, what: 'w', benefit: 'b', apply: 'a', detail: null }], skips: [] });
+    assert.doesNotMatch(out, /recipe:/);
+  });
+
   it('the section always opens at the header — items or not', () => {
     const root = makeProject();
     const r = main(['--cwd', root], { deps: hermeticDeps(root) });
@@ -104,11 +121,13 @@ describe('recommendations — section contract', () => {
     assert.match(r.stderr, /not a directory/);
   });
 
-  it('--help names the empty-state line and the hand-apply boundary', () => {
+  it('--help names the empty-state line, the hand-apply boundary, and the optional `recipe:` line', () => {
     const r = main(['--help']);
     assert.equal(r.code, 0);
     assert.ok(r.stdout.includes(RECOMMENDATIONS_EMPTY_LINE));
     assert.match(r.stdout, /HAND-APPLY/);
+    // The literal `recipe:` label (with the colon), checked against the ACTUAL rendered --help output.
+    assert.match(r.stdout, /optional `recipe:` line/i, 'the --help documents the optional recipe: line');
   });
 });
 
@@ -280,7 +299,14 @@ describe('recommendations — the add() runtime backstop (D2)', () => {
   it('a valid one-line item passes through unchanged (the backstop green arm)', () => {
     const { items, skips } = run(({ add }) => add('velocity-core', 'a one-line WHAT', 'node /x.mjs'));
     assert.equal(skips.length, 0);
-    assert.deepEqual(items, [{ key: 'velocity-core', severity: SEVERITIES['velocity-core'], what: 'a one-line WHAT', benefit: BENEFITS['velocity-core'], apply: 'node /x.mjs' }]);
+    // `detail` is null for an item without a recipe line (only sandbox-lane carries one).
+    assert.deepEqual(items, [{ key: 'velocity-core', severity: SEVERITIES['velocity-core'], what: 'a one-line WHAT', benefit: BENEFITS['velocity-core'], apply: 'node /x.mjs', detail: null }]);
+  });
+
+  it('a multi-line recipe detail is a stated shape violation (the backstop covers the recipe line too)', () => {
+    const { items, skips } = run(({ add }) => add('sandbox-lane', 'a one-line WHAT', 'node /x.mjs', 'sandbox-lane', 'line1\nline2'));
+    assert.equal(items.length, 0);
+    assert.ok(skips.some((s) => /recipe detail is not a single line/u.test(s.reason)));
   });
 });
 
@@ -631,38 +657,43 @@ describe('recommendations — item probes over fixtures', () => {
     rmSync(root, { recursive: true, force: true });
     const item = items.find((i) => i.key === 'sandbox-lane');
     assert.ok(item, 'a changed recipe (env-moved dir) re-fires despite the old ack');
-    assert.ok(item.apply.includes('/opt/codex-home'), 'the RESOLVED override dir rides the recipe');
     const freshFp = recipeFingerprint({ hosts: CODEX_HOSTS, dirs: ['/opt/codex-home'], home: root });
-    assert.ok(item.apply.includes(freshFp), 'the apply carries the CURRENT recipe fingerprint');
+    assert.ok(item.apply.includes(freshFp), 'the apply carries the CURRENT recipe fingerprint (which encodes the resolved override dir)');
+    assert.ok(!item.apply.includes(staleFp), 'the stale fingerprint is gone — the recipe changed');
   });
 
   it('D6 resolution arms: unset → default; EMPTY ≡ unset; tilde/absolute as-given; relative anchors to --cwd', () => {
     const root = makeProject();
     mkdirSync(join(root, '.claude'), { recursive: true });
     writeFileSync(join(root, '.claude', 'settings.json'), JSON.stringify({ sandbox: { excludedCommands: ['codex-review'] }, permissions: { allow: ['Bash(codex-review code:*)'] } }));
-    const laneApply = (getenv) => {
+    // The apply is now the pure ack-write one-liner (Decisions 4); dir resolution is verified via the
+    // FINGERPRINT it carries (the convergence-relevant value), not a literal dir in the command.
+    const laneFingerprint = (getenv) => {
       const deps = hermeticDeps(root, { findWrapper: (cmd) => cmd === 'codex-review', getenv: { PATH: '/nonexistent-path-for-tests', ...getenv } });
       const { items } = buildRecommendations({ cwd: root, deps });
       const item = items.find((i) => i.key === 'sandbox-lane');
       assert.ok(item, 'the wired fixture fires the item');
-      return item.apply;
+      const m = item.apply.match(/--fingerprint ([0-9a-f]{16})/u);
+      assert.ok(m, 'the apply carries a 16-hex fingerprint');
+      return m[1];
     };
-    assert.ok(laneApply({}).includes(CODEX_DIRS[0].default), 'env unset → the manifest default');
-    assert.ok(laneApply({ CODEX_HOME: '' }).includes(CODEX_DIRS[0].default), 'an EMPTY env value ≡ unset (the ${VAR:-default} form)');
-    assert.ok(laneApply({ CODEX_HOME: '~/.codex-alt' }).includes('~/.codex-alt'), 'a tilde-form override rides as-given');
-    assert.ok(laneApply({ CODEX_HOME: '/abs/codex-state' }).includes('/abs/codex-state'), 'an absolute override rides as-given');
+    const fpFor = (dir) => recipeFingerprint({ hosts: CODEX_HOSTS, dirs: [dir], home: root });
+    assert.equal(laneFingerprint({}), fpFor(CODEX_DIRS[0].default), 'env unset → the manifest default');
+    assert.equal(laneFingerprint({ CODEX_HOME: '' }), fpFor(CODEX_DIRS[0].default), 'an EMPTY env value ≡ unset (the ${VAR:-default} form)');
+    assert.equal(laneFingerprint({ CODEX_HOME: '~/.codex-alt' }), fpFor('~/.codex-alt'), 'a tilde-form override rides as-given');
+    assert.equal(laneFingerprint({ CODEX_HOME: '/abs/codex-state' }), fpFor('/abs/codex-state'), 'an absolute override rides as-given');
     // The wrapper's case-arms treat ONLY `~`, `~/…` and `/…` as-given; every other form —
     // including `~user/state` — anchors like a relative path (a `~`-prefix heuristic would
     // misclassify `~user/…` as a home path the wrapper never resolves).
-    assert.ok(laneApply({ CODEX_HOME: '~user/state' }).includes(resolve(root, '~user/state')), 'a ~user/… form anchors like a relative path, never as a home path');
+    assert.equal(laneFingerprint({ CODEX_HOME: '~user/state' }), fpFor(resolve(root, '~user/state')), 'a ~user/… form anchors like a relative path, never as a home path');
     // A RELATIVE env value anchors to the TARGET PROJECT ROOT (the pinned --cwd), never the
     // shell cwd — exercised with process.cwd() deliberately different from --cwd (codex R3).
     const prev = process.cwd();
     process.chdir(join(root, 'docs'));
     try {
-      const apply = laneApply({ CODEX_HOME: 'state/codex' });
-      assert.ok(apply.includes(resolve(root, 'state/codex')), 'a relative override anchors to the named root');
-      assert.ok(!apply.includes(resolve(join(root, 'docs'), 'state/codex')), 'never the shell cwd');
+      const fp = laneFingerprint({ CODEX_HOME: 'state/codex' });
+      assert.equal(fp, fpFor(resolve(root, 'state/codex')), 'a relative override anchors to the named root');
+      assert.notEqual(fp, fpFor(resolve(join(root, 'docs'), 'state/codex')), 'never the shell cwd');
     } finally {
       process.chdir(prev);
       rmSync(root, { recursive: true, force: true });
@@ -715,30 +746,202 @@ describe('recommendations — item probes over fixtures', () => {
     assert.ok(!skips.some((s) => s.key === 'sandbox-lane'), 'half-wired is not a probe failure either');
   });
 
-  it('the sandbox-lane item is HAND-APPLY, fires only for WIRED wrappers, and renders the manifest recipe', () => {
+  it('the sandbox-lane item is a WRITER-class ack (the ack-write preview one-liner), fires only for WIRED wrappers', () => {
     const root = makeProject();
     mkdirSync(join(root, '.claude'), { recursive: true });
     writeFileSync(join(root, '.claude', 'settings.json'), JSON.stringify({ sandbox: { excludedCommands: ['agy-review'] }, permissions: { allow: ['Bash(agy-review code:*)'] } }));
     const deps = hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' });
     const { items } = buildRecommendations({ cwd: root, deps });
-    rmSync(root, { recursive: true, force: true });
     const item = items.find((i) => i.key === 'sandbox-lane');
+    const expectedFp = recipeFingerprint({ hosts: AGY_HOSTS, dirs: [AGY_DIRS[0].default], home: root });
+    rmSync(root, { recursive: true, force: true });
     assert.ok(item, 'fires when a placed review wrapper is wired into excludedCommands');
-    assert.ok(item.apply.startsWith('HAND-APPLY (a neutral acknowledgement, never a security key)'), 'hand-apply by design — never an agent-run writer');
-    for (const h of AGY_HOSTS) assert.ok(item.apply.includes(h), `the wired bridge's manifest host ${h} rides the recipe`);
-    assert.ok(item.apply.includes(AGY_DIRS[0].default), "the wired bridge's writable state dir rides the recipe");
-    for (const h of CODEX_HOSTS) assert.ok(!item.apply.includes(h), `un-wired bridge host ${h} must not ride`);
-    assert.ok(!item.apply.includes(CODEX_DIRS[0].default), 'un-wired bridge dirs must not ride');
+    // The apply is now the ack writer's PREVIEW one-liner — a PURE executable command (Decisions 4):
+    // absolute tool path, the CURRENT fingerprint, a pinned --cwd, NO trailing --apply (preview form).
+    assert.equal(item.apply, `node ${join(HERE, 'ack-write.mjs')} --fingerprint ${expectedFp} --cwd ${root}`);
+    // It relocates OFF the host settings schema: no hand-apply prose, no security-key mention, and
+    // no `agentWorkflow.sandboxLaneAck` settings namespace anywhere in the command.
+    assert.doesNotMatch(item.apply, /HAND-APPLY/u, 'no longer hand-apply — it joins the consent-gated writer class');
     assert.doesNotMatch(item.apply, /allowedDomains|allowWrite/u, 'the apply never asks the user to touch a security key');
-    // Key-path MERGE semantics: a re-fire must never instruct "adding" a whole top-level
-    // object beside an existing one (duplicate key / sibling clobber).
-    assert.match(
-      item.apply,
-      new RegExp(`set "${SANDBOX_LANE_ACK_PARENT}"\\."${SANDBOX_LANE_ACK_KEY}" to "[0-9a-f]{16}"`, 'u'),
-      'the ack is a key-path set, carrying the current fingerprint',
+    assert.doesNotMatch(item.apply, new RegExp(`${SANDBOX_LANE_ACK_PARENT}|settings\\.json`, 'u'), 'the ack no longer lives in the host settings namespace');
+    // The absence of --apply proves ONLY that the apply is the PREVIEW form (per §3 it still runs
+    // only AFTER confirmation, then prints its follow-up run under the SAME consent — nothing runs
+    // before confirmation). A no---apply MUTATION (e.g. family-freshness's `npx … init`) is a
+    // DIFFERENT item; the direct --apply form is pinned by the gate-hook item's own test.
+    assert.doesNotMatch(item.apply, /--apply/u, 'the sandbox-lane apply is the PREVIEW form (no --apply); it still runs only after confirmation');
+    // The LIVE recipe rides a SEPARATE `recipe:` detail line — the apply stays a pure command; the
+    // recipe: line is the fill source for the mode-doc lane-(2) hand-apply block.
+    assert.ok(item.detail, 'the item carries a rendered recipe: detail line');
+    for (const h of AGY_HOSTS) assert.ok(item.detail.includes(h), `the wired bridge's manifest host ${h} rides the recipe line`);
+    assert.ok(item.detail.includes(AGY_DIRS[0].default), "the wired bridge's writable state dir rides the recipe line");
+    for (const h of CODEX_HOSTS) assert.ok(!item.detail.includes(h), `un-wired bridge host ${h} must not ride the recipe`);
+    assert.doesNotMatch(item.apply, /googleapis|\.goog/u, 'the recipe hosts do NOT ride the pure-command apply');
+    // The wired-vs-unwired discrimination rides the FINGERPRINT: an un-wired codex host would change it.
+    assert.notEqual(expectedFp, recipeFingerprint({ hosts: [...AGY_HOSTS, ...CODEX_HOSTS], dirs: [AGY_DIRS[0].default], home: root }), 'un-wired codex hosts do not ride the fingerprint');
+  });
+
+  // ── Part I (AD-055): the family-owned acks.json store + one legacy deprecation window ──────────
+  // A two-surface wired agy fixture (no ack anywhere) — the shared starting point for the store tests.
+  const wiredAgyProject = () => {
+    const root = makeProject();
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    writeFileSync(
+      join(root, '.claude', 'settings.json'),
+      JSON.stringify({ sandbox: { excludedCommands: ['agy-review'] }, permissions: { allow: ['Bash(agy-review code:*)'] } }),
     );
-    assert.match(item.apply, new RegExp(`MERGE into the existing ${SANDBOX_LANE_ACK_PARENT} object`, 'u'), 'the merge semantics are stated');
-    assert.doesNotMatch(item.apply, new RegExp(`"${SANDBOX_LANE_ACK_PARENT}": \\{`, 'u'), 'no whole-object JSON shape to paste beside an existing one');
+    return root;
+  };
+  const agyFingerprint = (root) => recipeFingerprint({ hosts: AGY_HOSTS, dirs: [AGY_DIRS[0].default], home: root });
+  const writeAcks = (root, value) => writeFileSync(join(root, ACKS_FILE), JSON.stringify({ [ACKS_LANE_KEY]: value }));
+
+  it('acks.json-only convergence: the family-owned store silences the item with NO legacy key', () => {
+    const root = wiredAgyProject();
+    writeAcks(root, agyFingerprint(root));
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!items.some((i) => i.key === 'sandbox-lane'), 'the acks.json ack converges the item');
+    assert.ok(!skips.some((s) => s.key === 'sandbox-lane'), 'a present, valid acks.json is not a skip');
+  });
+
+  it('acks.json CURRENT + a STALE legacy key → converges (the discriminating store-precedence case)', () => {
+    const root = wiredAgyProject();
+    const staleFp = recipeFingerprint({ hosts: CODEX_HOSTS, dirs: [CODEX_DIRS[0].default], home: root });
+    writeFileSync(
+      join(root, '.claude', 'settings.json'),
+      JSON.stringify({
+        sandbox: { excludedCommands: ['agy-review'] },
+        permissions: { allow: ['Bash(agy-review code:*)'] },
+        [SANDBOX_LANE_ACK_PARENT]: { [SANDBOX_LANE_ACK_KEY]: staleFp },
+      }),
+    );
+    writeAcks(root, agyFingerprint(root));
+    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!items.some((i) => i.key === 'sandbox-lane'), 'a fresh acks.json ack converges even beside a stale legacy key');
+  });
+
+  it('a STALE acks.json is IGNORED when a legacy key matches — either store may carry the live ack', () => {
+    const root = wiredAgyProject();
+    writeFileSync(
+      join(root, '.claude', 'settings.json'),
+      JSON.stringify({
+        sandbox: { excludedCommands: ['agy-review'] },
+        permissions: { allow: ['Bash(agy-review code:*)'] },
+        [SANDBOX_LANE_ACK_PARENT]: { [SANDBOX_LANE_ACK_KEY]: agyFingerprint(root) },
+      }),
+    );
+    writeAcks(root, 'deadbeefdeadbeef');
+    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!items.some((i) => i.key === 'sandbox-lane'), 'a live legacy key converges despite a stale acks.json');
+  });
+
+  it('an ABSENT acks.json (the normal not-yet-acked state) fires the item with ZERO skip lines', () => {
+    const root = wiredAgyProject(); // makeProject creates docs/ai but no acks.json
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    // Also exercise the absent-PARENT-dir path — same ENOENT branch, no skip either.
+    rmSync(join(root, 'docs', 'ai'), { recursive: true, force: true });
+    const noDir = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(items.some((i) => i.key === 'sandbox-lane'), 'no ack anywhere → the item fires');
+    assert.ok(!skips.some((s) => s.key === 'sandbox-lane'), 'an absent acks.json is the normal state, never a skip');
+    assert.ok(noDir.items.some((i) => i.key === 'sandbox-lane') && !noDir.skips.some((s) => s.key === 'sandbox-lane'), 'an absent docs/ai dir behaves identically');
+  });
+
+  it('a parse-error on an EXISTING acks.json is a stated skip — never a crash, never a silent converge', () => {
+    const root = wiredAgyProject();
+    writeFileSync(join(root, ACKS_FILE), '{ not valid json');
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!items.some((i) => i.key === 'sandbox-lane'), 'a malformed acks.json never fabricates an item');
+    assert.ok(skips.some((s) => s.key === 'sandbox-lane'), 'a malformed EXISTING acks.json states a skip');
+  });
+
+  it('a valid-JSON NON-OBJECT root (e.g. []) is a fail-closed SKIP, never a silent converge', () => {
+    // Branch D: readAcksLane throws on a non-object root — the probe catch states a skip (removing
+    // the guard would flip a `[]` root from SKIP to a silent FIRE via undefined→null).
+    const root = wiredAgyProject();
+    writeFileSync(join(root, ACKS_FILE), '[]');
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!items.some((i) => i.key === 'sandbox-lane'), 'a non-object root never fabricates an item');
+    assert.ok(skips.some((s) => s.key === 'sandbox-lane'), 'a non-object acks.json root is a stated skip (fail-closed)');
+  });
+
+  it('a NON-STRING sandboxLaneAck value is tolerated → the item FIRES with ZERO skip (re-fires)', () => {
+    // Branch E: readAcksLane returns null for a non-string value — the item re-fires, never a skip
+    // (a regression throwing on non-string would silently flip re-fire→skip).
+    const root = wiredAgyProject();
+    writeFileSync(join(root, ACKS_FILE), JSON.stringify({ sandboxLaneAck: 123 }));
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(items.some((i) => i.key === 'sandbox-lane'), 'a non-string ack value is not a match → the item re-fires');
+    assert.ok(!skips.some((s) => s.key === 'sandbox-lane'), 'a non-string value is tolerated, never a skip');
+  });
+
+  it('a SYMLINKED or NON-REGULAR acks.json is a fail-closed SKIP — never read (no FIFO hang, no dangling-symlink misfire)', () => {
+    // readAcksLane lstat-guards the target — a symlink (incl. dangling) or non-regular node is a
+    // stated skip, never a not-yet-acked FIRE and never a blocking read.
+    const root = wiredAgyProject();
+    symlinkSync(join(root, 'nonexistent-ack-target'), join(root, ACKS_FILE)); // a DANGLING symlink
+    const a = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    assert.ok(!a.items.some((i) => i.key === 'sandbox-lane'), 'a symlinked acks.json never fires the item');
+    assert.ok(a.skips.some((s) => s.key === 'sandbox-lane'), 'a symlinked acks.json is a stated skip');
+    rmSync(join(root, ACKS_FILE));
+    mkdirSync(join(root, ACKS_FILE)); // a NON-REGULAR target (a dir where the file should be; a FIFO hits the same guard)
+    const b = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!b.items.some((i) => i.key === 'sandbox-lane'), 'a non-regular acks.json never fires the item');
+    assert.ok(b.skips.some((s) => s.key === 'sandbox-lane'), 'a non-regular acks.json is a stated skip');
+  });
+
+  it('a SYMLINKED ANCESTOR (docs/ai) is a fail-closed SKIP — the reader never reads an ack from OUTSIDE the project', () => {
+    // readAcksLane guards the WHOLE path chain, not just the leaf. A symlinked docs/ai pointing at
+    // an out-of-tree dir with a MATCHING ack must NOT silently converge (the writer refuses such a
+    // deployment too) — without the ancestor guard the reader would follow it.
+    const root = wiredAgyProject();
+    const outside = mkdtempSync(join(tmpdir(), 'recommendations-outside-'));
+    writeFileSync(join(outside, 'acks.json'), JSON.stringify({ sandboxLaneAck: agyFingerprint(root) }));
+    rmSync(join(root, 'docs', 'ai'), { recursive: true, force: true });
+    symlinkSync(outside, join(root, 'docs', 'ai'));
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+    assert.ok(skips.some((s) => s.key === 'sandbox-lane'), 'a symlinked docs/ai ancestor is a stated skip, never a silent out-of-project converge');
+    assert.ok(!items.some((i) => i.key === 'sandbox-lane'), 'and the item does not render');
+  });
+
+  it('a STALE acks.json ALONE (no legacy key) RE-FIRES — a stale PRIMARY ack does not converge', () => {
+    // The earlier stale-acks.json case rode ALONGSIDE a matching legacy ack; this pins that a stale
+    // primary ack by itself does not converge (present, valid read → item fires, zero skip).
+    const root = wiredAgyProject(); // settings.json carries NO legacy ack
+    writeAcks(root, 'deadbeefdeadbeef');
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(items.some((i) => i.key === 'sandbox-lane'), 'a stale primary ack alone does not converge → the item re-fires');
+    assert.ok(!skips.some((s) => s.key === 'sandbox-lane'), 'a present-but-stale acks.json is a valid read, never a skip');
+  });
+
+  it('a FRESH advisor process converges from docs/ai/acks.json ALONE — both settings scopes lack the legacy key (restart-independence, acceptance 2)', () => {
+    const root = wiredAgyProject();
+    // A bin dir with an executable agy-review shim so the SUBPROCESS's real findOnPath sees it placed.
+    const bin = join(root, 'fake-bin');
+    mkdirSync(bin, { recursive: true });
+    const shim = join(bin, 'agy-review');
+    writeFileSync(shim, '#!/bin/sh\nexit 0\n');
+    chmodSync(shim, 0o755);
+    // HOME=root so the subprocess resolves the ~/.gemini default under the fixture home; PATH carries
+    // only the shim dir; env is otherwise minimal so nothing outside the fixture leaks in.
+    const spawn = () => execFileSync(process.execPath, [join(HERE, 'recommendations.mjs'), '--cwd', root], { encoding: 'utf8', env: { PATH: bin, HOME: root } });
+    const withoutAck = spawn(); // control: no ack in ANY store → the item fires (wrapper detected as wired)
+    writeAcks(root, agyFingerprint(root));
+    const withAck = spawn();
+    rmSync(root, { recursive: true, force: true });
+    // The item's WHAT is the robust marker (the apply is now a bare ack-write command); "session-sandbox
+    // recipe" renders only when the item FIRES, never on convergence.
+    const MARKER = /session-sandbox recipe/u;
+    assert.match(withoutAck, MARKER, 'control: with NO ack the item fires — the wrapper IS detected as wired');
+    assert.doesNotMatch(withAck, MARKER, 'the family-owned acks.json alone converges the item in a fresh process — no settings-load dependence');
   });
 
   it('an unwired non-empty gate declaration fires the gate-hook one-liner', () => {
@@ -1023,11 +1226,14 @@ describe('recommendations — every probe degrades honestly (per-branch skip cov
       readFile: (p, enc) => (p.includes('.DS_Store') ? enotdir() : readFileSync(p, enc)),
     });
     const { items, skips } = buildRecommendations({ cwd: root, deps });
+    const expectedFp = recipeFingerprint({ hosts: AGY_HOSTS, dirs: [AGY_DIRS[0].default], home: root });
     rmSync(root, { recursive: true, force: true });
     assert.ok(!skips.some((s) => s.key === 'sandbox-lane'), 'ENOTDIR on a stray file must not skip the item');
     const item = items.find((i) => i.key === 'sandbox-lane');
     assert.ok(item, 'the item still renders from the real bridge manifests');
-    for (const h of AGY_HOSTS) assert.ok(item.apply.includes(h), `manifest host ${h} still rides the recipe line`);
+    // The recipe rides the FINGERPRINT (the apply is the pure ack-write one-liner); the stray file
+    // did not thin it — the fingerprint still equals the full agy manifest recipe.
+    assert.ok(item.apply.includes(expectedFp), 'the real agy manifest recipe still rides the fingerprint despite the stray file');
   });
 
   it('the direct CLI run renders the section and exits 0 (the spawn covers the emit tail)', () => {

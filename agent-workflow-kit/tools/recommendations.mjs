@@ -19,10 +19,11 @@
 // below) and VERDICT-FIRST (D1): every non-optimal state opens with ONE composed verdict line.
 // Registry strings are frozen tool DATA, fact-true, one line under the shape cap (D2); posture/
 // risk prose lives in the mode doc at the consent moment (D3). A probe failure is a stated
-// skipped-item line — never a crash, never a fabricated item. The sandbox-lane item is HAND-APPLY
-// by design (bridge council 2026-07-11, both backends concur): the kit never seeds
-// sandbox.network.allowedDomains / filesystem.allowWrite; its convergence is a NEUTRAL
-// fingerprint-bound acknowledgement, never a security key (D4).
+// skipped-item line — never a crash, never a fabricated item. The kit never seeds
+// sandbox.network.allowedDomains / filesystem.allowWrite (HAND-APPLY territory; bridge council
+// 2026-07-11, both backends concur); the sandbox-lane item's convergence is a NEUTRAL
+// fingerprint-bound acknowledgement recorded by the consent-gated ack writer into the family-owned
+// docs/ai/acks.json (AD-055 relocated it off the host settings schema), never a security key (D4).
 //
 // Read-only: never writes, never commits, never runs a subscription CLI. The reused probes are all
 // exported read-only surfaces of their owning tools (velocity/autonomy/doctor/backends/recipes/
@@ -55,6 +56,7 @@ import { probeSandboxMasks, needsMasksApply } from './sandbox-masks.mjs';
 import { shellQuoteArg } from './review-state.mjs';
 import { loadConfig } from './orchestration-config.mjs';
 import { DEFAULT_BUNDLE_ROOT, SETTINGS_FILENAME, settingsPath, parseSettings, duplicateKeys } from './bridge-settings-read.mjs';
+import { assertContainedRealPath } from './fs-safe.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const toolPath = (rel) => join(HERE, rel);
@@ -485,10 +487,50 @@ export const recipeFingerprint = ({ hosts, dirs, home }) => {
   return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
 };
 
-// The kit-owned neutral ack namespace (D4): project-scoped, hand-applicable as one line, read from
-// BOTH settings scopes; the sandbox/permissions security keys are NEVER consulted as an ack.
+// The kit-owned neutral ack store (D4; AD-055 Part I): a FAMILY-OWNED strict-JSON file no host
+// validator guards — top-level key `sandboxLaneAck` (+ optional `_README`), unknown keys tolerated
+// on read (future acks are siblings). This is the PRIMARY ack channel; the legacy settings-scope
+// keys below are read for one deprecation window. The sandbox/permissions security keys are NEVER
+// consulted as an ack.
+export const ACKS_FILE = 'docs/ai/acks.json';
+export const ACKS_LANE_KEY = 'sandboxLaneAck';
+
+// The LEGACY neutral ack namespace (pre-AD-055): read from BOTH settings scopes until the next kit
+// MAJOR (2.0.0) so a never-migrated host stays converged across the deprecation window (Decisions 3).
 export const SANDBOX_LANE_ACK_PARENT = 'agentWorkflow';
 export const SANDBOX_LANE_ACK_KEY = 'sandboxLaneAck';
+
+// Read the family-owned ack store. An ABSENT file (or absent docs/ai) is the NORMAL not-yet-acked
+// state → null (plain fall-through, never a skip). A parse/IO error on an EXISTING file THROWS — the
+// probe's catch turns it into a stated skip line (Decisions 2). A non-object root is a malformed
+// store (fail-closed skip); a non-string value at the key is tolerated → null (the item re-fires).
+// The WHOLE path chain (root / docs / ai / acks.json) is guarded WITHOUT following symlinks
+// BEFORE any read: a symlinked ANCESTOR could otherwise read an ack from OUTSIDE the project (the
+// writer refuses such a deployment — the reader must too), a symlinked/dangling LEAF must not read as
+// not-yet-acked, and a non-regular target (FIFO/dir/device) is a fail-closed SKIP — never read it (a
+// FIFO would BLOCK the advisor). ENOENT-safe: an absent file/dir is the NORMAL not-yet-acked null.
+const readAcksLane = (root, deps) => {
+  const readFile = deps.readFile ?? readFileSync;
+  const lstat = deps.lstat ?? lstatSync;
+  const absPath = join(root, ACKS_FILE);
+  let st;
+  try {
+    assertContainedRealPath(root, absPath, { lstat }); // symlinked root/ancestor/leaf or escape → throws
+    st = lstat(absPath);
+  } catch (err) {
+    if (err?.code === 'ENOENT') return null; // genuinely absent (file or docs/ai) — normal not-yet-acked
+    throw err; // a symlinked ancestor/leaf, an escape, or a real IO error — stated skip
+  }
+  if (!st.isFile()) {
+    throw new Error(`${ACKS_FILE} is not a regular file — refusing to read it`);
+  }
+  const parsed = JSON.parse(readFile(absPath, 'utf8'));
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${ACKS_FILE}: expected a JSON object`);
+  }
+  const value = parsed[ACKS_LANE_KEY];
+  return typeof value === 'string' ? value : null;
+};
 
 // D3: the risk-marked keys — every key here has a per-item posture note in the mode doc, surfaced
 // at the consent moment; the static contract test asserts EXACT bidirectional coverage
@@ -522,14 +564,28 @@ const probeSandboxLane = ({ root, deps, add, skip }) => {
       if (!dirs.includes(resolved)) dirs.push(resolved);
     }
     const fingerprint = recipeFingerprint({ hosts, dirs, home });
-    // Convergence is the NEUTRAL fingerprint-bound acknowledgement, read from BOTH scopes — a
-    // changed recipe (hosts, dirs, or an env override) re-fires the item (D4).
-    const acks = [settings.data?.[SANDBOX_LANE_ACK_PARENT]?.[SANDBOX_LANE_ACK_KEY], localSettings.data?.[SANDBOX_LANE_ACK_PARENT]?.[SANDBOX_LANE_ACK_KEY]];
+    // Convergence is the NEUTRAL fingerprint-bound acknowledgement: the item converges iff the
+    // CURRENT fingerprint equals the ack in ANY consulted store — the family-owned acks.json FIRST,
+    // then the legacy settings scopes; a stale value in one store is ignored when another matches
+    // (Decisions 2). A changed recipe (hosts, dirs, or an env override) re-fires the item (D4).
+    const acks = [
+      readAcksLane(root, deps),
+      settings.data?.[SANDBOX_LANE_ACK_PARENT]?.[SANDBOX_LANE_ACK_KEY],
+      localSettings.data?.[SANDBOX_LANE_ACK_PARENT]?.[SANDBOX_LANE_ACK_KEY],
+    ];
     if (acks.includes(fingerprint)) return; // the acknowledged recipe — the item converged
+    // The item joins the CONSENT-GATED WRITER class (Decisions 4): the apply is the ack writer's
+    // PREVIEW one-liner (pure executable, cwd-independent), carrying the neutral fingerprint — never
+    // a security key. The LIVE recipe (egress hosts + resolved writable dirs) rides a separate
+    // rendered `recipe:` line (the fill source for the mode doc's lane-(2) hand-apply block); the
+    // fingerprint encodes it, so a changed recipe re-fires with a fresh command.
+    const recipe = `egress hosts [${hosts.join(', ')}]; writable state dirs [${dirs.join(', ')}] (observed-minimal; a blocked host names itself at run time)`;
     add(
       'sandbox-lane',
       fillTemplate(WHATS['sandbox-lane'], {}),
-      `HAND-APPLY (a neutral acknowledgement, never a security key): recipe — egress hosts [${hosts.join(', ')}]; writable state dirs [${dirs.join(', ')}] (observed-minimal; a blocked host names itself at run time); what to DO with it per host class: the mode doc's sandbox-lanes section; once handled, record the ack: set "${SANDBOX_LANE_ACK_PARENT}"."${SANDBOX_LANE_ACK_KEY}" to "${fingerprint}" in .claude/settings.json or settings.local.json — a MERGE into the existing ${SANDBOX_LANE_ACK_PARENT} object (keep its other keys; create it only if absent)`,
+      `node ${q(toolPath('ack-write.mjs'))} --fingerprint ${fingerprint} --cwd ${q(root)}`,
+      'sandbox-lane',
+      recipe,
     );
   } catch (err) {
     skip('sandbox-lane', err);
@@ -560,18 +616,22 @@ export const buildRecommendations = ({ cwd, deps = {} } = {}) => {
   // violation surfaces through the stated-skip lane, never a crash, never a rendered violation.
   // severityKey defaults to the item key; a per-site arm passes its `<key>.<variant>` entry when
   // its class differs from the base (the invalid-env attention arm).
-  const add = (key, what, apply, severityKey = key) => {
+  // `detail` (optional) is an extra rendered `recipe:` line — factual context that is TOO LONG for
+  // the capped WHAT and does NOT belong in the pure-command apply (the sandbox-lane live recipe:
+  // egress hosts + resolved writable dirs). Single-line like apply; absent for every other item.
+  const add = (key, what, apply, severityKey = key, detail = null) => {
     const problems = [];
     if (!(key in BENEFITS)) problems.push(`unregistered item key ${JSON.stringify(key)}`);
     if (!(severityKey in SEVERITIES)) problems.push(`unregistered severity key ${JSON.stringify(severityKey)}`);
     if (/[\r\n]/.test(what)) problems.push('WHAT is not a single line');
     else if (what.length > ITEM_LINE_CAP) problems.push(`WHAT exceeds the ${ITEM_LINE_CAP}-char cap (${what.length})`);
     if (/[\r\n]/.test(apply)) problems.push('apply is not a single line');
+    if (detail != null && /[\r\n]/.test(detail)) problems.push('recipe detail is not a single line');
     if (problems.length > 0) {
       skip(key, new Error(`item shape violation — ${problems.join('; ')}`));
       return;
     }
-    items.push({ key, severity: SEVERITIES[severityKey], what, benefit: BENEFITS[key], apply });
+    items.push({ key, severity: SEVERITIES[severityKey], what, benefit: BENEFITS[key], apply, detail });
   };
   for (const probe of deps.probes ?? PROBES) probe({ root, deps, add, skip });
   return { root, items, skips };
@@ -599,6 +659,7 @@ export const formatRecommendations = ({ items, skips }) => {
     ordered.forEach((item, i) => {
       lines.push(`${i + 1}. ${SEVERITY_LABELS[item.severity] ?? SEVERITY_LABELS[SEVERITY_OPTIONAL]}: ${item.what}`);
       lines.push(`   benefit: ${item.benefit}`);
+      if (item.detail) lines.push(`   recipe: ${item.detail}`);
       lines.push(`   apply: ${item.apply}`);
     });
   }
@@ -615,15 +676,16 @@ Usage:
 
 Computes the deterministic Recommendations section every kit upgrade ends with — VERDICT-FIRST:
 one composed verdict line opens every non-optimal render, then per item {severity · what is
-sub-optimal · the benefit in one plain line · the exact consent-gated apply one-liner}. --cwd is
+sub-optimal · the benefit in one plain line · an optional \`recipe:\` line (the sandbox-lane live
+recipe only) · the exact consent-gated apply one-liner}. --cwd is
 REQUIRED (the target project is explicit, never inferred from the shell's current directory). The
 section renders present-even-when-empty ("${RECOMMENDATIONS_EMPTY_LINE}"); a probe failure is a
 stated skipped-item line. Apply lines are cwd-independent (absolute tool paths, a pinned --cwd;
 the doctor item pins via a cd prefix; the ONE exception is the set-autonomy item — a
 conversational skill invocation labeled "run IN the target project") and preserve each writer's
-own consent semantics; the sandbox-lane item is HAND-APPLY by design — this tool and the kit
-writers never seed sandbox network/filesystem allowances, and its convergence is a neutral
-fingerprint acknowledgement, never a security key.
+own consent semantics; the kit never seeds sandbox network/filesystem allowances (HAND-APPLY
+territory), and the sandbox-lane convergence is a neutral fingerprint acknowledgement recorded by
+the consent-gated ack writer into docs/ai/acks.json (never a security key).
 
 Read-only: never writes, never commits, never runs a subscription CLI. Exit codes: 0 report
 rendered (items or empty); 1 error; 2 usage.`;
