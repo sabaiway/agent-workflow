@@ -4,6 +4,48 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 1.48.0 — Family-owned neutral ack store + read-prompt-economy hook lane (AD-055, the CLAUDE-CODE-HARNESS-FRICTION cluster)
+
+A **feature** release (kit-only — engine 1.17.0, memory 2.3.0, bridges 2.7.0/2.6.0 unchanged) that
+closes two sibling defects where the kit fought the Claude Code host surface. Both land under one ADR
+(AD-055), two commit-anchored segments.
+
+- **Part I — the neutral ack store relocates off the host settings schema.** The `sandbox-lane`
+  upgrade recommendation converged by writing `agentWorkflow.sandboxLaneAck` into
+  `.claude/settings.local.json` — an advertised apply path a Claude Code host blocks twice (the
+  Edit-tool settings validator rejects the unknown key; the command sandbox EROFS-denies
+  `.claude/settings*.json`). The neutral fingerprint acknowledgement now lives in a **family-owned
+  `docs/ai/acks.json`** no host validator guards, written by a new consent-gated **ack writer**
+  (`tools/ack-write.mjs`); the legacy settings-scope key is still read for one deprecation window
+  (until the next MAJOR). The recommendation's apply line is an executable writer one-liner again.
+- **Part II — the read-prompt-economy hook lane kills read-side Bash prompts at the source.** A
+  Claude Code prefix allow rule can never match a `;`/`&&`/`|` COMPOUND even when every segment is
+  seeded, so routine read compounds still prompt. The placed gate hook gains an **opt-in read-lane**
+  (rung c): with `docs/ai/lanes.json` set to `{ "readLane": true }` (read live per call, fail-closed),
+  a command whose every separator-split segment is a plain frozen read-only core command with **zero
+  shell metaprogramming** is auto-approved — a conservative closed-world allow bounded by the audited
+  core (a standalone opt-in grant). `lanes.json` is a **separate** kit-owned file — `gates.json`, its
+  validators and the byte-mirrored template stay untouched. The residual guard (settings-allowed
+  singles) additionally trips the bash-5.3 funsub openers, a backslash-newline line-continuation
+  splice, and a de-spliced re-scan of quote/backslash/bracket/brace `--output` reconstruction.
+- **`gate-hook --read-lane`** is the consent-gated writer for `lanes.json`: it verifies the placed
+  hook is byte-current **and** wired **and** at the deployment stamp head before enabling (a pre-1.48
+  hook never reads `lanes.json`), refusing a stale/unwired hook with the delete-to-reseed recovery
+  (absolute paths). The upgrade Recommendations advisor surfaces the **read-lane offer** once the hook
+  is placed+wired (RISK_NOTED, with a consent-moment posture note; ATTENTION variants when the placed
+  hook is stale or missing — no silent dark lane).
+- **Canon honesty.** `velocity.md` (read-side invocation shape), `hook.md` (rung c + `lanes.json` +
+  the currency check + delete-to-reseed), the three cheap-agent templates (they grant no Bash — a
+  missing `Grep`/`Glob` falls back to the Read tool; a harness-forced Bash read stays plain-single),
+  and the README hook row.
+
+Reviewed by the codex + agy council across three rounds (agy SHIP ×3; every fixable fold red-first);
+the surviving word-construction-on-a-single major is a documented inherent-layer-residual — a
+string-based residual guard cannot close every shell reconstruction of a write flag without a full
+shell parser or an over-ASK that would defeat the read-prompt-economy goal (rung b is a trust-posture
+convenience, not a sandbox). Dogfooded live on this host: the read-lane currency guard passed on the
+re-placed 1.48 hook and wrote `lanes.json`.
+
 ## 1.47.0 — REPORT-FACTS train: live-fact report contract · batched ledger writer · version-sync wrapper lane · sandbox-lanes canon & bridge contract twins (AD-054)
 
 A **feature** release (ships with engine 1.17.0, memory 2.3.0, bridges 2.7.0/2.6.0 bundled) that
