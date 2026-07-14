@@ -140,6 +140,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the consent-gated gates.json seeder + the shared atomic-write core it runs on (AD-042)
       'tools/seed-gates.mjs',
       'tools/atomic-write.mjs',
+      // the AD-055 Part I consent-gated ack-store writer (docs/ai/acks.json — the family-owned
+      // neutral sandbox-lane fingerprint ack, relocated off the host settings schema)
+      'tools/ack-write.mjs',
       // the opt-in one-file-per-ADR store migration writer + its mode + the seeded templates (AD-051)
       'tools/migrate-adr-store.mjs',
       'references/modes/migrate-adr-store.md',
@@ -242,7 +245,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       Recommendations advisor) + references/modes/recommendations.md (the 25th mode-ref) +
     //       references/templates/autonomy.json (the sparse defaults-equivalent policy seed, mirrored
     //       from memory). The *.test.mjs siblings are stripped by files[].
-    assert.equal(packed.length, 150, `tarball file count drifted (${packed.length} ≠ 150)`);
+    // 151 = 150 + tools/ack-write.mjs (AD-055 Part I — the consent-gated writer for the family-owned
+    //       docs/ai/acks.json neutral ack store; its *.test.mjs sibling is stripped by files[]).
+    assert.equal(packed.length, 151, `tarball file count drifted (${packed.length} ≠ 151)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

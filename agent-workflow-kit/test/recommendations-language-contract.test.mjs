@@ -102,14 +102,30 @@ describe('recommendations contract — risk lives at the consent moment (D3, clo
     }
   });
 
-  it('the consent-sequence is an explicit informed-consent checkpoint (select → note → confirm → run)', () => {
+  it('the consent-sequence is an explicit informed-consent checkpoint (nothing runs before confirmation)', () => {
     assert.match(MODE_DOC, /surface its posture note inline/i);
     assert.match(MODE_DOC, /explicitly confirms/i);
     assert.match(MODE_DOC, /only then/i);
+    // The invariant is that NO command runs before confirmation — and the doc must NOT let a
+    // no---apply command (e.g. family-freshness's `npx … init`) be treated as a "safe preview" to
+    // run before consent. Safety is NOT inferred from the presence/absence of an --apply flag.
+    assert.match(MODE_DOC, /no command runs before confirmation/i, 'nothing runs before confirmation');
+    assert.match(MODE_DOC, /Do NOT infer safety from the presence or absence of an `--apply` flag/i, 'the --apply heuristic is explicitly rejected');
+    assert.match(MODE_DOC, /family-freshness/, 'the no---apply mutation is named as a mutation, never a preview');
+    assert.match(MODE_DOC, /dry-run preview/i, 'the genuine preview class is named');
+    // Negative pin: the rejected "run the preview BEFORE confirmation" wording must never return —
+    // nothing runs before confirmation, and no command is ever declared safe-to-run pre-consent.
+    assert.doesNotMatch(MODE_DOC, /FIRST run that rendered preview/i, 'the rejected run-preview-before-confirm wording never returns');
+    assert.doesNotMatch(MODE_DOC, /safe to run before confirmation/i, 'no command is declared safe to run before confirmation');
     // The sandbox-lane guidance must be DELIVERED at the consent moment, not left behind a
     // pointer the user never follows: the ladder rides the note inline.
     assert.match(MODE_DOC, /the note INCLUDES the sandbox-lanes ladder/i);
     assert.match(MODE_DOC, /present the whole ladder inline/i);
+  });
+
+  it('the item-shape contract documents the optional `recipe:` line (mode doc + README; the tool --help is pinned in recommendations.test.mjs)', () => {
+    assert.match(MODE_DOC, /optional `recipe:` line/i, 'the mode doc lists the optional `recipe:` line');
+    assert.match(README, /optional `recipe:` line/i, 'the README lists the optional `recipe:` line');
   });
 
   it('the sandbox-lanes section explains the recipe per host class', () => {

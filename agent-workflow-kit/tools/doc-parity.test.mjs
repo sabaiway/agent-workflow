@@ -86,6 +86,15 @@ describe('the REAL registry is consistent with the shipped contract docs (dogfoo
     }
   });
 
+  // AD-055 Part I: the ack-store path drift guard must itself be pinned — a deleted binding would
+  // otherwise leave the whole suite green and silently disable the guard.
+  it('the registry binds ACKS_FILE (docs/ai/acks.json) to the recommendations AND velocity mode docs', () => {
+    const acks = BINDINGS.find((b) => b.constant === 'acks-file');
+    assert.ok(acks, 'registry must bind the ACKS_FILE apply target (the ack-store path drift guard)');
+    assert.equal(acks.token, 'docs/ai/acks.json', 'the token is the family-owned ack store path');
+    assert.deepEqual([...acks.files].sort(), ['references/modes/recommendations.md', 'references/modes/velocity.md']);
+  });
+
   // AD-044 Plan 2: the autonomy-doctor D7 exit/status contract is bound to its mode doc.
   it('the registry binds the autonomy-doctor EXIT table + every non-usage status token', () => {
     const names = BINDINGS.map((b) => b.constant);

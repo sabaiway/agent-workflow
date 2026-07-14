@@ -34,6 +34,7 @@ import {
   VERDICT_NOTHING_BROKEN,
   VERDICT_OPTIONAL_TEMPLATE,
   VERDICT_SKIPS_TEMPLATE,
+  ACKS_FILE,
 } from './recommendations.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -43,6 +44,7 @@ const FOLD_DOC = 'references/modes/fold-completeness.md';
 const AUTONOMY_DOCTOR_DOC = 'references/modes/autonomy-doctor.md';
 const RECOMMENDATIONS_DOC = 'references/modes/recommendations.md';
 const UPGRADE_DOC = 'references/modes/upgrade.md';
+const VELOCITY_DOC = 'references/modes/velocity.md';
 
 // A typed usage failure (exit 2) for the CLI parser — the codebase's typed-error idiom (no classes).
 const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 });
@@ -92,6 +94,11 @@ export const BINDINGS = Object.freeze([
   valueBinding('verdict-nothing-broken', VERDICT_NOTHING_BROKEN, VERDICT_NOTHING_BROKEN, [RECOMMENDATIONS_DOC, UPGRADE_DOC]),
   valueBinding('verdict-optional', VERDICT_OPTIONAL_TEMPLATE, VERDICT_OPTIONAL_TEMPLATE, [RECOMMENDATIONS_DOC, UPGRADE_DOC]),
   valueBinding('verdict-skips', VERDICT_SKIPS_TEMPLATE, VERDICT_SKIPS_TEMPLATE, [RECOMMENDATIONS_DOC, UPGRADE_DOC]),
+  // The ack-store apply target (AD-055 Part I): the family-owned docs/ai/acks.json path — a
+  // drift-guarded constant so the mode docs' ack-store references cannot silently outdate the code
+  // (the incident's "mode-doc apply text stays in lockstep" acceptance as a mechanism, not prose).
+  // Bound in BOTH docs that name the path (recommendations.md + velocity.md).
+  valueBinding('acks-file', ACKS_FILE, ACKS_FILE, [RECOMMENDATIONS_DOC, VELOCITY_DOC]),
 ].map((b) => Object.freeze(b)));
 
 // ── the pure checker (readText is injectable for hermetic tests) ────────────────────────
