@@ -39,6 +39,7 @@ import {
   recipeFingerprint,
   ACKS_FILE,
   ACKS_LANE_KEY,
+  LANES_FILE,
   SANDBOX_LANE_ACK_PARENT,
   SANDBOX_LANE_ACK_KEY,
   RISK_NOTED_KEYS,
@@ -362,6 +363,16 @@ const buildInventoryFixtures = () => {
     deps: hermeticDeps(root6, { listUntracked: () => ['.bashrc'], lstat: (p) => (p.endsWith('.bashrc') ? fakeChar : lstatSync(p)) }),
   }));
   rmSync(root6, { recursive: true, force: true });
+  // (7) wired gate hook with the read-lane off: read-lane.
+  const root7 = makeProject();
+  mkdirSync(join(root7, '.claude', 'hooks'), { recursive: true });
+  writeFileSync(join(root7, '.claude', 'hooks', 'agent-workflow-gates.mjs'), '// placed hook\n');
+  writeFileSync(
+    join(root7, '.claude', 'settings.json'),
+    JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/agent-workflow-gates.mjs"' }] }] } }),
+  );
+  results.push(buildRecommendations({ cwd: root7, deps: hermeticDeps(root7) }));
+  rmSync(root7, { recursive: true, force: true });
   return results;
 };
 
@@ -981,6 +992,147 @@ describe('recommendations — item probes over fixtures', () => {
     const item = items.find((i) => i.key === 'sandbox-masks');
     assert.ok(item, 'fires when the derivation diverges from the (absent) managed block');
     assert.match(item.apply, /sandbox-masks\.mjs.*--apply/u, 'the apply one-liner is the lane the tool itself renders');
+  });
+});
+
+describe('recommendations — the read-lane offer (AD-055 Part II, Help-through-Recommendations)', () => {
+  const HOOK_CMD = 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/agent-workflow-gates.mjs"';
+  // The REAL bundled hook the advisor byte-compares the placed hook against (council B7).
+  const REAL_BUNDLE = readFileSync(join(HERE, '..', 'references', 'hooks', 'gate-approve.mjs'), 'utf8');
+  // A deployment with the gate hook PLACED and WIRED (the read-lane item's precondition). hookCurrent
+  // (default false) writes a STALE placeholder; true copies the real bundle (byte-current).
+  const wiredHookProject = ({ lanes, hookCurrent = false } = {}) => {
+    const root = makeProject();
+    mkdirSync(join(root, '.claude', 'hooks'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'hooks', 'agent-workflow-gates.mjs'), hookCurrent ? REAL_BUNDLE : '// an old placed hook\n');
+    writeFileSync(
+      join(root, '.claude', 'settings.json'),
+      JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: HOOK_CMD }] }] } }),
+    );
+    if (lanes !== undefined) writeFileSync(join(root, LANES_FILE), lanes);
+    return root;
+  };
+
+  it('placed + wired + no lanes.json → fires the gate-hook --read-lane PREVIEW one-liner; the gate-hook item stays silent (no double-fire)', () => {
+    const root = wiredHookProject();
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    const item = items.find((i) => i.key === 'read-lane');
+    assert.ok(item, 'fires once the hook is wired and the lane is off');
+    assert.equal(item.severity, SEVERITY_OPTIONAL);
+    assert.equal(item.apply, `node ${join(HERE, 'gate-hook.mjs')} --read-lane --cwd ${root}`);
+    assert.doesNotMatch(item.apply, /--apply/u, 'the offer is the PREVIEW form (the currency check + posture fire at the writer)');
+    assert.ok(!skips.some((s) => s.key === 'read-lane'));
+    assert.ok(!items.some((i) => i.key === 'gate-hook'), 'the gate-hook item never fires for a WIRED hook — no double-offer');
+  });
+
+  it('readLane: true + a byte-CURRENT hook → converged (the item does not fire)', () => {
+    const root = wiredHookProject({ lanes: JSON.stringify({ readLane: true }), hookCurrent: true });
+    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!items.some((i) => i.key === 'read-lane'), 'an enabled lane over a current hook converges the item');
+  });
+
+  it('readLane: true + a STALE placed hook → ATTENTION with a delete-to-reseed recovery [B7]', () => {
+    const root = wiredHookProject({ lanes: JSON.stringify({ readLane: true }), hookCurrent: false });
+    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    const item = items.find((i) => i.key === 'read-lane');
+    assert.ok(item, 'a stale hook under an enabled lane fires the item (it is a silent no-op otherwise)');
+    assert.equal(item.severity, SEVERITY_ATTENTION);
+    assert.match(item.apply, /HAND-APPLY.*rm .*agent-workflow-gates\.mjs/);
+    assert.match(item.apply, /gate-hook\.mjs --apply/);
+  });
+
+  it('readLane:false / a non-boolean value → the lane is off → the item fires (the writer will flip it), never a skip', () => {
+    for (const lanes of [JSON.stringify({ readLane: false }), JSON.stringify({ readLane: 'yes', _README: 'x' })]) {
+      const root = wiredHookProject({ lanes });
+      const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+      rmSync(root, { recursive: true, force: true });
+      assert.ok(items.some((i) => i.key === 'read-lane'), `readLane off (${lanes}) → offer`);
+      assert.ok(!skips.some((s) => s.key === 'read-lane'), 'a valid off lane is not a skip');
+    }
+  });
+
+  it('no double-fire: an unwired hook is covered by the gate-hook item, never the read-lane item', () => {
+    // (a) nothing placed/wired — no read-lane offer.
+    const bare = makeProject();
+    const a = buildRecommendations({ cwd: bare, deps: hermeticDeps(bare) });
+    rmSync(bare, { recursive: true, force: true });
+    assert.ok(!a.items.some((i) => i.key === 'read-lane'), 'no read-lane offer without a wired hook');
+    // (b) placed-but-NOT-wired — still no read-lane offer.
+    const placedUnwired = makeProject();
+    mkdirSync(join(placedUnwired, '.claude', 'hooks'), { recursive: true });
+    writeFileSync(join(placedUnwired, '.claude', 'hooks', 'agent-workflow-gates.mjs'), '// placed\n');
+    const b = buildRecommendations({ cwd: placedUnwired, deps: hermeticDeps(placedUnwired) });
+    rmSync(placedUnwired, { recursive: true, force: true });
+    assert.ok(!b.items.some((i) => i.key === 'read-lane'), 'placed-but-unwired does not offer the lane');
+    // (c) gates declared but hook unwired → the gate-hook item fires, the read-lane item does not.
+    const unwiredGates = makeProject();
+    writeFileSync(join(unwiredGates, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates: [{ id: 'unit-tests', title: 'T', cmd: 'node --test' }] }));
+    const c = buildRecommendations({ cwd: unwiredGates, deps: hermeticDeps(unwiredGates) });
+    rmSync(unwiredGates, { recursive: true, force: true });
+    assert.ok(c.items.some((i) => i.key === 'gate-hook'), 'the gate-hook item covers the unwired case');
+    assert.ok(!c.items.some((i) => i.key === 'read-lane'), 'and the read-lane item stays silent');
+  });
+
+  it('a MALFORMED lanes.json is a stated SKIP — never a wrong offer, never a crash', () => {
+    const root = wiredHookProject({ lanes: '{ not json' });
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!items.some((i) => i.key === 'read-lane'), 'a malformed lanes.json never fabricates an offer');
+    assert.ok(skips.some((s) => s.key === 'read-lane'), 'a malformed lanes.json is a stated skip');
+  });
+
+  it('a NON-OBJECT lanes.json root (e.g. []) is a fail-closed SKIP', () => {
+    const root = wiredHookProject({ lanes: '[]' });
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!items.some((i) => i.key === 'read-lane'));
+    assert.ok(skips.some((s) => s.key === 'read-lane'));
+  });
+
+  it('a SYMLINKED lanes.json is a fail-closed SKIP (never read from outside the project)', () => {
+    const root = wiredHookProject();
+    symlinkSync(join(root, 'nonexistent-lane-target'), join(root, LANES_FILE)); // a dangling symlink
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!items.some((i) => i.key === 'read-lane'), 'a symlinked lanes.json never fires');
+    assert.ok(skips.some((s) => s.key === 'read-lane'), 'a symlinked lanes.json is a stated skip');
+  });
+
+  it('a NON-REGULAR lanes.json (a directory at the path) is a fail-closed SKIP', () => {
+    const root = wiredHookProject();
+    mkdirSync(join(root, LANES_FILE)); // a dir where the toggle file should be (a FIFO hits the same guard)
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!items.some((i) => i.key === 'read-lane'), 'a non-regular lanes.json never fires');
+    assert.ok(skips.some((s) => s.key === 'read-lane'), 'a non-regular lanes.json is a stated skip');
+  });
+
+  it('a wired hook whose placed FILE is MISSING → ATTENTION place-first (never a silent dark lane) [R2-M2]', () => {
+    const root = makeProject();
+    mkdirSync(join(root, '.claude'), { recursive: true }); // settings wired, but NO .claude/hooks file placed
+    writeFileSync(
+      join(root, '.claude', 'settings.json'),
+      JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: HOOK_CMD }] }] } }),
+    );
+    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    const item = items.find((i) => i.key === 'read-lane');
+    assert.ok(item, 'a wired-but-missing hook fires the item (the lane is silently dark otherwise)');
+    assert.equal(item.severity, SEVERITY_ATTENTION);
+    assert.match(item.apply, /gate-hook\.mjs --apply/);
+  });
+
+  it('the stale reseed recovery names an ABSOLUTE rm path, never cwd-relative (council R2-M3)', () => {
+    const root = wiredHookProject({ lanes: JSON.stringify({ readLane: true }), hookCurrent: false });
+    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    const item = items.find((i) => i.key === 'read-lane');
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(item);
+    assert.match(item.apply, /rm \/[^\s,]*\.claude\/hooks\/agent-workflow-gates\.mjs/);
+    assert.doesNotMatch(item.apply, /rm \.claude\/hooks/);
   });
 });
 

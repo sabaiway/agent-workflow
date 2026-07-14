@@ -24,6 +24,21 @@ describe('gate hook ↔ velocity-profile constant parity', () => {
     );
   });
 
+  it('the bash-5.3 funsub openers + the line-continuation forms are present on BOTH sides (AD-055 Part II) — a simultaneous revert goes red', () => {
+    // deepStrictEqual above catches a ONE-sided drift; this pins the extensions themselves so removing
+    // them from both copies at once still fails.
+    for (const forms of [RUNTIME_RESIDUAL_FORMS.commandSubstitutions, RESIDUAL_FORMS.commandSubstitutions]) {
+      for (const opener of ['${ ', '${\t', '${\n', '${\r', '${|']) {
+        assert.ok(forms.includes(opener), `commandSubstitutions must include the funsub opener ${JSON.stringify(opener)}`);
+      }
+    }
+    for (const forms of [RUNTIME_RESIDUAL_FORMS.lineContinuations, RESIDUAL_FORMS.lineContinuations]) {
+      for (const form of ['\\\n', '\\\r']) {
+        assert.ok(forms.includes(form), `lineContinuations must include the splice form ${JSON.stringify(form)}`);
+      }
+    }
+  });
+
   it('both sides are frozen (a runtime mutation cannot widen either set)', () => {
     for (const value of [
       UNIVERSAL_READONLY_ALLOWLIST,

@@ -31,8 +31,12 @@
 //     preserved-customization discipline — no refresh-in-place, no marker/checksum machinery);
 //   • never writes settings.local.json; never commits.
 //
+// The `--read-lane` flag is a SEPARATE operation (AD-055 Part II): it enables the opt-in read-only
+// compound lane in docs/ai/lanes.json after a currency check, and never touches settings or
+// gates.json — see the read-lane writer section below.
+//
 // Exit codes: 0 done / dry-run (incl. the report-only diverged-but-wired state); 1 precondition
-// STOP; 2 usage. Dependency-free beyond the kit's own velocity exports, Node >= 18. No side
+// STOP; 2 usage. Dependency-free beyond the kit's own internal exports, Node >= 18. No side
 // effects on import.
 
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -49,8 +53,13 @@ import {
   readSettingsFile,
   resolveEffectiveMode,
 } from './velocity-profile.mjs';
+import { assertDocsAiDeployment, writeDocsAiFileAtomic } from './atomic-write.mjs';
+import { shellQuoteArg } from './review-state.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+// This tool's own absolute path — the recovery / apply one-liners the read-lane writer prints.
+export const GATE_HOOK_TOOL = fileURLToPath(import.meta.url);
+const q = shellQuoteArg;
 
 export const BUNDLED_HOOK_PATH = resolve(HERE, '..', 'references', 'hooks', 'gate-approve.mjs');
 export const HOOKS_DIR = '.claude/hooks';
@@ -68,6 +77,11 @@ export const GATE_HOOK_UNSAFE_MODE = 'GATE_HOOK_UNSAFE_MODE';
 export const GATE_HOOK_MALFORMED = 'GATE_HOOK_MALFORMED';
 export const GATE_HOOK_DIVERGED = 'GATE_HOOK_DIVERGED';
 export const GATE_HOOK_BUNDLE = 'GATE_HOOK_BUNDLE';
+// --read-lane (AD-055 Part II): the opt-in read-only compound lane toggle + its currency guard.
+export const LANES_REL = 'docs/ai/lanes.json';
+export const READ_LANE_KEY = 'readLane';
+export const GATE_HOOK_STALE = 'GATE_HOOK_STALE'; // the placed hook is absent/stale — the lane cannot fire
+export const GATE_HOOK_LANE = 'GATE_HOOK_LANE'; // a lanes.json write refusal (deployment/malformed)
 
 const EXIT_OK = 0;
 const EXIT_PRECONDITION = 1;
@@ -84,12 +98,21 @@ const TARGET_CURRENT = 'already-current';
 const TARGET_DIVERGED = 'diverged';
 
 const USAGE = `usage: gate-hook [--dry-run | --apply] [--cwd <dir>] [--help]
+       gate-hook --read-lane [--dry-run | --apply] [--cwd <dir>]   (enable the opt-in read-only compound lane)
 
 Places the bundled PreToolUse gate-approval hook to ${HOOK_FILE_REL} and wires ONE
 PreToolUse "Bash" entry into ${SETTINGS_FILE}. Default is --dry-run (a preview; writes
 nothing). --apply writes. The hook auto-approves byte-exact declared gate cmds
 (docs/ai/gates.json, project root) and asks on seeded-read-only commands carrying the
-documented runtime residual. Never writes ${SETTINGS_LOCAL_FILE}; never commits.`;
+documented runtime residual.
+
+--read-lane enables the opt-in read-only COMPOUND lane in ${LANES_REL} ("${READ_LANE_KEY}": true) — the
+hook then auto-approves compounds of the seeded read-only core carrying zero shell metaprogramming.
+--apply --read-lane verifies the PLACED hook is the CURRENT bundle first (a pre-1.48 hook never reads
+${LANES_REL}) and refuses with the delete-to-reseed recovery otherwise. Never touches ${SETTINGS_FILE}
+or docs/ai/gates.json.
+
+Never writes ${SETTINGS_LOCAL_FILE}; never commits.`;
 
 export const fail = (exitCode, message) => Object.assign(new Error(message), { exitCode });
 
@@ -307,6 +330,166 @@ export const writeGateHook = ({ cwd, dryRun = true } = {}, deps = {}) => {
   return { wrote: placePlanned || wirePlanned, dryRun: false, ...base };
 };
 
+// ── the read-lane writer (--read-lane; AD-055 Part II, Decisions 5/9) ──────────────────
+// Enables the opt-in read-only COMPOUND lane by writing { "readLane": true } into the kit-owned
+// docs/ai/lanes.json (a SEPARATE file — gates.json is never touched). Same family writer discipline
+// as the base flow + ack-write (preview-then-mutate, deployment-gated, create-if-absent,
+// merge-preserve, symlink/non-regular refusal, malformed-JSON fail-closed, atomic), PLUS a CURRENCY
+// CHECK (Decisions 9): --apply refuses unless the PLACED hook is byte-identical to the current
+// bundle — enabling a lane a pre-1.48 hook can never read would be a silent no-op the user paid
+// consent for. The refusal names the delete-to-reseed recovery.
+
+const laneStop = (message) => makeGateHookError(GATE_HOOK_LANE, message);
+
+// Read the existing lanes.json (already gated as a regular file). ENOENT (a TOCTOU vanish) → absent
+// {}; malformed JSON / a non-object root FAILS CLOSED — never overwrite an unparseable toggle file.
+const readExistingLanes = (absPath, deps) => {
+  const readFile = deps.readFile ?? readFileSync;
+  let text;
+  try {
+    text = readFile(absPath, UTF8);
+  } catch (err) {
+    if (err?.code === 'ENOENT') return {};
+    throw laneStop(`cannot read ${LANES_REL} (${err?.code ?? err?.message}) — refusing to overwrite it`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw laneStop(`${LANES_REL} is not valid JSON — refusing to overwrite it (fix or delete it, then re-run)`);
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw laneStop(`${LANES_REL} is not a JSON object — refusing to overwrite it`);
+  }
+  return parsed;
+};
+
+// Target gate: a symlinked / non-regular lanes.json is a STOP checked BEFORE any read (a FIFO can
+// never block the reader). Returns { existed, existing } — the merge base.
+const preflightLaneTarget = (absPath, deps) => {
+  const fs = fsDeps(deps);
+  const st = lstatNoFollow(absPath, fs);
+  if (st === null) return { existed: false, existing: {} };
+  if (st.isSymbolicLink()) throw makeGateHookError(GATE_HOOK_SYMLINK, `${LANES_REL} is a symlink — refusing to write through it`);
+  if (!st.isFile()) throw makeGateHookError(GATE_HOOK_SYMLINK, `${LANES_REL} exists but is not a regular file — refusing to touch it`);
+  return { existed: true, existing: readExistingLanes(absPath, deps) };
+};
+
+export const applyGateHookCommand = (root) => `node ${q(GATE_HOOK_TOOL)} --apply --cwd ${q(root)}`;
+export const applyReadLaneCommand = (root) => `node ${q(GATE_HOOK_TOOL)} --read-lane --cwd ${q(root)} --apply`;
+
+// The currency check (Decisions 9): the PLACED hook must be byte-identical to the current bundle,
+// else enabling the lane is a no-op. Returns { current, reason, refusal? }; a symlinked / non-regular
+// placed hook is a hard STOP.
+const checkHookCurrency = (root, bundleContent, fs) => {
+  const hookAbs = join(root, HOOK_FILE_REL);
+  const st = lstatNoFollow(hookAbs, fs);
+  if (st === null) {
+    return {
+      current: false,
+      reason: `${HOOK_FILE_REL} is not placed`,
+      refusal: `${HOOK_FILE_REL} is not placed — the read-lane cannot fire. Place the hook first:\n  ${applyGateHookCommand(root)}\nthen re-run with --read-lane.`,
+    };
+  }
+  if (st.isSymbolicLink() || !st.isFile()) {
+    throw makeGateHookError(GATE_HOOK_SYMLINK, `${HOOK_FILE_REL} is not a regular file — refusing to touch it`);
+  }
+  if (fs.readFile(hookAbs, UTF8) !== bundleContent) {
+    return {
+      current: false,
+      reason: `${HOOK_FILE_REL} is not the current bundle`,
+      refusal: `${HOOK_FILE_REL} is NOT the current bundle — enabling the read-lane now would be a silent no-op (a pre-1.48 hook never reads ${LANES_REL}). Reseed it, then re-run with --read-lane:\n  rm ${q(join(root, HOOK_FILE_REL))}\n  ${applyGateHookCommand(root)}`,
+    };
+  }
+  return { current: true, reason: 'the placed hook is the current bundle' };
+};
+
+// Pure preflight (both dry-run and apply): deployment gate + the merge over the existing toggle file.
+export const planReadLane = ({ cwd }, deps = {}) => {
+  const root = resolve(cwd);
+  assertDocsAiDeployment(root, deps, { stop: laneStop, noun: 'the read-lane toggle', rel: LANES_REL });
+  const absPath = join(root, LANES_REL);
+  const { existed, existing } = preflightLaneTarget(absPath, deps);
+  const already = existing[READ_LANE_KEY] === true;
+  const merged = { ...existing, [READ_LANE_KEY]: true };
+  const otherKeys = Object.keys(existing).filter((k) => k !== READ_LANE_KEY);
+  return { root, absPath, existed, existing, merged, already, otherKeys };
+};
+
+// A byte-current hook that is not WIRED never fires — enabling the lane against it is the same
+// silent no-op the currency check guards (council B5). Wired-detection reuses the writer's own
+// isHookWired over BOTH settings scopes (the hooks contract merges both).
+const checkHookWired = (root, deps) => {
+  const project = readSettingsFile(join(root, SETTINGS_FILE), { ...deps, cwd: root });
+  const local = readSettingsFile(join(root, SETTINGS_LOCAL_FILE), { ...deps, cwd: root });
+  return isHookWired(project.data) || isHookWired(local.data);
+};
+
+export const writeReadLane = ({ cwd, dryRun = true } = {}, deps = {}) => {
+  const fs = fsDeps(deps);
+  const bundleContent = readBundledHook(deps);
+  const plan = planReadLane({ cwd: cwd ?? deps.cwd ?? process.cwd() }, deps);
+  const currency = checkHookCurrency(plan.root, bundleContent, fs);
+  const wired = checkHookWired(plan.root, deps);
+  const stamp = readStamp(join(plan.root, WORKFLOW_STAMP), fs);
+  const stampOk = stamp === EXPECTED_WORKFLOW_VERSION;
+  if (dryRun) return { wrote: false, dryRun: true, currency, wired, stamp, stampOk, ...plan };
+  if (!currency.current) throw makeGateHookError(GATE_HOOK_STALE, currency.refusal);
+  if (!wired) {
+    throw makeGateHookError(
+      GATE_HOOK_STALE,
+      `${HOOK_FILE_REL} is placed and current but NOT wired into ${SETTINGS_FILE} — the read-lane cannot fire. Wire it first:\n  ${applyGateHookCommand(plan.root)}\nthen re-run with --read-lane.`,
+    );
+  }
+  if (!stampOk) {
+    throw makeGateHookError(
+      GATE_HOOK_STAMP,
+      `not a deployed agent-workflow project at lineage ${EXPECTED_WORKFLOW_VERSION} (found ${stamp ?? 'none'}) — run init/upgrade first`,
+    );
+  }
+  if (plan.already) return { wrote: false, dryRun: false, currency, wired, stamp, stampOk, ...plan };
+  const body = `${JSON.stringify(plan.merged, null, SETTINGS_JSON_INDENT)}\n`;
+  writeDocsAiFileAtomic(plan.root, LANES_REL, body, deps, { stop: laneStop, noun: 'the read-lane toggle' });
+  return { wrote: true, dryRun: false, currency, wired, stamp, stampOk, ...plan };
+};
+
+const READ_LANE_POSTURE =
+  "posture: an auto-allowed read chain runs UNATTENDED and can read any file you can — the SAME trust boundary as the AUDITED read-only core velocity seeds, extended to COMPOUNDS (and singles) of that core. The subset invariant holds against that AUDITED CORE (every segment is an audited-core read), so the lane is a standalone opt-in grant BOUNDED BY the audited core — never a command outside it; it auto-approves those core commands REGARDLESS of which you seeded as individual settings rules (not strictly a subset of your current settings). This consent is a PROJECT-PERSISTENT declaration in docs/ai/lanes.json — it applies to every future session and to subagents' Bash, and where docs/ai is committed, to every checkout. It bypasses the PROMPT only, never the OS sandbox; on engine builds where a hook allow supersedes an ask rule, the opt-in covers EXACTLY the audited read-only core — nothing else.";
+
+export const formatReadLaneResult = (result) => {
+  const merge = result.otherKeys.length > 0 ? ` (merge-preserving ${result.otherKeys.length} existing key(s))` : '';
+  if (!result.dryRun) {
+    if (result.already) {
+      return `agent-workflow read-lane — APPLY: ${LANES_REL} already enables the read-lane — nothing to do (hook currency verified).`;
+    }
+    return [
+      'agent-workflow read-lane — APPLY',
+      `  - ${LANES_REL}: "${READ_LANE_KEY}" = true${merge}`,
+      '  - hook currency verified: the placed hook is the current bundle — the lane is active for new Bash calls.',
+    ].join(LF);
+  }
+  const lines = [
+    result.already
+      ? `agent-workflow read-lane — DRY RUN: ${LANES_REL} already enables the read-lane ("${READ_LANE_KEY}": true) — nothing to do.`
+      : 'agent-workflow read-lane — DRY RUN (no changes; re-run with --apply --read-lane)',
+  ];
+  if (!result.already) lines.push(`  - would ${result.existed ? 'set' : 'create'} ${LANES_REL} "${READ_LANE_KEY}" = true${merge}`);
+  lines.push(
+    result.currency.current
+      ? '  hook currency: current — the lane will fire once enabled.'
+      : `  hook currency: STALE — ${result.currency.reason}; --apply will REFUSE until you reseed the placed hook.`,
+  );
+  if (!result.wired) {
+    lines.push(`  hook wiring: NOT wired into ${SETTINGS_FILE}; --apply will REFUSE until you wire it (${applyGateHookCommand(result.root)}).`);
+  }
+  if (!result.stampOk) {
+    lines.push(`  deployment stamp: ${result.stamp ?? 'none'} ≠ lineage head ${EXPECTED_WORKFLOW_VERSION}; --apply will REFUSE until init/upgrade runs.`);
+  }
+  lines.push(READ_LANE_POSTURE);
+  if (!result.already) lines.push(`  to apply: ${applyReadLaneCommand(result.root)}`);
+  return lines.join(LF);
+};
+
 // ── report ────────────────────────────────────────────────────────────────────────────
 
 const TRUST_POSTURE_LINE =
@@ -346,12 +529,13 @@ export const formatResult = (result) => {
 // ── CLI ───────────────────────────────────────────────────────────────────────────────
 
 export const parseArgs = (argv) => {
-  const opts = { dryRunFlag: false, apply: false, cwd: undefined, help: false };
+  const opts = { dryRunFlag: false, apply: false, cwd: undefined, help: false, readLane: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') opts.help = true;
     else if (arg === '--dry-run') opts.dryRunFlag = true;
     else if (arg === '--apply') opts.apply = true;
+    else if (arg === '--read-lane') opts.readLane = true;
     else if (arg === '--cwd') {
       i += 1;
       if (argv[i] === undefined || argv[i].startsWith('-')) throw fail(EXIT_USAGE, '--cwd needs a directory argument');
@@ -361,7 +545,7 @@ export const parseArgs = (argv) => {
     }
   }
   if (opts.dryRunFlag && opts.apply) throw fail(EXIT_USAGE, '--dry-run and --apply cannot be used together');
-  return { help: opts.help, dryRun: !opts.apply, cwd: opts.cwd };
+  return { help: opts.help, dryRun: !opts.apply, cwd: opts.cwd, readLane: opts.readLane };
 };
 
 export const main = (argv = process.argv.slice(2), deps = {}) => {
@@ -371,6 +555,11 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
     const args = parseArgs(argv);
     if (args.help) {
       log(USAGE);
+      return EXIT_OK;
+    }
+    if (args.readLane) {
+      const laneResult = writeReadLane({ cwd: args.cwd ?? deps.cwd ?? process.cwd(), dryRun: args.dryRun }, deps);
+      log(formatReadLaneResult(laneResult));
       return EXIT_OK;
     }
     const result = writeGateHook({ cwd: args.cwd ?? deps.cwd ?? process.cwd(), dryRun: args.dryRun }, deps);

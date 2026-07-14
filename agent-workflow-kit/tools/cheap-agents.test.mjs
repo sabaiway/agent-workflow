@@ -60,6 +60,21 @@ describe('bundled cheap-lane vehicles — frontmatter pins', () => {
       assert.match(frontmatter, /^description: .{40,}/m, 'carries a routing description');
     });
   }
+
+  // The read-prompt-economy honesty line (AD-055 Part II, reconciled by council B9) — CONTENT, not
+  // just placement: the vehicle grants NO Bash (consistent with `tools: Read, Grep, Glob`), so a
+  // missing Grep/Glob falls back to the READ tool (never a shelled-out command); only IF a harness
+  // routes reads through Bash does the plain-single + read-lane guidance apply. This reconciles the
+  // "never run commands" rule with the Bash-fallback note codex B9 flagged as self-contradictory.
+  it('every vehicle carries the reconciled read-lane honesty line (no Bash grant → Read fallback → conditional read-lane)', () => {
+    for (const template of BUNDLE) {
+      assert.match(template.content, /no `Bash`/u, `${template.name} states the vehicle grants no Bash`);
+      assert.match(template.content, /fall back to the `Read` tool/u, `${template.name} directs the missing-Grep/Glob fallback to the Read tool`);
+      assert.match(template.content, /plain single read-only command/u, `${template.name} pins plain single reads for a harness-forced Bash read`);
+      assert.match(template.content, /never `node -e`/u, `${template.name} bans node -e`);
+      assert.match(template.content, /read-lane/u, `${template.name} names the read-lane mechanism`);
+    }
+  });
 });
 
 // ── the writer: velocity discipline ────────────────────────────────────────────────────

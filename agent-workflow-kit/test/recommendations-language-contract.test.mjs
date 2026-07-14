@@ -22,6 +22,7 @@ const read = (rel) => readFileSync(resolve(kitRoot, rel), 'utf8');
 const MODE_DOC = read('references/modes/recommendations.md');
 const UPGRADE_DOC = read('references/modes/upgrade.md');
 const VELOCITY_DOC = read('references/modes/velocity.md');
+const HOOK_DOC = read('references/modes/hook.md');
 const README = read('README.md');
 const TOOL_SOURCE = read('tools/recommendations.mjs');
 const TOOL_TEST = read('tools/recommendations.test.mjs');
@@ -163,5 +164,23 @@ describe('recommendations contract — the retired item key is gone from LIVE su
 
   it('velocity.md routes the recipe through the sandbox-lane item', () => {
     assert.match(VELOCITY_DOC, /sandbox-lane/);
+  });
+
+  it('the read-lane canon is documented (velocity.md mechanism + node -e ban; README lane mention) — AD-055 Part II', () => {
+    assert.match(VELOCITY_DOC, /read-lane/, 'velocity.md names the read-lane mechanism for compound reads');
+    assert.match(VELOCITY_DOC, /node -e/, 'velocity.md bans the unclassifiable inline node -e probe form');
+    assert.match(README, /read-lane/, 'the README hook row mentions the opt-in read-lane');
+  });
+
+  it('hook.md frames the read-lane as a standalone grant bounded by the frozen audited core, not the user\'s seeded rules (council B4)', () => {
+    assert.match(HOOK_DOC, /bounded by the frozen audited read-only core/i, 'the honest framing is present');
+    assert.match(HOOK_DOC, /standalone opt-in grant/i, 'the lane is named a standalone grant');
+    assert.doesNotMatch(HOOK_DOC, /never new per-command exposure/i, 'the overstated subset claim is gone');
+  });
+
+  it('the read-lane posture note covers BOTH the enable-preview and the stale delete-to-reseed recovery (council R2-minor)', () => {
+    const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
+    assert.match(notes, /- `read-lane` —/, 'the read-lane posture note exists');
+    assert.match(notes, /delete-to-reseed/i, 'the note names the stale-variant reseed recovery, not only the enable preview');
   });
 });
