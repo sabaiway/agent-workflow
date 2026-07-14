@@ -26,13 +26,17 @@ import {
   DECISION_ALLOW,
   DECISION_ASK,
   GATES_REL,
+  LANES_REL,
+  READ_LANE_KEY,
   HOOK_EVENT_NAME,
   RESIDUAL_FORMS,
   decideBashCall,
   detectResidualClasses,
   formatDecision,
+  isReadLaneCommand,
   matchSeededCorePrefix,
   readDeclarationGates,
+  readReadLaneEnabled,
   runHook,
   validateDeclarationShape,
 } from '../references/hooks/gate-approve.mjs';
@@ -94,6 +98,23 @@ const hookDeps = (declaration) => ({
   readFile: (path) => {
     if (path === join(ROOT, GATES_REL) && declaration !== undefined) {
       return typeof declaration === 'string' ? declaration : JSON.stringify(declaration);
+    }
+    throw ENOENT_ERROR();
+  },
+});
+
+// Like hookDeps, but also serves docs/ai/lanes.json (the opt-in read-lane config). `laneConfig`
+// undefined = the file is ABSENT (lane dark, the 1.47.0 characterization); a string is served raw
+// (malformed-JSON cases); an object is JSON-stringified.
+const hookDepsLane = (declaration, laneConfig) => ({
+  env: { CLAUDE_PROJECT_DIR: ROOT },
+  realpath: (path) => path,
+  readFile: (path) => {
+    if (path === join(ROOT, GATES_REL) && declaration !== undefined) {
+      return typeof declaration === 'string' ? declaration : JSON.stringify(declaration);
+    }
+    if (path === join(ROOT, LANES_REL) && laneConfig !== undefined) {
+      return typeof laneConfig === 'string' ? laneConfig : JSON.stringify(laneConfig);
     }
     throw ENOENT_ERROR();
   },
@@ -429,6 +450,221 @@ describe('spawned hook — decision shape, exit codes, never exit 2', () => {
   });
 });
 
+// ── ladder (c): the opt-in read-lane (docs/ai/lanes.json) ──────────────────────────────
+
+describe('read-lane config read — live, fail-closed (docs/ai/lanes.json; Decisions 5)', () => {
+  it('readLane: true → the lane is enabled', () => {
+    assert.equal(readReadLaneEnabled(ROOT, hookDepsLane(undefined, { readLane: true })), true);
+  });
+
+  const off = [
+    ['absent lanes.json', undefined],
+    ['readLane: false', { readLane: false }],
+    ['readLane missing (other keys only)', { _README: 'x' }],
+    ['readLane the STRING "true" (non-boolean)', { readLane: 'true' }],
+    ['readLane the number 1 (non-boolean)', { readLane: 1 }],
+    ['malformed JSON', '{ nope'],
+    ['a non-object root (array)', ['readLane']],
+    ['a non-object root (null literal)', 'null'],
+  ];
+  for (const [name, config] of off) {
+    it(`${name} → lane dark`, () => {
+      assert.equal(readReadLaneEnabled(ROOT, hookDepsLane(undefined, config)), false);
+    });
+  }
+
+  it('no project root → false (never throws)', () => {
+    assert.equal(readReadLaneEnabled(null, {}), false);
+    assert.equal(readReadLaneEnabled('', {}), false);
+  });
+
+  it('the lane lives in a SEPARATE file/key from gates.json — the gates schema is untouched', () => {
+    assert.notEqual(LANES_REL, GATES_REL);
+    assert.equal(LANES_REL, 'docs/ai/lanes.json');
+    assert.equal(READ_LANE_KEY, 'readLane');
+    // gates.json validation still REJECTS a lane field (the run-gates-parity schema is unchanged).
+    assert.equal(validateDeclarationShape({ gates: [], readLane: true }).ok, false);
+  });
+});
+
+describe('read-lane rung (c) — approves core-read compounds ONLY when the lane is on', () => {
+  const laneOn = hookDepsLane(undefined, { readLane: true });
+  const approve = [
+    ['&& chain', 'git status && git diff'],
+    ['|| chain', 'cat a.txt || cat b.txt'],
+    ['; chain', 'grep foo file ; ls -la'],
+    ['| pipe of two core reads', 'ls -la | grep foo'],
+    ['|& pipe of two core reads', 'grep x file |& cat'],
+    ['newline-separated', 'git log\ngit status'],
+    ['three segments, mixed separators', 'ls ; grep x f && wc -l f'],
+    ['leading/trailing whitespace tolerated', '   git status && git diff\t'],
+    ['a single core read (trivially in-lane)', 'grep -rn pattern .'],
+    ['multi-token core prefixes', 'git branch --list && git tag --list'],
+  ];
+  for (const [name, cmd] of approve) {
+    it(`${name} → allow`, () => {
+      const result = runHook(bashPayload(cmd), laneOn);
+      assert.equal(decisionOf(result), DECISION_ALLOW);
+      assert.match(result.permissionDecisionReason, /read-lane/u);
+    });
+  }
+
+  it('a core-read compound from a SUBDIRECTORY cwd → still allow (rung (c) is cwd-agnostic)', () => {
+    assert.equal(decisionOf(runHook(bashPayload('git status && git diff', { cwd: SUBDIR }), laneOn)), DECISION_ALLOW);
+  });
+
+  it('characterization: with lanes.json ABSENT the hook byte-behaves as 1.47.0 — the same compounds get NO decision', () => {
+    for (const [, cmd] of approve) {
+      assert.equal(runHook(bashPayload(cmd), hookDepsLane(undefined, undefined)), null);
+    }
+  });
+
+  it('lane on but mode outside the fence (plan / bypassPermissions) → NO allow', () => {
+    for (const mode of ['plan', 'bypassPermissions']) {
+      assert.notEqual(decisionOf(runHook(bashPayload('git status && git diff', { permission_mode: mode }), laneOn)), DECISION_ALLOW);
+    }
+  });
+
+  it('lane readLane:false / malformed → the same compound gets NO allow', () => {
+    assert.notEqual(decisionOf(runHook(bashPayload('git status && git diff'), hookDepsLane(undefined, { readLane: false }))), DECISION_ALLOW);
+    assert.notEqual(decisionOf(runHook(bashPayload('git status && git diff'), hookDepsLane(undefined, '{ nope'))), DECISION_ALLOW);
+  });
+});
+
+describe('read-lane rung (c) — the adversarial no-allow battery (lane ON; never allow, never deny)', () => {
+  const laneOn = hookDepsLane(undefined, { readLane: true });
+  // LITERAL named cases (NOT an iteration over the frozen list — an anti-shrink guard). Each MUST
+  // NOT be auto-approved by rung (c); some ASK via rung (b) (a core prefix carrying a residual), the
+  // rest get NO decision — but NEVER an allow, and NEVER a deny.
+  const battery = [
+    ['backtick substitution', 'cat `evil` file'],
+    ['$(…) substitution', 'cat $(evil) file'],
+    ['<(…) process substitution', 'cat <(touch pwned)'],
+    ['> redirection', 'grep x file > out'],
+    ['>> redirection', 'grep x file >> out'],
+    ['--output write flag', 'git log --output=stolen'],
+    ['pipe to sh', 'grep x file | sh'],
+    ['pipe to tee', 'grep x file | tee out'],
+    ['pipe to xargs', 'grep x file | xargs rm'],
+    ['pipe to node', 'grep x file | node app.js'],
+    ['git push segment', 'git status && git push'],
+    ['git commit segment', 'git status && git commit -m x'],
+    ['rm segment', 'ls -la && rm -rf /'],
+    ['git -c global option (leading-token mismatch)', 'git -c core.pager=cat log'],
+    ['git -C global option (leading-token mismatch)', 'git -C /other/repo log'],
+    ['quoted argv0 (double)', '"grep" x file'],
+    ['quoted argv0 (single)', "'grep' x file"],
+    ['absolute-path argv0', '/bin/grep x file'],
+    ['quoted separator inside an arg (quote-blind over-split)', 'grep "a;b" file'],
+    ['quote-splice reconstructing --output', 'git log --out"put"=x'],
+    ['backslash splice', 'cat fi\\le'],
+    ['brace expansion', 'grep --{a,b} file'],
+    ['glob pathname expansion', 'grep x *.mjs && ls'],
+    ['$VAR expansion', 'grep $VAR file'],
+    ['${VAR} expansion', 'grep ${VAR} file'],
+    ['$((arith))', 'grep $((1+1)) file'],
+    ['funsub ${ …; }', 'grep ${ ls; } file'],
+    ['funsub ${| …; }', 'grep ${| ls; } file'],
+    ['env prefix on a core read', 'PATH=/x grep foo file'],
+    ['env prefix on git', 'FOO=bar git log'],
+    ['bare & backgrounding', 'ls -la & grep x file'],
+    ['trailing empty segment', 'grep x file ; '],
+    ['leading empty segment', '; grep x file'],
+    ['adjacent empty segments', 'grep x file ;; ls'],
+  ];
+  for (const [name, cmd] of battery) {
+    it(`${name} → never allow, never deny`, () => {
+      const result = runHook(bashPayload(cmd), laneOn);
+      assert.notEqual(decisionOf(result), DECISION_ALLOW);
+      // the hook never emits deny — a non-null decision is only ever an ask.
+      if (result !== null) assert.equal(result.permissionDecision, DECISION_ASK);
+    });
+  }
+
+  it('anti-shrink: RESIDUAL_FORMS still carries backtick + $( (rung (b) coverage cannot silently thin)', () => {
+    assert.ok(RESIDUAL_FORMS.commandSubstitutions.includes('`'));
+    assert.ok(RESIDUAL_FORMS.commandSubstitutions.includes('$('));
+  });
+
+  it('subset invariant: every segment of a lane-ALLOWED compound is itself a seeded-core read', () => {
+    const allowed = 'git status && grep foo file ; ls -la';
+    assert.equal(decisionOf(runHook(bashPayload(allowed), laneOn)), DECISION_ALLOW);
+    for (const seg of allowed.split(/&&|;|\|\||\|/)) {
+      assert.notEqual(matchSeededCorePrefix(seg.trim()), null);
+    }
+    // a compound with ONE non-core segment is refused — the lane adds no per-command exposure.
+    assert.notEqual(decisionOf(runHook(bashPayload('git status && rm -rf /'), laneOn)), DECISION_ALLOW);
+  });
+});
+
+describe('rung (b) funsub extension (Decisions 8) — a settings-allowed SINGLE', () => {
+  const noLane = hookDeps(undefined);
+  it('funsub `${ cmd; }` (space blank) on a core single → ask', () => {
+    assert.equal(decisionOf(runHook(bashPayload('grep ${ ls; } file'), noLane)), DECISION_ASK);
+  });
+  it('funsub `${| cmd; }` on a core single → ask', () => {
+    assert.equal(decisionOf(runHook(bashPayload('grep ${| ls; } file'), noLane)), DECISION_ASK);
+  });
+  it('funsub with a newline blank on a core single → ask', () => {
+    assert.equal(decisionOf(runHook(bashPayload('grep ${\n ls; } file'), noLane)), DECISION_ASK);
+  });
+  it('ordinary `${VAR}` on a core single → NO decision (stays rung-(b)-silent, both directions)', () => {
+    assert.equal(runHook(bashPayload('grep ${VAR} file'), noLane), null);
+  });
+  it('ordinary `$VAR` on a core single → NO decision', () => {
+    assert.equal(runHook(bashPayload('grep $VAR file'), noLane), null);
+  });
+});
+
+// ── council round-1 folds (AD-055 Part II) ─────────────────────────────────────────────
+
+describe('read-lane rung (c) — glob brackets close the lane (council B1)', () => {
+  const laneOn = hookDepsLane(undefined, { readLane: true });
+  it('glob character-class `[`/`]` takes a command OUT of the lane (splice-reconstruction of --output)', () => {
+    // `--outpu[t]=target` glob-reconstructs `--output=target` past the raw --output substring scan; if a
+    // file so named exists the shell writes. `[`/`]` must be forbidden like `*`/`?`/`{`/`}`.
+    assert.notEqual(decisionOf(runHook(bashPayload('git log --outpu[t]=target && git status'), laneOn)), DECISION_ALLOW);
+    assert.equal(isReadLaneCommand('git log --outpu[t]=target && git status'), false);
+    assert.equal(isReadLaneCommand('grep x [abc].txt'), false);
+    assert.equal(isReadLaneCommand('grep x [abc].txt && ls'), false);
+  });
+});
+
+describe('residual guard — backslash-newline splice + funsub CR (council B3 + agy nit1)', () => {
+  const noLane = hookDeps(undefined);
+  it('a backslash-newline line-continuation splice on a settings-allowed SINGLE → ask', () => {
+    // bash removes `\<newline>` and splices the words: `--outp\<LF>ut=f` becomes `--output=f`, past the
+    // raw --output scan; `${\<LF> ls; }` becomes the funsub `${ ls; }`. Both must ASK.
+    assert.equal(decisionOf(runHook(bashPayload('git log --outp\\\nut=f'), noLane)), DECISION_ASK);
+    assert.equal(decisionOf(runHook(bashPayload('grep ${\\\n ls; } file'), noLane)), DECISION_ASK);
+  });
+  it('funsub with a CR blank `${\\r …; }` on a settings-allowed SINGLE → ask (CRLF completeness)', () => {
+    assert.equal(decisionOf(runHook(bashPayload('grep ${\r ls; } file'), noLane)), DECISION_ASK);
+  });
+  it('rung (c) also rejects a spliced compound', () => {
+    const laneOn = hookDepsLane(undefined, { readLane: true });
+    assert.notEqual(decisionOf(runHook(bashPayload('git log --outp\\\nut=f && ls'), laneOn)), DECISION_ALLOW);
+  });
+});
+
+describe('residual guard — word-construction reconstructs --output on a SINGLE (council R2-M1)', () => {
+  const noLane = hookDeps(undefined);
+  // The literal --output scan is defeated by quoting/backslash/bracket/brace splicing that Bash
+  // collapses back to --output on a settings-allowed single. The de-spliced re-scan must ASK.
+  const cases = [
+    ['quote-splice', 'git log --out"put"=target'],
+    ['single-quote splice', "git log --out'put'=target"],
+    ['backslash splice', 'git log --out\\put=target'],
+    ['glob-bracket splice', 'git log --outpu[t]=target'],
+    ['brace splice', 'git log --out{put}=target'],
+  ];
+  for (const [name, cmd] of cases) {
+    it(`${name}: reconstructs --output → ask`, () => {
+      assert.equal(decisionOf(runHook(bashPayload(cmd), noLane)), DECISION_ASK);
+    });
+  }
+});
+
 // ── pure-helper sanity the ladder relies on ───────────────────────────────────────────
 
 describe('decideBashCall — ladder order and invariants as a pure function', () => {
@@ -440,6 +676,28 @@ describe('decideBashCall — ladder order and invariants as a pure function', ()
     assert.equal(decideBashCall({ ...base, cwdIsProjectRoot: false }), null);
     assert.equal(decideBashCall({ ...base, permissionMode: 'plan' }), null);
     assert.equal(decideBashCall({ ...base, gates: null }), null);
+  });
+
+  it('rung (c): allows a core compound only with readLaneOn AND a fenced mode; cwd-agnostic', () => {
+    const base = { command: 'git status && git diff', permissionMode: 'default', cwdIsProjectRoot: false, gates: null, readLaneOn: true };
+    assert.equal(decideBashCall(base).permissionDecision, DECISION_ALLOW); // cwdIsProjectRoot false is OK for (c)
+    assert.match(decideBashCall(base).permissionDecisionReason, /read-lane/u);
+    assert.equal(decideBashCall({ ...base, readLaneOn: false }), null);
+    assert.equal(decideBashCall({ ...base, readLaneOn: undefined }), null); // defaults to off
+    assert.equal(decideBashCall({ ...base, permissionMode: 'plan' }), null); // mode-fenced
+    assert.equal(decideBashCall({ ...base, command: 'git status && rm -rf /' }), null); // a non-core segment
+  });
+
+  it('isReadLaneCommand — the pure classifier', () => {
+    assert.equal(isReadLaneCommand('git status && git diff'), true);
+    assert.equal(isReadLaneCommand('grep x . | ls'), true);
+    assert.equal(isReadLaneCommand('grep -rn pattern .'), true);
+    assert.equal(isReadLaneCommand('git status && rm -rf /'), false); // non-core segment
+    assert.equal(isReadLaneCommand('grep x > f'), false); // residual
+    assert.equal(isReadLaneCommand('grep ${VAR} f'), false); // any $
+    assert.equal(isReadLaneCommand('ls -la & grep x'), false); // bare &
+    assert.equal(isReadLaneCommand(';'), false); // empty segments
+    assert.equal(isReadLaneCommand('   '), false); // empty
   });
 
   it('detectResidualClasses names every class present', () => {

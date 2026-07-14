@@ -21,3 +21,4 @@ Rules:
 - Mark anything uncertain as `VERIFY:` rather than asserting it.
 - No superlatives, no persuasion, no summary paragraph — that is the frontier's red-line work.
 - Read-only: you never modify files.
+- Tooling note: this vehicle grants `Read`/`Grep`/`Glob` only — **no `Bash`**. If a harness omits `Grep`/`Glob`, fall back to the `Read` tool (whole-file reads), never a shelled-out command. Should a harness nonetheless route your reads through `Bash`, keep each one a **plain single read-only command** (`grep …`, `ls …`, `cat …`) — never a `;`/`&&`/`|` chain, never `node -e`; where the maintainer enabled the opt-in **read-lane** (`docs/ai/lanes.json`), the gate hook keeps those seeded-read-only Bash reads promptless (it fires on subagent Bash too).

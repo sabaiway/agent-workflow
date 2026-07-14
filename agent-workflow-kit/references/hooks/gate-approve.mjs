@@ -11,9 +11,11 @@
 // RUNTIME_RESIDUAL_FORMS — drift-guarded by the kit's test/gate-hook-core-parity.test.mjs.
 //
 // It reads <project root>/docs/ai/gates.json LIVE on every invocation (AD-035: one declaration,
-// two consumers — editing gates.json never requires re-wiring). The project root resolves from
-// $CLAUDE_PROJECT_DIR (the stdin `cwd` may be a subdirectory), falling back to the stdin `cwd`
-// only when the env is absent.
+// two consumers — editing gates.json never requires re-wiring) and, for the opt-in read-lane
+// (rung c), <project root>/docs/ai/lanes.json LIVE as well (AD-055 Part II — a SEPARATE kit-owned
+// file; gates.json, both its validators and the byte-mirrored template stay untouched). The project
+// root resolves from $CLAUDE_PROJECT_DIR (the stdin `cwd` may be a subdirectory), falling back to
+// the stdin `cwd` only when the env is absent.
 //
 // Decision ladder for every Bash PreToolUse call — first match wins:
 //   (a) declared-gate EXACT match → allow. Byte-identical (leading/trailing trim only — no
@@ -31,13 +33,20 @@
 //       and conservative (no shell parsing in a dependency-free hook): a quoted metacharacter
 //       may over-ASK, never under-allow. Covers the kit-SEEDED core only, never arbitrary
 //       user-added rules.
-//   (c) everything else → NO decision: exit 0, no output — the normal permission flow proceeds
+//   (c) read-lane allow (OPT-IN) → allow. Only when docs/ai/lanes.json enables it
+//       (`{ "readLane": true }`, read LIVE per call, fail-closed): a command every separator-split
+//       segment of which is a plain frozen read-only core prefix, with ZERO shell metaprogramming
+//       anywhere — a conservative CLOSED-WORLD allow (any doubt → fall through, never a widening).
+//       Mode-fenced like (a); cwd-agnostic (a read is a read from any directory). Runs AFTER (b),
+//       so a residual-carrying core command still ASKs (most-restrictive-wins by ladder order).
+//   (d) everything else → NO decision: exit 0, no output — the normal permission flow proceeds
 //       unchanged. The hook NEVER emits `deny`.
 //
 // Fail-safe invariant, decoupled per function: a DECLARATION anomaly (missing / unreadable /
 // malformed / schema-invalid gates.json) disables ONLY exact-gate approval (a) — the residual
 // guard (b) needs no declaration and keeps running (a broken gates.json must not silently
-// reopen the seeded-allowlist hole). Only an INPUT anomaly (unparseable stdin, non-Bash
+// reopen the seeded-allowlist hole). A lanes.json anomaly (absent / malformed / non-boolean) merely
+// leaves rung (c) DARK (fail-closed) — rungs (a)/(b) are unaffected. Only an INPUT anomaly (unparseable stdin, non-Bash
 // tool_name) disables the whole hook. EVERY anomaly path exits 0 — never exit 2 (exit 2 is an
 // immediate block; a hook that fires on every Bash call must never become the blocker or the
 // noise — run-gates.mjs already yells about a broken declaration at its own point of use).
@@ -54,6 +63,10 @@ import { pathToFileURL } from 'node:url';
 export const HOOK_EVENT_NAME = 'PreToolUse';
 export const BASH_TOOL_NAME = 'Bash';
 export const GATES_REL = 'docs/ai/gates.json';
+// The opt-in read-lane toggle (rung c) — a SEPARATE kit-owned strict-JSON file (AD-055 Part II);
+// gates.json's schema/validators/template are untouched by design.
+export const LANES_REL = 'docs/ai/lanes.json';
+export const READ_LANE_KEY = 'readLane';
 export const PROJECT_DIR_ENV = 'CLAUDE_PROJECT_DIR';
 export const DECISION_ALLOW = 'allow';
 export const DECISION_ASK = 'ask';
@@ -103,8 +116,16 @@ export const RESIDUAL_FORMS = Object.freeze({
   writeRedirections: Object.freeze(['>', '>>', '1>', '2>', '&>', '>|']),
   // `$(…)` + backtick + process substitution `<(…)` all RUN a nested command (`>(…)` is caught by
   // the `>` redirection scan). Bare `<` is input redirection (reads a file — read-only commands may
-  // already do that), so it is deliberately NOT here.
-  commandSubstitutions: Object.freeze(['$(', '`', '<(']),
+  // already do that), so it is deliberately NOT here. The bash-5.3 function substitutions `${ cmd; }`
+  // (a blank — space/tab/newline/CR — right after `${`) and `${| cmd; }` also RUN a nested command —
+  // matched as the literal openers `${ ` / `${\t` / `${\n` / `${\r` / `${|` (AD-055 Part II). Ordinary
+  // `${VAR}` has no blank after `${`, so it trips none of these (kept rung-(b)-silent).
+  commandSubstitutions: Object.freeze(['$(', '`', '<(', '${ ', '${\t', '${\n', '${\r', '${|']),
+  // A backslash immediately before a newline/CR is a bash LINE CONTINUATION: bash removes it and
+  // splices the two lines into ONE word, reconstructing a residual token (`--output`, `$(`, `${ …; }`)
+  // a raw substring scan on the pre-splice string misses. Guards a settings-allowed SINGLE (rung c
+  // already forbids backslash in every segment). AD-055 Part II council fold.
+  lineContinuations: Object.freeze(['\\\n', '\\\r']),
   // The `--output` write-flag family, matched as a raw SUBSTRING of the whole command (never a
   // whitespace-token check): the hook sees the pre-shell command string, so `--output=f`,
   // `"--output=f"`, `'--output' f`, and `\--output` must all trip it — over-asking on a benign
@@ -115,6 +136,7 @@ export const RESIDUAL_FORMS = Object.freeze({
 export const RESIDUAL_CLASS_REDIRECTION = 'output redirection';
 export const RESIDUAL_CLASS_SUBSTITUTION = 'command substitution';
 export const RESIDUAL_CLASS_OUTPUT_FLAG = 'a bounded --output write flag';
+export const RESIDUAL_CLASS_CONTINUATION = 'a line-continuation splice';
 
 const EXIT_OK = 0;
 const UTF8 = 'utf8';
@@ -170,6 +192,25 @@ export const readDeclarationGates = (projectRoot, deps = {}) => {
   }
 };
 
+// Read the opt-in read-lane toggle LIVE per call — the gates.json live-read pattern, over the
+// SEPARATE kit-owned docs/ai/lanes.json (Decisions 5). Fail-closed: an absent / unreadable /
+// malformed / non-object file, or a `readLane` that is not the boolean literal `true`, leaves the
+// lane DARK (returns false → rung (c) never fires; rungs (a)/(b) unaffected). Only an explicit
+// `{ "readLane": true }` opens the lane. A PRE-1.48 placed hook never calls this, so enabling the
+// lane against a stale placed copy is simply a no-op (the gate-hook writer's currency check makes
+// that loud at consent time).
+export const readReadLaneEnabled = (projectRoot, deps = {}) => {
+  const readFile = deps.readFile ?? readFileSync;
+  if (typeof projectRoot !== 'string' || projectRoot === '') return false;
+  try {
+    const parsed = JSON.parse(readFile(join(projectRoot, LANES_REL), UTF8));
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+    return parsed[READ_LANE_KEY] === true;
+  } catch {
+    return false;
+  }
+};
+
 // ── seeded-core prefix + residual detection (ladder b) ────────────────────────────────
 
 const getAllowCommandPrefix = (pattern) => {
@@ -200,23 +241,75 @@ export const matchSeededCorePrefix = (command) => {
 // substring scan (never a whitespace-token check — a token check misses `"--output=f"` / `'>' f`
 // where the quotes are still in the string but the shell will strip them). A quoted metacharacter
 // or write flag may over-ASK, never under-allow (no shell parsing in a dependency-free hook).
+// Word-construction — quoting (`"`/`'`), backslash, brace, glob (`[]`/`{}`/`*`/`?`) — can splice a
+// residual token back together AFTER a raw substring scan: `--out"put"=f` / `--outpu[t]=f` /
+// `--out{put}=f` all collapse to `--output=f` when Bash strips the construction (council R2-M1). The
+// scan re-runs against a DE-SPLICED copy (those characters removed) so a settings-allowed SINGLE
+// carrying such a reconstruction still trips. De-splicing only ever ADDS matches — over-ASK, the safe
+// direction (rung (c) forbids every construction character per segment, so this guards rung (b) singles).
+const WORD_CONSTRUCTION_CHARS = /["'\\[\]{}*?]/gu;
+
 export const detectResidualClasses = (command) => {
+  const deSpliced = command.replace(WORD_CONSTRUCTION_CHARS, '');
+  const scan = (form) => command.includes(form) || deSpliced.includes(form);
   const classes = [];
-  if (RESIDUAL_FORMS.writeRedirections.some((form) => command.includes(form))) {
-    classes.push(RESIDUAL_CLASS_REDIRECTION);
-  }
-  if (RESIDUAL_FORMS.commandSubstitutions.some((form) => command.includes(form))) {
-    classes.push(RESIDUAL_CLASS_SUBSTITUTION);
-  }
-  if (RESIDUAL_FORMS.boundedWriteFlags.some((flag) => command.includes(flag))) {
-    classes.push(RESIDUAL_CLASS_OUTPUT_FLAG);
-  }
+  if (RESIDUAL_FORMS.writeRedirections.some(scan)) classes.push(RESIDUAL_CLASS_REDIRECTION);
+  if (RESIDUAL_FORMS.commandSubstitutions.some(scan)) classes.push(RESIDUAL_CLASS_SUBSTITUTION);
+  if (RESIDUAL_FORMS.boundedWriteFlags.some(scan)) classes.push(RESIDUAL_CLASS_OUTPUT_FLAG);
+  if (RESIDUAL_FORMS.lineContinuations.some(scan)) classes.push(RESIDUAL_CLASS_CONTINUATION);
   return classes;
+};
+
+// ── read-lane classifier (ladder c; Decisions 6-8) ────────────────────────────────────
+// The opt-in read-lane's closed-world allow: a command is lane-safe ONLY when it is a compound (or
+// single) of frozen read-only core commands with ZERO shell metaprogramming anywhere. Conservative
+// by construction — any doubt returns false (no decision; the command keeps today's flow, the hook
+// still never denies). The lane is BOUNDED BY THE FROZEN AUDITED read-only core (the set velocity
+// seeds) — a standalone opt-in grant, never a command OUTSIDE that audited core. Enabling it
+// auto-approves compounds (and singles) of that audited core REGARDLESS of which of those commands
+// the user seeded as individual settings rules (the opt-in consent covers exactly the audited core,
+// not strictly a subset of the current settings).
+
+// Documented command separators (bash / Claude Code): the split points between independently-run
+// segments. Longest-first so `&&`/`||`/`|&` win over the bare `|`; newline + CR included. No capture
+// groups → `String.split` drops the separators. A bare `&` (backgrounding) is deliberately ABSENT
+// here — it is caught as a forbidden per-segment character (so `ls & grep x` never rides the lane).
+const LANE_SEPARATOR_PATTERN = /&&|\|\||\|&|;|\||\n|\r/u;
+
+// Any of these characters in a post-split SEGMENT puts the whole command OUTSIDE the lane:
+// expansion (`$`), substitution (backtick), quoting (`"` `'`), backslash splice (`\`), brace
+// expansion (`{` `}`), glob (`*` `?` `[` `]`), redirection/subshell (`<` `>` `(` `)`),
+// home/history/comment (`~` `!` `#`), and a leftover backgrounding/pipe operator (`&` `|`). The
+// word-construction vectors (quote/backslash/brace/glob) are closed CONSERVATIVELY here — each can
+// reconstruct a write/exec token after a raw scan (Decisions 7; the council B1 fold added the glob
+// character-class brackets `[`/`]` after `--outpu[t]=f` was shown to reconstruct `--output`). The
+// multi-char `--output` write flag is caught by detectResidualClasses over the raw string, not here.
+const LANE_FORBIDDEN_SEGMENT_CHARS = Object.freeze([
+  '$', '`', '"', "'", '\\', '{', '}', '*', '?', '[', ']', '<', '>', '(', ')', '~', '!', '#', '&', '|',
+]);
+
+const hasForbiddenSegmentChar = (segment) => LANE_FORBIDDEN_SEGMENT_CHARS.some((ch) => segment.includes(ch));
+
+// True iff every separator-split segment is a non-empty, metacharacter-free, frozen read-only core
+// command. Quote-BLIND by design (the splitter never interprets quotes): over-splitting can only
+// REDUCE the set of allowed commands, never widen it. An empty segment (adjacent/leading/trailing
+// separator) never allows; a residual anywhere over the raw string (redirection, `$(`/backtick/`<(`,
+// funsub, `--output`) takes the command out of the lane before the split even runs.
+export const isReadLaneCommand = (command) => {
+  const trimmed = command.trim();
+  if (trimmed === '') return false;
+  if (detectResidualClasses(trimmed).length > 0) return false;
+  return trimmed.split(LANE_SEPARATOR_PATTERN).every((segment) => {
+    const seg = segment.trim();
+    if (seg === '') return false;
+    if (hasForbiddenSegmentChar(seg)) return false;
+    return matchSeededCorePrefix(seg) !== null;
+  });
 };
 
 // ── the decision ladder (pure core) ───────────────────────────────────────────────────
 
-export const decideBashCall = ({ command, permissionMode, cwdIsProjectRoot, gates }) => {
+export const decideBashCall = ({ command, permissionMode, cwdIsProjectRoot, gates, readLaneOn = false }) => {
   const trimmed = command.trim();
   // (a) declared-gate exact match — all three invariants (declaration valid, cwd = project
   // root, mode in the allow fence) must hold; otherwise fall through, never error.
@@ -240,7 +333,15 @@ export const decideBashCall = ({ command, permissionMode, cwdIsProjectRoot, gate
       };
     }
   }
-  // (c) no decision — the normal permission flow proceeds unchanged.
+  // (c) read-lane allow — opt-in (lanes.json), mode-fenced like (a) but cwd-agnostic (a read is a
+  // read from any directory). Runs AFTER (b), so a residual-carrying core command still ASKs.
+  if (readLaneOn === true && ALLOW_PERMISSION_MODES.includes(permissionMode) && isReadLaneCommand(trimmed)) {
+    return {
+      permissionDecision: DECISION_ALLOW,
+      permissionDecisionReason: `agent-workflow read-lane: every command segment is a frozen read-only core prefix with no shell metaprogramming — auto-approved (opt-in ${LANES_REL})`,
+    };
+  }
+  // (d) no decision — the normal permission flow proceeds unchanged.
   return null;
 };
 
@@ -285,6 +386,7 @@ export const runHook = (rawInput, deps = {}) => {
     permissionMode: input.permission_mode,
     cwdIsProjectRoot: rootReal !== null && cwdReal !== null && rootReal === cwdReal,
     gates: readDeclarationGates(projectRoot, deps),
+    readLaneOn: readReadLaneEnabled(projectRoot, deps),
   });
 };
 

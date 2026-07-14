@@ -97,6 +97,9 @@ export const SEVERITIES = Object.freeze({
   'review-recipe': SEVERITY_ATTENTION,
   'gates-declaration': SEVERITY_OPTIONAL,
   'gate-hook': SEVERITY_OPTIONAL,
+  'read-lane': SEVERITY_OPTIONAL,
+  'read-lane.stale': SEVERITY_ATTENTION,
+  'read-lane.missing': SEVERITY_ATTENTION,
   'family-freshness': SEVERITY_ATTENTION,
   'sandbox-masks': SEVERITY_OPTIONAL,
   'agy-adddir': SEVERITY_OPTIONAL,
@@ -149,6 +152,9 @@ export const WHATS = Object.freeze({
   'review-recipe': '{degraded}',
   'gates-declaration': 'no declared gate matrix (docs/ai/gates.json absent or empty) — gates prompt one by one; the apply PREVIEWS its --apply line, writes nothing',
   'gate-hook': '{n} declared gate(s) prompt per run — the gate-approval hook is not wired',
+  'read-lane': 'the gate hook is wired but the read-only compound lane is off — pipes/chains of seeded reads still prompt one by one',
+  'read-lane.stale': 'the read-lane is ON but the placed gate hook is stale — an old hook never reads lanes.json, so the lane is silently dark; reseed it',
+  'read-lane.missing': 'the gate hook is wired but its placed file is missing — every Bash call errors and the read-lane is dark; re-place it',
   'family-freshness': '{parts}',
   'sandbox-masks': '{n} sandbox device mask(s) clutter git status — the managed exclude block is absent or stale',
   'sandbox-masks.stale-real': '{n} sandbox device mask(s) clutter git status — the exclude block is stale; {m} fenced entr(ies) are REAL paths (a fresh apply drops them)',
@@ -199,6 +205,7 @@ export const BENEFITS = Object.freeze({
   'review-recipe': 'review coverage — the review recipe you configured actually runs instead of silently degrading',
   'gates-declaration': 'velocity — your project’s gates run as ONE declared batch with a PASS/FAIL table',
   'gate-hook': 'velocity — your own declared gate commands auto-approve byte-exactly (opt-in PreToolUse hook)',
+  'read-lane': 'velocity — pipes/chains of your seeded read-only commands auto-approve instead of prompting (opt-in, conservatively classified)',
   'family-freshness': 'currency — placed family members carry the latest shipped fixes and features',
   'sandbox-masks': 'zero clutter — git status shows only your changes (the review domain already ignores the masks by construction)',
   'agy-adddir': 'large reviews — an oversized agy code review offloads to a staging dir instead of refusing',
@@ -333,6 +340,43 @@ const probeGates = ({ root, deps, add, skip }) => {
     }
   } catch (err) {
     skip('gate-hook', err);
+  }
+};
+
+// The read-lane offer (AD-055 Part II, Help-through-Recommendations): once the gate hook is PLACED
+// and WIRED, offer to enable the opt-in read-only compound lane. Mutually exclusive with the
+// gate-hook item BY CONSTRUCTION — that item keys on `!wired`, this one on `wired` — so an unplaced
+// or un-wired hook is covered there, never double-offered here. The apply is the gate-hook
+// --read-lane PREVIEW one-liner (its own currency check + posture note fire at the writer; it may
+// prompt once — it IS a consent flow). Converges once lanes.json enables the lane.
+const probeReadLane = ({ root, deps, add, skip }) => {
+  try {
+    const sg = surveyGateHook(root, deps);
+    if (sg.error) throw new Error(sg.error);
+    if (!sg.wired) return; // not wired → the gate-hook item covers (no double-fire)
+    if (!sg.filePlaced) {
+      // Wired but the placed hook FILE is missing — the hook errors on every Bash call and the lane
+      // is silently dark; surface it as attention with a place-first recovery (council R2-M2).
+      add('read-lane', fillTemplate(WHATS['read-lane.missing'], {}), `node ${q(toolPath('gate-hook.mjs'))} --apply --cwd ${q(root)}`, 'read-lane.missing');
+      return;
+    }
+    if (readReadLaneToggle(root, deps)) {
+      // The lane is ON: converged IFF the placed hook is byte-current — a stale (pre-1.48) hook never
+      // reads lanes.json, so the enabled lane is a silent no-op the user must reseed (council B7). The
+      // rm target is ABSOLUTE (council R2-M3) so running the recovery from any cwd can only delete this
+      // repo's hook.
+      if (isPlacedHookCurrent(root, deps)) return; // converged
+      add(
+        'read-lane',
+        fillTemplate(WHATS['read-lane.stale'], {}),
+        `HAND-APPLY: rm ${q(join(root, GATE_HOOK_REL))}, then node ${q(toolPath('gate-hook.mjs'))} --apply --cwd ${q(root)}`,
+        'read-lane.stale',
+      );
+      return;
+    }
+    add('read-lane', fillTemplate(WHATS['read-lane'], {}), `node ${q(toolPath('gate-hook.mjs'))} --read-lane --cwd ${q(root)}`);
+  } catch (err) {
+    skip('read-lane', err);
   }
 };
 
@@ -495,6 +539,26 @@ export const recipeFingerprint = ({ hosts, dirs, home }) => {
 export const ACKS_FILE = 'docs/ai/acks.json';
 export const ACKS_LANE_KEY = 'sandboxLaneAck';
 
+// The opt-in read-lane toggle file (AD-055 Part II) — the SAME kit-owned docs/ai/lanes.json the
+// placed hook reads live. The read-lane item offers to enable it once the hook is placed+wired.
+export const LANES_FILE = 'docs/ai/lanes.json';
+export const READ_LANE_KEY = 'readLane';
+
+// The placed gate hook + the bundled runtime the read-lane item byte-compares for currency (AD-055
+// Part II, council B7): an enabled lane over a STALE hook is a silent no-op — the pre-1.48 hook never
+// reads lanes.json — so it must surface as an ATTENTION reseed, not a silent convergence.
+const GATE_HOOK_REL = '.claude/hooks/agent-workflow-gates.mjs';
+const BUNDLED_HOOK_ABS = join(HERE, '..', 'references', 'hooks', 'gate-approve.mjs');
+
+// Byte-compare the placed gate hook against the bundled runtime. A read error (an unreadable placed
+// hook, a broken kit bundle) propagates → the probe states a skip, never a wrong currency verdict.
+const isPlacedHookCurrent = (root, deps) => {
+  const readFile = deps.readFile ?? readFileSync;
+  const placed = readFile(join(root, GATE_HOOK_REL), 'utf8');
+  const bundle = readFile(deps.bundledHookPath ?? BUNDLED_HOOK_ABS, 'utf8');
+  return placed === bundle;
+};
+
 // The LEGACY neutral ack namespace (pre-AD-055): read from BOTH settings scopes until the next kit
 // MAJOR (2.0.0) so a never-migrated host stays converged across the deprecation window (Decisions 3).
 export const SANDBOX_LANE_ACK_PARENT = 'agentWorkflow';
@@ -532,10 +596,37 @@ const readAcksLane = (root, deps) => {
   return typeof value === 'string' ? value : null;
 };
 
+// Read the opt-in read-lane toggle for the read-lane item. An ABSENT file (or absent docs/ai) →
+// false (the lane is off — offer it). `readLane === true` → enabled (converged). A parse/IO error on
+// an EXISTING file, a symlinked ancestor/leaf, an escape, or a non-object root THROWS — the probe
+// turns it into a stated skip (a BROKEN toggle the writer would refuse to overwrite is not "off").
+// A present-but-non-boolean `readLane` is a valid store the writer merges → false (offer), never a skip.
+const readReadLaneToggle = (root, deps) => {
+  const readFile = deps.readFile ?? readFileSync;
+  const lstat = deps.lstat ?? lstatSync;
+  const absPath = join(root, LANES_FILE);
+  let st;
+  try {
+    assertContainedRealPath(root, absPath, { lstat }); // symlinked root/ancestor/leaf or escape → throws
+    st = lstat(absPath);
+  } catch (err) {
+    if (err?.code === 'ENOENT') return false; // genuinely absent — the lane is off, offer it
+    throw err; // a symlinked ancestor/leaf, an escape, or a real IO error — stated skip
+  }
+  if (!st.isFile()) {
+    throw new Error(`${LANES_FILE} is not a regular file — refusing to read it`);
+  }
+  const parsed = JSON.parse(readFile(absPath, 'utf8'));
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${LANES_FILE}: expected a JSON object`);
+  }
+  return parsed[READ_LANE_KEY] === true;
+};
+
 // D3: the risk-marked keys — every key here has a per-item posture note in the mode doc, surfaced
 // at the consent moment; the static contract test asserts EXACT bidirectional coverage
 // (risk-marked keys == mode-doc note keys — a dropped note goes red, not silent).
-export const RISK_NOTED_KEYS = Object.freeze(['agy-adddir', 'sandbox-lane']);
+export const RISK_NOTED_KEYS = Object.freeze(['agy-adddir', 'sandbox-lane', 'read-lane']);
 
 const probeSandboxLane = ({ root, deps, add, skip }) => {
   try {
@@ -599,6 +690,7 @@ const PROBES = Object.freeze([
   probeSandboxProvision,
   probeReviewRecipe,
   probeGates,
+  probeReadLane,
   probeFamilyFreshness,
   probeMasksItem,
   probeAgyAdddir,

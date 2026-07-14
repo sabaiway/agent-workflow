@@ -255,8 +255,19 @@ export const RUNTIME_RESIDUAL_FORMS = Object.freeze({
   writeRedirections: Object.freeze(['>', '>>', '1>', '2>', '&>', '>|']),
   // `$(…)` + backtick + process substitution `<(…)` all RUN a nested command (`>(…)` is caught by
   // the `>` redirection scan). Bare `<` is input redirection (reads a file — read-only commands may
-  // already do that), so it is deliberately NOT here.
-  commandSubstitutions: Object.freeze(['$(', '`', '<(']),
+  // already do that), so it is deliberately NOT here. The bash-5.3 function substitutions `${ cmd; }`
+  // (a blank — space/tab/newline/CR — right after `${`) and `${| cmd; }` (runs a command, assigns
+  // REPLY) also execute a nested command — matched as the literal openers `${ ` / `${\t` / `${\n` /
+  // `${\r` / `${|` (AD-055 Part II; the `\r` opener guards CRLF payloads — council agy nit). An
+  // ordinary `${VAR}` parameter expansion has NO blank after `${`, so it trips none of these — kept
+  // rung-(b)-silent on a settings-allowed single (rung (c) excludes all `$`).
+  commandSubstitutions: Object.freeze(['$(', '`', '<(', '${ ', '${\t', '${\n', '${\r', '${|']),
+  // A backslash immediately before a newline/CR is a bash LINE CONTINUATION: bash removes it and
+  // splices the two lines into ONE word, which can reconstruct a residual token (`--output`, `$(`,
+  // `${ …; }`) that a raw substring scan on the pre-splice string misses (`--outp\<newline>ut=f` →
+  // `--output=f`). Guards a settings-allowed SINGLE (rung c already forbids backslash in every
+  // segment). AD-055 Part II council fold (codex B3).
+  lineContinuations: Object.freeze(['\\\n', '\\\r']),
   // The `--output` write-flag family, matched as a raw SUBSTRING of the whole command (never a
   // whitespace-token check): the hook sees the pre-shell command string, so `--output=f`,
   // `"--output=f"`, `'--output' f`, and `\--output` must all trip it — over-asking on a benign
