@@ -71,6 +71,13 @@ waste, never lowering quality. Full knob list: [§ Environment knobs](#environme
 
 ## Usage
 
+> **The machine-readable mode catalog lives in [`capability.json`](capability.json) `modeCatalog`** —
+> every documented mode with its purpose, when to use it (and when not), the exact invocation form
+> with its operand slots, and the guardrails that really apply. The catalog tracks **the documented
+> wrapper mode set** (never "the CLI's modes"): an upstream Codex CLI change reaches it through a
+> bridge release, where the source-level drift tests fail loudly until the catalog is updated.
+> Nothing probes a live CLI. The prose below stays the human tour.
+
 Drive codex only through the two wrappers (installed on `PATH`), run from the target project root:
 
 ```bash

@@ -91,7 +91,10 @@ Receipt:
   grounded = whether a NON-EMPTY --facts payload was supplied (an empty payload records
   grounded:false — fail-closed, the state gate rejects it), factsHash = sha256 of the facts
   payload; a continuation receipt is fresh:false (informational-only — it cannot attest the
-  folded tree); a write failure warns, never fails the review
+  folded tree); probe = whether the run relaxed the quality guards (AGY_PROBE=1), written on EVERY
+  receipt so it self-declares — the kit's review-state gate rejects a probe-marked receipt (a probe
+  review never attests) and equally rejects an unmarked one (silence is not a declaration); a write
+  failure warns, never fails the review
 
 Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):
   ${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf
@@ -228,6 +231,10 @@ FRONTIER_SET=("Gemini 3.1 Pro (High)" "Claude Opus 4.6 (Thinking)" "Claude Sonne
 AGY_HARD_TIMEOUT="${AGY_HARD_TIMEOUT:-30m}"
 AGY_TIMEOUT="${AGY_TIMEOUT:-$AGY_HARD_TIMEOUT}"
 AGY_PROBE="${AGY_PROBE:-0}"
+# A probe run is RECORDED, not just silently allowed: the receipt carries probe:true so the kit's
+# review-state gate rejects it — a guards-relaxed review must never attest a tree.
+REVIEW_PROBE=false
+if [[ "$AGY_PROBE" == "1" ]]; then REVIEW_PROBE=true; fi
 AGY_REVIEW_ALLOW_ADDDIR="${AGY_REVIEW_ALLOW_ADDDIR:-0}"
 AGY_MAX_PROMPT_BYTES="${AGY_MAX_PROMPT_BYTES:-120000}"
 if [[ ! "$AGY_MAX_PROMPT_BYTES" =~ ^[0-9]+$ ]]; then
@@ -432,13 +439,18 @@ receipt_json_scalar() {
   if [[ -z "${1:-}" ]]; then printf 'null'; else printf '"%s"' "$1"; fi
 }
 
-# write_review_receipt <artifact|""> <fresh: true|false> <fingerprint|""> <verdict> <grounded: true|false> <factsHash|"">
+# write_review_receipt <artifact|""> <fresh: true|false> <fingerprint|""> <verdict> <grounded: true|false> <factsHash|""> [probe: true|false]
 # Appends ONE receipt line (the AD-038 fixture shape) as a side effect of a SUCCESSFUL review —
 # to $AW_REVIEW_RECEIPTS when set, else <git dir>/agent-workflow-review-receipts.jsonl (inside the
 # git dir by construction, so it is never committable). Fail-safe: every failure here warns loudly
 # and returns 0 — a missing receipt fails the kit's review-state CHECKER, never the review run.
+# The optional 7th argument marks a PROBE run (CODEX_PROBE=1 / AGY_PROBE=1 — the quality guards
+# relaxed), which the kit's review-state gate rejects: a probe review must never attest a tree. The
+# marker is written ALWAYS, true or false: the receipt SELF-DECLARES, so the gate reads the fact
+# itself instead of inferring it from this wrapper's version (which bumps in a different release
+# phase). Silence is not a declaration — an unmarked receipt is untrustworthy and the gate rejects it.
 write_review_receipt() {
-  local artifact="$1" fresh="$2" fingerprint="$3" verdict="$4" grounded="$5" facts_hash="$6"
+  local artifact="$1" fresh="$2" fingerprint="$3" verdict="$4" grounded="$5" facts_hash="$6" probe="${7:-false}"
   local receipts="${AW_REVIEW_RECEIPTS:-}"
   if [[ -z "$receipts" ]]; then
     local receipt_git_dir
@@ -448,11 +460,12 @@ write_review_receipt() {
     fi
     receipts="$receipt_git_dir/agent-workflow-review-receipts.jsonl"
   fi
-  local line
-  line="$(printf '{"schema":1,"artifact":%s,"fresh":%s,"fingerprint":%s,"backend":"%s","verdict":"%s","grounded":%s,"factsHash":%s,"wrapperVersion":"%s","timestamp":"%s"}' \
+  local line probe_field=',"probe":false'
+  if [[ "$probe" == "true" ]]; then probe_field=',"probe":true'; fi
+  line="$(printf '{"schema":1,"artifact":%s,"fresh":%s,"fingerprint":%s,"backend":"%s","verdict":"%s","grounded":%s,"factsHash":%s,"wrapperVersion":"%s","timestamp":"%s"%s}' \
     "$(receipt_json_scalar "$artifact")" "$fresh" "$(receipt_json_scalar "$fingerprint")" \
     "$AW_RECEIPT_BACKEND" "$verdict" "$grounded" "$(receipt_json_scalar "$facts_hash")" \
-    "$AW_BRIDGE_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)")"
+    "$AW_BRIDGE_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$probe_field")"
   if ! printf '%s\n' "$line" >>"$receipts" 2>/dev/null; then
     echo "warning: could not append the review receipt to $receipts — the review itself succeeded;" >&2
     echo "         the review-state gate will read the current tree as un-receipted." >&2
@@ -795,7 +808,7 @@ if [[ $rc -eq 0 ]]; then
     # A continuation never re-embeds the current artifact (agy holds the ORIGINAL round server-side;
     # --facts is rejected above), so it cannot attest the folded tree: fresh:false, artifact /
     # fingerprint / factsHash null, grounded false — informational-only, ignored by the state gate.
-    write_review_receipt "" false "" "$verdict" false ""
+    write_review_receipt "" false "" "$verdict" false "" "$REVIEW_PROBE"
     echo "notice: a continuation receipt is fresh:false (informational-only) — only a fresh grounded run" >&2
     echo "        (agy-review code --facts @f) mints a receipt that satisfies the review-state gate." >&2
   else
@@ -805,7 +818,7 @@ if [[ $rc -eq 0 ]]; then
       grounded=true
       facts_hash="$(printf '%s' "$FACTS_CONTENT" | sha256_stdin || true)"
     fi
-    write_review_receipt "$REVIEW_ARTIFACT" true "$REVIEW_FINGERPRINT" "$verdict" "$grounded" "$facts_hash"
+    write_review_receipt "$REVIEW_ARTIFACT" true "$REVIEW_FINGERPRINT" "$verdict" "$grounded" "$facts_hash" "$REVIEW_PROBE"
   fi
 fi
 exit $rc

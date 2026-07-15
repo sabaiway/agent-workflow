@@ -30,6 +30,18 @@
 // Informational receipts NEVER satisfy (nor fail) the tree check: plan/diff-mode receipts
 // (artifact ≠ "code") and continuations (fresh:false — agy --continue/--conversation cannot attest
 // a folded tree; only a fresh grounded re-run mints a gate-satisfying receipt).
+// PROBE receipts never satisfy either (BRIDGE-MODES-CATALOG, D3): a CODEX_PROBE=1 / AGY_PROBE=1
+// review runs with the frontier-model/max-effort guard OFF, so the wrappers stamp `probe:true` and
+// this checker drops those receipts — PER RECEIPT, so a normal receipt at the same fingerprint still
+// satisfies, and a backend whose ONLY current receipts are probes fails with its own stated reason
+// (never the stale one). Every receipt from a marker-aware wrapper SELF-DECLARES — `probe` is written
+// on every successful review, true or false — so a NON-BOOLEAN or ABSENT marker is rejected
+// fail-closed: silence is not a declaration, and the probe status of an unmarked receipt is
+// untrustworthy whoever wrote it (the pre-D3 wrappers honoured the probe env vars while writing no
+// marker; a hand-written line is no better evidence). Deliberately NOT keyed on wrapperVersion: the
+// version bumps in a different release phase than the marker lands, so a version floor would reject
+// the very receipts the current wrappers write. Accepted cost (maintainer, 2026-07-15): a pre-D3
+// receipt stops satisfying — re-run the review with a marker-aware bridge.
 //
 // The fingerprint is the ONE canonical uncommitted-state identity — sha256 over: staged diff +
 // unstaged diff + untracked-not-ignored file contents (binary untracked files, symlinks, and
@@ -61,7 +73,14 @@ import { resolveActivityRecipe, planRecipe, DISPLAY_ALIASES } from './recipes.mj
 import { CONFIG_REL, fail, loadConfig } from './orchestration-config.mjs';
 // The NEUTRAL ledger read-core (AD-050): review-state reads the review-ledger ONLY for the degraded
 // exemption, through the neutral core — never review-ledger.mjs (which imports THIS module, the cycle).
-import { resolveLedgerPath, resolveBase, readLedger, filterSegmentRecords, roundSequenceIntact } from './review-ledger-core.mjs';
+import {
+  resolveLedgerPath,
+  resolveBase,
+  readLedger,
+  filterSegmentRecords,
+  roundSequenceIntact,
+  summarizeReviewReceiptsForTree,
+} from './review-ledger-core.mjs';
 
 export const RECEIPTS_BASENAME = 'agent-workflow-review-receipts.jsonl';
 export const PLANS_REL = 'docs/plans';
@@ -290,29 +309,35 @@ export const readReceipts = (path, readFile = readFileSync) => {
   return { receipts, malformed };
 };
 
-// A receipt that can satisfy the tree check: a FRESH code-mode receipt for the current fingerprint.
-// Plan/diff-mode receipts and continuations are informational-only (see the header contract).
-const satisfies = (receipt, fingerprint) =>
-  receipt.fresh === true && receipt.artifact === 'code' && receipt.fingerprint === fingerprint;
-
-// Per-backend receipt status for the current fingerprint:
-//   current    — a satisfying receipt with grounded:true exists (its latest verdict reported);
-//   ungrounded — current-fingerprint fresh receipts exist but every one carries grounded:false;
+// Per-backend receipt status for the current fingerprint, over the ONE shared attesting-receipt
+// predicate (review-ledger-core) that the round cross-check and the round writer read too — two
+// gates disagreeing about what counts as an attestation is the class AD-050 closed:
+//   current    — an ATTESTING receipt exists (fresh code, probe:false, grounded) — its verdict rides;
+//   ungrounded — real (probe:false) current receipts exist but every one carries grounded:false;
+//   probe      — current receipts exist and EVERY one is a well-formed probe (D3);
+//   rejected   — current receipts exist, none attests, and >=1 marker was malformed or absent;
 //   stale      — this backend has receipts, none for the current fingerprint (edited after review);
-//   missing    — no usable receipt from this backend at all.
+//   missing    — no receipt from this backend at all.
+// The counts state what was dropped, so a PASS over a partially-excluded set still says so
+// (No-silent-failures) and the --json surface can show it.
 export const backendReceiptStatus = (receipts, backend, fingerprint) => {
   const own = receipts.filter((r) => r.backend === backend);
-  const current = own.filter((r) => satisfies(r, fingerprint));
-  const grounded = current.filter((r) => r.grounded === true);
-  if (grounded.length > 0) {
-    const latest = grounded[grounded.length - 1];
-    return { state: 'current', verdict: latest.verdict ?? 'unknown', grounded: true, timestamp: latest.timestamp ?? null };
+  const summary = summarizeReviewReceiptsForTree(own, fingerprint);
+  const counts = {
+    probeExcluded: summary.probeExcluded,
+    markerRejected: summary.markerRejected,
+    unmarkedRejected: summary.unmarkedRejected,
+  };
+  if (summary.state === 'current') {
+    return { state: 'current', verdict: summary.receipt.verdict ?? 'unknown', grounded: true, timestamp: summary.receipt.timestamp ?? null, ...counts };
   }
-  if (current.length > 0) {
-    const latest = current[current.length - 1];
-    return { state: 'ungrounded', verdict: latest.verdict ?? 'unknown', grounded: false, timestamp: latest.timestamp ?? null };
+  if (summary.state === 'ungrounded') {
+    return { state: 'ungrounded', verdict: summary.receipt.verdict ?? 'unknown', grounded: false, timestamp: summary.receipt.timestamp ?? null, ...counts };
   }
-  return { state: own.length > 0 ? 'stale' : 'missing', verdict: null, grounded: null, timestamp: null };
+  if (summary.state === 'probe' || summary.state === 'rejected') {
+    return { state: summary.state, verdict: null, grounded: null, timestamp: null, ...counts };
+  }
+  return { state: own.length > 0 ? 'stale' : 'missing', verdict: null, grounded: null, timestamp: null, ...counts };
 };
 
 // ── the degraded exemption (AD-050): read the review-ledger for a recorded current-tree degrade ────
@@ -411,6 +436,17 @@ export const buildState = ({ cwd, env = process.env, detect = detectBackends, ls
   };
 };
 
+// Why a backend's current-tree receipts were all rejected — the two causes read differently and
+// have different recoveries (fix the file vs refresh the bridge), so they are never collapsed.
+const rejectionCause = (b) => {
+  const parts = [];
+  if (b.markerRejected > 0) parts.push(`${b.markerRejected} with a malformed probe marker`);
+  if (b.unmarkedRejected > 0) {
+    parts.push(`${b.unmarkedRejected} with no probe marker — silence is not a declaration, so the probe status is untrustworthy; re-run the review with a bridge that marks its runs`);
+  }
+  return parts.join(' + ');
+};
+
 // The normative --check decision (the header contract, in order). → { code, reason }.
 export const decideCheck = (state) => {
   // A DETECTOR FAILURE is unknown state, not "no reviewer ready" — the advisory tools warn and
@@ -449,23 +485,37 @@ export const decideCheck = (state) => {
   // stays verdict-blind: the exemption proves the degrade was RECORDED, never that the tree converged.
   const exempt = new Set(state.degradedExempt);
   const failing = state.backends.filter((b) => b.state !== 'current' && !exempt.has(b.backend));
+  // A receipt dropped for an untrustworthy probe marker is never silently dropped either (D3): it
+  // cannot fail a tree that other receipts satisfy, but a report over a partially-rejected set says
+  // so. It counts only the exclusions NOT already named per backend — a FAILING `rejected` backend
+  // prints its own cause below, and repeating it in the summary is noise. Every other exclusion (a
+  // partial one on a satisfied backend, or one on a degraded-exempt backend) still needs a voice.
+  const namedPerBackend = new Set(failing.filter((b) => b.state === 'rejected').map((b) => b.backend));
+  const untrustedTotal = state.backends
+    .filter((b) => !namedPerBackend.has(b.backend))
+    .reduce((n, b) => n + (b.markerRejected ?? 0) + (b.unmarkedRejected ?? 0), 0);
+  const markerNote = untrustedTotal > 0
+    ? ` — ${untrustedTotal} receipt(s) rejected: an untrustworthy probe marker (malformed, or absent — silence is not a declaration) — fail-closed; inspect ${state.receiptsPath}`
+    : '';
   if (failing.length === 0) {
     if (exempt.size === 0) {
-      return { code: 0, reason: `every recipe-named backend has a fresh grounded receipt for the current tree (${state.requiredBackends.join(' + ')})${malformedNote}${ledgerNote}` };
+      return { code: 0, reason: `every recipe-named backend has a fresh grounded receipt for the current tree (${state.requiredBackends.join(' + ')})${markerNote}${malformedNote}${ledgerNote}` };
     }
-    return { code: 0, reason: `every recipe-named backend reviewed the current tree (${state.requiredBackends.join(' + ')}) — degraded-exempt (recorded degraded for the current tree in the review ledger): ${[...exempt].join(', ')}${malformedNote}${ledgerNote}` };
+    return { code: 0, reason: `every recipe-named backend reviewed the current tree (${state.requiredBackends.join(' + ')}) — degraded-exempt (recorded degraded for the current tree in the review ledger): ${[...exempt].join(', ')}${markerNote}${malformedNote}${ledgerNote}` };
   }
   const parts = failing.map((b) => {
     if (b.state === 'ungrounded') return `${b.backend}: only ungrounded receipts for the current tree — re-run grounded (--facts)`;
+    if (b.state === 'probe') return `${b.backend}: only probe receipts for the current tree (CODEX_PROBE=1 / AGY_PROBE=1 relaxes the quality guards) — a probe review never attests; re-run a real one`;
+    if (b.state === 'rejected') return `${b.backend}: current-tree receipts rejected — ${rejectionCause(b)} (fail-closed); inspect ${state.receiptsPath}`;
     if (b.state === 'stale') return `${b.backend}: receipts exist but none matches the current tree (edited after review) — run a fresh review`;
     return `${b.backend}: no receipt — run its review wrapper`;
   });
-  return { code: 1, reason: `${parts.join('; ')}${malformedNote}${ledgerNote}` };
+  return { code: 1, reason: `${parts.join('; ')}${markerNote}${malformedNote}${ledgerNote}` };
 };
 
 // ── rendering ───────────────────────────────────────────────────────────────────────
 
-const STATE_GLYPH = { current: '✓', ungrounded: '✗', stale: '✗', missing: '✗' };
+const STATE_GLYPH = { current: '✓', ungrounded: '✗', probe: '✗', rejected: '✗', stale: '✗', missing: '✗' };
 
 const formatHuman = (state, check) => {
   const src = state.resolved.source === 'config' ? `from ${CONFIG_REL}` : 'computed default';
@@ -488,10 +538,17 @@ const formatHuman = (state, check) => {
         ? `current (verdict: ${b.verdict}, grounded, ${b.timestamp ?? '?'})`
         : b.state === 'ungrounded'
           ? `ungrounded for the current tree (verdict: ${b.verdict}) — a grounded fresh run is required`
-          : b.state === 'stale'
-            ? 'stale — no receipt matches the current tree (edited after review)'
-            : 'missing — no receipt from this backend';
-    lines.push(`    ${exempt.has(b.backend) ? '⊘' : STATE_GLYPH[b.state]} ${b.backend}: ${detail}${exemptTag}`);
+          : b.state === 'probe'
+            ? 'only probe receipts for the current tree (quality guards relaxed) — a probe review never attests'
+            : b.state === 'rejected'
+              ? `current-tree receipts rejected — ${rejectionCause(b)} (fail-closed)`
+              : b.state === 'stale'
+                ? 'stale — no receipt matches the current tree (edited after review)'
+                : 'missing — no receipt from this backend';
+    const excludedTag = b.probeExcluded || b.markerRejected || b.unmarkedRejected
+      ? ` [excluded: ${b.probeExcluded} probe, ${b.markerRejected} malformed-marker, ${b.unmarkedRejected} unmarked]`
+      : '';
+    lines.push(`    ${exempt.has(b.backend) ? '⊘' : STATE_GLYPH[b.state]} ${b.backend}: ${detail}${excludedTag}${exemptTag}`);
   }
   lines.push(`  check: ${check.code === 0 ? 'PASS' : 'FAIL'} — ${check.reason}`);
   return lines.join('\n');
@@ -507,7 +564,11 @@ recomputes the canonical uncommitted-state fingerprint (staged + unstaged + untr
 the review-payload domain), reads the receipt file the review wrappers append to
 (<git dir>/${RECEIPTS_BASENAME}; AW_REVIEW_RECEIPTS overrides), and reports per-backend receipt
 presence + verdict + grounding for the CURRENT tree. Plan/diff-mode receipts and continuations
-(fresh:false) are informational-only — they never satisfy the tree check.
+(fresh:false) are informational-only — they never satisfy the tree check, and neither does a PROBE
+receipt (probe:true — a CODEX_PROBE=1 / AGY_PROBE=1 run has the quality guards off). The probe
+filter is per receipt, so a real receipt at the same fingerprint still satisfies. Every marker-aware
+wrapper writes the probe field on EVERY review (true or false), so a malformed OR absent marker is
+rejected fail-closed — silence is not a declaration.
 
 --check exits 0/1 per the normative contract in the tool header: 0 for solo / no plan in flight /
 a clean tree / not-a-git-tree / all recipe-named backends receipted-current-and-grounded OR

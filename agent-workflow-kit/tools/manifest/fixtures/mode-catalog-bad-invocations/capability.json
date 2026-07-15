@@ -1,0 +1,130 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "fixture-mode-catalog-bad-invocations",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["review", "probe"],
+  "roles": {
+    "review": {
+      "cmd": "fixture-review",
+      "source": "bin/run.sh",
+      "modes": ["plan", "code"],
+      "output": "advisory",
+      "contract": {
+        "invocations": [
+          "fixture-review plan <plan-file>",
+          "fixture-review code [extra focus...]"
+        ],
+        "grounding": "automatic",
+        "continue": ["fixture-review --continue"],
+        "receipt": "side effect — one receipt line per successful review"
+      }
+    },
+    "probe": { "cmd": "fixture-run", "source": "bin/run.sh", "output": "advisory" }
+  },
+  "modeCatalog": [
+    {
+      "key": "review.plan",
+      "kind": "primary",
+      "role": "review",
+      "submode": "plan",
+      "purpose": "the first claimant of review.invocations[0]",
+      "whenToUse": ["a plan review"],
+      "invocationRefs": [{ "contractField": "invocations", "index": 0 }],
+      "operands": [{ "slot": "<plan-file>", "required": true, "description": "the plan file under review" }]
+    },
+    {
+      "key": "dup-ref",
+      "kind": "primary",
+      "role": "review",
+      "submode": "code",
+      "purpose": "a second claimant of the SAME contract invocation",
+      "whenToUse": ["never — one invocation, one entry"],
+      "invocationRefs": [{ "contractField": "invocations", "index": 0 }]
+    },
+    {
+      "key": "bad-index",
+      "kind": "continuation",
+      "role": "review",
+      "purpose": "a reference past the end of the contract array",
+      "whenToUse": ["never — the index does not resolve"],
+      "invocationRefs": [{ "contractField": "continue", "index": 7 }]
+    },
+    {
+      "key": "bad-field",
+      "kind": "continuation",
+      "role": "review",
+      "purpose": "a reference into a contract field that carries no invocation descriptors",
+      "whenToUse": ["never — receipt is not an invocation array"],
+      "invocationRefs": [{ "contractField": "receipt", "index": 0 }]
+    },
+    {
+      "key": "no-refs",
+      "kind": "primary",
+      "role": "review",
+      "submode": "code",
+      "purpose": "a contract-backed primary that references nothing",
+      "whenToUse": ["never — a contract-backed entry composes by reference"]
+    },
+    {
+      "key": "both-forms",
+      "kind": "primary",
+      "role": "review",
+      "submode": "plan",
+      "purpose": "a contract-backed entry ALSO carrying a literal descriptor",
+      "whenToUse": ["never — the literal would duplicate the contract"],
+      "invocationRefs": [{ "contractField": "invocations", "index": 1 }],
+      "descriptor": "fixture-review plan <plan-file>"
+    },
+    {
+      "key": "descriptor-missing",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "a contract-FREE primary with no literal descriptor",
+      "whenToUse": ["never — nothing renders an invocation for it"]
+    },
+    {
+      "key": "ref-not-object",
+      "kind": "continuation",
+      "role": "review",
+      "purpose": "an invocationRefs element that is not a {contractField, index} object",
+      "whenToUse": ["never — a bare string is not a reference"],
+      "invocationRefs": ["invocations[0]"]
+    },
+    {
+      "key": "ref-bad-index",
+      "kind": "continuation",
+      "role": "review",
+      "purpose": "a reference whose index is not a non-negative integer",
+      "whenToUse": ["never — the index must address a real array slot"],
+      "invocationRefs": [{ "contractField": "continue", "index": -1 }]
+    },
+    {
+      "key": "primary-into-continue",
+      "kind": "primary",
+      "role": "review",
+      "submode": "code",
+      "purpose": "a primary claiming a continuation descriptor",
+      "whenToUse": ["never — a primary drives a mode, it does not resume one"],
+      "invocationRefs": [{ "contractField": "continue", "index": 0 }]
+    },
+    {
+      "key": "continuation-into-invocations",
+      "kind": "continuation",
+      "role": "review",
+      "purpose": "a continuation claiming a primary drive form",
+      "whenToUse": ["never — a continuation resumes, it does not drive"],
+      "invocationRefs": [{ "contractField": "invocations", "index": 1 }]
+    },
+    {
+      "key": "contract-free-continuation",
+      "kind": "continuation",
+      "role": "probe",
+      "purpose": "a continuation on a contract-free role, carrying a literal descriptor",
+      "whenToUse": ["never — the literal-descriptor exception covers primaries and env-hooks only"],
+      "descriptor": "fixture-run --continue"
+    }
+  ],
+  "cost": "subscription"
+}

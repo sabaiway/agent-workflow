@@ -618,6 +618,32 @@ const extractArgCaseArms = (source) => {
 };
 const splitArms = (labels) => (labels ?? []).flatMap((l) => l.split('|'));
 
+// The source lines that really EXECUTE: a heredoc body (the --help text) and a comment both carry
+// names without carrying logic, so a bare name-grep over the whole source stays green after the
+// logic is deleted. Reuses the same heredoc discipline as extractArgCaseArms.
+const executableLines = (source) => {
+  const out = [];
+  let heredoc = null;
+  for (const raw of source.split('\n')) {
+    if (heredoc) {
+      if (raw.trim() === heredoc) heredoc = null;
+      continue;
+    }
+    const hd = raw.match(/<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?/);
+    if (hd) { heredoc = hd[1]; continue; }
+    if (raw.trimStart().startsWith('#')) continue;
+    out.push(raw);
+  }
+  return out;
+};
+// An env var is really CONSULTED when an executable test compares it: [[ "${NAME:-}" == … ]].
+const consultsEnv = (source, name) =>
+  executableLines(source).some((l) => new RegExp(`\\[\\[[^\\]]*\\$\\{?${name}\\b[^\\]]*(==|!=)`).test(l));
+// The operand slots a rendered invocation form really carries: <angle> and [bracket] placeholders.
+// The optional `@` prefix rides WITH the slot (`@<facts-file>` is one operand, not a bare
+// `<facts-file>` behind a stray character) — the catalog declares the whole token a user types.
+const SLOT_RE = /@?<[^<>]+>|\[[^[\]]*\]/g;
+
 describe('codex-review.sh — --help contract (manifest-pinned)', () => {
   it('--help and -h exit 0 pre-preflight (no codex, no git, no AGENTS.md)', () => {
     for (const arg of ['--help', '-h']) {
@@ -679,11 +705,114 @@ describe('codex-review.sh — source-level reverse guard (parser arms ⟷ manife
   });
 });
 
+// ── mode catalog ⟷ wrapper reality (BRIDGE-MODES-CATALOG) ─────────────────────────
+// The kit validator owns the catalog's INTERNAL shape; these arms pin what only the wrapper source
+// can settle — the catalog documents THIS wrapper's real modes and real escape hatches, and every
+// contract invocation the wrapper honours is cataloged (adding a mode without one fails here).
+describe('codex-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)', () => {
+  const source = readFileSync(WRAPPER, 'utf8');
+  const arms = extractArgCaseArms(source);
+  const catalog = MANIFEST.modeCatalog ?? [];
+  const reviewEntries = catalog.filter((e) => e.role === 'review');
+  const reviewPrimaries = reviewEntries.filter((e) => e.kind === 'primary');
+
+  it('the catalog submodes ARE the wrapper\'s real parser mode arms (both directions)', () => {
+    const modes = splitArms(arms.get('"$mode"')).filter((a) => a !== '*');
+    assert.ok(reviewPrimaries.length > 0, 'the manifest must catalog its review modes');
+    setEq(reviewPrimaries.map((e) => e.submode), modes, 'catalog submodes ⟷ real parser mode arms');
+  });
+
+  it('every review entry composes BY REFERENCE and every reference resolves', () => {
+    for (const entry of reviewEntries) {
+      assert.ok(
+        Array.isArray(entry.invocationRefs) && entry.invocationRefs.length > 0,
+        `${entry.key}: a contract-backed entry references at least one contract descriptor`,
+      );
+      assert.ok(!Object.hasOwn(entry, 'descriptor'), `${entry.key}: a contract-backed entry never restates a literal descriptor`);
+      for (const ref of entry.invocationRefs) {
+        assert.equal(
+          typeof REVIEW_CONTRACT[ref.contractField]?.[ref.index], 'string',
+          `${entry.key}: ref ${ref.contractField}[${ref.index}] does not resolve into the manifest contract`,
+        );
+      }
+    }
+  });
+
+  it('every review contract invocation is claimed by exactly ONE catalog entry (no uncataloged mode)', () => {
+    const claims = reviewEntries.flatMap((e) => e.invocationRefs.map((r) => `${r.contractField}[${r.index}]`));
+    assert.equal(new Set(claims).size, claims.length, 'a contract invocation is claimed at most once');
+    const declared = [
+      ...REVIEW_CONTRACT.invocations.map((_, i) => `invocations[${i}]`),
+      ...(REVIEW_CONTRACT.continue ?? []).map((_, i) => `continue[${i}]`),
+    ];
+    setEq(new Set(claims), declared, 'catalog claims ⟷ declared contract invocations');
+  });
+
+  it('every env-hook the catalog aims at a review mode is a real EXECUTABLE guard, not a mention', () => {
+    const hooks = catalog.filter((e) => e.kind === 'env-hook' && e.parents.some((p) => reviewPrimaries.some((r) => r.key === p)));
+    assert.ok(hooks.length > 0, 'CODEX_PROBE must be cataloged as an env-hook over the review modes');
+    for (const hook of hooks) {
+      assert.ok(
+        consultsEnv(source, hook.key),
+        `env-hook ${hook.key} is named in the source but never TESTED in an executable condition — a help/comment mention would keep a name-grep green after the logic is deleted`,
+      );
+    }
+  });
+
+  it('the catalog operand slots set-EQUAL the slots its rendered forms really carry (both directions)', () => {
+    for (const entry of reviewEntries) {
+      const forms = entry.invocationRefs.map((r) => REVIEW_CONTRACT[r.contractField][r.index]);
+      // The DEDUPLICATED UNION over every resolved form: a plural-ref entry legitimately spreads its
+      // slots across forms, so per-form equality would false-fail a correct catalog.
+      const realSlots = new Set(forms.flatMap((f) => f.match(SLOT_RE) ?? []));
+      setEq(new Set((entry.operands ?? []).map((o) => o.slot)), realSlots, `${entry.key}: catalog operands ⟷ the slots its forms really carry`);
+    }
+  });
+
+  it('an entry rendering a LITERAL descriptor is slot-checked too (env-hooks have no role to filter on)', () => {
+    // The contract-backed arm above filters by role — and an env-hook HAS no role, so its descriptor
+    // would never be slot-checked. That is exactly how a hardcoded dead path can reach the discovery
+    // surface looking ready-to-run. Every literal-descriptor kind is covered here: env-hooks and
+    // contract-free primaries.
+    const literalEntries = catalog.filter((e) => typeof e.descriptor === 'string');
+    assert.ok(literalEntries.length > 0, 'CODEX_PROBE must be cataloged with a literal descriptor');
+    for (const entry of literalEntries) {
+      const realSlots = new Set(entry.descriptor.match(SLOT_RE) ?? []);
+      setEq(new Set((entry.operands ?? []).map((o) => o.slot)), realSlots, `${entry.key}: catalog operands ⟷ the slots its descriptor really carries`);
+    }
+  });
+
+  it('CODEX_PROBE really relaxes the guard on EVERY review parent the catalog claims (behavioural)', () => {
+    // The catalog CLAIMS these modes are modified by the hook; prove it per parent rather than
+    // trusting a source scan: an off-pin model is exit 2 normally, exit 0 under probe.
+    const hook = catalog.find((e) => e.key === 'CODEX_PROBE');
+    const drive = { 'review.plan': ['plan', 'plan.md'], 'review.code': ['code'] };
+    const reviewParents = hook.parents.filter((p) => reviewPrimaries.some((r) => r.key === p));
+    assert.ok(reviewParents.length > 0, 'CODEX_PROBE must claim at least one review parent');
+    for (const parent of reviewParents) {
+      assert.ok(drive[parent], `no behavioural drive for claimed parent "${parent}" — add one`);
+      // The exit code alone is weak evidence: pin the real DISPATCH too (capStdin is non-empty only
+      // when codex was actually invoked), so a run that dies early can never pass the probe-on branch.
+      const guarded = makeSandbox();
+      const off = run(guarded, { args: drive[parent], env: { CODEX_MODEL: 'not-the-pinned-model' } });
+      rmSync(guarded.root, { recursive: true, force: true });
+      assert.equal(off.status, 2, `${parent}: the quality guard must refuse an off-pin model without the hook`);
+      assert.equal(off.capStdin, '', `${parent}: the guard must refuse BEFORE spending a run`);
+
+      const probed = makeSandbox();
+      const on = run(probed, { args: drive[parent], env: { CODEX_MODEL: 'not-the-pinned-model', CODEX_PROBE: '1' } });
+      rmSync(probed.root, { recursive: true, force: true });
+      assert.equal(on.status, 0, `${parent}: CODEX_PROBE=1 must really relax the guard — the catalog claims it does`);
+      assert.notEqual(on.capStdin, '', `${parent}: CODEX_PROBE=1 must really reach codex, not merely exit 0`);
+    }
+  });
+});
+
 // ── review receipts (AD-038) ─────────────────────────────────────────────────────
-// The normative fixture (docs: the AD-038 plan Decisions — copied verbatim; field VALUES with
+// The normative fixture: the AD-038 shape + the D3 self-declaring probe marker (field VALUES with
 // dynamic content are asserted by shape):
 const RECEIPT_FIXTURE = JSON.parse(
-  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"revise","grounded":true,"factsHash":null,"wrapperVersion":"2.3.0","timestamp":"2026-07-03T12:00:00Z"}',
+  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"revise","grounded":true,"factsHash":null,"wrapperVersion":"2.3.0","timestamp":"2026-07-03T12:00:00Z","probe":false}',
 );
 const RECEIPTS_REL = join('.git', 'agent-workflow-review-receipts.jsonl');
 const readReceipts = (repo) => {
@@ -713,6 +842,40 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
     assert.equal(receipt.factsHash, null, 'native grounding — no separate facts payload');
     assert.equal(receipt.wrapperVersion, MANIFEST.version, 'receipt version ⟷ capability.json version');
     assert.match(receipt.timestamp, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  });
+
+  // The probe marker (BRIDGE-MODES-CATALOG, D3): a CODEX_PROBE=1 review runs with the
+  // frontier-model/max-effort guard OFF, so its receipt must be distinguishable — the kit's
+  // review-state gate rejects a probe-marked receipt. EVERY receipt carries the marker (true or
+  // false): it self-declares, so the gate reads the fact rather than inferring it from a version
+  // string that bumps in a different release phase. Silence is not a declaration.
+  it('CODEX_PROBE=1 stamps probe:true — a throwaway probe can never attest a tree (D3)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_PROBE: '1', CODEX_FAKE_FINAL: 'Verdict: ship' } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipts[0].probe, true, 'a probe-relaxed run marks its own receipt');
+    assert.deepEqual(Object.keys(receipts[0]), Object.keys(RECEIPT_FIXTURE), 'fixture key set + order');
+  });
+
+  // Every receipt SELF-DECLARES: the kit's gate reads the marker, never the wrapper version — so
+  // the marker must not depend on a version bump landing in the same release phase.
+  it('a normal review self-declares probe:false — the receipt states the fact, not a version', () => {
+    const sb = makeSandbox();
+    run(sb, { env: { CODEX_FAKE_FINAL: 'Verdict: ship' } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(receipts[0].probe, false, 'silence is not a declaration — the gate rejects an unmarked receipt');
+  });
+
+  it('the marker tracks the RELAXED GUARD, not the model — a probe on an off-pinned model still marks', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_PROBE: '1', CODEX_MODEL: 'gpt-5-mini', CODEX_EFFORT: 'low', CODEX_FAKE_FINAL: 'Verdict: ship' } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipts[0].probe, true, 'exactly the runs the guard let through unpinned are marked');
   });
 
   it('the code-mode fingerprint tracks the uncommitted state (same tree → same hash; edit → different)', () => {

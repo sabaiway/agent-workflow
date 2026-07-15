@@ -1,0 +1,140 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "fixture-mode-catalog-valid",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["review", "execute", "probe"],
+  "roles": {
+    "review": {
+      "cmd": "fixture-review",
+      "source": "bin/run.sh",
+      "modes": ["plan", "code"],
+      "output": "advisory",
+      "contract": {
+        "invocations": [
+          "fixture-review plan <plan-file>",
+          "fixture-review code [extra focus...]"
+        ],
+        "grounding": "automatic — the wrapper precomputes the change set",
+        "continue": ["fixture-review --continue [--focus \"…\"]"],
+        "receipt": "side effect — one receipt line per successful review"
+      }
+    },
+    "execute": {
+      "cmd": "fixture-exec",
+      "source": "bin/run.sh",
+      "output": "diff",
+      "contract": {
+        "invocations": [
+          "fixture-exec <plan-file|->",
+          "fixture-exec <plan-file|-> -- <extra flags...>"
+        ],
+        "grounding": "automatic — the root AGENTS.md rides in context",
+        "continue": ["fixture-exec --resume-last <plan-file|->"]
+      }
+    },
+    "probe": { "cmd": "fixture-run", "source": "bin/run.sh", "output": "advisory" }
+  },
+  "modeCatalog": [
+    {
+      "key": "exec",
+      "kind": "primary",
+      "role": "execute",
+      "purpose": "Run a bounded plan in a sandboxed workspace and return a diff.",
+      "whenToUse": ["a bounded sub-task whose acceptance criteria are already pinned"],
+      "whenNotTo": ["work whose design is still open — decide it first"],
+      "invocationRefs": [
+        { "contractField": "invocations", "index": 0 },
+        { "contractField": "invocations", "index": 1 }
+      ],
+      "operands": [
+        { "slot": "<plan-file|->", "required": true, "description": "the plan file to execute, or - to read it from stdin" },
+        { "slot": "<extra flags...>", "required": false, "description": "extra backend flags, guarded by the passthrough policy" }
+      ],
+      "guardrails": [
+        { "value": "runs under its own OS sandbox (workspace-write)", "enforcement": "enforced", "source": "bin/run.sh" }
+      ],
+      "customHooks": ["FIXTURE_PROBE"]
+    },
+    {
+      "key": "exec.resume-last",
+      "kind": "continuation",
+      "role": "execute",
+      "purpose": "Continue the most recent execute session with a follow-up instruction.",
+      "whenToUse": ["a small delta on work the backend already holds in context"],
+      "invocationRefs": [{ "contractField": "continue", "index": 0 }],
+      "operands": [
+        { "slot": "<plan-file|->", "required": true, "description": "the follow-up instruction file, or - for stdin" }
+      ]
+    },
+    {
+      "key": "review.plan",
+      "kind": "primary",
+      "role": "review",
+      "submode": "plan",
+      "purpose": "Critique an implementation plan before any code exists.",
+      "whenToUse": ["a plan draft heading into its review council"],
+      "whenNotTo": ["a working-tree change set — that is review.code"],
+      "invocationRefs": [{ "contractField": "invocations", "index": 0 }],
+      "operands": [
+        { "slot": "<plan-file>", "required": true, "description": "the plan file under review" }
+      ],
+      "guardrails": [
+        { "value": "read-only — the backend cannot edit, create or delete a file", "enforcement": "enforced", "source": "bin/run.sh" },
+        { "value": "a successful review appends one receipt line", "enforcement": "enforced", "condition": "the receipt file is writable — a write failure warns, never fails the review", "source": "capability.json roles.review.contract.receipt" }
+      ],
+      "customHooks": ["FIXTURE_PROBE"]
+    },
+    {
+      "key": "review.code",
+      "kind": "primary",
+      "role": "review",
+      "submode": "code",
+      "purpose": "Review the uncommitted working-tree change set.",
+      "whenToUse": ["a finished segment heading into its review round"],
+      "invocationRefs": [{ "contractField": "invocations", "index": 1 }],
+      "operands": [
+        { "slot": "[extra focus...]", "required": false, "description": "extra focus words appended to the review directive" }
+      ],
+      "customHooks": ["FIXTURE_PROBE"]
+    },
+    {
+      "key": "review.continue",
+      "kind": "continuation",
+      "role": "review",
+      "purpose": "Send a round-2 delta into the review already in this conversation.",
+      "whenToUse": ["asking the same reviewer whether a fold really solves its own finding"],
+      "invocationRefs": [{ "contractField": "continue", "index": 0 }],
+      "operands": [
+        { "slot": "[--focus \"…\"]", "required": false, "description": "what this round must look at" }
+      ]
+    },
+    {
+      "key": "run",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "Send a raw advisory prompt and print the reply.",
+      "whenToUse": ["a one-off question", "a throwaway probe of the CLI itself"],
+      "descriptor": "fixture-run <prompt|@prompt-file|->",
+      "operands": [
+        { "slot": "<prompt|@prompt-file|->", "required": true, "description": "the prompt text, an @file, or - for stdin" }
+      ],
+      "customHooks": ["run"]
+    },
+    {
+      "key": "FIXTURE_PROBE",
+      "kind": "env-hook",
+      "parents": ["exec", "review.plan", "review.code"],
+      "purpose": "Relax the quality guards for a throwaway probe run.",
+      "whenToUse": ["a probe whose result cannot depend on model or effort"],
+      "whenNotTo": ["any run whose output informs what ships"],
+      "descriptor": "FIXTURE_PROBE=1 fixture-review code",
+      "guardrails": [
+        { "value": "a probe review mints a probe-marked receipt the state gate rejects", "enforcement": "enforced", "source": "tools/review-state.mjs" }
+      ]
+    }
+  ],
+  "cost": "subscription",
+  "quota": { "kind": "subscription", "finite": true }
+}

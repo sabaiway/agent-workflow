@@ -28,7 +28,7 @@
           "agy-review --continue [--decided @f] [--focus \"…\"]",
           "agy-review --conversation <id> [--decided @f] [--focus \"…\"]"
         ],
-        "receipt": "side effect — a successful review appends one JSON receipt line to <git dir>/agent-workflow-review-receipts.jsonl (AW_REVIEW_RECEIPTS overrides; plan/diff outside a git tree: warn + skip unless overridden): fingerprint = sha256 over the canonical uncommitted-state payload (staged diff + unstaged diff + untracked-not-ignored contents — the review-payload domain; never-committable untracked paths — character/block devices, FIFOs, sockets — are excluded from the domain entirely, untracked symlinks/directories ride as name-only notes) in code mode, the artifact-file sha256 in plan/diff mode; verdict recorded verbatim from the mandated '### Verdict' section (SHIP / SHIP WITH NITS / REWORK); grounded = whether a NON-EMPTY --facts payload was supplied (an empty payload records grounded:false — fail-closed, the state gate rejects it), factsHash = sha256 of the facts payload; a continuation receipt is fresh:false (informational-only — it cannot attest the folded tree); a write failure warns, never fails the review",
+        "receipt": "side effect — a successful review appends one JSON receipt line to <git dir>/agent-workflow-review-receipts.jsonl (AW_REVIEW_RECEIPTS overrides; plan/diff outside a git tree: warn + skip unless overridden): fingerprint = sha256 over the canonical uncommitted-state payload (staged diff + unstaged diff + untracked-not-ignored contents — the review-payload domain; never-committable untracked paths — character/block devices, FIFOs, sockets — are excluded from the domain entirely, untracked symlinks/directories ride as name-only notes) in code mode, the artifact-file sha256 in plan/diff mode; verdict recorded verbatim from the mandated '### Verdict' section (SHIP / SHIP WITH NITS / REWORK); grounded = whether a NON-EMPTY --facts payload was supplied (an empty payload records grounded:false — fail-closed, the state gate rejects it), factsHash = sha256 of the facts payload; a continuation receipt is fresh:false (informational-only — it cannot attest the folded tree); probe = whether the run relaxed the quality guards (AGY_PROBE=1), written on EVERY receipt so it self-declares — the kit's review-state gate rejects a probe-marked receipt (a probe review never attests) and equally rejects an unmarked one (silence is not a declaration); a write failure warns, never fails the review",
         "notes": [
           "pre-dispatch host-diff: before the FIRST dispatch of this bridge, diff its declared networkHosts against the live sandbox allow-list — a missing host is surfaced to the maintainer BEFORE dispatching, never fired into a known prompt"
         ]
@@ -36,6 +36,164 @@
     },
     "probe": { "cmd": "agy-run", "source": "bin/agy.sh", "output": "advisory" }
   },
+  "modeCatalog": [
+    {
+      "key": "review.code",
+      "kind": "primary",
+      "role": "review",
+      "submode": "code",
+      "purpose": "Review the uncommitted working-tree change set against facts you supply.",
+      "whenToUse": [
+        "a finished segment heading into its review round",
+        "a second opinion on real code before the commit ask"
+      ],
+      "whenNotTo": ["a clean tree — the wrapper exits before spending a run"],
+      "invocationRefs": [{ "contractField": "invocations", "index": 0 }],
+      "operands": [
+        { "slot": "[--facts @f]", "required": false, "description": "the verified facts to review AGAINST; omitting it warns loudly and records the review ungrounded" },
+        { "slot": "[--decided @f]", "required": false, "description": "decisions already made; the reviewer must not re-raise them (anti-circling)" },
+        { "slot": "[--focus \"…\"]", "required": false, "description": "what this review must look at (repeatable)" },
+        { "slot": "[extra focus…]", "required": false, "description": "extra focus words appended to the review directive" }
+      ],
+      "guardrails": [
+        { "value": "read-only posture — the prompt forbids edits, commands and git writes", "enforcement": "advisory", "source": "bin/agy-review.sh" },
+        { "value": "receives no ambient repo/file context by default — the wrapper passes no --add-dir", "enforcement": "enforced", "source": "bin/agy-review.sh" },
+        { "value": "an ungrounded review guesses — stale-model and partial-diff false positives", "enforcement": "advisory", "source": "bin/agy-review.sh" },
+        { "value": "an ungrounded run records grounded:false and the review-state gate rejects it", "enforcement": "enforced", "source": "capability.json roles.review.contract.receipt" },
+        { "value": "an oversized prompt refuses rather than truncate", "enforcement": "enforced", "condition": "unless AGY_REVIEW_ALLOW_ADDDIR=1 offloads it to a private --add-dir staging dir", "source": "capability.json settings.AGY_REVIEW_ALLOW_ADDDIR" }
+      ],
+      "customHooks": ["AGY_PROBE"]
+    },
+    {
+      "key": "review.plan",
+      "kind": "primary",
+      "role": "review",
+      "submode": "plan",
+      "purpose": "Critique an implementation plan before any of its code exists.",
+      "whenToUse": [
+        "a plan draft heading into its review council",
+        "checking whether a cold executor could really run the plan"
+      ],
+      "whenNotTo": ["a working-tree change set — that is review.code"],
+      "invocationRefs": [{ "contractField": "invocations", "index": 1 }],
+      "operands": [
+        { "slot": "<plan-file>", "required": true, "description": "the plan file under review" },
+        { "slot": "[--facts @f]", "required": false, "description": "the verified facts to review AGAINST; omitting it warns loudly and records the review ungrounded" },
+        { "slot": "[--decided @f]", "required": false, "description": "decisions already made; the reviewer must not re-raise them (anti-circling)" },
+        { "slot": "[--focus \"…\"]", "required": false, "description": "what this review must look at (repeatable)" }
+      ],
+      "guardrails": [
+        { "value": "read-only posture — the prompt forbids edits, commands and git writes", "enforcement": "advisory", "source": "bin/agy-review.sh" },
+        { "value": "outside a git tree the receipt is skipped with a warning", "enforcement": "enforced", "condition": "unless AW_REVIEW_RECEIPTS names a destination", "source": "capability.json roles.review.contract.receipt" }
+      ],
+      "customHooks": ["AGY_PROBE"]
+    },
+    {
+      "key": "review.diff",
+      "kind": "primary",
+      "role": "review",
+      "submode": "diff",
+      "purpose": "Review a diff file you assembled yourself, rather than the live working tree.",
+      "whenToUse": [
+        "reviewing a diff that is not the current tree — a patch, a range, another branch",
+        "reviewing a change set trimmed to the hunks that matter"
+      ],
+      "whenNotTo": ["the current uncommitted tree — review.code assembles that for you"],
+      "invocationRefs": [{ "contractField": "invocations", "index": 2 }],
+      "operands": [
+        { "slot": "<diff-file>", "required": true, "description": "the diff file under review" },
+        { "slot": "[--facts @f]", "required": false, "description": "the verified facts to review AGAINST; omitting it warns loudly and records the review ungrounded" },
+        { "slot": "[--decided @f]", "required": false, "description": "decisions already made; the reviewer must not re-raise them (anti-circling)" },
+        { "slot": "[--focus \"…\"]", "required": false, "description": "what this review must look at (repeatable)" }
+      ],
+      "guardrails": [
+        { "value": "read-only posture — the prompt forbids edits, commands and git writes", "enforcement": "advisory", "source": "bin/agy-review.sh" },
+        { "value": "the receipt fingerprints the DIFF FILE, never the tree — it cannot attest the tree", "enforcement": "enforced", "source": "capability.json roles.review.contract.receipt" }
+      ],
+      "customHooks": ["AGY_PROBE"]
+    },
+    {
+      "key": "review.continue",
+      "kind": "continuation",
+      "role": "review",
+      "purpose": "Send a round-2 delta into the review already open in this conversation.",
+      "whenToUse": [
+        "asking the same reviewer whether a fold really solves its own finding",
+        "a follow-up round that must not re-read the whole artifact"
+      ],
+      "whenNotTo": ["attesting a folded tree — a continuation records fresh:false and never satisfies the gate"],
+      "invocationRefs": [{ "contractField": "continue", "index": 0 }],
+      "operands": [
+        { "slot": "[--decided @f]", "required": false, "description": "decisions already made; the reviewer must not re-raise them (anti-circling)" },
+        { "slot": "[--focus \"…\"]", "required": false, "description": "what this round must look at (repeatable)" }
+      ],
+      "guardrails": [
+        { "value": "--facts is rejected on a continuation — the facts are already in the conversation", "enforcement": "enforced", "source": "bin/agy-review.sh" },
+        { "value": "a continuation receipt is fresh:false — informational only, never a gate pass", "enforcement": "enforced", "source": "capability.json roles.review.contract.receipt" }
+      ],
+      "customHooks": ["AGY_PROBE"]
+    },
+    {
+      "key": "review.conversation",
+      "kind": "continuation",
+      "role": "review",
+      "purpose": "Resume a NAMED review conversation by its id, rather than the most recent one.",
+      "whenToUse": ["returning to a specific earlier review after other agy runs happened in between"],
+      "invocationRefs": [{ "contractField": "continue", "index": 1 }],
+      "operands": [
+        { "slot": "<id>", "required": true, "description": "the conversation id of the review to resume" },
+        { "slot": "[--decided @f]", "required": false, "description": "decisions already made; the reviewer must not re-raise them (anti-circling)" },
+        { "slot": "[--focus \"…\"]", "required": false, "description": "what this round must look at (repeatable)" }
+      ],
+      "guardrails": [
+        { "value": "a continuation receipt is fresh:false — informational only, never a gate pass", "enforcement": "enforced", "source": "capability.json roles.review.contract.receipt" }
+      ],
+      "customHooks": ["AGY_PROBE"]
+    },
+    {
+      "key": "run",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "Send a raw advisory prompt to a selectable model and print the reply.",
+      "whenToUse": [
+        "a one-off question that needs no repo grounding",
+        "reaching a specific model (Gemini, Claude, GPT-OSS) from the terminal",
+        "a throwaway probe of the CLI, a model, or the wrapper plumbing"
+      ],
+      "whenNotTo": ["a code or plan review — agy-review owns the grounded posture and the receipt"],
+      "descriptor": "agy-run <prompt|-|@file> -- <extra agy flags...>",
+      "operands": [
+        { "slot": "<prompt|-|@file>", "required": true, "description": "the prompt text, - to read it from stdin, or @path to read it from a file" },
+        { "slot": "<extra agy flags...>", "required": false, "description": "raw agy flags passed straight through after --" }
+      ],
+      "guardrails": [
+        { "value": "subscription-only — every *_API_KEY env var is unset before the run", "enforcement": "enforced", "source": "bin/agy.sh" },
+        { "value": "any model is selectable via AGY_MODEL; the default is Gemini 3.1 Pro (High)", "enforcement": "advisory", "source": "bin/agy.sh" },
+        { "value": "hard wall-clock cap AGY_HARD_TIMEOUT (built-in default 5m)", "enforcement": "enforced", "condition": "only while timeout(1)/gtimeout is on PATH — otherwise the wrapper warns and runs uncapped", "source": "capability.json settings.AGY_HARD_TIMEOUT" },
+        { "value": "the prompt rides a single argv — over AGY_MAX_PROMPT_BYTES (120000) the run refuses", "enforcement": "enforced", "source": "bin/agy.sh" },
+        { "value": "no review posture, no grounding, no receipt — the reply is raw model output", "enforcement": "advisory", "source": "bin/agy.sh" }
+      ],
+      "customHooks": ["run"]
+    },
+    {
+      "key": "AGY_PROBE",
+      "kind": "env-hook",
+      "parents": ["review.code", "review.plan", "review.diff", "review.continue", "review.conversation"],
+      "purpose": "Silence the off-frontier model advisory for a THROWAWAY probe review.",
+      "whenToUse": [
+        "a probe whose answer cannot depend on the model",
+        "deliberately reviewing with a cheaper non-frontier model"
+      ],
+      "whenNotTo": ["any run whose output informs what ships — a probe never attests"],
+      "descriptor": "AGY_PROBE=1 agy-review code --facts @<facts-file>",
+      "operands": [
+        { "slot": "@<facts-file>", "required": true, "description": "the verified facts the review runs AGAINST" }
+      ],
+      "guardrails": [
+        { "value": "a probe review mints a probe-marked receipt the review-state gate rejects", "enforcement": "enforced", "source": "agent-workflow-kit tools/review-state.mjs" }
+      ]
+    }
+  ],
   "settings": [
     {
       "key": "AGY_HARD_TIMEOUT",

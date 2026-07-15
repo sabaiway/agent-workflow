@@ -521,6 +521,32 @@ const extractArgCaseArms = (source) => {
 };
 const splitArms = (labels) => (labels ?? []).flatMap((l) => l.split('|'));
 
+// The source lines that really EXECUTE: a heredoc body (the --help text) and a comment both carry
+// names without carrying logic, so a bare name-grep over the whole source stays green after the
+// logic is deleted. Reuses the same heredoc discipline as extractArgCaseArms.
+const executableLines = (source) => {
+  const out = [];
+  let heredoc = null;
+  for (const raw of source.split('\n')) {
+    if (heredoc) {
+      if (raw.trim() === heredoc) heredoc = null;
+      continue;
+    }
+    const hd = raw.match(/<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?/);
+    if (hd) { heredoc = hd[1]; continue; }
+    if (raw.trimStart().startsWith('#')) continue;
+    out.push(raw);
+  }
+  return out;
+};
+// An env var is really CONSULTED when an executable test compares it: [[ "$NAME" == … ]].
+const consultsEnv = (source, name) =>
+  executableLines(source).some((l) => new RegExp(`\\[\\[[^\\]]*\\$\\{?${name}\\b[^\\]]*(==|!=)`).test(l));
+// The operand slots a rendered invocation form really carries: <angle> and [bracket] placeholders.
+// The optional `@` prefix rides WITH the slot (`@<facts-file>` is one operand, not a bare
+// `<facts-file>` behind a stray character) — the catalog declares the whole token a user types.
+const SLOT_RE = /@?<[^<>]+>|\[[^[\]]*\]/g;
+
 describe('agy-review.sh — --help contract (manifest-pinned)', () => {
   it('--help and -h exit 0 pre-preflight (no agy, no git)', () => {
     for (const arg of ['--help', '-h']) {
@@ -597,6 +623,116 @@ describe('agy-review.sh — source-level reverse guard (parser arms ⟷ manifest
   });
 });
 
+// ── mode catalog ⟷ wrapper reality (BRIDGE-MODES-CATALOG) ─────────────────────────
+// The kit validator owns the catalog's INTERNAL shape; these arms pin the half only this wrapper's
+// source can settle — the cataloged review modes ARE the real parser arms, every declared contract
+// invocation is cataloged, and the env-hook the catalog aims at review is a real env var.
+describe('agy-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)', () => {
+  const source = readFileSync(WRAPPER, 'utf8');
+  const arms = extractArgCaseArms(source);
+  const catalog = MANIFEST.modeCatalog ?? [];
+  const reviewEntries = catalog.filter((e) => e.role === 'review');
+  const reviewPrimaries = reviewEntries.filter((e) => e.kind === 'primary');
+
+  it('the catalog submodes ARE the wrapper\'s real parser mode arms (both directions)', () => {
+    const modes = splitArms(arms.get('"$mode"')).filter((a) => a !== '*');
+    assert.ok(reviewPrimaries.length > 0, 'the manifest must catalog its review modes');
+    setEq(new Set(reviewPrimaries.map((e) => e.submode)), new Set(modes), 'catalog submodes ⟷ real parser mode arms');
+  });
+
+  it('every review entry composes BY REFERENCE and every reference resolves', () => {
+    for (const entry of reviewEntries) {
+      assert.ok(
+        Array.isArray(entry.invocationRefs) && entry.invocationRefs.length > 0,
+        `${entry.key}: a contract-backed entry references at least one contract descriptor`,
+      );
+      assert.ok(!Object.hasOwn(entry, 'descriptor'), `${entry.key}: a contract-backed entry never restates a literal descriptor`);
+      for (const ref of entry.invocationRefs) {
+        assert.equal(
+          typeof REVIEW_CONTRACT[ref.contractField]?.[ref.index], 'string',
+          `${entry.key}: ref ${ref.contractField}[${ref.index}] does not resolve into the manifest contract`,
+        );
+      }
+    }
+  });
+
+  it('every review contract invocation is claimed by exactly ONE catalog entry (no uncataloged mode)', () => {
+    const claims = reviewEntries.flatMap((e) => e.invocationRefs.map((r) => `${r.contractField}[${r.index}]`));
+    assert.equal(new Set(claims).size, claims.length, 'a contract invocation is claimed at most once');
+    const declared = [
+      ...REVIEW_CONTRACT.invocations.map((_, i) => `invocations[${i}]`),
+      ...REVIEW_CONTRACT.continue.map((_, i) => `continue[${i}]`),
+    ];
+    setEq(new Set(claims), declared, 'catalog claims ⟷ declared contract invocations');
+  });
+
+  it('every env-hook the catalog aims at a review mode is a real EXECUTABLE guard, not a mention', () => {
+    const hooks = catalog.filter((e) => e.kind === 'env-hook' && e.parents.some((p) => reviewPrimaries.some((r) => r.key === p)));
+    assert.ok(hooks.length > 0, 'AGY_PROBE must be cataloged as an env-hook over the review modes');
+    for (const hook of hooks) {
+      assert.ok(
+        consultsEnv(source, hook.key),
+        `env-hook ${hook.key} is named in the source but never TESTED in an executable condition — a help/comment mention would keep a name-grep green after the logic is deleted`,
+      );
+    }
+  });
+
+  it('the catalog operand slots set-EQUAL the slots its rendered forms really carry (both directions)', () => {
+    for (const entry of reviewEntries) {
+      const forms = entry.invocationRefs.map((r) => REVIEW_CONTRACT[r.contractField][r.index]);
+      // The DEDUPLICATED UNION over every resolved form: a plural-ref entry legitimately spreads its
+      // slots across forms, so per-form equality would false-fail a correct catalog.
+      const realSlots = new Set(forms.flatMap((f) => f.match(SLOT_RE) ?? []));
+      setEq(new Set((entry.operands ?? []).map((o) => o.slot)), realSlots, `${entry.key}: catalog operands ⟷ the slots its forms really carry`);
+    }
+  });
+
+  it('an entry rendering a LITERAL descriptor is slot-checked too (env-hooks have no role to filter on)', () => {
+    // The contract-backed arm above filters by role — and an env-hook HAS no role, so its descriptor
+    // was never slot-checked at all. That is exactly how a hardcoded dead path can reach the
+    // discovery surface looking ready-to-run. Every literal-descriptor kind is covered here:
+    // env-hooks and contract-free primaries.
+    const literalEntries = catalog.filter((e) => typeof e.descriptor === 'string');
+    assert.ok(literalEntries.length > 0, 'AGY_PROBE must be cataloged with a literal descriptor');
+    for (const entry of literalEntries) {
+      const realSlots = new Set(entry.descriptor.match(SLOT_RE) ?? []);
+      setEq(new Set((entry.operands ?? []).map((o) => o.slot)), realSlots, `${entry.key}: catalog operands ⟷ the slots its descriptor really carries`);
+    }
+  });
+
+  it('AGY_PROBE really silences the advisory on EVERY review parent the catalog claims (behavioural)', () => {
+    // The catalog CLAIMS these modes are modified by the hook; prove it per parent rather than
+    // trusting a source scan: the off-frontier advisory fires without it, is silent with it.
+    const hook = catalog.find((e) => e.key === 'AGY_PROBE');
+    const drive = {
+      'review.code': () => ['code', '--facts', 'f'],
+      'review.plan': (sb) => { writeFileSync(join(sb.repo, 'p.md'), '# p\n'); return ['plan', 'p.md', '--facts', 'f']; },
+      'review.diff': (sb) => { writeFileSync(join(sb.repo, 'c.diff'), 'diff body\n'); return ['diff', 'c.diff', '--facts', 'f']; },
+      'review.continue': () => ['--continue'],
+      'review.conversation': () => ['--conversation', 'conv-1'],
+    };
+    assert.ok(hook.parents.length > 0, 'AGY_PROBE must claim at least one parent');
+    for (const parent of hook.parents) {
+      assert.ok(drive[parent], `no behavioural drive for claimed parent "${parent}" — add one`);
+      // Both runs must really REACH agy: asserting the diagnostic text alone would let an early
+      // failure that never dispatched pass the probe-on branch (its stderr simply lacks the string).
+      const noisy = makeSandbox();
+      const off = run(noisy, { args: drive[parent](noisy), env: { AGY_MODEL: 'Some Weak Model' } });
+      rmSync(noisy.home, { recursive: true, force: true });
+      assert.equal(off.status, 0, `${parent}: ${off.stderr}`);
+      assert.equal(off.invoked, true, `${parent}: the control run must reach agy`);
+      assert.match(off.stderr, /non-frontier model/, `${parent}: the advisory must fire without the hook`);
+
+      const quiet = makeSandbox();
+      const on = run(quiet, { args: drive[parent](quiet), env: { AGY_MODEL: 'Some Weak Model', AGY_PROBE: '1' } });
+      rmSync(quiet.home, { recursive: true, force: true });
+      assert.equal(on.status, 0, `${parent}: ${on.stderr}`);
+      assert.equal(on.invoked, true, `${parent}: AGY_PROBE=1 must still reach agy — silence must come from the hook, not from an early exit`);
+      assert.doesNotMatch(on.stderr, /non-frontier model/, `${parent}: AGY_PROBE=1 must really silence it — the catalog claims it does`);
+    }
+  });
+});
+
 describe('agy-review.sh — declared contract is really accepted (forward guard)', () => {
   it('every manifest mode runs green', () => {
     const drive = {
@@ -643,10 +779,10 @@ describe('agy-review.sh — declared contract is really accepted (forward guard)
 });
 
 // ── review receipts (AD-038) ─────────────────────────────────────────────────────
-// The normative fixture (docs: the AD-038 plan Decisions — copied verbatim; backend/verdict here
+// The normative fixture: the AD-038 shape + the D3 self-declaring probe marker (backend/verdict here
 // carry this bridge's vocabulary; dynamic values are asserted by shape):
 const RECEIPT_FIXTURE = JSON.parse(
-  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"revise","grounded":true,"factsHash":null,"wrapperVersion":"2.3.0","timestamp":"2026-07-03T12:00:00Z"}',
+  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"revise","grounded":true,"factsHash":null,"wrapperVersion":"2.3.0","timestamp":"2026-07-03T12:00:00Z","probe":false}',
 );
 const RECEIPTS_REL = join('.git', 'agent-workflow-review-receipts.jsonl');
 const readReceipts = (repo) => {
@@ -680,6 +816,41 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
     assert.equal(receipt.factsHash, await sha256HexOf('a tiny fact'), 'sha256 of the facts payload — an empty/changed facts file is visible');
     assert.equal(receipt.wrapperVersion, MANIFEST.version, 'receipt version ⟷ capability.json version');
     assert.match(receipt.timestamp, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  });
+
+  // The probe marker (BRIDGE-MODES-CATALOG, D3) — the twin of the sibling bridge's arm: an
+  // AGY_PROBE=1 review runs with the frontier-model advisory silenced, so its receipt is marked and
+  // the kit's review-state gate rejects it. EVERY receipt carries the marker (true or false): it
+  // self-declares, so the gate reads the fact rather than inferring it from a version string that
+  // bumps in a different release phase. Silence is not a declaration.
+  it('AGY_PROBE=1 stamps probe:true — a throwaway probe can never attest a tree (D3)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_PROBE: '1', AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipts[0].probe, true, 'a probe-relaxed run marks its own receipt');
+    assert.deepEqual(Object.keys(receipts[0]), Object.keys(RECEIPT_FIXTURE), 'fixture key set + order');
+  });
+
+  // Every receipt SELF-DECLARES: the kit's gate reads the marker, never the wrapper version — so
+  // the marker must not depend on a version bump landing in the same release phase.
+  it('a normal review self-declares probe:false — the receipt states the fact, not a version', () => {
+    const sb = makeSandbox();
+    run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(receipts[0].probe, false, 'silence is not a declaration — the gate rejects an unmarked receipt');
+  });
+
+  it('a probe CONTINUATION is marked too (it is doubly unable to attest — fresh:false AND probe)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['--continue'], env: { AGY_PROBE: '1', AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipts[0].fresh, false);
+    assert.equal(receipts[0].probe, true, 'both write paths carry the marker — no unmarked probe lane');
   });
 
   it('an ungrounded fresh run records grounded:false + factsHash null (the vacuous-grounding hole stays visible)', () => {

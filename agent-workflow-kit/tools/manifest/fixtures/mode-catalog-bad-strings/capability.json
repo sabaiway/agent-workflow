@@ -1,0 +1,117 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "fixture-mode-catalog-bad-strings",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["probe", "review"],
+  "roles": {
+    "probe": { "cmd": "fixture-run", "source": "bin/run.sh", "output": "advisory" },
+    "review": {
+      "cmd": "fixture-review",
+      "source": "bin/run.sh",
+      "modes": ["code", "plan"],
+      "output": "advisory",
+      "contract": {
+        "invocations": [
+          "fixture-review code\nwith a newline the renderer cannot print",
+          "fixture-review plan <plan-file> 01234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
+        ],
+        "grounding": "automatic",
+        "continue": []
+      }
+    }
+  },
+  "modeCatalog": [
+    {
+      "key": "long-purpose",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "01234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789A",
+      "whenToUse": ["never — the purpose is over the one-line cap"],
+      "descriptor": "fixture-run <prompt>"
+    },
+    {
+      "key": "newline-purpose",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "a purpose that\nbreaks the line",
+      "whenToUse": ["never — a control character breaks the render"],
+      "descriptor": "fixture-run <prompt>"
+    },
+    {
+      "key": "no-whentouse",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "an entry that never says when to reach for it",
+      "descriptor": "fixture-run <prompt>"
+    },
+    {
+      "key": "empty-whentouse",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "an entry whose whenToUse list is empty",
+      "whenToUse": [],
+      "descriptor": "fixture-run <prompt>"
+    },
+    {
+      "key": "long-guardrail",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "a guardrail value over the one-line cap",
+      "whenToUse": ["never — the guardrail value is over the cap"],
+      "descriptor": "fixture-run <prompt>",
+      "guardrails": [
+        {
+          "value": "01234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789A",
+          "enforcement": "advisory",
+          "source": "bin/run.sh"
+        }
+      ]
+    },
+    {
+      "key": "tab-descriptor",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "a literal descriptor carrying a control character",
+      "whenToUse": ["never — the descriptor is a copy-pasteable one-liner"],
+      "descriptor": "fixture-run\t<prompt>"
+    },
+    {
+      "key": "A01234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "a key over the one-line cap — the renderer prints the key as the mode identity",
+      "whenToUse": ["never — the key is over the cap"],
+      "descriptor": "fixture-run <prompt>"
+    },
+    {
+      "key": "numeric-submode",
+      "kind": "primary",
+      "role": "review",
+      "submode": 3,
+      "purpose": "a submode that is not a string",
+      "whenToUse": ["never — a submode names a parser arm"],
+      "invocationRefs": [{ "contractField": "invocations", "index": 0 }]
+    },
+    {
+      "key": "newline-in-resolved-form",
+      "kind": "primary",
+      "role": "review",
+      "submode": "code",
+      "purpose": "a REFERENCED contract invocation carrying a newline — the renderer prints it verbatim",
+      "whenToUse": ["never — a referenced form is printed exactly like a literal descriptor"],
+      "invocationRefs": [{ "contractField": "invocations", "index": 0 }]
+    },
+    {
+      "key": "over-cap-resolved-form",
+      "kind": "primary",
+      "role": "review",
+      "submode": "plan",
+      "purpose": "a REFERENCED contract invocation over the one-line cap",
+      "whenToUse": ["never — a referenced form obeys the same cap as a literal one"],
+      "invocationRefs": [{ "contractField": "invocations", "index": 1 }]
+    }
+  ],
+  "cost": "subscription"
+}

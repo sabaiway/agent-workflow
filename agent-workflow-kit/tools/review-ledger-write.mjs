@@ -18,8 +18,10 @@
 //                   round VANISHED unclassified (D6 — no-repro-no-fold; `refuted` is the honest
 //                   phantom lane); refuses while the changed source surface exceeds the diff cap
 //                   without a recorded segment size-cap override (D4). Integrity binding (Decision 7):
-//                   each NON-degraded backend needs a grounded code receipt for the current tree, so a
-//                   round cannot be recorded for a tree no bridge reviewed.
+//                   each NON-degraded backend needs an ATTESTING code receipt for the current tree
+//                   (the shared review-ledger-core predicate: grounded AND probe:false — a probe,
+//                   unmarked or malformed marker never attests), so a round cannot be recorded for a
+//                   tree no bridge really reviewed.
 //   recordTriage  — the classification that BREAKS the deadlock: each surviving blocking finding of a
 //                   SEGMENT round classified fixable-bug / inherent-layer-residual / escalate /
 //                   refuted (v4). No teeth (a triage is exactly what lets the next round proceed),
@@ -51,6 +53,9 @@ import {
   decideStop,
   validateRecord,
 } from './review-ledger.mjs';
+// The SHARED attesting-receipt predicate (D3) — read straight from the neutral core, the same one
+// review-state and the round cross-check use: one definition of "this receipt may attest a tree".
+import { summarizeReviewReceiptsForTree, describeMissingReviewAttestation } from './review-ledger-core.mjs';
 // The NEUTRAL shared changed-surface computation (BUGFREE-2 / D4): the D4 diff-cap and the
 // fold-completeness coverage gate consume ONE computation, so they can never drift. The writer
 // imports the NEUTRAL module, never the runner (the sole-tree-toucher boundary, codex R2 — an
@@ -253,17 +258,20 @@ export const recordRound = (params, deps = {}) => {
   const v = validateRecord(record);
   if (!v.ok) throw stop(`refusing to record a malformed round: ${v.reason}`);
 
-  // Integrity binding: each NON-degraded backend needs a grounded code receipt for this tree — a
-  // round cannot be recorded for a tree no bridge reviewed. A degraded backend minted no receipt.
+  // Integrity binding: each NON-degraded backend needs an ATTESTING receipt for this tree — a round
+  // cannot be recorded for a tree no bridge really reviewed. A degraded backend minted no receipt.
+  // The predicate is the SHARED one (review-ledger-core), the same review-state and the round
+  // cross-check read — a probe receipt never counted as a review, and the stated reason names WHICH
+  // exclusion applied, because the recoveries differ (run a real review / refresh the bridge / fix
+  // the receipt source / re-run grounded) and a silent "no receipt" would hide that.
   const receiptsPath = deps.receiptsPath ?? resolveReceiptsPath(cwd, env);
   const { receipts } = receiptsPath ? readReceipts(receiptsPath, deps.readFile) : { receipts: [] };
   for (const b of backends) {
     if (b.degraded) continue;
-    const own = receipts.filter(
-      (r) => r.backend === b.backend && r.fingerprint === fingerprint && r.artifact === 'code' && r.fresh === true && r.grounded === true,
-    );
-    if (own.length === 0) {
-      throw stop(`refusing to record a round for ${b.backend}: no grounded code receipt for the current tree — run its review wrapper (codex-review code / agy-review code --facts @f) first, or mark the backend degraded with a reason`);
+    const own = receipts.filter((r) => r.backend === b.backend);
+    const failure = describeMissingReviewAttestation(summarizeReviewReceiptsForTree(own, fingerprint));
+    if (failure !== null) {
+      throw stop(`refusing to record a round for ${b.backend}: no grounded code receipt for the current tree can attest this round — ${failure}; run its real review (codex-review code / agy-review code --facts @f), or mark the backend degraded with a reason`);
     }
   }
 
@@ -518,7 +526,8 @@ record   appends one review round. The JSON payload carries { loop, round, origi
          segment size-cap override (D4); while the segment lacks a quality-green gate-run at the
          current fingerprint (D5 — run the FULL matrix first: run-gates.mjs --record; a --only
          subset or a tree-changed run never satisfies; red PROCESS gates never block); or when a
-         non-degraded backend lacks a grounded code receipt for the current tree.
+         non-degraded backend lacks an ATTESTING code receipt for the current tree (grounded AND
+         probe:false — a probe, unmarked or malformed marker never attests).
 classify appends one triage record. The JSON payload carries { loop, round, classifications } (each
          { findingKey, class, accepted, testId, note }). A fixable-bug REQUIRES a testId — the
          red→green test that pins the fold, formatted "<test-file>#<test-name-pattern>" (write it

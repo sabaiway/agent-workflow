@@ -32,9 +32,11 @@ const detect = (codex, agy) => () => [
   { name: AGY, readiness: agy },
 ];
 
-// The normative receipt fixture (AD-038 plan Decisions — copied verbatim); tests override fields.
+// The normative receipt fixture (AD-038 shape + the D3 self-declaring probe marker); tests override
+// fields. wrapperVersion stays at its historical 2.2.0 ON PURPOSE: the probe verdict must depend on
+// the MARKER alone, so a suite about anything else must not be able to pass because of a version.
 const RECEIPT_FIXTURE = JSON.parse(
-  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"revise","grounded":true,"factsHash":null,"wrapperVersion":"2.2.0","timestamp":"2026-07-03T12:00:00Z"}',
+  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"revise","grounded":true,"factsHash":null,"wrapperVersion":"2.2.0","timestamp":"2026-07-03T12:00:00Z","probe":false}',
 );
 const receiptLine = (overrides) => `${JSON.stringify({ ...RECEIPT_FIXTURE, ...overrides })}\n`;
 
@@ -284,6 +286,179 @@ describe('review-state — informational receipts never satisfy the tree check',
     const r = check(root);
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.code, 0, r.stdout);
+  });
+});
+
+// ── the probe-receipt filter (BRIDGE-MODES-CATALOG, D3) ──────────────────────────────
+// A probe-relaxed review (CODEX_PROBE=1 / AGY_PROBE=1) runs with the frontier-model/max-effort
+// guard OFF, so its findings must never attest a tree — but the wrappers used to write receipts
+// UNCONDITIONALLY, so a probe review minted a receipt this gate accepted. The wrappers now SELF-
+// DECLARE on every review (probe:true or probe:false); the filter runs PER RECEIPT, so a probe line
+// never poisons a real one at the same fingerprint, and a marker that is malformed OR ABSENT is
+// rejected fail-closed — silence is not a declaration, so a pre-marker receipt no longer passes.
+describe('review-state — probe receipts never attest the tree (D3)', () => {
+  it('probe-only receipts for a backend → FAIL, with a probe reason DISTINCT from stale', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    mint(root, { backend: 'agy', fingerprint: fp, probe: true });
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'a probe review never attests the tree');
+    assert.match(r.stdout, /agy: only probe receipts/);
+    assert.doesNotMatch(r.stdout, /agy: receipts exist but none matches/, 'the probe reason is its own, never the stale one');
+  });
+
+  it('a probe receipt beside a NORMAL current one (same backend) → satisfied (per-receipt, not per-backend)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    mint(root, { backend: 'agy', fingerprint: fp, probe: true });
+    mint(root, { backend: 'agy', fingerprint: fp });
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stdout);
+  });
+
+  // B1 (the maintainer's decision to close the hole; the first mechanism proved release-order-coupled
+  // and was replaced by this one). A marker-aware wrapper ALWAYS self-declares
+  // (`probe:true`/`probe:false`), so the receipt states the fact directly and no version proxy is
+  // needed. An ABSENT marker means the probe status is UNTRUSTWORTHY — whatever wrote it: the pre-D3
+  // wrappers honoured the probe env vars while writing nothing, and a hand-written/third-party line
+  // says nothing either. Claim untrustworthiness, never provenance. Either way: rejected fail-closed.
+  it('a self-declared probe:false receipt satisfies — the wrapper states the fact, not a version', () => {
+    const { root } = makeRepo();
+    assert.equal(RECEIPT_FIXTURE.probe, false, 'the fixture must self-declare — else this is vacuous');
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    mint(root, { backend: 'agy', fingerprint: fp });
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stdout);
+  });
+
+  it('an UNMARKED receipt is rejected — its probe status is untrustworthy, whatever wrote it', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    mint(root, { backend: 'agy', fingerprint: fp, probe: undefined });
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'an unmarked receipt could have been a probe and nothing would show it');
+    assert.match(r.stdout, /agy: current-tree receipts rejected/);
+    assert.match(r.stdout, /no probe marker/);
+  });
+
+  it('the verdict does NOT depend on wrapperVersion — the marker is the whole story (both directions)', () => {
+    // An ancient version string with an honest marker SATISFIES; a future one without a marker does NOT.
+    const honest = makeRepo();
+    const fpH = computeTreeFingerprint(honest.root);
+    mint(honest.root, { backend: 'codex', fingerprint: fpH, wrapperVersion: '0.0.1' });
+    mint(honest.root, { backend: 'agy', fingerprint: fpH, wrapperVersion: '0.0.1' });
+    const marked = check(honest.root);
+    rmSync(honest.root, { recursive: true, force: true });
+    assert.equal(marked.code, 0, 'a self-declaring receipt is trusted at any version — no release-order coupling');
+
+    const silent = makeRepo();
+    const fpS = computeTreeFingerprint(silent.root);
+    mint(silent.root, { backend: 'codex', fingerprint: fpS, probe: undefined, wrapperVersion: '99.0.0' });
+    mint(silent.root, { backend: 'agy', fingerprint: fpS, probe: undefined, wrapperVersion: '99.0.0' });
+    const unmarked = check(silent.root);
+    rmSync(silent.root, { recursive: true, force: true });
+    assert.equal(unmarked.code, 1, 'a high version number is not a self-declaration');
+  });
+
+  it('probe:false is an explicit NORMAL receipt (the marker is a boolean, not a presence flag)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp, probe: false });
+    mint(root, { backend: 'agy', fingerprint: fp, probe: false });
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stdout);
+  });
+
+  it('a MALFORMED marker is rejected fail-closed PER RECEIPT — a normal current receipt still satisfies, exclusion STATED', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    mint(root, { backend: 'agy', fingerprint: fp, probe: 'yes' });
+    mint(root, { backend: 'agy', fingerprint: fp });
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stdout);
+    assert.match(r.stdout, /1 receipt\(s\) rejected: an untrustworthy probe marker/, 'a silently-dropped receipt would violate No-silent-failures');
+  });
+
+  it('a MALFORMED marker with no normal receipt → FAIL closed (never read as a normal receipt)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    mint(root, { backend: 'agy', fingerprint: fp, probe: 'yes' });
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /agy: current-tree receipts rejected/);
+    // The per-backend cause is the whole story here — the generic summary must not repeat it.
+    assert.doesNotMatch(r.stdout, /receipt\(s\) rejected: an untrustworthy probe marker/, 'a failing backend states its own cause once');
+  });
+
+  it('null is a malformed marker too (JSON null is not a boolean)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    mint(root, { backend: 'agy', fingerprint: fp, probe: null });
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'fail-closed: an unparseable marker is never assumed normal');
+  });
+
+  it('the probe reason renders ONLY when every candidate is probe-marked (probe + malformed → the malformed reason)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    mint(root, { backend: 'agy', fingerprint: fp, probe: true });
+    mint(root, { backend: 'agy', fingerprint: fp, probe: 'yes' });
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /agy: current-tree receipts rejected/, 'a malformed marker in the set is the louder fact');
+    assert.doesNotMatch(r.stdout, /agy: only probe receipts/);
+  });
+
+  it('the human report renders the rejected-marker and stale states in their own words', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    mint(root, { backend: 'agy', fingerprint: fp, probe: 'yes' });
+    const rejected = check(root, { args: [] });
+    assert.match(rejected.stdout, /agy: current-tree receipts rejected — 1 with a malformed probe marker \(fail-closed\)/);
+    assert.match(rejected.stdout, /\[excluded: 0 probe, 1 malformed-marker, 0 unmarked\]/, 'the report counts what it dropped');
+
+    // Edit the tree AFTER the reviews: every receipt goes stale — the distinct pre-existing arm.
+    writeFileSync(join(root, 'pending.txt'), 'an edit after both reviews\n');
+    const stale = check(root, { args: [] });
+    rmSync(root, { recursive: true, force: true });
+    assert.match(stale.stdout, /codex: stale — no receipt matches the current tree \(edited after review\)/);
+  });
+
+  it('the default report and --json carry the probe state too (every surface, not just --check)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    mint(root, { backend: 'agy', fingerprint: fp, probe: true });
+
+    const human = check(root, { args: [] });
+    assert.equal(human.code, 0, 'the plain report is informational — it never carries the gate code');
+    assert.match(human.stdout, /agy: only probe receipts for the current tree/);
+
+    const json = check(root, { args: ['--check', '--json'] });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(json.code, 1);
+    const state = JSON.parse(json.stdout);
+    const agy = state.backends.find((b) => b.backend === 'agy');
+    assert.equal(agy.state, 'probe');
+    assert.equal(agy.probeExcluded, 1, 'the machine surface counts what it excluded');
   });
 });
 

@@ -1,0 +1,68 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "fixture-mode-catalog-bad-guardrails",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["probe"],
+  "roles": {
+    "probe": { "cmd": "fixture-run", "source": "bin/run.sh", "output": "advisory" }
+  },
+  "modeCatalog": [
+    {
+      "key": "bad-enforcement",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "an enforcement value outside the closed enum",
+      "whenToUse": ["never — enforcement is enforced|advisory"],
+      "descriptor": "fixture-run <prompt>",
+      "guardrails": [{ "value": "a guard", "enforcement": "sort-of", "source": "bin/run.sh" }]
+    },
+    {
+      "key": "no-value",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "a guardrail with no value",
+      "whenToUse": ["never — a guardrail states what it guards"],
+      "descriptor": "fixture-run <prompt>",
+      "guardrails": [{ "enforcement": "advisory", "source": "bin/run.sh" }]
+    },
+    {
+      "key": "no-source",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "a guardrail claiming no source",
+      "whenToUse": ["never — an unsourced guarantee is a claim, not a fact"],
+      "descriptor": "fixture-run <prompt>",
+      "guardrails": [{ "value": "a guard", "enforcement": "advisory" }]
+    },
+    {
+      "key": "bad-guardrails-shape",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "a guardrails block that is not an array",
+      "whenToUse": ["never — guardrails is an array of typed entries"],
+      "descriptor": "fixture-run <prompt>",
+      "guardrails": "nope"
+    },
+    {
+      "key": "bad-condition",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "a runtime-bound condition that is not a string",
+      "whenToUse": ["never — the condition is rendered prose"],
+      "descriptor": "fixture-run <prompt>",
+      "guardrails": [{ "value": "a guard", "enforcement": "enforced", "condition": 5, "source": "bin/run.sh" }]
+    },
+    {
+      "key": "guardrail-not-object",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "a guardrails element that is not a typed guardrail object",
+      "whenToUse": ["never — a bare scalar guarantees nothing"],
+      "descriptor": "fixture-run <prompt>",
+      "guardrails": [42]
+    }
+  ],
+  "cost": "subscription"
+}

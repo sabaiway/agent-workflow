@@ -1,0 +1,58 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "fixture-mode-catalog-bad-entries",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["review", "probe"],
+  "roles": {
+    "review": { "cmd": "fixture-review", "source": "bin/run.sh", "modes": ["code"], "output": "advisory" },
+    "probe": { "cmd": "fixture-run", "source": "bin/run.sh", "output": "advisory" }
+  },
+  "modeCatalog": [
+    "not-an-object",
+    {
+      "key": "has space",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "a key that is not a bare token",
+      "whenToUse": ["never — the key is malformed"],
+      "descriptor": "fixture-run <prompt>"
+    },
+    {
+      "key": "review.code",
+      "kind": "primary",
+      "role": "review",
+      "submode": "code",
+      "purpose": "the first entry under this key",
+      "whenToUse": ["a working-tree review"],
+      "descriptor": "fixture-review code"
+    },
+    {
+      "key": "review.code",
+      "kind": "primary",
+      "role": "review",
+      "submode": "code",
+      "purpose": "a second entry under the SAME key",
+      "whenToUse": ["never — the key is already taken"],
+      "descriptor": "fixture-review code"
+    },
+    {
+      "key": "wrong-kind",
+      "kind": "escape",
+      "role": "probe",
+      "purpose": "a kind outside the closed taxonomy",
+      "whenToUse": ["never — the kind is unknown"],
+      "descriptor": "fixture-run <prompt>"
+    },
+    {
+      "key": "lower_probe",
+      "kind": "env-hook",
+      "parents": ["review.code"],
+      "purpose": "an env-hook whose key is not its env-var name",
+      "whenToUse": ["never — an env-hook key IS the env-var name"],
+      "descriptor": "lower_probe=1 fixture-review code"
+    }
+  ],
+  "cost": "subscription"
+}

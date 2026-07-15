@@ -19,8 +19,10 @@
 //           no reviewer ready); when no plan is in flight (the review-state naming convention);
 //           when the tree is clean (nothing to review); when the cwd is not a git work tree; and
 //           when the in-flight plan-execution SEGMENT is `converged` or `resolved-residual` (its
-//           latest round's non-degraded backends carry grounded code receipts for the recorded
-//           fingerprint, and a recorded 0/0 is ship-class-consistent with those receipts).
+//           latest round's non-degraded backends carry ATTESTING code receipts for the recorded
+//           fingerprint — the shared review-ledger-core predicate: grounded AND probe:false, a
+//           probe/unmarked/malformed marker never attests — and a recorded 0/0 is
+//           ship-class-consistent with those receipts).
 //   exit 1  for any DIRTY in-flight plan-execution segment that is neither `converged` nor
 //           `resolved-residual` — `triage-required`, `continue`, OR no round/receipt recorded in
 //           the CURRENT segment (a dirty active plan with an empty/stale/other-segment ledger is a
@@ -83,6 +85,8 @@ import {
   filterLoopRecords,
   filterSegmentRecords,
   roundSequenceIntact,
+  summarizeReviewReceiptsForTree,
+  describeMissingReviewAttestation,
 } from './review-ledger-core.mjs';
 export {
   LEDGER_BASENAME,
@@ -270,22 +274,27 @@ export const decideStop = (records, { cap = REVIEW_CAP, currentFingerprint = nul
 // ── receipt cross-check (integrity binding, Decision 7) ──────────────────────────────────────────
 
 // receiptCrossCheck(round, receipts, fingerprint) → { ok, reason }. For each NON-degraded backend of
-// `round`: a grounded code receipt must exist for (backend, fingerprint) — a round cannot pass for a
-// tree no bridge reviewed — AND a recorded ship-class 0/0 must not coexist with a non-ship receipt
+// `round`: an ATTESTING receipt must exist for (backend, fingerprint) — a round cannot pass for a
+// tree no bridge really reviewed — AND a recorded ship-class 0/0 must not coexist with a non-ship
 // verdict. A degraded backend minted no receipt (it ran no real review) and is exempt.
+// The attesting predicate is the SHARED one (review-ledger-core), the same review-state reads: this
+// gate used to filter raw fields and take `own[own.length - 1]`, so a probe receipt landing AFTER a
+// real one became the authoritative verdict — a late probe SHIP could bury a real REWORK and let
+// BOTH gates report convergence (D3). The summary's `receipt` is the latest ATTESTING one, never
+// simply the last line.
 export const receiptCrossCheck = (round, receipts, fingerprint) => {
   for (const b of round.backends) {
     if (b.degraded) continue;
-    const own = receipts.filter(
-      (r) => r.backend === b.backend && r.fingerprint === fingerprint && r.artifact === 'code' && r.fresh === true && r.grounded === true,
-    );
-    if (own.length === 0) {
-      return { ok: false, reason: `no grounded code receipt for ${b.backend} at the recorded fingerprint (a recorded round must bind to a real review)` };
+    const own = receipts.filter((r) => r.backend === b.backend);
+    const summary = summarizeReviewReceiptsForTree(own, fingerprint);
+    const failure = describeMissingReviewAttestation(summary);
+    if (failure !== null) {
+      return { ok: false, reason: `no grounded code receipt for ${b.backend} at the recorded fingerprint can attest this review round — ${failure}` };
     }
     if (b.blockers === 0 && b.majors === 0) {
-      const latest = own[own.length - 1];
-      if (!isShipVerdict(latest.verdict)) {
-        return { ok: false, reason: `${b.backend} recorded 0 blockers/0 majors but its receipt verdict "${latest.verdict}" is not ship-class` };
+      const { verdict } = summary.receipt;
+      if (!isShipVerdict(verdict)) {
+        return { ok: false, reason: `${b.backend} recorded 0 blockers/0 majors but its attesting receipt verdict "${verdict}" is not ship-class` };
       }
     }
   }

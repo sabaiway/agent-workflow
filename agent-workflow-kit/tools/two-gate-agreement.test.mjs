@@ -39,8 +39,10 @@ const makeRepo = () => {
   return { root, g };
 };
 
+// The receipt SELF-DECLARES its probe status (D3): an unmarked one is untrustworthy and would never
+// satisfy, so this suite exercises the two gates AGREEING rather than the marker rule.
 const codexShipReceipt = (fingerprint) =>
-  JSON.stringify({ schema: 1, artifact: 'code', fresh: true, fingerprint, backend: 'codex', verdict: 'ship', grounded: true, factsHash: null, wrapperVersion: '2.2.0', timestamp: '2026-07-09T00:00:00Z' });
+  JSON.stringify({ schema: 1, artifact: 'code', fresh: true, fingerprint, backend: 'codex', verdict: 'ship', grounded: true, factsHash: null, wrapperVersion: '2.2.0', timestamp: '2026-07-09T00:00:00Z', probe: false });
 
 const convergedWithDegradeRound = (base, fingerprint) =>
   JSON.stringify({
@@ -90,5 +92,59 @@ describe('two-gate agreement (AD-050) — review-state and review-ledger agree o
     rmSync(dir, { recursive: true, force: true });
     assert.equal(s.code, 1, 'review-state: the degrade is stale → agy not exempt → FAIL');
     assert.equal(l.code, 1, 'review-ledger: the round attests a stale tree → not converged → FAIL');
+  });
+});
+
+// The probe marker is a TWO-GATE invariant (D3): review-state owns receipt presence and review-ledger
+// owns convergence, so a probe that satisfied either one alone would let the pair report a green
+// tree. These pin that no probe receipt — however it is arranged — can do that.
+describe('two-gate agreement (D3) — a probe receipt can never green the pair', () => {
+  const seedProbeOnly = (root) => {
+    const dir = mkdtempSync(join(tmpdir(), 'two-gate-probe-'));
+    const ledger = join(dir, 'ledger.jsonl');
+    const receipts = join(dir, 'receipts.jsonl');
+    const base = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim();
+    const treeFp = computeTreeFingerprint(root);
+    writeFileSync(ledger, `${convergedWithDegradeRound(base, treeFp)}\n`);
+    // The ONLY current receipt is a probe claiming ship — formally a converged 0/0 round beside it.
+    writeFileSync(receipts, `${JSON.stringify({ schema: 1, artifact: 'code', fresh: true, fingerprint: treeFp, backend: 'codex', verdict: 'ship', grounded: true, factsHash: null, wrapperVersion: '2.2.0', timestamp: '2026-07-09T00:00:00Z', probe: true })}\n`);
+    return { env: { AW_REVIEW_LEDGER: ledger, AW_REVIEW_RECEIPTS: receipts }, dir };
+  };
+
+  it('probe-only current receipts fail BOTH receipt gates', () => {
+    const { root } = makeRepo();
+    const { env, dir } = seedProbeOnly(root);
+    const s = stateCheck(root, env);
+    const l = ledgerCheck(root, env);
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(s.code, 1, `review-state must reject a probe-only tree: ${s.stdout}`);
+    assert.match(s.stdout, /only probe receipts/);
+    assert.equal(l.code, 1, `review-ledger must reject a round bound only to a probe: ${l.stdout}`);
+    assert.match(l.stdout, /only probe receipts/);
+  });
+
+  it('a real REWORK receipt followed by a probe SHIP cannot make the pair pass', () => {
+    // review-state sees a real receipt and passes presence; review-ledger must still refuse the
+    // recorded 0/0, because the ATTESTING verdict is the real "revise" — not the probe that landed
+    // after it. Taking the LAST receipt is exactly the false-pass this pins shut.
+    const { root } = makeRepo();
+    const dir = mkdtempSync(join(tmpdir(), 'two-gate-probe-order-'));
+    const ledger = join(dir, 'ledger.jsonl');
+    const receipts = join(dir, 'receipts.jsonl');
+    const base = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim();
+    const treeFp = computeTreeFingerprint(root);
+    writeFileSync(ledger, `${convergedWithDegradeRound(base, treeFp)}\n`);
+    const real = JSON.stringify({ schema: 1, artifact: 'code', fresh: true, fingerprint: treeFp, backend: 'codex', verdict: 'revise', grounded: true, factsHash: null, wrapperVersion: '2.2.0', timestamp: '2026-07-09T00:00:00Z', probe: false });
+    const probe = JSON.stringify({ schema: 1, artifact: 'code', fresh: true, fingerprint: treeFp, backend: 'codex', verdict: 'ship', grounded: true, factsHash: null, wrapperVersion: '2.2.0', timestamp: '2026-07-09T00:00:01Z', probe: true });
+    writeFileSync(receipts, `${real}\n${probe}\n`);
+    const env = { AW_REVIEW_LEDGER: ledger, AW_REVIEW_RECEIPTS: receipts };
+    const s = stateCheck(root, env);
+    const l = ledgerCheck(root, env);
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(s.code, 0, `review-state passes on the real receipt's presence: ${s.stdout}`);
+    assert.equal(l.code, 1, `review-ledger must refuse 0/0 against the real "revise": ${l.stdout}`);
+    assert.match(l.stdout, /is not ship-class/);
   });
 });

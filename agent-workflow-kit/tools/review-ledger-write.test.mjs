@@ -25,8 +25,10 @@ const originsOf = (findings) => {
   return o;
 };
 const roundParams = ({ loop = 'L', round = 1, backends, findings = [] }) => ({ loop, round, backends, findings, origins: originsOf(findings), timestamp: 't' });
-const codexReceiptFile = (path, fingerprint = FP, verdict = 'SHIP') =>
-  writeFileSync(path, `${JSON.stringify({ schema: 1, artifact: 'code', fresh: true, fingerprint, backend: 'codex', verdict, grounded: true, timestamp: 't' })}\n`);
+// A receipt SELF-DECLARES its probe status (D3): only `probe:false` attests. `overrides` drives the
+// exclusion lanes (probe / malformed / unmarked) the writer must refuse with a stated reason.
+const codexReceiptFile = (path, fingerprint = FP, verdict = 'SHIP', overrides = {}) =>
+  writeFileSync(path, `${JSON.stringify({ schema: 1, artifact: 'code', fresh: true, fingerprint, backend: 'codex', verdict, grounded: true, timestamp: 't', probe: false, ...overrides })}\n`);
 
 let dir;
 let ledgerPath;
@@ -57,6 +59,50 @@ beforeEach(() => {
   receiptsPath = join(dir, 'receipts.jsonl');
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+// The writer reads the SAME attesting-receipt predicate as review-state and the round cross-check
+// (D3): a probe never counted as a review, and each exclusion states its OWN recovery — they differ
+// (run a real review / refresh the bridge / fix the receipt source), so a silent "no receipt" hides
+// what to do next.
+describe('review-ledger-write — only an ATTESTING receipt can bind a round (D3)', () => {
+  const shipRound = () => roundParams({ backends: [{ backend: 'codex', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'SHIP' }], findings: [] });
+
+  it('refuses a probe-only current receipt, naming the probe as the reason', () => {
+    codexReceiptFile(receiptsPath, FP, 'SHIP', { probe: true });
+    seedGateRun();
+    assert.throws(
+      () => recordRound({ ...shipRound(), cwd: dir, env: {} }, deps()),
+      /only probe receipts exist for the current tree/,
+    );
+  });
+
+  it('refuses an UNMARKED current receipt fail-closed (silence is not a declaration)', () => {
+    writeFileSync(receiptsPath, `${JSON.stringify({ schema: 1, artifact: 'code', fresh: true, fingerprint: FP, backend: 'codex', verdict: 'SHIP', grounded: true, timestamp: 't' })}\n`);
+    seedGateRun();
+    assert.throws(
+      () => recordRound({ ...shipRound(), cwd: dir, env: {} }, deps()),
+      /1 receipt\(s\) with no probe marker/,
+    );
+  });
+
+  it('refuses a MALFORMED probe marker fail-closed', () => {
+    codexReceiptFile(receiptsPath, FP, 'SHIP', { probe: 'no' });
+    seedGateRun();
+    assert.throws(
+      () => recordRound({ ...shipRound(), cwd: dir, env: {} }, deps()),
+      /malformed probe marker/,
+    );
+  });
+
+  it('accepts probe:false and a later probe receipt never unseats it', () => {
+    const real = JSON.stringify({ schema: 1, artifact: 'code', fresh: true, fingerprint: FP, backend: 'codex', verdict: 'SHIP', grounded: true, timestamp: 't', probe: false });
+    const late = JSON.stringify({ schema: 1, artifact: 'code', fresh: true, fingerprint: FP, backend: 'codex', verdict: 'revise', grounded: true, timestamp: 't', probe: true });
+    writeFileSync(receiptsPath, `${real}\n${late}\n`);
+    seedGateRun();
+    const { record } = recordRound({ ...shipRound(), cwd: dir, env: {} }, deps());
+    assert.equal(record.kind, 'round', 'the real receipt attests; the probe beside it is simply not a review');
+  });
+});
 
 describe('review-ledger-write — append + read back', () => {
   it('appends a round and reads it back through the read module', () => {
@@ -890,7 +936,7 @@ describe('the writer HELP names the D5 quality-green prerequisite (codex Phase-3
 
 // ── the batch verb (WRITER-BURST-BATCH / D4 + D5): one invocation, an ordered op list ────────────
 describe('review-ledger-write — the batch verb (D4/D5)', () => {
-  const codexReceipt = { schema: 1, artifact: 'code', fresh: true, fingerprint: FP, backend: 'codex', verdict: 'SHIP', grounded: true, timestamp: 't' };
+  const codexReceipt = { schema: 1, artifact: 'code', fresh: true, fingerprint: FP, backend: 'codex', verdict: 'SHIP', grounded: true, timestamp: 't', probe: false };
   // A fromReceipts op drafts backends[] from this injected state (the single verb builds it from the
   // receipts file; the draft path itself is shared, so the injected state is equivalent).
   const currentState = { requiredBackends: ['codex'], backends: [{ backend: 'codex', state: 'current', verdict: 'SHIP' }] };

@@ -821,6 +821,139 @@ describe('codex-exec.sh — source-level reverse guard (parser arms ⟷ manifest
   });
 });
 
+// ── mode catalog ⟷ wrapper reality (BRIDGE-MODES-CATALOG) ─────────────────────────
+// The kit validator owns the catalog's INTERNAL shape; these arms pin the half only this wrapper's
+// source can settle — the execute role's cataloged modes really exist here, every declared contract
+// invocation is cataloged, and the env-hook the catalog aims at exec really changes the run.
+
+// The source lines that really EXECUTE: a heredoc body (the --help text) and a comment both carry
+// names without carrying logic, so a bare name-grep stays green after the logic is deleted.
+const executableLines = (source) => {
+  const out = [];
+  let heredoc = null;
+  for (const raw of source.split('\n')) {
+    if (heredoc) {
+      if (raw.trim() === heredoc) heredoc = null;
+      continue;
+    }
+    const hd = raw.match(/<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?/);
+    if (hd) { heredoc = hd[1]; continue; }
+    if (raw.trimStart().startsWith('#')) continue;
+    out.push(raw);
+  }
+  return out;
+};
+const consultsEnv = (source, name) =>
+  executableLines(source).some((l) => new RegExp(`\\[\\[[^\\]]*\\$\\{?${name}\\b[^\\]]*(==|!=)`).test(l));
+// The optional `@` prefix rides WITH the slot — the catalog declares the whole token a user types.
+const SLOT_RE = /@?<[^<>]+>|\[[^[\]]*\]/g;
+
+describe('codex-exec.sh — mode catalog ⟷ wrapper reality (manifest-pinned)', () => {
+  const source = readFileSync(WRAPPER, 'utf8');
+  const catalog = MANIFEST.modeCatalog ?? [];
+  const execEntries = catalog.filter((e) => e.role === 'execute');
+
+  it('the execute role is cataloged: one primary plus a continuation per resume flag', () => {
+    const primaries = execEntries.filter((e) => e.kind === 'primary');
+    const continuations = execEntries.filter((e) => e.kind === 'continuation');
+    assert.equal(primaries.length, 1, 'codex-exec has exactly one primary drive form');
+    assert.equal(continuations.length, EXEC_CONTRACT.continue.length, 'one continuation entry per declared resume descriptor');
+  });
+
+  it('every execute entry composes BY REFERENCE and every reference resolves', () => {
+    for (const entry of execEntries) {
+      assert.ok(
+        Array.isArray(entry.invocationRefs) && entry.invocationRefs.length > 0,
+        `${entry.key}: a contract-backed entry references at least one contract descriptor`,
+      );
+      assert.ok(!Object.hasOwn(entry, 'descriptor'), `${entry.key}: a contract-backed entry never restates a literal descriptor`);
+      for (const ref of entry.invocationRefs) {
+        assert.equal(
+          typeof EXEC_CONTRACT[ref.contractField]?.[ref.index], 'string',
+          `${entry.key}: ref ${ref.contractField}[${ref.index}] does not resolve into the manifest contract`,
+        );
+      }
+    }
+  });
+
+  it('every execute contract invocation is claimed by exactly ONE catalog entry (no uncataloged form)', () => {
+    const claims = execEntries.flatMap((e) => e.invocationRefs.map((r) => `${r.contractField}[${r.index}]`));
+    assert.equal(new Set(claims).size, claims.length, 'a contract invocation is claimed at most once');
+    const declared = [
+      ...EXEC_CONTRACT.invocations.map((_, i) => `invocations[${i}]`),
+      ...EXEC_CONTRACT.continue.map((_, i) => `continue[${i}]`),
+    ];
+    setEq(new Set(claims), declared, 'catalog claims ⟷ declared contract invocations');
+  });
+
+  it('every env-hook the catalog aims at an execute mode is a real EXECUTABLE guard, not a mention', () => {
+    const hooks = catalog.filter((e) => e.kind === 'env-hook' && e.parents.some((p) => execEntries.some((x) => x.key === p)));
+    assert.ok(hooks.length > 0, 'CODEX_PROBE must be cataloged as an env-hook over codex-exec');
+    for (const hook of hooks) {
+      assert.ok(
+        consultsEnv(source, hook.key),
+        `env-hook ${hook.key} is named in the source but never TESTED in an executable condition — a help/comment mention would keep a name-grep green after the logic is deleted`,
+      );
+    }
+  });
+
+  it('the catalog operand slots set-EQUAL the slots its rendered forms really carry (both directions)', () => {
+    for (const entry of execEntries) {
+      const forms = entry.invocationRefs.map((r) => EXEC_CONTRACT[r.contractField][r.index]);
+      // The DEDUPLICATED UNION over every resolved form: `exec` legitimately spreads its slots across
+      // two descriptors, so per-form equality would false-fail a correct catalog.
+      const realSlots = new Set(forms.flatMap((f) => f.match(SLOT_RE) ?? []));
+      setEq(new Set((entry.operands ?? []).map((o) => o.slot)), realSlots, `${entry.key}: catalog operands ⟷ the slots its forms really carry`);
+    }
+  });
+
+  it('the catalog claims CODEX_PROBE over the resume modes because the guard really precedes resume parsing', () => {
+    // Verified in source: the quality guard runs BEFORE the resume dispatch, so a resume run is
+    // relaxed too — the catalog must say so, and this pins the ORDER the claim rests on.
+    const lines = executableLines(source);
+    const guardAt = lines.findIndex((l) => /\$\{?CODEX_PROBE/.test(l));
+    const resumeAt = lines.findIndex((l) => /^\s*--resume-last\)/.test(l));
+    assert.ok(guardAt !== -1 && resumeAt !== -1, 'both the probe guard and the resume arm must exist');
+    assert.ok(guardAt < resumeAt, 'the probe guard must precede resume parsing — else the resume parents are a false claim');
+    const hook = catalog.find((e) => e.key === 'CODEX_PROBE');
+    for (const key of ['exec.resume-last', 'exec.resume']) {
+      assert.ok(hook.parents.includes(key), `${key} is relaxed by the hook, so the catalog must declare it a parent`);
+    }
+  });
+
+  it('CODEX_PROBE really relaxes the guard on EVERY execute parent the catalog claims (behavioural)', () => {
+    // Source ORDER alone is not the claim: a branch bug after resume parsing would keep it green.
+    // Drive each claimed parent for real — the guard must stop the dispatch without the hook, and
+    // codex must really be reached with it (r.argv is non-empty only on a real invocation).
+    const hook = catalog.find((e) => e.key === 'CODEX_PROBE');
+    const drive = {
+      exec: (sb) => ({ args: ['-'], input: 'do a thing' }),
+      'exec.resume-last': (sb) => {
+        writeFileSync(join(sb.repo, '.codex-last-session'), 'sess-from-sidecar\n');
+        return { args: ['--resume-last', '-'], input: 'continue' };
+      },
+      'exec.resume': () => ({ args: ['--resume', 'sess-xyz', '-'], input: 'continue' }),
+    };
+    const execParents = hook.parents.filter((p) => execEntries.some((x) => x.key === p));
+    assert.ok(execParents.length > 0, 'CODEX_PROBE must claim at least one execute parent');
+    for (const parent of execParents) {
+      assert.ok(drive[parent], `no behavioural drive for claimed parent "${parent}" — add one`);
+
+      const guarded = makeSandbox();
+      const off = run(guarded, { ...drive[parent](guarded), env: { CODEX_MODEL: 'not-the-pinned-model' } });
+      rmSync(guarded.root, { recursive: true, force: true });
+      assert.equal(off.status, 2, `${parent}: the quality guard must refuse an off-pin model without the hook`);
+      assert.equal(off.argv, '', `${parent}: the guard must refuse BEFORE spending a run`);
+
+      const probed = makeSandbox();
+      const on = run(probed, { ...drive[parent](probed), env: { CODEX_MODEL: 'not-the-pinned-model', CODEX_PROBE: '1' } });
+      rmSync(probed.root, { recursive: true, force: true });
+      assert.equal(on.status, 0, `${parent}: CODEX_PROBE=1 must really relax the guard — the catalog claims it does`);
+      assert.notEqual(on.argv, '', `${parent}: CODEX_PROBE=1 must really reach codex, not merely exit 0`);
+    }
+  });
+});
+
 // ── bridge settings file + service tier knob (bridges 2.3.0) ─────────────────────
 // ${XDG_CONFIG_HOME:-$HOME/.config}/agent-workflow/bridge-settings.conf holds KEY=VALUE
 // lines, PARSED (never sourced). Precedence: explicit env (even empty: KEY= disables the

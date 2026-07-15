@@ -1,0 +1,13 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "fixture-mode-catalog-null",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["review"],
+  "roles": {
+    "review": { "cmd": "fixture-review", "source": "bin/run.sh", "modes": ["code"], "output": "advisory" }
+  },
+  "modeCatalog": null,
+  "cost": "subscription"
+}

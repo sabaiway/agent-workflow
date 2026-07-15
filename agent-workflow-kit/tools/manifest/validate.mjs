@@ -60,6 +60,31 @@ export const settingValueValid = (entry, value) => {
   }
 };
 
+// ── `modeCatalog` vocabulary (BRIDGE-MODES-CATALOG, D2/D4/D6) ────────────────────────
+// Every `modeCatalog` string the mode renderer prints is ONE capped line: the surface is a
+// terminal-width discovery list, and a control character would break the line (or a pasted form).
+export const CATALOG_LINE_MAX = 200;
+// The closed entry taxonomy (D4): a `primary` is a mode you drive; a `continuation` resumes one; an
+// `env-hook` MODIFIES named parents (an env var is never a fake role).
+export const CATALOG_KINDS = new Set(['primary', 'continuation', 'env-hook']);
+// `enforced` is claimable only for an OS-/code-enforced fact (a runtime bound rides in `condition`);
+// everything a prompt merely asks for is `advisory` (D6).
+export const CATALOG_ENFORCEMENT = new Set(['enforced', 'advisory']);
+// The AD-033 `contract` fields that carry invocation descriptors — the only referenceable ones.
+export const CATALOG_CONTRACT_FIELDS = new Set(['invocations', 'continue']);
+// The operand-slot grammar the RENDERER speaks: `<angle>` and `[bracket]` placeholders, with an
+// optional `@` riding WITH the slot (`@<facts-file>` is one operand a user types, not a bare
+// `<facts-file>` behind a stray character). Production owns it here; the bridge test suites keep
+// their own local copy ON PURPOSE — they ship as standalone bridge payload and must not import the
+// kit, so their regex is an INDEPENDENT drift oracle across the package boundary, not a duplicate.
+export const CATALOG_SLOT_RE = /@?<[^<>]+>|\[[^[\]]*\]/g;
+export const extractCatalogOperandSlots = (form) => (typeof form === 'string' ? form.match(CATALOG_SLOT_RE) ?? [] : []);
+
+const CATALOG_KEY_RE = /^[A-Za-z][A-Za-z0-9._-]*$/;
+const ENV_HOOK_KEY_RE = /^[A-Z][A-Z0-9_]*$/;
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
+
 const hasTraversal = (p) => p.split(/[\\/]/).includes('..');
 const isUnresolved = (s) => /\{\{|\}\}|\$\{/.test(s);
 
@@ -122,6 +147,292 @@ export const readAuthoritativeVersion = (skillDir) => {
     return { version: readSkillVersion(readFileSync(skillPath, 'utf8')), from: 'SKILL.md metadata.version' };
   }
   return { version: null, from: 'no package.json or SKILL.md' };
+};
+
+// Validate a PRESENT `modeCatalog` block against `roles` (BRIDGE-MODES-CATALOG, D1/D2/D4/D6). It is
+// the USER-FACING mode catalog the `bridge-modes` renderer prints verbatim and composes invocation
+// forms from — RELATED TO, never shadowing, the AD-033 `contract` (the internal driving contract):
+// a contract-backed entry composes BY REFERENCE and never restates a descriptor; a contract-FREE
+// primary (a raw prompt mode) and an env-hook carry a literal one — the stated exception to
+// no-duplication, because for them the catalog IS canonical. Errors are appended, never thrown.
+const validateModeCatalog = (catalog, roles, errors) => {
+  const oneLine = (label, value) => {
+    if (typeof value !== 'string' || !value) {
+      errors.push(`${label} must be a non-empty string`);
+      return false;
+    }
+    if (CONTROL_CHAR_RE.test(value)) {
+      errors.push(`${label} must not carry control characters`);
+      return false;
+    }
+    if (value.length > CATALOG_LINE_MAX) {
+      errors.push(`${label} must be one line of at most ${CATALOG_LINE_MAX} characters`);
+      return false;
+    }
+    return true;
+  };
+  const stringList = (label, value) => {
+    if (!Array.isArray(value) || value.length === 0) {
+      errors.push(`${label} must be a non-empty array of one-line strings`);
+      return;
+    }
+    value.forEach((v, i) => oneLine(`${label}[${i}]`, v));
+  };
+
+  // The key index is built FIRST: `parents[]` and `customHooks[]` resolve ACROSS entries, so a
+  // forward reference resolves exactly like a backward one (declaration order is not a contract).
+  const byKey = new Map();
+  for (const entry of catalog) {
+    if (entry == null || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    if (typeof entry.key === 'string' && entry.key && !byKey.has(entry.key)) byKey.set(entry.key, entry);
+  }
+
+  const seenKeys = new Set();
+  const claimedRefs = new Set(); // "<role>.<field>[<index>]" — one contract invocation, at most one entry
+  catalog.forEach((entry, i) => {
+    const at = `\`modeCatalog[${i}]\``;
+    if (entry == null || typeof entry !== 'object' || Array.isArray(entry)) {
+      errors.push(`${at} must be an object`);
+      return;
+    }
+    const isEnvHook = entry.kind === 'env-hook';
+
+    if (typeof entry.key !== 'string' || !CATALOG_KEY_RE.test(entry.key)) {
+      errors.push(`${at}.key must be a bare token (a letter, then letters/digits/._-)`);
+    } else if (!oneLine(`${at}.key`, entry.key)) {
+      // The key IS the mode's printed identity — it obeys the same one-line contract as any other
+      // rendered string (the token regex already bars control characters; this bars a giant key).
+    } else if (seenKeys.has(entry.key)) {
+      errors.push(`duplicate modeCatalog key "${entry.key}" (${at})`);
+    } else {
+      seenKeys.add(entry.key);
+      if (isEnvHook && !ENV_HOOK_KEY_RE.test(entry.key)) {
+        errors.push(`${at}.key must be an UPPER_SNAKE_CASE env-var name (an env-hook's key IS its env var)`);
+      }
+    }
+    if (!CATALOG_KINDS.has(entry.kind)) {
+      errors.push(`${at}.kind must be one of primary|continuation|env-hook`);
+      return; // every rule below is keyed on the kind
+    }
+
+    oneLine(`${at}.purpose`, entry.purpose);
+    stringList(`${at}.whenToUse`, entry.whenToUse);
+    if (Object.hasOwn(entry, 'whenNotTo')) stringList(`${at}.whenNotTo`, entry.whenNotTo);
+
+    let role = null;
+    if (isEnvHook) {
+      if (Object.hasOwn(entry, 'role')) errors.push(`${at}.role is not allowed on an env-hook (it names parents[], never a role)`);
+      if (!Array.isArray(entry.parents) || entry.parents.length === 0) {
+        errors.push(`${at}.parents is required for an env-hook (the catalog keys it modifies)`);
+      } else {
+        const seenParents = new Set();
+        for (const p of entry.parents) {
+          const target = typeof p === 'string' ? byKey.get(p) : undefined;
+          if (target === undefined) {
+            errors.push(`${at}.parents names ${JSON.stringify(p)} which is no modeCatalog key`);
+            continue;
+          }
+          if (p === entry.key) {
+            errors.push(`${at}.parents must not name the env-hook itself`);
+            continue;
+          }
+          if (seenParents.has(p)) {
+            errors.push(`duplicate parent ${JSON.stringify(p)} (${at})`);
+            continue;
+          }
+          seenParents.add(p);
+          if (target.kind === 'env-hook') {
+            errors.push(`${at}.parents names ${JSON.stringify(p)}, which is an env-hook — a hook modifies a mode, never another hook`);
+            continue;
+          }
+          // The linkage is SYMMETRIC. The forward rule below stops a customHook from lying about a
+          // hook that does not target it; this is the reverse: a hook that claims a mode must be
+          // declared BY that mode, or the mode's rendered detail silently omits a hook that really
+          // changes how it runs — an incomplete discovery surface is the failure this block exists
+          // to prevent.
+          if (!Array.isArray(target.customHooks) || !target.customHooks.includes(entry.key)) {
+            errors.push(`${at}.parents names ${JSON.stringify(p)}, which does not list ${JSON.stringify(entry.key)} in its customHooks[]`);
+          }
+        }
+      }
+    } else {
+      if (Object.hasOwn(entry, 'parents')) errors.push(`${at}.parents is only allowed on an env-hook`);
+      if (!Object.hasOwn(entry, 'role')) errors.push(`${at}.role is required for a ${entry.kind} entry`);
+      else if (typeof entry.role !== 'string' || !Object.hasOwn(roles, entry.role)) {
+        errors.push(`${at}.role ${JSON.stringify(entry.role)} is no role of this manifest`);
+      } else {
+        role = entry.role;
+      }
+    }
+
+    // `submode` is the EXPLICIT parser-arm binding (D4) — the drift test set-equals these against the
+    // wrapper's real mode arms, so the binding is never parsed back out of the key.
+    const roleModes = role != null && Array.isArray(roles[role]?.modes) ? roles[role].modes : null;
+    if (Object.hasOwn(entry, 'submode')) {
+      if (typeof entry.submode !== 'string' || !entry.submode) errors.push(`${at}.submode must be a non-empty string (it names a parser mode arm)`);
+      else if (entry.kind !== 'primary') errors.push(`${at}.submode is only allowed on a primary entry (only a primary binds a parser mode arm)`);
+      else if (roleModes == null || roleModes.length === 0) errors.push(`${at}.submode is only allowed when the entry's role declares modes[]`);
+      else if (!roleModes.includes(entry.submode)) errors.push(`${at}.submode ${JSON.stringify(entry.submode)} is no declared mode of role "${role}"`);
+    } else if (entry.kind === 'primary' && roleModes != null && roleModes.length > 0) {
+      errors.push(`${at}.submode is required (a primary whose role declares modes[] binds one)`);
+    }
+
+    const contract = role != null ? roles[role]?.contract : null;
+    const contractBacked = !isEnvHook && contract != null && typeof contract === 'object' && !Array.isArray(contract);
+    // The kind BINDS the contract field it may claim: a primary DRIVES a mode (`invocations`), a
+    // continuation RESUMES one (`continue`). Crossing them would render a resume form as a drive
+    // form (or the reverse) — a lie in exactly the surface the catalog exists to make honest.
+    const requiredField = entry.kind === 'primary' ? 'invocations' : 'continue';
+    // A continuation has nothing to be canonical ABOUT: D6's literal-descriptor exception covers a
+    // contract-free PRIMARY (a raw prompt mode) and an env-hook only. A role with no `continue`
+    // contract simply has no continuation to catalog.
+    if (entry.kind === 'continuation' && !contractBacked) {
+      errors.push(`${at}: a continuation must be contract-backed (the literal-descriptor exception covers contract-free primaries and env-hooks only)`);
+    }
+    // The invocation forms this entry really renders — the domain every operand slot must live in.
+    const forms = [];
+    if (contractBacked) {
+      if (Object.hasOwn(entry, 'descriptor')) errors.push(`${at}.descriptor is only allowed on a contract-free primary or an env-hook (a contract-backed entry composes BY REFERENCE)`);
+      if (!Array.isArray(entry.invocationRefs) || entry.invocationRefs.length === 0) {
+        errors.push(`${at}.invocationRefs is required (non-empty) for a contract-backed entry`);
+      } else {
+        entry.invocationRefs.forEach((ref, j) => {
+          const rat = `${at}.invocationRefs[${j}]`;
+          if (ref == null || typeof ref !== 'object' || Array.isArray(ref)) {
+            errors.push(`${rat} must be a {contractField, index} object`);
+            return;
+          }
+          if (!CATALOG_CONTRACT_FIELDS.has(ref.contractField)) {
+            errors.push(`${rat}.contractField must be one of invocations|continue`);
+            return;
+          }
+          if (ref.contractField !== requiredField) {
+            errors.push(`${rat}.contractField must be "${requiredField}" for a ${entry.kind} entry (a primary drives, a continuation resumes)`);
+            return;
+          }
+          if (!Number.isSafeInteger(ref.index) || ref.index < 0) {
+            errors.push(`${rat}.index must be a non-negative integer`);
+            return;
+          }
+          const declared = contract[ref.contractField];
+          const form = Array.isArray(declared) ? declared[ref.index] : undefined;
+          if (typeof form !== 'string' || !form) {
+            errors.push(`${rat} does not resolve (roles.${role}.contract.${ref.contractField}[${ref.index}])`);
+            return;
+          }
+          // A REFERENCED form is printed exactly like a literal descriptor, so it obeys the same
+          // one-line contract. The AD-033 `contract` block is otherwise validator-TOLERATED (its
+          // shape is drift-guarded by the bridge tests, not here) — this checks only the invocations
+          // a catalog entry causes to be PRINTED, and the label names the contract as their home.
+          if (!oneLine(`${rat} → roles.${role}.contract.${ref.contractField}[${ref.index}]`, form)) return;
+          const claim = `${role}.${ref.contractField}[${ref.index}]`;
+          if (claimedRefs.has(claim)) errors.push(`duplicate modeCatalog invocation reference ${claim} (${at})`);
+          else claimedRefs.add(claim);
+          forms.push(form);
+        });
+      }
+    } else {
+      if (Object.hasOwn(entry, 'invocationRefs')) errors.push(`${at}.invocationRefs is only allowed on a contract-backed entry`);
+      if (!Object.hasOwn(entry, 'descriptor')) errors.push(`${at}.descriptor is required (a contract-free entry is canonical for its own invocation form)`);
+      else if (oneLine(`${at}.descriptor`, entry.descriptor)) forms.push(entry.descriptor);
+    }
+
+    // Descriptor honesty (D2), BOTH ways. The render labels an unfilled form a TEMPLATE and names
+    // each required operand, so the declared slots and the placeholders the forms really carry must
+    // be the SAME set: an invented slot names an operand with nowhere to go, and an UNDECLARED
+    // placeholder is worse — the render shows a form as if it were ready to run while the reader has
+    // no idea what to put there or whether it is required. `required` is deliberately NOT inferred
+    // from the bracket shape (`<extra flags...>` is legitimately optional): the grammar fixes a
+    // slot's IDENTITY, the catalog fixes its semantics.
+    const renderedSlots = new Set(forms.flatMap((f) => extractCatalogOperandSlots(f)));
+    const hasOperands = Object.hasOwn(entry, 'operands');
+    if (forms.length > 0 && renderedSlots.size > 0 && !hasOperands) {
+      errors.push(`${at}.operands is required because its invocation forms contain rendered operand slots`);
+    }
+    if (hasOperands) {
+      if (!Array.isArray(entry.operands) || entry.operands.length === 0) {
+        errors.push(`${at}.operands must be an array of typed operand slots`);
+      } else {
+        const seenSlots = new Set();
+        entry.operands.forEach((op, j) => {
+          const oat = `${at}.operands[${j}]`;
+          if (op == null || typeof op !== 'object' || Array.isArray(op)) {
+            errors.push(`${oat} must be a {slot, required, description} object`);
+            return;
+          }
+          const slotOk = oneLine(`${oat}.slot`, op.slot);
+          if (typeof op.required !== 'boolean') errors.push(`${oat}.required must be a boolean`);
+          oneLine(`${oat}.description`, op.description);
+          if (!slotOk) return;
+          if (seenSlots.has(op.slot)) errors.push(`duplicate operand slot "${op.slot}" (${oat})`);
+          else seenSlots.add(op.slot);
+          // Checked only once the forms really resolved (else the error is noise).
+          if (forms.length > 0 && !renderedSlots.has(op.slot)) {
+            errors.push(`${oat}.slot "${op.slot}" is not a rendered placeholder in this entry's invocation forms`);
+          }
+        });
+        if (forms.length > 0) {
+          for (const slot of renderedSlots) {
+            if (!seenSlots.has(slot)) errors.push(`${at}.operands is missing rendered slot "${slot}"`);
+          }
+        }
+      }
+    }
+
+    if (Object.hasOwn(entry, 'guardrails')) {
+      if (!Array.isArray(entry.guardrails) || entry.guardrails.length === 0) {
+        errors.push(`${at}.guardrails must be an array of typed guardrail entries`);
+      } else {
+        entry.guardrails.forEach((g, j) => {
+          const gat = `${at}.guardrails[${j}]`;
+          if (g == null || typeof g !== 'object' || Array.isArray(g)) {
+            errors.push(`${gat} must be a {value, enforcement, condition?, source} object`);
+            return;
+          }
+          oneLine(`${gat}.value`, g.value);
+          if (!CATALOG_ENFORCEMENT.has(g.enforcement)) errors.push(`${gat}.enforcement must be one of enforced|advisory`);
+          if (Object.hasOwn(g, 'condition')) oneLine(`${gat}.condition`, g.condition);
+          oneLine(`${gat}.source`, g.source);
+        });
+      }
+    }
+
+    if (Object.hasOwn(entry, 'customHooks')) {
+      if (!Array.isArray(entry.customHooks) || entry.customHooks.length === 0) {
+        errors.push(`${at}.customHooks must be a non-empty array of modeCatalog keys`);
+      } else {
+        const seenHooks = new Set();
+        for (const hook of entry.customHooks) {
+          const target = typeof hook === 'string' ? byKey.get(hook) : undefined;
+          if (target === undefined) {
+            errors.push(`${at}.customHooks names ${JSON.stringify(hook)} which is no modeCatalog key`);
+            continue;
+          }
+          if (seenHooks.has(hook)) {
+            errors.push(`duplicate customHook "${hook}" (${at})`);
+            continue;
+          }
+          seenHooks.add(hook);
+          if (hook === entry.key) {
+            // The raw-mode carve-out (D4): a contract-free primary IS its own escape, so it names
+            // itself rather than repeating an escape it does not have.
+            if (contractBacked || entry.kind !== 'primary') {
+              errors.push(`${at}.customHooks may name this entry itself only on a contract-free primary (the raw mode)`);
+            }
+            continue;
+          }
+          if (target.kind !== 'env-hook') {
+            errors.push(`${at}.customHooks names ${JSON.stringify(hook)}, which is neither an env-hook nor this entry itself`);
+            continue;
+          }
+          // A customHook can never LIE about a hook that does not target this mode.
+          if (!Array.isArray(target.parents) || !target.parents.includes(entry.key)) {
+            errors.push(`${at}.customHooks names env-hook "${hook}", which does not list ${JSON.stringify(entry.key)} in its parents[]`);
+          }
+        }
+      }
+    }
+  });
 };
 
 export const validateManifest = (skillDir) => {
@@ -375,6 +686,22 @@ export const validateManifest = (skillDir) => {
         else seenDefaults.add(dir);
       });
     }
+  }
+
+  // `modeCatalog` (BRIDGE-MODES-CATALOG, D1): the user-facing mode catalog. ADDITIVE-OPTIONAL —
+  // an absent block is VALID (a bridge predating the catalog stays valid; the mode renders a stated
+  // "no catalog" line, never invalid-manifest and never an empty silent list). A PRESENT block is
+  // typed-validated like `settings`: the renderer prints its strings verbatim and composes runnable
+  // forms from its refs, so a malformed entry would render a lying discovery surface.
+  // Presence is keyed on the KEY, never on non-null: an explicit `modeCatalog: null` is a PRESENT
+  // malformed block, not an absence (absence is "this bridge predates the catalog"). An EMPTY array
+  // is likewise invalid — it would render as "this bridge has no modes", which is never true and is
+  // exactly the silent empty list D1 forbids; a bridge with nothing to say omits the block.
+  if (Object.hasOwn(manifest, 'modeCatalog')) {
+    const modeCatalog = manifest.modeCatalog;
+    if (!Array.isArray(modeCatalog)) errors.push('`modeCatalog` must be an array of mode entries');
+    else if (modeCatalog.length === 0) errors.push('`modeCatalog` must not be empty — a declared catalog states at least one mode (omit the block instead)');
+    else validateModeCatalog(modeCatalog, roles, errors);
   }
 
   if (!isStub) {
