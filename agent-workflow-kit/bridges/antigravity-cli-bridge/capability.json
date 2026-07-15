@@ -3,7 +3,7 @@
   "schema": 1,
   "name": "antigravity-cli-bridge",
   "kind": "execution-backend",
-  "version": "2.6.1",
+  "version": "2.7.0",
   "provides": ["review", "probe"],
   "roles": {
     "review": {

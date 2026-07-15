@@ -7,6 +7,54 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-15 — kit 2.0.0 (BREAKING) + bridges 2.8.0/2.7.0: bridge mode catalog + a review receipt that self-declares (AD-057)
+
+**Kit MAJOR** — the first in the kit's history. A review receipt written before this release **no longer
+attests a tree**: the kit now rejects an unmarked receipt, because the pre-marker wrappers already
+honoured `CODEX_PROBE`/`AGY_PROBE` and wrote no marker, so an unmarked receipt is indistinguishable from
+a probe receipt (a review that ran with the quality guards off). Upgrade with
+`npx @sabaiway/agent-workflow-kit@latest init`, which also ATTEMPTS to refresh the placed bridges — then
+read its per-bridge outcome: **`skipped-readonly` or `could not refresh` means a compatible writer is not
+guaranteed**, so the new kit reader may still be paired with an old bridge writer and every review would
+write an unmarked receipt the gate rejects. Re-run the refresh from a writable environment (using the
+recovery command if one was printed), then re-run the review. No project files change; the
+deployment-lineage head is a separate axis and stays `2.0.0`.
+
+The two bridges stay **MINOR** (2.8.0 / 2.7.0): they only ADD a field to the receipt they write, which is
+additive. The incompatibility is created by the kit READER that refuses the old form.
+
+Two independently reviewable contracts, one theme — *what a bridge offers, and what a receipt claims,
+must be readable off the artifact itself; never inferred from source, never inferred from silence*:
+
+- **`modeCatalog` — the discovery layer.** A new top-level, additive-optional manifest block (schema
+  stays 1), typed-validated like `settings` (absent → valid; present-but-malformed → invalid). Both
+  bridges declare their real mode set with a closed taxonomy (`primary`/`continuation`/`env-hook` — an
+  env-hook names `parents[]` instead of faking a role), a required per-mode `purpose` + `whenToUse`, and
+  — where they apply — `whenNotTo`, typed `operands[]`, structured `guardrails{value, enforcement,
+  condition?, source}` and `customHooks[]`. Forms compose **by reference** into the AD-033 driving contract rather than shadowing
+  it. Honesty is enforced, not promised: declared slots set-EQUAL the placeholders the rendered forms
+  really carry in both directions, `enforced` is claimable only for an OS-/code-enforced fact, and
+  `submode`/env-hook declarations are drift-guarded against the wrappers' real parser arms and real
+  executable conditions.
+- **Probe-receipt honesty — the breaking change above.** Both wrappers wrote receipts unconditionally, so
+  a `CODEX_PROBE=1`/`AGY_PROBE=1` review — running with the frontier-model/max-effort guard **off** —
+  minted a receipt the review-state gate accepted. Both now write `probe` (`true`/`false`) on **every**
+  successful review through the shared byte-identical `write_review_receipt` block: the receipt
+  self-declares. The kit rejects a probe-marked receipt and equally rejects an unmarked one — silence is
+  not a declaration. What the marker carries is UNTRUSTWORTHINESS, never provenance: receipts are not
+  authenticated, so this is self-discipline made legible, not a security boundary.
+- **One attesting predicate, three consumers.** The classify/summarize/describe trio lives in the neutral
+  `review-ledger-core.mjs`, read by `review-state.mjs`, `receiptCrossCheck` and the round writer — two
+  gates disagreeing about what attests is the class AD-050 closed. It also fixes a latent hole: the ledger
+  took the LAST receipt line, so a probe landing after a real review became authoritative (a probe SHIP
+  could bury a real REWORK and let both gates report convergence). The summary now returns the latest
+  **attesting** receipt.
+
+The BRIDGE-MODES-CATALOG plan's **Segment B** (the kit `bridge-modes` read-only mode, its Recommendations
+funnel/ack, and the memory `archive-decisions --headroom` lane) is **not** in this release — a maintainer
+scope decision both backends independently endorsed. Full record, the mid-execution amendment of the
+original probe design, and the stated residuals in AD-057.
+
 ## 2026-07-14 — kit 1.49.0 + bridges 2.7.1/2.6.1: honesty/robustness bundle (AD-056)
 
 **Kit MINOR** (carrying codex-cli-bridge 2.7.1 + antigravity-cli-bridge 2.6.1 PATCH in-tarball;
