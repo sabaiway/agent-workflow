@@ -4,6 +4,77 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 2.0.0 — Bridge mode catalog (manifest-as-source) + a review receipt that SELF-DECLARES (AD-057)
+
+> ### ⚠ BREAKING — a review receipt written before this release no longer attests a tree
+>
+> The kit now **rejects an unmarked receipt**: a receipt must self-declare whether it came from a
+> probe run, and silence is not a declaration. Every receipt on disk from kit ≤ 1.49.0 / bridges
+> ≤ 2.7.1 / ≤ 2.6.1 predates the marker, so `review-state --check` and `review-ledger --check` will
+> RED on it where they previously passed.
+>
+> **How to upgrade:** `npx @sabaiway/agent-workflow-kit@latest init`, which also ATTEMPTS to refresh
+> the placed bridges — then read its per-bridge outcome. **`skipped-readonly` or `could not refresh`
+> means a compatible writer is not guaranteed:** the new reader may still be paired with an old bridge
+> writer, whose reviews write unmarked receipts this gate now rejects. Re-run the refresh from a
+> writable environment (using the recovery command if one was printed), then **re-run the review** on
+> the tree you are working on. That is the whole migration; no project file changes, and the
+> deployment-lineage stamp is untouched.
+>
+> **Why it is not opt-in.** The pre-marker wrappers already honoured `CODEX_PROBE` / `AGY_PROBE` and
+> wrote no marker, so an unmarked receipt is **indistinguishable from a probe receipt** — a review
+> that ran with the frontier-model/max-effort guard switched off. Any transitional window that keeps
+> accepting unmarked receipts keeps the hole fully open for exactly the receipts it targets: it would
+> not defer the break, it would cancel the fix.
+
+A **breaking + feature** release (kit MAJOR carrying codex-cli-bridge **2.8.0** + antigravity-cli-bridge
+**2.7.0** MINOR in-tarball — the bridges only ADD a field to the receipt they write, which is additive;
+the incompatibility is created by the kit READER that now refuses the old form. engine 1.17.0 / memory
+2.3.0 unchanged; the deployment-lineage head is a separate axis and stays `2.0.0`). Two independent
+contracts, one theme: **what a bridge offers, and what a receipt claims, must both be readable off the
+artifact itself — never inferred from source or from silence.**
+
+- **`modeCatalog` — a machine-readable answer to "what modes does this bridge offer, and why?"** A new
+  **top-level, additive-optional** manifest block (schema stays 1), typed-validated exactly like
+  `settings`: absent → valid (a bridge predating it keeps validating), present-but-malformed → invalid.
+  Both bridges now declare their real mode set — codex `{exec, exec.resume-last, exec.resume,
+  review.plan, review.code, CODEX_PROBE}`, agy `{review.code/plan/diff, review.continue,
+  review.conversation, run, AGY_PROBE}` — each entry carrying a closed taxonomy (`primary` /
+  `continuation` / `env-hook`, where an env-hook names `parents[]` rather than faking a role), a
+  required one-line `purpose` + `whenToUse`, and — declared only where they apply — `whenNotTo`, typed
+  `operands[]`, structured `guardrails` `{value, enforcement, condition?, source}` and `customHooks[]`
+  (`exec.resume` carries no `guardrails`; a mode with no operands omits `operands`). Invocation forms compose **by
+  reference** (`invocationRefs[]`) into the existing AD-033 driving contract — the catalog is the
+  user-facing DISCOVERY layer and never shadows it.
+- **Descriptor honesty is enforced, not promised.** Declared operand slots must set-EQUAL the
+  placeholders the referenced forms really carry, in **both** directions over the deduplicated union of
+  an entry's forms: an undeclared placeholder is as dishonest as an invented slot, since either way the
+  render shows a form as ready-to-run that the reader cannot actually fill. `enforced` is claimable only
+  for an OS- or code-enforced fact; a runtime bound rides in `condition`; anything a prompt merely asks
+  for renders `advisory`. Catalog `submode` values are drift-guarded against the wrappers' real parser
+  arms, and every declared env-hook must be a real EXECUTABLE condition (heredocs and comments excluded,
+  so a name-grep cannot stay green after the logic is deleted).
+- **A probe review can no longer attest a tree — and the receipt says so itself.** Both wrappers wrote
+  receipts unconditionally, so a `CODEX_PROBE=1` / `AGY_PROBE=1` review — which runs with the
+  frontier-model/max-effort guard **off** — minted a `fresh:true`/`grounded:true` receipt the
+  review-state gate accepted. Both wrappers now write `probe` on **every** successful review, `true` or
+  `false`, through the shared byte-identical `write_review_receipt` block: a receipt self-declares and
+  nothing has to infer it. The kit rejects a probe-marked receipt (a probe never attests) and **equally
+  rejects an unmarked one — silence is not a declaration**.
+- **One attesting predicate, three consumers.** `classifyReviewReceiptForTree` /
+  `summarizeReviewReceiptsForTree` / `describeMissingReviewAttestation` live in the neutral
+  `review-ledger-core.mjs` and are read by `review-state.mjs`, `receiptCrossCheck` and the round writer
+  — two gates disagreeing about what attests is precisely the class AD-050 closed, and a second copy
+  would re-open it. The shared summary also fixes a latent hole: the ledger took `own[own.length - 1]`,
+  so a probe landing **after** a real review became the authoritative verdict — a probe SHIP could bury
+  a real REWORK and let both gates report convergence. The summary now returns the latest **attesting**
+  receipt, never the last line.
+- **Scope of the claim.** What a marker carries is UNTRUSTWORTHINESS, never provenance — receipts are
+  not authenticated, and a forger could write `probe:false` as easily as any other field. This is
+  self-discipline made legible, not a security boundary. See the BREAKING callout above for the upgrade
+  path; full record, including the mid-execution amendment of the original design and the stated
+  residuals, in AD-057.
+
 ## 1.49.0 — Honesty/robustness bundle: refresh EROFS stated skip · settings integer-overflow parity (AD-056)
 
 A small **honesty/robustness** release (kit MINOR carrying the two bridge PATCH bumps in-tarball —

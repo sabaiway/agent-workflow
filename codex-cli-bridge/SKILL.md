@@ -2,7 +2,7 @@
 name: codex-cli-bridge
 description: Delegate work to the OpenAI Codex CLI (`codex`) under a ChatGPT subscription — run plan/instruction EXECUTION in a sandboxed workspace, or get a read-only ADVISORY review of a plan or working-tree diff — as a second delegated-execution backend beside Antigravity. Use when the user wants to hand a bounded coding task or plan to `codex exec`, get a second-opinion review from codex, install or authenticate Codex CLI, understand its sandbox/network/approval policy, drive codex efficiently from the main agent (exec vs review, resume, the commit boundary), bridge project context (`AGENTS.md`) into codex, or troubleshoot codex flags, models, auth, or its no-TTY headless behaviour.
 metadata:
-  version: '2.7.1'
+  version: '2.8.0'
 ---
 
 # codex-cli-bridge
