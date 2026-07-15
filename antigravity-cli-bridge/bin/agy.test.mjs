@@ -455,3 +455,79 @@ describe('agy.sh — settings surface ⟷ manifest (D6, manifest-pinned)', () =>
     }
   });
 });
+
+// ── mode catalog: the contract-free raw mode ⟷ this wrapper (BRIDGE-MODES-CATALOG) ─────
+// agy-run is the probe role: it is dispatched by no activity slot and so carries NO manifest
+// driving contract (`wrapperContractFor(_, 'probe')` stays null). Its catalog entry therefore
+// carries a LITERAL descriptor — the stated exception to no-duplication, because for a
+// contract-free mode the catalog IS canonical. That makes the catalog the only thing that can
+// drift from this wrapper, so these arms pin it in BOTH directions and then really drive it.
+const USAGE_HEADER = 'Usage:';
+const PROBE_CMD = 'agy-run';
+// The operand slots a rendered invocation form really carries: <angle> and [bracket] placeholders.
+// The optional `@` prefix rides WITH the slot — the catalog declares the whole token a user types.
+const SLOT_RE = /@?<[^<>]+>|\[[^[\]]*\]/g;
+
+describe('agy.sh — mode catalog ⟷ wrapper reality (the contract-free raw mode)', () => {
+  const catalog = MANIFEST.modeCatalog ?? [];
+  const probeEntries = catalog.filter((e) => e.role === 'probe');
+
+  const helpText = () => {
+    const home = mkdtempSync(join(tmpdir(), 'agy-catalog-help-'));
+    const r = spawnSync('bash', [WRAPPER, '--help'], {
+      env: { HOME: home, PATH: makePathWithout(home, ['agy', 'git']) },
+      encoding: 'utf8',
+      timeout: 15000,
+    });
+    rmSync(home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout;
+  };
+
+  it('the probe role is cataloged as exactly ONE contract-free primary carrying a literal descriptor', () => {
+    assert.equal(probeEntries.length, 1, 'agy-run is one mode — a raw prompt');
+    const [entry] = probeEntries;
+    assert.equal(entry.kind, 'primary');
+    assert.equal(MANIFEST.roles.probe.contract, undefined, 'the probe role carries no driving contract — the catalog must not invent one');
+    assert.ok(!Object.hasOwn(entry, 'invocationRefs'), 'a contract-free entry has nothing to reference');
+    assert.equal(typeof entry.descriptor, 'string', 'a contract-free entry is canonical for its own form');
+  });
+
+  it('the catalog descriptor IS a real --help Usage line (catalog → wrapper: no invented form)', () => {
+    const usage = helpSection(helpText(), USAGE_HEADER);
+    assert.ok(usage.includes(probeEntries[0].descriptor), `the cataloged form is in no Usage line: ${probeEntries[0].descriptor}`);
+  });
+
+  it('every --help Usage line belongs to the cataloged mode (wrapper → catalog: no uncataloged form)', () => {
+    const usage = helpSection(helpText(), USAGE_HEADER);
+    assert.ok(usage.length > 0, 'the wrapper must document its usage');
+    for (const line of usage) {
+      assert.ok(line.includes(PROBE_CMD), `Usage line "${line}" invokes something other than the one cataloged mode`);
+    }
+  });
+
+  it('the catalog operand slots set-EQUAL the slots the cataloged form really carries (both directions)', () => {
+    const [entry] = probeEntries;
+    const realSlots = new Set(entry.descriptor.match(SLOT_RE) ?? []);
+    setEq(new Set((entry.operands ?? []).map((o) => o.slot)), realSlots, 'catalog operands ⟷ the slots the descriptor really carries');
+  });
+
+  it('the required operand really accepts every form the catalog says it takes (forward drive)', () => {
+    // <prompt|-|@file> is ONE slot with three real spellings — drive all three against the stub.
+    const home = makeSandbox('#!/usr/bin/env bash\nprintf "%s" "$*" >"$HOME/argv"\necho FAKE_REPLY\n');
+    const promptFile = join(home, 'p.md');
+    writeFileSync(promptFile, 'from a file\n');
+    const env = { HOME: home, PATH: `${join(home, '.local', 'bin')}:${process.env.PATH}`, TMPDIR: process.env.TMPDIR ?? '/tmp' };
+    const drives = [
+      { label: 'literal prompt', args: ['inline prompt'], stdin: undefined },
+      { label: 'stdin (-)', args: ['-'], stdin: 'from stdin\n' },
+      { label: '@file', args: [`@${promptFile}`], stdin: undefined },
+    ];
+    for (const drive of drives) {
+      const r = spawnSync('bash', [WRAPPER, ...drive.args], { env, encoding: 'utf8', timeout: 20000, input: drive.stdin });
+      assert.equal(r.status, 0, `${drive.label}: ${r.stderr}`);
+      assert.match(r.stdout, /FAKE_REPLY/, `${drive.label} never reached agy`);
+    }
+    rmSync(home, { recursive: true, force: true });
+  });
+});

@@ -20,6 +20,7 @@ expansion), never via the shell. The validator is [`validate.mjs`](./validate.mj
 | `settings` | array | no | the bridge's **settings-file surface** (typed; see *Settings*). Unlike `contract`, a malformed entry **fails** `--strict`. |
 | `networkHosts` | string[] | no | the backend CLI's **observed egress host families** (see *Network hosts*). A malformed list **fails** `--strict`. |
 | `writableDirs` | object[] | no | the backend CLI's **writable state-dir declarations** — `{env, default}` entries (see *Writable dirs*). A malformed list **fails** `--strict`. |
+| `modeCatalog` | object[] | no | the bridge's **user-facing operating modes** — what each mode is FOR and when to reach for it (see *Mode catalog*). A malformed block **fails** `--strict`. |
 | `install` / `uninstall` | object | no | `install.npm` is a package name, not a path |
 | `cost` / `quota` / `provenance` | misc | no | informational |
 | `available` | boolean | no | `false` = a declared-but-not-installed stub; skips fs/version checks |
@@ -127,6 +128,67 @@ declared path is only the **default under no override**. Rules:
 - Like `networkHosts`, this is a **documentation source**: the kit never seeds
   `sandbox.filesystem.allowWrite` or any other filesystem allowance — the entries feed the
   sandbox-lane discoverability item (session/host sandbox config is hand-applied territory).
+
+## Mode catalog (BRIDGE-MODES-CATALOG)
+
+`modeCatalog` answers the question the `contract` block deliberately does not: **what modes does
+this bridge offer, and what is each one FOR?** The `contract` is the internal DRIVING contract (how
+a dispatching agent invokes a role); the catalog is the **user-facing discovery surface**. They are
+related, never nested: a catalog entry backed by a contract **composes by reference** and never
+restates a descriptor.
+
+**Additive-optional.** The schema stays `1`. An absent block is **valid** — a bridge released before
+the catalog keeps validating, and the mode renders a stated *"no catalog — this bridge predates it"*
+line rather than `invalid-manifest` or an empty silent list. A **present** block is typed-validated
+like `settings`: the renderer prints these strings verbatim and builds invocation forms from the
+refs, so a malformed entry would render a lying discovery surface.
+
+**Currency claim (honest scope):** the catalog tracks the **documented wrapper mode set** — never
+"the CLI's modes". Upstream CLI evolution enters through a bridge release, where the source-level
+drift tests fail loudly until the catalog is updated. Nothing here ever probes a live CLI.
+
+An **array** of entries (an object would silently dedupe keys under `JSON.parse`). Each entry:
+
+- `key` (string, required) — a **unique bare token** (`exec`, `review.plan`, `exec.resume-last`).
+  For an `env-hook` the key **IS** its env-var name, so it must be UPPER_SNAKE_CASE.
+- `kind` (string, required) — the closed taxonomy:
+  - `primary` — a mode you drive directly (`codex exec`, `agy-review code`, the raw `agy-run`).
+  - `continuation` — resumes a mode already in flight (`--resume-last`, `--continue`).
+  - `env-hook` — an env var that MODIFIES named modes (`CODEX_PROBE`). It names `parents[]`, never
+    a role: an env var is not a capability, and a fake role would corrupt the recipe planner.
+- `role` (string) — required on `primary`/`continuation`, must be a declared key of `roles`;
+  **forbidden** on an `env-hook`.
+- `parents` (string[]) — required and non-empty on an `env-hook`, resolving to catalog keys (never
+  itself); **forbidden** elsewhere.
+- `submode` (string) — the **explicit** binding to the wrapper's parser mode arm. Present exactly
+  when the entry is a `primary` **and** its role declares `modes[]`; must be one of them. The
+  bridge drift tests set-equal these against the wrapper's REAL arms — the binding is never parsed
+  back out of the key.
+- `purpose` (string, required) — one line: what the mode is for.
+- `whenToUse` (string[], required, non-empty) / `whenNotTo` (string[], optional) — the reach-for-it
+  and reach-for-something-else signals.
+- `invocationRefs` (object[]) — **composition by reference**: `{contractField, index}` into
+  `roles[<role>].contract.invocations` / `.continue`. Required (non-empty) on a contract-backed
+  entry; every ref must resolve, and a contract invocation is claimed by **at most one** entry.
+- `descriptor` (string) — the literal invocation form. Allowed **only** where no contract exists (a
+  contract-free primary such as a raw-prompt mode, or an env-hook): for those the catalog IS
+  canonical — the stated exception to no-duplication.
+- `operands` (object[], optional) — `{slot, required, description}`. Typed **catalog data**, never
+  parsed out of contract strings. Each `slot` is unique within the entry and must really appear in
+  one of the entry's rendered invocation forms — the render labels an unfilled form a **template**
+  and names each required operand, so a slot with nowhere to go would be a lie.
+- `guardrails` (object[], optional) — `{value, enforcement, condition?, source}`. `enforcement` is
+  `enforced` **only** for an OS-/code-enforced fact; where the guarantee has a runtime bound, the
+  `condition` carries it (e.g. a hard timeout is enforced *only when `timeout(1)`/`gtimeout` is on
+  PATH*). Anything a prompt merely asks for renders `advisory`. `source` names where the fact lives.
+- `customHooks` (string[], optional) — this mode's escape hatches, as catalog keys. Each is either
+  an **env-hook that really lists this mode in its `parents[]`** (a hook can never lie about a mode
+  it does not target), or the entry's **own key** — the raw-mode carve-out: a contract-free primary
+  IS its own escape, so it references itself rather than repeating one it does not have.
+
+Every string the renderer prints (`purpose`, `whenToUse`/`whenNotTo` items, `descriptor`, operand
+`description`, guardrail `value`/`condition`/`source`) is ONE line of at most **200** characters
+with no control characters — the surface is a terminal-width list and a pasted form.
 
 ## Path-field rules (Windows-safe, traversal-safe)
 

@@ -62,7 +62,10 @@ Receipt:
   symlinks/directories ride as name-only notes) in code mode, the artifact-file
   sha256 in plan mode; verdict parsed from the mandated literal verdict line (schema mode: the
   verdict field); always fresh:true (one-shot) + grounded:true (native AGENTS.md auto-merge,
-  factsHash null); a write failure warns, never fails the review
+  factsHash null); probe = whether the run relaxed the quality guards (CODEX_PROBE=1), written on
+  EVERY receipt so it self-declares — the kit's review-state gate rejects a probe-marked receipt (a
+  probe review never attests) and equally rejects an unmarked one (silence is not a declaration); a
+  write failure warns, never fails the review
 
 Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):
   ${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf
@@ -217,7 +220,11 @@ fi
 CHATGPT_LOGIN_GUARD="Logged in using ChatGPT"
 
 # --- Quality-first guard: refuse a silent model/effort downgrade ---------------
+# A relaxed run is RECORDED, not just warned about: the receipt carries probe:true so the kit's
+# review-state gate rejects it — "do NOT use this as a real review" becomes a mechanism, not a plea.
+REVIEW_PROBE=false
 if [[ "${CODEX_PROBE:-}" == "1" ]]; then
+  REVIEW_PROBE=true
   echo "warning: CODEX_PROBE=1 — THROWAWAY PROBE MODE. Quality guards relaxed; do NOT use this run's" >&2
   echo "         output as a real review (model='$CODEX_MODEL' effort='$CODEX_EFFORT')." >&2
 else
@@ -414,13 +421,18 @@ receipt_json_scalar() {
   if [[ -z "${1:-}" ]]; then printf 'null'; else printf '"%s"' "$1"; fi
 }
 
-# write_review_receipt <artifact|""> <fresh: true|false> <fingerprint|""> <verdict> <grounded: true|false> <factsHash|"">
+# write_review_receipt <artifact|""> <fresh: true|false> <fingerprint|""> <verdict> <grounded: true|false> <factsHash|""> [probe: true|false]
 # Appends ONE receipt line (the AD-038 fixture shape) as a side effect of a SUCCESSFUL review —
 # to $AW_REVIEW_RECEIPTS when set, else <git dir>/agent-workflow-review-receipts.jsonl (inside the
 # git dir by construction, so it is never committable). Fail-safe: every failure here warns loudly
 # and returns 0 — a missing receipt fails the kit's review-state CHECKER, never the review run.
+# The optional 7th argument marks a PROBE run (CODEX_PROBE=1 / AGY_PROBE=1 — the quality guards
+# relaxed), which the kit's review-state gate rejects: a probe review must never attest a tree. The
+# marker is written ALWAYS, true or false: the receipt SELF-DECLARES, so the gate reads the fact
+# itself instead of inferring it from this wrapper's version (which bumps in a different release
+# phase). Silence is not a declaration — an unmarked receipt is untrustworthy and the gate rejects it.
 write_review_receipt() {
-  local artifact="$1" fresh="$2" fingerprint="$3" verdict="$4" grounded="$5" facts_hash="$6"
+  local artifact="$1" fresh="$2" fingerprint="$3" verdict="$4" grounded="$5" facts_hash="$6" probe="${7:-false}"
   local receipts="${AW_REVIEW_RECEIPTS:-}"
   if [[ -z "$receipts" ]]; then
     local receipt_git_dir
@@ -430,11 +442,12 @@ write_review_receipt() {
     fi
     receipts="$receipt_git_dir/agent-workflow-review-receipts.jsonl"
   fi
-  local line
-  line="$(printf '{"schema":1,"artifact":%s,"fresh":%s,"fingerprint":%s,"backend":"%s","verdict":"%s","grounded":%s,"factsHash":%s,"wrapperVersion":"%s","timestamp":"%s"}' \
+  local line probe_field=',"probe":false'
+  if [[ "$probe" == "true" ]]; then probe_field=',"probe":true'; fi
+  line="$(printf '{"schema":1,"artifact":%s,"fresh":%s,"fingerprint":%s,"backend":"%s","verdict":"%s","grounded":%s,"factsHash":%s,"wrapperVersion":"%s","timestamp":"%s"%s}' \
     "$(receipt_json_scalar "$artifact")" "$fresh" "$(receipt_json_scalar "$fingerprint")" \
     "$AW_RECEIPT_BACKEND" "$verdict" "$grounded" "$(receipt_json_scalar "$facts_hash")" \
-    "$AW_BRIDGE_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)")"
+    "$AW_BRIDGE_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$probe_field")"
   if ! printf '%s\n' "$line" >>"$receipts" 2>/dev/null; then
     echo "warning: could not append the review receipt to $receipts — the review itself succeeded;" >&2
     echo "         the review-state gate will read the current tree as un-receipted." >&2
@@ -687,5 +700,5 @@ fi
 [[ -z "$verdict" ]] && verdict="unknown"
 # codex is grounded by construction (AGENTS.md auto-merge + the precomputed change set): grounded
 # true, factsHash null (native grounding — no separate facts payload exists). Every codex run is a
-# full fresh run (one-shot, no resume) → fresh:true.
-write_review_receipt "$REVIEW_ARTIFACT" true "$REVIEW_FINGERPRINT" "$verdict" true ""
+# full fresh run (one-shot, no resume) → fresh:true. $REVIEW_PROBE marks a guards-relaxed run.
+write_review_receipt "$REVIEW_ARTIFACT" true "$REVIEW_FINGERPRINT" "$verdict" true "" "$REVIEW_PROBE"

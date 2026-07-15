@@ -20,8 +20,10 @@ const detect = (codex = READY, agy = READY) => () => [
   { name: AGY, readiness: agy },
 ];
 
+// The receipt SELF-DECLARES its probe status (D3): an unmarked receipt is untrustworthy and would
+// never satisfy, so these await suites exercise the wait rather than the marker rule.
 const RECEIPT_FIXTURE = JSON.parse(
-  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"ship","grounded":true,"factsHash":null,"wrapperVersion":"2.2.0","timestamp":"2026-07-08T12:00:00Z"}',
+  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"ship","grounded":true,"factsHash":null,"wrapperVersion":"2.2.0","timestamp":"2026-07-08T12:00:00Z","probe":false}',
 );
 const COUNCIL_CONFIG = JSON.stringify({ 'plan-execution': { execute: 'solo', review: 'council' } });
 const SOLO_CONFIG = JSON.stringify({ 'plan-execution': { review: 'solo' } });
@@ -94,6 +96,33 @@ describe('review-state --await', () => {
     assert.equal(r.code, 1);
     assert.match(r.stderr, /TIMEOUT after 10s/);
     assert.match(r.stderr, /agy/, 'the timeout reason names the still-missing backend');
+  });
+
+  it('a PROBE receipt never satisfies — the await keeps waiting, then a real review lands READY (D3)', async () => {
+    const root = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    // agy answers with a PROBE run first (guards relaxed — it cannot attest), then a real one.
+    mint(root, { backend: 'agy', fingerprint: fp, factsHash: 'c'.repeat(64), probe: true });
+    let slept = 0;
+    const clock = fakeClock(() => { slept += 1; if (slept === 1) mint(root, { backend: 'agy', fingerprint: fp, factsHash: 'd'.repeat(64) }); });
+    const r = await mainAwait(['--await', '--timeout', '60'], { cwd: root, env: {}, detect: detect(), ...clock });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(slept, 1, 'the probe receipt did NOT end the wait — only the real review did');
+    assert.match(r.stdout, /READY/);
+  });
+
+  it('a probe-ONLY backend times out loudly, naming the probe reason (D3)', async () => {
+    const root = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    mint(root, { backend: 'agy', fingerprint: fp, factsHash: 'e'.repeat(64), probe: true });
+    const r = await mainAwait(['--await', '--timeout', '10'], { cwd: root, env: {}, detect: detect(), ...fakeClock() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /TIMEOUT after 10s/);
+    assert.match(r.stderr, /only probe receipts/, 'the timeout states WHY, never just "missing"');
   });
 
   it('an UNGROUNDED receipt never satisfies (times out)', async () => {

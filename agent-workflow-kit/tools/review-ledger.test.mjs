@@ -915,7 +915,9 @@ const mkState = (over = {}) => ({
   ...over,
 });
 
-const codexReceipt = (fingerprint, verdict = 'SHIP') => ({ schema: 1, artifact: 'code', fresh: true, fingerprint, backend: 'codex', verdict, grounded: true, timestamp: 't' });
+// A receipt SELF-DECLARES its probe status (D3): `probe:false` is a real review, `probe:true` a
+// throwaway probe that may never attest. An unmarked receipt is rejected, so the default is explicit.
+const codexReceipt = (fingerprint, verdict = 'SHIP', overrides = {}) => ({ schema: 1, artifact: 'code', fresh: true, fingerprint, backend: 'codex', verdict, grounded: true, timestamp: 't', probe: false, ...overrides });
 
 describe('decideCheck — the --check gate exit contract', () => {
   it('exit 0 — explicitly configured solo (detector-independent)', () => {
@@ -1174,6 +1176,46 @@ describe('receiptCrossCheck — presence + ship-class consistency', () => {
   it('a non-0/0 backend needs presence but no ship-class consistency', () => {
     const r = round({ fingerprint: FP, backends: [B('codex', 0, 1)], findings: [F('k', 'major', 'codex')] });
     assert.equal(receiptCrossCheck(r, [codexReceipt(FP, 'revise')], FP).ok, true);
+  });
+
+  // The ORDER is the whole finding (D3): the cross-check used to take the LAST current receipt, so a
+  // probe written after a real review became the authoritative verdict — a probe SHIP could bury a
+  // real REWORK and let this gate AND review-state both report convergence.
+  it('a later probe SHIP never overrides an earlier real REWORK receipt', () => {
+    const r = round({ fingerprint: FP, backends: [B('codex')], findings: [] });
+    const receipts = [codexReceipt(FP, 'revise'), codexReceipt(FP, 'SHIP', { probe: true })];
+    const out = receiptCrossCheck(r, receipts, FP);
+    assert.equal(out.ok, false, 'the real verdict is the attesting one, whatever lands after it');
+    assert.match(out.reason, /attesting receipt verdict "revise"/);
+  });
+
+  it('a later probe REWORK never poisons an earlier real SHIP receipt', () => {
+    const r = round({ fingerprint: FP, backends: [B('codex')], findings: [] });
+    const receipts = [codexReceipt(FP, 'SHIP'), codexReceipt(FP, 'revise', { probe: true })];
+    assert.equal(receiptCrossCheck(r, receipts, FP).ok, true, 'a probe cannot fail a round either — it simply never attests');
+  });
+
+  it('probe-only receipts cannot attest a round, with a probe-specific reason', () => {
+    const r = round({ fingerprint: FP, backends: [B('codex')], findings: [] });
+    const out = receiptCrossCheck(r, [codexReceipt(FP, 'SHIP', { probe: true })], FP);
+    assert.equal(out.ok, false);
+    assert.match(out.reason, /only probe receipts exist for the current tree/);
+  });
+
+  it('an UNMARKED receipt cannot attest a round (silence is not a declaration)', () => {
+    const r = round({ fingerprint: FP, backends: [B('codex')], findings: [] });
+    const unmarked = codexReceipt(FP, 'SHIP');
+    delete unmarked.probe;
+    const out = receiptCrossCheck(r, [unmarked], FP);
+    assert.equal(out.ok, false);
+    assert.match(out.reason, /1 receipt\(s\) with no probe marker/);
+  });
+
+  it('a MALFORMED marker cannot attest a round (fail-closed)', () => {
+    const r = round({ fingerprint: FP, backends: [B('codex')], findings: [] });
+    const out = receiptCrossCheck(r, [codexReceipt(FP, 'SHIP', { probe: 'no' })], FP);
+    assert.equal(out.ok, false);
+    assert.match(out.reason, /malformed probe marker/);
   });
 });
 

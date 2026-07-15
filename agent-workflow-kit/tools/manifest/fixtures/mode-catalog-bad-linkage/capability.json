@@ -1,0 +1,107 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "fixture-mode-catalog-bad-linkage",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["review", "probe"],
+  "roles": {
+    "review": { "cmd": "fixture-review", "source": "bin/run.sh", "modes": ["plan", "code"], "output": "advisory" },
+    "probe": { "cmd": "fixture-run", "source": "bin/run.sh", "output": "advisory" }
+  },
+  "modeCatalog": [
+    {
+      "key": "ok-primary",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "the one well-formed entry — the parent target for the env-hooks below",
+      "whenToUse": ["a raw advisory prompt"],
+      "descriptor": "fixture-run <prompt>",
+      "operands": [{ "slot": "<prompt>", "required": true, "description": "the prompt text" }]
+    },
+    {
+      "key": "no-role",
+      "kind": "primary",
+      "purpose": "a primary with no role linkage",
+      "whenToUse": ["never — a primary must name its role"],
+      "descriptor": "fixture-run <prompt>"
+    },
+    {
+      "key": "unknown-role",
+      "kind": "primary",
+      "role": "synthesize",
+      "purpose": "a role in the family vocabulary that this manifest does not declare",
+      "whenToUse": ["never — the role is not in roles{}"],
+      "descriptor": "fixture-run <prompt>"
+    },
+    {
+      "key": "HOOK_WITH_ROLE",
+      "kind": "env-hook",
+      "role": "review",
+      "parents": ["ok-primary"],
+      "purpose": "an env-hook claiming a role — the fake-role shape the taxonomy forbids",
+      "whenToUse": ["never — an env-hook has parents, never a role"],
+      "descriptor": "HOOK_WITH_ROLE=1 fixture-run <prompt>"
+    },
+    {
+      "key": "HOOK_NO_PARENTS",
+      "kind": "env-hook",
+      "purpose": "an env-hook that modifies nothing",
+      "whenToUse": ["never — an env-hook must name the modes it modifies"],
+      "descriptor": "HOOK_NO_PARENTS=1 fixture-run <prompt>"
+    },
+    {
+      "key": "HOOK_BAD_PARENT",
+      "kind": "env-hook",
+      "parents": ["nope"],
+      "purpose": "an env-hook whose parent is no catalog key",
+      "whenToUse": ["never — the parent does not resolve"],
+      "descriptor": "HOOK_BAD_PARENT=1 fixture-run <prompt>"
+    },
+    {
+      "key": "parents-on-primary",
+      "kind": "primary",
+      "role": "probe",
+      "parents": ["ok-primary"],
+      "purpose": "a primary carrying the env-hook-only parents field",
+      "whenToUse": ["never — parents is env-hook only"],
+      "descriptor": "fixture-run <prompt>"
+    },
+    {
+      "key": "missing-submode",
+      "kind": "primary",
+      "role": "review",
+      "purpose": "a primary on a role that declares modes, with no submode binding",
+      "whenToUse": ["never — the parser-arm binding is missing"],
+      "descriptor": "fixture-review code"
+    },
+    {
+      "key": "bad-submode",
+      "kind": "primary",
+      "role": "review",
+      "submode": "nope",
+      "purpose": "a submode that is no declared mode of the role",
+      "whenToUse": ["never — the submode does not resolve"],
+      "descriptor": "fixture-review code"
+    },
+    {
+      "key": "submode-on-modeless-role",
+      "kind": "primary",
+      "role": "probe",
+      "submode": "code",
+      "purpose": "a submode on a role that declares no modes",
+      "whenToUse": ["never — there is no parser arm to bind to"],
+      "descriptor": "fixture-run <prompt>"
+    },
+    {
+      "key": "submode-on-continuation",
+      "kind": "continuation",
+      "role": "review",
+      "submode": "code",
+      "purpose": "a submode on a continuation",
+      "whenToUse": ["never — only a primary binds a parser mode arm"],
+      "descriptor": "fixture-review --continue"
+    }
+  ],
+  "cost": "subscription"
+}

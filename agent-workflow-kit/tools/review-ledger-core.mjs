@@ -348,6 +348,80 @@ export const filterSegmentRecords = (records, { activity, loop, base }) =>
 // (no duplicate, gap, or out-of-order round). Checks the EXISTING sequence, not just the incoming
 // round: a ledger like [2] / [1,1] / [2,1] (reachable only by hand-editing the git-dir file — the
 // stated residual) must fail closed rather than be trusted to compute the "latest" round (codex R3).
+// ── the attesting-receipt predicate (BRIDGE-MODES-CATALOG, D3) ─────────────────────────
+// The ONE place that decides whether a review receipt may attest a tree. It lives in this neutral
+// core because all three consumers — review-state.mjs (the receipt gate), review-ledger.mjs (the
+// round cross-check) and review-ledger-write.mjs (the round writer) — need it, and the core imports
+// none of them: the same DAG reason this module exists at all. Two gates disagreeing about what
+// counts as an attestation is exactly the class AD-050 closed; a second copy would re-open it.
+export const REVIEW_RECEIPT_CLASS = Object.freeze({
+  NOT_CURRENT: 'not-current',
+  ATTESTING: 'attesting',
+  UNGROUNDED: 'ungrounded',
+  PROBE: 'probe',
+  UNMARKED: 'unmarked',
+  MALFORMED_MARKER: 'malformed-marker',
+});
+
+// Classify ONE receipt against a tree fingerprint. Order is load-bearing: identity first (is this
+// even about the current tree?), then the probe marker (may it attest at all?), then grounding.
+export const classifyReviewReceiptForTree = (receipt, fingerprint) => {
+  if (!isPlainObject(receipt) || receipt.fresh !== true || receipt.artifact !== 'code' || receipt.fingerprint !== fingerprint) {
+    return REVIEW_RECEIPT_CLASS.NOT_CURRENT;
+  }
+  if (!Object.hasOwn(receipt, 'probe')) return REVIEW_RECEIPT_CLASS.UNMARKED;
+  if (typeof receipt.probe !== 'boolean') return REVIEW_RECEIPT_CLASS.MALFORMED_MARKER;
+  if (receipt.probe === true) return REVIEW_RECEIPT_CLASS.PROBE;
+  if (receipt.grounded !== true) return REVIEW_RECEIPT_CLASS.UNGROUNDED;
+  return REVIEW_RECEIPT_CLASS.ATTESTING;
+};
+
+// Summarize one backend's receipts for a tree → { state, receipt, counts… }. `receipt` is the LATEST
+// ATTESTING one — never simply the last line: a probe (or a forged marker) written after a real
+// review must never become the authoritative verdict, which is precisely how a late probe SHIP could
+// override an earlier real REWORK and let both gates report convergence.
+export const summarizeReviewReceiptsForTree = (receipts, fingerprint) => {
+  const classified = receipts
+    .map((receipt) => ({ receipt, classification: classifyReviewReceiptForTree(receipt, fingerprint) }))
+    .filter(({ classification }) => classification !== REVIEW_RECEIPT_CLASS.NOT_CURRENT);
+  const rowsFor = (classification) => classified.filter((row) => row.classification === classification);
+  const attesting = rowsFor(REVIEW_RECEIPT_CLASS.ATTESTING);
+  const ungrounded = rowsFor(REVIEW_RECEIPT_CLASS.UNGROUNDED);
+  const probe = rowsFor(REVIEW_RECEIPT_CLASS.PROBE);
+  const unmarked = rowsFor(REVIEW_RECEIPT_CLASS.UNMARKED);
+  const malformedMarker = rowsFor(REVIEW_RECEIPT_CLASS.MALFORMED_MARKER);
+  const counts = {
+    currentCount: classified.length,
+    ungroundedCount: ungrounded.length,
+    probeExcluded: probe.length,
+    markerRejected: malformedMarker.length,
+    unmarkedRejected: unmarked.length,
+  };
+  if (attesting.length > 0) return { state: 'current', receipt: attesting[attesting.length - 1].receipt, ...counts };
+  if (ungrounded.length > 0) return { state: 'ungrounded', receipt: ungrounded[ungrounded.length - 1].receipt, ...counts };
+  if (classified.length > 0) {
+    return { state: malformedMarker.length > 0 || unmarked.length > 0 ? 'rejected' : 'probe', receipt: null, ...counts };
+  }
+  return { state: 'none', receipt: null, ...counts };
+};
+
+// Why this backend has no attestation — one stated sentence, never a silent "no receipt". The four
+// causes have DIFFERENT recoveries (run a real review / refresh the bridge / fix the receipt source /
+// re-run grounded), so they are never collapsed into one message.
+export const describeMissingReviewAttestation = (summary) => {
+  if (summary.state === 'current') return null;
+  const exclusions = [
+    summary.probeExcluded > 0 ? `${summary.probeExcluded} probe receipt(s)` : null,
+    summary.markerRejected > 0 ? `${summary.markerRejected} receipt(s) with a malformed probe marker` : null,
+    summary.unmarkedRejected > 0 ? `${summary.unmarkedRejected} receipt(s) with no probe marker` : null,
+  ].filter(Boolean);
+  const exclusionSuffix = exclusions.length > 0 ? `; excluded ${exclusions.join(', ')}` : '';
+  if (summary.state === 'ungrounded') return `only ungrounded normal receipts exist for the current tree${exclusionSuffix}`;
+  if (summary.state === 'probe') return 'only probe receipts exist for the current tree — a probe review never attests';
+  if (summary.state === 'rejected') return `current-tree receipts have untrustworthy probe markers${exclusionSuffix}`;
+  return 'no fresh code receipt exists for the current tree';
+};
+
 export const roundSequenceIntact = (records) => {
   const nums = records.filter((r) => r.kind === 'round').map((r) => r.round);
   return nums.every((n, i) => n === i + 1);

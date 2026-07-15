@@ -1,0 +1,111 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "fixture-mode-catalog-bad-operands",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["probe"],
+  "roles": {
+    "probe": { "cmd": "fixture-run", "source": "bin/run.sh", "output": "advisory" }
+  },
+  "modeCatalog": [
+    {
+      "key": "bad-slot-type",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "an operand slot that is not a string",
+      "whenToUse": ["never — the slot is malformed"],
+      "descriptor": "fixture-run <prompt>",
+      "operands": [{ "slot": 42, "required": true, "description": "a numeric slot" }]
+    },
+    {
+      "key": "dup-slot",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "the same operand slot declared twice",
+      "whenToUse": ["never — one slot, one declaration"],
+      "descriptor": "fixture-run <prompt>",
+      "operands": [
+        { "slot": "<prompt>", "required": true, "description": "the prompt text" },
+        { "slot": "<prompt>", "required": false, "description": "the prompt text again" }
+      ]
+    },
+    {
+      "key": "bad-required",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "an operand whose required flag is not a boolean",
+      "whenToUse": ["never — required is a boolean"],
+      "descriptor": "fixture-run <prompt>",
+      "operands": [{ "slot": "<prompt>", "required": "yes", "description": "the prompt text" }]
+    },
+    {
+      "key": "orphan-slot",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "an operand slot that appears in no rendered descriptor",
+      "whenToUse": ["never — the render would name an operand the form has no room for"],
+      "descriptor": "fixture-run <prompt>",
+      "operands": [{ "slot": "<nowhere>", "required": true, "description": "a slot the descriptor never carries" }]
+    },
+    {
+      "key": "bad-operands-shape",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "an operands block that is not an array",
+      "whenToUse": ["never — operands is an array of typed slots"],
+      "descriptor": "fixture-run <prompt>",
+      "operands": "nope"
+    },
+    {
+      "key": "no-description",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "an operand with no description",
+      "whenToUse": ["never — every slot states what it takes"],
+      "descriptor": "fixture-run <prompt>",
+      "operands": [{ "slot": "<prompt>", "required": true }]
+    },
+    {
+      "key": "operand-not-object",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "an operands element that is not a typed slot object",
+      "whenToUse": ["never — a bare scalar is not an operand"],
+      "descriptor": "fixture-run <prompt>",
+      "operands": [42]
+    },
+    {
+      "key": "missing-operands",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "a rendered placeholder with no typed operands block at all",
+      "whenToUse": ["never — the renderer could neither describe nor populate the placeholder"],
+      "descriptor": "fixture-run <prompt>"
+    },
+    {
+      "key": "partial-operands",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "one of two rendered placeholders is undeclared",
+      "whenToUse": ["never — an undeclared slot renders as if the form were ready to run"],
+      "descriptor": "fixture-run <prompt> <model>",
+      "operands": [
+        { "slot": "<prompt>", "required": true, "description": "the prompt text" }
+      ]
+    },
+    {
+      "key": "literal-command-as-slot",
+      "kind": "primary",
+      "role": "probe",
+      "purpose": "a literal command token mislabeled as an operand",
+      "whenToUse": ["never — an operand is a rendered placeholder, not any substring of the form"],
+      "descriptor": "fixture-run <prompt>",
+      "operands": [
+        { "slot": "<prompt>", "required": true, "description": "the prompt text" },
+        { "slot": "fixture-run", "required": true, "description": "a literal command token falsely presented as an operand" }
+      ]
+    }
+  ],
+  "cost": "subscription"
+}
