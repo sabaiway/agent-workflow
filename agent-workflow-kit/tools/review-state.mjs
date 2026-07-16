@@ -285,14 +285,17 @@ export const resolveReceiptsPath = (cwd, env = process.env) => {
   return gitDir == null ? null : join(gitDir, RECEIPTS_BASENAME);
 };
 
-// Parse the receipt file → { receipts, malformed }. Absent file → empty (not an error: no review
-// ever ran). A malformed line is counted + reported, never silently dropped.
+// Parse the receipt file → { receipts, malformed, readError? }. Absent file → empty (not an
+// error: no review ever ran). A NON-ENOENT read failure surfaces as readError — an unreadable
+// store must never silently read as "no receipts" (the core-evidence summary withholds its
+// verdicts section on it). A malformed line is counted + reported, never silently dropped.
 export const readReceipts = (path, readFile = readFileSync) => {
   let raw;
   try {
     raw = readFile(path, 'utf8');
-  } catch {
-    return { receipts: [], malformed: 0 };
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return { receipts: [], malformed: 0 };
+    return { receipts: [], malformed: 0, readError: (err && err.code) || (err && err.message) || 'read failed' };
   }
   const receipts = [];
   let malformed = 0;

@@ -143,6 +143,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the AD-055 Part I consent-gated ack-store writer (docs/ai/acks.json — the family-owned
       // neutral sandbox-lane fingerprint ack, relocated off the host settings schema)
       'tools/ack-write.mjs',
+      // the strip-the-kit core-evidence writer (D3(b)/(c) + D6/D6a/D7): the git-dir evidence store
+      // (red-proof / degrade / summary) the hardened self-control core rides on
+      'tools/core-evidence.mjs',
       // the opt-in one-file-per-ADR store migration writer + its mode + the seeded templates (AD-051)
       'tools/migrate-adr-store.mjs',
       'references/modes/migrate-adr-store.md',
@@ -247,7 +250,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       from memory). The *.test.mjs siblings are stripped by files[].
     // 151 = 150 + tools/ack-write.mjs (AD-055 Part I — the consent-gated writer for the family-owned
     //       docs/ai/acks.json neutral ack store; its *.test.mjs sibling is stripped by files[]).
-    assert.equal(packed.length, 151, `tarball file count drifted (${packed.length} ≠ 151)`);
+    // 152 = 151 + tools/core-evidence.mjs (strip-the-kit Phase 2 — the ONE core-evidence writer:
+    //       the git-dir store for red-proof / degrade records + the D6 stateless summary). Its
+    //       *.test.mjs sibling is stripped by files[].
+    assert.equal(packed.length, 152, `tarball file count drifted (${packed.length} ≠ 152)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
