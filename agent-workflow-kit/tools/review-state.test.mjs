@@ -21,6 +21,7 @@ import {
   isScratchPlanName,
   plansInFlight,
   backendReceiptStatus,
+  readReceipts,
   RECEIPTS_BASENAME,
 } from './review-state.mjs';
 import { READY, NEEDS_SKILL } from './detect-backends.mjs';
@@ -573,6 +574,20 @@ describe('review-state — receipts file + env override + report surface', () =>
     assert.equal(j.resolved.recipe, 'council');
     assert.deepEqual(j.requiredBackends, ['codex', 'agy']);
     assert.equal(typeof j.check.code, 'number');
+  });
+});
+
+describe('readReceipts — a non-ENOENT read failure is surfaced, never an empty success', () => {
+  it('readReceipts surfaces a non-ENOENT read failure as readError', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'review-state-recdir-'));
+    const r = readReceipts(dir);
+    assert.ok(r.readError, 'reading a directory must surface a readError (an unreadable store is not "no receipts")');
+    assert.equal(r.receipts.length, 0);
+    rmSync(dir, { recursive: true, force: true });
+  });
+  it('an absent file stays the empty no-error shape (no review ever ran)', () => {
+    const r = readReceipts(join(tmpdir(), 'review-state-ghost-receipts.jsonl'));
+    assert.deepEqual([r.receipts.length, r.malformed, r.readError], [0, 0, undefined]);
   });
 });
 
