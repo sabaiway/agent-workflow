@@ -7,6 +7,20 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-16 — kit 2.1.0 + antigravity bridge 3.0.0 (MAJOR): agy code review fails CLOSED pre-spend (AD-058)
+
+**Bridge MAJOR, kit MINOR carrier.** `agy-review code` without a NON-EMPTY `--facts` payload now
+refuses at parse time — exit 2, zero subscription runs spent, and the refusal prints the exact
+recovery (the installed kit's `grounding.mjs`, resolved from the wrapper's own location and quoted,
+plus the `--facts @<file>` re-run line). Previously the wrapper warned and spent the run anyway —
+producing a `grounded:false` receipt the review-state gate rejects by design: a guaranteed-wasted
+spend. Explicit, honest escapes: `--ungrounded` (throwaway opinion; the receipt records
+`grounded:false` and never attests) and `AGY_PROBE=1` (a probe may run ungrounded — its receipt
+never attests either way). `plan`/`diff` and continuations unchanged. Every declaration home moved
+in lockstep, drift-guarded: `--help` ⟷ `capability.json` (contract + modeCatalog) ⟷ the kit
+registry mirror ⟷ SKILL.md ⟷ the reference docs. Scripts calling bare `agy-review code` add
+`--facts @f` or `--ungrounded`.
+
 ## 2026-07-15 — kit 2.0.0 (BREAKING) + bridges 2.8.0/2.7.0: bridge mode catalog + a review receipt that self-declares (AD-057)
 
 **Kit MAJOR** — the first in the kit's history. A review receipt written before this release **no longer

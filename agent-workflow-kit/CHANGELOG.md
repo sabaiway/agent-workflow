@@ -4,6 +4,35 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 2.1.0 — agy code review fails CLOSED pre-spend: grounded facts required, `--ungrounded` is the explicit escape (AD-058)
+
+> ### ⚠ the bundled antigravity bridge takes MAJOR 3.0.0 — bare `agy-review code` now refuses
+>
+> `agy-review code` without a NON-EMPTY `--facts` payload exits 2 **before spending a run**
+> (previously: a loud warning, then a spent subscription run whose `grounded:false` receipt the
+> review-state gate rejects — a guaranteed-wasted spend). Scripts calling bare `agy-review code`
+> must add `--facts @f` (grounded) or `--ungrounded` (explicit throwaway opinion; the receipt still
+> records `grounded:false` and never attests). `plan`/`diff` modes and continuations are unchanged.
+> The kit itself is a MINOR carrier — the incompatibility is created, and declared, by the bridge.
+
+A **fail-closed** release (kit MINOR carrying antigravity-cli-bridge **3.0.0** MAJOR in-tarball;
+codex-cli-bridge 2.8.0 / engine 1.17.0 / memory 2.3.0 unchanged; the deployment-lineage head stays
+`2.0.0`). One theme: **a run that cannot produce a usable result refuses before the money is spent.**
+
+- **The refusal prints the recovery:** the exact `grounding.mjs` invocation — resolved from the
+  wrapper's own location across the three real install layouts (monorepo canon / deployed skills
+  sibling / kit-bundled mirror), quoted so an install path with spaces still yields a runnable
+  command — plus the `agy-review code --facts @<file>` re-run line.
+- **Escapes, both honest:** `--ungrounded` (code-mode only, contradicts `--facts`, refused on a
+  continuation) and `AGY_PROBE=1` (a probe may now run ungrounded — a probe receipt never attests
+  either way; its `modeCatalog` descriptor now marks the facts file optional).
+- **Every declaration home moves in lockstep** (drift-guarded both directions): `--help` ⟷
+  `capability.json` (`roles.review.contract` + `modeCatalog` `review.code` operands/guardrails +
+  the `AGY_PROBE` env-hook) ⟷ the kit registry mirror (`tools/detect-backends.mjs`) ⟷ `SKILL.md` ⟷
+  `references/driving-agy.md` / `models-and-flags.md` / `review-prompt.md`.
+- **Receipt contract scoped honestly:** in `code` mode an absent/empty facts payload now means NO
+  run and NO receipt; the `grounded:false`-on-empty clause applies to `plan`/`diff` only.
+
 ## 2.0.0 — Bridge mode catalog (manifest-as-source) + a review receipt that SELF-DECLARES (AD-057)
 
 > ### ⚠ BREAKING — a review receipt written before this release no longer attests a tree
