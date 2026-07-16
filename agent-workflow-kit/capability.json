@@ -3,7 +3,7 @@
   "schema": 1,
   "name": "agent-workflow-kit",
   "kind": "composition-root",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "provides": [],
   "roles": {},
   "detect": {
