@@ -23,7 +23,7 @@ GUARD    Do NOT comment on AI model names/versions or your own knowledge cutoff 
          and a known source of false positives. Review ONLY the engineering, AGAINST the facts.
 
 ## Grounded facts — review AGAINST these, do NOT guess the code
-{{GROUNDED_FACTS}}   # from --facts @file (omitted -> an in-band note + a LOUD stderr warning)
+{{GROUNDED_FACTS}}   # from --facts @file (code: REQUIRED non-empty, refuses pre-spend — escapes --ungrounded / AGY_PROBE=1; plan/diff omitted -> an in-band note + a LOUD stderr warning)
 
 ## Decisions already made / already addressed — do NOT re-raise these
 {{ALREADY_DECIDED}}  # from --decided @file (optional — the anti-circling lever; the round-2 payload)

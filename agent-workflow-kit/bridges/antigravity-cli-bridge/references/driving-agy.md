@@ -58,12 +58,16 @@ prompt for `agy-run`. It **mechanizes the grounded-review contract** (see
 [`review-prompt.md`](./review-prompt.md)) so grounding is the enforced default, not a per-call effort:
 
 ```bash
-agy-review code  [--facts @facts.md] [--decided @decided.md] [--focus "…"] [extra focus…]
-agy-review plan  <plan-file> [--facts @f] [--decided @f] [--focus "…"]
+agy-review code  --facts @facts.md [--decided @decided.md] [--focus "…"] [extra focus…]   # facts REQUIRED — refuses pre-spend
+agy-review code  --ungrounded                  # explicit escape: throwaway ungrounded opinion (never attests)
+agy-review plan  <plan-file> [--facts @f] [--decided @f] [--focus "…"]   # no facts ⇒ loud warning, proceeds
 agy-review diff  <diff-file> [--facts @f] [--decided @f] [--focus "…"]
 agy-review --continue          [--decided @f] [--focus "…"]   # round-2 delta — no re-assembly
 agy-review --conversation <id> [--decided @f] [--focus "…"]
 ```
+
+`code` fails CLOSED without a non-empty `--facts` payload — the refusal fires before any run is
+spent; the explicit escapes are `--ungrounded` and `AGY_PROBE=1` (a probe never attests).
 
 What it does for you, and what YOU must supply:
 

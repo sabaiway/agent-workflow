@@ -14,7 +14,8 @@
 #   1. POSTURE   read-only second-opinion reviewer; findings only, no edits/commits
 #   2. GUARD     do NOT opine on AI model names/versions or your knowledge cutoff
 #   3. FACTS     "## Grounded facts — review AGAINST these, do NOT guess the code"
-#                (omitted -> a one-line note in-prompt + a LOUD stderr warning)
+#                (code mode REFUSES pre-spend without a non-empty payload — escapes:
+#                --ungrounded / AGY_PROBE=1; plan/diff omitted -> a LOUD stderr warning)
 #   4. DECIDED   "## Decisions already made / already addressed — do NOT re-raise"
 #                (optional; the anti-circling lever — the round-2 payload)
 #   5. FOCUS     the merged --focus / trailing focus text (optional)
@@ -27,7 +28,7 @@
 # facts (--facts), the already-decided list (--decided), and the focus (--focus).
 #
 # Usage (installed on PATH as `agy-review`):
-#   agy-review code   [--facts @f] [--decided @f] [--focus "…"] [extra focus…]
+#   agy-review code   [--facts @f] [--ungrounded] [--decided @f] [--focus "…"] [extra focus…]
 #   agy-review plan   <plan-file> [--facts @f] [--decided @f] [--focus "…"]
 #   agy-review diff   <diff-file> [--facts @f] [--decided @f] [--focus "…"]
 #   agy-review --continue          [--decided @f] [--focus "…"]   # round-2 delta (no mode, no re-assembly)
@@ -55,19 +56,22 @@ case "${1:-}" in
 agy-review — grounded read-only ADVISORY review by Google's Antigravity CLI (agy; subscription-only).
 
 Usage:
-  agy-review code [--facts @f] [--decided @f] [--focus "…"] [extra focus…]
+  agy-review code [--facts @f] [--ungrounded] [--decided @f] [--focus "…"] [extra focus…]
   agy-review plan <plan-file> [--facts @f] [--decided @f] [--focus "…"]
   agy-review diff <diff-file> [--facts @f] [--decided @f] [--focus "…"]
 
 Flags:
-  --facts @f — verified facts the review runs AGAINST (omit ⇒ loud ungrounded-review warning)
+  --facts @f — verified facts the review runs AGAINST (code mode REQUIRES a non-empty payload; plan/diff warn loudly when omitted)
+  --ungrounded — deliberately ungrounded CODE review, a throwaway opinion (code mode only, contradicts --facts; the receipt records grounded:false and never attests)
   --decided @f — already-decided / already-addressed list; do NOT re-raise (anti-circling; the round-2 payload)
   --focus "…" — extra focus (repeatable; code mode also takes trailing focus words)
 
 Grounding:
   grounded review — agy reads NOTHING by default, an ungrounded review GUESSES:
   --facts @f = the verified facts to review AGAINST; --decided @f = decisions
-  already made, do NOT re-raise (anti-circling)
+  already made, do NOT re-raise (anti-circling). code mode REQUIRES a non-empty
+  --facts payload and refuses BEFORE spending a run (escapes: --ungrounded,
+  AGY_PROBE=1); plan/diff proceed with a loud warning
 
 Notes:
   pre-dispatch host-diff: before the FIRST dispatch of this bridge, diff its declared networkHosts
@@ -88,7 +92,8 @@ Receipt:
   sockets — are excluded from the domain entirely, untracked symlinks/directories ride as
   name-only notes) in code mode, the artifact-file sha256 in plan/diff mode; verdict
   recorded verbatim from the mandated '### Verdict' section (SHIP / SHIP WITH NITS / REWORK);
-  grounded = whether a NON-EMPTY --facts payload was supplied (an empty payload records
+  grounded = whether a NON-EMPTY --facts payload was supplied (code mode refuses pre-spend without
+  one — no run, no receipt — unless --ungrounded/AGY_PROBE=1; in plan/diff an empty payload records
   grounded:false — fail-closed, the state gate rejects it), factsHash = sha256 of the facts
   payload; a continuation receipt is fresh:false (informational-only — it cannot attest the
   folded tree); probe = whether the run relaxed the quality guards (AGY_PROBE=1), written on EVERY
@@ -101,7 +106,7 @@ Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins ov
   AGY_HARD_TIMEOUT — hard wall-clock cap, duration string like 5m/30m/90s (built-in default 30m)
   AGY_REVIEW_ALLOW_ADDDIR — boolean 0/1: 1 arms the oversized --add-dir escape (re-enables the Issue-001 stall risk; default 0)
 
-Closed grammar: unknown flags are rejected; no '--' passthrough (the only escapes are AGY_PROBE=1 and AGY_REVIEW_ALLOW_ADDDIR=1).
+Closed grammar: unknown flags are rejected; no '--' passthrough (the flag escape is --ungrounded; the env escapes are AGY_PROBE=1 and AGY_REVIEW_ALLOW_ADDDIR=1).
 Requires at run time: the agy CLI on PATH + a Google AI subscription login (--help needs neither).
 HELP
     exit 0
@@ -541,7 +546,7 @@ case "${1:-}" in
 esac
 
 usage() {
-  echo "usage: $0 code   [--facts @f] [--decided @f] [--focus \"…\"] [extra focus…]" >&2
+  echo "usage: $0 code   [--facts @f] [--ungrounded] [--decided @f] [--focus \"…\"] [extra focus…]" >&2
   echo "       $0 plan   <plan-file> [--facts @f] [--decided @f] [--focus \"…\"]" >&2
   echo "       $0 diff   <diff-file> [--facts @f] [--decided @f] [--focus \"…\"]" >&2
   echo "       $0 --continue          [--decided @f] [--focus \"…\"]" >&2
@@ -580,6 +585,7 @@ fi
 # --- Flag parse (--facts / --decided / --focus + trailing focus) -------------
 FACTS_RAW=""
 DECIDED_RAW=""
+UNGROUNDED=0
 FOCUS_PARTS=()
 # A value-taking flag must be followed by a real value — never end-of-args and never another flag.
 # Otherwise `agy-review code --facts --focus x` would silently take "--focus" as the facts and spend a
@@ -598,6 +604,12 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       need_value "$1" "${2:-}"; FACTS_RAW="$2"; shift 2 ;;
+    --ungrounded)
+      if [[ -n "$resume_mode" ]]; then
+        echo "error: --ungrounded is not valid on a continuation (the original round already set its grounding)." >&2
+        exit 2
+      fi
+      UNGROUNDED=1; shift ;;
     --decided)
       need_value "$1" "${2:-}"; DECIDED_RAW="$2"; shift 2 ;;
     --focus)
@@ -622,6 +634,18 @@ while [[ $# -gt 0 ]]; do
 done
 # Merge --focus values and trailing focus words, in parse order, into ONE focus block.
 FOCUS="${FOCUS_PARTS[*]:-}"
+
+# --ungrounded closed grammar (D4): code-mode only, and an explicit contradiction with --facts refuses.
+if [[ "$UNGROUNDED" == "1" ]]; then
+  if [[ -n "$FACTS_RAW" ]]; then
+    echo "error: --ungrounded contradicts --facts — pass the verified facts (grounded) or drop them (--ungrounded), never both." >&2
+    exit 2
+  fi
+  if [[ "$mode" != "code" ]]; then
+    echo "error: --ungrounded is only valid in code mode — $mode mode already proceeds ungrounded with a loud warning." >&2
+    exit 2
+  fi
+fi
 
 # Resolve @file / literal for --facts and --decided NOW (cwd = invocation, before any code-mode cd).
 # The `@file` existence check runs at TOP LEVEL (not inside a command substitution) so its exit-2 exits
@@ -648,6 +672,25 @@ if [[ -n "$DECIDED_RAW" ]]; then
 fi
 
 if [[ -z "$FACTS_CONTENT" && -z "$resume_mode" ]]; then
+  # code mode fails CLOSED before the spend (D4): an ungrounded CODE receipt records grounded:false,
+  # which the review-state gate rejects — the run would be paid for and attest nothing. Keyed on the
+  # resolved CONTENT, so --facts naming an empty payload refuses identically.
+  if [[ "$mode" == "code" && "$UNGROUNDED" != "1" && "$AGY_PROBE" != "1" ]]; then
+    # The recovery hint resolves the kit's grounding tool from THIS wrapper's location (monorepo
+    # canon / deployed skills sibling / kit-bundled mirror) — a repo-relative path would not exist
+    # for a globally installed kit. Quoted: an install path may carry spaces.
+    grounding_tool="node <agent-workflow-kit>/tools/grounding.mjs"
+    for _g in "$HERE/../../agent-workflow-kit/tools/grounding.mjs" "$HERE/../../../tools/grounding.mjs"; do
+      if [[ -f "$_g" ]]; then grounding_tool="node \"$_g\""; break; fi
+    done
+    echo "error: 'agy-review code' requires grounded facts and refuses BEFORE spending a run — an" >&2
+    echo "       ungrounded code review GUESSES, and its receipt (grounded:false) never attests." >&2
+    echo "       Assemble the verified facts, then re-run:" >&2
+    echo "         $grounding_tool --constraints [--plan <plan-file>] --out <facts-file>" >&2
+    echo "         agy-review code --facts @<facts-file>" >&2
+    echo "       Explicit escapes: --ungrounded (throwaway opinion) · AGY_PROBE=1 (a probe never attests)." >&2
+    exit 2
+  fi
   echo "warning: no --facts supplied. agy reads NOTHING by default, so an ungrounded review GUESSES" >&2
   echo "         (stale-model and partial-diff false positives). Pass --facts @file with the verified" >&2
   echo "         facts the model must review AGAINST. Proceeding without grounding." >&2
