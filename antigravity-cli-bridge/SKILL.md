@@ -118,11 +118,16 @@ review **guesses** (stale-model and partial-diff false positives). `agy-review` 
 POSTURE + a **model/cutoff GUARD** + your **`--facts`** (the verified facts the model reviews AGAINST)
 + **`--decided`** (the anti-circling list) + **`--focus`** + the artifact + a strict output shape, then
 delegates execution to `agy-run` (one home for the timeout, the subscription invariant, and the byte
-ceiling).
+ceiling). In `code` mode grounding **fails closed**: without a non-empty `--facts` payload the wrapper
+refuses **before spending a run** (an ungrounded code receipt records `grounded:false`, which the
+review-state gate rejects — the run would attest nothing). The explicit escapes are `--ungrounded`
+(a throwaway opinion) and `AGY_PROBE=1` (a probe never attests anyway); `plan`/`diff` keep the loud
+warning and proceed.
 
 ```bash
-agy-review code [--facts @facts.md] [--decided @decided.md] [--focus "…"]   # the repo-complete diff
-agy-review plan <plan-file> [--facts @f] …      # critique a plan
+agy-review code --facts @facts.md [--decided @decided.md] [--focus "…"]   # the repo-complete diff (facts REQUIRED — fails closed pre-spend)
+agy-review code --ungrounded                    # explicit escape: throwaway ungrounded opinion (receipt never attests)
+agy-review plan <plan-file> [--facts @f] …      # critique a plan (no facts ⇒ loud warning)
 agy-review diff <diff-file> [--facts @f] …      # review a supplied diff
 agy-review --continue --decided @round1.md --focus "still-open items"   # round-2 delta, no re-assembly
 ```

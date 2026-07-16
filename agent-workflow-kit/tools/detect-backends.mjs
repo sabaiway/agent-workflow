@@ -110,13 +110,14 @@ const RAW_BACKENDS = [
     roleContracts: {
       review: {
         invocations: [
-          'agy-review code [--facts @f] [--decided @f] [--focus "…"] [extra focus…]',
+          'agy-review code [--facts @f] [--ungrounded] [--decided @f] [--focus "…"] [extra focus…]',
           'agy-review plan <plan-file> [--facts @f] [--decided @f] [--focus "…"]',
           'agy-review diff <diff-file> [--facts @f] [--decided @f] [--focus "…"]',
         ],
-        grounding: 'grounded review — agy reads NOTHING by default, an ungrounded review GUESSES: --facts @f = the verified facts to review AGAINST; --decided @f = decisions already made, do NOT re-raise (anti-circling)',
+        grounding: 'grounded review — agy reads NOTHING by default, an ungrounded review GUESSES: --facts @f = the verified facts to review AGAINST; --decided @f = decisions already made, do NOT re-raise (anti-circling). code mode REQUIRES a non-empty --facts payload and refuses BEFORE spending a run (escapes: --ungrounded, AGY_PROBE=1); plan/diff proceed with a loud warning',
         flags: [
-          '--facts @f — verified facts the review runs AGAINST (omit ⇒ loud ungrounded-review warning)',
+          '--facts @f — verified facts the review runs AGAINST (code mode REQUIRES a non-empty payload; plan/diff warn loudly when omitted)',
+          '--ungrounded — deliberately ungrounded CODE review, a throwaway opinion (code mode only, contradicts --facts; the receipt records grounded:false and never attests)',
           '--decided @f — already-decided / already-addressed list; do NOT re-raise (anti-circling; the round-2 payload)',
           '--focus "…" — extra focus (repeatable; code mode also takes trailing focus words)',
         ],
@@ -124,7 +125,7 @@ const RAW_BACKENDS = [
           'agy-review --continue [--decided @f] [--focus "…"]',
           'agy-review --conversation <id> [--decided @f] [--focus "…"]',
         ],
-        receipt: "side effect — a successful review appends one JSON receipt line to <git dir>/agent-workflow-review-receipts.jsonl (AW_REVIEW_RECEIPTS overrides; plan/diff outside a git tree: warn + skip unless overridden): fingerprint = sha256 over the canonical uncommitted-state payload (staged diff + unstaged diff + untracked-not-ignored contents — the review-payload domain; never-committable untracked paths — character/block devices, FIFOs, sockets — are excluded from the domain entirely, untracked symlinks/directories ride as name-only notes) in code mode, the artifact-file sha256 in plan/diff mode; verdict recorded verbatim from the mandated '### Verdict' section (SHIP / SHIP WITH NITS / REWORK); grounded = whether a NON-EMPTY --facts payload was supplied (an empty payload records grounded:false — fail-closed, the state gate rejects it), factsHash = sha256 of the facts payload; a continuation receipt is fresh:false (informational-only — it cannot attest the folded tree); probe = whether the run relaxed the quality guards (AGY_PROBE=1), written on EVERY receipt so it self-declares — the kit's review-state gate rejects a probe-marked receipt (a probe review never attests) and equally rejects an unmarked one (silence is not a declaration); a write failure warns, never fails the review",
+        receipt: "side effect — a successful review appends one JSON receipt line to <git dir>/agent-workflow-review-receipts.jsonl (AW_REVIEW_RECEIPTS overrides; plan/diff outside a git tree: warn + skip unless overridden): fingerprint = sha256 over the canonical uncommitted-state payload (staged diff + unstaged diff + untracked-not-ignored contents — the review-payload domain; never-committable untracked paths — character/block devices, FIFOs, sockets — are excluded from the domain entirely, untracked symlinks/directories ride as name-only notes) in code mode, the artifact-file sha256 in plan/diff mode; verdict recorded verbatim from the mandated '### Verdict' section (SHIP / SHIP WITH NITS / REWORK); grounded = whether a NON-EMPTY --facts payload was supplied (code mode refuses pre-spend without one — no run, no receipt — unless --ungrounded/AGY_PROBE=1; in plan/diff an empty payload records grounded:false — fail-closed, the state gate rejects it), factsHash = sha256 of the facts payload; a continuation receipt is fresh:false (informational-only — it cannot attest the folded tree); probe = whether the run relaxed the quality guards (AGY_PROBE=1), written on EVERY receipt so it self-declares — the kit's review-state gate rejects a probe-marked receipt (a probe review never attests) and equally rejects an unmarked one (silence is not a declaration); a write failure warns, never fails the review",
         notes: [
           'pre-dispatch host-diff: before the FIRST dispatch of this bridge, diff its declared networkHosts against the live sandbox allow-list — a missing host is surfaced to the maintainer BEFORE dispatching, never fired into a known prompt',
         ],

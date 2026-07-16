@@ -48,14 +48,15 @@ subscription invariant, and the byte ceiling all apply once. The playbook is in
 [`driving-agy.md`](./driving-agy.md); the surface:
 
 ```bash
-agy-review code|plan <file>|diff <file> [--facts @f] [--decided @f] [--focus "…"]
+agy-review code --facts @f [--decided @f] [--focus "…"]   # facts REQUIRED — refuses pre-spend (escapes: --ungrounded, AGY_PROBE=1)
+agy-review plan <file>|diff <file> [--facts @f] [--decided @f] [--focus "…"]
 agy-review --continue | --conversation <id>   [--decided @f] [--focus "…"]   # round-2 delta
 ```
 
 | Var | Default | Effect |
 |---|---|---|
 | `AGY_MODEL` | `Gemini 3.1 Pro (High)` | frontier default; **any** model is allowed — a sub-frontier one earns a silenceable advisory (quality-first, not a gate) |
-| `AGY_PROBE` | `0` | `1` silences the off-frontier model advisory (throwaway probe) |
+| `AGY_PROBE` | `0` | `1` silences the off-frontier model advisory AND lets `code` run without `--facts` (an ungrounded probe never attests — its receipt is probe-marked) |
 | `AGY_REVIEW_ALLOW_ADDDIR` | `0` | `1` lets an oversized `code` review offload ONLY the change set to a private staging dir via `--add-dir` (the grounding stays inline; re-enables the Issue-001 stall risk — prefer splitting into focused reviews) |
 | `AGY_HARD_TIMEOUT` | `30m` | the review's hard cap (longer default than a probe — reviews are slower) |
 | `AGY_MAX_PROMPT_BYTES` | `120000` | the same single-argv byte ceiling; oversized → trim/split (or the `--add-dir` escape above) |

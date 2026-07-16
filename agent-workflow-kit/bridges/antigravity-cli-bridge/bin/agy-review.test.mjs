@@ -190,14 +190,97 @@ describe('agy-review.sh — guard + grounding (2, 3)', () => {
     assert.match(r.prompt, /## Focus\nfirst second third/);
   });
 
-  it('warns LOUDLY when --facts is omitted, and proceeds', () => {
+  it('plan mode with no --facts keeps the warning and proceeds (unchanged contract)', () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code'] });
+    writeFileSync(join(sb.repo, 'p.md'), '# plan body\n');
+    const r = run(sb, { args: ['plan', 'p.md'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /no --facts supplied/);
-    assert.equal(r.invoked, true, 'an ungrounded review still proceeds (warn, not block)');
+    assert.equal(r.invoked, true, 'an ungrounded plan review still proceeds (warn, not block)');
     assert.match(r.prompt, /none supplied/, 'the prompt notes the missing facts in-band');
+  });
+});
+
+// ── code mode fails CLOSED without grounded facts (D4) ───────────────────────────
+// An ungrounded CODE receipt records grounded:false, which the kit's review-state gate rejects —
+// the run would be paid for and attest nothing. The wrapper refuses BEFORE the spend, keyed on the
+// resolved CONTENT (an empty --facts payload refuses identically). Escapes: the explicit
+// --ungrounded flag (throwaway opinion) and AGY_PROBE=1 (a probe receipt never attests anyway).
+describe('agy-review.sh — code mode fails CLOSED without grounded facts (D4)', () => {
+  it('code mode with no --facts exits 2 before any agy invocation', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code'] });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 2, r.stderr);
+    assert.equal(r.invoked, false, 'the refusal must fire before any agy invocation — zero runs spent');
+    assert.match(r.stderr, /grounding\.mjs/, 'the refusal names the facts assembler');
+    assert.match(r.stderr, /agy-review code --facts @/, 'the refusal prints the exact re-run line');
+    const hint = r.stderr.match(/node "([^"]+grounding\.mjs)"/);
+    assert.ok(hint, 'the recovery hint resolves and QUOTES a real grounding.mjs path (an install path may carry spaces)');
+    assert.ok(existsSync(hint[1]), 'the resolved hint path exists on this layout');
+  });
+
+  it('code mode with --facts naming an EMPTY payload exits 2 before any agy invocation', () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.repo, 'empty-facts.md'), '');
+    const r = run(sb, { args: ['code', '--facts', '@empty-facts.md'] });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 2, 'the refusal keys on the CONTENT, not the flag');
+    assert.equal(r.invoked, false, 'an empty payload must not spend a run');
+    assert.match(r.stderr, /agy-review code --facts @/);
+  });
+
+  it('code --ungrounded proceeds and the receipt records grounded:false', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--ungrounded'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.invoked, true, 'the explicit escape lets the run proceed');
+    assert.equal(receipts.length, 1);
+    assert.equal(receipts[0].grounded, false, 'an --ungrounded run still records grounded:false');
+    assert.equal(receipts[0].factsHash, null);
+    assert.match(r.stderr, /no --facts supplied/, 'the escape path stays loud, never silent');
+  });
+
+  it('AGY_PROBE=1 code with no --facts proceeds and the receipt records probe:true', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code'], env: { AGY_PROBE: '1', AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.invoked, true, 'an ungrounded probe is coherent — a probe receipt never attests');
+    assert.equal(receipts[0].probe, true);
+    assert.equal(receipts[0].grounded, false);
+  });
+
+  it('--ungrounded with --facts is a refusal (contradiction)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--ungrounded', '--facts', 'f'] });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 2);
+    assert.equal(r.invoked, false);
+    assert.match(r.stderr, /--ungrounded contradicts --facts/);
+  });
+
+  it('--ungrounded outside code mode is a refusal', () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.repo, 'p.md'), '# p\n');
+    const r = run(sb, { args: ['plan', 'p.md', '--ungrounded'] });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 2);
+    assert.equal(r.invoked, false);
+    assert.match(r.stderr, /--ungrounded is only valid in code mode/);
+  });
+
+  it('--ungrounded on a continuation is a refusal', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['--continue', '--ungrounded'] });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 2);
+    assert.equal(r.invoked, false);
+    assert.match(r.stderr, /--ungrounded is not valid on a continuation/);
   });
 });
 
@@ -754,7 +837,12 @@ describe('agy-review.sh — declared contract is really accepted (forward guard)
     for (const descriptor of REVIEW_CONTRACT.flags) {
       const flag = leadingFlag(descriptor);
       const sb = makeSandbox();
-      const r = run(sb, { args: ['code', flag, 'f'] });
+      // D4: code mode refuses without grounded facts, so a non-facts value flag is driven on a
+      // grounded run; --ungrounded takes no value, contradicts --facts, and is driven alone.
+      const args = flag === '--facts' ? ['code', '--facts', 'f']
+        : flag === '--ungrounded' ? ['code', '--ungrounded']
+          : ['code', '--facts', 'f', flag, 'f'];
+      const r = run(sb, { args });
       rmSync(sb.home, { recursive: true, force: true });
       assert.equal(r.status, 0, `${flag}: ${r.stderr}`);
     }
@@ -853,9 +941,9 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
     assert.equal(receipts[0].probe, true, 'both write paths carry the marker — no unmarked probe lane');
   });
 
-  it('an ungrounded fresh run records grounded:false + factsHash null (the vacuous-grounding hole stays visible)', () => {
+  it('an --ungrounded fresh run records grounded:false + factsHash null (the vacuous-grounding hole stays visible)', () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const r = run(sb, { args: ['code', '--ungrounded'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -863,16 +951,15 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
     assert.equal(receipts[0].factsHash, null);
   });
 
-  it('an EMPTY --facts file records grounded:false (fail-closed — vacuous grounding never satisfies the gate) and still warns', () => {
+  it('an EMPTY --facts file in code mode refuses pre-spend — no run, no receipt (D4 fail-closed)', () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.home, 'empty-facts.md'), '');
     const r = run(sb, { args: ['code', '--facts', `@${join(sb.home, 'empty-facts.md')}`], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
-    assert.equal(r.status, 0, r.stderr);
-    assert.equal(receipts[0].grounded, false, 'an empty payload is recorded as ungrounded, never as grounded-by-flag');
-    assert.equal(receipts[0].factsHash, null);
-    assert.match(r.stderr, /no --facts supplied|ungrounded review GUESSES/, 'the ungrounded warning fires for an empty payload');
+    assert.equal(r.status, 2, 'vacuous grounding no longer spends a run');
+    assert.equal(r.invoked, false);
+    assert.equal(receipts.length, 0, 'no run — no receipt');
   });
 
   it('parses REWORK and plain SHIP; records "unknown" when the mandated section is absent', () => {
