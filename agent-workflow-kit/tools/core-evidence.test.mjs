@@ -20,10 +20,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { computeTreeFingerprint } from './review-state.mjs';
+import { computeTreeFingerprint, computeFingerprintPayload } from './review-state.mjs';
+import { lstatSync } from 'node:fs';
 
 const core = await import('./core-evidence.mjs').catch(() => null);
 const {
+  isBinaryFile,
+  readReceipts,
+  isShipVerdict,
+  classifyReviewReceiptForTree,
   CORE_EVIDENCE_STOP,
   EVIDENCE_BASENAME,
   EVIDENCE_SCHEMA_VERSION,
@@ -317,6 +322,74 @@ describe('authoritative selection + canonical serialization (D6a: LATEST per key
     assert.match(s, /red-proof/);
     assert.doesNotMatch(s, /degrade/, 'serialization never mixes kinds (receipts/other kinds are outside the hashed domain)');
     assert.equal(canonicalKindSerialization([], 'red-proof'), '', 'an empty authoritative set serializes empty');
+  });
+});
+
+// ── the review-domain primitives (owned here since the DAG inversion) ─────────────────────────────
+
+describe('the closed verdict vocabulary — type-strict, never coerced', () => {
+  it('a non-string verdict never coerces into the closed vocabulary', () => {
+    assert.equal(isShipVerdict(['ship']), false, 'String([\'ship\']) === \'ship\' — coercion must never admit an array');
+    assert.equal(isShipVerdict({ toString: () => 'ship' }), false);
+    assert.equal(isShipVerdict(0), false);
+    assert.equal(isShipVerdict('ship'), true);
+    const fp = 'f'.repeat(64);
+    const arrayVerdict = { schema: 1, artifact: 'code', fresh: true, fingerprint: fp, backend: 'codex', verdict: ['ship'], grounded: true, probe: false, timestamp: 't' };
+    assert.equal(classifyReviewReceiptForTree(arrayVerdict, fp), 'unrecognized-verdict');
+  });
+
+  it('the verdict arm precedes grounding: ungrounded plus unknown classifies unrecognized-verdict', () => {
+    const fp = 'f'.repeat(64);
+    const receipt = { schema: 1, artifact: 'code', fresh: true, fingerprint: fp, backend: 'codex', verdict: 'unknown', grounded: false, probe: false, timestamp: 't' };
+    assert.equal(classifyReviewReceiptForTree(receipt, fp), 'unrecognized-verdict', 'grounding never reclassifies an unrecognized verdict');
+    const ungroundedRevise = { ...receipt, verdict: 'revise' };
+    assert.equal(classifyReviewReceiptForTree(ungroundedRevise, fp), 'ungrounded', 'a RECOGNIZED verdict without grounding stays ungrounded (not a veto)');
+  });
+});
+
+describe('review-domain primitives — the defensive arms of the canonical payload walk', () => {
+  it('isBinaryFile: NUL bytes → binary; text → false; an unreadable read (EISDIR) → false via the catch', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'core-evidence-bin-'));
+    writeFileSync(join(dir, 'bin.dat'), Buffer.from([0x61, 0x00, 0x62]));
+    writeFileSync(join(dir, 'text.txt'), 'plain text\n');
+    assert.equal(isBinaryFile(join(dir, 'bin.dat')), true);
+    assert.equal(isBinaryFile(join(dir, 'text.txt')), false);
+    assert.equal(isBinaryFile(dir), false, 'a directory read fails (EISDIR) — the fail-safe arm reads as text');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('computeFingerprintPayload: a THROWING lstat keeps the path as a name-only nonregular note (vanished path)', () => {
+    const { root } = makeRepo();
+    writeFileSync(join(root, 'ghosty.txt'), 'untracked\n');
+    const throwingLstat = (p) => {
+      if (p.endsWith('ghosty.txt')) throw new Error('vanished');
+      return lstatSync(p);
+    };
+    const payload = computeFingerprintPayload(root, { lstat: throwingLstat });
+    assert.match(payload.toString('utf8'), /untracked-nonregular:ghosty\.txt/);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('computeFingerprintPayload: a lying symlink stat whose readlink fails rides as "-> ?" (never a crash)', () => {
+    const { root } = makeRepo();
+    writeFileSync(join(root, 'fake-link.txt'), 'a regular file the stat calls a symlink\n');
+    const lyingLstat = (p) => {
+      const real = lstatSync(p);
+      if (!p.endsWith('fake-link.txt')) return real;
+      return { ...real, isFile: () => false, isSymbolicLink: () => true, isCharacterDevice: () => false, isBlockDevice: () => false, isFIFO: () => false, isSocket: () => false, isDirectory: () => false };
+    };
+    const payload = computeFingerprintPayload(root, { lstat: lyingLstat });
+    assert.match(payload.toString('utf8'), /untracked-symlink:fake-link\.txt -> \?/);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('readReceipts: a valid-JSON line that is not a receipt object counts malformed (the else arm)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'core-evidence-recmal-'));
+    const path = join(dir, 'receipts.jsonl');
+    writeFileSync(path, '{"noBackendField":1}\n"just a string"\n');
+    const r = readReceipts(path);
+    assert.deepEqual([r.receipts.length, r.malformed], [0, 2]);
+    rmSync(dir, { recursive: true, force: true });
   });
 });
 
@@ -746,6 +819,18 @@ describe('summary — stateless D6 render (verdicts, red-proofs, degrades; loud 
     assert.match(r.stdout, /review verdicts WITHHELD/);
     assert.match(r.stdout, /read error/);
     rmSync(dir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  });
+  it('summary names an unrecognized verdict instead of stale or missing', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    writeFileSync(
+      join(root, '.git', 'agent-workflow-review-receipts.jsonl'),
+      `${JSON.stringify({ schema: 1, artifact: 'code', fresh: true, fingerprint: fp, backend: 'codex', verdict: 'unknown', grounded: true, probe: false, timestamp: 't1' })}\n`,
+    );
+    const r = main(['summary'], { cwd: root, env: fixtureEnv() });
+    assert.match(r.stdout, /codex: unrecognized verdict \("unknown"\) — never attests/);
+    assert.doesNotMatch(r.stdout, /codex: no attesting receipt for the current tree \(stale or missing\)/, 'a current unknown-verdict receipt is NOT stale/missing — the render must not lie');
     rmSync(root, { recursive: true, force: true });
   });
   it('a malformed later line never resurrects a superseded record in the render (sections withheld)', () => {

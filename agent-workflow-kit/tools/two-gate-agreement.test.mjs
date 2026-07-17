@@ -55,17 +55,24 @@ const convergedWithDegradeRound = (base, fingerprint) =>
     findings: [], timestamp: '2026-07-09T00:00:00Z',
   });
 
-// Seed out-of-tree ledger + receipts files (in the git dir they would not move the fingerprint; a tmp
-// file is simplest to control per case). Returns the env override map + the cleanup dir.
+// Seed out-of-tree ledger + receipts + core-evidence files (in the git dir they would not move the
+// fingerprint; a tmp file is simplest to control per case). The degrade is recorded in BOTH homes —
+// the ledger round (review-ledger's convergence input) AND the core-evidence degrade record
+// (review-state's D3(b) escape) — the transitional agreement both gates read while the ledger
+// lives. Returns the env override map + the cleanup dir.
+const agyDegradeRecord = (fingerprint) =>
+  JSON.stringify({ schema: 1, kind: 'degrade', backend: 'agy', reason: 'Issue-001 stall on a large diff', fingerprint, timestamp: '2026-07-09T00:00:00Z' });
 const seed = (root, roundFingerprint) => {
   const dir = mkdtempSync(join(tmpdir(), 'two-gate-state-'));
   const ledger = join(dir, 'ledger.jsonl');
   const receipts = join(dir, 'receipts.jsonl');
+  const evidence = join(dir, 'evidence.jsonl');
   const base = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim();
   const treeFp = computeTreeFingerprint(root);
   writeFileSync(ledger, `${convergedWithDegradeRound(base, roundFingerprint ?? treeFp)}\n`);
   writeFileSync(receipts, `${codexShipReceipt(treeFp)}\n`);
-  return { env: { AW_REVIEW_LEDGER: ledger, AW_REVIEW_RECEIPTS: receipts }, dir };
+  writeFileSync(evidence, `${agyDegradeRecord(roundFingerprint ?? treeFp)}\n`);
+  return { env: { AW_REVIEW_LEDGER: ledger, AW_REVIEW_RECEIPTS: receipts, AW_CORE_EVIDENCE: evidence }, dir };
 };
 
 const stateCheck = (root, env) => reviewStateMain(['--check'], { cwd: root, env, detect: councilDetect });
@@ -85,12 +92,13 @@ describe('two-gate agreement (AD-050) — review-state and review-ledger agree o
 
   it('flip the degrade to an OLD fingerprint → BOTH gates exit 1 (the degrade no longer attests THIS tree)', () => {
     const { root } = makeRepo();
-    const { env, dir } = seed(root, `${'old'.repeat(21)}x`); // the round attests a stale tree
+    const { env, dir } = seed(root, 'a'.repeat(64)); // a VALID but different fingerprint — a stale record, never a malformed one
     const s = stateCheck(root, env);
     const l = ledgerCheck(root, env);
     rmSync(root, { recursive: true, force: true });
     rmSync(dir, { recursive: true, force: true });
     assert.equal(s.code, 1, 'review-state: the degrade is stale → agy not exempt → FAIL');
+    assert.doesNotMatch(s.stdout, /evidence store unavailable/, 'the refusal comes from stale-record semantics, not a malformed store');
     assert.equal(l.code, 1, 'review-ledger: the round attests a stale tree → not converged → FAIL');
   });
 });
@@ -125,9 +133,10 @@ describe('two-gate agreement (D3) — a probe receipt can never green the pair',
   });
 
   it('a real REWORK receipt followed by a probe SHIP cannot make the pair pass', () => {
-    // review-state sees a real receipt and passes presence; review-ledger must still refuse the
-    // recorded 0/0, because the ATTESTING verdict is the real "revise" — not the probe that landed
-    // after it. Taking the LAST receipt is exactly the false-pass this pins shut.
+    // BOTH gates refuse: review-state vetoes on the real "revise" (ship-class-only satisfaction —
+    // the strip-the-kit hardening), and review-ledger refuses the recorded 0/0 against it. The
+    // ATTESTING verdict is the real "revise" — never the probe that landed after it: taking the
+    // LAST receipt is exactly the false-pass this pins shut.
     const { root } = makeRepo();
     const dir = mkdtempSync(join(tmpdir(), 'two-gate-probe-order-'));
     const ledger = join(dir, 'ledger.jsonl');
@@ -143,7 +152,8 @@ describe('two-gate agreement (D3) — a probe receipt can never green the pair',
     const l = ledgerCheck(root, env);
     rmSync(root, { recursive: true, force: true });
     rmSync(dir, { recursive: true, force: true });
-    assert.equal(s.code, 0, `review-state passes on the real receipt's presence: ${s.stdout}`);
+    assert.equal(s.code, 1, `review-state vetoes on the real "revise" (ship-class-only): ${s.stdout}`);
+    assert.match(s.stdout, /authoritative veto/);
     assert.equal(l.code, 1, `review-ledger must refuse 0/0 against the real "revise": ${l.stdout}`);
     assert.match(l.stdout, /is not ship-class/);
   });

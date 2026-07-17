@@ -24,6 +24,10 @@ import {
   readReceipts,
   RECEIPTS_BASENAME,
 } from './review-state.mjs';
+// The obligations derivation is a NEW export authored WITH its fixtures — imported dynamically so
+// this spec LOADS (and each fixture fails individually) against a pre-hardening tree; the
+// behavior fixtures below import only the pre-existing surface and fail on their own assertions.
+const { requiredBackendsForConfiguredRecipe } = await import('./review-state.mjs');
 import { READY, NEEDS_SKILL } from './detect-backends.mjs';
 
 const CODEX = 'codex-cli-bridge';
@@ -36,8 +40,10 @@ const detect = (codex, agy) => () => [
 // The normative receipt fixture (AD-038 shape + the D3 self-declaring probe marker); tests override
 // fields. wrapperVersion stays at its historical 2.2.0 ON PURPOSE: the probe verdict must depend on
 // the MARKER alone, so a suite about anything else must not be able to pass because of a version.
+// The default verdict is SHIP-CLASS: only ship-class satisfies the hardened gate, so presence
+// tests satisfy by default; the veto/vocabulary fixtures override it explicitly.
 const RECEIPT_FIXTURE = JSON.parse(
-  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"revise","grounded":true,"factsHash":null,"wrapperVersion":"2.2.0","timestamp":"2026-07-03T12:00:00Z","probe":false}',
+  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"ship","grounded":true,"factsHash":null,"wrapperVersion":"2.2.0","timestamp":"2026-07-03T12:00:00Z","probe":false}',
 );
 const receiptLine = (overrides) => `${JSON.stringify({ ...RECEIPT_FIXTURE, ...overrides })}\n`;
 
@@ -78,12 +84,21 @@ describe('review-state --check — exit-0 branches of the normative contract', (
     assert.match(r.stdout, /recipe is solo/);
   });
 
-  it('no reviewer backend ready (council degrades to solo) → 0, degradation stated', () => {
-    const { root } = makeRepo();
+  it('NO configured recipe + no reviewer backend ready → 0 (the computed default is solo)', () => {
+    const { root } = makeRepo({ config: null });
     const r = check(root, { codex: NEEDS_SKILL, agy: NEEDS_SKILL });
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /degrades to solo/);
+    assert.match(r.stdout, /computed.*default is solo/);
+  });
+
+  it('a CONFIGURED council with no reviewer backend ready NEVER silently becomes solo → 1', () => {
+    const { root } = makeRepo();
+    const r = check(root, { codex: NEEDS_SKILL, agy: NEEDS_SKILL });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'the obligation stands — an unavailable backend needs an explicit degrade record');
+    assert.match(r.stdout, /no receipt/);
+    assert.match(r.stdout, /degrade/);
   });
 
   it('no plan in flight (docs/plans holds only queue.md + scratch) → 0', () => {
@@ -126,7 +141,7 @@ describe('review-state --check — exit-0 branches of the normative contract', (
     const r = check(root);
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.code, 0, r.stdout);
-    assert.match(r.stdout, /every recipe-named backend has a fresh grounded receipt/);
+    assert.match(r.stdout, /every configured backend attests ship-class/);
   });
 });
 
@@ -200,18 +215,19 @@ describe('review-state --check — exit-1 branches', () => {
     const r = check(root);
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.code, 1);
-    assert.match(r.stdout, /agy: only ungrounded receipts/);
+    assert.match(r.stdout, /agy: the latest normal receipt is ungrounded/);
   });
 
-  it('reviewed (one backend) needs exactly that backend', () => {
+  it('reviewed needs ONE ship-class attestation from any review-capable backend', () => {
     const { root } = makeRepo({ config: JSON.stringify({ 'plan-execution': { review: 'reviewed' } }) });
     const red = check(root);
     assert.equal(red.code, 1);
-    assert.match(red.stdout, /codex: no receipt/, 'reviewed prefers codex when both are ready');
-    mint(root, { backend: 'codex', fingerprint: computeTreeFingerprint(root) });
+    assert.match(red.stdout, /no receipt/);
+    mint(root, { backend: 'agy', fingerprint: computeTreeFingerprint(root), verdict: 'SHIP' });
     const green = check(root);
     rmSync(root, { recursive: true, force: true });
-    assert.equal(green.code, 0, green.stdout);
+    assert.equal(green.code, 0, `either provider satisfies reviewed: ${green.stdout}`);
+    assert.match(green.stdout, /reviewed satisfied/);
   });
 });
 
@@ -220,13 +236,17 @@ describe('review-state --check — detector failure fails CLOSED (a gate, not an
     throw Object.assign(new Error('corrupt bridge (EISDIR)'), { code: 'EISDIR' });
   };
 
-  it('a throwing detector under a configured council → 1 (unknown state never disables the receipt requirement)', () => {
+  it('a throwing detector under a configured council: the obligations are config-derived — unreceipted → 1, ship-receipted → 0', () => {
     const { root } = makeRepo();
-    const r = main(['--check'], { cwd: root, env: {}, detect: throwingDetect });
+    const red = main(['--check'], { cwd: root, env: {}, detect: throwingDetect });
+    assert.equal(red.code, 1, 'no receipts → the configured obligation stands, detector or not');
+    assert.match(red.stdout, /no receipt/);
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    mint(root, { backend: 'agy', fingerprint: fp });
+    const green = main(['--check'], { cwd: root, env: {}, detect: throwingDetect });
     rmSync(root, { recursive: true, force: true });
-    assert.equal(r.code, 1);
-    assert.match(r.stdout, /cannot verify receipts/);
-    assert.match(r.stdout, /backend detection failed/);
+    assert.equal(green.code, 0, `an explicit config needs no detector: ${green.stdout}`);
   });
 
   it('a throwing detector under an EXPLICIT solo config → 0 (the detector is irrelevant to solo)', () => {
@@ -525,9 +545,30 @@ describe('review-state — receipts file + env override + report surface', () =>
     const r = check(root, { args: [] });
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /codex: current \(verdict: revise, grounded/);
-    assert.match(r.stdout, /agy: current \(verdict: SHIP WITH NITS, grounded/);
+    assert.match(r.stdout, /codex: current \(verdict: "revise" — a recognized negative, an authoritative VETO, grounded/);
+    assert.match(r.stdout, /agy: current \(verdict: "SHIP WITH NITS", ship-class, grounded/);
     assert.match(r.stdout, /plan in flight: active-plan\.md/);
+  });
+
+  it('a recognized-after-trim verdict with control characters renders JSON-escaped on one line', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'ship\n' });
+    mint(root, { backend: 'agy', fingerprint: fp, verdict: 'SHIP' });
+    const r = check(root, { args: [] });
+    rmSync(root, { recursive: true, force: true });
+    assert.match(r.stdout, /codex: current \(verdict: "ship\\n", ship-class/, 'the newline renders as a literal \\n escape, never a raw line break');
+  });
+
+  it('the default report renders the unrecognized-verdict and ungrounded states in their own words', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'unknown' });
+    mint(root, { backend: 'agy', fingerprint: fp, grounded: false, factsHash: null });
+    const r = check(root, { args: [] });
+    rmSync(root, { recursive: true, force: true });
+    assert.match(r.stdout, /codex: latest normal receipt carries an unrecognized verdict \("unknown"\) — never attests/);
+    assert.match(r.stdout, /agy: ungrounded latest normal receipt/);
   });
 
   it('a malformed receipt line is counted loudly, never silently dropped', () => {
@@ -602,224 +643,356 @@ describe('backendReceiptStatus — the latest grounded receipt wins', () => {
     assert.equal(s.state, 'current');
     assert.equal(s.verdict, 'SHIP');
   });
-});
 
-// ── the degraded exemption (AD-050 Segment 2) — MIRRORS review-ledger decideStop's degraded handling:
-// a recipe-named backend WITHOUT a current grounded code receipt is EXEMPT from --check IFF the current
-// segment's LATEST round records THAT backend degraded at the CURRENT tree fingerprint, ≥1 non-degraded
-// recipe-named backend is present with a current grounded receipt, and the ledger reads clean. It stays
-// VERDICT-BLIND (presence, not unanimity — Decision 7). Fail-closed (exemption denied) on an ambiguous
-// loop, an unreadable/malformed ledger, an empty segment, or a corrupt round sequence. ────────────────
+  it('an ungrounded unrecognized verdict reports grounded:false (the receipt, never a hardcode)', () => {
+    const fp = 'f'.repeat(64);
+    const receipts = [{ ...RECEIPT_FIXTURE, backend: 'codex', fingerprint: fp, verdict: 'unknown', grounded: false }];
+    const s = backendReceiptStatus(receipts, 'codex', fp);
+    assert.equal(s.state, 'unrecognized-verdict');
+    assert.equal(s.grounded, false, 'the grounded boolean comes from the receipt');
+  });
 
-// Seed a v4 review-ledger via the AW_REVIEW_LEDGER override (out of the work tree so it never moves the
-// fingerprint). Each line is a record object; a raw string rides verbatim (the malformed-line case).
-const seedLedger = (lines) => {
-  const dir = mkdtempSync(join(tmpdir(), 'review-state-ledger-'));
-  const path = join(dir, 'ledger.jsonl');
-  writeFileSync(path, `${lines.map((l) => (typeof l === 'string' ? l : JSON.stringify(l))).join('\n')}\n`);
-  return { path, dir };
-};
-const v4Round = ({ loop = 'active-plan', base, fingerprint, round = 1, backends, findings = [], origins = { 'first-draft': 0, 'fold-induced': 0, mechanics: 0 } }) =>
-  ({ schema: 4, loop, activity: 'plan-execution', kind: 'round', round, base, fingerprint, origins, backends, findings, timestamp: '2026-07-09T00:00:00Z' });
-const CODEX_SHIP = { backend: 'codex', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'ship' };
-const CODEX_REVISE = { backend: 'codex', degraded: false, blockers: 1, majors: 0, minors: 0, verdict: 'revise' };
-const AGY_DEGRADED = { backend: 'agy', degraded: true, blockers: 0, majors: 0, minors: 0, verdict: 'degraded', reason: 'Issue-001 stall on a large diff' };
-const headOf = (g) => g('rev-parse', 'HEAD').stdout.trim();
+  it('the REVERSE order pins selection-first: a grounded SHIP followed by a LATER ungrounded → ungrounded (the earlier SHIP never survives)', () => {
+    const fp = 'f'.repeat(64);
+    const receipts = [
+      { ...RECEIPT_FIXTURE, backend: 'agy', fingerprint: fp, grounded: true, verdict: 'SHIP' },
+      { ...RECEIPT_FIXTURE, backend: 'agy', fingerprint: fp, grounded: false, verdict: 'SHIP' },
+    ];
+    const s = backendReceiptStatus(receipts, 'agy', fp);
+    assert.equal(s.state, 'ungrounded', 'the LATEST normal receipt is selected first and then judged');
+  });
 
-describe('review-state --check — the degraded exemption (AD-050)', () => {
-  it('no receipt but a current-fp degraded round → 0 (exempt; the reason names the degraded backend)', () => {
-    const { root, g } = makeRepo();
+  it('gate level: SHIP then a later ungrounded receipt refuses with the ungrounded reason (the other backend ship-class)', () => {
+    const { root } = makeRepo();
     const fp = computeTreeFingerprint(root);
     mint(root, { backend: 'codex', fingerprint: fp, verdict: 'ship' });
-    const { path, dir } = seedLedger([v4Round({ base: headOf(g), fingerprint: fp, backends: [CODEX_SHIP, AGY_DEGRADED] })]);
-    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
+    mint(root, { backend: 'agy', fingerprint: fp, verdict: 'SHIP', timestamp: 't1' });
+    mint(root, { backend: 'agy', fingerprint: fp, verdict: 'SHIP', grounded: false, factsHash: null, timestamp: 't2' });
+    const r = check(root);
     rmSync(root, { recursive: true, force: true });
-    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /agy: the latest normal receipt is ungrounded/);
+  });
+});
+
+// ── the verdict vocabulary + the D3(b) degrade-record escape (the strip-the-kit hardening) ────────
+// Satisfaction is SHIP-CLASS ONLY; a recognized negative on the LATEST normal receipt is an
+// authoritative veto; an unrecognized verdict never attests (fail closed). The ONLY exemption lane
+// for an unavailable backend under council is an EXPLICIT per-backend, per-tree degrade record in
+// the core-evidence store — and never all backends.
+
+const degradeLine = (backend, fingerprint, over = {}) =>
+  `${JSON.stringify({ schema: 1, kind: 'degrade', backend, reason: 'backend unavailable for this tree', fingerprint, timestamp: '2026-07-16T00:00:00Z', ...over })}\n`;
+const recordDegrade = (root, backend, fingerprint, over) =>
+  appendFileSync(join(root, '.git', 'agent-workflow-core-evidence.jsonl'), degradeLine(backend, fingerprint, over));
+
+describe('review-state --check — the verdict vocabulary (D3(b))', () => {
+  it('an unknown-verdict receipt never attests (fail closed)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'unknown' });
+    mint(root, { backend: 'agy', fingerprint: fp, verdict: 'SHIP' });
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, r.stdout);
+    assert.match(r.stdout, /unrecognized verdict/);
+    assert.match(r.stdout, /never attests/);
+  });
+
+  it('SHIP then a later unknown → refuse (a later unknown never lets an earlier SHIP survive)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'ship', timestamp: 't1' });
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'unknown', timestamp: 't2' });
+    mint(root, { backend: 'agy', fingerprint: fp, verdict: 'SHIP' });
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'the LATEST normal receipt is judged — an earlier SHIP never survives a later unknown');
+    assert.match(r.stdout, /codex: .*unrecognized verdict/);
+  });
+
+  it('the latest revise VETOES an earlier ship (a recognized negative is authoritative)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'ship', timestamp: 't1' });
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'revise', timestamp: 't2' });
+    mint(root, { backend: 'agy', fingerprint: fp, verdict: 'SHIP' });
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /authoritative veto/);
+  });
+
+  it('an unrecognized verdict is an unconditional refusal never masked by a ship or a degrade record', () => {
+    const { root: reviewedRoot } = makeRepo({ config: JSON.stringify({ 'plan-execution': { review: 'reviewed' } }) });
+    const fp1 = computeTreeFingerprint(reviewedRoot);
+    mint(reviewedRoot, { backend: 'agy', fingerprint: fp1, verdict: 'SHIP' });
+    mint(reviewedRoot, { backend: 'codex', fingerprint: fp1, verdict: 'unknown' });
+    const reviewed = check(reviewedRoot);
+    rmSync(reviewedRoot, { recursive: true, force: true });
+    assert.equal(reviewed.code, 1, 'under reviewed, another backend\'s SHIP never masks an unknown-verdict receipt');
+    assert.match(reviewed.stdout, /codex: .*unrecognized verdict/);
+
+    const { root: councilRoot } = makeRepo();
+    const fp2 = computeTreeFingerprint(councilRoot);
+    mint(councilRoot, { backend: 'codex', fingerprint: fp2, verdict: 'ship' });
+    mint(councilRoot, { backend: 'agy', fingerprint: fp2, verdict: 'unknown' });
+    recordDegrade(councilRoot, 'agy', fp2);
+    const council = check(councilRoot);
+    rmSync(councilRoot, { recursive: true, force: true });
+    assert.equal(council.code, 1, 'a degrade record never lifts an unknown-verdict receipt — the backend demonstrably ran');
+    assert.match(council.stdout, /agy: .*unrecognized verdict/);
+  });
+
+  it('an ungrounded unknown verdict is still an unconditional refusal', () => {
+    const { root } = makeRepo({ config: JSON.stringify({ 'plan-execution': { review: 'reviewed' } }) });
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'agy', fingerprint: fp, verdict: 'SHIP' });
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'unknown', grounded: false, factsHash: null });
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'grounding must never reclassify an unrecognized verdict out of the unconditional refusal');
+    assert.match(r.stdout, /codex: .*unrecognized verdict/);
+  });
+
+  it('an array verdict renders as its JSON form, never as a recognized-looking string', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: ['ship'] });
+    mint(root, { backend: 'agy', fingerprint: fp, verdict: 'SHIP' });
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /unrecognized verdict \(\["ship"\]\)/, 'the render must show the JSON form, not a coerced "ship"');
+  });
+
+  it('a satisfied gate still names rejected probe markers (no silent exclusions on success paths)', () => {
+    const { root } = makeRepo({ config: JSON.stringify({ 'plan-execution': { review: 'reviewed' } }) });
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'agy', fingerprint: fp, verdict: 'SHIP' });
+    const unmarked = { ...RECEIPT_FIXTURE, backend: 'codex', fingerprint: fp };
+    delete unmarked.probe;
+    appendFileSync(join(root, '.git', RECEIPTS_BASENAME), `${JSON.stringify(unmarked)}\n`);
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, `agy satisfies reviewed: ${r.stdout}`);
+    assert.match(r.stdout, /receipt\(s\) rejected: an untrustworthy probe marker/, 'the PASS line still names the exclusions');
+  });
+
+  it('a printed veto row does not suppress its own marker exclusions (mixed failure)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'revise' });
+    const unmarked = { ...RECEIPT_FIXTURE, backend: 'codex', fingerprint: fp, verdict: 'ship', timestamp: 't0' };
+    delete unmarked.probe;
+    appendFileSync(join(root, '.git', RECEIPTS_BASENAME), `${JSON.stringify(unmarked)}\n`);
+    mint(root, { backend: 'agy', fingerprint: fp, verdict: 'SHIP' });
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /authoritative veto/);
+    assert.match(r.stdout, /receipt\(s\) rejected: an untrustworthy probe marker/, 'the veto part does not name markers — the note must');
+  });
+
+  it('a veto is never lifted by a degrade record (the backend demonstrably reviewed this tree)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'rework' });
+    mint(root, { backend: 'agy', fingerprint: fp, verdict: 'SHIP' });
+    recordDegrade(root, 'codex', fp);
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'a recognized negative outranks the degrade escape');
+    assert.match(r.stdout, /authoritative veto/);
+  });
+});
+
+describe('review-state --check — the D3(b) degrade-record escape (core-evidence store)', () => {
+  it('codex ship + an agy degrade record at the CURRENT fingerprint → 0 (council satisfied, degrade stated)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'ship' });
+    recordDegrade(root, 'agy', fp);
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
     assert.equal(r.code, 0, r.stdout);
-    assert.match(r.stdout, /degraded-exempt/);
+    assert.match(r.stdout, /degrade-recorded/);
     assert.match(r.stdout, /agy/);
   });
 
-  it('a STALE prior receipt AND a current-fp degraded round → 0 (the exemption is receipt-state-independent)', () => {
-    const { root, g } = makeRepo();
+  it('an unavailable backend WITHOUT a degrade record → 1 (the obligation stands)', () => {
+    const { root } = makeRepo();
     const fp = computeTreeFingerprint(root);
-    mint(root, { backend: 'codex', fingerprint: fp });
-    mint(root, { backend: 'agy', fingerprint: 'stale'.repeat(12) }); // agy has a receipt, none current → 'stale'
-    const { path, dir } = seedLedger([v4Round({ base: headOf(g), fingerprint: fp, backends: [CODEX_SHIP, AGY_DEGRADED] })]);
-    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'ship' });
+    const r = check(root, { agy: NEEDS_SKILL });
     rmSync(root, { recursive: true, force: true });
-    rmSync(dir, { recursive: true, force: true });
-    assert.equal(r.code, 0, r.stdout);
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /agy: no receipt/);
+    assert.match(r.stdout, /degrade/);
   });
 
-  it('VERDICT-BLIND: the non-degraded backend receipted "revise" (blockers>0 in the round) + the other degraded at the current fp → 0 (presence, not unanimity)', () => {
+  it('a stale-fingerprint degrade record never exempts → 1', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'ship' });
+    recordDegrade(root, 'agy', 'f'.repeat(64));
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'a degrade attests ONE tree — a stale record is no escape');
+    assert.match(r.stdout, /agy: no receipt/);
+  });
+
+  it('all backends degrade-recorded → 1 (never all degraded: >=1 real ship-class attestation required)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    recordDegrade(root, 'codex', fp);
+    recordDegrade(root, 'agy', fp);
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /never all degraded/);
+  });
+
+  it('an exempt backend with rejected receipts keeps its marker exclusions named on the minShip path', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    recordDegrade(root, 'codex', fp);
+    const unmarked = { ...RECEIPT_FIXTURE, backend: 'codex', fingerprint: fp };
+    delete unmarked.probe;
+    appendFileSync(join(root, '.git', RECEIPTS_BASENAME), `${JSON.stringify(unmarked)}\n`);
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'no ship-class attestation — the minShip floor holds');
+    assert.match(r.stdout, /codex: degrade-recorded for this tree/, 'the exempt row prints its degrade string');
+    assert.match(r.stdout, /receipt\(s\) rejected: an untrustworthy probe marker/, 'its rejected-marker exclusions are still named — never silently lost');
+  });
+
+  it('a mixed exempt and missing council names each backend honestly', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    recordDegrade(root, 'codex', fp);
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'no ship-class attestation exists — the minShip floor holds');
+    assert.match(r.stdout, /codex: degrade-recorded for this tree/);
+    assert.doesNotMatch(r.stdout, /codex: no receipt/, 'an already-exempt backend must never be told to record a degrade');
+    assert.match(r.stdout, /agy: no receipt/);
+  });
+
+  it('an early-exit PASS still names an unreadable receipts store (clean tree + EISDIR)', () => {
     const { root, g } = makeRepo();
+    g('add', '-A');
+    g('commit', '-qm', 'everything committed');
+    const dir = mkdtempSync(join(tmpdir(), 'review-state-recdir3-'));
+    const r = check(root, { env: { AW_REVIEW_RECEIPTS: dir } });
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, 'a clean tree stays PASS');
+    assert.match(r.stdout, /receipts store unreadable/, 'the diagnostic rides every check line, early exits included');
+  });
+
+  it('the human report glyph reflects satisfaction: a recognized negative renders ✗, never ✓', () => {
+    const { root } = makeRepo();
     const fp = computeTreeFingerprint(root);
     mint(root, { backend: 'codex', fingerprint: fp, verdict: 'revise' });
-    const round = v4Round({
-      base: headOf(g), fingerprint: fp,
-      backends: [CODEX_REVISE, AGY_DEGRADED],
-      findings: [{ findingKey: 'x', severity: 'blocker', origin: 'first-draft', backend: 'codex' }],
-      origins: { 'first-draft': 1, 'fold-induced': 0, mechanics: 0 },
-    });
-    const { path, dir } = seedLedger([round]);
-    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
+    mint(root, { backend: 'agy', fingerprint: fp, verdict: 'SHIP' });
+    const r = check(root, { args: [] });
     rmSync(root, { recursive: true, force: true });
-    rmSync(dir, { recursive: true, force: true });
-    assert.equal(r.code, 0, r.stdout); // review-state does not adjudicate ship/revise — the backend reviewed + the other is degraded-exempt
+    assert.match(r.stdout, /✗ codex: current \(verdict: "revise"/);
+    assert.match(r.stdout, /✓ agy: current \(verdict: "SHIP"/);
   });
 
-  it('the same degrade at an OLD/other fingerprint → 1 (stale, not exempt)', () => {
-    const { root, g } = makeRepo();
-    const fp = computeTreeFingerprint(root);
-    mint(root, { backend: 'codex', fingerprint: fp });
-    const { path, dir } = seedLedger([v4Round({ base: headOf(g), fingerprint: 'old'.repeat(21) + 'x', backends: [CODEX_SHIP, AGY_DEGRADED] })]);
-    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
-    rmSync(root, { recursive: true, force: true });
-    rmSync(dir, { recursive: true, force: true });
-    assert.equal(r.code, 1);
-    assert.match(r.stdout, /agy: no receipt|agy: /);
-  });
-
-  it('a two-round segment where an EARLIER round records the backend degraded but the LATEST does not → 1 (the latest governs)', () => {
-    const { root, g } = makeRepo();
-    const fp = computeTreeFingerprint(root);
-    const base = headOf(g);
-    mint(root, { backend: 'codex', fingerprint: fp });
-    const r1 = v4Round({ base, fingerprint: fp, round: 1, backends: [CODEX_SHIP, AGY_DEGRADED] });
-    const r2 = v4Round({ base, fingerprint: fp, round: 2, backends: [CODEX_SHIP, { backend: 'agy', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'ship' }] });
-    const { path, dir } = seedLedger([r1, r2]);
-    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
-    rmSync(root, { recursive: true, force: true });
-    rmSync(dir, { recursive: true, force: true });
-    assert.equal(r.code, 1, 'the latest round has agy non-degraded → not exempt → agy missing');
-  });
-
-  it('a missing backend with NO degrade record → 1 (unchanged)', () => {
-    const { root, g } = makeRepo();
-    const fp = computeTreeFingerprint(root);
-    mint(root, { backend: 'codex', fingerprint: fp });
-    // a round exists but records BOTH backends non-degraded (agy just has no receipt) → no exemption
-    const round = v4Round({ base: headOf(g), fingerprint: fp, backends: [CODEX_SHIP, { backend: 'agy', degraded: false, blockers: 0, majors: 0, minors: 0, verdict: 'ship' }] });
-    const { path, dir } = seedLedger([round]);
-    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
-    rmSync(root, { recursive: true, force: true });
-    rmSync(dir, { recursive: true, force: true });
-    assert.equal(r.code, 1);
-  });
-
-  it('all degraded / no non-degraded current receipt → 1 (condition v — ≥1 real review required)', () => {
-    const { root, g } = makeRepo();
-    const fp = computeTreeFingerprint(root);
-    // NO codex receipt; both backends recorded degraded
-    const round = v4Round({ base: headOf(g), fingerprint: fp, backends: [
-      { backend: 'codex', degraded: true, blockers: 0, majors: 0, minors: 0, verdict: 'degraded', reason: 'codex unreachable' },
-      AGY_DEGRADED,
-    ] });
-    const { path, dir } = seedLedger([round]);
-    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
-    rmSync(root, { recursive: true, force: true });
-    rmSync(dir, { recursive: true, force: true });
-    assert.equal(r.code, 1, 'never everyone degraded — at least one real grounded review is required');
-  });
-
-  it('the non-degraded backend is ABSENT from the latest round (only the degraded one recorded) + a stray current receipt → 1 (mirrors decideStop allPresent)', () => {
-    const { root, g } = makeRepo();
-    const fp = computeTreeFingerprint(root);
-    mint(root, { backend: 'codex', fingerprint: fp }); // codex has a current receipt...
-    // ...but the latest round records ONLY agy degraded (codex absent) — not a valid council round; a
-    // stray receipt for a NON-recorded backend must never justify the exemption (else the two gates
-    // disagree: review-ledger fails allPresent on the absent codex).
-    const { path, dir } = seedLedger([v4Round({ base: headOf(g), fingerprint: fp, backends: [AGY_DEGRADED] })]);
-    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
-    rmSync(root, { recursive: true, force: true });
-    rmSync(dir, { recursive: true, force: true });
-    assert.equal(r.code, 1, 'a degrade-only round with the non-degraded backend absent never exempts');
-  });
-
-  it('a degrade recorded under a DIFFERENT base than the in-flight one → 1 (segment isolation)', () => {
-    const { root, g } = makeRepo();
-    const fp = computeTreeFingerprint(root);
-    mint(root, { backend: 'codex', fingerprint: fp });
-    const { path, dir } = seedLedger([v4Round({ base: 'a'.repeat(40), fingerprint: fp, backends: [CODEX_SHIP, AGY_DEGRADED] })]);
-    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
-    rmSync(root, { recursive: true, force: true });
-    rmSync(dir, { recursive: true, force: true });
-    assert.equal(r.code, 1);
-  });
-
-  it('a degrade recorded under a DIFFERENT loop than the in-flight one → 1 (segment isolation)', () => {
-    const { root, g } = makeRepo();
-    const fp = computeTreeFingerprint(root);
-    mint(root, { backend: 'codex', fingerprint: fp });
-    const { path, dir } = seedLedger([v4Round({ loop: 'some-other-plan', base: headOf(g), fingerprint: fp, backends: [CODEX_SHIP, AGY_DEGRADED] })]);
-    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
-    rmSync(root, { recursive: true, force: true });
-    rmSync(dir, { recursive: true, force: true });
-    assert.equal(r.code, 1);
-  });
-
-  it('>1 plan in flight + a degraded backend → 1 (ambiguous loop → exemption suppressed)', () => {
-    const { root, g } = makeRepo();
-    writeFileSync(join(root, 'docs', 'plans', 'second-plan.md'), '# second\n');
-    const fp = computeTreeFingerprint(root);
-    mint(root, { backend: 'codex', fingerprint: fp });
-    const { path, dir } = seedLedger([v4Round({ base: headOf(g), fingerprint: fp, backends: [CODEX_SHIP, AGY_DEGRADED] })]);
-    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
-    rmSync(root, { recursive: true, force: true });
-    rmSync(dir, { recursive: true, force: true });
-    assert.equal(r.code, 1, 'two plans in flight → the loop is ambiguous → no exemption');
-  });
-
-  it('>1 plan in flight + all backends receipt-current + no degrade → 0 (REGRESSION: multi-plan suppresses ONLY the exemption, adds no fail-closed arm)', () => {
-    const { root } = makeRepo();
-    writeFileSync(join(root, 'docs', 'plans', 'second-plan.md'), '# second\n');
-    const fp = computeTreeFingerprint(root);
-    mint(root, { backend: 'codex', fingerprint: fp });
-    mint(root, { backend: 'agy', fingerprint: fp });
-    const r = check(root); // no ledger at all
-    rmSync(root, { recursive: true, force: true });
-    assert.equal(r.code, 0, 'an all-current >1-plan tree must stay exit 0 — the exemption suppression must not add an exit-1 arm');
-  });
-
-  it('a corrupt round sequence in the current segment + a current-fp degrade + a backend needing the exemption → 1 (fail-closed)', () => {
-    const { root, g } = makeRepo();
-    const fp = computeTreeFingerprint(root);
-    const base = headOf(g);
-    mint(root, { backend: 'codex', fingerprint: fp });
-    // rounds numbered [1,1] — a corrupt sequence (reachable only by hand-editing the git-dir file)
-    const r1 = v4Round({ base, fingerprint: fp, round: 1, backends: [CODEX_SHIP, AGY_DEGRADED] });
-    const r1dup = v4Round({ base, fingerprint: fp, round: 1, backends: [CODEX_SHIP, AGY_DEGRADED] });
-    const { path, dir } = seedLedger([r1, r1dup]);
-    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
-    rmSync(root, { recursive: true, force: true });
-    rmSync(dir, { recursive: true, force: true });
-    assert.equal(r.code, 1, 'a corrupt round sequence is unknown state → the exemption is denied');
-  });
-
-  it('an unreadable / malformed ledger while a backend NEEDS the exemption → 1 (fail-closed, exemption denied, surfaced)', () => {
+  it('the ⊘ glyph applies only where the escape does: unknown+degrade renders ✗, missing+degrade renders ⊘', () => {
     const { root } = makeRepo();
     const fp = computeTreeFingerprint(root);
-    mint(root, { backend: 'codex', fingerprint: fp });
-    const { path, dir } = seedLedger(['{ this is not valid json']);
-    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'unknown' });
+    recordDegrade(root, 'codex', fp);
+    recordDegrade(root, 'agy', fp);
+    const r = check(root, { args: [] });
     rmSync(root, { recursive: true, force: true });
-    rmSync(dir, { recursive: true, force: true });
-    assert.equal(r.code, 1);
-    assert.match(r.stdout, /malformed|ledger/);
+    assert.match(r.stdout, /✗ codex: latest normal receipt carries an unrecognized verdict/, 'a produced receipt outranks the record');
+    assert.match(r.stdout, /⊘ agy: missing/, 'the escape glyph stays for a backend that could not run');
   });
 
-  it('an unreadable / malformed ledger + ALL backends receipt-current → 0 with the ledger corruption SURFACED (exemption-scoped fail-closed)', () => {
+  it('the unknowable arm still names an unreadable receipts store', () => {
+    const { root } = makeRepo({ config: null });
+    const dir = mkdtempSync(join(tmpdir(), 'review-state-recdir4-'));
+    const throwingDetect2 = () => { throw new Error('down'); };
+    const r = main(['--check'], { cwd: root, env: { AW_REVIEW_RECEIPTS: dir }, detect: throwingDetect2 });
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /cannot verify receipts/);
+    assert.match(r.stdout, /receipts store unreadable/);
+  });
+
+  it('an unreadable receipts store is named on the check line (never a silent missing)', () => {
+    const { root } = makeRepo();
+    const dir = mkdtempSync(join(tmpdir(), 'review-state-recdir2-'));
+    const r = check(root, { env: { AW_REVIEW_RECEIPTS: dir } });
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /receipts store unreadable/);
+  });
+
+  it('a malformed degrade store denies the escape fail-closed (surfaced) while a backend NEEDS it → 1', () => {
     const { root } = makeRepo();
     const fp = computeTreeFingerprint(root);
-    mint(root, { backend: 'codex', fingerprint: fp });
-    mint(root, { backend: 'agy', fingerprint: fp });
-    const { path, dir } = seedLedger(['{ not valid json at all']);
-    const r = check(root, { env: { AW_REVIEW_LEDGER: path } });
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'ship' });
+    recordDegrade(root, 'agy', fp);
+    appendFileSync(join(root, '.git', 'agent-workflow-core-evidence.jsonl'), 'not valid json at all\n');
+    const r = check(root);
     rmSync(root, { recursive: true, force: true });
-    rmSync(dir, { recursive: true, force: true });
-    assert.equal(r.code, 0, 'a corrupt ledger must never fail a tree whose receipts independently satisfy the gate');
-    assert.match(r.stdout, /ledger/, 'the ledger corruption is surfaced even on the exit-0 path');
+    assert.equal(r.code, 1, 'a corrupt store is unknown state → the escape is denied');
+    assert.match(r.stdout, /evidence store unavailable/);
+  });
+
+  it('a malformed degrade store + ALL backends ship-receipted → 0 with the corruption SURFACED (escape-scoped fail-closed)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'ship' });
+    mint(root, { backend: 'agy', fingerprint: fp, verdict: 'SHIP' });
+    appendFileSync(join(root, '.git', 'agent-workflow-core-evidence.jsonl'), 'not valid json at all\n');
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, 'a corrupt store must never fail a tree whose receipts independently satisfy the gate');
+    assert.match(r.stdout, /evidence store unavailable/, 'the corruption is surfaced even on the exit-0 path');
+  });
+});
+
+describe('requiredBackendsForConfiguredRecipe — obligations from the CONFIGURED recipe only', () => {
+  const detection = (codex, agy) => [{ name: CODEX, readiness: codex }, { name: AGY, readiness: agy }];
+  const COUNCIL = { 'plan-execution': { review: 'council' } };
+  const REVIEWED = { 'plan-execution': { review: 'reviewed' } };
+
+  it('a configured council names EVERY review-capable backend under every readiness state (never degrades)', () => {
+    for (const readiness of [detection(READY, READY), detection(NEEDS_SKILL, READY), detection(NEEDS_SKILL, NEEDS_SKILL)]) {
+      const o = requiredBackendsForConfiguredRecipe({ config: COUNCIL, readiness });
+      assert.deepEqual([o.recipe, o.backends, o.perBackend, o.minShip], ['council', ['codex', 'agy'], true, 1]);
+    }
+  });
+
+  it('a configured reviewed keeps the 1-of-set obligation under every readiness state', () => {
+    for (const readiness of [detection(READY, READY), detection(NEEDS_SKILL, READY), detection(NEEDS_SKILL, NEEDS_SKILL)]) {
+      const o = requiredBackendsForConfiguredRecipe({ config: REVIEWED, readiness });
+      assert.deepEqual([o.recipe, o.backends, o.perBackend, o.minShip], ['reviewed', ['codex', 'agy'], false, 1]);
+    }
+  });
+
+  it('absent config: the computed default is readiness-aware (reviewed when any backend is ready, else solo)', () => {
+    assert.equal(requiredBackendsForConfiguredRecipe({ config: {}, readiness: detection(READY, NEEDS_SKILL) }).recipe, 'reviewed');
+    assert.equal(requiredBackendsForConfiguredRecipe({ config: {}, readiness: detection(NEEDS_SKILL, NEEDS_SKILL) }).recipe, 'solo');
+  });
+
+  it('absent config + a down detector → unknowable (fail closed upstream); an explicit config never is', () => {
+    assert.equal(requiredBackendsForConfiguredRecipe({ config: {}, readiness: [], detectionFailed: true }).unknowable, true);
+    assert.equal(requiredBackendsForConfiguredRecipe({ config: COUNCIL, readiness: [], detectionFailed: true }).unknowable, false);
+  });
+
+  it('a configured solo carries no obligation', () => {
+    const o = requiredBackendsForConfiguredRecipe({ config: { 'plan-execution': { review: 'solo' } }, readiness: detection(READY, READY) });
+    assert.deepEqual([o.recipe, o.backends, o.minShip], ['solo', [], 0]);
   });
 });
 

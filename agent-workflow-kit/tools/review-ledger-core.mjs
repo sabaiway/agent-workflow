@@ -7,9 +7,11 @@
 // neutral core instead (added in AD-050 Segment 2). review-ledger.mjs consumes + re-exports every
 // symbol here for external back-compat — the changed-surface.mjs precedent (AD-048).
 //
-// Import-graph invariant (pinned by import-split tests): this module imports NOTHING from the
-// family — node built-ins only. Everyone may import it; it imports no one:
-//   review-ledger.mjs → review-ledger-core.mjs ← review-state.mjs (AD-050 Segment 2)
+// Import-graph invariant (pinned by import-split tests): this module imports ONLY the
+// core-evidence DAG bottom (which owns the shared review-domain primitives it re-exports for
+// back-compat: the attesting predicate, the testId format, base resolution). Everyone may import
+// it; it imports no checker:
+//   review-ledger.mjs → review-ledger-core.mjs → core-evidence.mjs
 //
 // Read-only: never writes, never commits. It DOES spawn read-only `git` queries (rev-parse).
 // Dependency-free, Node >= 18. No side effects on import.
@@ -17,6 +19,25 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import {
+  resolveBase,
+  isWellFormedTestId,
+  splitTestId,
+  REVIEW_RECEIPT_CLASS,
+  classifyReviewReceiptForTree,
+  summarizeReviewReceiptsForTree,
+  describeMissingReviewAttestation,
+} from './core-evidence.mjs';
+
+export {
+  resolveBase,
+  isWellFormedTestId,
+  splitTestId,
+  REVIEW_RECEIPT_CLASS,
+  classifyReviewReceiptForTree,
+  summarizeReviewReceiptsForTree,
+  describeMissingReviewAttestation,
+};
 
 export const LEDGER_BASENAME = 'agent-workflow-review-ledger.jsonl';
 
@@ -78,9 +99,7 @@ export const resolveLedgerPath = (cwd, env = process.env) => {
 // resetting the round counter REQUIRES shipping a green, converged unit. An amend/rebase mid-loop
 // orphans the segment's rounds — correct: the reviewed tree no longer exists.
 
-// resolveBase(cwd) → the current HEAD commit sha, or null on an unborn branch / outside a git work
-// tree (a caught refusal from git, never a crash — agy R1).
-export const resolveBase = (cwd) => gitLine(['rev-parse', '--verify', '--quiet', 'HEAD'], cwd);
+// resolveBase lives in core-evidence.mjs (re-exported above).
 
 // ── schema validation (tolerant reader counts + surfaces malformed lines, never drops silently) ──
 
@@ -88,22 +107,8 @@ const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArr
 const isNonEmptyString = (v) => typeof v === 'string' && v.length > 0;
 const isNonNegInt = (v) => Number.isInteger(v) && v >= 0;
 
-// testId FORMAT (Decision 3): "<repo-relative test file>#<test-name-pattern>" — a "#" separator with
-// BOTH halves non-empty. NO file-suffix rule: a suffix check would itself be a special case and would
-// block a consumer's own naming (e.g. `.spec.js`; agy R1). The reader validates FORMAT only (it stays
-// hermetic); the fold-completeness gate validates RESOLVABILITY via a bound-test probe run. Exported
-// (with the splitter) as the single home of the format — the fold-completeness pair validates and
-// splits testIds through THESE, so the format can never fork (BUGFREE-1 / AD-047).
-const TESTID_SEPARATOR = '#';
-export const isWellFormedTestId = (v) => {
-  if (typeof v !== 'string') return false;
-  const at = v.indexOf(TESTID_SEPARATOR);
-  return at > 0 && at < v.length - 1; // separator present, both halves non-empty
-};
-export const splitTestId = (v) => {
-  const at = v.indexOf(TESTID_SEPARATOR);
-  return { file: v.slice(0, at), pattern: v.slice(at + 1) };
-};
+// The testId FORMAT helpers live in core-evidence.mjs (re-exported above) — still ONE home; the
+// fold-completeness pair and this schema validate/split through the same functions.
 
 // validateRound(obj) → { ok, reason }. Structural checks + the two internal-consistency invariants:
 // the per-backend findings-by-severity equal that backend's counts, and the origins tally equals the
@@ -348,79 +353,12 @@ export const filterSegmentRecords = (records, { activity, loop, base }) =>
 // (no duplicate, gap, or out-of-order round). Checks the EXISTING sequence, not just the incoming
 // round: a ledger like [2] / [1,1] / [2,1] (reachable only by hand-editing the git-dir file — the
 // stated residual) must fail closed rather than be trusted to compute the "latest" round (codex R3).
-// ── the attesting-receipt predicate (BRIDGE-MODES-CATALOG, D3) ─────────────────────────
-// The ONE place that decides whether a review receipt may attest a tree. It lives in this neutral
-// core because all three consumers — review-state.mjs (the receipt gate), review-ledger.mjs (the
-// round cross-check) and review-ledger-write.mjs (the round writer) — need it, and the core imports
-// none of them: the same DAG reason this module exists at all. Two gates disagreeing about what
-// counts as an attestation is exactly the class AD-050 closed; a second copy would re-open it.
-export const REVIEW_RECEIPT_CLASS = Object.freeze({
-  NOT_CURRENT: 'not-current',
-  ATTESTING: 'attesting',
-  UNGROUNDED: 'ungrounded',
-  PROBE: 'probe',
-  UNMARKED: 'unmarked',
-  MALFORMED_MARKER: 'malformed-marker',
-});
-
-// Classify ONE receipt against a tree fingerprint. Order is load-bearing: identity first (is this
-// even about the current tree?), then the probe marker (may it attest at all?), then grounding.
-export const classifyReviewReceiptForTree = (receipt, fingerprint) => {
-  if (!isPlainObject(receipt) || receipt.fresh !== true || receipt.artifact !== 'code' || receipt.fingerprint !== fingerprint) {
-    return REVIEW_RECEIPT_CLASS.NOT_CURRENT;
-  }
-  if (!Object.hasOwn(receipt, 'probe')) return REVIEW_RECEIPT_CLASS.UNMARKED;
-  if (typeof receipt.probe !== 'boolean') return REVIEW_RECEIPT_CLASS.MALFORMED_MARKER;
-  if (receipt.probe === true) return REVIEW_RECEIPT_CLASS.PROBE;
-  if (receipt.grounded !== true) return REVIEW_RECEIPT_CLASS.UNGROUNDED;
-  return REVIEW_RECEIPT_CLASS.ATTESTING;
-};
-
-// Summarize one backend's receipts for a tree → { state, receipt, counts… }. `receipt` is the LATEST
-// ATTESTING one — never simply the last line: a probe (or a forged marker) written after a real
-// review must never become the authoritative verdict, which is precisely how a late probe SHIP could
-// override an earlier real REWORK and let both gates report convergence.
-export const summarizeReviewReceiptsForTree = (receipts, fingerprint) => {
-  const classified = receipts
-    .map((receipt) => ({ receipt, classification: classifyReviewReceiptForTree(receipt, fingerprint) }))
-    .filter(({ classification }) => classification !== REVIEW_RECEIPT_CLASS.NOT_CURRENT);
-  const rowsFor = (classification) => classified.filter((row) => row.classification === classification);
-  const attesting = rowsFor(REVIEW_RECEIPT_CLASS.ATTESTING);
-  const ungrounded = rowsFor(REVIEW_RECEIPT_CLASS.UNGROUNDED);
-  const probe = rowsFor(REVIEW_RECEIPT_CLASS.PROBE);
-  const unmarked = rowsFor(REVIEW_RECEIPT_CLASS.UNMARKED);
-  const malformedMarker = rowsFor(REVIEW_RECEIPT_CLASS.MALFORMED_MARKER);
-  const counts = {
-    currentCount: classified.length,
-    ungroundedCount: ungrounded.length,
-    probeExcluded: probe.length,
-    markerRejected: malformedMarker.length,
-    unmarkedRejected: unmarked.length,
-  };
-  if (attesting.length > 0) return { state: 'current', receipt: attesting[attesting.length - 1].receipt, ...counts };
-  if (ungrounded.length > 0) return { state: 'ungrounded', receipt: ungrounded[ungrounded.length - 1].receipt, ...counts };
-  if (classified.length > 0) {
-    return { state: malformedMarker.length > 0 || unmarked.length > 0 ? 'rejected' : 'probe', receipt: null, ...counts };
-  }
-  return { state: 'none', receipt: null, ...counts };
-};
-
-// Why this backend has no attestation — one stated sentence, never a silent "no receipt". The four
-// causes have DIFFERENT recoveries (run a real review / refresh the bridge / fix the receipt source /
-// re-run grounded), so they are never collapsed into one message.
-export const describeMissingReviewAttestation = (summary) => {
-  if (summary.state === 'current') return null;
-  const exclusions = [
-    summary.probeExcluded > 0 ? `${summary.probeExcluded} probe receipt(s)` : null,
-    summary.markerRejected > 0 ? `${summary.markerRejected} receipt(s) with a malformed probe marker` : null,
-    summary.unmarkedRejected > 0 ? `${summary.unmarkedRejected} receipt(s) with no probe marker` : null,
-  ].filter(Boolean);
-  const exclusionSuffix = exclusions.length > 0 ? `; excluded ${exclusions.join(', ')}` : '';
-  if (summary.state === 'ungrounded') return `only ungrounded normal receipts exist for the current tree${exclusionSuffix}`;
-  if (summary.state === 'probe') return 'only probe receipts exist for the current tree — a probe review never attests';
-  if (summary.state === 'rejected') return `current-tree receipts have untrustworthy probe markers${exclusionSuffix}`;
-  return 'no fresh code receipt exists for the current tree';
-};
+// ── the attesting-receipt predicate ────────────────────────────────────────────────────
+// The predicate (REVIEW_RECEIPT_CLASS / classify / summarize / describe) lives in the
+// core-evidence DAG bottom (re-exported above) — ONE home for every consumer: the review-state
+// gate, this core's importers (the round cross-check + the round writer), and the core-evidence
+// summary itself. Two gates disagreeing about what counts as an attestation is exactly the class
+// AD-050 closed; a second copy would re-open it.
 
 export const roundSequenceIntact = (records) => {
   const nums = records.filter((r) => r.kind === 'round').map((r) => r.round);

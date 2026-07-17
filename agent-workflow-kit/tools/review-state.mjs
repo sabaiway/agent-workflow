@@ -1,32 +1,39 @@
 #!/usr/bin/env node
 // review-state.mjs — the read-only review-receipt checker behind `/agent-workflow-kit review-state`
-// (AD-038). It makes "reviewed ≠ shipped" mechanically detectable: the bridge review wrappers
-// (codex-review / agy-review ≥2.2.0) append one receipt line per successful review; this tool
-// resolves the effective `plan-execution.review` recipe (the advisor's single-source readers),
-// recomputes the CURRENT canonical uncommitted-state fingerprint, and reports — per recipe-named
-// backend — whether a FRESH, grounded, current-fingerprint receipt exists. `--check` turns the
-// report into a gate exit code (declare it in docs/ai/gates.json — by hand OR via the
-// explicit-consent seeder, tools/seed-gates.mjs — never without consent, AD-021/AD-042).
+// (AD-038; HARDENED by the strip-the-kit core, D3(b)). It makes "reviewed ≠ shipped" mechanically
+// detectable: the bridge review wrappers append one receipt line per successful review; this tool
+// derives the review OBLIGATIONS from the CONFIGURED `plan-execution.review` recipe (the raw
+// orchestration.json value — never the readiness-degraded effective recipe: a computed
+// readiness-degrade NEVER silently becomes solo), recomputes the CURRENT canonical
+// uncommitted-state fingerprint, and judges — per configured backend — the LATEST NORMAL receipt.
+// `--check` turns the report into a gate exit code (declare it in docs/ai/gates.json).
 //
 // Normative `--check` exit contract (the single home of this list — SKILL.md points here):
-//   exit 0  when the resolved plan-execution.review recipe is solo (configured, or degraded there —
-//           i.e. no reviewer backend is ready); when no plan is in flight (docs/plans/ holds no
-//           top-level .md that is not queue.md and not scratch by the naming convention: prefixes
-//           EXECUTE- / FEEDBACK-, or a name containing PROMPT / prompt / handoff); when the tree is
-//           clean (nothing to review); when the cwd is not a git work tree (nothing to fingerprint);
-//           and when EVERY recipe-named backend has a current-fingerprint receipt with acceptable
-//           grounding (fresh:true, artifact "code", grounded:true) OR is degraded-exempt: the current
-//           plan-execution SEGMENT's latest review-ledger round records that backend degraded:true at
-//           the current tree fingerprint, with >= 1 non-degraded recipe-named backend present with a
-//           current grounded receipt and the ledger reading clean (AD-050; MIRRORS review-ledger
-//           decideStop's degraded handling — presence, not unanimity, never a 0/0-counts gate).
-//   exit 1  when a recipe-named backend has no current-fingerprint receipt AND is not degraded-exempt —
-//           including the stale-after-edit case (any tracked/untracked change after the review moves the
-//           fingerprint) — or when its only current receipts carry grounded:false AND it is not
-//           degraded-exempt (an ungrounded agy review under reviewed/council never satisfies the gate on
-//           its own — but a recorded current-tree degrade still exempts it). An unreadable/malformed
-//           review-ledger DENIES the degraded exemption (fail-closed) but NEVER fails a tree whose
-//           receipts independently satisfy the gate (that stays exit 0, the ledger issue surfaced).
+//   exit 0  when the CONFIGURED plan-execution.review recipe is solo (or the computed default is —
+//           absent config with no reviewer backend ready); when no plan is in flight (docs/plans/
+//           holds no top-level .md that is not queue.md and not scratch by the naming convention:
+//           prefixes EXECUTE- / FEEDBACK-, or a name containing PROMPT / prompt / handoff); when
+//           the tree is clean (nothing to review); when the cwd is not a git work tree; and when
+//           the obligations are SATISFIED: under `reviewed`, >=1 backend's latest normal receipt
+//           attests SHIP-CLASS (ship / ship with nits) for the current tree; under `council`,
+//           EVERY review-capable backend attests ship-class OR carries an explicit current-tree
+//           degrade record in the core-evidence store — and NEVER all backends (>=1 non-degraded
+//           ship-class attestation is required whenever >=1 backend is configured).
+//   exit 1  on an authoritative VETO (any configured backend's latest normal receipt carries a
+//           recognized NEGATIVE verdict — revise / rethink / rework — for the current tree; a
+//           degrade record never lifts a veto); on an UNRECOGNIZED verdict on the latest normal
+//           receipt (an `unknown` verdict never attests — fail closed, so a later unknown never
+//           lets an earlier SHIP survive); on a missing/stale/ungrounded/probe-only backend under
+//           council without a current-tree degrade record; when every configured backend is
+//           degrade-recorded (all-degraded refused); and, with NO configured recipe, when the
+//           backend detector is down (the computed default is unknowable — fail closed). An
+//           unreadable/malformed evidence store DENIES the degrade escape (fail-closed) but NEVER
+//           fails a tree whose receipts independently satisfy the gate (surfaced either way).
+// Selection is LATEST-NORMAL-FIRST: among current-fingerprint, marker-valid, probe-free receipts
+// the LATEST is selected and THEN judged (the verdict-vocabulary arm first, then grounding — an
+// unrecognized verdict is an unconditional refusal that grounding never reclassifies) — so a
+// revise-class latest VETOES an earlier ship-class one, and a probe/forged-marker receipt written
+// after a real review never becomes the authoritative verdict.
 // Informational receipts NEVER satisfy (nor fail) the tree check: plan/diff-mode receipts
 // (artifact ≠ "code") and continuations (fresh:false — agy --continue/--conversation cannot attest
 // a folded tree; only a fresh grounded re-run mints a gate-satisfying receipt).
@@ -63,26 +70,42 @@
 // (read-only queries) to compute the fingerprint — stated honestly in the catalog. Dependency-free,
 // Node >= 18. No side effects on import (the isDirectRun idiom).
 
-import { readFileSync, readdirSync, lstatSync, readlinkSync, openSync, readSync, closeSync } from 'node:fs';
+import { readdirSync, lstatSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { detectBackends } from './detect-backends.mjs';
-import { resolveActivityRecipe, planRecipe, DISPLAY_ALIASES } from './recipes.mjs';
+import { detectBackends, READY } from './detect-backends.mjs';
+import { resolveActivityRecipe, DISPLAY_ALIASES } from './recipes.mjs';
 import { CONFIG_REL, fail, loadConfig } from './orchestration-config.mjs';
-// The NEUTRAL ledger read-core (AD-050): review-state reads the review-ledger ONLY for the degraded
-// exemption, through the neutral core — never review-ledger.mjs (which imports THIS module, the cycle).
+// The canonical review-domain primitives live in the core-evidence DAG bottom (ONE home for the
+// fingerprint, the receipt read path, and the attesting predicate); this module RE-EXPORTS its
+// historical public API from there and consumes the degrade records the same store owns.
 import {
-  resolveLedgerPath,
-  resolveBase,
-  readLedger,
-  filterSegmentRecords,
-  roundSequenceIntact,
+  RECEIPTS_BASENAME,
+  computeFingerprintPayload,
+  computeTreeFingerprint,
+  isTreeClean,
+  isNeverCommittableStat,
+  resolveReceiptsPath,
+  readReceipts,
   summarizeReviewReceiptsForTree,
-} from './review-ledger-core.mjs';
+  resolveBase,
+  isShipVerdict,
+  resolveEvidencePath,
+  readEvidence,
+  authoritativeOfKind,
+} from './core-evidence.mjs';
 
-export const RECEIPTS_BASENAME = 'agent-workflow-review-receipts.jsonl';
+export {
+  RECEIPTS_BASENAME,
+  computeFingerprintPayload,
+  computeTreeFingerprint,
+  isTreeClean,
+  isNeverCommittableStat,
+  resolveReceiptsPath,
+  readReceipts,
+};
+
 export const PLANS_REL = 'docs/plans';
 const ACTIVITY = 'plan-execution';
 const SLOT = 'review';
@@ -110,111 +133,8 @@ const gitLine = (args, cwd) => {
   return buf == null ? null : buf.toString('utf8').replace(/\r?\n$/, '');
 };
 
-// ── the canonical fingerprint (node twin of the wrappers' bash implementation) ──────
-
-// First 8 KiB contain a NUL byte → binary (git's own heuristic; mirrors the wrappers' is_binary).
-const isBinaryFile = (path) => {
-  let fd;
-  try {
-    fd = openSync(path, 'r');
-    const buf = Buffer.alloc(8192);
-    const n = readSync(fd, buf, 0, 8192, 0);
-    return buf.subarray(0, n).includes(0);
-  } catch {
-    return false;
-  } finally {
-    if (fd !== undefined) closeSync(fd);
-  }
-};
-
-// The never-committable untracked stat classes (Decision 1, AD-044 Plan 4): character/block
-// devices, FIFOs, sockets — git content can never carry them, so they are excluded from the ENTIRE
-// review domain (fingerprint payload, clean check; the wrappers' bash twin filters the assembled
-// payload identically). lstat-keyed by design: the sandbox mask class surfaces exactly where the
-// dirent LIES (readdir says file, lstat says char device). A null stat (vanished path) is NOT in
-// the class — it keeps its name-only note, like directories (gitlinks) and symlinks.
-export const isNeverCommittableStat = (stat) =>
-  stat != null &&
-  (stat.isCharacterDevice() || stat.isBlockDevice() || stat.isFIFO() || stat.isSocket());
-
-// The canonical payload bytes: staged diff + unstaged diff + the untracked-not-ignored section —
-// byte-identical to the wrappers' emit_fingerprint_payload (same git invocations, same headers,
-// same ls-files ordering), emitted from the work-tree ROOT. Returns null outside a git work tree.
-// The lstat is injectable ONLY so tests can prove the never-committable filter non-vacuously (a
-// lying lstat over a git-visible fixture path — the sandbox mechanism itself); production callers
-// never pass it.
-export const computeFingerprintPayload = (cwd, { lstat = lstatSync } = {}) => {
-  const top = gitLine(['rev-parse', '--show-toplevel'], cwd);
-  if (top == null) return null;
-  const staged = gitBuf(['diff', '--cached', '--no-ext-diff'], top);
-  const unstaged = gitBuf(['diff', '--no-ext-diff'], top);
-  const untrackedZ = gitBuf(['ls-files', '--others', '--exclude-standard', '-z'], top);
-  if (staged == null || unstaged == null || untrackedZ == null) return null;
-  const chunks = [staged, unstaged];
-  for (const rel of untrackedZ.toString('utf8').split('\0').filter(Boolean)) {
-    const full = join(top, rel);
-    let stat = null;
-    try {
-      stat = lstat(full);
-    } catch {
-      stat = null;
-    }
-    if (isNeverCommittableStat(stat)) continue;
-    if (stat?.isSymbolicLink()) {
-      let target = '?';
-      try {
-        target = readlinkSync(full);
-      } catch {
-        target = '?';
-      }
-      chunks.push(Buffer.from(`untracked-symlink:${rel} -> ${target}\n`));
-    } else if (!stat?.isFile()) {
-      chunks.push(Buffer.from(`untracked-nonregular:${rel}\n`));
-    } else if (isBinaryFile(full)) {
-      chunks.push(Buffer.from(`untracked-binary:${rel}\n`));
-    } else {
-      chunks.push(Buffer.from(`untracked:${rel}\n`));
-      chunks.push(readFileSync(full));
-    }
-  }
-  return Buffer.concat(chunks);
-};
-
-// sha256 hex of the canonical payload, or null outside a git work tree.
-export const computeTreeFingerprint = (cwd, fsx) => {
-  const payload = computeFingerprintPayload(cwd, fsx);
-  return payload == null ? null : createHash('sha256').update(payload).digest('hex');
-};
-
-// Clean = nothing staged, nothing unstaged, no REVIEWABLE untracked-not-ignored paths (the
-// wrappers' no-diff preflight). Never-committable untracked paths (device/FIFO/socket) do not
-// count as dirty — same filter as the fingerprint, so the two can never disagree about a
-// masks-only tree. An lstat failure keeps the path in the domain (dirty), mirroring the
-// fingerprint's null-stat note. null when not decidable (not a git work tree). Anchored at the
-// work-tree ROOT like the fingerprint: `git ls-files --others` is cwd-SCOPED, so a subdirectory
-// invocation would otherwise miss root/sibling untracked paths and report a dirty tree as clean
-// (codex R1 finding).
-export const isTreeClean = (cwd, { lstat = lstatSync } = {}) => {
-  const top = gitLine(['rev-parse', '--show-toplevel'], cwd);
-  if (top == null) return null;
-  const staged = gitRaw(['diff', '--cached', '--quiet'], top);
-  const unstaged = gitRaw(['diff', '--quiet'], top);
-  if (staged.error || unstaged.error || staged.status > 1 || unstaged.status > 1) return null;
-  const untrackedZ = gitBuf(['ls-files', '--others', '--exclude-standard', '-z'], top);
-  if (untrackedZ == null) return null;
-  const reviewable = untrackedZ
-    .toString('utf8')
-    .split('\0')
-    .filter(Boolean)
-    .filter((rel) => {
-      try {
-        return !isNeverCommittableStat(lstat(join(top, rel)));
-      } catch {
-        return true;
-      }
-    });
-  return staged.status === 0 && unstaged.status === 0 && reviewable.length === 0;
-};
+// The canonical fingerprint / clean check / never-committable filter live in core-evidence.mjs
+// (the ONE home, re-exported above); this module keeps only its own presentation plumbing.
 
 // ── the sandbox-masks advisory (D lane, AD-044 Plan 4 Phase 1.5) ────────────────────
 
@@ -277,52 +197,22 @@ export const plansInFlight = (cwd, readdir = readdirSync) => {
     .sort();
 };
 
-// ── receipts ───────────────────────────────────────────────────────────────────────
-
-export const resolveReceiptsPath = (cwd, env = process.env) => {
-  if (env.AW_REVIEW_RECEIPTS) return env.AW_REVIEW_RECEIPTS;
-  const gitDir = gitLine(['rev-parse', '--absolute-git-dir'], cwd);
-  return gitDir == null ? null : join(gitDir, RECEIPTS_BASENAME);
-};
-
-// Parse the receipt file → { receipts, malformed, readError? }. Absent file → empty (not an
-// error: no review ever ran). A NON-ENOENT read failure surfaces as readError — an unreadable
-// store must never silently read as "no receipts" (the core-evidence summary withholds its
-// verdicts section on it). A malformed line is counted + reported, never silently dropped.
-export const readReceipts = (path, readFile = readFileSync) => {
-  let raw;
-  try {
-    raw = readFile(path, 'utf8');
-  } catch (err) {
-    if (err && err.code === 'ENOENT') return { receipts: [], malformed: 0 };
-    return { receipts: [], malformed: 0, readError: (err && err.code) || (err && err.message) || 'read failed' };
-  }
-  const receipts = [];
-  let malformed = 0;
-  for (const line of raw.split('\n')) {
-    if (line.trim() === '') continue;
-    try {
-      const parsed = JSON.parse(line);
-      if (parsed && typeof parsed === 'object' && typeof parsed.backend === 'string') receipts.push(parsed);
-      else malformed += 1;
-    } catch {
-      malformed += 1;
-    }
-  }
-  return { receipts, malformed };
-};
+// ── receipts (path + reader re-exported from the core-evidence one-home above) ──────
 
 // Per-backend receipt status for the current fingerprint, over the ONE shared attesting-receipt
-// predicate (review-ledger-core) that the round cross-check and the round writer read too — two
-// gates disagreeing about what counts as an attestation is the class AD-050 closed:
-//   current    — an ATTESTING receipt exists (fresh code, probe:false, grounded) — its verdict rides;
-//   ungrounded — real (probe:false) current receipts exist but every one carries grounded:false;
-//   probe      — current receipts exist and EVERY one is a well-formed probe (D3);
-//   rejected   — current receipts exist, none attests, and >=1 marker was malformed or absent;
-//   stale      — this backend has receipts, none for the current fingerprint (edited after review);
-//   missing    — no receipt from this backend at all.
-// The counts state what was dropped, so a PASS over a partially-excluded set still says so
-// (No-silent-failures) and the --json surface can show it.
+// predicate — the LATEST NORMAL (probe-free, marker-valid, current-fingerprint) receipt is
+// selected FIRST and THEN judged, so a later unknown/ungrounded receipt never lets an earlier
+// SHIP survive:
+//   current              — the latest normal receipt ATTESTS (grounded + recognized verdict);
+//                          its verdict rides — ONLY ship-class satisfies, a recognized negative
+//                          is an authoritative veto;
+//   ungrounded           — the latest normal receipt carries grounded:false;
+//   unrecognized-verdict — the latest normal receipt carries a verdict outside the closed
+//                          vocabulary (an unknown verdict never attests — fail closed);
+//   probe                — current receipts exist and EVERY one is a well-formed probe (D3);
+//   rejected             — current receipts exist, none normal, and >=1 marker malformed/absent;
+//   stale                — receipts exist, none for the current fingerprint (edited after review);
+//   missing              — no receipt from this backend at all.
 export const backendReceiptStatus = (receipts, backend, fingerprint) => {
   const own = receipts.filter((r) => r.backend === backend);
   const summary = summarizeReviewReceiptsForTree(own, fingerprint);
@@ -332,54 +222,57 @@ export const backendReceiptStatus = (receipts, backend, fingerprint) => {
     unmarkedRejected: summary.unmarkedRejected,
   };
   if (summary.state === 'current') {
-    return { state: 'current', verdict: summary.receipt.verdict ?? 'unknown', grounded: true, timestamp: summary.receipt.timestamp ?? null, ...counts };
+    return { state: 'current', verdict: summary.receipt.verdict ?? 'unknown', shipClass: isShipVerdict(summary.receipt.verdict), grounded: true, timestamp: summary.receipt.timestamp ?? null, ...counts };
   }
-  if (summary.state === 'ungrounded') {
-    return { state: 'ungrounded', verdict: summary.receipt.verdict ?? 'unknown', grounded: false, timestamp: summary.receipt.timestamp ?? null, ...counts };
+  if (summary.state === 'ungrounded' || summary.state === 'unrecognized-verdict') {
+    return { state: summary.state, verdict: summary.receipt.verdict ?? 'unknown', shipClass: false, grounded: summary.receipt.grounded === true, timestamp: summary.receipt.timestamp ?? null, ...counts };
   }
   if (summary.state === 'probe' || summary.state === 'rejected') {
-    return { state: summary.state, verdict: null, grounded: null, timestamp: null, ...counts };
+    return { state: summary.state, verdict: null, shipClass: false, grounded: null, timestamp: null, ...counts };
   }
-  return { state: own.length > 0 ? 'stale' : 'missing', verdict: null, grounded: null, timestamp: null, ...counts };
+  return { state: own.length > 0 ? 'stale' : 'missing', verdict: null, shipClass: false, grounded: null, timestamp: null, ...counts };
 };
 
-// ── the degraded exemption (AD-050): read the review-ledger for a recorded current-tree degrade ────
+// ── obligations from the CONFIGURED recipe + the D3(b) degrade-record escape ────────
 
-// degradedExemptSet(args) → the Set of recipe-named backends EXEMPT from --check because the current
-// segment's LATEST round records them degraded at the current tree fingerprint. It MIRRORS review-ledger
-// decideStop's degraded handling: a backend WITHOUT a current grounded code receipt is exempt IFF
-// (i) exactly one plan is in flight (else the loop is ambiguous — the exempt set is empty, NO fail-closed
-// exit-1 arm) AND the ledger reads clean (a readError / malformed line DENIES the exemption, fail-closed);
-// (ii) the segment (activity=plan-execution, loop, base=resolveBase) has >=1 round with an intact
-// sequence; (iii) its LATEST round records THAT backend degraded; (iv) that round's fingerprint equals
-// the CURRENT tree (the degrade attests THIS tree); (v) >=1 NON-degraded recipe-named backend is present
-// with a current grounded receipt (never everyone degraded). It is VERDICT-BLIND — it mirrors only the
-// PRESENCE half of decideStop (nonDegradedReq >= 1), never its 0/0 counts (Decision 7).
-export const degradedExemptSet = ({ records, readError, malformed, base, plans, currentFingerprint, requiredBackends, backends }) => {
-  const empty = new Set();
-  if (plans.length !== 1) return empty; // (i) ambiguous loop → exemption suppressed (no fail-closed exit-1 arm)
-  if (readError || malformed > 0) return empty; // fail-closed: a corrupt ledger denies the exemption
-  if (currentFingerprint == null) return empty;
-  const loop = plans[0].replace(/\.md$/, '');
-  const rounds = filterSegmentRecords(records, { activity: ACTIVITY, loop, base }).filter((r) => r.kind === 'round');
-  if (rounds.length === 0) return empty; // (ii) empty segment → nothing recorded yet
-  if (!roundSequenceIntact(rounds)) return empty; // (ii) corrupt sequence → fail closed
-  const latest = rounds[rounds.length - 1];
-  if (latest.fingerprint !== currentFingerprint) return empty; // (iv) the degrade must attest THIS tree
-  // Mirror decideStop's PRESENCE discipline (review-ledger.mjs): EVERY recipe-named backend must be IN
-  // the latest round (allPresent) — a backend absent from the round reviewed nothing there, so a stray
-  // current receipt for a NON-recorded backend can never justify the exemption (codex R1: else a
-  // degrade-only round `[{agy degraded}]` + any current codex receipt would exempt agy, disagreeing
-  // with review-ledger, whose decideStop fails allPresent on the absent codex).
-  const entryFor = (rb) => latest.backends.find((b) => b.backend === rb);
-  if (!requiredBackends.every((rb) => entryFor(rb) !== undefined)) return empty;
-  const receiptCurrent = new Set(backends.filter((b) => b.state === 'current').map((b) => b.backend));
-  // (v) >=1 non-degraded recipe-named backend PRESENT in the latest round with a current grounded
-  // receipt — never all degraded (mirrors decideStop's nonDegradedReq >= 1, plus review-state's own
-  // "it really reviewed" = a current receipt).
-  if (!requiredBackends.some((rb) => { const e = entryFor(rb); return e && !e.degraded && receiptCurrent.has(rb); })) return empty;
-  // (iii) exempt each recipe-named backend the latest round records degraded.
-  return new Set(requiredBackends.filter((rb) => { const e = entryFor(rb); return e && e.degraded === true; }));
+// Obligations derive from the CONFIGURED recipe — the RAW orchestration.json value — never the
+// readiness-degraded effective recipe: the resolver degrades council→reviewed→solo BEFORE any
+// check would see the missing backend, which would silently drop an obligation (a computed
+// readiness-degrade NEVER silently becomes solo). The resolver stays for display/diagnostics
+// only. The computed DEFAULT (absent config) is readiness-aware by design — a default never
+// mints an unsatisfiable obligation; an EXPLICIT configured recipe never degrades here.
+//   solo     → no obligation (the existing honest exit-0 contract);
+//   reviewed → ONE ship-class attestation from ANY review-capable backend (minShip 1);
+//   council  → EVERY review-capable backend attests ship-class OR carries a current-tree degrade
+//              record — and NEVER all degraded (minShip 1 stands whenever >=1 backend is configured).
+export const requiredBackendsForConfiguredRecipe = ({ config, readiness = [], detectionFailed = false } = {}) => {
+  const configured = config?.[ACTIVITY]?.[SLOT];
+  const providers = Object.values(DISPLAY_ALIASES); // every review-capable backend, codex first
+  if (configured == null && detectionFailed) {
+    // No config + no readiness signal: the computed default is UNKNOWABLE — fail closed upstream.
+    return { recipe: null, source: 'default', backends: [], minShip: 0, perBackend: false, unknowable: true };
+  }
+  const anyReady = readiness.some((b) => b.readiness === READY);
+  const recipe = configured ?? (anyReady ? 'reviewed' : 'solo');
+  const source = configured != null ? 'config' : 'default';
+  if (recipe === 'solo') return { recipe, source, backends: [], minShip: 0, perBackend: false, unknowable: false };
+  if (recipe === 'council') return { recipe, source, backends: providers, minShip: 1, perBackend: true, unknowable: false };
+  return { recipe, source, backends: providers, minShip: 1, perBackend: false, unknowable: false };
+};
+
+// degradeRecordSet — the D3(b) escape: an EXPLICIT per-backend, per-tree degrade RECORD in the
+// core-evidence store is the ONLY exemption lane. Fail-closed: an unreadable/malformed store
+// DENIES every exemption (surfaced), but never fails a tree whose receipts independently satisfy
+// the gate. A stale-fingerprint record never exempts (the authoritative record per {backend,
+// fingerprint} must attest THIS tree).
+export const degradeRecordSet = ({ cwd, env = process.env, fingerprint }) => {
+  const storePath = resolveEvidencePath(cwd, env);
+  const read = storePath ? readEvidence(storePath) : { records: [], malformed: 0, malformedReasons: [] };
+  const unavailable = (read.malformed ?? 0) > 0 || read.readError != null;
+  const set = unavailable || fingerprint == null
+    ? new Set()
+    : new Set(authoritativeOfKind(read.records, 'degrade').filter((r) => r.fingerprint === fingerprint).map((r) => r.backend));
+  return { set, storePath, malformed: read.malformed ?? 0, readError: read.readError ?? null, unavailable };
 };
 
 // ── the check + report core ─────────────────────────────────────────────────────────
@@ -397,29 +290,33 @@ export const buildState = ({ cwd, env = process.env, detect = detectBackends, ls
   try {
     detection = detect();
   } catch (err) {
-    detectionWarning = `backend detection failed (${(err && err.message) || err}) — treating all backends as not ready; the review recipe floors at solo.`;
+    detectionWarning = `backend detection failed (${(err && err.message) || err}) — readiness unknown.`;
   }
+  // The resolver stays for DISPLAY/diagnostics only; the OBLIGATIONS come from the configured
+  // recipe (never the readiness-degraded effective one — no silent solo).
   const resolved = resolveActivityRecipe({ config: config ?? {}, readiness: detection, activity: ACTIVITY, slot: SLOT });
-  const { dispatch } = planRecipe(resolved.recipe, detection);
-  const requiredBackends = dispatch.map((d) => DISPLAY_ALIASES[d.backend] ?? d.backend);
+  const obligations = requiredBackendsForConfiguredRecipe({ config: config ?? {}, readiness: detection, detectionFailed: detectionWarning != null });
+  const requiredBackends = obligations.backends;
   const plans = plansInFlight(root);
   // The injected lstat threads through EVERY stat-dependent computation (fingerprint, clean, the
-  // mask count) — a partial injection would let a test observe an inconsistent state (codex R3).
+  // mask count) — a partial injection would let a test observe an inconsistent state.
   const fingerprint = computeTreeFingerprint(cwd, { lstat });
   const clean = fingerprint == null ? null : isTreeClean(cwd, { lstat });
   const receiptsPath = resolveReceiptsPath(cwd, env);
-  const { receipts, malformed } = receiptsPath ? readReceipts(receiptsPath) : { receipts: [], malformed: 0 };
+  const receiptsRead = receiptsPath ? readReceipts(receiptsPath) : { receipts: [], malformed: 0 };
+  const { receipts, malformed } = receiptsRead;
+  const receiptsReadError = receiptsRead.readError ?? null;
   const backends = requiredBackends.map((b) => ({ backend: b, ...backendReceiptStatus(receipts, b, fingerprint) }));
-  // The degraded exemption (AD-050): read the review-ledger ONLY here, ONLY for the exemption — the
-  // whole gate never depends on the ledger (a corrupt ledger fails the exemption CLOSED, never a tree
-  // whose receipts independently satisfy the gate; Decision 3). base/ledger locate the current segment.
+  // The D3(b) degrade escape: read the core-evidence store ONLY here, ONLY for the exemption —
+  // the gate never otherwise depends on it (an unavailable store denies the exemption CLOSED,
+  // never fails a tree whose receipts independently satisfy the gate).
   const base = resolveBase(cwd);
-  const ledgerPath = resolveLedgerPath(cwd, env);
-  const { records, malformed: ledgerMalformed, readError: ledgerReadError } = ledgerPath ? readLedger(ledgerPath) : { records: [], malformed: 0 };
-  const degradedExempt = [...degradedExemptSet({ records, readError: ledgerReadError, malformed: ledgerMalformed, base, plans, currentFingerprint: fingerprint, requiredBackends, backends })];
+  const degrade = degradeRecordSet({ cwd, env, fingerprint });
+  const degradedExempt = requiredBackends.filter((b) => degrade.set.has(b));
   return {
     resolved,
     configSource,
+    obligations,
     requiredBackends,
     backends,
     plans,
@@ -429,10 +326,12 @@ export const buildState = ({ cwd, env = process.env, detect = detectBackends, ls
     receiptsPath,
     receiptCount: receipts.length,
     malformed,
+    receiptsReadError,
     base,
-    ledgerPath,
-    ledgerMalformed: ledgerMalformed ?? 0,
-    ledgerReadError: ledgerReadError ?? null,
+    evidenceStorePath: degrade.storePath,
+    evidenceMalformed: degrade.malformed,
+    evidenceReadError: degrade.readError,
+    evidenceUnavailable: degrade.unavailable,
     degradedExempt,
     maskedUntracked: countNeverCommittableUntracked(cwd, { lstat }),
     detectionWarning,
@@ -450,80 +349,114 @@ const rejectionCause = (b) => {
   return parts.join(' + ');
 };
 
+// One failing backend row → its stated recovery. Shared by the council per-backend arm and the
+// reviewed closest-recovery listing.
+const backendFailurePart = (b, state) => {
+  if (b.state === 'current') return `${b.backend}: latest recognized verdict is ${JSON.stringify(b.verdict)} — a recognized negative is an authoritative veto; fold and re-review`;
+  if (b.state === 'unrecognized-verdict') return `${b.backend}: the latest normal receipt carries an unrecognized verdict (${JSON.stringify(b.verdict)}) — an unknown verdict never attests (fail-closed); re-run the review`;
+  if (b.state === 'ungrounded') return `${b.backend}: the latest normal receipt is ungrounded — re-run grounded (--facts)`;
+  if (b.state === 'probe') return `${b.backend}: only probe receipts for the current tree (CODEX_PROBE=1 / AGY_PROBE=1 relaxes the quality guards) — a probe review never attests; re-run a real one`;
+  if (b.state === 'rejected') return `${b.backend}: current-tree receipts rejected — ${rejectionCause(b)} (fail-closed); inspect ${state.receiptsPath}`;
+  if (b.state === 'stale') return `${b.backend}: receipts exist but none matches the current tree (edited after review) — run a fresh review`;
+  return `${b.backend}: no receipt — run its review wrapper, or record an explicit degrade (node ${shellQuoteArg(join(dirname(fileURLToPath(import.meta.url)), 'core-evidence.mjs'))} degrade --backend ${b.backend} --reason "...")`;
+};
+
 // The normative --check decision (the header contract, in order). → { code, reason }.
+// Obligations come from the CONFIGURED recipe; satisfaction is SHIP-CLASS ONLY; a recognized
+// negative on the latest normal receipt VETOES; an explicit current-tree degrade record is the
+// only escape for an unavailable backend under council — and never all backends (>=1 ship-class
+// attestation is required whenever >=1 backend is configured).
 export const decideCheck = (state) => {
-  // A DETECTOR FAILURE is unknown state, not "no reviewer ready" — the advisory tools warn and
-  // floor at solo, but a GATE must fail closed (codex R2+R3 findings): a broken detector would
-  // otherwise disable the receipt requirement both for a configured non-solo recipe AND for a
-  // default-config project (whose computed default would be `reviewed` had a backend been ready —
-  // unknowable while the detector is down). The ONLY detector-independent green is an EXPLICIT
-  // configured solo (that project asked for no reviewer, readiness is irrelevant to it).
-  const explicitSolo = state.resolved.recipe === 'solo' && state.resolved.source === 'config' && !state.resolved.degradedFrom;
-  if (state.detectionWarning && !explicitSolo) {
-    return { code: 1, reason: `cannot verify receipts — ${state.detectionWarning}` };
-  }
-  if (state.resolved.recipe === 'solo') {
-    const why = state.resolved.degradedFrom
-      ? `resolved ${ACTIVITY}.${SLOT} recipe degrades to solo here (${state.resolved.reason})`
-      : `resolved ${ACTIVITY}.${SLOT} recipe is solo`;
-    return { code: 0, reason: `${why} — no receipt required` };
-  }
-  if (state.plans.length === 0) return { code: 0, reason: 'no plan in flight (docs/plans/ holds no active plan) — no receipt required' };
-  if (state.fingerprint == null) return { code: 0, reason: 'not a git work tree — nothing to fingerprint' };
-  if (state.clean === true) return { code: 0, reason: 'the working tree is clean — nothing to review' };
-  // A malformed receipt line is never silently ignored (No-silent-failures Hard Constraint): it
-  // cannot fail the gate by itself (a forged/corrupt line must not brick commits), but the check
-  // line always names it so a PASS over a partially-corrupt file is visible.
+  // Store diagnostics ride EVERY check line, early exits (and the unknowable arm) included — a
+  // malformed receipt line, an unavailable evidence store, or an unreadable receipts store is
+  // never hidden behind any exit.
   const malformedNote = state.malformed > 0 ? ` — ${state.malformed} malformed receipt line(s) ignored; inspect ${state.receiptsPath}` : '';
-  // The review-ledger is consulted ONLY for the degraded exemption; a corrupt ledger DENIES it
-  // (fail-closed) but never fails a tree the receipts independently satisfy — surfaced either way
-  // (No-silent-failures; Decision 3).
-  const ledgerNote = state.ledgerReadError
-    ? ` — review ledger unreadable (${state.ledgerReadError}); degraded exemption unavailable (fail-closed) — inspect ${state.ledgerPath}`
-    : state.ledgerMalformed > 0
-      ? ` — review ledger has ${state.ledgerMalformed} malformed line(s); degraded exemption unavailable (fail-closed) — inspect ${state.ledgerPath}`
-      : '';
-  // The degraded exemption (AD-050): a backend recorded degraded for the current tree is excluded from
-  // `failing` (it reviewed nothing to receipt — MIRRORS decideStop excluding a degraded backend). It
-  // stays verdict-blind: the exemption proves the degrade was RECORDED, never that the tree converged.
-  const exempt = new Set(state.degradedExempt);
-  const failing = state.backends.filter((b) => b.state !== 'current' && !exempt.has(b.backend));
-  // A receipt dropped for an untrustworthy probe marker is never silently dropped either (D3): it
-  // cannot fail a tree that other receipts satisfy, but a report over a partially-rejected set says
-  // so. It counts only the exclusions NOT already named per backend — a FAILING `rejected` backend
-  // prints its own cause below, and repeating it in the summary is noise. Every other exclusion (a
-  // partial one on a satisfied backend, or one on a degraded-exempt backend) still needs a voice.
-  const namedPerBackend = new Set(failing.filter((b) => b.state === 'rejected').map((b) => b.backend));
-  const untrustedTotal = state.backends
-    .filter((b) => !namedPerBackend.has(b.backend))
-    .reduce((n, b) => n + (b.markerRejected ?? 0) + (b.unmarkedRejected ?? 0), 0);
-  const markerNote = untrustedTotal > 0
-    ? ` — ${untrustedTotal} receipt(s) rejected: an untrustworthy probe marker (malformed, or absent — silence is not a declaration) — fail-closed; inspect ${state.receiptsPath}`
+  const evidenceNote = state.evidenceUnavailable
+    ? ` — evidence store unavailable (${state.evidenceMalformed} malformed line(s)${state.evidenceReadError ? `, read error: ${state.evidenceReadError}` : ''}); the degrade escape is denied (fail-closed) — inspect ${state.evidenceStorePath}`
     : '';
-  if (failing.length === 0) {
-    if (exempt.size === 0) {
-      return { code: 0, reason: `every recipe-named backend has a fresh grounded receipt for the current tree (${state.requiredBackends.join(' + ')})${markerNote}${malformedNote}${ledgerNote}` };
-    }
-    return { code: 0, reason: `every recipe-named backend reviewed the current tree (${state.requiredBackends.join(' + ')}) — degraded-exempt (recorded degraded for the current tree in the review ledger): ${[...exempt].join(', ')}${markerNote}${malformedNote}${ledgerNote}` };
+  const earlyNotes = `${malformedNote}${evidenceNote}${state.receiptsReadError ? ` — receipts store unreadable (${state.receiptsReadError}); inspect ${state.receiptsPath}` : ''}`;
+  // Detector failure with NO configured recipe: the computed default is unknowable → fail closed.
+  // An EXPLICIT configured recipe needs no detector — its obligations are readiness-independent.
+  if (state.obligations.unknowable) {
+    return { code: 1, reason: `cannot verify receipts — ${state.detectionWarning} No configured ${ACTIVITY}.${SLOT} recipe: the computed default is unknowable while the detector is down (fail closed).${earlyNotes}` };
   }
-  const parts = failing.map((b) => {
-    if (b.state === 'ungrounded') return `${b.backend}: only ungrounded receipts for the current tree — re-run grounded (--facts)`;
-    if (b.state === 'probe') return `${b.backend}: only probe receipts for the current tree (CODEX_PROBE=1 / AGY_PROBE=1 relaxes the quality guards) — a probe review never attests; re-run a real one`;
-    if (b.state === 'rejected') return `${b.backend}: current-tree receipts rejected — ${rejectionCause(b)} (fail-closed); inspect ${state.receiptsPath}`;
-    if (b.state === 'stale') return `${b.backend}: receipts exist but none matches the current tree (edited after review) — run a fresh review`;
-    return `${b.backend}: no receipt — run its review wrapper`;
-  });
-  return { code: 1, reason: `${parts.join('; ')}${markerNote}${malformedNote}${ledgerNote}` };
+  if (state.obligations.recipe === 'solo') {
+    const why = state.obligations.source === 'config'
+      ? `configured ${ACTIVITY}.${SLOT} recipe is solo`
+      : `no reviewer backend is ready — the computed ${ACTIVITY}.${SLOT} default is solo`;
+    return { code: 0, reason: `${why} — no receipt required${earlyNotes}` };
+  }
+  if (state.plans.length === 0) return { code: 0, reason: `no plan in flight (docs/plans/ holds no active plan) — no receipt required${earlyNotes}` };
+  if (state.fingerprint == null) return { code: 0, reason: `not a git work tree — nothing to fingerprint${earlyNotes}` };
+  if (state.clean === true) return { code: 0, reason: `the working tree is clean — nothing to review${earlyNotes}` };
+  const exempt = new Set(state.degradedExempt);
+  const satisfied = state.backends.filter((b) => b.state === 'current' && b.shipClass);
+  const vetoed = state.backends.filter((b) => b.state === 'current' && !b.shipClass);
+  // The marker note is PATH-AWARE (no silent rejections on any exit): it counts every backend's
+  // untrusted-marker exclusions EXCEPT those whose printed part already names them — i.e. only a
+  // PRINTED `rejected` row (backendFailurePart's rejectionCause) suppresses its own counts; a
+  // printed veto/unrecognized/ungrounded row does not, and success paths suppress nothing.
+  const notesFor = (printed) => {
+    const total = state.backends
+      .filter((b) => !(printed.has(b.backend) && b.state === 'rejected'))
+      .reduce((n, b) => n + (b.markerRejected ?? 0) + (b.unmarkedRejected ?? 0), 0);
+    const markerNote = total > 0
+      ? ` — ${total} receipt(s) rejected: an untrustworthy probe marker (malformed, or absent — silence is not a declaration) — fail-closed; inspect ${state.receiptsPath}`
+      : '';
+    return `${markerNote}${earlyNotes}`;
+  };
+  const NONE_PRINTED = new Set();
+  // UNCONDITIONAL refusals, checked BEFORE minShip/exemptions: a recognized NEGATIVE (the
+  // authoritative veto) and an UNRECOGNIZED verdict (fail closed) — another backend's SHIP never
+  // masks them and a degrade record never lifts them (the backend demonstrably ran).
+  const unrecognized = state.backends.filter((b) => b.state === 'unrecognized-verdict');
+  const unconditional = [...vetoed, ...unrecognized];
+  if (unconditional.length > 0) {
+    return { code: 1, reason: `${unconditional.map((b) => backendFailurePart(b, state)).join('; ')}${notesFor(new Set(unconditional.map((b) => b.backend)))}` };
+  }
+  // Never all degraded: >=1 ship-class attestation whenever >=1 backend is configured. An
+  // already-exempt backend renders its own honest part — never the "record an explicit degrade"
+  // recovery it has already taken.
+  if (satisfied.length < state.obligations.minShip) {
+    const failing = state.backends.filter((b) => !(b.state === 'current' && b.shipClass));
+    const allExempt = failing.length > 0 && failing.every((b) => exempt.has(b.backend));
+    const head = allExempt
+      ? `every configured backend is degrade-recorded for this tree — never all degraded: >=1 non-degraded ship-class attestation is required; run at least one real review`
+      : failing
+          .map((b) => (exempt.has(b.backend)
+            ? `${b.backend}: degrade-recorded for this tree — a degrade never counts toward the >=1 ship-class floor; run a real review on another backend`
+            : backendFailurePart(b, state)))
+          .join('; ');
+    // Only backends that actually rendered their backendFailurePart suppress their counts — an
+    // exempt row prints the degrade string (no rejectionCause), so its exclusions stay named.
+    return { code: 1, reason: `${head}${notesFor(new Set(failing.filter((b) => !exempt.has(b.backend)).map((b) => b.backend)))}` };
+  }
+  if (state.obligations.perBackend) {
+    // Council: EVERY configured backend must attest ship-class OR carry a current-tree degrade record.
+    const failing = state.backends.filter((b) => !(b.state === 'current' && b.shipClass) && !exempt.has(b.backend));
+    if (failing.length > 0) {
+      return { code: 1, reason: `${failing.map((b) => backendFailurePart(b, state)).join('; ')}${notesFor(new Set(failing.map((b) => b.backend)))}` };
+    }
+    if (exempt.size === 0) {
+      return { code: 0, reason: `every configured backend attests ship-class for the current tree (${state.requiredBackends.join(' + ')})${notesFor(NONE_PRINTED)}` };
+    }
+    return { code: 0, reason: `council satisfied: ship-class attestation(s) from ${satisfied.map((b) => b.backend).join(' + ')}; degrade-recorded for this tree: ${[...exempt].join(', ')}${notesFor(NONE_PRINTED)}` };
+  }
+  // Reviewed: >=1 ship-class attestation from any review-capable backend satisfies.
+  return { code: 0, reason: `reviewed satisfied: ship-class attestation from ${satisfied.map((b) => b.backend).join(' + ')} for the current tree${notesFor(NONE_PRINTED)}` };
 };
 
 // ── rendering ───────────────────────────────────────────────────────────────────────
 
-const STATE_GLYPH = { current: '✓', ungrounded: '✗', probe: '✗', rejected: '✗', stale: '✗', missing: '✗' };
+// The glyph reflects SATISFACTION, not bare state: a `current` row carrying a recognized
+// NEGATIVE is an authoritative veto and renders ✗.
+const STATE_GLYPH = { 'unrecognized-verdict': '✗', ungrounded: '✗', probe: '✗', rejected: '✗', stale: '✗', missing: '✗' };
+const glyphFor = (b) => (b.state === 'current' ? (b.shipClass ? '✓' : '✗') : STATE_GLYPH[b.state]);
 
 const formatHuman = (state, check) => {
-  const src = state.resolved.source === 'config' ? `from ${CONFIG_REL}` : 'computed default';
+  const src = state.obligations.source === 'config' ? `from ${CONFIG_REL}` : 'computed default';
   const lines = [
-    `review-state — ${ACTIVITY}.${SLOT} = ${state.resolved.recipe} (${src})${state.requiredBackends.length ? ` → ${state.requiredBackends.join(' + ')}` : ''}`,
+    `review-state — ${ACTIVITY}.${SLOT} = ${state.obligations.recipe ?? '(unknowable)'} (${src})${state.requiredBackends.length ? ` → ${state.requiredBackends.join(' + ')}${state.obligations.perBackend ? '' : ' (any one, ship-class)'}` : ''}`,
   ];
   if (state.detectionWarning) lines.push(`  ⚠ ${state.detectionWarning}`);
   lines.push(`  plan in flight: ${state.plans.length ? state.plans.join(', ') : '(none)'}`);
@@ -531,27 +464,32 @@ const formatHuman = (state, check) => {
   else if (state.clean === true) lines.push('  tree: clean (nothing to review)');
   else lines.push(`  tree fingerprint: ${state.fingerprint}`);
   lines.push(`  receipts: ${state.receiptsPath ?? '(unresolvable — no git dir)'} (${state.receiptCount} line(s)${state.malformed ? `, ${state.malformed} malformed — inspect the file` : ''})`);
-  if (state.ledgerReadError) lines.push(`  ⚠ review ledger unreadable (${state.ledgerReadError}) — degraded exemption unavailable`);
-  else if (state.ledgerMalformed) lines.push(`  ⚠ review ledger: ${state.ledgerMalformed} malformed line(s) — degraded exemption unavailable`);
+  if (state.receiptsReadError) lines.push(`  ⚠ receipts store unreadable (${state.receiptsReadError}) — inspect ${state.receiptsPath}`);
+  if (state.evidenceUnavailable) lines.push(`  ⚠ evidence store unavailable (${state.evidenceMalformed} malformed line(s)${state.evidenceReadError ? `, read error: ${state.evidenceReadError}` : ''}) — the degrade escape is denied (fail-closed)`);
   const exempt = new Set(state.degradedExempt);
   for (const b of state.backends) {
-    const exemptTag = exempt.has(b.backend) ? ' — degraded-exempt (recorded degraded in the review ledger for the current tree)' : '';
+    const exemptTag = exempt.has(b.backend) ? ' — degrade-recorded for the current tree (core-evidence store)' : '';
     const detail =
       b.state === 'current'
-        ? `current (verdict: ${b.verdict}, grounded, ${b.timestamp ?? '?'})`
-        : b.state === 'ungrounded'
-          ? `ungrounded for the current tree (verdict: ${b.verdict}) — a grounded fresh run is required`
-          : b.state === 'probe'
-            ? 'only probe receipts for the current tree (quality guards relaxed) — a probe review never attests'
-            : b.state === 'rejected'
-              ? `current-tree receipts rejected — ${rejectionCause(b)} (fail-closed)`
-              : b.state === 'stale'
-                ? 'stale — no receipt matches the current tree (edited after review)'
-                : 'missing — no receipt from this backend';
+        ? `current (verdict: ${JSON.stringify(b.verdict)}${b.shipClass ? ', ship-class' : ' — a recognized negative, an authoritative VETO'}, grounded, ${b.timestamp ?? '?'})`
+        : b.state === 'unrecognized-verdict'
+          ? `latest normal receipt carries an unrecognized verdict (${JSON.stringify(b.verdict)}) — never attests (fail-closed)`
+          : b.state === 'ungrounded'
+            ? `ungrounded latest normal receipt (verdict: ${JSON.stringify(b.verdict)}) — a grounded fresh run is required`
+            : b.state === 'probe'
+              ? 'only probe receipts for the current tree (quality guards relaxed) — a probe review never attests'
+              : b.state === 'rejected'
+                ? `current-tree receipts rejected — ${rejectionCause(b)} (fail-closed)`
+                : b.state === 'stale'
+                  ? 'stale — no receipt matches the current tree (edited after review)'
+                  : 'missing — no receipt from this backend';
     const excludedTag = b.probeExcluded || b.markerRejected || b.unmarkedRejected
       ? ` [excluded: ${b.probeExcluded} probe, ${b.markerRejected} malformed-marker, ${b.unmarkedRejected} unmarked]`
       : '';
-    lines.push(`    ${exempt.has(b.backend) ? '⊘' : STATE_GLYPH[b.state]} ${b.backend}: ${detail}${excludedTag}${exemptTag}`);
+    // ⊘ only where the escape actually applies: a PRODUCED receipt outranks the record — a
+    // negative/unknown verdict keeps its ✗ (the degrade lifts neither).
+    const escapeApplies = exempt.has(b.backend) && b.state !== 'current' && b.state !== 'unrecognized-verdict';
+    lines.push(`    ${escapeApplies ? '⊘' : glyphFor(b)} ${b.backend}: ${detail}${excludedTag}${exemptTag}`);
   }
   lines.push(`  check: ${check.code === 0 ? 'PASS' : 'FAIL'} — ${check.reason}`);
   return lines.join('\n');
@@ -562,22 +500,24 @@ const HELP = `review-state — read-only review-receipt checker (agent-workflow 
 Usage:
   node review-state.mjs [--check] [--json]
 
-Resolves the effective ${ACTIVITY}.${SLOT} recipe (${CONFIG_REL} + the read-only backend detector),
-recomputes the canonical uncommitted-state fingerprint (staged + unstaged + untracked-not-ignored —
-the review-payload domain), reads the receipt file the review wrappers append to
-(<git dir>/${RECEIPTS_BASENAME}; AW_REVIEW_RECEIPTS overrides), and reports per-backend receipt
-presence + verdict + grounding for the CURRENT tree. Plan/diff-mode receipts and continuations
-(fresh:false) are informational-only — they never satisfy the tree check, and neither does a PROBE
-receipt (probe:true — a CODEX_PROBE=1 / AGY_PROBE=1 run has the quality guards off). The probe
-filter is per receipt, so a real receipt at the same fingerprint still satisfies. Every marker-aware
-wrapper writes the probe field on EVERY review (true or false), so a malformed OR absent marker is
-rejected fail-closed — silence is not a declaration.
+Derives the review OBLIGATIONS from the CONFIGURED ${ACTIVITY}.${SLOT} recipe (${CONFIG_REL} raw
+value — never the readiness-degraded effective recipe), recomputes the canonical uncommitted-state
+fingerprint (staged + unstaged + untracked-not-ignored — the review-payload domain), reads the
+receipt file the review wrappers append to (<git dir>/${RECEIPTS_BASENAME}; AW_REVIEW_RECEIPTS
+overrides), and judges each configured backend's LATEST NORMAL receipt: only SHIP-CLASS verdicts
+(ship / ship with nits) satisfy; a recognized negative (revise / rethink / rework) is an
+authoritative VETO; an unrecognized verdict never attests (fail closed). Plan/diff-mode receipts
+and continuations (fresh:false) are informational-only, and a PROBE receipt (probe:true) never
+attests; a malformed OR absent probe marker is rejected fail-closed — silence is not a declaration.
+The ONLY escape for an unavailable backend under council is an explicit current-tree degrade
+record (node core-evidence.mjs degrade) — and never all backends.
 
 --check exits 0/1 per the normative contract in the tool header: 0 for solo / no plan in flight /
-a clean tree / not-a-git-tree / all recipe-named backends receipted-current-and-grounded OR
-degraded-exempt (a recorded current-tree degrade in the review-ledger for that backend; AD-050); 1 when
-a recipe-named backend is missing, stale (edited after review), or grounded:false under reviewed/council
-AND is not degraded-exempt. Declare it as a project gate by hand (docs/ai/gates.json) or via the
+a clean tree / not-a-git-tree / obligations satisfied (reviewed: >=1 ship-class attestation;
+council: every backend ship-class or degrade-recorded, >=1 real ship); 1 on a veto, an
+unrecognized verdict, a missing/stale/ungrounded/probe-only backend without a degrade record,
+an all-degraded tree, or a down detector with no configured recipe.
+Declare it as a project gate by hand (docs/ai/gates.json) or via the
 explicit-consent seeder (tools/seed-gates.mjs) — never without consent.
 
 Read-only: never writes, never commits, never runs a subscription CLI; spawns read-only git queries.
@@ -614,17 +554,18 @@ export const main = (argv, ctx = {}) => {
   }
 };
 
-// ── --await: block until every recipe-named backend has receipted the current tree ─────
-// (BUGFREE-3 / AD-049, item (d)). It waits for every recipe-named backend to be SATISFIED — a fresh
-// grounded current-tree receipt, OR (AD-050) the degraded exemption: once a current-tree degrade is
-// RECORDED in the review-ledger, --await stops waiting for that backend and returns READY (before,
-// it waited forever for a receipt that never comes). It inherits the exemption for FREE — it polls
-// the SAME decideCheck(buildState()) `--check` computes. The completion signal is the RECEIPT (i.e.
-// `--check` would PASS), NEVER a process event — a harness "completed" notification fires early and a
-// bridge's output late-flushes, so polling a pid/receipt-file is the durable mechanization of
-// receipts-not-pgrep. Stays read-only (it only re-reads state — now the ledger too, a few KB per
-// tick); the clock is injectable (ctx.now / ctx.sleep / ctx.pollMs) so hermetic tests never spend
-// wall-clock.
+// ── --await: block until the configured review obligations are SATISFIED ───────────────
+// It waits until `--check` would pass: under `reviewed`, a ship-class attestation from any
+// review-capable backend; under `council`, every configured backend ship-class OR carrying a
+// current-tree degrade RECORD in the core-evidence store (never all backends) — once such a
+// record lands, --await stops waiting for that backend and returns READY (before, it waited
+// forever for a receipt that never comes). It inherits everything for FREE — it polls the SAME
+// decideCheck(buildState()) `--check` computes. The completion signal is the RECEIPT/RECORD
+// (i.e. `--check` would PASS), NEVER a process event — a harness "completed" notification fires
+// early and a bridge's output late-flushes, so polling state is the durable mechanization of
+// receipts-not-pgrep. Stays read-only (it only re-reads state — now the evidence store too, a
+// few KB per tick); the clock is injectable (ctx.now / ctx.sleep / ctx.pollMs) so hermetic tests
+// never spend wall-clock.
 
 const AWAIT_ALLOWED_ARGS = new Set(['--await', '--timeout']);
 
