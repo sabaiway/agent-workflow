@@ -24,37 +24,292 @@
 // 234-292, 501-741 — move, not re-derive): safe repo-relative path resolution, no-follow real-path
 // containment, shell-free argv, per-run timeout, N/N reruns, the quarantine lane. N and the
 // timeout are pinned from that runner's own constants (reruns 3, timeout 120s).
-// Import posture: today this module leans on the live one-homes (review-state fingerprint/receipt
-// readers, review-ledger-core testId format + base + receipt summary). Step 2.2 inverts the
-// fingerprint/receipt primitives INTO this module (review-state re-exports them) so review-state
-// can import the degrade reader without an import cycle; the Phase-3 deletion relocates the
-// ledger-core helpers here the same way.
+// Import posture: this module is the DAG BOTTOM — it imports only node built-ins + atomic-write +
+// changed-surface, and OWNS the canonical review-domain primitives (tree fingerprint, receipt read
+// path, attesting predicate, verdict vocabulary, testId format, base resolution). review-state and
+// review-ledger-core RE-EXPORT their historical public API from here, so their consumers (and the
+// bash-twin parity tests) are unchanged while review-state can import the degrade reader without
+// an import cycle.
 //
 // HONEST residuals: records are forgeable (a self-discipline mechanism in the git dir, not a
 // security boundary); coverage/green verification of red-proof records lives in the final-run
 // checker, not here. Dependency-free, Node >= 18. No side effects on import.
 
-import { readFileSync, lstatSync, realpathSync } from 'node:fs';
+import { readFileSync, lstatSync, realpathSync, readlinkSync, openSync, readSync, closeSync } from 'node:fs';
 import { join, dirname, isAbsolute, normalize, sep, basename } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { writeContainedFileAtomic } from './atomic-write.mjs';
 import { parsePositiveIntKnob, probeVerdict } from './changed-surface.mjs';
-import { computeTreeFingerprint, resolveReceiptsPath, readReceipts } from './review-state.mjs';
-import { isWellFormedTestId, splitTestId, resolveBase, summarizeReviewReceiptsForTree } from './review-ledger-core.mjs';
 
 export const CORE_EVIDENCE_STOP = 'CORE_EVIDENCE_STOP';
 const stop = (message) => Object.assign(new Error(`[agent-workflow-kit] ${message}`), { name: 'CoreEvidenceStop', code: CORE_EVIDENCE_STOP });
 const usageFail = (message) => Object.assign(new Error(`[agent-workflow-kit] ${message}`), { exitCode: 2 });
 
 const isoNow = () => new Date().toISOString();
-const GIT_MAX_BUFFER = 256 * 1024 * 1024; // a full TAP stream can be large; never truncate
+const GIT_MAX_BUFFER = 256 * 1024 * 1024; // a full-tree diff / TAP stream can be large; never truncate
+
+const gitRaw = (args, cwd) => spawnSync('git', args, { cwd, maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
+
+const gitBuf = (args, cwd) => {
+  const r = gitRaw(args, cwd);
+  if (r.error || r.status !== 0) return null;
+  return r.stdout;
+};
 
 const gitLine = (args, cwd) => {
-  const r = spawnSync('git', args, { cwd, windowsHide: true });
-  if (r.error || r.status !== 0) return null;
-  return r.stdout.toString('utf8').replace(/\r?\n$/, '');
+  const buf = gitBuf(args, cwd);
+  return buf == null ? null : buf.toString('utf8').replace(/\r?\n$/, '');
+};
+
+// ── the canonical review-domain primitives (ONE home; review-state re-exports its public API) ─────
+// The uncommitted-state identity + the receipt read path + the attesting predicate live HERE — the
+// DAG bottom every checker (review-state gate, ledger cross-check, this module's summary) imports
+// from, so no two consumers can ever disagree about what a fingerprint or an attestation is.
+
+// resolveBase(cwd) → the current HEAD commit sha, or null on an unborn branch / outside a git tree.
+export const resolveBase = (cwd) => gitLine(['rev-parse', '--verify', '--quiet', 'HEAD'], cwd);
+
+// testId FORMAT: "<repo-relative test file>#<test-name-pattern>" — a "#" separator with BOTH halves
+// non-empty. Format-only (no suffix rule); resolvability is the probe's job.
+const TESTID_SEPARATOR = '#';
+export const isWellFormedTestId = (v) => {
+  if (typeof v !== 'string') return false;
+  const at = v.indexOf(TESTID_SEPARATOR);
+  return at > 0 && at < v.length - 1;
+};
+export const splitTestId = (v) => {
+  const at = v.indexOf(TESTID_SEPARATOR);
+  return { file: v.slice(0, at), pattern: v.slice(at + 1) };
+};
+
+// First 8 KiB contain a NUL byte → binary (git's own heuristic; mirrors the wrappers' is_binary
+// bash twin). An unreadable path reads as text (the fail-safe arm — the payload walk then surfaces
+// its own read failure).
+export const isBinaryFile = (path) => {
+  let fd;
+  try {
+    fd = openSync(path, 'r');
+    const buf = Buffer.alloc(8192);
+    const n = readSync(fd, buf, 0, 8192, 0);
+    return buf.subarray(0, n).includes(0);
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+};
+
+// The never-committable untracked stat classes: character/block devices, FIFOs, sockets — excluded
+// from the ENTIRE review domain (fingerprint payload, clean check); lstat-keyed because a lying
+// dirent is exactly how sandbox masks surface.
+export const isNeverCommittableStat = (stat) =>
+  stat != null &&
+  (stat.isCharacterDevice() || stat.isBlockDevice() || stat.isFIFO() || stat.isSocket());
+
+// The canonical payload bytes: staged diff + unstaged diff + the untracked-not-ignored section —
+// byte-identical to the wrappers' emit_fingerprint_payload, emitted from the work-tree ROOT. Null
+// outside a git work tree. The lstat is injectable ONLY for the never-committable filter tests.
+export const computeFingerprintPayload = (cwd, { lstat = lstatSync } = {}) => {
+  const top = gitLine(['rev-parse', '--show-toplevel'], cwd);
+  if (top == null) return null;
+  const staged = gitBuf(['diff', '--cached', '--no-ext-diff'], top);
+  const unstaged = gitBuf(['diff', '--no-ext-diff'], top);
+  const untrackedZ = gitBuf(['ls-files', '--others', '--exclude-standard', '-z'], top);
+  if (staged == null || unstaged == null || untrackedZ == null) return null;
+  const chunks = [staged, unstaged];
+  for (const rel of untrackedZ.toString('utf8').split('\0').filter(Boolean)) {
+    const full = join(top, rel);
+    let stat = null;
+    try {
+      stat = lstat(full);
+    } catch {
+      stat = null;
+    }
+    if (isNeverCommittableStat(stat)) continue;
+    if (stat?.isSymbolicLink()) {
+      let target = '?';
+      try {
+        target = readlinkSync(full);
+      } catch {
+        target = '?';
+      }
+      chunks.push(Buffer.from(`untracked-symlink:${rel} -> ${target}\n`));
+    } else if (!stat?.isFile()) {
+      chunks.push(Buffer.from(`untracked-nonregular:${rel}\n`));
+    } else if (isBinaryFile(full)) {
+      chunks.push(Buffer.from(`untracked-binary:${rel}\n`));
+    } else {
+      chunks.push(Buffer.from(`untracked:${rel}\n`));
+      chunks.push(readFileSync(full));
+    }
+  }
+  return Buffer.concat(chunks);
+};
+
+// sha256 hex of the canonical payload, or null outside a git work tree.
+export const computeTreeFingerprint = (cwd, fsx) => {
+  const payload = computeFingerprintPayload(cwd, fsx);
+  return payload == null ? null : createHash('sha256').update(payload).digest('hex');
+};
+
+// Clean = nothing staged, nothing unstaged, no REVIEWABLE untracked-not-ignored paths — the same
+// never-committable filter as the fingerprint, so the two can never disagree about a masks-only
+// tree. Anchored at the work-tree ROOT (ls-files is cwd-scoped). Null when not decidable.
+export const isTreeClean = (cwd, { lstat = lstatSync } = {}) => {
+  const top = gitLine(['rev-parse', '--show-toplevel'], cwd);
+  if (top == null) return null;
+  const staged = gitRaw(['diff', '--cached', '--quiet'], top);
+  const unstaged = gitRaw(['diff', '--quiet'], top);
+  if (staged.error || unstaged.error || staged.status > 1 || unstaged.status > 1) return null;
+  const untrackedZ = gitBuf(['ls-files', '--others', '--exclude-standard', '-z'], top);
+  if (untrackedZ == null) return null;
+  const reviewable = untrackedZ
+    .toString('utf8')
+    .split('\0')
+    .filter(Boolean)
+    .filter((rel) => {
+      try {
+        return !isNeverCommittableStat(lstat(join(top, rel)));
+      } catch {
+        return true;
+      }
+    });
+  return staged.status === 0 && unstaged.status === 0 && reviewable.length === 0;
+};
+
+// ── the review-receipt read path + attesting predicate (ONE home) ────────────────────────────────
+
+export const RECEIPTS_BASENAME = 'agent-workflow-review-receipts.jsonl';
+
+export const resolveReceiptsPath = (cwd, env = process.env) => {
+  if (env.AW_REVIEW_RECEIPTS) return env.AW_REVIEW_RECEIPTS;
+  const gitDir = gitLine(['rev-parse', '--absolute-git-dir'], cwd);
+  return gitDir == null ? null : join(gitDir, RECEIPTS_BASENAME);
+};
+
+// Parse the receipt file → { receipts, malformed, readError? }. Absent file → empty (not an
+// error: no review ever ran). A NON-ENOENT read failure surfaces as readError — an unreadable
+// store must never silently read as "no receipts" (the summary withholds its verdicts section on
+// it). A malformed line is counted + reported, never silently dropped.
+export const readReceipts = (path, readFile = readFileSync) => {
+  let raw;
+  try {
+    raw = readFile(path, 'utf8');
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return { receipts: [], malformed: 0 };
+    return { receipts: [], malformed: 0, readError: (err && err.code) || (err && err.message) || 'read failed' };
+  }
+  const receipts = [];
+  let malformed = 0;
+  for (const line of raw.split('\n')) {
+    if (line.trim() === '') continue;
+    try {
+      const parsed = JSON.parse(line);
+      if (parsed && typeof parsed === 'object' && typeof parsed.backend === 'string') receipts.push(parsed);
+      else malformed += 1;
+    } catch {
+      malformed += 1;
+    }
+  }
+  return { receipts, malformed };
+};
+
+// The closed review-verdict vocabulary (the union of both wrappers' closed grammars). Any
+// RECOGNIZED verdict is review EVIDENCE (a recognized negative is an authoritative veto); ONLY
+// ship-class SATISFIES the review-state gate.
+const SHIP_VERDICTS = new Set(['ship', 'ship with nits']);
+const NEGATIVE_VERDICTS = new Set(['revise', 'rethink', 'rework']);
+// Type-strict: only a STRING can enter the closed grammar — String() coercion would admit an
+// array like ["ship"] as ship-class.
+const normalizeVerdict = (verdict) => (typeof verdict === 'string' ? verdict.trim().toLowerCase() : null);
+export const isShipVerdict = (verdict) => {
+  const v = normalizeVerdict(verdict);
+  return v !== null && SHIP_VERDICTS.has(v);
+};
+export const isRecognizedVerdict = (verdict) => {
+  const v = normalizeVerdict(verdict);
+  return v !== null && (SHIP_VERDICTS.has(v) || NEGATIVE_VERDICTS.has(v));
+};
+
+export const REVIEW_RECEIPT_CLASS = Object.freeze({
+  NOT_CURRENT: 'not-current',
+  ATTESTING: 'attesting',
+  UNGROUNDED: 'ungrounded',
+  UNRECOGNIZED_VERDICT: 'unrecognized-verdict',
+  PROBE: 'probe',
+  UNMARKED: 'unmarked',
+  MALFORMED_MARKER: 'malformed-marker',
+});
+
+// Classify ONE receipt against a tree fingerprint. Order is load-bearing: identity first (is this
+// even about the current tree?), then the probe marker (may it attest at all?), then the
+// verdict-in-recognized-vocabulary arm BEFORE grounding — an unrecognized verdict is an
+// unconditional refusal that grounding must never reclassify (an ungrounded `unknown` receipt
+// otherwise reads UNGROUNDED and can be masked by another backend's SHIP), then grounding.
+export const classifyReviewReceiptForTree = (receipt, fingerprint) => {
+  if (!(receipt !== null && typeof receipt === 'object' && !Array.isArray(receipt)) || receipt.fresh !== true || receipt.artifact !== 'code' || receipt.fingerprint !== fingerprint) {
+    return REVIEW_RECEIPT_CLASS.NOT_CURRENT;
+  }
+  if (!Object.hasOwn(receipt, 'probe')) return REVIEW_RECEIPT_CLASS.UNMARKED;
+  if (typeof receipt.probe !== 'boolean') return REVIEW_RECEIPT_CLASS.MALFORMED_MARKER;
+  if (receipt.probe === true) return REVIEW_RECEIPT_CLASS.PROBE;
+  if (!isRecognizedVerdict(receipt.verdict)) return REVIEW_RECEIPT_CLASS.UNRECOGNIZED_VERDICT;
+  if (receipt.grounded !== true) return REVIEW_RECEIPT_CLASS.UNGROUNDED;
+  return REVIEW_RECEIPT_CLASS.ATTESTING;
+};
+
+// Summarize one backend's receipts for a tree → { state, receipt, counts… }. The LATEST NORMAL
+// (probe-free, marker-valid, current-fingerprint) receipt is selected FIRST and THEN judged — a
+// later unknown-verdict or ungrounded receipt never lets an earlier SHIP survive, and a probe (or
+// forged marker) written after a real review never becomes the authoritative verdict.
+export const summarizeReviewReceiptsForTree = (receipts, fingerprint) => {
+  const classified = receipts
+    .map((receipt) => ({ receipt, classification: classifyReviewReceiptForTree(receipt, fingerprint) }))
+    .filter(({ classification }) => classification !== REVIEW_RECEIPT_CLASS.NOT_CURRENT);
+  const rowsFor = (classification) => classified.filter((row) => row.classification === classification);
+  const normal = classified.filter(({ classification }) =>
+    classification === REVIEW_RECEIPT_CLASS.ATTESTING ||
+    classification === REVIEW_RECEIPT_CLASS.UNGROUNDED ||
+    classification === REVIEW_RECEIPT_CLASS.UNRECOGNIZED_VERDICT);
+  const probe = rowsFor(REVIEW_RECEIPT_CLASS.PROBE);
+  const unmarked = rowsFor(REVIEW_RECEIPT_CLASS.UNMARKED);
+  const malformedMarker = rowsFor(REVIEW_RECEIPT_CLASS.MALFORMED_MARKER);
+  const counts = {
+    currentCount: classified.length,
+    ungroundedCount: rowsFor(REVIEW_RECEIPT_CLASS.UNGROUNDED).length,
+    unrecognizedVerdictCount: rowsFor(REVIEW_RECEIPT_CLASS.UNRECOGNIZED_VERDICT).length,
+    probeExcluded: probe.length,
+    markerRejected: malformedMarker.length,
+    unmarkedRejected: unmarked.length,
+  };
+  if (normal.length > 0) {
+    const latest = normal[normal.length - 1];
+    if (latest.classification === REVIEW_RECEIPT_CLASS.ATTESTING) return { state: 'current', receipt: latest.receipt, ...counts };
+    if (latest.classification === REVIEW_RECEIPT_CLASS.UNGROUNDED) return { state: 'ungrounded', receipt: latest.receipt, ...counts };
+    return { state: 'unrecognized-verdict', receipt: latest.receipt, ...counts };
+  }
+  if (classified.length > 0) {
+    return { state: malformedMarker.length > 0 || unmarked.length > 0 ? 'rejected' : 'probe', receipt: null, ...counts };
+  }
+  return { state: 'none', receipt: null, ...counts };
+};
+
+// Why this backend has no attestation — one stated sentence per distinct recovery.
+export const describeMissingReviewAttestation = (summary) => {
+  if (summary.state === 'current') return null;
+  const exclusions = [
+    summary.probeExcluded > 0 ? `${summary.probeExcluded} probe receipt(s)` : null,
+    summary.markerRejected > 0 ? `${summary.markerRejected} receipt(s) with a malformed probe marker` : null,
+    summary.unmarkedRejected > 0 ? `${summary.unmarkedRejected} receipt(s) with no probe marker` : null,
+  ].filter(Boolean);
+  const exclusionSuffix = exclusions.length > 0 ? `; excluded ${exclusions.join(', ')}` : '';
+  if (summary.state === 'ungrounded') return `the latest normal receipt for the current tree is ungrounded${exclusionSuffix}`;
+  if (summary.state === 'unrecognized-verdict') return `the latest normal receipt carries an unrecognized verdict (${JSON.stringify(summary.receipt?.verdict ?? null)}) — an unknown verdict never attests${exclusionSuffix}`;
+  if (summary.state === 'probe') return 'only probe receipts exist for the current tree — a probe review never attests';
+  if (summary.state === 'rejected') return `current-tree receipts have untrustworthy probe markers${exclusionSuffix}`;
+  return 'no fresh code receipt exists for the current tree';
 };
 
 // ── the store: ONE git-dir JSONL file (D7) ────────────────────────────────────────────────────────
@@ -469,6 +724,7 @@ export const buildSummaryState = ({ cwd = process.cwd(), env = process.env } = {
 const verdictLine = ({ backend, summary }) => {
   if (summary.state === 'current') return `${backend}: ${summary.receipt.verdict ?? 'unknown'} (attesting, ${summary.receipt.timestamp ?? '?'})`;
   if (summary.state === 'ungrounded') return `${backend}: ${summary.receipt.verdict ?? 'unknown'} (ungrounded — never attests)`;
+  if (summary.state === 'unrecognized-verdict') return `${backend}: unrecognized verdict (${JSON.stringify(summary.receipt?.verdict ?? null)}) — never attests (fail-closed)`;
   if (summary.state === 'probe') return `${backend}: probe receipts only for the current tree (never attest)`;
   if (summary.state === 'rejected') return `${backend}: current-tree receipts rejected (untrustworthy probe marker)`;
   return `${backend}: no attesting receipt for the current tree (stale or missing)`;

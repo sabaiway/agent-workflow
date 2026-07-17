@@ -119,14 +119,14 @@ const gitLine = (args, cwd) => {
 
 const gitRoot = (cwd) => gitLine(['rev-parse', '--show-toplevel'], cwd);
 
-// ── ship-verdict mapping (the single home; a named test pins it) ────────────────────────────────
+// ── ship-verdict mapping (the single home is the core-evidence vocabulary; a named test pins it) ─
 
-// isShipVerdict(verdict) — which free-text review verdicts are ship-class. SHIP / SHIP WITH NITS are
-// ship; revise / REWORK / unknown / anything else are not. Case-insensitive, trimmed.
-export const isShipVerdict = (verdict) => {
-  const v = String(verdict ?? '').trim().toLowerCase();
-  return v === 'ship' || v === 'ship with nits';
-};
+// isShipVerdict(verdict) — which free-text review verdicts are ship-class. SHIP / SHIP WITH NITS
+// are ship; revise / rethink / REWORK / unknown / anything else are not. Case-insensitive,
+// trimmed. Owned by core-evidence.mjs (the closed verdict vocabulary); re-exported here for
+// back-compat.
+import { isShipVerdict } from './core-evidence.mjs';
+export { isShipVerdict };
 
 // isProcessGateCmd(cmd) — the CLOSED, kit-owned process-gate classification (D5): the kit's own
 // process-loop `--check` commands (review-state / review-ledger / fold-completeness) legitimately

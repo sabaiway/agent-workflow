@@ -773,22 +773,29 @@ describe('import-split guard — review-ledger.mjs never imports the writer', ()
     assert.deepEqual(familyImports, [], `the neutral module must not import family modules (found: ${familyImports.join(', ')})`);
   });
 
-  // AD-050: the ledger read-core is the SECOND neutral module — the seam that lets review-state.mjs
-  // read the ledger for its degraded exemption without importing review-ledger.mjs back (the cycle:
-  // review-ledger.mjs already imports review-state.mjs). It imports NO family module, and
-  // review-ledger.mjs consumes+re-exports it (so every pre-existing importer resolves unchanged).
-  it('review-ledger-core.mjs imports no family module (neutral — node built-ins only)', () => {
+  // The ledger read-core stays the neutral seam, now anchored on the core-evidence DAG bottom:
+  // it may import ONLY core-evidence.mjs (which owns the shared review-domain primitives it
+  // re-exports) — never a checker, so no cycle can form. review-ledger.mjs consumes+re-exports it
+  // (every pre-existing importer resolves unchanged).
+  it('review-ledger-core.mjs imports only the core-evidence DAG bottom (never a checker)', () => {
     const src = readFileSync(join(HERE, 'review-ledger-core.mjs'), 'utf8');
     const familyImports = [...src.matchAll(/from\s+['"](\.[^'"]+)['"]/g)].map((m) => m[1]);
-    assert.deepEqual(familyImports, [], `the neutral read-core must not import family modules (found: ${familyImports.join(', ')})`);
+    assert.deepEqual(familyImports, ['./core-evidence.mjs'], `the read-core may import only core-evidence.mjs (found: ${familyImports.join(', ')})`);
   });
 
-  it('review-ledger.mjs consumes the neutral read-core (the seam); review-state.mjs reads the CORE for the exemption, never review-ledger.mjs (the cycle)', () => {
+  it('core-evidence.mjs is the DAG bottom — it imports no checker (atomic-write + changed-surface only)', () => {
+    const src = readFileSync(join(HERE, 'core-evidence.mjs'), 'utf8');
+    const familyImports = [...src.matchAll(/from\s+['"](\.[^'"]+)['"]/g)].map((m) => m[1]);
+    assert.deepEqual(familyImports.sort(), ['./atomic-write.mjs', './changed-surface.mjs'], `the DAG bottom must import no checker (found: ${familyImports.join(', ')})`);
+  });
+
+  it('review-ledger.mjs consumes the neutral read-core (the seam); review-state.mjs reads the D3(b) escape from core-evidence, never review-ledger.mjs (the cycle)', () => {
     const ledger = readFileSync(join(HERE, 'review-ledger.mjs'), 'utf8');
     assert.match(ledger, /from '\.\/review-ledger-core\.mjs'/, 'review-ledger.mjs must consume + re-export the neutral read-core');
     const state = readFileSync(join(HERE, 'review-state.mjs'), 'utf8');
-    assert.match(state, /from '\.\/review-ledger-core\.mjs'/, 'review-state.mjs must read the neutral core for the degraded exemption (AD-050)');
-    assert.ok(!/from\s+['"][^'"]*review-ledger\.mjs['"]/.test(state), 'review-state.mjs must never import review-ledger.mjs (it reads the neutral core instead — no cycle)');
+    assert.match(state, /from '\.\/core-evidence\.mjs'/, 'review-state.mjs must read the core-evidence store for the degrade escape');
+    assert.ok(!/from\s+['"][^'"]*review-ledger\.mjs['"]/.test(state), 'review-state.mjs must never import review-ledger.mjs (no cycle)');
+    assert.ok(!/from\s+['"][^'"]*review-ledger-core\.mjs['"]/.test(state), 'review-state.mjs no longer reads the ledger core — the exemption moved to the core-evidence degrade records');
   });
 });
 
