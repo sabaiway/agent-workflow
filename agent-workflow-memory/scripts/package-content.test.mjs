@@ -193,6 +193,9 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
     // 48 = 46 + references/scripts/migrate-gates-branches.test.mjs (the refusal/no-op branch
     //      pins) + references/scripts/install-git-hooks-repo-exec.test.mjs (the in-place
     //      GIT_DIR-pinned execution lane for the D3(d) changed-line check). Both kit-mirrored.
-    assert.equal(packed.length, 48, `tarball file count drifted (${packed.length} ≠ 48)`);
+    // 49 = 48 + migrations/3.0.0-hardened-core-loop.md (the AD-059 lineage migration — the
+    //      memory-side steps: Node floor, the kit-present vs memory-only branches,
+    //      the .memory-version re-stamp).
+    assert.equal(packed.length, 49, `tarball file count drifted (${packed.length} ≠ 49)`);
   });
 });

@@ -2,7 +2,24 @@
 
 All notable changes to the methodology engine. Versions are this **package's** npm versions;
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
-(which tracks the shared `agent-workflow` lineage, head `2.0.0`).
+(which tracks the shared `agent-workflow` lineage, head `3.0.0`).
+
+## 2.0.0 — strip-the-kit: the planning canon teaches the computed loop (AD-059)
+
+> ### ⚠ BREAKING — the §9 "Computed instrument" canon is rewritten
+>
+> The review-ledger/fold-completeness vocabulary is gone from the methodology. The loop the canon
+> now teaches: red-proof BEFORE a fix (`core-evidence red-proof`) · explicit per-backend degrade
+> records · stage → reviews on the STAGED tree → `run-gates --final` (the ONE receipt) →
+> `commit-guard --check` at the commit boundary — **no ledger records it**; the round
+> tally/classification discipline stays dialogue-level.
+
+- `planning.md` §9 rewritten to the D3 loop; `procedures.md` step 5 mirrors it; the
+  `orchestration.md` writer-economy clause reworded (the ledger-triad example died with the
+  machinery).
+- The agent-rules LENS reworded in its canonical home; the OUTGOING pre-strip body is appended to
+  `agent-rules-lens-priors.md` verbatim (the AD-041 vintage contract — priors are append-only
+  history).
 
 ## 1.17.0 — Prompt-economy canon gains a writer-batch clause + two sandbox-lane sentences (REPORT-FACTS train D5/D6, AD-054)
 

@@ -96,7 +96,7 @@ const memFs = ({ files = {}, dirs = [], symlinks = [] } = {}) => {
 };
 
 const deployedFs = (extra = {}) =>
-  memFs({ ...extra, files: { [STAMP_ABS]: '2.0.0\n', ...(extra.files ?? {}) } });
+  memFs({ ...extra, files: { [STAMP_ABS]: '3.0.0\n', ...(extra.files ?? {}) } });
 
 const wiredSettings = (extra = {}) =>
   JSON.stringify({ hooks: { PreToolUse: [buildHookSettingsEntry()] }, ...extra });
@@ -380,9 +380,9 @@ describe('gate-hook --read-lane — the opt-in read-only compound lane writer', 
 
   // hook: BUNDLE_V (current) | STALE (diverged) | undefined (not placed). lanes: raw lanes.json body.
   // wired (default true): wire the hook into settings.json (the --read-lane currency check needs it,
-  // council B5). stamp (default '2.0.0' = the lineage head): the deployment stamp (--read-lane --apply
+  // council B5). stamp (default '3.0.0' = the lineage head): the deployment stamp (--read-lane --apply
   // enforces it, council B6); null skips it.
-  const makeDeployed = ({ hook, lanes, gates, wired = true, stamp = '2.0.0' } = {}) => {
+  const makeDeployed = ({ hook, lanes, gates, wired = true, stamp = '3.0.0' } = {}) => {
     const root = mkdtempSync(join(tmpdir(), 'gate-hook-lane-'));
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
     if (stamp !== null) writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), `${stamp}\n`);

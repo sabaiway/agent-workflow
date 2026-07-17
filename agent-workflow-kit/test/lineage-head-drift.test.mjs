@@ -22,8 +22,13 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { EXPECTED_WORKFLOW_VERSION } from '../tools/velocity-profile.mjs';
 import { LINEAGE_HEAD } from '../../agent-workflow-memory/scripts/stamp-takeover.mjs';
+
+const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 describe('deployment-lineage head — cross-package drift guard', () => {
   it('kit EXPECTED_WORKFLOW_VERSION tracks the canonical agent-workflow-memory LINEAGE_HEAD', () => {
@@ -36,5 +41,20 @@ describe('deployment-lineage head — cross-package drift guard', () => {
         `Bump BOTH together — and the matching prose in both SKILL.md files — when the deployed ` +
         `docs/ai structure changes.`,
     );
+  });
+
+  // The AD-059 sweep lesson: the constants moved and the PROSE lagged. Every package-CHANGELOG
+  // PREAMBLE (text before the first `## ` — historical entries are exempt) that names the lineage
+  // head must name the CURRENT one; non-vacuous — the memory + engine preambles do declare it.
+  it('every package-CHANGELOG preamble head declaration names the current lineage head', () => {
+    let declarations = 0;
+    for (const pkg of ['agent-workflow-memory', 'agent-workflow-engine', 'agent-workflow-kit']) {
+      const preamble = readFileSync(join(REPO, pkg, 'CHANGELOG.md'), 'utf8').split('\n## ')[0];
+      for (const [, head] of preamble.matchAll(/head `(\d+\.\d+\.\d+)`/g)) {
+        declarations += 1;
+        assert.equal(head, EXPECTED_WORKFLOW_VERSION, `${pkg}/CHANGELOG.md preamble declares a stale lineage head`);
+      }
+    }
+    assert.ok(declarations >= 2, 'non-vacuous: the memory + engine preambles declare the head');
   });
 });

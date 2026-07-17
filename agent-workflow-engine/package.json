@@ -1,6 +1,6 @@
 {
   "name": "@sabaiway/agent-workflow-engine",
-  "version": "1.17.0",
+  "version": "2.0.0",
   "description": "Canonical home of the agent-workflow planning methodology — the Plan→Phase→Step vocabulary, plan lifecycle, queue.md series index, and mandatory Cleanup phase, consumed by the kit (composition root). The methodology engine of the agent-workflow family.",
   "keywords": [
     "ai-agents",

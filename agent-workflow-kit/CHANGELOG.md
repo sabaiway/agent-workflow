@@ -4,6 +4,51 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 3.0.0 — strip-the-kit: the hardened computed core replaces the ledger machinery (AD-059)
+
+> ### ⚠ BREAKING — the review loop is now computed, not recorded
+>
+> The review-ledger / fold-completeness / verification-profile / sarif / seed-gates tools, their
+> modes, and their git-dir stores are **DELETED**. `run-gates --record` is a usage error (exit 7
+> retired); the loop's ONE receipt is `run-gates --final`. Review receipts without a self-declared
+> `posture` field (any pre-3.0.0/4.0.0 bridge wrapper) **stop satisfying** the review-state gate —
+> fail-closed, like the AD-057 probe marker; re-run the reviews on the refreshed bridges. Node
+> floor is **>= 22** family-wide. The consented `migrate-gates.mjs` migrates an existing
+> `docs/ai/gates.json` (see `migrations/3.0.0-hardened-core-loop.md`).
+
+The MAJOR family release (memory **3.0.0** / engine **2.0.0** / bundled codex bridge **3.0.0** /
+bundled antigravity bridge **4.0.0**; deployment-lineage head **3.0.0**). One theme: **every claim
+the loop makes is computed from artifacts it can re-verify — never remembered, never recorded prose.**
+
+- **The hardened core (new tools):** `core-evidence.mjs` — the ONE git-dir evidence writer
+  (red-proof records with observed-red 3/3 custody + content hashes; explicit per-backend degrade
+  records; the stateless end-of-loop `summary`) · `coverage-check.mjs` — the D3(d) final-run
+  checker (changed-line lcov coverage + red-proof verification + the `lcov-sha256=` machine line) ·
+  `commit-guard.mjs` — the D10 read-only pre-commit (binds a commit to the LATEST green final
+  receipt at the exact tree fingerprint; `--no-verify` stays a stated residual).
+- **`run-gates --final`:** canonical realpath-anchored core checks (review-state + coverage-check,
+  checker LAST), evidence-store drift teeth, the checker-bound lcov sha with an end re-hash, ONE
+  attempt-linked receipt (green/red DERIVED, integrity failures explicit), `AW_GIT_DIR` exported
+  to every gate child on every run.
+- **`review-state` D3(b):** ship-class-only on the latest NORMAL receipt; a recognized negative is
+  an authoritative VETO; unknown verdicts, probe-marked, unmarked, posture-less, and malformed
+  receipts never attest (each with its stated recovery); explicit degrade records are the only
+  escape and never all backends.
+- **Consumer lanes:** `gates-init.mjs` (D9 consented fill preview; the coverage-check candidate
+  appended LAST so a whole-offer apply is final-run-ready) · `migrate-gates.mjs` (D8, mirrored
+  from the memory canon: canonical-anchor matching with move/collision semantics, the full lcov
+  reporter flag set, retired-store cleanup, symlink/control-byte STOPs) · the hook installer's
+  explicit `--commit-guard <path>` arm with strict carry-forward · a `commit-guard`
+  Recommendations item gated on final-run-capability.
+- **Bundled bridges (D4/D5):** a verdict-less review run exits 4 with NO receipt (exact agy
+  `### Verdict` parse; structural top-level JSON verdict in codex schema mode); one stderr banner
+  states the ACTUAL dispatch posture and every receipt records the same `posture{}`; control-byte
+  and unknowable-model postures refuse pre-spend. Manifests carry VALIDATED posture pins; the kit
+  renders the CONFIGURED posture (pins + the bridge-settings tier overlay) in the backend status
+  line, drift-guarded end to end (`posture-parity`).
+- **Suite economics note:** the supervisory ledger cluster (~98% of the old 94s unit matrix) is
+  gone with its machinery; the dedicated speedup pass (plan Phase 5) follows post-release.
+
 ## 2.1.0 — agy code review fails CLOSED pre-spend: grounded facts required, `--ungrounded` is the explicit escape (AD-058)
 
 > ### ⚠ the bundled antigravity bridge takes MAJOR 3.0.0 — bare `agy-review code` now refuses
