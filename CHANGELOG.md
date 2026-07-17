@@ -20,8 +20,8 @@ posture (a banner + `posture{}` on every receipt, validated manifest pins, pre-s
 refusals) — pre-posture receipts stop attesting, fail-closed. Consumers migrate via the consented
 `migrate-gates.mjs` + `gates-init.mjs` and the hook installer's `--commit-guard` arm; the
 deployment-lineage head is 3.0.0 (`migrations/3.0.0-hardened-core-loop.md`); Node floor >= 22
-family-wide. Five gated code commits (`b48c2a5`→`2d2ab1f`), each council-converged; the last two
-passed under the armed commit-guard itself — the loop shipped by surviving its own teeth.
+family-wide. Five gated code commits across Phases 2–4, each council-converged; the last two passed under
+the armed commit-guard itself — the loop shipped by surviving its own teeth.
 
 ## 2026-07-16 — kit 2.1.0 + antigravity bridge 3.0.0 (MAJOR): agy code review fails CLOSED pre-spend (AD-058)
 
