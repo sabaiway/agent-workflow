@@ -13,7 +13,7 @@
 // must live here. A drift-guard test (family-registry.test.mjs) pins FAMILY_MEMBERS to the 5 in-repo
 // capability.json files, so the table cannot silently drift from the manifests it mirrors.
 //
-// Pure, dependency-injectable (fs/env/home/validator are deps), dependency-free, Node >= 18. No
+// Pure, dependency-injectable (fs/env/home/validator are deps), dependency-free, Node >= 22. No
 // side effects on import (the isDirectRun idiom) — tests import the helpers with nothing run.
 
 import { existsSync, statSync, readFileSync, lstatSync } from 'node:fs';

@@ -6,7 +6,7 @@
 // filenames never reach them). This module resolves public tokens → English phrases (presentation.mjs)
 // and computes the headline counts; the renderers do layout + glyphs only.
 //
-// Pure, no side effects, Node >= 18.
+// Pure, no side effects, Node >= 22.
 
 import { STATE_PHRASING, VISIBILITY_PHRASING } from './presentation.mjs';
 

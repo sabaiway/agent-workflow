@@ -1,11 +1,7 @@
 #!/usr/bin/env node
-// lcov.mjs — a dependency-free LCOV parser for the fold-completeness runner's coverage.kind:"lcov"
-// branch (BUGFREE-3, AD-049 — the language-independence contract). When a verification profile
-// declares coverage.kind:"lcov", the consumer's OWN suite leaves an LCOV file at the declared path
-// (the diff-cover / c8 --reporter=lcov pattern) and this module reads it into a per-file
-// line→hits map, keyed by the SAME canonical absolute path the V8 coverage map uses — so the
-// runner's ONE uncovered-changed loop consumes either source unchanged (computeUncoveredLines /
-// effectiveCount stay the V8-only path, D10).
+// lcov.mjs — a dependency-free LCOV parser for the coverage-check final-run checker (D3(d)).
+// The declared unit-tests gate leaves an LCOV file at the fixed git-dir path and this module reads
+// it into a per-file line→hits map, keyed by a canonical absolute path.
 //
 // FAIL-CLOSED posture (the whole reason the fold gate exists): a malformed record can never mark a
 // line COVERED — a DA with a valid line but a non-integer HIT count reads the line UNCOVERED (hits 0,
@@ -16,7 +12,7 @@
 // changed executable line with NO DA entry reads non-executable — LCOV carries no separate
 // executability signal; the V8 path, which reads an absent line as uncovered, differs by format.)
 //
-// Dependency-free, Node >= 18. No side effects on import.
+// Dependency-free, Node >= 22. No side effects on import.
 
 import { join, resolve, isAbsolute, sep } from 'node:path';
 import { realpathSync } from 'node:fs';
@@ -80,8 +76,8 @@ const defaultCanon = (p) => {
 };
 
 // Segment-safe containment ('/a' never contains '/ab'); correct at the filesystem root (mirrors
-// fold-completeness-run.mjs containsPath). Defined locally so lcov.mjs never imports the runner (the
-// runner imports THIS module).
+// core-evidence.mjs containsPath). Defined locally so lcov.mjs imports no family module (its
+// consumers import THIS module).
 const containsPath = (realRoot, realAbs) =>
   realAbs === realRoot || realAbs.startsWith(realRoot.endsWith(sep) ? realRoot : realRoot + sep);
 

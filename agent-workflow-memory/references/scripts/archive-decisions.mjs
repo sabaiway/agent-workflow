@@ -46,7 +46,7 @@
 // destructive --migrate --apply writes a durable snapshot to the git dir (uncommittable, the
 // review-receipts precedent) BEFORE any delete, with a stated out-of-tree fallback off git.
 //
-// Dependency-free, Node >= 18. Deployed into a consumer's scripts/ like its siblings.
+// Dependency-free, Node >= 22. Deployed into a consumer's scripts/ like its siblings.
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { dirname, resolve, join } from 'node:path';

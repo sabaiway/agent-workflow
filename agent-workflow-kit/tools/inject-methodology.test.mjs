@@ -911,7 +911,7 @@ describe('reconcile CLI — atomic ensure+inject-if-empty+cap, reading the fragm
     });
   });
 
-  // NB the double space in "orch  EMPTY" is load-bearing: the review-ledger's bound fixable-bug
+  // NB the double space in "orch  EMPTY" is load-bearing: a historical bound fixable-bug
   // testId pins this name as a regex — do not "fix" the spacing (it would unbind the fold proof).
   it('D4 causal chain: EMPTY orch  EMPTY autonomy pairs + an engine shipping the AUTONOMY fragment but NOT the orchestration one → autonomy stays EMPTY (never fills under a withheld recipes pointer)', () => {
     const partialEngine = makeEngineFixture(FRAGMENT, '1.0.0', null, AUT_FRAGMENT);

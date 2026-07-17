@@ -7,7 +7,7 @@
 // imports family-registry for vocabulary, and family-registry imports + re-exports the public subset
 // it exported before (the 7 state constants + DISPLAY_NAMES), so every existing importer stays green.
 //
-// Pure data, no side effects, Node >= 18. Every export is frozen — this is a contract, not a mutable.
+// Pure data, no side effects, Node >= 22. Every export is frozen — this is a contract, not a mutable.
 
 // ── manifestState values (internal; the detect-backends precedence, generalized to any member) ──────
 // These are INTERNAL — they must never reach a user surface verbatim (mapped through STATE_PUBLIC

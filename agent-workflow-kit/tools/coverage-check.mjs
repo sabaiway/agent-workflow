@@ -18,7 +18,7 @@
 // Every refusal names its locations (file:line / testId) — never a bare count.
 //
 // Read-only: never writes; spawns read-only git queries + the bound-test probes (node --test).
-// Dependency-free, Node >= 18. No side effects on import.
+// Dependency-free, Node >= 22. No side effects on import.
 
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -225,6 +225,8 @@ An absent lcov file is a LOUD skipped-no-lcov (exit 0 — NO coverage check ran,
 symlinked lcov path, an uncovered line, a broken red-proof obligation, or a malformed evidence
 store fails (exit 1).
 
+Sandbox-safe: no network; writes nothing; spawns read-only git queries and the bound-test
+probes (node --test, shell-free) — the D4 sandbox lane.
 Read-only. Exit codes: 0 pass/skipped-loud; 1 fail; 2 usage.`;
 
 export const main = (argv, ctx = {}) => {

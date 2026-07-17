@@ -6,7 +6,7 @@
 //   detectMemory(dir) → { delegate, reason, ... }   runs the kit's OWN validator + asset check
 //   handoffPlan(delegate) → who writes what, which stamps end up present, who owns the commit gate
 //
-// Pure (dependency-injectable validator + fs), dependency-free, Node >= 18.
+// Pure (dependency-injectable validator + fs), dependency-free, Node >= 22.
 
 import { statSync } from 'node:fs';
 import { join, resolve } from 'node:path';

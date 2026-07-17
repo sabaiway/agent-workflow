@@ -107,7 +107,7 @@ const SOCAT_MISSING_APT = () => execWorld('/usr/bin/bwrap', '/usr/bin/apt-get', 
 
 // ── D1 — tier absence: the doctor sits OUTSIDE every velocity auto-approve tier ──────────
 
-describe('D1 — autonomy-doctor is OUTSIDE every velocity tier (the seed-gates pattern)', () => {
+describe('D1 — autonomy-doctor is OUTSIDE every velocity tier (the consented-writer pattern)', () => {
   it('not in KIT_READONLY_TOOLS / KIT_WRITER_PREVIEW_TOOLS / the core allowlist', () => {
     for (const rel of [...KIT_READONLY_TOOLS, ...KIT_WRITER_PREVIEW_TOOLS]) {
       assert.ok(!rel.includes('autonomy-doctor'), `autonomy-doctor must not be tiered (found ${rel})`);

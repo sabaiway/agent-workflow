@@ -76,14 +76,12 @@ describe('the REAL registry is consistent with the shipped contract docs (dogfoo
     assert.equal(r.code, 0, r.stdout);
   });
 
-  it('the registry covers the named constants + the full ledger vocabulary', () => {
+  it('the registry carries NO binding into the deleted ledger/fold contracts (they died with their tools)', () => {
     const names = BINDINGS.map((b) => b.constant);
     for (const c of ['SCHEMA_VERSION', 'HARD_MAX', 'DEFAULT_DIFF_CAP', 'REVIEW_CAP', 'RESULT_SCHEMA_VERSION']) {
-      assert.ok(names.includes(c), `registry must bind ${c}`);
+      assert.ok(!names.includes(c), `the deleted-contract binding ${c} must not survive`);
     }
-    for (const word of ['size-cap', 'refuted', 'gate-run', 'red-proof', 'oracle-change', 'fixable-bug', 'inherent-layer-residual', 'escalate']) {
-      assert.ok(names.includes(`vocab:${word}`), `registry must bind the vocab word ${word}`);
-    }
+    assert.ok(!names.some((n) => n.startsWith('vocab:')), 'the ledger vocabulary died with the ledger');
   });
 
   // AD-055 Part I: the ack-store path drift guard must itself be pinned — a deleted binding would
@@ -139,7 +137,7 @@ describe('doc-parity CLI surface', () => {
     const r = main([]);
     assert.equal(r.code, 0);
     assert.match(r.stdout, /doc-parity — code constants/);
-    assert.match(r.stdout, /✓ SCHEMA_VERSION/);
+    assert.match(r.stdout, /✓ doctor-exit:ready/);
     assert.match(r.stdout, /check: PASS/);
   });
 

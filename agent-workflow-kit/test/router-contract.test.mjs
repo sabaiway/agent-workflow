@@ -216,7 +216,11 @@ const BUDGET = {
   // THREE pointers (the autonomy slot: step-3 wording, the (a)(iii) anchor-absent soft-skip lane,
   // the No-Node walk, the step-4/8 report row) — ~575 B of new contract content over 179 B of
   // headroom; a documented KB-multiple bump, never a silent re-pin.)
-  fullReadSet: 61440, // router + mode + its declared shared files. 59392 → 61440 (60 KB): the
+  fullReadSet: 62464, // router + mode + its declared shared files. 61440 → 62464 (61 KB):
+  // strip-the-kit 3.6 — upgrade.md gains the consented D8 legacy gates.json migration paragraph
+  // (~0.9 KB) against a pair already at its 60 KB ceiling (the deleted verification-profile
+  // ensure freed less than the migration costs) — a documented KB-multiple bump, never a silent
+  // re-pin. History: 59392 → 61440 (60 KB): the
   // REPORT-FACTS train (Item A, AD-054) — the report-facts full clause lands in report-footer.md
   // (~1 KB, in upgrade.md's read set) and the two binding lines grow upgrade.md itself; the heaviest
   // read set (upgrade + its 3 shared files) measures 61367 B, over the 58 KB budget — a documented

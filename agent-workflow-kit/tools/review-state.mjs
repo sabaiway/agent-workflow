@@ -68,7 +68,7 @@
 //
 // Read-only: never writes, never commits, never runs a subscription CLI. It DOES spawn `git`
 // (read-only queries) to compute the fingerprint — stated honestly in the catalog. Dependency-free,
-// Node >= 18. No side effects on import (the isDirectRun idiom).
+// Node >= 22. No side effects on import (the isDirectRun idiom).
 
 import { readdirSync, lstatSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -518,7 +518,7 @@ council: every backend ship-class or degrade-recorded, >=1 real ship); 1 on a ve
 unrecognized verdict, a missing/stale/ungrounded/probe-only backend without a degrade record,
 an all-degraded tree, or a down detector with no configured recipe.
 Declare it as a project gate by hand (docs/ai/gates.json) or via the
-explicit-consent seeder (tools/seed-gates.mjs) — never without consent.
+explicit-consent init preview (tools/gates-init.mjs) — never without consent.
 
 Read-only: never writes, never commits, never runs a subscription CLI; spawns read-only git queries.
 Sandbox-safe: runs fully inside an OS sandbox (fs + git reads, no network) — the D4 sandbox lane.

@@ -32,14 +32,15 @@ concurrency:
 
 jobs:
   # Unit suite across the supported Node range. Every shipped script is dependency-free
-  # and declares engines.node ">=18", so the matrix guards that floor (a 18-only
-  # regression must not pass on a 20-only gate). No `npm install` — there are no deps.
+  # and declares engines.node ">=22"; the floor job pins the EXACT minimal version (22.0.0
+  # carries --experimental-test-coverage + the lcov reporter) — never a floating '22' alias,
+  # so a floor-only regression cannot pass on a newer minor. No `npm install` — no deps.
   test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        node-version: ['18', '20']
+        node-version: ['22.0.0', '24']
     steps:
       - uses: actions/checkout@v5
 
@@ -75,7 +76,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
 
       # Family manifest validation (strict), all five package dirs.
       - name: Manifest validate (strict, 5 dirs)

@@ -8,7 +8,7 @@
 // tripping the (narrow) attribution rules. Only the TEST is self-excluded (it holds attribution
 // fixtures); the scanner source contains no attribution construction, so it is scanned normally.
 //
-// Pure `scanText` for unit fixtures; `scanPaths`/CLI for the release tree. Dependency-free, Node >= 18.
+// Pure `scanText` for unit fixtures; `scanPaths`/CLI for the release tree. Dependency-free, Node >= 22.
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, extname, basename, resolve } from 'node:path';

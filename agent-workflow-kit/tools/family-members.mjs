@@ -8,7 +8,7 @@
 // + the drift-guard (family-registry.test.mjs pins FAMILY_MEMBERS to the 5 in-repo capability.json)
 // are preserved — the table just lives in a dependency-free leaf now.
 //
-// Pure data, no imports, no side effects, Node >= 18.
+// Pure data, no imports, no side effects, Node >= 22.
 
 // ── the unified registry ───────────────────────────────────────────────────────
 // One entry per family member. `installed` is the detect.installed spec (env + home-relative default

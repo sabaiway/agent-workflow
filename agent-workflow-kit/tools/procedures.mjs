@@ -9,7 +9,7 @@
 //
 // Invariants (mirror recipes.mjs): pure-where-possible, READ-ONLY (never writes, never commits, never
 // runs a subscription CLI). The deterministic resolution lives in the kit (resolveActivityRecipe), not
-// in the agent. Dependency-free, Node >= 18.
+// in the agent. Dependency-free, Node >= 22.
 //
 // Exit codes: 0 success (an unsatisfiable explicit override degrades LOUDLY but still exits 0 — it is a
 // valid request that gracefully degraded); 2 usage (unknown <activity> / bad --override syntax);
@@ -213,7 +213,7 @@ const reviewLoopAdvice = (slots, activity) =>
         '  • At the cap, classify every surviving blocking finding: fixable-bug (fold ONCE as a red→green test, re-review) / inherent-layer-residual (document + raise to an acceptance criterion) / escalate (the maintainer decides); a minor never forces triage.',
         ...(activity === 'plan-execution'
           ? [
-              '  • The computed instrument for THIS loop: run the FULL gate matrix with run-gates --record BEFORE recording a round (the green-baseline receipt the writer demands), then record each round + triage via review-ledger (record / classify); rounds, caps, and teeth are per SEGMENT (base = HEAD — the counter resets only at a gated commit); read the stop with review-ledger --status (its render replaces the hand-composed tally); gate the commit with review-ledger --check.',
+              '  • The computed instrument for THIS loop: declare each bugfix red BEFORE the fix (core-evidence red-proof — observed N/N red, custody-hashed); an unavailable backend gets an explicit core-evidence degrade record, never a silent skip; then stage everything, run the reviews on the STAGED tree, and mint the ONE receipt with run-gates --final (coverage + red-proof verification ride the final run); the commit is gated by commit-guard --check (the D13 ordering: any edit after the final run re-stales it); read the loop state statelessly with core-evidence summary.',
             ]
           : []),
       ]

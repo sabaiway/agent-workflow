@@ -362,7 +362,7 @@ describe('sandbox-masks — the apply never writes through a symlink or a non-re
   });
 });
 
-describe('sandbox-masks — coverage of the defensive arms (fold-completeness)', () => {
+describe('sandbox-masks — coverage of the defensive arms', () => {
   it('the REAL unfiltered git walk runs by default (no injected deps) and a plain repo derives zero masks', () => {
     const root = makeRepo();
     writeFileSync(join(root, 'untracked.txt'), 'plain\n');

@@ -154,12 +154,12 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
       'references/scripts/check-docs-size.mjs',
       'references/scripts/_expect-shim.mjs',
       'references/scripts/install-git-hooks.mjs',
+      'references/scripts/migrate-gates.mjs',
       'bin/install.mjs',
       'capability.json',
       'SKILL.md',
       'scripts/stamp-takeover.mjs',
       'references/templates/gates.json',
-      'references/templates/verification-profile.json',
       'references/templates/adr-record.md',
       'references/templates/adr/log.md',
     ];
@@ -183,6 +183,16 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
     //      package-content test + template-parity.test.mjs.
     // 44 = 43 + references/templates/autonomy.json (AD-044 Plan 4: the sparse, defaults-equivalent
     //      per-project autonomy-policy seed — _README only; the kit mirrors it via sync-mirrors).
-    assert.equal(packed.length, 44, `tarball file count drifted (${packed.length} ≠ 44)`);
+    // 43 = 44 − references/templates/verification-profile.json (strip-the-kit 3.1: the profile
+    //      died with the fold machinery).
+    // 45 = 43 + references/scripts/migrate-gates.mjs + its deploy-payload test (strip-the-kit
+    //      3.6: the consented D8 legacy gates.json migration — the lineage owner carries it;
+    //      the kit mirrors both via sync-mirrors).
+    // 46 = 45 + references/scripts/install-git-hooks.test.mjs (the installer's deploy-payload
+    //      spec — the C7/C8 worktree-hooks + commit-guard-persistence pins; mirrored to the kit).
+    // 48 = 46 + references/scripts/migrate-gates-branches.test.mjs (the refusal/no-op branch
+    //      pins) + references/scripts/install-git-hooks-repo-exec.test.mjs (the in-place
+    //      GIT_DIR-pinned execution lane for the D3(d) changed-line check). Both kit-mirrored.
+    assert.equal(packed.length, 48, `tarball file count drifted (${packed.length} ≠ 48)`);
   });
 });

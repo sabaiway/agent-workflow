@@ -21,7 +21,7 @@
 // bundle (cannot determine the allowlist). main(argv, ctx) → { code, stdout, stderr }; getenv / home /
 // bundleRoot / fs are injectable for host-independent tests.
 //
-// Dependency-free, Node >= 18. No side effects on import (the isDirectRun idiom).
+// Dependency-free, Node >= 22. No side effects on import (the isDirectRun idiom).
 
 import { pathToFileURL } from 'node:url';
 import { settingValueValid } from './manifest/validate.mjs';

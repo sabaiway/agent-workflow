@@ -6,7 +6,7 @@
 // lines, the manifest-as-source registry (the union of the bundled bridges' `settings` blocks), and
 // the effective value of each knob (env > file > built-in default). It NEVER writes.
 //
-// Dependency-free, Node >= 18. No side effects on import.
+// Dependency-free, Node >= 22. No side effects on import.
 
 import { readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';

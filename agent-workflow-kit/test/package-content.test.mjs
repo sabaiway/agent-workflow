@@ -106,14 +106,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the generic gate runner + its project-declaration seed (cost-tiered execution)
       'tools/run-gates.mjs',
       'references/templates/gates.json',
-      // the BUGFREE-3 verification-profile read-core + its seeded template (the language-independence
-      // contract, AD-049) — the memory-canon template's kit mirror (byte-parity: template-parity.test.mjs)
-      'tools/verification-profile.mjs',
-      'references/templates/verification-profile.json',
-      // the dependency-free LCOV parser (the coverage.kind:"lcov" branch — M3a goes any-language)
+      // the dependency-free LCOV parser (the D3(d) coverage arm's consumption path)
       'tools/lcov.mjs',
-      // the dependency-free SARIF reader (the OPTIONAL advisory findings surface — never gate-blocking)
-      'tools/sarif.mjs',
       // the cheap-lane subagent writer + its bundled vehicles
       'tools/cheap-agents.mjs',
       'references/agents/mechanical-sweep.md',
@@ -125,20 +119,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the AD-038 review-enforcement pair: the read-only receipt checker + the facts assembler
       'tools/review-state.mjs',
       'tools/grounding.mjs',
-      // the AD-045 review-round LEDGER: the read-only checker (schema + decideStop + --check) + the sole writer
-      'tools/review-ledger.mjs',
-      'tools/review-ledger-write.mjs',
-      // the AD-050 NEUTRAL ledger read-core: the validated read path (path/base + schema + reader +
-      // filters) both read-only checkers share without a cycle (review-state reads it for the degraded exemption)
-      'tools/review-ledger-core.mjs',
-      // the AD-046 fold-completeness READ/RUN pair: the read-only --check gate + the sole tree-toucher/runner
-      'tools/fold-completeness.mjs',
-      'tools/fold-completeness-run.mjs',
-      // the AD-048 NEUTRAL shared core: the changed-surface computation (the D4 diff cap + the
-      // coverage domain consume ONE computation) + the D8 telemetry fold-read path
+      // the NEUTRAL shared core: the changed-surface computation the coverage domain consumes
       'tools/changed-surface.mjs',
-      // the consent-gated gates.json seeder + the shared atomic-write core it runs on (AD-042)
-      'tools/seed-gates.mjs',
+      // the shared atomic-write core the consented writers run on (AD-042)
       'tools/atomic-write.mjs',
       // the AD-055 Part I consent-gated ack-store writer (docs/ai/acks.json — the family-owned
       // neutral sandbox-lane fingerprint ack, relocated off the host settings schema)
@@ -166,8 +149,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // and the catalog↔modes set-equality guard cover the full set)
       'references/modes/upgrade.md',
       'references/modes/help.md',
-      'references/modes/review-ledger.md',
-      'references/modes/fold-completeness.md',
+      'references/modes/core-evidence.md',
+      'references/modes/coverage-check.md',
+      'references/modes/commit-guard.md',
       'references/shared/report-footer.md',
       'references/shared/composition-handoff.md',
       'references/shared/deploy-tail.md',
@@ -260,7 +244,20 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 154 = 152 + tools/coverage-check.mjs (the D3(c)+(d) final-run checker) +
     //       tools/commit-guard.mjs (the D10 read-only pre-commit guard binding the --final
     //       receipt). Their *.test.mjs siblings are stripped by files[].
-    assert.equal(packed.length, 154, `tarball file count drifted (${packed.length} ≠ 154)`);
+    // 149 = 154 − 11 (strip-the-kit 3.1: the ledger triad review-ledger/-core/-write + the fold
+    //       pair fold-completeness/-run + verification-profile.mjs + sarif.mjs + seed-gates.mjs,
+    //       their two mode docs, and the verification-profile.json template)
+    //       + 3 (the new core mode docs: core-evidence.md / coverage-check.md / commit-guard.md)
+    //       + 1 (tools/gates-init.mjs — the D9 consented gates.json fill preview)
+    //       + 2 (references/scripts/migrate-gates.mjs + its deploy-payload test — the D8 legacy
+    //       gates.json migration, mirrored from the memory canon).
+    // 150 = 149 + references/scripts/install-git-hooks.test.mjs (the installer's deploy-payload
+    //       spec joins its mirrored script — the C7/C8 worktree-hooks + guard-persistence pins).
+    // 152 = 150 + references/scripts/migrate-gates-branches.test.mjs (the refusal/no-op branch
+    //       pins) + references/scripts/install-git-hooks-repo-exec.test.mjs (the in-place
+    //       GIT_DIR-pinned execution lane — the D3(d) changed-line check reads real executions
+    //       of the shipped bytes). Both mirrored from the memory canon.
+    assert.equal(packed.length, 152, `tarball file count drifted (${packed.length} ≠ 152)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

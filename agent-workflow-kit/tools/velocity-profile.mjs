@@ -490,7 +490,7 @@ const isScriptMap = (scripts) => Boolean(scripts) && typeof scripts === 'object'
 const isMutatingScriptName = (name) =>
   MUTATING_SCRIPT_NAME_PATTERN.test(name) || MUTATING_SCRIPT_HOOK_PATTERN.test(name);
 
-// `scriptName` is ADDITIVE (AD-042): the seed-gates offer layer maps a candidate to a
+// `scriptName` is ADDITIVE (AD-042): the gates-init offer layer maps a candidate to a
 // package-manager-aware `{ id, title, cmd }` and needs the raw script name for that derivation;
 // `command` stays the advisory's own npm-run spelling (this fn is otherwise unchanged).
 const makeGateCandidate = (name) => ({

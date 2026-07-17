@@ -11,7 +11,7 @@
 // Fail-closed: readEngineFragment never falls back to a bundled copy (there is none after the
 // mirror retirement) — when the engine is needed but absent/invalid it throws with the exact
 // remediation, so the reconcile STOPs loudly rather than silently dropping the slot (AGENTS.md:
-// no silent failures). Pure-where-possible (fs + validator injectable for tests), Node >= 18.
+// no silent failures). Pure-where-possible (fs + validator injectable for tests), Node >= 22.
 
 import { statSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';

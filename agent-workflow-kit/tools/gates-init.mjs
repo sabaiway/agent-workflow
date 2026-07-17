@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-// seed-gates.mjs — the consent-gated docs/ai/gates.json seeder (AD-042). Reached ONLY through
-// explicitly-consenting prose (the bootstrap accelerators block and the gates.md consent-seed
-// section) — it is NOT a routable mode token, it sits OUTSIDE every velocity allowlist tier
-// (a consent-per-run writer is never pre-approved), and the shipped gates.json TEMPLATE stays
-// EMPTY (AD-021/AD-038): a populated declaration is per-entry maintainer consent recorded through
-// this preview, never auto-seeding.
+// gates-init.mjs — the consented docs/ai/gates.json FILL preview (D9; the pure derivation carried
+// from the retired standalone seeder, AD-042/AD-052 invariants intact). Reached ONLY through
+// explicitly-consenting prose (the init/bootstrap flows and the gates.md consent-fill section) —
+// it is NOT a routable mode token, it sits OUTSIDE every velocity allowlist tier (a
+// consent-per-run writer is never pre-approved), and the shipped gates.json TEMPLATE stays EMPTY
+// (AD-021/AD-038): a populated declaration is per-entry maintainer consent recorded through this
+// preview, never auto-seeding. ONE lifecycle contract: this preview runs at INIT; at UPGRADE the
+// only gates.json writer is the consented legacy migration.
 //
 // What it offers (the derivation invariants, test-pinned) — CLOSED-WORLD since AD-052: an entry
 // is offered only when every axis is proven safe by MEMBERSHIP in a finite, test-guarded set,
@@ -29,7 +31,7 @@
 //     executes project-controlled tooling (a node_modules/.bin PATH shim intercepts under every
 //     form) — the documented residual, disclosed in the preview, bounded by the two consents;
 //   • ids derive kebab-case from script names (build:prod → build-prod) and every offered entry
-//     passes the runner's validateDeclaration (the seeder imports the validator — NEVER the
+//     passes the runner's validateDeclaration (this module imports the validator — NEVER the
 //     reverse: run-gates.mjs stays a runner that writes nothing);
 //   • the review-state candidate appears ONLY when docs/ai/orchestration.json DECLARES
 //     reviewed/council on plan-execution.review — the slot the checker enforces — with the
@@ -44,7 +46,7 @@
 // .workflow-version == lineage-head stamp gate on --apply only (the velocity/gate-hook precedent).
 //
 // Exit codes: 0 done / dry-run; 1 precondition STOP (no deployment, stamp, symlink, malformed
-// declaration, id collision); 2 usage. Dependency-free, Node >= 18. No side effects on import.
+// declaration, id collision); 2 usage. Dependency-free, Node >= 22. No side effects on import.
 
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
@@ -58,39 +60,40 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const KIT_ROOT = resolve(HERE, '..');
 const TEMPLATE_PATH = join(KIT_ROOT, 'references', 'templates', 'gates.json');
 const REVIEW_STATE_TOOL = join(KIT_ROOT, 'tools', 'review-state.mjs');
-const REVIEW_LEDGER_TOOL = join(KIT_ROOT, 'tools', 'review-ledger.mjs');
+const COVERAGE_CHECK_TOOL = join(KIT_ROOT, 'tools', 'coverage-check.mjs');
 const STAMP_REL = join('docs', 'ai', '.workflow-version');
 
 const EXIT_OK = 0;
 const EXIT_PRECONDITION = 1;
 const EXIT_USAGE = 2;
 
-export const SEED_GATES_STOP = 'SEED_GATES_STOP';
+export const GATES_INIT_STOP = 'GATES_INIT_STOP';
 const stop = (message) =>
-  Object.assign(new Error(`[agent-workflow-kit] ${message}`), { name: 'SeedGatesStop', code: SEED_GATES_STOP, exitCode: EXIT_PRECONDITION });
+  Object.assign(new Error(`[agent-workflow-kit] ${message}`), { name: 'GatesInitStop', code: GATES_INIT_STOP, exitCode: EXIT_PRECONDITION });
 const usageFail = (message) =>
   Object.assign(new Error(`[agent-workflow-kit] ${message}`), { exitCode: EXIT_USAGE });
 
 // The trust-chain disclosure (AD-042) — printed with EVERY preview, token-pinned by the tests: a
 // consent-seeded command becomes auto-approvable only after TWO explicit consents.
 export const TRUST_CHAIN_DISCLOSURE =
-  'Disclosure: once the optional approval hook is wired (/agent-workflow-kit hook), it ' +
-  'auto-approves byte-exact declared gate commands from the project root — seeding (this consent) ' +
-  'and hook wiring (its own consent) are two separate yeses. A script gate runs the project\'s ' +
-  'own tooling, which executes project-controlled code (the seeder does not sandbox it; the two ' +
-  'consents bound it).';
+  'Disclosure: gates.json is a PRIVILEGED file — once the optional approval hook is wired ' +
+  '(/agent-workflow-kit hook), it auto-approves byte-exact declared gate commands from the ' +
+  'project root — filling (this consent) and hook wiring (its own consent) are two separate ' +
+  'yeses. A script gate runs the project\'s own tooling, which executes project-controlled code ' +
+  '(this preview does not sandbox it; the two consents bound it).';
 
-const USAGE = `usage: seed-gates [--dry-run | --apply] [--only <id>]... [--cwd <dir>] [--help]
+const USAGE = `usage: gates-init [--dry-run | --apply] [--only <id>]... [--cwd <dir>] [--help]
 
-Consent-gated seeder for the project's own docs/ai/gates.json. Default is --dry-run: prints the
-derived { id, title, cmd } entries and writes NOTHING. --apply APPENDS exactly the consented
-entries (--only <id> selects a subset; append-only — existing entries are never modified or
-removed, an id collision is refused). The offer is CLOSED-WORLD: only a terminating-class script
-name (test / lint / type-check / build — never release/publish/deploy, never watch/serve, never a
-write-mode variant) whose BODY is a member of the literal runner allowlist is offered, as the
-hook-free \`COREPACK_ENABLE_NETWORK=0 <pm> exec -- <body>\` form for the detected package manager. A gate-class script whose
-body is NOT in the allowlist is screened out with a note naming it (a command you trust can still
-be declared by hand); non-gate-class names are excluded silently, as always.
+The consented FILL preview for the project's own docs/ai/gates.json (D9). Default is --dry-run:
+prints the derived { id, title, cmd } entries and writes NOTHING. --apply APPENDS exactly the
+consented entries (--only <id> selects a subset; append-only — existing entries are never
+modified or removed, an id collision is refused). The offer is CLOSED-WORLD: only a
+terminating-class script name (test / lint / type-check / build — never release/publish/deploy,
+never watch/serve, never a write-mode variant) whose BODY is a member of the literal runner
+allowlist is offered, as the hook-free \`COREPACK_ENABLE_NETWORK=0 <pm> exec -- <body>\` form for
+the detected package manager. A gate-class script whose body is NOT in the allowlist is screened
+out with a note naming it (a command you trust can still be declared by hand); non-gate-class
+names are excluded silently, as always.
 ${TRUST_CHAIN_DISCLOSURE}`;
 
 // ── candidate classification: the NAME screens (the LOCKED derivation invariants) ──────
@@ -310,12 +313,14 @@ export const reviewStateCandidate = (cwd, deps = {}) => {
   }
 };
 
-// The conditional review-LEDGER candidate (AD-045) — the SAME consent + conditional rule as the
-// review-state candidate (offered ONLY when plan-execution.review is reviewed/council), keyed on the
-// same slot, path resolved + QUOTED. It gates the review-ROUND ledger (converged / resolved-residual);
-// review-state gates receipt PRESENCE. Both may be offered together — distinct axes.
-export const reviewLedgerCandidate = (cwd, deps = {}) => {
-  const toolPath = deps.reviewLedgerTool ?? REVIEW_LEDGER_TOOL;
+// The conditional COVERAGE-CHECK candidate (D3(a)) — the SAME consent + conditional rule as the
+// review-state candidate (offered ONLY when plan-execution.review is reviewed/council), keyed on
+// the same slot, path resolved + QUOTED. Together they are the canonical core pair `run-gates
+// --final` requires (the checker declared LAST — buildOffer appends it last so a whole-offer
+// apply lands final-ready); review-state gates receipt satisfaction, coverage-check verifies the
+// consumed lcov + the red-proof declarations.
+export const coverageCheckCandidate = (cwd, deps = {}) => {
+  const toolPath = deps.coverageCheckTool ?? COVERAGE_CHECK_TOOL;
   try {
     const { config } = loadConfig(resolve(cwd), deps.readFile ?? readFileSync, deps.lstat ?? lstatSync);
     const declared = config?.['plan-execution']?.review;
@@ -324,15 +329,15 @@ export const reviewLedgerCandidate = (cwd, deps = {}) => {
       return {
         candidate: null,
         note:
-          `the review-ledger candidate was withheld: the resolved kit path contains shell ` +
+          `the coverage-check candidate was withheld: the resolved kit path contains shell ` +
           `metacharacters that do not survive double-quoting (${toolPath}) — declare the gate ` +
-          `by hand per references/modes/review-ledger.md`,
+          `by hand per references/modes/coverage-check.md`,
       };
     }
     return {
       candidate: {
-        id: 'review-ledger',
-        title: 'Review-round ledger: the in-flight loop is converged or resolved-residual',
+        id: 'coverage-check',
+        title: 'Changed-line coverage + red-proof verification (the final-run checker)',
         cmd: `node "${toolPath}" --check`,
       },
       note: null,
@@ -340,7 +345,7 @@ export const reviewLedgerCandidate = (cwd, deps = {}) => {
   } catch (err) {
     return {
       candidate: null,
-      note: `orchestration config unreadable (${err.message}) — the review-ledger candidate was not evaluated`,
+      note: `orchestration config unreadable (${err.message}) — the coverage-check candidate was not evaluated`,
     };
   }
 };
@@ -356,22 +361,23 @@ const assertOnlyIdsOffered = (offer, onlyIds = []) => {
   }
 };
 
-// The full offer: script entries + the conditional review-state + review-ledger candidates (last),
-// plus loud notes. Both review candidates key on the same slot (plan-execution.review reviewed/council)
-// but gate distinct axes (receipt presence vs review-round convergence) — offered together.
+// The full offer: script entries + the conditional review-state + coverage-check candidates
+// (coverage-check LAST — the `run-gates --final` declaration-shape rule requires the checker as
+// the last declared gate, so a whole-offer apply is final-ready by construction). Both key on the
+// same slot (plan-execution.review reviewed/council) but gate distinct axes.
 export const buildOffer = (cwd, deps = {}) => {
   const scripts = deriveScripts(cwd, deps);
   const rs = reviewStateCandidate(cwd, deps);
-  const rl = reviewLedgerCandidate(cwd, deps);
-  const candidates = [rs.candidate, rl.candidate].filter(Boolean);
+  const cc = coverageCheckCandidate(cwd, deps);
+  const candidates = [rs.candidate, cc.candidate].filter(Boolean);
   return {
     entries: [...scripts.entries, ...candidates],
-    notes: [...scripts.notes, rs.note, rl.note].filter(Boolean),
+    notes: [...scripts.notes, rs.note, cc.note].filter(Boolean),
   };
 };
 
 // The RUNNABLE apply invocation for a given project — this tool has no bin and no mode token, so
-// the consent step must print the real command, never a bare `seed-gates`. Consent integrity: a
+// the consent step must print the real command, never a bare `gates-init`. Consent integrity: a
 // previewed --only subset is carried into the hint VERBATIM (ids are shell-safe by construction —
 // kebabIdOf output / the fixed `review-state`), so following the hint can never widen the consent.
 // Paths that do not survive double-quoting (the reviewStateCandidate screen, same pattern) make
@@ -386,7 +392,7 @@ export const applyInvocationFor = (cwd, onlyIds = []) => {
 const GENERIC_APPLY_HINT = 're-run this same command with --apply [--only <id>]...';
 
 export const formatPreview = (offer, applyInvocation = null, { explicitOnly = false } = {}) => {
-  const lines = ['[agent-workflow-kit] gates seeding preview (dry-run — nothing was written):'];
+  const lines = ['[agent-workflow-kit] gates fill preview (dry-run — nothing was written):'];
   if (!offer.entries.length) {
     lines.push('  nothing to offer — no seedable terminating verification scripts were found.');
   }
@@ -418,14 +424,14 @@ const loadExistingDeclaration = (cwd, deps = {}) => {
     try {
       return JSON.parse(String(read(full, 'utf8')));
     } catch (err) {
-      throw stop(`${GATES_REL}: malformed JSON (${err.message}) — fix it by hand; the seeder never writes over a declaration it cannot parse`);
+      throw stop(`${GATES_REL}: malformed JSON (${err.message}) — fix it by hand; this preview never writes over a declaration it cannot parse`);
     }
   })();
   const gates = (() => {
     try {
       return validateDeclaration(parsed);
     } catch (err) {
-      throw stop(`${err.message} — fix it by hand; the seeder never writes over an invalid declaration`);
+      throw stop(`${err.message} — fix it by hand; this preview never writes over an invalid declaration`);
     }
   })();
   return { outcome: 'loaded', readme: typeof parsed._README === 'string' ? parsed._README : undefined, gates };
@@ -453,7 +459,7 @@ const readStampValue = (cwd, deps = {}) => {
 };
 
 // ── apply (append exactly the consented entries) ───────────────────────────────────────
-export const applySeed = ({ cwd, onlyIds = [] }, deps = {}) => {
+export const applyFill = ({ cwd, onlyIds = [] }, deps = {}) => {
   assertDocsAiDeployment(cwd, deps, { stop, noun: 'a gate declaration', rel: GATES_REL });
   const stampValue = readStampValue(cwd, deps);
   if (stampValue !== EXPECTED_WORKFLOW_VERSION) {
@@ -474,7 +480,7 @@ export const applySeed = ({ cwd, onlyIds = [] }, deps = {}) => {
   if (collisions.length) {
     throw stop(
       `id collision — already declared in ${GATES_REL}: ${collisions.join(', ')} (append-only: the ` +
-        `seeder never modifies or removes an existing entry; pick the others with --only, or edit by hand)`,
+        `fill never modifies or removes an existing entry; pick the others with --only, or edit by hand)`,
     );
   }
 
@@ -539,7 +545,7 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
       log(formatPreview(filtered, applyInvocationFor(cwd, args.only), { explicitOnly: args.only.length > 0 }));
       return EXIT_OK;
     }
-    const result = applySeed({ cwd, onlyIds: args.only }, deps);
+    const result = applyFill({ cwd, onlyIds: args.only }, deps);
     if (result.outcome === 'nothing') {
       log('[agent-workflow-kit] nothing to offer — no seedable terminating verification scripts were found; wrote nothing.');
       for (const note of result.notes) log(`  note: ${note}`); // the user learns WHY (same note as the preview)

@@ -146,28 +146,9 @@ describe('autonomy.json seed — sparse, schema-valid, DEFAULTS-EQUIVALENT (AD-0
   });
 });
 
-describe('verification-profile.json seed — strict JSON valid against the read-core schema (BUGFREE-3)', () => {
-  const raw = readFileSync(join(KIT_TEMPLATES, 'verification-profile.json'), 'utf8');
-
-  it('parses as strict JSON (no comments — the runner JSON.parses it)', () => {
-    assert.doesNotThrow(() => JSON.parse(raw));
-  });
-
-  it('validates against verification-profile.mjs and seeds the today-reproducing default (v8 + tap-stdout)', async () => {
-    const { validateProfile } = await import('../tools/verification-profile.mjs');
-    const parsed = JSON.parse(raw);
-    assert.equal(typeof parsed._README, 'string', 'the onboarding _README is a string');
-    assert.deepEqual(validateProfile(parsed), { ok: true }, 'the seeded profile is schema-valid');
-    // The seed must reproduce today's behaviour: V8 coverage + node:test TAP-on-stdout.
-    assert.equal(parsed.schema, 1);
-    assert.equal(parsed.coverage.kind, 'v8', 'the seed defaults to V8 (today\'s behaviour)');
-    assert.equal(parsed.singleTest.resultFormat, 'tap-stdout', 'the seed defaults to TAP-on-stdout');
-  });
-
-  it('the _README frames the profile as optional and names the safety + suite-command contracts', () => {
-    const readme = JSON.parse(raw)._README;
-    assert.match(readme, /DELETE this file|absent profile/i, 'states the profile is optional (absent → defaults)');
-    assert.match(readme, /gitignored|outside the repo/i, 'states the declared-path safety contract');
-    assert.match(readme, /gates\.json/i, 'states the suite command stays the gates.json unit-tests gate');
+describe('the deleted verification-profile seed never resurfaces (strip-the-kit 3.1)', () => {
+  it('neither template dir carries verification-profile.json', () => {
+    assert.equal(existsSync(join(KIT_TEMPLATES, 'verification-profile.json')), false);
+    assert.equal(existsSync(join(MEMORY_TEMPLATES, 'verification-profile.json')), false);
   });
 });

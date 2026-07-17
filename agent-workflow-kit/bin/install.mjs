@@ -28,7 +28,7 @@
 // them from this package's own bundled copies — a purely LOCAL copy, no third server contact —
 // skippable with `--no-bridges`. No tracking either way.
 //
-// Dependency-free, Node >= 18.
+// Dependency-free, Node >= 22.
 
 import { readFile, mkdir, rm } from 'node:fs/promises';
 import { existsSync, lstatSync, realpathSync } from 'node:fs';

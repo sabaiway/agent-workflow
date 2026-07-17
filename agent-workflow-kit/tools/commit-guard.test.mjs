@@ -356,3 +356,14 @@ describe('commit-guard — integration: a REAL git commit is refused per violati
     assert.match(`${refused.stdout}${refused.stderr}`, /fingerprint/);
   });
 });
+
+describe('resolveGitHooksPath — the ONE hooks-path answer consumers read', () => {
+  it('answers git’s own hooks dir inside a repo and null outside one', () => {
+    const { root } = makeRepo();
+    assert.equal(guard.resolveGitHooksPath(root), join(root, '.git', 'hooks'));
+    rmSync(root, { recursive: true, force: true });
+    const plain = mkdtempSync(join(tmpdir(), 'commit-guard-nogit-'));
+    assert.equal(guard.resolveGitHooksPath(plain), null);
+    rmSync(plain, { recursive: true, force: true });
+  });
+});

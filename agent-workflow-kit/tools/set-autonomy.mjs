@@ -19,7 +19,7 @@
 // (malformed/unreadable policy) or a write STOP (no deployment / symlinked leaf). main(argv, ctx) →
 // { code, stdout, stderr }; cwd / fs are injectable for host-independent tests.
 //
-// Dependency-free, Node >= 18. No side effects on import (the isDirectRun idiom).
+// Dependency-free, Node >= 22. No side effects on import (the isDirectRun idiom).
 
 import { readFileSync, lstatSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';

@@ -7,7 +7,7 @@
 // freshness probe that cannot parse a version must degrade to "unknown" — never to a false ordering
 // claim in either direction (INV-B). No `let`: a small functional comparison (AGENTS.md §2.3).
 //
-// Pure, no imports, no side effects, Node >= 18.
+// Pure, no imports, no side effects, Node >= 22.
 
 export const parseSemver = (str) => {
   const m = typeof str === 'string' ? str.trim().match(/^(\d+)\.(\d+)\.(\d+)/) : null;

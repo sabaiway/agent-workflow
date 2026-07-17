@@ -16,7 +16,7 @@
 //   • atomic — exclusive-create *.tmp + rename (no partial-write state); last-writer-wins;
 //   • never commits.
 //
-// Dependency-free beyond the kit's own atomic-write core + the shared ack constants, Node >= 18. No
+// Dependency-free beyond the kit's own atomic-write core + the shared ack constants, Node >= 22. No
 // side effects on import (the isDirectRun idiom).
 
 import { lstatSync, readFileSync } from 'node:fs';

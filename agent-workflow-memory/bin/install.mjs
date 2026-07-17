@@ -13,7 +13,7 @@
 // That is distinct from `/agent-workflow-memory upgrade`, which migrates a
 // *project's* docs/ai deployment — see README "Use".
 //
-// No telemetry, no phone-home. Dependency-free, Node >= 18.
+// No telemetry, no phone-home. Dependency-free, Node >= 22.
 
 import { readFile, mkdir, readdir, copyFile, lstat, readlink, symlink } from 'node:fs/promises';
 import { existsSync, lstatSync, realpathSync } from 'node:fs';

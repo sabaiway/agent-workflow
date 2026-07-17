@@ -28,9 +28,9 @@
 // Read-only: never writes, never commits, never runs a subscription CLI. The reused probes are all
 // exported read-only surfaces of their owning tools (velocity/autonomy/doctor/backends/recipes/
 // registry/sandbox-masks); the sandbox-masks and settings probes may run read-only git queries.
-// Dependency-free, Node >= 18. No side effects on import (the isDirectRun idiom).
+// Dependency-free, Node >= 22. No side effects on import (the isDirectRun idiom).
 
-import { readFileSync, readdirSync, lstatSync } from 'node:fs';
+import { readFileSync, readdirSync, lstatSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -54,6 +54,8 @@ import { ACTIVITIES, resolveActivityRecipe } from './recipes.mjs';
 import { surveyFamily, surveyGateHook } from './family-registry.mjs';
 import { probeSandboxMasks, needsMasksApply } from './sandbox-masks.mjs';
 import { shellQuoteArg } from './review-state.mjs';
+import { isFinalCapableDeclaration } from './run-gates.mjs';
+import { resolveGitHooksPath } from './commit-guard.mjs';
 import { loadConfig } from './orchestration-config.mjs';
 import { DEFAULT_BUNDLE_ROOT, SETTINGS_FILENAME, settingsPath, parseSettings, duplicateKeys } from './bridge-settings-read.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
@@ -97,6 +99,7 @@ export const SEVERITIES = Object.freeze({
   'review-recipe': SEVERITY_ATTENTION,
   'gates-declaration': SEVERITY_OPTIONAL,
   'gate-hook': SEVERITY_OPTIONAL,
+  'commit-guard': SEVERITY_OPTIONAL,
   'read-lane': SEVERITY_OPTIONAL,
   'read-lane.stale': SEVERITY_ATTENTION,
   'read-lane.missing': SEVERITY_ATTENTION,
@@ -152,6 +155,7 @@ export const WHATS = Object.freeze({
   'review-recipe': '{degraded}',
   'gates-declaration': 'no declared gate matrix (docs/ai/gates.json absent or empty) — gates prompt one by one; the apply PREVIEWS its --apply line, writes nothing',
   'gate-hook': '{n} declared gate(s) prompt per run — the gate-approval hook is not wired',
+  'commit-guard': 'the gate matrix is final-run-capable but no commit-guard arms the pre-commit hook — a commit needs no green receipt yet',
   'read-lane': 'the gate hook is wired but the read-only compound lane is off — pipes/chains of seeded reads still prompt one by one',
   'read-lane.stale': 'the read-lane is ON but the placed gate hook is stale — an old hook never reads lanes.json, so the lane is silently dark; reseed it',
   'read-lane.missing': 'the gate hook is wired but its placed file is missing — every Bash call errors and the read-lane is dark; re-place it',
@@ -205,6 +209,7 @@ export const BENEFITS = Object.freeze({
   'review-recipe': 'review coverage — the review recipe you configured actually runs instead of silently degrading',
   'gates-declaration': 'velocity — your project’s gates run as ONE declared batch with a PASS/FAIL table',
   'gate-hook': 'velocity — your own declared gate commands auto-approve byte-exactly (opt-in PreToolUse hook)',
+  'commit-guard': 'integrity — commits require the ONE green --final receipt at the exact staged fingerprint (consented pre-commit arm)',
   'read-lane': 'velocity — pipes/chains of your seeded read-only commands auto-approve instead of prompting (opt-in, conservatively classified)',
   'family-freshness': 'currency — placed family members carry the latest shipped fixes and features',
   'sandbox-masks': 'zero clutter — git status shows only your changes (the review domain already ignores the masks by construction)',
@@ -326,13 +331,13 @@ const probeGates = ({ root, deps, add, skip }) => {
     if (sg.error) throw new Error(sg.error);
     if (sg.declarationPresent && sg.declaredGates === null) throw new Error(sg.declarationError ?? 'gates.json present but unreadable');
     // An ABSENT file and the seeded-EMPTY list are equally undeclared (codex R2, Segment B); the
-    // apply is the consent-gated seeder PREVIEW (it proposes entries from the project's own
+    // apply is the consent-gated gates-init PREVIEW (it proposes entries from the project's own
     // scripts and writes only on an explicit yes) — never the runner.
     if (!sg.declarationPresent || sg.declaredGates === 0) {
-      // The seeder writes ONLY with --apply and consent is per-entry (--only) — the apply field
-      // stays a PURE executable command (run-exactly-as-rendered feeds it to the shell); the
-      // two-step preview semantics live in WHAT, never as prose appended to the command.
-      add('gates-declaration', fillTemplate(WHATS['gates-declaration'], {}), `node ${q(toolPath('seed-gates.mjs'))} --cwd ${q(root)}`);
+      // gates-init writes ONLY with --apply — the apply field stays a PURE executable command
+      // (run-exactly-as-rendered feeds it to the shell); the two-step preview semantics live in
+      // WHAT, never as prose appended to the command.
+      add('gates-declaration', fillTemplate(WHATS['gates-declaration'], {}), `node ${q(toolPath('gates-init.mjs'))} --cwd ${q(root)}`);
       return;
     }
     if (sg.declaredGates > 0 && !sg.wired) {
@@ -340,6 +345,56 @@ const probeGates = ({ root, deps, add, skip }) => {
     }
   } catch (err) {
     skip('gate-hook', err);
+  }
+};
+
+// The D10 consumer surface: once the declaration is FINAL-capable (the canonical core checks
+// present, the checker LAST — the run-gates helper is the one home of that rule), offer the
+// consented commit-guard install — for a MANAGED guardless pre-commit hook AND for an absent one
+// alike; an UNMANAGED hook is a loud skip (manual merge, never an overwrite offer); a
+// non-final-capable declaration gets NO offer (an armed guard over a matrix that cannot mint a
+// receipt would block every commit).
+const INSTALLER_MARKER_RE = /:install-git-hooks\.mjs$/m;
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// Convergence needs the EXACT canonical armed line the installer writes — full-line anchored on
+// the kit's OWN resolved guard path. A commented-out line or a lookalike path (fake-commit-guard)
+// must never read as armed (that would suppress the offer and leave commits unguarded).
+const canonicalGuardLineRe = () => new RegExp(`^node "${escapeRe(toolPath('commit-guard.mjs'))}" --check$`, 'm');
+const probeCommitGuard = ({ root, deps, add, skip }) => {
+  try {
+    const read = deps.readFile ?? readFileSync;
+    const gatesRaw = (() => {
+      try {
+        return String(read(join(root, 'docs', 'ai', 'gates.json'), 'utf8'));
+      } catch {
+        return null;
+      }
+    })();
+    if (gatesRaw === null) return; // undeclared — the gates-declaration item owns that story
+    const gates = JSON.parse(gatesRaw).gates;
+    if (!isFinalCapableDeclaration(gates, root)) return; // no receipt to guard yet — no offer
+    const installer = join(root, 'scripts', 'install-git-hooks.mjs');
+    if (!(deps.exists ?? existsSync)(installer)) {
+      skip('commit-guard', new Error('the hook installer (scripts/install-git-hooks.mjs) is not deployed — run upgrade first'));
+      return;
+    }
+    const hooksPath = (deps.gitHooksPath ?? resolveGitHooksPath)(root);
+    if (hooksPath === null) return; // not a git tree — nothing to hook
+    const hook = (() => {
+      try {
+        return String(read(join(hooksPath, 'pre-commit'), 'utf8'));
+      } catch {
+        return null;
+      }
+    })();
+    if (hook !== null && canonicalGuardLineRe().test(hook)) return; // armed — converged (managed or not)
+    if (hook !== null && !INSTALLER_MARKER_RE.test(hook)) {
+      skip('commit-guard', new Error('an UNMANAGED pre-commit hook exists — merge the guard line by hand (the installer refuses to overwrite it)'));
+      return;
+    }
+    add('commit-guard', fillTemplate(WHATS['commit-guard'], {}), `node ${q(installer)} --commit-guard ${q(toolPath('commit-guard.mjs'))}`);
+  } catch (err) {
+    skip('commit-guard', err);
   }
 };
 
@@ -690,6 +745,7 @@ const PROBES = Object.freeze([
   probeSandboxProvision,
   probeReviewRecipe,
   probeGates,
+  probeCommitGuard,
   probeReadLane,
   probeFamilyFreshness,
   probeMasksItem,

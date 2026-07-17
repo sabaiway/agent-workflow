@@ -18,7 +18,7 @@
 // The live read is lazy + fail-loud: resolve+read the engine ONLY when a fill is actually needed, and
 // STOP loudly (never a silent fallback) when the engine is needed but absent/invalid.
 //
-// Pure string functions (testable with byte-preservation fixtures); dependency-free, Node >= 18.
+// Pure string functions (testable with byte-preservation fixtures); dependency-free, Node >= 22.
 //
 // Canonical-refresh (AD-025): a slot filled BEFORE a clause existed is normally preserved verbatim
 // (reconcile only fills an EMPTY slot). To push a NEW canonical clause to the EXISTING filled base

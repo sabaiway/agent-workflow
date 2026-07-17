@@ -31,7 +31,7 @@
 // explicit set — drift cannot hide between them. The exported sync helpers are
 // ROOT-PARAMETERIZED (module-level REPO_ROOT is the CLI default only) so hermetic tests never
 // touch the real tree; scripts/release/version-sync.mjs --bump reuses syncBridgeMirror after a
-// bridge bump. Dependency-free, Node >= 18. No side effects on import.
+// bridge bump. Dependency-free, Node >= 22. No side effects on import.
 
 import { readFileSync, existsSync, readdirSync, mkdirSync, statSync, copyFileSync, chmodSync, rmSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
@@ -56,7 +56,7 @@ const TEMPLATES_REL = 'references/templates';
 // non-canon script) is NEVER flagged or deleted, and a canon file absent from root is never added.
 const ROOT_SCRIPTS_REL = 'scripts';
 
-// The byte-identical template set (15 top-level + 1 adr/ + 3 pages/). One explicit list, consumed
+// The byte-identical template set (14 top-level + 1 adr/ + 3 pages/). One explicit list, consumed
 // by BOTH the sync below and template-parity.test.mjs — never two lists that can drift apart. The
 // adr-record.md authoring reference + the seed adr/log.md navigator are package-neutral (identical
 // memory↔kit); the divergent decisions.md HOT seed stays in TEMPLATE_HARD_EXCLUDES (hand-edited).
@@ -75,7 +75,6 @@ export const MIRROR_TEMPLATE_FILES = Object.freeze([
   'orchestration.json',
   'tech_reference.md',
   'technical_specification.md',
-  'verification-profile.json',
   'adr/log.md',
   'pages/PAGE_TEMPLATE.md',
   'pages/index.md',

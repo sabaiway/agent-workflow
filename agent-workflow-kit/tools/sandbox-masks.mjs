@@ -31,7 +31,7 @@
 // from the hidden-mode reconcile's block (hide-footprint.mjs — that lane noops on visible
 // deployments; this one serves them too). A malformed fence (start without end / duplicated
 // markers) fails CLOSED: loud report, file untouched. Patterns are root-anchored (`/rel`),
-// glob-metacharacters escaped, NUL-safe walk. Dependency-free, Node >= 18; no side effects on
+// glob-metacharacters escaped, NUL-safe walk. Dependency-free, Node >= 22; no side effects on
 // import (the isDirectRun idiom).
 
 import { lstatSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';

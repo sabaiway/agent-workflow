@@ -36,7 +36,7 @@
 // gates.json — see the read-lane writer section below.
 //
 // Exit codes: 0 done / dry-run (incl. the report-only diverged-but-wired state); 1 precondition
-// STOP; 2 usage. Dependency-free beyond the kit's own internal exports, Node >= 18. No side
+// STOP; 2 usage. Dependency-free beyond the kit's own internal exports, Node >= 22. No side
 // effects on import.
 
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';

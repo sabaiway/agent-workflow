@@ -6,7 +6,7 @@
 // in the user's language per SKILL.md §4.4 — it never reads this file. Keeping the vocabulary here (a
 // frozen leaf) means the renderers carry no inline strings and the phrasing is pinned by tests.
 //
-// Pure data, no side effects, Node >= 18. Every export frozen.
+// Pure data, no side effects, Node >= 22. Every export frozen.
 
 // public state token (STATE_PUBLIC value) → the direct-CLI English phrase. `installed` is null because
 // an installed member shows its VERSION, not a phrase (the renderer special-cases it). Mirrors the

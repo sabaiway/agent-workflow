@@ -171,13 +171,17 @@ read-only — read `${CLAUDE_SKILL_DIR}/references/modes/review-state.md` before
 
 writer — read `${CLAUDE_SKILL_DIR}/references/modes/grounding.md` before acting.
 
-### Mode: review-ledger
+### Mode: core-evidence
 
-writer — read `${CLAUDE_SKILL_DIR}/references/modes/review-ledger.md` before acting.
+writer — read `${CLAUDE_SKILL_DIR}/references/modes/core-evidence.md` before acting.
 
-### Mode: fold-completeness
+### Mode: coverage-check
 
-writer — read `${CLAUDE_SKILL_DIR}/references/modes/fold-completeness.md` before acting.
+project-exec — read `${CLAUDE_SKILL_DIR}/references/modes/coverage-check.md` before acting.
+
+### Mode: commit-guard
+
+read-only — read `${CLAUDE_SKILL_DIR}/references/modes/commit-guard.md` before acting.
 
 ### Mode: doc-parity
 
