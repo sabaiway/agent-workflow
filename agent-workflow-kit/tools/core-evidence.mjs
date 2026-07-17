@@ -370,7 +370,46 @@ export const validateEvidenceRecord = (record) => {
     if (!isNonEmptyString(record.timestamp)) return { ok: false, reason: 'degrade: timestamp must be a non-empty string' };
     return { ok: true };
   }
-  return { ok: false, reason: `unknown kind ${JSON.stringify(record.kind)} — closed set: red-proof | degrade (fail closed)` };
+  if (record.kind === 'final-start') {
+    if (typeof record.fingerprint !== 'string' || !HEX64_RE.test(record.fingerprint)) return { ok: false, reason: 'final-start: fingerprint must be the 64-hex tree fingerprint the attempt targets' };
+    if (!isNonEmptyString(record.attempt)) return { ok: false, reason: 'final-start: attempt must be a non-empty id — the completion closes exactly THIS start (linkage)' };
+    if (!isNonEmptyString(record.timestamp)) return { ok: false, reason: 'final-start: timestamp must be a non-empty string' };
+    return { ok: true };
+  }
+  if (record.kind === 'final') {
+    if (record.status !== 'green' && record.status !== 'red') return { ok: false, reason: `final: status must be "green" or "red" (got ${JSON.stringify(record.status)})` };
+    if (!isNonEmptyString(record.attempt)) return { ok: false, reason: 'final: attempt must be the non-empty id of the start this completion closes' };
+    for (const field of ['fingerprintBefore', 'fingerprintAfter']) {
+      if (typeof record[field] !== 'string' || !HEX64_RE.test(record[field])) return { ok: false, reason: `final: ${field} must be a 64-hex tree fingerprint` };
+    }
+    if (!Array.isArray(record.declared) || record.declared.length === 0 || !record.declared.every((d) => isPlainObject(d) && isNonEmptyString(d.id) && isNonEmptyString(d.cmd))) {
+      return { ok: false, reason: 'final: declared must be the non-empty ordered {id, cmd} array the run executed — an empty declaration never attests' };
+    }
+    if (!Array.isArray(record.results) || !record.results.every((r) => isPlainObject(r) && isNonEmptyString(r.id) && typeof r.ok === 'boolean' && (r.code === null || Number.isInteger(r.code)))) {
+      return { ok: false, reason: 'final: results must be the per-gate {id, ok, code} array (code integer, or null on a spawn failure)' };
+    }
+    if (record.results.length !== record.declared.length || !record.results.every((r, i) => r.id === record.declared[i].id)) {
+      return { ok: false, reason: 'final: results must mirror the declared gates 1:1 IN ORDER — a partial or shuffled attribution never attests' };
+    }
+    if (record.integrityFailure !== null && !isNonEmptyString(record.integrityFailure)) {
+      return { ok: false, reason: 'final: integrityFailure must be null or a non-empty reason (an artifact moved under the run)' };
+    }
+    const derived = record.results.every((r) => r.ok) && record.integrityFailure === null ? 'green' : 'red';
+    if (record.status !== derived) {
+      return { ok: false, reason: `final: status ${JSON.stringify(record.status)} contradicts the results/integrity content (derived ${JSON.stringify(derived)}) — status is DERIVED, never asserted` };
+    }
+    if (!isPlainObject(record.evidenceHashes)
+      || typeof record.evidenceHashes.redProof !== 'string' || !HEX64_RE.test(record.evidenceHashes.redProof)
+      || typeof record.evidenceHashes.degrade !== 'string' || !HEX64_RE.test(record.evidenceHashes.degrade)) {
+      return { ok: false, reason: 'final: evidenceHashes must carry 64-hex sha256 of the canonical red-proof and degrade serializations' };
+    }
+    if (record.lcovSha256 !== null && (typeof record.lcovSha256 !== 'string' || !HEX64_RE.test(record.lcovSha256))) {
+      return { ok: false, reason: 'final: lcovSha256 must be a 64-hex sha256 of the consumed lcov file, or null when none was produced' };
+    }
+    if (!isNonEmptyString(record.timestamp)) return { ok: false, reason: 'final: timestamp must be a non-empty string' };
+    return { ok: true };
+  }
+  return { ok: false, reason: `unknown kind ${JSON.stringify(record.kind)} — closed set: red-proof | degrade | final-start | final (fail closed)` };
 };
 
 // ── the fail-closed reader ────────────────────────────────────────────────────────────────────────
@@ -447,6 +486,8 @@ export const appendEvidenceRecord = ({ path, record }) => {
 export const evidenceKey = (r) =>
   r.kind === 'red-proof' ? `red-proof ${r.base} ${r.testId}`
   : r.kind === 'degrade' ? `degrade ${r.fingerprint} ${r.backend}`
+  : r.kind === 'final' ? `final ${r.fingerprintBefore}`
+  : r.kind === 'final-start' ? `final-start ${r.fingerprint}`
   : null;
 
 // The authoritative subset: the LATEST record per key, in file order of that latest appearance.
@@ -707,6 +748,7 @@ export const buildSummaryState = ({ cwd = process.cwd(), env = process.env } = {
   }));
   const redProofs = authoritativeOfKind(store.records, 'red-proof').filter((r) => r.base === base);
   const degrades = authoritativeOfKind(store.records, 'degrade').filter((r) => r.fingerprint === fingerprint);
+  const finalRun = authoritativeOfKind(store.records, 'final').find((r) => r.fingerprintBefore === fingerprint) ?? null;
   // A malformed/unreadable store makes the AUTHORITATIVE selection untrustworthy (a dropped later
   // line could resurrect a superseded record — or hide a newer verdict) — the summary WITHHOLDS
   // the affected sections and exits non-zero instead of rendering a lie. Both stores get the same
@@ -717,7 +759,7 @@ export const buildSummaryState = ({ cwd = process.cwd(), env = process.env } = {
     fingerprint, base, storePath,
     storeRecords: store.records.length, storeMalformed: store.malformed, storeReadError: store.readError ?? null,
     evidenceUnavailable, receiptsUnavailable, receiptsReadError,
-    receiptsPath, receiptsMalformed, verdicts, redProofs, degrades,
+    receiptsPath, receiptsMalformed, verdicts, redProofs, degrades, finalRun,
   };
 };
 
@@ -746,10 +788,16 @@ export const renderSummary = (s) => {
         '  review verdicts (current tree):',
         ...(s.verdicts.length ? s.verdicts.map((v) => `    ${verdictLine(v)}`) : ['    (no receipts)']),
       ];
+  const finalLine = s.evidenceUnavailable
+    ? null
+    : s.finalRun
+      ? `  final gate run: ${s.finalRun.status === 'green' ? 'GREEN' : 'RED'} (${s.finalRun.results.filter((r) => r.ok).length}/${s.finalRun.results.length} gates, ${s.finalRun.timestamp})`
+      : '  final gate run: (none recorded for the current tree)';
   const lines = [
     'core-evidence summary — stateless render (review receipts + evidence store; no ledger, no rounds)',
     `  tree fingerprint: ${s.fingerprint ?? '(not a git work tree)'}`,
     `  base: ${s.base ?? '(unborn branch)'}`,
+    ...(finalLine ? [finalLine] : []),
     ...verdictsSection,
     ...evidenceSections,
     `  evidence store: ${s.storePath ?? '(unresolvable — no git dir)'} (${s.storeRecords} record(s)${s.storeMalformed ? `, ${s.storeMalformed} malformed — inspect the file` : ''}${s.storeReadError ? `, read error: ${s.storeReadError}` : ''})`,

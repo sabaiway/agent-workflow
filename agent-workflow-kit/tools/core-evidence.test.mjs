@@ -130,6 +130,69 @@ describe('validateEvidenceRecord — versioned schema, closed kinds, per-kind fi
     assert.equal(v.ok, false);
     assert.match(v.reason, /kind/);
   });
+  it('the final-run kinds validate: final-start and a completed final (green/red)', () => {
+    const start = { schema: 1, kind: 'final-start', fingerprint: 'c'.repeat(64), attempt: 'a1', timestamp: 't' };
+    assert.equal(validateEvidenceRecord(start).ok, true);
+    const done = {
+      schema: 1, kind: 'final', status: 'green', attempt: 'a1',
+      fingerprintBefore: 'c'.repeat(64), fingerprintAfter: 'c'.repeat(64),
+      declared: [{ id: 'unit-tests', cmd: 'node --test x' }],
+      results: [{ id: 'unit-tests', ok: true, code: 0 }],
+      evidenceHashes: { redProof: 'a'.repeat(64), degrade: 'b'.repeat(64) },
+      lcovSha256: null, integrityFailure: null, timestamp: 't',
+    };
+    assert.equal(validateEvidenceRecord(done).ok, true);
+    assert.equal(validateEvidenceRecord({ ...done, status: 'maybe' }).ok, false, 'status is a closed enum');
+    assert.equal(validateEvidenceRecord({ ...done, declared: [] }).ok, false, 'an empty declaration never attests');
+    assert.equal(validateEvidenceRecord({ ...done, evidenceHashes: { redProof: 'zz' } }).ok, false);
+    assert.equal(validateEvidenceRecord({ ...done, results: 'nope' }).ok, false, 'results must be the per-gate array');
+    assert.equal(validateEvidenceRecord({ ...done, results: [{ id: 1, ok: true }] }).ok, false, 'a result row needs a string id and boolean ok');
+    assert.equal(validateEvidenceRecord({ ...done, lcovSha256: 'zz' }).ok, false, 'lcovSha256 is 64-hex or null');
+    assert.equal(validateEvidenceRecord({ ...done, lcovSha256: 'a'.repeat(64) }).ok, true, 'a consumed lcov records its sha');
+    const key1 = evidenceKey(done);
+    const key2 = evidenceKey({ ...done, status: 'red', results: [] });
+    assert.equal(key1, key2, 'completed attempts key on fingerprintBefore — the LATEST attempt is authoritative');
+  });
+  it('the final kinds enforce attempt linkage, 1:1 ordered results, and status consistency (fail closed)', () => {
+    const done = {
+      schema: 1, kind: 'final', status: 'green', attempt: 'a1',
+      fingerprintBefore: 'c'.repeat(64), fingerprintAfter: 'c'.repeat(64),
+      declared: [{ id: 'g1', cmd: 'true' }, { id: 'g2', cmd: 'true' }],
+      results: [{ id: 'g1', ok: true, code: 0 }, { id: 'g2', ok: true, code: 0 }],
+      evidenceHashes: { redProof: 'a'.repeat(64), degrade: 'b'.repeat(64) },
+      lcovSha256: null, integrityFailure: null, timestamp: 't',
+    };
+    assert.equal(validateEvidenceRecord(done).ok, true);
+    const { attempt: _a, ...noAttempt } = done;
+    assert.equal(validateEvidenceRecord(noAttempt).ok, false, 'a completion without its attempt id never validates');
+    const start = { schema: 1, kind: 'final-start', fingerprint: 'c'.repeat(64), timestamp: 't' };
+    assert.equal(validateEvidenceRecord(start).ok, false, 'a start without its attempt id never validates');
+    assert.equal(validateEvidenceRecord({ ...start, attempt: 'a1' }).ok, true);
+    assert.equal(validateEvidenceRecord({ ...done, results: done.results.slice(0, 1) }).ok, false, 'results must cover the declaration 1:1');
+    assert.equal(
+      validateEvidenceRecord({ ...done, results: [done.results[1], done.results[0]] }).ok, false,
+      'results must mirror the declared ORDER — a shuffled attribution never validates',
+    );
+    assert.equal(validateEvidenceRecord({ ...done, results: [done.results[0], { id: 'g2', ok: true, code: 1.5 }] }).ok, false, 'code is an integer or null');
+    assert.equal(validateEvidenceRecord({ ...done, results: [done.results[0], { id: 'g2', ok: true, code: null }] }).ok, true, 'a spawn-failed gate records code null');
+    assert.equal(
+      validateEvidenceRecord({ ...done, results: [done.results[0], { id: 'g2', ok: false, code: 1 }] }).ok, false,
+      'status green with a failing result is a lie — refused',
+    );
+    assert.equal(
+      validateEvidenceRecord({ ...done, status: 'red' }).ok, false,
+      'status red with all-green results and no integrity failure is a lie — refused',
+    );
+    assert.equal(validateEvidenceRecord({ ...done, integrityFailure: '' }).ok, false, 'an empty integrity reason never validates');
+    assert.equal(
+      validateEvidenceRecord({ ...done, status: 'red', integrityFailure: 'the lcov moved under the run' }).ok, true,
+      'an integrity failure forces red even over all-green results — the ONE honest representation',
+    );
+    assert.equal(
+      validateEvidenceRecord({ ...done, integrityFailure: 'the lcov moved under the run' }).ok, false,
+      'status green with a named integrity failure is a lie — refused',
+    );
+  });
   it('a red-proof with anything but an N/N red observation is malformed (reds must equal runs)', () => {
     assert.equal(validateEvidenceRecord(validRedProof({ reds: 2 })).ok, false);
     assert.equal(validateEvidenceRecord(validRedProof({ runs: 0, reds: 0 })).ok, false);
@@ -780,6 +843,24 @@ describe('summary — stateless D6 render (verdicts, red-proofs, degrades; loud 
     assert.match(r.stdout, /declared degrade for this tree/);
     rmSync(root, { recursive: true, force: true });
   });
+  it('summary renders the final gate line from the latest completed attempt at the current tree', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    const done = {
+      schema: 1, kind: 'final', status: 'green', attempt: 'a1',
+      fingerprintBefore: fp, fingerprintAfter: fp,
+      declared: [{ id: 'noop', cmd: 'true' }],
+      results: [{ id: 'noop', ok: true, code: 0 }],
+      evidenceHashes: { redProof: 'a'.repeat(64), degrade: 'b'.repeat(64) },
+      lcovSha256: null, integrityFailure: null, timestamp: 't-final',
+    };
+    writeFileSync(storeOf(root), `${JSON.stringify(done)}\n`);
+    const r = main(['summary'], { cwd: root, env: fixtureEnv() });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /final gate run: GREEN/);
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it('an empty world renders gracefully (no store, no receipts) and stays exit 0', () => {
     const { root } = makeRepo();
     const r = main(['summary'], { cwd: root, env: fixtureEnv() });
