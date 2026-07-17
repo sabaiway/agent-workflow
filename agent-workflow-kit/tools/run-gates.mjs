@@ -31,12 +31,17 @@
 // subset — it never satisfies quality-green) + the tree fingerprint BEFORE and AFTER the run (a
 // mutating gate attests no particular tree). Dependency-free, Node >= 18. No side effects on import.
 
-import { readFileSync, lstatSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, lstatSync, unlinkSync, realpathSync } from 'node:fs';
+import { join, isAbsolute } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+import { createHash, randomUUID } from 'node:crypto';
 import { computeTreeFingerprint } from './review-state.mjs';
 import { recordGateRun } from './review-ledger-write.mjs';
+// The D3(a) final receipt rides the core-evidence SOLE WRITER (the sole-writer boundary — this
+// runner never opens the store itself) + the canonical per-kind serialization its hashes bind.
+import { appendEvidenceRecord, resolveEvidencePath, readEvidence, canonicalKindSerialization, EVIDENCE_SCHEMA_VERSION } from './core-evidence.mjs';
+import { LCOV_BASENAME } from './coverage-check.mjs';
 // (a) BUGFREE-3 / AD-049: the one-suite-run credit. The fold runner already spawned the `unit-tests`
 // suite under coverage; --record can CREDIT that gate from the recorded evidence instead of
 // re-spawning it minutes later — read-only (the read core, never the tree-toucher).
@@ -62,6 +67,9 @@ export const EXIT = Object.freeze({
   // malformed ledger, an fs refusal): the invocation's contract included a ledger receipt — not
   // delivering it is its own loud outcome, never folded into ok/fail.
   recordFailed: 7,
+  // --final could not write its receipt (a corrupt store, an fs refusal): green gates WITHOUT a
+  // written receipt never read as success (D3(a)).
+  finalFailed: 8,
 });
 
 // A tagged failure carrying its process exit code (the shared orchestration-config idiom).
@@ -74,7 +82,14 @@ const SPAWN_FAILED_CODE = -1;
 const MAX_GATE_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 const USAGE = [
-  'usage: run-gates.mjs [--cwd <dir>] [--only <id>]... [--record] [--help]',
+  'usage: run-gates.mjs [--cwd <dir>] [--only <id>]... [--record] [--final] [--help]',
+  '',
+  '--final runs the FULL declared matrix as the D3(a) final verification run: it refuses a',
+  'declaration lacking the canonical core checks (the review-state + coverage-check gates),',
+  'deletes the stale git-dir lcov first, exports AW_GIT_DIR to every gate cmd, records EVERY',
+  'attempt (start + completed green/red) in the core-evidence store, and binds the receipt to',
+  '{ fingerprint before/after, the full declaration, per-gate results, the canonical red-proof +',
+  'degrade evidence hashes, the lcov sha }. --final refuses --only (a subset never attests).',
   '',
   `Runs the gates declared in <cwd>/${GATES_REL} (one bash command line each, project root as cwd).`,
   'Prints a per-gate PASS/FAIL table + one machine-readable summary line; exit 0 iff all green.',
@@ -88,7 +103,8 @@ const USAGE = [
   'lane; each DECLARED gate command is the project\'s own, so ITS sandbox-safety is command-shape',
   'dependent (first try the sandbox-safe shape — cache under $TMPDIR, offline/notifier off).',
   `Exit codes: 0 ok · 1 gate failure · 2 usage · 3 missing declaration · 4 empty gates list ·`,
-  '5 malformed/invalid declaration · 6 bash unavailable · 7 --record asked but the record failed.',
+  '5 malformed/invalid declaration · 6 bash unavailable · 7 --record asked but the record failed ·',
+  '8 --final asked but its receipt could not be written (green gates never read as success without it).',
 ].join('\n');
 
 // ── declaration validation (malformed → exit 5, loud `path: reason`) ─────────────────
@@ -192,8 +208,8 @@ export const selectGates = (gates, onlyIds) => {
 // recursive-run guard, silently skip every file, and exit 0 — a vacuous false green. Stripping it also
 // makes the plain gate env-equivalent to the fold suite, so the (a) suite-run credit's exit-0 truthfully
 // predicts a plain-spawn exit-0 (the one remaining, documented residual is NODE_V8_COVERAGE).
-export const spawnGateViaBash = (cmd, cwd) => {
-  const env = { ...process.env };
+export const spawnGateViaBash = (cmd, cwd, extraEnv = {}) => {
+  const env = { ...process.env, ...extraEnv };
   delete env.NODE_TEST_CONTEXT;
   return spawnSync('bash', ['-c', cmd], { cwd, env, encoding: 'utf8', maxBuffer: MAX_GATE_OUTPUT_BYTES });
 };
@@ -228,7 +244,7 @@ export const runGates = (gates, { cwd, spawn = spawnGateViaBash, now = Date.now,
     const spawnError = res.error ? `spawn error: ${res.error.code || res.error.message}` : null;
     const ok = spawnError === null && res.status === 0;
     const code = spawnError === null ? res.status : SPAWN_FAILED_CODE;
-    results.push({ id: gate.id, title: gate.title, ok, code, elapsedMs });
+    results.push({ id: gate.id, title: gate.title, ok, code, elapsedMs, stdout: res.stdout ? String(res.stdout) : '' });
     if (ok) {
       log(`   PASS (${formatSeconds(elapsedMs)})`);
     } else {
@@ -264,7 +280,7 @@ export const composeSummaryLine = ({ status, results = [] }) => {
 // ── CLI ───────────────────────────────────────────────────────────────────────────────
 
 const parseArgs = (argv) => {
-  const opts = { cwd: null, only: [], record: false, help: false };
+  const opts = { cwd: null, only: [], record: false, final: false, help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') {
@@ -279,12 +295,42 @@ const parseArgs = (argv) => {
       opts.only.push(argv[i]);
     } else if (arg === '--record') {
       opts.record = true;
+    } else if (arg === '--final') {
+      opts.final = true;
     } else {
       throw fail(EXIT.usage, `unknown argument "${arg}"\n${USAGE}`);
     }
   }
+  if (opts.final && opts.only.length > 0) {
+    throw fail(EXIT.usage, '--final refuses --only — a subset never attests (the D3(a) receipt binds the FULL declaration)');
+  }
   return opts;
 };
+
+// The canonical core checks a --final declaration must carry (D3(a)), matched as STRICT FULL
+// commands: `node` + ONE (quoted or bare) path token + the exact tool basename + ` --check` +
+// END — and the path token must REALPATH-RESOLVE to the kit's OWN tool (the canonical sibling of
+// this runner). Masked forms (`--check --help`, `--check || true`, prefix commands) never match
+// the shape; a lookalike file that merely carries the basename — whatever it prints — never
+// resolves to the canonical tool. Any form that DOES resolve (bare, relative, absolute, quoted)
+// is accepted, so the anchor adds no false refusals.
+const coreCheckRe = (basename) => new RegExp(`^node\\s+(?:"((?:[^"]*[/\\\\])?${basename})"|((?:[^\\s"]*[/\\\\])?${basename}))\\s+--check$`);
+const FINAL_CORE_CHECKS = [
+  { name: 'review-state', re: coreCheckRe('review-state\\.mjs'), canonical: fileURLToPath(new URL('./review-state.mjs', import.meta.url)) },
+  { name: 'coverage-check', re: coreCheckRe('coverage-check\\.mjs'), canonical: fileURLToPath(new URL('./coverage-check.mjs', import.meta.url)) },
+];
+const matchesCanonicalCheck = (check, cmd, projectDir) => {
+  const m = check.re.exec(cmd.trim());
+  if (!m) return false;
+  const token = m[1] ?? m[2];
+  const abs = isAbsolute(token) ? token : join(projectDir, token);
+  try {
+    return realpathSync(abs) === realpathSync(check.canonical);
+  } catch {
+    return false; // unresolvable → never canonical (fail closed)
+  }
+};
+const sha256Hex = (data) => createHash('sha256').update(data).digest('hex');
 
 // The full CLI, dependency-injected for hermetic tests. Returns the process exit code; the two
 // output sinks split human-facing report (log) from error channel (logError). The summary line is
@@ -326,6 +372,37 @@ export const runCli = (argv, deps = {}) => {
       return EXIT.empty;
     }
     const selected = selectGates(declaration.gates, opts.only);
+    // ── --final preflight (D3(a)): the declaration must carry the canonical core checks; the TRUE
+    // git dir resolves AW_GIT_DIR; the stale lcov dies BEFORE the suite so it is never consumed.
+    let gitDir = null;
+    let gateSpawn = spawn;
+    if (opts.final) {
+      const missing = FINAL_CORE_CHECKS.filter((c) => !declaration.gates.some((g) => matchesCanonicalCheck(c, g.cmd, projectDir)));
+      if (missing.length > 0) {
+        throw fail(EXIT.malformed, `--final refuses a weakened declaration — missing the canonical core check(s): ${missing.map((c) => c.name).join(', ')} (each must be ONE plain --check invocation of the kit's OWN tool in ${GATES_REL} — a masked form, a compound, or a lookalike path never counts)`);
+      }
+      const lastGate = declaration.gates[declaration.gates.length - 1];
+      if (!matchesCanonicalCheck(FINAL_CORE_CHECKS[1], lastGate.cmd, projectDir)) {
+        throw fail(EXIT.malformed, `--final refuses the declaration — the CANONICAL coverage-check gate must be the LAST declared gate (nothing may run after the checker consumed the lcov; "${lastGate.id}" is declared last)`);
+      }
+      const dirRes = spawnSync('git', ['rev-parse', '--absolute-git-dir'], { cwd: projectDir, windowsHide: true });
+      if (dirRes.error || dirRes.status !== 0) throw fail(EXIT.fail, '--final needs a git work tree (cannot resolve the git dir)');
+      gitDir = dirRes.stdout.toString('utf8').replace(/\r?\n$/, '');
+      try {
+        unlinkSync(join(gitDir, LCOV_BASENAME)); // a stale lcov is never consumed
+      } catch (err) {
+        if (err.code !== 'ENOENT') {
+          // Anything but "absent" leaves a readable stale artifact behind — fail closed BEFORE
+          // the attempt starts (a swallowed delete error could fake coverage).
+          logError(`[run-gates] --final could not delete the stale lcov at ${join(gitDir, LCOV_BASENAME)}: ${err.message} (fail closed)`);
+          log(composeSummaryLine({ status: 'fail' }));
+          return EXIT.finalFailed;
+        }
+      }
+      // ONE lcov path for delete/check/hash/guard: the fixed git-dir file is FORCED into every
+      // gate child env — a stray host AW_LCOV_FILE can never desync the checker from the receipt.
+      gateSpawn = (cmd, cwd2) => spawn(cmd, cwd2, { AW_GIT_DIR: gitDir, AW_LCOV_FILE: join(gitDir, LCOV_BASENAME) });
+    }
     const probe = spawn(BASH_PROBE_CMD, projectDir);
     if (probe.error && probe.error.code === 'ENOENT') {
       logError(
@@ -342,14 +419,129 @@ export const runCli = (argv, deps = {}) => {
     // later-positioned unit-tests must re-spawn — never credit a state the real matrix might fail), and
     // ONLY when the fold evidence is fingerprint-bound + exit-0 (foldCredit) AND its recorded cmd EQUALS
     // this gate's cmd (the --only-subset defense). Any mismatch → credit is null → the normal spawn.
+    // NEVER under --final: the final receipt attests THIS process's run, and the checker consumes
+    // the lcov only a freshly SPAWNED suite (after the stale delete) can produce — a credit,
+    // however legitimate for the D5 gate-run record, would make the coverage arm vacuous.
     let credit = null;
-    if (opts.record && selected[0]?.id === UNIT_TESTS_GATE_ID) {
+    if (opts.record && !opts.final && selected[0]?.id === UNIT_TESTS_GATE_ID) {
       const fold = foldCredit({ cwd: projectDir, env, fingerprint: fingerprintBefore });
       credit = (gate) => (gate.id === UNIT_TESTS_GATE_ID && fold.credited && fold.evidence.cmd === gate.cmd ? fold : null);
     }
-    const results = runGates(selected, { cwd: projectDir, spawn, log, now, credit });
+    // --final needs the pre-run fingerprint too (the receipt binds before == after == current).
+    const finalFingerprintBefore = opts.final ? fingerprint(projectDir) : null;
+    const finalAttempt = opts.final ? randomUUID() : null;
+    let finalError = null;
+    let startEvidenceHashes = null;
+    if (opts.final) {
+      try {
+        appendEvidenceRecord({
+          path: resolveEvidencePath(projectDir, env),
+          record: { schema: EVIDENCE_SCHEMA_VERSION, kind: 'final-start', fingerprint: finalFingerprintBefore, attempt: finalAttempt, timestamp: new Date().toISOString() },
+        });
+        // The drift tooth's anchor: the canonical red-proof/degrade serializations BEFORE any
+        // gate runs — no legitimate writer appends those kinds DURING a final run, so any change
+        // by receipt time is an integrity failure, never a green.
+        const { records } = readEvidence(resolveEvidencePath(projectDir, env));
+        startEvidenceHashes = {
+          redProof: sha256Hex(canonicalKindSerialization(records, 'red-proof')),
+          degrade: sha256Hex(canonicalKindSerialization(records, 'degrade')),
+        };
+      } catch (err) {
+        // EVERY attempt is recorded — an unwritable store refuses the whole attempt up front
+        // (green gates without a written receipt never read as success).
+        logError(`[run-gates] --final could not record the attempt start: ${err.message}`);
+        log(composeSummaryLine({ status: 'fail' }));
+        return EXIT.finalFailed;
+      }
+    }
+    const results = runGates(selected, { cwd: projectDir, spawn: gateSpawn, log, now, credit });
     for (const line of formatTable(results)) log(line);
     const allGreen = results.every((result) => result.ok);
+    if (opts.final) {
+      // The checker's verbatim diagnostics surface even on green — skipped-no-lcov and the
+      // out-of-domain/unsupported lists must never vanish into a suppressed green stdout.
+      const checkerRow = results[results.length - 1];
+      if (checkerRow?.ok && checkerRow.stdout) {
+        log('── coverage-check diagnostics (verbatim)');
+        log(trimTrailingNewline(checkerRow.stdout));
+      }
+      // The completed attempt (D3(a)): status green/red DERIVED from results + integrity, the
+      // FULL declaration, the per-gate results, the evidence hashes over the CANONICAL
+      // authoritative serializations, and the lcov sha the CHECKER printed for the bytes it
+      // actually read — with an end re-hash agreement check (the checker's own children are the
+      // one write window that survives "coverage-check runs last").
+      try {
+        const storePath = resolveEvidencePath(projectDir, env);
+        const endRead = readEvidence(storePath);
+        const endBroken = Boolean(endRead.readError) || (endRead.malformed ?? 0) > 0;
+        let integrityFailure = null;
+        if (endBroken) {
+          integrityFailure = 'the evidence store became unreadable under the final run';
+        } else {
+          const endHashes = {
+            redProof: sha256Hex(canonicalKindSerialization(endRead.records, 'red-proof')),
+            degrade: sha256Hex(canonicalKindSerialization(endRead.records, 'degrade')),
+          };
+          if (endHashes.redProof !== startEvidenceHashes.redProof || endHashes.degrade !== startEvidenceHashes.degrade) {
+            integrityFailure = 'the evidence store moved under the final run (the canonical red-proof/degrade serialization changed)';
+          }
+        }
+        // Exactly ONE full machine line binds the receipt — an unanchored first-match would let
+        // an injected/duplicated line shadow the real one and skip the end re-hash.
+        const shaLineRe = /^coverage-check: lcov-sha256=([0-9a-f]{64}|none)$/;
+        const shaLines = String(checkerRow?.stdout ?? '').split(/\r?\n/).filter((l) => shaLineRe.test(l));
+        const shaValue = shaLines.length === 1 ? shaLineRe.exec(shaLines[0])[1] : null;
+        const lcovSha256 = shaValue !== null && shaValue !== 'none' ? shaValue : null;
+        if (allGreen && integrityFailure === null) {
+          if (shaLines.length !== 1) {
+            integrityFailure = shaLines.length === 0
+              ? 'the coverage-check gate printed no lcov-sha256 line — the consumed lcov is unknowable (fail closed)'
+              : `the coverage-check gate printed ${shaLines.length} lcov-sha256 lines — exactly ONE full machine line binds the receipt`;
+          } else if (lcovSha256 !== null) {
+            let endSha = null;
+            try {
+              const st = lstatSync(join(gitDir, LCOV_BASENAME));
+              if (st.isFile()) endSha = sha256Hex(readFileSync(join(gitDir, LCOV_BASENAME)));
+            } catch { /* vanished → disagreement below */ }
+            if (endSha !== lcovSha256) integrityFailure = 'the lcov moved under the checker (the end re-hash differs from the checker-read bytes)';
+          }
+        }
+        const status = allGreen && integrityFailure === null ? 'green' : 'red';
+        appendEvidenceRecord({
+          path: storePath,
+          record: {
+            schema: EVIDENCE_SCHEMA_VERSION,
+            kind: 'final',
+            status,
+            attempt: finalAttempt,
+            fingerprintBefore: finalFingerprintBefore,
+            fingerprintAfter: fingerprint(projectDir),
+            declared: declaration.gates.map(({ id, cmd }) => ({ id, cmd })),
+            results: results.map(({ id, ok, code }) => ({ id, ok, code })),
+            evidenceHashes: endBroken
+              ? startEvidenceHashes
+              : {
+                redProof: sha256Hex(canonicalKindSerialization(endRead.records, 'red-proof')),
+                degrade: sha256Hex(canonicalKindSerialization(endRead.records, 'degrade')),
+              },
+            lcovSha256,
+            integrityFailure,
+            timestamp: new Date().toISOString(),
+          },
+        });
+        if (integrityFailure) {
+          finalError = new Error(integrityFailure);
+          logError(`[run-gates] --final integrity failure: ${integrityFailure} — the receipt is RED`);
+        }
+        log(`[run-gates] final receipt recorded (${status}) → ${storePath}`);
+        if (status === 'green' && lcovSha256 === null) {
+          logError(`[run-gates] --final consumed NO lcov — the coverage arm ran skipped-no-lcov; the receipt records lcovSha256:null (the declared unit-tests gate must produce <git-dir>/${LCOV_BASENAME})`);
+        }
+      } catch (err) {
+        finalError = err;
+        logError(`[run-gates] --final could not write its receipt: ${err.message}`);
+      }
+    }
     // The gate-run record (D5): minted for green AND red runs alike (an honest red is telemetry
     // fuel), via the ledger's sole writer. Emitted BEFORE the summary line — the machine summary
     // stays the LAST line of every non-usage outcome (pinned).
@@ -379,6 +571,7 @@ export const runCli = (argv, deps = {}) => {
       }
     }
     log(composeSummaryLine({ status: allGreen ? 'ok' : 'fail', results }));
+    if (finalError) return EXIT.finalFailed;
     if (recordError) return EXIT.recordFailed;
     return allGreen ? EXIT.ok : EXIT.fail;
   } catch (err) {

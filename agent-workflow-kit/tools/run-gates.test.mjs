@@ -2,8 +2,11 @@ import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, cpSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { resolveBase, computeTreeFingerprint } from './core-evidence.mjs';
 import {
   GATES_REL,
   EXIT,
@@ -13,6 +16,7 @@ import {
   composeSummaryLine,
   runCli,
   BASH_PROBE_CMD,
+  spawnGateViaBash,
 } from './run-gates.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -435,11 +439,340 @@ describe('runCli --record — the gate-run receipt via the ledger sole writer', 
     assert.equal(out[out.length - 1], '[run-gates] status=fail gates=2 passed=1 failed=1 failed_ids=two', 'the honest gate verdict still lands on stdout');
   });
 
-  it('the sole-writer boundary: run-gates delegates to recordGateRun and never opens the ledger itself (structure pin)', () => {
+  it('the sole-writer boundary: run-gates delegates to recordGateRun / appendEvidenceRecord and never opens a store itself (structure pin)', () => {
     const src = readFileSync(join(HERE, 'run-gates.mjs'), 'utf8');
-    assert.match(src, /import \{ recordGateRun \} from '\.\/review-ledger-write\.mjs'/, 'the delegation import');
+    assert.match(src, /import \{ recordGateRun \} from '\.\/review-ledger-write\.mjs'/, 'the ledger delegation import');
+    assert.match(src, /appendEvidenceRecord/, 'the final receipt rides the core-evidence sole writer');
     assert.ok(!/atomic-write/.test(src), 'never the atomic-write core directly');
     assert.ok(!/agent-workflow-review-ledger/.test(src), 'never the ledger basename/path');
-    assert.ok(!/appendRecord/.test(src), 'never the append primitive');
+    assert.ok(!/agent-workflow-core-evidence\.jsonl/.test(src), 'never the evidence basename/path');
+  });
+});
+
+// ── --final: the D3(a) green receipt (strip-the-kit 2.4) — real fixture repos, real spawns ────────
+
+describe('run-gates --final — the ONE receipt the commit guard consumes', () => {
+  const TOOLS = HERE;
+  const fixtureEnv = (extra = {}) => {
+    const env = { ...process.env };
+    for (const k of Object.keys(env)) if (k.startsWith('AW_')) delete env[k];
+    return { ...env, ...extra };
+  };
+  const makeRepo = (gates) => {
+    const root = mkdtempSync(join(tmpdir(), 'run-gates-final-'));
+    const g = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+    g('init', '-q');
+    g('config', 'user.email', 'probe@example.com');
+    g('config', 'user.name', 'probe');
+    mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
+    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'solo' } }));
+    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates }));
+    writeFileSync(join(root, 'base.txt'), 'base\n');
+    g('add', '-A');
+    g('commit', '-qm', 'base');
+    writeFileSync(join(root, 'pending.mjs'), 'export const p = 1;\n');
+    return root;
+  };
+  const CANONICAL = [
+    { id: 'review-state', title: 'rs', cmd: `node "${join(TOOLS, 'review-state.mjs')}" --check` },
+    { id: 'coverage-check', title: 'cc', cmd: `node "${join(TOOLS, 'coverage-check.mjs')}" --check` },
+  ];
+  const finalRecords = (root) => {
+    const raw = readFileSync(join(root, '.git', 'agent-workflow-core-evidence.jsonl'), 'utf8');
+    return raw.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  };
+  const runFinal = (root, argv = ['--final'], extraEnv = {}) => {
+    const out = [];
+    const code = runCli([...argv, '--cwd', root], { env: fixtureEnv(extraEnv), log: (l) => out.push(String(l)), logError: (l) => out.push(String(l)) });
+    return { code, out: out.join('\n') };
+  };
+  // A shape-valid red-proof whose bound test EXISTS and passes — verifiable by the checker.
+  const greenBoundProof = (root, name) => {
+    writeFileSync(
+      join(root, name),
+      "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('pinned', () => { assert.equal(1, 1); });\n",
+    );
+    return {
+      schema: 1, kind: 'red-proof', testId: `${name}#pinned`, file: name,
+      fileHash: createHash('sha256').update(readFileSync(join(root, name))).digest('hex'),
+      runs: 1, reds: 1, base: resolveBase(root), fingerprint: 'b'.repeat(64),
+      timestamp: '2026-07-17T00:00:00Z',
+    };
+  };
+
+  it('--final --only is a loud usage refusal (a subset never attests)', () => {
+    const root = makeRepo([...CANONICAL, { id: 'noop', title: 'n', cmd: 'true' }]);
+    const { code, out } = runFinal(root, ['--final', '--only', 'noop']);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.usage);
+    assert.match(out, /--final.*--only|subset never attests/);
+  });
+
+  it('a WEAKENED declaration (missing the canonical core checks) is refused before anything runs', () => {
+    const root = makeRepo([{ id: 'noop', title: 'n', cmd: 'true' }]);
+    const { code, out } = runFinal(root);
+    const recorded = existsSync(join(root, '.git', 'agent-workflow-core-evidence.jsonl'));
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.malformed);
+    assert.match(out, /review-state/);
+    assert.match(out, /coverage-check/);
+    assert.equal(recorded, false, 'nothing ran, nothing recorded');
+  });
+
+  it('a GREEN final run deletes the stale lcov, exports AW_GIT_DIR, and mints the completed receipt', () => {
+    const root = makeRepo([CANONICAL[0], { id: 'needs-gitdir', title: 'g', cmd: 'test -n "$AW_GIT_DIR"' }, CANONICAL[1]]);
+    writeFileSync(join(root, '.git', 'agent-workflow-lcov.info'), 'SF:stale\nend_of_record\n');
+    const { code, out } = runFinal(root);
+    assert.equal(code, EXIT.ok, out);
+    assert.equal(existsSync(join(root, '.git', 'agent-workflow-lcov.info')), false, 'the stale lcov is deleted before the suite (no gate recreated it here)');
+    const records = finalRecords(root);
+    const start = records.find((r) => r.kind === 'final-start');
+    const done = records.find((r) => r.kind === 'final');
+    assert.ok(start, 'every attempt records its start');
+    assert.ok(done, 'the completed attempt is recorded');
+    assert.equal(done.status, 'green');
+    assert.equal(done.fingerprintBefore, done.fingerprintAfter, 'the tree did not move under the run');
+    assert.deepEqual(done.declared.map((d) => d.id), ['review-state', 'needs-gitdir', 'coverage-check']);
+    assert.match(done.evidenceHashes.redProof, /^[0-9a-f]{64}$/);
+    assert.match(done.evidenceHashes.degrade, /^[0-9a-f]{64}$/);
+    assert.ok(typeof start.attempt === 'string' && start.attempt.length > 0, 'the start names its attempt');
+    assert.equal(done.attempt, start.attempt, 'the completion closes exactly ITS start (attempt linkage)');
+    assert.equal(done.integrityFailure, null, 'a clean run records no integrity failure');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('a RED final run records status red — never an attesting receipt', () => {
+    const root = makeRepo([CANONICAL[0], { id: 'boom', title: 'b', cmd: 'false' }, CANONICAL[1]]);
+    const { code } = runFinal(root);
+    const done = finalRecords(root).filter((r) => r.kind === 'final').pop();
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.fail);
+    assert.equal(done.status, 'red', 'the attempt is recorded honestly as red');
+  });
+
+  it('a receipt append failure is its own distinct non-zero outcome (green gates never read as success without the written receipt)', () => {
+    const root = makeRepo(CANONICAL);
+    writeFileSync(join(root, '.git', 'agent-workflow-core-evidence.jsonl'), 'not json — the store is corrupt so the sole writer refuses\n');
+    const { code, out } = runFinal(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.finalFailed);
+    assert.match(out, /final.*record|receipt/i);
+  });
+
+  it('a store that becomes unwritable AFTER the start record still fails as finalFailed (the completion catch)', () => {
+    // The start append succeeds; a mid-run gate replaces the store with a DIRECTORY, so the
+    // COMPLETED-record append throws — green gates never read as success without the receipt.
+    const wreck = { id: 'wreck-store', title: 'w', cmd: 'rm -f "$AW_GIT_DIR/agent-workflow-core-evidence.jsonl" && mkdir "$AW_GIT_DIR/agent-workflow-core-evidence.jsonl"' };
+    const root = makeRepo([{ ...CANONICAL[0] }, wreck, { ...CANONICAL[1] }]);
+    const { code, out } = runFinal(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.finalFailed);
+    assert.match(out, /could not write its receipt/);
+  });
+
+  it('masked core-check commands are refused as weakened (strict full-command match)', () => {
+    const cc = join(TOOLS, 'coverage-check.mjs');
+    const masked = [
+      `node "${cc}" --check --help`,
+      `node "${cc}" --check || true`,
+      'echo coverage-check.mjs --check',
+      'node evil-coverage-check.mjs --check',
+    ];
+    for (const cmd of masked) {
+      const root = makeRepo([CANONICAL[0], { id: 'coverage-check', title: 'cc', cmd }]);
+      const { code, out } = runFinal(root);
+      rmSync(root, { recursive: true, force: true });
+      assert.equal(code, EXIT.malformed, `a masked cmd never attests: ${cmd}\n${out}`);
+    }
+  });
+
+  it('a RELATIVE path resolving to the canonical tool is ACCEPTED (the anchor never falsely refuses a legitimate form)', () => {
+    const root = makeRepo(CANONICAL);
+    const gates = { gates: [
+      { id: 'review-state', title: 'rs', cmd: `node ${relative(root, join(TOOLS, 'review-state.mjs'))} --check` },
+      { id: 'coverage-check', title: 'cc', cmd: `node ${relative(root, join(TOOLS, 'coverage-check.mjs'))} --check` },
+    ] };
+    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify(gates));
+    const { code, out } = runFinal(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.ok, out);
+  });
+
+  it('an UNRESOLVABLE core-check path is refused pre-spend (a missing file is never canonical)', () => {
+    const root = makeRepo([
+      CANONICAL[0],
+      { id: 'coverage-check', title: 'cc', cmd: 'node no-such-dir/coverage-check.mjs --check' },
+    ]);
+    const { code, out } = runFinal(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.malformed, out);
+    assert.match(out, /canonical/i);
+  });
+
+  it('a NON-CANONICAL core-check path is refused pre-spend (a lookalike tool never attests, whatever it prints)', () => {
+    const root = makeRepo([
+      CANONICAL[0],
+      { id: 'coverage-check', title: 'cc', cmd: 'node coverage-check.mjs --check' },
+    ]);
+    writeFileSync(join(root, 'coverage-check.mjs'), 'console.log("coverage-check: lcov-sha256=none"); process.exit(0);\n');
+    const { code, out } = runFinal(root);
+    const recorded = existsSync(join(root, '.git', 'agent-workflow-core-evidence.jsonl'));
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.malformed, out);
+    assert.match(out, /canonical/i);
+    assert.equal(recorded, false, 'refused pre-spend, nothing recorded');
+  });
+
+  it('a declaration where coverage-check is NOT the last gate is refused (nothing runs after the checker)', () => {
+    const root = makeRepo([CANONICAL[0], CANONICAL[1], { id: 'after', title: 'a', cmd: 'true' }]);
+    const { code, out } = runFinal(root);
+    const recorded = existsSync(join(root, '.git', 'agent-workflow-core-evidence.jsonl'));
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.malformed);
+    assert.match(out, /last/i);
+    assert.equal(recorded, false, 'refused pre-spend, nothing recorded');
+  });
+
+  it('--final surfaces the checker diagnostics on green: skipped-no-lcov is LOUD, the null lcov is named', () => {
+    const root = makeRepo(CANONICAL);
+    const { code, out } = runFinal(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.ok, out);
+    assert.match(out, /skipped-no-lcov/, 'the green checker stdout is printed under --final');
+    assert.match(out, /consumed NO lcov/i);
+  });
+
+  it('a green run with a produced lcov binds the receipt to the CHECKER-read bytes', () => {
+    const produce = { id: 'produce-lcov', title: 'p', cmd: 'printf "SF:%s/pending.mjs\\nDA:1,1\\nend_of_record\\n" "$PWD" > "$AW_LCOV_FILE"' };
+    const root = makeRepo([CANONICAL[0], produce, CANONICAL[1]]);
+    const { code, out } = runFinal(root);
+    const done = finalRecords(root).filter((r) => r.kind === 'final').pop();
+    const lcovBytes = readFileSync(join(root, '.git', 'agent-workflow-lcov.info'));
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.ok, out);
+    assert.equal(done.lcovSha256, createHash('sha256').update(lcovBytes).digest('hex'));
+    assert.equal(done.integrityFailure, null);
+  });
+
+  it('an evidence-store append DURING the final run is integrity drift: a red receipt, exit finalFailed', () => {
+    const root = makeRepo([CANONICAL[0], { id: 'sneak', title: 's', cmd: 'PLACEHOLDER' }, CANONICAL[1]]);
+    // The sneaked record is VALID and even VERIFIABLE (its bound test exists and passes) — the
+    // drift tooth must fire on the WRITE-DURING-RUN itself, not on the record's quality.
+    const sneaked = JSON.stringify(greenBoundProof(root, 'drift.test.mjs'));
+    const gates = JSON.parse(readFileSync(join(root, 'docs', 'ai', 'gates.json'), 'utf8'));
+    gates.gates[1].cmd = `printf '%s\\n' '${sneaked}' >> "$AW_GIT_DIR/agent-workflow-core-evidence.jsonl"`;
+    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify(gates));
+    const { code, out } = runFinal(root, ['--final'], { AW_CORE_EVIDENCE_RERUNS: '1' });
+    const done = finalRecords(root).filter((r) => r.kind === 'final').pop();
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.finalFailed, out);
+    assert.equal(done.status, 'red', 'green never survives an integrity failure');
+    assert.match(done.integrityFailure ?? '', /store/i);
+  });
+
+  it('a bound test that rewrites the lcov UNDER the checker is caught by the end re-hash (integrity drift)', () => {
+    const produce = { id: 'produce-lcov', title: 'p', cmd: 'printf "SF:%s/pending.mjs\\nDA:1,1\\nend_of_record\\n" "$PWD" > "$AW_LCOV_FILE"' };
+    const root = makeRepo([CANONICAL[0], produce, CANONICAL[1]]);
+    const lcovAbs = join(root, '.git', 'agent-workflow-lcov.info');
+    // The bound test PASSES — and mutates the lcov the checker already read (the checker's own
+    // children are the one write window that survives "coverage-check runs last").
+    writeFileSync(
+      join(root, 'mutate.test.mjs'),
+      `import { test } from 'node:test';\nimport { appendFileSync } from 'node:fs';\ntest('pinned', () => { appendFileSync(${JSON.stringify(lcovAbs)}, 'DA:9,9\\n'); });\n`,
+    );
+    const proof = {
+      schema: 1, kind: 'red-proof', testId: 'mutate.test.mjs#pinned', file: 'mutate.test.mjs',
+      fileHash: createHash('sha256').update(readFileSync(join(root, 'mutate.test.mjs'))).digest('hex'),
+      runs: 1, reds: 1, base: resolveBase(root), fingerprint: 'b'.repeat(64),
+      timestamp: '2026-07-17T00:00:00Z',
+    };
+    writeFileSync(join(root, '.git', 'agent-workflow-core-evidence.jsonl'), `${JSON.stringify(proof)}\n`);
+    const { code, out } = runFinal(root, ['--final'], { AW_CORE_EVIDENCE_RERUNS: '1' });
+    const done = finalRecords(root).filter((r) => r.kind === 'final').pop();
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.finalFailed, out);
+    assert.equal(done.status, 'red');
+    assert.match(done.integrityFailure ?? '', /lcov/i);
+  });
+
+  it('a checker stdout MISSING the lcov-sha256 line is an integrity failure (fail closed on the unknowable)', () => {
+    // The canonical checker always prints the line while green — the arm is fail-closed defense;
+    // the runner's spawn is the DI seam that makes it deterministically reachable.
+    const root = makeRepo(CANONICAL);
+    const stripSpawn = (cmd, cwd2, extra) => {
+      const r = spawnGateViaBash(cmd, cwd2, extra);
+      if (/coverage-check\.mjs/.test(cmd)) r.stdout = String(r.stdout ?? '').replace(/^coverage-check: lcov-sha256=.*\n?/m, '');
+      return r;
+    };
+    const out = [];
+    const code = runCli(['--final', '--cwd', root], { env: fixtureEnv(), spawn: stripSpawn, log: (l) => out.push(String(l)), logError: (l) => out.push(String(l)) });
+    const done = finalRecords(root).filter((r) => r.kind === 'final').pop();
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.finalFailed, out.join('\n'));
+    assert.equal(done.status, 'red');
+    assert.match(done.integrityFailure ?? '', /no lcov-sha256 line/);
+  });
+
+  it('a DUPLICATED lcov-sha256 line is integrity drift (exactly ONE full machine line binds the receipt)', () => {
+    const root = makeRepo(CANONICAL);
+    const dupSpawn = (cmd, cwd2, extra) => {
+      const r = spawnGateViaBash(cmd, cwd2, extra);
+      if (/coverage-check\.mjs/.test(cmd)) r.stdout = `${String(r.stdout ?? '')}coverage-check: lcov-sha256=none\n`;
+      return r;
+    };
+    const out = [];
+    const code = runCli(['--final', '--cwd', root], { env: fixtureEnv(), spawn: dupSpawn, log: (l) => out.push(String(l)), logError: (l) => out.push(String(l)) });
+    const done = finalRecords(root).filter((r) => r.kind === 'final').pop();
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.finalFailed, out.join('\n'));
+    assert.equal(done.status, 'red');
+    assert.match(done.integrityFailure ?? '', /exactly ONE/);
+  });
+
+  it('--final --record never CREDITS the unit-tests gate (the receipt attests THIS run)', () => {
+    const unitCmd = 'printf "SF:%s/pending.mjs\\nDA:1,1\\nend_of_record\\n" "$PWD" > "$AW_LCOV_FILE"';
+    const root = makeRepo([
+      { id: 'unit-tests', title: 'ut', cmd: unitCmd },
+      CANONICAL[0],
+      CANONICAL[1],
+    ]);
+    mkdirSync(join(root, 'docs', 'plans'), { recursive: true });
+    writeFileSync(join(root, 'docs', 'plans', 'fixture-loop.md'), '# plan\n');
+    // A credit-ELIGIBLE fold record: same suite cmd, exit 0, bound to the CURRENT tree — the
+    // exact state that legitimately credits a --record run and must NOT credit a --final one.
+    const fp = computeTreeFingerprint(root);
+    const foldRecord = {
+      schema: 4, kind: 'run', loop: 'fixture-loop', base: resolveBase(root), fingerprint: fp,
+      boundTestIds: [], testIds: [], unsupported: [], outOfDomain: [],
+      coverage: { uncoveredChanged: [] }, tamper: { tampered: [] },
+      suite: { cmd: unitCmd, exit: 0, fingerprintBefore: fp, fingerprintAfter: fp },
+      mutation: { total: 0, killed: 0, survived: [], skipped: 0, killSetBasis: null },
+      budgets: { mutantsMax: 200, hunkMutantsMax: 25, timeBudgetS: 600, foldReruns: 3, probeTimeoutS: 120 },
+      timestamp: '2026-07-17T00:00:00Z',
+    };
+    writeFileSync(join(root, '.git', 'agent-workflow-fold-completeness.jsonl'), `${JSON.stringify(foldRecord)}\n`);
+    const { code, out } = runFinal(root, ['--final', '--record']);
+    const done = finalRecords(root).filter((r) => r.kind === 'final').pop();
+    const lcovBytes = readFileSync(join(root, '.git', 'agent-workflow-lcov.info'));
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.ok, out);
+    assert.doesNotMatch(out, /credited/, 'the final receipt never rides a fold credit');
+    assert.equal(
+      done.lcovSha256,
+      createHash('sha256').update(lcovBytes).digest('hex'),
+      'the SPAWNED unit-tests gate produced the lcov the checker consumed',
+    );
+  });
+
+  it('a stale lcov that cannot be deleted refuses BEFORE the matrix (only ENOENT is survivable)', () => {
+    const root = makeRepo(CANONICAL);
+    mkdirSync(join(root, '.git', 'agent-workflow-lcov.info'));
+    writeFileSync(join(root, '.git', 'agent-workflow-lcov.info', 'occupant'), 'x');
+    const { code, out } = runFinal(root);
+    const recorded = existsSync(join(root, '.git', 'agent-workflow-core-evidence.jsonl'));
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.finalFailed);
+    assert.match(out, /stale lcov/i);
+    assert.equal(recorded, false, 'refused before the attempt started');
   });
 });

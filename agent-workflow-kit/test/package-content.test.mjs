@@ -146,6 +146,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the strip-the-kit core-evidence writer (D3(b)/(c) + D6/D6a/D7): the git-dir evidence store
       // (red-proof / degrade / summary) the hardened self-control core rides on
       'tools/core-evidence.mjs',
+      // the D3(c)+(d) final-run checker (fixed git-dir lcov path + red-proof verification) and the
+      // D10 read-only pre-commit guard that binds the run-gates --final receipt
+      'tools/coverage-check.mjs',
+      'tools/commit-guard.mjs',
       // the opt-in one-file-per-ADR store migration writer + its mode + the seeded templates (AD-051)
       'tools/migrate-adr-store.mjs',
       'references/modes/migrate-adr-store.md',
@@ -253,7 +257,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 152 = 151 + tools/core-evidence.mjs (strip-the-kit Phase 2 — the ONE core-evidence writer:
     //       the git-dir store for red-proof / degrade records + the D6 stateless summary). Its
     //       *.test.mjs sibling is stripped by files[].
-    assert.equal(packed.length, 152, `tarball file count drifted (${packed.length} ≠ 152)`);
+    // 154 = 152 + tools/coverage-check.mjs (the D3(c)+(d) final-run checker) +
+    //       tools/commit-guard.mjs (the D10 read-only pre-commit guard binding the --final
+    //       receipt). Their *.test.mjs siblings are stripped by files[].
+    assert.equal(packed.length, 154, `tarball file count drifted (${packed.length} ≠ 154)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
