@@ -61,7 +61,7 @@ const CODEX_DIRS = manifestField('codex-cli-bridge', 'writableDirs');
 const makeProject = () => {
   const root = mkdtempSync(join(tmpdir(), 'recommendations-'));
   mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
-  writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '2.0.0\n');
+  writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '3.0.0\n');
   return root;
 };
 
@@ -357,7 +357,7 @@ const buildInventoryFixtures = () => {
   const root6 = mkdtempSync(join(tmpdir(), 'recommendations-inventory-'));
   spawnSync('git', ['init', '-q'], { cwd: root6, encoding: 'utf8' });
   mkdirSync(join(root6, 'docs', 'ai'), { recursive: true });
-  writeFileSync(join(root6, 'docs', 'ai', '.workflow-version'), '2.0.0\n');
+  writeFileSync(join(root6, 'docs', 'ai', '.workflow-version'), '3.0.0\n');
   const fakeChar = {
     isFile: () => false,
     isDirectory: () => false,
@@ -989,7 +989,7 @@ describe('recommendations — item probes over fixtures', () => {
     const g = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
     g('init', '-q');
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
-    writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '2.0.0\n');
+    writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '3.0.0\n');
     const fakeChar = {
       isFile: () => false,
       isDirectory: () => false,
@@ -1170,7 +1170,7 @@ describe('recommendations — every probe degrades honestly (per-branch skip cov
   it('an unseedable (space-carrying) project root skips ONLY the kit-tools tier — core still fires', () => {
     const root = mkdtempSync(join(tmpdir(), 'rec space-'));
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
-    writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '2.0.0\n');
+    writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '3.0.0\n');
     const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
     rmSync(root, { recursive: true, force: true });
     assert.ok(skips.some((s) => s.key === 'kit-tools-tier'), 'the tier derivation refuses the unseedable root — a stated skip');
@@ -1336,7 +1336,7 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
     const root = mkdtempSync(join(tmpdir(), 'recommendations-stalereal-'));
     spawnSync('git', ['init', '-q'], { cwd: root, encoding: 'utf8' });
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
-    writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '2.0.0\n');
+    writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '3.0.0\n');
     mkdirSync(join(root, '.git', 'info'), { recursive: true });
     writeFileSync(
       join(root, '.git', 'info', 'exclude'),
@@ -1362,7 +1362,7 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
     const root = mkdtempSync(join(tmpdir(), 'recommendations-git-skip-'));
     spawnSync('git', ['init', '-q'], { cwd: root, encoding: 'utf8' });
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
-    writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '2.0.0\n');
+    writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '3.0.0\n');
     const deps = hermeticDeps(root, {
       listUntracked: () => {
         throw new Error('walk exploded');

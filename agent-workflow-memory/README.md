@@ -45,7 +45,7 @@ Open your agent inside a project and run the skill:
 
 Two independent axes: this package's **npm version** vs the **deployment-lineage** stamp the
 substrate writes into a project. They are not the same number. `.memory-version` tracks the
-shared `agent-workflow` deployment lineage (head `2.0.0` today), **not** this package's
+shared `agent-workflow` deployment lineage (head `3.0.0` today), **not** this package's
 version. A project bootstrapped by the kit's fallback carries a `.workflow-version`; when this
 substrate is later installed, `migrations/legacy-stamp-takeover.md` copies that value verbatim
 into `.memory-version` and never deletes the legacy stamp. See `migrations/README.md`.

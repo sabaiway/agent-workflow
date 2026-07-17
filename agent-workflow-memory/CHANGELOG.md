@@ -2,7 +2,35 @@
 
 All notable changes to the memory substrate. Versions are this **package's** npm versions;
 they are distinct from the **deployment-lineage** stamp written into a project's
-`docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `2.0.0`).
+`docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
+
+## 3.0.0 — strip-the-kit: the substrate follows the hardened computed core (AD-059)
+
+> ### ⚠ BREAKING — retired loop surfaces + Node >= 22
+>
+> The verification-profile template is gone; the gates.json seed and the loop docs describe the
+> `run-gates --final` / commit-guard loop; pre-commit hooks from `install-git-hooks.mjs` may gain
+> the consented `--commit-guard <path>` line. Node floor **>= 22**. Deployment-lineage head is
+> **3.0.0** — init/upgrade re-stamps and applies `migrations/3.0.0-hardened-core-loop.md`.
+
+Shipped in lockstep with kit 3.0.0 / engine 2.0.0 (the lineage owner carries the consumer
+migration surfaces):
+
+- **`migrate-gates.mjs` (+ its deploy-payload spec, NEW):** the consented D8 legacy gates.json
+  migration — preview default, atomic apply; canonical legacy entries removed by their documented
+  single-invocation forms; the canonical `unit-tests` cmd gains the full lcov reporter flag set;
+  the canonical `coverage-check` gate lands LAST (realpath-anchored, move/collision semantics);
+  retired git-dir ledger stores cleaned; CUSTOMIZED entries reported with paste-ready recoveries;
+  symlinked-parent and control-byte STOPs, all fail-closed.
+- **`install-git-hooks.mjs`:** the hooks path comes from `git rev-parse --git-path hooks` (a
+  linked worktree installs at ITS OWN hooks dir); the optional `--commit-guard <path>` arm writes
+  the resolved quoted guard line; an armed line survives flagless re-runs (strict single-line
+  carry-forward; `--no-commit-guard` is the one consented disable; duplicates fail closed). New
+  colocated specs incl. the in-place GIT_DIR-pinned execution suite.
+- **`stamp-takeover.mjs`:** LINEAGE_HEAD 3.0.0; the takeover/migration selection mechanics are
+  unchanged — new deployments stamp 3.0.0, older ones pick up the 3.0.0 migration.
+- **Templates/docs:** the gates seed + agent-rules/§4 consent line follow the D13 loop (staging
+  is reversible loop-work; COMMIT is the ask); SKILL sweeps for the three seeded configs.
 
 ## 2.3.0 — agent_rules template: a report-facts Communication bullet + the writer-batch lens re-render (REPORT-FACTS train, AD-054)
 

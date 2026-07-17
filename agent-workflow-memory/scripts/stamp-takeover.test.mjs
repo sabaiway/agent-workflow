@@ -17,7 +17,7 @@ import {
 
 describe('LINEAGE_HEAD', () => {
   it('is the shared deployment-lineage head (not this package version)', () => {
-    assert.equal(LINEAGE_HEAD, '2.0.0');
+    assert.equal(LINEAGE_HEAD, '3.0.0');
   });
 });
 
@@ -83,7 +83,7 @@ describe('decideTakeover — §1.5 state table (pure, per row)', () => {
   });
 
   it('future .memory-version (> head) → STOP', () => {
-    const d = decideTakeover({ memoryVersion: '2.1.0', workflowVersion: null });
+    const d = decideTakeover({ memoryVersion: '3.1.0', workflowVersion: null });
     assert.equal(d.status, 'stop');
     assert.match(d.note, /newer than the lineage head/);
   });
@@ -108,7 +108,18 @@ describe('selectMigrations', () => {
     assert.deepEqual(selectMigrations('1.3.0', available), []);
   });
   it('null migrateFrom selects all ≤ head; excludes future migrations', () => {
-    assert.deepEqual(selectMigrations(null, [...available, '2.1.0']), ['1.1.0', '1.2.0', '1.3.0']);
+    assert.deepEqual(selectMigrations(null, [...available, '3.1.0']), ['1.1.0', '1.2.0', '1.3.0']);
+  });
+
+  it('the REAL migrations dir wires a 2.0.0 deployment to exactly the 3.0.0 migration (AD-059)', async () => {
+    const { readdir } = await import('node:fs/promises');
+    const { dirname, join: pjoin } = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const migrationsDir = pjoin(dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
+    const real = (await readdir(migrationsDir))
+      .map((f) => f.match(/^(\d+\.\d+\.\d+)-/)?.[1])
+      .filter(Boolean);
+    assert.deepEqual(selectMigrations('2.0.0', real), ['3.0.0'], 'a 2.0.0-stamped deployment picks up exactly the head migration');
   });
 });
 

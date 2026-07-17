@@ -7,6 +7,22 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-17 — MAJOR family: kit 3.0.0 / memory 3.0.0 / engine 2.0.0 / codex bridge 3.0.0 / agy bridge 4.0.0 — strip-the-kit ships the hardened computed core (AD-059)
+
+**The recorded review loop is replaced by a computed one.** The ledger/fold machinery (tools,
+modes, stores — ~14.5k lines whose records duplicated what receipts and the tree already prove) is
+DELETED; in its place: `core-evidence` (observed-red red-proof custody + explicit degrade records +
+the stateless summary), `coverage-check` (changed-line lcov + red-proof verification inside
+`run-gates --final`, the one attempt-linked receipt), and `commit-guard` (the pre-commit that binds
+a commit to the latest green receipt at the exact tree fingerprint). Both bundled bridges gain
+honesty (a verdict-less run exits 4 with NO receipt; exact/structural verdict parses) and dispatch
+posture (a banner + `posture{}` on every receipt, validated manifest pins, pre-spend control-byte
+refusals) — pre-posture receipts stop attesting, fail-closed. Consumers migrate via the consented
+`migrate-gates.mjs` + `gates-init.mjs` and the hook installer's `--commit-guard` arm; the
+deployment-lineage head is 3.0.0 (`migrations/3.0.0-hardened-core-loop.md`); Node floor >= 22
+family-wide. Five gated code commits (`b48c2a5`→`2d2ab1f`), each council-converged; the last two
+passed under the armed commit-guard itself — the loop shipped by surviving its own teeth.
+
 ## 2026-07-16 — kit 2.1.0 + antigravity bridge 3.0.0 (MAJOR): agy code review fails CLOSED pre-spend (AD-058)
 
 **Bridge MAJOR, kit MINOR carrier.** `agy-review code` without a NON-EMPTY `--facts` payload now

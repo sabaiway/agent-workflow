@@ -2,7 +2,7 @@
 
 The opt-in onboarding **velocity profile** — it seeds a fixed, audited **read-only** Claude Code allowlist into `.claude/settings.json` so an agent stops idling on approval prompts for routine read-only commands while the maintainer is away. It is the family's **first programmatic `.claude/settings.json` writer** (attribution stayed an agent-driven prose merge). **In-agent, opt-in, writes only `.claude/settings.json`**, on one hard rule: **it never allowlists `commit`/`push`/`publish`** — so a direct commit/push/publish still ASKs; the only caveat is the trust-posture residual (below) — its closure is **shipped, opt-in: `${CLAUDE_SKILL_DIR}/references/modes/hook.md`**.
 
-**Version-status routing (like the other writer modes):** read `docs/ai/.workflow-version` first — not-deployed → bootstrap; stamp < `2.0.0` → `upgrade`; stamp > head / unparseable → STOP. The tool enforces this in code too (`--apply` STOPs unless the stamp is the lineage head).
+**Version-status routing (like the other writer modes):** read `docs/ai/.workflow-version` first — not-deployed → bootstrap; stamp < `3.0.0` → `upgrade`; stamp > head / unparseable → STOP. The tool enforces this in code too (`--apply` STOPs unless the stamp is the lineage head).
 
 Run `node ${CLAUDE_SKILL_DIR}/tools/velocity-profile.mjs [--dry-run | --apply] [--kit-tools] [--bridge-tier] [--accept-edits] [--cwd <dir>]`:
 

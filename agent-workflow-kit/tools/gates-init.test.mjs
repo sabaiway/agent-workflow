@@ -54,7 +54,7 @@ beforeEach(() => {
 afterEach(() => rmSync(cwd, { recursive: true, force: true }));
 
 // A full project fixture: docs/ai + stamp + package.json (+ optional lockfile / config / gates).
-const mkProject = ({ scripts = {}, lockfile, packageManager, config, gates, stamp = '2.0.0' } = {}) => {
+const mkProject = ({ scripts = {}, lockfile, packageManager, config, gates, stamp = '3.0.0' } = {}) => {
   mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
   if (stamp) writeFileSync(join(cwd, 'docs', 'ai', '.workflow-version'), `${stamp}\n`);
   writeFileSync(
@@ -513,7 +513,7 @@ describe('gates-init — T7 a symlinked docs PARENT is a preflight STOP on previ
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'gates-init-symlink-')));
     try {
       mkdirSync(join(root, 'target', 'ai'), { recursive: true });
-      writeFileSync(join(root, 'target', 'ai', '.workflow-version'), '2.0.0\n');
+      writeFileSync(join(root, 'target', 'ai', '.workflow-version'), '3.0.0\n');
       writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { test: 'node --test' } }));
       symlinkSync(join(root, 'target'), join(root, 'docs'));
       const preview = quiet();
@@ -639,7 +639,7 @@ describe('gates-init — preview is the default and writes NOTHING', () => {
     const evil = mkdtempSync(join(tmpdir(), 'gates-init-$evil-'));
     try {
       mkdirSync(join(evil, 'docs', 'ai'), { recursive: true });
-      writeFileSync(join(evil, 'docs', 'ai', '.workflow-version'), '2.0.0\n');
+      writeFileSync(join(evil, 'docs', 'ai', '.workflow-version'), '3.0.0\n');
       writeFileSync(join(evil, 'package.json'), JSON.stringify({ scripts: { test: 'node --test' } }));
       const io = quiet();
       assert.equal(main(['--cwd', evil, '--dry-run'], io), 0);
@@ -746,7 +746,7 @@ describe('gates-init — --apply appends exactly the consented entries', () => {
     assert.match(dry.out.join('\n'), /offered/i, 'the error lists what IS offered');
     // An empty offer + a --only typo must fail as usage, not return the silent "nothing to offer".
     mkdirSync(join(cwd, 'empty', 'docs', 'ai'), { recursive: true });
-    writeFileSync(join(cwd, 'empty', 'docs', 'ai', '.workflow-version'), '2.0.0\n');
+    writeFileSync(join(cwd, 'empty', 'docs', 'ai', '.workflow-version'), '3.0.0\n');
     writeFileSync(join(cwd, 'empty', 'package.json'), JSON.stringify({ scripts: { dev: 'x' } }));
     const io = quiet();
     assert.equal(main(['--cwd', join(cwd, 'empty'), '--apply', '--only', 'test'], io), 2);
@@ -812,7 +812,7 @@ describe('gates-init — refusal and degradation branches', () => {
 
   it('NO package.json at all: an honest empty offer, never a crash', () => {
     mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
-    writeFileSync(join(cwd, 'docs', 'ai', '.workflow-version'), '2.0.0\n');
+    writeFileSync(join(cwd, 'docs', 'ai', '.workflow-version'), '3.0.0\n');
     const io = quiet();
     assert.equal(main(['--cwd', cwd], io), 0);
     assert.match(io.out.join('\n'), /nothing to offer/);

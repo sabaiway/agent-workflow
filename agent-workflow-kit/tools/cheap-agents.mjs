@@ -34,7 +34,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 export const AGENTS_DIR = '.claude/agents';
 export const CLAUDE_DIR = '.claude';
 export const WORKFLOW_STAMP = 'docs/ai/.workflow-version';
-export const EXPECTED_WORKFLOW_VERSION = '2.0.0';
+export const EXPECTED_WORKFLOW_VERSION = '3.0.0';
 export const BUNDLED_AGENTS_DIR = resolve(HERE, '..', 'references', 'agents');
 
 const EXIT_OK = 0;

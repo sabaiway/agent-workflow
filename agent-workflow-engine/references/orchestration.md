@@ -153,7 +153,7 @@ no deterministic gate classifies a dispatch — enforcement is this canon at the
 the placed vehicles, and the retro loop.
 
 **Sandbox lanes.** Under an OS sandbox the lanes split once more by **surface class**: the L0
-surfaces are **sandbox-safe** (gate/ledger/state/fold checks, git reads, plain no-network tests);
+surfaces are **sandbox-safe** (gate/state/coverage checks, git reads, plain no-network tests);
 the bridge wrappers are **genuinely unsandboxed** (they need network); npm-cache-touching commands
 are **COMMAND-SHAPE dependent** — first try the sandbox-safe shape (cache under `$TMPDIR`,
 offline/notifier off) before moving anything out. Two driving rules: **move ONLY the failing

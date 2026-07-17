@@ -264,7 +264,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 155 = 154 + bridges/antigravity-cli-bridge/bin/agy-review-model-screen.test.mjs (the
     //       round-2 M6 ordering pin: the control-byte screen precedes every AGY_MODEL
     //       interpolation — the advisory can never echo a raw control byte).
-    assert.equal(packed.length, 155, `tarball file count drifted (${packed.length} ≠ 155)`);
+    // 156 = 155 + migrations/3.0.0-hardened-core-loop.md (the AD-059 lineage migration — the
+    //       kit-side consumer steps: gates migration, bridge refresh, the guarded installer
+    //       refresh + commit-guard arm, re-stamp).
+    assert.equal(packed.length, 156, `tarball file count drifted (${packed.length} ≠ 156)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
