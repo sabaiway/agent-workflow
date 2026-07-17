@@ -704,6 +704,25 @@ export const validateManifest = (skillDir) => {
     else validateModeCatalog(modeCatalog, roles, errors);
   }
 
+  // `posture` (strip-the-kit D5): the DEFAULT dispatch posture pins the wrapper ships — the
+  // checkable source the kit renders the configured posture from (before D5 these lived only in
+  // shell defaults + prose). ADDITIVE-OPTIONAL like modeCatalog (absence = a bridge predating
+  // posture labeling); a PRESENT block is typed-validated with the SAME shape rule the receipt
+  // predicate applies (isValidReceiptPosture's manifest twin): `model` a non-empty string;
+  // `effort` (when present) a non-empty string; `tier` (when present) a non-empty string or null.
+  if (Object.hasOwn(manifest, 'posture')) {
+    const posture = manifest.posture;
+    if (posture === null || typeof posture !== 'object' || Array.isArray(posture)) {
+      errors.push('`posture` must be an object of dispatch-posture pins');
+    } else {
+      if (typeof posture.model !== 'string' || posture.model.length === 0) errors.push('`posture.model` must be a non-empty string');
+      if (Object.hasOwn(posture, 'effort') && (typeof posture.effort !== 'string' || posture.effort.length === 0)) errors.push('`posture.effort` (when declared) must be a non-empty string');
+      if (Object.hasOwn(posture, 'tier') && posture.tier !== null && (typeof posture.tier !== 'string' || posture.tier.length === 0)) errors.push('`posture.tier` (when declared) must be a non-empty string or null');
+      const unknown = Object.keys(posture).filter((k) => !['model', 'effort', 'tier'].includes(k));
+      if (unknown.length > 0) errors.push(`\`posture\` carries unknown key(s): ${unknown.join(', ')} (closed vocabulary: model, effort, tier)`);
+    }
+  }
+
   if (!isStub) {
     const auth = readAuthoritativeVersion(skillDir);
     if (auth.version == null) errors.push(`could not resolve an authoritative version (${auth.from})`);

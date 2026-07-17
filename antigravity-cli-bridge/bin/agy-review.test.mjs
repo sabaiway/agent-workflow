@@ -38,7 +38,9 @@ const FAKE_AGY = [
   '  fi; prev="$a"',
   'done',
   'if [[ -n "${AGY_FAKE_SLEEP:-}" ]]; then sleep "$AGY_FAKE_SLEEP"; fi',
-  'printf "%s\\n" "${AGY_FAKE_OUTPUT:-FAKE_AGY_REVIEW_OUTPUT}"',
+  // Unset AGY_FAKE_OUTPUT → a verdict-carrying default (D4: a verdict-less run is a FAILURE, so
+  // the success-path tests need one); an EXPLICIT empty value exercises the empty-output failure.
+  'if [[ -z "${AGY_FAKE_OUTPUT+x}" ]]; then printf "FAKE_AGY_REVIEW_OUTPUT\\n### Verdict\\nSHIP\\n"; else printf "%s\\n" "$AGY_FAKE_OUTPUT"; fi',
   'exit "${AGY_FAKE_EXIT:-0}"',
   '',
 ].join('\n');
@@ -870,7 +872,7 @@ describe('agy-review.sh — declared contract is really accepted (forward guard)
 // The normative fixture: the AD-038 shape + the D3 self-declaring probe marker (backend/verdict here
 // carry this bridge's vocabulary; dynamic values are asserted by shape):
 const RECEIPT_FIXTURE = JSON.parse(
-  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"revise","grounded":true,"factsHash":null,"wrapperVersion":"2.3.0","timestamp":"2026-07-03T12:00:00Z","probe":false}',
+  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"revise","grounded":true,"factsHash":null,"wrapperVersion":"2.3.0","timestamp":"2026-07-03T12:00:00Z","probe":false,"posture":{"model":"<display>"}}',
 );
 const RECEIPTS_REL = join('.git', 'agent-workflow-review-receipts.jsonl');
 const readReceipts = (repo) => {
@@ -962,11 +964,10 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
     assert.equal(receipts.length, 0, 'no run — no receipt');
   });
 
-  it('parses REWORK and plain SHIP; records "unknown" when the mandated section is absent', () => {
+  it('parses REWORK and plain SHIP verbatim (an absent section is a FAILED run — the D4 describe owns that arm)', () => {
     for (const [output, want] of [
       ['### Verdict\nREWORK — the contract is violated.', 'REWORK'],
       ['### Verdict\nSHIP — clean.', 'SHIP'],
-      ['free-form text with no verdict heading', 'unknown'],
     ]) {
       const sb = makeSandbox();
       const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_OUTPUT: output } });
@@ -1262,5 +1263,95 @@ describe('agy-review.sh — settings surface ⟷ manifest (D6, manifest-pinned)'
         assert.ok(arm[1].includes('$zero_re'), `${s.key}: zero-duration rejection not pinned (timeout 0 disables the cap)`);
       }
     }
+  });
+});
+
+// ── strip-the-kit Phase 4: wrapper honesty (D4) + dispatch-posture labeling (D5) ────────────────
+describe('agy-review.sh — wrapper honesty: a verdict-less run is a FAILED review (D4)', () => {
+  it('a VERDICT-LESS review output: non-zero exit, NO receipt, the stated re-run recovery', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: 'prose without the mandated section' } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.notEqual(r.status, 0, 'a verdict-less review never exits 0');
+    assert.equal(receipts.length, 0, 'NO receipt is minted for a failed review');
+    assert.match(r.stderr, /### Verdict/, 'the missing section is named');
+    assert.match(r.stderr, /re-run/i, 'documented as a failed review — re-run, never fatal');
+  });
+
+  it('EMPTY review output is the same failed run (non-zero, no receipt)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: '' } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.notEqual(r.status, 0);
+    assert.equal(receipts.length, 0);
+  });
+
+  it('the closed vocabulary still parses (SHIP WITH NITS before SHIP; REWORK) and a recognized run exits 0', () => {
+    for (const [out, want] of [[VERDICT_OUTPUT, 'SHIP WITH NITS'], ['### Verdict\nREWORK — reasons.\n', 'REWORK']]) {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: out } });
+      const receipts = readReceipts(sb.repo);
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(receipts[0].verdict, want);
+    }
+  });
+});
+
+describe('agy-review.sh — dispatch-posture labeling (D5)', () => {
+  it('ONE banner line carries the ACTUAL model and the receipt carries the SAME posture (agy has no tier)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'] });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /review posture: model=Gemini 3\.1 Pro \(High\)/, 'the banner states the actual run posture');
+    assert.deepEqual(receipts[0].posture, { model: 'Gemini 3.1 Pro (High)' }, 'banner ↔ receipt parity');
+    assert.deepEqual(Object.keys(receipts[0]), Object.keys(RECEIPT_FIXTURE), 'fixture key set + order');
+  });
+
+  it('an ATTESTING review with AGY_MODEL explicitly emptied REFUSES pre-spend naming the fix', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: '' } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.notEqual(r.status, 0);
+    assert.equal(r.invoked, false, 'refused BEFORE any spend');
+    assert.equal(receipts.length, 0);
+    assert.match(r.stderr, /AGY_MODEL/, 'the fix is named');
+  });
+
+  it('AGY_PROBE=1 with AGY_MODEL emptied still runs (probe exempt; posture model null on the probe receipt)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: '', AGY_PROBE: '1' } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipts[0].probe, true);
+    assert.deepEqual(receipts[0].posture, { model: null }, 'an unknowable model is recorded null, never guessed');
+  });
+
+  it('a HOSTILE model string (quotes + backslash) rides the receipt strictly JSON-encoded', () => {
+    const hostile = 'we"ird \\ mo"del';
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: hostile } });
+    const receipts = readReceipts(sb.repo); // JSON.parse throwing here IS the encoding failure
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipts[0].posture.model, hostile, 'the exact bytes round-trip through strict encoding');
+    assert.match(r.stderr, /review posture: /, 'the banner still renders');
+  });
+
+  it('a model string carrying CONTROL BYTES refuses pre-spend (never a broken banner or receipt)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: `bad${String.fromCharCode(1)}model` } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.notEqual(r.status, 0);
+    assert.equal(r.invoked, false);
+    assert.equal(receipts.length, 0);
+    assert.match(r.stderr, /control/i);
   });
 });

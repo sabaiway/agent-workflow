@@ -43,7 +43,7 @@ const detect = (codex, agy) => () => [
 // The default verdict is SHIP-CLASS: only ship-class satisfies the hardened gate, so presence
 // tests satisfy by default; the veto/vocabulary fixtures override it explicitly.
 const RECEIPT_FIXTURE = JSON.parse(
-  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"ship","grounded":true,"factsHash":null,"wrapperVersion":"2.2.0","timestamp":"2026-07-03T12:00:00Z","probe":false}',
+  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"ship","grounded":true,"factsHash":null,"wrapperVersion":"2.2.0","timestamp":"2026-07-03T12:00:00Z","probe":false,"posture":{"model":"<display>"}}',
 );
 const receiptLine = (overrides) => `${JSON.stringify({ ...RECEIPT_FIXTURE, ...overrides })}\n`;
 
@@ -461,6 +461,19 @@ describe('review-state — probe receipts never attest the tree (D3)', () => {
     const stale = check(root, { args: [] });
     rmSync(root, { recursive: true, force: true });
     assert.match(stale.stdout, /codex: stale — no receipt matches the current tree \(edited after review\)/);
+  });
+
+  it('a POSTURE-LESS current receipt renders the D5 rejection with its stated recovery (strip Phase 4)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp, posture: undefined }); // JSON.stringify drops the key — a pre-D5 receipt
+    mint(root, { backend: 'agy', fingerprint: fp });
+    const gate = check(root);
+    const report = check(root, { args: [] });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(gate.code, 1, 'a posture-less receipt never satisfies the council gate');
+    assert.match(report.stdout, /codex: current-tree receipts rejected — 1 with an absent\/invalid run posture \(D5\)/, 'the posture rejection names itself');
+    assert.match(report.stdout, /re-run the review on the current bridge/, 'the recovery is stated');
   });
 
   it('the default report and --json carry the probe state too (every surface, not just --check)', () => {

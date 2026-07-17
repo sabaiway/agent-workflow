@@ -91,6 +91,7 @@ const seedStart = (root, fingerprint, attempt) => {
 const shipReceipt = (fp, backend) => JSON.stringify({
   schema: 1, artifact: 'code', fresh: true, fingerprint: fp, backend, verdict: 'ship',
   grounded: true, factsHash: null, wrapperVersion: '0.0.0', timestamp: '2026-07-17T00:00:00Z', probe: false,
+  posture: { model: '<display>' },
 });
 
 // The council-config repo shape the ship-arm fixtures share: an in-flight plan + both backends required.

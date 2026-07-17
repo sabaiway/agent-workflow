@@ -14,12 +14,12 @@
 // orchestrator (the main agent) executes it via the bridge skills and always makes the single commit;
 // a backend is advisory or delegated, never autonomous. Dependency-free, Node >= 22.
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 // The host-level bridge-settings snapshot (fact-only, best-effort). READ-ONLY core only — never the
 // writer — so this read-only advisor never pulls in the atomic-write core.
-import { settingsSnapshot } from './bridge-settings-read.mjs';
+import { settingsSnapshot, DEFAULT_BUNDLE_ROOT } from './bridge-settings-read.mjs';
 import {
   detectBackends,
   wrapperCmdFor,
@@ -298,7 +298,50 @@ export const resolveActivityRecipe = ({ config = {}, readiness = [], activity, s
 // DISPLAY_ALIASES — the ONE alias table the recommendation clause already uses; ordering is the
 // deterministic BACKEND_PRIORITY (codex before agy), independent of detection emission order.
 // Always exactly one line: no part may carry a newline (pinned by tests).
-export const composeStatusLine = (detection, recommendation, settings = null, autonomy = null) => {
+// composeConfiguredPosture(ctx) → the CONFIGURED dispatch posture (strip-the-kit D5), rendered
+// from the bundled manifests' VALIDATED posture pins overlaid with the ACTIVE bridge-settings —
+// today only the codex tier knob (bridge-settings stays model/effort-free by design, so this
+// surface can never carry a settings-file model claim). Returns null when NO bundled bridge
+// declares a posture block (a pre-D5 bundle keeps every surface byte-identical). Best-effort:
+// a corrupt bundle degrades to null — the posture segment is a footer fact, never a gate.
+export const composeConfiguredPosture = (ctx = {}) => {
+  try {
+    const bundleRoot = ctx.bundleRoot ?? DEFAULT_BUNDLE_ROOT;
+    const read = ctx.readFile ?? readFileSync;
+    const parts = [];
+    for (const name of BACKEND_PRIORITY) {
+      let manifest;
+      try {
+        manifest = JSON.parse(String(read(join(bundleRoot, name, 'capability.json'), 'utf8')));
+      } catch {
+        return null; // an unreadable/corrupt manifest is CORRUPTION — a partial posture would lie
+      }
+      if (!Object.hasOwn(manifest, 'posture')) continue; // a pre-D5 bridge — legitimate absence
+      const posture = manifest.posture;
+      // The FULL closed shape (the validator/receipt-predicate twin): a present-but-invalid
+      // block nulls the WHOLE render — fail closed to silence, never a partial/mangled line.
+      const invalid =
+        posture === null || typeof posture !== 'object' || Array.isArray(posture) ||
+        typeof posture.model !== 'string' || posture.model.length === 0 ||
+        (Object.hasOwn(posture, 'effort') && (typeof posture.effort !== 'string' || posture.effort.length === 0)) ||
+        (Object.hasOwn(posture, 'tier') && posture.tier !== null && (typeof posture.tier !== 'string' || posture.tier.length === 0)) ||
+        Object.keys(posture).some((k) => !['model', 'effort', 'tier'].includes(k));
+      if (invalid) return null;
+      const seg = [`model=${posture.model}`];
+      if (Object.hasOwn(posture, 'effort')) seg.push(`effort=${posture.effort}`);
+      if (Object.hasOwn(posture, 'tier')) {
+        const knob = (ctx.settings?.active ?? []).find((s) => s.key === 'CODEX_SERVICE_TIER' && s.bridge === name);
+        seg.push(knob ? `tier=${knob.value} (bridge-settings)` : `tier=${posture.tier ?? 'standard'}`);
+      }
+      parts.push(`${DISPLAY_ALIASES[name] ?? name} ${seg.join(' ')}`);
+    }
+    return parts.length ? parts.join(' · ') : null;
+  } catch {
+    return null;
+  }
+};
+
+export const composeStatusLine = (detection, recommendation, settings = null, autonomy = null, posture = null) => {
   const backends = [...detection]
     .sort((a, b) => priorityIndex(a.name) - priorityIndex(b.name))
     .map((b) => `${DISPLAY_ALIASES[b.name] ?? b.name} ${b.readiness === READY ? '✓' : '✗'} ${b.readiness}`)
@@ -315,7 +358,10 @@ export const composeStatusLine = (detection, recommendation, settings = null, au
   // suffix precedent). Fact-only: effective per-activity levels + the render-sync state; an absent
   // policy says "computed defaults" honestly; a malformed policy surfaces LOUDLY, never omitted.
   const autonomySegment = autonomy == null ? '' : ` · autonomy: ${oneLine(formatAutonomySegment(autonomy))}`;
-  return base + suffix + autonomySegment;
+  // The D5 posture segment: rendered ONLY when the caller supplies the composed pins-derived
+  // posture (composeConfiguredPosture) — an omitted/null param keeps the line byte-identical.
+  const postureSegment = posture == null ? '' : ` · posture: ${oneLine(posture)}`;
+  return base + suffix + autonomySegment + postureSegment;
 };
 
 // The one-segment autonomy renderer behind composeStatusLine's 4th param.
@@ -425,7 +471,7 @@ export const composeActiveRecipeLine = ({ config, source } = {}, detection, auto
 
 // The structured report behind `--json` — the recipes, the recommendation, a plan per recipe, and
 // (additive) the pasteable one-line backend status composed from the same detection.
-export const buildReport = (detection, settings = null, autonomy = null) => {
+export const buildReport = (detection, settings = null, autonomy = null, posture = null) => {
   const recommendation = recommendRecipe(detection);
   return {
     recipes: RECIPES.map(({ id, title, role, minBackends, degradesTo, summary }) => ({
@@ -440,7 +486,7 @@ export const buildReport = (detection, settings = null, autonomy = null) => {
     plans: RECIPES.map((r) => planRecipe(r.id, detection)),
     // The SAME autonomy facts the --status-line surface renders — the --json envelope must never
     // expose a stale machine-composed status line (codex R1, Segment B).
-    statusLine: composeStatusLine(detection, recommendation, settings, autonomy),
+    statusLine: composeStatusLine(detection, recommendation, settings, autonomy, posture),
   };
 };
 
@@ -512,8 +558,13 @@ exclusive. Detection only — never writes, never commits, never runs a subscrip
       console.error(`[agent-workflow-kit] ${err.message}`);
       return err.exitCode ?? 1;
     }
-  } else if (argv.includes('--status-line')) console.log(composeStatusLine(detection, recommendRecipe(detection), settingsSnapshot(), await composeAutonomyFacts(process.cwd())));
-  else if (argv.includes('--json')) console.log(JSON.stringify(buildReport(detection, settingsSnapshot(), await composeAutonomyFacts(process.cwd())), null, 2));
+  } else if (argv.includes('--status-line')) {
+    const snapshot = settingsSnapshot();
+    console.log(composeStatusLine(detection, recommendRecipe(detection), snapshot, await composeAutonomyFacts(process.cwd()), composeConfiguredPosture({ settings: snapshot })));
+  } else if (argv.includes('--json')) {
+    const snapshot = settingsSnapshot();
+    console.log(JSON.stringify(buildReport(detection, snapshot, await composeAutonomyFacts(process.cwd()), composeConfiguredPosture({ settings: snapshot })), null, 2));
+  }
   else console.log(formatRecipes(detection));
   return 0;
 };

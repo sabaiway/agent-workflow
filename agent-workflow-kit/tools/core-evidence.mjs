@@ -239,10 +239,25 @@ export const REVIEW_RECEIPT_CLASS = Object.freeze({
   PROBE: 'probe',
   UNMARKED: 'unmarked',
   MALFORMED_MARKER: 'malformed-marker',
+  POSTURE_UNMARKED: 'posture-unmarked',
+  MALFORMED_POSTURE: 'malformed-posture',
 });
 
+// The D5 posture declaration (strip Phase 4): an object whose `model` is a NON-EMPTY string;
+// `effort` (when present) a non-empty string; `tier` (when present) a non-empty string or null.
+// Backend-agnostic — the wrapper is the writer authority on WHICH keys it declares.
+const isValidReceiptPosture = (posture) => {
+  if (posture === null || typeof posture !== 'object' || Array.isArray(posture)) return false;
+  if (typeof posture.model !== 'string' || posture.model.length === 0) return false;
+  if (Object.hasOwn(posture, 'effort') && (typeof posture.effort !== 'string' || posture.effort.length === 0)) return false;
+  if (Object.hasOwn(posture, 'tier') && posture.tier !== null && (typeof posture.tier !== 'string' || posture.tier.length === 0)) return false;
+  return true;
+};
+
 // Classify ONE receipt against a tree fingerprint. Order is load-bearing: identity first (is this
-// even about the current tree?), then the probe marker (may it attest at all?), then the
+// even about the current tree?), then the probe marker (may it attest at all?), then the D5
+// posture marker (same self-declaration doctrine — an absent/invalid posture is non-attesting,
+// fail closed; pre-D5 receipts stop satisfying, the recovery is re-running the review), then the
 // verdict-in-recognized-vocabulary arm BEFORE grounding — an unrecognized verdict is an
 // unconditional refusal that grounding must never reclassify (an ungrounded `unknown` receipt
 // otherwise reads UNGROUNDED and can be masked by another backend's SHIP), then grounding.
@@ -253,6 +268,8 @@ export const classifyReviewReceiptForTree = (receipt, fingerprint) => {
   if (!Object.hasOwn(receipt, 'probe')) return REVIEW_RECEIPT_CLASS.UNMARKED;
   if (typeof receipt.probe !== 'boolean') return REVIEW_RECEIPT_CLASS.MALFORMED_MARKER;
   if (receipt.probe === true) return REVIEW_RECEIPT_CLASS.PROBE;
+  if (!Object.hasOwn(receipt, 'posture')) return REVIEW_RECEIPT_CLASS.POSTURE_UNMARKED;
+  if (!isValidReceiptPosture(receipt.posture)) return REVIEW_RECEIPT_CLASS.MALFORMED_POSTURE;
   if (!isRecognizedVerdict(receipt.verdict)) return REVIEW_RECEIPT_CLASS.UNRECOGNIZED_VERDICT;
   if (receipt.grounded !== true) return REVIEW_RECEIPT_CLASS.UNGROUNDED;
   return REVIEW_RECEIPT_CLASS.ATTESTING;
@@ -274,6 +291,8 @@ export const summarizeReviewReceiptsForTree = (receipts, fingerprint) => {
   const probe = rowsFor(REVIEW_RECEIPT_CLASS.PROBE);
   const unmarked = rowsFor(REVIEW_RECEIPT_CLASS.UNMARKED);
   const malformedMarker = rowsFor(REVIEW_RECEIPT_CLASS.MALFORMED_MARKER);
+  const postureUnmarked = rowsFor(REVIEW_RECEIPT_CLASS.POSTURE_UNMARKED);
+  const malformedPosture = rowsFor(REVIEW_RECEIPT_CLASS.MALFORMED_POSTURE);
   const counts = {
     currentCount: classified.length,
     ungroundedCount: rowsFor(REVIEW_RECEIPT_CLASS.UNGROUNDED).length,
@@ -281,6 +300,7 @@ export const summarizeReviewReceiptsForTree = (receipts, fingerprint) => {
     probeExcluded: probe.length,
     markerRejected: malformedMarker.length,
     unmarkedRejected: unmarked.length,
+    postureRejected: postureUnmarked.length + malformedPosture.length,
   };
   if (normal.length > 0) {
     const latest = normal[normal.length - 1];
@@ -289,7 +309,11 @@ export const summarizeReviewReceiptsForTree = (receipts, fingerprint) => {
     return { state: 'unrecognized-verdict', receipt: latest.receipt, ...counts };
   }
   if (classified.length > 0) {
-    return { state: malformedMarker.length > 0 || unmarked.length > 0 ? 'rejected' : 'probe', receipt: null, ...counts };
+    return {
+      state: malformedMarker.length > 0 || unmarked.length > 0 || counts.postureRejected > 0 ? 'rejected' : 'probe',
+      receipt: null,
+      ...counts,
+    };
   }
   return { state: 'none', receipt: null, ...counts };
 };
@@ -301,12 +325,13 @@ export const describeMissingReviewAttestation = (summary) => {
     summary.probeExcluded > 0 ? `${summary.probeExcluded} probe receipt(s)` : null,
     summary.markerRejected > 0 ? `${summary.markerRejected} receipt(s) with a malformed probe marker` : null,
     summary.unmarkedRejected > 0 ? `${summary.unmarkedRejected} receipt(s) with no probe marker` : null,
+    (summary.postureRejected ?? 0) > 0 ? `${summary.postureRejected} receipt(s) with an absent/invalid run posture (a pre-D5 wrapper — re-run the review on the current bridge)` : null,
   ].filter(Boolean);
   const exclusionSuffix = exclusions.length > 0 ? `; excluded ${exclusions.join(', ')}` : '';
   if (summary.state === 'ungrounded') return `the latest normal receipt for the current tree is ungrounded${exclusionSuffix}`;
   if (summary.state === 'unrecognized-verdict') return `the latest normal receipt carries an unrecognized verdict (${JSON.stringify(summary.receipt?.verdict ?? null)}) — an unknown verdict never attests${exclusionSuffix}`;
   if (summary.state === 'probe') return 'only probe receipts exist for the current tree — a probe review never attests';
-  if (summary.state === 'rejected') return `current-tree receipts have untrustworthy probe markers${exclusionSuffix}`;
+  if (summary.state === 'rejected') return `current-tree receipts have an untrustworthy probe marker or run posture${exclusionSuffix}`;
   return 'no fresh code receipt exists for the current tree';
 };
 
