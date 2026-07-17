@@ -64,14 +64,27 @@ Receipt:
   verdict field); always fresh:true (one-shot) + grounded:true (native AGENTS.md auto-merge,
   factsHash null); probe = whether the run relaxed the quality guards (CODEX_PROBE=1), written on
   EVERY receipt so it self-declares — the kit's review-state gate rejects a probe-marked receipt (a
-  probe review never attests) and equally rejects an unmarked one (silence is not a declaration); a
-  write failure warns, never fails the review
+  probe review never attests) and equally rejects an unmarked one (silence is not a declaration);
+  posture = the ACTUAL run posture {model, effort, tier} (tier null on the standard tier), written
+  on EVERY receipt (D5) — the gate rejects a receipt with an absent/invalid posture (a pre-D5
+  wrapper minted it; re-run the review), one stderr banner line states the same posture, and a
+  posture value carrying control bytes refuses pre-spend in every mode; a run whose final message
+  carries NO recognized 'Verdict: <ship|revise|rethink>' line — empty or missing output included —
+  exits 4 with NO receipt (D4: a FAILED review to RE-RUN, never a fatal session error); a write
+  failure warns, never fails the review
 
 Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):
   ${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf
   CODEX_SERVICE_TIER — service tier: 'priority' (Fast — ~1.5x speed at a 2.5x credit rate on gpt-5.6-sol); a consented SPEND knob, default off (standard tier)
   CODEX_HARD_TIMEOUT — hard wall-clock cap, integer seconds 1..86400 (built-in default 1800)
   CODEX_REVIEW_MAX_TOTAL_BYTES — inline-payload cap, integer bytes 1..100000000 (default 1500000); above it the diff rides via a git-dir temp file
+
+Honesty + posture (D4/D5):
+  a run whose final message carries NO recognized 'Verdict: <ship|revise|rethink>' line — empty or
+  missing output included — exits 4 with NO receipt: a FAILED review to RE-RUN, never a fatal
+  session error. One stderr banner line states the ACTUAL run posture (review posture: model=…
+  effort=… tier=…) and the receipt records the same posture {model, effort, tier} (tier null on
+  the standard tier). A posture value carrying control bytes refuses pre-spend in every mode.
 
 Environment: CODEX_REVIEW_SCHEMA=1 (structured JSON findings), CODEX_HARD_TIMEOUT (seconds, default 1800), CODEX_PROBE=1 (throwaway probe only), AW_REVIEW_RECEIPTS (receipt file override).
 Requires at run time: the codex CLI on PATH, a ChatGPT-subscription login, a git work tree with a root AGENTS.md (--help needs none of these).
@@ -193,7 +206,7 @@ DEFAULT_CODEX_EFFORT="xhigh"
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by codex-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="codex"
-AW_BRIDGE_VERSION="2.8.0"
+AW_BRIDGE_VERSION="3.0.0"
 CODEX_MODEL="${CODEX_MODEL:-$DEFAULT_CODEX_MODEL}"
 CODEX_EFFORT="${CODEX_EFFORT:-$DEFAULT_CODEX_EFFORT}"
 # Generous hard cap for a slow xhigh review (subscription latency varies).
@@ -209,6 +222,15 @@ CODEX_REVIEW_MAX_TOTAL_BYTES="${CODEX_REVIEW_MAX_TOTAL_BYTES:-1500000}"
 # the wrapper validates the effective value: an unsupported one warns and runs on the standard
 # tier — a typo can never silently masquerade as Fast.
 CODEX_SERVICE_TIER="${CODEX_SERVICE_TIER:-}"
+# D5 pre-spend control-byte screen — BEFORE tier validation (a malformed value is not a policy
+# question; validating first would echo the hostile value into a multiline warning and then run
+# on the standard tier, defeating the stated refusal). Screens the RAW model/effort/tier.
+for _posture_pair in "CODEX_MODEL=$CODEX_MODEL" "CODEX_EFFORT=$CODEX_EFFORT" "CODEX_SERVICE_TIER=$CODEX_SERVICE_TIER"; do
+  if [[ "${_posture_pair#*=}" == *[$'\x01'-$'\x1f']* ]]; then
+    echo "error: ${_posture_pair%%=*} contains control bytes — fix the setting (env or bridge-settings.conf) and re-run." >&2
+    exit 2
+  fi
+done
 if [[ -n "$CODEX_SERVICE_TIER" ]] && ! aw_settings_valid CODEX_SERVICE_TIER "$CODEX_SERVICE_TIER"; then
   echo "warning: CODEX_SERVICE_TIER='$CODEX_SERVICE_TIER' is not a supported service tier ('priority') — running on the standard tier." >&2
   CODEX_SERVICE_TIER=""
@@ -218,6 +240,11 @@ if [[ -n "$CODEX_SERVICE_TIER" ]]; then
   tier_flags=(-c "service_tier=$CODEX_SERVICE_TIER")
 fi
 CHATGPT_LOGIN_GUARD="Logged in using ChatGPT"
+
+# --- D5 banner (one line, the ACTUAL run posture) -------------------------------------------
+# The control-byte screen already ran above (BEFORE tier validation); the banner states the
+# EFFECTIVE posture (post tier validation) and the receipt records the same fields.
+echo "review posture: model=$CODEX_MODEL effort=$CODEX_EFFORT tier=${CODEX_SERVICE_TIER:-standard}" >&2
 
 # --- Quality-first guard: refuse a silent model/effort downgrade ---------------
 # A relaxed run is RECORDED, not just warned about: the receipt carries probe:true so the kit's
@@ -421,6 +448,24 @@ receipt_json_scalar() {
   if [[ -z "${1:-}" ]]; then printf 'null'; else printf '"%s"' "$1"; fi
 }
 
+# STRICT JSON string encoding for the free-form posture fields (model/effort ride env/settings):
+# backslash then double-quote escaped. Control bytes never reach here — the D5 pre-spend gate
+# refuses them, so these two escapes make the encoding total.
+json_string_escape() {
+  local s="${1//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  printf '%s' "$s"
+}
+
+# The D5 posture object this wrapper writes into EVERY receipt: the ACTUAL {model, effort, tier}
+# of the run (tier null on the standard tier — the validated CODEX_SERVICE_TIER is the one source).
+posture_json() {
+  local tier_json='null'
+  if [[ -n "${CODEX_SERVICE_TIER:-}" ]]; then tier_json="\"$(json_string_escape "$CODEX_SERVICE_TIER")\""; fi
+  printf '{"model":"%s","effort":"%s","tier":%s}' \
+    "$(json_string_escape "$CODEX_MODEL")" "$(json_string_escape "$CODEX_EFFORT")" "$tier_json"
+}
+
 # write_review_receipt <artifact|""> <fresh: true|false> <fingerprint|""> <verdict> <grounded: true|false> <factsHash|""> [probe: true|false]
 # Appends ONE receipt line (the AD-038 fixture shape) as a side effect of a SUCCESSFUL review —
 # to $AW_REVIEW_RECEIPTS when set, else <git dir>/agent-workflow-review-receipts.jsonl (inside the
@@ -444,10 +489,10 @@ write_review_receipt() {
   fi
   local line probe_field=',"probe":false'
   if [[ "$probe" == "true" ]]; then probe_field=',"probe":true'; fi
-  line="$(printf '{"schema":1,"artifact":%s,"fresh":%s,"fingerprint":%s,"backend":"%s","verdict":"%s","grounded":%s,"factsHash":%s,"wrapperVersion":"%s","timestamp":"%s"%s}' \
+  line="$(printf '{"schema":1,"artifact":%s,"fresh":%s,"fingerprint":%s,"backend":"%s","verdict":"%s","grounded":%s,"factsHash":%s,"wrapperVersion":"%s","timestamp":"%s"%s,"posture":%s}' \
     "$(receipt_json_scalar "$artifact")" "$fresh" "$(receipt_json_scalar "$fingerprint")" \
     "$AW_RECEIPT_BACKEND" "$verdict" "$grounded" "$(receipt_json_scalar "$facts_hash")" \
-    "$AW_BRIDGE_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$probe_field")"
+    "$AW_BRIDGE_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$probe_field" "$(posture_json)")"
   if ! printf '%s\n' "$line" >>"$receipts" 2>/dev/null; then
     echo "warning: could not append the review receipt to $receipts — the review itself succeeded;" >&2
     echo "         the review-state gate will read the current tree as un-receipted." >&2
@@ -648,7 +693,11 @@ codex_cmd=("${codex_flags[@]}" -)
 invoke_codex
 
 # Raw-text fallback: if the structured-findings run failed (not a timeout), retry
-# once WITHOUT the schema rather than lose the review — loud, never silent.
+# once WITHOUT the schema rather than lose the review — loud, never silent. The verdict parse
+# tracks the run that actually SUCCEEDED: a fallback run emits the TEXT verdict line, so parsing
+# it in schema mode would read every fallback as verdict-less (a guaranteed D4 failure).
+verdict_parse_mode="text"
+if [[ -n "$schema_file" ]]; then verdict_parse_mode="schema"; fi
 if [[ -n "$schema_file" && $rc -ne 0 && $rc -ne 124 && $rc -ne 137 ]]; then
   echo "warning: the --output-schema run failed (exit $rc) — retrying once without the schema constraint." >&2
   codex_cmd=()
@@ -657,6 +706,7 @@ if [[ -n "$schema_file" && $rc -ne 0 && $rc -ne 124 && $rc -ne 137 ]]; then
     codex_cmd+=("$_f")
   done
   codex_cmd+=(-)
+  verdict_parse_mode="text"
   invoke_codex
 fi
 
@@ -688,16 +738,27 @@ fi
 
 # --- Review receipt (AD-038): parse the verdict, append one receipt line ------
 # Text mode parses the mandated literal 'Verdict: <ship|revise|rethink>' line; CODEX_REVIEW_SCHEMA=1
-# reads the schema's "verdict" field instead; absent either way → "unknown" (recorded, never guessed).
+# reads the schema's "verdict" field instead. D4 (wrapper honesty): NO recognized verdict —
+# empty/missing final message included — is a FAILED review: non-zero exit, NO receipt; a failed
+# review to RE-RUN, never a fatal session error (documented in --help).
 verdict=""
 if [[ -f "$out" && -s "$out" ]]; then
-  if [[ "${CODEX_REVIEW_SCHEMA:-}" == "1" ]]; then
-    verdict="$(sed -nE 's/.*"verdict"[[:space:]]*:[[:space:]]*"(ship|revise|rethink)".*/\1/p' "$out" | tail -n1)"
+  if [[ "$verdict_parse_mode" == "schema" ]]; then
+    # STRUCTURAL parse (round-1 fold): the TOP-LEVEL `verdict` field of the schema payload,
+    # accepted only inside the closed enum — a legal multiline layout parses, a decoy "verdict"
+    # inside a findings string never substitutes, malformed/out-of-enum stays empty (the D4
+    # failed-run arm). Node ≥22 is a family floor, so the one-liner adds no dependency.
+    verdict="$(node -e 'try{const v=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).verdict;if(["ship","revise","rethink"].includes(v))process.stdout.write(v);}catch{}' "$out" 2>/dev/null || true)"
   else
     verdict="$(sed -nE 's/^Verdict: (ship|revise|rethink)[[:space:]]*$/\1/p' "$out" | tail -n1)"
   fi
 fi
-[[ -z "$verdict" ]] && verdict="unknown"
+if [[ -z "$verdict" ]]; then
+  echo "error: the review produced no recognized 'Verdict: <ship|revise|rethink>' line (empty or" >&2
+  echo "       verdict-less final message) — a FAILED review; NO receipt was written. Re-run the" >&2
+  echo "       review; if it recurs, inspect the captured output for what the model produced." >&2
+  exit 4
+fi
 # codex is grounded by construction (AGENTS.md auto-merge + the precomputed change set): grounded
 # true, factsHash null (native grounding — no separate facts payload exists). Every codex run is a
 # full fresh run (one-shot, no resume) → fresh:true. $REVIEW_PROBE marks a guards-relaxed run.

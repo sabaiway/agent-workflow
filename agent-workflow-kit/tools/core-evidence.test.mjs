@@ -48,6 +48,8 @@ const {
   probeKnobsFromEnv,
   runRedProof,
   runDegrade,
+  summarizeReviewReceiptsForTree,
+  describeMissingReviewAttestation,
   main,
 } = core ?? {};
 
@@ -397,16 +399,49 @@ describe('the closed verdict vocabulary — type-strict, never coerced', () => {
     assert.equal(isShipVerdict(0), false);
     assert.equal(isShipVerdict('ship'), true);
     const fp = 'f'.repeat(64);
-    const arrayVerdict = { schema: 1, artifact: 'code', fresh: true, fingerprint: fp, backend: 'codex', verdict: ['ship'], grounded: true, probe: false, timestamp: 't' };
+    const arrayVerdict = { schema: 1, artifact: 'code', fresh: true, fingerprint: fp, backend: 'codex', verdict: ['ship'], grounded: true, probe: false, posture: { model: 'm' }, timestamp: 't' };
     assert.equal(classifyReviewReceiptForTree(arrayVerdict, fp), 'unrecognized-verdict');
   });
 
   it('the verdict arm precedes grounding: ungrounded plus unknown classifies unrecognized-verdict', () => {
     const fp = 'f'.repeat(64);
-    const receipt = { schema: 1, artifact: 'code', fresh: true, fingerprint: fp, backend: 'codex', verdict: 'unknown', grounded: false, probe: false, timestamp: 't' };
+    const receipt = { schema: 1, artifact: 'code', fresh: true, fingerprint: fp, backend: 'codex', verdict: 'unknown', grounded: false, probe: false, posture: { model: 'm' }, timestamp: 't' };
     assert.equal(classifyReviewReceiptForTree(receipt, fp), 'unrecognized-verdict', 'grounding never reclassifies an unrecognized verdict');
     const ungroundedRevise = { ...receipt, verdict: 'revise' };
     assert.equal(classifyReviewReceiptForTree(ungroundedRevise, fp), 'ungrounded', 'a RECOGNIZED verdict without grounding stays ungrounded (not a veto)');
+  });
+});
+
+// ── the D5 posture marker (strip Phase 4) — the probe-marker twin ─────────────────────────────────
+describe('the D5 posture marker — absent/empty/invalid never attest, fail closed', () => {
+  const fp = 'f'.repeat(64);
+  const base = { schema: 1, artifact: 'code', fresh: true, fingerprint: fp, backend: 'codex', verdict: 'ship', grounded: true, probe: false, timestamp: 't' };
+
+  it('ABSENT posture → posture-unmarked (silence is not a declaration; pre-D5 receipts stop satisfying)', () => {
+    assert.equal(classifyReviewReceiptForTree(base, fp), 'posture-unmarked');
+  });
+
+  it('EMPTY or INVALID posture shapes → malformed-posture, never attesting', () => {
+    for (const posture of [{}, null, 'gpt-5.6-sol', 42, [], { model: '' }, { model: 42 }, { model: 'm', effort: '' }, { model: 'm', effort: 7 }, { model: 'm', tier: 0 }, { model: 'm', tier: '' }]) {
+      assert.equal(classifyReviewReceiptForTree({ ...base, posture }, fp), 'malformed-posture', `posture=${JSON.stringify(posture)}`);
+    }
+  });
+
+  it('a VALID posture attests: {model} alone (agy) and {model, effort, tier|null} (codex)', () => {
+    assert.equal(classifyReviewReceiptForTree({ ...base, posture: { model: 'Gemini 3.1 Pro (High)' } }, fp), 'attesting');
+    assert.equal(classifyReviewReceiptForTree({ ...base, posture: { model: 'gpt-5.6-sol', effort: 'xhigh', tier: null } }, fp), 'attesting');
+    assert.equal(classifyReviewReceiptForTree({ ...base, posture: { model: 'gpt-5.6-sol', effort: 'xhigh', tier: 'priority' } }, fp), 'attesting');
+  });
+
+  it('order is load-bearing: after the probe arms, BEFORE the verdict arm', () => {
+    assert.equal(classifyReviewReceiptForTree({ ...base, probe: true }, fp), 'probe', 'a posture-less probe still classifies probe');
+    assert.equal(classifyReviewReceiptForTree({ ...base, verdict: 'unknown' }, fp), 'posture-unmarked', 'the posture arm precedes the verdict arm');
+  });
+
+  it('summarize lands posture-rejected receipts in the rejected state with a stated posture reason', () => {
+    const s = summarizeReviewReceiptsForTree([base, { ...base, posture: {} }], fp);
+    assert.equal(s.state, 'rejected');
+    assert.match(describeMissingReviewAttestation(s), /posture/);
   });
 });
 
@@ -830,8 +865,8 @@ describe('summary — stateless D6 render (verdicts, red-proofs, degrades; loud 
     const fp = computeTreeFingerprint(root);
     writeFileSync(
       join(root, '.git', 'agent-workflow-review-receipts.jsonl'),
-      `${JSON.stringify({ schema: 1, artifact: 'code', fresh: true, fingerprint: fp, backend: 'codex', verdict: 'SHIP', grounded: true, probe: false, timestamp: 't1' })}\n` +
-      `${JSON.stringify({ schema: 1, artifact: 'code', fresh: true, fingerprint: 'stale'.padEnd(64, '0'), backend: 'agy', verdict: 'revise', grounded: true, probe: false, timestamp: 't0' })}\n`,
+      `${JSON.stringify({ schema: 1, artifact: 'code', fresh: true, fingerprint: fp, backend: 'codex', verdict: 'SHIP', grounded: true, probe: false, posture: { model: 'm' }, timestamp: 't1' })}\n` +
+      `${JSON.stringify({ schema: 1, artifact: 'code', fresh: true, fingerprint: 'stale'.padEnd(64, '0'), backend: 'agy', verdict: 'revise', grounded: true, probe: false, posture: { model: 'm' }, timestamp: 't0' })}\n`,
     );
     const r = main(['summary'], { cwd: root, env });
     assert.equal(r.code, 0, r.stderr);
@@ -883,7 +918,7 @@ describe('summary — stateless D6 render (verdicts, red-proofs, degrades; loud 
     const fp = computeTreeFingerprint(root);
     writeFileSync(
       join(root, '.git', 'agent-workflow-review-receipts.jsonl'),
-      `${JSON.stringify({ schema: 1, artifact: 'code', fresh: true, fingerprint: fp, backend: 'codex', verdict: 'SHIP', grounded: true, probe: false, timestamp: 't1' })}\n` +
+      `${JSON.stringify({ schema: 1, artifact: 'code', fresh: true, fingerprint: fp, backend: 'codex', verdict: 'SHIP', grounded: true, probe: false, posture: { model: 'm' }, timestamp: 't1' })}\n` +
       'corrupted receipt line — a NEWER verdict may hide here\n',
     );
     const r = main(['summary'], { cwd: root, env: fixtureEnv() });
@@ -907,7 +942,7 @@ describe('summary — stateless D6 render (verdicts, red-proofs, degrades; loud 
     const fp = computeTreeFingerprint(root);
     writeFileSync(
       join(root, '.git', 'agent-workflow-review-receipts.jsonl'),
-      `${JSON.stringify({ schema: 1, artifact: 'code', fresh: true, fingerprint: fp, backend: 'codex', verdict: 'unknown', grounded: true, probe: false, timestamp: 't1' })}\n`,
+      `${JSON.stringify({ schema: 1, artifact: 'code', fresh: true, fingerprint: fp, backend: 'codex', verdict: 'unknown', grounded: true, probe: false, posture: { model: 'm' }, timestamp: 't1' })}\n`,
     );
     const r = main(['summary'], { cwd: root, env: fixtureEnv() });
     assert.match(r.stdout, /codex: unrecognized verdict \("unknown"\) — never attests/);

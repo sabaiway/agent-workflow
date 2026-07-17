@@ -37,7 +37,9 @@ const FAKE_CODEX = [
   '  if [[ "$prev" == "-o" || "$prev" == "--output-last-message" ]]; then out="$a"; fi',
   '  prev="$a"',
   'done',
-  'if [[ -n "$out" && "${CODEX_FAKE_NO_OUT:-}" != "1" ]]; then echo "${CODEX_FAKE_FINAL:-FAKE_FINAL_MESSAGE}" >"$out"; fi',
+  // Unset CODEX_FAKE_FINAL → a verdict-carrying default (D4: a verdict-less run is a FAILURE, so
+  // the success-path tests need one); an EXPLICIT empty value exercises the empty-output failure.
+  'if [[ -n "$out" && "${CODEX_FAKE_NO_OUT:-}" != "1" ]]; then if [[ -z "${CODEX_FAKE_FINAL+x}" ]]; then printf "FAKE_FINAL_MESSAGE\\nVerdict: ship\\n" >"$out"; else printf "%s\\n" "$CODEX_FAKE_FINAL" >"$out"; fi; fi',
   'if [[ "${CODEX_FAKE_NO_THREAD:-}" != "1" ]]; then',
   'cat <<EOF',
   '{"type":"thread.started","thread_id":"${CODEX_FAKE_THREAD_ID:-fake-thread-123}"}',
@@ -366,7 +368,8 @@ describe('codex-review.sh — precomputed diff for code mode (2.1)', () => {
 describe('codex-review.sh — optional structured findings (2.2)', () => {
   it('CODEX_REVIEW_SCHEMA=1 passes --output-schema to codex', () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code'], env: { CODEX_REVIEW_SCHEMA: '1' } });
+    // Schema mode parses the schema's verdict FIELD (D4) — the fixture output must carry it.
+    const r = run(sb, { args: ['code'], env: { CODEX_REVIEW_SCHEMA: '1', CODEX_FAKE_FINAL: '{"verdict":"ship","findings":[]}' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.argv, /(^|\n)--output-schema(\n|$)/);
@@ -379,8 +382,11 @@ describe('codex-review.sh — optional structured findings (2.2)', () => {
     assert.doesNotMatch(r.argv, /--output-schema/);
   });
 
-  it('falls back to a raw-text run when the schema run fails (loud; exit 0)', () => {
+  it('falls back to a raw-text run when the schema run fails (loud; exit 0) — and parses the TEXT verdict', () => {
     const sb = makeSandbox();
+    // No CODEX_FAKE_FINAL: the fallback run emits the TEXT default (FAKE_FINAL_MESSAGE +
+    // Verdict: ship) — the wrapper must parse the mode of the run that actually SUCCEEDED,
+    // or every fallback would read verdict-less and die on the D4 arm.
     const r = run(sb, { args: ['code'], env: { CODEX_REVIEW_SCHEMA: '1', CODEX_FAKE_FAIL_ON_SCHEMA: '1' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -527,13 +533,13 @@ describe('codex-review.sh — assemble & output edge cases', () => {
     assert.match(r.capStdin, /Extra focus: watch the parser/);
   });
 
-  it('warns and prints the trace tail when codex writes no final-message file', () => {
+  it('warns and prints the trace tail when codex writes no final-message file (then fails the D4 arm)', () => {
     const sb = makeSandbox();
     const r = run(sb, { args: ['code'], env: { CODEX_FAKE_NO_OUT: '1' } });
     rmSync(sb.root, { recursive: true, force: true });
-    assert.equal(r.status, 0, r.stderr);
+    assert.notEqual(r.status, 0, 'no final message ⇒ no verdict ⇒ a FAILED review (D4)');
     assert.match(r.stderr, /no final-message file/);
-    assert.match(r.stdout, /turn\.completed/, 'the trace tail carries the event stream');
+    assert.match(r.stdout, /turn\.completed/, 'the trace tail still carries the event stream');
   });
 
   it('prints no session line when codex emits no thread id', () => {
@@ -812,7 +818,7 @@ describe('codex-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)
 // The normative fixture: the AD-038 shape + the D3 self-declaring probe marker (field VALUES with
 // dynamic content are asserted by shape):
 const RECEIPT_FIXTURE = JSON.parse(
-  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"revise","grounded":true,"factsHash":null,"wrapperVersion":"2.3.0","timestamp":"2026-07-03T12:00:00Z","probe":false}',
+  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"revise","grounded":true,"factsHash":null,"wrapperVersion":"2.3.0","timestamp":"2026-07-03T12:00:00Z","probe":false,"posture":{"model":"<m>","effort":"<e>","tier":null}}',
 );
 const RECEIPTS_REL = join('.git', 'agent-workflow-review-receipts.jsonl');
 const readReceipts = (repo) => {
@@ -905,13 +911,13 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
     assert.equal(receipts[0].verdict, 'ship');
   });
 
-  it('no parseable verdict → recorded as "unknown", never guessed', () => {
+  it('no parseable verdict is a FAILED run — never recorded as "unknown" (D4 owns the arm)', () => {
     const sb = makeSandbox();
     const r = run(sb, { env: { CODEX_FAKE_FINAL: 'looks fine to me overall' } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
-    assert.equal(r.status, 0, r.stderr);
-    assert.equal(receipts[0].verdict, 'unknown');
+    assert.notEqual(r.status, 0);
+    assert.equal(receipts.length, 0, 'an unknown verdict never reaches the receipt store');
   });
 
   it('plan mode: artifact "plan", fingerprint = the artifact-file sha256', () => {
@@ -1193,5 +1199,82 @@ describe('codex-review.sh — settings surface ⟷ manifest (D6, manifest-pinned
         assert.ok(arm[1].includes('$zero_re'), `${s.key}: zero-duration rejection not pinned (timeout 0 disables the cap)`);
       }
     }
+  });
+});
+
+// ── strip-the-kit Phase 4: wrapper honesty (D4) + dispatch-posture labeling (D5) ────────────────
+describe('codex-review.sh — wrapper honesty: a verdict-less run is a FAILED review (D4)', () => {
+  it('a VERDICT-LESS final message: non-zero exit, NO receipt, the stated re-run recovery', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_FAKE_FINAL: 'prose without the mandated verdict line' } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.notEqual(r.status, 0, 'a verdict-less review never exits 0');
+    assert.equal(receipts.length, 0, 'NO receipt is minted for a failed review');
+    assert.match(r.stderr, /Verdict/, 'the missing line is named');
+    assert.match(r.stderr, /re-run/i, 'documented as a failed review — re-run, never fatal');
+  });
+
+  it('an EMPTY final message is the same failed run (non-zero, no receipt)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_FAKE_FINAL: '' } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.notEqual(r.status, 0);
+    assert.equal(receipts.length, 0);
+  });
+
+  it('a MISSING final-message file is the same failed run', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_FAKE_NO_OUT: '1' } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.notEqual(r.status, 0);
+    assert.equal(receipts.length, 0);
+  });
+});
+
+describe('codex-review.sh — dispatch-posture labeling (D5)', () => {
+  it('ONE banner line carries the ACTUAL {model, effort, tier} and the receipt carries the SAME posture', () => {
+    const sb = makeSandbox();
+    const r = run(sb, {});
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /review posture: model=gpt-5\.6-sol effort=xhigh tier=standard/, 'the banner states the actual run posture');
+    assert.deepEqual(receipts[0].posture, { model: 'gpt-5.6-sol', effort: 'xhigh', tier: null }, 'banner ↔ receipt parity (standard tier = null)');
+    assert.deepEqual(Object.keys(receipts[0]), Object.keys(RECEIPT_FIXTURE), 'fixture key set + order');
+  });
+
+  it('an ARMED Fast tier rides both surfaces (banner tier=priority; receipt tier "priority")', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_SERVICE_TIER: 'priority' } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /review posture: model=gpt-5\.6-sol effort=xhigh tier=priority/);
+    assert.equal(receipts[0].posture.tier, 'priority');
+  });
+
+  it('a HOSTILE model string (quotes + backslash) rides the receipt strictly JSON-encoded (probe lane)', () => {
+    const hostile = 'we"ird \\ mo"del';
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_PROBE: '1', CODEX_MODEL: hostile } });
+    const receipts = readReceipts(sb.repo); // JSON.parse throwing here IS the encoding failure
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipts[0].posture.model, hostile, 'the exact bytes round-trip through strict encoding');
+    assert.equal(receipts[0].probe, true, 'an off-pinned model runs only on the probe lane');
+  });
+
+  it('a posture value carrying CONTROL BYTES refuses pre-spend, BEFORE the frontier guard', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_MODEL: `gpt-5.6-sol${String.fromCharCode(1)}` } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.notEqual(r.status, 0);
+    assert.equal(r.capStdin, '', 'codex is never invoked');
+    assert.equal(receipts.length, 0);
+    assert.match(r.stderr, /control/i, 'named as the control-byte class, not a policy refusal');
   });
 });

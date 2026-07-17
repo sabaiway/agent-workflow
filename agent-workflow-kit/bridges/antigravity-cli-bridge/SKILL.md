@@ -2,7 +2,7 @@
 name: antigravity-cli-bridge
 description: Delegate work to Google's Antigravity CLI (`agy`) — the successor to Gemini CLI — to reach Gemini, Claude, and GPT-OSS models under a Google AI Pro/Ultra subscription from the terminal. Use when the user wants to run a headless `agy` prompt, hand a focused task or second-opinion review to `agy`, install or authenticate Antigravity CLI, check or economise its quota/models, bridge project context into `agy`, set up a second delegated-execution backend beside Codex, or troubleshoot `agy` flags, models, auth, conversations, or its no-JSON headless behaviour.
 metadata:
-  version: '3.0.0'
+  version: '4.0.0'
 ---
 
 # antigravity-cli-bridge
@@ -131,6 +131,13 @@ agy-review plan <plan-file> [--facts @f] …      # critique a plan (no facts �
 agy-review diff <diff-file> [--facts @f] …      # review a supplied diff
 agy-review --continue --decided @round1.md --focus "still-open items"   # round-2 delta, no re-assembly
 ```
+
+**Honesty + posture (D4/D5):** a run with no recognized `### Verdict` section — empty output
+included — **exits 4 with NO receipt**: treat it as a *failed review to re-run*, never a fatal
+session error. One stderr banner states the actual posture (`review posture: model=…`) and the
+receipt records the same `posture {model}`; an attesting review with `AGY_MODEL` explicitly
+emptied refuses pre-spend (`AGY_PROBE=1` exempt), and control bytes in a model string refuse
+pre-spend in every mode.
 
 Frontier default `Gemini 3.1 Pro (High)`; **any** model is allowed (a sub-frontier one earns a
 silenceable `AGY_PROBE=1` advisory). An oversized `code` review trips the byte ceiling with trim/split

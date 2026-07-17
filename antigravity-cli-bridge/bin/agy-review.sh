@@ -98,13 +98,27 @@ Receipt:
   payload; a continuation receipt is fresh:false (informational-only — it cannot attest the
   folded tree); probe = whether the run relaxed the quality guards (AGY_PROBE=1), written on EVERY
   receipt so it self-declares — the kit's review-state gate rejects a probe-marked receipt (a probe
-  review never attests) and equally rejects an unmarked one (silence is not a declaration); a write
-  failure warns, never fails the review
+  review never attests) and equally rejects an unmarked one (silence is not a declaration);
+  posture = the ACTUAL run posture {model} (agy has no tier), written on EVERY receipt (D5) — the
+  gate rejects a receipt with an absent/invalid posture (a pre-D5 wrapper minted it; re-run the
+  review), one stderr banner line states the same posture, an ATTESTING review with AGY_MODEL
+  explicitly emptied refuses pre-spend, and a model string carrying control bytes refuses
+  pre-spend in every mode; a run whose output carries NO recognized '### Verdict' section — empty
+  output included — exits 4 with NO receipt (D4: a FAILED review to RE-RUN, never a fatal session
+  error); a write failure warns, never fails the review
 
 Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):
   ${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf
   AGY_HARD_TIMEOUT — hard wall-clock cap, duration string like 5m/30m/90s (built-in default 30m)
   AGY_REVIEW_ALLOW_ADDDIR — boolean 0/1: 1 arms the oversized --add-dir escape (re-enables the Issue-001 stall risk; default 0)
+
+Honesty + posture (D4/D5):
+  a run whose output carries NO recognized '### Verdict' section — empty output included — exits 4
+  with NO receipt: a FAILED review to RE-RUN, never a fatal session error. One stderr banner line
+  states the ACTUAL run posture (review posture: model=…) and the receipt records the same
+  posture {model} (agy has no tier). An ATTESTING review with AGY_MODEL explicitly emptied
+  refuses pre-spend (the actual model would be unknowable; AGY_PROBE=1 is exempt), and a model
+  string carrying control bytes refuses pre-spend in every mode.
 
 Closed grammar: unknown flags are rejected; no '--' passthrough (the flag escape is --ungrounded; the env escapes are AGY_PROBE=1 and AGY_REVIEW_ALLOW_ADDDIR=1).
 Requires at run time: the agy CLI on PATH + a Google AI subscription login (--help needs neither).
@@ -225,9 +239,15 @@ DEFAULT_AGY_REVIEW_MODEL="Gemini 3.1 Pro (High)"
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by agy-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="agy"
-AW_BRIDGE_VERSION="3.0.0"
+AW_BRIDGE_VERSION="4.0.0"
 # `-` not `:-` so an EXPLICIT empty AGY_MODEL= survives (drop --model, use settings.json — agy.sh:52).
 AGY_MODEL="${AGY_MODEL-$DEFAULT_AGY_REVIEW_MODEL}"
+# D5 control-byte screen — IMMEDIATELY after resolution, BEFORE the off-frontier advisory (or any
+# other interpolation) can echo raw newline/ESC bytes into stderr/the terminal (round-2 fold).
+if [[ "$AGY_MODEL" == *[$'\x01'-$'\x1f']* ]]; then
+  echo "error: AGY_MODEL contains control bytes — fix the setting (env or bridge-settings.conf) and re-run." >&2
+  exit 2
+fi
 # Frontier review models. ANY model is allowed; a sub-frontier one only earns a soft, silenceable warning.
 FRONTIER_SET=("Gemini 3.1 Pro (High)" "Claude Opus 4.6 (Thinking)" "Claude Sonnet 4.6 (Thinking)")
 
@@ -444,6 +464,26 @@ receipt_json_scalar() {
   if [[ -z "${1:-}" ]]; then printf 'null'; else printf '"%s"' "$1"; fi
 }
 
+# STRICT JSON string encoding for the ONE free-form receipt field (the posture model display
+# string): backslash then double-quote escaped. Control bytes never reach here — the posture
+# resolution refuses them pre-spend (D5), so these two escapes make the encoding total.
+json_string_escape() {
+  local s="${1//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  printf '%s' "$s"
+}
+
+# The D5 posture object this wrapper writes into EVERY receipt (agy has no tier — the label is
+# the model display string). An unknowable model (explicitly emptied on an exempt probe run) is
+# recorded null, never guessed.
+posture_json() {
+  if [[ -z "${AGY_MODEL:-}" ]]; then
+    printf '{"model":null}'
+  else
+    printf '{"model":"%s"}' "$(json_string_escape "$AGY_MODEL")"
+  fi
+}
+
 # write_review_receipt <artifact|""> <fresh: true|false> <fingerprint|""> <verdict> <grounded: true|false> <factsHash|""> [probe: true|false]
 # Appends ONE receipt line (the AD-038 fixture shape) as a side effect of a SUCCESSFUL review —
 # to $AW_REVIEW_RECEIPTS when set, else <git dir>/agent-workflow-review-receipts.jsonl (inside the
@@ -467,28 +507,29 @@ write_review_receipt() {
   fi
   local line probe_field=',"probe":false'
   if [[ "$probe" == "true" ]]; then probe_field=',"probe":true'; fi
-  line="$(printf '{"schema":1,"artifact":%s,"fresh":%s,"fingerprint":%s,"backend":"%s","verdict":"%s","grounded":%s,"factsHash":%s,"wrapperVersion":"%s","timestamp":"%s"%s}' \
+  line="$(printf '{"schema":1,"artifact":%s,"fresh":%s,"fingerprint":%s,"backend":"%s","verdict":"%s","grounded":%s,"factsHash":%s,"wrapperVersion":"%s","timestamp":"%s"%s,"posture":%s}' \
     "$(receipt_json_scalar "$artifact")" "$fresh" "$(receipt_json_scalar "$fingerprint")" \
     "$AW_RECEIPT_BACKEND" "$verdict" "$grounded" "$(receipt_json_scalar "$facts_hash")" \
-    "$AW_BRIDGE_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$probe_field")"
+    "$AW_BRIDGE_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$probe_field" "$(posture_json)")"
   if ! printf '%s\n' "$line" >>"$receipts" 2>/dev/null; then
     echo "warning: could not append the review receipt to $receipts — the review itself succeeded;" >&2
     echo "         the review-state gate will read the current tree as un-receipted." >&2
   fi
 }
 
-# Parse the mandated '### Verdict' section of a captured review: the first non-empty line after the
-# heading, matched against the closed verdict vocabulary (SHIP WITH NITS before SHIP — substring).
-# No heading / no match → "unknown" (recorded, never guessed).
+# Parse the mandated '### Verdict' section of a captured review: the first non-empty line after
+# the EXACT heading (`### Verdicts` or any suffix never matches), tested against the closed
+# vocabulary as an ANCHORED PREFIX with a word boundary — the verdict line must START with the
+# token and the next char must be non-word/EOL (SHIP WITH NITS before SHIP; `NOT SHIP` and
+# `SHIPPING` never match). No heading / no match → "unknown" (the D4 failed-run arm owns it).
 parse_agy_verdict() { # $1 = captured-output file
   local line
-  line="$(awk '/^### Verdict/{flag=1; next} flag && NF {print; exit}' "$1" 2>/dev/null)"
-  case "$line" in
-    *"SHIP WITH NITS"*) printf 'SHIP WITH NITS' ;;
-    *REWORK*)           printf 'REWORK' ;;
-    *SHIP*)             printf 'SHIP' ;;
-    *)                  printf 'unknown' ;;
-  esac
+  line="$(awk '/^### Verdict[[:space:]]*$/{flag=1; next} flag && NF {print; exit}' "$1" 2>/dev/null)"
+  if [[ "$line" =~ ^SHIP\ WITH\ NITS([^[:alnum:]_]|$) ]]; then printf 'SHIP WITH NITS'
+  elif [[ "$line" =~ ^REWORK([^[:alnum:]_]|$) ]]; then printf 'REWORK'
+  elif [[ "$line" =~ ^SHIP([^[:alnum:]_]|$) ]]; then printf 'SHIP'
+  else printf 'unknown'
+  fi
 }
 
 # Emit the full review surface to stdout: repo map, status (never-committable untracked records
@@ -828,6 +869,21 @@ else
   fi
 fi
 
+# --- D5 pre-spend posture gate + banner (one line, the ACTUAL run posture) ------------------
+# The control-byte screen already ran at AGY_MODEL resolution (before any interpolation). An
+# ATTESTING review (fresh code mode, guards on) whose wrapper cannot know the actual model
+# (AGY_MODEL explicitly emptied → the CLI's own settings default decides) refuses pre-spend;
+# AGY_PROBE=1 runs are exempt (their receipts never attest and record model null).
+# Scoped to the ATTESTING branch only (grounded code, guards on): plan / diff / --ungrounded
+# code mint receipts that never attest, so an emptied model just records posture.model null.
+if [[ -z "$AGY_MODEL" && -z "$resume_mode" && "$REVIEW_PROBE" != "true" && "$REVIEW_ARTIFACT" == "code" && -n "$FACTS_CONTENT" ]]; then
+  echo "error: AGY_MODEL is explicitly empty, so the ACTUAL review model is unknowable (the agy CLI's" >&2
+  echo "       own settings default decides) — an attesting review refuses pre-spend. Fix: unset" >&2
+  echo "       AGY_MODEL (wrapper default), or set the real model display string; AGY_PROBE=1 is exempt." >&2
+  exit 2
+fi
+echo "review posture: model=${AGY_MODEL:-<agy settings default>}" >&2
+
 # --- Execute via agy-run (single home of timeout + subscription + byte ceiling) ---
 # The output is teed into the private staging dir so the mandated '### Verdict' section can be
 # parsed into the review receipt — the user-facing stream is unchanged.
@@ -845,8 +901,17 @@ fi
 set -e
 
 # --- Review receipt (AD-038): only a SUCCESSFUL review attests --------------------
+# D4 (wrapper honesty): a run that produced NO recognized '### Verdict' section — empty output
+# included — is a FAILED review: non-zero exit, NO receipt. This is a failed review to RE-RUN,
+# never a fatal session error (documented in --help).
 if [[ $rc -eq 0 ]]; then
   verdict="$(parse_agy_verdict "$review_out_file")"
+  if [[ "$verdict" == "unknown" ]]; then
+    echo "error: the review output carries no recognized '### Verdict' section (closed vocabulary:" >&2
+    echo "       SHIP / SHIP WITH NITS / REWORK) — a FAILED review; NO receipt was written. Re-run" >&2
+    echo "       the review; if it recurs, inspect the captured output for what the model produced." >&2
+    exit 4
+  fi
   if [[ -n "$resume_mode" ]]; then
     # A continuation never re-embeds the current artifact (agy holds the ORIGINAL round server-side;
     # --facts is rejected above), so it cannot attest the folded tree: fresh:false, artifact /

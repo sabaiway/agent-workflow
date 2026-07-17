@@ -2,7 +2,7 @@
 name: codex-cli-bridge
 description: Delegate work to the OpenAI Codex CLI (`codex`) under a ChatGPT subscription — run plan/instruction EXECUTION in a sandboxed workspace, or get a read-only ADVISORY review of a plan or working-tree diff — as a second delegated-execution backend beside Antigravity. Use when the user wants to hand a bounded coding task or plan to `codex exec`, get a second-opinion review from codex, install or authenticate Codex CLI, understand its sandbox/network/approval policy, drive codex efficiently from the main agent (exec vs review, resume, the commit boundary), bridge project context (`AGENTS.md`) into codex, or troubleshoot codex flags, models, auth, or its no-TTY headless behaviour.
 metadata:
-  version: '2.8.0'
+  version: '3.0.0'
 ---
 
 # codex-cli-bridge
@@ -95,6 +95,13 @@ codex-review plan docs/plans/<slug>.md           # critique a plan
 codex-review code                                # review the current working-tree diff (precomputed)
 codex-review code "focus on the new reducer"     # review with extra focus
 ```
+
+**Honesty + posture (D4/D5):** a run whose final message has no recognized
+`Verdict: <ship|revise|rethink>` line — empty or missing output included — **exits 4 with NO
+receipt**: treat it as a *failed review to re-run*, never a fatal session error. One stderr banner
+states the actual posture (`review posture: model=… effort=… tier=…`) and the receipt records the
+same `posture {model, effort, tier}` (tier `null` on the standard tier); control bytes in a
+posture value refuse pre-spend in every mode.
 
 `codex exec` is headless: there is **no TTY**, so `approval_policy=never` — anything needing
 escalation is refused and reported, never interactively approved. The wrappers capture only codex's

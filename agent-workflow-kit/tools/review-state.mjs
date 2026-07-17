@@ -220,6 +220,7 @@ export const backendReceiptStatus = (receipts, backend, fingerprint) => {
     probeExcluded: summary.probeExcluded,
     markerRejected: summary.markerRejected,
     unmarkedRejected: summary.unmarkedRejected,
+    postureRejected: summary.postureRejected,
   };
   if (summary.state === 'current') {
     return { state: 'current', verdict: summary.receipt.verdict ?? 'unknown', shipClass: isShipVerdict(summary.receipt.verdict), grounded: true, timestamp: summary.receipt.timestamp ?? null, ...counts };
@@ -345,6 +346,9 @@ const rejectionCause = (b) => {
   if (b.markerRejected > 0) parts.push(`${b.markerRejected} with a malformed probe marker`);
   if (b.unmarkedRejected > 0) {
     parts.push(`${b.unmarkedRejected} with no probe marker — silence is not a declaration, so the probe status is untrustworthy; re-run the review with a bridge that marks its runs`);
+  }
+  if ((b.postureRejected ?? 0) > 0) {
+    parts.push(`${b.postureRejected} with an absent/invalid run posture (D5) — a pre-posture wrapper minted it; re-run the review on the current bridge`);
   }
   return parts.join(' + ');
 };

@@ -257,7 +257,14 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       pins) + references/scripts/install-git-hooks-repo-exec.test.mjs (the in-place
     //       GIT_DIR-pinned execution lane — the D3(d) changed-line check reads real executions
     //       of the shipped bytes). Both mirrored from the memory canon.
-    assert.equal(packed.length, 152, `tarball file count drifted (${packed.length} ≠ 152)`);
+    // 154 = 152 + the strip Phase-4 round-1 hardening specs, one per bridge bundle:
+    //       bridges/*/bin/agy-review-honesty.test.mjs + codex-review-honesty.test.mjs (the
+    //       exact-verdict-parse / scoped-refusal / structural-schema-parse / raw-tier-screen
+    //       pins — colocated separately because the main wrapper specs are red-proof-frozen).
+    // 155 = 154 + bridges/antigravity-cli-bridge/bin/agy-review-model-screen.test.mjs (the
+    //       round-2 M6 ordering pin: the control-byte screen precedes every AGY_MODEL
+    //       interpolation — the advisory can never echo a raw control byte).
+    assert.equal(packed.length, 155, `tarball file count drifted (${packed.length} ≠ 155)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

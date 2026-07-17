@@ -787,7 +787,7 @@ describe('recipes.mjs CLI — --status-line + strict args (no silent fallthrough
     return env;
   };
 
-  it('--status-line emits exactly one line matching the composed contract (incl. the autonomy segment)', () => {
+  it('--status-line emits exactly one line matching the composed contract (incl. autonomy + posture)', () => {
     // cwd = system temp (no docs/ai): the autonomy segment must state the computed-defaults origin
     // honestly — and the line stays hermetic (this repo's own policy file never leaks into the pin).
     const out = execFileSync(process.execPath, [SCRIPT, '--status-line'], { encoding: 'utf8', env: cleanEnv(), cwd: tmpdir() });
@@ -797,7 +797,10 @@ describe('recipes.mjs CLI — --status-line + strict args (no silent fallthrough
     assert.match(line, /^backends: /);
     assert.match(line, / — run \/agent-workflow-kit backends · recipes: /);
     assert.match(line, / — see \/agent-workflow-kit recipes · autonomy: /);
-    assert.match(line, /autonomy: plan-authoring=prompt, plan-execution=prompt \(computed defaults — no policy file; declare with \/agent-workflow-kit set-autonomy\)$/);
+    assert.match(line, /autonomy: plan-authoring=prompt, plan-execution=prompt \(computed defaults — no policy file; declare with \/agent-workflow-kit set-autonomy\)/);
+    // The D5 posture tail: composed from the bundled manifests' pins; cleanEnv strips the tier
+    // knob, so the codex tier renders the pinned standard default.
+    assert.match(line, /· posture: codex model=gpt-5\.6-sol effort=xhigh tier=standard · agy model=Gemini 3\.1 Pro \(High\)$/);
   });
 
   it('rejects an unknown/mistyped argument loudly — never the silent multi-line human render', () => {
