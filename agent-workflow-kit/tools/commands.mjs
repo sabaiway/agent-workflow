@@ -17,7 +17,7 @@
 //
 // Source of truth = the COMMANDS table below; a drift-guard test (commands.test.mjs) pins its keys to
 // the `### Mode:` headers in SKILL.md, so the catalog cannot silently drift from the documented modes.
-// Pure, dependency-free, Node >= 18. No side effects on import (the isDirectRun idiom).
+// Pure, dependency-free, Node >= 22. No side effects on import (the isDirectRun idiom).
 
 import { pathToFileURL } from 'node:url';
 
@@ -110,7 +110,7 @@ const CATALOG = [
     invocation: invocationOf('gates'),
     group: 'Inspect',
     kind: PROJECT_EXEC,
-    oneLine: 'Run the project’s own declared gate commands (docs/ai/gates.json) as one batch — a PASS/FAIL table, one summary line. Writes nothing by default; opt-in --record mints a gate-run record via the review-ledger writer (the segment’s green-baseline receipt). A separate consent-gated seeder can propose entries from your project’s own scripts (preview first, written only on your yes).',
+    oneLine: 'Run the project’s own declared gate commands (docs/ai/gates.json) as one batch — a PASS/FAIL table, one summary line. Writes nothing by default; --final runs the FULL matrix as the final verification run and mints the ONE receipt the commit guard consumes (every attempt recorded, green or red). A separate consent-gated init preview can propose entries from your project’s own scripts (written only on your yes).',
   },
   {
     key: 'setup',
@@ -204,25 +204,32 @@ const CATALOG = [
     oneLine: 'Assemble the verified-facts payload a grounded review runs against — the entry-point Hard Constraints, the effective autonomy policy, plus a plan’s decision sections; prints it, or writes ONE scratch file with --out.',
   },
   {
-    key: 'review-ledger',
-    invocation: invocationOf('review-ledger'),
+    key: 'core-evidence',
+    invocation: invocationOf('core-evidence'),
     group: 'Orchestrate',
     kind: WRITER,
-    oneLine: 'Record each review round, its triage, and recorded overrides (oracle-change / red-proof / size-cap waivers) and read the computed crossover-stop for the plan-execution loop — per SEGMENT since v4 (base = HEAD; caps and teeth reset only at a gated commit; class refuted is the honest phantom lane); --check turns it into a gate exit code, --telemetry renders counts-only gate-efficacy data.',
+    oneLine: 'Declare loop evidence into the ONE git-dir store — an observed-red proof for a bugfix test (red-proof, minted BEFORE the fix) or an explicit per-backend review degrade for the current tree; `summary` renders the whole loop state statelessly from the receipts + the store.',
   },
   {
-    key: 'fold-completeness',
-    invocation: invocationOf('fold-completeness'),
+    key: 'coverage-check',
+    invocation: invocationOf('coverage-check'),
     group: 'Orchestrate',
-    kind: WRITER,
-    oneLine: 'Verify the review loop’s folded fixes are pinned by HONEST tests — every changed executable line executed, and each bound test carries an observed-red receipt (--red, minted BEFORE the fix), N/N-green probes, and content custody (waivable per-testId only by a recorded red-proof override), over a test surface whose tampered files carry recorded oracle-change overrides; SEGMENT-scoped since v3 (a committed phase’s custody obligations close with its commit); --check turns the result into a gate exit code.',
+    kind: PROJECT_EXEC,
+    oneLine: 'The final-run checker: every CHANGED executable Node line must be covered by the lcov the declared unit-tests gate produced (uncovered lines listed file:line), and every current-base red-proof declaration must verify (bound test green N/N, content custody intact); --check turns it into a gate exit code.',
+  },
+  {
+    key: 'commit-guard',
+    invocation: invocationOf('commit-guard'),
+    group: 'Orchestrate',
+    kind: READ_ONLY,
+    oneLine: 'The read-only pre-commit guard: binds the LATEST completed run-gates --final receipt to the CURRENT tree — refusing on any fingerprint, declaration, evidence-hash, or lcov drift, a dangling later attempt, or unsatisfied review obligations; re-runs no gate or test.',
   },
   {
     key: 'doc-parity',
     invocation: invocationOf('doc-parity'),
     group: 'Orchestrate',
     kind: READ_ONLY,
-    oneLine: 'Check that the documented contract values (review caps, schema versions, ledger vocabulary) still match the live code constants they describe — a read-only lint that fails closed on drift; --check turns it into a gate exit code.',
+    oneLine: 'Check that the documented contract tokens still match the live code constants they describe — a read-only lint that fails closed on drift; --check turns it into a gate exit code.',
   },
 ];
 

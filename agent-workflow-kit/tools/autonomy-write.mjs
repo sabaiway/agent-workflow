@@ -10,7 +10,7 @@
 // core (tools/atomic-write.mjs, AD-042) and is consumed here with this module's own STOP identity, so
 // the public API + error contract are its own (this file's tests pin them).
 //
-// Dependency-free, Node >= 18. Every fs primitive is injectable (deps.*) so the guards are unit-testable.
+// Dependency-free, Node >= 22. Every fs primitive is injectable (deps.*) so the guards are unit-testable.
 
 import { AUTONOMY_REL, serializeAutonomy } from './autonomy-config.mjs';
 import { writeDocsAiFileAtomic } from './atomic-write.mjs';

@@ -1,5 +1,5 @@
 // atomic-write.test.mjs — the NEW out-of-tree host-config core (bridges 2.3.0). The docs/ai path is
-// proven by orchestration-write.test.mjs + seed-gates.test.mjs (both consumers of the same core after
+// proven by orchestration-write.test.mjs + gates-init.test.mjs (both consumers of the same core after
 // the refactor); here we prove the host-config gate + the root-parameterized guards: dir create-if-
 // absent, symlink/non-dir dir refusal, containment (no escape), symlinked-leaf refusal, and the TOCTOU
 // re-check + tmp cleanup. Guards are exercised via injected deps (no real ~/.config touched).

@@ -20,20 +20,18 @@
 // D3(a) receipt hashes ride canonicalKindSerialization — the CANONICAL (key-sorted) serialization
 // of the AUTHORITATIVE subset per kind; receipts themselves are excluded from the hashed domain by
 // construction (serialization is per kind).
-// The test-running arm MOVES the old fold-runner's safeguards intact (fold-completeness-run.mjs:
-// 234-292, 501-741 — move, not re-derive): safe repo-relative path resolution, no-follow real-path
-// containment, shell-free argv, per-run timeout, N/N reruns, the quarantine lane. N and the
-// timeout are pinned from that runner's own constants (reruns 3, timeout 120s).
+// The test-running arm carries the retired fold-runner's safeguards intact (moved, not
+// re-derived): safe repo-relative path resolution, no-follow real-path containment, shell-free
+// argv, per-run timeout, N/N reruns, the quarantine lane (reruns 3, timeout 120s).
 // Import posture: this module is the DAG BOTTOM — it imports only node built-ins + atomic-write +
 // changed-surface, and OWNS the canonical review-domain primitives (tree fingerprint, receipt read
-// path, attesting predicate, verdict vocabulary, testId format, base resolution). review-state and
-// review-ledger-core RE-EXPORT their historical public API from here, so their consumers (and the
-// bash-twin parity tests) are unchanged while review-state can import the degrade reader without
-// an import cycle.
+// path, attesting predicate, verdict vocabulary, testId format, base resolution). review-state
+// RE-EXPORTS its historical public API from here, so its consumers (and the bash-twin parity
+// tests) are unchanged while review-state can import the degrade reader without an import cycle.
 //
 // HONEST residuals: records are forgeable (a self-discipline mechanism in the git dir, not a
 // security boundary); coverage/green verification of red-proof records lives in the final-run
-// checker, not here. Dependency-free, Node >= 18. No side effects on import.
+// checker, not here. Dependency-free. No side effects on import.
 
 import { readFileSync, lstatSync, realpathSync, readlinkSync, openSync, readSync, closeSync } from 'node:fs';
 import { join, dirname, isAbsolute, normalize, sep, basename } from 'node:path';
@@ -520,7 +518,7 @@ export const canonicalKindSerialization = (records, kind) => {
   return lines.length === 0 ? '' : `${lines.join('\n')}\n`;
 };
 
-// ── the MOVED runner safeguards (fold-completeness-run.mjs — verbatim semantics) ──────────────────
+// ── the probe safeguards (moved verbatim from the retired fold runner) ────────────────────────────
 
 // Node sets NODE_TEST_CONTEXT for any process running UNDER `node --test`; a fresh `node --test`
 // that inherits it silently SKIPS running its files. The probe spawns `node --test`, so it strips
@@ -537,7 +535,8 @@ const PROBE_DIRECTIVE_RE = /#\s*(?:skip|todo)\b/i; // a TAP SKIP/TODO directive 
 
 // parseProbeOutput({ stdout, code, fileArg }) → { resolvable, executed, baselineGreen }. The file
 // wrapper is matched by BASENAME (node normalizes the echoed path); a directive-carrying result
-// line never counts (node 18/20 emit pattern-filtered tests as SKIP).
+// line never counts (some Node lines emit pattern-filtered tests as SKIP — the guard is
+// version-agnostic on purpose).
 export const parseProbeOutput = ({ stdout, code, fileArg }) => {
   let matched = 0;
   let notOk = 0;

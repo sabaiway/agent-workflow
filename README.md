@@ -13,7 +13,7 @@ Claude Code, Codex, Cursor, and any agent that reads `AGENTS.md`.*
 [![license](https://img.shields.io/npm/l/@sabaiway/agent-workflow-kit)](./LICENSE)
 [![node](https://img.shields.io/node/v/@sabaiway/agent-workflow-kit)](https://nodejs.org)
 
-`Node ≥ 18`  ·  `dependency-free scripts`  ·  `no telemetry in family code`
+`Node ≥ 22`  ·  `dependency-free scripts`  ·  `no telemetry in family code`
 
 **One command to start:**
 
@@ -192,7 +192,7 @@ optional backends (placed once by setup, NOT by init; init refreshes them):
 - **Plan lifecycle** — Plan → Phase → Step, ephemeral plan files, a **mandatory Cleanup phase**.
 - **No silent failures** — every guard that rejects an action surfaces a real error.
 
-Enforcement ships as dependency-free **Node ≥ 18** scripts; non-Node projects follow the policy
+Enforcement ships as dependency-free **Node ≥ 22** scripts; non-Node projects follow the policy
 by hand.
 
 ---
@@ -280,7 +280,7 @@ This is a monorepo (npm workspaces) for the whole family.
   (kit + memory) stamp the shared lineage head — the engine has no per-project footprint, so it does
   not stamp it.
 - `docs/plans/` is machine-local and is never committed (see `.gitignore`).
-- Shipped Node scripts stay dependency-free and support Node ≥ 18. Run the repo's test,
+- Shipped Node scripts stay dependency-free and support Node ≥ 22. Run the repo's test,
   manifest-validate, release-scan, and docs-caps checks before proposing a commit.
 
 </details>

@@ -23,7 +23,7 @@
 //
 // Exit codes: 0 done / dry-run (incl. preserved customizations — a user's file is a legitimate
 // state, not an error); 1 precondition STOP (stamp, symlink, missing bundle); 2 usage.
-// Dependency-free, Node >= 18. No side effects on import.
+// Dependency-free, Node >= 22. No side effects on import.
 
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';

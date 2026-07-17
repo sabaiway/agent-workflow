@@ -18,18 +18,13 @@
 // Honest outcomes — each distinct, never a silent green (the exit-code table + the summary-line
 // schema are pinned by run-gates.test.mjs):
 //   0 ok · 1 gate failure · 2 usage · 3 missing declaration · 4 empty gates list ·
-//   5 malformed/invalid declaration · 6 bash unavailable · 7 --record asked but the gate-run
-//   record could not be written. Gate `cmd` lines are BASH command lines (brace/glob expansion);
-//   a host without bash gets the loud exit-6 preflight error, never a silent reinterpretation
-//   under another shell.
+//   5 malformed/invalid declaration · 6 bash unavailable · 8 --final receipt not written.
+//   Gate `cmd` lines are BASH command lines (brace/glob expansion); a host without bash gets the
+//   loud exit-6 preflight error, never a silent reinterpretation under another shell.
 //
-// The runner itself WRITES NOTHING by default. `--record` (BUGFREE-2 / AD-048, D5) mints ONE
-// v4 `gate-run` record — the green-baseline receipt the review-ledger writer's D5 tooth consumes —
-// by DELEGATING to the ledger's sole writer (recordGateRun in review-ledger-write.mjs): this
-// runner never opens the ledger file itself (an import/structure pin holds the boundary). The
-// record carries the FULL declaration + exactly what ran (a --only subset records honestly as a
-// subset — it never satisfies quality-green) + the tree fingerprint BEFORE and AFTER the run (a
-// mutating gate attests no particular tree). Dependency-free, Node >= 18. No side effects on import.
+// The runner itself WRITES NOTHING on a plain run. `--final` (D3(a)) is the ONE writing mode:
+// every attempt lands in the core-evidence store via its sole writer. Dependency-free.
+// No side effects on import.
 
 import { readFileSync, lstatSync, unlinkSync, realpathSync } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
@@ -37,24 +32,17 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
 import { computeTreeFingerprint } from './review-state.mjs';
-import { recordGateRun } from './review-ledger-write.mjs';
 // The D3(a) final receipt rides the core-evidence SOLE WRITER (the sole-writer boundary — this
 // runner never opens the store itself) + the canonical per-kind serialization its hashes bind.
 import { appendEvidenceRecord, resolveEvidencePath, readEvidence, canonicalKindSerialization, EVIDENCE_SCHEMA_VERSION } from './core-evidence.mjs';
 import { LCOV_BASENAME } from './coverage-check.mjs';
-// (a) BUGFREE-3 / AD-049: the one-suite-run credit. The fold runner already spawned the `unit-tests`
-// suite under coverage; --record can CREDIT that gate from the recorded evidence instead of
-// re-spawning it minutes later — read-only (the read core, never the tree-toucher).
-import { foldSuiteCredit } from './fold-completeness.mjs';
-
-// The gate id the (a) credit applies to — the SAME command the fold runner resolves as its suite.
-export const UNIT_TESTS_GATE_ID = 'unit-tests';
 
 // The per-project declaration (strict JSON, hand-editable). cwd-relative — errors show a path the
 // user can open (the orchestration-config CONFIG_REL idiom).
 export const GATES_REL = 'docs/ai/gates.json';
 
 // The full exit-code table — one distinct code per honest outcome (never a silent green).
+// 7 is RETIRED (the deleted --record arm's outcome) — never reused for a new meaning.
 export const EXIT = Object.freeze({
   ok: 0,
   fail: 1,
@@ -63,10 +51,6 @@ export const EXIT = Object.freeze({
   empty: 4,
   malformed: 5,
   noBash: 6,
-  // --record was asked for but the gate-run record could not be written (no in-flight loop, a
-  // malformed ledger, an fs refusal): the invocation's contract included a ledger receipt — not
-  // delivering it is its own loud outcome, never folded into ok/fail.
-  recordFailed: 7,
   // --final could not write its receipt (a corrupt store, an fs refusal): green gates WITHOUT a
   // written receipt never read as success (D3(a)).
   finalFailed: 8,
@@ -82,7 +66,7 @@ const SPAWN_FAILED_CODE = -1;
 const MAX_GATE_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 const USAGE = [
-  'usage: run-gates.mjs [--cwd <dir>] [--only <id>]... [--record] [--final] [--help]',
+  'usage: run-gates.mjs [--cwd <dir>] [--only <id>]... [--final] [--help]',
   '',
   '--final runs the FULL declared matrix as the D3(a) final verification run: it refuses a',
   'declaration lacking the canonical core checks (the review-state + coverage-check gates),',
@@ -93,17 +77,11 @@ const USAGE = [
   '',
   `Runs the gates declared in <cwd>/${GATES_REL} (one bash command line each, project root as cwd).`,
   'Prints a per-gate PASS/FAIL table + one machine-readable summary line; exit 0 iff all green.',
-  '--record additionally mints ONE v4 gate-run record into the review ledger via its sole writer',
-  '(the D5 green-baseline receipt; needs a single in-flight plan): the full declaration + what ran',
-  '+ the pre/post tree fingerprints. A red run records honestly; a --only subset records as a subset.',
-  'In --record mode the unit-tests gate is CREDITED (not re-spawned) when it is the FIRST declared gate',
-  'AND the fold-completeness runner already ran that EXACT command green at the current tree',
-  '(fingerprint-bound + exit-0 + cmd-identity); positioned after another gate, it always re-spawns.',
   'Sandbox-safe: the runner itself needs no network and writes only repo-local state — the D4 sandbox',
   'lane; each DECLARED gate command is the project\'s own, so ITS sandbox-safety is command-shape',
   'dependent (first try the sandbox-safe shape — cache under $TMPDIR, offline/notifier off).',
   `Exit codes: 0 ok · 1 gate failure · 2 usage · 3 missing declaration · 4 empty gates list ·`,
-  '5 malformed/invalid declaration · 6 bash unavailable · 7 --record asked but the record failed ·',
+  '5 malformed/invalid declaration · 6 bash unavailable ·',
   '8 --final asked but its receipt could not be written (green gates never read as success without it).',
 ].join('\n');
 
@@ -203,11 +181,9 @@ export const selectGates = (gates, onlyIds) => {
 // Spawn one gate cmd via bash from the project root. `cmd` is a BASH command line by contract
 // (the declaration's _README states it): this repo's own gate matrix needs brace+glob expansion,
 // which /bin/sh does not perform — hence bash explicitly, never the platform default shell.
-// NODE_TEST_CONTEXT is stripped (mirroring the fold suite's childTestEnv): a `node --test` gate spawned
-// while run-gates is itself running under a parent test context would otherwise inherit it, hit Node's
-// recursive-run guard, silently skip every file, and exit 0 — a vacuous false green. Stripping it also
-// makes the plain gate env-equivalent to the fold suite, so the (a) suite-run credit's exit-0 truthfully
-// predicts a plain-spawn exit-0 (the one remaining, documented residual is NODE_V8_COVERAGE).
+// NODE_TEST_CONTEXT is stripped: a `node --test` gate spawned while run-gates is itself running
+// under a parent test context would otherwise inherit it, hit Node's recursive-run guard, silently
+// skip every file, and exit 0 — a vacuous false green.
 export const spawnGateViaBash = (cmd, cwd, extraEnv = {}) => {
   const env = { ...process.env, ...extraEnv };
   delete env.NODE_TEST_CONTEXT;
@@ -225,19 +201,10 @@ const trimTrailingNewline = (text) => text.replace(/\n$/, '');
 
 // Run the selected gates sequentially (declaration order). A green gate logs one PASS line; a
 // failing gate logs FAIL + its captured stdout/stderr VERBATIM (triage without re-running).
-export const runGates = (gates, { cwd, spawn = spawnGateViaBash, now = Date.now, log = console.log, credit = null }) => {
+export const runGates = (gates, { cwd, spawn = spawnGateViaBash, now = Date.now, log = console.log }) => {
   const results = [];
   for (const gate of gates) {
     log(`── ${gate.id} — ${gate.title}`);
-    // (a) the one-suite-run credit: for the unit-tests gate, if the fold runner already ran this exact
-    // command green at the current tree, CREDIT it instead of re-spawning (no quality loss — same
-    // execution, same tree, recorded once). Any mismatch → credit is null → the normal spawn below.
-    const credited = credit ? credit(gate) : null;
-    if (credited) {
-      log('   PASS (credited from the fold-completeness suite run — no re-spawn)');
-      results.push({ id: gate.id, title: gate.title, ok: true, code: 0, elapsedMs: 0, credited: true });
-      continue;
-    }
     const startedAt = now();
     const res = spawn(gate.cmd, cwd);
     const elapsedMs = now() - startedAt;
@@ -280,7 +247,7 @@ export const composeSummaryLine = ({ status, results = [] }) => {
 // ── CLI ───────────────────────────────────────────────────────────────────────────────
 
 const parseArgs = (argv) => {
-  const opts = { cwd: null, only: [], record: false, final: false, help: false };
+  const opts = { cwd: null, only: [], final: false, help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') {
@@ -293,8 +260,6 @@ const parseArgs = (argv) => {
       i += 1;
       if (argv[i] === undefined) throw fail(EXIT.usage, '--only requires a gate id argument');
       opts.only.push(argv[i]);
-    } else if (arg === '--record') {
-      opts.record = true;
     } else if (arg === '--final') {
       opts.final = true;
     } else {
@@ -330,6 +295,16 @@ const matchesCanonicalCheck = (check, cmd, projectDir) => {
     return false; // unresolvable → never canonical (fail closed)
   }
 };
+
+// isFinalCapableDeclaration(gates, projectDir) → whether --final would accept this declaration
+// (every canonical core check present + the checker LAST) — the ONE home consumers (the
+// recommendations guard-install probe) read instead of re-deriving the rule.
+export const isFinalCapableDeclaration = (gates, projectDir) => {
+  if (!Array.isArray(gates) || gates.length === 0) return false;
+  const missing = FINAL_CORE_CHECKS.filter((c) => !gates.some((g) => matchesCanonicalCheck(c, g.cmd, projectDir)));
+  if (missing.length > 0) return false;
+  return matchesCanonicalCheck(FINAL_CORE_CHECKS[1], gates[gates.length - 1].cmd, projectDir);
+};
 const sha256Hex = (data) => createHash('sha256').update(data).digest('hex');
 
 // The full CLI, dependency-injected for hermetic tests. Returns the process exit code; the two
@@ -345,9 +320,7 @@ export const runCli = (argv, deps = {}) => {
     readFile,
     lstat,
     now,
-    record = recordGateRun,
     fingerprint = computeTreeFingerprint,
-    foldCredit = foldSuiteCredit,
   } = deps;
   try {
     const opts = parseArgs(argv);
@@ -372,10 +345,14 @@ export const runCli = (argv, deps = {}) => {
       return EXIT.empty;
     }
     const selected = selectGates(declaration.gates, opts.only);
+    // AW_GIT_DIR rides EVERY gate child inside a git tree (plain and --only alike): declared
+    // cmds reference fixed git-dir artifacts (the unit-tests lcov destination) — a plain red-run
+    // must exercise the SAME cmd line --final will, never a broken-only-outside---final variant.
+    const dirRes = spawnSync('git', ['rev-parse', '--absolute-git-dir'], { cwd: projectDir, windowsHide: true });
+    const gitDir = dirRes.error || dirRes.status !== 0 ? null : dirRes.stdout.toString('utf8').replace(/\r?\n$/, '');
+    let gateSpawn = gitDir === null ? spawn : (cmd, cwd2) => spawn(cmd, cwd2, { AW_GIT_DIR: gitDir });
     // ── --final preflight (D3(a)): the declaration must carry the canonical core checks; the TRUE
     // git dir resolves AW_GIT_DIR; the stale lcov dies BEFORE the suite so it is never consumed.
-    let gitDir = null;
-    let gateSpawn = spawn;
     if (opts.final) {
       const missing = FINAL_CORE_CHECKS.filter((c) => !declaration.gates.some((g) => matchesCanonicalCheck(c, g.cmd, projectDir)));
       if (missing.length > 0) {
@@ -385,9 +362,7 @@ export const runCli = (argv, deps = {}) => {
       if (!matchesCanonicalCheck(FINAL_CORE_CHECKS[1], lastGate.cmd, projectDir)) {
         throw fail(EXIT.malformed, `--final refuses the declaration — the CANONICAL coverage-check gate must be the LAST declared gate (nothing may run after the checker consumed the lcov; "${lastGate.id}" is declared last)`);
       }
-      const dirRes = spawnSync('git', ['rev-parse', '--absolute-git-dir'], { cwd: projectDir, windowsHide: true });
-      if (dirRes.error || dirRes.status !== 0) throw fail(EXIT.fail, '--final needs a git work tree (cannot resolve the git dir)');
-      gitDir = dirRes.stdout.toString('utf8').replace(/\r?\n$/, '');
+      if (gitDir === null) throw fail(EXIT.fail, '--final needs a git work tree (cannot resolve the git dir)');
       try {
         unlinkSync(join(gitDir, LCOV_BASENAME)); // a stale lcov is never consumed
       } catch (err) {
@@ -412,22 +387,7 @@ export const runCli = (argv, deps = {}) => {
       log(composeSummaryLine({ status: 'no-bash' }));
       return EXIT.noBash;
     }
-    const fingerprintBefore = opts.record ? fingerprint(projectDir) : null;
-    // (a) the one-suite-run credit — ONLY in --record mode (the fold-loop flow), ONLY the unit-tests
-    // gate, ONLY when it is the FIRST selected gate (a gate that ran BEFORE it could have side-effected
-    // an ignored/out-of-tree artifact unit-tests depends on WITHOUT moving the fingerprint, so a
-    // later-positioned unit-tests must re-spawn — never credit a state the real matrix might fail), and
-    // ONLY when the fold evidence is fingerprint-bound + exit-0 (foldCredit) AND its recorded cmd EQUALS
-    // this gate's cmd (the --only-subset defense). Any mismatch → credit is null → the normal spawn.
-    // NEVER under --final: the final receipt attests THIS process's run, and the checker consumes
-    // the lcov only a freshly SPAWNED suite (after the stale delete) can produce — a credit,
-    // however legitimate for the D5 gate-run record, would make the coverage arm vacuous.
-    let credit = null;
-    if (opts.record && !opts.final && selected[0]?.id === UNIT_TESTS_GATE_ID) {
-      const fold = foldCredit({ cwd: projectDir, env, fingerprint: fingerprintBefore });
-      credit = (gate) => (gate.id === UNIT_TESTS_GATE_ID && fold.credited && fold.evidence.cmd === gate.cmd ? fold : null);
-    }
-    // --final needs the pre-run fingerprint too (the receipt binds before == after == current).
+    // --final needs the pre-run fingerprint (the receipt binds before == after == current).
     const finalFingerprintBefore = opts.final ? fingerprint(projectDir) : null;
     const finalAttempt = opts.final ? randomUUID() : null;
     let finalError = null;
@@ -454,7 +414,7 @@ export const runCli = (argv, deps = {}) => {
         return EXIT.finalFailed;
       }
     }
-    const results = runGates(selected, { cwd: projectDir, spawn: gateSpawn, log, now, credit });
+    const results = runGates(selected, { cwd: projectDir, spawn: gateSpawn, log, now });
     for (const line of formatTable(results)) log(line);
     const allGreen = results.every((result) => result.ok);
     if (opts.final) {
@@ -542,37 +502,8 @@ export const runCli = (argv, deps = {}) => {
         logError(`[run-gates] --final could not write its receipt: ${err.message}`);
       }
     }
-    // The gate-run record (D5): minted for green AND red runs alike (an honest red is telemetry
-    // fuel), via the ledger's sole writer. Emitted BEFORE the summary line — the machine summary
-    // stays the LAST line of every non-usage outcome (pinned).
-    let recordError = null;
-    if (opts.record) {
-      const failing = results.filter((result) => !result.ok);
-      try {
-        const { writtenPath } = record({
-          cwd: projectDir,
-          env,
-          declared: declaration.gates.map(({ id, cmd }) => ({ id, cmd })),
-          results: results.map(({ id, ok, code }) => ({ id, ok, code })),
-          summary: {
-            status: allGreen ? 'ok' : 'fail',
-            gates: results.length,
-            passed: results.length - failing.length,
-            failed: failing.length,
-            failedIds: failing.map((result) => result.id),
-          },
-          fingerprintBefore,
-          fingerprintAfter: fingerprint(projectDir),
-        });
-        log(`[run-gates] gate-run recorded → ${writtenPath}`);
-      } catch (err) {
-        recordError = err;
-        logError(`[run-gates] --record failed: ${err.message}`);
-      }
-    }
     log(composeSummaryLine({ status: allGreen ? 'ok' : 'fail', results }));
     if (finalError) return EXIT.finalFailed;
-    if (recordError) return EXIT.recordFailed;
     return allGreen ? EXIT.ok : EXIT.fail;
   } catch (err) {
     logError(`[run-gates] ${err.message}`);

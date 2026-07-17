@@ -342,7 +342,7 @@ describe('grounding --out — outside-repo scratch is TEMP-ONLY (codex R8 blocke
   });
 });
 
-describe('grounding — coverage of the defensive arms (fold-completeness)', () => {
+describe('grounding — coverage of the defensive arms', () => {
   it('an --out leaf whose lstat fails (EACCES via an unreadable parent) refuses fail-closed', () => {
     const root = makeDir();
     const locked = join(root, 'locked');

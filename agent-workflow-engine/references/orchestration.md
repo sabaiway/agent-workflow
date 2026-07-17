@@ -144,9 +144,9 @@ zero-prompt bar prefer the agent-spawn lane with placed vehicles. This clause is
 vehicles, use them; WITHOUT restricted-tool vehicles — whether or not generic full-tool spawning
 exists — read-only research stays in the orchestrator's own context —
 never a vehicle mandate a host cannot satisfy. **(d)** a stage that fires repeated WRITER commands
-batches them — the review-ledger triad (records / classifications / overrides) rides ONE batched
-write, and the remaining stage writers combine via one launcher per stage; never
-one writer call at a time (each write is its own prompt). The clause narrows
+batches them — a stage's evidence declarations (red-proofs, degrades) ride consecutive plain
+writer invocations of ONE allow-listed tool, and the remaining stage writers combine via one
+launcher per stage; never an unbatched writer scatter (each gated write is its own prompt). The clause narrows
 TOOLS for read-only work only — judgment, code, and synthesis stay at the frontier lane, and a
 task that genuinely needs to run or write keeps a full-tool subagent. **Honest limit:**
 no deterministic gate classifies a dispatch — enforcement is this canon at the point of use,

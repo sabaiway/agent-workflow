@@ -116,9 +116,10 @@ Execute an approved plan Step by Step; each Step is one logical commit.
    **{round N · finding-origin tally · per-backend verdict}**; when backends diverge, that is the
    crossover — resolve at altitude, not by exhausting the strictest backend. Classify survivors at the
    cap the same way (**fixable-bug / inherent-layer-residual / escalate**). This loop's computed
-   instrument is the **review-ledger**: record each round + triage, read the stop from its `--status`
-   render (it replaces the hand-composed tally), and wire `review-ledger --check` as the gate — the
-   exit contract lives in the tool's own header, never restated here.
+   instruments: `core-evidence red-proof` declares each bugfix red BEFORE the fix; `core-evidence
+   degrade` records an unavailable backend explicitly; the reviews run on the STAGED tree and
+   `run-gates --final` mints the ONE receipt `commit-guard --check` gates the commit against — the
+   exit contracts live in each tool's own header, never restated here.
 6. **Gates** — run the project's verification gate (tests + checks) to green before committing.
 7. **Commit boundary** — the orchestrator makes the single commit for the Step; a backend never
    commits. The project's commit-approval policy (e.g. ask first) lives in the project's own rules.

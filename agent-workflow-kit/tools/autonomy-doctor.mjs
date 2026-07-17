@@ -35,7 +35,7 @@
 // a PATH shadow, never fixes it; (iii) the harness permission prompt shows the --apply tuple, not
 // the absolute-path command — bridged by the apply-time re-print of the exact resolved command.
 //
-// Dependency-free, Node >= 18. No side effects on import (the isDirectRun idiom).
+// Dependency-free, Node >= 22. No side effects on import (the isDirectRun idiom).
 
 import { spawnSync } from 'node:child_process';
 import { closeSync, lstatSync, openSync } from 'node:fs';

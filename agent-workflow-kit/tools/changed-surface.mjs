@@ -1,20 +1,14 @@
 #!/usr/bin/env node
-// changed-surface.mjs — the NEUTRAL shared read-only core (BUGFREE-2 / AD-048, D4 + D8). One home
-// for the changed-surface computation that BOTH the fold-completeness runner (coverage domain) and
-// the review-ledger writer (the D4 diff-size cap) consume — one computation, so the cap and the
-// coverage gate can never drift (the probeVerdict single-home precedent, AD-047). The D8 telemetry
-// fold-ledger read path lives beside it: fold-completeness.mjs already imports review-ledger.mjs,
-// so the review-ledger telemetry must reach the fold ledger WITHOUT importing back the other
-// direction — it imports THIS module instead.
+// changed-surface.mjs — the NEUTRAL shared read-only core: ONE home for the changed-surface
+// computation the coverage checker consumes (the closed classification + new-side line numbering),
+// plus the shared fail-closed knob parser and the strict N/N probe-verdict algebra the
+// core-evidence red-proof observer reads.
 //
 // Import-graph invariant (pinned by import-split tests): this module imports NOTHING from the
-// family — node built-ins only. Everyone may import it; it imports no one:
-//   review-ledger.mjs → changed-surface.mjs ← fold-completeness.mjs ← fold-completeness-run.mjs
-//   review-ledger-write.mjs → changed-surface.mjs (the writer NEVER imports the runner — the
-//   sole-tree-toucher boundary, codex R2)
+// family — node built-ins only. Everyone may import it; it imports no one.
 //
 // Read-only: never writes, never commits. It DOES spawn read-only `git` queries (diff/ls-files/
-// rev-parse). Dependency-free, Node >= 18. No side effects on import.
+// rev-parse). Dependency-free. No side effects on import.
 
 import { readFileSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
@@ -129,11 +123,6 @@ const gitStdout = (args, cwd) => {
   const r = runGit(args, cwd);
   return r.error || r.status > 1 ? null : r.stdout;
 };
-const gitLine = (args, cwd) => {
-  const r = runGit(args, cwd);
-  if (r.error || r.status !== 0) return null;
-  return r.stdout.replace(/\r?\n$/, '');
-};
 // Both leaf guards are exported for the unit tests of exactly their fail-closed edges (the
 // hashFileBytes precedent, AD-047) — internal consumers stay this module's own passes.
 export const readFileSafe = (path) => {
@@ -215,18 +204,6 @@ export const computeChangedSurface = (root) => {
   return { assessable, unsupported: [...unsupportedLines.keys()].sort(), outOfDomain: outOfDomain.sort(), unsupportedLines };
 };
 
-// countCapLines(surface) → the D4 counted magnitude: new-side changed lines of assessable AND
-// unsupported SOURCE files (the two counted classes, pinned by named tests); excluded-test and
-// out-of-domain never count; pure deletions already cost nothing (new-side lines only). Stated
-// consequence, INTENTIONAL (agy R1): under --no-renames a rename of a large file costs its full
-// length — the single-home invariant outweighs a rename special case.
-export const countCapLines = ({ assessable, unsupportedLines }) => {
-  let counted = 0;
-  for (const lines of assessable.values()) counted += lines.length;
-  for (const lines of unsupportedLines.values()) counted += lines.length;
-  return counted;
-};
-
 // ── the shared fail-closed positive-integer knob parser (AD-047 precedent) ───────────────────────
 
 // Zero / negative / fractional / non-numeric values are refusals by name — the parseInt(...)||default
@@ -241,8 +218,8 @@ export const parsePositiveIntKnob = (env, name, fallback, makeError = (m) => new
   return Number.parseInt(raw, 10);
 };
 
-// ── the D4 probe-verdict algebra (AD-047; the SINGLE home — moved here from fold-completeness.mjs,
-// which re-exports it, so the runner, the checker, AND the review-ledger telemetry read ONE algebra) ─
+// ── the probe-verdict algebra (AD-047; the SINGLE home — the core-evidence red-proof observer
+// consumes it) ────────────────────────────────────────────────────────────────────────────────────
 
 // probeVerdict(entry) → 'green' | 'red' | 'quarantine' | 'unresolvable'. RED/GREEN are strict N/N
 // verdicts; any timeout, mixed outcome, or partial resolution is QUARANTINE — it never converts and
@@ -253,42 +230,4 @@ export const probeVerdict = (t) => {
   if (unresolved >= t.runs) return 'unresolvable';
   if (t.timeouts > 0 || unresolved > 0 || (t.greens > 0 && t.reds > 0)) return 'quarantine';
   return t.greens === t.runs ? 'green' : 'red';
-};
-
-// ── the fold-result ledger locator + a tolerant row reader (the D8 telemetry read path) ──────────
-
-export const RESULTS_BASENAME = 'agent-workflow-fold-completeness.jsonl';
-
-// The result-ledger path: AW_FOLD_RESULTS overrides (mirrors AW_REVIEW_LEDGER); else <git dir>/basename.
-export const resolveResultsPath = (cwd, env = process.env) => {
-  if (env.AW_FOLD_RESULTS) return env.AW_FOLD_RESULTS;
-  const gitDir = gitLine(['rev-parse', '--absolute-git-dir'], cwd);
-  return gitDir == null ? null : join(gitDir, RESULTS_BASENAME);
-};
-
-// readJsonlRows(path) → { rows, badLines, readError? } — the TOLERANT parse the telemetry counts
-// ride on (counts only, no judgment — D8): a row is any parsed JSON object; a bad line is counted,
-// never dropped silently. Schema validation stays with each ledger's own reader — telemetry must
-// not fork a second validator (drift) nor import one across the cycle boundary.
-export const readJsonlRows = (path, readFile = readFileSync) => {
-  let raw;
-  try {
-    raw = readFile(path, 'utf8');
-  } catch (err) {
-    if (err && err.code === 'ENOENT') return { rows: [], badLines: 0 };
-    return { rows: [], badLines: 0, readError: (err && err.code) || (err && err.message) || 'read failed' };
-  }
-  const rows = [];
-  let badLines = 0;
-  for (const line of raw.split('\n')) {
-    if (line.trim() === '') continue;
-    try {
-      const parsed = JSON.parse(line);
-      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) rows.push(parsed);
-      else badLines += 1;
-    } catch {
-      badLines += 1;
-    }
-  }
-  return { rows, badLines };
 };

@@ -6,7 +6,7 @@
 // `/agent-workflow-kit status` surface always consumes `--json` and localizes itself.
 //
 // Pure + fully injectable (argv / env / isTTY / columns / platform are inputs), no side effects on
-// import, Node >= 18. Tested in isolation against the §4.5 table.
+// import, Node >= 22. Tested in isolation against the §4.5 table.
 
 export const FORMATS = Object.freeze(['auto', 'plain', 'ansi', 'json']);
 export const FORMAT_ENV = 'AGENT_WORKFLOW_FORMAT';

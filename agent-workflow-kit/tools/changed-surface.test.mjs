@@ -1,40 +1,24 @@
-// changed-surface.test.mjs — the NEUTRAL shared read-only core (BUGFREE-2 / AD-048, D4 + D8).
-// Pins the D4 counted classes (assessable + unsupported source count; excluded-test and
-// out-of-domain never do; pure deletions are free), the fail-closed knob parser home, the tolerant
-// telemetry row reader, and the single-home re-exports (probeVerdict / resolveResultsPath keep ONE
-// implementation across the neutral module and fold-completeness.mjs).
+// changed-surface.test.mjs — the NEUTRAL shared read-only core. Pins the CLOSED changed-surface
+// classification (assessable / unsupported-source / excluded-test / out-of-domain; new-side lines
+// only, pure deletions free), the fail-closed edges, the shared knob parser home, and the
+// probe-verdict algebra the core-evidence red-proof observer consumes.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   classifyChangedPath,
   parseUnifiedDiff,
   unquoteDiffPath,
   computeChangedSurface,
-  countCapLines,
   readFileSafe,
   isRegularLeaf,
   parsePositiveIntKnob,
   probeVerdict,
-  resolveResultsPath,
-  RESULTS_BASENAME,
-  readJsonlRows,
 } from './changed-surface.mjs';
-import {
-  probeVerdict as reExportedProbeVerdict,
-  resolveResultsPath as reExportedResolveResultsPath,
-  RESULTS_BASENAME as reExportedBasename,
-} from './fold-completeness.mjs';
-import {
-  classifyChangedPath as runnerClassify,
-  parseUnifiedDiff as runnerParse,
-  unquoteDiffPath as runnerUnquote,
-  computeChangedSurface as runnerSurface,
-} from './fold-completeness-run.mjs';
 
 // A dirty git fixture: one committed base, then a mixed working set covering every counted class.
 const makeRepo = () => {
@@ -46,8 +30,8 @@ const makeRepo = () => {
   return { root, g };
 };
 
-describe('computeChangedSurface + countCapLines — the D4 counted classes', () => {
-  it('counts assessable AND unsupported source lines; never tests or out-of-domain; deletions are free', () => {
+describe('computeChangedSurface — the CLOSED counted classes', () => {
+  it('carries assessable AND unsupported source lines; never tests or out-of-domain; deletions are free', () => {
     const { root, g } = makeRepo();
     // Base commit: a source file, a TS file, a test file, a doc, and a file to be deleted.
     writeFileSync(join(root, 'src.mjs'), 'line1\nline2\nline3\n');
@@ -75,13 +59,12 @@ describe('computeChangedSurface + countCapLines — the D4 counted classes', () 
     // Unsupported source carries its lines too (counted).
     assert.deepEqual(surface.unsupported, ['lib.ts']);
     assert.deepEqual(surface.unsupportedLines.get('lib.ts'), [2]);
-    // Out-of-domain listed, never counted; the deleted file contributes nothing.
+    // Out-of-domain listed, never line-carrying; the deleted file contributes nothing.
     assert.deepEqual(surface.outOfDomain, ['README.md']);
-    assert.equal(countCapLines(surface), 2 + 3 + 1, 'assessable (2+3) + unsupported (1); tests/docs/deletions free');
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('a PURE deletion working set counts 0 (subtractive folds stay free)', () => {
+  it('a PURE deletion working set carries no lines (subtractive folds stay free)', () => {
     const { root, g } = makeRepo();
     writeFileSync(join(root, 'a.mjs'), 'a1\na2\na3\n');
     writeFileSync(join(root, 'keep.mjs'), 'k\n');
@@ -89,11 +72,12 @@ describe('computeChangedSurface + countCapLines — the D4 counted classes', () 
     g('commit', '-qm', 'base');
     rmSync(join(root, 'a.mjs'));
     const surface = computeChangedSurface(root);
-    assert.equal(countCapLines(surface), 0);
+    assert.equal(surface.assessable.size, 0);
+    assert.equal(surface.unsupportedLines.size, 0);
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('an untracked unsupported source file counts ALL its lines (whole-file new)', () => {
+  it('an untracked unsupported source file carries ALL its lines (whole-file new)', () => {
     const { root, g } = makeRepo();
     writeFileSync(join(root, 'keep.mjs'), 'k\n');
     g('add', '-A');
@@ -101,7 +85,7 @@ describe('computeChangedSurface + countCapLines — the D4 counted classes', () 
     writeFileSync(join(root, 'brand-new.tsx'), 'x1\nx2\nx3\nx4\n');
     const surface = computeChangedSurface(root);
     assert.deepEqual(surface.unsupported, ['brand-new.tsx']);
-    assert.equal(countCapLines(surface), 4);
+    assert.deepEqual(surface.unsupportedLines.get('brand-new.tsx'), [1, 2, 3, 4]);
     rmSync(root, { recursive: true, force: true });
   });
 });
@@ -112,7 +96,6 @@ describe('computeChangedSurface — fail-closed edges', () => {
     writeFileSync(join(root, 'fresh.mjs'), 'f1\nf2\n');
     const surface = computeChangedSurface(root);
     assert.deepEqual(surface.assessable.get('fresh.mjs'), [1, 2]);
-    assert.equal(countCapLines(surface), 2);
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -136,7 +119,6 @@ describe('computeChangedSurface — fail-closed edges', () => {
     g('add', 'staged.mjs');
     const surface = computeChangedSurface(root);
     assert.deepEqual(surface.assessable.get('staged.mjs'), [1, 2], 'a staged initial source file is changed surface');
-    assert.equal(countCapLines(surface), 2);
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -145,7 +127,7 @@ describe('computeChangedSurface — fail-closed edges', () => {
     writeFileSync(join(bare, 'loose.mjs'), 'l1\n');
     const surface = computeChangedSurface(bare);
     assert.equal(surface.assessable.size, 0, 'without git there is no change domain');
-    assert.equal(countCapLines(surface), 0);
+    assert.equal(surface.unsupportedLines.size, 0);
     rmSync(bare, { recursive: true, force: true });
   });
 
@@ -170,49 +152,7 @@ describe('parsePositiveIntKnob — the shared fail-closed knob home', () => {
   });
 });
 
-describe('readJsonlRows — the tolerant D8 telemetry reader', () => {
-  it('parses object rows, counts bad lines, never drops silently', () => {
-    const { rows, badLines } = readJsonlRows('X', () => '{"a":1}\n{not json\n[1,2]\n\n{"b":2}\n');
-    assert.equal(rows.length, 2);
-    assert.equal(badLines, 2, 'unparseable + non-object both count');
-  });
-
-  it('ENOENT → empty; a non-ENOENT read error surfaces as readError', () => {
-    const absent = readJsonlRows('X', () => { throw Object.assign(new Error('nope'), { code: 'ENOENT' }); });
-    assert.deepEqual(absent, { rows: [], badLines: 0 });
-    const denied = readJsonlRows('X', () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); });
-    assert.equal(denied.readError, 'EACCES');
-  });
-});
-
-describe('single-home re-exports — one implementation, every consumer', () => {
-  it('fold-completeness.mjs re-exports the SAME probeVerdict / resolveResultsPath / basename', () => {
-    assert.equal(reExportedProbeVerdict, probeVerdict);
-    assert.equal(reExportedResolveResultsPath, resolveResultsPath);
-    assert.equal(reExportedBasename, RESULTS_BASENAME);
-  });
-
-  it('fold-completeness-run.mjs re-exports the SAME surface functions (one entry point per concern)', () => {
-    assert.equal(runnerClassify, classifyChangedPath);
-    assert.equal(runnerParse, parseUnifiedDiff);
-    assert.equal(runnerUnquote, unquoteDiffPath);
-    assert.equal(runnerSurface, computeChangedSurface);
-  });
-
-  it('resolveResultsPath honors AW_FOLD_RESULTS and anchors at the git dir otherwise', () => {
-    assert.equal(resolveResultsPath('/nowhere', { AW_FOLD_RESULTS: '/x/f.jsonl' }), '/x/f.jsonl');
-    const { root, g } = makeRepo();
-    writeFileSync(join(root, 'a.txt'), 'a\n');
-    g('add', '-A');
-    g('commit', '-qm', 'base');
-    const resolved = resolveResultsPath(root, {});
-    assert.ok(resolved.endsWith(RESULTS_BASENAME), resolved);
-    assert.equal(dirname(resolved), join(root, '.git'));
-    rmSync(root, { recursive: true, force: true });
-  });
-});
-
-describe('probeVerdict — the D4 algebra (home smoke; the full matrix lives in fold-completeness.test.mjs)', () => {
+describe('probeVerdict — the strict N/N algebra (the core-evidence red-proof observer consumes it)', () => {
   it('N/N green / N/N red / mixed / timeout / unresolved', () => {
     assert.equal(probeVerdict({ runs: 3, greens: 3, reds: 0, timeouts: 0 }), 'green');
     assert.equal(probeVerdict({ runs: 3, greens: 0, reds: 3, timeouts: 0 }), 'red');
@@ -222,7 +162,7 @@ describe('probeVerdict — the D4 algebra (home smoke; the full matrix lives in 
   });
 });
 
-describe('classifyChangedPath / parseUnifiedDiff / unquoteDiffPath — home smoke (full suites ride the runner tests)', () => {
+describe('classifyChangedPath / parseUnifiedDiff / unquoteDiffPath — home smoke', () => {
   it('classification stays the CLOSED rule', () => {
     assert.equal(classifyChangedPath('tools/a.mjs'), 'assessable');
     assert.equal(classifyChangedPath('a.test.mjs'), 'excluded-test');

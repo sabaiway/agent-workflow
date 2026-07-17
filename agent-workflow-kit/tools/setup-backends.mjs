@@ -21,7 +21,7 @@
 // wrappers are POSIX .sh — report unsupported / use WSL and mutate nothing. Every fs primitive is
 // injectable (deps.*) so the whole module is unit-testable without touching the real filesystem.
 //
-// Dependency-free, Node >= 18.
+// Dependency-free, Node >= 22.
 
 import {
   existsSync, lstatSync, statSync, readdirSync, readlinkSync, symlinkSync, mkdirSync, copyFileSync,

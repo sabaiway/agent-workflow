@@ -12,7 +12,7 @@
 // Invariants (the backends/status posture): pure (no fs/network/CLI in planRecipe/recommendRecipe),
 // read-only, NEVER runs a subscription CLI. The kit only surfaces/selects/plans a recipe — the
 // orchestrator (the main agent) executes it via the bridge skills and always makes the single commit;
-// a backend is advisory or delegated, never autonomous. Dependency-free, Node >= 18.
+// a backend is advisory or delegated, never autonomous. Dependency-free, Node >= 22.
 
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';

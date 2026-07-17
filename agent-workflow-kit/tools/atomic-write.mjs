@@ -3,7 +3,7 @@
 // by (containment ROOT, absolute target, body, stop identity) so every consumer runs the same guarded
 // flow with zero drift:
 //   • writeDocsAiFileAtomic  — a file under a project's docs/ai/ (deployment-gated to cwd):
-//       orchestration-write.mjs → docs/ai/orchestration.json; seed-gates.mjs → docs/ai/gates.json.
+//       orchestration-write.mjs → docs/ai/orchestration.json; gates-init.mjs → docs/ai/gates.json.
 //   • writeHostConfigFileAtomic — a file under a host config dir OUTSIDE any project tree
 //       (bridges 2.3.0, D6): ${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf. The
 //       host dir is CREATED if absent (a host config SHOULD materialize), unlike the docs/ai gate
@@ -19,7 +19,7 @@
 //   - tmp cleaned up on any failure after its creation.
 //   - LAST-WRITER-WINS: local, single-user; no cross-process lock (documented, not silently assumed).
 //
-// Dependency-free, Node >= 18. Every fs primitive is injectable (deps.*) so the guards are
+// Dependency-free, Node >= 22. Every fs primitive is injectable (deps.*) so the guards are
 // unit-testable. NEVER imported by a read-only module (procedures.mjs — pinned by an import guard).
 
 import { lstatSync, writeFileSync, renameSync, rmSync, mkdirSync } from 'node:fs';

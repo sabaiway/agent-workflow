@@ -17,7 +17,7 @@
 // path). Add-local-first, then DETECT + REPORT the residual legacy global block — removal is the
 // explicit, ASK-gated `--remove-global` (prints a restorable backup), never a default (an arbitrary
 // host's OTHER hidden repo may rely on the same root-anchored global lines). Windows is supported (text
-// edit; forward-slash patterns; CRLF preserved via EOL detection). Dependency-free, Node >= 18.
+// edit; forward-slash patterns; CRLF preserved via EOL detection). Dependency-free, Node >= 22.
 
 import {
   readFileSync, writeFileSync, statSync, readdirSync,

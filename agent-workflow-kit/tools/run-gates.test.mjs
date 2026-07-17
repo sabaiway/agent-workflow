@@ -6,7 +6,7 @@ import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { resolveBase, computeTreeFingerprint } from './core-evidence.mjs';
+import { resolveBase } from './core-evidence.mjs';
 import {
   GATES_REL,
   EXIT,
@@ -359,92 +359,27 @@ describe('stale memory — the feature self-heals from the kit template twin', (
   });
 });
 
-// ── --record: the D5 gate-run receipt (BUGFREE-2 / AD-048) — delegation, honesty, exit 7 ─────────
+// ── the retired --record arm + the sole-writer boundary ──────────────────────────────────────────
 
-describe('runCli --record — the gate-run receipt via the ledger sole writer', () => {
-  const gates = [
-    { id: 'one', title: 'First', cmd: 'cmd-one' },
-    { id: 'two', title: 'Second', cmd: 'cmd-two' },
-  ];
-  const RED = { status: 1, stdout: 'boom\n', stderr: '' };
-  const fpSeq = (...values) => {
-    let i = 0;
-    return () => values[Math.min(i++, values.length - 1)];
-  };
+describe('the retired --record arm', () => {
+  const gates = [{ id: 'one', title: 'First', cmd: 'cmd-one' }];
 
-  it('record written ONLY under --record (a plain run never touches the writer)', () => {
-    const recorded = [];
-    const { code } = runHermetic({
-      gates,
-      byCmd: { 'cmd-one': GREEN, 'cmd-two': GREEN },
-      deps: { record: (params) => { recorded.push(params); return { writtenPath: '/L' }; }, fingerprint: fpSeq('f1') },
-    });
-    assert.equal(code, EXIT.ok);
-    assert.equal(recorded.length, 0, 'no --record → the writer is never called');
-  });
-
-  it('--record mirrors the machine summary: full declaration + what ran + pre/post fingerprints', () => {
-    const recorded = [];
-    const { code, out } = runHermetic({
+  it('--record is GONE — a loud usage refusal, nothing spawned (exit 7 is retired with it)', () => {
+    const { code, errText, calls } = runHermetic({
       gates,
       argv: ['--record'],
-      byCmd: { 'cmd-one': GREEN, 'cmd-two': RED },
-      deps: { record: (params) => { recorded.push(params); return { writtenPath: '/L' }; }, fingerprint: fpSeq('fp-before', 'fp-after') },
-    });
-    assert.equal(code, EXIT.fail, 'the gate verdict still rules the exit when the record succeeded');
-    assert.equal(recorded.length, 1, 'a RED run records too (telemetry fuel)');
-    const p = recorded[0];
-    assert.deepEqual(p.declared, [{ id: 'one', cmd: 'cmd-one' }, { id: 'two', cmd: 'cmd-two' }]);
-    assert.deepEqual(p.results, [{ id: 'one', ok: true, code: 0 }, { id: 'two', ok: false, code: 1 }]);
-    assert.deepEqual(p.summary, { status: 'fail', gates: 2, passed: 1, failed: 1, failedIds: ['two'] });
-    assert.equal(p.fingerprintBefore, 'fp-before');
-    assert.equal(p.fingerprintAfter, 'fp-after');
-    assert.match(out.join('\n'), /gate-run recorded → \/L/);
-    assert.equal(out[out.length - 1], '[run-gates] status=fail gates=2 passed=1 failed=1 failed_ids=two', 'the machine summary stays the LAST line');
-  });
-
-  it('a --only subset records HONESTLY as a subset: declared stays full, results shrink', () => {
-    const recorded = [];
-    const { code } = runHermetic({
-      gates,
-      argv: ['--record', '--only', 'one'],
       byCmd: { 'cmd-one': GREEN },
-      deps: { record: (params) => { recorded.push(params); return { writtenPath: '/L' }; }, fingerprint: fpSeq('f') },
     });
-    assert.equal(code, EXIT.ok);
-    assert.equal(recorded[0].declared.length, 2, 'the FULL declaration is recorded');
-    assert.deepEqual(recorded[0].results.map((r) => r.id), ['one'], 'only what ran is a result');
+    assert.equal(code, EXIT.usage);
+    assert.match(errText, /unknown argument "--record"/);
+    assert.equal(calls.length, 0, 'nothing ran');
+    assert.equal(EXIT.recordFailed, undefined, 'the retired outcome has no exit-table row');
   });
 
-  it('a record failure is its own LOUD outcome — exit 7, stderr names it, the summary line still lands', () => {
-    const { code, out, errText } = runHermetic({
-      gates,
-      argv: ['--record'],
-      byCmd: { 'cmd-one': GREEN, 'cmd-two': GREEN },
-      deps: { record: () => { throw new Error('no in-flight plan'); }, fingerprint: fpSeq('f') },
-    });
-    assert.equal(code, EXIT.recordFailed);
-    assert.match(errText, /--record failed: no in-flight plan/);
-    assert.equal(out[out.length - 1], '[run-gates] status=ok gates=2 passed=2 failed=0 failed_ids=-');
-  });
-
-  it('exit 7 also shadows a RED run — the record failure outranks the gate verdict (agy Phase-2 nit)', () => {
-    const { code, out } = runHermetic({
-      gates,
-      argv: ['--record'],
-      byCmd: { 'cmd-one': GREEN, 'cmd-two': RED },
-      deps: { record: () => { throw new Error('ledger unwritable'); }, fingerprint: fpSeq('f') },
-    });
-    assert.equal(code, EXIT.recordFailed, 'recordFailed outranks EXIT.fail');
-    assert.equal(out[out.length - 1], '[run-gates] status=fail gates=2 passed=1 failed=1 failed_ids=two', 'the honest gate verdict still lands on stdout');
-  });
-
-  it('the sole-writer boundary: run-gates delegates to recordGateRun / appendEvidenceRecord and never opens a store itself (structure pin)', () => {
+  it('the sole-writer boundary: run-gates delegates to appendEvidenceRecord and never opens a store itself (structure pin)', () => {
     const src = readFileSync(join(HERE, 'run-gates.mjs'), 'utf8');
-    assert.match(src, /import \{ recordGateRun \} from '\.\/review-ledger-write\.mjs'/, 'the ledger delegation import');
     assert.match(src, /appendEvidenceRecord/, 'the final receipt rides the core-evidence sole writer');
     assert.ok(!/atomic-write/.test(src), 'never the atomic-write core directly');
-    assert.ok(!/agent-workflow-review-ledger/.test(src), 'never the ledger basename/path');
     assert.ok(!/agent-workflow-core-evidence\.jsonl/.test(src), 'never the evidence basename/path');
   });
 });
@@ -499,6 +434,18 @@ describe('run-gates --final — the ONE receipt the commit guard consumes', () =
       timestamp: '2026-07-17T00:00:00Z',
     };
   };
+
+  it('AW_GIT_DIR is exported to gate children on EVERY run inside a git tree (plain and --only alike)', () => {
+    const root = makeRepo([
+      { id: 'needs-gitdir', title: 'g', cmd: 'test -n "$AW_GIT_DIR"' },
+      { id: 'other', title: 'o', cmd: 'true' },
+    ]);
+    const plain = runFinal(root, []);
+    assert.equal(plain.code, EXIT.ok, `a PLAIN run exports AW_GIT_DIR: ${plain.out}`);
+    const subset = runFinal(root, ['--only', 'needs-gitdir']);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(subset.code, EXIT.ok, `an --only subset exports AW_GIT_DIR too: ${subset.out}`);
+  });
 
   it('--final --only is a loud usage refusal (a subset never attests)', () => {
     const root = makeRepo([...CANONICAL, { id: 'noop', title: 'n', cmd: 'true' }]);
@@ -729,34 +676,19 @@ describe('run-gates --final — the ONE receipt the commit guard consumes', () =
     assert.match(done.integrityFailure ?? '', /exactly ONE/);
   });
 
-  it('--final --record never CREDITS the unit-tests gate (the receipt attests THIS run)', () => {
+  it('a full [unit-tests → core checks] declaration SPAWNS the suite and binds its produced lcov (no credit lane exists)', () => {
     const unitCmd = 'printf "SF:%s/pending.mjs\\nDA:1,1\\nend_of_record\\n" "$PWD" > "$AW_LCOV_FILE"';
     const root = makeRepo([
       { id: 'unit-tests', title: 'ut', cmd: unitCmd },
       CANONICAL[0],
       CANONICAL[1],
     ]);
-    mkdirSync(join(root, 'docs', 'plans'), { recursive: true });
-    writeFileSync(join(root, 'docs', 'plans', 'fixture-loop.md'), '# plan\n');
-    // A credit-ELIGIBLE fold record: same suite cmd, exit 0, bound to the CURRENT tree — the
-    // exact state that legitimately credits a --record run and must NOT credit a --final one.
-    const fp = computeTreeFingerprint(root);
-    const foldRecord = {
-      schema: 4, kind: 'run', loop: 'fixture-loop', base: resolveBase(root), fingerprint: fp,
-      boundTestIds: [], testIds: [], unsupported: [], outOfDomain: [],
-      coverage: { uncoveredChanged: [] }, tamper: { tampered: [] },
-      suite: { cmd: unitCmd, exit: 0, fingerprintBefore: fp, fingerprintAfter: fp },
-      mutation: { total: 0, killed: 0, survived: [], skipped: 0, killSetBasis: null },
-      budgets: { mutantsMax: 200, hunkMutantsMax: 25, timeBudgetS: 600, foldReruns: 3, probeTimeoutS: 120 },
-      timestamp: '2026-07-17T00:00:00Z',
-    };
-    writeFileSync(join(root, '.git', 'agent-workflow-fold-completeness.jsonl'), `${JSON.stringify(foldRecord)}\n`);
-    const { code, out } = runFinal(root, ['--final', '--record']);
+    const { code, out } = runFinal(root);
     const done = finalRecords(root).filter((r) => r.kind === 'final').pop();
     const lcovBytes = readFileSync(join(root, '.git', 'agent-workflow-lcov.info'));
     rmSync(root, { recursive: true, force: true });
     assert.equal(code, EXIT.ok, out);
-    assert.doesNotMatch(out, /credited/, 'the final receipt never rides a fold credit');
+    assert.doesNotMatch(out, /credited/, 'the final receipt never rides a credit');
     assert.equal(
       done.lcovSha256,
       createHash('sha256').update(lcovBytes).digest('hex'),

@@ -13,7 +13,7 @@
 // (write temp + rename) so an interrupted write can never corrupt the prior stamp.
 //
 // The Markdown twin `migrations/legacy-stamp-takeover.md` documents the same table as the
-// no-Node manual fallback. Dependency-free, Node >= 18.
+// no-Node manual fallback. Dependency-free, Node >= 22.
 
 import { readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import { dirname, basename, join, resolve } from 'node:path';

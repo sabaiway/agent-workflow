@@ -14,9 +14,10 @@
 //   3. re-computes the review-state decision (the ship-receipt arm) — a missing/vetoed ship
 //      receipt refuses.
 // `git commit --no-verify` stays the stated residual (a self-discipline mechanism, not a security
-// boundary). Read-only; dependency-free; Node >= 18. No side effects on import.
+// boundary). Read-only; dependency-free; Node >= 22. No side effects on import.
 
 import { readFileSync, lstatSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -33,6 +34,14 @@ const gitLine = (args, cwd) => {
   const r = spawnSync('git', args, { cwd, maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
   if (r.error || r.status !== 0) return null;
   return r.stdout.toString('utf8').replace(/\r?\n$/, '');
+};
+
+// resolveGitHooksPath(projectDir) → the ABSOLUTE hooks dir git itself reports (a linked worktree
+// answers with ITS OWN hooks path — never a hardcoded `.git/hooks`), or null outside a git tree.
+// The one home consumers (the recommendations guard-install probe) read instead of re-deriving it.
+export const resolveGitHooksPath = (projectDir) => {
+  const line = gitLine(['rev-parse', '--git-path', 'hooks'], projectDir);
+  return line == null ? null : resolve(projectDir, line);
 };
 
 // runGuard({ cwd, env }) → { code, lines }. Every refusal names its recovery.

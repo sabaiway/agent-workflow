@@ -10,7 +10,7 @@
 // consumed here with this module's own STOP identity, so the public API + error contract are
 // unchanged (this file's tests pin them, characterize-first).
 //
-// Dependency-free, Node >= 18. Every fs primitive is injectable (deps.*) so the guards are unit-testable.
+// Dependency-free, Node >= 22. Every fs primitive is injectable (deps.*) so the guards are unit-testable.
 
 import { CONFIG_REL, serializeConfig } from './orchestration-config.mjs';
 import { writeDocsAiFileAtomic } from './atomic-write.mjs';

@@ -14,7 +14,7 @@
 // count sentinel + intrinsic invariants (anchoring, uniqueness, disjointness, no subsumption) — and
 // references/contracts.md carries the human-readable mirror table, kept in sync by review.
 //
-// Pure, dependency-free, Node >= 18. The only fs touch is expandGlob (readdir/stat of a glob parent),
+// Pure, dependency-free, Node >= 22. The only fs touch is expandGlob (readdir/stat of a glob parent),
 // injected so the registry stays unit-testable without the real filesystem.
 
 import { readdirSync, statSync } from 'node:fs';

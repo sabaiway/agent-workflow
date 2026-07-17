@@ -23,7 +23,7 @@
 //
 // Output: the observed line matched per expectation (verbatim), MISSING for an unmatched one;
 // on any failure the full captured output is dumped for triage. Exit 0 iff the installer exited
-// 0 AND every expectation matched; 1 otherwise; 2 usage. Dependency-free, Node >= 18.
+// 0 AND every expectation matched; 1 otherwise; 2 usage. Dependency-free, Node >= 22.
 
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

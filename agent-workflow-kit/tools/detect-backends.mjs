@@ -16,7 +16,7 @@
 // credential marker, stable setup URL) must live here. A drift-guard test keeps the registry in
 // lockstep with the in-repo manifests.
 //
-// Pure, dependency-injectable (fs/env/validator are deps), dependency-free, Node >= 18. Every fs
+// Pure, dependency-injectable (fs/env/validator are deps), dependency-free, Node >= 22. Every fs
 // probe is wrapped → an explicit `unknown` + reason, never a throw and never a nameless failure.
 
 import { existsSync, statSync, accessSync, realpathSync, constants } from 'node:fs';

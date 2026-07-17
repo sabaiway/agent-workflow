@@ -23,7 +23,7 @@
 //
 // Write discipline: preview (--dry-run) is the DEFAULT and writes NOTHING; --apply performs the
 // migration. It NEVER commits. Exit codes: 0 done / dry-run / no-op; 1 precondition STOP (no
-// deployment, no writable snapshot base, a failed migration); 2 usage. Dependency-free, Node >= 18.
+// deployment, no writable snapshot base, a failed migration); 2 usage. Dependency-free, Node >= 22.
 // No side effects on import.
 
 import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, writeFileSync, chmodSync } from 'node:fs';
@@ -65,7 +65,7 @@ conservation proof) and writes NOTHING. --apply snapshots, force-refreshes the e
 then runs the conservation-checked migration. It NEVER commits — review the tree and commit yourself.`;
 
 // The mutually-exclusive dry-run/apply parse (a consent-gated writer never lets a later flag silently
-// decide whether it mutates) + --cwd, cloned from the seed-gates writer contract.
+// decide whether it mutates) + --cwd — the family's shared consented-writer contract.
 export const parseArgs = (argv) => {
   const parsed = argv.reduce(
     (acc, a, i) => {

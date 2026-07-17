@@ -36,7 +36,7 @@
 // The authoritative-source precedence (package.json first, SKILL.md fallback) is reused from the
 // kit's manifest validator (readAuthoritativeVersion) as the BASE line; the other sources are
 // parsed here independently — the cross-source comparison is the whole point of this script.
-// Dependency-free, Node >= 18. No side effects on import.
+// Dependency-free, Node >= 22. No side effects on import.
 
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, resolve, dirname, basename } from 'node:path';

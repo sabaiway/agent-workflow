@@ -46,7 +46,7 @@
 // red) · 9 post-publish verification UNREACHABLE (inconclusive — the publish itself concluded
 // success but a verify endpoint could not be reached, e.g. a network-blocked sandbox; re-run the
 // verify OUTSIDE the sandbox with the printed `--verify-only` command — NOT a failed release).
-// Dependency-free, Node >= 18 (global fetch). No side effects on import.
+// Dependency-free, Node >= 22 (global fetch). No side effects on import.
 
 import { readFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';

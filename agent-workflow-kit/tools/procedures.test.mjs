@@ -376,22 +376,22 @@ describe('procedures CLI — review-loop economics block (§2.2, M1/M6): prints 
   });
 });
 
-describe('procedures CLI — activity-aware ledger pointer (AD-046): plan-execution names the ledger, plan-authoring never does', () => {
-  it('plan-execution (council) names review-ledger with record / --status / --check', () => {
+describe('procedures CLI — activity-aware instrument pointer: plan-execution names the D3 loop, plan-authoring never does', () => {
+  it('plan-execution (council) names the D3 instruments (red-proof / --final / commit-guard)', () => {
     // The structured reviewLoop is the assertion target (the verbatim canon section also names the
-    // ledger, so a bare stdout match could stay green with the advice bullet deleted).
+    // instruments, so a bare stdout match could stay green with the advice bullet deleted).
     const j = JSON.parse(run(['plan-execution', '--override', 'review=council', '--json'], { codex: READY, agy: READY }).stdout);
-    const ledgerLine = j.reviewLoop.find((l) => l.includes('review-ledger'));
-    assert.ok(ledgerLine, 'plan-execution reviewLoop carries the ledger line');
-    for (const token of ['record', '--status', '--check']) {
-      assert.ok(ledgerLine.includes(token), `the ledger line carries "${token}"`);
+    const instrumentLine = j.reviewLoop.find((l) => l.includes('run-gates --final'));
+    assert.ok(instrumentLine, 'plan-execution reviewLoop carries the computed-instrument line');
+    for (const token of ['red-proof', 'degrade', 'commit-guard --check', 'core-evidence summary']) {
+      assert.ok(instrumentLine.includes(token), `the instrument line carries "${token}"`);
     }
   });
 
-  it('plan-authoring (council) does NOT name review-ledger (the ledger is plan-execution-scoped)', () => {
+  it('plan-authoring (council) does NOT name the plan-execution instruments', () => {
     const r = run(['plan-authoring', '--override', 'review=council'], { codex: READY, agy: READY });
     assert.equal(r.code, 0, r.stderr);
-    assert.ok(!r.stdout.includes('review-ledger'), 'plan-authoring must not point at the plan-execution ledger');
+    assert.ok(!r.stdout.includes('run-gates --final'), 'plan-authoring must not point at the plan-execution loop instruments');
   });
 
   it('BOTH activities carry the triage classification vocabulary (fixable-bug / inherent-layer-residual / escalate)', () => {
@@ -405,18 +405,18 @@ describe('procedures CLI — activity-aware ledger pointer (AD-046): plan-execut
     }
   });
 
-  it('solo omits the ledger pointer and the classification bullet with the whole block (non-vacuous)', () => {
-    // The canon SECTION (rendered verbatim above the advice) legitimately names the ledger for
-    // plan-execution — the solo invariant lives in the structured ADVICE block, which must be empty.
+  it('solo omits the instrument pointer and the classification bullet with the whole block (non-vacuous)', () => {
+    // The canon SECTION (rendered verbatim above the advice) legitimately names the instruments
+    // for plan-execution — the solo invariant lives in the structured ADVICE block, which must be empty.
     const r = JSON.parse(run(['plan-execution', '--override', 'review=solo', '--json'], { codex: READY, agy: READY }).stdout);
-    assert.deepEqual(r.reviewLoop, [], 'solo → empty reviewLoop (no ledger pointer, no classification bullet)');
+    assert.deepEqual(r.reviewLoop, [], 'solo → empty reviewLoop (no instrument pointer, no classification bullet)');
   });
 
-  it('--json reviewLoop mirrors the activity split (ledger line present for plan-execution, absent for plan-authoring)', () => {
+  it('--json reviewLoop mirrors the activity split (instrument line present for plan-execution, absent for plan-authoring)', () => {
     const exec = JSON.parse(run(['plan-execution', '--override', 'review=council', '--json'], { codex: READY, agy: READY }).stdout);
-    assert.ok(exec.reviewLoop.some((l) => /review-ledger/.test(l)), 'plan-execution reviewLoop carries the ledger line');
+    assert.ok(exec.reviewLoop.some((l) => /run-gates --final/.test(l)), 'plan-execution reviewLoop carries the instrument line');
     const auth = JSON.parse(run(['plan-authoring', '--override', 'review=council', '--json'], { codex: READY, agy: READY }).stdout);
-    assert.ok(!auth.reviewLoop.some((l) => /review-ledger/.test(l)), 'plan-authoring reviewLoop carries no ledger line');
+    assert.ok(!auth.reviewLoop.some((l) => /run-gates --final/.test(l)), 'plan-authoring reviewLoop carries no instrument line');
     assert.ok(auth.reviewLoop.some((l) => /fixable-bug/.test(l)), 'plan-authoring reviewLoop keeps the classification line');
   });
 });
@@ -487,7 +487,7 @@ describe('procedures CLI — cost-lane advisory block (cost-tiered execution): u
   // sandbox-lane contract line on their own HELP/header surface (the canon-side twin lives in the
   // engine's orchestration-canon test — both sides pinned, neither can silently drop it).
   it('the four L0 checker tools carry the sandbox-lane contract line on their own surfaces', () => {
-    for (const rel of ['run-gates.mjs', 'review-state.mjs', 'review-ledger.mjs', 'fold-completeness-run.mjs']) {
+    for (const rel of ['run-gates.mjs', 'review-state.mjs', 'core-evidence.mjs', 'coverage-check.mjs']) {
       const src = readFileSync(join(HERE, rel), 'utf8');
       assert.match(src, /Sandbox-safe/, `${rel} states its sandbox-lane contract line`);
     }

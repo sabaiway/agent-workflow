@@ -6,11 +6,11 @@
 // lane), the degrade verb (backend + non-empty reason + fingerprint), and the stateless D6 summary.
 //
 // Pure helpers are unit-tested directly; the integration cases drive the real verbs over hermetic
-// git fixture repos (the fold-completeness-run.test.mjs makeRepo idiom) with REAL `node --test`
+// git fixture repos (the retired fold runner's makeRepo idiom) with REAL `node --test`
 // subprocesses, never mocked.
 //
 // The module under test is imported DYNAMICALLY (the D7 authoring pattern, the
-// fold-completeness-run precedent): this spec LOADS — and fails per fixture — on the
+// retired-runner precedent): this spec LOADS — and fails per fixture — on the
 // pre-implementation tree, so every refusal fixture has an observed RED first.
 
 import { describe, it } from 'node:test';
@@ -456,7 +456,7 @@ describe('review-domain primitives — the defensive arms of the canonical paylo
   });
 });
 
-// ── the MOVED runner safeguards (fold-completeness-run.mjs:234-292 — move, do not re-derive) ──────
+// ── the probe safeguards (moved verbatim from the retired fold runner) ────────────────────────────
 
 describe('resolveTestFile — the safe test-file resolver (moved intact)', () => {
   const makeResolverFixture = () => {

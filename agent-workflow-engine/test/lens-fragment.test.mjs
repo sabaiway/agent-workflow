@@ -73,8 +73,9 @@ const DISCIPLINE_TOKENS = [
   'vehicle mandate a host cannot satisfy',
   'stay at the frontier lane',
   'no deterministic gate classifies a dispatch',
-  // writer-economy (D6 batch verb, AD-054) — the ledger triad batches, stage writers combine
-  'one writer call at a time',
+  // writer-economy (AD-054; strip-the-kit rewording) — evidence declarations batch, stage
+  // writers combine
+  'unbatched writer scatter',
 ];
 
 // The pre-E4 intro line (the outgoing body differs from the current fragment ONLY by the
@@ -137,13 +138,14 @@ describe('agent-rules-lens-priors — append-only prior store shape', () => {
 
   it('the OUTGOING body of the previous release IS the newest entry — exact normalized equality', () => {
     // The current fragment differs from the IMMEDIATELY-previous release's body by EXACTLY the
-    // appended writer-economy sentence-suffix on the cost-lanes line (AD-054) — so the exact
-    // expected outgoing body is computable, and a typo in the prior entry goes red instead of
-    // sliding past a token spot-check.
-    const outgoing = normalize(fragment.replace(/ \*\*Writer economy:\*\*[^\n]*/, ''));
-    assert.notEqual(outgoing, normalize(fragment), 'sanity: the strip actually removes the extension');
+    // reworded writer-economy sentence-suffix on the cost-lanes line (strip-the-kit: the
+    // ledger-triad example died with the ledger) — so the exact expected outgoing body is
+    // computable, and a typo in the prior entry goes red instead of sliding past a spot-check.
+    const OLD_WRITER_ECONOMY = " **Writer economy:** a stage's repeated WRITER commands batch into ONE invocation — the review-ledger triad rides one batched write, other stage writers combine via one launcher per stage; never one writer call at a time (each write is its own prompt).";
+    const outgoing = normalize(fragment.replace(/ \*\*Writer economy:\*\*[^\n]*/, OLD_WRITER_ECONOMY));
+    assert.notEqual(outgoing, normalize(fragment), 'sanity: the swap actually changes the sentence');
     assert.ok(outgoing.includes(CURRENT_INTRO), 'the outgoing body carries the provenance intro (post-E4)');
-    assert.equal(priors[priors.length - 1], outgoing, 'the newest prior byte-equals the pre-prompt-economy fragment (normalized)');
+    assert.equal(priors[priors.length - 1], outgoing, 'the newest prior byte-equals the pre-strip fragment (normalized)');
   });
 
   it('the pre-E4 body REMAINS an entry (append-only: a deployment seeded from any past release keeps converging)', () => {

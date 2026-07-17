@@ -5,7 +5,7 @@
 // .claude/settings.json.
 //
 // SELF-CONTAINED by contract: the placed copy must run on machines without the kit — no kit
-// imports, dependency-free, Node >= 18, no side effects on import. Two constants are baked
+// imports, dependency-free, Node >= 22, no side effects on import. Two constants are baked
 // FROZEN COPIES of the velocity-profile.mjs exports (a placed file cannot import the kit):
 // SEEDED_READONLY_CORE ≡ UNIVERSAL_READONLY_ALLOWLIST and RESIDUAL_FORMS ≡
 // RUNTIME_RESIDUAL_FORMS — drift-guarded by the kit's test/gate-hook-core-parity.test.mjs.

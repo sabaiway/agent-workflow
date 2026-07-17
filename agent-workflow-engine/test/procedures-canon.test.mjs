@@ -124,12 +124,14 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     return lines.slice(start, end).join('\n');
   };
 
-  it('the plan-execution review STEP (5) names the review-ledger (incl. --check); plan-authoring never does', () => {
+  it('the plan-execution review STEP (5) names the D3 instruments (incl. commit-guard --check); plan-authoring never does', () => {
     const execStep5 = stepOf(sectionOf(procedures, 'plan-execution'), 5);
-    assert.match(execStep5, /review-ledger/, 'plan-execution step 5 names the ledger');
-    assert.match(execStep5, /--check/, 'plan-execution step 5 names the ledger gate');
+    for (const token of ['core-evidence red-proof', 'core-evidence\n   degrade', 'run-gates --final', 'commit-guard --check']) {
+      assert.ok(execStep5.includes(token), `plan-execution step 5 names "${token.replace(/\s+/g, ' ')}"`);
+    }
     const auth = sectionOf(procedures, 'plan-authoring');
-    assert.ok(!auth.includes('review-ledger'), 'plan-authoring must not point at the plan-execution ledger');
+    assert.ok(!auth.includes('run-gates --final'), 'plan-authoring must not point at the plan-execution loop instruments');
+    assert.ok(!auth.includes('review-ledger'), 'the retired ledger is never named');
   });
 
   it('BOTH review steps (5) carry the triage classification vocabulary', () => {
@@ -153,8 +155,9 @@ describe('procedures.md — canonical activity-procedures reference', () => {
       'cheapest adequate executor', 'no named guardrail', 'L0', 'L1', 'L2', 'L3', 'red lines never move',
       'forbidden lane downgrade', 'plain pipeline per call', 'vehicle mandate a host cannot satisfy',
       'stay at the frontier lane', 'no deterministic gate classifies a dispatch',
-      // writer economy (D6 batch verb) + sandbox lanes (host-diff + nested-sandbox honesty), AD-054
-      'one writer call at a time', 'host-diff', 'nested inside a harness sandbox',
+      // writer economy (AD-054; strip-the-kit rewording) + sandbox lanes (host-diff +
+      // nested-sandbox honesty)
+      'unbatched writer scatter', 'host-diff', 'nested inside a harness sandbox',
     ]) {
       assert.ok(orchestration.includes(token), `orchestration.md carries the "${token}" canon token`);
     }

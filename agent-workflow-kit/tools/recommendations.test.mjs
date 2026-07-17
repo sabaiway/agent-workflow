@@ -65,6 +65,15 @@ const makeProject = () => {
   return root;
 };
 
+// A FINAL-run-capable declaration: both canonical core checks as quoted absolute paths to the
+// kit's OWN tools (realpath-matched by run-gates), the coverage checker LAST.
+const finalCapableGatesJson = () => JSON.stringify({
+  gates: [
+    { id: 'review-state', title: 'Review state', cmd: `node "${join(HERE, 'review-state.mjs')}" --check` },
+    { id: 'coverage-check', title: 'Coverage', cmd: `node "${join(HERE, 'coverage-check.mjs')}" --check` },
+  ],
+});
+
 // Deps that keep the host machine out of the probes: no placed wrappers, empty env/PATH, and a
 // fixture HOME (no bridge-settings.conf).
 const hermeticDeps = (root, extra = {}) => ({
@@ -373,6 +382,13 @@ const buildInventoryFixtures = () => {
   );
   results.push(buildRecommendations({ cwd: root7, deps: hermeticDeps(root7) }));
   rmSync(root7, { recursive: true, force: true });
+  // (8) final-run-capable declaration, deployed installer, no hook yet: commit-guard.
+  const root8 = makeProject();
+  writeFileSync(join(root8, 'docs', 'ai', 'gates.json'), finalCapableGatesJson());
+  mkdirSync(join(root8, 'scripts'), { recursive: true });
+  writeFileSync(join(root8, 'scripts', 'install-git-hooks.mjs'), '// deployed installer stand-in\n');
+  results.push(buildRecommendations({ cwd: root8, deps: hermeticDeps(root8, { gitHooksPath: () => join(root8, 'hooks') }) }));
+  rmSync(root8, { recursive: true, force: true });
   return results;
 };
 
@@ -1211,6 +1227,83 @@ describe('recommendations — every probe degrades honestly (per-branch skip cov
     rmSync(root, { recursive: true, force: true });
     assert.ok(skips.some((s) => s.key === 'gate-hook'), 'an unreadable declaration is a stated skip, never a guess');
   });
+});
+
+describe('recommendations — the commit-guard item (the D10 consumer surface)', () => {
+  // A final-run-capable project with the installer deployed and a fixture hooks dir (injected —
+  // the probe never spawns git in these tests).
+  const guardProject = () => {
+    const root = makeProject();
+    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), finalCapableGatesJson());
+    mkdirSync(join(root, 'scripts'), { recursive: true });
+    writeFileSync(join(root, 'scripts', 'install-git-hooks.mjs'), '// deployed installer stand-in\n');
+    mkdirSync(join(root, 'hooks'), { recursive: true });
+    return root;
+  };
+  const guardDeps = (root, extra = {}) => hermeticDeps(root, { gitHooksPath: () => join(root, 'hooks'), ...extra });
+  const MANAGED_GUARDLESS = '#!/usr/bin/env bash\n# fixture:install-git-hooks.mjs\nset -e\nnode scripts/check.mjs\n';
+
+  it('an ABSENT pre-commit hook under a final-capable declaration fires the consented installer one-liner', () => {
+    const root = guardProject();
+    const { items, skips } = buildRecommendations({ cwd: root, deps: guardDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    const item = items.find((i) => i.key === 'commit-guard');
+    assert.ok(item, 'an absent hook gets the offer too — the installer creates it armed');
+    assert.match(item.apply, /^node .*install-git-hooks\.mjs --commit-guard /u);
+    assert.ok(item.apply.endsWith(join(HERE, 'commit-guard.mjs')), `the apply names the kit's own resolved guard tool: ${item.apply}`);
+    assert.equal(item.severity, SEVERITY_OPTIONAL);
+    assert.ok(!skips.some((s) => s.key === 'commit-guard'));
+  });
+
+  it('a MANAGED guardless hook fires the same offer; an ARMED guard line converges silently', () => {
+    const root = guardProject();
+    writeFileSync(join(root, 'hooks', 'pre-commit'), MANAGED_GUARDLESS);
+    const managed = buildRecommendations({ cwd: root, deps: guardDeps(root) });
+    assert.ok(managed.items.some((i) => i.key === 'commit-guard'), 'a managed guardless hook gets the offer');
+    writeFileSync(join(root, 'hooks', 'pre-commit'), `${MANAGED_GUARDLESS}node "${join(HERE, 'commit-guard.mjs')}" --check\n`);
+    const armed = buildRecommendations({ cwd: root, deps: guardDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!armed.items.some((i) => i.key === 'commit-guard'), 'an armed guard converges the item');
+    assert.ok(!armed.skips.some((s) => s.key === 'commit-guard'));
+  });
+
+  it('convergence needs the EXACT canonical armed line — a comment or a lookalike guard still FIRES the offer', () => {
+    const root = guardProject();
+    writeFileSync(join(root, 'hooks', 'pre-commit'), `${MANAGED_GUARDLESS}# node "${join(HERE, 'commit-guard.mjs')}" --check\n`);
+    const commented = buildRecommendations({ cwd: root, deps: guardDeps(root) });
+    assert.ok(commented.items.some((i) => i.key === 'commit-guard'), 'a commented-out guard line never reads as armed');
+    writeFileSync(join(root, 'hooks', 'pre-commit'), `${MANAGED_GUARDLESS}node "${join(root, 'fake-commit-guard.mjs')}" --check\n`);
+    const lookalike = buildRecommendations({ cwd: root, deps: guardDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(lookalike.items.some((i) => i.key === 'commit-guard'), 'a non-canonical guard path never reads as armed');
+  });
+
+  it('an UNMANAGED pre-commit hook is a stated skip (manual merge — never an overwrite offer)', () => {
+    const root = guardProject();
+    writeFileSync(join(root, 'hooks', 'pre-commit'), '#!/bin/sh\nexit 0\n');
+    const { items, skips } = buildRecommendations({ cwd: root, deps: guardDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!items.some((i) => i.key === 'commit-guard'));
+    assert.ok(skips.some((s) => s.key === 'commit-guard' && /UNMANAGED.*by hand/u.test(s.reason)));
+  });
+
+  it('a declaration that is NOT final-run-capable gets NO offer and NO skip (an armed guard there would refuse every commit)', () => {
+    const root = guardProject();
+    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates: [{ id: 'unit', title: 'T', cmd: 'node --test' }] }));
+    const { items, skips } = buildRecommendations({ cwd: root, deps: guardDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!items.some((i) => i.key === 'commit-guard'));
+    assert.ok(!skips.some((s) => s.key === 'commit-guard'));
+  });
+
+  it('a final-capable declaration WITHOUT the deployed installer is a stated skip naming the recovery', () => {
+    const root = guardProject();
+    rmSync(join(root, 'scripts', 'install-git-hooks.mjs'));
+    const { items, skips } = buildRecommendations({ cwd: root, deps: guardDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!items.some((i) => i.key === 'commit-guard'));
+    assert.ok(skips.some((s) => s.key === 'commit-guard' && /install-git-hooks\.mjs.*upgrade/u.test(s.reason)));
+  });
 
   it('family-freshness: behind/caveated rows fire the init item; a throwing survey degrades to a skip', () => {
     const root = makeProject();
@@ -1308,7 +1401,7 @@ describe('recommendations — every probe degrades honestly (per-branch skip cov
     rmSync(root, { recursive: true, force: true });
     const item = items.find((i) => i.key === 'gates-declaration');
     assert.ok(item, 'an EMPTY declaration is as undeclared as an absent file');
-    assert.equal(item.apply, `node ${join(HERE, 'seed-gates.mjs')} --cwd ${root}`, 'the apply line is a PURE executable command — run-exactly-as-rendered must not feed prose to the CLI');
+    assert.equal(item.apply, `node ${join(HERE, 'gates-init.mjs')} --cwd ${root}`, 'the apply line is a PURE executable command — run-exactly-as-rendered must not feed prose to the CLI');
     assert.match(item.what, /PREVIEW.*writes nothing/i, 'the two-step is stated in WHAT — the rendered line previews, it does not write');
     assert.match(item.what, /--apply/, 'the consent step is named in WHAT: the preview prints the exact --apply line to run');
   });

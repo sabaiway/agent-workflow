@@ -22,7 +22,7 @@
 // never a silent truncate; a file without frontmatter/`maxLines` skips the guard with a stated
 // note (such a file is outside the docs cap gate anyway).
 //
-// Pure string functions (fs only in the CLI); dependency-free, Node >= 18.
+// Pure string functions (fs only in the CLI); dependency-free, Node >= 22.
 
 import { normalizeCanonical } from './orchestration-config.mjs';
 

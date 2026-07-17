@@ -16,7 +16,7 @@
 //
 // This module performs NO filesystem WRITES — only reads (loadConfig). The single fs-writer lives in
 // orchestration-write.mjs, which procedures.mjs never imports, so "procedures never reaches a writer"
-// is structurally true. Pure-where-possible (fs injectable), dependency-free, Node >= 18. No side
+// is structurally true. Pure-where-possible (fs injectable), dependency-free, Node >= 22. No side
 // effects on import.
 
 import { readFileSync, lstatSync } from 'node:fs';

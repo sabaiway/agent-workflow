@@ -19,7 +19,7 @@
 //                    untouched and reported, never removed.
 //
 // Pure planner (buildPlan) + guarded executor (executePlan), both dependency-injectable so the whole
-// module is unit-testable without the real filesystem. Dependency-free, Node >= 18. No side effects on
+// module is unit-testable without the real filesystem. Dependency-free, Node >= 22. No side effects on
 // import (the isDirectRun idiom).
 
 import { existsSync, statSync, lstatSync, readlinkSync, readFileSync, readdirSync, realpathSync } from 'node:fs';

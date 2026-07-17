@@ -5,7 +5,7 @@
 // the JSON mode is handled by the caller (it prints the envelope, not a render). The renderers do
 // LAYOUT + GLYPHS only — phrasing + headline counts already live in the ViewModel.
 //
-// Pure, no side effects, Node >= 18.
+// Pure, no side effects, Node >= 22.
 
 import { BLOCK_TITLES, SETTINGS_LABELS, glyphsFor, NO_DEPLOYMENT } from './presentation.mjs';
 

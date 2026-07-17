@@ -16,7 +16,7 @@
 //
 // This module performs NO filesystem WRITES — only reads (loadAutonomy). The single fs-writer lives in
 // autonomy-write.mjs, which no read-only module imports, so the read surface stays fs-write-free.
-// Pure-where-possible (fs injectable), dependency-free, Node >= 18. No side effects on import.
+// Pure-where-possible (fs injectable), dependency-free, Node >= 22. No side effects on import.
 
 import { readFileSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';

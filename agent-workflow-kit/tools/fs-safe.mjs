@@ -2,7 +2,7 @@
 // (bin/install.mjs) and the backend linker (tools/setup-backends.mjs). Importing this module has NO
 // side effects: it runs nothing. Every fs primitive is injectable via `deps.*` so the guards are
 // unit-testable without touching the real filesystem; the defaults are Node's SYNC fs (matching the
-// tools/ detector style). Dependency-free, Node >= 18.
+// tools/ detector style). Dependency-free, Node >= 22.
 //
 // Five primitives:
 //   assertContainedRealPath — refuse to write through/into a symlink, or to a dest outside a root.
