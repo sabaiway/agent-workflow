@@ -355,7 +355,7 @@ describe('kit installer — mandatory engine install (subprocess)', () => {
     // --no-bridges keeps the run off the host's real placed bridges (dedicated sandboxed tests below).
     const res = spawnSync(process.execPath, [INSTALLER, '--dir', target, '--no-launchers', '--no-memory', '--no-bridges'], {
       encoding: 'utf8',
-      env: { ...process.env, PATH: emptyBin },
+      env: { ...process.env, PATH: emptyBin, AW_INSTALL_RETRY_DELAY_MS: '0' },
     });
     assert.notEqual(res.status, 0, 'an engine-install failure must exit nonzero');
     assert.match(res.stderr, /FAILED to install the methodology engine/);
@@ -514,6 +514,7 @@ describe('kit installer — memory cascade (subprocess, stubbed npx, no network)
         HOME: join(dir, 'home'),
         AGENT_WORKFLOW_MEMORY_DIR: join(dir, 'mem'), // sanitized: the degraded warning never reads real home
         AGENT_WORKFLOW_ENGINE_DIR: join(dir, 'eng'),
+        AW_INSTALL_RETRY_DELAY_MS: '0', // the retry POLICY still runs; only the transient-blip wait is zeroed
         ...env,
       },
     });

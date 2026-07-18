@@ -1,13 +1,13 @@
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, readFileSync,
-  existsSync, readdirSync, symlinkSync,
+  existsSync, readdirSync, symlinkSync, cpSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFile } from 'node:child_process';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WRAPPER = join(HERE, 'agy-review.sh');
@@ -65,15 +65,23 @@ const makePathWithout = (root, exclude = []) => {
   return dir;
 };
 
-// `clean: true` leaves a pristine committed tree (for the no-diff preflight); the default leaves one
-// untracked file so `code` mode has a diff to review.
-const makeSandbox = ({ clean = false } = {}) => {
-  const home = mkdtempSync(join(tmpdir(), 'agy-review-test-'));
+// The PATH farms and the sandbox base are READ-ONLY per invocation, so both are built ONCE and
+// shared: a per-run farm rebuild (thousands of symlinks) plus a per-test `git init`+commit were
+// the suite's dominant wall cost, not the wrapper under test.
+const SHARED_ROOT = mkdtempSync(join(tmpdir(), 'agy-review-shared-'));
+after(() => rmSync(SHARED_ROOT, { recursive: true, force: true }));
+const farms = new Map();
+const farmFor = (exclude) => {
+  const key = exclude.join('|');
+  if (!farms.has(key)) farms.set(key, makePathWithout(SHARED_ROOT, exclude));
+  return farms.get(key);
+};
+
+const TEMPLATE_HOME = (() => {
+  const home = join(SHARED_ROOT, 'template-home');
   const bin = join(home, '.local', 'bin');
   mkdirSync(bin, { recursive: true });
-  const stub = join(bin, 'agy');
-  writeFileSync(stub, FAKE_AGY, { mode: 0o755 });
-  chmodSync(stub, 0o755);
+  writeFileSync(join(bin, 'agy'), FAKE_AGY, { mode: 0o755 });
   const repo = join(home, 'repo');
   mkdirSync(repo);
   const g = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
@@ -83,13 +91,25 @@ const makeSandbox = ({ clean = false } = {}) => {
   writeFileSync(join(repo, 'base.txt'), 'committed base\n');
   g('add', '-A');
   g('commit', '-qm', 'base');
+  return home;
+})();
+
+// `clean: true` leaves a pristine committed tree (for the no-diff preflight); the default leaves one
+// untracked file so `code` mode has a diff to review.
+const makeSandbox = ({ clean = false } = {}) => {
+  const home = mkdtempSync(join(tmpdir(), 'agy-review-test-'));
+  cpSync(TEMPLATE_HOME, home, { recursive: true });
+  const bin = join(home, '.local', 'bin');
+  chmodSync(join(bin, 'agy'), 0o755);
+  const repo = join(home, 'repo');
+  const g = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
   if (!clean) writeFileSync(join(repo, 'pending.txt'), 'PENDING_UNTRACKED_BODY\n');
   return { home, bin, repo, g };
 };
 
 const run = (sb, { args, env = {}, cwd } = {}) => {
   const { home, bin, repo } = sb;
-  const farm = makePathWithout(home, ['agy', 'agy-run']);
+  const farm = farmFor(['agy', 'agy-run']);
   const cap = {
     argv: join(home, 'cap-argv'), env: join(home, 'cap-env'), prompt: join(home, 'cap-prompt'),
     sentinel: join(home, 'cap-sentinel'), adddir: join(home, 'cap-adddir'),
@@ -121,6 +141,44 @@ const run = (sb, { args, env = {}, cwd } = {}) => {
     artifactMode: readIf(cap.artifactMode).trim(), artifactCopy: readIf(cap.artifactCopy),
   };
 };
+
+// Async twin of run() for the two sleep-bound timeout tests: spawnSync blocks the event loop
+// for the whole deliberate wait, so a concurrent describe could not overlap them. Same spawn
+// contract and captures.
+const runAsync = (sb, { args, env = {}, cwd } = {}) =>
+  new Promise((done) => {
+    const { home, bin, repo } = sb;
+    const cap = {
+      argv: join(home, 'cap-argv'), env: join(home, 'cap-env'), prompt: join(home, 'cap-prompt'),
+      sentinel: join(home, 'cap-sentinel'), adddir: join(home, 'cap-adddir'),
+      adddirMode: join(home, 'cap-adddir-mode'), artifactMode: join(home, 'cap-artifact-mode'),
+      artifactCopy: join(home, 'cap-artifact-copy'),
+    };
+    const child = execFile('bash', [WRAPPER, ...args], {
+      cwd: cwd || repo,
+      encoding: 'utf8',
+      timeout: 30000,
+      env: {
+        HOME: home,
+        PATH: `${bin}:${farmFor(['agy', 'agy-run'])}`,
+        TMPDIR: process.env.TMPDIR ?? '/tmp',
+        AGY_FAKE_ARGV: cap.argv, AGY_FAKE_ENV: cap.env, AGY_FAKE_PROMPT: cap.prompt,
+        AGY_FAKE_SENTINEL: cap.sentinel, AGY_FAKE_ADDDIR: cap.adddir, AGY_FAKE_ADDDIR_MODE: cap.adddirMode,
+        AGY_FAKE_ARTIFACT_MODE: cap.artifactMode, AGY_FAKE_ARTIFACT_COPY: cap.artifactCopy,
+        ...env,
+      },
+    }, (error, stdout, stderr) => {
+      const readIf = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '');
+      done({
+        status: error ? (error.code ?? 1) : 0, stdout, stderr,
+        invoked: existsSync(cap.sentinel),
+        argv: readIf(cap.argv), capEnv: readIf(cap.env), prompt: readIf(cap.prompt),
+        adddir: readIf(cap.adddir).trim(), adddirMode: readIf(cap.adddirMode).trim(),
+        artifactMode: readIf(cap.artifactMode).trim(), artifactCopy: readIf(cap.artifactCopy),
+      });
+    });
+    child.stdin.end();
+  });
 
 describe('agy-review.sh — model policy advisory (1)', () => {
   it('warns for a non-frontier model but still runs', () => {
@@ -424,11 +482,11 @@ describe('agy-review.sh — resume / round-2 delta (7)', () => {
   });
 });
 
-describe('agy-review.sh — delegated guards inherited via agy-run (9, 10)', () => {
-  it('hard timeout: a sleeping stub is killed at AGY_HARD_TIMEOUT', () => {
+describe('agy-review.sh — delegated guards inherited via agy-run (9, 10)', { concurrency: true }, () => {
+  it('hard timeout: a sleeping stub is killed at AGY_HARD_TIMEOUT', async () => {
     const sb = makeSandbox();
     const started = Date.now();
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_SLEEP: '30', AGY_HARD_TIMEOUT: '2s', AGY_TIMEOUT: '2s' } });
+    const r = await runAsync(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_SLEEP: '30', AGY_HARD_TIMEOUT: '2s', AGY_TIMEOUT: '2s' } });
     const elapsed = Date.now() - started;
     rmSync(sb.home, { recursive: true, force: true });
     assert.ok(elapsed < 20000, `must return well under the kill-after window, took ${elapsed}ms`);
@@ -552,7 +610,7 @@ const runHelp = (arg) => {
   const root = mkdtempSync(join(tmpdir(), 'agy-review-help-'));
   const nongit = join(root, 'nongit');
   mkdirSync(nongit, { recursive: true });
-  const path = makePathWithout(root, ['codex', 'agy', 'git']);
+  const path = farmFor(['codex', 'agy', 'git']);
   const r = spawnSync('bash', [WRAPPER, arg], {
     cwd: nongit, encoding: 'utf8', timeout: 15000, env: { HOME: root, PATH: path },
   });
@@ -1078,7 +1136,7 @@ const writeSettings = (sb, text) => {
 };
 const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 
-describe('agy-review.sh — bridge settings file (bridges 2.3.0)', () => {
+describe('agy-review.sh — bridge settings file (bridges 2.3.0)', { concurrency: true }, () => {
   it('a file-set AGY_REVIEW_ALLOW_ADDDIR=1 arms the oversized --add-dir escape', () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'unique.txt'), `OVERSIZE_UNIQUE_MARKER\n${'x'.repeat(8000)}\n`);
@@ -1123,10 +1181,10 @@ describe('agy-review.sh — bridge settings file (bridges 2.3.0)', () => {
     assert.equal(r.invoked, false);
   });
 
-  it('a file-set AGY_HARD_TIMEOUT flows through the agy-run delegation (killed at the file cap)', () => {
+  it('a file-set AGY_HARD_TIMEOUT flows through the agy-run delegation (killed at the file cap)', async () => {
     const sb = makeSandbox();
     writeSettings(sb, 'AGY_HARD_TIMEOUT=2s\n');
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_SLEEP: '5' } });
+    const r = await runAsync(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_SLEEP: '5' } });
     rmSync(sb.home, { recursive: true, force: true });
     assert.notEqual(r.status, 0, 'the file cap must apply end-to-end (reader → agy-run → timeout)');
     assert.match(r.stderr, /exceeded the hard cap AGY_HARD_TIMEOUT=2s/);

@@ -211,7 +211,16 @@ const spawnMember = ({ command, args, options }) => spawnSync(command, args, opt
 // npm/network blip (rate-limit, registry hiccup, momentary DNS) — an immediate retry tends to hit the
 // same blip, so wait briefly first. Atomics.wait is a dependency-free sync sleep (the install flow is
 // already synchronous here). Injected in tests as a 0ms no-op so the suite never actually sleeps.
-const RETRY_DELAY_MS = 1500;
+// AW_INSTALL_RETRY_DELAY_MS is a test seam (the subprocess cascade suite zeroes the wait; the
+// retry POLICY itself stays exercised). Unset, empty, malformed and negative all keep the shipped
+// default — `Number('')` is 0, so the raw value is screened BEFORE coercion (the R1 council bug).
+export const resolveRetryDelayMs = (env) => {
+  const raw = env.AW_INSTALL_RETRY_DELAY_MS;
+  if (typeof raw !== 'string' || raw.trim() === '') return 1500;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 1500;
+};
+const RETRY_DELAY_MS = resolveRetryDelayMs(process.env);
 const sleepSync = (ms) => {
   if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 };

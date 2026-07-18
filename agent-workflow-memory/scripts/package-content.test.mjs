@@ -196,6 +196,9 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
     // 49 = 48 + migrations/3.0.0-hardened-core-loop.md (the AD-059 lineage migration — the
     //      memory-side steps: Node floor, the kit-present vs memory-only branches,
     //      the .memory-version re-stamp).
-    assert.equal(packed.length, 49, `tarball file count drifted (${packed.length} ≠ 49)`);
+    // 50 = 49 + references/scripts/check-docs-size-cli.test.mjs (Phase-5 coverage fill: the
+    //      runCli refusal-branch pins the subprocess smokes cannot reach; the main spec file
+    //      is parity-frozen, so the pins ride a colocated deploy-payload file; kit-mirrored).
+    assert.equal(packed.length, 50, `tarball file count drifted (${packed.length} ≠ 50)`);
   });
 });

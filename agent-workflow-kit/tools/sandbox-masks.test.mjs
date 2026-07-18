@@ -4,9 +4,9 @@
 // same lying-dirent mechanism the sandbox exhibits — over a REAL fixture repo whose write
 // mechanics (fence, info/exclude, .gitignore untouched) are asserted on disk.
 
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, lstatSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, lstatSync, symlinkSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,15 +34,24 @@ const fakeStat = (type) => ({
   isSocket: () => type === 'socket',
 });
 
-const makeRepo = () => {
-  const root = mkdtempSync(join(tmpdir(), 'sandbox-masks-'));
-  const g = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+// Identical committed base for every test — built once, cloned per test (a per-test
+// `git init`+commit dominated the fixture cost).
+const REPO_TEMPLATE = (() => {
+  const dir = mkdtempSync(join(tmpdir(), 'sandbox-masks-template-'));
+  const g = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
   g('init', '-q');
   g('config', 'user.email', 'probe@example.com');
   g('config', 'user.name', 'probe');
-  writeFileSync(join(root, 'base.txt'), 'committed\n');
+  writeFileSync(join(dir, 'base.txt'), 'committed\n');
   g('add', '-A');
   g('commit', '-qm', 'base');
+  return dir;
+})();
+after(() => rmSync(REPO_TEMPLATE, { recursive: true, force: true }));
+
+const makeRepo = () => {
+  const root = mkdtempSync(join(tmpdir(), 'sandbox-masks-'));
+  cpSync(REPO_TEMPLATE, root, { recursive: true });
   return root;
 };
 

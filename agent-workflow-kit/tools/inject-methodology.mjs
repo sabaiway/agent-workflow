@@ -314,11 +314,31 @@ const isCapRefusal = (errorMessage) => typeof errorMessage === 'string' && error
 export const isFillCapRefusal = (errorMessage) =>
   isCapRefusal(errorMessage) && errorMessage.includes('injection would push');
 
-const main = async (argv) => {
+const EXIT = Symbol('inject-methodology.exit');
+
+// The return-code entry point (5.1): argv[] + injected env/home → { code, stdout, stderr }, no
+// process.argv / process.exit / console inside — an in-process caller is as hermetic as a spawned
+// one. The thin shell at the bottom is the only process-coupled code.
+export const runCli = async (argv, deps = {}) => {
   const { readFile, writeFile, rename, rm } = await import('node:fs/promises');
   const { dirname, basename, join, resolve } = await import('node:path');
   const { homedir } = await import('node:os');
   const { resolveEngineDir, readEngineFragment, detectEngine, ENGINE_FRAGMENT_REL, ORCHESTRATION_FRAGMENT_REL, AUTONOMY_FRAGMENT_REL } = await import('./engine-source.mjs');
+  const env = deps.env ?? process.env;
+  const home = deps.home ?? homedir();
+
+  const stdoutLines = [];
+  const stderrLines = [];
+  const log = (line) => stdoutLines.push(line);
+  const logError = (line) => stderrLines.push(line);
+  const result = (code) => ({
+    code,
+    stdout: stdoutLines.length > 0 ? `${stdoutLines.join('\n')}\n` : '',
+    stderr: stderrLines.length > 0 ? `${stderrLines.join('\n')}\n` : '',
+  });
+  // Nested sourcing helpers end the run from arbitrary depth — a tagged throw the catch below
+  // translates into the result code (the process.exit of the pre-entry-point CLI).
+  const stop = (code) => Object.assign(new Error(`exit ${code}`), { [EXIT]: code });
 
   // `reconcile <AGENTS.md> [fragment.md]` = ensure-slot + inject-if-empty + cap (bootstrap/upgrade) for
   // ALL THREE slots; `<AGENTS.md> [fragment.md]` = the legacy inject-into-existing-(methodology)-slot mode.
@@ -326,10 +346,11 @@ const main = async (argv) => {
   const rest = mode === 'reconcile' ? argv.slice(1) : argv;
   const agentsPath = rest[0];
   if (!agentsPath) {
-    console.error('usage: inject-methodology.mjs [reconcile] <path/to/AGENTS.md> [fragment.md]');
-    process.exit(2);
+    logError('usage: inject-methodology.mjs [reconcile] <path/to/AGENTS.md> [fragment.md]');
+    return result(2);
   }
   const explicitFragmentArg = rest[1];
+  try {
   const text = await readFile(resolve(agentsPath), 'utf8');
 
   // Source a bounded fragment LAZILY, per slot. An explicit [fragment.md] arg (tests + manual) wins and
@@ -339,7 +360,7 @@ const main = async (argv) => {
   // the install command. The caller only invokes this when a fill is actually needed (the laziness).
   const sourceFragment = async (rel) => {
     if (explicitFragmentArg) return readFile(resolve(explicitFragmentArg), 'utf8');
-    const { dir, source } = resolveEngineDir({ env: process.env, home: homedir() });
+    const { dir, source } = resolveEngineDir({ env, home });
     return readEngineFragment(dir, { source, rel }); // sync; throws loudly when the engine is absent/invalid
   };
   const sourceFragmentOrStop = async (label, rel) => {
@@ -348,8 +369,8 @@ const main = async (argv) => {
     } catch (err) {
       // Engine needed-but-absent → a hard STOP, distinct from the soft cap-skip. The "methodology
       // engine not found/invalid" prefix lets the agent classify this exit (SKILL.md).
-      console.error(`[inject-methodology] ${label} — ${err.message}`);
-      process.exit(1);
+      logError(`[inject-methodology] ${label} — ${err.message}`);
+      throw stop(1);
     }
   };
 
@@ -362,16 +383,16 @@ const main = async (argv) => {
   // an unreadable fragment). Returns { fragment } on success, { skip } for the soft case, or
   // process.exit(1) for the hard STOP.
   const sourceChainedFragment = async (rel) => {
-    const { dir, source } = resolveEngineDir({ env: process.env, home: homedir() });
-    const stop = (err) => {
-      console.error(`[inject-methodology] reconcile STOP — ${err.message}`);
-      process.exit(1);
+    const { dir, source } = resolveEngineDir({ env, home });
+    const chainedStop = (err) => {
+      logError(`[inject-methodology] reconcile STOP — ${err.message}`);
+      throw stop(1);
     };
     if (detectEngine(dir, { source, rel }).ok) {
       try {
         return { fragment: readEngineFragment(dir, { source, rel }) };
       } catch (err) {
-        stop(err);
+        chainedStop(err);
       }
     }
     if (detectEngine(dir, { source }).ok) {
@@ -380,7 +401,7 @@ const main = async (argv) => {
     try {
       readEngineFragment(dir, { source, rel }); // throws the canonical install-me error
     } catch (err) {
-      stop(err);
+      chainedStop(err);
     }
   };
 
@@ -402,8 +423,8 @@ const main = async (argv) => {
     if (methResult.status === 'error') {
       // cap-refusal OR malformed/anchor STOP — preserve the single-slot classification (SKILL.md
       // distinguishes by the message); the file is byte-for-byte unchanged either way.
-      console.error(`[inject-methodology] reconcile refused — ${methResult.error}`);
-      process.exit(1);
+      logError(`[inject-methodology] reconcile refused — ${methResult.error}`);
+      return result(1);
     }
     const afterMeth = methResult.text; // === text when the methodology slot was already filled (custom)
     const describeMeth = {
@@ -421,18 +442,18 @@ const main = async (argv) => {
       const u = markerSlotUpgradeHint(afterMeth, METHODOLOGY_DESCRIPTOR); if (u) notes.push(u);
     }
     const reportNotes = () => {
-      for (const n of notes) console.log(`[inject-methodology] note: ${n}`);
+      for (const n of notes) log(`[inject-methodology] note: ${n}`);
     };
 
     // ── Explicit [fragment.md] binds methodology ONLY → skip the orchestration + autonomy reconciles ──
     if (explicitFragmentArg) {
       if (afterMeth === text) {
-        console.log('[inject-methodology] methodology slot already present and filled — nothing to do (zero-diff).');
-        return;
+        log('[inject-methodology] methodology slot already present and filled — nothing to do (zero-diff).');
+        return result(0);
       }
       await writeAtomic(afterMeth);
-      console.log(`[inject-methodology] reconcile: ${describeMeth}.`);
-      return;
+      log(`[inject-methodology] reconcile: ${describeMeth}.`);
+      return result(0);
     }
 
     // ── Slot 2: orchestration, reconciled on the methodology-reconciled text (the cap-check then guards
@@ -459,8 +480,8 @@ const main = async (argv) => {
           describeOrch = `orchestration-recipes pointer skipped — ${orchResult.error}`;
         } else {
           // Malformed orchestration slot/anchor → a hard STOP. No partial write.
-          console.error(`[inject-methodology] reconcile refused (orchestration) — ${orchResult.error}`);
-          process.exit(1);
+          logError(`[inject-methodology] reconcile refused (orchestration) — ${orchResult.error}`);
+          return result(1);
         }
       } else {
         finalText = orchResult.text;
@@ -493,8 +514,8 @@ const main = async (argv) => {
       // Malformed markers are a hard STOP on EVERY lane — validated before the soft-skip
       // short-circuits so a duplicate/reversed autonomy pair can never ride out as a "skip"
       // alongside a partial (methodology) write.
-      console.error(`[inject-methodology] reconcile refused (autonomy) — ${autSlot.reason}`);
-      process.exit(1);
+      logError(`[inject-methodology] reconcile refused (autonomy) — ${autSlot.reason}`);
+      return result(1);
     }
     if (orchSkipped) {
       // The chain is CAUSAL, not merely positional: a pointer never lands in a run that withheld
@@ -523,8 +544,8 @@ const main = async (argv) => {
             autSkipped = true;
             describeAut = `autonomy pointer skipped — ${autResult.error}`;
           } else {
-            console.error(`[inject-methodology] reconcile refused (autonomy) — ${autResult.error}`);
-            process.exit(1);
+            logError(`[inject-methodology] reconcile refused (autonomy) — ${autResult.error}`);
+            return result(1);
           }
         } else {
           finalText = autResult.text;
@@ -545,34 +566,44 @@ const main = async (argv) => {
     // ── One atomic write of the final (three-slot) text ──
     if (finalText === text) {
       // Byte-unchanged. Still report a skip (it is not "nothing to do" — a pointer was withheld).
-      if (orchSkipped || autSkipped) console.log(`[inject-methodology] reconcile: ${describeMeth}; ${describeOrch}; ${describeAut}.`);
-      else console.log('[inject-methodology] reconcile: all three pointers already present and filled — nothing to do (zero-diff).');
+      if (orchSkipped || autSkipped) log(`[inject-methodology] reconcile: ${describeMeth}; ${describeOrch}; ${describeAut}.`);
+      else log('[inject-methodology] reconcile: all three pointers already present and filled — nothing to do (zero-diff).');
       reportNotes();
-      return;
+      return result(0);
     }
     await writeAtomic(finalText);
-    console.log(`[inject-methodology] reconcile: ${describeMeth}; ${describeOrch}; ${describeAut}.`);
+    log(`[inject-methodology] reconcile: ${describeMeth}; ${describeOrch}; ${describeAut}.`);
     reportNotes();
-    return;
+    return result(0);
   }
 
   // Legacy inject-into-existing-slot mode (METHODOLOGY only). injectMethodology no-ops on absent markers
   // and errors on a malformed slot WITHOUT reading the fragment, so resolve+read the engine only when
   // there is a present (ok) slot to fill — a markerless legacy AGENTS.md stays a no-op without the engine.
   const fragment = findSlot(text).state === 'ok' ? await sourceFragmentOrStop('STOP', ENGINE_FRAGMENT_REL) : '';
-  const result = injectMethodology(text, fragment, { maxLines: AGENTS_MD_CAP });
-  if (result.status === 'error') {
-    console.error(`[inject-methodology] malformed slot — refusing to edit: ${result.error}`);
-    process.exit(1);
+  const injected = injectMethodology(text, fragment, { maxLines: AGENTS_MD_CAP });
+  if (injected.status === 'error') {
+    logError(`[inject-methodology] malformed slot — refusing to edit: ${injected.error}`);
+    return result(1);
   }
-  if (result.status === 'noop-absent') {
-    console.log('[inject-methodology] no methodology markers found — nothing to inject (legacy AGENTS.md).');
-    return;
+  if (injected.status === 'noop-absent') {
+    log('[inject-methodology] no methodology markers found — nothing to inject (legacy AGENTS.md).');
+    return result(0);
   }
-  await writeAtomic(result.text);
-  console.log('[inject-methodology] injected the bounded methodology fragment into the slot.');
+  await writeAtomic(injected.text);
+  log('[inject-methodology] injected the bounded methodology fragment into the slot.');
+  return result(0);
+  } catch (err) {
+    if (err[EXIT] !== undefined) return result(err[EXIT]);
+    throw err;
+  }
 };
 
 const { pathToFileURL } = await import('node:url');
 const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) await main(process.argv.slice(2));
+if (isDirectRun) {
+  const { code, stdout, stderr } = await runCli(process.argv.slice(2));
+  if (stdout) process.stdout.write(stdout);
+  if (stderr) process.stderr.write(stderr);
+  process.exitCode = code;
+}

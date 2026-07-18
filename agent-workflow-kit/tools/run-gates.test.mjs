@@ -1,4 +1,4 @@
-import { describe, it, afterEach } from 'node:test';
+import { describe, it, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, cpSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -393,18 +393,31 @@ describe('run-gates --final — the ONE receipt the commit guard consumes', () =
     for (const k of Object.keys(env)) if (k.startsWith('AW_')) delete env[k];
     return { ...env, ...extra };
   };
-  const makeRepo = (gates) => {
-    const root = mkdtempSync(join(tmpdir(), 'run-gates-final-'));
-    const g = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+  // The invariant part of the committed base (config + base file) is built once and cloned; only
+  // the per-test gates.json still lands in its own commit (a full per-test `git init`+commit
+  // dominated the fixture cost).
+  const REPO_TEMPLATE = (() => {
+    const dir = mkdtempSync(join(tmpdir(), 'run-gates-final-template-'));
+    const g = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
     g('init', '-q');
     g('config', 'user.email', 'probe@example.com');
     g('config', 'user.name', 'probe');
-    mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
-    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'solo' } }));
-    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates }));
-    writeFileSync(join(root, 'base.txt'), 'base\n');
+    mkdirSync(join(dir, 'docs', 'ai'), { recursive: true });
+    writeFileSync(join(dir, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'solo' } }));
+    writeFileSync(join(dir, 'base.txt'), 'base\n');
     g('add', '-A');
     g('commit', '-qm', 'base');
+    return dir;
+  })();
+  after(() => rmSync(REPO_TEMPLATE, { recursive: true, force: true }));
+
+  const makeRepo = (gates) => {
+    const root = mkdtempSync(join(tmpdir(), 'run-gates-final-'));
+    cpSync(REPO_TEMPLATE, root, { recursive: true });
+    const g = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates }));
+    g('add', '-A');
+    g('commit', '-qm', 'gates');
     writeFileSync(join(root, 'pending.mjs'), 'export const p = 1;\n');
     return root;
   };

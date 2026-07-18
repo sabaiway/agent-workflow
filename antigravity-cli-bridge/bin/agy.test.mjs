@@ -1,10 +1,10 @@
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, existsSync, readdirSync, symlinkSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFile } from 'node:child_process';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WRAPPER = join(HERE, 'agy.sh');
@@ -31,11 +31,23 @@ const runWrapper = (home, env, prompt = 'hello') =>
     timeout: 20000,
   });
 
-describe('agy.sh — hard wall-clock cap (timeout(1))', () => {
-  it('kills a hung agy at AGY_HARD_TIMEOUT and reports it (non-zero + actionable guidance)', () => {
+// Async twin of runWrapper for the sleep-bound suites below: spawnSync BLOCKS the event loop
+// and would serialize the deliberate timeout waits; the async form lets a concurrent describe
+// overlap them (the waiting children are idle, not CPU-bound). Same spawn contract.
+const runWrapperAsync = (home, env, prompt = 'hello') =>
+  new Promise((done) => {
+    execFile('bash', [WRAPPER, prompt], {
+      env: { HOME: home, PATH: `${join(home, '.local', 'bin')}:${process.env.PATH}`, TMPDIR: process.env.TMPDIR ?? '/tmp', ...env },
+      encoding: 'utf8',
+      timeout: 20000,
+    }, (error, stdout, stderr) => done({ status: error ? (error.code ?? 1) : 0, stdout, stderr }));
+  });
+
+describe('agy.sh — hard wall-clock cap (timeout(1))', { concurrency: true }, () => {
+  it('kills a hung agy at AGY_HARD_TIMEOUT and reports it (non-zero + actionable guidance)', async () => {
     const home = makeSandbox('#!/usr/bin/env bash\nsleep 30\n');
     const started = Date.now();
-    const r = runWrapper(home, { AGY_HARD_TIMEOUT: '2s', AGY_TIMEOUT: '2s', AGY_MODEL: '' });
+    const r = await runWrapperAsync(home, { AGY_HARD_TIMEOUT: '2s', AGY_TIMEOUT: '2s', AGY_MODEL: '' });
     const elapsed = Date.now() - started;
     rmSync(home, { recursive: true, force: true });
     assert.ok(elapsed < 13000, `wrapper must return well under the kill-after window, took ${elapsed}ms`);
@@ -43,17 +55,17 @@ describe('agy.sh — hard wall-clock cap (timeout(1))', () => {
     assert.match(r.stderr, /exceeded the hard cap/, 'must explain the hard-cap kill');
   });
 
-  it('passes a fast agy run through unchanged (exit 0, stdout preserved)', () => {
+  it('passes a fast agy run through unchanged (exit 0, stdout preserved)', async () => {
     const home = makeSandbox('#!/usr/bin/env bash\necho "OK reply"\nexit 0\n');
-    const r = runWrapper(home, { AGY_HARD_TIMEOUT: '10s', AGY_TIMEOUT: '10s', AGY_MODEL: '' });
+    const r = await runWrapperAsync(home, { AGY_HARD_TIMEOUT: '10s', AGY_TIMEOUT: '10s', AGY_MODEL: '' });
     rmSync(home, { recursive: true, force: true });
     assert.equal(r.status, 0, `expected clean exit, got ${r.status}; stderr=${r.stderr}`);
     assert.match(r.stdout, /OK reply/);
   });
 
-  it('propagates a non-timeout agy failure code verbatim (no false hard-cap message)', () => {
+  it('propagates a non-timeout agy failure code verbatim (no false hard-cap message)', async () => {
     const home = makeSandbox('#!/usr/bin/env bash\necho "boom" >&2\nexit 3\n');
-    const r = runWrapper(home, { AGY_HARD_TIMEOUT: '10s', AGY_TIMEOUT: '10s', AGY_MODEL: '' });
+    const r = await runWrapperAsync(home, { AGY_HARD_TIMEOUT: '10s', AGY_TIMEOUT: '10s', AGY_MODEL: '' });
     rmSync(home, { recursive: true, force: true });
     assert.equal(r.status, 3, 'a genuine agy failure code must pass through');
     assert.doesNotMatch(r.stderr, /exceeded the hard cap/, 'must not mislabel a non-timeout failure');
@@ -178,6 +190,12 @@ const makePathWithout = (root, exclude = []) => {
   return dir;
 };
 
+// The farm is READ-ONLY per invocation — built ONCE and shared (a per-call rebuild is thousands
+// of symlinks).
+const FARM_ROOT = mkdtempSync(join(tmpdir(), 'agy-farm-'));
+after(() => rmSync(FARM_ROOT, { recursive: true, force: true }));
+const FARM = makePathWithout(FARM_ROOT, ['agy', 'git']);
+
 describe('agy.sh — --help (pre-preflight, candidate C)', () => {
   it('--help and -h exit 0 with NO agy on PATH and name the documented usage', () => {
     for (const arg of ['--help', '-h']) {
@@ -185,7 +203,7 @@ describe('agy.sh — --help (pre-preflight, candidate C)', () => {
       // the help must not need the CLI even when the host has a real agy installed.
       const home = mkdtempSync(join(tmpdir(), 'agy-help-'));
       const r = spawnSync('bash', [WRAPPER, arg], {
-        env: { HOME: home, PATH: makePathWithout(home, ['agy', 'git']) },
+        env: { HOME: home, PATH: FARM },
         encoding: 'utf8',
         timeout: 15000,
       });
@@ -226,77 +244,77 @@ const writeSettings = (home, text) => {
 };
 const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 
-describe('agy.sh — bridge settings file (bridges 2.3.0)', () => {
-  it('a file-set AGY_HARD_TIMEOUT is effective (killed at the file cap)', () => {
+describe('agy.sh — bridge settings file (bridges 2.3.0)', { concurrency: true }, () => {
+  it('a file-set AGY_HARD_TIMEOUT is effective (killed at the file cap)', async () => {
     const home = makeSandbox('#!/usr/bin/env bash\nsleep 5\n');
     writeSettings(home, 'AGY_HARD_TIMEOUT=2s\n');
-    const r = runWrapper(home, { AGY_MODEL: '' });
+    const r = await runWrapperAsync(home, { AGY_MODEL: '' });
     rmSync(home, { recursive: true, force: true });
     assert.notEqual(r.status, 0, 'the file cap must apply when the env is unset');
     assert.match(r.stderr, /exceeded the hard cap AGY_HARD_TIMEOUT=2s/);
   });
 
-  it('env overrides file: env=2s file=10m → killed at the env cap', () => {
+  it('env overrides file: env=2s file=10m → killed at the env cap', async () => {
     const home = makeSandbox('#!/usr/bin/env bash\nsleep 5\n');
     writeSettings(home, 'AGY_HARD_TIMEOUT=10m\n');
-    const r = runWrapper(home, { AGY_HARD_TIMEOUT: '2s', AGY_TIMEOUT: '2s', AGY_MODEL: '' });
+    const r = await runWrapperAsync(home, { AGY_HARD_TIMEOUT: '2s', AGY_TIMEOUT: '2s', AGY_MODEL: '' });
     rmSync(home, { recursive: true, force: true });
     assert.notEqual(r.status, 0, 'the env cap (2s) must win over the file cap (10m)');
     assert.match(r.stderr, /exceeded the hard cap AGY_HARD_TIMEOUT=2s/);
   });
 
-  it('an EXPLICITLY EMPTY env (AGY_HARD_TIMEOUT=) disables the file knob for one run', () => {
+  it('an EXPLICITLY EMPTY env (AGY_HARD_TIMEOUT=) disables the file knob for one run', async () => {
     const home = makeSandbox('#!/usr/bin/env bash\nsleep 3\necho "OK reply"\n');
     writeSettings(home, 'AGY_HARD_TIMEOUT=2s\n');
-    const r = runWrapper(home, { AGY_HARD_TIMEOUT: '', AGY_MODEL: '' });
+    const r = await runWrapperAsync(home, { AGY_HARD_TIMEOUT: '', AGY_MODEL: '' });
     rmSync(home, { recursive: true, force: true });
     assert.equal(r.status, 0, `built-in default must apply (not the 2s file cap): ${r.stderr}`);
     assert.match(r.stdout, /OK reply/);
   });
 
-  it('duplicate key → the LAST occurrence wins (10m then 2s → killed at 2s)', () => {
+  it('duplicate key → the LAST occurrence wins (10m then 2s → killed at 2s)', async () => {
     const home = makeSandbox('#!/usr/bin/env bash\nsleep 5\n');
     writeSettings(home, 'AGY_HARD_TIMEOUT=10m\nAGY_HARD_TIMEOUT=2s\n');
-    const r = runWrapper(home, { AGY_MODEL: '' });
+    const r = await runWrapperAsync(home, { AGY_MODEL: '' });
     rmSync(home, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /exceeded the hard cap AGY_HARD_TIMEOUT=2s/);
   });
 
-  it('an invalid duration warns and falls back to the built-in default', () => {
+  it('an invalid duration warns and falls back to the built-in default', async () => {
     const home = makeSandbox(RECORDING_STUB);
     writeSettings(home, 'AGY_HARD_TIMEOUT=abc\n');
-    const r = runWrapper(home, { AGY_MODEL: '' });
+    const r = await runWrapperAsync(home, { AGY_MODEL: '' });
     rmSync(home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /invalid value 'abc'/);
     assert.match(r.stdout, /OK reply/);
   });
 
-  it('a bare-integer duration (no unit suffix) is invalid → warn + built-in default', () => {
+  it('a bare-integer duration (no unit suffix) is invalid → warn + built-in default', async () => {
     const home = makeSandbox(RECORDING_STUB);
     writeSettings(home, 'AGY_HARD_TIMEOUT=90\n');
-    const r = runWrapper(home, { AGY_MODEL: '' });
+    const r = await runWrapperAsync(home, { AGY_MODEL: '' });
     rmSync(home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /invalid value '90'/, 'duration values require a unit suffix (5m/30m/90s)');
     assert.match(r.stdout, /OK reply/);
   });
 
-  it('a ZERO duration is invalid — timeout 0 would silently DISABLE the hard cap', () => {
+  it('a ZERO duration is invalid — timeout 0 would silently DISABLE the hard cap', async () => {
     const home = makeSandbox(RECORDING_STUB);
     writeSettings(home, 'AGY_HARD_TIMEOUT=0s\n');
-    const r = runWrapper(home, { AGY_MODEL: '' });
+    const r = await runWrapperAsync(home, { AGY_MODEL: '' });
     rmSync(home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /invalid value '0s'/, 'a persistent settings line must never remove the stall guard');
     assert.match(r.stdout, /OK reply/);
   });
 
-  it('a DIRECTORY at the settings path warns loudly and falls back to built-ins (no crash)', () => {
+  it('a DIRECTORY at the settings path warns loudly and falls back to built-ins (no crash)', async () => {
     const home = makeSandbox(RECORDING_STUB);
     mkdirSync(join(home, '.config', 'agent-workflow', 'bridge-settings.conf'), { recursive: true });
-    const r = runWrapper(home, { AGY_MODEL: '' });
+    const r = await runWrapperAsync(home, { AGY_MODEL: '' });
     rmSync(home, { recursive: true, force: true });
     assert.equal(r.status, 0, `a directory must degrade honestly, not kill the run: ${r.stderr}`);
     assert.match(r.stderr, /unreadable or not a regular file/);
@@ -304,20 +322,20 @@ describe('agy.sh — bridge settings file (bridges 2.3.0)', () => {
     assert.match(r.stdout, /OK reply/);
   });
 
-  it("another bridge's valid key is skipped silently (and never applied)", () => {
+  it("another bridge's valid key is skipped silently (and never applied)", async () => {
     const home = makeSandbox('#!/usr/bin/env bash\nsleep 3\necho "OK reply"\n');
     writeSettings(home, 'CODEX_SERVICE_TIER=priority\nCODEX_HARD_TIMEOUT=2\n');
-    const r = runWrapper(home, { AGY_MODEL: '' });
+    const r = await runWrapperAsync(home, { AGY_MODEL: '' });
     rmSync(home, { recursive: true, force: true });
     assert.equal(r.status, 0, `a codex key must not cap an agy run: ${r.stderr}`);
     assert.doesNotMatch(r.stderr, /bridge settings/, 'a recognized non-applied key earns NO warning');
     assert.match(r.stdout, /OK reply/);
   });
 
-  it('a truly unknown key warns ONCE naming the file; the run is unaffected', () => {
+  it('a truly unknown key warns ONCE naming the file; the run is unaffected', async () => {
     const home = makeSandbox(RECORDING_STUB);
     writeSettings(home, 'TOTALLY_UNKNOWN=1\nTOTALLY_UNKNOWN=2\n');
-    const r = runWrapper(home, { AGY_MODEL: '' });
+    const r = await runWrapperAsync(home, { AGY_MODEL: '' });
     rmSync(home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     const warns = r.stderr.match(/unknown key 'TOTALLY_UNKNOWN'/g) ?? [];
@@ -326,10 +344,10 @@ describe('agy.sh — bridge settings file (bridges 2.3.0)', () => {
     assert.match(r.stdout, /OK reply/);
   });
 
-  it('malformed lines warn and are ignored; comments and blank lines are silent', () => {
+  it('malformed lines warn and are ignored; comments and blank lines are silent', async () => {
     const home = makeSandbox(RECORDING_STUB);
     writeSettings(home, '# a comment\n\nNOT A KEY VALUE LINE\n');
-    const r = runWrapper(home, { AGY_MODEL: '' });
+    const r = await runWrapperAsync(home, { AGY_MODEL: '' });
     rmSync(home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     const malformed = r.stderr.match(/malformed line/g) ?? [];
@@ -337,22 +355,22 @@ describe('agy.sh — bridge settings file (bridges 2.3.0)', () => {
     assert.match(r.stdout, /OK reply/);
   });
 
-  it('an existing-but-unreadable file warns loudly and falls back to built-ins', { skip: isRoot }, () => {
+  it('an existing-but-unreadable file warns loudly and falls back to built-ins', { skip: isRoot }, async () => {
     const home = makeSandbox(RECORDING_STUB);
     const file = writeSettings(home, 'AGY_HARD_TIMEOUT=2s\n');
     chmodSync(file, 0o000);
-    const r = runWrapper(home, { AGY_MODEL: '' });
+    const r = await runWrapperAsync(home, { AGY_MODEL: '' });
     rmSync(home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /unreadable/);
     assert.match(r.stdout, /OK reply/);
   });
 
-  it('a settings line can NEVER execute code (command-substitution payload inert)', () => {
+  it('a settings line can NEVER execute code (command-substitution payload inert)', async () => {
     const home = makeSandbox(RECORDING_STUB);
     const pwned = join(home, 'pwned');
     writeSettings(home, `AGY_HARD_TIMEOUT=$(touch ${pwned})\nEVIL_KEY=\`touch ${pwned}2\`\n`);
-    const r = runWrapper(home, { AGY_MODEL: '' });
+    const r = await runWrapperAsync(home, { AGY_MODEL: '' });
     const executed = existsSync(pwned) || existsSync(`${pwned}2`);
     rmSync(home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -360,9 +378,9 @@ describe('agy.sh — bridge settings file (bridges 2.3.0)', () => {
     assert.match(r.stdout, /OK reply/);
   });
 
-  it('no file → byte-identical behaviour to today (no settings chatter)', () => {
+  it('no file → byte-identical behaviour to today (no settings chatter)', async () => {
     const home = makeSandbox(RECORDING_STUB);
-    const r = runWrapper(home, { AGY_MODEL: '' });
+    const r = await runWrapperAsync(home, { AGY_MODEL: '' });
     rmSync(home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /bridge settings/);
@@ -398,7 +416,7 @@ describe('agy.sh — settings surface ⟷ manifest (D6, manifest-pinned)', () =>
   const runHelpText = () => {
     const home = mkdtempSync(join(tmpdir(), 'agy-settings-help-'));
     const r = spawnSync('bash', [WRAPPER, '--help'], {
-      env: { HOME: home, PATH: makePathWithout(home, ['agy', 'git']) },
+      env: { HOME: home, PATH: FARM },
       encoding: 'utf8',
       timeout: 15000,
     });
@@ -475,7 +493,7 @@ describe('agy.sh — mode catalog ⟷ wrapper reality (the contract-free raw mod
   const helpText = () => {
     const home = mkdtempSync(join(tmpdir(), 'agy-catalog-help-'));
     const r = spawnSync('bash', [WRAPPER, '--help'], {
-      env: { HOME: home, PATH: makePathWithout(home, ['agy', 'git']) },
+      env: { HOME: home, PATH: FARM },
       encoding: 'utf8',
       timeout: 15000,
     });

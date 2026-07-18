@@ -10,9 +10,9 @@
 // record is minted at the STAGED tree (staging moves the fingerprint), then the commit follows
 // immediately.
 
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, readFileSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,19 +33,28 @@ const fixtureEnv = (extra = {}) => {
 const GATES = { gates: [{ id: 'noop', title: 'noop', cmd: 'true' }] };
 
 // A repo with a committed base, a SOLO review config (the ship arm is exercised separately), a
-// declared gates.json, and one staged change ready to commit.
-const makeRepo = () => {
-  const root = mkdtempSync(join(tmpdir(), 'commit-guard-'));
-  const g = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+// declared gates.json, and one staged change ready to commit. The committed base is identical
+// everywhere — built once, cloned per test; only the staged change is re-added per clone.
+const REPO_TEMPLATE = (() => {
+  const dir = mkdtempSync(join(tmpdir(), 'commit-guard-template-'));
+  const g = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
   g('init', '-q');
   g('config', 'user.email', 'probe@example.com');
   g('config', 'user.name', 'probe');
-  mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
-  writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'solo' } }));
-  writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify(GATES));
-  writeFileSync(join(root, 'base.txt'), 'base\n');
+  mkdirSync(join(dir, 'docs', 'ai'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'solo' } }));
+  writeFileSync(join(dir, 'docs', 'ai', 'gates.json'), JSON.stringify(GATES));
+  writeFileSync(join(dir, 'base.txt'), 'base\n');
   g('add', '-A');
   g('commit', '-qm', 'base');
+  return dir;
+})();
+after(() => rmSync(REPO_TEMPLATE, { recursive: true, force: true }));
+
+const makeRepo = () => {
+  const root = mkdtempSync(join(tmpdir(), 'commit-guard-'));
+  cpSync(REPO_TEMPLATE, root, { recursive: true });
+  const g = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
   writeFileSync(join(root, 'change.mjs'), 'export const x = 1;\n');
   g('add', '-A'); // D13: staged FIRST — the final record below binds the STAGED tree
   return { root, g };

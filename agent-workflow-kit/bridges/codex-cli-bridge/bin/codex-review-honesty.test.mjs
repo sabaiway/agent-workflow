@@ -5,9 +5,9 @@
 // CODEX_SERVICE_TIER BEFORE tier validation (no multiline warning echo, no silent standard-tier
 // run). Colocated separately — codex-review.test.mjs is red-proof-frozen; standalone harness.
 
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, existsSync, readdirSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, existsSync, readdirSync, symlinkSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -46,12 +46,17 @@ const makePathWithout = (root, exclude = []) => {
   return dir;
 };
 
-const makeSandbox = () => {
-  const root = mkdtempSync(join(tmpdir(), 'codex-honesty-'));
+// Farm + sandbox base are READ-ONLY per invocation — built ONCE, shared (a per-run farm rebuild
+// plus a per-test `git init`+commit dominate the wall otherwise).
+const SHARED_ROOT = mkdtempSync(join(tmpdir(), 'codex-honesty-shared-'));
+after(() => rmSync(SHARED_ROOT, { recursive: true, force: true }));
+const FARM = makePathWithout(SHARED_ROOT, ['codex']);
+
+const TEMPLATE_ROOT = (() => {
+  const root = join(SHARED_ROOT, 'template-root');
   const bin = join(root, 'bin');
   mkdirSync(bin, { recursive: true });
   writeFileSync(join(bin, 'codex'), FAKE_CODEX, { mode: 0o755 });
-  chmodSync(join(bin, 'codex'), 0o755);
   const repo = join(root, 'repo');
   mkdirSync(repo);
   const g = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
@@ -62,7 +67,15 @@ const makeSandbox = () => {
   g('add', '-A');
   g('commit', '-qm', 'base');
   writeFileSync(join(repo, 'pending.txt'), 'PENDING\n');
-  return { root, bin, repo };
+  return root;
+})();
+
+const makeSandbox = () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-honesty-'));
+  cpSync(TEMPLATE_ROOT, root, { recursive: true });
+  const bin = join(root, 'bin');
+  chmodSync(join(bin, 'codex'), 0o755);
+  return { root, bin, repo: join(root, 'repo') };
 };
 
 const run = (sb, { args = ['code'], env = {} } = {}) => {
@@ -73,7 +86,7 @@ const run = (sb, { args = ['code'], env = {} } = {}) => {
     timeout: 30000,
     env: {
       HOME: sb.repo,
-      PATH: `${sb.bin}:${makePathWithout(sb.root, ['codex'])}`,
+      PATH: `${sb.bin}:${FARM}`,
       TMPDIR: process.env.TMPDIR ?? '/tmp',
       CODEX_HOME: join(sb.root, 'codex-home'),
       CODEX_FAKE_SENTINEL: sentinel,

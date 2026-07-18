@@ -103,25 +103,19 @@ export const discoverMeta = async (root = ROOT) => {
   return { projectName, hierarchicalLinks, onDemandLinks };
 };
 
+// Pure argv parser (no I/O, no exit): `help` / `error` ride out as data for runCli to render.
 const parseArgs = (argv) => {
   const flags = { report: false, writeIndex: false, checkIndex: false, quiet: false };
   const opts = { today: null, root: null };
-  for (const arg of argv.slice(2)) {
+  for (const arg of argv) {
     if (arg === '--report') flags.report = true;
     else if (arg === '--write-index') flags.writeIndex = true;
     else if (arg === '--check-index') flags.checkIndex = true;
     else if (arg === '--quiet') flags.quiet = true;
     else if (arg.startsWith('--today=')) opts.today = arg.slice('--today='.length);
     else if (arg.startsWith('--root=')) opts.root = arg.slice('--root='.length);
-    else if (arg === '--help' || arg === '-h') {
-      console.log(
-        'Usage: check-docs-size.mjs [--report|--write-index|--check-index] [--today=YYYY-MM-DD] [--root=<dir>] [--quiet]',
-      );
-      process.exit(0);
-    } else {
-      console.error(`Unknown argument: ${arg}`);
-      process.exit(2);
-    }
+    else if (arg === '--help' || arg === '-h') return { flags, opts, help: true };
+    else return { flags, opts, error: `Unknown argument: ${arg}` };
   }
   return { flags, opts };
 };
@@ -218,7 +212,7 @@ const formatRow = (row) => {
   return { status, sizeCell, ...row };
 };
 
-const printReport = (rows, quiet) => {
+const printReport = (rows, quiet, log = console.log) => {
   const widths = {
     status: 2,
     path: Math.max(4, ...rows.map((r) => r.path.length)),
@@ -228,15 +222,15 @@ const printReport = (rows, quiet) => {
   };
   const printable = quiet ? rows.filter((r) => r.errors.length || r.warnings.length) : rows;
   if (printable.length > 0) {
-    console.log(
+    log(
       `${'S'.padEnd(widths.status)}  ${'PATH'.padEnd(widths.path)}  ${'SIZE/MAX'.padEnd(widths.size)}  ${'TYPE'.padEnd(widths.type)}  ${'UPDATED'.padEnd(widths.updated)}`,
     );
     for (const row of printable) {
-      console.log(
+      log(
         `${row.status.padEnd(widths.status)}  ${row.path.padEnd(widths.path)}  ${row.sizeCell.padEnd(widths.size)}  ${(row.frontmatter?.type ?? '').padEnd(widths.type)}  ${(row.frontmatter?.lastUpdated ?? '').padEnd(widths.updated)}`,
       );
-      for (const err of row.errors) console.log(`     - ERROR  ${err}`);
-      for (const warn of row.warnings) console.log(`     - WARN   ${warn}`);
+      for (const err of row.errors) log(`     - ERROR  ${err}`);
+      for (const warn of row.warnings) log(`     - WARN   ${warn}`);
     }
   }
 };
@@ -361,9 +355,29 @@ export const regenerateIndex = async (root, todayStr = null) => {
   return { indexPath, files: rows.length };
 };
 
-const main = async () => {
-  const { flags, opts } = parseArgs(process.argv);
-  const { root, docsDir, indexPath } = pathsFor(opts.root ? resolve(opts.root) : ROOT);
+// The return-code entry point (no process.argv / process.exit / console inside): argv[] →
+// { code, stdout, stderr }. The thin shell at the bottom is the only process-coupled code.
+export const runCli = async (argv, deps = {}) => {
+  const stdoutLines = [];
+  const stderrLines = [];
+  const log = (line) => stdoutLines.push(line);
+  const logError = (line) => stderrLines.push(line);
+  const result = (code) => ({
+    code,
+    stdout: stdoutLines.length > 0 ? `${stdoutLines.join('\n')}\n` : '',
+    stderr: stderrLines.length > 0 ? `${stderrLines.join('\n')}\n` : '',
+  });
+
+  const { flags, opts, help, error } = parseArgs(argv);
+  if (help) {
+    log('Usage: check-docs-size.mjs [--report|--write-index|--check-index] [--today=YYYY-MM-DD] [--root=<dir>] [--quiet]');
+    return result(0);
+  }
+  if (error) {
+    logError(error);
+    return result(2);
+  }
+  const { root, docsDir, indexPath } = pathsFor(opts.root ? resolve(opts.root) : (deps.root ?? ROOT));
   const today = computeToday(opts.today);
   const files = (await walkMarkdownFiles(docsDir)).sort();
   const inspected = await Promise.all(files.map((f) => inspectFile(f, today, root)));
@@ -373,11 +387,11 @@ const main = async () => {
 
   if (flags.writeIndex) {
     await writeIndex(rows, today, meta, indexPath);
-    console.log(`Wrote ${relative(root, indexPath)}`);
+    log(`Wrote ${relative(root, indexPath)}`);
     const after = await stat(indexPath);
     if (after.size === 0) {
-      console.error('index.md was written empty');
-      process.exit(2);
+      logError('index.md was written empty');
+      return result(2);
     }
   }
 
@@ -385,28 +399,31 @@ const main = async () => {
     const onDisk = existsSync(indexPath) ? await readFile(indexPath, 'utf8') : null;
     const { fresh } = checkIndexFreshness(rows, onDisk, meta);
     if (!fresh) {
-      console.error(
+      logError(
         `[check-docs-size] FAIL: ${relative(root, indexPath)} is stale (out of sync with source frontmatter). Regenerate the index (--write-index) and commit the regenerated file.`,
       );
-      process.exit(1);
+      return result(1);
     }
-    console.log(
+    log(
       `[check-docs-size] OK — ${relative(root, indexPath)} is in sync with source frontmatter.`,
     );
-    return;
+    return result(0);
   }
 
-  printReport(rows, flags.quiet);
+  printReport(rows, flags.quiet, log);
   const errorCount = rows.reduce((n, r) => n + r.errors.length, 0);
   const warnCount = rows.reduce((n, r) => n + r.warnings.length, 0);
-  console.log(
+  log(
     `\n${rows.length} files inspected  —  ${errorCount} error(s), ${warnCount} warning(s)`,
   );
 
-  if (errorCount > 0 && !flags.report) process.exit(1);
+  return result(errorCount > 0 && !flags.report ? 1 : 0);
 };
 
 const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isDirectRun) {
-  await main();
+  const { code, stdout, stderr } = await runCli(process.argv.slice(2));
+  if (stdout) process.stdout.write(stdout);
+  if (stderr) process.stderr.write(stderr);
+  process.exitCode = code;
 }
