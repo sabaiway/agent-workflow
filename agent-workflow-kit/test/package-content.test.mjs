@@ -267,7 +267,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 156 = 155 + migrations/3.0.0-hardened-core-loop.md (the AD-059 lineage migration — the
     //       kit-side consumer steps: gates migration, bridge refresh, the guarded installer
     //       refresh + commit-guard arm, re-stamp).
-    assert.equal(packed.length, 156, `tarball file count drifted (${packed.length} ≠ 156)`);
+    // 157 = 156 + references/scripts/check-docs-size-cli.test.mjs (Phase-5 coverage fill,
+    //       mirrored from the memory canon: the runCli refusal-branch pins — the main spec
+    //       file is parity-frozen, so the pins ride a colocated deploy-payload file).
+    assert.equal(packed.length, 157, `tarball file count drifted (${packed.length} ≠ 157)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

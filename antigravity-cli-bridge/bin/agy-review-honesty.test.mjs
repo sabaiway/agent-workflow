@@ -5,9 +5,9 @@
 // posture.model null). Colocated separately from agy-review.test.mjs — that file is
 // red-proof-frozen; this one carries its own minimal standalone harness (the family idiom).
 
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, existsSync, readdirSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, existsSync, readdirSync, symlinkSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,12 +41,17 @@ const makePathWithout = (root, exclude = []) => {
   return dir;
 };
 
-const makeSandbox = () => {
-  const home = mkdtempSync(join(tmpdir(), 'agy-honesty-'));
+// Farm + sandbox base are READ-ONLY per invocation — built ONCE, shared (a per-run farm rebuild
+// plus a per-test `git init`+commit dominate the wall otherwise).
+const SHARED_ROOT = mkdtempSync(join(tmpdir(), 'agy-honesty-shared-'));
+after(() => rmSync(SHARED_ROOT, { recursive: true, force: true }));
+const FARM = makePathWithout(SHARED_ROOT, ['agy', 'agy-run']);
+
+const TEMPLATE_HOME = (() => {
+  const home = join(SHARED_ROOT, 'template-home');
   const bin = join(home, '.local', 'bin');
   mkdirSync(bin, { recursive: true });
   writeFileSync(join(bin, 'agy'), FAKE_AGY, { mode: 0o755 });
-  chmodSync(join(bin, 'agy'), 0o755);
   const repo = join(home, 'repo');
   mkdirSync(repo);
   const g = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
@@ -58,7 +63,15 @@ const makeSandbox = () => {
   g('commit', '-qm', 'base');
   writeFileSync(join(repo, 'pending.txt'), 'PENDING\n');
   writeFileSync(join(repo, 'plan.md'), '# a plan artifact\n');
-  return { home, bin, repo };
+  return home;
+})();
+
+const makeSandbox = () => {
+  const home = mkdtempSync(join(tmpdir(), 'agy-honesty-'));
+  cpSync(TEMPLATE_HOME, home, { recursive: true });
+  const bin = join(home, '.local', 'bin');
+  chmodSync(join(bin, 'agy'), 0o755);
+  return { home, bin, repo: join(home, 'repo') };
 };
 
 const run = (sb, { args, env = {} } = {}) => {
@@ -69,7 +82,7 @@ const run = (sb, { args, env = {} } = {}) => {
     timeout: 30000,
     env: {
       HOME: sb.home,
-      PATH: `${sb.bin}:${makePathWithout(sb.home, ['agy', 'agy-run'])}`,
+      PATH: `${sb.bin}:${FARM}`,
       TMPDIR: process.env.TMPDIR ?? '/tmp',
       AGY_FAKE_SENTINEL: sentinel,
       ...env,

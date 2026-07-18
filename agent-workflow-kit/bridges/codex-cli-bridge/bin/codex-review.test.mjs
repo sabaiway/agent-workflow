@@ -1,13 +1,13 @@
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, readFileSync,
-  existsSync, readdirSync, symlinkSync,
+  existsSync, readdirSync, symlinkSync, cpSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -54,16 +54,23 @@ const FAKE_CODEX = [
   '',
 ].join('\n');
 
-// `clean: true` leaves a committed, pristine tree (for the no-diff preflight);
-// the default leaves one uncommitted untracked file so `code` mode has a diff to
-// review (otherwise the new no-diff preflight short-circuits before codex runs).
-const makeSandbox = ({ clean = false } = {}) => {
-  const root = mkdtempSync(join(tmpdir(), 'codex-review-test-'));
+// The PATH farms and the sandbox base are READ-ONLY per invocation, so both are built ONCE and
+// shared (a per-call farm rebuild is thousands of symlinks; a per-test `git init`+commit
+// dominates the sandbox cost).
+const SHARED_ROOT = mkdtempSync(join(tmpdir(), 'codex-review-shared-'));
+after(() => rmSync(SHARED_ROOT, { recursive: true, force: true }));
+const farms = new Map();
+const farmFor = (exclude) => {
+  const key = exclude.join('|');
+  if (!farms.has(key)) farms.set(key, makePathWithout(SHARED_ROOT, exclude));
+  return farms.get(key);
+};
+
+const TEMPLATE_ROOT = (() => {
+  const root = join(SHARED_ROOT, 'template-root');
   const bin = join(root, 'bin');
   mkdirSync(bin, { recursive: true });
-  const stub = join(bin, 'codex');
-  writeFileSync(stub, FAKE_CODEX, { mode: 0o755 });
-  chmodSync(stub, 0o755);
+  writeFileSync(join(bin, 'codex'), FAKE_CODEX, { mode: 0o755 });
   const repo = join(root, 'repo');
   mkdirSync(repo);
   const g = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
@@ -74,6 +81,18 @@ const makeSandbox = ({ clean = false } = {}) => {
   writeFileSync(join(repo, 'plan.md'), '# Plan\n\nDo a thing in two steps.\n');
   g('add', '-A');
   g('commit', '-qm', 'base');
+  return root;
+})();
+
+// `clean: true` leaves a committed, pristine tree (for the no-diff preflight);
+// the default leaves one uncommitted untracked file so `code` mode has a diff to
+// review (otherwise the new no-diff preflight short-circuits before codex runs).
+const makeSandbox = ({ clean = false } = {}) => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-review-test-'));
+  cpSync(TEMPLATE_ROOT, root, { recursive: true });
+  const bin = join(root, 'bin');
+  chmodSync(join(bin, 'codex'), 0o755);
+  const repo = join(root, 'repo');
   if (!clean) writeFileSync(join(repo, 'pending.txt'), 'an uncommitted change to review\n');
   return { root, bin, repo };
 };
@@ -122,6 +141,35 @@ const run = ({ repo, bin }, { args = ['code'], env = {}, path, cwd } = {}) => {
   const readIf = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '');
   return { ...r, codexHome, argv: readIf(argvFile), capEnv: readIf(envFile), capStdin: readIf(stdinFile) };
 };
+
+// Async twin of run() for the sleep-bound timeout test: spawnSync blocks the event loop for
+// the whole deliberate wait, so a concurrent describe could not overlap it. Same contract.
+const runAsync = ({ repo, bin }, { args = ['code'], env = {}, path, cwd } = {}) =>
+  new Promise((done) => {
+    const argvFile = join(repo, '.cap-argv');
+    const envFile = join(repo, '.cap-env');
+    const stdinFile = join(repo, '.cap-stdin');
+    const codexHome = join(repo, '..', 'codex-home');
+    const child = execFile('bash', [WRAPPER, ...args], {
+      cwd: cwd || repo,
+      encoding: 'utf8',
+      timeout: 30000,
+      env: {
+        PATH: path || `${bin}:${process.env.PATH}`,
+        HOME: repo,
+        TMPDIR: process.env.TMPDIR ?? '/tmp',
+        CODEX_HOME: codexHome,
+        CODEX_FAKE_ARGV: argvFile,
+        CODEX_FAKE_ENV: envFile,
+        CODEX_FAKE_STDIN: stdinFile,
+        ...env,
+      },
+    }, (error, stdout, stderr) => {
+      const readIf = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '');
+      done({ status: error ? (error.code ?? 1) : 0, stdout, stderr, codexHome, argv: readIf(argvFile), capEnv: readIf(envFile), capStdin: readIf(stdinFile) });
+    });
+    child.stdin.end();
+  });
 
 describe('codex-review.sh — quality-first model/effort guard (1.1)', () => {
   it('refuses a non-default CODEX_MODEL', () => {
@@ -255,11 +303,11 @@ describe('codex-review.sh — subscription / config isolation (invariant)', () =
   });
 });
 
-describe('codex-review.sh — hard timeout (1.3)', () => {
-  it('kills a hung review at CODEX_HARD_TIMEOUT and reports it', () => {
+describe('codex-review.sh — hard timeout (1.3)', { concurrency: true }, () => {
+  it('kills a hung review at CODEX_HARD_TIMEOUT and reports it', async () => {
     const sb = makeSandbox();
     const started = Date.now();
-    const r = run(sb, { env: { CODEX_FAKE_SLEEP: '30', CODEX_HARD_TIMEOUT: '2' } });
+    const r = await runAsync(sb, { env: { CODEX_FAKE_SLEEP: '30', CODEX_HARD_TIMEOUT: '2' } });
     const elapsed = Date.now() - started;
     rmSync(sb.root, { recursive: true, force: true });
     assert.ok(elapsed < 18000, `must return well under the kill-after window, took ${elapsed}ms`);
@@ -269,7 +317,7 @@ describe('codex-review.sh — hard timeout (1.3)', () => {
 
   it('warns and runs uncapped when neither timeout nor gtimeout is on PATH', () => {
     const sb = makeSandbox();
-    const path = `${sb.bin}:${makePathWithout(sb.root, ['timeout', 'gtimeout'])}`;
+    const path = `${sb.bin}:${farmFor(['timeout', 'gtimeout'])}`;
     const r = run(sb, { path });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -414,7 +462,7 @@ describe('codex-review.sh — optional structured findings (2.2)', () => {
 describe('codex-review.sh — environment preflight (fail fast, before a run)', () => {
   it('STOPs with 127 when codex is not on PATH', () => {
     const sb = makeSandbox();
-    const path = makePathWithout(sb.root, ['codex']); // no fake codex, no real codex
+    const path = farmFor(['codex']); // no fake codex, no real codex
     const r = run(sb, { args: ['code'], path });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 127);
@@ -570,7 +618,7 @@ const runHelp = (arg) => {
   const root = mkdtempSync(join(tmpdir(), 'codex-review-help-'));
   const nongit = join(root, 'nongit');
   mkdirSync(nongit, { recursive: true });
-  const path = makePathWithout(root, ['codex', 'agy', 'git']);
+  const path = farmFor(['codex', 'agy', 'git']);
   const r = spawnSync('bash', [WRAPPER, arg], {
     cwd: nongit, encoding: 'utf8', timeout: 15000, env: { HOME: root, PATH: path },
   });

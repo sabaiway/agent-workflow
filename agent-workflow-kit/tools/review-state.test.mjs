@@ -5,9 +5,9 @@
 // plan-in-flight naming-convention detector against a fixture mirroring THIS repo's real
 // post-tidy docs/plans directory.
 
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, rmSync, lstatSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, rmSync, lstatSync, symlinkSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -50,16 +50,26 @@ const receiptLine = (overrides) => `${JSON.stringify({ ...RECEIPT_FIXTURE, ...ov
 const COUNCIL_CONFIG = JSON.stringify({ 'plan-execution': { execute: 'solo', review: 'council' } });
 const SOLO_CONFIG = JSON.stringify({ 'plan-execution': { review: 'solo' } });
 
-// A real git fixture repo: committed base, per-test config / plans / pending state.
-const makeRepo = ({ config = COUNCIL_CONFIG, plan = 'active-plan.md', pending = true } = {}) => {
-  const root = mkdtempSync(join(tmpdir(), 'review-state-'));
-  const g = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+// A real git fixture repo: committed base, per-test config / plans / pending state. The committed
+// base is IDENTICAL for every test (all variation is untracked, written post-commit), so it is
+// built ONCE and cloned per test — a per-test `git init`+commit dominated this suite's wall.
+const REPO_TEMPLATE = (() => {
+  const dir = mkdtempSync(join(tmpdir(), 'review-state-template-'));
+  const g = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
   g('init', '-q');
   g('config', 'user.email', 'probe@example.com');
   g('config', 'user.name', 'probe');
-  writeFileSync(join(root, 'base.txt'), 'committed base\n');
+  writeFileSync(join(dir, 'base.txt'), 'committed base\n');
   g('add', '-A');
   g('commit', '-qm', 'base');
+  return dir;
+})();
+after(() => rmSync(REPO_TEMPLATE, { recursive: true, force: true }));
+
+const makeRepo = ({ config = COUNCIL_CONFIG, plan = 'active-plan.md', pending = true } = {}) => {
+  const root = mkdtempSync(join(tmpdir(), 'review-state-'));
+  cpSync(REPO_TEMPLATE, root, { recursive: true });
+  const g = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
   if (config != null) {
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
     writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), config);

@@ -1,13 +1,13 @@
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, readFileSync,
-  existsSync, readdirSync, symlinkSync,
+  existsSync, readdirSync, symlinkSync, cpSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFile } from 'node:child_process';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WRAPPER = join(HERE, 'codex-exec.sh');
@@ -55,13 +55,16 @@ const FAKE_CODEX = [
   '',
 ].join('\n');
 
-const makeSandbox = () => {
-  const root = mkdtempSync(join(tmpdir(), 'codex-exec-test-'));
+// The sandbox base and the PATH farms are READ-ONLY per invocation, so both are built ONCE and
+// shared (a per-test `git init`+commit and a per-call farm rebuild dominate the wall otherwise).
+const SHARED_ROOT = mkdtempSync(join(tmpdir(), 'codex-exec-shared-'));
+after(() => rmSync(SHARED_ROOT, { recursive: true, force: true }));
+
+const TEMPLATE_ROOT = (() => {
+  const root = join(SHARED_ROOT, 'template-root');
   const bin = join(root, 'bin');
   mkdirSync(bin, { recursive: true });
-  const stub = join(bin, 'codex');
-  writeFileSync(stub, FAKE_CODEX, { mode: 0o755 });
-  chmodSync(stub, 0o755);
+  writeFileSync(join(bin, 'codex'), FAKE_CODEX, { mode: 0o755 });
   // A git work tree with a root AGENTS.md — the wrapper preflights both.
   const repo = join(root, 'repo');
   mkdirSync(repo);
@@ -72,7 +75,15 @@ const makeSandbox = () => {
   writeFileSync(join(repo, 'AGENTS.md'), '# AGENTS\n\nHard Constraints: none (test fixture).\n');
   g('add', '-A');
   g('commit', '-qm', 'base');
-  return { root, bin, repo };
+  return root;
+})();
+
+const makeSandbox = () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-exec-test-'));
+  cpSync(TEMPLATE_ROOT, root, { recursive: true });
+  const bin = join(root, 'bin');
+  chmodSync(join(bin, 'codex'), 0o755);
+  return { root, bin, repo: join(root, 'repo') };
 };
 
 // A PATH dir mirroring the real one MINUS the named binaries, to exercise the
@@ -94,6 +105,13 @@ const makePathWithout = (root, exclude = []) => {
     }
   }
   return dir;
+};
+
+const farms = new Map();
+const farmFor = (exclude) => {
+  const key = exclude.join('|');
+  if (!farms.has(key)) farms.set(key, makePathWithout(SHARED_ROOT, exclude));
+  return farms.get(key);
 };
 
 const run = ({ repo, bin }, { args = ['-'], input = 'do the thing', env = {}, path, cwd } = {}) => {
@@ -120,6 +138,33 @@ const run = ({ repo, bin }, { args = ['-'], input = 'do the thing', env = {}, pa
   const readIf = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '');
   return { ...r, argv: readIf(argvFile), capEnv: readIf(envFile), capStdin: readIf(stdinFile) };
 };
+
+// Async twin of run() for the sleep-bound timeout tests: spawnSync blocks the event loop for
+// the whole deliberate wait, so a concurrent describe could not overlap them. Same contract.
+const runAsync = ({ repo, bin }, { args = ['-'], input = 'do the thing', env = {}, path, cwd } = {}) =>
+  new Promise((done) => {
+    const argvFile = join(repo, '.cap-argv');
+    const envFile = join(repo, '.cap-env');
+    const stdinFile = join(repo, '.cap-stdin');
+    const child = execFile('bash', [WRAPPER, ...args], {
+      cwd: cwd || repo,
+      encoding: 'utf8',
+      timeout: 30000,
+      env: {
+        PATH: path || `${bin}:${process.env.PATH}`,
+        HOME: repo,
+        TMPDIR: process.env.TMPDIR ?? '/tmp',
+        CODEX_FAKE_ARGV: argvFile,
+        CODEX_FAKE_ENV: envFile,
+        CODEX_FAKE_STDIN: stdinFile,
+        ...env,
+      },
+    }, (error, stdout, stderr) => {
+      const readIf = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '');
+      done({ status: error ? (error.code ?? 1) : 0, stdout, stderr, argv: readIf(argvFile), capEnv: readIf(envFile), capStdin: readIf(stdinFile) });
+    });
+    child.stdin.end(input);
+  });
 
 describe('codex-exec.sh — quality-first model/effort guard (1.1)', () => {
   it('refuses a non-default CODEX_MODEL and never spends a run', () => {
@@ -344,11 +389,11 @@ describe('codex-exec.sh — leaner prompt (1.4)', () => {
   });
 });
 
-describe('codex-exec.sh — hard timeout (1.3)', () => {
-  it('kills a hung codex at CODEX_HARD_TIMEOUT and reports it', () => {
+describe('codex-exec.sh — hard timeout (1.3)', { concurrency: true }, () => {
+  it('kills a hung codex at CODEX_HARD_TIMEOUT and reports it', async () => {
     const sb = makeSandbox();
     const started = Date.now();
-    const r = run(sb, { env: { CODEX_FAKE_SLEEP: '30', CODEX_HARD_TIMEOUT: '2' } });
+    const r = await runAsync(sb, { env: { CODEX_FAKE_SLEEP: '30', CODEX_HARD_TIMEOUT: '2' } });
     const elapsed = Date.now() - started;
     rmSync(sb.root, { recursive: true, force: true });
     assert.ok(elapsed < 18000, `must return well under the kill-after window, took ${elapsed}ms`);
@@ -358,7 +403,7 @@ describe('codex-exec.sh — hard timeout (1.3)', () => {
 
   it('warns and runs uncapped when neither timeout nor gtimeout is on PATH', () => {
     const sb = makeSandbox();
-    const path = `${sb.bin}:${makePathWithout(sb.root, ['timeout', 'gtimeout'])}`;
+    const path = `${sb.bin}:${farmFor(['timeout', 'gtimeout'])}`;
     const r = run(sb, { path });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -368,7 +413,7 @@ describe('codex-exec.sh — hard timeout (1.3)', () => {
 
   it('resume runs uncapped (and warns) when no timeout binary is on PATH', () => {
     const sb = makeSandbox();
-    const path = `${sb.bin}:${makePathWithout(sb.root, ['timeout', 'gtimeout'])}`;
+    const path = `${sb.bin}:${farmFor(['timeout', 'gtimeout'])}`;
     const r = run(sb, { args: ['--resume', 'sess-1', '-'], input: 'go', path });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -545,7 +590,7 @@ describe('codex-exec.sh — environment preflight (fail fast, before a run)', ()
   it('STOPs with 127 when codex is not on PATH', () => {
     const sb = makeSandbox();
     // PATH WITHOUT the fake codex bin and without any real codex.
-    const path = makePathWithout(sb.root, ['codex']);
+    const path = farmFor(['codex']);
     const r = run(sb, { path });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 127);
@@ -556,7 +601,7 @@ describe('codex-exec.sh — environment preflight (fail fast, before a run)', ()
   it('STOPs with 127 when git is not on PATH', () => {
     const sb = makeSandbox();
     // codex present (sb.bin) but git stripped — exercises the type -P git guard.
-    const path = `${sb.bin}:${makePathWithout(sb.root, ['git'])}`;
+    const path = `${sb.bin}:${farmFor(['git'])}`;
     const r = run(sb, { path });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 127);
@@ -681,7 +726,7 @@ const runHelp = (arg) => {
   const root = mkdtempSync(join(tmpdir(), 'codex-exec-help-'));
   const nongit = join(root, 'nongit');
   mkdirSync(nongit, { recursive: true });
-  const path = makePathWithout(root, ['codex', 'agy', 'git']);
+  const path = farmFor(['codex', 'agy', 'git']);
   const r = spawnSync('bash', [WRAPPER, arg], {
     cwd: nongit, encoding: 'utf8', timeout: 15000, env: { HOME: root, PATH: path },
   });
@@ -1027,20 +1072,20 @@ describe('codex-exec.sh — service tier knob (bridges 2.3.0)', () => {
 
 });
 
-describe('codex-exec.sh — bridge settings file semantics (bridges 2.3.0)', () => {
-  it('env overrides file: CODEX_HARD_TIMEOUT env=2 file=9999 → killed at the env cap', () => {
+describe('codex-exec.sh — bridge settings file semantics (bridges 2.3.0)', { concurrency: true }, () => {
+  it('env overrides file: CODEX_HARD_TIMEOUT env=2 file=9999 → killed at the env cap', async () => {
     const sb = makeSandbox();
     writeSettings(sb, 'CODEX_HARD_TIMEOUT=9999\n');
-    const r = run(sb, { env: { CODEX_FAKE_SLEEP: '5', CODEX_HARD_TIMEOUT: '2' } });
+    const r = await runAsync(sb, { env: { CODEX_FAKE_SLEEP: '5', CODEX_HARD_TIMEOUT: '2' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0, 'the env cap (2s) must win over the file cap (9999s)');
     assert.match(r.stderr, /exceeded the hard cap CODEX_HARD_TIMEOUT=2s/);
   });
 
-  it('a file-set CODEX_HARD_TIMEOUT is effective (killed at the file cap)', () => {
+  it('a file-set CODEX_HARD_TIMEOUT is effective (killed at the file cap)', async () => {
     const sb = makeSandbox();
     writeSettings(sb, 'CODEX_HARD_TIMEOUT=2\n');
-    const r = run(sb, { env: { CODEX_FAKE_SLEEP: '5' } });
+    const r = await runAsync(sb, { env: { CODEX_FAKE_SLEEP: '5' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0, 'the file cap must apply when the env is unset');
     assert.match(r.stderr, /exceeded the hard cap CODEX_HARD_TIMEOUT=2s/);

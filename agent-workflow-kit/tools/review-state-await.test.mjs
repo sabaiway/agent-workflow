@@ -3,9 +3,9 @@
 // last one lands), a loud timeout when one never does, and a stale/ungrounded receipt never
 // satisfies. The clock is injected so the test spends zero wall-clock.
 
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, rmSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -28,15 +28,24 @@ const RECEIPT_FIXTURE = JSON.parse(
 const COUNCIL_CONFIG = JSON.stringify({ 'plan-execution': { execute: 'solo', review: 'council' } });
 const SOLO_CONFIG = JSON.stringify({ 'plan-execution': { review: 'solo' } });
 
-const makeRepo = ({ config = COUNCIL_CONFIG } = {}) => {
-  const root = mkdtempSync(join(tmpdir(), 'review-await-'));
-  const g = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+// The committed base is IDENTICAL for every test (all variation is untracked) — built once,
+// cloned per test (a per-test `git init`+commit dominated the fixture cost).
+const REPO_TEMPLATE = (() => {
+  const dir = mkdtempSync(join(tmpdir(), 'review-await-template-'));
+  const g = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
   g('init', '-q');
   g('config', 'user.email', 'probe@example.com');
   g('config', 'user.name', 'probe');
-  writeFileSync(join(root, 'base.txt'), 'committed base\n');
+  writeFileSync(join(dir, 'base.txt'), 'committed base\n');
   g('add', '-A');
   g('commit', '-qm', 'base');
+  return dir;
+})();
+after(() => rmSync(REPO_TEMPLATE, { recursive: true, force: true }));
+
+const makeRepo = ({ config = COUNCIL_CONFIG } = {}) => {
+  const root = mkdtempSync(join(tmpdir(), 'review-await-'));
+  cpSync(REPO_TEMPLATE, root, { recursive: true });
   mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
   writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), config);
   mkdirSync(join(root, 'docs', 'plans'), { recursive: true });

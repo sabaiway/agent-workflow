@@ -9,9 +9,9 @@
 // The module under test is imported DYNAMICALLY (the authoring pattern): this spec LOADS — and
 // fails per fixture — on the pre-implementation tree.
 
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync, symlinkSync, readFileSync, mkdirSync, realpathSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, symlinkSync, readFileSync, mkdirSync, realpathSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -41,14 +41,22 @@ const fixtureEnv = (extra = {}) => {
 };
 
 // A repo with one committed base and one CHANGED (untracked) source file `lib.mjs` of 3 lines.
-const makeRepo = () => {
-  const root = mkdtempSync(join(tmpdir(), 'coverage-check-'));
-  const g = gitInit(root);
-  writeFileSync(join(root, 'base.txt'), 'base\n');
+// The committed base is identical everywhere — built once, cloned per test.
+const REPO_TEMPLATE = (() => {
+  const dir = mkdtempSync(join(tmpdir(), 'coverage-check-template-'));
+  const g = gitInit(dir);
+  writeFileSync(join(dir, 'base.txt'), 'base\n');
   g('add', '-A');
   g('commit', '-qm', 'base');
+  return dir;
+})();
+after(() => rmSync(REPO_TEMPLATE, { recursive: true, force: true }));
+
+const makeRepo = () => {
+  const root = mkdtempSync(join(tmpdir(), 'coverage-check-'));
+  cpSync(REPO_TEMPLATE, root, { recursive: true });
   writeFileSync(join(root, 'lib.mjs'), 'export const a = 1;\nexport const b = 2;\nexport const c = 3;\n');
-  return { root, g };
+  return { root, g: (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' }) };
 };
 
 const lcovFor = (root, coveredLines, file = 'lib.mjs') => {

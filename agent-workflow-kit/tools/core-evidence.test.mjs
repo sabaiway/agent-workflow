@@ -13,9 +13,9 @@
 // retired-runner precedent): this spec LOADS — and fails per fixture — on the
 // pre-implementation tree, so every refusal fixture has an observed RED first.
 
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, readFileSync, existsSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -69,13 +69,22 @@ const fixtureEnv = (extra = {}) => {
   return { ...env, ...extra };
 };
 
-const makeRepo = () => {
-  const root = mkdtempSync(join(tmpdir(), 'core-evidence-'));
-  const g = gitInit(root);
-  writeFileSync(join(root, 'base.txt'), 'base\n');
+// Every makeRepo starts from the SAME committed base — built once, cloned per test (a per-test
+// `git init`+commit dominated this suite's wall).
+const REPO_TEMPLATE = (() => {
+  const dir = mkdtempSync(join(tmpdir(), 'core-evidence-template-'));
+  const g = gitInit(dir);
+  writeFileSync(join(dir, 'base.txt'), 'base\n');
   g('add', '-A');
   g('commit', '-qm', 'base');
-  return { root, g };
+  return dir;
+})();
+after(() => rmSync(REPO_TEMPLATE, { recursive: true, force: true }));
+
+const makeRepo = () => {
+  const root = mkdtempSync(join(tmpdir(), 'core-evidence-'));
+  cpSync(REPO_TEMPLATE, root, { recursive: true });
+  return { root, g: (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' }) };
 };
 
 const headOf = (root) => spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim();
