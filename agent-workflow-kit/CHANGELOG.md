@@ -4,6 +4,54 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 3.1.0 — parallel feature worktrees v1: provision · list · land --prepare · cleanup (AD-060)
+
+New `worktrees` mode + `tools/worktrees.mjs` — several features implemented simultaneously in
+DIFFERENT agent sessions on one machine/repo, zero interference on working-tree files (the ONE
+exception: the default `node_modules` symlink is a shared MUTABLE dependency cache — the printed
+isolated install is the isolation lane), unambiguous ownership. One thin dependency-free tool over git: every verification datum is recomputed live
+from git, never read from stored metadata (the ONE exception: the PREPARED OID in the handoff,
+read back only for recovery). Git >= 2.36 floor (NUL-terminated worktree porcelain); typed STOPs,
+never a guess.
+
+- **`provision <slug> --plan <path>`** — visible sibling worktree + `aw/<slug>` branch: the
+  registry-derived footprint copy-if-missing (a tracked file is NEVER overwritten), exactly one
+  seeded feature plan, the `handoff-<slug>.md` stub, shared-`node_modules` symlink advice
+  (`--install` only PRINTS the isolated install — zero spawn, zero write). `--resume` completes a
+  half-done provision behind fail-closed identity: at most one handoff, slug AND branch must
+  match, the section-required `## Provision record` (a duplicated field or section is a STOP,
+  never last-wins), user content preserved byte-exact.
+- **`list`** — read-only and honest: any read failure renders `handoff: (unreadable)` — a silent
+  "no" never appears.
+- **`land <slug> --prepare`** — the transient common-git-dir lock (shared with cleanup),
+  dirty-main / graph-divergence / docs-ai-drift / red-review-state refusals, the satellite
+  working-tree diff versus its base — staged AND unstaged inspected, every unstaged or
+  untracked-not-ignored leftover listed and refused (ignored content is outside observation by
+  design) — binary-safe transfer excluding exactly `docs/ai` + `docs/plans`, the optional
+  porcelain-visible sync adapter, the main gate matrix, and an OID report (main HEAD · TRANSFER ·
+  PREPARED · sync delta). The commit is NEVER run by the tool — it stays a dialogue ask. A second
+  prepare is reset-only against the recorded PREPARED OID; transfer-apply and post-launch sync
+  failures attempt a byte-clean rollback (rollback failures are composed without losing the
+  primary error), while a red gate matrix that leaves the snapshot unchanged intentionally KEEPS
+  the prepared tree and names both recovery lanes.
+- **`cleanup <slug>`** — live landed-verification against main HEAD (exact land-exclusion
+  parity), typed-EXACT ownership of ignored content (file/glob roots own only files), literal
+  pathspecs, branch `-d`, prune; foreign content stops it. `--abandon` is the ONE destructive arm
+  (`-D`; requires the handoff identity).
+- **Hardening:** every content read and regular-file copy goes through two no-follow descriptor
+  doors (identity-bound source · exclusive destination · descriptor-mode update), pinned as the
+  only paths by tripwire tests; strict parsers everywhere (NUL porcelain fields,
+  scan-before-parse JSON with any-depth duplicate-key refusal, atomic section surgery).
+- **release-scan:** the reviewer-round-identity rung — an `agy` or `codex` name followed by an
+  R-number reference is refused; shippable finding IDs use neutral
+  `review-<scope>-rNN-<severity>-NN` IDs; the clean line now reads "no AI attribution or
+  reviewer-round identity found".
+- **recommendations:** the worktrees parent-dir item — write access stays "not confirmed" without
+  a trusted host-capability signal; HAND-APPLY lines are host-qualified.
+- **Docs:** the `references/modes/worktrees.md` contract — the MAIN/SATELLITE ownership matrix
+  (shared git state included), satellite forbidden verbs (the v1 docs-only bar), the
+  host-specific consent lane, and the other-harnesses PROVEN/ASSUMED split.
+
 ## 3.0.0 — strip-the-kit: the hardened computed core replaces the ledger machinery (AD-059)
 
 > ### ⚠ BREAKING — the review loop is now computed, not recorded
