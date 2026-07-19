@@ -238,7 +238,7 @@ const CATALOG = [
     invocation: invocationOf('worktrees'),
     group: 'Orchestrate',
     kind: WRITER,
-    oneLine: 'Run features in parallel git worktrees: provision an isolated sibling copy, list them, stage a finished one back onto main (the commit still asks in dialogue), and remove a landed one. No preview step; list is read-only; cleanup --abandon destroys unlanded work. Land and cleanup arrive with this release\'s landing half.',
+    oneLine: 'Run features in parallel git worktrees: provision an isolated sibling copy, list them, stage a finished one back onto clean main (the commit still asks in dialogue), and remove a live-verified landed one. No preview step; list is read-only; cleanup --abandon destroys unlanded work.',
   },
 ];
 

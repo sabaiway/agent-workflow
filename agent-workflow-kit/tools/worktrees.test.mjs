@@ -951,22 +951,23 @@ describe('worktrees — CLI usage', () => {
     assert.equal(r.code, EXIT.usage);
     assert.match(r.errText, /requires --plan/);
   });
-  it('land/cleanup state their build honestly (this half ships with the landing phase)', () => {
-    for (const sub of ['land', 'cleanup']) {
-      const r = run([sub, 'x'], { cwd: MAIN });
-      assert.equal(r.code, EXIT.stop);
-      assert.match(r.errText, /not available in this build yet/);
-    }
+  it('land and cleanup require their explicit live safety arms', () => {
+    const land = run(['land', 'x'], { cwd: MAIN });
+    assert.equal(land.code, EXIT.usage);
+    assert.match(land.errText, /requires --prepare/);
+    const cleanup = parseArgs(['cleanup', 'x', '--abandon']);
+    assert.equal(cleanup.flags.abandon, true);
   });
   it('--help prints the four subcommands', () => {
     const r = run(['--help'], { cwd: MAIN });
     assert.equal(r.code, EXIT.ok);
     for (const token of ['provision', 'list', 'land', 'cleanup', '--abandon']) assert.ok(r.text.includes(token));
   });
-  it('the usage marks land AND cleanup as arriving with this release landing half (removed in that phase)', () => {
+  it('the usage states the live land and cleanup safety contracts', () => {
     const r = run(['--help'], { cwd: MAIN });
-    const hits = r.text.match(/arrives with this release's landing half/g) ?? [];
-    assert.equal(hits.length, 2, 'both land and cleanup carry the marking');
+    assert.match(r.text, /stage the satellite diff onto a clean main/);
+    assert.match(r.text, /--abandon is the one/);
+    assert.match(r.text, /destroys unlanded work/);
   });
 });
 
