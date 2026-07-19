@@ -7,6 +7,25 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-19 — kit 3.1.0: parallel feature worktrees v1 — provision · list · land --prepare · cleanup (AD-060)
+
+**Parallel feature development lands as a first-class mode.** `worktrees.mjs` provisions a visible
+sibling worktree per feature (registry-derived footprint copy-if-missing, exactly one seeded plan,
+a handoff stub, fail-closed `--resume` identity), lists honestly (`handoff: (unreadable)` — never
+a silent "no"), prepares a landing (the satellite diff — staged AND unstaged inspected, unstaged
+or untracked-not-ignored leftovers refused, `docs/ai` + `docs/plans` excluded — staged onto a
+clean main behind a common transient lock, gates run, OIDs reported — the commit stays a dialogue
+ask; a second prepare is reset-only; transfer-apply failures attempt a byte-clean rollback while
+a red gate that leaves the snapshot unchanged keeps the prepared tree with named recovery lanes,
+rollback failures composed without losing the primary error), and removes a LANDED worktree
+fail-closed (live verification at exact land-exclusion
+parity, typed-EXACT ignored-content ownership; `--abandon` is the one destructive arm). All
+content reads/copies go through two no-follow descriptor doors pinned by tripwire tests; parsers
+are strict (NUL worktree porcelain — git >= 2.36 floor, any-depth duplicate-key JSON refusal,
+section-required provision record). release-scan gains the reviewer-round-identity rung
+(`agy`/`codex` R-number references refused; shippable finding IDs move to neutral `review-…`
+IDs). Four gated commits, each council-converged on the staged tree.
+
 ## 2026-07-17 — MAJOR family: kit 3.0.0 / memory 3.0.0 / engine 2.0.0 / codex bridge 3.0.0 / agy bridge 4.0.0 — strip-the-kit ships the hardened computed core (AD-059)
 
 **The recorded review loop is replaced by a computed one.** The ledger/fold machinery (tools,
