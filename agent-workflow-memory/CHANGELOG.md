@@ -4,6 +4,18 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 3.0.1 — bundled reference scripts refreshed (no behavior change)
+
+PATCH rider on the kit 3.1.0 release — the publish workflow's changed-but-unbumped tooth caught
+that two bundled reference scripts had moved since 3.0.0 without a version bump. No CLI surface,
+output, or exit-code change:
+
+- `references/scripts/check-docs-size.mjs` — reworked to an in-process CLI shape (pure argv
+  parser, injectable log, exported `runCli`) so suites drive it without a spawn; same flags, same
+  behavior; a colocated CLI test pins it.
+- `references/scripts/archive-decisions.mjs` — comment-only cleanup (reviewer-round identity
+  references removed as part of the family-wide neutral-review-ID sweep).
+
 ## 3.0.0 — strip-the-kit: the substrate follows the hardened computed core (AD-059)
 
 > ### ⚠ BREAKING — retired loop surfaces + Node >= 22
