@@ -93,4 +93,28 @@ output: tracked modifications/deletions or untracked-not-ignored creations. Igno
 changes inside an already-untracked file are outside observation and therefore out of contract.
 Cleanup reports EBUSY as likely lingering processes/open file descriptors (including a sandbox
 mount); close them and retry, outside the sandbox when needed. Hidden satellite `docs/ai` state is
-ephemeral by design; durable content belongs in the handoff before landing.
+ephemeral by design; durable content belongs in the handoff before landing — the handoff carries a
+free-form session-records digest slot (every section outside `## Provision record` is user-owned
+and byte-preserved by the tool).
+
+**Ownership:** MAIN owns MAIN-tree files, commits, pushes, releases, the gate matrix, every
+docs/ai record, `docs/plans/queue.md`, and all shared git state — stash, hooks, repo config,
+`.git/info/exclude`, and every ref except the satellite's configured branch. The SATELLITE owns
+that one branch (`aw/<slug>` or the `--branch` override), its feature edits, its seeded plan, and
+the user-owned handoff sections; `## Provision record` remains tool-owned. Satellite forbidden
+verbs (the v1 docs-only bar): no `git commit`/`push`/`tag`/`git stash`/history rewrite — the ONE
+legal rewrite is the tool-printed `git reset --hard` recovery of the satellite's OWN configured
+branch (`aw/<slug>` or the `--branch` override) — no kit lifecycle writers
+(`init`/`upgrade`/`setup`/`hide-footprint`/`install-git-hooks`/`sandbox-masks`/`ack-write`), no
+queue.md writes, no version bumps or publishes, no edits to MAIN's files from the satellite
+session — divergence and the landed verification enforce the observable half; the rest is the
+stated contract. A symlinked `node_modules` under npm workspaces resolves
+workspace self-links to MAIN-tree sources — use the printed isolated install when that matters.
+
+**Other harnesses:** PROVEN — the host-installed codex/agy review wrappers run with a provisioned
+worktree as their cwd; the footprint carries the root `AGENTS.md` required by the codex wrappers
+and available to agy as its fallback project context. The host-level `bridge-settings.conf` under
+`${XDG_CONFIG_HOME:-~/.config}/agent-workflow/` is per-host, shared by every worktree, and is not
+copied into the worktree. ASSUMED until probed per harness — each target harness's project-local
+settings and context pickup in a fresh worktree session; treat that as unverified until the target
+harness demonstrates it.
