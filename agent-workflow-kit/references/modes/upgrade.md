@@ -1,6 +1,6 @@
 ### Mode: upgrade
 
-Requires: ${CLAUDE_SKILL_DIR}/references/shared/report-footer.md · ${CLAUDE_SKILL_DIR}/references/shared/composition-handoff.md · ${CLAUDE_SKILL_DIR}/references/shared/deploy-tail.md
+Requires: ${CLAUDE_SKILL_DIR}/references/shared/report-footer.md · ${CLAUDE_SKILL_DIR}/references/shared/composition-handoff.md · ${CLAUDE_SKILL_DIR}/references/shared/deploy-tail.md · ${CLAUDE_SKILL_DIR}/references/shared/command-shapes.md
 
 1. Read `docs/ai/.workflow-version` (the project's stamped lineage). If missing, treat as a pre-versioned deployment and offer to re-bootstrap conservatively.
 2. **Never-downgrade gate — FIRST, before any write.** Compare the stamp to the **deployment-lineage head** (`3.0.0` — NOT this kit's package version). If the stamp is **greater than the head** or unparseable → **STOP and report**; do not touch a newer / unknown deployment at all (not even the methodology slot). This STOP is one of the few places the number is actionable (*Version disclosure* in `${CLAUDE_SKILL_DIR}/references/shared/report-footer.md`): show the user **the `docs/ai` structure version** their deployment carries versus the one this kit expects, plus the plain one-line two-axes note — naming it the structure version, **never** "lineage head".

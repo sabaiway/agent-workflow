@@ -1,6 +1,6 @@
 ### Mode: bootstrap
 
-Requires: ${CLAUDE_SKILL_DIR}/references/shared/report-footer.md · ${CLAUDE_SKILL_DIR}/references/shared/composition-handoff.md · ${CLAUDE_SKILL_DIR}/references/shared/deploy-tail.md
+Requires: ${CLAUDE_SKILL_DIR}/references/shared/report-footer.md · ${CLAUDE_SKILL_DIR}/references/shared/composition-handoff.md · ${CLAUDE_SKILL_DIR}/references/shared/deploy-tail.md · ${CLAUDE_SKILL_DIR}/references/shared/command-shapes.md
 
 > Bundled sources below (templates, scripts) live in **this skill's own directory** — `${CLAUDE_SKILL_DIR}/` in Claude Code, or the folder containing this `SKILL.md` in Codex / other agents. Use that as the copy/read source; the working directory is the **target project**, not the skill.
 
@@ -9,7 +9,8 @@ Requires: ${CLAUDE_SKILL_DIR}/references/shared/report-footer.md · ${CLAUDE_SKI
 1. **Recon (read-only).** Before writing anything:
    - `package.json` / `pyproject.toml` / `go.mod` / `Cargo.toml` → stack, package manager, scripts.
    - `ls -la` root → `README`, existing `AGENTS.md`/`CLAUDE.md`, CI configs, linter/formatter configs.
-   - `git log --oneline -30` + `git status` → recent activity, branch, uncommitted changes.
+   - `git log --oneline -30` → recent activity.
+   - `git status` → branch, uncommitted changes.
    - `src/` (or equivalent) 2–3 levels deep → modules, routes/pages, components, services, types.
    - Tests (framework, location, E2E?) and linter rules.
    - Record: stack, package manager, daily commands (`dev`/`test`/`lint`/`type-check`), routes/pages, architecture layers.
