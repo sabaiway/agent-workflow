@@ -216,7 +216,11 @@ const BUDGET = {
   // THREE pointers (the autonomy slot: step-3 wording, the (a)(iii) anchor-absent soft-skip lane,
   // the No-Node walk, the step-4/8 report row) — ~575 B of new contract content over 179 B of
   // headroom; a documented KB-multiple bump, never a silent re-pin.)
-  fullReadSet: 62464, // router + mode + its declared shared files. 61440 → 62464 (61 KB):
+  fullReadSet: 63488, // router + mode + its declared shared files. 62464 → 63488 (62 KB):
+  // AD-061 — the shared command-shapes contract (references/shared/command-shapes.md, ~1.6 KB)
+  // joins the probe-instructing modes' read sets; the heaviest set (upgrade + its now-4 shared
+  // files) measures 63405 B, over the 61 KB ceiling — a documented KB-multiple bump, never a
+  // silent re-pin. History: 61440 → 62464 (61 KB):
   // strip-the-kit 3.6 — upgrade.md gains the consented D8 legacy gates.json migration paragraph
   // (~0.9 KB) against a pair already at its 60 KB ceiling (the deleted verification-profile
   // ensure freed less than the migration costs) — a documented KB-multiple bump, never a silent
@@ -288,5 +292,70 @@ describe('router contract — D6 byte budgets hold over the real files (e)', () 
   it('is non-vacuous: an inflated synthetic read set trips the same budget comparison (red→green probe)', () => {
     const inflated = routerBytes + BUDGET.routerPlusMode; // guaranteed over any real mode size
     assert.ok(!(inflated <= BUDGET.routerPlusMode), 'the budget comparison must reject an oversized read set');
+  });
+});
+
+// ── (f) the shared command-shapes contract: the declaring set + the router's inline bar ──────
+describe('router contract — command-shapes promptless bar (f)', () => {
+  const SHAPES = `${VAR}/references/shared/command-shapes.md`;
+  // Exactly the probe-instructing modes declare the contract (bootstrap's recon block, upgrade
+  // step 1, velocity's version-status routing) — NOT universal: minimal modes stay minimal. The
+  // pin is closed-world over the KNOWN probe-instructing modes; a future mode that instructs its
+  // own improvised probes must be added to DECLARING at review — no mechanical catch exists for
+  // it. The router's inline bar below covers only the shared stamp-read every mode routes through.
+  const DECLARING = ['bootstrap', 'upgrade', 'velocity'];
+  const SHAPES_TEXT = readShared('command-shapes.md');
+  // The contract's own content pins: the promptless bar, the honest host/config-dependent
+  // residual (never a promised prompt), the scope boundary, and the lens citation.
+  const SHAPES_TOKENS = [
+    'file-read tool', 'ONE plain undecorated command', 'one probe per invocation',
+    'no redirects', 'no pipes', 'no command substitution', 'file-edit tools',
+    'OUTSIDE this contract', 'plain pipeline per call', 'host/config-dependent',
+    'read-lane may auto-approve', 'slip past a prefix allow rule',
+  ];
+
+  it('the probe-instructing modes — and ONLY those — declare command-shapes.md', () => {
+    const declaring = modeKeys
+      .filter((k) => parseRequires(readMode(k), `modes/${k}.md`).includes(SHAPES))
+      .sort();
+    assert.deepEqual(declaring, [...DECLARING].sort(),
+      'the command-shapes declaring set drifted from the probe-instructing modes');
+  });
+
+  it('the router stamp-read carries the inline bar (file-read tool or one plain command)', () => {
+    const slice = region(ROUTER, '### Version status & the two axes', '### Mode: ', 'router');
+    assert.deepEqual(missingTokens(slice, ['file-read tool', 'ONE plain undecorated command']), []);
+  });
+
+  it('the contract file carries the promptless-bar tokens (content-pin)', () => {
+    assert.deepEqual(missingTokens(SHAPES_TEXT, SHAPES_TOKENS), []);
+  });
+
+  it('the contract file promises NO guaranteed prompt (negative pin on the withdrawn claim)', () => {
+    assert.ok(!SHAPES_TEXT.toLowerCase().includes('always prompts'),
+      'the contract must state the host/config-dependent residual, never promise a prompt');
+  });
+
+  it('is non-vacuous: a doctored contract with a stripped token is reported missing (red→green probe)', () => {
+    const doctored = SHAPES_TEXT.replaceAll('host/config-dependent', 'REDACTED');
+    assert.deepEqual(missingTokens(doctored, SHAPES_TOKENS), ['host/config-dependent']);
+  });
+
+  it('the router References line labels every shared contract (references-label-map)', () => {
+    // Closed-world basename → human-label map: keys must equal the real references/shared/ set,
+    // every label must render in the router's ## References region.
+    const LABELS = {
+      'report-footer.md': 'report footer',
+      'composition-handoff.md': 'composition hand-off',
+      'deploy-tail.md': 'deploy tail',
+      'command-shapes.md': 'command shapes',
+    };
+    assert.deepEqual(Object.keys(LABELS).sort(), [...sharedNames].sort(),
+      'the basename → label map must cover exactly the real references/shared/ files');
+    const refs = region(ROUTER, '## References', null, 'router');
+    for (const label of Object.values(LABELS)) {
+      assert.ok(refs.includes(label),
+        `the router References region is missing the "${label}" shared-contract label`);
+    }
   });
 });

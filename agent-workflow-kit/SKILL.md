@@ -68,7 +68,7 @@ Pick the mode from the user's invocation — the mapping is pinned by `tools/com
 
 **Safe-routing rule (which mode did the user invoke?).** Map the invocation token with `tools/commands.mjs` `routeInvocation`: a **known** subcommand → its mode; the **bare/empty** invocation → `bootstrap` — the one writer reachable without a token, and only on an undeployed project (if `docs/ai/` already exists, **ask upgrade-vs-bootstrap**, never overwrite); **any unrecognized/ambiguous** token → `help`, which is **read-only**. The invariant: **no unrecognized/garbage invocation ever triggers a write** (only an explicit known token or the acknowledged bare-bootstrap exception can).
 
-Before acting, read `docs/ai/.workflow-version` (the project's stamp) to decide the route — an **internal** routing decision, **not** a line you print (version display: *Version disclosure* in `${CLAUDE_SKILL_DIR}/references/shared/report-footer.md`). Route:
+Before acting, read `docs/ai/.workflow-version` (the project's stamp) — via the host's file-read tool, else ONE plain undecorated command (no compounds/redirects/pipes) — to decide the route — an **internal** routing decision, **not** a line you print (version display: *Version disclosure* in `${CLAUDE_SKILL_DIR}/references/shared/report-footer.md`). Route:
 
 - **absent** → bootstrap (a fresh deployment).
 - **stamp < `3.0.0`** (the deployment-lineage head) → `upgrade`.
@@ -195,7 +195,7 @@ writer — read `${CLAUDE_SKILL_DIR}/references/modes/worktrees.md` before actin
 
 ## References
 
-- [`references/modes/`](${CLAUDE_SKILL_DIR}/references/modes/) — one file per mode; [`references/shared/`](${CLAUDE_SKILL_DIR}/references/shared/) — the shared point-of-use contracts (report footer · composition hand-off · deploy tail).
+- [`references/modes/`](${CLAUDE_SKILL_DIR}/references/modes/) — one file per mode; [`references/shared/`](${CLAUDE_SKILL_DIR}/references/shared/) — the shared point-of-use contracts (report footer · composition hand-off · deploy tail · command shapes).
 - [`references/contracts.md`](${CLAUDE_SKILL_DIR}/references/contracts.md) — the three setup contracts.
 - [`references/templates/`](${CLAUDE_SKILL_DIR}/references/templates/) — the `AGENTS.md` + `docs/ai/` templates + seeded configs; [`references/scripts/`](${CLAUDE_SKILL_DIR}/references/scripts/) — the Node enforcement scripts; [`migrations/`](${CLAUDE_SKILL_DIR}/migrations/) — per-version upgrade steps; [`launchers/`](${CLAUDE_SKILL_DIR}/launchers/) — non-Claude agent launchers.
 - [`tools/`](${CLAUDE_SKILL_DIR}/tools/) — the family-wide tooling; each tool's contract lives with its mode file and its own header; bridge mirrors under [`bridges/`](${CLAUDE_SKILL_DIR}/bridges/).

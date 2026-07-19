@@ -158,6 +158,7 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'references/shared/report-footer.md',
       'references/shared/composition-handoff.md',
       'references/shared/deploy-tail.md',
+      'references/shared/command-shapes.md',
     ];
     const missing = required.filter((p) => !packed.includes(p));
     assert.deepEqual(missing, [], 'a runtime payload file or entry point was dropped from the tarball');
@@ -276,7 +277,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 159 = 157 + the parallel-feature worktrees surface (AD-060): tools/worktrees.mjs
     //       (provision | list | land | cleanup) + references/modes/worktrees.md (the 27th
     //       mode-ref). The *.test.mjs sibling is stripped by files[].
-    assert.equal(packed.length, 159, `tarball file count drifted (${packed.length} ≠ 159)`);
+    // 160 = 159 + references/shared/command-shapes.md (AD-061 — the shared promptless
+    //       command-shapes contract the probe-instructing modes Requires:-declare).
+    assert.equal(packed.length, 160, `tarball file count drifted (${packed.length} ≠ 160)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
