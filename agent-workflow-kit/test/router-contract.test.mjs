@@ -194,7 +194,11 @@ const BUDGET = {
   router: 11264, // router alone. 10240 → 11264 (11 KB): AD-044 Plan 4 adds the sandbox-masks and
   // recommendations modes to the router (~110 B each) against 27 B of headroom — a documented
   // KB-multiple bump, never a silent re-pin.
-  routerPlusMode: 37888, // router + any single mode file. 35840 → 37888 (37 KB): the REPORT-FACTS
+  routerPlusMode: 38912, // router + any single mode file. 37888 → 38912 (38 KB): AD-061 Phase 3 —
+  // upgrade.md gains the Communication-section reconcile contract (the enumerated outcome set on
+  // steps 3 and 4, the step-8 row) and the pair measures 37985 B, over the 37 KB ceiling — a
+  // documented KB-multiple bump, never a silent re-pin.
+  // History: 35840 → 37888 (37 KB): the REPORT-FACTS
   // train (Item A, AD-054) adds the report-facts binding line to upgrade.md steps 4 AND 8 (the
   // single-home pointer + the four pinned tokens on each exit) — the pair measures 36931 B, over the
   // 35 KB ceiling; a documented KB-multiple bump, never a silent re-pin.
@@ -216,11 +220,16 @@ const BUDGET = {
   // THREE pointers (the autonomy slot: step-3 wording, the (a)(iii) anchor-absent soft-skip lane,
   // the No-Node walk, the step-4/8 report row) — ~575 B of new contract content over 179 B of
   // headroom; a documented KB-multiple bump, never a silent re-pin.)
-  fullReadSet: 63488, // router + mode + its declared shared files. 62464 → 63488 (62 KB):
+  fullReadSet: 65536, // router + mode + its declared shared files. 63488 → 65536 (64 KB):
+  // AD-061 Phase 3 — upgrade.md gains the Communication-section reconcile contract (the
+  // enumerated outcome set on steps 3/4, the step-8 row) AND composition-handoff.md gains the
+  // Communication half of the both-paths refresh paragraph, against 83 B of headroom; the
+  // heaviest set (upgrade + its 4 shared files) measures 64526 B — a documented KB-multiple
+  // bump, never a silent re-pin. History: 62464 → 63488 (62 KB):
   // AD-061 — the shared command-shapes contract (references/shared/command-shapes.md, ~1.6 KB)
   // joins the probe-instructing modes' read sets; the heaviest set (upgrade + its now-4 shared
   // files) measures 63405 B, over the 61 KB ceiling — a documented KB-multiple bump, never a
-  // silent re-pin. History: 61440 → 62464 (61 KB):
+  // silent re-pin. Then 61440 → 62464 (61 KB):
   // strip-the-kit 3.6 — upgrade.md gains the consented D8 legacy gates.json migration paragraph
   // (~0.9 KB) against a pair already at its 60 KB ceiling (the deleted verification-profile
   // ensure freed less than the migration costs) — a documented KB-multiple bump, never a silent

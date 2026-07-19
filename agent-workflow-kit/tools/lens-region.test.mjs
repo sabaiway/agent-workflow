@@ -13,6 +13,11 @@ import {
   replaceLensRegion,
   frontmatterMaxLines,
   runCli,
+  extractCommsRegion,
+  normalizeCommsBody,
+  renderComms,
+  reconcileCommsText,
+  COMMS_PRIORS,
 } from './lens-region.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -134,6 +139,140 @@ describe('lens-region — render + pure reconcile policy', () => {
   it('non-vacuity: with an EMPTY prior set the same stale body is custom, not refreshed (injected)', () => {
     const text = doc({ body: `${atNumber(PRE_E4, 6)}\n` });
     assert.equal(reconcileLensText(text, FRAGMENT, []).status, 'custom');
+  });
+});
+
+// ── the §2.5 Communication region reconcile (AD-061 — the upgrade-reach half) ───────────────────
+const KIT_TEMPLATE_TEXT = readFileSync(join(HERE, '..', 'references', 'templates', 'agent_rules.md'), 'utf8');
+const COMMS_CANON = normalizeCommsBody(extractCommsRegion(KIT_TEMPLATE_TEXT).body);
+const commsAt = (neutralBody, number) => neutralBody.replace('### 2.x.', `### 2.${number}.`);
+const commsDoc = ({ body, maxLines = 150, after = '\n### 2.6. Planning, review & process-fidelity invariants\n- lens body\n' }) =>
+  `---\ntype: protocol\nmaxLines: ${maxLines}\n---\n\n# Rules\n\n### 2.4. Quality Gates\n- run tests\n\n${body}${after}`;
+
+describe('comms-region — canon, priors, pure reconcile (AD-061)', () => {
+  it('the kit template canon carries the plain-language bar and both known priors parse neutral-headed', () => {
+    assert.ok(COMMS_CANON.includes('Plain language'), 'the canon carries the plain-language bullet');
+    assert.equal(COMMS_PRIORS.length, 2, 'exactly the two known prior bodies (pre-AD-054, AD-054)');
+    for (const prior of COMMS_PRIORS) {
+      assert.match(prior.split('\n')[0], /^### 2\.x\. Communication \(user-facing messages\)/);
+      assert.ok(!prior.includes('Plain language'), 'a prior predates the plain-language bullet');
+    }
+  });
+
+  it('a legacy 4-bullet §2.5 (pre-AD-054) → refreshed to the canon at the SAME number', () => {
+    const text = commsDoc({ body: `${commsAt(COMMS_PRIORS[0], 5)}\n` });
+    const out = reconcileCommsText(text, COMMS_CANON, COMMS_PRIORS);
+    assert.equal(out.status, 'refreshed');
+    const region = extractCommsRegion(out.text);
+    assert.equal(region.number, '5', 'the file keeps its own section number');
+    assert.equal(normalizeCommsBody(region.body), COMMS_CANON);
+  });
+
+  it('a legacy 5-bullet §2.5 (AD-054) → refreshed; re-run → zero-diff current', () => {
+    const text = commsDoc({ body: `${commsAt(COMMS_PRIORS[1], 5)}\n` });
+    const first = reconcileCommsText(text, COMMS_CANON, COMMS_PRIORS);
+    assert.equal(first.status, 'refreshed');
+    const second = reconcileCommsText(first.text, COMMS_CANON, COMMS_PRIORS);
+    assert.equal(second.status, 'current');
+    assert.equal(second.text, first.text);
+  });
+
+  it('a customized §2.5 → preserved byte-for-byte (custom)', () => {
+    const text = commsDoc({ body: `${commsAt(COMMS_PRIORS[0], 5).replace('Lead with the result', 'Bury the result')}\n` });
+    const out = reconcileCommsText(text, COMMS_CANON, COMMS_PRIORS);
+    assert.equal(out.status, 'custom');
+    assert.equal(out.text, text);
+  });
+
+  it('renderComms binds the neutral heading to the file’s own number', () => {
+    assert.match(renderComms(COMMS_CANON, '5').split('\n')[0], /^### 2\.5\. Communication \(user-facing messages\)$/);
+  });
+});
+
+describe('comms-region — CLI reconcile (the legacy-deployment upgrade acceptance)', () => {
+  let projectDir;
+  let logs;
+  let errors;
+  const deps = (engineDir) => ({
+    log: (l) => logs.push(l),
+    logError: (l) => errors.push(l),
+    env: { AGENT_WORKFLOW_ENGINE_DIR: engineDir },
+  });
+  const target = () => join(projectDir, 'agent_rules.md');
+  const run = (engineDir = ENGINE_DIR) => runCli(['reconcile', target()], deps(engineDir));
+
+  beforeEach(() => {
+    projectDir = mkdtempSync(join(tmpdir(), 'comms-region-'));
+    logs = [];
+    errors = [];
+  });
+  afterEach(() => rmSync(projectDir, { recursive: true, force: true }));
+
+  it('a legacy deployment (4-bullet §2.5 + prior lens) leaves upgrade with the plain-language bar present', async () => {
+    writeFileSync(target(), `---\ntype: protocol\nmaxLines: 150\n---\n\n# Rules\n\n### 2.4. Quality Gates\n- run tests\n\n${commsAt(COMMS_PRIORS[0], 5)}\n\n${atNumber(PRE_E4, 6)}\n\n---\n\n## 3. Next\n\nprose\n`);
+    assert.equal(await run(), 0);
+    const upgraded = readFileSync(target(), 'utf8');
+    assert.equal(normalizeCommsBody(extractCommsRegion(upgraded).body), COMMS_CANON, 'the bar landed');
+    assert.equal(normalizeLensBody(extractLensRegion(upgraded).body), normalizeLensBody(FRAGMENT), 'the lens half still refreshes');
+    assert.ok(logs.some((l) => l.includes('refreshed the Communication section')), logs.join('\n'));
+  });
+
+  it('a deployment with NO Communication section (kit-fallback vintage) → stated note, file preserved, lens half unaffected', async () => {
+    const text = `---\ntype: protocol\nmaxLines: 150\n---\n\n# Rules\n\n${renderLens(FRAGMENT, 5)}\n\n---\n\n## 3. Next\n\nprose\n`;
+    writeFileSync(target(), text);
+    assert.equal(await run(), 0);
+    assert.equal(readFileSync(target(), 'utf8'), text, 'nothing rewritten');
+    assert.ok(logs.some((l) => l.includes('no "### 2.x. Communication')), logs.join('\n'));
+  });
+
+  it('a customized §2.5 at the CLI → preserved verbatim + advisory note', async () => {
+    const custom = commsDoc({ body: `${commsAt(COMMS_PRIORS[0], 5).replace('Lead with the result', 'Bury the result')}\n` });
+    writeFileSync(target(), custom);
+    assert.equal(await run(), 0);
+    assert.equal(readFileSync(target(), 'utf8'), custom);
+    assert.ok(logs.some((l) => l.includes('Communication section carries a custom edit')), logs.join('\n'));
+  });
+
+  it('an over-cap Communication refresh → loud refusal, exit 0, file preserved', async () => {
+    const text = commsDoc({ body: `${commsAt(COMMS_PRIORS[0], 5)}\n`, maxLines: 5 });
+    writeFileSync(target(), text);
+    assert.equal(await run(), 0);
+    assert.equal(readFileSync(target(), 'utf8'), text, 'nothing written');
+    assert.ok(logs.some((l) => l.includes('The Communication section was not changed')), logs.join('\n'));
+  });
+
+  it('no frontmatter maxLines → the comms cap-guard is skipped with a stated note, refresh proceeds', async () => {
+    const text = `# Rules\n\n${commsAt(COMMS_PRIORS[0], 5)}\n\n---\n\n## 3. Next\n\nprose\n`;
+    writeFileSync(target(), text);
+    assert.equal(await run(), 0);
+    assert.ok(logs.some((l) => l.includes('line-cap guard is skipped')), logs.join('\n'));
+    assert.equal(normalizeCommsBody(extractCommsRegion(readFileSync(target(), 'utf8')).body), COMMS_CANON);
+  });
+
+  it('an unreadable bundled template canon → loud STOP, exit 1, naming the kit reinstall', async () => {
+    const realFs = await import('node:fs/promises');
+    const fsBrokenTemplate = {
+      ...realFs,
+      readFile: (p, ...rest) => (String(p).includes('references/templates/agent_rules.md')
+        ? Promise.reject(new Error('EACCES: permission denied'))
+        : realFs.readFile(p, ...rest)),
+    };
+    writeFileSync(target(), commsDoc({ body: `${commsAt(COMMS_PRIORS[0], 5)}\n` }));
+    const code = await runCli(['reconcile', target()], { ...deps(ENGINE_DIR), fs: fsBrokenTemplate });
+    assert.equal(code, 1);
+    assert.ok(errors.some((l) => l.includes('template canon is unreadable')), errors.join('\n'));
+    assert.ok(errors.some((l) => l.includes('npx @sabaiway/agent-workflow-kit@latest init')), 'the STOP names the reinstall');
+  });
+
+  it('a write failure mid Communication refresh cleans the temp file and surfaces the error', async () => {
+    const realFs = await import('node:fs/promises');
+    const fsRenameFail = { ...realFs, rename: async () => { throw new Error('EIO: rename failed'); } };
+    const text = commsDoc({ body: `${commsAt(COMMS_PRIORS[0], 5)}\n` });
+    writeFileSync(target(), text);
+    await assert.rejects(runCli(['reconcile', target()], { ...deps(ENGINE_DIR), fs: fsRenameFail }), /EIO/);
+    assert.equal(readFileSync(target(), 'utf8'), text, 'the target is untouched');
+    const leftovers = readdirSync(projectDir).filter((f) => f.includes('.tmp-'));
+    assert.deepEqual(leftovers, [], 'no temp file may be left behind');
   });
 });
 

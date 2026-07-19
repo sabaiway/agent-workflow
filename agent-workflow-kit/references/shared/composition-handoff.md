@@ -43,7 +43,7 @@ duplicate anchor → **STOP with an error**, never edit (the file is left byte-f
 exceed the 100-line cap, the engine is too old to ship its fragment, or (autonomy only) its anchor
 (the orchestration pair) is absent: every prior pointer still lands and the upgrade continues.
 
-**Agent-rules lens refresh (runs in BOTH paths).** Its precondition is its own target file — run it
+**Agent-rules lens + Communication refresh (runs in BOTH paths).** Its precondition is its own target file — run it
 only after `<project>/docs/ai/agent_rules.md` exists: after the substrate deploy in the
 **delegated** path, after the fallback-template copy in the **kit** path (never anchored to the
 `AGENTS.md` step above). ONE command:
@@ -53,4 +53,9 @@ prior canonical body is refreshed from the installed engine; a current seed repo
 current* (zero-diff). Relay its outcome in plain language (*refreshed* / *already current* /
 *custom edit preserved + note* / *file absent — skipped* / *engine too old — skipped* / *over the
 line cap — refused*); a fully absent/invalid engine is the same loud STOP + one-line install
-command as the pointer reconcile.
+command as the pointer reconcile. The same invocation also reconciles the **Communication
+(user-facing messages)** section from the kit's own bundled template canon (no engine involved):
+a body matching the current canon is reported *already current*; a body matching a known prior
+is refreshed; a custom body is preserved + noted; an absent section is a stated note (never an
+insert); an over-cap refresh is refused; and an unreadable bundled template canon is its own
+loud STOP naming the kit reinstall command.
