@@ -5,6 +5,7 @@ sessions on one machine/repo, zero interference on working-tree files (the ONE e
 default `node_modules` symlink is a shared MUTABLE dependency cache — see below), unambiguous
 ownership. One thin tool over git; every verification datum is recomputed live from git, never
 read from stored metadata.
+The ONE stored-metadata exception is the PREPARED OID recorded in the handoff: land and cleanup read it back only for recovery.
 
 **Run** — `node ${CLAUDE_SKILL_DIR}/tools/worktrees.mjs <subcommand> …`:
 
@@ -41,12 +42,22 @@ own verbatim error through the existing Git-error surface.
   vanished worktree dir, or any other read failure renders `handoff: (unreadable)` — never a
   silent "no".
 - `land <slug> --prepare` — stage the satellite's finished diff onto a CLEAN main; the commit is
-  NEVER run by the tool — it stays a dialogue ask at the primary session. Arrives with this
-  release's landing half — until then the CLI answers honestly that it is not available.
-- `cleanup <slug> [--abandon]` — remove a LANDED worktree, fail-closed (live landed-verification
-  against main HEAD). `--abandon` is the ONE destructive arm: it DESTROYS unlanded work and is
-  the only path where `--force` may appear. Arrives with this release's landing half — same
-  honest CLI answer until then.
+  NEVER run by the tool — it stays a dialogue ask at the primary session. Land takes the transient
+  common-git-dir lock, refuses a dirty main, graph divergence, visible `docs/ai` drift, excluded
+  staged paths, unstaged/untracked leftovers, an empty diff, or a red satellite review-state. The
+  complete satellite working-tree diff versus its base is inspected (staged and unstaged); every
+  unstaged/untracked path is listed and refused, so an accepted transfer cannot silently omit it.
+  The binary/no-ext-diff/no-textconv transfer excludes exactly `docs/ai` and `docs/plans`, applies
+  into the index, optionally runs the porcelain-visible sync adapter, then runs the main gate
+  matrix. It reports main HEAD, TRANSFER, PREPARED, and sync delta OIDs/data; the primary re-attests
+  that prepared tree and confirms main HEAD still equals the printed OID before the commit ask.
+- `cleanup <slug> [--branch <name>] [--abandon]` — take the same transient lock and remove a LANDED
+  worktree fail-closed after live landed-verification against main HEAD. Verification uses exactly
+  the land exclusions (`docs/ai`, `docs/plans`), then checks untracked and ignored content before a
+  plain worktree remove, branch `-d`, and prune. Provision-derived ignored containers are ephemeral;
+  `node_modules` of any kind is provision-derivable because provision explicitly advises installs.
+  Foreign content stops cleanup. `--abandon` is the ONE destructive arm: it DESTROYS unlanded work,
+  requires the handoff identity, and is the only path where `--force` may appear.
 
 **Honesty:** there is NO preview step on the writers — over-warned by design. The tool never
 commits, never pushes, never runs a subscription CLI. Every content read and regular-file copy
@@ -69,6 +80,17 @@ narrow parent through the host/session controls; if that is unavailable, use the
 command for each operation. The `recommendations` mode surfaces this lane but treats write access
 as unverified without a trusted host-capability signal.
 
-Ownership matrix, crash recovery, the land preflights, and the commit-ask procedure: extended in
-this file by the release's landing half (the flow: provision → work → handoff → land → re-attest
-→ commit → cleanup).
+**Landing flow:** provision → work → handoff → land → re-attest → commit → cleanup. Satellite
+commits are outside v1: graph divergence stops land and prints cherry-pick/rebase recovery. A gate
+failure keeps the prepared main tree and names both recovery lanes. A second prepare is reset-only:
+the STOP prints the current staged write-tree, compares it with the PREPARED OID recorded in the
+handoff, distinguishes a converged re-run from foreign staged work, and lists removal commands for
+untracked crash residue before the reset-and-re-run lane. A killed process may leave
+`aw-prepare-lock`; after confirming no land/cleanup process owns it, remove that directory by hand.
+
+The optional `scripts/sync-mirrors.mjs` adapter runs as a child. Its contract is porcelain-visible
+output: tracked modifications/deletions or untracked-not-ignored creations. Ignored writes and
+changes inside an already-untracked file are outside observation and therefore out of contract.
+Cleanup reports EBUSY as likely lingering processes/open file descriptors (including a sandbox
+mount); close them and retry, outside the sandbox when needed. Hidden satellite `docs/ai` state is
+ephemeral by design; durable content belongs in the handoff before landing.

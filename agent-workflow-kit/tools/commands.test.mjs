@@ -220,12 +220,6 @@ describe('commands catalog — the worktrees entry', () => {
     assert.match(c.oneLine, /[Nn]o preview step/);
     assert.match(c.oneLine, /commit still asks/i, 'the commit-stays-a-dialogue-ask honesty rides the line');
   });
-
-  // TEMPORARY (remove with the landing half, same commit as the markings): until land/cleanup
-  // are implemented, every user surface marks them as forthcoming.
-  it('the one-liner marks land/cleanup as arriving with this release landing half', () => {
-    assert.match(commandFor('worktrees').oneLine, /arrive with this release's landing half/);
-  });
 });
 
 // ── the Tune tail — the opt-in accelerator funnel (F10a) ─────────────────────────────────────────────

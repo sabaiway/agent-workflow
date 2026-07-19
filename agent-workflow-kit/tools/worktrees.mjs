@@ -2,8 +2,9 @@
 // worktrees.mjs — parallel feature worktrees over git: provision | list | land | cleanup (v1).
 // Thin steps over git — every verification datum is recomputed live from git (branches, OIDs,
 // observed status), never read from stored metadata; the handoff file is the one on-disk record
-// (written at provision, read by list/cleanup). Ownership matrix, crash discipline, and the
-// zero-prompt lanes live in references/modes/worktrees.md. Dependency-free, Node >= 22.
+// (written at provision, refreshed at prepare, read by list/cleanup). Ownership matrix, crash
+// discipline, and the zero-prompt lanes live in references/modes/worktrees.md. Dependency-free,
+// Node >= 22.
 // No side effects on import (the isDirectRun idiom).
 
 import {
@@ -28,12 +29,17 @@ export const WORKTREES_STOP = 'WORKTREES_STOP';
 export const stop = (message, fields = {}) =>
   Object.assign(new Error(`[agent-workflow-kit] ${message}`), { name: 'WorktreesStop', code: WORKTREES_STOP, ...fields });
 const usageStop = (message) => stop(message, { exitCode: EXIT.usage });
+const errorText = (error) => String(error?.message ?? error).replace(/^\[agent-workflow-kit\] /, '');
+const composeFailure = (primary, secondaryName, secondary) =>
+  stop(`${errorText(primary)}; ${secondaryName} failed: ${errorText(secondary)}`);
 
 export const EXIT = Object.freeze({ ok: 0, stop: 1, usage: 2 });
 export const CONFIG_REL = 'docs/ai/worktrees.json';
 export const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 export const DEFAULT_BRANCH_PREFIX = 'aw/';
 export const handoffBasename = (slug) => `handoff-${slug}.md`;
+const WORKTREES_TOOL_ABS = fileURLToPath(import.meta.url);
+const WORKTREES_TOOL_DIR = dirname(WORKTREES_TOOL_ABS);
 
 // Stores/sidecars a fresh worktree must NOT inherit (session state stays with its session).
 const EXCLUDED_BASENAMES = new Set([
@@ -47,6 +53,8 @@ const SEEDED_SEPARATELY = new Set([`/${PLANS_REL}/`]);
 const REBASE_TARGETS = Object.freeze(['docs/ai/gates.json', '.claude/settings.json', '.claude/settings.local.json']);
 const TRACKED_PIN_DECLARATION =
   'tracked declaration is not worktree-portable — this worktree\'s council/final checks route through the MAIN runner via --cwd';
+const TRANSFER_EXCLUSIONS = Object.freeze([':!docs/ai', ':!docs/plans']);
+const PREPARE_LOCK_BASENAME = 'aw-prepare-lock';
 
 const GIT_MAX_BUFFER = 256 * 1024 * 1024;
 
@@ -61,10 +69,10 @@ const USAGE = [
   '  list      show every worktree of this repo: slug, path, branch, base OID, dirty, handoff.',
   '  land <slug> --prepare',
   '            stage the satellite diff onto a clean main (no commit — the commit stays a',
-  "            dialogue ask). This subcommand arrives with this release's landing half.",
+  '            dialogue ask). Refuses divergence, incomplete satellite state, or a dirty main.',
   '  cleanup <slug> [--branch <name>] [--abandon]',
   '            remove a LANDED worktree (fail-closed verification); --abandon is the one',
-  "            destructive arm and destroys unlanded work. This subcommand arrives with this release's landing half.",
+  '            destructive arm and destroys unlanded work.',
   '',
   'The slug is REQUIRED and positional on provision/land/cleanup: lowercase letters, digits,',
   'hyphens, max 64 chars, letter/digit first. Exit codes: 0 ok / 1 refusal / 2 usage.',
@@ -494,6 +502,10 @@ export const probeParentWritable = (parentDir, deps = {}) => {
   return { writable: true };
 };
 
+const probeCleanupStop = ({ path, code }) => stop(
+  `the writability probe could not clean up its probe dir (${code}) — remove it by hand: ${path}`,
+);
+
 const provisionFlagsTail = (flags, q) => {
   const parts = ['--plan', q(flags.plan)];
   if (flags.as) parts.push('--as', q(flags.as));
@@ -507,10 +519,21 @@ const provisionFlagsTail = (flags, q) => {
 
 // The maintainer-paste fallback must be the COMPLETE original invocation, quoted; the tool
 // path is ALWAYS quoted — the one token whose spaces depend on the install location.
+const quoteOwnTool = () => `'${WORKTREES_TOOL_ABS.replace(/'/g, `'\\''`)}'`;
+const composeOwnToolPrefix = (root) =>
+  `cd ${shellQuoteArg(root)} && node ${quoteOwnTool()}`;
+
+const landWritabilityStop = ({ parentDir, root, slug }) => stop([
+  `the worktrees parent dir is not writable from this session: ${parentDir}`,
+  'Arm the ONE-TIME consent (then land runs promptless):',
+  `  .claude/settings.json → sandbox.filesystem.allowWrite += ${JSON.stringify(parentDir)}`,
+  'Or run the full command yourself in a plain terminal:',
+  `  ${composeOwnToolPrefix(root)} land ${shellQuoteArg(slug)} --prepare`,
+].join('\n'));
+
 export const composeProvisionArgv = ({ root, slug, flags }) => {
   const q = shellQuoteArg;
-  const toolAbs = fileURLToPath(import.meta.url);
-  return ['cd', q(root), '&&', 'node', `'${toolAbs.replace(/'/g, `'\\''`)}'`, 'provision', q(slug), ...provisionFlagsTail(flags, q)].join(' ');
+  return [composeOwnToolPrefix(root), 'provision', q(slug), ...provisionFlagsTail(flags, q)].join(' ');
 };
 
 const writabilityStop = ({ parentDir, root, slug, flags }) => {
@@ -563,10 +586,57 @@ const guardDst = (fs, wtRoot, dstAbs) => {
   }
 };
 
+// The ONE path-removal door: containment + no-follow classification before a known leaf/tree is
+// removed. Symlinks are unlinked as links; recursion enters plain directories only.
+const removeNodeNoFollow = ({ root, abs, fs, label = abs, emptyOnly = false }) => {
+  guardDst(fs, root, dirname(abs));
+  const node = classifyNodeNoFollow(abs, fs);
+  if (node.kind === 'absent') return true;
+  if (node.kind === 'error') throw stop(`cannot inspect removal target ${label} (${node.error})`);
+  if (node.kind === 'plain-directory') {
+    let names;
+    try {
+      names = fs.readdir(abs);
+    } catch (error) {
+      throw stop(`cannot enumerate removal target ${label} (${error?.code ?? 'fs error'})`, { causeCode: error?.code ?? 'fs error' });
+    }
+    if (emptyOnly && names.length > 0) return false;
+    for (const name of names) {
+      removeNodeNoFollow({ root, abs: join(abs, name), fs, label: `${label}/${name}` });
+    }
+    try {
+      fs.rmdir(abs);
+    } catch (error) {
+      throw stop(`cannot remove directory ${label} (${error?.code ?? 'fs error'})`, { causeCode: error?.code ?? 'fs error' });
+    }
+    return true;
+  }
+  if (emptyOnly) return false;
+  if (node.kind === 'special' || node.kind === 'symlink-to-special') {
+    throw stop(`refusing to remove special node ${label}`);
+  }
+  try {
+    fs.unlink(abs);
+  } catch (error) {
+    throw stop(`cannot remove ${label} (${error?.code ?? 'fs error'})`, { causeCode: error?.code ?? 'fs error' });
+  }
+  return true;
+};
+
+const removeEmptyParentsNoFollow = ({ root, abs, fs }) => {
+  const parent = dirname(abs);
+  if (parent === root) return;
+  const removed = removeNodeNoFollow({
+    root, abs: parent, fs, label: relative(root, parent), emptyOnly: true,
+  });
+  if (removed) removeEmptyParentsNoFollow({ root, abs: parent, fs });
+};
+
 const failAfterCopy = ({ cause, dstAbs, wtRoot, fs }) => {
   const primary = cause.message.replace(/^\[agent-workflow-kit\] /, '');
   const throwCleanupFailure = (error) => {
-    const cleanupCode = error?.code ?? 'fs error';
+    // a door STOP carries its underlying errno as causeCode — the composed contract stays concise
+    const cleanupCode = error?.causeCode ?? error?.code ?? 'fs error';
     const cleanupDetail = cleanupCode === WORKTREES_STOP
       ? `: ${error.message.replace(/^\[agent-workflow-kit\] /, '')}`
       : '';
@@ -587,7 +657,7 @@ const failAfterCopy = ({ cause, dstAbs, wtRoot, fs }) => {
     throwCleanupFailure(error);
   }
   try {
-    fs.unlink(dstAbs);
+    removeNodeNoFollow({ root: wtRoot, abs: dstAbs, fs, label: dstAbs });
   } catch (error) {
     throwCleanupFailure(error);
   }
@@ -857,7 +927,7 @@ const assertResumePlanCompatibility = ({ wtRoot, seedName, fs }) => {
 
 // ── the handoff artifact (the tool's own record inside it; list/cleanup read it) ───────
 
-const composeProvisionRecordSection = ({ slug, branch, includes, nodeModules, vscode }) => [
+const composeProvisionRecordSection = ({ slug, branch, includes, nodeModules, vscode, prepared = null }) => [
   '## Provision record',
   '',
   `- slug: ${slug}`,
@@ -865,6 +935,7 @@ const composeProvisionRecordSection = ({ slug, branch, includes, nodeModules, vs
   ...(includes.length === 0 ? ['- include: (none)'] : includes.map((p) => `- include: ${p}`)),
   `- node_modules: ${nodeModules}`,
   `- vscode-settings: ${vscode}`,
+  ...(prepared === null ? [] : [`- prepared-tree: ${prepared}`]),
   '',
 ].join('\n');
 
@@ -894,8 +965,11 @@ const locateProvisionRecordSection = (text) => {
 export const parseProvisionRecord = (text) => {
   const section = locateProvisionRecordSection(text);
   const scan = section.source.slice(section.start, section.end).split('\n').slice(1);
-  const record = { slug: null, branch: null, includes: [], nodeModules: null, vscode: null };
-  const single = { slug: 'slug', branch: 'branch', node_modules: 'nodeModules', 'vscode-settings': 'vscode' };
+  const record = { slug: null, branch: null, includes: [], nodeModules: null, vscode: null, prepared: null };
+  const single = {
+    slug: 'slug', branch: 'branch', node_modules: 'nodeModules',
+    'vscode-settings': 'vscode', 'prepared-tree': 'prepared',
+  };
   const seen = new Set();
   for (const line of scan) {
     const m = line.match(/^- ([a-z_-]+): (.*)$/);
@@ -1291,11 +1365,7 @@ export const runProvision = ({ argvSlug, flags, cwd, git, deps, log }) => {
   const runWritabilityProbe = () => {
     const probe = probeParentWritable(probeDir, deps);
     if (!probe.writable) {
-      if (probe.cleanupFailed) {
-        throw stop(
-          `the writability probe could not clean up its probe dir (${probe.cleanupFailed.code}) — remove it by hand: ${probe.cleanupFailed.path}`,
-        );
-      }
+      if (probe.cleanupFailed) throw probeCleanupStop(probe.cleanupFailed);
       throw writabilityStop({ parentDir: probeDir, root, slug, flags });
     }
   };
@@ -1433,6 +1503,727 @@ export const runList = ({ cwd, git, deps, log }) => {
   return EXIT.ok;
 };
 
+// ── land + cleanup ────────────────────────────────────────────────────────────────────
+
+const nulFields = (text) => String(text).split('\0').filter((field) => field !== '');
+
+const gitRead = (git, args, cwd, label) => {
+  const result = git(args, cwd);
+  if (result.status !== 0) {
+    throw stop(`${label}: ${(result.stderr || result.stdout).trim() || `git exited ${result.status}`}`);
+  }
+  return result;
+};
+
+// New git mutations cross one status-checking door; callers may add a narrower recovery message.
+const gitMutation = (git, args, cwd, label) => gitRead(git, args, cwd, label);
+
+const spawnChild = (deps, command, args, cwd) => {
+  const spawn = deps.spawn ?? ((cmd, childArgs, options) => {
+    const result = spawnSync(cmd, childArgs, {
+      ...options, encoding: 'utf8', windowsHide: true, maxBuffer: GIT_MAX_BUFFER,
+    });
+    return {
+      status: result.error ? -1 : result.status,
+      stdout: result.stdout ?? '',
+      stderr: result.error ? String(result.error.message) : (result.stderr ?? ''),
+    };
+  });
+  return spawn(command, args, { cwd, encoding: 'utf8', windowsHide: true, maxBuffer: GIT_MAX_BUFFER });
+};
+
+const childWords = (result) => [result.stdout, result.stderr]
+  .map((part) => String(part ?? '').trim())
+  .filter(Boolean)
+  .join('\n');
+
+const withPrepareLock = ({ commonDir, fs, now }, action) => {
+  const path = join(commonDir, PREPARE_LOCK_BASENAME);
+  try {
+    fs.mkdirPlain(path);
+  } catch (error) {
+    if (error?.code !== 'EEXIST') throw stop(`cannot acquire ${PREPARE_LOCK_BASENAME}: ${error?.code ?? 'fs error'}`);
+    let age = 'unknown';
+    try {
+      const stat = fs.lstat(path);
+      age = `${Math.max(0, Math.floor((now() - Number(stat.mtimeMs)) / 1000))}s`;
+    } catch {
+      // The lock still failed atomically; an unreadable age must not weaken the refusal.
+    }
+    throw stop(
+      `${PREPARE_LOCK_BASENAME} is already held at ${path} (age ${age}). ` +
+      `If no land/cleanup process owns it, remove ${path} by hand and retry.`,
+    );
+  }
+  let result;
+  let actionError = null;
+  try {
+    result = action();
+  } catch (error) {
+    actionError = error;
+  }
+  let releaseError = null;
+  try {
+    fs.rmdir(path);
+  } catch (error) {
+    releaseError = stop(`could not release ${PREPARE_LOCK_BASENAME} at ${path} (${error?.code ?? 'fs error'}) — remove it by hand`);
+  }
+  if (actionError && releaseError) throw composeFailure(actionError, 'lock release', releaseError);
+  if (actionError) throw actionError;
+  if (releaseError) throw releaseError;
+  return result;
+};
+
+const branchNameOf = (entry) => entry.branch?.replace(/^refs\/heads\//, '') ?? null;
+
+const findSatelliteEntry = ({ root, slug, branch, git, fs }) => {
+  const entries = listWorktrees(git, root).slice(1);
+  const exactHandoff = [];
+  for (const entry of entries) {
+    if (entry.prunable) continue;
+    const scan = scanPlansDir({ wtRoot: entry.path, fs });
+    if (scan.state === 'ok' && scan.handoffs.includes(handoffBasename(slug))) exactHandoff.push(entry);
+  }
+  if (exactHandoff.length > 1) {
+    throw stop(`multiple worktrees carry ${handoffBasename(slug)} — cleanup the duplicate identity before continuing`);
+  }
+  if (branch !== null) {
+    const byBranch = entries.filter((entry) => entry.branch === `refs/heads/${branch}`);
+    if (byBranch.length > 1) throw stop(`multiple worktrees claim branch ${branch}`);
+    if (byBranch.length === 1) return byBranch[0];
+  }
+  if (exactHandoff.length === 1) return exactHandoff[0];
+  const fallback = entries.filter((entry) => entry.branch === `refs/heads/${DEFAULT_BRANCH_PREFIX}${slug}`);
+  if (fallback.length === 1) return fallback[0];
+  throw stop(`no registered satellite worktree for ${slug}`);
+};
+
+const readSatelliteIdentity = ({ entry, slug, expectedBranch, fs, abandon = false }) => {
+  const name = handoffBasename(slug);
+  const scan = scanPlansDir({ wtRoot: entry.path, fs });
+  if (scan.state === 'ok' && scan.nonRegular.includes(name)) {
+    throw stop(`handoff identity mismatch: ${name} is not a regular file`);
+  }
+  if (scan.state !== 'ok' || !scan.handoffs.includes(name)) {
+    if (abandon) throw stop(`${name} is absent — force deletion is forbidden without the handoff identity`);
+    throw stop(`handoff identity mismatch: expected ${name} in the satellite`);
+  }
+  if (scan.handoffs.length !== 1) {
+    throw stop(`handoff identity mismatch: expected exactly ${name}, found [${scan.handoffs.join(', ')}]`);
+  }
+  const leaf = readFileNoFollow(fs, join(entry.path, PLANS_REL, name));
+  if (!leaf.bytes) throw stop(`handoff identity mismatch: ${name} is not readable as a regular file`);
+  const record = parseProvisionRecord(String(leaf.bytes));
+  const liveBranch = branchNameOf(entry);
+  const wantedBranch = expectedBranch ?? liveBranch;
+  if (record.slug !== slug || record.branch !== wantedBranch || liveBranch !== wantedBranch) {
+    throw stop(
+      `handoff identity mismatch: expected slug ${slug} and branch ${wantedBranch}; ` +
+      `record has slug ${record.slug ?? '(missing)'} and branch ${record.branch ?? '(missing)'}, live branch ${liveBranch ?? '(detached)'}`,
+    );
+  }
+  return { record, path: join(entry.path, PLANS_REL, name), branch: wantedBranch };
+};
+
+const changedPaths = (git, args, cwd, label) =>
+  nulFields(gitRead(git, [...args, '-z', '--', ...TRANSFER_EXCLUSIONS], cwd, label).stdout);
+
+const literalPathspec = (path) => `:(literal)${path}`;
+
+const untrackedPaths = (git, cwd) => nulFields(gitRead(
+  git, ['ls-files', '--others', '--exclude-standard', '-z'], cwd, 'git ls-files failed',
+).stdout);
+
+const mainPorcelain = (git, cwd) => gitRead(
+  git, ['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd, 'git status failed',
+).stdout;
+
+const classifyDivergence = ({ git, mainHead, satelliteHead, worktree }) => {
+  if (mainHead === satelliteHead) return 'none';
+  const satelliteBehind = git(['merge-base', '--is-ancestor', satelliteHead, mainHead], worktree);
+  const satelliteAhead = git(['merge-base', '--is-ancestor', mainHead, satelliteHead], worktree);
+  if (![0, 1].includes(satelliteBehind.status) || ![0, 1].includes(satelliteAhead.status)) {
+    throw stop(`git merge-base failed: ${(satelliteBehind.stderr || satelliteAhead.stderr).trim()}`);
+  }
+  if (satelliteBehind.status === 0) return 'behind';
+  if (satelliteAhead.status === 0) return 'local';
+  return 'both';
+};
+
+const driftRecipe = ({ slug, satelliteHead, mainHead }) => [
+  `satellite is behind main; old satellite HEAD rollback datum: ${satelliteHead}`,
+  'Recover in the satellite:',
+  '  git add -A',
+  `  git diff --cached --binary --no-ext-diff --no-textconv --output=${PLANS_REL}/aw-rebase-${slug}.patch`,
+  `  git reset --hard ${mainHead}`,
+  `  git apply --index ${PLANS_REL}/aw-rebase-${slug}.patch`,
+  'Delete the patch ONLY after apply succeeds; on failure the patch is KEPT, run:',
+  `  git reset --hard ${satelliteHead}`,
+  `  git apply --index ${PLANS_REL}/aw-rebase-${slug}.patch`,
+  'Resolve conflicts in the satellite, then re-run its council.',
+].join('\n');
+
+const assertSatelliteReady = ({ slug, mainHead, satelliteHead, worktree, git }) => {
+  const divergence = classifyDivergence({ git, mainHead, satelliteHead, worktree });
+  if (divergence === 'local') {
+    throw stop('satellite has local commits; cherry-pick the wanted commits at main, then retire or reset the satellite before land');
+  }
+  if (divergence === 'both') {
+    throw stop(
+      'satellite is both behind main and carries local commits. Recover commits first with cherry-pick, then repair the working diff:\n' +
+      driftRecipe({ slug, satelliteHead, mainHead }),
+    );
+  }
+  if (divergence === 'behind') throw stop(driftRecipe({ slug, satelliteHead, mainHead }));
+
+  const docsAi = nulFields(gitRead(
+    git, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', 'docs/ai'], worktree,
+    'git status failed for docs/ai',
+  ).stdout).map((entry) => entry.length > 3 ? entry.slice(3) : entry);
+  if (docsAi.length > 0) {
+    throw stop(
+      `satellite docs/ai must stay byte-equal to HEAD; move durable content to the handoff and reset these paths:\n${docsAi.join('\n')}`,
+    );
+  }
+
+  const stagedExcluded = nulFields(gitRead(
+    git, ['diff', '--cached', '--name-only', '--no-renames', '-z', '--', 'docs/ai', 'docs/plans'], worktree,
+    'git diff failed for excluded paths',
+  ).stdout);
+  if (stagedExcluded.length > 0) {
+    throw stop(
+      `staged excluded path(s): ${stagedExcluded.join(', ')} — unstage them; their durable content belongs in the handoff`,
+    );
+  }
+
+  const unstaged = nulFields(gitRead(
+    git, ['diff', '--name-only', '--no-renames', '-z'], worktree, 'git diff failed for satellite leftovers',
+  ).stdout);
+  const untracked = untrackedPaths(git, worktree);
+  const leftovers = [...new Set([...unstaged, ...untracked])];
+  if (leftovers.length > 0) {
+    throw stop(
+      `satellite has unstaged or untracked-not-ignored leftovers; stage the complete working-tree diff before land:\n${leftovers.join('\n')}`,
+    );
+  }
+
+  const staged = changedPaths(git, ['diff', '--cached', '--name-only', '--no-renames'], worktree, 'git diff failed');
+  if (staged.length === 0) throw stop('satellite has an empty staged diff — there is nothing to prepare');
+  return staged;
+};
+
+const runSatelliteReview = ({ worktree, deps }) => {
+  const tool = join(WORKTREES_TOOL_DIR, 'review-state.mjs');
+  const result = spawnChild(deps, process.execPath, [tool, '--check'], worktree);
+  if (result.status !== 0) {
+    throw stop(
+      `satellite review-state is not green; finish the in-flight plan and council in the satellite before land.\n${childWords(result)}`,
+    );
+  }
+};
+
+const rollbackMain = ({ root, mainHead, git, fs }) => {
+  const failures = [];
+  let leftovers = [];
+  try {
+    leftovers = untrackedPaths(git, root);
+  } catch (error) {
+    failures.push(error);
+  }
+  for (const rel of leftovers) {
+    try {
+      const abs = join(root, rel);
+      removeNodeNoFollow({ root, abs, fs, label: rel });
+      removeEmptyParentsNoFollow({ root, abs, fs });
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  try {
+    gitMutation(git, ['reset', '--hard', mainHead], root, 'git reset --hard rollback failed');
+  } catch (error) {
+    failures.push(error);
+  }
+  return failures;
+};
+
+const withRollbackFailures = (primary, rollback) =>
+  rollback.reduce((error, failure) => composeFailure(error, 'rollback', failure), primary);
+
+const withRollbackOnFailure = ({ root, mainHead, git, fs }, action) => {
+  try {
+    return action();
+  } catch (error) {
+    throw withRollbackFailures(error, rollbackMain({ root, mainHead, git, fs }));
+  }
+};
+
+const applyTransfer = ({ root, commonDir, slug, patch, mainHead, git, fs }) => {
+  const patchPath = join(commonDir, `aw-transfer-${slug}.patch`);
+  writeContainedFileAtomic(commonDir, patchPath, patch, fs, { stop: (message) => stop(message) });
+  let applyError = null;
+  try {
+    gitMutation(git, ['apply', '--index', patchPath], root, 'git apply --index failed');
+  } catch (error) {
+    applyError = error;
+  }
+  let cleanupError = null;
+  try {
+    removeNodeNoFollow({ root: commonDir, abs: patchPath, fs, label: patchPath });
+  } catch (error) {
+    cleanupError = error;
+  }
+  if (!applyError && !cleanupError) return;
+  let primary = applyError ?? cleanupError;
+  if (applyError && cleanupError) primary = composeFailure(applyError, 'patch cleanup', cleanupError);
+  throw withRollbackFailures(primary, rollbackMain({ root, mainHead, git, fs }));
+};
+
+const runSyncAdapter = ({ root, mainHead, transferPaths, git, fs, deps, report }) => {
+  const adapter = join(root, 'scripts/sync-mirrors.mjs');
+  const node = classifyNodeNoFollow(adapter, fs);
+  if (node.kind === 'absent') {
+    report.push('sync adapter: absent — skipped');
+    return [];
+  }
+  if (node.kind !== 'regular-file') throw stop('sync adapter is not a regular non-symlink file — refusing to execute it');
+  const indexTreeBefore = gitRead(git, ['write-tree'], root, 'cannot snapshot the main index before sync').stdout.trim();
+  const result = spawnChild(deps, process.execPath, [adapter], root);
+  const { indexDelta, workingDelta } = withRollbackOnFailure({ root, mainHead, git, fs }, () => {
+    const indexTreeAfter = gitRead(git, ['write-tree'], root, 'cannot snapshot the main index after sync').stdout.trim();
+    return {
+      indexDelta: indexTreeBefore === indexTreeAfter
+        ? []
+        : nulFields(gitRead(
+            git, ['diff', '--name-only', '--no-renames', '-z', indexTreeBefore, indexTreeAfter], root,
+            'git diff failed for the sync index delta',
+          ).stdout),
+      workingDelta: [...new Set([
+        ...nulFields(gitRead(git, ['diff', '--name-only', '--no-renames', '-z'], root, 'git diff failed after sync').stdout),
+        ...untrackedPaths(git, root),
+      ])],
+    };
+  });
+  if (result.status !== 0) {
+    const output = childWords(result);
+    const primary = stop('sync adapter failed');
+    const composed = withRollbackFailures(primary, rollbackMain({ root, mainHead, git, fs }));
+    if (composed !== primary) {
+      if (output) composed.message += `\n${output}`;
+      throw composed;
+    }
+    throw stop(`sync adapter failed; main was rolled back byte-clean.${output ? `\n${output}` : ''}`);
+  }
+  withRollbackOnFailure({ root, mainHead, git, fs }, () => {
+    if (workingDelta.length > 0) {
+      gitMutation(
+        git, ['add', '-A', '--', ...workingDelta.map(literalPathspec)], root,
+        'git add failed for the observed sync delta',
+      );
+    }
+  });
+  const delta = [...new Set([...indexDelta, ...workingDelta])];
+  const overlap = delta.filter((path) => transferPaths.includes(path));
+  if (overlap.length > 0) report.push(`mirror edit overwritten by canon sync: ${overlap.join(', ')}`);
+  const output = childWords(result);
+  if (output) report.push(output);
+  return delta;
+};
+
+const recordPreparedTree = ({ identity, slug, entry, prepared, fs }) => {
+  writeHandoffRecord({
+    wtRoot: entry.path,
+    slug,
+    branch: identity.branch,
+    fields: { ...identity.record, prepared },
+    fs,
+    report: [],
+  });
+};
+
+const dirtyMainStop = ({ root, git, record, porcelain }) => {
+  const tree = gitRead(git, ['write-tree'], root, 'git write-tree failed').stdout.trim();
+  const leftovers = untrackedPaths(git, root);
+  const treeMatchesRecord = record.prepared !== null && record.prepared === tree;
+  const stagedDelta = treeMatchesRecord ? git(['diff', '--cached', '--quiet'], root) : null;
+  if (stagedDelta !== null && ![0, 1].includes(stagedDelta.status)) {
+    throw stop(`git diff --cached --quiet failed: ${(stagedDelta.stderr || stagedDelta.stdout).trim()}`);
+  }
+  const converged = treeMatchesRecord && (stagedDelta.status === 1 || stagedDelta.stdout !== '');
+  const trackedEntries = parseStatusZ(porcelain).filter((entry) => !['??', '!!'].includes(entry.code));
+  const trackedPaths = [...new Set(trackedEntries.flatMap((entry) => entry.paths))];
+  const hasTrackedUnstaged = trackedEntries.some((entry) => entry.code[1] !== ' ');
+  const mayReset = converged && !hasTrackedUnstaged;
+  const classification = converged
+    ? `converged re-run: current staged write-tree matches the previous prepare's recorded OID ${record.prepared}`
+    : record.prepared === null
+      ? 'foreign staged work: no previous prepare OID is recorded'
+      : treeMatchesRecord
+        ? `foreign staged work: the index has no staged delta against HEAD, although its write-tree matches the recorded OID ${record.prepared}`
+      : `foreign staged work: current staged write-tree differs from the previous prepare's recorded OID ${record.prepared}`;
+  const leftoversReport = leftovers.length === 0
+    ? []
+    : mayReset
+      ? [
+          'Then remove crash-residue untracked paths:',
+          ...leftovers.map((path) => `  cd ${shellQuoteArg(root)} && rm -- ${shellQuoteArg(path)}`),
+        ]
+      : [
+          'Untracked paths require manual review; no removal command is offered:',
+          ...leftovers.map((path) => `  ${shellQuoteArg(path)}`),
+        ];
+  const trackedReport = trackedPaths.length === 0
+    ? []
+    : ['Tracked changes:', ...trackedPaths.map((path) => `  ${shellQuoteArg(path)}`)];
+  throw stop([
+    mayReset
+      ? 'main is not clean; a second prepare is reset-only.'
+      : 'main is not clean; land --prepare refuses to overwrite existing main changes.',
+    `current staged write-tree: ${tree}`,
+    classification,
+    ...trackedReport,
+    ...(mayReset ? ['Recover mechanically: git reset --hard'] : []),
+    ...leftoversReport,
+    `Re-run land from ${root} with --prepare.`,
+  ].join('\n'));
+};
+
+export const runLand = ({ argvSlug, flags, cwd, git, deps, log }) => {
+  const slug = validateSlug(argvSlug);
+  if (!flags.prepare) throw usageStop('land requires --prepare');
+  const fs = fsOf(deps);
+  const { root, commonDir } = resolveRoots(cwd, git);
+
+  return withPrepareLock({ commonDir, fs, now: deps.now ?? Date.now }, () => {
+    const entry = findSatelliteEntry({ root, slug, branch: null, git, fs });
+    if (entry.prunable) throw stop(`satellite ${slug} is prunable because its directory is gone — run cleanup ${slug}`);
+    const identity = readSatelliteIdentity({ entry, slug, expectedBranch: null, fs });
+    const porcelain = mainPorcelain(git, root);
+    if (porcelain !== '') dirtyMainStop({ root, git, record: identity.record, porcelain });
+    const mainHead = gitRead(git, ['rev-parse', 'HEAD'], root, 'cannot resolve main HEAD').stdout.trim();
+    const satelliteHead = gitRead(git, ['rev-parse', 'HEAD'], entry.path, 'cannot resolve satellite HEAD').stdout.trim();
+    const transferPaths = assertSatelliteReady({ slug, mainHead, satelliteHead, worktree: entry.path, git });
+    runSatelliteReview({ worktree: entry.path, deps });
+
+    const gates = classifyNodeNoFollow(join(root, 'docs/ai/gates.json'), fs);
+    if (gates.kind === 'absent') throw stop('docs/ai/gates.json is absent — land cannot attest the prepared main tree');
+    if (gates.kind !== 'regular-file') throw stop('docs/ai/gates.json is not a regular non-symlink file — land fails closed');
+
+    const satelliteParent = dirname(entry.path);
+    const probe = probeParentWritable(satelliteParent, deps);
+    if (!probe.writable) {
+      if (probe.cleanupFailed) throw probeCleanupStop(probe.cleanupFailed);
+      throw landWritabilityStop({ parentDir: satelliteParent, root, slug });
+    }
+
+    const transferTree = gitRead(git, ['write-tree'], entry.path, 'cannot write the satellite transfer tree').stdout.trim();
+    const patch = gitRead(
+      git,
+      ['diff', '--cached', '--binary', '--no-ext-diff', '--no-textconv', '--full-index', '--', ...TRANSFER_EXCLUSIONS],
+      entry.path,
+      'cannot create the satellite transfer diff',
+    ).stdout;
+    applyTransfer({ root, commonDir, slug, patch, mainHead, git, fs });
+
+    const report = [];
+    const syncDelta = runSyncAdapter({ root, mainHead, transferPaths, git, fs, deps, report });
+    const preparedTree = gitRead(git, ['write-tree'], root, 'cannot write the prepared main tree').stdout.trim();
+    try {
+      recordPreparedTree({ identity, slug, entry, prepared: preparedTree, fs });
+    } catch (error) {
+      throw withRollbackFailures(error, rollbackMain({ root, mainHead, git, fs }));
+    }
+
+    const beforeGates = { head: mainHead, tree: preparedTree, porcelain: mainPorcelain(git, root) };
+    const gateTool = join(WORKTREES_TOOL_DIR, 'run-gates.mjs');
+    const gateResult = spawnChild(deps, process.execPath, [gateTool, '--cwd', root], root);
+    const afterGates = {
+      head: gitRead(git, ['rev-parse', 'HEAD'], root, 'cannot re-read main HEAD').stdout.trim(),
+      tree: gitRead(git, ['write-tree'], root, 'cannot re-read the prepared tree').stdout.trim(),
+      porcelain: mainPorcelain(git, root),
+    };
+    if (afterGates.head !== beforeGates.head || afterGates.tree !== beforeGates.tree || afterGates.porcelain !== beforeGates.porcelain) {
+      throw stop(
+        `main changed during gates; the post-gates snapshot no longer matches. ` +
+        `Recover with git reset --hard ${mainHead}, fix the gate, and re-run land --prepare.`,
+      );
+    }
+    if (gateResult.status !== 0) {
+      throw stop([
+        childWords(gateResult),
+        'The prepared tree stays staged. Recover either by: reset main, fix in satellite, and re-land; or apply a maintainer-directed fix at main during primary re-attest.',
+      ].filter(Boolean).join('\n'));
+    }
+
+    const gateOutput = childWords(gateResult);
+    if (gateOutput) log(gateOutput);
+    for (const line of report) log(line);
+    log(`transfer paths: ${transferPaths.map(shellQuoteArg).join(', ')}`);
+    log(`main HEAD: ${mainHead}`);
+    log(`transfer: ${transferTree}`);
+    log(`prepared: ${preparedTree}`);
+    log(`sync delta: ${syncDelta.length === 0 ? 'none' : syncDelta.join(', ')}`);
+    log('this tool did not commit — re-attest the landed diff, confirm main HEAD is unchanged, then ask before committing');
+    return EXIT.ok;
+  });
+};
+
+const parseStatusZ = (text) => {
+  const fields = String(text).split('\0');
+  const entries = [];
+  for (let index = 0; index < fields.length; index += 1) {
+    const field = fields[index];
+    if (!field) continue;
+    const code = field.slice(0, 2);
+    const paths = [field.slice(3)];
+    if (code.includes('R') || code.includes('C')) paths.push(fields[index += 1]);
+    entries.push({ code, paths: paths.filter(Boolean) });
+  }
+  return entries;
+};
+
+const indexEntry = (git, cwd, path) => {
+  const fields = nulFields(gitRead(
+    git, ['ls-files', '--stage', '-z', '--', literalPathspec(path)], cwd,
+    `git ls-files failed for ${path}`,
+  ).stdout);
+  if (fields.length === 0) return null;
+  if (fields.length !== 1) throw stop(`satellite index is conflicted at ${path}`);
+  const match = fields[0].match(/^(\d+) ([0-9a-f]+) 0\t/);
+  if (!match) throw stop(`cannot parse the satellite index entry for ${path}`);
+  return { mode: match[1], oid: match[2] };
+};
+
+const headEntry = (git, cwd, head, path) => {
+  const fields = nulFields(gitRead(
+    git, ['ls-tree', '-z', head, '--', literalPathspec(path)], cwd,
+    `git ls-tree failed for ${path}`,
+  ).stdout);
+  if (fields.length === 0) return null;
+  const match = fields[0].match(/^(\d+) \w+ ([0-9a-f]+)\t/);
+  if (!match) throw stop(`cannot parse the main HEAD entry for ${path}`);
+  return { mode: match[1], oid: match[2] };
+};
+
+const registryRoots = () => {
+  const roots = [];
+  for (const pattern of [...KIT_OWN_PATHS, ...KNOWN_FOOTPRINT.map((entry) => entry.pattern)]) {
+    const normalized = normalizeSlashes(pattern).replace(/^\//, '').replace(/\/$/, '');
+    if (normalized) roots.push(normalized);
+  }
+  return roots;
+};
+
+const safeRecordedPath = (path) => {
+  const normalized = normalizeSlashes(String(path)).replace(/^\.\//, '').replace(/\/$/, '');
+  if (!normalized || isAbsolute(normalized) || normalized.split('/').includes('..')) {
+    throw stop(`handoff record carries an unsafe provision path: ${path}`);
+  }
+  return normalized;
+};
+
+const provisionKnownRoots = (identity) => {
+  const roots = [
+    ...registryRoots(),
+    ...identity.record.includes.map(safeRecordedPath),
+    PLANS_REL,
+    'node_modules',
+  ];
+  if (identity.record.vscode === 'written') roots.push('.vscode/settings.json');
+  return [...new Set(roots)];
+};
+
+const provisionKnownDirectoryRoots = ({ root, identity, fs }) => {
+  const roots = [
+    ...KIT_OWN_PATHS.filter(isDirPattern),
+    ...KNOWN_FOOTPRINT.filter((entry) => entry.type === 'dir').map((entry) => entry.pattern),
+    PLANS_REL,
+    'node_modules',
+  ].map((path) => normalizeSlashes(path).replace(/^\//, '').replace(/\/$/, ''));
+  for (const include of identity.record.includes.map(safeRecordedPath)) {
+    const kind = classifyNodeNoFollow(join(root, include), fs).kind;
+    if (kind === 'plain-directory' || kind === 'symlink-to-directory') roots.push(include);
+  }
+  return new Set(roots);
+};
+
+const rootCoveringPath = (path, roots) => roots.find((root) => {
+  if (root.includes('*')) {
+    const expression = new RegExp(`^${root.split('*').map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')}$`);
+    return expression.test(path);
+  }
+  return path === root || path.startsWith(`${root}/`);
+}) ?? null;
+
+const foreignIgnoredPaths = ({ root, git, identity, fs }) => {
+  const result = gitRead(
+    git, ['status', '--porcelain=v1', '-z', '--ignored', '--untracked-files=all'], root,
+    'git status --ignored failed',
+  );
+  const seen = new Map();
+  for (const entry of parseStatusZ(result.stdout)) {
+    if (entry.code !== '!!') continue;
+    for (const rawPath of entry.paths) {
+      const normalized = normalizeSlashes(rawPath);
+      const path = normalized.replace(/\/$/, '');
+      const kind = classifyNodeNoFollow(join(root, path), fs).kind;
+      const rootType = kind === 'plain-directory' || kind === 'symlink-to-directory'
+        ? 'directory'
+        : kind === 'regular-file' || kind === 'symlink-to-file'
+          ? 'file'
+          : kind === 'absent'
+            ? (normalized.endsWith('/') ? 'directory' : 'file')
+            : 'unknown';
+      seen.set(path, rootType);
+    }
+  }
+  const knownRoots = provisionKnownRoots(identity);
+  const directoryRoots = provisionKnownDirectoryRoots({ root, identity, fs });
+  return [...seen].filter(([path, rootType]) => {
+    const known = rootCoveringPath(path, knownRoots);
+    if (known === null) return true;
+    const atRoot = known.includes('*') || path === known;
+    if (atRoot && rootType !== (directoryRoots.has(known) ? 'directory' : 'file')) return true;
+    return !atRoot && !directoryRoots.has(known);
+  }).map(([path]) => path);
+};
+
+const composeCleanupCommand = ({ slug, branch, abandon }) =>
+  `cleanup ${shellQuoteArg(slug)}` +
+  `${branch === `${DEFAULT_BRANCH_PREFIX}${slug}` ? '' : ` --branch ${shellQuoteArg(branch)}`}` +
+  `${abandon ? ' --abandon' : ''}`;
+
+const destructiveRecovery = ({ slug, branch }) =>
+  `Destructive recovery requires: ${composeCleanupCommand({ slug, branch, abandon: true })}`;
+
+const cleanupWritabilityStop = ({ parentDir, root, slug, branch, abandon }) => stop([
+  `the worktrees parent dir is not writable from this session: ${parentDir}`,
+  'Arm the ONE-TIME consent (then every provision/cleanup runs promptless):',
+  `  .claude/settings.json → sandbox.filesystem.allowWrite += ${JSON.stringify(parentDir)}`,
+  'Or run the full command yourself in a plain terminal:',
+  `  ${composeOwnToolPrefix(root)} ${composeCleanupCommand({ slug, branch, abandon })}`,
+].join('\n'));
+
+const removeWorktree = ({ root, entry, branch, abandon, git }) => {
+  const args = ['worktree', 'remove', ...(abandon ? ['--force'] : []), entry.path];
+  try {
+    gitMutation(git, args, root, 'git worktree remove failed');
+  } catch (error) {
+    if (/EBUSY|Device or resource busy/i.test(error.message)) {
+      throw stop(
+        `${error.message}\nLikely causes: lingering processes or open file descriptors (including a sandbox mount). ` +
+        'Close them and retry cleanup outside the sandbox if needed.',
+      );
+    }
+    throw error;
+  }
+  const deleteFlag = abandon ? '-D' : '-d';
+  // Normal cleanup's divergence STOP makes -d sufficient; --abandon is explicitly destructive.
+  gitMutation(git, ['branch', deleteFlag, branch], root, `git branch ${deleteFlag} failed`);
+  gitMutation(git, ['worktree', 'prune'], root, 'git worktree prune failed');
+};
+
+export const runCleanup = ({ argvSlug, flags, cwd, git, deps, log }) => {
+  const slug = validateSlug(argvSlug);
+  const fs = fsOf(deps);
+  const { root, commonDir } = resolveRoots(cwd, git);
+  const branch = flags.branch ?? `${DEFAULT_BRANCH_PREFIX}${slug}`;
+
+  return withPrepareLock({ commonDir, fs, now: deps.now ?? Date.now }, () => {
+    const entry = findSatelliteEntry({ root, slug, branch, git, fs });
+    if (entry.prunable) {
+      gitMutation(git, ['worktree', 'prune'], root, 'git worktree prune failed');
+      log(`[worktrees] pruned the registered deleted worktree for ${slug}`);
+      return EXIT.ok;
+    }
+    const identity = readSatelliteIdentity({ entry, slug, expectedBranch: branch, fs, abandon: flags.abandon });
+    if (flags.abandon) log('WARNING: cleanup --abandon DESTROYS unlanded work');
+
+    const knownRoots = provisionKnownRoots(identity);
+    let removalRoots = [];
+    if (!flags.abandon) {
+      const mainHead = gitRead(git, ['rev-parse', 'HEAD'], root, 'cannot resolve main HEAD').stdout.trim();
+      // Transfer verification excludes docs/ai and docs/plans; their tracked drift is checked separately before reset.
+      const stagedPaths = changedPaths(
+        git, ['diff', '--cached', '--name-only', '--no-renames', 'HEAD'], entry.path,
+        'git diff failed for landed verification',
+      );
+      const unstagedPaths = changedPaths(
+        git, ['diff', '--name-only', '--no-renames'], entry.path,
+        'git diff failed for landed verification',
+      );
+      const excludedStagedPaths = nulFields(gitRead(
+        git, ['diff', '--cached', '--name-only', '--no-renames', '-z', '--', 'docs/ai', 'docs/plans'], entry.path,
+        'git diff failed for excluded tracked paths',
+      ).stdout);
+      const excludedUnstagedPaths = nulFields(gitRead(
+        git, ['diff', '--name-only', '--no-renames', '-z', '--', 'docs/ai', 'docs/plans'], entry.path,
+        'git diff failed for excluded tracked paths',
+      ).stdout);
+      const mismatches = new Set([...unstagedPaths, ...excludedStagedPaths, ...excludedUnstagedPaths]);
+      for (const path of stagedPaths) {
+        const satellite = indexEntry(git, entry.path, path);
+        const main = headEntry(git, root, mainHead, path);
+        if (satellite?.mode !== main?.mode || satellite?.oid !== main?.oid) mismatches.add(path);
+      }
+      if (mismatches.size > 0) {
+        const lines = [...mismatches].map(
+          (path) => `${path}: differs — canon-overwritten at land OR changed after land; confirm via the handoff`,
+        );
+        throw stop(
+          `unlanded or foreign work prevents cleanup:\n${lines.join('\n')}\n` +
+          destructiveRecovery({ slug, branch }),
+        );
+      }
+
+      if (identity.record.prepared === null) {
+        throw stop(
+          `nothing has been landed: the handoff prepared-tree OID is absent — ` +
+          `${composeCleanupCommand({ slug, branch, abandon: true })} is required`,
+        );
+      }
+
+      const untracked = untrackedPaths(git, entry.path);
+      const foreign = [];
+      for (const path of untracked) {
+        const known = rootCoveringPath(path, knownRoots);
+        if (known === null) foreign.push(path);
+        else removalRoots.push(known.includes('*') ? path : known);
+      }
+      if (foreign.length > 0) {
+        throw stop(
+          `unlanded or foreign work prevents cleanup:\n${foreign.join('\n')}\n` +
+          destructiveRecovery({ slug, branch }),
+        );
+      }
+      const foreignIgnored = foreignIgnoredPaths({ root: entry.path, git, identity, fs });
+      if (foreignIgnored.length > 0) {
+        throw stop(`foreign ignored content requires --abandon:\n${foreignIgnored.join('\n')}`);
+      }
+    }
+
+    const probe = probeParentWritable(dirname(entry.path), deps);
+    if (!probe.writable) {
+      if (probe.cleanupFailed) throw probeCleanupStop(probe.cleanupFailed);
+      throw cleanupWritabilityStop({ parentDir: dirname(entry.path), root, slug, branch, abandon: flags.abandon });
+    }
+
+    if (!flags.abandon) {
+      const satelliteHead = gitRead(git, ['rev-parse', 'HEAD'], entry.path, 'cannot resolve satellite HEAD').stdout.trim();
+      gitMutation(git, ['reset', '--hard', satelliteHead], entry.path, 'git reset --hard failed before cleanup');
+      removalRoots = [...new Set(removalRoots)].sort((a, b) => a.length - b.length)
+        .filter((path, index, all) => !all.slice(0, index).some((parent) => path.startsWith(`${parent}/`)));
+      for (const rel of removalRoots) {
+        removeNodeNoFollow({ root: entry.path, abs: join(entry.path, rel), fs, label: rel });
+      }
+    }
+
+    removeWorktree({ root, entry, branch, abandon: flags.abandon, git });
+    log(`[worktrees] cleanup complete for ${slug}`);
+    return EXIT.ok;
+  });
+};
+
 // ── CLI ────────────────────────────────────────────────────────────────────────────────
 
 export const parseArgs = (argv) => {
@@ -1487,7 +2278,10 @@ export const runCli = (argv, deps = {}) => {
       return runProvision({ argvSlug: parsed.slug, flags: parsed.flags, cwd, git, deps, log });
     }
     if (parsed.sub === 'list') return runList({ cwd, git, deps, log });
-    throw stop(`${parsed.sub} is not available in this build yet — it ships with this release's landing half`);
+    if (parsed.sub === 'land') {
+      return runLand({ argvSlug: parsed.slug, flags: parsed.flags, cwd, git, deps, log });
+    }
+    return runCleanup({ argvSlug: parsed.slug, flags: parsed.flags, cwd, git, deps, log });
   } catch (err) {
     logError(`[worktrees] ${err.message}`);
     return err.exitCode ?? EXIT.stop;
