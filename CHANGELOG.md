@@ -7,6 +7,13 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-19 — memory 3.0.1: bundled reference scripts refreshed (patch rider on kit 3.1.0)
+
+The publish workflow's changed-but-unbumped tooth refused to no-op memory at 3.0.0: two bundled
+reference scripts had moved since that tag (the in-process CLI rework of `check-docs-size.mjs`
+from the suite speedup + a comment-only neutral-review-ID sweep in `archive-decisions.mjs`). No
+behavior change — a PATCH release restores the version/content pairing the workflow enforces.
+
 ## 2026-07-19 — kit 3.1.0: parallel feature worktrees v1 — provision · list · land --prepare · cleanup (AD-060)
 
 **Parallel feature development lands as a first-class mode.** `worktrees.mjs` provisions a visible
