@@ -67,6 +67,7 @@ Before proposing changes or committing, review against:
 
 ### 2.5. Communication (user-facing messages)
 Apply this as part of §2 before any user-facing summary:
+- **Plain language.** User-facing narration is short, clear, plain words of the dialogue language; when the dialogue language is not English, transliterated English jargon is banned — an English term survives only as the NAME of a thing (a flag / command / file / test), glossed in plain words when helpful; plain English stays plain for English-dialogue users.
 - **Deliver the artifact IN the message** — paste the prompt / diff / version / command inline; never "see §X / open the file / run it and you'll see" as a *substitute* for showing what was asked.
 - **Lead with the result**, then the details; show exactly what was asked — no deflection, no "almost done" when the ask was the finished thing.
 - **No condescension, no filler.** Own a miss plainly and fix it in the same message.

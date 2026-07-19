@@ -66,6 +66,71 @@ describe('agent_rules.md §1.1 — kit and memory template regions are byte-iden
   });
 });
 
+// The §2.5 Communication region: its heading line through (exclusive) the next `### ` heading.
+// AD-061 supersedes the AD-054 memory-only Communication-twin pin: BOTH templates now carry the
+// section byte-identically (the kit fallback deploy path must communicate under the same bar).
+const extractCommunicationRegion = (text) => {
+  const heading = '### 2.5. Communication (user-facing messages)';
+  const start = text.indexOf(heading);
+  assert.notEqual(start, -1, 'the §2.5 Communication heading exists');
+  const next = text.indexOf('### ', start + heading.length);
+  return text.slice(start, next === -1 ? text.length : next);
+};
+
+describe('agent_rules.md §2.5 Communication — kit and memory template regions are byte-identical (AD-061)', () => {
+  const kit = extractCommunicationRegion(read(KIT_TEMPLATES, 'agent_rules.md'));
+  const memory = extractCommunicationRegion(read(MEMORY_TEMPLATES, 'agent_rules.md'));
+
+  it('the two §2.5 regions match byte-for-byte', () => {
+    assert.equal(kit, memory, 'kit and memory agent_rules.md §2.5 regions have drifted — edit both in the same change');
+  });
+
+  it('the region carries the plain-language bar (the AD-061 communication contract)', () => {
+    for (const token of [
+      'Plain language',
+      'plain words of the dialogue language',
+      'transliterated English jargon is banned',
+      'NAME of a thing',
+      'glossed in plain words',
+      'plain English stays plain',
+    ]) {
+      assert.ok(kit.includes(token), `the §2.5 region is missing the plain-language token "${token}"`);
+    }
+  });
+
+  it('the region keeps the report-facts bullet (the AD-054 tokens ride into both templates)', () => {
+    for (const token of ['live tool output', 'context, never report facts']) {
+      assert.ok(kit.includes(token), `the §2.5 region is missing the report-facts token "${token}"`);
+    }
+  });
+
+  it('non-vacuous: an injected divergence is caught by the same extractor + comparator', () => {
+    const mutated = read(KIT_TEMPLATES, 'agent_rules.md').replace('Plain language', 'Fancy language');
+    assert.notEqual(extractCommunicationRegion(mutated), memory, 'the guard detects a region divergence');
+  });
+
+  it('the §2.5 region is immediately followed by the §2.6 lens heading in BOTH templates (the renumber pin)', () => {
+    for (const [label, text] of [
+      ['kit', read(KIT_TEMPLATES, 'agent_rules.md')],
+      ['memory', read(MEMORY_TEMPLATES, 'agent_rules.md')],
+    ]) {
+      const region = extractCommunicationRegion(text);
+      const after = text.slice(text.indexOf(region) + region.length);
+      assert.ok(after.startsWith('### 2.6. Planning, review & process-fidelity invariants'),
+        `${label}: §2.5 Communication must be immediately followed by the §2.6 lens heading`);
+      assert.equal((text.match(/^### 2\.5\./gm) ?? []).length, 1, `${label}: exactly one §2.5 heading`);
+      assert.equal((text.match(/^### 2\.6\./gm) ?? []).length, 1, `${label}: exactly one §2.6 heading`);
+    }
+  });
+
+  it('non-vacuous: a doctored kit template with the lens back at 2.5 fails the renumber pin (injected)', () => {
+    const doctored = read(KIT_TEMPLATES, 'agent_rules.md').replace('### 2.6. Planning', '### 2.5. Planning');
+    const region = extractCommunicationRegion(doctored);
+    const after = doctored.slice(doctored.indexOf(region) + region.length);
+    assert.ok(!after.startsWith('### 2.6. Planning'), 'the doctored regression must be caught by pin (a)');
+  });
+});
+
 describe('handover.md "Active recipes:" slot — kit and memory template lines are byte-identical', () => {
   const kitFile = read(KIT_TEMPLATES, 'handover.md');
   const memoryFile = read(MEMORY_TEMPLATES, 'handover.md');

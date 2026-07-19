@@ -142,8 +142,8 @@ describe('handoffPlan — stamp sets + single commit gate', () => {
       'delegate kitWrites should name the bounded reconcile of all three pointer slots',
     );
     assert.ok(
-      p.kitWrites.some((w) => w.includes('agent_rules.md lens region')),
-      'delegate kitWrites must name the lens-region refresh (it converges a stale-memory seed)',
+      p.kitWrites.some((w) => w.includes('agent_rules.md lens') && w.includes('Communication')),
+      'delegate kitWrites must name the lens + Communication region refresh (it converges a stale-memory seed)',
     );
   });
 
@@ -161,8 +161,8 @@ describe('handoffPlan — stamp sets + single commit gate', () => {
       'fallback kitWrites should describe all three pointer slots, not inline methodology',
     );
     assert.ok(
-      p.kitWrites.some((w) => w.includes('agent_rules.md lens region')),
-      'fallback kitWrites must name the lens-region refresh (both paths run it)',
+      p.kitWrites.some((w) => w.includes('agent_rules.md lens') && w.includes('Communication')),
+      'fallback kitWrites must name the lens + Communication region refresh (both paths run it)',
     );
   });
 });
