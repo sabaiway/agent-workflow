@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const packFull = () => {
-  // The npm cache rides under $TMPDIR (cleaned after the run — agy R1) and every network
+  // The npm cache rides under $TMPDIR (cleaned after the run) and every network
   // side-channel (update-notifier / audit / fund) is off: a sandboxed run (read-only ~/.npm, no
   // network) must stay green and must not fire a network prompt — neither is relevant to what
   // this guard asserts (the D4 sandbox-safe command shape).

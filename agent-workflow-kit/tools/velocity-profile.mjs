@@ -170,7 +170,7 @@ const RUN_GATES_CWD_FLAG = '--cwd';
 // final council: a blanket exclusion at opt-in contradicts «never a preemptive blanket»), guided by
 // codex-exec.sh's own nested-sandbox detection hint.
 export const BRIDGE_REVIEW_WRAPPERS = Object.freeze(['codex-review', 'agy-review']);
-// Only the `code` review mode is auto-allowed (codex R2, Segment A): a bare `Bash(<wrapper>:*)`
+// Only the `code` review mode is auto-allowed (Segment A): a bare `Bash(<wrapper>:*)`
 // prefix would also cover the plan/diff file-argument modes, whose targets can point OUTSIDE the
 // repo — the tier's stated surface is the unattended council CODE review, so the seeded prefix is
 // `<wrapper> code`. Plan/diff invocations keep their prompt.
@@ -210,7 +210,7 @@ export const deriveBridgeTierAllowlist = ({ findWrapper, groundingAbsPath } = {}
   const allow = placed.map((cmd) => `Bash(${cmd} ${BRIDGE_REVIEW_MODE}:*)`);
   const excludedCommands = [...placed];
   // The grounding pre-step exists FOR agy (its grounded --facts reviews; codex grounds natively via
-  // the AGENTS.md auto-merge) — a codex-only install must not auto-allow an unused writer (codex R9).
+  // the AGENTS.md auto-merge) — a codex-only install must not auto-allow an unused writer.
   if (placed.includes('agy-review')) {
     // groundingAbsPath is a TEST seam only (an unseedable kit path — spaces — is not constructible
     // from a test against the real checkout); production callers never pass it.
@@ -420,7 +420,7 @@ const validateSettingsShape = (data, relPath) => {
   }
   // The bridge tier merges into sandbox.excludedCommands — a malformed (non-array) value is a STOP
   // with ZERO writes (the same fail-closed posture as permissions.allow above), never a silent
-  // treat-as-empty overwrite (codex R1, Segment A).
+  // treat-as-empty overwrite (Segment A).
   if (isJsonObject(data.sandbox) && data.sandbox.excludedCommands !== undefined && !Array.isArray(data.sandbox.excludedCommands)) {
     throw makeVelocityProfileError(VELOCITY_MALFORMED, `${relPath}: sandbox.excludedCommands must be an array`);
   }
@@ -647,8 +647,8 @@ const formatKitTier = (result) =>
       ]
     : [];
 
-// The bridge tier's honest posture, printed on EVERY --bridge-tier run (test-pinned — the codex-R2
-// informed-consent resolution): the exfiltration surface is stated, never pretended away.
+// The bridge tier's honest posture, printed on EVERY --bridge-tier run: the informed-consent
+// resolution states the exfiltration surface, never pretends it away.
 export const KIT_BRIDGE_TIER_NOTICE =
   'bridge-wrappers tier: seeds the REVIEW wrappers only, and only their CODE mode (`codex-review code`, `agy-review code` — never codex-exec/agy-run: delegated execution keeps its human prompt; never the plan/diff modes: their file arguments can point outside the repo, so they keep their prompt), each derived ONLY when its bridge is PLACED on PATH, plus the grounding pre-step rule in its rendered quoted byte-form. POSTURE (what this consent covers): an auto-allowed review wrapper runs UNATTENDED — it reads any repo file it is pointed at and sends the assembled payload to its subscription backend, and prefix rules cannot inspect arguments, so a code-mode argument that names a readable file (agy\'s --facts/--decided) rides the same consent — the same documented residual class as the autonomy red-line rules; that is the tier\'s PURPOSE (unattended council review runs) and its residual — tier entries get NO PreToolUse-hook coverage. The grounding entry\'s writer surface is bounded by grounding.mjs\'s OWN scratch-destination guard (a tracked or in-repo-not-ignored --out is refused by the tool). The wrapper names are ALSO seeded into sandbox.excludedCommands IN THE PROJECT settings.json (an exclusion only in settings.local.json was live-observed NOT to route — the wrapper then runs sandboxed and dies on a read-only HOME): the harness runs an excluded command OUTSIDE the sandbox (the wrappers need network), so a plain allowlisted invocation triggers no sandbox-bypass approval. INVOCATION SHAPE: a prefix rule matches only a PLAIN invocation starting with the wrapper name — an env-var prefix or a compound chain never matches (redirects are fine).';
 
@@ -722,7 +722,7 @@ export const screenAllowlistEntry = (pattern) => {
     }
     // Bridge-review-wrapper class (AD-044 Plan 4): EXACTLY `<frozen-tier wrapper> code` + the args
     // wildcard — never codex-exec/agy-run, never the bare or plan/diff spellings (those file-argument
-    // modes can read outside the repo; codex R2).
+    // modes can read outside the repo).
     if (BRIDGE_REVIEW_WRAPPERS.includes(tokens[0])) return tokens.length === 2 && tokens[1] === BRIDGE_REVIEW_MODE;
     return isSingleShellToken(wildcardCmd, tokens) && SHELL_READONLY.includes(wildcardCmd);
   }
@@ -1196,7 +1196,7 @@ const collectRedlineBypass = (sources) =>
 // sub-keys (merge-don't-clobber, never a silent clobber of the user's sandbox tuning), so a pre-existing
 // weakening sub-key is REPORTED loudly (remove it by hand) — never silently carried as security.
 const collectSandboxWeakenings = (sources) => {
-  // Tier-known PROOF (codex R4): an excludedCommands entry is downgraded to a note ONLY when it is
+  // Tier-known PROOF: an excludedCommands entry is downgraded to a note ONLY when it is
   // demonstrably the consented tier's own output — it lives in the PROJECT settings.json (the file
   // the tier writes; a local-file exclusion is never tier output) AND the matching derived
   // code-mode allow rule is present there. A bare name match alone proves nothing.

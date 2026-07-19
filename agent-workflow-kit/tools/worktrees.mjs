@@ -7,8 +7,9 @@
 // No side effects on import (the isDirectRun idiom).
 
 import {
-  lstatSync, statSync, readFileSync, mkdirSync, rmdirSync, readdirSync, copyFileSync, readlinkSync,
-  symlinkSync, chmodSync, realpathSync, unlinkSync, openSync, fstatSync, closeSync, constants as fsC,
+  lstatSync, statSync, readFileSync, mkdirSync, rmdirSync, readdirSync, readlinkSync,
+  symlinkSync, realpathSync, unlinkSync, openSync, fstatSync, readSync, writeSync, fchmodSync,
+  closeSync, constants as fsC,
 } from 'node:fs';
 import { join, dirname, basename, resolve, relative, isAbsolute, sep } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -77,12 +78,16 @@ const fsOf = (deps) => ({
   mkdirPlain: deps.mkdirPlain ?? mkdirSync,
   rmdir: deps.rmdir ?? rmdirSync,
   readdir: deps.readdir ?? readdirSync,
-  copyFile: deps.copyFile ?? copyFileSync,
   unlink: deps.unlink ?? unlinkSync,
   readlink: deps.readlink ?? readlinkSync,
   symlink: deps.symlink ?? symlinkSync,
-  chmod: deps.chmod ?? chmodSync,
   realpath: deps.realpath ?? realpathSync,
+  open: deps.open ?? openSync,
+  fstat: deps.fstat ?? fstatSync,
+  read: deps.read ?? readSync,
+  write: deps.write ?? writeSync,
+  fchmod: deps.fchmod ?? fchmodSync,
+  close: deps.close ?? closeSync,
   writeFile: deps.writeFile,
   rename: deps.rename,
   rm: deps.rm,
@@ -120,6 +125,44 @@ const lstatNoFollow = (lstat, path) => {
   }
 };
 
+const classifyNodeNoFollow = (path, fs) => {
+  const node = (() => {
+    try {
+      return { stat: fs.lstat(path) };
+    } catch (error) {
+      return error?.code === 'ENOENT'
+        ? { stat: null }
+        : { error: error?.code ?? 'fs error' };
+    }
+  })();
+  if (node.error) return { kind: 'error', error: node.error };
+  if (node.stat === null) return { kind: 'absent' };
+  if (!node.stat.isSymbolicLink()) {
+    if (node.stat.isDirectory()) return { kind: 'plain-directory', stat: node.stat };
+    if (node.stat.isFile()) return { kind: 'regular-file', stat: node.stat };
+    return { kind: 'special', stat: node.stat };
+  }
+  const realPath = (() => {
+    try {
+      return { path: fs.realpath(path) };
+    } catch (error) {
+      return { error: error?.code ?? 'fs error' };
+    }
+  })();
+  if (realPath.error) return { kind: 'symlink-unresolvable', error: realPath.error };
+  const target = (() => {
+    try {
+      return { stat: fs.lstat(realPath.path) };
+    } catch (error) {
+      return { error: error?.code ?? 'fs error' };
+    }
+  })();
+  if (target.error) return { kind: 'symlink-unresolvable', error: target.error };
+  if (target.stat.isDirectory()) return { kind: 'symlink-to-directory', realPath: realPath.path, stat: node.stat };
+  if (target.stat.isFile()) return { kind: 'symlink-to-file', realPath: realPath.path, stat: node.stat };
+  return { kind: 'symlink-to-special', realPath: realPath.path, stat: node.stat };
+};
+
 // The ONE content-read door: no-follow lstat, then an O_NOFOLLOW|O_NONBLOCK descriptor with an
 // fstat recheck — a node swapped after the lstat can neither follow a link nor block on a FIFO.
 // Outcomes: { bytes } | { absent } | { unsafe } | { error: code }; callers map them, never read raw.
@@ -147,6 +190,64 @@ const readFileNoFollow = (fs, abs) => {
   }
 };
 
+const NOFOLLOW_WRITE = fsC.O_WRONLY | fsC.O_CREAT | fsC.O_EXCL | (fsC.O_NOFOLLOW ?? 0);
+const COPY_BUFFER_BYTES = 64 * 1024;
+const copyFileNoFollow = ({ srcAbs, dstAbs, sourceStat, rel, fs }) => {
+  const handles = { source: null, destination: null };
+  const closeErrors = [];
+  const outcome = { error: null };
+  try {
+    try {
+      handles.source = fs.open(srcAbs, NOFOLLOW_READ);
+    } catch (error) {
+      if (error?.code === 'ENOENT' || error?.code === 'ELOOP') {
+        throw stop(`copy source changed between lstat and open: ${rel}`);
+      }
+      throw error;
+    }
+    const descriptorStat = fs.fstat(handles.source);
+    if (!descriptorStat.isFile() || descriptorStat.dev !== sourceStat.dev || descriptorStat.ino !== sourceStat.ino) {
+      throw stop(`copy source changed between lstat and open: ${rel}`);
+    }
+    try {
+      // O_EXCL closes the create race; O_NOFOLLOW is defense-in-depth for nonstandard link handling.
+      handles.destination = fs.open(dstAbs, NOFOLLOW_WRITE, sourceStat.mode & 0o666);
+    } catch (error) {
+      if (error?.code === 'EEXIST' || error?.code === 'ELOOP') {
+        throw stop(`copy destination changed between lstat and open: ${rel}`);
+      }
+      throw error;
+    }
+    const buffer = Buffer.allocUnsafe(COPY_BUFFER_BYTES);
+    let bytesRead = fs.read(handles.source, buffer, 0, buffer.length, null);
+    while (bytesRead > 0) {
+      let written = 0;
+      while (written < bytesRead) {
+        const bytesWritten = fs.write(handles.destination, buffer, written, bytesRead - written, null);
+        if (bytesWritten <= 0) throw Object.assign(new Error('zero-byte descriptor write'), { code: 'EIO' });
+        written += bytesWritten;
+      }
+      bytesRead = fs.read(handles.source, buffer, 0, buffer.length, null);
+    }
+    if ((sourceStat.mode & 0o111) !== 0) fs.fchmod(handles.destination, sourceStat.mode & 0o777);
+  } catch (error) {
+    outcome.error = error;
+  }
+  for (const key of ['destination', 'source']) {
+    if (handles[key] === null) continue;
+    try {
+      fs.close(handles[key]);
+    } catch (error) {
+      closeErrors.push(error);
+    }
+  }
+  const withDestinationState = (error) => Object.assign(error, {
+    copyDoorDestinationCreated: handles.destination !== null,
+  });
+  if (outcome.error) throw withDestinationState(outcome.error);
+  if (closeErrors.length > 0) throw withDestinationState(closeErrors[0]);
+};
+
 const isInside = (root, path) => {
   const rel = relative(root, path);
   return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
@@ -161,6 +262,88 @@ export const validateSlug = (slug) => {
     );
   }
   return slug;
+};
+
+export const parseStrictJson = (text) => {
+  const source = String(text);
+  const cursor = { index: 0 };
+  const skipWhitespace = () => {
+    while (/\s/.test(source[cursor.index] ?? '')) cursor.index += 1;
+  };
+  const readString = () => {
+    const start = cursor.index;
+    cursor.index += 1;
+    while (cursor.index < source.length) {
+      if (source[cursor.index] === '\\') {
+        cursor.index += 2;
+      } else if (source[cursor.index] === '"') {
+        cursor.index += 1;
+        return JSON.parse(source.slice(start, cursor.index));
+      } else {
+        cursor.index += 1;
+      }
+    }
+    return null;
+  };
+  const childPath = (path, key) => /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key)
+    ? `${path}.${key}`
+    : `${path}[${JSON.stringify(key)}]`;
+  const scanValue = (path) => {
+    skipWhitespace();
+    if (source[cursor.index] === '{') {
+      cursor.index += 1;
+      skipWhitespace();
+      const seen = new Set();
+      if (source[cursor.index] === '}') {
+        cursor.index += 1;
+        return;
+      }
+      while (cursor.index < source.length) {
+        const key = readString();
+        if (seen.has(key)) throw new SyntaxError(`duplicate JSON key ${JSON.stringify(key)} at ${path}`);
+        seen.add(key);
+        skipWhitespace();
+        cursor.index += 1;
+        scanValue(childPath(path, key));
+        skipWhitespace();
+        if (source[cursor.index] === '}') {
+          cursor.index += 1;
+          return;
+        }
+        cursor.index += 1;
+        skipWhitespace();
+      }
+      return;
+    }
+    if (source[cursor.index] === '[') {
+      cursor.index += 1;
+      skipWhitespace();
+      if (source[cursor.index] === ']') {
+        cursor.index += 1;
+        return;
+      }
+      let item = 0;
+      while (cursor.index < source.length) {
+        scanValue(`${path}[${item}]`);
+        item += 1;
+        skipWhitespace();
+        if (source[cursor.index] === ']') {
+          cursor.index += 1;
+          return;
+        }
+        cursor.index += 1;
+      }
+      return;
+    }
+    if (source[cursor.index] === '"') {
+      readString();
+      return;
+    }
+    while (cursor.index < source.length && !/[\s,}\]]/.test(source[cursor.index])) cursor.index += 1;
+  };
+  // the duplicate scan tolerates malformed tails (EOF-safe returns); JSON.parse then rejects them
+  scanValue('$');
+  return JSON.parse(source);
 };
 
 export const loadWorktreesConfig = (root, deps = {}) => {
@@ -187,7 +370,7 @@ export const loadWorktreesConfig = (root, deps = {}) => {
   if (leaf.error) throw stop(`${CONFIG_REL}: unreadable (${leaf.error})`);
   let parsed;
   try {
-    parsed = JSON.parse(String(leaf.bytes));
+    parsed = parseStrictJson(String(leaf.bytes));
   } catch (err) {
     throw stop(`${CONFIG_REL}: malformed JSON (${err.message}) — fix it by hand; the tool never guesses`);
   }
@@ -231,30 +414,36 @@ export const realpathThroughExistingParent = (target, deps = {}) => {
 
 export const parseWorktreeList = (text) => {
   const entries = [];
-  for (const block of String(text).split(/\n\n+/)) {
-    const lines = block.split('\n').filter(Boolean);
-    if (lines.length === 0) continue;
+  let fields = [];
+  const finishEntry = () => {
+    if (fields.length === 0) return;
     const entry = { path: null, head: null, branch: null, detached: false, prunable: false, bare: false };
-    for (const line of lines) {
-      if (line.startsWith('worktree ')) entry.path = line.slice('worktree '.length);
-      else if (line.startsWith('HEAD ')) entry.head = line.slice('HEAD '.length);
-      else if (line.startsWith('branch ')) entry.branch = line.slice('branch '.length);
-      else if (line === 'detached') entry.detached = true;
-      else if (line === 'bare') entry.bare = true;
-      else if (line === 'prunable' || line.startsWith('prunable ')) entry.prunable = true;
+    for (const field of fields) {
+      if (field.startsWith('worktree ')) entry.path = field.slice('worktree '.length);
+      else if (field.startsWith('HEAD ')) entry.head = field.slice('HEAD '.length);
+      else if (field.startsWith('branch ')) entry.branch = field.slice('branch '.length);
+      else if (field === 'detached') entry.detached = true;
+      else if (field === 'bare') entry.bare = true;
+      else if (field === 'prunable' || field.startsWith('prunable ')) entry.prunable = true;
     }
     if (entry.path !== null) entries.push(entry);
+    fields = [];
+  };
+  for (const field of String(text).split('\0')) {
+    if (field === '') finishEntry();
+    else fields.push(field);
   }
+  finishEntry();
   return entries;
 };
 
 const listWorktrees = (git, cwd) => {
-  const r = git(['worktree', 'list', '--porcelain'], cwd);
+  const r = git(['worktree', 'list', '--porcelain', '-z'], cwd);
   if (r.status !== 0) throw stop(`git worktree list failed: ${r.stderr.trim() || r.stdout.trim()}`);
   return parseWorktreeList(r.stdout);
 };
 
-// The MAIN worktree is the first `git worktree list --porcelain` entry; provision/land/cleanup
+// The MAIN worktree is the first `git worktree list --porcelain -z` entry; provision/land/cleanup
 // refuse to run from inside a linked worktree.
 export const resolveRoots = (cwd, git, { refuseLinked = true } = {}) => {
   const root = gitLine(git, ['rev-parse', '--show-toplevel'], cwd);
@@ -365,7 +554,7 @@ export const provisionCopySet = (root, deps = {}) => {
 };
 
 // fs-safe's traversal guard, surfaced as this tool's typed STOP — runs before EVERY destination
-// mutation (mkdir / copyFile / symlink / chmod), so a symlinked parent can never leak a write.
+// mutation, so a symlinked parent can never leak a write.
 const guardDst = (fs, wtRoot, dstAbs) => {
   try {
     assertContainedRealPath(wtRoot, dstAbs, { lstat: fs.lstat });
@@ -470,18 +659,10 @@ const copyNode = ({ srcAbs, dstAbs, wtRoot, rel, fs, report, copied }) => {
       fs.mkdir(dirname(dstAbs));
       guardDst(fs, wtRoot, dstAbs);
       try {
-        fs.copyFile(srcAbs, dstAbs);
-        // copyFile follows links by API — re-checking the source narrows the post-lstat swap window
-        const post = lstatNoFollow(fs.lstat, srcAbs);
-        if (post === null || post.isSymbolicLink() || !post.isFile()) {
-          throw stop(`copy source changed mid-copy: ${rel}`);
-        }
-        if ((st.mode & 0o111) !== 0) {
-          guardDst(fs, wtRoot, dstAbs);
-          fs.chmod(dstAbs, st.mode & 0o777);
-        }
+        copyFileNoFollow({ srcAbs, dstAbs, sourceStat: st, rel, fs });
       } catch (err) {
         const cause = err?.code === WORKTREES_STOP ? err : stop(`copy failed (${err?.code ?? 'fs error'}) at ${rel}`);
+        if (err?.copyDoorDestinationCreated !== true) throw cause;
         failAfterCopy({ cause, dstAbs, wtRoot, fs });
       }
       copied.add(rel);
@@ -606,25 +787,14 @@ const assertTargetOutsideSources = ({ targetReal, sources }) => {
 // Whole-chain no-follow: the worktree root, docs, and docs/plans must be plain directories;
 // handoff candidates count ONLY as regular files. states: ok | absent | unreadable.
 // ANY stat failure (not just readdir) renders honestly — list must never crash on a bad node.
-const scanStat = (lstat, p) => {
-  try {
-    return { st: lstat(p) };
-  } catch (err) {
-    return err?.code === 'ENOENT' ? { st: null } : { error: true };
-  }
-};
-
 const scanPlansDir = ({ wtRoot, fs }) => {
-  const root = scanStat(fs.lstat, wtRoot);
-  if (root.error || root.st === null || root.st.isSymbolicLink() || !root.st.isDirectory()) return { state: 'unreadable' };
-  const docs = scanStat(fs.lstat, join(wtRoot, 'docs'));
-  if (docs.error) return { state: 'unreadable' };
-  if (docs.st === null) return { state: 'absent' };
-  if (docs.st.isSymbolicLink() || !docs.st.isDirectory()) return { state: 'unreadable' };
-  const plans = scanStat(fs.lstat, join(wtRoot, PLANS_REL));
-  if (plans.error) return { state: 'unreadable' };
-  if (plans.st === null) return { state: 'absent' };
-  if (plans.st.isSymbolicLink() || !plans.st.isDirectory()) return { state: 'unreadable' };
+  if (classifyNodeNoFollow(wtRoot, fs).kind !== 'plain-directory') return { state: 'unreadable' };
+  const docs = classifyNodeNoFollow(join(wtRoot, 'docs'), fs);
+  if (docs.kind === 'absent') return { state: 'absent' };
+  if (docs.kind !== 'plain-directory') return { state: 'unreadable' };
+  const plans = classifyNodeNoFollow(join(wtRoot, PLANS_REL), fs);
+  if (plans.kind === 'absent') return { state: 'absent' };
+  if (plans.kind !== 'plain-directory') return { state: 'unreadable' };
   let names;
   try {
     names = fs.readdir(join(wtRoot, PLANS_REL));
@@ -635,8 +805,8 @@ const scanPlansDir = ({ wtRoot, fs }) => {
   const nonRegular = [];
   for (const n of names) {
     if (!/^handoff-.+\.md$/.test(n)) continue;
-    const cand = scanStat(fs.lstat, join(wtRoot, PLANS_REL, n));
-    if (cand.error || cand.st === null || cand.st.isSymbolicLink() || !cand.st.isFile()) nonRegular.push(n);
+    const cand = classifyNodeNoFollow(join(wtRoot, PLANS_REL, n), fs);
+    if (cand.kind !== 'regular-file') nonRegular.push(n);
     else handoffs.push(n);
   }
   return { state: 'ok', handoffs, nonRegular };
@@ -687,11 +857,7 @@ const assertResumePlanCompatibility = ({ wtRoot, seedName, fs }) => {
 
 // ── the handoff artifact (the tool's own record inside it; list/cleanup read it) ───────
 
-export const composeHandoffStub = ({ slug, branch, includes, nodeModules, vscode }) => [
-  `# Handoff — ${slug}`,
-  '',
-  'provisioned, nothing done yet',
-  '',
+const composeProvisionRecordSection = ({ slug, branch, includes, nodeModules, vscode }) => [
   '## Provision record',
   '',
   `- slug: ${slug}`,
@@ -702,21 +868,32 @@ export const composeHandoffStub = ({ slug, branch, includes, nodeModules, vscode
   '',
 ].join('\n');
 
-// When a `## Provision record` section exists, ONLY it is parsed (a decoy field elsewhere can't
-// hijack identity); headingless text keeps the whole-text parse. Duplicated single-valued fields
-// are ambiguous identity → typed STOP, never last-wins.
+export const composeHandoffStub = (fields) => [
+  `# Handoff — ${fields.slug}`,
+  '',
+  'provisioned, nothing done yet',
+  '',
+  composeProvisionRecordSection(fields),
+].join('\n');
+
+const ATX_SECTION_HEADING = /^ {0,3}#{1,2} /;
+
+const locateProvisionRecordSection = (text) => {
+  const source = String(text);
+  const lines = [...source.matchAll(/.*(?:\r?\n|$)/g)].filter((match) => match[0] !== '');
+  const headings = lines.filter((match) => match[0].replace(/\r?\n$/, '').trim() === '## Provision record');
+  if (headings.length === 0) throw stop('handoff record: missing required "## Provision record" section');
+  if (headings.length > 1) throw stop('handoff record: multiple "## Provision record" sections — the record is ambiguous');
+  const start = headings[0].index;
+  const nextHeading = lines.find((match) => match.index > start && ATX_SECTION_HEADING.test(match[0].replace(/\r?\n$/, '')));
+  return { source, start, end: nextHeading?.index ?? source.length };
+};
+
+// ONLY the required section is parsed, so decoy fields elsewhere cannot hijack identity.
+// Duplicated single-valued fields are ambiguous identity → typed STOP, never last-wins.
 export const parseProvisionRecord = (text) => {
-  const lines = String(text).split('\n');
-  const heads = lines.reduce((acc, l, i) => (l.trim() === '## Provision record' ? [...acc, i] : acc), []);
-  if (heads.length > 1) throw stop('handoff record: multiple "## Provision record" sections — the record is ambiguous');
-  let scan = lines;
-  if (heads.length === 1) {
-    let end = lines.length;
-    for (let i = heads[0] + 1; i < lines.length; i += 1) {
-      if (lines[i].startsWith('## ')) { end = i; break; }
-    }
-    scan = lines.slice(heads[0] + 1, end);
-  }
+  const section = locateProvisionRecordSection(text);
+  const scan = section.source.slice(section.start, section.end).split('\n').slice(1);
   const record = { slug: null, branch: null, includes: [], nodeModules: null, vscode: null };
   const single = { slug: 'slug', branch: 'branch', node_modules: 'nodeModules', 'vscode-settings': 'vscode' };
   const seen = new Set();
@@ -740,13 +917,12 @@ export const parseProvisionRecord = (text) => {
 const pendingHandoffFields = ({ slug, branch }) =>
   ({ slug, branch, includes: [], nodeModules: 'pending', vscode: 'pending' });
 
-// The stub is written only when ABSENT; the final record replaces ONLY the tool's own pending
-// stub byte-exact — anything else is user work and stays byte-untouched (reported).
+// The stub is written only when ABSENT; the final record surgically replaces the tool section.
 const writeHandoffStubIfAbsent = ({ wtRoot, slug, branch, fs, report }) => {
   const dst = join(wtRoot, PLANS_REL, handoffBasename(slug));
   const cur = readFileNoFollow(fs, dst);
   if (cur.bytes) {
-    report.push('  handoff: preserved (already present)');
+    report.push('  handoff: kept (already present)');
     return;
   }
   if (!cur.absent) {
@@ -763,11 +939,10 @@ const writeHandoffRecord = ({ wtRoot, slug, branch, fields, fs, report }) => {
   if (!cur.bytes) {
     throw stop(`the handoff at ${PLANS_REL}/${handoffBasename(slug)} is not readable as a regular file — fix or remove it, then re-run --resume`);
   }
-  if (String(cur.bytes) !== composeHandoffStub(pendingHandoffFields({ slug, branch }))) {
-    report.push('  handoff: preserved (not the pending stub — the provision-record update is skipped)');
-    return;
-  }
-  writeContainedFileAtomic(wtRoot, dst, composeHandoffStub(fields), fs, { stop: (m) => stop(m) });
+  const section = locateProvisionRecordSection(String(cur.bytes));
+  const updated = `${section.source.slice(0, section.start)}${composeProvisionRecordSection(fields)}${section.source.slice(section.end)}`;
+  writeContainedFileAtomic(wtRoot, dst, updated, fs, { stop: (m) => stop(m) });
+  report.push('  handoff: provision record refreshed (user sections preserved)');
 };
 
 // ── provision ──────────────────────────────────────────────────────────────────────────
@@ -778,6 +953,10 @@ const validateSeedPlan = ({ root, rootReal, planFlag, asFlag, fs }) => {
     throw usageStop(`--as must be a basename ending in .md, got ${JSON.stringify(asFlag)}`);
   }
   const srcAbs = resolve(root, planFlag);
+  const node = classifyNodeNoFollow(srcAbs, fs);
+  if (node.kind === 'absent') throw stop(`--plan: not found: ${planFlag}`);
+  if (node.kind === 'error') throw stop(`--plan: cannot inspect ${planFlag} (${node.error})`);
+  if (node.kind !== 'regular-file') throw stop(`--plan must be a regular non-symlink file: ${planFlag}`);
   let srcReal;
   try {
     srcReal = fs.realpath(srcAbs);
@@ -785,8 +964,6 @@ const validateSeedPlan = ({ root, rootReal, planFlag, asFlag, fs }) => {
     throw stop(`--plan: not found: ${planFlag}`);
   }
   if (!isInside(rootReal, srcReal)) throw stop(`--plan must resolve inside the main repo: ${planFlag}`);
-  const st = fs.lstat(srcReal);
-  if (!st.isFile()) throw stop(`--plan must be a regular file: ${planFlag}`);
   if (normalizeSlashes(dirname(srcReal)) === normalizeSlashes(join(rootReal, PLANS_REL)) && !isScratchPlanName(basename(srcReal))) {
     throw stop(
       `--plan names a bare (in-flight) plan inside MAIN's ${PLANS_REL} — the feature plan must live in the satellite ONLY, ` +
@@ -918,10 +1095,19 @@ const provisionNodeModules = ({ root, rootReal, wtRoot, installFlag, git, fs, re
     return 'install-printed';
   }
   const mainNm = join(root, 'node_modules');
-  const st = lstatNoFollow(fs.lstat, mainNm);
-  if (st === null) {
+  const node = classifyNodeNoFollow(mainNm, fs);
+  if (node.kind === 'absent') {
     report.push(`  node_modules: main has none — after your own install there, re-run --resume, or: ${install.instruction}`);
     return 'absent';
+  }
+  if (node.kind === 'symlink-unresolvable') {
+    report.push(`  node_modules: main's is unresolvable — ${install.instruction}`);
+    return 'unresolvable';
+  }
+  if (node.kind === 'error') throw stop(`cannot inspect main's node_modules (${node.error})`);
+  if (node.kind !== 'plain-directory' && node.kind !== 'symlink-to-directory') {
+    report.push(`  node_modules: main's node_modules is neither a plain directory nor a symlink resolving to a directory — not symlinked; ${install.instruction}`);
+    return 'invalid-kind';
   }
   // A directory-form ignore pattern (node_modules/) never covers a SYMLINK of that name — the
   // link would surface as an untracked leftover; the placed-paths-stay-ignored rule applies.
@@ -1196,7 +1382,7 @@ const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed
   const base = gitLine(git, ['rev-parse', 'HEAD'], targetPath) ?? '(unknown)';
   for (const line of report) log(line);
   log(`[worktrees] provisioned ${slug} at ${targetPath} (branch ${branch}, base ${base})`);
-  log(`open it: code -n ${targetPath}`);
+  log(`open it: code -n ${shellQuoteArg(targetPath)}`);
   return EXIT.ok;
 };
 
@@ -1234,7 +1420,7 @@ export const runList = ({ cwd, git, deps, log }) => {
           row.handoff = `ambiguous (${scan.handoffs.length})`;
         }
       }
-      const porcelain = git(['status', '--porcelain'], entry.path);
+      const porcelain = git(['--no-optional-locks', 'status', '--porcelain'], entry.path);
       row.dirty = porcelain.status === 0 ? (porcelain.stdout.trim() === '' ? 'clean' : 'dirty') : '(unreadable)';
     }
     rows.push(row);
@@ -1242,7 +1428,7 @@ export const runList = ({ cwd, git, deps, log }) => {
   for (const r of rows) {
     const state = r.prunable ? 'PRUNABLE (dir gone — `git worktree prune` reclaims the entry)' : `${r.dirty}, handoff: ${r.handoff}`;
     log(`${r.slug} · ${r.path} · branch ${r.branch} · base ${r.base} · ${state}`);
-    if (!r.prunable) log(`  open: code -n ${r.path}`);
+    if (!r.prunable) log(`  open: code -n ${shellQuoteArg(r.path)}`);
   }
   return EXIT.ok;
 };

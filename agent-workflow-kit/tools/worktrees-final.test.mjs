@@ -81,13 +81,15 @@ describe('worktrees final — F1 content reads never follow links', () => {
       (e) => e.code === WORKTREES_STOP && /not a regular file/.test(e.message),
     );
   });
-  it('F1 tripwire — content reads exist only inside the one no-follow door', () => {
+  it('F1 tripwire — reads and regular-file copies exist only inside the two no-follow doors', () => {
     const src = readFileSync(new URL('./worktrees.mjs', import.meta.url), 'utf8');
     const count = (re) => (src.match(re) ?? []).length;
     assert.equal(count(/readFile\(/g), 0, 'raw readFile( calls must not exist — use the door');
     assert.equal(count(/readFileSync\(/g), 1, 'exactly one readFileSync( — the door body');
     assert.equal(count(/openSync\(/g), 1, 'exactly one openSync( — the door body');
     assert.equal(count(/createReadStream|readSync\(|readvSync/g), 0);
+    assert.equal(count(/\bcopyFile\(/g), 0, 'raw copyFile( calls must not exist — use the copy door');
+    assert.equal(count(/\bchmod\(/g), 0, 'path chmod( calls must not exist — use descriptor fchmod');
   });
 });
 
@@ -129,9 +131,9 @@ describe('worktrees final — F3 scan errors render honestly', () => {
     const wt = join(TMP, 'f3-wt');
     mkdirSync(join(wt, 'docs'), { recursive: true });
     const porcelain = [
-      `worktree ${TMP}`, 'HEAD aaaaaaaaaaaa', 'branch refs/heads/main', '',
-      `worktree ${wt}`, 'HEAD bbbbbbbbbbbb', 'branch refs/heads/aw/x', '',
-    ].join('\n');
+      [`worktree ${TMP}`, 'HEAD aaaaaaaaaaaa', 'branch refs/heads/main'],
+      [`worktree ${wt}`, 'HEAD bbbbbbbbbbbb', 'branch refs/heads/aw/x'],
+    ].map((fields) => fields.join('\0')).join('\0\0') + '\0\0';
     const git = (args) => (args[0] === 'worktree'
       ? { status: 0, stdout: porcelain, stderr: '' }
       : { status: 0, stdout: '', stderr: '' });

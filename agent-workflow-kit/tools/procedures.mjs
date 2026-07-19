@@ -234,7 +234,7 @@ const groundingPreStepAdvice = (activity, slots, plans) => {
   if (!slots.some((s) => (s.backends ?? []).includes('agy-review'))) return [];
   const planArg = plans.length === 1 ? `--plan "${PLANS_REL}/${plans[0]}"` : '--plan <path>';
   // plan-authoring reviews the plan FILE — when exactly one plan is in flight, the review command
-  // is populated with the same discovered path (codex R3: a known path never renders a placeholder).
+  // is populated with the same discovered path (a known path never renders a placeholder).
   const reviewForm =
     activity === 'plan-authoring'
       ? plans.length === 1

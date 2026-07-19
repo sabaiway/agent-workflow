@@ -70,7 +70,7 @@ describe('velocity --autonomy — sandbox-availability probe', () => {
     assert.deepEqual(p2.missing, ['bwrap', 'socat']);
   });
 
-  it('a NON-executable file (or a dir) named socat does NOT count — the loud degrade still fires (codex R1 major)', () => {
+  it('a NON-executable file (or a dir) named socat does NOT count — the loud degrade still fires (review-autonomy-r01-major-01)', () => {
     const env = { PATH: '/usr/bin' };
     // bwrap is an executable regular file; "socat" exists on PATH but is not an executable regular file
     // (a directory, or a 0644 file) → isExecutable returns false for it.
@@ -309,7 +309,7 @@ describe('velocity --autonomy — write path', () => {
     assert.throws(() => writeAutonomyProfile({ cwd }, LINUX_OK), (e) => e.code === VELOCITY_NO_POLICY);
   });
 
-  it('a pre-existing allow entry matching a red-line is a LOUD bypass warning (codex R1+R2 majors), in either file', () => {
+  it('a pre-existing allow entry matching a red-line is a LOUD bypass warning (review-autonomy-r01-major-02 + review-autonomy-r02-major-01), in either file', () => {
     seedPolicy(DOGFOOD); // renders commit/push under permissions.ask
     const bypassOut = (allow, file = SETTINGS_FILE) => {
       writeFileSync(join(cwd, SETTINGS_FILE), JSON.stringify({ permissions: { allow: file === SETTINGS_FILE ? allow : [] } }, null, 2));
@@ -320,13 +320,13 @@ describe('velocity --autonomy — write path', () => {
     // exact render-owned wildcard form
     assert.match(bypassOut(['Bash(git commit:*)', 'Bash(ls:*)']), /pre-existing allow entry Bash\(git commit:\*\) that would BYPASS the rendered red-line\(s\) commit/);
     assert.match(bypassOut(['Bash(git commit:*)']), /settings\.json has a pre-existing allow entry/);
-    // BROAD wildcard `Bash(git:*)` subsumes commit AND push (codex R2)
+    // BROAD wildcard `Bash(git:*)` subsumes commit AND push
     assert.match(bypassOut(['Bash(git:*)']), /Bash\(git:\*\) that would BYPASS the rendered red-line\(s\) commit\/push/);
     // BROAD `Bash(npm:*)` subsumes publish
     assert.match(bypassOut(['Bash(npm:*)']), /Bash\(npm:\*\) that would BYPASS the rendered red-line\(s\) publish/);
     // EXACT no-arg form `Bash(git commit)` (no wildcard) bypasses the no-arg commit
     assert.match(bypassOut(['Bash(git commit)']), /Bash\(git commit\) that would BYPASS the rendered red-line\(s\) commit/);
-    // GLOBAL OPTIONS between tool and subcommand (codex R3) — still a bypass
+    // GLOBAL OPTIONS between tool and subcommand — still a bypass
     assert.match(bypassOut(['Bash(git -c user.name=x commit:*)']), /BYPASS the rendered red-line\(s\) commit/);
     assert.match(bypassOut(['Bash(npm --registry=https://r publish:*)']), /BYPASS the rendered red-line\(s\) publish/);
     // a local-file allow entry is flagged too
@@ -335,7 +335,7 @@ describe('velocity --autonomy — write path', () => {
     assert.doesNotMatch(bypassOut(['Bash(git status:*)', 'Bash(npm view:*)', 'Bash(ls:*)', 'Bash(git)', 'Bash(git commit-tree:*)']), /BYPASS the rendered red-line/);
   });
 
-  it('foreign sandbox sub-keys that weaken a red-line get a LOUD warning, preserved not clobbered (codex R3 major)', () => {
+  it('foreign sandbox sub-keys that weaken a red-line get a LOUD warning, preserved not clobbered (review-autonomy-r03-major-01)', () => {
     seedPolicy(DOGFOOD); // network=deny, fs_outside_repo=deny by default
     const sbOut = (sandbox, file = SETTINGS_FILE) => {
       writeFileSync(join(cwd, SETTINGS_FILE), JSON.stringify(file === SETTINGS_FILE ? { permissions: { allow: [] }, sandbox } : { permissions: { allow: [] } }, null, 2));
@@ -356,7 +356,7 @@ describe('velocity --autonomy — write path', () => {
     assert.deepEqual(readSettings().sandbox.network, { allowedDomains: ['keep.me'] }, 'foreign sandbox sub-key preserved on apply');
   });
 
-  it('the render reflects ask/deny placement; the residual notice never hardcodes "still asks" (codex R1 minor)', () => {
+  it('the render reflects ask/deny placement; the residual notice never hardcodes "still asks" (review-autonomy-r01-minor-01)', () => {
     // a policy that DENIES commit renders it under permissions.deny (placement reflected in the output),
     // and the residual notice must not claim commit "still asks"
     seedPolicy({ redlines: { commit: 'deny' }, 'plan-authoring': { autonomy: 'sandbox' }, 'plan-execution': { autonomy: 'sandbox' } });

@@ -502,7 +502,7 @@ was blocked on an honest degrade.
 
 Contract surfaces moved in lockstep (the tool header, `--help`, the human render, the `--await`
 comment, `references/modes/review-state.md`). Council-converged both segments (S1 codex + agy SHIP; S2
-codex R1 revise → allPresent fold → R2 both SHIP), the two-gate agreement dogfooded live + pinned by a
+review round 1 revise → allPresent fold → review round 2 both SHIP), the two-gate agreement dogfooded live + pinned by a
 detector-independent `two-gate-agreement.test.mjs` + a 17-case matrix; full suite 2969 green.
 
 ## 1.40.0 — Universal verification profile + session-loop economics (a)–(h) (BUGFREE-3, AD-049)

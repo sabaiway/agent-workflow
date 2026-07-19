@@ -22,7 +22,7 @@ const seedConf = (body) => {
 };
 const active = (snap) => snap.active.map((a) => `${a.key}=${a.value}[${a.source}]`).sort();
 
-describe('settingsSnapshot — active = differs from the built-in default (codex R1 major)', () => {
+describe('settingsSnapshot — active = differs from the built-in default (review-bridge-settings-r01-major-01)', () => {
   it('no file, no env → nothing active (the surfaces stay as before any knob)', () => {
     assert.deepEqual(settingsSnapshot(ctx()).active, []);
   });
@@ -39,7 +39,7 @@ describe('settingsSnapshot — active = differs from the built-in default (codex
   });
 });
 
-describe('settingsSnapshot — env validation mirrors the wrapper (codex R1 major, narrowed per D3)', () => {
+describe('settingsSnapshot — env validation mirrors the wrapper (review-bridge-settings-r01-major-02, narrowed per D3)', () => {
   it('an INVALID enum env value (the service tier) is NOT active — the wrapper drops it to standard', () => {
     // codex validates the tier env (accepts any -c service_tier string silently, so the wrapper guards).
     assert.deepEqual(settingsSnapshot(ctx({ CODEX_SERVICE_TIER: 'turbo' })).active, []);
@@ -61,7 +61,7 @@ describe('settingsSnapshot — env validation mirrors the wrapper (codex R1 majo
   });
 });
 
-describe('settingsSnapshot — file state matches the wrappers exactly (codex R2 blocker: no follow mismatch)', () => {
+describe('settingsSnapshot — file state matches the wrappers exactly (review-bridge-settings-r02-blocker-01: no follow mismatch)', () => {
   it('a symlink → regular file is FOLLOWED and read, exactly as the wrappers do (never falsely "ignored")', () => {
     // The wrappers use -e/-f/-r (follow) — a symlinked config IS honored, so the reader must reflect it.
     mkdirSync(join(tmp, 'agent-workflow'), { recursive: true });

@@ -119,7 +119,7 @@ describe('grounding --plan — the canonical §7 heading policy', () => {
     assert.doesNotMatch(r.stdout, /Decisions \(locked\)/);
   });
 
-  it('--plan outside the work tree → loud STOP, nothing read into the payload (codex R4: the tier auto-allows this tool)', () => {
+  it('--plan outside the work tree → loud STOP, nothing read into the payload (review-grounding-r04-major-01: the tier auto-allows this tool)', () => {
     const root = makeDir();
     const outside = makeDir({ plan: PLAN_MD });
     const r = run(root, ['--plan', join(outside, 'plan.md')]);
@@ -324,7 +324,7 @@ describe('grounding --out — scratch-only writer honesty', () => {
   });
 });
 
-describe('grounding --out — outside-repo scratch is TEMP-ONLY (codex R8 blocker: the tier auto-allows this writer)', () => {
+describe('grounding --out — outside-repo scratch is TEMP-ONLY (review-grounding-r08-blocker-01: the tier auto-allows this writer)', () => {
   it('an outside-repo non-temp destination (a home-dir file) is refused loudly BEFORE any write; a temp one writes', () => {
     const root = makeDir();
     const underTemp = mkdtempSync(join(tmpdir(), 'grounding-temp-ok-'));
@@ -398,7 +398,7 @@ describe('grounding — coverage of the defensive arms', () => {
   });
 });
 
-describe('grounding --out — an in-repo destination is CREATE-ONLY (codex R10: the .env clobber class)', () => {
+describe('grounding --out — an in-repo destination is CREATE-ONLY (review-grounding-r10-major-01: the .env clobber class)', () => {
   it('an EXISTING gitignored in-repo file refuses; a fresh gitignored path writes; temp overwrites fine', () => {
     const root = makeDir();
     const g = (...a) => spawnSync('git', a, { cwd: root, encoding: 'utf8' });
@@ -424,7 +424,7 @@ describe('grounding --out — an in-repo destination is CREATE-ONLY (codex R10: 
   });
 });
 
-describe('grounding --out — an existing non-regular leaf refuses (codex R9: the write would hang on a FIFO)', () => {
+describe('grounding --out — an existing non-regular leaf refuses (review-grounding-r09-major-01: the write would hang on a FIFO)', () => {
   it('a FIFO under the temp surface is refused FAST, before any write', () => {
     const root = makeDir();
     const dir = mkdtempSync(join(tmpdir(), 'grounding-fifo-'));
@@ -442,7 +442,7 @@ describe('grounding --out — an existing non-regular leaf refuses (codex R9: th
   });
 });
 
-describe('grounding --out — the segment-safe outside test (Issue-004 class, codex R5)', () => {
+describe('grounding --out — the segment-safe outside test (Issue-004 class, review-grounding-r05-major-01)', () => {
   it('an in-repo gitignored file literally named "..facts" is IN-repo (the ignored check runs) and writes fine', () => {
     const root = makeDir();
     const g = (...a) => spawnSync('git', a, { cwd: root, encoding: 'utf8' });

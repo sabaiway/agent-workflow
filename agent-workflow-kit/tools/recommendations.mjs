@@ -301,7 +301,7 @@ const probeSandboxProvision = ({ root, deps, add, skip }) => {
     const variant = plan.tuple ? 'sandbox-provision.installable' : 'sandbox-provision';
     const reason = truncatedTo(oneLineOf(p.reason), templateBudget(WHATS[variant]) - (plan.tuple ? String(plan.tuple).length : 0));
     // The doctor reads process.cwd() (deployment-gated) and takes no --cwd flag — the one-liner
-    // pins the target project via a cd prefix (codex R2, Segment B).
+    // pins the target project via a cd prefix (Segment B).
     add('sandbox-provision', fillTemplate(WHATS[variant], { reason, tuple: plan.tuple }), `cd ${q(root)} && node ${q(toolPath('autonomy-doctor.mjs'))}`);
   } catch (err) {
     skip('sandbox-provision', err);
@@ -310,7 +310,7 @@ const probeSandboxProvision = ({ root, deps, add, skip }) => {
 
 const probeReviewRecipe = ({ root, deps, add, skip }) => {
   try {
-    // The VALIDATED reader (codex R2, Segment B): a schema-invalid config (unknown activity/slot,
+    // The VALIDATED reader (Segment B): a schema-invalid config (unknown activity/slot,
     // bad recipe) throws here and becomes a stated skip — raw JSON.parse would silently ignore it.
     const { config } = loadConfig(root, deps.readFile ?? readFileSync, deps.lstat ?? lstatSync);
     const detection = detectBackends(deps);
@@ -334,7 +334,7 @@ const probeGates = ({ root, deps, add, skip }) => {
     const sg = surveyGateHook(root, deps);
     if (sg.error) throw new Error(sg.error);
     if (sg.declarationPresent && sg.declaredGates === null) throw new Error(sg.declarationError ?? 'gates.json present but unreadable');
-    // An ABSENT file and the seeded-EMPTY list are equally undeclared (codex R2, Segment B); the
+    // An ABSENT file and the seeded-EMPTY list are equally undeclared (Segment B); the
     // apply is the consent-gated gates-init PREVIEW (it proposes entries from the project's own
     // scripts and writes only on an explicit yes) — never the runner.
     if (!sg.declarationPresent || sg.declaredGates === 0) {
@@ -471,7 +471,7 @@ const probeMasksItem = ({ root, deps, add, skip }) => {
     if (!needsMasksApply(p)) return;
     const variant = p.staleReal.length > 0 ? 'sandbox-masks.stale-real' : 'sandbox-masks';
     // A stale-real-only fence (EMPTY derivation over a non-empty block) makes the plain --apply
-    // REFUSE — the exact one-liner must carry --clear there (codex R1, Segment B).
+    // REFUSE — the exact one-liner must carry --clear there (Segment B).
     const apply = p.masks.length === 0 && p.staleReal.length > 0 ? `${p.applyCmd} --clear` : p.applyCmd;
     add('sandbox-masks', fillTemplate(WHATS[variant], { n: p.masks.length, m: p.staleReal.length }), apply);
   } catch (err) {
@@ -484,7 +484,7 @@ const probeAgyAdddir = ({ deps, add, skip }) => {
     const probePlaced = deps.findWrapper ?? ((cmd) => findOnPath(cmd, deps).state === 'present');
     if (!probePlaced('agy-review')) return;
     // Configured means a VALID boolean value (the wrapper validates and falls back to the default
-    // on garbage — presence alone proves nothing; codex R3). An explicit valid 0 is a user CHOICE
+    // on garbage — presence alone proves nothing). An explicit valid 0 is a user CHOICE
     // (refuse mode) — respected, never nagged. env > file, the wrappers' own precedence.
     const isValidBool = (v) => v === '0' || v === '1';
     const env = deps.getenv ?? process.env;
@@ -820,7 +820,7 @@ export const formatRecommendations = ({ items, skips }) => {
   const verdict = composeVerdict({ attention, optional: items.length - attention, skipped: skips.length });
   if (verdict == null) {
     // The flow-optimal claim renders ONLY when every probe ran and none fired — an empty item
-    // list beside skipped checks would falsely attest optimality (codex R1, Segment B).
+    // list beside skipped checks would falsely attest optimality (Segment B).
     lines.push(RECOMMENDATIONS_EMPTY_LINE);
     return lines.join('\n');
   }

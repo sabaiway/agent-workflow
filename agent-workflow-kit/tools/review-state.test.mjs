@@ -1138,7 +1138,7 @@ describe('review-domain filter — fingerprint + isTreeClean over a lying lstat 
     assert.doesNotMatch(withoutMasks.stdout, /sandbox-masks/, 'no masks → no advisory');
   });
 
-  it('buildState threads the injected lstat into fingerprint + clean + mask count — one consistent state (codex R3)', () => {
+  it('buildState threads the injected lstat into fingerprint + clean + mask count — one consistent state (review-state-r03-major-01)', () => {
     const { root, baselineFp, liar } = makeMaskRepo();
     const r = main(['--json'], { cwd: root, env: {}, detect: detect(READY, READY), lstat: liar });
     const state = JSON.parse(r.stdout);
@@ -1156,7 +1156,7 @@ describe('review-domain filter — fingerprint + isTreeClean over a lying lstat 
     const fp = computeTreeFingerprint(root);
     const clean = isTreeClean(root);
     rmSync(root, { recursive: true, force: true });
-    assert.notEqual(fp, baselineFp, 'the embedded-repo `dir/` note moves the fingerprint (codex R1 gitlink pin)');
+    assert.notEqual(fp, baselineFp, 'the embedded-repo `dir/` note moves the fingerprint (gitlink pin)');
     assert.equal(clean, false, 'a new embedded repo can never read clean');
   });
 });

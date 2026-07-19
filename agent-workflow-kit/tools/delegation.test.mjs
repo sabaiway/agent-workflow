@@ -93,7 +93,7 @@ describe('detectMemory — decision matrix', () => {
     assert.match(d.reason, /orchestration\.json/);
   });
 
-  // The Plan-3 decision HOLDS (agy R1 blocker, Segment B): detectMemory carries NO autonomy-marker
+  // The Plan-3 decision HOLDS (review-delegation-r01-blocker-01, Segment B): detectMemory carries NO autonomy-marker
   // gate — an old memory missing the autonomy seed stays delegable; the kit-side upgrade ensure +
   // the family-registry caveat (inform, never gate) cover the stale-memory case instead.
   it('autonomy.json is NOT a required memory asset — the Plan-3 no-gate decision holds', () => {

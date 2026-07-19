@@ -421,7 +421,7 @@ describe('gates-init — T4d per-PM no-network fail-closed (missing package-runn
   // RUNNER-NOT-FOUND signature class — which varies by PM version (`spawn … EACCES/ENOENT`,
   // pnpm's `ERR_PNPM…`/`EACCES`, yarn 1.22.19 `spawn … EACCES` vs 1.22.22 `Couldn't find the
   // binary`) but is disjoint from the executed-and-failed `Command failed / Exit code: N` string a
-  // runner that ran-then-failed would print (the codex R1 wrong-path admission we must exclude).
+  // runner that ran-then-failed would print (the wrong-path admission we must exclude).
   const NOT_FOUND = /Couldn't find the binary|command not found|no such file|EACCES|ENOENT|ERR_PNPM/i;
   it('pnpm: a missing runner fails closed locally, no network', { skip: !PNPM_AVAILABLE || onPath('vitest') }, () => {
     mkProject({ scripts: { test: 'vitest run' }, lockfile: 'pnpm-lock.yaml' });

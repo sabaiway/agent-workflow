@@ -37,7 +37,7 @@ export const classifyChangedPath = (rel) => {
 
 // Strip the quotes and decode escapes BYTE-wise (octal escapes are UTF-8 bytes) — an unparsed
 // quoted path compares unequal to its classifier/testId form and would silently escape the
-// coverage/cap surface (agy R5, AD-047).
+// coverage/cap surface (AD-047).
 const CQUOTE_SIMPLE = { n: 10, t: 9, r: 13, f: 12, v: 11, b: 8, a: 7, '"': 34, '\\': 92 };
 export const unquoteDiffPath = (p) => {
   if (!(p.length >= 2 && p.startsWith('"') && p.endsWith('"'))) return p;
@@ -47,7 +47,7 @@ export const unquoteDiffPath = (p) => {
     const c = inner[i];
     if (c !== '\\') {
       // Consume a full CODE POINT — 16-bit-unit iteration would split a surrogate pair (an
-      // unescaped non-BMP char, reachable under core.quotepath=false) into replacement bytes (agy R6).
+      // unescaped non-BMP char, reachable under core.quotepath=false) into replacement bytes.
       const ch = String.fromCodePoint(inner.codePointAt(i));
       for (const b of Buffer.from(ch, 'utf8')) bytes.push(b);
       i += ch.length - 1;
@@ -89,7 +89,7 @@ export const parseUnifiedDiff = (diffText) => {
     }
     if (inHeader && line.startsWith('--- ')) continue;
     if (inHeader && line.startsWith('+++ ')) {
-      const p = unquoteDiffPath(line.slice(4).replace(/[\t\r]+$/, '')); // TAB/CR are git artifacts, never filename bytes (agy R6)
+      const p = unquoteDiffPath(line.slice(4).replace(/[\t\r]+$/, '')); // TAB/CR are git artifacts, never filename bytes
       current = p === '/dev/null' ? null : p.startsWith('b/') ? p.slice(2) : p;
       inHeader = false;
       continue;
@@ -114,7 +114,7 @@ export const parseUnifiedDiff = (diffText) => {
 // ── the changed surface (git-driven; the ONE computation both consumers read) ─────────────────────
 
 // The one diff-invocation shape every surface pass uses. The a/ b/ prefixes are pinned EXPLICITLY
-// (agy R6): a user's global diff.noprefix=true would otherwise drop them and the parsers would eat
+// A user's global diff.noprefix=true would otherwise drop them and the parsers would eat
 // a real directory named "a" — user git config must never bend the parse.
 export const DIFF_FLAGS = ['--unified=0', '--no-color', '--no-ext-diff', '--no-renames', '--src-prefix=a/', '--dst-prefix=b/'];
 
@@ -134,7 +134,7 @@ export const readFileSafe = (path) => {
 };
 // A changed LEAF is read only if it is a REGULAR file. lstat (no-follow): a symlinked or non-regular
 // leaf must NEVER be read/followed — following it could read outside the work tree or HANG on a
-// FIFO/device (codex R2, AD-046). A non-regular leaf fails closed (routed to `unsupported`).
+// FIFO/device (AD-046). A non-regular leaf fails closed (routed to `unsupported`).
 export const isRegularLeaf = (abs) => {
   try {
     return lstatSync(abs).isFile();
@@ -150,13 +150,13 @@ export const isRegularLeaf = (abs) => {
 // pure deletions cost nothing, subtractive folds stay free); an untracked file is wholly new, so all
 // its lines are "changed". `unsupportedLines` is the D4 cap's view of the SAME pass: unsupported
 // SOURCE files carry their new-side lines too (excluding them would gift a large-TS-fold bypass,
-// codex R2 / BUGFREE-2 D4); an unreadable/non-regular leaf counts 0 lines but stays LISTED (the
+// BUGFREE-2 D4); an unreadable/non-regular leaf counts 0 lines but stays LISTED (the
 // coverage gate still fails closed on it). excluded-test and out-of-domain never carry lines.
 export const computeChangedSurface = (root) => {
   // Unborn branch (no HEAD yet): the plain diff alone misses files STAGED for the initial commit —
   // they sit in the index, so they are neither worktree-vs-index changes nor untracked. Merge the
   // --cached diff (index vs the empty tree) with the plain one; parseUnifiedDiff unions per-file
-  // lines across concatenated diffs (codex R1).
+  // lines across concatenated diffs.
   const trackedDiff = gitStdout(['diff', 'HEAD', ...DIFF_FLAGS], root)
     ?? `${gitStdout(['diff', '--cached', ...DIFF_FLAGS], root) ?? ''}\n${gitStdout(['diff', ...DIFF_FLAGS], root) ?? ''}`;
   const trackedLines = parseUnifiedDiff(trackedDiff);
@@ -207,7 +207,7 @@ export const computeChangedSurface = (root) => {
 // ── the shared fail-closed positive-integer knob parser (AD-047 precedent) ───────────────────────
 
 // Zero / negative / fractional / non-numeric values are refusals by name — the parseInt(...)||default
-// idiom would silently accept bad truthy values (codex R2, AD-046). Unset → the default; set → a
+// idiom would silently accept bad truthy values (AD-046). Unset → the default; set → a
 // positive integer, exactly. `makeError` lets each caller throw its OWN typed STOP.
 export const parsePositiveIntKnob = (env, name, fallback, makeError = (m) => new Error(m)) => {
   const raw = env[name];

@@ -102,7 +102,7 @@ export const assembleGrounding = ({ constraintsText = null, autonomyText = null,
 // Trim `payload` to `budget` bytes, tail-first, with a loud in-band marker. The budget is a HARD
 // ceiling: when it is smaller than the marker itself, the marker is truncated too (the output may
 // never exceed `budget` — a facts file over the reserved share would push the final wrapper prompt
-// past the argv ceiling; codex R1 finding). Returns { text, trimmedBytes }. Never a silent cut.
+// past the argv ceiling). Returns { text, trimmedBytes }. Never a silent cut.
 export const trimToBudget = (payload, budget) => {
   const bytes = Buffer.byteLength(payload, 'utf8');
   if (bytes <= budget) return { text: payload, trimmedBytes: 0 };
@@ -164,17 +164,17 @@ const gitLine = (args, cwd) => {
 // EXISTING in-repo file, even gitignored, is a project file — the .env clobber class). Refused:
 // tracked paths, in-repo not-ignored paths (a new untracked file would move the fingerprint),
 // every other outside-repo destination, symlink and existing non-regular leaves, and any
-// unverifiable lstat. The check runs on the REAL destination, never the lexical path (codex R1):
+// unverifiable lstat. The check runs on the REAL destination, never the lexical path:
 // the parent directory is realpath-resolved first, so a symlink can never route the write onto a
 // tracked/in-repo file. Returns { path, kind: 'temp' | 'repo-fresh' } — a repo-fresh caller MUST
-// write with the exclusive flag ('wx'), sealing the guard→write race (codex R11).
+// write with the exclusive flag ('wx'), sealing the guard→write race.
 export const assertScratchDestination = (outPath, cwd) => {
   const lexical = isAbsolute(outPath) ? outPath : resolve(cwd, outPath);
   let leaf = null;
   try {
     leaf = lstatSync(lexical);
   } catch (err) {
-    // ONLY an absent leaf is a fresh file; any other lstat failure fails CLOSED (codex R9 — this
+    // ONLY an absent leaf is a fresh file; any other lstat failure fails CLOSED (this
     // writer is bridge-tier auto-allowable, so an unverifiable leaf must never be written).
     if (err?.code !== 'ENOENT') {
       throw fail(1, `--out cannot inspect the destination (${outPath}: ${err?.code ?? err?.message ?? err}) — refusing to write an unverifiable leaf`);
@@ -185,7 +185,7 @@ export const assertScratchDestination = (outPath, cwd) => {
     throw fail(1, `--out refuses a symlink destination (${outPath}) — the write would follow it onto another file; name the real scratch path`);
   }
   if (leaf != null && !leaf.isFile()) {
-    throw fail(1, `--out refuses an existing non-regular destination (${outPath}) — a FIFO/device/directory write would hang or land on a non-file (codex R9); name a fresh or regular scratch path`);
+    throw fail(1, `--out refuses an existing non-regular destination (${outPath}) — a FIFO/device/directory write would hang or land on a non-file; name a fresh or regular scratch path`);
   }
   let realParent;
   try {
@@ -194,8 +194,8 @@ export const assertScratchDestination = (outPath, cwd) => {
     throw fail(1, `--out parent directory does not exist (${dirname(lexical)}) — create the scratch dir first`);
   }
   const full = join(realParent, basename(lexical));
-  // An out-of-repo (or no-repo) destination is scratch ONLY under a system temp root (codex R8
-  // blocker): the bridge tier auto-allows this tool with an args wildcard, so "anything outside
+  // An out-of-repo (or no-repo) destination is scratch ONLY under a system temp root: the bridge
+  // tier auto-allows this tool with an args wildcard, so "anything outside
   // the repo is scratch" would let an unattended run overwrite e.g. ~/.bashrc promptless.
   // $TMPDIR / os.tmpdir() / /tmp are the scratch surface; everything else refuses loudly.
   const assertTempScratch = () => {
@@ -215,7 +215,7 @@ export const assertScratchDestination = (outPath, cwd) => {
   if (top == null || top.status !== 0) return { path: assertTempScratch().path, kind: 'temp' }; // no git tree → temp-only scratch
   const root = top.stdout.replace(/\r?\n$/, '');
   const rel = relative(root, full);
-  // Segment-safe outside test (the Issue-004 class, codex R5): an in-repo file literally named
+  // Segment-safe outside test (the Issue-004 class): an in-repo file literally named
   // `..facts` has rel `..facts` — `startsWith('..')` would misread it as outside and BYPASS the
   // tracked/ignored refusals below. Only `..` exactly or a `..${sep}`-prefixed rel is outside.
   if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return { path: assertTempScratch().path, kind: 'temp' };
@@ -227,11 +227,11 @@ export const assertScratchDestination = (outPath, cwd) => {
   if (ignored == null || ignored.status !== 0) {
     throw fail(1, `--out refuses an in-repo path that is not gitignored (${rel}) — a new untracked file would move the review fingerprint; use a gitignored path or a location outside the repo`);
   }
-  // An in-repo destination must be a FRESH file (codex R10): even a gitignored existing file is a
+  // An in-repo destination must be a FRESH file: even a gitignored existing file is a
   // project file (.env is the canonical victim) — an auto-allowable writer must never clobber one.
   // The rewritable scratch surface is the system temp; in-repo gitignored writes are create-only —
   // the CALLER must open with the exclusive flag ('wx'): the kind seals the pre-check against the
-  // guard→write race (codex R11).
+  // guard→write race.
   if (leaf != null) {
     throw fail(1, `--out refuses to OVERWRITE an existing in-repo file (${rel}) — even gitignored, it is a project file (the .env class); write rewritable scratch under $TMPDIR//tmp, or remove the file first`);
   }
@@ -328,7 +328,7 @@ export const main = (argv, ctx = {}) => {
     };
     const constraintsText = constraints ? readOrStop('AGENTS.md', 'root AGENTS.md') : null;
     const autonomyText = autonomy ? resolveAutonomyFacts({ cwd }) : null;
-    // --plan is CONFINED to the git work tree (codex R4): the bridge tier auto-allows this tool
+    // --plan is CONFINED to the git work tree: the bridge tier auto-allows this tool
     // with an args wildcard, so an unattended invocation could otherwise point --plan at ANY
     // readable file and ship it into the facts payload. Plans are in-repo by contract
     // (docs/plans); an outside-tree path is a loud refusal, never a silent read.
@@ -360,7 +360,7 @@ export const main = (argv, ctx = {}) => {
     if (out != null) {
       const dest = assertScratchDestination(out, cwd);
       // repo-fresh writes are EXCLUSIVE ('wx'): the create-only pre-check would otherwise race a
-      // file created between the guard and this write (codex R11); temp scratch stays rewritable.
+      // file created between the guard and this write; temp scratch stays rewritable.
       // ctx.writeFile is a TEST seam (the EEXIST race arm is not constructible without it).
       const writeFile = ctx.writeFile ?? writeFileSync;
       try {
@@ -380,7 +380,7 @@ export const main = (argv, ctx = {}) => {
 const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isDirectRun) {
   const r = main(process.argv.slice(2));
-  // Exact writes + a natural exit (codex R2): console.log would append a stray newline to the
+  // Exact writes + a natural exit: console.log would append a stray newline to the
   // byte-exact facts payload, and process.exit() can truncate large piped stdout before Node
   // flushes. The payload already ends with '\n' (sliceSection normalizes); only a non-payload
   // message (help / the --out report) gains the terminating newline it lacks.

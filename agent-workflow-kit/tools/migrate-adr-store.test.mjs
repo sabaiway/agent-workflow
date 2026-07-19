@@ -107,7 +107,7 @@ describe('migrate-adr-store — dry-run writes nothing', () => {
     assert.match(io.out(), /conserved/, 'the rotator conservation proof is surfaced in the preview');
   });
 
-  it('a dry-run whose rotation would fail exits nonzero and does NOT green-light --apply (codex R1 major)', () => {
+  it('a dry-run whose rotation would fail exits nonzero and does NOT green-light --apply (review-adr-migrate-r01-major-01)', () => {
     mkOldLayout({ git: true });
     const hot = join(cwd, 'docs', 'ai', 'decisions.md');
     writeFileSync(hot, `${readFileSync(hot, 'utf8')}\n## not an ADR heading\n\nstray body.\n`);
@@ -117,7 +117,7 @@ describe('migrate-adr-store — dry-run writes nothing', () => {
     assert.match(io.err(), /NOT safe to --apply/);
   });
 
-  it('a dry-run with no out-of-tree snapshot location does NOT green-light --apply either (codex R2 minor)', () => {
+  it('a dry-run with no out-of-tree snapshot location does NOT green-light --apply either (review-adr-migrate-r02-minor-01)', () => {
     mkOldLayout({ git: false });
     const io = quiet();
     // Non-git + a fallback under cwd → resolveSnapshotDir returns dir:null → --apply would refuse.
@@ -173,7 +173,7 @@ describe('migrate-adr-store — apply performs the migration', () => {
     assert.match(io.out(), /out-of-tree fallback/);
   });
 
-  it('refuses when the only snapshot base would land inside the work tree (codex R1 minor)', () => {
+  it('refuses when the only snapshot base would land inside the work tree (review-adr-migrate-r01-minor-01)', () => {
     mkOldLayout({ git: false });
     const io = quiet();
     // A fallback base UNDER cwd would put the snapshot in the (stageable) work tree — reject it.

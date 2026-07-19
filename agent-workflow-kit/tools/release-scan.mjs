@@ -35,6 +35,9 @@ const ATTRIBUTION = [
   { re: /reviewed by (claude|codex|chatgpt|gpt|gemini|copilot|cursor|the (ai|model|agent))/i, label: 'AI review attribution' },
   { re: /authored[- ]by[: ][^\n]{0,40}\b(claude|chatgpt|gemini|copilot)\b/i, label: 'AI authorship attribution' },
 ];
+const REVIEWER_IDENTITY = [
+  { re: /\b(?:agy|codex)(?:\s+|-)r\d+(?:(?:\+|\/)r?\d+)*(?:-[a-z0-9]+)*\b/i, label: 'reviewer-round identity' },
+];
 
 const allowlistCovers = (matched, allowlist) =>
   allowlist.some((term) => matched.toLowerCase().includes(term.toLowerCase()));
@@ -48,6 +51,10 @@ export const scanText = (text, { allowlist = ALLOWLIST } = {}) => {
       if (m && !allowlistCovers(m[0], allowlist)) {
         findings.push({ line: idx + 1, kind: 'attribution', detail: `${label}: "${m[0]}"` });
       }
+    }
+    for (const { re, label } of REVIEWER_IDENTITY) {
+      const m = line.match(re);
+      if (m) findings.push({ line: idx + 1, kind: 'reviewer-identity', detail: `${label}: "${m[0]}"` });
     }
   });
   return findings;
@@ -83,7 +90,7 @@ export const scanPaths = (paths, opts = {}) => {
   return report;
 };
 
-const main = (argv) => {
+export const main = (argv) => {
   const reportOnly = argv.includes('--report');
   const paths = argv.filter((a) => a !== '--report');
   if (paths.length === 0) {
@@ -93,7 +100,7 @@ const main = (argv) => {
   const report = scanPaths(paths);
   for (const r of report) console.log(`[${r.kind}] ${r.file}:${r.line} — ${r.detail}`);
   if (report.length === 0) {
-    console.log('[release-scan] clean — no AI attribution found.');
+    console.log('[release-scan] clean — no AI attribution or reviewer-round identity found.');
     return;
   }
   console.log(`\n[release-scan] ${report.length} finding(s).`);

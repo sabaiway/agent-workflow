@@ -82,7 +82,7 @@ describe('set-recipe — preview by default (writes NOTHING)', () => {
   });
 });
 
-describe('set-recipe — the --write echo carries the autonomy levels (codex R1, Segment B)', () => {
+describe('set-recipe — the --write echo carries the autonomy levels (review-set-recipe-r01-major-01, Segment B)', () => {
   it('the echoed active-line includes the per-activity autonomy level like recipes --active-line', () => {
     const r = run(['--set', 'plan-authoring.review=council', '--write'], { codex: READY, agy: READY });
     assert.equal(r.code, 0, r.stderr);
