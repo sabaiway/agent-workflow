@@ -261,7 +261,7 @@ describe('bridge-settings — reconcile', () => {
 
   it('--reconcile combined with ANY other argument → usage exit 2 (never silently ignored)', () => {
     // A consent-gated writer must not let --reconcile mask a --set/--apply into a no-op the caller
-    // thinks wrote, nor silently swallow an unknown flag (codex R1 minor + R2 minor).
+    // thinks wrote, nor silently swallow an unknown flag.
     assert.equal(main(['--reconcile', '--set', 'CODEX_SERVICE_TIER=priority', '--apply'], ctx()).code, 2);
     assert.equal(main(['--reconcile', '--apply'], ctx()).code, 2);
     assert.equal(main(['--reconcile', '--bogus'], ctx()).code, 2, 'an unknown flag is rejected, never ignored');
@@ -269,7 +269,7 @@ describe('bridge-settings — reconcile', () => {
   });
 });
 
-describe('bridge-settings — reader env honesty (codex R1)', () => {
+describe('bridge-settings — reader env honesty (review-bridge-settings-r01-major-03)', () => {
   it('an invalid enum env value (the tier) shows as the built-in default with a note, never as active', () => {
     const r = main([], ctx({ CODEX_SERVICE_TIER: 'turbo' }));
     assert.match(r.stdout, /CODEX_SERVICE_TIER = \(unset[^\n]*\[default\]/);

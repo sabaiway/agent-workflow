@@ -341,7 +341,7 @@ describe('1.3 --migrate --apply — records + snapshot + retire monoliths + HOT 
     assert.equal(run(['--check', '--today=2026-07-09'], root).code, 0, 'the resumed tree passes --check');
   });
 
-  it('refuses when a pre-existing adr/ record duplicates an ADR that stays in HOT (never two places — codex R4)', () => {
+  it('refuses when a pre-existing adr/ record duplicates an ADR that stays in HOT (never two places — review-adr-archive-r04-major-01)', () => {
     const root = makeRoot();
     seedLegacy(root, { hot: ['005', '006'], warm: ['003'], cold: ['001'] });
     mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
@@ -452,7 +452,7 @@ describe('1.4 --check', () => {
     assert.match(errText, /duplicate ADR id AD-002/);
   });
 
-  it('a decisions.md with NO maxLines cap fails loud (never operates against an unknown budget — codex R4)', () => {
+  it('a decisions.md with NO maxLines cap fails loud (never operates against an unknown budget — review-adr-archive-r04-major-02)', () => {
     const root = makeRoot();
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
     const noCapFm = '---\ntype: reference\nlastUpdated: 2026-01-01\nscope: permanent\nstaleAfter: never\nowner: none\n---\n';
@@ -514,7 +514,7 @@ describe('1.4 --check', () => {
     assert.match(errText, /two records for AD-001/);
   });
 
-  it('a NESTED subdirectory in adr/ fails loud (the store is a flat directory — codex R2)', () => {
+  it('a NESTED subdirectory in adr/ fails loud (the store is a flat directory — review-adr-archive-r02-major-01)', () => {
     const root = makeRoot();
     seedMigrated(root, { hotIds: ['005'], storeIds: ['001'] });
     mkdirSync(join(root, ADR_DIR_REL, 'nested'), { recursive: true });
@@ -561,7 +561,7 @@ describe('1.4 default rotate — explode the oldest beyond cap + regenerate the 
     assert.equal(regenCalls.length, 0, 'a no-op never regenerates the index');
   });
 
-  it('is crash-resumable: a byte-identical record from a crashed prior rotate is deduped, not a fatal duplicate (codex R2)', () => {
+  it('is crash-resumable: a byte-identical record from a crashed prior rotate is deduped, not a fatal duplicate (review-adr-archive-r02-major-02)', () => {
     const root = makeRoot();
     mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
     const blocks = ['005', '006', '007', '008'].map((id) => adrBlock(id));
@@ -579,7 +579,7 @@ describe('1.4 default rotate — explode the oldest beyond cap + regenerate the 
     assert.equal(run(['--check', '--today=2026-07-09'], root).code, 0);
   });
 
-  it('a no-op rotate still REFUSES a corrupt store (partition) — never a silent green no-op (codex R2)', () => {
+  it('a no-op rotate still REFUSES a corrupt store (partition) — never a silent green no-op (review-adr-archive-r02-major-03)', () => {
     const root = makeRoot();
     seedMigrated(root, { hotIds: ['005'], storeIds: ['001'] }); // under cap
     const rec = explode(parseDecisionsText(tierText(999, '# T', [adrBlock('010')]), 'x').entries, '2026-07-09')[0];

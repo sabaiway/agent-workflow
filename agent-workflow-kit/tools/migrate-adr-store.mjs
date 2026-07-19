@@ -125,7 +125,7 @@ const isUnder = (child, parent) => {
 
 // The ordered snapshot bases that are provably NOT stageable: the git dir first (always safe), then the
 // fallback base ONLY when its snapshot dir lands OUTSIDE cwd (else it is in the work tree and could be
-// committed — reject it; codex R1 minor). Returns [{ base, dir, viaGitDir }] (possibly empty).
+// committed — reject it). Returns [{ base, dir, viaGitDir }] (possibly empty).
 const snapshotBases = (cwd, stamp, gitDir, fallbackBase) => {
   const bases = [];
   if (gitDir) bases.push({ base: gitDir, dir: resolve(gitDir, `${SNAPSHOT_PREFIX}-${stamp}`), viaGitDir: true });
@@ -226,14 +226,14 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
       log(`  snapshot → ${preview.dir ? `${preview.dir} (${preview.viaGitDir ? 'git dir' : 'out-of-tree fallback'})` : 'NONE — no out-of-tree location; run inside a git repo (apply would refuse otherwise)'}`);
       log(`  refresh ${refresh.length} enforcement script(s) to this kit's version${drifted.length ? ` (${drifted.length} locally differ: ${drifted.map((r) => r.name).join(', ')})` : ''}`);
       log('  then the conservation-checked rotation:');
-      // Surface the rotation's own exit code (codex R1 major): a failed dry-run must NOT print the
+      // Surface the rotation's own exit code: a failed dry-run must NOT print the
       // "run with --apply" go-ahead nor exit 0 — it would send the user to --apply on an unsafe tree.
       const code = runMigrate(['--migrate'], { root: cwd, log: (m) => log(`    ${m}`), logError: (m) => error(`    ${m}`) });
       if (code !== EXIT_OK) {
         throw stop(`the dry-run rotation would not conserve every ADR (exit ${code}) — NOT safe to --apply; fix the reported problem, then re-run.`);
       }
       // A null preview means --apply would refuse (no out-of-tree snapshot base) — never green-light it
-      // (codex R2 minor: a dry-run go-ahead must not send the user to an apply that will STOP).
+      // A dry-run go-ahead must not send the user to an apply that will STOP.
       if (preview.dir === null) {
         throw stop('no out-of-tree snapshot location — --apply would refuse; run inside a git repo (or point the fallback outside the project), then re-run.');
       }

@@ -1,8 +1,32 @@
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { scanText } from './release-scan.mjs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { main, scanText } from './release-scan.mjs';
 
 const COAUTHOR = 'Co-' + 'Authored-By: Claude <noreply@anthropic.com>';
+const LONG_REVIEWER = ['Co', 'dex'].join('');
+const SHORT_REVIEWER = ['a', 'gy'].join('');
+const ROUND_ONE = ['R', '1'].join('');
+const ROUND_TWO = ['r', '2'].join('');
+
+describe('main — a clean tree states the clean verdict', () => {
+  const TMP = mkdtempSync(join(tmpdir(), 'aw-release-scan-'));
+  after(() => rmSync(TMP, { recursive: true, force: true }));
+  it('prints the clean line and returns without exiting', () => {
+    writeFileSync(join(TMP, 'clean.mjs'), 'export const ok = 1;\n');
+    const logs = [];
+    const original = console.log;
+    console.log = (line) => logs.push(String(line));
+    try {
+      main([TMP]);
+    } finally {
+      console.log = original;
+    }
+    assert.match(logs.join('\n'), /clean — no AI attribution or reviewer-round identity found/);
+  });
+});
 
 describe('scanText — attribution detection', () => {
   it('flags a co-author trailer', () => {
@@ -37,5 +61,26 @@ describe('scanText — attribution detection', () => {
   it('does NOT flag clean prose with emoji, math symbols, em-dash, and accents', () => {
     const clean = '## 🧭 Memory Map — caps ≤ 100, provides ⊇ roles · café façade naïve\n';
     assert.deepEqual(scanText(clean), []);
+  });
+
+  it('flags a reviewer-round identity in a comment case-insensitively', () => {
+    const fixture = ['// finding retained (', LONG_REVIEWER, ' ', ROUND_ONE, ' major)'].join('');
+    const f = scanText(fixture);
+    assert.ok(f.some((x) => x.kind === 'reviewer-identity' && /reviewer-round/.test(x.detail)));
+  });
+
+  it('flags a reviewer-round identity in a test title', () => {
+    const fixture = ['it("boundary pin — ', SHORT_REVIEWER, ' ', ROUND_TWO, '", () => {})'].join('');
+    assert.ok(scanText(fixture).some((x) => x.kind === 'reviewer-identity'));
+  });
+
+  it('flags a hyphen-separated reviewer-round identity', () => {
+    const fixture = '// finding retained (' + ['co', 'dex-R2'].join('') + ')';
+    assert.ok(scanText(fixture).some((x) => x.kind === 'reviewer-identity'));
+  });
+
+  it('does NOT flag literal bridge product names', () => {
+    const fixture = 'codex-review agy-review codex-exec agy-run codex-cli-bridge antigravity-cli-bridge\n';
+    assert.deepEqual(scanText(fixture), []);
   });
 });

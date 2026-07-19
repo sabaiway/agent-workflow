@@ -910,7 +910,7 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     assert.equal(bridge.allow.includes(`Bash(node "${GROUNDING_TOOL}":*)`), true, 'the seeded rule wraps exactly the rendered `node "${GROUNDING_TOOL}"` prefix');
   });
 
-  it('an absent bridge is a STATED skip with zero entries for it; grounding derives ONLY with agy (codex R9)', () => {
+  it('an absent bridge is a STATED skip with zero entries for it; grounding derives ONLY with agy (review-velocity-profile-r09-major-01)', () => {
     const onlyCodex = deriveBridgeTierAllowlist({ findWrapper: (cmd) => cmd === 'codex-review' });
     assert.deepEqual([...onlyCodex.allow], ['Bash(codex-review code:*)'], 'a codex-only install never auto-allows the agy facts pre-step writer');
     assert.deepEqual([...onlyCodex.excludedCommands], ['codex-review']);
@@ -929,7 +929,7 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     assert.equal(screenAllowlistEntry('Bash(agy-review code:*)'), true);
     assert.equal(screenAllowlistEntry(GROUNDING_RULE), true);
     // Near-misses: non-review wrappers, bare/plan/diff spellings, exact (non-wildcard) forms — the
-    // file-argument modes can read outside the repo, so they must keep their prompt (codex R2).
+    // file-argument modes can read outside the repo, so they must keep their prompt.
     assert.equal(screenAllowlistEntry('Bash(codex-exec:*)'), false, 'the execution wrapper never passes');
     assert.equal(screenAllowlistEntry('Bash(agy-run:*)'), false, 'the probe wrapper never passes');
     assert.equal(screenAllowlistEntry('Bash(codex-review:*)'), false, 'the BARE wrapper prefix covers plan mode — not the tier form');
@@ -951,7 +951,7 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     assert.throws(() => validateProfile([GROUNDING_RULE]), (err) => err.code === VELOCITY_OFFCORE);
   });
 
-  it('the tier notice states the informed-consent posture EXPLICITLY (codex R2 resolution, pinned)', () => {
+  it('the tier notice states the informed-consent posture EXPLICITLY (review-velocity-profile-r02-major-01, pinned)', () => {
     assert.match(KIT_BRIDGE_TIER_NOTICE, /runs UNATTENDED/);
     assert.match(KIT_BRIDGE_TIER_NOTICE, /reads any repo file it is pointed at and sends the assembled payload to its subscription backend/);
     assert.match(KIT_BRIDGE_TIER_NOTICE, /never codex-exec\/agy-run/);
@@ -994,7 +994,7 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     assert.match(otherhost.stdout, /codex-review/);
   });
 
-  it('a NON-ARRAY sandbox.excludedCommands is a fail-closed STOP — never treated as empty and overwritten (codex R1)', (t) => {
+  it('a NON-ARRAY sandbox.excludedCommands is a fail-closed STOP — never treated as empty and overwritten (review-velocity-profile-r01-major-01)', (t) => {
     const cwd = makeTempProject(t);
     seedWorkflowStamp(cwd);
     ensureClaudeDir(cwd);
@@ -1037,7 +1037,7 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     assert.match(r.stdout, /pre-existing non-read-only Bash allow entries/, 'over-flagging is the safe direction when the probe fails');
   });
 
-  it('tier-known excludedCommands suppression demands PROOF — project file + the derived allow rules (codex R4)', (t) => {
+  it('tier-known excludedCommands suppression demands PROOF — project file + the derived allow rules (review-velocity-profile-r04-major-01)', (t) => {
     const cwd = makeTempProject(t);
     seedWorkflowStamp(cwd);
     mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });

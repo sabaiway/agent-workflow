@@ -2,7 +2,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync, chmodSync, readFileSync,
-  copyFileSync, lstatSync, existsSync, realpathSync,
+  fchmodSync, lstatSync, existsSync, realpathSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
@@ -186,7 +186,7 @@ describe('worktrees — parseWorktreeList / probeParentWritable', () => {
       'worktree /repo--x', 'HEAD bbbb', 'branch refs/heads/aw/x', '',
       'worktree /repo--d', 'HEAD cccc', 'detached', '',
       'worktree /gone', 'HEAD dddd', 'prunable gitdir file points to non-existent location', '',
-    ].join('\n');
+    ].join('\0');
     const entries = parseWorktreeList(text);
     assert.equal(entries.length, 4);
     assert.deepEqual(entries.map((e) => e.path), ['/repo', '/repo--x', '/repo--d', '/gone']);
@@ -318,7 +318,10 @@ describe('worktrees — provision (real git)', () => {
     const r = run(['list'], { cwd: MAIN, git: recordingGit(calls) });
     assert.equal(r.code, EXIT.ok);
     for (const c of calls) {
-      assert.ok(c.startsWith('worktree list') || c.startsWith('status --porcelain'), `unexpected git call: ${c}`);
+      assert.ok(
+        c === 'worktree list --porcelain -z' || c === '--no-optional-locks status --porcelain',
+        `unexpected git call: ${c}`,
+      );
     }
   });
 
@@ -360,7 +363,7 @@ describe('worktrees — provision (real git)', () => {
       cwd: MAIN,
       log: (l) => out.push(l),
       logError: (l) => err.push(l),
-      copyFile: () => {
+      write: () => {
         armed = true;
         throw Object.assign(new Error('boom'), { code: 'EIO' });
       },
@@ -439,21 +442,27 @@ describe('worktrees — provision (real git)', () => {
 // ── the R1 fold set: resume preservation · source containment · collision preflight ────
 
 describe('worktrees — resume preserves user work (copy-if-missing everywhere)', () => {
-  it('a --resume after user edits preserves the handoff (marker kept, text added) and the seeded plan byte-exact', () => {
+  it('a --resume refreshes only the record while preserving user sections and the seeded plan byte-exact', () => {
     const repo = makeRepo('res-preserve');
     const r1 = run(['provision', 'resp', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-resp.md'], { cwd: repo });
     assert.equal(r1.code, EXIT.ok, r1.errText);
     const wt = join(dirname(repo), `${basename(repo)}--resp`);
     const handoffPath = join(wt, 'docs/plans', handoffBasename('resp'));
-    const userHandoff = `${readFileSync(handoffPath, 'utf8')}\n## Progress\n\nreal satellite work notes\n`;
+    const originalHandoff = readFileSync(handoffPath, 'utf8');
+    const recordOffset = originalHandoff.indexOf('## Provision record');
+    const userPrefix = originalHandoff.slice(0, recordOffset);
+    const userSuffix = '## Progress\n\nreal satellite work notes\n';
+    const userHandoff = `${originalHandoff}\n${userSuffix}`;
     writeFileSync(handoffPath, userHandoff);
     const userPlan = '# plan body\n\nuser-refined step\n';
     writeFileSync(join(wt, 'docs/plans/feature-resp.md'), userPlan);
     const r2 = run(['provision', 'resp', '--resume', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-resp.md'], { cwd: repo });
     assert.equal(r2.code, EXIT.ok, r2.errText);
-    assert.equal(readFileSync(handoffPath, 'utf8'), userHandoff, 'the user handoff must stay byte-exact');
+    const updatedHandoff = readFileSync(handoffPath, 'utf8');
+    assert.equal(updatedHandoff.slice(0, updatedHandoff.indexOf('## Provision record')), userPrefix);
+    assert.equal(updatedHandoff.slice(updatedHandoff.indexOf('## Progress')), userSuffix);
     assert.equal(readFileSync(join(wt, 'docs/plans/feature-resp.md'), 'utf8'), userPlan, 'the user plan must stay byte-exact');
-    assert.match(r2.text, /handoff: preserved/);
+    assert.match(r2.text, /handoff: provision record refreshed \(user sections preserved\)/);
     assert.match(r2.text, /kept \(already present\): docs\/plans\/feature-resp\.md/);
   });
 });
@@ -466,33 +475,33 @@ describe('worktrees — provision-source containment (pre-add sweep)', () => {
     writeFileSync(join(outside, 'stolen.md'), 'outside data\n');
     rmSync(join(repo, '.claude/skills'), { recursive: true, force: true });
     symlinkSync(outside, join(repo, '.claude/skills'));
-    const beforeCount = parseWorktreeList(sh(['worktree', 'list', '--porcelain'], repo)).length;
+    const beforeCount = parseWorktreeList(sh(['worktree', 'list', '--porcelain', '-z'], repo)).length;
     const r = run(['provision', 'esc', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md'], { cwd: repo });
     assert.equal(r.code, EXIT.stop);
     assert.match(r.errText, /provision source escapes the main repo/);
-    assert.equal(parseWorktreeList(sh(['worktree', 'list', '--porcelain'], repo)).length, beforeCount, 'no worktree may be created');
+    assert.equal(parseWorktreeList(sh(['worktree', 'list', '--porcelain', '-z'], repo)).length, beforeCount, 'no worktree may be created');
     assert.ok(!existsSync(join(dirname(repo), `${basename(repo)}--esc`)));
   });
 });
 
 describe('worktrees — target-inside-source collision preflight (pre-add)', () => {
   it('a check-ignored target INSIDE a copy-set subtree is a typed STOP before worktree add', () => {
-    const beforeCount = parseWorktreeList(sh(['worktree', 'list', '--porcelain'], MAIN)).length;
+    const beforeCount = parseWorktreeList(sh(['worktree', 'list', '--porcelain', '-z'], MAIN)).length;
     const r = run(['provision', 'nest', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md', '--dir', join(MAIN, '.claude/skills/nest')], { cwd: MAIN });
     assert.equal(r.code, EXIT.stop);
     assert.match(r.errText, /inside a provision source/);
-    assert.equal(parseWorktreeList(sh(['worktree', 'list', '--porcelain'], MAIN)).length, beforeCount, 'no worktree may be registered');
+    assert.equal(parseWorktreeList(sh(['worktree', 'list', '--porcelain', '-z'], MAIN)).length, beforeCount, 'no worktree may be registered');
   });
   it('a target inside an --include source dir is the same pre-add STOP', () => {
     mkdirSync(join(MAIN, 'ignored-extras'), { recursive: true });
     writeFileSync(join(MAIN, 'ignored-extras/data.txt'), 'x\n');
     writeFileSync(join(MAIN, '.git/info/exclude'), [...HIDDEN_EXCLUDES.slice(0, -1), '/ignored-extras/', ''].join('\n'));
     try {
-      const beforeCount = parseWorktreeList(sh(['worktree', 'list', '--porcelain'], MAIN)).length;
+      const beforeCount = parseWorktreeList(sh(['worktree', 'list', '--porcelain', '-z'], MAIN)).length;
       const r = run(['provision', 'nesti', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md', '--include', 'ignored-extras', '--dir', join(MAIN, 'ignored-extras/nest')], { cwd: MAIN });
       assert.equal(r.code, EXIT.stop);
       assert.match(r.errText, /inside a provision source/);
-      assert.equal(parseWorktreeList(sh(['worktree', 'list', '--porcelain'], MAIN)).length, beforeCount);
+      assert.equal(parseWorktreeList(sh(['worktree', 'list', '--porcelain', '-z'], MAIN)).length, beforeCount);
     } finally {
       writeFileSync(join(MAIN, '.git/info/exclude'), HIDDEN_EXCLUDES.join('\n'));
       rmSync(join(MAIN, 'ignored-extras'), { recursive: true, force: true });
@@ -538,7 +547,7 @@ describe('worktrees — rebase decides tracked/untracked via git, byte-safe on u
 // ── the plan-seed refusal set (validated BEFORE any git mutation) ──────────────────────
 
 describe('worktrees — plan-seed refusals (pre-add, no worktree is created)', () => {
-  const worktreeCount = () => parseWorktreeList(sh(['worktree', 'list', '--porcelain'], MAIN)).length;
+  const worktreeCount = () => parseWorktreeList(sh(['worktree', 'list', '--porcelain', '-z'], MAIN)).length;
   const seedRun = (extra) => run(['provision', 'seedx', '--plan', 'docs/plans/SEED-PROMPT-feature.md', ...extra], { cwd: MAIN });
 
   for (const scratch of ['queue.md', 'EXECUTE-x.md', 'FEEDBACK-x.md', 'a-PROMPT.md', 'a-prompt.md', 'handoff-x.md']) {
@@ -557,10 +566,10 @@ describe('worktrees — plan-seed refusals (pre-add, no worktree is created)', (
     assert.equal(r.code, EXIT.stop);
     assert.match(r.errText, /must resolve inside the main repo/);
   });
-  it('refuses a --plan that is not a regular file', () => {
+  it('refuses a --plan that is not a regular non-symlink file', () => {
     const r = run(['provision', 'seedx', '--plan', 'docs/plans', '--as', 'feature-x.md'], { cwd: MAIN });
     assert.equal(r.code, EXIT.stop);
-    assert.match(r.errText, /regular file/);
+    assert.match(r.errText, /regular non-symlink file/);
   });
   it('refuses a missing --plan path', () => {
     const r = run(['provision', 'seedx', '--plan', 'docs/plans/nope.md', '--as', 'feature-x.md'], { cwd: MAIN });
@@ -803,27 +812,24 @@ describe('worktrees — copy semantics', () => {
       (e) => e.code === WORKTREES_STOP,
     );
   });
-  it('the chmod of an executable copy re-guards containment (a parent swapped to a symlink after copyFile STOPs)', () => {
+  it('an executable copy applies its mode through the destination descriptor', () => {
     const src = join(TMP, 'dc-chmod');
     const wt = join(TMP, 'dc-chmod-wt');
     mkdirSync(src, { recursive: true });
     mkdirSync(join(wt, 'sub'), { recursive: true });
     writeFileSync(join(src, 'run.sh'), '#!/bin/sh\n');
     chmodSync(join(src, 'run.sh'), 0o755);
-    const realLstat = lstatSync;
-    let copied = false;
-    const fakeSymlink = { isSymbolicLink: () => true, isDirectory: () => false, isFile: () => false, mode: 0 };
+    const calls = [];
     const deps = {
-      lstat: (p) => (copied && p === join(wt, 'sub') ? fakeSymlink : realLstat(p)),
-      copyFile: (a, b) => {
-        copyFileSync(a, b);
-        copied = true;
+      fchmod: (fd, mode) => {
+        calls.push({ fd, mode });
+        fchmodSync(fd, mode);
       },
     };
-    assert.throws(
-      () => copyTreeIfMissing({ srcAbs: join(src, 'run.sh'), dstAbs: join(wt, 'sub', 'run.sh'), wtRoot: wt, rel: 'sub/run.sh', deps }),
-      (e) => e.code === WORKTREES_STOP && /symlink/.test(e.message),
-    );
+    const destination = join(wt, 'sub', 'run.sh');
+    copyTreeIfMissing({ srcAbs: join(src, 'run.sh'), dstAbs: destination, wtRoot: wt, rel: 'sub/run.sh', deps });
+    assert.deepEqual(calls.map((call) => call.mode), [0o755]);
+    assert.notEqual(lstatSync(destination).mode & 0o111, 0);
   });
   it('a copy fs error is a typed STOP carrying the code and the path', () => {
     const src = join(TMP, 'cs-err');
@@ -832,7 +838,7 @@ describe('worktrees — copy semantics', () => {
     assert.throws(
       () => copyTreeIfMissing({
         srcAbs: join(src, 'f'), dstAbs: join(TMP, 'cs-err-wt', 'f'), wtRoot: join(TMP, 'cs-err-wt'), rel: 'f',
-        deps: { copyFile: () => { throw Object.assign(new Error('boom'), { code: 'EIO' }); } },
+        deps: { write: () => { throw Object.assign(new Error('boom'), { code: 'EIO' }); } },
       }),
       (e) => e.code === WORKTREES_STOP && /copy failed \(EIO\) at f/.test(e.message),
     );
@@ -968,7 +974,7 @@ describe('worktrees — CLI usage', () => {
 
 describe('worktrees — handoff record round-trip', () => {
   it('parseProvisionRecord trims trailing whitespace in values', () => {
-    const record = parseProvisionRecord('- slug: s1  \n- branch: aw/s1\t\n- include: a.txt \n- node_modules: symlinked\n- vscode-settings: absent\n');
+    const record = parseProvisionRecord('## Provision record\n\n- slug: s1  \n- branch: aw/s1\t\n- include: a.txt \n- node_modules: symlinked\n- vscode-settings: absent\n');
     assert.equal(record.slug, 's1');
     assert.equal(record.branch, 'aw/s1');
     assert.deepEqual(record.includes, ['a.txt']);

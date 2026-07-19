@@ -2,13 +2,15 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mkdtempSync, rmSync, writeFileSync, mkdirSync, lstatSync, unlinkSync, realpathSync, readdirSync,
+  fstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, lstatSync, unlinkSync, realpathSync, readdirSync,
+  existsSync, symlinkSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   EXIT, WORKTREES_STOP, runCli, loadWorktreesConfig, parseArgs, copyTreeIfMissing, handoffBasename,
+  parseStrictJson,
 } from './worktrees.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-wt-cov-'));
@@ -114,7 +116,7 @@ describe('worktrees coverage — copy error branches', () => {
         wtRoot: wt,
         rel: 'f.txt',
         deps: {
-          copyFile: () => {
+          write: () => {
             copyFailed = true;
             throw Object.assign(new Error('io'), { code: 'EIO' });
           },
@@ -129,13 +131,11 @@ describe('worktrees coverage — copy error branches', () => {
         && /untrusted destination remains/.test(e.message),
     );
   });
-  it('a source swapped during the copy is the mid-copy STOP', () => {
+  it('a source identity mismatch at descriptor bind is the pre-copy STOP', () => {
     const wt = join(TMP, 'cov-copy-swap-wt');
     mkdirSync(wt, { recursive: true });
     const src = join(TMP, 'cov-copy-swap-src.txt');
     writeFileSync(src, 'x\n');
-    const lie = { isSymbolicLink: () => true, isFile: () => false, isDirectory: () => false, mode: 0o644 };
-    let n = 0;
     assert.throws(
       () => copyTreeIfMissing({
         srcAbs: src,
@@ -143,16 +143,13 @@ describe('worktrees coverage — copy error branches', () => {
         wtRoot: wt,
         rel: 'f.txt',
         deps: {
-          lstat: (p) => {
-            if (p === src) {
-              n += 1;
-              if (n >= 2) return lie;
-            }
-            return lstatSync(p);
+          fstat: (fd) => {
+            const descriptor = fstatSync(fd);
+            return { isFile: () => true, dev: descriptor.dev + 1, ino: descriptor.ino };
           },
         },
       }),
-      (e) => e.code === WORKTREES_STOP && /changed mid-copy/.test(e.message),
+      (e) => e.code === WORKTREES_STOP && /changed between lstat and open/.test(e.message),
     );
   });
 });
@@ -212,6 +209,55 @@ describe('worktrees coverage — handoff door STOPs on resume', () => {
   });
 });
 
+describe('worktrees coverage — provision record section boundaries', () => {
+  it('preserves level-1 and indented user sections byte-exact across resume', () => {
+    const actual = {};
+    const expected = {};
+    for (const [name, suffix] of [
+      ['level-one', '# User notes\r\n\r\nkeep level one  \r\n'],
+      ['indented', '  ## Indented\r\n\r\nkeep indented  \r\n'],
+    ]) {
+      const root = join(TMP, `cov-record-${name}`);
+      mkdirSync(join(root, 'docs/plans'), { recursive: true });
+      writeFileSync(join(root, 'docs/plans/SEED-PROMPT-x.md'), '# body\n');
+      const head = 'a'.repeat(40);
+      const entries = [{ path: root, head, branch: 'refs/heads/main' }];
+      const git = (args) => {
+        const commandArgs = args[0] === '--no-optional-locks' ? args.slice(1) : args;
+        const ok = (stdout = '') => ({ status: 0, stdout, stderr: '' });
+        if (commandArgs[0] === 'rev-parse' && commandArgs.includes('--show-toplevel')) return ok(`${root}\n`);
+        if (commandArgs[0] === 'rev-parse' && commandArgs.includes('--git-dir')) return ok(`${join(root, '.git')}\n`);
+        if (commandArgs[0] === 'rev-parse' && commandArgs.includes('--git-common-dir')) return ok(`${join(root, '.git')}\n`);
+        if (commandArgs[0] === 'rev-parse' && commandArgs[1] === 'HEAD') return ok(`${head}\n`);
+        if (commandArgs[0] === 'check-ignore') return ok(`${commandArgs.at(-1)}\n`);
+        if (commandArgs[0] === 'ls-files' || commandArgs[0] === 'status') return ok();
+        if (commandArgs[0] === 'worktree' && commandArgs[1] === 'list') {
+          return ok(`${entries.map((entry) => `worktree ${entry.path}\0HEAD ${entry.head}\0branch ${entry.branch}\0\0`).join('')}\0`);
+        }
+        if (commandArgs[0] === 'worktree' && commandArgs[1] === 'add') {
+          const target = commandArgs.at(-1);
+          const branch = commandArgs[commandArgs.indexOf('-b') + 1];
+          mkdirSync(target, { recursive: true });
+          entries.push({ path: target, head, branch: `refs/heads/${branch}` });
+          return ok();
+        }
+        return { status: 128, stdout: '', stderr: `unexpected git call: ${args.join(' ')}` };
+      };
+      const argv = ['provision', name, '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', `feature-${name}.md`];
+      const first = run(argv, { cwd: root, deps: { git } });
+      assert.equal(first.code, EXIT.ok, first.errText);
+      const wt = join(dirname(root), `${basename(root)}--${name}`);
+      const handoffPath = join(wt, 'docs/plans', handoffBasename(name));
+      expected[name] = `${readFileSync(handoffPath, 'utf8')}${suffix}`;
+      writeFileSync(handoffPath, expected[name]);
+      const resumed = run([...argv, '--resume'], { cwd: root, deps: { git } });
+      assert.equal(resumed.code, EXIT.ok, resumed.errText);
+      actual[name] = readFileSync(handoffPath, 'utf8');
+    }
+    assert.deepEqual(actual, expected, 'both user-section terminators must survive byte-exact');
+  });
+});
+
 describe('worktrees coverage — node_modules degrade branches', () => {
   it('an unresolvable main node_modules prints the install lane', () => {
     const repo = makeRepo('cov-nm-unres');
@@ -266,6 +312,69 @@ describe('worktrees coverage — vscode degrade branches', () => {
     const r = run(['provision', 'alpha', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-alpha.md'], { cwd: repo });
     assert.equal(r.code, EXIT.ok, r.errText);
     assert.match(r.text, /settings\.json is not a JSON object — skipped/);
+  });
+});
+
+describe('worktrees coverage — door and parser defensive branches', () => {
+  it('a source open racing to ELOOP is the between-lstat-and-open STOP with no destination', () => {
+    const wt = join(TMP, 'cov-door-eloop-wt');
+    mkdirSync(wt, { recursive: true });
+    const src = join(TMP, 'cov-door-eloop-src.txt');
+    writeFileSync(src, 'x\n');
+    const dst = join(wt, 'f.txt');
+    assert.throws(
+      () => copyTreeIfMissing({
+        srcAbs: src,
+        dstAbs: dst,
+        wtRoot: wt,
+        rel: 'f.txt',
+        deps: { open: () => { throw Object.assign(new Error('loop'), { code: 'ELOOP' }); } },
+      }),
+      (e) => e.code === WORKTREES_STOP && /copy source changed between lstat and open/.test(e.message),
+    );
+    assert.equal(existsSync(dst), false);
+  });
+  it('a close failure after a successful copy surfaces as a typed copy failure', () => {
+    const wt = join(TMP, 'cov-door-close-wt');
+    mkdirSync(wt, { recursive: true });
+    const src = join(TMP, 'cov-door-close-src.txt');
+    writeFileSync(src, 'x\n');
+    assert.throws(
+      () => copyTreeIfMissing({
+        srcAbs: src,
+        dstAbs: join(wt, 'f.txt'),
+        wtRoot: wt,
+        rel: 'f.txt',
+        deps: { close: () => { throw Object.assign(new Error('bad fd'), { code: 'EBADF' }); } },
+      }),
+      (e) => e.code === WORKTREES_STOP && /copy failed \(EBADF\) at f\.txt/.test(e.message),
+    );
+  });
+  it('parseStrictJson walks escaped quotes, empty and unclosed objects, and truncated keys', () => {
+    assert.deepEqual(parseStrictJson('{"a\\"b": 1}'), { 'a"b': 1 });
+    assert.deepEqual(parseStrictJson('{}'), {});
+    assert.deepEqual(parseStrictJson('{"a": {}}'), { a: {} });
+    assert.throws(() => parseStrictJson('{"a": "x'));
+    assert.throws(() => parseStrictJson('{"ab'));
+    assert.throws(() => parseStrictJson('{"a": 1'));
+  });
+  it('a special node at main node_modules is the neither-kind degrade line', () => {
+    const repo = makeRepo('cov-nm-special');
+    const nm = join(repo, 'node_modules');
+    const fifo = { isSymbolicLink: () => false, isFile: () => false, isDirectory: () => false };
+    const r = run(['provision', 'alpha', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-alpha.md'], {
+      cwd: repo,
+      deps: { lstat: (p) => (p === nm ? fifo : lstatSync(p)) },
+    });
+    assert.equal(r.code, EXIT.ok, r.errText);
+    assert.match(r.text, /neither a plain directory nor a symlink resolving to a directory/);
+  });
+  it('a dangling node_modules symlink prints the unresolvable install lane', () => {
+    const repo = makeRepo('cov-nm-dangling');
+    symlinkSync('missing-target', join(repo, 'node_modules'));
+    const r = run(['provision', 'alpha', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-alpha.md'], { cwd: repo });
+    assert.equal(r.code, EXIT.ok, r.errText);
+    assert.match(r.text, /node_modules: main's is unresolvable/);
   });
 });
 

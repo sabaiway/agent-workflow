@@ -8,6 +8,9 @@ read from stored metadata.
 
 **Run** — `node ${CLAUDE_SKILL_DIR}/tools/worktrees.mjs <subcommand> …`:
 
+Git ≥ 2.36 is required for NUL-terminated worktree porcelain; an older Git fails closed with its
+own verbatim error through the existing Git-error surface.
+
 - `provision <slug> --plan <path> [--as <name>.md] [--dir <path>] [--branch <name>] [--include <path>]... [--install] [--resume]`
   — create a feature worktree (default: the visible sibling `<repoParent>/<repoName>--<slug>`,
   branch `aw/<slug>`) and populate it: the registry-derived footprint copy-if-missing (a tracked
@@ -19,15 +22,16 @@ read from stored metadata.
   printed unlink-first recovery first. Absolute root-pinned gate commands are rebased on UNTRACKED copies only — and only
   while their bytes still equal the MAIN source (or its rebased form); user-modified copies stay
   byte-untouched. `--install` only PRINTS the install command — zero spawn, zero write.
-  `--resume <slug>` completes a half-done provision (identity fail-closed; user work — the
-  handoff, the seeded plan, edited copies — is preserved byte-exact, copy-if-missing everywhere).
+  `--resume <slug>` completes a half-done provision (identity fail-closed; handoff user sections,
+  the seeded plan, and edited copies are preserved byte-exact; the provision-record section is
+  refreshed atomically; copy-if-missing everywhere).
   Resume identity also binds the EXISTING handoff: at most one `handoff-<slug>.md` may exist and
   its recorded slug AND branch must match the live invocation — a second handoff, a name/record
   mismatch, or a handoff that is not a regular file is a typed STOP before anything is written
   (the writability probe itself runs only after these checks on a resume). The provision record
-  is read from the `## Provision record` section ONLY (a decoy field elsewhere cannot hijack
-  identity); a duplicated single-valued field is ambiguous identity — a typed STOP, never
-  last-wins.
+  is read from exactly one REQUIRED `## Provision record` section (a decoy field elsewhere cannot
+  hijack identity); a missing or repeated section, or a duplicated single-valued field, is a typed
+  STOP, never last-wins.
 - `list` — read-only: every worktree of this repo with slug (from the handoff file; none →
   "unknown (foreign)"), path, branch, base OID (the worktree HEAD — under the v1 no-commit bar
   that IS the provision base; a manual satellite commit moves it, and land derives its own base
@@ -45,9 +49,9 @@ read from stored metadata.
   honest CLI answer until then.
 
 **Honesty:** there is NO preview step on the writers — over-warned by design. The tool never
-commits, never pushes, never runs a subscription CLI. Every content read goes through ONE
-no-follow door (descriptor-verified — a swapped node can neither follow a link nor block), and a
-tripwire test keeps it the only read path.
+commits, never pushes, never runs a subscription CLI. Every content read and regular-file copy
+goes through its one no-follow descriptor door (identity-bound source, exclusive destination,
+descriptor mode update), and tripwire tests keep them the only paths.
 
 **Settings:** the parent dir for new worktrees is the `docs/ai/worktrees.json` `{"parentDir": …}`
 project setting (hand-editable strict JSON; absent file → the sibling default; malformed → a

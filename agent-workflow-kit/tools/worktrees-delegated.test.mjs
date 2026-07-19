@@ -1,8 +1,8 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync,
-  symlinkSync, writeFileSync,
+  existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, realpathSync, rmSync,
+  readFileSync, symlinkSync, writeFileSync, writeSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -21,9 +21,9 @@ const makeGit = (main) => {
   const entries = [];
   const ok = (stdout = '') => ({ status: 0, stdout, stderr: '' });
   const porcelain = () => [
-    `worktree ${main}`, `HEAD ${HEAD}`, 'branch refs/heads/main', '',
-    ...entries.flatMap(({ path, branch }) => [`worktree ${path}`, `HEAD ${HEAD}`, `branch refs/heads/${branch}`, '']),
-  ].join('\n');
+    [`worktree ${main}`, `HEAD ${HEAD}`, 'branch refs/heads/main'],
+    ...entries.map(({ path, branch }) => [`worktree ${path}`, `HEAD ${HEAD}`, `branch refs/heads/${branch}`]),
+  ].map((fields) => fields.join('\0')).join('\0\0') + '\0\0';
   return (args) => {
     if (args[0] === 'rev-parse' && args.includes('--show-toplevel')) return ok(main);
     if (args[0] === 'rev-parse' && args.includes('--git-dir')) return ok(`${commonDir}\n`);
@@ -31,7 +31,8 @@ const makeGit = (main) => {
     if (args[0] === 'rev-parse' && args.includes('HEAD')) return ok(`${HEAD}\n`);
     if (args[0] === 'check-ignore') return ok();
     if (args[0] === 'ls-files') return ok();
-    if (args[0] === 'status' && args[1] === '--porcelain') return ok();
+    if ((args[0] === 'status' && args[1] === '--porcelain')
+      || (args[0] === '--no-optional-locks' && args[1] === 'status' && args[2] === '--porcelain')) return ok();
     if (args[0] === 'worktree' && args[1] === 'list') return ok(porcelain());
     if (args[0] === 'worktree' && args[1] === 'add') {
       const branch = args[3];
@@ -89,7 +90,7 @@ const captureError = (fn) => {
 };
 
 describe('delegated finding 1 — a failed copy leaves no untrusted destination', () => {
-  it('cleans bytes written by a failing copyFile and reports a cleanup refusal exactly', () => {
+  it('cleans bytes written by a failing descriptor write and reports a cleanup refusal exactly', () => {
     const source = join(TMP, 'copy-failure-source.txt');
     const worktree = join(TMP, 'copy-failure-worktree');
     const destination = join(worktree, 'f.txt');
@@ -102,8 +103,8 @@ describe('delegated finding 1 — a failed copy leaves no untrusted destination'
       wtRoot: worktree,
       rel: 'f.txt',
       deps: {
-        copyFile: (_src, dst) => {
-          writeFileSync(dst, 'partial\n');
+        write: (fd, buffer, offset, length, position) => {
+          writeSync(fd, buffer, offset, length, position);
           throw Object.assign(new Error('I/O failure'), { code: 'EIO' });
         },
       },
@@ -114,8 +115,8 @@ describe('delegated finding 1 — a failed copy leaves no untrusted destination'
       wtRoot: worktree,
       rel: 'blocked.txt',
       deps: {
-        copyFile: (_src, dst) => {
-          writeFileSync(dst, 'partial\n');
+        write: (fd, buffer, offset, length, position) => {
+          writeSync(fd, buffer, offset, length, position);
           throw Object.assign(new Error('I/O failure'), { code: 'EIO' });
         },
         unlink: () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); },
@@ -145,12 +146,10 @@ describe('delegated finding 1 — a failed copy leaves no untrusted destination'
     );
   });
 
-  it('removes a completed copy when the source changes during validation', () => {
+  it('refuses the source before destination creation when descriptor identity changed after lstat', () => {
     const source = join(TMP, 'copy-swap-source.txt');
     const worktree = join(TMP, 'copy-swap-worktree');
     const destination = join(worktree, 'f.txt');
-    const sourceStats = [];
-    const swapped = { isSymbolicLink: () => true, isFile: () => false, isDirectory: () => false, mode: 0o644 };
     mkdirSync(worktree, { recursive: true });
     writeFileSync(source, 'trusted\n');
     const error = captureError(() => copyTreeIfMissing({
@@ -159,11 +158,9 @@ describe('delegated finding 1 — a failed copy leaves no untrusted destination'
       wtRoot: worktree,
       rel: 'f.txt',
       deps: {
-        copyFile: copyFileSync,
-        lstat: (path) => {
-          if (path !== source) return lstatSync(path);
-          sourceStats.push(path);
-          return sourceStats.length === 1 ? lstatSync(path) : swapped;
+        fstat: (fd) => {
+          const descriptor = fstatSync(fd);
+          return { isFile: () => true, dev: descriptor.dev, ino: descriptor.ino + 1 };
         },
       },
     }));
@@ -171,10 +168,57 @@ describe('delegated finding 1 — a failed copy leaves no untrusted destination'
       { code: error.code, message: error.message, destinationExists: existsSync(destination) },
       {
         code: WORKTREES_STOP,
-        message: '[agent-workflow-kit] copy source changed mid-copy: f.txt — partial destination removed; re-run provision',
+        message: '[agent-workflow-kit] copy source changed between lstat and open: f.txt',
         destinationExists: false,
       },
     );
+  });
+
+  it('retries partial descriptor writes until every source byte is copied', () => {
+    const source = join(TMP, 'copy-partial-source.txt');
+    const worktree = join(TMP, 'copy-partial-worktree');
+    const destination = join(worktree, 'f.txt');
+    mkdirSync(worktree, { recursive: true });
+    writeFileSync(source, 'partial writes stay complete\n');
+    const lengths = [];
+    copyTreeIfMissing({
+      srcAbs: source,
+      dstAbs: destination,
+      wtRoot: worktree,
+      rel: 'f.txt',
+      deps: {
+        write: (fd, buffer, offset, length, position) => {
+          const shortLength = Math.min(3, length);
+          lengths.push(shortLength);
+          return writeSync(fd, buffer, offset, shortLength, position);
+        },
+      },
+    });
+    assert.ok(lengths.length > 1);
+    assert.equal(readFileSync(destination, 'utf8'), 'partial writes stay complete\n');
+  });
+
+  it('does not unlink a destination raced into place before exclusive open', () => {
+    const source = join(TMP, 'copy-raced-destination-source.txt');
+    const worktree = join(TMP, 'copy-raced-destination-worktree');
+    const destination = join(worktree, 'f.txt');
+    mkdirSync(worktree, { recursive: true });
+    writeFileSync(source, 'trusted\n');
+    const error = captureError(() => copyTreeIfMissing({
+      srcAbs: source,
+      dstAbs: destination,
+      wtRoot: worktree,
+      rel: 'f.txt',
+      deps: {
+        open: (path, flags, mode) => {
+          if (path === destination) writeFileSync(destination, 'raced\n');
+          return openSync(path, flags, mode);
+        },
+      },
+    }));
+    assert.equal(error.code, WORKTREES_STOP);
+    assert.match(error.message, /copy destination changed between lstat and open/);
+    assert.equal(readFileSync(destination, 'utf8'), 'raced\n');
   });
 });
 
@@ -188,7 +232,7 @@ describe('delegated finding 2 — symlink-parent provision resumes by canonical 
     symlinkSync(realParent, linkedParent);
     const first = run(['provision', 'linkres', ...PLAN_ARGS, '--as', 'feature-linkres.md', '--dir', targetLexical], {
       cwd: repo,
-      deps: { copyFile: () => { throw Object.assign(new Error('injected failure'), { code: 'EIO' }); } },
+      deps: { write: () => { throw Object.assign(new Error('injected failure'), { code: 'EIO' }); } },
     });
     const targetReal = realpathSync(targetLexical);
     const resumed = run(['provision', 'linkres', '--resume', ...PLAN_ARGS, '--as', 'feature-linkres.md', '--dir', targetLexical], { cwd: repo });

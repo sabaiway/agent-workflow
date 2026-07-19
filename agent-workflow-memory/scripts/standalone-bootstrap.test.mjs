@@ -207,7 +207,8 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
     assert.equal(readFileSync(dest, 'utf8'), readFileSync(join(TEMPLATES, 'gates.json'), 'utf8'));
   });
 
-  // The stamp-independent enforcement-script ensure (SKILL.md upgrade step 2, the codex R1 fold):
+  // The stamp-independent enforcement-script ensure (SKILL.md upgrade step 2,
+  // review-bootstrap-r01-major-01):
   // a deployment older than the ADR-cascade feature gains the archive-decisions pair on an
   // equal-head upgrade — copy-if-missing from references/scripts, never overwrite an existing
   // file. Modeled the way the documented prose performs it (the ensureConfig idiom).

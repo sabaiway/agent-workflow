@@ -584,7 +584,7 @@ describe('composeStatusLine — the tool speaks, the agent pastes', () => {
     assert.ok(!withKnob.includes('\n'), 'the knob suffix never breaks the single-line invariant');
   });
 
-  it('a raw env value carrying a newline is collapsed to one line (codex R2: no newline injection)', () => {
+  it('a raw env value carrying a newline is collapsed to one line (review-recipes-r02-major-01: no newline injection)', () => {
     const det = detect(READY, READY);
     const line = composeStatusLine(det, { clause: 'x' }, { active: [{ key: 'CODEX_HARD_TIMEOUT', value: '2h\nINJECTED: pwned' }] });
     assert.ok(!line.includes('\n'), 'a newline in a raw env value never breaks the one-line contract');
@@ -624,7 +624,7 @@ describe('composeStatusLine — the tool speaks, the agent pastes', () => {
   });
 });
 
-describe('the autonomy segment rides EVERY machine-composed surface (codex R1, Segment B)', () => {
+describe('the autonomy segment rides EVERY machine-composed surface (review-recipes-r01-major-01, Segment B)', () => {
   it('buildReport statusLine carries the SAME autonomy segment when the facts are supplied', () => {
     const det = detect(READY, READY);
     const facts = {

@@ -4,7 +4,6 @@ import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync, lstatSync, existsSync,
-  copyFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
@@ -65,7 +64,7 @@ describe('worktrees attest — post-add failures state the kept partial state (M
     const flags = { plan: 'docs/plans/SEED-PROMPT-x.md', as: 'feature-kp.md', branch: 'aw/custom-kp', dir: null, include: [], install: false, resume: false };
     const r = run(['provision', 'kp', '--plan', flags.plan, '--as', flags.as, '--branch', flags.branch], {
       cwd: repo,
-      deps: { copyFile: () => { throw Object.assign(new Error('boom'), { code: 'EIO' }); } },
+      deps: { write: () => { throw Object.assign(new Error('boom'), { code: 'EIO' }); } },
     });
     assert.equal(r.code, EXIT.stop);
     assert.match(r.errText, /was created and KEPT/);
@@ -141,9 +140,9 @@ describe('worktrees attest — list ENOENT honesty covers dangling and vanished 
     const repo = makeRepo('at-vanish');
     const ghost = join(TMP, 'at-ghost-dir');
     const fakeList = [
-      `worktree ${repo}`, 'HEAD aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'branch refs/heads/main', '',
-      `worktree ${ghost}`, 'HEAD bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'branch refs/heads/aw/ghost', '',
-    ].join('\n');
+      [`worktree ${repo}`, 'HEAD aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'branch refs/heads/main'],
+      [`worktree ${ghost}`, 'HEAD bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'branch refs/heads/aw/ghost'],
+    ].map((fields) => fields.join('\0')).join('\0\0') + '\0\0';
     const git = (args, cwd) => (args[0] === 'worktree' ? { status: 0, stdout: fakeList, stderr: '' } : spawnGit(args, cwd));
     const r = run(['list'], { cwd: repo, deps: { git } });
     assert.equal(r.code, EXIT.ok);

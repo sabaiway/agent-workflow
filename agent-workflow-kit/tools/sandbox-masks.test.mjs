@@ -89,7 +89,7 @@ describe('sandbox-masks — derivation classes (the D5 guard is the classifier)'
     assert.deepEqual(derived.masks, []);
   });
 
-  it('a CR/LF-carrying mask name is a LOUD unrenderable skip — never written (codex R3)', () => {
+  it('a CR/LF-carrying mask name is a LOUD unrenderable skip — never written (review-sandbox-masks-r03-major-01)', () => {
     const root = makeRepo();
     const probe = probeSandboxMasks({ cwd: root, ...maskDeps({ 'evil\nname': 'char', '.bashrc': 'char' }) });
     assert.deepEqual(probe.masks, ['.bashrc'], 'the newline name never enters the writable set');
@@ -98,14 +98,14 @@ describe('sandbox-masks — derivation classes (the D5 guard is the classifier)'
     assert.match(report.stdout, /cannot be expressed as ONE exclude rule/);
     const applied = main(['--cwd', root, '--apply'], { deps: maskDeps({ 'evil\nname': 'char', '.bashrc': 'char' }) });
     assert.equal(applied.code, 0, applied.stderr);
-    assert.match(applied.stderr, /cannot be expressed as ONE exclude rule/, 'the skip stays LOUD on the apply path too (codex R4)');
+    assert.match(applied.stderr, /cannot be expressed as ONE exclude rule/, 'the skip stays LOUD on the apply path too');
     const exclude = readFileSync(join(root, '.git', 'info', 'exclude'), 'utf8');
     rmSync(root, { recursive: true, force: true });
     assert.ok(exclude.includes('/.bashrc'), 'the renderable mask still lands');
     assert.ok(!exclude.includes('evil'), 'no fragment of the newline name reaches the exclude file');
   });
 
-  it('an UNREADABLE exclude file fails CLOSED — never treated as empty and overwritten (codex R4)', () => {
+  it('an UNREADABLE exclude file fails CLOSED — never treated as empty and overwritten (review-sandbox-masks-r04-major-01)', () => {
     const root = makeRepo();
     mkdirSync(join(root, '.git', 'info'), { recursive: true });
     writeFileSync(join(root, '.git', 'info', 'exclude'), '# existing hand content\n'); // lstat passes; only the READ fails
@@ -124,7 +124,7 @@ describe('sandbox-masks — derivation classes (the D5 guard is the classifier)'
     assert.equal(toExcludePattern('trailing '), '/trailing\\ ');
   });
 
-  it('a TRAILING-TAB mask name is unrenderable (gitignore cannot escape it — codex R12) and the warning names the tab case (codex R13)', () => {
+  it('a TRAILING-TAB mask name is unrenderable (review-sandbox-masks-r12-major-01) and the warning names the tab case (review-sandbox-masks-r13-minor-01)', () => {
     const root = makeRepo();
     const derived = deriveMasks({ root, ...maskDeps({ 'tab-ended\t': 'char', 'mid\tname': 'char' }) });
     const report = main(['--cwd', root], { deps: maskDeps({ 'tab-ended\t': 'char' }) });
@@ -181,7 +181,7 @@ describe('sandbox-masks — apply mechanics (full-block replace, own fence only)
     assert.ok(exclude.includes(MASKS_FENCE_START), 'the fence appended after them');
   });
 
-  it('a first apply preserves TRAILING BLANK LINES of the hand content byte-exactly (codex R5)', () => {
+  it('a first apply preserves TRAILING BLANK LINES of the hand content byte-exactly (review-sandbox-masks-r05-major-01)', () => {
     const root = makeRepo();
     mkdirSync(join(root, '.git', 'info'), { recursive: true });
     writeFileSync(join(root, '.git', 'info', 'exclude'), '# hand header\n/hand-entry\n\n\n');
@@ -192,7 +192,7 @@ describe('sandbox-masks — apply mechanics (full-block replace, own fence only)
     assert.ok(exclude.includes(MASKS_FENCE_START));
   });
 
-  it('an existing-block REPLACE preserves CRLF hand bytes outside the fence exactly (codex R6)', () => {
+  it('an existing-block REPLACE preserves CRLF hand bytes outside the fence exactly (review-sandbox-masks-r06-major-01)', () => {
     const root = makeRepo();
     mkdirSync(join(root, '.git', 'info'), { recursive: true });
     const handHead = '# hand CRLF header\r\n/hand-entry\r\n';
@@ -208,7 +208,7 @@ describe('sandbox-masks — apply mechanics (full-block replace, own fence only)
     assert.ok(!exclude.includes('/.old-mask'), 'the stale mask dropped');
   });
 
-  it('a REFUSAL still carries the unrenderable warnings (codex R5)', () => {
+  it('a REFUSAL still carries the unrenderable warnings (review-sandbox-masks-r05-major-02)', () => {
     const root = makeRepo();
     main(['--cwd', root, '--apply'], { deps: maskDeps({ '.bashrc': 'char' }) });
     // Rerun where the only derivable mask is unrenderable: masks=[], the block is non-empty →
@@ -286,8 +286,8 @@ describe('sandbox-masks — outside-sandbox / empty-derivation behavior', () => 
   });
 });
 
-describe('sandbox-masks — the apply never writes through a symlink or a non-regular leaf (codex R2)', () => {
-  it('a SYMLINKED exclude file refuses at the PROBE — never read through, target untouched (codex R7)', () => {
+describe('sandbox-masks — the apply never writes through a symlink or a non-regular leaf (review-sandbox-masks-r02-major-01)', () => {
+  it('a SYMLINKED exclude file refuses at the PROBE — never read through, target untouched (review-sandbox-masks-r07-major-01)', () => {
     const root = makeRepo();
     const outside = mkdtempSync(join(tmpdir(), 'sandbox-masks-outside-'));
     const target = join(outside, 'victim.txt');
@@ -306,7 +306,7 @@ describe('sandbox-masks — the apply never writes through a symlink or a non-re
     assert.equal(victim, 'must stay intact\n', 'the symlink target is never clobbered');
   });
 
-  it('a SYMLINKED .git/info PARENT refuses at the flagless probe — never followed (codex R8)', () => {
+  it('a SYMLINKED .git/info PARENT refuses at the flagless probe — never followed (review-sandbox-masks-r08-major-01)', () => {
     const root = makeRepo();
     const outside = mkdtempSync(join(tmpdir(), 'sandbox-masks-parent-'));
     writeFileSync(join(outside, 'exclude'), '# reachable only through the symlinked parent\n');
@@ -319,7 +319,7 @@ describe('sandbox-masks — the apply never writes through a symlink or a non-re
     assert.match(probe.stderr, /refusing to touch .*symlink/i);
   });
 
-  it('--apply --clear removes an EMPTY managed block too (codex R8)', () => {
+  it('--apply --clear removes an EMPTY managed block too (review-sandbox-masks-r08-major-02)', () => {
     const root = makeRepo();
     mkdirSync(join(root, '.git', 'info'), { recursive: true });
     writeFileSync(join(root, '.git', 'info', 'exclude'), `# hand\n${MASKS_FENCE_START}\n${MASKS_FENCE_END}\n`);
@@ -331,7 +331,7 @@ describe('sandbox-masks — the apply never writes through a symlink or a non-re
     assert.ok(exclude.startsWith('# hand\n'), 'hand content stays');
   });
 
-  it('a FIFO exclude leaf refuses FAST at the probe — the read that would hang never starts (codex R7)', () => {
+  it('a FIFO exclude leaf refuses FAST at the probe — the read that would hang never starts (review-sandbox-masks-r07-major-02)', () => {
     const root = makeRepo();
     mkdirSync(join(root, '.git', 'info'), { recursive: true });
     rmSync(join(root, '.git', 'info', 'exclude'), { force: true });
@@ -499,7 +499,7 @@ describe('sandbox-masks — probe (read-only) + revalidation (the D5 watch)', ()
     assert.match(r.stdout, /silently skipped by bulk staging/, 'the watch note states the REAL danger — bulk git add skips excluded paths');
   });
 
-  it('a CRLF-saved fence body still revalidates (the trailing CR never rides into the rel name — agy R5)', () => {
+  it('a CRLF-saved fence body still revalidates (review-sandbox-masks-r05-major-03)', () => {
     const root = makeRepo();
     writeFileSync(join(root, 'was-a-mask.txt'), 'now a real file\n');
     const stale = revalidateFence(['/was-a-mask.txt\r'], { root });
@@ -514,7 +514,7 @@ describe('sandbox-masks — probe (read-only) + revalidation (the D5 watch)', ()
     assert.deepEqual(stale, []);
   });
 
-  it('a TRAILING-SPACE mask round-trips: derived, escaped, re-parsed, revalidated — never corrupted (codex R1)', () => {
+  it('a TRAILING-SPACE mask round-trips: derived, escaped, re-parsed, revalidated — never corrupted (review-sandbox-masks-r01-major-01)', () => {
     const root = makeRepo();
     main(['--cwd', root, '--apply'], { deps: maskDeps({ 'trailing ': 'char' }) });
     const exclude = readFileSync(join(root, '.git', 'info', 'exclude'), 'utf8');
@@ -539,7 +539,7 @@ describe('sandbox-masks — probe (read-only) + revalidation (the D5 watch)', ()
     assert.ok(r.stdout.includes('--apply --clear'), 'the rendered one-liner is the form planApply actually accepts here');
   });
 
-  it('the rendered apply one-liner shell-quotes a root with spaces/metacharacters (codex R1)', () => {
+  it('the rendered apply one-liner shell-quotes a root with spaces/metacharacters (review-sandbox-masks-r01-major-02)', () => {
     const base = mkdtempSync(join(tmpdir(), 'sandbox masks '));
     const root = join(base, 'repo');
     mkdirSync(root);

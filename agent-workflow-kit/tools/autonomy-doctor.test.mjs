@@ -269,7 +269,7 @@ describe('D2 — trusted-dir execution gate', () => {
     assert.equal(r.diagnostic.calls.length, 0);
   });
 
-  // codex R1 major (round 1): a mixed state — one binary untrusted, the other missing — must never
+  // review-autonomy-doctor-r01-major-01: a mixed state — one binary untrusted, the other missing — must never
   // reach the privileged install path; the untrusted degrade wins in EVERY lane.
   it('mixed missing and untrusted state refuses every lane with untrusted-path exit 6, runs NOTHING', (t) => {
     const mixed = () => execWorld('/opt/bin/bwrap', '/usr/bin/apt-get', '/usr/bin/env', '/usr/bin/sudo');
@@ -726,7 +726,7 @@ describe('default seams — characterized with harmless argv', () => {
     assert.match(r.stdout, /sandbox provisioner doctor/);
   });
 
-  // codex R1 minor (round 1): --help is NOT a diagnosis outcome — the summary contract is scoped to
+  // review-autonomy-doctor-r01-minor-01: --help is NOT a diagnosis outcome — the summary contract is scoped to
   // the three lanes, and help's LAST line must never read as a live machine summary.
   it('--help prints no machine summary line (its last line does not match the pinned schema)', () => {
     const script = join(HERE, 'autonomy-doctor.mjs');

@@ -649,7 +649,7 @@ const runMigrate = (root, flags, today, deps, log, logError) => {
   verifyConservation(oldItems, newItems);
   // Integrity over the FULL final store — existing records ∪ freshly-exploded — not just the new
   // writes: a pre-existing adr/ record whose id also stays RETAINED in HOT would otherwise leave the
-  // ADR in two places (codex R4). Same full-store pattern as runRotate.
+  // ADR in two places. Same full-store pattern as runRotate.
   const finalStoreById = new Map(existingStore.map((e) => [e.id, { id: e.id, idNum: e.idNum, fileName: e.fileName }]));
   for (const r of records) finalStoreById.set(r.id, { id: r.id, idNum: r.idNum, fileName: r.fileName });
   assertStoreIntegrity(retained, [...finalStoreById.values()]);
@@ -783,7 +783,7 @@ const runRotate = (root, flags, today, deps, log, logError) => {
   }
 
   const records = explode(toExplode, today);
-  // Crash-resume (fold-induced, codex R2): a record from a prior crashed rotate may already be on
+  // Crash-resume (fold-induced): a record from a prior crashed rotate may already be on
   // disk. A byte-identical one is done (deduped, not a duplicate-id error); a divergent-body one is
   // corrupt → FAIL. The FINAL store = existing ∪ freshly-exploded, deduped by id.
   const existingById = new Map(existingStore.map((e) => [e.id, e]));

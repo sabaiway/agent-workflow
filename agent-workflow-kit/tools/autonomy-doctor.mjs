@@ -254,7 +254,7 @@ const renderDiagnosis = ({ plan, probeResult, log }) => {
   }
 };
 
-// The untrusted degrade every lane runs FIRST (codex R1): while any sandbox binary resolves only
+// The untrusted degrade every lane runs FIRST: while any sandbox binary resolves only
 // outside the trusted dirs, no offer, no consent invitation, and no privileged path may proceed —
 // an install cannot make such a host verify-ready.
 const refuseUntrusted = ({ plan, log }) => {

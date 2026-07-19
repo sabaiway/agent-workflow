@@ -162,7 +162,7 @@ export const countNeverCommittableUntracked = (cwd, { lstat = lstatSync } = {}) 
 
 // Shell-quote one argument for a COPY-PASTE advisory command: plain safe tokens stay bare; anything
 // else rides single quotes (a space/metacharacter path must never render a dead or unsafe paste —
-// codex R1). Exported for the sandbox-masks probe, which renders the same apply one-liner.
+// Exported for the sandbox-masks probe, which renders the same apply one-liner.
 export const shellQuoteArg = (s) => (/^[A-Za-z0-9_/.\-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`);
 
 const maskAdvisoryLine = (state) =>
@@ -282,7 +282,7 @@ export const degradeRecordSet = ({ cwd, env = process.env, fingerprint }) => {
 // EVERY project-relative read (orchestration config, docs/plans, receipts) anchors at the git
 // work-tree ROOT when one exists — the fingerprint is root-anchored, so a subdirectory invocation
 // must read the same config/plans or a dirty unreceipted tree could false-PASS as "no plan in
-// flight" (codex R1 finding). Outside a git tree the cwd is the only anchor (and --check exits 0).
+// flight". Outside a git tree the cwd is the only anchor (and --check exits 0).
 export const buildState = ({ cwd, env = process.env, detect = detectBackends, lstat = lstatSync } = {}) => {
   const root = gitLine(['rev-parse', '--show-toplevel'], cwd) ?? cwd;
   const { config, source: configSource } = loadConfig(root);
@@ -618,7 +618,7 @@ export const mainAwait = async (argv, ctx = {}) => {
 };
 
 const emitResult = (r) => {
-  // Exact writes + a natural exit: process.exit() can truncate unflushed piped stdio (codex R2).
+  // Exact writes + a natural exit: process.exit() can truncate unflushed piped stdio.
   if (r.stdout) process.stdout.write(r.stdout.endsWith('\n') ? r.stdout : `${r.stdout}\n`);
   if (r.stderr) process.stderr.write(r.stderr.endsWith('\n') ? r.stderr : `${r.stderr}\n`);
   process.exitCode = r.code;

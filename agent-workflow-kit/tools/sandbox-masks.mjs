@@ -69,7 +69,7 @@ const listUntrackedUnfilteredZ = (root) => {
 // name can never shadow a deeper real path), glob metacharacters + leading-! / leading-# handled
 // by the anchor, trailing whitespace escaped (gitignore trims it otherwise).
 // Trailing SPACES are escapable in gitignore (`\ `); a trailing TAB is not expressible — such a
-// name is classified unrenderable by the derivation (codex R12), so it never reaches this renderer.
+// name is classified unrenderable by the derivation, so it never reaches this renderer.
 export const toExcludePattern = (rel) => {
   const escaped = rel.replace(/([\\*?[\]])/g, '\\$1').replace(/ +$/, (m) => '\\ '.repeat(m.length));
   return `/${escaped}`;
@@ -79,7 +79,7 @@ export const toExcludePattern = (rel) => {
 // lstat class is never-committable (char/block/FIFO/socket). Everything else is refused by
 // construction — tracked paths never appear in an --others walk; regular/dir/symlink/missing fail
 // the predicate. A CR/LF-carrying mask NAME cannot be expressed as ONE gitignore rule — rendering
-// it would split into several rules and could hide unrelated committable paths (codex R3) — so it
+// it would split into several rules and could hide unrelated committable paths — so it
 // is a LOUD unrenderable skip, never written (the review domain already ignores the mask itself).
 export const deriveMasks = ({ root, lstat = lstatSync, listUntracked = listUntrackedUnfilteredZ } = {}) => {
   const entries = listUntracked(root);
@@ -95,7 +95,7 @@ export const deriveMasks = ({ root, lstat = lstatSync, listUntracked = listUntra
     }
     if (!isNeverCommittableStat(stat)) continue;
     // CR/LF anywhere, or a trailing TAB (inexpressible in gitignore — only trailing SPACES escape
-    // as `\ `; codex R12), make the name unrenderable as ONE exclude rule.
+    // as `\ `), make the name unrenderable as ONE exclude rule.
     if (/[\r\n]/.test(rel) || /\t$/.test(rel)) unrenderable.push(rel);
     else masks.push(rel);
   }
@@ -115,11 +115,11 @@ export const findMasksFence = (lines) => {
 
 // A fenced pattern back to its relative path (the derivation writes only `/rel` root-anchored
 // escaped forms; unescape is its exact inverse — the escaped-space form `\ ` included, so a
-// trailing-space mask round-trips; codex R1). Non-pattern lines (blank/comment) are skipped;
+// trailing-space mask round-trips). Non-pattern lines (blank/comment) are skipped;
 // only UNESCAPED trailing whitespace is insignificant (gitignore semantics).
 const patternToRel = (line) => {
   // A trailing CR (a CRLF-saved exclude file) strips FIRST — it would otherwise ride into the rel
-  // name and false-ENOENT the revalidation lstat (agy R5); then only UNESCAPED trailing
+  // name and false-ENOENT the revalidation lstat; then only UNESCAPED trailing
   // whitespace is insignificant (gitignore semantics — an escaped `\ ` survives).
   const t = line.replace(/\r$/, '').replace(/^[ \t]+/, '').replace(/(?<!\\)[ \t]+$/, '');
   if (t === '' || t.startsWith('#') || !t.startsWith('/')) return null;
@@ -156,13 +156,13 @@ export const probeSandboxMasks = ({ cwd = process.cwd(), lstat = lstatSync, list
   const commonDirRaw = gitLine(['rev-parse', '--git-common-dir'], cwd);
   if (gitPathRaw == null || commonDirRaw == null) return null;
   const excludeFile = resolve(cwd, gitPathRaw);
-  // The write-containment root (codex R2): info/exclude lives in the COMMON git dir (worktree-safe),
+  // The write-containment root: info/exclude lives in the COMMON git dir (worktree-safe),
   // and the apply must never write through a symlinked component or a non-regular leaf.
   const gitCommonDir = resolve(cwd, commonDirRaw);
   const derived = deriveMasks({ root, lstat, listUntracked });
   if (derived == null) return null;
   const { masks, unrenderable } = derived;
-  // The WHOLE chain is guarded BEFORE any read (codex R7+R8): a symlinked exclude leaf OR a
+  // The WHOLE chain is guarded BEFORE any read: a symlinked exclude leaf OR a
   // symlinked parent (.git/info) must never be read through, and a FIFO/socket leaf would HANG
   // the read-only probe — parent-chain containment + leaf lstat first, fail closed on everything
   // but a plain absent file, then read the existing REGULAR content. The apply re-checks
@@ -190,7 +190,7 @@ export const probeSandboxMasks = ({ cwd = process.cwd(), lstat = lstatSync, list
       content = readFile(excludeFile, 'utf8');
     } catch (err) {
       // The file existed a moment ago — ANY read failure now fails CLOSED (an apply over a misread
-      // "empty" file would overwrite hand content outside the managed block; codex R4).
+      // "empty" file would overwrite hand content outside the managed block).
       throw fail(1, `cannot read ${excludeFile} (${err?.code ?? err?.message ?? err}) — refusing to treat an unreadable exclude file as empty`);
     }
   }
@@ -222,7 +222,7 @@ export const planApply = (probe, { clear = false } = {}) => {
   }
   // --clear takes PRECEDENCE over the derivation (codex, Segment-A receipt): it means "remove the
   // managed block", even while masks are visible — re-writing the block instead of the requested
-  // clear would be a silent divergence. An EMPTY fence (markers, no entries) clears too (codex R8);
+  // clear would be a silent divergence. An EMPTY fence (markers, no entries) clears too;
   // no fence at all is a stated no-op.
   if (clear && probe.fence.state !== 'ok') {
     return { action: 'noop', reason: 'no managed block present — nothing to clear' };
@@ -236,7 +236,7 @@ export const planApply = (probe, { clear = false } = {}) => {
   }
   const masks = clear ? [] : probe.masks;
   const block = masks.length === 0 ? [] : [MASKS_FENCE_START, ...masks.map(toExcludePattern), MASKS_FENCE_END];
-  // EVERY hand byte outside the managed fence is preserved EXACTLY (codex R5+R6): the first-apply
+  // EVERY hand byte outside the managed fence is preserved EXACTLY: the first-apply
   // append adds at most ONE separator newline, and the existing-block replace splices via RAW
   // string offsets around the fence lines — a split/join('\n') rebuild would silently normalize
   // CRLF hand content outside the block. Only the fenced block itself is ours (always LF).
@@ -325,18 +325,18 @@ export const main = (argv, ctx = {}) => {
       return { code: 0, stdout: formatProbe(probe), stderr: '' };
     }
     const plan = planApply(probe, { clear: argv.includes('--clear') });
-    // The unrenderable skips stay LOUD on EVERY apply path (codex R4) — the same warning the
+    // The unrenderable skips stay LOUD on EVERY apply path — the same warning the
     // probe prints; the renderable subset still applies (a refusal would block the useful masks).
     const skipWarnings = probe.unrenderable
       .map((rel) => `sandbox-masks: ⚠ mask name carries a newline or ends with a tab and cannot be expressed as ONE exclude rule — NOT written (the review domain already ignores the mask itself): ${JSON.stringify(rel)}`)
       .join('\n');
-    // A refusal carries the unrenderable warnings too (codex R5) — they are never discarded.
+    // A refusal carries the unrenderable warnings too — they are never discarded.
     if (plan.action === 'refuse') throw fail(1, skipWarnings ? `${plan.reason}\n${skipWarnings}` : plan.reason);
     if (plan.action === 'noop') return { code: 0, stdout: `sandbox-masks: ${plan.reason}`, stderr: skipWarnings };
     const writeFile = ctx.deps?.writeFile ?? writeFileSync;
     const mkdir = ctx.deps?.mkdir ?? mkdirSync;
     const lstat = ctx.deps?.lstat ?? lstatSync;
-    // The write never follows a symlink or clobbers a non-regular leaf (codex R2): every component
+    // The write never follows a symlink or clobbers a non-regular leaf: every component
     // from the common git dir down is guarded, and an existing exclude leaf must be a regular file.
     try {
       assertContainedRealPath(probe.gitCommonDir, probe.excludeFile, { lstat });

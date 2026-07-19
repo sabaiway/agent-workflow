@@ -580,7 +580,7 @@ describe('recommendations — item probes over fixtures', () => {
 
   it('an INVALID bridge-settings value does not suppress the agy-adddir item', () => {
     // agy-review validates the value and falls back to the default (refuse) on garbage — a
-    // presence-only check would suppress the item while the knob is effectively unset (codex R3).
+    // presence-only check would suppress the item while the knob is effectively unset.
     const root = makeProject();
     mkdirSync(join(root, '.config', 'agent-workflow'), { recursive: true });
     writeFileSync(join(root, '.config', 'agent-workflow', 'bridge-settings.conf'), 'AGY_REVIEW_ALLOW_ADDDIR=2\n');
@@ -657,7 +657,7 @@ describe('recommendations — item probes over fixtures', () => {
     const { items } = buildRecommendations({ cwd: root, deps });
     assert.ok(!items.some((i) => i.key === 'sandbox-lane'), 'a local-scope ack converges the item');
     // (b) fully-populated security keys WITHOUT the ack keep the item firing — an inert-intent
-    // allowedDomains/allowWrite entry must never double as an acknowledgement (codex R3 blocker).
+    // allowedDomains/allowWrite entry must never double as an acknowledgement.
     writeFileSync(
       join(root, '.claude', 'settings.json'),
       JSON.stringify({
@@ -718,7 +718,7 @@ describe('recommendations — item probes over fixtures', () => {
     // misclassify `~user/…` as a home path the wrapper never resolves).
     assert.equal(laneFingerprint({ CODEX_HOME: '~user/state' }), fpFor(resolve(root, '~user/state')), 'a ~user/… form anchors like a relative path, never as a home path');
     // A RELATIVE env value anchors to the TARGET PROJECT ROOT (the pinned --cwd), never the
-    // shell cwd — exercised with process.cwd() deliberately different from --cwd (codex R3).
+    // shell cwd — exercised with process.cwd() deliberately different from --cwd.
     const prev = process.cwd();
     process.chdir(join(root, 'docs'));
     try {
@@ -1336,7 +1336,7 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
   it('a stale-real-only fence renders the clear form of the apply one-liner', () => {
     // The mask was applied, then the path became a REAL file: derivation is now EMPTY while the
     // block is non-empty — a plain --apply REFUSES there, so the rendered one-liner must carry
-    // --clear (codex R1, Segment B).
+    // --clear (Segment B).
     const root = mkdtempSync(join(tmpdir(), 'recommendations-stalereal-'));
     spawnSync('git', ['init', '-q'], { cwd: root, encoding: 'utf8' });
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
@@ -1379,7 +1379,7 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
 
   it('the sandbox-provision apply pins the target project via a cd prefix', () => {
     // autonomy-doctor reads process.cwd() and refuses outside a deployment — a bare one-liner
-    // could diagnose the WRONG project from a subdirectory (codex R2, Segment B).
+    // could diagnose the WRONG project from a subdirectory (Segment B).
     const root = makeProject();
     const deps = hermeticDeps(root, { platform: 'linux', hasBinary: () => false });
     const { items } = buildRecommendations({ cwd: root, deps });

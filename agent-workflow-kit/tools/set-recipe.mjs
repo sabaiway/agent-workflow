@@ -210,7 +210,7 @@ export const main = (argv, ctx = {}) => {
     const { writtenPath } = writeConfig(cwd, after, ctx);
     const fileBody = serializeConfig(after);
     // The echoed handover line carries the SAME autonomy levels recipes --active-line renders —
-    // sync facts (no render-check needed for the cells; codex R1, Segment B). A malformed policy
+    // sync facts (no render-check needed for the cells; Segment B). A malformed policy
     // surfaces loudly through the line's own MALFORMED segment.
     const autonomyFacts = (() => {
       try {

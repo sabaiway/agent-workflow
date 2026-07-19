@@ -113,7 +113,7 @@ describe('computeChangedSurface — fail-closed edges', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('staged initial files on an UNBORN branch are counted (neither in the plain diff nor untracked — codex R1)', () => {
+  it('staged initial files on an UNBORN branch are counted (neither in the plain diff nor untracked — review-changed-surface-r01-major-01)', () => {
     const { root, g } = makeRepo(); // no commit — HEAD unborn
     writeFileSync(join(root, 'staged.mjs'), 's1\ns2\n');
     g('add', 'staged.mjs');

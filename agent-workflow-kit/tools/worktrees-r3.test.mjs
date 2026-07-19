@@ -50,7 +50,7 @@ const run = (argv, { cwd, deps = {} }) => {
   return { code, out, err, text: out.join('\n'), errText: err.join('\n') };
 };
 
-describe('worktrees r3 — directory probes carry the trailing slash (agy R3-B1)', () => {
+describe('worktrees r3 — directory probes carry the trailing slash (review-worktrees-r03-blocker-01)', () => {
   it('a tracked dir-form docs/plans/ ignore with NO docs/plans dir on disk provisions cleanly', () => {
     const repo = makeGitignoreRepo('r3-noplans');
     const r = run(['provision', 'npd', '--plan', 'SEED-PROMPT-x.md', '--as', 'feature-npd.md'], { cwd: repo });
@@ -77,7 +77,7 @@ describe('worktrees r3 — directory probes carry the trailing slash (agy R3-B1)
   });
 });
 
-describe('worktrees r3 — the symlink branch creates its parent, guarded (agy R3-B2)', () => {
+describe('worktrees r3 — the symlink branch creates its parent, guarded (review-worktrees-r03-blocker-02)', () => {
   it('a nested registry symlink with no pre-created parent provisions cleanly (mirrored as a link)', () => {
     const repo = makeGitignoreRepo('r3-lnkparent');
     mkdirSync(join(repo, '.claude'));
@@ -115,7 +115,7 @@ describe('worktrees r3 — the symlink branch creates its parent, guarded (agy R
   });
 });
 
-describe('worktrees r3 — symlink targets are canonicalized through existing ancestors (codex R3-M1)', () => {
+describe('worktrees r3 — symlink targets are canonicalized through existing ancestors (review-worktrees-r03-major-01)', () => {
   it('copyNode: a dangling target routed through an escaping ancestor symlink STOPs', () => {
     const src = join(TMP, 'r3-canon-src');
     const wt = join(TMP, 'r3-canon-wt');
@@ -145,7 +145,7 @@ describe('worktrees r3 — symlink targets are canonicalized through existing an
   });
 });
 
-describe('worktrees r3 — the node_modules symlink is a guarded mutation (codex R3-M2)', () => {
+describe('worktrees r3 — the node_modules symlink is a guarded mutation (review-worktrees-r03-major-02)', () => {
   it('a wt root swapped to a symlink before the link STOPs with zero symlink calls', () => {
     const repo = makeGitignoreRepo('r3-nmguard');
     mkdirSync(join(repo, 'node_modules'));
@@ -173,7 +173,7 @@ describe('worktrees r3 — the node_modules symlink is a guarded mutation (codex
   });
 });
 
-describe('worktrees r3 — JSON-escaped backslash pins rebase with their encoding (codex R3-M3)', () => {
+describe('worktrees r3 — JSON-escaped backslash pins rebase with their encoding (review-worktrees-r03-major-03)', () => {
   it('a JSON.stringify-shaped Windows pin rebases preserving the doubled encoding, counted', () => {
     const text = JSON.stringify({ cmd: 'node C:\\u\\main\\tools\\c.mjs --check' });
     const { text: out, changes } = rebaseAbsolutePins(text, 'C:/u/main', 'C:/u/main--x');
@@ -187,7 +187,7 @@ describe('worktrees r3 — JSON-escaped backslash pins rebase with their encodin
   });
 });
 
-describe('worktrees r3 — list read errors render honestly (codex R3-m4)', () => {
+describe('worktrees r3 — list read errors render honestly (review-worktrees-r03-minor-01)', () => {
   it('a readdir failure renders handoff: (unreadable), never handoff: no', () => {
     const repo = makeGitignoreRepo('r3-listerr', { plansDirOnDisk: true });
     writeFileSync(join(repo, 'docs/plans/SEED2-PROMPT.md'), '# p\n');

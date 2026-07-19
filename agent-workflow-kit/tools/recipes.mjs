@@ -460,7 +460,7 @@ export const composeActiveRecipeLine = ({ config, source } = {}, detection, auto
   const rec = recommendRecipe(detection);
   const origin = source === 'none' || config == null ? 'no config file — computed defaults apply' : `from ${source}`;
   // A MALFORMED policy must surface LOUDLY on this paste surface too — silently rendering cells
-  // without levels would hide the required STOP signal (codex R1, Segment B). One line always.
+  // without levels would hide the required STOP signal (Segment B). One line always.
   const malformed = autonomy?.error
     ? ` · autonomy: MALFORMED policy — ${String(autonomy.error).replace(/[\s]+/g, ' ').trim()}`
     : '';
@@ -485,7 +485,7 @@ export const buildReport = (detection, settings = null, autonomy = null, posture
     recommendation,
     plans: RECIPES.map((r) => planRecipe(r.id, detection)),
     // The SAME autonomy facts the --status-line surface renders — the --json envelope must never
-    // expose a stale machine-composed status line (codex R1, Segment B).
+    // expose a stale machine-composed status line (Segment B).
     statusLine: composeStatusLine(detection, recommendation, settings, autonomy, posture),
   };
 };

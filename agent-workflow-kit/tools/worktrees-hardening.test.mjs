@@ -102,12 +102,12 @@ describe('worktrees hardening — every destination mkdir is guarded BEFORE the 
     assert.equal(r.code, EXIT.stop);
     assert.ok(!mkdirCalls.some((p) => p.startsWith(join(wt, '.vscode'))));
   });
-  it('the copyNode file branch guards mkdir and copyFile separately (a swap between them STOPs the copy)', () => {
+  it('the copyNode file branch guards mkdir and the copy door separately (a swap between them STOPs the open)', () => {
     const repo = makeRepo('hb-copy');
     const wt = provisionOk(repo, 'hb4');
     rmSync(join(wt, 'AGENTS.md'));
     let armed = false;
-    const copyCalls = [];
+    const openCalls = [];
     const r = run(['provision', 'hb4', '--resume', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-hb4.md'], {
       cwd: repo,
       deps: {
@@ -116,12 +116,12 @@ describe('worktrees hardening — every destination mkdir is guarded BEFORE the 
           if (p === dirname(join(wt, 'AGENTS.md'))) armed = true;
           mkdirSync(p, { recursive: true });
         },
-        copyFile: (a, b) => copyCalls.push([a, b]),
+        open: (...args) => openCalls.push(args),
       },
     });
     assert.equal(r.code, EXIT.stop);
     assert.match(r.errText, /symlink/);
-    assert.deepEqual(copyCalls, [], 'the copy must never run after the post-mkdir swap');
+    assert.deepEqual(openCalls, [], 'the copy door must never open after the post-mkdir swap');
   });
 });
 

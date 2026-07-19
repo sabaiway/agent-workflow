@@ -20,9 +20,9 @@ const makeGit = (main) => {
   const entries = [];
   const ok = (stdout = '') => ({ status: 0, stdout, stderr: '' });
   const porcelain = () => [
-    `worktree ${main}`, `HEAD ${HEAD}`, 'branch refs/heads/main', '',
-    ...entries.flatMap(({ path, branch }) => [`worktree ${path}`, `HEAD ${HEAD}`, `branch refs/heads/${branch}`, '']),
-  ].join('\n');
+    [`worktree ${main}`, `HEAD ${HEAD}`, 'branch refs/heads/main'],
+    ...entries.map(({ path, branch }) => [`worktree ${path}`, `HEAD ${HEAD}`, `branch refs/heads/${branch}`]),
+  ].map((fields) => fields.join('\0')).join('\0\0') + '\0\0';
   return (args) => {
     if (args[0] === 'rev-parse' && args.includes('--show-toplevel')) return ok(main);
     if (args[0] === 'rev-parse' && args.includes('--git-dir')) return ok(`${commonDir}\n`);
@@ -30,7 +30,8 @@ const makeGit = (main) => {
     if (args[0] === 'rev-parse' && args.includes('HEAD')) return ok(`${HEAD}\n`);
     if (args[0] === 'check-ignore') return ok();
     if (args[0] === 'ls-files') return ok();
-    if (args[0] === 'status' && args[1] === '--porcelain') return ok();
+    if ((args[0] === 'status' && args[1] === '--porcelain')
+      || (args[0] === '--no-optional-locks' && args[1] === 'status' && args[2] === '--porcelain')) return ok();
     if (args[0] === 'worktree' && args[1] === 'list') return ok(porcelain());
     if (args[0] === 'worktree' && args[1] === 'add') {
       const branch = args[3];
