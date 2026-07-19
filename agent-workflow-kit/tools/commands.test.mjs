@@ -206,6 +206,28 @@ describe('commands catalog — well-formed entries', () => {
   });
 });
 
+// ── the worktrees entry — the kind rule + the honest help line ───────────────────────────────────────
+// NEVER `guarded`: that kind promises dry-run-first, which these writers do not have. The honest
+// strongest caution the vocabulary offers is `writer` with the destructive arm named inline.
+
+describe('commands catalog — the worktrees entry', () => {
+  it('is a writer (never guarded) whose one-liner names the destructive arm, the read-only list, and the no-preview honesty', () => {
+    const c = commandFor('worktrees');
+    assert.ok(c, 'the worktrees entry exists');
+    assert.equal(c.kind, WRITER);
+    assert.match(c.oneLine, /cleanup --abandon destroys unlanded work/);
+    assert.match(c.oneLine, /list is read-only/i);
+    assert.match(c.oneLine, /[Nn]o preview step/);
+    assert.match(c.oneLine, /commit still asks/i, 'the commit-stays-a-dialogue-ask honesty rides the line');
+  });
+
+  // TEMPORARY (remove with the landing half, same commit as the markings): until land/cleanup
+  // are implemented, every user surface marks them as forthcoming.
+  it('the one-liner marks land/cleanup as arriving with this release landing half', () => {
+    assert.match(commandFor('worktrees').oneLine, /arrive with this release's landing half/);
+  });
+});
+
 // ── the Tune tail — the opt-in accelerator funnel (F10a) ─────────────────────────────────────────────
 // NOT a new catalog key / mode: the frozen CATALOG + GROUP_ORDER stay, the router SKILL.md is
 // untouched — the funnel is a rendered tail after the groups, mirroring the bootstrap block.

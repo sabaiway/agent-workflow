@@ -136,6 +136,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the opt-in one-file-per-ADR store migration writer + its mode + the seeded templates (AD-051)
       'tools/migrate-adr-store.mjs',
       'references/modes/migrate-adr-store.md',
+      // the parallel-feature worktrees tool + its mode contract (AD-060)
+      'tools/worktrees.mjs',
+      'references/modes/worktrees.md',
       'references/templates/adr-record.md',
       'references/templates/adr/log.md',
       // the guarded autonomy provisioner doctor + its mode contract (AD-044 Plan 2)
@@ -270,7 +273,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 157 = 156 + references/scripts/check-docs-size-cli.test.mjs (Phase-5 coverage fill,
     //       mirrored from the memory canon: the runCli refusal-branch pins — the main spec
     //       file is parity-frozen, so the pins ride a colocated deploy-payload file).
-    assert.equal(packed.length, 157, `tarball file count drifted (${packed.length} ≠ 157)`);
+    // 159 = 157 + the parallel-feature worktrees surface (AD-060): tools/worktrees.mjs
+    //       (provision | list | land | cleanup) + references/modes/worktrees.md (the 27th
+    //       mode-ref). The *.test.mjs sibling is stripped by files[].
+    assert.equal(packed.length, 159, `tarball file count drifted (${packed.length} ≠ 159)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

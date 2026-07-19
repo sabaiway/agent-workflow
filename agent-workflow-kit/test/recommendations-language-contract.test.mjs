@@ -103,6 +103,18 @@ describe('recommendations contract — risk lives at the consent moment (D3, clo
     }
   });
 
+  it('the worktrees-dir note distinguishes host classes and keeps the scope-narrowing mitigation', () => {
+    assert.match(notes, /- `worktrees-dir` — /, 'the posture note exists');
+    assert.match(notes, /settings-native/i, 'the settings-native effect is qualified');
+    assert.match(notes, /harness-managed/i, 'the settings-ignoring host class is named');
+    assert.match(notes, /host\/session/i, 'the harness-managed allowance is host/session-scoped');
+    assert.match(notes, /terminal fallback/i, 'the terminal fallback remains available');
+    assert.match(notes, /every sibling path under it/i, 'the sibling-wide scope is stated');
+    assert.match(notes, /dedicated dir/i, 'the narrowing mitigation is stated');
+    assert.match(notes, /parentDir/, 'the mitigation names the setting');
+    assert.match(notes, /re-run recommendations/i, 'the re-check step is stated');
+  });
+
   it('the consent-sequence is an explicit informed-consent checkpoint (nothing runs before confirmation)', () => {
     assert.match(MODE_DOC, /surface its posture note inline/i);
     assert.match(MODE_DOC, /explicitly confirms/i);
