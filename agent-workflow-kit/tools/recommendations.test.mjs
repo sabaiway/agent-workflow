@@ -11,7 +11,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, lstatSync, chmodSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, lstatSync, chmodSync, symlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -389,6 +389,10 @@ const buildInventoryFixtures = () => {
   writeFileSync(join(root8, 'scripts', 'install-git-hooks.mjs'), '// deployed installer stand-in\n');
   results.push(buildRecommendations({ cwd: root8, deps: hermeticDeps(root8, { gitHooksPath: () => join(root8, 'hooks') }) }));
   rmSync(root8, { recursive: true, force: true });
+  // (9) an unwritable worktrees parent dir: worktrees-dir.
+  const root9 = makeProject();
+  results.push(buildRecommendations({ cwd: root9, deps: hermeticDeps(root9, { canWriteDir: () => false }) }));
+  rmSync(root9, { recursive: true, force: true });
   return results;
 };
 
@@ -1486,6 +1490,73 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
     const out = execFileSync(process.execPath, [join(HERE, 'recommendations.mjs'), '--cwd', root], { encoding: 'utf8' });
     rmSync(root, { recursive: true, force: true });
     assert.ok(out.startsWith(RECOMMENDATIONS_SECTION_HEADER));
+  });
+});
+
+describe('recommendations — the worktrees-dir arming item', () => {
+  it('quiet only when a trusted host signal confirms the resolved parent dir writable', () => {
+    const root = makeProject();
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { canWriteDir: () => true }) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!items.some((i) => i.key === 'worktrees-dir'));
+    assert.ok(!skips.some((s) => s.key === 'worktrees-dir'));
+  });
+
+  it('a negative trusted signal fires the item: the probed dir in the WHAT, the host-specific HAND-APPLY', () => {
+    const root = makeProject();
+    const probed = realpathSync(dirname(resolve(root)));
+    const seen = [];
+    const { items } = buildRecommendations({
+      cwd: root,
+      deps: hermeticDeps(root, { canWriteDir: (d) => { seen.push(d); return false; } }),
+    });
+    rmSync(root, { recursive: true, force: true });
+    const item = items.find((i) => i.key === 'worktrees-dir');
+    assert.ok(item, 'fires when host capability does not confirm the parent dir writable');
+    assert.deepEqual(seen, [probed], 'the probed dir is the canonical existing ancestor of the default parent');
+    assert.ok(item.what.includes(probed), `the WHAT names the probed dir: ${item.what}`);
+    assert.match(item.apply, /^HAND-APPLY: add ".+" to sandbox\.filesystem\.allowWrite in \.claude\/settings\.json/);
+    assert.ok(item.apply.includes(probed), 'the HAND-APPLY names the same probed dir');
+    assert.equal(item.severity, SEVERITY_OPTIONAL);
+    assert.equal(item.benefit, BENEFITS['worktrees-dir']);
+  });
+
+  it('the probe shares provision canonical derivation: an ABSENT configured parentDir probes its nearest EXISTING ancestor', () => {
+    const root = makeProject();
+    const rootReal = realpathSync(root);
+    const farm = join(root, 'farm');
+    writeFileSync(join(root, 'docs', 'ai', 'worktrees.json'), JSON.stringify({ parentDir: join(farm, 'deep') }));
+    const seenAbsent = [];
+    buildRecommendations({ cwd: root, deps: hermeticDeps(root, { canWriteDir: (d) => { seenAbsent.push(d); return true; } }) });
+    assert.deepEqual(seenAbsent, [rootReal], 'absent farm/deep → the nearest existing ancestor is the project root');
+    mkdirSync(farm, { recursive: true });
+    const farmReal = realpathSync(farm);
+    const seenPresent = [];
+    buildRecommendations({ cwd: root, deps: hermeticDeps(root, { canWriteDir: (d) => { seenPresent.push(d); return true; } }) });
+    rmSync(root, { recursive: true, force: true });
+    assert.deepEqual(seenPresent, [farmReal], 'a created farm becomes the nearest existing ancestor');
+  });
+
+  it('a configured parentDir under a SYMLINK probes the realpathed ancestor (symlink escape resolved)', () => {
+    const root = makeProject();
+    const real = join(root, 'real-farm');
+    mkdirSync(real, { recursive: true });
+    const realReal = realpathSync(real);
+    symlinkSync(real, join(root, 'link-farm'));
+    writeFileSync(join(root, 'docs', 'ai', 'worktrees.json'), JSON.stringify({ parentDir: join(root, 'link-farm', 'absent') }));
+    const seen = [];
+    buildRecommendations({ cwd: root, deps: hermeticDeps(root, { canWriteDir: (d) => { seen.push(d); return true; } }) });
+    rmSync(root, { recursive: true, force: true });
+    assert.deepEqual(seen, [realReal]);
+  });
+
+  it('a malformed worktrees.json is a stated skip, never a guess', () => {
+    const root = makeProject();
+    writeFileSync(join(root, 'docs', 'ai', 'worktrees.json'), '{ nope');
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { canWriteDir: () => false }) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!items.some((i) => i.key === 'worktrees-dir'));
+    assert.ok(skips.some((s) => s.key === 'worktrees-dir' && /malformed JSON/.test(s.reason)));
   });
 });
 

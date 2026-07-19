@@ -231,6 +231,15 @@ const CATALOG = [
     kind: READ_ONLY,
     oneLine: 'Check that the documented contract tokens still match the live code constants they describe — a read-only lint that fails closed on drift; --check turns it into a gate exit code.',
   },
+  {
+    // NEVER `guarded` — that kind promises dry-run-first, which these writers do not have; the
+    // honest strongest caution is `writer` with the destructive arm named in the line itself.
+    key: 'worktrees',
+    invocation: invocationOf('worktrees'),
+    group: 'Orchestrate',
+    kind: WRITER,
+    oneLine: 'Run features in parallel git worktrees: provision an isolated sibling copy, list them, stage a finished one back onto main (the commit still asks in dialogue), and remove a landed one. No preview step; list is read-only; cleanup --abandon destroys unlanded work. Land and cleanup arrive with this release\'s landing half.',
+  },
 ];
 
 // Deep-freeze: freeze the array AND every entry, so the catalog is genuinely immutable at runtime

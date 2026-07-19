@@ -59,6 +59,7 @@ import { resolveGitHooksPath } from './commit-guard.mjs';
 import { loadConfig } from './orchestration-config.mjs';
 import { DEFAULT_BUNDLE_ROOT, SETTINGS_FILENAME, settingsPath, parseSettings, duplicateKeys } from './bridge-settings-read.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
+import { loadWorktreesConfig, resolveProbeDir } from './worktrees.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const toolPath = (rel) => join(HERE, rel);
@@ -108,6 +109,7 @@ export const SEVERITIES = Object.freeze({
   'agy-adddir': SEVERITY_OPTIONAL,
   'agy-adddir.invalid-env': SEVERITY_ATTENTION,
   'sandbox-lane': SEVERITY_OPTIONAL,
+  'worktrees-dir': SEVERITY_OPTIONAL,
 });
 // The per-item render tags (frozen presentation data, same language contract as the templates).
 export const SEVERITY_LABELS = Object.freeze({
@@ -165,6 +167,7 @@ export const WHATS = Object.freeze({
   'agy-adddir': 'agy-review is placed but AGY_REVIEW_ALLOW_ADDDIR is not set ({file}) — an oversized code review refuses instead of offloading',
   'agy-adddir.invalid-env': 'AGY_REVIEW_ALLOW_ADDDIR is set to an INVALID value ({value}) — refuse-mode applies and the settings file is shadowed while it is set',
   'sandbox-lane': 'the wired review wrappers declare a session-sandbox recipe (egress hosts + writable state dirs) not yet acknowledged for this project',
+  'worktrees-dir': 'write access to the worktrees parent dir {dir} is not confirmed — provision may still stop',
 });
 
 // ── the shape contract (D2): registry strings AND composed items stay one line under the cap ────
@@ -215,6 +218,7 @@ export const BENEFITS = Object.freeze({
   'sandbox-masks': 'zero clutter — git status shows only your changes (the review domain already ignores the masks by construction)',
   'agy-adddir': 'large reviews — an oversized agy code review offloads to a staging dir instead of refusing',
   'sandbox-lane': 'discoverability — the manifest-declared observed sandbox recipe for bridge runs surfaces itself instead of waiting to be asked',
+  'worktrees-dir': 'parallel features — the host-specific write allowance or terminal fallback is surfaced before provision',
 });
 
 // A typed usage failure (exit 2) — the codebase's typed-error idiom (no classes).
@@ -681,7 +685,7 @@ const readReadLaneToggle = (root, deps) => {
 // D3: the risk-marked keys — every key here has a per-item posture note in the mode doc, surfaced
 // at the consent moment; the static contract test asserts EXACT bidirectional coverage
 // (risk-marked keys == mode-doc note keys — a dropped note goes red, not silent).
-export const RISK_NOTED_KEYS = Object.freeze(['agy-adddir', 'sandbox-lane', 'read-lane']);
+export const RISK_NOTED_KEYS = Object.freeze(['agy-adddir', 'sandbox-lane', 'read-lane', 'worktrees-dir']);
 
 const probeSandboxLane = ({ root, deps, add, skip }) => {
   try {
@@ -738,6 +742,28 @@ const probeSandboxLane = ({ root, deps, add, skip }) => {
   }
 };
 
+// The worktrees-dir arming item (parallel feature worktrees): fires when the resolved worktrees
+// parent dir (docs/ai/worktrees.json parentDir, else the repo's own parent) is not confirmed
+// writable by a trusted host signal. The provision preflight remains the real create+delete test.
+const probeWorktreesDir = ({ root, deps, add, skip }) => {
+  try {
+    const config = loadWorktreesConfig(root, deps);
+    const parent = config.parentDir == null ? dirname(root) : resolve(root, config.parentDir);
+    // the SAME canonical derivation the provision preflight probes (worktrees.mjs) — an absent
+    // configured dir resolves to its nearest existing ancestor, never a false denial
+    const probeDir = resolveProbeDir(parent, deps);
+    if (deps.canWriteDir?.(probeDir) === true) return;
+    const dir = truncatedTo(oneLineOf(probeDir), templateBudget(WHATS['worktrees-dir']));
+    add(
+      'worktrees-dir',
+      fillTemplate(WHATS['worktrees-dir'], { dir }),
+      `HAND-APPLY: add ${JSON.stringify(probeDir)} to sandbox.filesystem.allowWrite in .claude/settings.json on settings-native hosts; on harness-managed hosts grant this dir for the session or use the provision terminal fallback`,
+    );
+  } catch (err) {
+    skip('worktrees-dir', err);
+  }
+};
+
 // ── assembly (frozen presentation order) ─────────────────────────────────────────────────────────
 const PROBES = Object.freeze([
   probeVelocityItems,
@@ -751,6 +777,7 @@ const PROBES = Object.freeze([
   probeMasksItem,
   probeAgyAdddir,
   probeSandboxLane,
+  probeWorktreesDir,
 ]);
 
 export const buildRecommendations = ({ cwd, deps = {} } = {}) => {

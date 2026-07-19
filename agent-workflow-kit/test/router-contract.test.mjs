@@ -245,12 +245,14 @@ const BUDGET = {
   // Then 54272 → 55296 (54 KB): AD-044 Plan 3 — the same three-pointer contract also lands in
   // composition-handoff.md (a shared file in upgrade's read set), overflowing the pair by ~949 B;
   // the same documented KB-multiple bump.
-  daily: 17408, // the no-shared daily modes (help/backends/recipes/procedures/gates). 16384 →
+  daily: 18432, // the no-shared daily modes (help/backends/recipes/procedures/gates). 16384 →
   // 17408 (17 KB): AD-052 replaces gates.md's one-sentence offer description with the closed-world
   // contract paragraph (allowlist membership + the uniform `<pm> exec` hook-free form + the per-PM
   // fail-closed floor + the runtime-residual disclosure), 738 B of new contract content against
   // 471 B of headroom, overflowing by 267 B after trimming — a documented KB-multiple bump, never
-  // a silent re-pin.
+  // a silent re-pin. Then 17408 → 18432 (18 KB): AD-060 — the worktrees mode header lands in the
+  // router (one line riding EVERY daily read set), overflowing gates by 67 B; the same documented
+  // KB-multiple bump.
 };
 const DAILY = ['help', 'backends', 'recipes', 'procedures', 'gates'];
 
