@@ -695,7 +695,10 @@ describe('composeAutonomyFacts — the fact source behind the autonomy segments 
         permissions: { defaultMode: 'acceptEdits', ask: ['Bash(git commit:*)', 'Bash(git push:*)', 'Bash(npm publish:*)'] },
       }),
     );
-    const facts = await composeAutonomyFacts(root);
+    // The harness probe is injected: the render check now reads the installed build, so without a
+    // seam this fixture would read "in sync" or "DRIFT" depending on whether the machine running the
+    // suite happens to have a credential-capable harness installed.
+    const facts = await composeAutonomyFacts(root, { findOnPath: () => ({ bin: 'claude', state: 'missing', path: null }) });
     rmSync(root, { recursive: true, force: true });
     assert.equal(facts.renderState, 'in sync');
   });

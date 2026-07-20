@@ -63,6 +63,81 @@ export const scanText = (text, { allowlist = ALLOWLIST } = {}) => {
   return findings;
 };
 
+// ── the version-pin rung ─────────────────────────────────────────────────────────────────────────
+// A hardcoded harness version under tools/ is a documentation claim frozen in code: it goes stale by
+// default and nothing reports it. This rung refuses a BARE pin and demands a runtime probe beside
+// it — the probe is what converts silent staleness into a loud degrade.
+//
+// A line is a claim when it names the harness AND carries a version literal. The rung reports
+// exactly those lines — it deliberately does NOT spread the claimed series across the rest of the
+// file, which was measured to flag an unrelated dependency constant that merely shared a major.minor
+// with the claim two lines above it. Nothing is lost by the narrower rule: the exemption is
+// FILE-scoped, so a single refusal already forces the probe that makes every literal in the file
+// honest. (This comment names the harness without a literal on the same line ON PURPOSE — the rung
+// scans its own source, and a worked example here would make the scanner refuse itself.)
+//
+// STATED RESIDUAL, not an oversight: a claim split across lines — the harness named on one line, the
+// literal on another — is NOT detected. Closing it needs whole-file arming, which trades this narrow
+// miss for a broad false-positive class. Deliberate line splitting is left to human review; this rung
+// is a guard against staleness that accumulates by default, not against an author evading it.
+const HARNESS_CLAIM_RE = /\bclaude\b/i;
+const SEMVER_LITERAL_RE = /\b\d+\.\d+\.\d+\b/g;
+const TOOLS_SEGMENT = 'tools';
+const PATH_SEP_RE = /[/\\]/;
+const VERSION_PIN_REMEDY =
+  'pair it with a runtime probe (probeHarnessVersion) that compares the pin to the installed build '
+  + 'and degrades loudly, or move the literal into a test fixture or changelog entry, where it '
+  + 'records history instead of asserting a live platform fact';
+
+// Three exemptions, each because the literal is NOT a live claim there. A test fixture and a
+// changelog entry record what was true at a moment; a file that CALLS the probe already reports its
+// own staleness, which is the entire behaviour the rung exists to demand.
+//
+// The probe exemption is a REFERENCE test, deliberately: it asks exactly what the decision asks —
+// that a runtime probe sits beside the literal — and claims nothing more.
+//
+// It was briefly a CALL test. Separating a call from a declaration, a comment, a string and a regex
+// literal is JS lexing, and hand-rolling that opened a new hole in three consecutive review rounds:
+// a legitimate member call wrongly refused, then a per-character recursion that would crash this
+// scanner inside the commit gate, then a regex literal read as a call. The repo does own a real
+// lexical code mask — in root tooling a shipped kit tool cannot import — and extracting it is queued
+// as its own work rather than approximated again here.
+//
+// STATED RESIDUAL, and why the precision was not worth its risk: even a perfect call detector proves
+// only that the probe is REACHABLE in this file, never that its result is compared against the
+// literal. That stronger guarantee was never on offer, so the rung stops where the decision stops
+// and says so. The exemption stays scoped to files that could call anything at all — a `#` comment
+// in a shell script and a line of Markdown prose earn nothing.
+const PROBE_CALLABLE_EXT = new Set(['.mjs', '.js']);
+const PROBE_SYMBOL = 'probeHarnessVersion';
+const TEST_FILE_RE = /\.test\.mjs$/;
+const CHANGELOG_FILE_RE = /^CHANGELOG\.md$/i;
+
+const semverLiteralsIn = (line) => line.match(SEMVER_LITERAL_RE) ?? [];
+const isUnderTools = (path) => String(path).split(PATH_SEP_RE).includes(TOOLS_SEGMENT);
+const isRecordNotClaim = (path) => {
+  const name = basename(String(path));
+  return TEST_FILE_RE.test(name) || CHANGELOG_FILE_RE.test(name);
+};
+
+// PURE: classify one file's text. Path-aware — the same literal is a claim under tools/ and history
+// in a changelog, so the verdict cannot be made from the bytes alone.
+export const scanVersionPins = (text, path) => {
+  if (!isUnderTools(path) || isRecordNotClaim(path)) return [];
+  const probeCallable = PROBE_CALLABLE_EXT.has(extname(String(path)));
+  if (probeCallable && text.includes(PROBE_SYMBOL)) return [];
+  return text.split('\n').flatMap((line, idx) => {
+    const pinned = HARNESS_CLAIM_RE.test(line) ? semverLiteralsIn(line) : [];
+    return pinned.length === 0
+      ? []
+      : [{
+        line: idx + 1,
+        kind: 'version-pin',
+        detail: `harness version pin ${pinned.join(', ')} with no runtime probe in this file — a version literal frozen in code goes stale silently; ${VERSION_PIN_REMEDY}`,
+      }];
+  });
+};
+
 const TEXT_EXT = new Set(['.md', '.mjs', '.js', '.json', '.sh', '.yml', '.yaml', '.txt', '']);
 const EXCLUDE_DIR_NAMES = new Set(['node_modules', '.git', 'plans', 'scan-fixtures']);
 // Only the TEST is self-excluded — it necessarily contains attribution fixtures. The scanner source
@@ -126,7 +201,9 @@ const findingsIn = (targets, opts) => {
   const report = [];
   for (const target of targets) {
     for (const file of target.files) {
-      for (const finding of scanText(readFileSync(file, 'utf8'), opts)) report.push({ file, ...finding });
+      const text = readFileSync(file, 'utf8');
+      for (const finding of scanText(text, opts)) report.push({ file, ...finding });
+      for (const finding of scanVersionPins(text, file)) report.push({ file, ...finding });
     }
   }
   return report;

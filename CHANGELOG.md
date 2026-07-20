@@ -7,6 +7,21 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-20 — AD-062 version-pin honesty: a runtime harness probe replaces a frozen claim (kit 3.3.0)
+
+`velocity --autonomy` had been telling every user their credentials could not be protected by the
+sandbox, naming a harness version frozen in the source and 30 patch releases stale — a false claim
+about a security control, not a silent failure. **kit 3.3.0** replaces the literal with a runtime
+probe of the INSTALLED build, renders and merges `sandbox.credentials` where it is genuinely
+supported, and degrades loudly — naming the version it observed, or stating that it resolved none —
+wherever the build is older or its version is unresolvable. An UNREADABLE install or a defect inside
+the probe throws instead, deliberately: "cannot confirm" must never read as "confirmed absent". A
+new `version-pin` rung in `release-scan` refuses a bare harness version literal
+under `tools/` unless a runtime probe sits beside it, so the next frozen pin fails a gate instead of
+quietly aging. The rung deliberately proves PRESENCE, not comparison — the stronger claim needs JS
+lexing, and the repo's existing lexer is not reachable from a shipped kit tool (queued separately).
+Nothing else in the family moved (memory 3.1.0 / engine 2.0.0 / bridges unchanged).
+
 ## 2026-07-20 — AD-061 friction cluster: minimum approvals + plain language + posture as code (kit 3.2.0 / memory 3.1.0 / codex bridge 3.1.0 / agy bridge 4.1.0)
 
 A four-item maintainer-flagged friction cluster shipped as mechanism (engine unbumped at 2.0.0):

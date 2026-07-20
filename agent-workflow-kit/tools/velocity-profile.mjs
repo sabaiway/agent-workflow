@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 // The --autonomy render reads the per-project autonomy policy through the read-only autonomy core
 // (AD-044). This file is the family's one .claude/settings.json writer, so the policy render lives here;
@@ -9,6 +9,7 @@ import { AUTONOMY_REL, loadAutonomy, resolveAutonomy, COMMAND_REDLINES } from '.
 // The bridge-wrappers tier's placement probe (AD-044 Plan 4, Decision 2): a tier entry derives ONLY
 // for a PLACED bridge wrapper — findOnPath is the same read-only PATH scan the backend detector uses.
 import { findOnPath } from './detect-backends.mjs';
+import { compareSemver } from './semver-lite.mjs';
 
 // Velocity-profile core + writer: a fixed, audited read-only allowlist that an onboarding step seeds
 // into `.claude/settings.json` so routine read-only commands stop idling on approval prompts.
@@ -982,12 +983,12 @@ export const writeVelocityProfile = ({ cwd, acceptEdits = false, dryRun = true, 
 // ── the --autonomy render (AD-044) ───────────────────────────────────────────────────────────────
 // Render docs/ai/autonomy.json into the .claude/settings.json blocks the render OWNS — the `sandbox`
 // block + permissions.ask/deny red-lines + permissions.defaultMode — per the Decision-6 invariant,
-// wired to what the REAL claude 2.1.185 accepts (Step 3.1). POLICY-ONLY: never seeds the read-only
+// wired to what the installed harness accepts, READ AT RUN TIME. POLICY-ONLY: never seeds the read-only
 // allowlist and never touches permissions.allow as a value; a sibling of the flagless allowlist merge
 // (mergeProjectSettings) that follows the identical merge-don't-clobber discipline. Preview-then-apply,
 // dry-run default. Refuses an absent policy (a writer renders only a declared policy).
 
-// The exact 2.1.185 sandbox settings keys (Step 3.1, characterized against the real CLI + official docs).
+// The sandbox settings keys this render owns (characterized against the real CLI + official docs).
 const SANDBOX_KEY = 'sandbox';
 const SANDBOX_ENABLED_KEY = 'enabled';
 const SANDBOX_AUTOALLOW_KEY = 'autoAllowBashIfSandboxed';
@@ -1075,6 +1076,153 @@ export const probeSandboxAvailability = (deps = {}) => {
   return { platform, sandbox: 'none', available: false, missing: [], reason: `native ${platform} sandbox unsupported — use WSL2 on Windows` };
 };
 
+// ── the harness-version probe ────────────────────────────────────────────────────────────────────
+// A version literal frozen in code is a documentation claim: it goes stale by default and nothing
+// reports it. Nobody can guarantee another vendor's version format, install layout or settings
+// shape, so this probe does NOT promise a correct answer — it promises that being wrong is LOUD.
+// A pin goes stale silently; a probe goes stale with a stated unknown. That direction-of-failure IS
+// the whole value. Read-only (PATH scan + realpath via findOnPath), never a spawn — the same
+// doctrine probeSandboxAvailability follows.
+const HARNESS_BIN = 'claude';
+// Two install layouts, both read-only, both matched EXACTLY. The native installer puts the binary at
+// …/claude/versions/<semver>; an npm install carries the @anthropic-ai/claude-code package.json a few
+// levels up. Identity is checked, never guessed from a substring: a third-party wrapper called
+// my-claude-wrapper@9.0.0 must resolve to UNKNOWN, because a false "supported" renders a protection
+// that is not there — strictly worse than an honest unknown, which at least degrades loudly.
+const HARNESS_PKG_NAME = '@anthropic-ai/claude-code';
+const HARNESS_VERSIONS_DIR = 'versions';
+const HARNESS_PKG_SEARCH_DEPTH = 5;
+// The ONLY fs errors that mean "keep walking". EACCES is deliberately NOT here: an unreadable
+// package.json means we cannot confirm, which must surface rather than read as "not the harness".
+// A coded TypeError (Node attaches codes like ERR_INVALID_ARG_TYPE to programming defects) must not
+// pass as an expected walk failure — that is how a defect would masquerade as an unknown layout.
+const WALK_SKIP_FS_CODES = Object.freeze(['ENOENT', 'ENOTDIR', 'EISDIR', 'ELOOP', 'ENAMETOOLONG']);
+// Strict: the whole segment must be a version, so a decorated or trailing-garbage name is unknown
+// rather than a prefix-parsed guess.
+const STRICT_SEMVER_RE = /^\d+\.\d+\.\d+$/;
+
+const unknownHarness = (reason) => ({ version: null, source: null, reason });
+
+const ancestorDirs = (start, depth) => {
+  const step = (acc) => {
+    const last = acc[acc.length - 1];
+    const parent = dirname(last);
+    return acc.length >= depth || parent === last ? acc : step([...acc, parent]);
+  };
+  return step([start]);
+};
+
+// The native layout, matched in FULL: …/claude/versions/<version>. Checking only the `versions/`
+// parent would accept /opt/my-wrapper/versions/9.0.0 as the official harness, so the grandparent is
+// checked too, and the version segment must match strictly — a prefix parse would read
+// `2.1.215-tampered` as a clean version.
+const harnessVersionFromNativeLayout = (installPath) => {
+  const versionsDir = dirname(installPath);
+  const isNativeLayout = basename(versionsDir) === HARNESS_VERSIONS_DIR && basename(dirname(versionsDir)) === HARNESS_BIN;
+  const segment = basename(installPath);
+  return isNativeLayout && STRICT_SEMVER_RE.test(segment) ? segment : null;
+};
+
+// A walk failure is EXPECTED (no package.json at that ancestor, or a malformed one) and is skipped;
+// every other error class rethrows. A probe that swallowed a programming defect would report
+// "unrecognised install layout" — a wrong reason, which is the exact defect this feature exists to
+// stop, just relocated into the probe itself.
+const readPackageVersionAt = (dir, readFile) => {
+  try {
+    const pkg = JSON.parse(readFile(join(dir, 'package.json'), UTF8));
+    // Strict, like the native layout: a prefix parse would read `2.1.187-beta.0` as the stable
+    // `2.1.187` and switch a capability on for a build that may not have it. A prerelease is an
+    // honest unknown, not a rounding-down opportunity.
+    return pkg.name === HARNESS_PKG_NAME && STRICT_SEMVER_RE.test(String(pkg.version)) ? String(pkg.version) : null;
+  } catch (err) {
+    if (err instanceof SyntaxError) return null;
+    if (err instanceof TypeError || err instanceof RangeError || err instanceof ReferenceError) throw err;
+    if (err && WALK_SKIP_FS_CODES.includes(err.code)) return null;
+    throw err;
+  }
+};
+
+// Short-circuits at the first confirmed package: an eager map would keep walking after the answer
+// was already found, so an unrelated ancestor's EACCES would abort a probe that had SUCCEEDED.
+// Fail-loud on an unreadable ancestor still applies for every dir visited BEFORE the confirmation.
+const harnessVersionFromPackageJson = (installPath, readFile) => {
+  for (const dir of ancestorDirs(dirname(installPath), HARNESS_PKG_SEARCH_DEPTH)) {
+    const version = readPackageVersionAt(dir, readFile);
+    if (version !== null) return version;
+  }
+  return null;
+};
+
+// probeHarnessVersion(deps) → { version, source, reason }. `version` is null whenever the installed
+// build could not be read; `reason` then STATES why, so a caller can say "unknown" instead of
+// inventing either direction.
+export const probeHarnessVersion = (deps = {}) => {
+  const locate = deps.findOnPath ?? findOnPath;
+  const readFile = deps.readFile ?? readFileSync;
+  const found = locate(HARNESS_BIN, deps);
+  if (!found.path) {
+    return unknownHarness(`no ${HARNESS_BIN} binary resolved on PATH (${found.state}) — the installed harness version is unknown`);
+  }
+  const version = harnessVersionFromNativeLayout(found.path) ?? harnessVersionFromPackageJson(found.path, readFile);
+  return version === null
+    ? unknownHarness(`resolved ${HARNESS_BIN} to ${found.path}, but no version could be read from that install layout — the installed harness version is unknown`)
+    : { version, source: found.path, reason: `read from the resolved ${HARNESS_BIN} install path ${found.path}` };
+};
+
+// The capability threshold: sandbox credential denial arrived here. This literal is HISTORY (the
+// release where the key appeared), never a claim about the installed build — it is only ever
+// compared against a version the probe OBSERVED, which is what keeps it honest.
+const CREDENTIALS_DENY_SINCE = '2.1.187';
+const CREDENTIALS_KEY = 'credentials';
+const CREDENTIAL_DENY_MODE = 'deny';
+// The env vars the profile protects when the installed build supports it. File-based credentials
+// (~/.ssh) are deliberately NOT rendered: the entry shape for sandbox.credentials.files was not
+// verified against an installed build, and this profile never renders what it has not observed.
+const PROTECTED_ENV_VARS = Object.freeze(['NPM_TOKEN', 'GITHUB_TOKEN']);
+// A caller that did not probe gets the same treatment as a failed probe — a stated unknown. The
+// default must never be an assumed capability in either direction.
+const HARNESS_UNPROBED = Object.freeze({
+  version: null,
+  source: null,
+  reason: 'the harness version was not probed by this caller',
+});
+
+// Inside the credentials block this render owns EXACTLY the envVars entries for the names it
+// protects. Everything else — `files`, `allowPlaintextInject`, any other envVar — is the
+// maintainer's, and the degrade explicitly invites them to declare it. So the block follows the same
+// merge-don't-clobber contract as the rest of the sandbox key, and drift compares only the owned
+// slice: a maintainer who takes the tool's own advice must never be told their settings drifted.
+const isOwnedEnvVar = (entry) => isJsonObject(entry) && PROTECTED_ENV_VARS.includes(entry.name);
+
+// Canonical projection: same keys, same order, sorted by name. Comparing raw entries would flag a
+// hand-written {mode, name} as drift against an identical {name, mode} — a warning about nothing,
+// which trains the reader to ignore the loud channel this whole feature depends on.
+const ownedEnvVarsIn = (block) => {
+  const entries = isJsonObject(block) && Array.isArray(block.envVars) ? block.envVars : [];
+  return entries
+    .filter(isOwnedEnvVar)
+    .map((entry) => ({ name: entry.name, mode: entry.mode }))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+};
+
+const mergeCredentialsBlock = (existing, rendered) => {
+  const base = isJsonObject(existing) ? existing : {};
+  const foreignEnvVars = (Array.isArray(base.envVars) ? base.envVars : []).filter((e) => !isOwnedEnvVar(e));
+  if (rendered !== undefined) return { ...base, envVars: [...foreignEnvVars, ...rendered.envVars] };
+  const withoutOwned = { ...base };
+  if (foreignEnvVars.length) withoutOwned.envVars = foreignEnvVars;
+  else delete withoutOwned.envVars;
+  return Object.keys(withoutOwned).length > 0 ? withoutOwned : undefined;
+};
+
+const observedPhrase = (harness) =>
+  harness.version !== null
+    ? `observed ${HARNESS_BIN} ${harness.version}`
+    : `the installed ${HARNESS_BIN} version could not be determined — ${harness.reason}`;
+
+const supportsCredentialDenial = (harness) =>
+  harness.version !== null && compareSemver(harness.version, CREDENTIALS_DENY_SINCE) >= 0;
+
 // effectiveAutonomyLevel(resolved) → the ONE global level the (global, static) settings file renders.
 // The autonomy policy is per-activity (Decision 2), but .claude/settings.json is global and the
 // plan.end/exec.end checkpoints are BEHAVIORAL, not machine-enforced (Decision 1). Global auto-allow is
@@ -1086,15 +1234,22 @@ export const effectiveAutonomyLevel = (resolved) => {
   return levels.length > 0 && levels.every((l) => l === AUTONOMY_SANDBOX) ? AUTONOMY_SANDBOX : AUTONOMY_PROMPT;
 };
 
-// renderAutonomySettings(resolved, probe) → the render-owned blocks + honesty notes/degrades. PURE. The
+// renderAutonomySettings(resolved, probe, harness) → the render-owned blocks + honesty notes/degrades. PURE. The
 // sandbox is ALWAYS enabled (the Decision-1 floor: BOTH levels confine); auto-allow + defaultMode follow
 // the collapsed level. Command red-lines land under ask/deny by value. The three non-command red-lines
-// are the sandbox DEFAULTS (network prompt-on-egress; fs cwd+$TMPDIR confine) — where 2.1.185 cannot
+// are the sandbox DEFAULTS (network prompt-on-egress; fs cwd+$TMPDIR confine) — where this render cannot
 // express a value distinctly it DEGRADES LOUDLY (never a silent allow, never silent pretend-security).
-export const renderAutonomySettings = (resolved, probe) => {
+export const renderAutonomySettings = (resolved, probe, harness = HARNESS_UNPROBED) => {
   const level = effectiveAutonomyLevel(resolved);
   const wantsSandbox = level === AUTONOMY_SANDBOX;
-  const sandbox = { [SANDBOX_ENABLED_KEY]: true, [SANDBOX_AUTOALLOW_KEY]: wantsSandbox };
+  const credentialsSupported = supportsCredentialDenial(harness);
+  const sandbox = {
+    [SANDBOX_ENABLED_KEY]: true,
+    [SANDBOX_AUTOALLOW_KEY]: wantsSandbox,
+    ...(credentialsSupported
+      ? { [CREDENTIALS_KEY]: { envVars: PROTECTED_ENV_VARS.map((name) => ({ name, mode: CREDENTIAL_DENY_MODE })) } }
+      : {}),
+  };
   const defaultMode = DEFAULT_MODE_FOR[level];
   const ask = [];
   const deny = [];
@@ -1103,20 +1258,34 @@ export const renderAutonomySettings = (resolved, probe) => {
   }
   const notes = [];
   const degrades = [];
-  // network — 2.1.185 regular settings cannot HARD-BLOCK egress; both values render as no allowedDomains
-  // (prompt-on-egress). deny DEGRADES LOUDLY (can't hard-block); ask is the faithful sandbox default.
+  // network — this render owns no egress-blocking key, so both values land as prompt-on-egress. The
+  // degrade states what THIS RENDER does not express; it never claims a platform limit it did not
+  // observe, and it names the version it did observe (or states the unknown).
   if (resolved.redlines.network === 'deny') {
-    degrades.push('network=deny requested, but claude 2.1.185 regular settings cannot HARD-BLOCK egress — rendered as prompt-on-egress (the sandbox default: no domains pre-allowed, a new domain still prompts). A silent hard block needs managed settings (allowManagedDomainsOnly).');
+    degrades.push(`network=deny requested, but this render expresses no HARD egress block (${observedPhrase(harness)}) — rendered as prompt-on-egress (the sandbox default: no domains pre-allowed, a new domain still prompts). A silent hard block needs managed settings (allowManagedDomainsOnly).`);
   } else {
     notes.push('network=ask → prompt on each new domain (the sandbox default; no domains pre-allowed).');
   }
-  // credentials — 2.1.185 has NO sandbox.credentials at all (deny added 2.1.187, mask 2.1.199). BOTH
-  // values degrade loudly — never silent pretend-security.
-  degrades.push(`credentials=${resolved.redlines.credentials} requested, but claude 2.1.185 has NO sandbox credential denial (deny added in 2.1.187, mask in 2.1.199) — NPM_TOKEN/GITHUB_TOKEN and ~/.ssh are NOT hidden from sandboxed commands. Upgrade to 2.1.187+ for sandbox.credentials.`);
-  // fs_outside_repo — the sandbox default is a HARD confine to cwd+$TMPDIR; 2.1.185 has no
-  // prompt-on-outside-write, so `ask` DEGRADES LOUDLY to the deny form (hard confine).
+  // credentials — rendered when the OBSERVED version reaches the threshold, degraded loudly when it
+  // does not or when the version is unknown. Reporting a platform limit that does not exist is the
+  // defect; so is pretending protection that was never confirmed.
+  if (credentialsSupported) {
+    // The installed schema offers deny|mask — there is NO ask mode, so `ask` cannot be expressed and
+    // DEGRADES LOUDLY to the deny form rather than being quietly upgraded. And even on deny the
+    // coverage is PARTIAL: env vars only, because the files entry shape was never verified against an
+    // installed build. Partial protection reported as success is the same defect as the false claim
+    // this render replaced — so it degrades too, never a note.
+    if (resolved.redlines.credentials === 'ask') {
+      degrades.push(`credentials=ask requested, but sandbox.${CREDENTIALS_KEY} offers no ask mode (${observedPhrase(harness)}) — rendered as the deny form: ${PROTECTED_ENV_VARS.join('/')} are unset for sandboxed commands with no prompt.`);
+    }
+    degrades.push(`credentials=${resolved.redlines.credentials} coverage is PARTIAL (${observedPhrase(harness)}) — sandbox.${CREDENTIALS_KEY} denies ${PROTECTED_ENV_VARS.join('/')} only. File-based credentials (~/.ssh and any other secret FILE) stay readable by sandboxed commands: this profile does not render ${CREDENTIALS_KEY}.files, whose entry shape it has not verified against an installed build. Declare them yourself if you need them.`);
+  } else {
+    degrades.push(`credentials=${resolved.redlines.credentials} requested, but ${observedPhrase(harness)}; sandbox credential denial arrived in ${CREDENTIALS_DENY_SINCE}, so ${PROTECTED_ENV_VARS.join('/')} and ~/.ssh are NOT hidden from sandboxed commands here. Upgrade to ${CREDENTIALS_DENY_SINCE}+ (or fix the install so the version can be read) for sandbox.${CREDENTIALS_KEY}.`);
+  }
+  // fs_outside_repo — the sandbox default is a HARD confine to cwd+$TMPDIR; this render expresses no
+  // prompt-on-outside-write mode, so `ask` DEGRADES LOUDLY to the deny form (hard confine).
   if (resolved.redlines.fs_outside_repo === 'ask') {
-    degrades.push('fs_outside_repo=ask requested, but claude 2.1.185 has no prompt-on-outside-write — rendered as the deny form (writes hard-confined to cwd+$TMPDIR; an outside write is blocked, then auto-retried through the normal permission flow).');
+    degrades.push(`fs_outside_repo=ask requested, but this render expresses no prompt-on-outside-write mode (${observedPhrase(harness)}) — rendered as the deny form (writes hard-confined to cwd+$TMPDIR; an outside write is blocked, then auto-retried through the normal permission flow).`);
   } else {
     notes.push('fs_outside_repo=deny → writes confined to cwd+$TMPDIR (the sandbox default).');
   }
@@ -1147,7 +1316,14 @@ export const mergeAutonomySettings = (projectData, render) => {
   else delete mergedPermissions.ask;
   if (mergedDeny.length) mergedPermissions.deny = mergedDeny;
   else delete mergedPermissions.deny;
+  // The credentials block is render-OWNED like the two flags above: it must be written when the
+  // render carries it and REMOVED when it does not, or a stale block would outlive the capability
+  // that justified it. A render that carries no credentials key protects nothing, so leaving a
+  // previous one in place would keep claiming a protection this run did not render.
+  const mergedCredentials = mergeCredentialsBlock(existingSandbox[CREDENTIALS_KEY], render.sandbox[CREDENTIALS_KEY]);
   const mergedSandbox = { ...existingSandbox, [SANDBOX_ENABLED_KEY]: true, [SANDBOX_AUTOALLOW_KEY]: render.sandbox[SANDBOX_AUTOALLOW_KEY] };
+  if (mergedCredentials === undefined) delete mergedSandbox[CREDENTIALS_KEY];
+  else mergedSandbox[CREDENTIALS_KEY] = mergedCredentials;
   return { ...base, [SANDBOX_KEY]: mergedSandbox, permissions: mergedPermissions };
 };
 
@@ -1256,6 +1432,16 @@ const collectLocalMasks = (localData, render) => {
       masks.push({ key: `${SANDBOX_KEY}.${k}`, local: localSandbox[k], rendered: render.sandbox[k] });
     }
   }
+  // credentials is render-owned too, and local > project applies to the WHOLE key: a local block
+  // that drops or weakens a rendered entry silently removes a protection the preview just reported.
+  // Compared on the owned slice only, so a local file that merely ADDS its own entries is not a mask.
+  if (hasOwn(localSandbox, CREDENTIALS_KEY)) {
+    const localOwned = ownedEnvVarsIn(localSandbox[CREDENTIALS_KEY]);
+    const renderedOwned = ownedEnvVarsIn(render.sandbox[CREDENTIALS_KEY]);
+    if (JSON.stringify(localOwned) !== JSON.stringify(renderedOwned)) {
+      masks.push({ key: `${SANDBOX_KEY}.${CREDENTIALS_KEY}`, local: localOwned, rendered: renderedOwned });
+    }
+  }
   return masks;
 };
 
@@ -1310,7 +1496,7 @@ export const writeAutonomyProfile = ({ cwd, apply = false } = {}, deps = {}) => 
   }
   const resolved = resolveAutonomy(config);
   const probe = probeSandboxAvailability(deps);
-  const render = renderAutonomySettings(resolved, probe);
+  const render = renderAutonomySettings(resolved, probe, probeHarnessVersion(deps));
   const preflight = preflightVelocityProfile({ cwd: projectDir }, deps);
   // local-mask honesty: a settings.local.json value for ANY render-owned key (defaultMode + the sandbox
   // enable/auto-allow keys) that differs from the render's MASKS it (local > project). Reported loudly;
@@ -1369,7 +1555,7 @@ export const checkAutonomyProfile = ({ cwd } = {}, deps = {}) => {
   if (source === 'none' || config === null) {
     throw makeVelocityProfileError(VELOCITY_NO_POLICY, `no ${AUTONOMY_REL} to check against — seed a policy first (set-autonomy previews, then --write)`);
   }
-  const render = renderAutonomySettings(resolveAutonomy(config), probeSandboxAvailability(deps));
+  const render = renderAutonomySettings(resolveAutonomy(config), probeSandboxAvailability(deps), probeHarnessVersion(deps));
   const settings = readSettingsFile(join(projectDir, SETTINGS_FILE), { ...deps, cwd: projectDir });
   const data = settings.present ? settings.data : {};
   const drift = [];
@@ -1379,6 +1565,13 @@ export const checkAutonomyProfile = ({ cwd } = {}, deps = {}) => {
   }
   if (liveSandbox[SANDBOX_AUTOALLOW_KEY] !== render.sandbox[SANDBOX_AUTOALLOW_KEY]) {
     drift.push(`${SANDBOX_KEY}.${SANDBOX_AUTOALLOW_KEY}: expected ${render.sandbox[SANDBOX_AUTOALLOW_KEY]}, found ${JSON.stringify(liveSandbox[SANDBOX_AUTOALLOW_KEY])}`);
+  }
+  // The credentials block is render-owned in BOTH directions: a removed one is a protection that
+  // silently stopped applying, and a leftover one claims a protection this render did not make.
+  const liveOwnedCredentials = ownedEnvVarsIn(liveSandbox[CREDENTIALS_KEY]);
+  const wantOwnedCredentials = ownedEnvVarsIn(render.sandbox[CREDENTIALS_KEY]);
+  if (JSON.stringify(liveOwnedCredentials) !== JSON.stringify(wantOwnedCredentials)) {
+    drift.push(`${SANDBOX_KEY}.${CREDENTIALS_KEY}.envVars (render-owned entries): expected ${JSON.stringify(wantOwnedCredentials)}, found ${JSON.stringify(liveOwnedCredentials)}`);
   }
   const perms = getPermissions(data);
   if (perms[DEFAULT_MODE_KEY] !== render.defaultMode) {
@@ -1399,12 +1592,28 @@ export const checkAutonomyProfile = ({ cwd } = {}, deps = {}) => {
     if (inExpected !== 1) drift.push(`permissions.${want}: expected exactly one ${rule} (redlines.${rl}=${want}), found ${inExpected}`);
     if (inOther !== 0) drift.push(`permissions.${other}: ${rule} present ${inOther}× but redlines.${rl}=${want} (belongs under ${want})`);
   }
-  return { inSync: drift.length === 0, drift, source, level: render.level, settingsPresent: settings.present };
+  // The degrades ride along even when the check PASSES. "In sync" only means the file matches the
+  // render — it says nothing about what that render could not protect. Dropping them here would let
+  // an unknown or too-old harness report a clean IN SYNC while the credential protection is simply
+  // absent: exactly the silent-success shape this whole change exists to remove.
+  // A local file that masks a render-owned key defeats the rendered value silently (local > project),
+  // so the check must read it too. Without this a local block weakening sandbox.credentials still
+  // produced IN SYNC while the report claimed the tokens were denied — a false all-clear about a
+  // security control, which is the exact defect class this change exists to close.
+  const localSettings = readSettingsFile(join(projectDir, SETTINGS_LOCAL_FILE), { ...deps, cwd: projectDir });
+  const localMasks = collectLocalMasks(localSettings.present ? localSettings.data : undefined, render);
+  for (const m of localMasks) {
+    drift.push(`${SETTINGS_LOCAL_FILE} masks ${m.key}: local ${JSON.stringify(m.local)} overrides the rendered ${JSON.stringify(m.rendered)} (local > project)`);
+  }
+  return { inSync: drift.length === 0, drift, degrades: render.degrades, localMasks, source, level: render.level, settingsPresent: settings.present };
 };
 
 export const formatAutonomyCheck = (c) =>
   c.inSync
-    ? `autonomy --check: IN SYNC — ${SETTINGS_FILE} matches the ${c.source} render (level ${c.level}).`
+    ? [
+        `autonomy --check: IN SYNC — ${SETTINGS_FILE} matches the ${c.source} render (level ${c.level}).`,
+        ...(c.degrades ?? []).map((d) => `  ⚠ DEGRADE: ${d}`),
+      ].join('\n')
     : [
         `autonomy --check: DRIFT — ${SETTINGS_FILE} diverges from the ${c.source} render (level ${c.level}):`,
         ...c.drift.map((d) => `  ✗ ${d}`),

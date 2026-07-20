@@ -394,7 +394,10 @@ const projectTopOf = (cwd) => {
   }
 };
 
-export const composeAutonomyFacts = async (cwd) => {
+// `deps` is threaded to the render check because that check now PROBES the installed harness: without
+// a seam the render state would vary with the machine composing the facts, and a caller could not
+// pin it. Production passes nothing and probes for real.
+export const composeAutonomyFacts = async (cwd, deps = {}) => {
   try {
     const root = projectTopOf(cwd);
     const { loadAutonomy, resolveAutonomy, isSparseSeedConfig } = await import('./autonomy-config.mjs');
@@ -411,7 +414,7 @@ export const composeAutonomyFacts = async (cwd) => {
     let renderState;
     try {
       const { checkAutonomyProfile } = await import('./velocity-profile.mjs');
-      renderState = checkAutonomyProfile({ cwd: root }).inSync
+      renderState = checkAutonomyProfile({ cwd: root }, deps).inSync
         ? 'in sync'
         : 'DRIFT — re-run the velocity --autonomy render';
     } catch (err) {

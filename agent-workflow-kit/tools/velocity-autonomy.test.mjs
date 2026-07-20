@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import {
   main,
   probeSandboxAvailability,
+  probeHarnessVersion,
   effectiveAutonomyLevel,
   renderAutonomySettings,
   mergeAutonomySettings,
@@ -132,25 +133,29 @@ describe('velocity --autonomy — red-lines render for both ask AND deny (Decisi
     assert.ok(!r.ask.includes('Bash(git commit)'), 'must not emit the args-blind exact form');
   });
 
-  it('network=deny DEGRADES LOUDLY (no hard-block in 2.1.185); network=ask is a note, not a degrade', () => {
+  it('network=deny DEGRADES LOUDLY (this render expresses no hard block); network=ask is a note, not a degrade', () => {
     const deny = renderAutonomySettings(resolvedWith({ redlines: { network: 'deny' } }), AVAILABLE);
-    assert.match(degradesText(deny), /network=deny .*cannot HARD-BLOCK/);
+    assert.match(degradesText(deny), /network=deny .*no HARD egress block/);
     const ask = renderAutonomySettings(resolvedWith({ redlines: { network: 'ask' } }), AVAILABLE);
     assert.ok(!/network=ask/.test(degradesText(ask)), 'network=ask is not a degrade');
     assert.ok(ask.notes.some((n) => /network=ask/.test(n)), 'network=ask is a note');
   });
 
-  it('credentials DEGRADES LOUDLY for BOTH ask and deny (2.1.185 has no sandbox.credentials)', () => {
+  // An UNPROBED caller is treated exactly like a failed probe: a stated unknown. The old form of
+  // this test asserted an unconditional degrade naming a fixed version — it pinned the false claim
+  // in place, which is why the defect survived. What is worth pinning is the DIRECTION of failure.
+  it('credentials DEGRADES LOUDLY for BOTH ask and deny when the version was never probed', () => {
     for (const v of ['ask', 'deny']) {
       const r = renderAutonomySettings(resolvedWith({ redlines: { credentials: v } }), AVAILABLE);
-      assert.match(degradesText(r), new RegExp(`credentials=${v}.*NO sandbox credential denial`));
-      assert.match(degradesText(r), /2\.1\.187/, 'names the upgrade pointer');
+      assert.match(degradesText(r), new RegExp(`credentials=${v}.*could not be determined`));
+      assert.match(degradesText(r), /2\.1\.187/, 'names the threshold the capability arrived in');
+      assert.equal(r.sandbox.credentials, undefined, 'nothing is rendered on an unknown');
     }
   });
 
   it('fs_outside_repo=ask DEGRADES LOUDLY to the deny form; =deny is a note', () => {
     const ask = renderAutonomySettings(resolvedWith({ redlines: { fs_outside_repo: 'ask' } }), AVAILABLE);
-    assert.match(degradesText(ask), /fs_outside_repo=ask .*no prompt-on-outside-write .*deny form/);
+    assert.match(degradesText(ask), /fs_outside_repo=ask .*no prompt-on-outside-write mode .*deny form/);
     const deny = renderAutonomySettings(resolvedWith({ redlines: { fs_outside_repo: 'deny' } }), AVAILABLE);
     assert.ok(!/fs_outside_repo/.test(degradesText(deny)), 'fs_outside_repo=deny is not a degrade');
     assert.ok(deny.notes.some((n) => /fs_outside_repo=deny/.test(n)));
@@ -228,9 +233,13 @@ describe('velocity --autonomy — write path', () => {
   const seedPolicy = (config) => writeFileSync(join(cwd, AUTONOMY_REL), serializeAutonomy(config));
   const DOGFOOD = { 'plan-authoring': { autonomy: 'sandbox' }, 'plan-execution': { autonomy: 'sandbox' } };
   const readSettings = () => JSON.parse(readFileSync(join(cwd, SETTINGS_FILE), 'utf8'));
+  // The harness probe is injected by DEFAULT, never left to the host: without this the probe walks
+  // the real PATH, so the suite would pass or fail depending on whether the machine running it has
+  // the harness installed — and would keep passing for the wrong reason after the logic broke.
+  const UNKNOWN_HARNESS = { findOnPath: () => ({ bin: 'claude', state: 'missing', path: null }) };
   const runMain = (argv, extraDeps = {}) => {
     let out = '';
-    const code = main(['--autonomy', ...argv, '--cwd', cwd], { ...LINUX_OK, ...extraDeps, log: (s) => { out += `${s}\n`; }, errlog: (s) => { out += `${s}\n`; } });
+    const code = main(['--autonomy', ...argv, '--cwd', cwd], { ...LINUX_OK, ...UNKNOWN_HARNESS, ...extraDeps, log: (s) => { out += `${s}\n`; }, errlog: (s) => { out += `${s}\n`; } });
     return { code, out };
   };
 
@@ -256,6 +265,104 @@ describe('velocity --autonomy — write path', () => {
     assert.deepEqual(s.permissions.allow, ['Bash(git status:*)', 'Bash(ls:*)'], 'allow untouched');
     assert.ok(s.permissions.ask.includes('Bash(git commit:*)'));
     assert.deepEqual(s.hooks, { PreToolUse: [{ matcher: 'Bash', hooks: [] }] }, 'foreign hooks preserved');
+  });
+
+  // The render is not the delivery. A credentials block that exists only in the render object
+  // protects nothing: --apply must WRITE it and --check must notice when it is missing, or the
+  // profile reports a protection the settings file never carries.
+  const SUPPORTED_HARNESS = {
+    findOnPath: () => ({ bin: 'claude', state: 'present', path: '/home/u/.local/share/claude/versions/2.1.215' }),
+  };
+
+  it('credentials-render-reaches-the-settings-file-on-apply', () => {
+    seedPolicy(DOGFOOD);
+    const r = runMain(['--apply'], SUPPORTED_HARNESS);
+    assert.equal(r.code, 0, r.out);
+    const c = readSettings().sandbox.credentials;
+    assert.ok(c, 'the rendered credentials block must land in settings.json, not only in the render');
+    assert.ok(c.envVars.some((e) => e.name === 'NPM_TOKEN' && e.mode === 'deny'));
+  });
+
+  it('a hand-removed credentials block is DRIFT, never a silent in-sync', () => {
+    seedPolicy(DOGFOOD);
+    runMain(['--apply'], SUPPORTED_HARNESS);
+    const s = readSettings();
+    delete s.sandbox.credentials;
+    writeFileSync(join(cwd, SETTINGS_FILE), JSON.stringify(s, null, 2));
+    const r = main(['--autonomy', '--check', '--cwd', cwd], { ...LINUX_OK, ...SUPPORTED_HARNESS, log() {}, errlog() {} });
+    assert.equal(r, 1, 'a removed protection must fail the drift check');
+  });
+
+  // The degrade tells the user to declare file credentials themselves. A render that then wipes them
+  // would instruct and destroy in the same breath — and merge-don't-clobber is this writer's whole
+  // contract everywhere else in the sandbox block.
+  it('a hand-declared credentials.files survives an apply and does not trip --check', () => {
+    seedPolicy(DOGFOOD);
+    runMain(['--apply'], SUPPORTED_HARNESS);
+    const s = readSettings();
+    s.sandbox.credentials.files = [{ path: '~/.ssh', mode: 'deny' }];
+    s.sandbox.credentials.envVars.push({ name: 'MY_OWN_TOKEN', mode: 'mask' });
+    writeFileSync(join(cwd, SETTINGS_FILE), JSON.stringify(s, null, 2));
+    const again = runMain(['--apply'], SUPPORTED_HARNESS);
+    assert.equal(again.code, 0, again.out);
+    const after = readSettings().sandbox.credentials;
+    assert.deepEqual(after.files, [{ path: '~/.ssh', mode: 'deny' }], 'a foreign sub-key is preserved');
+    assert.ok(after.envVars.some((e) => e.name === 'MY_OWN_TOKEN'), 'a foreign envVar entry is preserved');
+    assert.ok(after.envVars.some((e) => e.name === 'NPM_TOKEN' && e.mode === 'deny'), 'the owned entry still lands');
+    const check = main(['--autonomy', '--check', '--cwd', cwd], { ...LINUX_OK, ...SUPPORTED_HARNESS, log() {}, errlog() {} });
+    assert.equal(check, 0, 'following the tool\'s own advice must not read as drift');
+  });
+
+  // "In sync" only says the file matches the render. It says nothing about what the render could not
+  // protect — so an unknown or too-old harness must still say so on a PASSING check.
+  it('a passing --check still states the degrades — IN SYNC is not a clean bill of health', () => {
+    seedPolicy(DOGFOOD);
+    runMain(['--apply']);
+    const r = runMain(['--check']);
+    assert.equal(r.code, 0, 'the file matches the render');
+    assert.match(r.out, /IN SYNC/);
+    assert.match(r.out, /DEGRADE/, 'the lost protection is named even when nothing drifted');
+    assert.match(r.out, /could not be determined/, 'and it names the cause');
+  });
+
+  it('a settings.local.json that weakens an owned credentials entry is a LOUD mask', () => {
+    seedPolicy(DOGFOOD);
+    writeFileSync(join(cwd, SETTINGS_LOCAL_FILE), JSON.stringify({
+      sandbox: { credentials: { envVars: [{ name: 'NPM_TOKEN', mode: 'mask' }] } },
+    }, null, 2));
+    const r = runMain(['--apply'], SUPPORTED_HARNESS);
+    assert.match(r.out, /MASKS/, 'a local file that weakens a rendered protection must be reported');
+    assert.match(r.out, /credentials/);
+  });
+
+  it('--check reads settings.local.json too — a local weakening is DRIFT, never IN SYNC', () => {
+    seedPolicy(DOGFOOD);
+    runMain(['--apply'], SUPPORTED_HARNESS);
+    writeFileSync(join(cwd, SETTINGS_LOCAL_FILE), JSON.stringify({
+      sandbox: { credentials: { envVars: [{ name: 'NPM_TOKEN', mode: 'mask' }] } },
+    }, null, 2));
+    const r = runMain(['--check'], SUPPORTED_HARNESS);
+    assert.equal(r.code, 1, 'a local override that defeats the rendered protection must fail the check');
+    assert.match(r.out, /masks/, 'and the check names it');
+  });
+
+  it('a settings.local.json adding ONLY foreign credentials entries is not a mask', () => {
+    seedPolicy(DOGFOOD);
+    writeFileSync(join(cwd, SETTINGS_LOCAL_FILE), JSON.stringify({
+      sandbox: { credentials: { envVars: [{ name: 'NPM_TOKEN', mode: 'deny' }, { name: 'GITHUB_TOKEN', mode: 'deny' }, { name: 'MY_TOKEN', mode: 'mask' }] } },
+    }, null, 2));
+    const r = runMain(['--apply'], SUPPORTED_HARNESS);
+    assert.ok(!/sandbox\.credentials.*MASKS/.test(r.out), 'adding your own entries is not masking ours');
+  });
+
+  it('a hand-written entry with the keys in the other order is NOT drift', () => {
+    seedPolicy(DOGFOOD);
+    runMain(['--apply'], SUPPORTED_HARNESS);
+    const s = readSettings();
+    s.sandbox.credentials.envVars = s.sandbox.credentials.envVars.map((e) => ({ mode: e.mode, name: e.name }));
+    writeFileSync(join(cwd, SETTINGS_FILE), JSON.stringify(s, null, 2));
+    const check = main(['--autonomy', '--check', '--cwd', cwd], { ...LINUX_OK, ...SUPPORTED_HARNESS, log() {}, errlog() {} });
+    assert.equal(check, 0, 'key order is not policy — warning about nothing trains the reader to ignore the loud channel');
   });
 
   it('never writes settings.local.json', () => {
@@ -423,5 +530,189 @@ describe('velocity --autonomy --check — drift-guard', () => {
     rmSync(join(cwd, AUTONOMY_REL));
     const r = main(['--autonomy', '--check', '--cwd', cwd], { ...LINUX_OK, log() {}, errlog() {} });
     assert.equal(r, 1);
+  });
+});
+
+// A version literal frozen in code is a documentation claim: it goes stale by default and nothing
+// reports it. The probe does not make the tool right — no one can guarantee another vendor's
+// version format, install layout or settings shape. It makes being WRONG loud, which is the only
+// invariant available here. So the degrade names the version it OBSERVED, or states the unknown.
+describe('velocity --autonomy — the degrade text names only what was observed', () => {
+  const HARNESS_SUPPORTS = { version: '2.1.215', source: 'installed-cli', reason: 'resolved from the installed CLI path' };
+  const HARNESS_TOO_OLD = { version: '2.1.186', source: 'installed-cli', reason: 'resolved from the installed CLI path' };
+  const HARNESS_UNKNOWN = { version: null, source: null, reason: 'no claude CLI resolved on PATH' };
+  const render = (redlines, harness) => renderAutonomySettings(resolvedWith({ redlines }), AVAILABLE, harness);
+
+  // What must vanish is the FABRICATED limit, not every mention of credentials: the render still
+  // states the limits it really has (no ask mode, files uncovered). Asserting "no degrade at all"
+  // would forbid honest degrades and reward the quiet-success failure mode instead.
+  it('credentials-degrade-absent-when-installed-version-supports-it', () => {
+    for (const v of ['ask', 'deny']) {
+      const t = degradesText(render({ credentials: v }, HARNESS_SUPPORTS));
+      assert.ok(!/NO sandbox credential denial/.test(t), 'the fabricated platform limit is gone');
+      assert.ok(!/could not be determined/.test(t), 'an observed version is never reported as unknown');
+    }
+  });
+
+  it('credentials=ask DEGRADES LOUDLY — the installed schema has no ask mode to render', () => {
+    const t = degradesText(render({ credentials: 'ask' }, HARNESS_SUPPORTS));
+    assert.match(t, /credentials=ask .*no ask mode/, 'ask is never quietly upgraded to deny');
+  });
+
+  it('credentials coverage is stated PARTIAL — file credentials are not rendered', () => {
+    const t = degradesText(render({ credentials: 'deny' }, HARNESS_SUPPORTS));
+    assert.match(t, /coverage is PARTIAL/, 'partial protection reported as success is the same defect');
+    assert.match(t, /~\/\.ssh/, 'the degrade names what stays readable');
+  });
+
+  it('credentials-key-rendered-when-installed-version-supports-it', () => {
+    const c = render({ credentials: 'deny' }, HARNESS_SUPPORTS).sandbox.credentials;
+    assert.ok(c, 'a supported capability is rendered, never withheld');
+    assert.ok(c.envVars.some((e) => e.name === 'NPM_TOKEN' && e.mode === 'deny'));
+    assert.ok(c.envVars.some((e) => e.name === 'GITHUB_TOKEN' && e.mode === 'deny'));
+  });
+
+  it('credentials still degrades when the OBSERVED version predates the capability', () => {
+    const r = render({ credentials: 'deny' }, HARNESS_TOO_OLD);
+    assert.match(degradesText(r), /2\.1\.186/, 'the degrade names the version it observed');
+    assert.equal(r.sandbox.credentials, undefined, 'unsupported stays unrendered');
+  });
+
+  it('network-degrade-text-names-only-the-observed-version', () => {
+    const t = degradesText(render({ network: 'deny' }, HARNESS_SUPPORTS));
+    assert.match(t, /network=deny/);
+    assert.match(t, /2\.1\.215/, 'names the observed version');
+    assert.ok(!/2\.1\.185/.test(t), 'never names a version the tool did not observe');
+  });
+
+  it('fs-outside-repo-degrade-text-names-only-the-observed-version', () => {
+    const t = degradesText(render({ fs_outside_repo: 'ask' }, HARNESS_SUPPORTS));
+    assert.match(t, /fs_outside_repo=ask/);
+    assert.match(t, /2\.1\.215/, 'names the observed version');
+    assert.ok(!/2\.1\.185/.test(t), 'never names a version the tool did not observe');
+  });
+
+  it('version-probe-failure-degrades-loudly-and-states-the-unknown', () => {
+    const r = render({ credentials: 'deny' }, HARNESS_UNKNOWN);
+    const t = degradesText(r);
+    assert.match(t, /could not be determined/i, 'the unknown is stated, never resolved by assumption');
+    assert.match(t, /no claude CLI resolved on PATH/, 'the degrade carries the probe reason');
+    assert.equal(r.sandbox.credentials, undefined, 'never render what could not be confirmed');
+  });
+});
+
+// Every case injects findOnPath — the ONE seam. Injecting a lower-level dep instead lets the probe
+// fall through to the real PATH of the host running the suite, which passes for the wrong reason
+// and would keep passing after the logic broke.
+describe('velocity --autonomy — probeHarnessVersion (read-only, no spawn)', () => {
+  const located = (path) => ({ findOnPath: () => ({ bin: 'claude', state: 'present', path }) });
+  // An EXPECTED walk failure: no package.json at that ancestor. It carries an fs error code, which
+  // is exactly what the probe is allowed to skip — unlike a defect, which must rethrow.
+  const throwingRead = () => { throw Object.assign(new Error('ENOENT: no package.json'), { code: 'ENOENT' }); };
+
+  it('resolves the version from a version-named install path', () => {
+    const p = probeHarnessVersion(located('/home/u/.local/share/claude/versions/2.1.215'));
+    assert.equal(p.version, '2.1.215');
+    assert.match(p.reason, /2\.1\.215/, 'the reason names where the answer came from');
+  });
+
+  it('resolves the version from an npm install package.json', () => {
+    const p = probeHarnessVersion({
+      ...located('/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js'),
+      readFile: () => JSON.stringify({ name: '@anthropic-ai/claude-code', version: '2.1.215' }),
+    });
+    assert.equal(p.version, '2.1.215');
+  });
+
+  // A false "supported" is strictly worse than an unknown: it renders a protection that is not
+  // there, while an unknown at least degrades loudly. So identity is matched exactly, both ways.
+  it('a third-party wrapper whose package name merely CONTAINS claude resolves to unknown', () => {
+    const p = probeHarnessVersion({
+      ...located('/usr/lib/node_modules/my-claude-wrapper/bin/claude'),
+      readFile: () => JSON.stringify({ name: 'my-claude-wrapper', version: '9.0.0' }),
+    });
+    assert.equal(p.version, null, 'a name that merely contains "claude" is not the harness');
+  });
+
+  it('a bare executable with a semver basename is NOT read as a native install', () => {
+    const p = probeHarnessVersion({ ...located('/opt/tools/2.1.215'), readFile: throwingRead });
+    assert.equal(p.version, null, 'the native layout requires the versions/ parent, not just a semver name');
+  });
+
+  it('a CODED programming defect is still rethrown — a code is not a licence to swallow', () => {
+    assert.throws(
+      () => probeHarnessVersion({
+        ...located('/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js'),
+        readFile: () => { throw Object.assign(new TypeError('bad arg'), { code: 'ERR_INVALID_ARG_TYPE' }); },
+      }),
+      TypeError,
+      'Node attaches codes to defects too, so a bare code check would hide this one',
+    );
+  });
+
+  // EACCES is deliberately absent from the skip list: an unreadable package.json means we CANNOT
+  // CONFIRM, which must surface rather than quietly read as "not the harness here, keep walking".
+  it('an UNREADABLE package.json surfaces — "cannot confirm" is never folded into "not found"', () => {
+    assert.throws(
+      () => probeHarnessVersion({
+        ...located('/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js'),
+        readFile: () => { throw Object.assign(new Error('permission denied'), { code: 'EACCES' }); },
+      }),
+      /permission denied/,
+    );
+  });
+
+  it('an EACCES at an ancestor visited AFTER the answer never aborts a succeeded probe', () => {
+    const p = probeHarnessVersion({
+      ...located('/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js'),
+      readFile: (path) => {
+        if (path === '/usr/lib/node_modules/@anthropic-ai/claude-code/package.json') {
+          return JSON.stringify({ name: '@anthropic-ai/claude-code', version: '2.1.215' });
+        }
+        throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+      },
+    });
+    assert.equal(p.version, '2.1.215', 'the walk stops at the confirmed package');
+  });
+
+  it('a versions/ layout under a FOREIGN parent is not the harness', () => {
+    const p = probeHarnessVersion({ ...located('/opt/my-wrapper/versions/9.0.0'), readFile: throwingRead });
+    assert.equal(p.version, null, 'the full claude/versions/<version> segment must match, not just versions/');
+  });
+
+  it('a PRERELEASE package version is unknown, never rounded down to the stable release', () => {
+    const p = probeHarnessVersion({
+      ...located('/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js'),
+      readFile: () => JSON.stringify({ name: '@anthropic-ai/claude-code', version: '2.1.187-beta.0' }),
+    });
+    assert.equal(p.version, null, 'a prerelease is not the stable release that carries the capability');
+  });
+
+  it('a decorated version segment is unknown, never a prefix-parsed guess', () => {
+    const p = probeHarnessVersion({ ...located('/home/u/.local/share/claude/versions/2.1.215-tampered'), readFile: throwingRead });
+    assert.equal(p.version, null);
+  });
+
+  it('a programming defect inside the walk is rethrown, never reported as an unknown layout', () => {
+    assert.throws(
+      () => probeHarnessVersion({
+        ...located('/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js'),
+        readFile: () => { throw new TypeError('a real defect'); },
+      }),
+      TypeError,
+      'swallowing this would make the probe misattribute its own failure',
+    );
+  });
+
+  it('an unrecognised install layout is a STATED unknown, never a guess in either direction', () => {
+    const p = probeHarnessVersion({ ...located('/opt/claude/bin/claude'), readFile: throwingRead });
+    assert.equal(p.version, null);
+    assert.match(p.reason, /install layout/, 'the unknown names its own cause');
+  });
+
+  it('no claude on PATH → a stated unknown', () => {
+    const p = probeHarnessVersion({ findOnPath: () => ({ bin: 'claude', state: 'missing', path: null }) });
+    assert.equal(p.version, null);
+    assert.match(p.reason, /PATH/);
   });
 });
