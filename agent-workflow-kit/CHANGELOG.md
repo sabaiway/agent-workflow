@@ -4,6 +4,44 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 3.3.0 — version-pin honesty: the profile stops claiming a limit it never observed (AD-062)
+
+`velocity --autonomy` told every user their credentials could not be protected by the sandbox —
+naming a harness version frozen in the source, 30 patch releases stale, while a comment three lines
+above recorded when the capability had actually arrived. A user who declared
+`redlines.credentials=deny` got no `sandbox.credentials` key and a confident explanation that the
+platform could not enforce it. Not a silent failure: a false claim about a security control.
+
+Nobody can guarantee a vendor's version format, install layout or settings schema stays put, so the
+fix is not "read the right version" — it is **never state what was not observed**. A pin goes stale
+silently; a probe goes stale loudly, and that direction is the whole point.
+
+- **`probeHarnessVersion`** reads the INSTALLED harness at render time — read-only PATH resolution,
+  never a spawn. Two layouts matched exactly (`claude/versions/<version>` and the
+  `@anthropic-ai/claude-code` package.json); a third-party wrapper whose name merely contains
+  "claude", a decorated version segment, and a prerelease all resolve to a STATED unknown. A
+  programming defect inside the walk is rethrown rather than reported as an unknown layout, and an
+  unreadable package.json surfaces instead of folding into "not found".
+- **A supported build now gets the protection.** `sandbox.credentials` is rendered, MERGED into
+  settings (hand-declared `files` and foreign entries survive), drift-checked and local-mask-checked
+  — the render owns exactly the entries for the env vars it protects, nothing more.
+- **Every honest limit is a loud degrade, not a note.** Coverage is stated PARTIAL (env vars only;
+  file credentials are NOT rendered, because that entry shape was never verified against an
+  installed build). `credentials=ask` degrades rather than being quietly upgraded to deny. An older
+  build, or one whose version cannot be RESOLVED from a recognised layout, degrades naming what was
+  observed or stating that nothing was — and a PASSING `--check` prints the degrades too, because
+  "in sync" only means the file matches the render. An UNREADABLE install (a permission error) or a
+  defect inside the probe is a different outcome on purpose: it throws loudly rather than degrading,
+  because "cannot confirm" must never read as "confirmed absent".
+- **New `version-pin` rung in `release-scan`.** A harness version literal under `tools/` fails the
+  scan unless a runtime probe sits beside it in the same JS file. The harness series is discovered
+  from the scanned file, never hardcoded — a scanner carrying its own pin would be an instance of the
+  class it catches, and a self-refusal test enforces that. Prose earns nothing: a `#` comment in a
+  shell script or a line of Markdown cannot hold a probe, so those files stay scanned.
+  **Stated residual, argued in the source:** the rung proves a probe is PRESENT, not that its result
+  is compared with the literal. Proving the latter is JS lexing; an approximation of it was tried and
+  withdrawn, because each increment of precision opened a new hole without buying the guarantee.
+
 ## 3.2.0 — plain language + posture as code: the friction cluster shipped as mechanism (AD-061)
 
 Carrier release for a friction cluster (kit 3.2.0 bundles the bridges + shared contract + the
