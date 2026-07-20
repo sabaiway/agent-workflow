@@ -732,6 +732,12 @@ describe('codex-review.sh — --help contract (manifest-pinned)', () => {
     assert.equal(norm(helpSection(help, 'Receipt:').join(' ')), norm(REVIEW_CONTRACT.receipt));
     assert.match(REVIEW_CONTRACT.receipt, /sha256 over the canonical uncommitted-state payload/, 'the fingerprint definition lives in the manifest contract');
   });
+
+  it('Notes renders the manifest review contract.notes verbatim (AD-061 — a typed contract key that MUST surface)', () => {
+    const help = runHelp('--help').stdout;
+    assert.ok((REVIEW_CONTRACT.notes ?? []).length >= 2, 'the review contract declares the banner-only-timeout + quote-verbatim notes');
+    assert.equal(norm(helpSection(help, 'Notes:').join(' ')), norm(REVIEW_CONTRACT.notes.join(' ')));
+  });
 });
 
 describe('codex-review.sh — source-level reverse guard (parser arms ⟷ manifest)', () => {
@@ -1324,5 +1330,46 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', () => {
     assert.equal(r.capStdin, '', 'codex is never invoked');
     assert.equal(receipts.length, 0);
     assert.match(r.stderr, /control/i, 'named as the control-byte class, not a policy refusal');
+  });
+
+  it('the banner appends the RESOLVED hard timeout — banner-only, never in the receipt (AD-061)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, {});
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /^review posture: model=gpt-5\.6-sol effort=xhigh tier=standard timeout=1800s$/m);
+    assert.deepEqual(Object.keys(receipts[0].posture), ['model', 'effort', 'tier'], 'timeout never enters the receipt posture');
+  });
+
+  it('an INVALID effective CODEX_HARD_TIMEOUT (env — the closed aw_settings_valid bypass) warns and the banner prints the default', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_HARD_TIMEOUT: 'nonsense' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /invalid value 'nonsense' for CODEX_HARD_TIMEOUT/, 'the fallback is loud');
+    assert.match(r.stderr, /^review posture: .* timeout=1800s$/m, 'the banner prints the built-in default');
+  });
+
+  it('a CODEX_HARD_TIMEOUT carrying CONTROL BYTES refuses pre-spend (the banner-field screen)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_HARD_TIMEOUT: `1800${String.fromCharCode(1)}` } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.notEqual(r.status, 0);
+    assert.equal(r.capStdin, '', 'codex is never invoked');
+    assert.equal(receipts.length, 0);
+    assert.match(r.stderr, /control/i);
+  });
+
+  it('a DEL (0x7f) byte in a banner field refuses pre-spend like the C0 range', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_MODEL: `gpt-5.6-sol${String.fromCharCode(127)}` } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.notEqual(r.status, 0);
+    assert.equal(r.capStdin, '', 'codex is never invoked');
+    assert.equal(receipts.length, 0);
+    assert.match(r.stderr, /control/i);
   });
 });

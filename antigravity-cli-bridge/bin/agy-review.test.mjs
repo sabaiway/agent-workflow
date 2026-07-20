@@ -1412,4 +1412,117 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', () => {
     assert.equal(receipts.length, 0);
     assert.match(r.stderr, /control/i);
   });
+
+  it('the banner appends the RESOLVED hard timeout verbatim — banner-only, never in the receipt (AD-061)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'] });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /^review posture: model=Gemini 3\.1 Pro \(High\) timeout=30m$/m);
+    assert.deepEqual(Object.keys(receipts[0].posture), ['model'], 'timeout never enters the receipt posture');
+  });
+
+  it('the banner prints the EFFECTIVE hard cap: an env override and a fractional duration ride verbatim', () => {
+    for (const [envValue, want] of [['90s', '90s'], ['1.5m', '1\\.5m']]) {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_HARD_TIMEOUT: envValue } });
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stderr, new RegExp(`^review posture: .* timeout=${want}$`, 'm'));
+    }
+  });
+
+  it('AGY_TIMEOUT (soft print-timeout) alone never moves the banner — the hard cap governs (precedence pin)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_TIMEOUT: '5m' } });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /^review posture: .* timeout=30m$/m, 'the soft print-timeout is not the banner value');
+  });
+
+  it('an INVALID / EMPTY / OVERFLOW effective AGY_HARD_TIMEOUT falls back to the built-in default (loud on invalid)', () => {
+    for (const [bad, wantWarn] of [['10x', true], ['', false], ['99999999m', true]]) {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_HARD_TIMEOUT: bad } });
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stderr, /^review posture: .* timeout=30m$/m, `default must stand for ${JSON.stringify(bad)}`);
+      if (wantWarn) assert.match(r.stderr, new RegExp(`invalid value '${bad}' for AGY_HARD_TIMEOUT`));
+    }
+  });
+
+  it('a timeout value carrying CONTROL BYTES refuses pre-spend (the banner-field screen)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_HARD_TIMEOUT: `30m${String.fromCharCode(1)}` } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.notEqual(r.status, 0);
+    assert.equal(r.invoked, false);
+    assert.equal(receipts.length, 0);
+    assert.match(r.stderr, /control/i);
+  });
+
+  it('timeout honesty: no timeout/gtimeout on PATH → timeout=uncapped, never a fabricated number', () => {
+    const sb = makeSandbox();
+    const r = run(sb, {
+      args: ['code', '--facts', 'a tiny fact'],
+      env: { PATH: `${sb.bin}:${farmFor(['agy', 'agy-run', 'timeout', 'gtimeout'])}` },
+    });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /^review posture: .* timeout=uncapped$/m);
+  });
+
+  it('an EXPORTED shell function shadowing timeout never fools the banner (type -P discipline)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, {
+      args: ['code', '--facts', 'a tiny fact'],
+      env: {
+        PATH: `${sb.bin}:${farmFor(['agy', 'agy-run', 'timeout', 'gtimeout'])}`,
+        'BASH_FUNC_timeout%%': '() { return 0; }',
+      },
+    });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /^review posture: .* timeout=uncapped$/m, 'a shell function is not a capping binary');
+  });
+
+  it('an EXPORTED `type` function faking a path never fools the resolver (builtin type discipline)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, {
+      args: ['code', '--facts', 'a tiny fact'],
+      env: {
+        PATH: `${sb.bin}:${farmFor(['agy', 'agy-run', 'timeout', 'gtimeout'])}`,
+        'BASH_FUNC_type%%': '() { echo /fake/timeout; }',
+      },
+    });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /^review posture: .* timeout=uncapped$/m, 'builtin type bypasses an exported type function');
+  });
+
+  it('a DEL (0x7f) byte in a banner field refuses pre-spend like the C0 range', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: `bad${String.fromCharCode(127)}model` } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.notEqual(r.status, 0);
+    assert.equal(r.invoked, false);
+    assert.equal(receipts.length, 0);
+    assert.match(r.stderr, /control/i);
+  });
+
+  it('a control byte in AGY_TIMEOUT refuses pre-spawn — agy-review forwards it to the child agy-run', () => {
+    for (const c of [1, 127]) {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_TIMEOUT: `30m${String.fromCharCode(c)}` } });
+      const receipts = readReceipts(sb.repo);
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.notEqual(r.status, 0, `must refuse control byte ${c}`);
+      assert.equal(r.invoked, false, 'refused BEFORE spawning agy-run');
+      assert.equal(receipts.length, 0);
+      assert.match(r.stderr, /AGY_TIMEOUT/, 'names the offending knob');
+    }
+  });
 });

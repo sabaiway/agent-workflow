@@ -77,6 +77,11 @@ Notes:
   pre-dispatch host-diff: before the FIRST dispatch of this bridge, diff its declared networkHosts
   against the live sandbox allow-list — a missing host is surfaced to the maintainer BEFORE
   dispatching, never fired into a known prompt
+  the review posture banner appends a banner-only timeout=<duration|uncapped> field — exactly the
+  duration agy-run hands to timeout(1), uncapped when no timeout/gtimeout binary caps the run;
+  INFORMATIONAL only: it never enters the receipt posture or the D5 banner↔receipt parity
+  quote the posture banner verbatim when labeling this dispatch — the banner is the machine-stated
+  posture; a prose re-type drifts
 
 Round-2 / resume:
   agy-review --continue [--decided @f] [--focus "…"]
@@ -115,10 +120,12 @@ Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins ov
 Honesty + posture (D4/D5):
   a run whose output carries NO recognized '### Verdict' section — empty output included — exits 4
   with NO receipt: a FAILED review to RE-RUN, never a fatal session error. One stderr banner line
-  states the ACTUAL run posture (review posture: model=…) and the receipt records the same
-  posture {model} (agy has no tier). An ATTESTING review with AGY_MODEL explicitly emptied
-  refuses pre-spend (the actual model would be unknowable; AGY_PROBE=1 is exempt), and a model
-  string carrying control bytes refuses pre-spend in every mode.
+  states the ACTUAL run posture (review posture: model=… timeout=…) and the receipt records the
+  same posture {model} (agy has no tier; the timeout field is banner-only — never a receipt
+  field). Quote the posture banner verbatim when labeling this dispatch. An ATTESTING review with
+  AGY_MODEL explicitly emptied refuses pre-spend (the actual model would be unknowable;
+  AGY_PROBE=1 is exempt), and a model string carrying control bytes refuses pre-spend in every
+  mode.
 
 Closed grammar: unknown flags are rejected; no '--' passthrough (the flag escape is --ungrounded; the env escapes are AGY_PROBE=1 and AGY_REVIEW_ALLOW_ADDDIR=1).
 Requires at run time: the agy CLI on PATH + a Google AI subscription login (--help needs neither).
@@ -235,6 +242,56 @@ aw_apply_settings() {
 }
 aw_apply_settings
 
+# --- Effective-timeout resolver (D5 banner honesty; AD-061) --------------------
+# ONE rule, both bridges: the posture banner prints EXACTLY the duration handed to timeout(1) —
+# an integer-seconds value rendered with the `s` suffix, a duration string verbatim — and
+# `timeout=uncapped` when no timeout/gtimeout binary can cap the run; never a fabricated number.
+# The EFFECTIVE value (env included — closing the aw_settings_valid env bypass) is validated by
+# the same per-key rule as the settings file, plus a 7-digit integer-part bound (overflow); an
+# invalid value warns + falls back to the built-in default — a typo never silently masquerades
+# as a cap. AGY_TIMEOUT shares AGY_HARD_TIMEOUT's duration rule (it has no settings-file arm).
+aw_effective_timeout() {
+  local key="$1" default="$2" value="${!1:-}" rule="$1" intpart
+  [[ "$rule" == "AGY_TIMEOUT" ]] && rule="AGY_HARD_TIMEOUT"
+  [[ -n "$value" ]] || { printf '%s' "$default"; return 0; }
+  intpart="${value%%[!0-9]*}"
+  if ! aw_settings_valid "$rule" "$value" || (( ${#intpart} > 7 )); then
+    # %q escapes the raw value so a control byte in it can never forge an extra diagnostic line
+    # (the direct agy-run lane has no pre-spend screen — the warning itself must be injection-proof).
+    printf "warning: invalid value '%q' for %s — using the built-in default %s.\n" "$value" "$key" "$default" >&2
+    printf '%s' "$default"
+    return 0
+  fi
+  printf '%s' "$value"
+}
+aw_timeout_label() {
+  local bin="$1" value="$2"
+  [[ -n "$bin" ]] || { printf 'uncapped'; return 0; }
+  case "$value" in
+    *[!0-9]*) printf '%s' "$value" ;;
+    *) printf '%ss' "$value" ;;
+  esac
+}
+aw_resolve_timeout_bin() {
+  local bin dir base
+  bin="$(builtin type -P timeout 2>/dev/null || true)"
+  [[ -n "$bin" ]] || bin="$(builtin type -P gtimeout 2>/dev/null || true)"
+  [[ -n "$bin" ]] || { printf ''; return 0; }
+  case "$bin" in
+    /*) ;;
+    *)
+      case "$bin" in
+        */*) dir="${bin%/*}"; base="${bin##*/}" ;;
+        *) dir="."; base="$bin" ;;
+      esac
+      dir="$(builtin cd -- "$dir" 2>/dev/null && builtin pwd -P)" || { printf ''; return 0; }
+      bin="$dir/$base"
+      ;;
+  esac
+  [[ -f "$bin" && -x "$bin" ]] || { printf ''; return 0; }
+  printf '%s' "$bin"
+}
+
 DEFAULT_AGY_REVIEW_MODEL="Gemini 3.1 Pro (High)"
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by agy-review.test.mjs against capability.json).
@@ -244,7 +301,7 @@ AW_BRIDGE_VERSION="4.0.0"
 AGY_MODEL="${AGY_MODEL-$DEFAULT_AGY_REVIEW_MODEL}"
 # D5 control-byte screen — IMMEDIATELY after resolution, BEFORE the off-frontier advisory (or any
 # other interpolation) can echo raw newline/ESC bytes into stderr/the terminal (round-2 fold).
-if [[ "$AGY_MODEL" == *[$'\x01'-$'\x1f']* ]]; then
+if [[ "$AGY_MODEL" == *[$'\x01'-$'\x1f'$'\x7f']* ]]; then
   echo "error: AGY_MODEL contains control bytes — fix the setting (env or bridge-settings.conf) and re-run." >&2
   exit 2
 fi
@@ -254,7 +311,20 @@ FRONTIER_SET=("Gemini 3.1 Pro (High)" "Claude Opus 4.6 (Thinking)" "Claude Sonne
 # Duration-string timeouts (NOT codex's bare seconds): agy-run forwards a duration to --print-timeout,
 # and the timeout(1) hard cap is a duration too — never numerically compared, so 30m vs 2h is fine.
 AGY_HARD_TIMEOUT="${AGY_HARD_TIMEOUT:-30m}"
+# D5 banner-field control-byte screen (AD-061) — like AGY_MODEL above, BEFORE any interpolation.
+if [[ "$AGY_HARD_TIMEOUT" == *[$'\x01'-$'\x1f'$'\x7f']* ]]; then
+  echo "error: AGY_HARD_TIMEOUT contains control bytes — fix the setting (env or bridge-settings.conf) and re-run." >&2
+  exit 2
+fi
+AGY_HARD_TIMEOUT="$(aw_effective_timeout AGY_HARD_TIMEOUT 30m)"
 AGY_TIMEOUT="${AGY_TIMEOUT:-$AGY_HARD_TIMEOUT}"
+# D5 banner-field control-byte screen for AGY_TIMEOUT (AD-061): agy-review forwards it to the
+# child agy-run's --print-timeout, so a control byte must refuse HERE, pre-spawn — the child's
+# own diagnostic would otherwise echo it. (agy-run screens its own direct-lane env separately.)
+if [[ "$AGY_TIMEOUT" == *[$'\x01'-$'\x1f'$'\x7f']* ]]; then
+  echo "error: AGY_TIMEOUT contains control bytes — fix the setting (env or bridge-settings.conf) and re-run." >&2
+  exit 2
+fi
 AGY_PROBE="${AGY_PROBE:-0}"
 # A probe run is RECORDED, not just silently allowed: the receipt carries probe:true so the kit's
 # review-state gate rejects it — a guards-relaxed review must never attest a tree.
@@ -882,7 +952,14 @@ if [[ -z "$AGY_MODEL" && -z "$resume_mode" && "$REVIEW_PROBE" != "true" && "$REV
   echo "       AGY_MODEL (wrapper default), or set the real model display string; AGY_PROBE=1 is exempt." >&2
   exit 2
 fi
-echo "review posture: model=${AGY_MODEL:-<agy settings default>}" >&2
+# The timeout field is BANNER-ONLY (AD-061): it prints exactly the duration agy-run hands to
+# timeout(1), or `uncapped` without a capping binary, and never enters the receipt posture.
+# aw_resolve_timeout_bin: builtin type -P (an exported function can shadow neither `timeout` nor
+# `type` itself), normalized to an absolute path fail-closed — the banner can never claim a cap
+# the agy-run child would not have.
+aw_banner_timeout_bin="$(aw_resolve_timeout_bin)"
+aw_timeout_banner="$(aw_timeout_label "$aw_banner_timeout_bin" "$AGY_HARD_TIMEOUT")"
+echo "review posture: model=${AGY_MODEL:-<agy settings default>} timeout=$aw_timeout_banner" >&2
 
 # --- Execute via agy-run (single home of timeout + subscription + byte ceiling) ---
 # The output is teed into the private staging dir so the mandated '### Verdict' section can be
