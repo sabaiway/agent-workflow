@@ -4,6 +4,39 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 3.2.0 — plain language + posture as code: the friction cluster shipped as mechanism (AD-061)
+
+Carrier release for a friction cluster (kit 3.2.0 bundles the bridges + shared contract + the
+plain-language template bar; memory 3.1.0, codex bridge 3.1.0, agy bridge 4.1.0 ride alongside;
+engine unbumped). The packaged fixes below ship as MECHANISM for every user, never as one agent's
+discipline.
+
+- **Shared command-shapes contract.** New `references/shared/command-shapes.md` states the
+  promptless bar for improvised reads/probes — the host's file-read tool, else ONE plain
+  undecorated command (no compounds, redirects, pipes, or command substitution; improvised writes
+  use the host's file-edit tools). Bound via the existing `Requires:` mechanism to exactly the
+  probe-instructing modes (bootstrap / upgrade / velocity, closed-world pinned) + a one-sentence
+  inline bar on the SKILL.md router stamp-read. The honest residual is stated (a decorated form is
+  host/config-dependent) — never a false "always prompts" guarantee.
+- **Plain-language §2.5 Communication bar** in BOTH deployed `agent_rules` templates,
+  byte-identically (the kit fallback deploy path communicates under the same bar): user-facing
+  narration is short and plain in the dialogue language; transliterated jargon is banned; an
+  English term survives only as the NAME of a thing (flag / command / file / test), glossed.
+  `lens-region.mjs` now reconciles a SECOND region (Communication, canon from the kit's own bundled
+  template) so EXISTING deployments gain the bar on `upgrade`, not only new bootstraps.
+- **Posture as code on the codex-exec dispatch and both review dispatches** (bridges bundled here).
+  `codex-exec` gains a D5 exec posture banner (fresh + resume, resolved post-validation values, a
+  validated resume-id grammar + raw-byte NUL screen, control-byte refusal on every field). Both
+  review banners gain a BANNER-ONLY `timeout` field — outside D5 banner↔receipt parity — from ONE
+  shared effective-timeout resolver (byte-identical across the four wrappers) that closes the old
+  env-validation bypass and resolves the timeout binary shadow-proof; no capping binary →
+  `timeout=uncapped`, never fabricated. (The raw `agy-run` probe lane keeps no posture banner —
+  out of scope this release.) The quote-the-banner-verbatim duty rides both bridges' driving
+  contracts, capability notes, and the kit registry mirror, drift-guarded by a new cross-file test;
+  the threat-model boundary is stated on the codex execute capability and `codex-exec --help`
+  surfaces, including the kit mirror. The read-only `bridge-settings` advisor mirrors the wrapper's
+  control-byte refusal semantics with escaped output.
+
 ## 3.1.0 — parallel feature worktrees v1: provision · list · land --prepare · cleanup (AD-060)
 
 New `worktrees` mode + `tools/worktrees.mjs` — several features implemented simultaneously in

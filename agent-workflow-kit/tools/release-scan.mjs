@@ -36,7 +36,10 @@ const ATTRIBUTION = [
   { re: /authored[- ]by[: ][^\n]{0,40}\b(claude|chatgpt|gemini|copilot)\b/i, label: 'AI authorship attribution' },
 ];
 const REVIEWER_IDENTITY = [
+  // backend-then-round: a bridge name, a separator, then r<N> (with optional +/round suffixes).
   { re: /\b(?:agy|codex)(?:\s+|-)r\d+(?:(?:\+|\/)r?\d+)*(?:-[a-z0-9]+)*\b/i, label: 'reviewer-round identity' },
+  // round-then-backend (reverse order): r<N>, a separator, then a bridge name — the release-review gap.
+  { re: /\br\d+(?:\s+|-)(?:agy|codex)\b/i, label: 'reviewer-round identity' },
 ];
 
 const allowlistCovers = (matched, allowlist) =>

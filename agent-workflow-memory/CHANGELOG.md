@@ -4,6 +4,20 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 3.1.0 — plain-language communication bar in §2.5 of the agent_rules template (AD-061)
+
+The `agent_rules.md` template's **§2.5 Communication** section gains a plain-language bar: every
+user-facing message is short, clear, and written in plain words of the dialogue language; when the
+dialogue language is not English, transliterated English jargon is banned — an English term
+survives only as the NAME of a thing (a flag / command / file / test), glossed in plain words when
+helpful; plain English stays plain for English-dialogue users.
+
+The bar is byte-identical to the kit's fallback copy of the same template (a hand-kept pair), so
+both deploy paths carry it. Existing deployments are reconciled into the bar by the kit's upgrade
+lane (not only new bootstraps); a standalone memory upgrade does not touch the §2.5 region. This is
+a COMMUNICATION contract (§2.5 of the deployed template), not a §2.x process invariant — the
+methodology engine is untouched.
+
 ## 3.0.1 — bundled reference scripts refreshed (no behavior change)
 
 PATCH rider on the kit 3.1.0 release — the publish workflow's changed-but-unbumped tooth caught

@@ -3,7 +3,7 @@
 // (tracked .gitignore > .git/info/exclude > global core.excludesFile), and the delegated-memory
 // hand-off (fresh + stale). Every test ISOLATES the git environment (per-test HOME + GIT_CONFIG_GLOBAL
 // + GIT_CONFIG_NOSYSTEM) so the host's real ~/.gitignore_global — which already hides /AGENTS.md,
-// /docs/ai/ — cannot make a real check-ignore pass/fail for host-state reasons (Review fold R2 codex#8).
+// /docs/ai/ — cannot make a real check-ignore pass/fail for host-state reasons (review fold #8).
 
 import { describe, it, before, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
