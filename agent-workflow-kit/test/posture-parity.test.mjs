@@ -59,11 +59,28 @@ for (const base of [ROOT, join(ROOT, 'agent-workflow-kit', 'bridges')]) {
 
     it('the receipt writer and the banner both ride the SAME resolved values (source-level pins)', () => {
       const agy = readFileSync(join(base, 'antigravity-cli-bridge', 'bin', 'agy-review.sh'), 'utf8');
-      assert.match(agy, /^echo "review posture: model=\$\{AGY_MODEL:-<agy settings default>\}" >&2$/m);
+      assert.match(agy, /^echo "review posture: model=\$\{AGY_MODEL:-<agy settings default>\} timeout=\$aw_timeout_banner" >&2$/m);
       assert.match(agy, /posture_json\(\)/, 'the agy receipt posture rides posture_json');
       const codex = readFileSync(join(base, 'codex-cli-bridge', 'bin', 'codex-review.sh'), 'utf8');
-      assert.match(codex, /^echo "review posture: model=\$CODEX_MODEL effort=\$CODEX_EFFORT tier=\$\{CODEX_SERVICE_TIER:-standard\}" >&2$/m);
+      assert.match(codex, /^echo "review posture: model=\$CODEX_MODEL effort=\$CODEX_EFFORT tier=\$\{CODEX_SERVICE_TIER:-standard\} timeout=\$aw_timeout_banner" >&2$/m);
       assert.match(codex, /posture_json\(\)/, 'the codex receipt posture rides posture_json');
+    });
+
+    it('codex-exec emits the D5 exec banner from RESOLVED values (source-level pin, AD-061)', () => {
+      const exec = readFileSync(join(base, 'codex-cli-bridge', 'bin', 'codex-exec.sh'), 'utf8');
+      assert.match(exec,
+        /^echo "exec posture: model=\$CODEX_MODEL effort=\$CODEX_EFFORT tier=\$\{CODEX_SERVICE_TIER:-standard\} sandbox=workspace-write session=\$aw_session_label timeout=\$aw_timeout_banner" >&2$/m);
+    });
+
+    it('timeout is BANNER-ONLY (AD-061): posture blocks gain NO timeout key; both manifests state the clause', () => {
+      const codexManifest = JSON.parse(readFileSync(join(base, 'codex-cli-bridge', 'capability.json'), 'utf8'));
+      const agyManifest = JSON.parse(readFileSync(join(base, 'antigravity-cli-bridge', 'capability.json'), 'utf8'));
+      assert.deepEqual(Object.keys(codexManifest.posture), ['model', 'effort', 'tier'], 'no timeout in the codex posture block');
+      assert.deepEqual(Object.keys(agyManifest.posture), ['model'], 'no timeout in the agy posture block');
+      for (const [name, manifest] of [['codex', codexManifest], ['agy', agyManifest]]) {
+        assert.ok(JSON.stringify(manifest).includes('banner-only'),
+          `${name} capability.json must state the banner-only timeout clause (outside D5 banner↔receipt parity)`);
+      }
     });
   });
 }

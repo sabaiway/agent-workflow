@@ -99,9 +99,13 @@ codex-review code "focus on the new reducer"     # review with extra focus
 **Honesty + posture (D4/D5):** a run whose final message has no recognized
 `Verdict: <ship|revise|rethink>` line — empty or missing output included — **exits 4 with NO
 receipt**: treat it as a *failed review to re-run*, never a fatal session error. One stderr banner
-states the actual posture (`review posture: model=… effort=… tier=…`) and the receipt records the
-same `posture {model, effort, tier}` (tier `null` on the standard tier); control bytes in a
-posture value refuse pre-spend in every mode.
+states the actual posture (`review posture: model=… effort=… tier=… timeout=…`) and the receipt
+records the same `posture {model, effort, tier}` (tier `null` on the standard tier); control bytes
+in a posture value refuse pre-spend in every mode. `codex-exec` states its posture the same way —
+ONE `exec posture: model=… effort=… tier=… sandbox=workspace-write session=fresh|resume:<id>
+timeout=…` stderr line before dispatch (the resume id validated pre-spend). The `timeout=` field
+is **banner-only** (exactly the duration handed to `timeout(1)`, or `uncapped`) — informational,
+never a receipt field. **Quote the posture banner verbatim** when labeling a dispatch.
 
 `codex exec` is headless: there is **no TTY**, so `approval_policy=never` — anything needing
 escalation is refused and reported, never interactively approved. The wrappers capture only codex's

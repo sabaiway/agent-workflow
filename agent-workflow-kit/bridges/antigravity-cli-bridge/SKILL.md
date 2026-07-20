@@ -134,10 +134,12 @@ agy-review --continue --decided @round1.md --focus "still-open items"   # round-
 
 **Honesty + posture (D4/D5):** a run with no recognized `### Verdict` section — empty output
 included — **exits 4 with NO receipt**: treat it as a *failed review to re-run*, never a fatal
-session error. One stderr banner states the actual posture (`review posture: model=…`) and the
-receipt records the same `posture {model}`; an attesting review with `AGY_MODEL` explicitly
+session error. One stderr banner states the actual posture (`review posture: model=… timeout=…`)
+and the receipt records the same `posture {model}`; an attesting review with `AGY_MODEL` explicitly
 emptied refuses pre-spend (`AGY_PROBE=1` exempt), and control bytes in a model string refuse
-pre-spend in every mode.
+pre-spend in every mode. The `timeout=` field is **banner-only** (exactly the duration `agy-run`
+hands to `timeout(1)`, or `uncapped`) — informational, never a receipt field. **Quote the posture
+banner verbatim** when labeling a dispatch.
 
 Frontier default `Gemini 3.1 Pro (High)`; **any** model is allowed (a sub-frontier one earns a
 silenceable `AGY_PROBE=1` advisory). An oversized `code` review trips the byte ceiling with trim/split

@@ -28,7 +28,7 @@ const FAKE_CODEX = [
   '{ for a in "$@"; do echo "$a"; done; } >"$CODEX_FAKE_ARGV"',
   '{ echo "HOME=${HOME:-}"; echo "CODEX_HOME=${CODEX_HOME:-}"; echo "XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-}"; echo "OPENAI_API_KEY=${OPENAI_API_KEY:-<unset>}"; echo "OPENAI_BASE_URL=${OPENAI_BASE_URL:-<unset>}"; echo "FOO_API_KEY=${FOO_API_KEY:-<unset>}"; echo "CODEX_REAL_GIT=${CODEX_REAL_GIT:-<unset>}"; } >"$CODEX_FAKE_ENV"',
   'cat >"$CODEX_FAKE_STDIN"',
-  'if [[ "${CODEX_FAKE_GIT_PROBE:-}" == "1" ]]; then { echo "realgit_env=${CODEX_REAL_GIT:-unset}"; echo "status=$(git status --short >/dev/null 2>&1; echo $?)"; echo "diff=$(git --no-pager diff >/dev/null 2>&1; echo $?)"; echo "dashC_read=$(git -C . status --short >/dev/null 2>&1; echo $?)"; echo "dashc_read=$(git -c core.pager=cat status --short >/dev/null 2>&1; echo $?)"; echo "bare=$(git >/dev/null 2>&1; echo $?)"; echo "commit=$(git commit -m x >/dev/null 2>&1; echo $?)"; echo "add=$(git add -A >/dev/null 2>&1; echo $?)"; echo "checkout=$(git checkout -- . >/dev/null 2>&1; echo $?)"; echo "unknown=$(git frobnicate >/dev/null 2>&1; echo $?)"; echo "config_read=$(git config user.name >/dev/null 2>&1; echo $?)"; echo "config_list=$(git config --list >/dev/null 2>&1; echo $?)"; echo "config_bare=$(git config >/dev/null 2>&1; echo $?)"; echo "config_write=$(git config user.name HACKED >/dev/null 2>&1; echo $?)"; echo "config_bypass=$(git config --get --add a.b v >/dev/null 2>&1; echo $?)"; echo "symref_write=$(git symbolic-ref HEAD refs/heads/x >/dev/null 2>&1; echo $?)"; echo "reflog_write=$(git reflog expire --all >/dev/null 2>&1; echo $?)"; } > "${CODEX_FAKE_GIT_RESULT:-/dev/null}" 2>&1; fi',
+  'if [[ "${CODEX_FAKE_GIT_PROBE:-}" == "1" ]]; then { echo "realgit_env=${CODEX_REAL_GIT:-unset}"; echo "status=$(git status --short >/dev/null 2>&1; echo $?)"; echo "diff=$(git --no-pager diff >/dev/null 2>&1; echo $?)"; echo "dashC_read=$(git -C . status --short >/dev/null 2>&1; echo $?)"; echo "dashc_read=$(git -c core.pager=cat status --short >/dev/null 2>&1; echo $?)"; echo "bare=$(git >/dev/null 2>&1; echo $?)"; echo "commit=$(git commit -m x >/dev/null 2>&1; echo $?)"; echo "add=$(git add -A >/dev/null 2>&1; echo $?)"; echo "checkout=$(git checkout -- . >/dev/null 2>&1; echo $?)"; echo "unknown=$(git frobnicate >/dev/null 2>&1; echo $?)"; echo "config_read=$(git config user.name >/dev/null 2>&1; echo $?)"; echo "config_list=$(git config --list >/dev/null 2>&1; echo $?)"; echo "config_bare=$(git config >/dev/null 2>&1; echo $?)"; echo "config_write=$(git config user.name HACKED >/dev/null 2>&1; echo $?)"; echo "config_bypass=$(git config --get --add a.b v >/dev/null 2>&1; echo $?)"; echo "symref_write=$(git symbolic-ref HEAD refs/heads/x >/dev/null 2>&1; echo $?)"; echo "reflog_write=$(git reflog expire --all >/dev/null 2>&1; echo $?)"; echo "cdaway=$(cd / && git --version >/dev/null 2>&1; echo $?)"; } > "${CODEX_FAKE_GIT_RESULT:-/dev/null}" 2>&1; fi',
   'if [[ -n "${CODEX_FAKE_SLEEP:-}" ]]; then sleep "${CODEX_FAKE_SLEEP}"; fi',
   'out=""',
   'prev=""',
@@ -1267,6 +1267,216 @@ describe('codex-exec.sh — settings surface ⟷ manifest (D6, manifest-pinned)'
         assert.ok(arm[1].includes('$dur_re'), `${s.key}: duration grammar not pinned`);
         assert.ok(arm[1].includes('$zero_re'), `${s.key}: zero-duration rejection not pinned (timeout 0 disables the cap)`);
       }
+    }
+  });
+});
+
+describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', () => {
+  const banners = (stderr) => stderr.split('\n').filter((l) => l.startsWith('exec posture: '));
+
+  it('ONE banner line carries the ACTUAL {model, effort, tier, sandbox, session, timeout} on a fresh run', () => {
+    const sb = makeSandbox();
+    const r = run(sb, {});
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    const lines = banners(r.stderr);
+    assert.equal(lines.length, 1, 'EXACTLY ONE banner line per run');
+    assert.equal(lines[0],
+      'exec posture: model=gpt-5.6-sol effort=xhigh tier=standard sandbox=workspace-write session=fresh timeout=3600s');
+  });
+
+  it('an ARMED Fast tier rides the banner (tier=priority)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_SERVICE_TIER: 'priority' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /^exec posture: .* tier=priority .*$/m);
+  });
+
+  it('a resume banner carries the RESOLVED session id (explicit --resume)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['--resume', 'sess-xyz', '-'] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    const lines = banners(r.stderr);
+    assert.equal(lines.length, 1, 'EXACTLY ONE banner line on resume too');
+    assert.match(lines[0], / session=resume:sess-xyz /, 'the banner names the resolved id');
+  });
+
+  it('--resume-last resolves the sidecar id into the banner', () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.repo, '.codex-last-session'), 'sess-from-sidecar\n');
+    const r = run(sb, { args: ['--resume-last', '-'] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, / session=resume:sess-from-sidecar /);
+  });
+
+  it('a HOSTILE/malformed EXPLICIT session id refuses pre-spend (no codex invocation)', () => {
+    for (const hostile of ['evil;rm -rf /', 'a b', `x${String.fromCharCode(1)}y`]) {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['--resume', hostile, '-'] });
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.notEqual(r.status, 0, `must refuse: ${JSON.stringify(hostile)}`);
+      assert.equal(r.capStdin, '', 'codex is never invoked');
+      assert.match(r.stderr, /session id/i, 'named as the session-id class');
+    }
+  });
+
+  it('a HOSTILE SIDECAR-READ session id refuses pre-spend the same way', () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.repo, '.codex-last-session'), 'evil$(touch pwned)\n');
+    const r = run(sb, { args: ['--resume-last', '-'] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.notEqual(r.status, 0);
+    assert.equal(r.capStdin, '', 'codex is never invoked');
+    assert.match(r.stderr, /session id/i);
+  });
+
+  it('a FLAG-SHAPED sidecar id (leading dash) refuses at the grammar — never reaches codex as an option', () => {
+    for (const bad of ['--last\n', '-x\n']) {
+      const sb = makeSandbox();
+      writeFileSync(join(sb.repo, '.codex-last-session'), bad);
+      const r = run(sb, { args: ['--resume-last', '-'] });
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.notEqual(r.status, 0, `must refuse: ${JSON.stringify(bad)}`);
+      assert.equal(r.capStdin, '', 'codex is never invoked');
+      assert.match(r.stderr, /session id/i, 'refused at the grammar, never parsed as a codex option');
+    }
+  });
+
+  it('a sidecar carrying a NUL byte refuses pre-spend — bash would silently repair it into a valid id', () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.repo, '.codex-last-session'), Buffer.from('sess-\0target\n', 'binary'));
+    const r = run(sb, { args: ['--resume-last', '-'] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.notEqual(r.status, 0);
+    assert.equal(r.capStdin, '', 'codex is never invoked');
+    assert.match(r.stderr, /NUL/i, 'named as the NUL class — the raw bytes are checked before the shell variable');
+  });
+
+  it('a valid id containing the ASCII digit 0 gets no false NUL refusal', () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.repo, '.codex-last-session'), 'sess-01\n');
+    const r = run(sb, { args: ['--resume-last', '-'] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, / session=resume:sess-01 /);
+  });
+
+  it('a sidecar id with inner WHITESPACE refuses — never silently repaired into a different id', () => {
+    for (const bad of ['sess bad\n', 'sess\tbad\n']) {
+      const sb = makeSandbox();
+      writeFileSync(join(sb.repo, '.codex-last-session'), bad);
+      const r = run(sb, { args: ['--resume-last', '-'] });
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.notEqual(r.status, 0, `must refuse: ${JSON.stringify(bad)}`);
+      assert.equal(r.capStdin, '', 'codex is never invoked');
+      assert.match(r.stderr, /session id/i, 'the grammar refusal fires — the id is never whitespace-stripped into validity');
+    }
+  });
+
+  it('a banner field carrying CONTROL BYTES refuses pre-spend (model / effort / tier / timeout / DEL)', () => {
+    const cases = [
+      { CODEX_MODEL: `gpt-5.6-sol${String.fromCharCode(1)}` },
+      { CODEX_EFFORT: `xhigh${String.fromCharCode(2)}` },
+      { CODEX_SERVICE_TIER: `priority${String.fromCharCode(3)}` },
+      { CODEX_HARD_TIMEOUT: `3600${String.fromCharCode(4)}` },
+      { CODEX_MODEL: `gpt-5.6-sol${String.fromCharCode(127)}` },
+    ];
+    for (const env of cases) {
+      const sb = makeSandbox();
+      const r = run(sb, { env });
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.notEqual(r.status, 0, `must refuse: ${JSON.stringify(env)}`);
+      assert.equal(r.capStdin, '', 'codex is never invoked');
+      assert.match(r.stderr, /control/i, 'named as the control-byte class');
+    }
+  });
+
+  it('timeout honesty: no timeout/gtimeout on PATH → timeout=uncapped, never a fabricated number', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { path: `${sb.bin}:${farmFor(['timeout', 'gtimeout'])}` });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /^exec posture: .* timeout=uncapped$/m);
+  });
+
+  it('an EXPORTED shell function shadowing timeout never fools the banner (type -P discipline)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, {
+      path: `${sb.bin}:${farmFor(['timeout', 'gtimeout'])}`,
+      env: { 'BASH_FUNC_timeout%%': '() { return 0; }' },
+    });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /^exec posture: .* timeout=uncapped$/m, 'a shell function is not a capping binary');
+  });
+
+  it('an EXPORTED `type` function faking a path never fools the resolver (builtin type discipline)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, {
+      path: `${sb.bin}:${farmFor(['timeout', 'gtimeout'])}`,
+      env: { 'BASH_FUNC_type%%': '() { echo /fake/timeout; }' },
+    });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /^exec posture: .* timeout=uncapped$/m, 'builtin type bypasses an exported type function');
+  });
+
+  it('a RELATIVE first PATH git entry + shadowed dirname/basename still bakes an ABSOLUTE real git into the shim', () => {
+    const sb = makeSandbox();
+    const realGit = (process.env.PATH || '').split(':').filter(Boolean).map((d) => join(d, 'git')).find((p) => existsSync(p));
+    assert.ok(realGit, 'a real git exists on PATH');
+    mkdirSync(join(sb.repo, 'relgit'), { recursive: true });
+    writeFileSync(join(sb.repo, 'relgit', 'git'), `#!/usr/bin/env bash\nexec ${realGit} "$@"\n`, { mode: 0o755 });
+    const gitResult = join(sb.repo, '.cap-git');
+    const r = run(sb, {
+      path: `relgit:${sb.bin}:${process.env.PATH}`,
+      env: {
+        CODEX_FAKE_GIT_PROBE: '1',
+        CODEX_FAKE_GIT_RESULT: gitResult,
+        'BASH_FUNC_dirname%%': '() { echo /shadowed; }',
+        'BASH_FUNC_basename%%': '() { echo shadowed; }',
+      },
+    });
+    const probe = existsSync(gitResult) ? readFileSync(gitResult, 'utf8') : '';
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(probe, /cdaway=0/, 'the shim git works from a different cwd — the embedded path is absolute, shadow-proof');
+  });
+
+  it('a RELATIVE PATH entry still yields an ABSOLUTE capping binary (the stub sees an absolute $0)', () => {
+    const sb = makeSandbox();
+    mkdirSync(join(sb.repo, 'relbin'), { recursive: true });
+    const cap = join(sb.repo, '.stub-argv0');
+    writeFileSync(join(sb.repo, 'relbin', 'timeout'), [
+      '#!/usr/bin/env bash',
+      'echo "$0" >"$TIMEOUT_STUB_CAP"',
+      'while [[ "$1" == --* ]]; do shift; done',
+      'shift',
+      'exec "$@"',
+      '',
+    ].join('\n'), { mode: 0o755 });
+    const r = run(sb, {
+      path: `relbin:${sb.bin}:${farmFor(['timeout', 'gtimeout'])}`,
+      env: { TIMEOUT_STUB_CAP: cap },
+    });
+    const argv0 = existsSync(cap) ? readFileSync(cap, 'utf8').trim() : '';
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /^exec posture: .* timeout=3600s$/m, 'the relative-PATH binary still caps the run');
+    assert.ok(argv0.startsWith('/'), `the stub must be invoked by ABSOLUTE path, got: ${JSON.stringify(argv0)}`);
+  });
+
+  it('an INVALID effective CODEX_HARD_TIMEOUT (env — the closed aw_settings_valid bypass) warns and falls back to the default', () => {
+    for (const bad of ['abc', '0', '999999999']) {
+      const sb = makeSandbox();
+      const r = run(sb, { env: { CODEX_HARD_TIMEOUT: bad } });
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stderr, new RegExp(`invalid value '${bad}' for CODEX_HARD_TIMEOUT`), 'the fallback is loud');
+      assert.match(r.stderr, /^exec posture: .* timeout=3600s$/m, 'the banner prints the built-in default, never the bad value');
     }
   });
 });

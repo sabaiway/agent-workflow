@@ -36,7 +36,7 @@
 #   codex-exec <file|-> -- <extra codex flags...>    # passthrough codex flags
 #   codex-exec --resume-last <file|->                # continue the last session (iterate, no re-send)
 #   codex-exec --resume <session-id> <file|->        # continue a specific session
-#   CODEX_HARD_TIMEOUT=2h codex-exec <file>          # raise the hard wall-clock cap
+#   CODEX_HARD_TIMEOUT=7200 codex-exec <file>        # raise the hard wall-clock cap (integer seconds)
 #   CODEX_PROBE=1 CODEX_MODEL=<slug> codex-exec <file>   # throwaway probe (relaxes the guard)
 set -euo pipefail
 
@@ -72,6 +72,20 @@ Notes:
   nested inside a harness sandbox (the FS turns read-only) — route it OUTSIDE the harness sandbox
   (excludedCommands / a per-run consented bypass) on the OBSERVED bwrap/EPERM failure, never a
   preemptive blanket
+  exec posture banner: ONE stderr line before dispatch states the ACTUAL run posture —
+  exec posture: model=… effort=… tier=… sandbox=workspace-write session=fresh|resume:<id> timeout=… —
+  from RESOLVED post-validation values; the resume id is validated pre-spend, and control bytes in
+  any banner field refuse pre-spend
+  threat model: the sidecar byte and grammar screens detect corrupted input under a trusted parent
+  environment. A hostile parent environment — including exported shell functions or PATH
+  substitution of core/backend commands — is outside the threat model and can substitute the
+  backend itself. Targeted shadow-proof resolution protects banner/dispatch honesty from accidental
+  shadowing; it is not an environment security boundary
+  the exec posture banner appends a banner-only timeout=<duration|uncapped> field — exactly the
+  duration handed to timeout(1), uncapped when no timeout/gtimeout binary caps the run;
+  INFORMATIONAL only: it is never persisted in a receipt or session sidecar
+  quote the posture banner verbatim when labeling this dispatch — the banner is the machine-stated
+  posture; a prose re-type drifts
 
 Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):
   ${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf
@@ -193,6 +207,56 @@ aw_apply_settings() {
 }
 aw_apply_settings
 
+# --- Effective-timeout resolver (D5 banner honesty; AD-061) --------------------
+# ONE rule, both bridges: the posture banner prints EXACTLY the duration handed to timeout(1) —
+# an integer-seconds value rendered with the `s` suffix, a duration string verbatim — and
+# `timeout=uncapped` when no timeout/gtimeout binary can cap the run; never a fabricated number.
+# The EFFECTIVE value (env included — closing the aw_settings_valid env bypass) is validated by
+# the same per-key rule as the settings file, plus a 7-digit integer-part bound (overflow); an
+# invalid value warns + falls back to the built-in default — a typo never silently masquerades
+# as a cap. AGY_TIMEOUT shares AGY_HARD_TIMEOUT's duration rule (it has no settings-file arm).
+aw_effective_timeout() {
+  local key="$1" default="$2" value="${!1:-}" rule="$1" intpart
+  [[ "$rule" == "AGY_TIMEOUT" ]] && rule="AGY_HARD_TIMEOUT"
+  [[ -n "$value" ]] || { printf '%s' "$default"; return 0; }
+  intpart="${value%%[!0-9]*}"
+  if ! aw_settings_valid "$rule" "$value" || (( ${#intpart} > 7 )); then
+    # %q escapes the raw value so a control byte in it can never forge an extra diagnostic line
+    # (the direct agy-run lane has no pre-spend screen — the warning itself must be injection-proof).
+    printf "warning: invalid value '%q' for %s — using the built-in default %s.\n" "$value" "$key" "$default" >&2
+    printf '%s' "$default"
+    return 0
+  fi
+  printf '%s' "$value"
+}
+aw_timeout_label() {
+  local bin="$1" value="$2"
+  [[ -n "$bin" ]] || { printf 'uncapped'; return 0; }
+  case "$value" in
+    *[!0-9]*) printf '%s' "$value" ;;
+    *) printf '%ss' "$value" ;;
+  esac
+}
+aw_resolve_timeout_bin() {
+  local bin dir base
+  bin="$(builtin type -P timeout 2>/dev/null || true)"
+  [[ -n "$bin" ]] || bin="$(builtin type -P gtimeout 2>/dev/null || true)"
+  [[ -n "$bin" ]] || { printf ''; return 0; }
+  case "$bin" in
+    /*) ;;
+    *)
+      case "$bin" in
+        */*) dir="${bin%/*}"; base="${bin##*/}" ;;
+        *) dir="."; base="$bin" ;;
+      esac
+      dir="$(builtin cd -- "$dir" 2>/dev/null && builtin pwd -P)" || { printf ''; return 0; }
+      bin="$dir/$base"
+      ;;
+  esac
+  [[ -f "$bin" && -x "$bin" ]] || { printf ''; return 0; }
+  printf '%s' "$bin"
+}
+
 DEFAULT_CODEX_MODEL="gpt-5.6-sol"   # frontier coding model (verified locally) — pinned
 DEFAULT_CODEX_EFFORT="xhigh"    # maximum reasoning effort — pinned
 CODEX_MODEL="${CODEX_MODEL:-$DEFAULT_CODEX_MODEL}"
@@ -209,6 +273,15 @@ CODEX_HARD_TIMEOUT="${CODEX_HARD_TIMEOUT:-3600}"
 # the wrapper validates the effective value: an unsupported one warns and runs on the standard
 # tier — a typo can never silently masquerade as Fast.
 CODEX_SERVICE_TIER="${CODEX_SERVICE_TIER:-}"
+# D5 pre-spend control-byte screen — BEFORE tier validation (the codex-review.sh order: a
+# malformed value is not a policy question). Screens EVERY exec-banner field.
+for _posture_pair in "CODEX_MODEL=$CODEX_MODEL" "CODEX_EFFORT=$CODEX_EFFORT" "CODEX_SERVICE_TIER=$CODEX_SERVICE_TIER" "CODEX_HARD_TIMEOUT=$CODEX_HARD_TIMEOUT"; do
+  if [[ "${_posture_pair#*=}" == *[$'\x01'-$'\x1f'$'\x7f']* ]]; then
+    echo "error: ${_posture_pair%%=*} contains control bytes — fix the setting (env or bridge-settings.conf) and re-run." >&2
+    exit 2
+  fi
+done
+CODEX_HARD_TIMEOUT="$(aw_effective_timeout CODEX_HARD_TIMEOUT 3600)"
 if [[ -n "$CODEX_SERVICE_TIER" ]] && ! aw_settings_valid CODEX_SERVICE_TIER "$CODEX_SERVICE_TIER"; then
   echo "warning: CODEX_SERVICE_TIER='$CODEX_SERVICE_TIER' is not a supported service tier ('priority') — running on the standard tier." >&2
   CODEX_SERVICE_TIER=""
@@ -257,14 +330,27 @@ fi
 # Resolve the real git to an ABSOLUTE executable, ignoring shell functions/aliases
 # (`type -P` forces a PATH lookup). The shim embeds this path so codex cannot recurse
 # into the shim or delegate to the wrong binary.
-real_git="$(type -P git 2>/dev/null || true)"
+real_git="$(builtin type -P git 2>/dev/null || true)"
 if [[ -z "$real_git" ]]; then
   echo "error: 'git' not found on PATH (needed for the work tree and the git-write boundary shim)." >&2
   exit 127
 fi
+# Normalize a relative-PATH hit to an ABSOLUTE path with the same shadow-proof discipline as
+# aw_resolve_timeout_bin: parameter-expansion split (no external dirname/basename an exported
+# function could shadow), builtin cd/pwd -P, fail-closed to empty (the -x check below STOPs).
 case "$real_git" in
   /*) ;;
-  *)  real_git="$(cd "$(dirname "$real_git")" 2>/dev/null && pwd)/$(basename "$real_git")" ;;
+  *)
+    case "$real_git" in
+      */*) _git_dir="${real_git%/*}"; _git_base="${real_git##*/}" ;;
+      *) _git_dir="."; _git_base="$real_git" ;;
+    esac
+    if _git_dir="$(builtin cd -- "$_git_dir" 2>/dev/null && builtin pwd -P)"; then
+      real_git="$_git_dir/$_git_base"
+    else
+      real_git=""
+    fi
+    ;;
 esac
 if [[ ! -x "$real_git" ]]; then
   echo "error: resolved git path '$real_git' is not an executable." >&2
@@ -363,11 +449,36 @@ if [[ -n "$resume_mode" ]]; then
       echo "       Run a normal 'codex-exec' once (it records the session id there) before resuming." >&2
       exit 2
     fi
-    resume_id="$(head -n1 -- "$sidecar" | tr -d '[:space:]')"
-    if [[ -z "$resume_id" ]]; then
+    # RAW-byte NUL screen BEFORE the shell variable: bash command substitution silently DROPS
+    # NUL bytes, so a hostile `sess-\0target` would otherwise be repaired into a valid id.
+    nul_count="$(head -n1 -- "$sidecar" | LC_ALL=C tr -cd '\000' | wc -c)"
+    if (( nul_count != 0 )); then
+      echo "error: the session sidecar '$sidecar' carries NUL bytes — refusing before any spend; delete it or pass --resume <session-id>." >&2
+      exit 2
+    fi
+    # Read the first line WITHOUT content mutation — only a CRLF terminator is stripped. A
+    # whitespace-ONLY line is an empty sidecar; inner whitespace beside real content hits the
+    # session-id grammar below and REFUSES — it is never silently stripped into a different
+    # (accidentally valid) id.
+    resume_id="$(head -n1 -- "$sidecar")"
+    resume_id="${resume_id%$'\r'}"
+    if [[ -z "${resume_id//[[:space:]]/}" ]]; then
       echo "error: the session sidecar '$sidecar' is empty — no session id to resume." >&2
       exit 2
     fi
+  fi
+  # Resume-id grammar (AD-061, derived from live codex ids — UUID-like and sess-* forms alike):
+  # a safe charset + length bound, FIRST char alphanumeric (a leading dash would reach
+  # `codex exec resume` as an OPTION, bypassing the guarded passthrough). A hostile/malformed
+  # id — explicit OR sidecar-read — refuses BEFORE any spend and before the id can reach the
+  # codex argv; the raw value is never echoed (it could carry control bytes).
+  aw_session_id_re='^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
+  if [[ ! "$resume_id" =~ $aw_session_id_re ]]; then
+    echo "error: the resolved session id is not a valid codex session id (letters, digits, dot," >&2
+    echo "       underscore, hyphen; must START with a letter or digit; 1-128 chars) — refusing" >&2
+    echo "       before any spend. If it came from the sidecar, the file may be corrupted —" >&2
+    echo "       delete it or pass --resume <session-id>." >&2
+    exit 2
   fi
 else
   # Normal mode: split off passthrough codex flags after a literal `--`. Extra args
@@ -541,16 +652,23 @@ run_env=(env "PATH=$shim_dir:$PATH")
 # after the initial TERM if codex ignores it (a live probe confirmed plain
 # `timeout` reaps the whole codex child tree — no --foreground needed). If neither
 # binary exists we warn loudly and run uncapped rather than fail silently.
-timeout_bin=""
-if command -v timeout >/dev/null 2>&1; then
-  timeout_bin="timeout"
-elif command -v gtimeout >/dev/null 2>&1; then
-  timeout_bin="gtimeout"
-fi
+# aw_resolve_timeout_bin: builtin type -P (an exported function can shadow neither `timeout` nor
+# `type` itself), normalized to an ABSOLUTE path fail-closed — the dispatch invokes the same
+# absolute path the banner rendered from (banner and run never make independent conclusions).
+timeout_bin="$(aw_resolve_timeout_bin)"
 if [[ -z "$timeout_bin" ]]; then
   echo "warning: no 'timeout'/'gtimeout' on PATH — running codex WITHOUT a hard wall-clock cap" >&2
   echo "         (install coreutils to enable CODEX_HARD_TIMEOUT=$CODEX_HARD_TIMEOUT)." >&2
 fi
+
+# --- D5 exec banner (one line, the ACTUAL run posture; AD-061) -----------------
+# Emitted from RESOLVED post-validation values, AFTER the resume id is resolved and validated,
+# BEFORE the dispatch. The timeout field is banner-only (never a receipt/sidecar field): it
+# prints exactly the duration handed to timeout(1), or `uncapped` without a capping binary.
+aw_timeout_banner="$(aw_timeout_label "$timeout_bin" "$CODEX_HARD_TIMEOUT")"
+aw_session_label="fresh"
+[[ -n "$resume_mode" ]] && aw_session_label="resume:$resume_id"
+echo "exec posture: model=$CODEX_MODEL effort=$CODEX_EFFORT tier=${CODEX_SERVICE_TIER:-standard} sandbox=workspace-write session=$aw_session_label timeout=$aw_timeout_banner" >&2
 
 # Normal mode: -o writes $out, the JSON stream + logs go to $trace. Resume mode: the
 # final message is codex's stdout → $out, logs → $trace. Either way the final lands

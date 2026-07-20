@@ -180,6 +180,56 @@ aw_apply_settings() {
 }
 aw_apply_settings
 
+# --- Effective-timeout resolver (D5 banner honesty; AD-061) --------------------
+# ONE rule, both bridges: the posture banner prints EXACTLY the duration handed to timeout(1) —
+# an integer-seconds value rendered with the `s` suffix, a duration string verbatim — and
+# `timeout=uncapped` when no timeout/gtimeout binary can cap the run; never a fabricated number.
+# The EFFECTIVE value (env included — closing the aw_settings_valid env bypass) is validated by
+# the same per-key rule as the settings file, plus a 7-digit integer-part bound (overflow); an
+# invalid value warns + falls back to the built-in default — a typo never silently masquerades
+# as a cap. AGY_TIMEOUT shares AGY_HARD_TIMEOUT's duration rule (it has no settings-file arm).
+aw_effective_timeout() {
+  local key="$1" default="$2" value="${!1:-}" rule="$1" intpart
+  [[ "$rule" == "AGY_TIMEOUT" ]] && rule="AGY_HARD_TIMEOUT"
+  [[ -n "$value" ]] || { printf '%s' "$default"; return 0; }
+  intpart="${value%%[!0-9]*}"
+  if ! aw_settings_valid "$rule" "$value" || (( ${#intpart} > 7 )); then
+    # %q escapes the raw value so a control byte in it can never forge an extra diagnostic line
+    # (the direct agy-run lane has no pre-spend screen — the warning itself must be injection-proof).
+    printf "warning: invalid value '%q' for %s — using the built-in default %s.\n" "$value" "$key" "$default" >&2
+    printf '%s' "$default"
+    return 0
+  fi
+  printf '%s' "$value"
+}
+aw_timeout_label() {
+  local bin="$1" value="$2"
+  [[ -n "$bin" ]] || { printf 'uncapped'; return 0; }
+  case "$value" in
+    *[!0-9]*) printf '%s' "$value" ;;
+    *) printf '%ss' "$value" ;;
+  esac
+}
+aw_resolve_timeout_bin() {
+  local bin dir base
+  bin="$(builtin type -P timeout 2>/dev/null || true)"
+  [[ -n "$bin" ]] || bin="$(builtin type -P gtimeout 2>/dev/null || true)"
+  [[ -n "$bin" ]] || { printf ''; return 0; }
+  case "$bin" in
+    /*) ;;
+    *)
+      case "$bin" in
+        */*) dir="${bin%/*}"; base="${bin##*/}" ;;
+        *) dir="."; base="$bin" ;;
+      esac
+      dir="$(builtin cd -- "$dir" 2>/dev/null && builtin pwd -P)" || { printf ''; return 0; }
+      bin="$dir/$base"
+      ;;
+  esac
+  [[ -f "$bin" && -x "$bin" ]] || { printf ''; return 0; }
+  printf '%s' "$bin"
+}
+
 if ! command -v agy >/dev/null 2>&1; then
   echo "error: 'agy' (Antigravity CLI) not found on PATH. Install it and run 'agy' once to sign in." >&2
   exit 127
@@ -188,11 +238,13 @@ fi
 # `-` (empty) => skip --model and let agy use settings.json; default to Pro.
 AGY_MODEL="${AGY_MODEL-Gemini 3.1 Pro (High)}"
 AGY_TIMEOUT="${AGY_TIMEOUT:-5m}"
+AGY_TIMEOUT="$(aw_effective_timeout AGY_TIMEOUT 5m)"
 # Hard wall-clock cap (defaults to AGY_TIMEOUT). agy's own --print-timeout is NOT a reliable
 # wall-clock kill — a run was observed surviving 32 min past a 10m --print-timeout — so we also wrap
 # agy in timeout(1). A heavy `--add-dir` agentic prompt on the slowest model can otherwise run
 # unbounded, and once a caller backgrounds it nothing kills it. Raise only for a known-healthy run.
 AGY_HARD_TIMEOUT="${AGY_HARD_TIMEOUT:-$AGY_TIMEOUT}"
+AGY_HARD_TIMEOUT="$(aw_effective_timeout AGY_HARD_TIMEOUT "$AGY_TIMEOUT")"
 
 if [[ $# -lt 1 ]]; then
   echo "usage: $0 <prompt | - | @file> [-- extra agy flags...]" >&2
@@ -273,12 +325,9 @@ agy_cmd=(agy "${model_flag[@]}" --print-timeout "$AGY_TIMEOUT" "${passthrough[@]
 
 # Hard wall-clock cap via timeout(1) (GNU `timeout` on Linux, `gtimeout` from coreutils on macOS).
 # This is the real guard — a backgrounded, hung agy survives its own --print-timeout otherwise.
-timeout_bin=""
-if command -v timeout >/dev/null 2>&1; then
-  timeout_bin="timeout"
-elif command -v gtimeout >/dev/null 2>&1; then
-  timeout_bin="gtimeout"
-fi
+# aw_resolve_timeout_bin: builtin type -P (an exported function can shadow neither `timeout` nor
+# `type` itself), normalized to an ABSOLUTE path fail-closed — nothing can masquerade as the cap.
+timeout_bin="$(aw_resolve_timeout_bin)"
 
 if [[ -z "$timeout_bin" ]]; then
   echo "warning: no 'timeout'/'gtimeout' on PATH — running agy WITHOUT a hard wall-clock cap" >&2

@@ -27,6 +27,17 @@ model or effort for a real run — the wrapper will stop you. Quota is metered i
 never from a downgrade. The only opt-out is a throwaway, effort-independent probe: `CODEX_PROBE=1`
 (loud) — never use its output as real work.
 
+## Posture banners — quote them verbatim
+
+Every dispatch states its ACTUAL posture on ONE stderr line: `codex-exec` emits
+`exec posture: model=… effort=… tier=… sandbox=workspace-write session=fresh|resume:<id> timeout=…`
+(fresh and resume alike, only after the resume id is resolved and validated), `codex-review` emits
+`review posture: model=… effort=… tier=… timeout=…`. When you label a dispatch for a user or a
+record, **quote the posture banner verbatim** — the banner is the machine-stated posture; a prose
+re-type drifts. The `timeout=` field is **banner-only** (exactly the duration handed to
+`timeout(1)`, or `uncapped` when no capping binary is on PATH) — informational, never part of a
+receipt or the banner↔receipt parity.
+
 ## Exec vs review
 
 Use **`codex-exec`** when there is a concrete plan or focused instruction to implement, the project

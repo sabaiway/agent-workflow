@@ -89,6 +89,11 @@ What it does for you, and what YOU must supply:
 - **Model:** frontier default `Gemini 3.1 Pro (High)`; any model is allowed (a sub-frontier one earns a
   silenceable `AGY_PROBE=1` advisory). The service can still **stall on large/substantive prompts**
   (Issue-001) — keep reviews **focused**; the hard timeout is the guard.
+- **Posture banner — quote it verbatim.** Every review states its ACTUAL posture on ONE stderr line
+  (`review posture: model=… timeout=…`). When you label a dispatch for a user or a record, **quote
+  the posture banner verbatim** — the banner is the machine-stated posture; a prose re-type drifts.
+  The `timeout=` field is **banner-only** (exactly the duration `agy-run` hands to `timeout(1)`, or
+  `uncapped` when no capping binary is on PATH) — informational, never part of the receipt posture.
 
 ## Escalation policy (edits, network, git)
 

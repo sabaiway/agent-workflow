@@ -52,12 +52,57 @@ describe('settingsSnapshot — env validation mirrors the wrapper (review-bridge
     assert.deepEqual(active(settingsSnapshot(ctx({ CODEX_SERVICE_TIER: 'priority' }))), ['CODEX_SERVICE_TIER=priority[env]']);
   });
 
-  it('a NON-enum env value is the operator raw override, shown as-is (D3: no typed validation of env)', () => {
-    // CODEX_HARD_TIMEOUT env is documented timeout(1) usage — `2h` is valid env even though the FILE
-    // grammar is integer-seconds. The reader must NOT drop it (the Phase-1 refutation).
+  it('a TIMEOUT env value is validated like the wrapper resolver (AD-061 — the env bypass is closed)', () => {
+    // The AD-061 effective-timeout resolver validates the EFFECTIVE value env included — `2h` is
+    // NOT integer-seconds, so the wrapper warns and runs the built-in default; the advisor must
+    // never display a dead override as active.
     const eff = effectiveOf({ key: 'CODEX_HARD_TIMEOUT', kind: 'integer', min: 1, max: 86400, default: null }, { byKey: new Map() }, { CODEX_HARD_TIMEOUT: '2h' });
-    assert.deepEqual(eff, { value: '2h', source: 'env' });
-    assert.deepEqual(active(settingsSnapshot(ctx({ CODEX_HARD_TIMEOUT: '2h' }))), ['CODEX_HARD_TIMEOUT=2h[env]']);
+    assert.equal(eff.source, 'default');
+    assert.match(eff.note, /env value "2h" is invalid for CODEX_HARD_TIMEOUT/);
+    assert.deepEqual(active(settingsSnapshot(ctx({ CODEX_HARD_TIMEOUT: '2h' }))), []);
+    // A VALID timeout env value stays an active env override.
+    assert.deepEqual(active(settingsSnapshot(ctx({ CODEX_HARD_TIMEOUT: '7200' }))), ['CODEX_HARD_TIMEOUT=7200[env]']);
+    // The resolver's overflow bound rides along for timeout keys (8-digit integer part).
+    const agy = effectiveOf({ key: 'AGY_HARD_TIMEOUT', kind: 'duration', default: '30m' }, { byKey: new Map() }, { AGY_HARD_TIMEOUT: '99999999m' });
+    assert.equal(agy.source, 'default');
+  });
+
+  it('a NON-timeout non-enum env value stays the operator raw override (the wrappers do not resolver-validate it)', () => {
+    // CODEX_REVIEW_MAX_TOTAL_BYTES has no effective-value resolver in the wrappers — the advisor
+    // mirrors wrapper behavior, so a raw env override is shown as-is.
+    const eff = effectiveOf({ key: 'CODEX_REVIEW_MAX_TOTAL_BYTES', kind: 'integer', min: 1, max: 100000000, default: '1500000' }, { byKey: new Map() }, { CODEX_REVIEW_MAX_TOTAL_BYTES: 'weird' });
+    assert.deepEqual(eff, { value: 'weird', source: 'env' });
+  });
+});
+
+describe('effectiveOf — control bytes render a REFUSAL, never a raw byte (AD-061, review r05)', () => {
+  it('a control byte in a resolver-validated timeout key reports a pre-spend REFUSAL (the wrapper exits 2)', () => {
+    for (const c of ['\x01', '\x7f']) {
+      const eff = effectiveOf({ key: 'CODEX_HARD_TIMEOUT', kind: 'integer', min: 1, max: 86400, default: null }, { byKey: new Map() }, { CODEX_HARD_TIMEOUT: `1800${c}` });
+      assert.equal(eff.source, 'default');
+      assert.match(eff.note, /REFUSES the run pre-spend/, 'a control byte is a refusal, never a benign fallback');
+      assert.doesNotMatch(eff.note, /[\x01-\x1f\x7f]/, 'the note carries NO raw control byte');
+    }
+  });
+
+  it('a control byte in the enum tier key ALSO reports a pre-spend REFUSAL (the wrapper screens it)', () => {
+    const eff = effectiveOf({ key: 'CODEX_SERVICE_TIER', kind: 'enum', values: ['priority'], default: null }, { byKey: new Map() }, { CODEX_SERVICE_TIER: `priority\x01` });
+    assert.equal(eff.source, 'default');
+    assert.match(eff.note, /REFUSES the run pre-spend/);
+    assert.doesNotMatch(eff.note, /[\x01-\x1f\x7f]/);
+  });
+
+  it('a plain (non-control) invalid tier stays a standard-tier fallback, value shown safely', () => {
+    const eff = effectiveOf({ key: 'CODEX_SERVICE_TIER', kind: 'enum', values: ['priority'], default: null }, { byKey: new Map() }, { CODEX_SERVICE_TIER: 'turbo' });
+    assert.equal(eff.source, 'default');
+    assert.match(eff.note, /not a supported/);
+  });
+
+  it('an invalid FILE value carrying a control byte is escaped in the note (no raw byte from a file line)', () => {
+    const parsed = { byKey: new Map([['AGY_HARD_TIMEOUT', [{ value: 'x\x01' }]]]) };
+    const eff = effectiveOf({ key: 'AGY_HARD_TIMEOUT', kind: 'duration', default: '30m' }, parsed, {});
+    assert.equal(eff.source, 'default');
+    assert.doesNotMatch(eff.note, /[\x01-\x1f\x7f]/, 'the file-invalid note carries NO raw control byte');
   });
 });
 

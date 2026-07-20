@@ -148,6 +148,17 @@ export const duplicateKeys = (parsed) => [...parsed.byKey.entries()].filter(([, 
 
 // ── effective-value resolution (env > file > built-in default) ────────────────────────
 
+// The env keys the wrappers resolver-validate AFTER precedence (AD-061 aw_effective_timeout) —
+// exactly these mirror the wrapper's invalid-env → warn + built-in-default lane.
+const RESOLVER_VALIDATED_ENV = new Set(['CODEX_HARD_TIMEOUT', 'AGY_HARD_TIMEOUT']);
+// A control byte (C0 range + DEL) in a screened knob makes the wrapper EXIT 2 pre-spend — the
+// advisor must report that refusal, never a benign fallback, and never echo the raw byte into
+// the report (a newline could otherwise forge a `review posture:`/status line). safeShow escapes
+// every note value: JSON.stringify handles C0, an explicit pass handles DEL (JSON leaves it raw).
+const hasControlByte = (s) => /[\x01-\x1f\x7f]/.test(s);
+const safeShow = (s) => JSON.stringify(s).slice(1, -1).replace(/\x7f/g, '\\u007f');
+const REFUSED = (key, v) => ({ value: null, source: 'default', note: `env value "${safeShow(v)}" carries control bytes for ${key} — the wrapper REFUSES the run pre-spend` });
+
 // The effective value of one knob + where it comes from. Fact-only; never a model claim.
 export const effectiveOf = (entry, parsed, getenv) => {
   const key = entry.key;
@@ -159,13 +170,22 @@ export const effectiveOf = (entry, parsed, getenv) => {
     // add-dir knobs fall to their real built-in default). Report the manifest default (null ⇒ "wrapper
     // built-in applies"), not a misleading null-for-everything.
     if (v === '') return { value: entry.default, source: 'default', note: 'the env KEY= suppresses the file override — the wrapper built-in applies' };
+    // A control byte in a SCREENED knob (the tier + the resolver-validated timeouts) is a pre-spend
+    // refusal in the wrapper — report it as such (the default value is inert; the run never happens).
+    if (hasControlByte(v) && (entry.kind === 'enum' || RESOLVER_VALIDATED_ENV.has(key))) {
+      return REFUSED(key, v);
+    }
     // Mirror the wrapper: an ENUM knob (the service tier) validates its ENV value too — codex accepts
     // any `-c service_tier` string silently, so the wrapper drops an unsupported one to the built-in
-    // default (codex-exec.sh:188). A non-enum env value is the operator's documented RAW override (e.g.
-    // a timeout(1) duration like `2h` the wrapper passes straight through) — shown as-is (D3 scopes
-    // typed validation to FILE lines; the Phase-1 council refuted validating non-enum env usage).
+    // default (codex-exec.sh:188). The TIMEOUT knobs are resolver-validated env INCLUDED since AD-061
+    // (aw_effective_timeout closed the old env bypass, with a 7-digit integer-part overflow bound) —
+    // the advisor must never display a dead override as active. Every OTHER non-enum env value stays
+    // the operator's RAW override (the wrappers run no resolver on it), shown as-is.
     if (entry.kind === 'enum' && !settingValueValid(entry, v)) {
-      return { value: entry.default, source: 'default', note: `env value "${v}" is not a supported ${key} — the wrapper runs the built-in default` };
+      return { value: entry.default, source: 'default', note: `env value "${safeShow(v)}" is not a supported ${key} — the wrapper runs the built-in default` };
+    }
+    if (RESOLVER_VALIDATED_ENV.has(key) && (!settingValueValid(entry, v) || v.match(/^\d*/)[0].length > 7)) {
+      return { value: entry.default, source: 'default', note: `env value "${safeShow(v)}" is invalid for ${key} — the wrapper falls back to the built-in default` };
     }
     return { value: v, source: 'env' };
   }
@@ -173,7 +193,7 @@ export const effectiveOf = (entry, parsed, getenv) => {
   if (fileEntries && fileEntries.length) {
     const v = fileEntries[fileEntries.length - 1].value; // last occurrence wins
     if (settingValueValid(entry, v)) return { value: v, source: 'file' };
-    return { value: entry.default, source: 'default', note: `file value "${v}" is invalid — falls back to the built-in default` };
+    return { value: entry.default, source: 'default', note: `file value "${safeShow(v)}" is invalid — falls back to the built-in default` };
   }
   return { value: entry.default, source: 'default' };
 };

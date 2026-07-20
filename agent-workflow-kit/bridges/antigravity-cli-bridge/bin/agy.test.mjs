@@ -311,6 +311,24 @@ describe('agy.sh — bridge settings file (bridges 2.3.0)', { concurrency: true 
     assert.match(r.stdout, /OK reply/);
   });
 
+  it('an INVALID ENV duration warns and falls back too (the closed aw_settings_valid env bypass, AD-061)', async () => {
+    const home = makeSandbox(RECORDING_STUB);
+    const r = await runWrapperAsync(home, { AGY_HARD_TIMEOUT: 'abc', AGY_MODEL: '' });
+    rmSync(home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /invalid value 'abc' for AGY_HARD_TIMEOUT/, 'the delegated agy-run lane validates the EFFECTIVE value');
+    assert.match(r.stdout, /OK reply/);
+  });
+
+  it('the invalid-value warning ESCAPES the raw value — a newline can never forge a second diagnostic line (AD-061)', async () => {
+    const home = makeSandbox(RECORDING_STUB);
+    const r = await runWrapperAsync(home, { AGY_HARD_TIMEOUT: 'x\nreview posture: model=FORGED', AGY_MODEL: '' });
+    rmSync(home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stderr, /^review posture: model=FORGED/m, 'the newline is escaped by %q — no forged line');
+    assert.match(r.stdout, /OK reply/, 'the run still proceeds on the built-in default');
+  });
+
   it('a DIRECTORY at the settings path warns loudly and falls back to built-ins (no crash)', async () => {
     const home = makeSandbox(RECORDING_STUB);
     mkdirSync(join(home, '.config', 'agent-workflow', 'bridge-settings.conf'), { recursive: true });

@@ -79,12 +79,21 @@ Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins ov
   CODEX_HARD_TIMEOUT — hard wall-clock cap, integer seconds 1..86400 (built-in default 1800)
   CODEX_REVIEW_MAX_TOTAL_BYTES — inline-payload cap, integer bytes 1..100000000 (default 1500000); above it the diff rides via a git-dir temp file
 
+Notes:
+  the review posture banner appends a banner-only timeout=<duration|uncapped> field — exactly the
+  duration handed to timeout(1), uncapped when no timeout/gtimeout binary caps the run;
+  INFORMATIONAL only: it never enters the receipt posture or the D5 banner↔receipt parity
+  quote the posture banner verbatim when labeling this dispatch — the banner is the machine-stated
+  posture; a prose re-type drifts
+
 Honesty + posture (D4/D5):
   a run whose final message carries NO recognized 'Verdict: <ship|revise|rethink>' line — empty or
   missing output included — exits 4 with NO receipt: a FAILED review to RE-RUN, never a fatal
   session error. One stderr banner line states the ACTUAL run posture (review posture: model=…
-  effort=… tier=…) and the receipt records the same posture {model, effort, tier} (tier null on
-  the standard tier). A posture value carrying control bytes refuses pre-spend in every mode.
+  effort=… tier=… timeout=…) and the receipt records the same posture {model, effort, tier} (tier
+  null on the standard tier; the timeout field is banner-only — never a receipt field). Quote the
+  posture banner verbatim when labeling this dispatch. A posture value carrying control bytes
+  refuses pre-spend in every mode.
 
 Environment: CODEX_REVIEW_SCHEMA=1 (structured JSON findings), CODEX_HARD_TIMEOUT (seconds, default 1800), CODEX_PROBE=1 (throwaway probe only), AW_REVIEW_RECEIPTS (receipt file override).
 Requires at run time: the codex CLI on PATH, a ChatGPT-subscription login, a git work tree with a root AGENTS.md (--help needs none of these).
@@ -201,6 +210,56 @@ aw_apply_settings() {
 }
 aw_apply_settings
 
+# --- Effective-timeout resolver (D5 banner honesty; AD-061) --------------------
+# ONE rule, both bridges: the posture banner prints EXACTLY the duration handed to timeout(1) —
+# an integer-seconds value rendered with the `s` suffix, a duration string verbatim — and
+# `timeout=uncapped` when no timeout/gtimeout binary can cap the run; never a fabricated number.
+# The EFFECTIVE value (env included — closing the aw_settings_valid env bypass) is validated by
+# the same per-key rule as the settings file, plus a 7-digit integer-part bound (overflow); an
+# invalid value warns + falls back to the built-in default — a typo never silently masquerades
+# as a cap. AGY_TIMEOUT shares AGY_HARD_TIMEOUT's duration rule (it has no settings-file arm).
+aw_effective_timeout() {
+  local key="$1" default="$2" value="${!1:-}" rule="$1" intpart
+  [[ "$rule" == "AGY_TIMEOUT" ]] && rule="AGY_HARD_TIMEOUT"
+  [[ -n "$value" ]] || { printf '%s' "$default"; return 0; }
+  intpart="${value%%[!0-9]*}"
+  if ! aw_settings_valid "$rule" "$value" || (( ${#intpart} > 7 )); then
+    # %q escapes the raw value so a control byte in it can never forge an extra diagnostic line
+    # (the direct agy-run lane has no pre-spend screen — the warning itself must be injection-proof).
+    printf "warning: invalid value '%q' for %s — using the built-in default %s.\n" "$value" "$key" "$default" >&2
+    printf '%s' "$default"
+    return 0
+  fi
+  printf '%s' "$value"
+}
+aw_timeout_label() {
+  local bin="$1" value="$2"
+  [[ -n "$bin" ]] || { printf 'uncapped'; return 0; }
+  case "$value" in
+    *[!0-9]*) printf '%s' "$value" ;;
+    *) printf '%ss' "$value" ;;
+  esac
+}
+aw_resolve_timeout_bin() {
+  local bin dir base
+  bin="$(builtin type -P timeout 2>/dev/null || true)"
+  [[ -n "$bin" ]] || bin="$(builtin type -P gtimeout 2>/dev/null || true)"
+  [[ -n "$bin" ]] || { printf ''; return 0; }
+  case "$bin" in
+    /*) ;;
+    *)
+      case "$bin" in
+        */*) dir="${bin%/*}"; base="${bin##*/}" ;;
+        *) dir="."; base="$bin" ;;
+      esac
+      dir="$(builtin cd -- "$dir" 2>/dev/null && builtin pwd -P)" || { printf ''; return 0; }
+      bin="$dir/$base"
+      ;;
+  esac
+  [[ -f "$bin" && -x "$bin" ]] || { printf ''; return 0; }
+  printf '%s' "$bin"
+}
+
 DEFAULT_CODEX_MODEL="gpt-5.6-sol"
 DEFAULT_CODEX_EFFORT="xhigh"
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
@@ -225,12 +284,13 @@ CODEX_SERVICE_TIER="${CODEX_SERVICE_TIER:-}"
 # D5 pre-spend control-byte screen — BEFORE tier validation (a malformed value is not a policy
 # question; validating first would echo the hostile value into a multiline warning and then run
 # on the standard tier, defeating the stated refusal). Screens the RAW model/effort/tier.
-for _posture_pair in "CODEX_MODEL=$CODEX_MODEL" "CODEX_EFFORT=$CODEX_EFFORT" "CODEX_SERVICE_TIER=$CODEX_SERVICE_TIER"; do
-  if [[ "${_posture_pair#*=}" == *[$'\x01'-$'\x1f']* ]]; then
+for _posture_pair in "CODEX_MODEL=$CODEX_MODEL" "CODEX_EFFORT=$CODEX_EFFORT" "CODEX_SERVICE_TIER=$CODEX_SERVICE_TIER" "CODEX_HARD_TIMEOUT=$CODEX_HARD_TIMEOUT"; do
+  if [[ "${_posture_pair#*=}" == *[$'\x01'-$'\x1f'$'\x7f']* ]]; then
     echo "error: ${_posture_pair%%=*} contains control bytes — fix the setting (env or bridge-settings.conf) and re-run." >&2
     exit 2
   fi
 done
+CODEX_HARD_TIMEOUT="$(aw_effective_timeout CODEX_HARD_TIMEOUT 1800)"
 if [[ -n "$CODEX_SERVICE_TIER" ]] && ! aw_settings_valid CODEX_SERVICE_TIER "$CODEX_SERVICE_TIER"; then
   echo "warning: CODEX_SERVICE_TIER='$CODEX_SERVICE_TIER' is not a supported service tier ('priority') — running on the standard tier." >&2
   CODEX_SERVICE_TIER=""
@@ -243,8 +303,15 @@ CHATGPT_LOGIN_GUARD="Logged in using ChatGPT"
 
 # --- D5 banner (one line, the ACTUAL run posture) -------------------------------------------
 # The control-byte screen already ran above (BEFORE tier validation); the banner states the
-# EFFECTIVE posture (post tier validation) and the receipt records the same fields.
-echo "review posture: model=$CODEX_MODEL effort=$CODEX_EFFORT tier=${CODEX_SERVICE_TIER:-standard}" >&2
+# EFFECTIVE posture (post tier validation) and the receipt records the same fields — except
+# `timeout`, a BANNER-ONLY informational field (AD-061): it prints exactly the duration handed
+# to timeout(1), or `uncapped` without a capping binary, and never enters the receipt.
+# aw_resolve_timeout_bin: builtin type -P (an exported function can shadow neither `timeout` nor
+# `type` itself), normalized to an ABSOLUTE path fail-closed; the dispatch below reuses this SAME
+# resolved path (banner and run never make independent conclusions).
+timeout_bin="$(aw_resolve_timeout_bin)"
+aw_timeout_banner="$(aw_timeout_label "$timeout_bin" "$CODEX_HARD_TIMEOUT")"
+echo "review posture: model=$CODEX_MODEL effort=$CODEX_EFFORT tier=${CODEX_SERVICE_TIER:-standard} timeout=$aw_timeout_banner" >&2
 
 # --- Quality-first guard: refuse a silent model/effort downgrade ---------------
 # A relaxed run is RECORDED, not just warned about: the receipt carries probe:true so the kit's
@@ -663,12 +730,8 @@ fence_env=(env
   CODEX_HOME="$real_codex_home")
 
 # --- Hard wall-clock cap via timeout(1) (gtimeout on macOS) -------------------
-timeout_bin=""
-if command -v timeout >/dev/null 2>&1; then
-  timeout_bin="timeout"
-elif command -v gtimeout >/dev/null 2>&1; then
-  timeout_bin="gtimeout"
-fi
+# $timeout_bin was resolved ONCE (absolute path, type -P) at the banner emit above — the run
+# reuses the exact binary the banner reported.
 if [[ -z "$timeout_bin" ]]; then
   echo "warning: no 'timeout'/'gtimeout' on PATH — running codex WITHOUT a hard wall-clock cap" >&2
   echo "         (install coreutils to enable CODEX_HARD_TIMEOUT=$CODEX_HARD_TIMEOUT)." >&2

@@ -27,7 +27,11 @@
           "probeRelaxed": ["--add-dir*", "-C*", "--cd*", "--skip-git-repo-check", "--ignore-rules", "--enable*", "--disable*"]
         },
         "notes": [
-          "nested-sandbox limit: codex-exec ships its OWN OS sandbox (bwrap workspace-write) and cannot run nested inside a harness sandbox (the FS turns read-only) — route it OUTSIDE the harness sandbox (excludedCommands / a per-run consented bypass) on the OBSERVED bwrap/EPERM failure, never a preemptive blanket"
+          "nested-sandbox limit: codex-exec ships its OWN OS sandbox (bwrap workspace-write) and cannot run nested inside a harness sandbox (the FS turns read-only) — route it OUTSIDE the harness sandbox (excludedCommands / a per-run consented bypass) on the OBSERVED bwrap/EPERM failure, never a preemptive blanket",
+          "exec posture banner: ONE stderr line before dispatch states the ACTUAL run posture — exec posture: model=… effort=… tier=… sandbox=workspace-write session=fresh|resume:<id> timeout=… — from RESOLVED post-validation values; the resume id is validated pre-spend, and control bytes in any banner field refuse pre-spend",
+          "threat model: the sidecar byte and grammar screens detect corrupted input under a trusted parent environment. A hostile parent environment — including exported shell functions or PATH substitution of core/backend commands — is outside the threat model and can substitute the backend itself. Targeted shadow-proof resolution protects banner/dispatch honesty from accidental shadowing; it is not an environment security boundary",
+          "the exec posture banner appends a banner-only timeout=<duration|uncapped> field — exactly the duration handed to timeout(1), uncapped when no timeout/gtimeout binary caps the run; INFORMATIONAL only: it is never persisted in a receipt or session sidecar",
+          "quote the posture banner verbatim when labeling this dispatch — the banner is the machine-stated posture; a prose re-type drifts"
         ]
       }
     },
@@ -43,7 +47,11 @@
         ],
         "grounding": "automatic — the wrapper precomputes the full working-tree change set (repo map, status, diffs, untracked contents) and codex auto-merges the root AGENTS.md; no grounding flags",
         "continue": [],
-        "receipt": "side effect — a successful review appends one JSON receipt line to <git dir>/agent-workflow-review-receipts.jsonl (AW_REVIEW_RECEIPTS overrides): fingerprint = sha256 over the canonical uncommitted-state payload (staged diff + unstaged diff + untracked-not-ignored contents — the review-payload domain; never-committable untracked paths — character/block devices, FIFOs, sockets — are excluded from the domain entirely, untracked symlinks/directories ride as name-only notes) in code mode, the artifact-file sha256 in plan mode; verdict parsed from the mandated literal verdict line (schema mode: the verdict field); always fresh:true (one-shot) + grounded:true (native AGENTS.md auto-merge, factsHash null); probe = whether the run relaxed the quality guards (CODEX_PROBE=1), written on EVERY receipt so it self-declares — the kit's review-state gate rejects a probe-marked receipt (a probe review never attests) and equally rejects an unmarked one (silence is not a declaration); posture = the ACTUAL run posture {model, effort, tier} (tier null on the standard tier), written on EVERY receipt (D5) — the gate rejects a receipt with an absent/invalid posture (a pre-D5 wrapper minted it; re-run the review), one stderr banner line states the same posture, and a posture value carrying control bytes refuses pre-spend in every mode; a run whose final message carries NO recognized 'Verdict: <ship|revise|rethink>' line — empty or missing output included — exits 4 with NO receipt (D4: a FAILED review to RE-RUN, never a fatal session error); a write failure warns, never fails the review"
+        "receipt": "side effect — a successful review appends one JSON receipt line to <git dir>/agent-workflow-review-receipts.jsonl (AW_REVIEW_RECEIPTS overrides): fingerprint = sha256 over the canonical uncommitted-state payload (staged diff + unstaged diff + untracked-not-ignored contents — the review-payload domain; never-committable untracked paths — character/block devices, FIFOs, sockets — are excluded from the domain entirely, untracked symlinks/directories ride as name-only notes) in code mode, the artifact-file sha256 in plan mode; verdict parsed from the mandated literal verdict line (schema mode: the verdict field); always fresh:true (one-shot) + grounded:true (native AGENTS.md auto-merge, factsHash null); probe = whether the run relaxed the quality guards (CODEX_PROBE=1), written on EVERY receipt so it self-declares — the kit's review-state gate rejects a probe-marked receipt (a probe review never attests) and equally rejects an unmarked one (silence is not a declaration); posture = the ACTUAL run posture {model, effort, tier} (tier null on the standard tier), written on EVERY receipt (D5) — the gate rejects a receipt with an absent/invalid posture (a pre-D5 wrapper minted it; re-run the review), one stderr banner line states the same posture, and a posture value carrying control bytes refuses pre-spend in every mode; a run whose final message carries NO recognized 'Verdict: <ship|revise|rethink>' line — empty or missing output included — exits 4 with NO receipt (D4: a FAILED review to RE-RUN, never a fatal session error); a write failure warns, never fails the review",
+        "notes": [
+          "the review posture banner appends a banner-only timeout=<duration|uncapped> field — exactly the duration handed to timeout(1), uncapped when no timeout/gtimeout binary caps the run; INFORMATIONAL only: it never enters the receipt posture or the D5 banner↔receipt parity",
+          "quote the posture banner verbatim when labeling this dispatch — the banner is the machine-stated posture; a prose re-type drifts"
+        ]
       }
     }
   },
@@ -72,7 +80,8 @@
       "guardrails": [
         { "value": "runs under codex's OWN OS sandbox (workspace-write)", "enforcement": "enforced", "condition": "it cannot nest inside another sandbox — the FS turns read-only; route it outside on the OBSERVED failure", "source": "capability.json roles.execute.contract.notes" },
         { "value": "the guarded passthrough blocks model / sandbox / approval overrides", "enforcement": "enforced", "source": "bin/codex-exec.sh" },
-        { "value": "hard wall-clock cap CODEX_HARD_TIMEOUT (built-in default 3600s)", "enforcement": "enforced", "condition": "only while timeout(1)/gtimeout is on PATH — otherwise the wrapper warns and runs uncapped", "source": "capability.json settings.CODEX_HARD_TIMEOUT" }
+        { "value": "hard wall-clock cap CODEX_HARD_TIMEOUT (built-in default 3600s)", "enforcement": "enforced", "condition": "only while timeout(1)/gtimeout is on PATH — otherwise the wrapper warns and runs uncapped", "source": "capability.json settings.CODEX_HARD_TIMEOUT" },
+        { "value": "ONE exec posture stderr banner line states the ACTUAL run posture before dispatch (session=fresh|resume:<id>; timeout is banner-only)", "enforcement": "enforced", "source": "bin/codex-exec.sh" }
       ],
       "customHooks": ["CODEX_PROBE"]
     },
@@ -87,6 +96,9 @@
       "operands": [
         { "slot": "<plan-file|->", "required": true, "description": "the follow-up instruction file, or - to read it from stdin" }
       ],
+      "guardrails": [
+        { "value": "ONE exec posture stderr banner line states the ACTUAL run posture before dispatch (session=resume:<id> only AFTER the sidecar id is resolved and validated; timeout is banner-only)", "enforcement": "enforced", "source": "bin/codex-exec.sh" }
+      ],
       "customHooks": ["CODEX_PROBE"]
     },
     {
@@ -99,6 +111,9 @@
       "operands": [
         { "slot": "<session-id>", "required": true, "description": "the session id the original run printed on stderr" },
         { "slot": "<plan-file|->", "required": true, "description": "the follow-up instruction file, or - to read it from stdin" }
+      ],
+      "guardrails": [
+        { "value": "ONE exec posture stderr banner line states the ACTUAL run posture before dispatch (session=resume:<id> only AFTER the explicit id is validated against the session-id grammar; timeout is banner-only)", "enforcement": "enforced", "source": "bin/codex-exec.sh" }
       ],
       "customHooks": ["CODEX_PROBE"]
     },

@@ -276,9 +276,23 @@ describe('bridge-settings — reader env honesty (review-bridge-settings-r01-maj
     assert.match(r.stdout, /env value "turbo" is not a supported CODEX_SERVICE_TIER/);
   });
 
-  it('a non-enum env override is shown as-is (a documented raw override — never dropped)', () => {
+  it('an INVALID timeout env value shows as the built-in default with a note (AD-061 — the resolver validates env)', () => {
     const r = main([], ctx({ CODEX_HARD_TIMEOUT: '2h' }));
-    assert.match(r.stdout, /CODEX_HARD_TIMEOUT = 2h\s+\[env\]/);
+    assert.match(r.stdout, /CODEX_HARD_TIMEOUT = \(unset[^\n]*\[default\]/);
+    assert.match(r.stdout, /env value "2h" is invalid for CODEX_HARD_TIMEOUT/);
+  });
+
+  it('a VALID timeout env value and a non-resolver-validated raw override both show as env', () => {
+    const r = main([], ctx({ CODEX_HARD_TIMEOUT: '7200', CODEX_REVIEW_MAX_TOTAL_BYTES: 'weird' }));
+    assert.match(r.stdout, /CODEX_HARD_TIMEOUT = 7200\s+\[env\]/);
+    assert.match(r.stdout, /CODEX_REVIEW_MAX_TOTAL_BYTES = weird\s+\[env\]/);
+  });
+
+  it('a control byte in an env knob renders a REFUSAL note with NO raw byte + no forged posture line (review r05)', () => {
+    const r = main([], ctx({ CODEX_HARD_TIMEOUT: '1800\x01\nreview posture: model=FORGED' }));
+    assert.match(r.stdout, /REFUSES the run pre-spend/, 'the advisor states the wrapper refusal');
+    assert.doesNotMatch(r.stdout, /[\x01\x7f]/, 'no raw control byte reaches the rendered report');
+    assert.doesNotMatch(r.stdout, /^review posture: model=FORGED/m, 'an embedded newline cannot forge a posture line');
   });
 });
 
