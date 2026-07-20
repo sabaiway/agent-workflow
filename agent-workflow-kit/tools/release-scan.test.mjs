@@ -1,12 +1,25 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { main, scanText } from './release-scan.mjs';
+import { main, scanText, classifyTarget, TARGET } from './release-scan.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+
+// main() reports on stdout for every outcome (findings, accounting, refusals) — capture it and
+// return the exit code so a refusal is an assertion, never a killed runner.
+const runMain = (argv) => {
+  const logs = [];
+  const original = console.log;
+  console.log = (line) => logs.push(String(line));
+  try {
+    return { code: main(argv), out: logs.join('\n') };
+  } finally {
+    console.log = original;
+  }
+};
 
 const COAUTHOR = 'Co-' + 'Authored-By: Claude <noreply@anthropic.com>';
 const LONG_REVIEWER = ['Co', 'dex'].join('');
@@ -103,17 +116,102 @@ describe('scanText — attribution detection', () => {
   });
 
   it('the whole kit tools/ tree scans clean via main() — the fixture-holding test is self-excluded', () => {
-    // main() prints findings then process.exit(1) on any hit (never throws), so a dirty tree fails
-    // this test loudly by killing the runner; the try/finally only restores console.log.
-    const logs = [];
-    const original = console.log;
-    console.log = (line) => logs.push(String(line));
-    try {
-      main([HERE]); // the release-scan tool's own directory — includes this fixture-laden test file
-    } finally {
-      console.log = original;
-    }
-    assert.match(logs.join('\n'), /clean — no AI attribution or reviewer-round identity found/,
+    const { code, out } = runMain([HERE]); // includes this fixture-laden, self-excluded test file
+    assert.equal(code, 0, 'the tool source is clean');
+    assert.match(out, /clean — no AI attribution or reviewer-round identity found/,
       'the fixture-laden test file is self-excluded; the tool source is clean');
+  });
+});
+
+// A target the caller NAMED that contributes no file must never fold into the clean verdict: an
+// empty file list is indistinguishable from a clean one in the report, so a mis-aimed scan reads
+// as proof of cleanliness. The directory-name exclusions make this reachable by accident.
+describe('main — per-target contribution accounting (a named target that scans nothing is a mis-aim)', () => {
+  const TMP = mkdtempSync(join(tmpdir(), 'aw-release-scan-targets-'));
+  after(() => rmSync(TMP, { recursive: true, force: true }));
+
+  const seedPlans = () => {
+    const dir = join(TMP, 'plans');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'draft.md'), `fold applied per ${['co', 'dex R5'].join('')} blocker\n`);
+    return dir;
+  };
+
+  it('refuses a directory target excluded by its own basename instead of calling it clean', () => {
+    const dir = seedPlans();
+    const { code, out } = runMain([dir]);
+    assert.equal(code, 1, 'an excluded target is a refusal, not a clean verdict');
+    assert.doesNotMatch(out, /clean — no AI attribution/, 'the false-green line must not appear');
+    assert.match(out, /plans/, 'the refusal names the target');
+    assert.match(out, /excluded/, 'the refusal names the CAUSE, not just the count');
+  });
+
+  it('scans the same excluded-directory content when the file is named directly', () => {
+    const dir = seedPlans();
+    const { code, out } = runMain([join(dir, 'draft.md')]);
+    assert.equal(code, 1, 'the direct file path reaches the scanner');
+    assert.match(out, /reviewer-identity/, 'the finding the directory form hid');
+  });
+
+  it('refuses an existing directory that holds nothing scannable', () => {
+    const dir = join(TMP, 'hollow');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'logo.png'), 'not text\n');
+    const { code, out } = runMain([dir]);
+    assert.equal(code, 1, 'zero contribution from an existing target is a refusal');
+    assert.match(out, /hollow/, 'the refusal names the target');
+  });
+
+  it('refuses a missing target that carries no glob metacharacter — a mis-aimed path', () => {
+    const { code, out } = runMain([join(TMP, 'no-such-dir')]);
+    assert.equal(code, 1, 'a plain path that does not exist is a mis-aim, not an optional target');
+    assert.match(out, /no-such-dir/, 'the refusal names the target');
+  });
+
+  // The declared gate lists shell globs (scripts/sync-mirrors*.mjs). bash passes an UNMATCHED glob
+  // through literally, so refusing every missing path would break a legitimate optional target.
+  it('treats an unmatched glob target as an optional skip, never a refusal', () => {
+    writeFileSync(join(TMP, 'kept.md'), 'clean prose\n');
+    const { code, out } = runMain([join(TMP, 'kept.md'), join(TMP, 'absent-*.mjs')]);
+    assert.equal(code, 0, 'an unmatched glob never fails the scan');
+    assert.match(out, /absent-\*\.mjs/, 'the skip is still stated, never silent');
+  });
+
+  it('refuses a mixed invocation when any single target contributes nothing', () => {
+    writeFileSync(join(TMP, 'real.md'), 'clean prose\n');
+    const { code } = runMain([join(TMP, 'real.md'), seedPlans()]);
+    assert.equal(code, 1, 'one productive target never covers for a mis-aimed one');
+  });
+
+  it('refuses a non-text file named directly as a target — naming it does not make it scannable', () => {
+    const png = join(TMP, 'logo.png');
+    writeFileSync(png, 'not text\n');
+    assert.equal(classifyTarget(png).status, TARGET.excluded);
+    const { code, out } = runMain([png]);
+    assert.equal(code, 1);
+    assert.match(out, /logo\.png/, 'the refusal names the target');
+  });
+
+  it('refuses the scanner test file named directly — a self-excluded file is still a zero contribution', () => {
+    assert.equal(classifyTarget(join(HERE, 'release-scan.test.mjs')).status, TARGET.excluded);
+  });
+
+  it('states a usage refusal when no target is named at all', () => {
+    const errs = [];
+    const original = console.error;
+    console.error = (line) => errs.push(String(line));
+    try {
+      assert.equal(main([]), 2, 'no target is a usage error, never an empty clean verdict');
+    } finally {
+      console.error = original;
+    }
+    assert.match(errs.join('\n'), /usage: release-scan\.mjs/);
+  });
+
+  it('classifies each target form distinctly so the refusal can name its cause', () => {
+    assert.equal(classifyTarget(join(TMP, 'no-such-dir')).status, TARGET.missing);
+    assert.equal(classifyTarget(join(TMP, 'absent-*.mjs')).status, TARGET.unmatchedGlob);
+    assert.equal(classifyTarget(seedPlans()).status, TARGET.excluded);
+    assert.equal(classifyTarget(join(TMP, 'real.md')).status, TARGET.scanned);
   });
 });

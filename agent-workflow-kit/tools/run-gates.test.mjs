@@ -460,6 +460,40 @@ describe('run-gates --final — the ONE receipt the commit guard consumes', () =
     assert.equal(subset.code, EXIT.ok, `an --only subset exports AW_GIT_DIR too: ${subset.out}`);
   });
 
+  // The runner PRODUCES AW_GIT_DIR / AW_LCOV_FILE for gate children. Composing the child env as
+  // {...process.env, ...injected} means a value already present in the PARENT survives whenever the
+  // runner declines to inject one — so a stale or hostile host value silently becomes the gate's
+  // truth instead of the computed one.
+  it('a gate child never inherits a HOST-set producer variable — only a computed value reaches it', () => {
+    const priorGitDir = process.env.AW_GIT_DIR;
+    const priorLcov = process.env.AW_LCOV_FILE;
+    process.env.AW_GIT_DIR = '/poisoned/by/the/host';
+    process.env.AW_LCOV_FILE = '/poisoned/by/the/host/lcov.info';
+    try {
+      const show = 'printf "%s|%s" "${AW_GIT_DIR-<unset>}" "${AW_LCOV_FILE-<unset>}"';
+      const bare = spawnGateViaBash(show, HERE);
+      assert.equal(String(bare.stdout), '<unset>|<unset>', 'the host values are stripped, never inherited');
+      const injected = spawnGateViaBash(show, HERE, { AW_GIT_DIR: '/computed' });
+      assert.equal(String(injected.stdout), '/computed|<unset>', 'only what the runner computed reaches the gate');
+    } finally {
+      if (priorGitDir === undefined) delete process.env.AW_GIT_DIR; else process.env.AW_GIT_DIR = priorGitDir;
+      if (priorLcov === undefined) delete process.env.AW_LCOV_FILE; else process.env.AW_LCOV_FILE = priorLcov;
+    }
+  });
+
+  it('a hostile host AW_GIT_DIR never reaches a gate through a real run — the computed git dir wins', () => {
+    const root = makeRepo([{ id: 'echo-gitdir', title: 'g', cmd: 'test "$AW_GIT_DIR" != "/poisoned/by/the/host"' }]);
+    const prior = process.env.AW_GIT_DIR;
+    process.env.AW_GIT_DIR = '/poisoned/by/the/host';
+    try {
+      const { code, out } = runFinal(root, []);
+      assert.equal(code, EXIT.ok, `the gate saw the computed git dir, not the host one: ${out}`);
+    } finally {
+      if (prior === undefined) delete process.env.AW_GIT_DIR; else process.env.AW_GIT_DIR = prior;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('--final --only is a loud usage refusal (a subset never attests)', () => {
     const root = makeRepo([...CANONICAL, { id: 'noop', title: 'n', cmd: 'true' }]);
     const { code, out } = runFinal(root, ['--final', '--only', 'noop']);
@@ -719,5 +753,80 @@ describe('run-gates --final — the ONE receipt the commit guard consumes', () =
     assert.equal(code, EXIT.finalFailed);
     assert.match(out, /stale lcov/i);
     assert.equal(recorded, false, 'refused before the attempt started');
+  });
+});
+
+// A declared cmd may reference a variable this runner is responsible for PRODUCING. When the run
+// will not set it, the reference expands to empty and the gate fails somewhere far from the cause —
+// the class that cost three separate review rounds to re-diagnose. Refuse before anything spawns.
+// The hermetic harness runs with cwd '/proj', where the git dir never resolves.
+describe('runCli — producer-env precondition (a reference the run will not satisfy refuses up front)', () => {
+  it('refuses a gate cmd referencing AW_GIT_DIR when the git dir did not resolve', () => {
+    const { code, errText, calls } = runHermetic({
+      gates: [{ id: 'unit-tests', title: 'ut', cmd: 'node --test --test-reporter-destination="$AW_GIT_DIR/x.info"' }],
+      byCmd: { [BASH_PROBE_CMD]: GREEN },
+    });
+    assert.equal(code, EXIT.fail);
+    assert.match(errText, /AW_GIT_DIR/, 'the refusal names the variable');
+    assert.match(errText, /unit-tests/, 'the refusal names the gate');
+    assert.match(errText, /git work tree/i, 'the refusal names the remedy');
+    assert.equal(calls.length, 0, 'nothing spawned — the refusal is pre-spend');
+  });
+
+  it('names the braced reference form too', () => {
+    const { code, errText, calls } = runHermetic({
+      gates: [{ id: 'unit-tests', title: 'ut', cmd: 'cp report "${AW_GIT_DIR}/out"' }],
+      byCmd: { [BASH_PROBE_CMD]: GREEN },
+    });
+    assert.equal(code, EXIT.fail);
+    assert.match(errText, /references \$AW_GIT_DIR/, 'the refusal itself, not an incidental echo of the cmd');
+    assert.equal(calls.length, 0, 'nothing spawned — the refusal is pre-spend');
+  });
+
+  it('does NOT refuse a reference that carries its own shell fallback', () => {
+    const cmd = 'ls "${AW_GIT_DIR:-.}"';
+    const { code } = runHermetic({
+      gates: [{ id: 'unit-tests', title: 'ut', cmd }],
+      byCmd: { [cmd]: GREEN, [BASH_PROBE_CMD]: GREEN },
+    });
+    assert.equal(code, EXIT.ok, 'a cmd with its own default does not depend on the injection');
+  });
+
+  it('refuses an AW_LCOV_FILE reference on a plain run — that variable is produced only by --final', () => {
+    const { code, errText } = runHermetic({
+      gates: [{ id: 'unit-tests', title: 'ut', cmd: 'node --test > "$AW_LCOV_FILE"' }],
+      byCmd: { [BASH_PROBE_CMD]: GREEN },
+    });
+    assert.equal(code, EXIT.fail);
+    assert.match(errText, /AW_LCOV_FILE/);
+    assert.match(errText, /--final/, 'the refusal names the remedy');
+  });
+
+  it('never refuses a cmd that references no producer variable', () => {
+    const { code } = runHermetic({
+      gates: [{ id: 'unit-tests', title: 'ut', cmd: 'node --test x' }],
+      byCmd: { 'node --test x': GREEN, [BASH_PROBE_CMD]: GREEN },
+    });
+    assert.equal(code, EXIT.ok);
+  });
+
+  it('never refuses on a variable whose name merely starts the same way', () => {
+    const { code } = runHermetic({
+      gates: [{ id: 'unit-tests', title: 'ut', cmd: 'echo "$AW_GIT_DIRECTORY_OVERRIDE"' }],
+      byCmd: { 'echo "$AW_GIT_DIRECTORY_OVERRIDE"': GREEN, [BASH_PROBE_CMD]: GREEN },
+    });
+    assert.equal(code, EXIT.ok, 'the boundary is the whole variable name, never a prefix');
+  });
+
+  it('screens only the SELECTED gates — an --only subset is not refused by a sibling it does not run', () => {
+    const { code } = runHermetic({
+      gates: [
+        { id: 'needs-gitdir', title: 'g', cmd: 'ls "$AW_GIT_DIR"' },
+        { id: 'plain', title: 'p', cmd: 'node --test x' },
+      ],
+      argv: ['--only', 'plain'],
+      byCmd: { 'node --test x': GREEN, [BASH_PROBE_CMD]: GREEN },
+    });
+    assert.equal(code, EXIT.ok);
   });
 });

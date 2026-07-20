@@ -28,6 +28,28 @@ import { createHash } from 'node:crypto';
 
 export const fail = (exitCode, message) => Object.assign(new Error(message), { exitCode });
 
+// git exports its own repository pointers into every hook and child environment (GIT_DIR,
+// GIT_INDEX_FILE, GIT_WORK_TREE, …). A child `git` that inherits them resolves to the AMBIENT
+// repository and silently ignores the cwd it was handed — so this tool, run from inside a git hook,
+// would read another repository's bytes and report them as this one's. Strip them; let cwd decide.
+export const GIT_LOCATION_ENV = Object.freeze([
+  'GIT_DIR',
+  'GIT_COMMON_DIR',
+  'GIT_INDEX_FILE',
+  'GIT_WORK_TREE',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_PREFIX',
+  'GIT_NAMESPACE',
+  'GIT_CEILING_DIRECTORIES',
+]);
+
+export const cwdBoundGitEnv = (env = process.env) => {
+  const clean = { ...env };
+  for (const name of GIT_LOCATION_ENV) delete clean[name];
+  return clean;
+};
+
 export const SCHEMA = 1;
 
 // One deterministic rule, applied identically at freeze and at check (assert-family + the
@@ -425,7 +447,7 @@ export const runCli = (argv, deps = {}) => {
     // "assertions preserved" dimension compares post to post and proves nothing — --git-rev reads
     // every corpus file's bytes at that revision instead of the worktree.
     const readTestFile = opts.gitRev
-      ? (rel) => execFileSync('git', ['show', `${opts.gitRev}:${rel}`], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+      ? (rel) => execFileSync('git', ['show', `${opts.gitRev}:${rel}`], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, env: cwdBoundGitEnv() })
       : (rel) => readFile(resolve(root, rel));
     const corpus = buildCorpus(readFile(resolve(root, opts.run)), { root, readTestFile });
     const totals = corpusTotals(corpus);

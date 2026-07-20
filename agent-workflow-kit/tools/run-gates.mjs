@@ -77,6 +77,12 @@ const USAGE = [
   '',
   `Runs the gates declared in <cwd>/${GATES_REL} (one bash command line each, project root as cwd).`,
   'Prints a per-gate PASS/FAIL table + one machine-readable summary line; exit 0 iff all green.',
+  '',
+  'Producer env: AW_GIT_DIR (inside a git tree) and AW_LCOV_FILE (--final only) are computed and',
+  'exported to every gate child, and STRIPPED from the inherited environment first — a host-set',
+  'value never stands in for a computed one. A selected gate referencing a producer variable this',
+  'run will not set is refused BEFORE anything spawns (exit 1), naming the gate, the variable, and',
+  'the remedy — never left to expand to empty and fail far from its cause.',
   'Sandbox-safe: the runner itself needs no network and writes only repo-local state — the D4 sandbox',
   'lane; each DECLARED gate command is the project\'s own, so ITS sandbox-safety is command-shape',
   'dependent (first try the sandbox-safe shape — cache under $TMPDIR, offline/notifier off).',
@@ -184,11 +190,36 @@ export const selectGates = (gates, onlyIds) => {
 // NODE_TEST_CONTEXT is stripped: a `node --test` gate spawned while run-gates is itself running
 // under a parent test context would otherwise inherit it, hit Node's recursive-run guard, silently
 // skip every file, and exit 0 — a vacuous false green.
+// The variables this runner PRODUCES for gate children. They are stripped from the inherited
+// environment before every spawn: composing the child env as {...process.env, ...injected} would
+// let a stale or hostile HOST value stand in whenever this run injects nothing, so a gate would
+// silently attest against the wrong git dir or lcov instead of the computed one.
+export const RESERVED_PRODUCER_ENV = Object.freeze(['AW_GIT_DIR', 'AW_LCOV_FILE']);
+
 export const spawnGateViaBash = (cmd, cwd, extraEnv = {}) => {
-  const env = { ...process.env, ...extraEnv };
+  const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
-  return spawnSync('bash', ['-c', cmd], { cwd, env, encoding: 'utf8', maxBuffer: MAX_GATE_OUTPUT_BYTES });
+  for (const name of RESERVED_PRODUCER_ENV) delete env[name];
+  return spawnSync('bash', ['-c', cmd], { cwd, env: { ...env, ...extraEnv }, encoding: 'utf8', maxBuffer: MAX_GATE_OUTPUT_BYTES });
 };
+
+// A `$VAR` / `${VAR}` reference to a producer variable. A `${VAR:-default}` form is deliberately NOT
+// matched — a cmd carrying its own fallback does not depend on the injection.
+const referencesProducer = (cmd, name) => new RegExp(`\\$\\{${name}\\}|\\$${name}(?![A-Za-z0-9_])`).test(cmd);
+
+const PRODUCER_RECOVERY = Object.freeze({
+  AW_GIT_DIR: 'run from inside a git work tree — the runner resolves the git dir there and exports it to every gate.',
+  AW_LCOV_FILE: 'AW_LCOV_FILE is produced only by --final — run with --final, or drop the reference from the gate cmd.',
+});
+
+// Which SELECTED gates reference a producer variable this run will not set. Such a reference
+// expands to empty and fails the gate somewhere far from its cause, so it is refused before
+// anything spawns, naming the gate, the variable, and the one remedy.
+export const findUnmetProducerRefs = (gates, injected) =>
+  gates.flatMap((gate) =>
+    RESERVED_PRODUCER_ENV
+      .filter((name) => !injected.includes(name) && referencesProducer(gate.cmd, name))
+      .map((name) => ({ id: gate.id, name })));
 
 // The command the bash preflight runs before ANY gate: proves bash itself spawns on this host,
 // so "no bash" is one loud exit-6 error up front — never a per-gate spawn-failure cascade.
@@ -377,6 +408,16 @@ export const runCli = (argv, deps = {}) => {
       // ONE lcov path for delete/check/hash/guard: the fixed git-dir file is FORCED into every
       // gate child env — a stray host AW_LCOV_FILE can never desync the checker from the receipt.
       gateSpawn = (cmd, cwd2) => spawn(cmd, cwd2, { AW_GIT_DIR: gitDir, AW_LCOV_FILE: join(gitDir, LCOV_BASENAME) });
+    }
+    const injectedEnv = [...(gitDir === null ? [] : ['AW_GIT_DIR']), ...(opts.final ? ['AW_LCOV_FILE'] : [])];
+    const unmet = findUnmetProducerRefs(selected, injectedEnv);
+    if (unmet.length > 0) {
+      for (const { id, name } of unmet) {
+        logError(`[run-gates] gate "${id}" references $${name}, which this run will not set — it would expand to empty and fail far from its cause.`);
+        logError(`   Recovery: ${PRODUCER_RECOVERY[name]}`);
+      }
+      log(composeSummaryLine({ status: 'fail' }));
+      return EXIT.fail;
     }
     const probe = spawn(BASH_PROBE_CMD, projectDir);
     if (probe.error && probe.error.code === 'ENOENT') {
