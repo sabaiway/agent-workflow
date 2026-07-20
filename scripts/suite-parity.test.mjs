@@ -12,6 +12,7 @@ import {
   buildCorpus,
   compareCorpus,
   runCli,
+  cwdBoundGitEnv,
 } from './suite-parity.mjs';
 // The R1-M2 export is imported dynamically so this spec LOADS against the pre-fold tree and
 // each fixture fails on its OWN assertion (the red-first authoring doctrine).
@@ -389,9 +390,12 @@ describe('runCli (hermetic, injected I/O)', () => {
 });
 
 describe('snapshot --git-rev — a post-edit freeze still counts the PRE-state assert sites', () => {
-  it('reads corpus file bytes at the revision, not the worktree', () => {
+  // git exports its repository pointers into every hook child. A git spawn that inherits them
+  // resolves to the AMBIENT repository and ignores the cwd it was handed — so the fixture repo must
+  // be built with those pointers stripped, or this spec silently drives the developer's own repo.
+  const seedRepo = () => {
     const root = makeTmp();
-    const g = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
+    const g = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', env: cwdBoundGitEnv() });
     g('init', '-q');
     g('config', 'user.email', 'probe@example.com');
     g('config', 'user.name', 'probe');
@@ -403,10 +407,28 @@ describe('snapshot --git-rev — a post-edit freeze still counts the PRE-state a
       join(root, 'run.ndjson'),
       withTail(`${JSON.stringify({ file: join(root, 'a.test.mjs'), name: 'adds', nesting: 0, suite: false, skip: false, todo: false, fail: false, ms: 1 })}\n`),
     );
-    const code = runCli(['snapshot', '--run', 'run.ndjson', '--out', 'base.json', '--root', root, '--git-rev', 'HEAD'], { log: () => {}, logError: () => {} });
-    assert.equal(code, 0);
-    const baseline = JSON.parse(readFileSync(join(root, 'base.json'), 'utf8'));
-    assert.equal(baseline.files['a.test.mjs'].assertCallSites, 3, 'the freeze carries the HEAD count, not the drifted worktree count');
+    return root;
+  };
+  const freeze = (root) =>
+    runCli(['snapshot', '--run', 'run.ndjson', '--out', 'base.json', '--root', root, '--git-rev', 'HEAD'], { log: () => {}, logError: () => {} });
+  const frozenCount = (root) => JSON.parse(readFileSync(join(root, 'base.json'), 'utf8')).files['a.test.mjs'].assertCallSites;
+
+  it('reads corpus file bytes at the revision, not the worktree', () => {
+    const root = seedRepo();
+    assert.equal(freeze(root), 0);
+    assert.equal(frozenCount(root), 3, 'the freeze carries the HEAD count, not the drifted worktree count');
+  });
+
+  it('stays bound to the --root repository under an ambient GIT_DIR (the git-hook environment)', () => {
+    const root = seedRepo();
+    const prior = process.env.GIT_DIR;
+    process.env.GIT_DIR = join(makeTmp(), 'somewhere-else.git');
+    try {
+      assert.equal(freeze(root), 0, 'an inherited GIT_DIR must not redirect the read');
+      assert.equal(frozenCount(root), 3, 'the bytes came from the --root repository at HEAD');
+    } finally {
+      if (prior === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = prior;
+    }
   });
 });
 

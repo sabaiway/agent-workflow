@@ -81,34 +81,88 @@ const walk = (path, acc = []) => {
   return acc;
 };
 
-export const scanPaths = (paths, opts = {}) => {
+// Per-target outcomes. A caller-NAMED target that contributes no file must never fold into the
+// clean verdict — an empty file list and a clean one print identically, so a mis-aimed scan would
+// read as proof of cleanliness. `unmatchedGlob` is the one benign zero: the gate declaration lists
+// shell globs, and bash passes an unmatched glob through literally, so a path that still carries a
+// glob metacharacter is an optional target the shell found nothing for, not a mis-aim.
+export const TARGET = Object.freeze({
+  scanned: 'scanned',
+  missing: 'missing',
+  unmatchedGlob: 'unmatched-glob',
+  excluded: 'excluded',
+  empty: 'empty',
+});
+
+const GLOB_META_RE = /[*?[\]]/;
+
+// PURE-ish (one fs read): classify ONE caller-named target and collect the files it contributes.
+// Every zero-contribution status names its own cause, so the refusal can state the remedy rather
+// than a bare count (a count without a location is the defect class this family bans).
+export const classifyTarget = (path) => {
+  if (!existsSync(path)) {
+    return GLOB_META_RE.test(path)
+      ? { path, status: TARGET.unmatchedGlob, files: [] }
+      : { path, status: TARGET.missing, files: [] };
+  }
+  const st = statSync(path);
+  const name = basename(path);
+  if (st.isDirectory() && EXCLUDE_DIR_NAMES.has(name)) return { path, status: TARGET.excluded, files: [] };
+  if (st.isFile() && (EXCLUDE_FILE_NAMES.has(name) || !TEXT_EXT.has(extname(path)) || path.endsWith('.tgz'))) {
+    return { path, status: TARGET.excluded, files: [] };
+  }
+  const files = walk(path);
+  return { path, status: files.length > 0 ? TARGET.scanned : TARGET.empty, files };
+};
+
+// Why each zero-contribution status refuses, and the one legal remedy for it.
+const TARGET_REMEDY = Object.freeze({
+  [TARGET.missing]: 'the path does not exist — fix the target, or drop it from the target list',
+  [TARGET.excluded]: `the target itself is excluded (directory names: ${[...EXCLUDE_DIR_NAMES].join(', ')}; non-text or self-excluded files) — name the FILES to scan instead of the directory`,
+  [TARGET.empty]: 'the target exists but holds no scannable text file — fix the target, or drop it from the target list',
+});
+
+const findingsIn = (targets, opts) => {
   const report = [];
-  for (const p of paths) {
-    if (!existsSync(p)) continue;
-    for (const file of walk(resolve(p))) {
-      const findings = scanText(readFileSync(file, 'utf8'), opts);
-      for (const f of findings) report.push({ file, ...f });
+  for (const target of targets) {
+    for (const file of target.files) {
+      for (const finding of scanText(readFileSync(file, 'utf8'), opts)) report.push({ file, ...finding });
     }
   }
   return report;
 };
+
+export const scanPaths = (paths, opts = {}) => findingsIn(paths.map((p) => classifyTarget(resolve(p))), opts);
 
 export const main = (argv) => {
   const reportOnly = argv.includes('--report');
   const paths = argv.filter((a) => a !== '--report');
   if (paths.length === 0) {
     console.error('usage: release-scan.mjs [--report] <path>...');
-    process.exit(2);
+    return 2;
   }
-  const report = scanPaths(paths);
+  const targets = paths.map((p) => classifyTarget(resolve(p)));
+  for (const target of targets) {
+    if (target.status === TARGET.unmatchedGlob) {
+      console.log(`[release-scan] skipped ${target.path} — no file matched this glob (an optional target, stated not silent).`);
+    }
+  }
+  const misaimed = targets.filter((target) => TARGET_REMEDY[target.status] !== undefined);
+  for (const target of misaimed) {
+    console.log(`[release-scan] target ${target.path} contributed NO file (${target.status}) — ${TARGET_REMEDY[target.status]}`);
+  }
+  const report = findingsIn(targets);
   for (const r of report) console.log(`[${r.kind}] ${r.file}:${r.line} — ${r.detail}`);
-  if (report.length === 0) {
-    console.log('[release-scan] clean — no AI attribution or reviewer-round identity found.');
-    return;
+  if (misaimed.length > 0) {
+    console.log(`\n[release-scan] ${misaimed.length} mis-aimed target(s) — this run proves nothing about them, so the clean verdict is refused.`);
   }
-  console.log(`\n[release-scan] ${report.length} finding(s).`);
-  if (!reportOnly) process.exit(1);
+  if (report.length > 0) console.log(`\n[release-scan] ${report.length} finding(s).`);
+  if (report.length === 0 && misaimed.length === 0) {
+    console.log('[release-scan] clean — no AI attribution or reviewer-round identity found.');
+    return 0;
+  }
+  return reportOnly ? 0 : 1;
 };
 
 const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) main(process.argv.slice(2));
+if (isDirectRun) process.exitCode = main(process.argv.slice(2));
