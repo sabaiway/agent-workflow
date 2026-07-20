@@ -296,7 +296,7 @@ DEFAULT_AGY_REVIEW_MODEL="Gemini 3.1 Pro (High)"
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by agy-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="agy"
-AW_BRIDGE_VERSION="4.0.0"
+AW_BRIDGE_VERSION="4.1.0"
 # `-` not `:-` so an EXPLICIT empty AGY_MODEL= survives (drop --model, use settings.json — agy.sh:52).
 AGY_MODEL="${AGY_MODEL-$DEFAULT_AGY_REVIEW_MODEL}"
 # D5 control-byte screen — IMMEDIATELY after resolution, BEFORE the off-frontier advisory (or any

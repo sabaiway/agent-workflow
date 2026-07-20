@@ -7,6 +7,25 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-20 — AD-061 friction cluster: minimum approvals + plain language + posture as code (kit 3.2.0 / memory 3.1.0 / codex bridge 3.1.0 / agy bridge 4.1.0)
+
+A four-item maintainer-flagged friction cluster shipped as mechanism (engine unbumped at 2.0.0):
+
+- **kit 3.2.0** carries the shared `command-shapes.md` promptless-probe contract (bound to the
+  probe-instructing modes + a router inline bar), bundles the two updated bridges, and carries the
+  plain-language §2.5 bar in its fallback template.
+- **memory 3.1.0** adds the plain-language §2.5 Communication bar to the `agent_rules` template
+  (byte-identical to the kit's copy; reconciled into existing deployments by the kit's upgrade
+  lane — a standalone memory upgrade does not touch the §2.5 region).
+- **codex bridge 3.1.0 / agy bridge 4.1.0** ship posture as code on the codex-exec dispatch and
+  both review dispatches: the codex-exec D5 exec banner (validated resume id + NUL/control-byte
+  screens), a banner-only `timeout` field on the review banners from one shared shadow-proof
+  effective-timeout resolver, the quote-the-banner-verbatim duty across every contract surface, and
+  the advisor's matching control-byte refusal.
+- **This repo's `release-cycle` process** flips to CONSOLIDATED approval asks by default (minimum
+  approvals — one message, one reply). This is a machine-local process change for this repository,
+  not part of any published package payload.
+
 ## 2026-07-19 — memory 3.0.1: bundled reference scripts refreshed (patch rider on kit 3.1.0)
 
 The publish workflow's changed-but-unbumped tooth refused to no-op memory at 3.0.0: two bundled
