@@ -11,6 +11,7 @@
 //
 //   node scripts/release/dispatch-publish.mjs all | <pkg>... [--expect <pkg>=X.Y.Z]...
 //        [--ref <ref>] [--live] [--poll-timeout <seconds>] [--repo <owner/name>]
+//        [--token-file <path>]
 //
 //   all | <pkg>...  `all` ALONE (never mixed with named packages): one workflow run covers
 //                   memory + engine + kit; --live then requires --expect for all three (an
@@ -22,6 +23,14 @@
 //   --ref           the git ref to dispatch on (default main).
 //   --live          actually publish. Without it the script runs the DRY-RUN phase only.
 //   --poll-timeout  per-run poll bound in seconds (default 1200).
+//   --token-file    read the GitHub PAT from <path> (line endings stripped) and use it as
+//                   GH_TOKEN for every gh call this process spawns. The flat lane for headless/
+//                   agent shells where env does not persist between tool calls and an
+//                   env-prefixed compound invocation never matches a plain allow rule
+//                   (INCIDENT 2026-07-21, second occurrence: the ad-hoc tmp-wrapper workaround —
+//                   unreviewed tmp code reading a secret and spawning this script — is exactly
+//                   the shape a host-side classifier rightly distrusts, and it got blocked
+//                   mid-release). The token value is never logged.
 //
 // Invariants (pinned by dispatch-publish.test.mjs):
 //   • NEVER self-triggering — this script runs ONLY when invoked after the maintainer's explicit
@@ -157,8 +166,10 @@ export const assertGitHubAuth = (ghApi, { verifyOnly = false, deadlineMs, reRunC
         EXIT.preflight,
         'GitHub auth unavailable — gh could not authenticate.\n' +
           '  This is a SKIPPED SETUP STEP, not a publish blocker: this repo authenticates gh via GH_TOKEN\n' +
-          '  (a PAT), NOT `gh auth login`. Load it, then re-run — see docs/ai/env_commands.md, the\n' +
-          '  "## Access / gh" block (export GH_TOKEN=$(… your PAT file …); export GH_TOKEN). An empty\n' +
+          '  (a PAT), NOT `gh auth login`. Simplest recovery: re-run with --token-file <your PAT file> —\n' +
+          '  the dispatcher reads the file itself, no env export needed (the flat lane for shells whose\n' +
+          '  env does not persist). The export form stays valid too — see docs/ai/env_commands.md, the\n' +
+          '  "## Access / gh" block (export GH_TOKEN=$(… your PAT file …)). An empty\n' +
           '  `gh auth status` here means the token was never exported this session, not that it is missing.',
       );
     }
@@ -265,10 +276,29 @@ const sleepDefault = (ms) => new Promise((resolveSleep) => setTimeout(resolveSle
 // ── arg parsing (usage → exit 2) ──────────────────────────────────────────────────────
 
 const USAGE =
-  'usage: dispatch-publish.mjs all | <pkg>... [--expect <pkg>=X.Y.Z]... [--ref <ref>] [--live | --verify-only] [--poll-timeout <seconds>] [--repo <owner/name>]';
+  'usage: dispatch-publish.mjs all | <pkg>... [--expect <pkg>=X.Y.Z]... [--ref <ref>] [--live | --verify-only] [--poll-timeout <seconds>] [--repo <owner/name>] [--token-file <path>]';
+
+// Reads the PAT for --token-file. Strips EVERY CR/LF (the documented `tr -d '\r\n'` semantics —
+// a PAT file often ends in a newline, and a multi-line paste must collapse the same way the
+// export form always did). Unreadable or empty fails LOUD at usage time: an empty GH_TOKEN would
+// otherwise surface later as gh's misleading generic auth error. The token value is returned,
+// never logged.
+export const loadGhToken = (path, readFile = readFileSync) => {
+  let raw;
+  try {
+    raw = String(readFile(path, 'utf8'));
+  } catch (err) {
+    throw fail(EXIT.usage, `--token-file: cannot read ${path} (${err?.code ?? 'error'}) — the file must hold the GitHub PAT this repo publishes with (docs/ai/env_commands.md "## Access / gh")`);
+  }
+  const token = raw.replace(/[\r\n]/g, '');
+  if (token === '') {
+    throw fail(EXIT.usage, `--token-file: ${path} is empty after stripping line endings — it must hold the GitHub PAT this repo publishes with`);
+  }
+  return token;
+};
 
 export const parseArgs = (argv) => {
-  const opts = { packages: [], expect: {}, ref: 'main', live: false, verifyOnly: false, pollTimeoutS: DEFAULT_POLL_TIMEOUT_S, repo: null, help: false };
+  const opts = { packages: [], expect: {}, ref: 'main', live: false, verifyOnly: false, pollTimeoutS: DEFAULT_POLL_TIMEOUT_S, repo: null, tokenFile: null, help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') opts.help = true;
@@ -285,6 +315,10 @@ export const parseArgs = (argv) => {
       // command, so a shell metacharacter (`;` `&&` `|` `$()` backtick, whitespace) must never reach it.
       if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(argv[i])) throw fail(EXIT.usage, `--repo must be a plain owner/name with no shell metacharacters (got "${argv[i]}")`);
       opts.repo = argv[i];
+    } else if (arg === '--token-file') {
+      i += 1;
+      if (argv[i] === undefined) throw fail(EXIT.usage, '--token-file requires a path argument (the file holding the GitHub PAT)');
+      opts.tokenFile = argv[i];
     } else if (arg === '--poll-timeout') {
       i += 1;
       const parsed = Number(argv[i]);
@@ -546,6 +580,12 @@ export const runDispatch = async (argv, deps = {}) => {
     if (opts.help) {
       log(USAGE);
       return EXIT.ok;
+    }
+
+    // The flat token lane loads BEFORE the auth preflight — every gh call this process spawns
+    // inherits it. process.env is this process's own child-env source; the value is never logged.
+    if (opts.tokenFile !== null) {
+      process.env.GH_TOKEN = loadGhToken(opts.tokenFile, readFile);
     }
 
     // D6: `all` resolves to TWO distinct target lists — the DISPATCH target (what the workflow
