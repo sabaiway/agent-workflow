@@ -927,16 +927,58 @@ const assertResumePlanCompatibility = ({ wtRoot, seedName, fs }) => {
 
 // ── the handoff artifact (the tool's own record inside it; list/cleanup read it) ───────
 
-const composeProvisionRecordSection = ({ slug, branch, includes, nodeModules, vscode, prepared = null }) => [
+// The orientation facts a fresh satellite session cannot derive from its own checkout. They are
+// CONSTANTS so the doc-parity registry can pin the mode doc to the exact strings the tool emits.
+export const QUEUE_BASENAME = 'queue.md';
+export const QUEUE_SHARED_RULE =
+  'the series index is SHARED and lives ONLY in main: read it at the absolute path above, and never copy it into this worktree, because docs/plans is git-ignored and machine-local, so a copy silently diverges from what main and every other worktree are writing. This worktree never WRITES that file: reaching outside it is an fs_outside_repo action the autonomy policy denies by default. Put new findings in THIS handoff record instead — it is the channel that survives the landing, and main appends them to the index from here';
+export const LANDING_FROM_MAIN = 'landing runs FROM MAIN, never from this worktree';
+
+// The record is LINE-oriented and is parsed back for IDENTITY, so a value carrying a control byte
+// is refused rather than written: a newline spills a second line the parser reads as a real field
+// (`- include:` is exempt from the duplicate-identity STOP, and an `## …` spill truncates or bricks
+// the whole section). Values reach here from the repo ROOT path and from --include, both of which
+// may legally carry a newline on POSIX — so the guard is the only thing between them and a forged
+// record. U+2028/U+2029 ride the same refusal: they are line terminators to the JS regex `.` but
+// not to String.split('\n'), so such a value WRITES fine and is then silently DROPPED on read —
+// a lost field with no error, which is the one outcome this codebase never allows.
+// Fail closed: refuse to write, never sanitize silently.
+const RECORD_CONTROL_BYTE = /[\u0000-\u001F\u007F\u2028\u2029]/;
+const recordValue = (name, value) => {
+  const text = String(value);
+  if (RECORD_CONTROL_BYTE.test(text)) {
+    throw stop(`handoff record: the ${name} value carries a control character (newline/CR/NUL) — refusing to write a record whose fields could be forged by an injected line`);
+  }
+  // The parser `.trim()`s every value on read, and String.prototype.trim strips UNICODE whitespace
+  // — so an edge space (a Unicode one is legal even in a git branch name) writes fine and reads
+  // back as a DIFFERENT identity, stranding the worktree behind a record that no longer matches.
+  if (text !== text.trim()) {
+    throw stop(`handoff record: the ${name} value carries leading or trailing whitespace, which the record trims on read — the identity would change across a write→read round-trip: ${JSON.stringify(text)}`);
+  }
+  return text;
+};
+
+// An OPTIONAL field is omitted when absent, never rendered as "null": a record written by an
+// earlier kit is re-composed from its PARSED form at every refresh (land --prepare), so a field
+// that kit never wrote must survive the round-trip as absence, not as a literal null string.
+const optionalField = (name, value) => (value == null ? [] : [`- ${name}: ${recordValue(name, value)}`]);
+
+const composeProvisionRecordSection = ({ slug, branch, includes, nodeModules, vscode, install = null, sharedQueue = null, landing = null, prepared = null }) => [
   '## Provision record',
   '',
-  `- slug: ${slug}`,
-  `- branch: ${branch}`,
-  ...(includes.length === 0 ? ['- include: (none)'] : includes.map((p) => `- include: ${p}`)),
-  `- node_modules: ${nodeModules}`,
-  `- vscode-settings: ${vscode}`,
-  ...(prepared === null ? [] : [`- prepared-tree: ${prepared}`]),
+  `- slug: ${recordValue('slug', slug)}`,
+  `- branch: ${recordValue('branch', branch)}`,
+  ...(includes.length === 0 ? ['- include: (none)'] : includes.map((p) => `- include: ${recordValue('include', p)}`)),
+  `- node_modules: ${recordValue('node_modules', nodeModules)}`,
+  `- vscode-settings: ${recordValue('vscode-settings', vscode)}`,
+  ...optionalField('install', install),
+  ...optionalField('shared-queue', sharedQueue),
+  ...optionalField('landing', landing),
+  ...optionalField('prepared-tree', prepared),
   '',
+  // The rule says "at the absolute path above", so it ships only WITH that path: a record from an
+  // earlier kit carries no shared-queue field, and a rule pointing at nothing is worse than silence.
+  ...(sharedQueue == null ? [] : [QUEUE_SHARED_RULE, '']),
 ].join('\n');
 
 export const composeHandoffStub = (fields) => [
@@ -965,10 +1007,11 @@ const locateProvisionRecordSection = (text) => {
 export const parseProvisionRecord = (text) => {
   const section = locateProvisionRecordSection(text);
   const scan = section.source.slice(section.start, section.end).split('\n').slice(1);
-  const record = { slug: null, branch: null, includes: [], nodeModules: null, vscode: null, prepared: null };
+  const record = { slug: null, branch: null, includes: [], nodeModules: null, vscode: null, install: null, sharedQueue: null, landing: null, prepared: null };
   const single = {
     slug: 'slug', branch: 'branch', node_modules: 'nodeModules',
     'vscode-settings': 'vscode', 'prepared-tree': 'prepared',
+    install: 'install', 'shared-queue': 'sharedQueue', landing: 'landing',
   };
   const seen = new Set();
   for (const line of scan) {
@@ -988,11 +1031,67 @@ export const parseProvisionRecord = (text) => {
   return record;
 };
 
-const pendingHandoffFields = ({ slug, branch }) =>
-  ({ slug, branch, includes: [], nodeModules: 'pending', vscode: 'pending' });
+// Derived from MAIN's root, so the satellite reads an absolute path and a command that already
+// cd-s back to main — neither is derivable from inside the worktree.
+const orientationFields = ({ root, slug }) => ({
+  sharedQueue: join(root, PLANS_REL, QUEUE_BASENAME),
+  landing: `${LANDING_FROM_MAIN} — ${composeOwnToolPrefix(root)} land ${shellQuoteArg(slug)} --prepare`,
+});
+
+// Pre-mutation gate for everything the record will carry. `sharedQueue`/`landing` are derived from
+// the repo ROOT, so validating them here validates the root itself.
+const assertRecordValuesComposable = ({ root, slug, branch }) => {
+  recordValue('slug', slug);
+  recordValue('branch', branch);
+  const orientation = orientationFields({ root, slug });
+  recordValue('shared-queue', orientation.sharedQueue);
+  recordValue('landing', orientation.landing);
+};
+
+// An `- include:` value also round-trips through the literal `(none)` empty-list sentinel, so that
+// exact text reads back as NO value at all and cleanup would not recognize the copied path.
+// (Edge whitespace is refused inside recordValue — the same trim-on-read hazard for every field.)
+const assertIncludeRoundTrips = (rel) => {
+  recordValue('include', rel);
+  // No empty-rel arm: an include resolving TO the repo root is already refused by the containment
+  // check above (`isInside` excludes the root itself), so a guard here would be unreachable.
+  if (rel === '(none)') {
+    throw stop('--include resolves to the literal "(none)", which the provision record uses as its empty-list sentinel — rename the path before provisioning');
+  }
+};
+
+// The shared series index must never reach a satellite — a machine-local copy silently diverges
+// from what main and every other worktree are writing, which is the whole point of the
+// read-only-at-the-absolute-path contract. `--include` is the one lane that could smuggle it in,
+// by naming the file OR any directory that contains it. The compare runs in BOTH spaces: `incReal`
+// is canonical, so a queue.md (or docs/plans) that is itself a symlink canonicalizes AWAY from the
+// lexical queue path and would walk straight through a lexical-only compare while copying the very
+// content the rule fences. Fail closed: ONLY an ABSENT queue path (ENOENT — nothing exists there
+// to smuggle) falls back to the lexical compare alone; any other realpath failure (EACCES/EIO)
+// means the canonical identity cannot be established, and a silent fallback would quietly disable
+// the guard it exists to enforce.
+const assertIncludeNeverCopiesTheQueue = ({ rootReal, incReal, inc, fs }) => {
+  const queueLexical = join(rootReal, PLANS_REL, QUEUE_BASENAME);
+  const queuePaths = [queueLexical];
+  try {
+    queuePaths.push(fs.realpath(queueLexical));
+  } catch (err) {
+    if (err?.code !== 'ENOENT') {
+      throw stop(`--include: cannot resolve the shared series index path (${err?.code ?? 'error'}), so the queue-copy guard cannot establish its canonical identity: ${PLANS_REL}/${QUEUE_BASENAME} — fix the path (or drop the --include) and re-run`);
+    }
+  }
+  for (const queuePath of queuePaths) {
+    if (incReal === queuePath || isInside(incReal, queuePath)) {
+      throw stop(`--include would copy the SHARED series index (${PLANS_REL}/${QUEUE_BASENAME}) into the worktree: ${inc}. The index lives only in main and is read there — a local copy silently diverges.`);
+    }
+  }
+};
+
+const pendingHandoffFields = ({ root, slug, branch }) =>
+  ({ slug, branch, includes: [], nodeModules: 'pending', vscode: 'pending', install: 'pending', ...orientationFields({ root, slug }) });
 
 // The stub is written only when ABSENT; the final record surgically replaces the tool section.
-const writeHandoffStubIfAbsent = ({ wtRoot, slug, branch, fs, report }) => {
+const writeHandoffStubIfAbsent = ({ root, wtRoot, slug, branch, fs, report }) => {
   const dst = join(wtRoot, PLANS_REL, handoffBasename(slug));
   const cur = readFileNoFollow(fs, dst);
   if (cur.bytes) {
@@ -1004,7 +1103,7 @@ const writeHandoffStubIfAbsent = ({ wtRoot, slug, branch, fs, report }) => {
   }
   guardDst(fs, wtRoot, dirname(dst));
   fs.mkdir(dirname(dst));
-  writeContainedFileAtomic(wtRoot, dst, composeHandoffStub(pendingHandoffFields({ slug, branch })), fs, { stop: (m) => stop(m) });
+  writeContainedFileAtomic(wtRoot, dst, composeHandoffStub(pendingHandoffFields({ root, slug, branch })), fs, { stop: (m) => stop(m) });
 };
 
 const writeHandoffRecord = ({ wtRoot, slug, branch, fields, fs, report }) => {
@@ -1070,26 +1169,25 @@ const writeSeedPlan = ({ wtRoot, srcAbs, name, fs, report }) => {
   report.push(`  seeded plan: ${PLANS_REL}/${name}`);
 };
 
-const provisionIncludes = ({ root, rootReal, wtRoot, includes, git, fs, report, copied }) => {
+// The include set is resolved and identity-checked in runProvision — BEFORE `git worktree add` —
+// against the queue-copy guard and the round-trip guard, and arrives here as {rel, real} pairs.
+// It is copied from that already-canonical `real`, NEVER re-resolved from the raw path: a fresh
+// realpath here (after the worktree exists) would re-open a TOCTOU where a swapped symlink could
+// redirect an include at the shared series index between the check and the copy.
+const provisionIncludes = ({ rootReal, wtRoot, includeSources, git, fs, report, copied }) => {
   const recorded = [];
-  for (const inc of includes) {
-    const srcAbs = resolve(root, inc);
-    let srcReal;
-    try {
-      srcReal = fs.realpath(srcAbs);
-    } catch {
-      throw stop(`--include: not found: ${inc}`);
-    }
-    if (!isInside(rootReal, srcReal)) throw stop(`--include must resolve inside the main repo: ${inc}`);
-    const rel = relative(rootReal, srcReal);
-    const probeRel = fs.lstat(srcReal).isDirectory() ? `${rel}/` : rel;
+  for (const { rel, real } of includeSources) {
+    // Defence in depth: re-assert the queue-copy prohibition on the canonical path at the POINT OF
+    // USE, so it holds where the copy happens and not only where the path was first checked.
+    assertIncludeNeverCopiesTheQueue({ rootReal, incReal: real, inc: rel, fs });
+    const probeRel = fs.lstat(real).isDirectory() ? `${rel}/` : rel;
     if (!checkIgnored(git, probeRel, wtRoot)) {
       throw stop(
         `--include destination is not ignored in the worktree: ${rel} — it would become a land-preflight leftover. ` +
           'Recovery: ignore the path (shared exclude / .gitignore) or drop the --include.',
       );
     }
-    copyNode({ srcAbs: srcReal, dstAbs: join(wtRoot, rel), wtRoot, rel, fs, report, copied });
+    copyNode({ srcAbs: real, dstAbs: join(wtRoot, rel), wtRoot, rel, fs, report, copied });
     recorded.push(rel);
   }
   return recorded;
@@ -1150,6 +1248,20 @@ const resolveInstallAdvice = ({ root, wtRoot, fs }) => {
   }
   const command = `cd ${shellQuoteArg(wtRoot)} && ${manager} install`;
   return { command, instruction: command };
+};
+
+// What the RECORD states about installing — the resolved posture for THIS worktree (the runnable
+// isolated-install command, or the honest by-hand advice), never a lane-dependent hint. Probed on
+// the LIVE worktree after the node_modules step: a plain `cd … && install` through a SYMLINKED
+// node_modules writes into MAIN — never presented as isolated; the symlink case records the
+// unlink-first form instead (the same contract the --install lane already prints).
+const resolveInstallPosture = ({ root, wtRoot, fs }) => {
+  const advice = resolveInstallAdvice({ root, wtRoot, fs });
+  const nmPath = join(wtRoot, 'node_modules');
+  const nm = lstatNoFollow(fs.lstat, nmPath);
+  if (nm === null || !nm.isSymbolicLink()) return advice.instruction;
+  const separator = advice.command === null ? ' — ' : ' && ';
+  return `the provisioned node_modules is a symlink into MAIN (an install through it writes into MAIN) — for isolation remove it first: rm ${shellQuoteArg(nmPath)}${separator}${advice.instruction}`;
 };
 
 const provisionNodeModules = ({ root, rootReal, wtRoot, installFlag, git, fs, report }) => {
@@ -1323,6 +1435,11 @@ export const runProvision = ({ argvSlug, flags, cwd, git, deps, log }) => {
   const branch = flags.branch ?? `${DEFAULT_BRANCH_PREFIX}${slug}`;
   if (flags.plan == null) throw usageStop('provision requires --plan <path> (the ONE feature plan the worktree starts with)');
   const { root, commonDir } = resolveRoots(cwd, git);
+  // Composing the record is the LAST step of provision, so a refusal there would leave a created
+  // worktree with no handoff — which neither --resume nor `cleanup --abandon` can recover, because
+  // both bind on the handoff identity. Every value the record will carry is therefore checked HERE,
+  // before the first fs read and long before `git worktree add`.
+  assertRecordValuesComposable({ root, slug, branch });
   const rootReal = fs.realpath(root);
   const config = loadWorktreesConfig(root, deps);
   const targetAbs = resolveTargetDir({ root, slug, dirFlag: flags.dir ?? null, parentDir: config.parentDir });
@@ -1356,9 +1473,16 @@ export const runProvision = ({ argvSlug, flags, cwd, git, deps, log }) => {
       throw stop(`--include: not found: ${inc}`);
     }
     if (!isInside(rootReal, incReal)) throw stop(`--include must resolve inside the main repo: ${inc}`);
-    includeSources.push({ rel: relative(rootReal, incReal), real: incReal });
+    assertIncludeNeverCopiesTheQueue({ rootReal, incReal, inc, fs });
+    const rel = relative(rootReal, incReal);
+    assertIncludeRoundTrips(rel);
+    includeSources.push({ rel, real: incReal });
   }
   assertTargetOutsideSources({ targetReal, sources: [...sources, ...includeSources] });
+  // The TARGET path reaches the record too — the `install` field embeds the worktree dir — and it
+  // is only known here, after --dir/parentDir resolution. Validating it now keeps the whole record
+  // composable BEFORE `git worktree add`, which is the point of every check above.
+  recordValue('target-dir', targetReal);
 
   const probeDir = resolveProbeDir(dirname(targetReal), deps);
   // the probe itself is a create+delete write — on resume it runs only AFTER every identity check
@@ -1399,7 +1523,7 @@ export const runProvision = ({ argvSlug, flags, cwd, git, deps, log }) => {
   // any failure past this point leaves a real created worktree — the error must say so and
   // hand back the exact finish command, never just the local cause
   try {
-    return finishProvision({ root, rootReal, targetPath: targetReal, slug, branch, flags, seed, git, deps, fs, report, log });
+    return finishProvision({ root, rootReal, targetPath: targetReal, slug, branch, flags, seed, includeSources, git, deps, fs, report, log });
   } catch (err) {
     if (!flags.resume && err?.message) {
       err.message += `\nNOTE: the worktree at ${targetReal} (branch ${branch}) was created and KEPT — finish with: ${composeProvisionArgv({ root, slug, flags: { ...flags, resume: true } })} (or reclaim it with the consented cleanup).`;
@@ -1408,8 +1532,8 @@ export const runProvision = ({ argvSlug, flags, cwd, git, deps, log }) => {
   }
 };
 
-const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed, git, deps, fs, report, log }) => {
-  writeHandoffStubIfAbsent({ wtRoot: targetPath, slug, branch, fs, report });
+const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed, includeSources, git, deps, fs, report, log }) => {
+  writeHandoffStubIfAbsent({ root, wtRoot: targetPath, slug, branch, fs, report });
 
   const copied = new Set();
   report.push('copying the provision set (copy-if-missing; tracked files come from the checkout):');
@@ -1419,7 +1543,7 @@ const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed
   }
 
   writeSeedPlan({ wtRoot: targetPath, srcAbs: seed.srcAbs, name: seed.name, fs, report });
-  const includesRecorded = provisionIncludes({ root, rootReal, wtRoot: targetPath, includes: flags.include, git, fs, report, copied });
+  const includesRecorded = provisionIncludes({ rootReal, wtRoot: targetPath, includeSources, git, fs, report, copied });
   const nodeModulesMode = provisionNodeModules({ root, rootReal, wtRoot: targetPath, installFlag: flags.install, git, fs, report });
   const vscodeMode = provisionVscode({ root, wtRoot: targetPath, slug, git, fs, report });
 
@@ -1429,7 +1553,15 @@ const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed
     wtRoot: targetPath,
     slug,
     branch,
-    fields: { slug, branch, includes: includesRecorded, nodeModules: nodeModulesMode, vscode: vscodeMode },
+    fields: {
+      slug,
+      branch,
+      includes: includesRecorded,
+      nodeModules: nodeModulesMode,
+      vscode: vscodeMode,
+      install: resolveInstallPosture({ root, wtRoot: targetPath, fs }),
+      ...orientationFields({ root, slug }),
+    },
     fs,
     report,
   });

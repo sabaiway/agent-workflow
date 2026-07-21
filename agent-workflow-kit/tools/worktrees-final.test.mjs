@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
-  EXIT, WORKTREES_STOP, runCli, loadWorktreesConfig, parseProvisionRecord,
+  EXIT, WORKTREES_STOP, runCli, loadWorktreesConfig, parseProvisionRecord, composeHandoffStub,
 } from './worktrees.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-wt-final-'));
@@ -186,5 +186,19 @@ describe('worktrees final — F4 config absence is trusted only under a plain ch
       }),
       (e) => e.code === WORKTREES_STOP && /EACCES/.test(e.message),
     );
+  });
+
+  // U+2028 / U+2029 are line terminators to the JS regex `.` but NOT to String.split('\n'): such a
+  // value WRITES fine and is then SILENTLY DROPPED on read, losing a record field with no error.
+  // The record guard refuses every byte that can break the write→read round-trip, not just \n.
+  it('a record value carrying a Unicode line separator is refused, never silently dropped on read', () => {
+    const fields = { slug: 's', branch: 'aw/s', includes: [], nodeModules: 'absent', vscode: 'absent' };
+    for (const separator of ['\u2028', '\u2029']) {
+      assert.throws(
+        () => composeHandoffStub({ ...fields, sharedQueue: `/repo/q.md${separator}x` }),
+        (e) => e.code === WORKTREES_STOP && /control character/.test(e.message),
+        `U+${separator.codePointAt(0).toString(16).toUpperCase()} must fail closed at compose time`,
+      );
+    }
   });
 });

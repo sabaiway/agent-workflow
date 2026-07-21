@@ -34,6 +34,7 @@ import {
 } from './recommendations.mjs';
 import { SKIPPED_READONLY } from './setup-backends.mjs';
 import { LATENT_ARM_NOTICE } from './review-state.mjs';
+import { QUEUE_SHARED_RULE, LANDING_FROM_MAIN } from './worktrees.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -43,6 +44,7 @@ const UPGRADE_DOC = 'references/modes/upgrade.md';
 const VELOCITY_DOC = 'references/modes/velocity.md';
 const SETUP_DOC = 'references/modes/setup.md';
 const REVIEW_STATE_DOC = 'references/modes/review-state.md';
+const WORKTREES_DOC = 'references/modes/worktrees.md';
 
 // A typed usage failure (exit 2) for the CLI parser — the codebase's typed-error idiom (no classes).
 const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 });
@@ -96,6 +98,11 @@ export const BINDINGS = Object.freeze([
   // It was a prose-only bar a doc could silently drop, so it is pinned to the live string the tool
   // actually emits — a reworded doc dropping the notice fails this pin plus the gate.
   valueBinding('latent-arm-notice', LATENT_ARM_NOTICE, LATENT_ARM_NOTICE, [REVIEW_STATE_DOC]),
+  // The provision-record orientation contract (same "the tool knows and does not say" class): the
+  // shared-queue rule and the landing-from-main fact were prose-only bars a doc could silently
+  // drop, so both are pinned to the live strings the record actually carries.
+  valueBinding('queue-shared-rule', QUEUE_SHARED_RULE, QUEUE_SHARED_RULE, [WORKTREES_DOC]),
+  valueBinding('landing-from-main', LANDING_FROM_MAIN, LANDING_FROM_MAIN, [WORKTREES_DOC]),
 ].map((b) => Object.freeze(b)));
 
 // ── the pure checker (readText is injectable for hermetic tests) ────────────────────────
@@ -142,7 +149,8 @@ Usage:
 A CLOSED, exported registry binds each live code constant — the autonomy-doctor contract (the EXIT
 table, the status tokens, the trusted-dir allowlist), the recommendations/upgrade presentation
 contract (section header, empty line, verdict templates), the acks-store path, the setup refresh
-degrade token, and the review-state clean-tree latent-arm notice — to the exact token its
+degrade token, the review-state clean-tree latent-arm notice, and the worktrees provision-record
+orientation contract (shared-queue rule, landing-from-main) — to the exact token its
 references/modes/*.md contract must carry, and
 asserts the CURRENT value renders into every bound file. A drifted doc, an unreadable bound file,
 or an absent token FAILS CLOSED.

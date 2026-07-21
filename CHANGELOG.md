@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-21 — AD-065 the provision record orients a fresh satellite session (kit 3.5.0)
+
+The worktrees provision record now carries the three facts a fresh satellite session cannot derive
+from its own checkout: the ABSOLUTE path to MAIN's shared `docs/plans/queue.md` with the verbatim
+never-copy rule, the landing-runs-FROM-MAIN direction with the runnable command, and the resolved
+install posture. The record refuses values it cannot round-trip (control bytes, U+2028/U+2029) and
+validates everything BEFORE any git mutation; `--include` can no longer smuggle the shared index
+into a satellite. Two `doc-parity` bindings pin the mode doc to the live strings.
+Second safe slice of the deferred parallel-track work (AD-063); the dependency-free install
+posture is the next slice, node_modules ownership stays a separate redesign.
+
 ## 2026-07-21 — AD-064 review-state names a latent arm on a clean-tree PASS (kit 3.4.0)
 
 `review-state --check` under a configured `reviewed` or `council` recipe on a clean tree now NAMES
