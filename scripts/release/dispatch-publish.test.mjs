@@ -6,6 +6,7 @@ import {
   REPO_ROOT,
   EXIT,
   parseArgs,
+  loadGhToken,
   parseOriginRepo,
   readTagTemplate,
   runDispatch,
@@ -403,6 +404,72 @@ describe('runDispatch — the RELEASE-STUB live-preflight gate (D4)', () => {
   it('newestChangelogEntry isolates the first heading section', () => {
     assert.equal(newestChangelogEntry('# C\n\n## 2.0.0 — A\n\nbody\n\n## 1.0.0 — B\n'), '## 2.0.0 — A\n\nbody\n');
     assert.equal(newestChangelogEntry('# C\n\nno headings\n'), null);
+  });
+});
+
+describe('--token-file — the flat token lane (INCIDENT 2026-07-21, second occurrence)', () => {
+  it('parseArgs accepts --token-file <path> and requires its argument', () => {
+    const opts = parseArgs(['all', '--token-file', '/secrets/x.pat']);
+    assert.equal(opts.tokenFile, '/secrets/x.pat');
+    assert.equal(parseArgs(['all']).tokenFile, null, 'absent flag stays null — env GH_TOKEN keeps working');
+    assert.throws(() => parseArgs(['all', '--token-file']), (e) => e.exitCode === EXIT.usage && /--token-file requires/.test(e.message));
+  });
+
+  it('loadGhToken strips line endings (the documented tr -d semantics) and returns the token', () => {
+    const token = loadGhToken('/secrets/x.pat', () => 'ghp_abc123\r\n');
+    assert.equal(token, 'ghp_abc123');
+    assert.equal(loadGhToken('/secrets/x.pat', () => '\nghp_two\n\n'), 'ghp_two', 'interior of a multi-line file collapses like tr -d');
+  });
+
+  it('an unreadable token file fails LOUD, naming the path and the lane', () => {
+    assert.throws(
+      () => loadGhToken('/secrets/absent.pat', () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); }),
+      (e) => e.exitCode === EXIT.usage && /--token-file/.test(e.message) && /\/secrets\/absent\.pat/.test(e.message) && /ENOENT/.test(e.message),
+    );
+  });
+
+  it('an empty token file fails LOUD (an empty GH_TOKEN would earn gh\'s misleading auth error later)', () => {
+    assert.throws(
+      () => loadGhToken('/secrets/empty.pat', () => '\r\n\n'),
+      (e) => e.exitCode === EXIT.usage && /empty/.test(e.message),
+    );
+  });
+
+  it('runDispatch loads the token BEFORE the auth preflight and never logs its value', async () => {
+    const priorToken = process.env.GH_TOKEN;
+    try {
+      delete process.env.GH_TOKEN;
+      const { deps, calls } = makeWorld({ ghAuthFails: true });
+      const seen = [];
+      const ghApi = deps.ghApi;
+      deps.ghApi = (...args) => {
+        seen.push(process.env.GH_TOKEN);
+        return ghApi(...args);
+      };
+      const realReadFile = deps.readFile;
+      deps.readFile = (path, enc) => {
+        if (path === '/secrets/x.pat') {
+          assert.equal(enc, 'utf8');
+          return 'ghp_secretvalue\n';
+        }
+        return realReadFile(path, enc);
+      };
+      const logged = [];
+      deps.log = (line) => logged.push(line);
+      await runDispatch(['memory', '--token-file', '/secrets/x.pat'], deps);
+      assert.equal(seen[0], 'ghp_secretvalue', 'GH_TOKEN is set for the child gh calls before the first api use');
+      const everything = [...logged, calls.lastError ?? ''].join('\n');
+      assert.doesNotMatch(everything, /ghp_secretvalue/, 'the token value never reaches any output line');
+    } finally {
+      if (priorToken === undefined) delete process.env.GH_TOKEN;
+      else process.env.GH_TOKEN = priorToken;
+    }
+  });
+
+  it('the auth-failure recovery now names the flat --token-file lane beside the export form', async () => {
+    const { deps, calls } = makeWorld({ ghAuthFails: true });
+    await runDispatch(['memory'], deps);
+    assert.match(calls.lastError, /--token-file/, 'the recovery offers the lane that needs no env export');
   });
 });
 
