@@ -4,6 +4,20 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 3.4.0 — review-state names a latent arm on a clean-tree PASS (AD-064)
+
+`review-state --check` under a configured `reviewed` or `council` recipe on a clean tree no longer
+returns a bare `PASS — nothing to review`. It now NAMES every plan still in flight and states the
+forward consequence — `this gate arms as soon as the
+tree is dirty` — so a spent boot prompt left under a bare name is discoverable BEFORE it blocks,
+instead of surfacing at the worst moment: a pending commit, or the landing of a feature worktree when
+main first turns dirty. The quiet case (configured `solo`, no plan in flight, a non-git cwd) still
+passes silently through the earlier-returning arms; dirty-tree behaviour is unchanged. A `doc-parity`
+binding pins the
+live notice to `references/modes/review-state.md`, so a reworded doc that drops it fails the gate — a
+prose-only bar becomes a mechanism. This is the safe, converged slice of the deferred parallel-track
+work (AD-063), shipped on its own with no worktrees-ownership coupling.
+
 ## 3.3.0 — version-pin honesty: the profile stops claiming a limit it never observed (AD-062)
 
 `velocity --autonomy` told every user their credentials could not be protected by the sandbox —

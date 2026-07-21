@@ -13,7 +13,11 @@
 //           absent config with no reviewer backend ready); when no plan is in flight (docs/plans/
 //           holds no top-level .md that is not queue.md and not scratch by the naming convention:
 //           prefixes EXECUTE- / FEEDBACK-, or a name containing PROMPT / prompt / handoff); when
-//           the tree is clean (nothing to review); when the cwd is not a git work tree; and when
+//           the tree is clean (nothing to review — under a non-solo review obligation the PASS
+//           still NAMES every plan in flight and states that the gate arms as soon as the tree
+//           turns dirty, so a latent arm is discoverable before it blocks a pending commit); when
+//           the cwd is not a git work tree
+//           (the gate can never arm there, so nothing is announced); and when
 //           the obligations are SATISFIED: under `reviewed`, >=1 backend's latest normal receipt
 //           attests SHIP-CLASS (ship / ship with nits) for the current tree; under `council`,
 //           EVERY review-capable backend attests ship-class OR carries an explicit current-tree
@@ -172,6 +176,25 @@ const maskAdvisoryLine = (state) =>
 
 // ── plan-in-flight detector (the AD-038 naming convention; documented in queue.md) ─────
 
+// The clean-tree PASS wording, split so the doc-parity registry can bind the forward-looking half
+// to the mode doc — the notice is the contract, not decoration.
+export const CLEAN_TREE_PASS = 'the working tree is clean — nothing to review';
+export const LATENT_ARM_NOTICE = 'this gate arms as soon as the tree is dirty';
+
+const UNSAFE_INLINE_SCALARS = /[\u007f-\u009f\u2028\u2029]/gu;
+// A plan FILENAME reaches a one-line gate report. JSON quoting handles the C0 control bytes; the C1
+// range (DEL + U+0080..U+009F, including the U+0085 line break) and the two Unicode line separators
+// survive JSON.stringify and can still break a line, so they are escaped explicitly — every escape a
+// valid JSON \uXXXX, so the token round-trips through JSON.parse. The plan set stays STRING-typed for
+// its consumers (procedures / worktrees / the JSON surface); a name carrying INVALID UTF-8 bytes is a
+// stated residual (queue: PARALLEL-TRACK-REDESIGN — two such names could collapse in the DISPLAY only,
+// never in the gate decision, which keys on the receipt fingerprint, not the name).
+export const quoteReportName = (name) =>
+  JSON.stringify(name).replace(
+    UNSAFE_INLINE_SCALARS,
+    (value) => `\\u${value.codePointAt(0).toString(16).padStart(4, '0')}`,
+  );
+
 // Scratch by the naming convention: EXECUTE-/FEEDBACK- prefixes, or a name carrying PROMPT/prompt/
 // handoff. queue.md is the series index, never a plan.
 export const isScratchPlanName = (name) =>
@@ -183,7 +206,7 @@ export const isScratchPlanName = (name) =>
   name.includes('handoff');
 
 // The in-flight plan files: top-level docs/plans/*.md minus queue.md minus scratch. [] when the
-// directory is absent (no plans → nothing in flight).
+// directory is absent (no plans → nothing in flight). STRING-typed for every consumer.
 export const plansInFlight = (cwd, readdir = readdirSync) => {
   let entries;
   try {
@@ -392,7 +415,14 @@ export const decideCheck = (state) => {
   }
   if (state.plans.length === 0) return { code: 0, reason: `no plan in flight (docs/plans/ holds no active plan) — no receipt required${earlyNotes}` };
   if (state.fingerprint == null) return { code: 0, reason: `not a git work tree — nothing to fingerprint${earlyNotes}` };
-  if (state.clean === true) return { code: 0, reason: `the working tree is clean — nothing to review${earlyNotes}` };
+  // A clean tree PASSES, but never silently: the no-plan arm above already returned, so reaching
+  // here means >=1 plan IS in flight and this gate arms the moment the tree turns dirty. Naming
+  // each file forward-looking is what makes the arm discoverable BEFORE it blocks a pending commit.
+  if (state.clean === true) {
+    // Each name is byte-preserving and quoted because this reason is one gate-report line.
+    const named = state.plans.map((p) => quoteReportName(p)).join(', ');
+    return { code: 0, reason: `${CLEAN_TREE_PASS} — ${state.plans.length} plan(s) in flight: ${named} — ${LATENT_ARM_NOTICE}${earlyNotes}` };
+  }
   const exempt = new Set(state.degradedExempt);
   const satisfied = state.backends.filter((b) => b.state === 'current' && b.shipClass);
   const vetoed = state.backends.filter((b) => b.state === 'current' && !b.shipClass);
@@ -463,7 +493,7 @@ const formatHuman = (state, check) => {
     `review-state — ${ACTIVITY}.${SLOT} = ${state.obligations.recipe ?? '(unknowable)'} (${src})${state.requiredBackends.length ? ` → ${state.requiredBackends.join(' + ')}${state.obligations.perBackend ? '' : ' (any one, ship-class)'}` : ''}`,
   ];
   if (state.detectionWarning) lines.push(`  ⚠ ${state.detectionWarning}`);
-  lines.push(`  plan in flight: ${state.plans.length ? state.plans.join(', ') : '(none)'}`);
+  lines.push(`  plan in flight: ${state.plans.length ? state.plans.map((name) => quoteReportName(name)).join(', ') : '(none)'}`);
   if (state.fingerprint == null) lines.push('  tree: not a git work tree');
   else if (state.clean === true) lines.push('  tree: clean (nothing to review)');
   else lines.push(`  tree fingerprint: ${state.fingerprint}`);
@@ -517,7 +547,8 @@ The ONLY escape for an unavailable backend under council is an explicit current-
 record (node core-evidence.mjs degrade) — and never all backends.
 
 --check exits 0/1 per the normative contract in the tool header: 0 for solo / no plan in flight /
-a clean tree / not-a-git-tree / obligations satisfied (reviewed: >=1 ship-class attestation;
+a clean tree (under a non-solo review obligation the PASS names every plan in flight and its arm) /
+not-a-git-tree / obligations satisfied (reviewed: >=1 ship-class attestation;
 council: every backend ship-class or degrade-recorded, >=1 real ship); 1 on a veto, an
 unrecognized verdict, a missing/stale/ungrounded/probe-only backend without a degrade record,
 an all-degraded tree, or a down detector with no configured recipe.

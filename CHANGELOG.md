@@ -7,6 +7,15 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-21 — AD-064 review-state names a latent arm on a clean-tree PASS (kit 3.4.0)
+
+`review-state --check` under a configured `reviewed` or `council` recipe on a clean tree now NAMES
+every plan in flight and states that the gate arms as soon as the tree turns dirty, so a spent boot
+prompt left under a bare name is discoverable before it blocks rather than at the worst moment. A
+`doc-parity` binding pins the live notice to its mode doc.
+This is the safe, converged slice of the deferred parallel-track work (AD-063), shipped alone with no
+worktrees-ownership coupling.
+
 ## 2026-07-20 — AD-062 version-pin honesty: a runtime harness probe replaces a frozen claim (kit 3.3.0)
 
 `velocity --autonomy` had been telling every user their credentials could not be protected by the

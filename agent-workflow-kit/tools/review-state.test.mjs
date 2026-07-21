@@ -7,12 +7,13 @@
 
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, rmSync, lstatSync, symlinkSync, cpSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, rmSync, lstatSync, symlinkSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   main,
+  decideCheck,
   computeTreeFingerprint,
   computeFingerprintPayload,
   countNeverCommittableUntracked,
@@ -20,6 +21,7 @@ import {
   isTreeClean,
   isScratchPlanName,
   plansInFlight,
+  quoteReportName,
   backendReceiptStatus,
   readReceipts,
   RECEIPTS_BASENAME,
@@ -570,7 +572,7 @@ describe('review-state — receipts file + env override + report surface', () =>
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /codex: current \(verdict: "revise" — a recognized negative, an authoritative VETO, grounded/);
     assert.match(r.stdout, /agy: current \(verdict: "SHIP WITH NITS", ship-class, grounded/);
-    assert.match(r.stdout, /plan in flight: active-plan\.md/);
+    assert.match(r.stdout, /plan in flight: "active-plan\.md"/);
   });
 
   it('a recognized-after-trim verdict with control characters renders JSON-escaped on one line', () => {
@@ -1158,5 +1160,103 @@ describe('review-domain filter — fingerprint + isTreeClean over a lying lstat 
     rmSync(root, { recursive: true, force: true });
     assert.notEqual(fp, baselineFp, 'the embedded-repo `dir/` note moves the fingerprint (gitlink pin)');
     assert.equal(clean, false, 'a new embedded repo can never read clean');
+  });
+});
+
+// A clean-tree PASS that hides a latent arm is the count-free form of the
+// guard-reports-count-not-location defect class: the inventory the human report already prints must
+// ride the --check line too, BEFORE the gate can block anything.
+describe('review-state --check — a clean tree still reports the plan inventory', () => {
+  const cleanState = (overrides = {}) => ({
+    obligations: { recipe: 'council', source: 'config' },
+    malformed: 0,
+    evidenceUnavailable: false,
+    receiptsReadError: null,
+    plans: ['active-plan.md'],
+    fingerprint: 'current',
+    clean: true,
+    ...overrides,
+  });
+
+  const cleanRepo = (opts) => {
+    const { root, g } = makeRepo(opts);
+    g('add', '-A');
+    g('commit', '-qm', 'everything committed');
+    return { root, g };
+  };
+
+  it('clean-tree check names each plan in flight → 0', () => {
+    const { root, g } = cleanRepo({ plan: 'active-plan.md' });
+    writeFileSync(join(root, 'docs', 'plans', 'second-plan.md'), '# second\n');
+    g('add', '-A');
+    g('commit', '-qm', 'second plan committed');
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /active-plan\.md/, 'the first in-flight plan is named on the check line');
+    assert.match(r.stdout, /second-plan\.md/, 'EVERY in-flight plan is named, not just a count');
+  });
+
+  it('clean-tree check states the forward consequence (the gate arms once the tree turns dirty)', () => {
+    const { root } = cleanRepo({ plan: 'active-plan.md' });
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /clean/, 'it stays an honest clean-tree PASS');
+    assert.match(r.stdout, /arms as soon as the tree is dirty/, 'the latent arm is stated forward-looking, not after it blocks');
+  });
+
+  it('a plan name with a C1 line break (U+0085) stays on one report line, escaped as valid JSON', () => {
+    const name = 'line\u0085break.md';
+    const result = decideCheck(cleanState({ plans: [name] }));
+    assert.equal(result.code, 0);
+    assert.doesNotMatch(result.reason, /\u0085/u, 'U+0085 never reaches the report literally');
+    assert.match(result.reason, /"line\\u0085break\.md"/, 'the plan name is escaped inside the one-line result');
+    assert.match(result.reason, /arms as soon as the tree is dirty/, 'the notice remains on that same line');
+    // Every emitted token is a valid JSON string (the escape round-trips) \u2014 the report stays parseable.
+    const token = result.reason.match(/"line[^"]*break\.md"/)[0];
+    assert.equal(JSON.parse(token), 'line\u0085break.md', 'quoteReportName emits a JSON-parseable token');
+  });
+
+  it('configured solo on a clean tree with a plan exits 0 without the latent-arm notice', () => {
+    const result = decideCheck(cleanState({ obligations: { recipe: 'solo', source: 'config' } }));
+    const modeDoc = readFileSync(new URL('../references/modes/review-state.md', import.meta.url), 'utf8');
+    assert.equal(result.code, 0);
+    assert.match(result.reason, /configured .* recipe is solo/, 'the earlier solo arm remains explicit');
+    assert.doesNotMatch(result.reason, /arms as soon as the tree is dirty/, 'solo carries no latent review obligation');
+    assert.match(modeDoc, /A clean-tree PASS under a NON-SOLO review obligation/, 'the documented notice is limited to the arm that can actually activate');
+  });
+
+  it('clean tree with no plans still passes quietly (no inventory noise)', () => {
+    const { root } = cleanRepo({ plan: null });
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /no plan in flight/, 'the pre-existing quiet wording is untouched');
+    assert.doesNotMatch(r.stdout, /arms as soon as the tree is dirty/, 'nothing is latent, so nothing is announced');
+  });
+
+  it('scratch-named files are never reported on a clean tree', () => {
+    const { root, g } = cleanRepo({ plan: 'active-plan.md' });
+    for (const scratch of ['EXECUTE-boot.md', 'FEEDBACK-round.md', 'a-PLAN-PROMPT.md', 'old-session-handoff.md']) {
+      writeFileSync(join(root, 'docs', 'plans', scratch), 'scratch\n');
+    }
+    g('add', '-A');
+    g('commit', '-qm', 'scratch committed');
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /active-plan\.md/, 'the real plan is still named');
+    for (const scratch of ['EXECUTE-boot', 'FEEDBACK-round', 'PLAN-PROMPT', 'session-handoff']) {
+      assert.doesNotMatch(r.stdout, new RegExp(scratch), `${scratch} is scratch by the naming convention — never an arm`);
+    }
+  });
+
+  it('dirty-tree behaviour is unchanged by the clean-tree notice', () => {
+    const { root } = makeRepo({ plan: 'active-plan.md' });
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'a dirty unreceipted tree still FAILS the council obligation');
+    assert.doesNotMatch(r.stdout, /arms as soon as the tree is dirty/, 'the forward notice belongs to the clean branch only — the gate has already armed');
   });
 });
