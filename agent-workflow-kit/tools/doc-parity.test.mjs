@@ -102,6 +102,16 @@ describe('the REAL registry is consistent with the shipped contract docs (dogfoo
     assert.deepEqual([...binding.files].sort(), ['references/modes/setup.md', 'references/modes/upgrade.md']);
   });
 
+  // The "the tool knows and does not say" contract: a clean-tree PASS must still name a latent arm.
+  // It was a prose-only bar before, so a deleted binding would leave the suite green and silently
+  // re-open the drift it closes.
+  it('the registry binds the review-state clean-tree latent-arm notice to its mode doc', () => {
+    const binding = BINDINGS.find((b) => b.constant === 'latent-arm-notice');
+    assert.ok(binding, 'registry must bind the clean-tree latent-arm notice');
+    assert.equal(binding.token, 'this gate arms as soon as the tree is dirty', 'the token is the live emitted notice');
+    assert.deepEqual([...binding.files].sort(), ['references/modes/review-state.md']);
+  });
+
   // AD-044 Plan 2: the autonomy-doctor D7 exit/status contract is bound to its mode doc.
   it('the registry binds the autonomy-doctor EXIT table + every non-usage status token', () => {
     const names = BINDINGS.map((b) => b.constant);

@@ -33,6 +33,7 @@ import {
   ACKS_FILE,
 } from './recommendations.mjs';
 import { SKIPPED_READONLY } from './setup-backends.mjs';
+import { LATENT_ARM_NOTICE } from './review-state.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -41,6 +42,7 @@ const RECOMMENDATIONS_DOC = 'references/modes/recommendations.md';
 const UPGRADE_DOC = 'references/modes/upgrade.md';
 const VELOCITY_DOC = 'references/modes/velocity.md';
 const SETUP_DOC = 'references/modes/setup.md';
+const REVIEW_STATE_DOC = 'references/modes/review-state.md';
 
 // A typed usage failure (exit 2) for the CLI parser — the codebase's typed-error idiom (no classes).
 const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 });
@@ -90,6 +92,10 @@ export const BINDINGS = Object.freeze([
   // (setup.md owns --refresh-placed; upgrade.md pastes its lines) — a reworded doc dropping the
   // outcome fails this pin plus the gate. The token tracks the exported SETUP constant.
   valueBinding('refresh-skipped-readonly', SKIPPED_READONLY, SKIPPED_READONLY, [SETUP_DOC, UPGRADE_DOC]),
+  // The "the tool knows and does not say" contract: a clean-tree PASS must still name a latent arm.
+  // It was a prose-only bar a doc could silently drop, so it is pinned to the live string the tool
+  // actually emits — a reworded doc dropping the notice fails this pin plus the gate.
+  valueBinding('latent-arm-notice', LATENT_ARM_NOTICE, LATENT_ARM_NOTICE, [REVIEW_STATE_DOC]),
 ].map((b) => Object.freeze(b)));
 
 // ── the pure checker (readText is injectable for hermetic tests) ────────────────────────
@@ -135,8 +141,9 @@ Usage:
 
 A CLOSED, exported registry binds each live code constant — the autonomy-doctor contract (the EXIT
 table, the status tokens, the trusted-dir allowlist), the recommendations/upgrade presentation
-contract (section header, empty line, verdict templates), the acks-store path, and the setup
-refresh degrade token — to the exact token its references/modes/*.md contract must carry, and
+contract (section header, empty line, verdict templates), the acks-store path, the setup refresh
+degrade token, and the review-state clean-tree latent-arm notice — to the exact token its
+references/modes/*.md contract must carry, and
 asserts the CURRENT value renders into every bound file. A drifted doc, an unreadable bound file,
 or an absent token FAILS CLOSED.
 
