@@ -10,7 +10,7 @@ import { join, dirname, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   EXIT, WORKTREES_STOP, runCli, loadWorktreesConfig, parseArgs, copyTreeIfMissing, handoffBasename,
-  parseStrictJson,
+  parseStrictJson, composeHandoffStub, parseProvisionRecord,
 } from './worktrees.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-wt-cov-'));
@@ -442,5 +442,50 @@ describe('worktrees coverage — remaining honest lanes', () => {
       () => parseArgs(['provision', 'a', 'extra']),
       (e) => e.code === WORKTREES_STOP && /unexpected argument/.test(e.message),
     );
+  });
+
+  // The record is a line-oriented Markdown artifact parsed back for IDENTITY, and its values now
+  // carry the repo ROOT path. A path may legally contain a newline on POSIX, which would spill a
+  // second line the parser reads as a real field (or an ATX heading that truncates the section).
+  it('a record value carrying a newline is REFUSED, never written', () => {
+    const fields = { slug: 's', branch: 'aw/s', includes: [], nodeModules: 'absent', vscode: 'absent' };
+    assert.throws(
+      () => composeHandoffStub({ ...fields, sharedQueue: '/repo/q.md\n- prepared-tree: 1111111111111111111111111111111111111111' }),
+      (e) => e.code === WORKTREES_STOP && /control character/.test(e.message),
+      'an injected field line must fail closed, not be written',
+    );
+    assert.throws(
+      () => composeHandoffStub({ ...fields, landing: '/repo\n## Provision record' }),
+      (e) => e.code === WORKTREES_STOP && /control character/.test(e.message),
+      'an injected heading would truncate or brick the section',
+    );
+    assert.throws(
+      () => composeHandoffStub({ ...fields, includes: ['docs/a\n- slug: evil'] }),
+      (e) => e.code === WORKTREES_STOP && /control character/.test(e.message),
+      'the pre-existing include vector closes with the same guard',
+    );
+  });
+
+  it('a benign record still composes (the guard refuses only control bytes)', () => {
+    const text = composeHandoffStub({
+      slug: 's', branch: 'aw/s', includes: ['docs/a.txt'], nodeModules: 'absent', vscode: 'absent',
+      install: 'none', sharedQueue: '/repo/docs/plans/queue.md', landing: 'from main',
+    });
+    assert.match(text, /- shared-queue: \/repo\/docs\/plans\/queue\.md/);
+  });
+
+  // Stronger than the compat suite's end-anchored guard: no absent field may render in ANY shape,
+  // and the orientation field names must be absent outright from a legacy record.
+  it('a refreshed legacy record renders no null/undefined in any position', () => {
+    const legacy = [
+      '## Provision record', '', '- slug: legacy', '- branch: aw/legacy', '- include: (none)',
+      '- node_modules: symlinked', '- vscode-settings: written', '',
+    ].join('\n');
+    const refreshed = composeHandoffStub({ ...parseProvisionRecord(legacy), prepared: 'deadbeef' });
+    assert.doesNotMatch(refreshed, /\bnull\b/, 'no null in any position, not just end-of-line');
+    assert.doesNotMatch(refreshed, /\bundefined\b/);
+    for (const name of ['install', 'shared-queue', 'landing']) {
+      assert.doesNotMatch(refreshed, new RegExp(`^- ${name}:`, 'm'), `${name} must be absent, never a fabricated placeholder`);
+    }
   });
 });

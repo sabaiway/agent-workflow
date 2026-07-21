@@ -105,6 +105,23 @@ describe('the REAL registry is consistent with the shipped contract docs (dogfoo
   // The "the tool knows and does not say" contract: a clean-tree PASS must still name a latent arm.
   // It was a prose-only bar before, so a deleted binding would leave the suite green and silently
   // re-open the drift it closes.
+  it('the registry binds the worktrees provision-record orientation contract to the worktrees mode doc', () => {
+    for (const constant of ['queue-shared-rule', 'landing-from-main']) {
+      const binding = BINDINGS.find((b) => b.constant === constant);
+      assert.ok(binding, `registry must bind ${constant} (the provision-record orientation contract)`);
+      assert.deepEqual([...binding.files].sort(), ['references/modes/worktrees.md']);
+    }
+    assert.equal(
+      BINDINGS.find((b) => b.constant === 'landing-from-main').token,
+      'landing runs FROM MAIN, never from this worktree',
+    );
+    assert.match(
+      BINDINGS.find((b) => b.constant === 'queue-shared-rule').token,
+      /never copy it into this worktree/,
+      'the queue rule token states the prohibition',
+    );
+  });
+
   it('the registry binds the review-state clean-tree latent-arm notice to its mode doc', () => {
     const binding = BINDINGS.find((b) => b.constant === 'latent-arm-notice');
     assert.ok(binding, 'registry must bind the clean-tree latent-arm notice');

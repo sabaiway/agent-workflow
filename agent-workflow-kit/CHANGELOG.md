@@ -4,6 +4,36 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 3.5.0 — the provision record orients a fresh satellite session (AD-065)
+
+The worktrees provision record was an identity stub; a fresh satellite session could not derive
+three facts from its own checkout. The record now carries all three, and the mode doc is pinned to
+the live constants:
+
+- **`shared-queue`** — the ABSOLUTE path to MAIN's `docs/plans/queue.md`, followed by the verbatim
+  rule: the series index is SHARED, read it at that path, never copy it (a machine-local copy
+  silently diverges); findings ride the handoff record and main appends them to the index. The rule
+  ships only WITH the path — a record from an earlier kit carries neither. `--include` refuses to
+  copy the index (or any directory containing it) into the worktree, at preflight AND re-asserted
+  at the point of copy on the canonical pair resolved before `git worktree add`.
+- **`landing`** — landing runs FROM MAIN, never from the worktree, with the runnable
+  `… land <slug> --prepare` command already `cd`-ing back to main.
+- **`install`** — the resolved install posture: the runnable isolated-install command, or the
+  honest by-hand advice when the package manager is ambiguous.
+
+The record is line-oriented and parsed back for IDENTITY, so it now REFUSES any value it cannot
+round-trip: control bytes (an injected newline forges a field line or an `## …` heading that
+truncates the section) and U+2028/U+2029 (which write fine and are then silently DROPPED on read —
+a lost field with no error) are a typed STOP, never sanitized. Every value the record will carry is
+validated BEFORE any git mutation — a refusal at compose time would strand a created worktree with
+no handoff, which neither `--resume` nor `cleanup --abandon` can recover. Optional fields are
+omitted when absent, never rendered as `null`, so a record written by an earlier kit survives a
+refresh. Two new `doc-parity` bindings (`queue-shared-rule`, `landing-from-main`) pin
+`references/modes/worktrees.md` to the emitted strings.
+
+Second safe slice extracted from the deferred parallel-track work (AD-063) — no
+node_modules-ownership coupling; the provable dependency-free install posture is the next slice.
+
 ## 3.4.0 — review-state names a latent arm on a clean-tree PASS (AD-064)
 
 `review-state --check` under a configured `reviewed` or `council` recipe on a clean tree no longer
