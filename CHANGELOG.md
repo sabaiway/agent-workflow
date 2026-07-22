@@ -7,6 +7,18 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-22 — AD-070 the --include copy door proves what it copies (kit 3.9.0)
+
+The `--include` provision lane carried a preflight→walk gap: a source swapped after preflight
+was copied as approved, and the path-based queue guard could not see a node that had become the
+shared series index by identity (a hardlink, a swap) rather than by path. Preflight now captures
+each include root's {device, inode, kind} before any git mutation (special or unprobeable roots
+refuse with no worktree created); a file root is re-verified at the descriptor door, a directory
+root at walk start; and every copied include file is proven, with both descriptors open, not to
+be the door-time queue — identity read at descriptor-open time, never cached, fail-closed on
+anything unprovable. The contract ships as an exported constant, emitted on every
+include-identity STOP and doc-parity-pinned into the worktrees mode doc.
+
 ## 2026-07-22 — AD-069 cleanup never deletes a node_modules it cannot prove ephemeral (kit 3.8.0)
 
 Routine non-abandon `worktrees cleanup` silently deleted an ignored user-built `node_modules` —

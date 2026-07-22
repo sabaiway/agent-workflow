@@ -33,6 +33,25 @@ own verbatim error through the existing Git-error surface.
   is read from exactly one REQUIRED `## Provision record` section (a decoy field elsewhere cannot
   hijack identity); a missing or repeated section, or a duplicated single-valued field, is a typed
   STOP, never last-wins.
+  `--include` sources are identity-bound: preflight records each include root's identity (device,
+  inode, and kind of the canonical node) BEFORE `git worktree add`, and a root that is neither a
+  regular file nor a directory — or whose identity probe fails — is refused before any mutation.
+  An include that overlaps a path provision itself populates (the frozen registry footprint, the
+  seeded plan, the handoff) or another include root is refused pre-mutation too — an overlapped
+  destination would meet the copy-if-missing kept-exit and skip the identity door. On a FRESH
+  (non-resume) provision an include destination that already exists at walk time is a fail-closed
+  STOP (nothing legitimate pre-populates it — filesystem aliasing the overlap compare missed is
+  caught at the door). On `--resume`
+  an include destination already present from the prior run is KEPT (copy-if-missing by design):
+  the door proves what THIS run copies, never re-proves prior content.
+  An --include source is copied only through the identity door: a file include must still match the identity preflight recorded (device, inode, kind), a directory include root is re-checked at walk start, and every copied file is proven, with both descriptors open, not to be the node that IS the door-time queue — an absent queue keeps the lexical guard alone, and anything unprovable stops the copy.
+  The queue identity is read at descriptor-open time (following links, non-blocking — a
+  FIFO-shaped queue classifies non-regular and stops) and is never cached across door crossings;
+  a dangling, unreadable, or non-regular queue stops the copy. Honest residuals: the child
+  path-walk under a directory include stays path-based, the walk-start root recheck leaves a
+  recheck→walk window, and the identity/queue compares are point-in-time inode proofs, not
+  pathname bindings — a node recreated at the same device and inode within the window passes,
+  inherent to an inode proof — a self-discipline door, not a security boundary.
 - `list` — read-only: every worktree of this repo with slug (from the handoff file; none →
   "unknown (foreign)"), path, branch, base OID (the worktree HEAD — under the v1 no-commit bar
   that IS the provision base; a manual satellite commit moves it, and land derives its own base

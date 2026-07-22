@@ -4,6 +4,33 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 3.9.0 — the --include copy door proves what it copies (AD-070)
+
+Nothing bound the node the provision copy walk read to the node `--include` preflight approved:
+a source swapped after preflight was copied as approved, and the path-based queue guard could not
+see a node that had become the shared series index by identity (a hardlink, a swap) rather than
+by path. The gap is closed at the existing descriptor door:
+
+- **Preflight identity, captured before any git mutation.** The `--include` loop records each
+  root's {device, inode, kind} from the canonical node. A root that is neither a regular file
+  nor a directory — or an erroring identity probe — refuses BEFORE `git worktree add`: no
+  worktree is left behind.
+- **Three tiers at the walk.** A file root is verified at the door — the open descriptor must
+  match the preflight identity, and a node that is no longer a plain regular file stops before
+  any destination exists. A directory root gets a walk-start recheck (a recheck, not a binding).
+  Child files keep the existing same-call lstat↔open identity; the child walk stays path-based
+  (a stated residual).
+- **The door-time queue refusal, every copied include file.** With the source descriptor open,
+  the door opens the lexical queue path (following links, non-blocking — a FIFO-shaped queue
+  classifies non-regular and stops), fstats the open descriptor, and compares identities with
+  both descriptors open: never copy the node that IS the door-time queue. Queue identity is
+  established at descriptor-open time and never cached across crossings — absence is not cached
+  either. A truly absent queue keeps the lexical guard alone; a dangling, unreadable, or
+  non-regular queue is unprovable and stops the copy. The queue descriptor closes exactly once;
+  a close error surfaces without destination residue.
+- **The contract ships as an exported constant** (`INCLUDE_IDENTITY_RULE`), emitted on every
+  include-identity STOP and doc-parity-pinned into the worktrees mode doc.
+
 ## 3.8.0 — cleanup never deletes a node_modules it cannot prove ephemeral (AD-069)
 
 Routine non-abandon `worktrees cleanup` used to delete an ignored user-built `node_modules`
