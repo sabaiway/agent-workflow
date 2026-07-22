@@ -4,6 +4,41 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 3.7.0 — the worktrees-dir advisor item can finally converge (AD-068)
+
+The `recommendations` advisor's `worktrees-dir` item used to fire forever: its only convergence
+signal was a host write-capability callback that production never supplies, so the item kept
+re-rendering even once its own advice had been applied. It now converges on either of two
+maintainer-visible signals — while a genuinely supplied host signal still overrides both, in
+EITHER direction (a trusted no keeps the item firing however the project is configured):
+
+- **a declared grant** — a `sandbox.filesystem.allowWrite` entry covering the probed worktrees
+  parent dir, in either settings scope; `~`/`~/…` resolve against home, and coverage is
+  path-segment-aware (a grant on a sibling or on a child never counts). A declaration is proof the
+  maintainer applied THIS item's advice, never proof of write capability — the provision
+  preflight's real create+delete probe stays the runtime truth. The declaration read is guarded
+  no-follow end to end (an out-of-project store reached through a symlink cannot silence the item;
+  a non-regular target is a stated skip), and the `allowWrite` shape check is fail-closed over the
+  whole array — one malformed entry invalidates the list rather than hiding beside a good one;
+- **a dir-bound ack** — for hosts that ignore the settings key: the item's consent-gated APPLY
+  one-liner is `ack-write --lane worktrees-dir` (a dry-run preview that prints the exact `--apply`
+  which records the ack), while the HAND-APPLY grant advice rides the `recipe:` line as the
+  labeled first step — the consent flow waits for the grant (or the terminal-fallback choice)
+  before the ack runs, because the ack RECORDS a choice, never makes one. The recorded
+  `worktreesDirAck` fingerprint lives in the family-owned `docs/ai/acks.json` and binds to the
+  RESOLVED probe dir, so the item re-fires exactly when that resolved dir changes — never on a
+  no-op re-render, never a security key. Against a trusted host NO the apply stays the HAND-APPLY
+  grant advice and no ack surfaces (it could never converge there).
+
+`ack-write` accordingly grows a closed-world `--lane` registry (`sandbox-lane` — the default, so
+every existing invocation and rendered one-liner stays byte-identical — and `worktrees-dir`); one
+lane sets exactly ONE store key, merge-preserving the rest, and an unknown lane is a usage refusal
+at the writer, never an invented key in the shared store.
+
+Honesty fix riding along: every shipped surface that promised the read-lane hook «fires on
+subagent Bash too» now says «where the host fires hooks on subagent Bash» — that behavior has
+never been measured, and a shipped surface must not assert it.
+
 ## 3.6.0 — the dependency-free install posture: a proof, never a default (AD-067)
 
 On a provably dependency-free project the provision record and the default-lane report no longer

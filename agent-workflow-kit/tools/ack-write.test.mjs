@@ -67,6 +67,54 @@ describe('ack-write — the consent-gated ack store writer', () => {
     assert.deepEqual(parsed, { _README: 'hi', otherAck: 'x', sandboxLaneAck: FP });
   });
 
+  it('--lane worktrees-dir sets ITS key only, preserving the sandbox lane ack beside it', () => {
+    const root = makeDeployed();
+    writeFileSync(acksPath(root), JSON.stringify({ sandboxLaneAck: 'aaaaaaaaaaaaaaaa' }));
+    const code = main(['--lane', 'worktrees-dir', '--fingerprint', FP, '--cwd', root, '--apply'], capture());
+    const parsed = JSON.parse(readFileSync(acksPath(root), 'utf8'));
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, 0);
+    assert.deepEqual(parsed, { sandboxLaneAck: 'aaaaaaaaaaaaaaaa', worktreesDirAck: FP });
+  });
+
+  it('the --lane preview prints its own --apply command; the DEFAULT lane stays flagless', () => {
+    const root = makeDeployed();
+    const cap = capture();
+    const code = main(['--lane', 'worktrees-dir', '--fingerprint', FP, '--cwd', root], cap);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, 0, cap.out());
+    const toApply = cap.out().split('\n').find((l) => l.includes('to apply:'));
+    assert.match(toApply, /--lane worktrees-dir --fingerprint abcdef0123456789 --cwd \/.* --apply$/);
+    assert.ok(applyCommand(root, FP).includes('--lane') === false, 'the default lane renders no --lane flag');
+  });
+
+  it('an UNKNOWN lane is a usage error (exit 2) — nothing written', () => {
+    const root = makeDeployed();
+    const cap = capture();
+    const code = main(['--lane', 'nope', '--fingerprint', FP, '--cwd', root, '--apply'], cap);
+    const created = existsSync(acksPath(root));
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, 2, cap.out());
+    assert.match(cap.out(), /--lane must name a known ack lane/);
+    assert.equal(created, false);
+  });
+
+  it('an INHERITED property name is not a lane — the store never gains an invented key', () => {
+    const root = makeDeployed();
+    const cap = capture();
+    const code = main(['--lane', 'constructor', '--fingerprint', FP, '--cwd', root, '--apply'], cap);
+    const created = existsSync(acksPath(root));
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, 2, cap.out());
+    assert.equal(created, false);
+  });
+
+  it('--lane without a value is a usage error (exit 2)', () => {
+    const cap = capture();
+    assert.equal(main(['--fingerprint', FP, '--lane'], cap), 2);
+    assert.match(cap.out(), /--lane needs a lane name/);
+  });
+
   it('REFUSES an absent docs/ai deployment with a named recovery pointer (exit 1, nothing created)', () => {
     const root = mkdtempSync(join(tmpdir(), 'ack-write-nodep-'));
     const cap = capture();

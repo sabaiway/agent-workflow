@@ -7,6 +7,20 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-22 — AD-068 the worktrees-dir advisor item can finally converge (kit 3.7.0)
+
+The `recommendations` advisor's `worktrees-dir` item fired forever — its only convergence signal
+was a host callback production never supplies. It now converges on a declared
+`sandbox.filesystem.allowWrite` entry covering the probed dir (either settings scope,
+path-segment-aware, guarded no-follow) or, on hosts that ignore that key, on a neutral dir-bound
+`worktreesDirAck` recorded by the consent-gated `ack-write --lane worktrees-dir` into
+`docs/ai/acks.json`; a supplied host signal still overrides both, in either direction. Neither
+signal claims write CAPABILITY — the provision preflight's real probe stays the runtime truth.
+`ack-write` grows a closed-world `--lane` registry (default `sandbox-lane` keeps every existing
+invocation byte-identical). Every shipped surface now qualifies the subagent promise honestly:
+«where the host fires hooks on subagent Bash». The advisor half of the bare-lane plan, shipped
+alone (AD-068); the deny rung stays deliberately queued behind its consent-gated live-host canary.
+
 ## 2026-07-22 — AD-067 the dependency-free install posture is a proof, never a default (kit 3.6.0)
 
 On a provably dependency-free project the worktrees provision record and the default-lane report

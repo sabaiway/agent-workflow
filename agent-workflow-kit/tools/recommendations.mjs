@@ -33,7 +33,7 @@
 import { readFileSync, readdirSync, lstatSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   preflightVelocityProfile,
@@ -597,6 +597,14 @@ export const recipeFingerprint = ({ hosts, dirs, home }) => {
 // consulted as an ack.
 export const ACKS_FILE = 'docs/ai/acks.json';
 export const ACKS_LANE_KEY = 'sandboxLaneAck';
+export const ACKS_WORKTREES_DIR_KEY = 'worktreesDirAck';
+// The CLOSED-WORLD ack-lane registry: the lane name an advisor item renders on the writer's
+// command line → the store key that writer sets. A lane the registry does not name is a usage
+// refusal at the writer, never a newly-invented key in the shared store.
+export const ACK_LANES = Object.freeze({
+  'sandbox-lane': ACKS_LANE_KEY,
+  'worktrees-dir': ACKS_WORKTREES_DIR_KEY,
+});
 
 // The opt-in read-lane toggle file (AD-055 Part II) — the SAME kit-owned docs/ai/lanes.json the
 // placed hook reads live. The read-lane item offers to enable it once the hook is placed+wired.
@@ -632,7 +640,7 @@ export const SANDBOX_LANE_ACK_KEY = 'sandboxLaneAck';
 // writer refuses such a deployment — the reader must too), a symlinked/dangling LEAF must not read as
 // not-yet-acked, and a non-regular target (FIFO/dir/device) is a fail-closed SKIP — never read it (a
 // FIFO would BLOCK the advisor). ENOENT-safe: an absent file/dir is the NORMAL not-yet-acked null.
-const readAcksLane = (root, deps) => {
+const readAckValue = (root, deps, ackKey) => {
   const readFile = deps.readFile ?? readFileSync;
   const lstat = deps.lstat ?? lstatSync;
   const absPath = join(root, ACKS_FILE);
@@ -651,7 +659,7 @@ const readAcksLane = (root, deps) => {
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error(`${ACKS_FILE}: expected a JSON object`);
   }
-  const value = parsed[ACKS_LANE_KEY];
+  const value = parsed[ackKey];
   return typeof value === 'string' ? value : null;
 };
 
@@ -719,7 +727,7 @@ const probeSandboxLane = ({ root, deps, add, skip }) => {
     // then the legacy settings scopes; a stale value in one store is ignored when another matches
     // (Decisions 2). A changed recipe (hosts, dirs, or an env override) re-fires the item (D4).
     const acks = [
-      readAcksLane(root, deps),
+      readAckValue(root, deps, ACKS_LANE_KEY),
       settings.data?.[SANDBOX_LANE_ACK_PARENT]?.[SANDBOX_LANE_ACK_KEY],
       localSettings.data?.[SANDBOX_LANE_ACK_PARENT]?.[SANDBOX_LANE_ACK_KEY],
     ];
@@ -742,9 +750,86 @@ const probeSandboxLane = ({ root, deps, add, skip }) => {
   }
 };
 
-// The worktrees-dir arming item (parallel feature worktrees): fires when the resolved worktrees
-// parent dir (docs/ai/worktrees.json parentDir, else the repo's own parent) is not confirmed
-// writable by a trusted host signal. The provision preflight remains the real create+delete test.
+// A declared `sandbox.filesystem.allowWrite` entry, resolved the way a host that honors the key
+// resolves it: `~` and `~/…` against the resolved home, every other form against the project root.
+const resolveDeclaredDir = (entry, { home, root }) => {
+  if (entry === '~') return resolve(home);
+  if (entry.startsWith('~/')) return resolve(home, entry.slice(2));
+  return resolve(root, entry);
+};
+
+// Ancestor-or-equal containment on PATH SEGMENTS, never a raw string prefix — a grant on
+// `<p>/farm` must never read as a grant on the sibling `<p>/farmhouse`. A grant on a DESCENDANT
+// never covers its parent: the parent dir is the one provision writes into.
+const dirCovers = (declaredDir, probeDir) => {
+  const base = declaredDir.endsWith(sep) ? declaredDir.slice(0, -sep.length) : declaredDir;
+  return probeDir === base || probeDir.startsWith(`${base}${sep}`);
+};
+
+// D7 lane 1 — the DECLARATION confirmation. A settings entry is not proof of writable CAPABILITY
+// (runtime truth stays with the provision preflight's real create+delete probe); it is proof the
+// maintainer applied this item's own advice, which is what the item may converge on. Both scopes
+// are consulted, as everywhere else here; a malformed store THROWS → the probe's stated skip.
+// readSettingsFile only filters ENOENT — it rejects neither a symlink nor a non-regular target, and
+// then reads THROUGH the link. A declaration is a CONVERGENCE signal here, so an unguarded read
+// would let a store outside the project silence the item (and a FIFO would block the advisor).
+// Guard the WHOLE path chain no-follow and require a regular file BEFORE the read; ENOENT stays the
+// normal not-declared fall-through, everything else becomes the probe's stated skip.
+const readDeclarationScope = (root, rel, deps) => {
+  const lstat = deps.lstat ?? lstatSync;
+  const absPath = join(root, rel);
+  let st;
+  try {
+    assertContainedRealPath(root, absPath, { lstat });
+    st = lstat(absPath);
+  } catch (err) {
+    if (err?.code === 'ENOENT') return null;
+    throw err;
+  }
+  if (!st.isFile()) throw new Error(`${rel} is not a regular file — refusing to read it`);
+  return readSettingsFile(absPath, { ...deps, cwd: root });
+};
+
+// Fail-closed shape check BEFORE any coverage test — UNIFORMLY, over the whole array: a declaration
+// that suppresses a recommendation is never PARTIALLY trusted, so one bad entry invalidates the
+// whole list rather than being filtered away beside a good one. An empty or whitespace-only entry is
+// invalid too: it is meaningless to a host, but would resolve to the project root here and silence
+// the item for any probe dir inside the repo. An ABSENT allowWrite is simply nothing declared.
+const declaredWritableDirs = (scope, rel) => {
+  const filesystem = scope?.data?.sandbox?.filesystem;
+  if (filesystem === null || typeof filesystem !== 'object' || Array.isArray(filesystem)) return [];
+  const { allowWrite } = filesystem;
+  if (allowWrite === undefined) return [];
+  if (!Array.isArray(allowWrite) || !allowWrite.every((entry) => typeof entry === 'string' && entry.trim() !== '')) {
+    throw new Error(`${rel}: sandbox.filesystem.allowWrite must be an array of non-empty strings`);
+  }
+  return allowWrite;
+};
+
+const declaresWritableDir = (root, probeDir, deps) => {
+  const home = deps.home ?? homedir();
+  // Both scopes are READ and SHAPE-CHECKED (never short-circuited) so the guards screen each one —
+  // a malformed second scope must not hide behind a converging first.
+  const declared = [SETTINGS_FILE, SETTINGS_LOCAL_FILE].map((rel) =>
+    declaredWritableDirs(readDeclarationScope(root, rel, deps), rel),
+  );
+  return declared.some((entries) =>
+    entries.some((entry) => dirCovers(resolveDeclaredDir(entry, { home, root }), probeDir)),
+  );
+};
+
+// D7 lane 2 — the ack fallback for a host that ignores the settings key, bound to the PROBED DIR
+// through the shared neutral fingerprint (the same home-symbolic canonicalization the sandbox-lane
+// ack uses, so a home-anchored dir acks portably). The binding is to the RESOLVED probe dir, so the
+// item re-fires only when that resolved dir changes — two ABSENT parentDir values sharing an
+// existing ancestor resolve to the same dir and keep the same ack.
+export const worktreesDirFingerprint = (probeDir, home) => recipeFingerprint({ hosts: [], dirs: [probeDir], home });
+
+// The worktrees-dir arming item (parallel feature worktrees): fires when write access to the
+// resolved worktrees parent dir (docs/ai/worktrees.json parentDir, else the repo's own parent) is
+// neither confirmed by a trusted host signal nor declared/acknowledged by the maintainer. Before
+// D7 the host signal was the ONLY convergence lane — injectable from tests but never supplied in
+// production, so the item fired forever even once its own advice had been applied.
 const probeWorktreesDir = ({ root, deps, add, skip }) => {
   try {
     const config = loadWorktreesConfig(root, deps);
@@ -752,13 +837,34 @@ const probeWorktreesDir = ({ root, deps, add, skip }) => {
     // the SAME canonical derivation the provision preflight probes (worktrees.mjs) — an absent
     // configured dir resolves to its nearest existing ancestor, never a false denial
     const probeDir = resolveProbeDir(parent, deps);
-    if (deps.canWriteDir?.(probeDir) === true) return;
+    // A supplied host signal is runtime truth and OVERRIDES both declaration lanes in EITHER
+    // direction: a trusted yes converges, a trusted no fires however the project is configured.
+    const hostSignal = deps.canWriteDir?.(probeDir);
+    if (hostSignal === true) return;
+    const home = deps.home ?? homedir();
+    const fingerprint = worktreesDirFingerprint(probeDir, home);
+    if (hostSignal !== false) {
+      if (declaresWritableDir(root, probeDir, deps)) return;
+      if (readAckValue(root, deps, ACKS_WORKTREES_DIR_KEY) === fingerprint) return;
+    }
     const dir = truncatedTo(oneLineOf(probeDir), templateBudget(WHATS['worktrees-dir']));
-    add(
-      'worktrees-dir',
-      fillTemplate(WHATS['worktrees-dir'], { dir }),
-      `HAND-APPLY: add ${JSON.stringify(probeDir)} to sandbox.filesystem.allowWrite in .claude/settings.json on settings-native hosts; on harness-managed hosts grant this dir for the session or use the provision terminal fallback`,
-    );
+    const grantAdvice = `add ${JSON.stringify(probeDir)} to sandbox.filesystem.allowWrite in .claude/settings.json on settings-native hosts; on harness-managed hosts grant this dir for the session or use the provision terminal fallback`;
+    // The consent-flow executes only the APPLY slot; a HAND-APPLY line is maintainer territory and
+    // a recipe: detail is informational. So when the ack lane is open, the runnable ack preview IS
+    // the apply (dry-run; it prints the exact --apply the flow then runs) and the grant advice
+    // rides the detail, labeled as the first step. Against a trusted NO the ack could never
+    // converge, so the grant advice is the apply and no ack surfaces.
+    if (hostSignal === false) {
+      add('worktrees-dir', fillTemplate(WHATS['worktrees-dir'], { dir }), `HAND-APPLY: ${grantAdvice}`);
+    } else {
+      add(
+        'worktrees-dir',
+        fillTemplate(WHATS['worktrees-dir'], { dir }),
+        `node ${q(toolPath('ack-write.mjs'))} --lane worktrees-dir --fingerprint ${fingerprint} --cwd ${q(root)}`,
+        'worktrees-dir',
+        `HAND-APPLY FIRST: ${grantAdvice}; THEN this item's apply one-liner previews the dir-bound ack and prints the exact --apply that records it`,
+      );
+    }
   } catch (err) {
     skip('worktrees-dir', err);
   }
@@ -852,7 +958,7 @@ Usage:
 Computes the deterministic Recommendations section every kit upgrade ends with — VERDICT-FIRST:
 one composed verdict line opens every non-optimal render, then per item {severity · what is
 sub-optimal · the benefit in one plain line · an optional \`recipe:\` line (the sandbox-lane live
-recipe only) · the exact consent-gated apply one-liner}. --cwd is
+recipe, or the worktrees-dir hand-apply-first grant advice) · the exact consent-gated apply one-liner}. --cwd is
 REQUIRED (the target project is explicit, never inferred from the shell's current directory). The
 section renders present-even-when-empty ("${RECOMMENDATIONS_EMPTY_LINE}"); a probe failure is a
 stated skipped-item line. Apply lines are cwd-independent (absolute tool paths, a pinned --cwd;

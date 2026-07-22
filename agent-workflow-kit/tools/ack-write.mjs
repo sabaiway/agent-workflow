@@ -9,8 +9,8 @@
 //   • preview-then-mutate — `--dry-run` is the DEFAULT and writes nothing; `--apply` writes;
 //   • deployment-gated — REFUSES an absent docs/ai with a named recovery pointer (run init/bootstrap);
 //   • creates docs/ai/acks.json (and nothing else) if absent;
-//   • merge-preserve — every existing key (a hand-authored `_README`, future sibling acks) is kept;
-//     only the `sandboxLaneAck` key is set;
+//   • merge-preserve — every existing key (a hand-authored `_README`, the OTHER lanes' acks) is
+//     kept; only the selected lane's ONE key is set (--lane, closed-world over ACK_LANES);
 //   • symlink / non-regular target → STOP (never write through a link or clobber a device/dir);
 //   • fail-closed on malformed existing JSON (never overwrite an unparseable store);
 //   • atomic — exclusive-create *.tmp + rename (no partial-write state); last-writer-wins;
@@ -22,7 +22,7 @@
 import { lstatSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { ACKS_FILE, ACKS_LANE_KEY } from './recommendations.mjs';
+import { ACKS_FILE, ACK_LANES } from './recommendations.mjs';
 import { assertDocsAiDeployment, writeDocsAiFileAtomic, lstatNoFollow } from './atomic-write.mjs';
 import { shellQuoteArg } from './review-state.mjs';
 
@@ -37,6 +37,9 @@ const JSON_INDENT = 2;
 // The recipeFingerprint shape (recommendations.mjs: sha256 hex sliced to 16) — a fail-closed guard so
 // the store never records a malformed or injected value.
 export const FINGERPRINT_PATTERN = /^[0-9a-f]{16}$/u;
+// The lane this writer records when none is named — the original single-lane contract, so every
+// pre-existing sandbox-lane invocation and its rendered one-liner stay byte-identical.
+export const DEFAULT_ACK_LANE = 'sandbox-lane';
 
 export const ACK_WRITE_STOP = 'ACK_WRITE_STOP';
 export const stop = (message) =>
@@ -82,34 +85,41 @@ const preflightTarget = (absPath, deps) => {
 
 // Pure preflight (both dry-run and apply). Validates the fingerprint, refuses an absent deployment,
 // gates the target, and computes the merge — no writes.
-export const planAckWrite = ({ cwd, fingerprint }, deps = {}) => {
+export const planAckWrite = ({ cwd, fingerprint, lane = DEFAULT_ACK_LANE }, deps = {}) => {
   // typeof BEFORE RegExp.test — .test() coerces its arg to a string, so a number or a single-element
   // array of 16 hex chars would otherwise pass the guard and be written as a non-string ack the
   // reader then ignores.
   if (typeof fingerprint !== 'string' || !FINGERPRINT_PATTERN.test(fingerprint)) {
     throw usageFail(`--fingerprint must be a 16-char lowercase hex fingerprint (got ${JSON.stringify(fingerprint ?? null)})`);
   }
+  // hasOwn, never a bare lookup: an inherited name ("constructor", "toString") would otherwise
+  // resolve to a function and be written into the shared store as an invented key.
+  if (typeof lane !== 'string' || !Object.hasOwn(ACK_LANES, lane)) {
+    throw usageFail(`--lane must name a known ack lane (${Object.keys(ACK_LANES).join(', ')}); got ${JSON.stringify(lane ?? null)}`);
+  }
+  const ackKey = ACK_LANES[lane];
+  const noun = `the neutral ${lane} ack`;
   const root = resolve(cwd);
-  assertDocsAiDeployment(root, deps, { stop, noun: 'the neutral sandbox-lane ack', rel: ACKS_FILE });
+  assertDocsAiDeployment(root, deps, { stop, noun, rel: ACKS_FILE });
   const absPath = join(root, ACKS_FILE);
   const { existed, existing } = preflightTarget(absPath, deps);
-  const alreadyAcked = existing[ACKS_LANE_KEY] === fingerprint;
-  const merged = { ...existing, [ACKS_LANE_KEY]: fingerprint };
-  const otherKeys = Object.keys(existing).filter((k) => k !== ACKS_LANE_KEY);
-  return { root, absPath, fingerprint, existed, existing, merged, alreadyAcked, otherKeys };
+  const alreadyAcked = existing[ackKey] === fingerprint;
+  const merged = { ...existing, [ackKey]: fingerprint };
+  const otherKeys = Object.keys(existing).filter((k) => k !== ackKey);
+  return { root, absPath, fingerprint, lane, ackKey, noun, existed, existing, merged, alreadyAcked, otherKeys };
 };
 
-export const writeAck = ({ cwd, fingerprint, dryRun = true } = {}, deps = {}) => {
-  const plan = planAckWrite({ cwd, fingerprint }, deps);
+export const writeAck = ({ cwd, fingerprint, lane = DEFAULT_ACK_LANE, dryRun = true } = {}, deps = {}) => {
+  const plan = planAckWrite({ cwd, fingerprint, lane }, deps);
   if (dryRun) return { wrote: false, dryRun: true, ...plan };
   const body = `${JSON.stringify(plan.merged, null, JSON_INDENT)}\n`;
-  writeDocsAiFileAtomic(plan.root, ACKS_FILE, body, deps, { stop, noun: 'the neutral sandbox-lane ack' });
+  writeDocsAiFileAtomic(plan.root, ACKS_FILE, body, deps, { stop, noun: plan.noun });
   return { wrote: true, dryRun: false, ...plan };
 };
 
 // ── report ──────────────────────────────────────────────────────────────────────────────
-export const applyCommand = (root, fingerprint) =>
-  `node ${q(ACK_WRITE_TOOL)} --fingerprint ${fingerprint} --cwd ${q(root)} --apply`;
+export const applyCommand = (root, fingerprint, lane = DEFAULT_ACK_LANE) =>
+  `node ${q(ACK_WRITE_TOOL)}${lane === DEFAULT_ACK_LANE ? '' : ` --lane ${lane}`} --fingerprint ${fingerprint} --cwd ${q(root)} --apply`;
 
 export const formatResult = (result) => {
   const merge = result.otherKeys.length > 0 ? ` (merge-preserving ${result.otherKeys.length} existing key(s))` : '';
@@ -121,27 +131,29 @@ export const formatResult = (result) => {
     }
     return [
       `agent-workflow ack — DRY RUN (no changes; re-run with --apply)`,
-      `  - would ${result.existed ? 'set' : 'create'} ${ACKS_FILE} "${ACKS_LANE_KEY}" = "${result.fingerprint}"${merge}`,
+      `  - would ${result.existed ? 'set' : 'create'} ${ACKS_FILE} "${result.ackKey}" = "${result.fingerprint}"${merge}`,
       `  - this is a NEUTRAL recipe acknowledgement, never a security key.`,
-      `  to apply: ${applyCommand(result.root, result.fingerprint)}`,
+      `  to apply: ${applyCommand(result.root, result.fingerprint, result.lane)}`,
     ].join('\n');
   }
   return [
     `agent-workflow ack — APPLY`,
-    `  - ${ACKS_FILE}: "${ACKS_LANE_KEY}" = "${result.fingerprint}"${merge}`,
+    `  - ${ACKS_FILE}: "${result.ackKey}" = "${result.fingerprint}"${merge}`,
   ].join('\n');
 };
 
 // ── CLI ─────────────────────────────────────────────────────────────────────────────────
-const USAGE = `usage: ack-write --fingerprint <16-hex> [--dry-run | --apply] [--cwd <dir>] [--help]
+const USAGE = `usage: ack-write --fingerprint <16-hex> [--lane <${Object.keys(ACK_LANES).join('|')}>] [--dry-run | --apply] [--cwd <dir>] [--help]
 
-Records the NEUTRAL sandbox-lane recipe acknowledgement into ${ACKS_FILE} (the family-owned ack
-store — no host settings validator guards it). Default is --dry-run (a preview; writes nothing) and
-prints the exact --apply command. --apply merges "${ACKS_LANE_KEY}" into ${ACKS_FILE}, preserving
-every existing key. Refuses an absent docs/ai deployment; never a security key; never commits.`;
+Records a NEUTRAL recipe acknowledgement into ${ACKS_FILE} (the family-owned ack store — no host
+settings validator guards it). --lane names which advisor item is being acknowledged (default
+"${DEFAULT_ACK_LANE}"); each lane owns one top-level key. Default is --dry-run (a preview; writes
+nothing) and prints the exact --apply command. --apply merges that ONE key into ${ACKS_FILE},
+preserving every existing key. Refuses an absent docs/ai deployment; never a security key; never
+commits.`;
 
 export const parseArgs = (argv) => {
-  const opts = { fingerprint: undefined, dryRunFlag: false, apply: false, cwd: undefined, help: false };
+  const opts = { fingerprint: undefined, lane: DEFAULT_ACK_LANE, dryRunFlag: false, apply: false, cwd: undefined, help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') opts.help = true;
@@ -151,6 +163,10 @@ export const parseArgs = (argv) => {
       i += 1;
       if (argv[i] === undefined || argv[i].startsWith('-')) throw usageFail('--fingerprint needs a value');
       opts.fingerprint = argv[i];
+    } else if (arg === '--lane') {
+      i += 1;
+      if (argv[i] === undefined || argv[i].startsWith('-')) throw usageFail('--lane needs a lane name');
+      opts.lane = argv[i];
     } else if (arg === '--cwd') {
       i += 1;
       if (argv[i] === undefined || argv[i].startsWith('-')) throw usageFail('--cwd needs a directory argument');
@@ -160,7 +176,7 @@ export const parseArgs = (argv) => {
     }
   }
   if (opts.dryRunFlag && opts.apply) throw usageFail('--dry-run and --apply cannot be used together');
-  return { help: opts.help, fingerprint: opts.fingerprint, dryRun: !opts.apply, cwd: opts.cwd };
+  return { help: opts.help, fingerprint: opts.fingerprint, lane: opts.lane, dryRun: !opts.apply, cwd: opts.cwd };
 };
 
 export const main = (argv = process.argv.slice(2), deps = {}) => {
@@ -172,7 +188,7 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
       log(USAGE);
       return EXIT_OK;
     }
-    const result = writeAck({ cwd: args.cwd ?? deps.cwd ?? process.cwd(), fingerprint: args.fingerprint, dryRun: args.dryRun }, deps);
+    const result = writeAck({ cwd: args.cwd ?? deps.cwd ?? process.cwd(), fingerprint: args.fingerprint, lane: args.lane, dryRun: args.dryRun }, deps);
     log(formatResult(result));
     return EXIT_OK;
   } catch (err) {
