@@ -106,7 +106,7 @@ describe('the REAL registry is consistent with the shipped contract docs (dogfoo
   // It was a prose-only bar before, so a deleted binding would leave the suite green and silently
   // re-open the drift it closes.
   it('the registry binds the worktrees provision-record orientation contract to the worktrees mode doc', () => {
-    for (const constant of ['queue-shared-rule', 'landing-from-main']) {
+    for (const constant of ['queue-shared-rule', 'landing-from-main', 'no-dependencies-posture']) {
       const binding = BINDINGS.find((b) => b.constant === constant);
       assert.ok(binding, `registry must bind ${constant} (the provision-record orientation contract)`);
       assert.deepEqual([...binding.files].sort(), ['references/modes/worktrees.md']);
@@ -114,6 +114,11 @@ describe('the REAL registry is consistent with the shipped contract docs (dogfoo
     assert.equal(
       BINDINGS.find((b) => b.constant === 'landing-from-main').token,
       'landing runs FROM MAIN, never from this worktree',
+    );
+    assert.equal(
+      BINDINGS.find((b) => b.constant === 'no-dependencies-posture').token,
+      'no install needed — the project declares no dependencies',
+      'the token is the live recorded posture',
     );
     assert.match(
       BINDINGS.find((b) => b.constant === 'queue-shared-rule').token,

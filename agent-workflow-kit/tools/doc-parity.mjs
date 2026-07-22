@@ -34,7 +34,7 @@ import {
 } from './recommendations.mjs';
 import { SKIPPED_READONLY } from './setup-backends.mjs';
 import { LATENT_ARM_NOTICE } from './review-state.mjs';
-import { QUEUE_SHARED_RULE, LANDING_FROM_MAIN } from './worktrees.mjs';
+import { QUEUE_SHARED_RULE, LANDING_FROM_MAIN, NO_DEPENDENCIES_POSTURE } from './worktrees.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -99,10 +99,12 @@ export const BINDINGS = Object.freeze([
   // actually emits — a reworded doc dropping the notice fails this pin plus the gate.
   valueBinding('latent-arm-notice', LATENT_ARM_NOTICE, LATENT_ARM_NOTICE, [REVIEW_STATE_DOC]),
   // The provision-record orientation contract (same "the tool knows and does not say" class): the
-  // shared-queue rule and the landing-from-main fact were prose-only bars a doc could silently
-  // drop, so both are pinned to the live strings the record actually carries.
+  // shared-queue rule, the landing-from-main fact, and the no-dependencies install posture were
+  // prose-only bars a doc could silently drop, so all are pinned to the live strings the record
+  // actually carries.
   valueBinding('queue-shared-rule', QUEUE_SHARED_RULE, QUEUE_SHARED_RULE, [WORKTREES_DOC]),
   valueBinding('landing-from-main', LANDING_FROM_MAIN, LANDING_FROM_MAIN, [WORKTREES_DOC]),
+  valueBinding('no-dependencies-posture', NO_DEPENDENCIES_POSTURE, NO_DEPENDENCIES_POSTURE, [WORKTREES_DOC]),
 ].map((b) => Object.freeze(b)));
 
 // ── the pure checker (readText is injectable for hermetic tests) ────────────────────────
@@ -150,8 +152,8 @@ A CLOSED, exported registry binds each live code constant — the autonomy-docto
 table, the status tokens, the trusted-dir allowlist), the recommendations/upgrade presentation
 contract (section header, empty line, verdict templates), the acks-store path, the setup refresh
 degrade token, the review-state clean-tree latent-arm notice, and the worktrees provision-record
-orientation contract (shared-queue rule, landing-from-main) — to the exact token its
-references/modes/*.md contract must carry, and
+orientation contract (shared-queue rule, landing-from-main, no-dependencies install posture) — to
+the exact token its references/modes/*.md contract must carry, and
 asserts the CURRENT value renders into every bound file. A drifted doc, an unreadable bound file,
 or an absent token FAILS CLOSED.
 

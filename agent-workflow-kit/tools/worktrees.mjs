@@ -933,6 +933,10 @@ export const QUEUE_BASENAME = 'queue.md';
 export const QUEUE_SHARED_RULE =
   'the series index is SHARED and lives ONLY in main: read it at the absolute path above, and never copy it into this worktree, because docs/plans is git-ignored and machine-local, so a copy silently diverges from what main and every other worktree are writing. This worktree never WRITES that file: reaching outside it is an fs_outside_repo action the autonomy policy denies by default. Put new findings in THIS handoff record instead — it is the channel that survives the landing, and main appends them to the index from here';
 export const LANDING_FROM_MAIN = 'landing runs FROM MAIN, never from this worktree';
+export const NO_DEPENDENCIES_POSTURE = 'no install needed — the project declares no dependencies';
+// The recorded node_modules mode for that same verdict: provision neither advised nor created a
+// node_modules for this worktree.
+export const NODE_MODULES_NONE = 'no-dependencies';
 
 // The record is LINE-oriented and is parsed back for IDENTITY, so a value carrying a control byte
 // is refused rather than written: a newline spills a second line the parser reads as a real field
@@ -1250,21 +1254,110 @@ const resolveInstallAdvice = ({ root, wtRoot, fs }) => {
   return { command, instruction: command };
 };
 
-// What the RECORD states about installing — the resolved posture for THIS worktree (the runnable
-// isolated-install command, or the honest by-hand advice), never a lane-dependent hint. Probed on
-// the LIVE worktree after the node_modules step: a plain `cd … && install` through a SYMLINKED
-// node_modules writes into MAIN — never presented as isolated; the symlink case records the
-// unlink-first form instead (the same contract the --install lane already prints).
-const resolveInstallPosture = ({ root, wtRoot, fs }) => {
-  const advice = resolveInstallAdvice({ root, wtRoot, fs });
-  const nmPath = join(wtRoot, 'node_modules');
-  const nm = lstatNoFollow(fs.lstat, nmPath);
-  if (nm === null || !nm.isSymbolicLink()) return advice.instruction;
-  const separator = advice.command === null ? ' — ' : ' && ';
-  return `the provisioned node_modules is a symlink into MAIN (an install through it writes into MAIN) — for isolation remove it first: rm ${shellQuoteArg(nmPath)}${separator}${advice.instruction}`;
+// Exported and frozen so the closed sets are test-pinned in BOTH directions (a member can neither
+// be dropped nor smuggled in without failing the pin).
+export const DEPENDENCY_FIELDS = Object.freeze(['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']);
+// Workspace declarations this tool cannot read. Their presence makes the dependency inventory
+// unknowable from package.json alone, so it is never proof.
+export const EXTERNAL_WORKSPACE_MANIFESTS = Object.freeze(['pnpm-workspace.yaml', 'pnpm-workspace.yml', 'lerna.json']);
+
+const readPackageJson = (fs, path) => {
+  const file = readFileNoFollow(fs, path);
+  if (!file.bytes) return null;
+  try {
+    const parsed = JSON.parse(String(file.bytes));
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 };
 
-const provisionNodeModules = ({ root, rootReal, wtRoot, installFlag, git, fs, report }) => {
+// A dependency field is read THREE ways, never two: 'has' (a non-empty plain object), 'none' (the
+// field is absent, or an empty plain object), and 'unknown' for every other shape — a string, an
+// array, null. A malformed manifest is evidence of NOTHING, so it must never read as "none".
+const dependencyFieldsVerdict = (pkg) => {
+  let verdict = 'none';
+  for (const field of DEPENDENCY_FIELDS) {
+    if (!Object.hasOwn(pkg, field)) continue;
+    const value = pkg[field];
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return 'unknown';
+    if (Object.keys(value).length > 0) verdict = 'has';
+  }
+  return verdict;
+};
+
+// A project with NO declared dependencies can still REQUIRE an install: a package-manager install
+// runs the WHOLE install-lifecycle set — the npm set (including the deprecated `prepublish`, which
+// historically fired on install) plus pnpm's `pnpm:devPreinstall` — so a manifest declaring any of
+// them, ROOT or member, needs an install even with no dependencies. dependency-free is NOT
+// install-free. The list is CLOSED and stated: a hook from a manager this tool has never heard of is
+// the honest residual of a closed-world check, the same shape as EXTERNAL_WORKSPACE_MANIFESTS.
+export const INSTALL_LIFECYCLE_SCRIPTS = Object.freeze(['preinstall', 'install', 'postinstall', 'prepare', 'preprepare', 'postprepare', 'prepublish', 'pnpm:devPreinstall']);
+// Fail-closed like the dependency check: a `scripts` field of the wrong SHAPE, or a lifecycle key
+// present with a NON-STRING value, is 'unknown' (never "no hook"). An empty-string value is a no-op,
+// not a trigger; 'has' only when a lifecycle key holds a non-empty command string.
+const installHookVerdict = (pkg) => {
+  if (!Object.hasOwn(pkg, 'scripts')) return 'none';
+  const scripts = pkg.scripts;
+  if (scripts === null || typeof scripts !== 'object' || Array.isArray(scripts)) return 'unknown';
+  let verdict = 'none';
+  for (const name of INSTALL_LIFECYCLE_SCRIPTS) {
+    if (!Object.hasOwn(scripts, name)) continue;
+    if (typeof scripts[name] !== 'string') return 'unknown';
+    if (scripts[name].length > 0) verdict = 'has';
+  }
+  return verdict;
+};
+// A native-addon manifest triggers an implicit `node-gyp rebuild` on install even with an empty
+// scripts block, so its presence — root or member — is a mandatory install, never proof of none.
+const declaresNativeBuild = (fs, dir) => lstatNoFollow(fs.lstat, join(dir, 'binding.gyp')) !== null;
+
+// PROVABLY dependency-free, or nothing — read from the WORKTREE'S OWN LIVE CHECKOUT, never from
+// MAIN's mutable working tree: the evidence is what an install run in THIS worktree would actually
+// read. At provision time that is exactly HEAD; on --resume it follows the session's own edits, in
+// both directions (gained dependencies revoke the proof, shed ones grant it) — the same live lane
+// as the node_modules symlink probe. A dirty main manifest must neither grant nor revoke a verdict
+// about content it does not describe. A `workspaces` field of ANY shape
+// is UNKNOWN outright — a workspace install materializes member links and `.bin` shims even with
+// zero dependencies, so a workspace tree is never provably install-free. Everything else the tool
+// cannot enumerate — an absent/unparseable package.json, a malformed dependency or scripts field,
+// an install-lifecycle script, a native-addon manifest (binding.gyp), an external workspace
+// manifest — leaves the posture UNKNOWN, and unknown keeps the existing install advice: a false
+// "nothing to install" is worse than a redundant hint.
+const declaresNoDependencies = ({ wtRoot, fs }) => {
+  const pkg = readPackageJson(fs, join(wtRoot, 'package.json'));
+  if (pkg === null || dependencyFieldsVerdict(pkg) !== 'none' || installHookVerdict(pkg) !== 'none') return false;
+  if (Object.hasOwn(pkg, 'workspaces')) return false;
+  if (declaresNativeBuild(fs, wtRoot)) return false;
+  // A workspace set can be declared OUTSIDE package.json too. The list is CLOSED and stated: an
+  // exotic third manifest this tool has never heard of would still read as proof, which is the
+  // honest residual of a closed-world check (the same shape as INSTALL_LIFECYCLE_SCRIPTS).
+  for (const manifest of EXTERNAL_WORKSPACE_MANIFESTS) {
+    if (lstatNoFollow(fs.lstat, join(wtRoot, manifest)) !== null) return false;
+  }
+  return true;
+};
+
+// What the RECORD states about installing — the resolved posture for THIS worktree (the runnable
+// isolated-install command, or the honest by-hand advice), never a lane-dependent hint. Probed on
+// the LIVE worktree after the node_modules step, and LIVE STATE WINS: a symlinked node_modules
+// records the unlink-first form even on a dependency-free checkout (`--resume` can meet a symlink
+// an earlier provision left — an install through it writes into MAIN, and the posture must never
+// hide that). Only then may a PROVEN dependency-free checkout short-circuit: a verdict of
+// "nothing to install" must not ride an install instruction.
+const resolveInstallPosture = ({ root, wtRoot, dependencyFree, fs }) => {
+  const nmPath = join(wtRoot, 'node_modules');
+  const nm = lstatNoFollow(fs.lstat, nmPath);
+  if (nm !== null && nm.isSymbolicLink()) {
+    const advice = resolveInstallAdvice({ root, wtRoot, fs });
+    const separator = advice.command === null ? ' — ' : ' && ';
+    return `the provisioned node_modules is a symlink into MAIN (an install through it writes into MAIN) — for isolation remove it first: rm ${shellQuoteArg(nmPath)}${separator}${advice.instruction}`;
+  }
+  if (dependencyFree) return NO_DEPENDENCIES_POSTURE;
+  return resolveInstallAdvice({ root, wtRoot, fs }).instruction;
+};
+
+const provisionNodeModules = ({ root, rootReal, wtRoot, installFlag, dependencyFree, git, fs, report }) => {
   const install = resolveInstallAdvice({ root, wtRoot, fs });
   if (installFlag) {
     const dst = join(wtRoot, 'node_modules');
@@ -1279,6 +1372,22 @@ const provisionNodeModules = ({ root, rootReal, wtRoot, installFlag, git, fs, re
       ? `  node_modules: ${install.instruction}`
       : `  node_modules: install it yourself (zero spawn): ${install.instruction}`);
     return 'install-printed';
+  }
+  // LIVE STATE WINS the whole default lane: a node already at the worktree — a directory, or a
+  // symlink an earlier provision left, even dangling — is what the record states; reporting
+  // MAIN's state (`absent`) beside an existing node would contradict record.install.
+  const dst = join(wtRoot, 'node_modules');
+  if (lstatNoFollow(fs.lstat, dst) !== null) {
+    report.push('  node_modules: already present in the worktree');
+    return 'present';
+  }
+  // Only then may a PROVEN dependency-free checkout short-circuit the rest. Composing the posture
+  // into one of the arms below instead produced a self-contradicting line ("after your own
+  // install there, re-run --resume, or: no install needed"). `--install` is untouched above —
+  // that request was explicit.
+  if (dependencyFree) {
+    report.push(`  node_modules: ${NO_DEPENDENCIES_POSTURE}`);
+    return NODE_MODULES_NONE;
   }
   const mainNm = join(root, 'node_modules');
   const node = classifyNodeNoFollow(mainNm, fs);
@@ -1312,11 +1421,6 @@ const provisionNodeModules = ({ root, rootReal, wtRoot, installFlag, git, fs, re
   if (!isInside(rootReal, mainNmReal)) {
     report.push(`  node_modules: main's resolves outside the repo — not symlinked; ${install.instruction}`);
     return 'outside-repo';
-  }
-  const dst = join(wtRoot, 'node_modules');
-  if (lstatNoFollow(fs.lstat, dst) !== null) {
-    report.push('  node_modules: already present in the worktree');
-    return 'present';
   }
   guardDst(fs, wtRoot, dst);
   try {
@@ -1544,7 +1648,10 @@ const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed
 
   writeSeedPlan({ wtRoot: targetPath, srcAbs: seed.srcAbs, name: seed.name, fs, report });
   const includesRecorded = provisionIncludes({ rootReal, wtRoot: targetPath, includeSources, git, fs, report, copied });
-  const nodeModulesMode = provisionNodeModules({ root, rootReal, wtRoot: targetPath, installFlag: flags.install, git, fs, report });
+  // Computed ONCE, from the satellite's own checkout, and threaded to both consumers — the report
+  // lane and the record must state the SAME verdict.
+  const dependencyFree = declaresNoDependencies({ wtRoot: targetPath, fs });
+  const nodeModulesMode = provisionNodeModules({ root, rootReal, wtRoot: targetPath, installFlag: flags.install, dependencyFree, git, fs, report });
   const vscodeMode = provisionVscode({ root, wtRoot: targetPath, slug, git, fs, report });
 
   rebasePins({ root, wtRoot: targetPath, git, fs, report });
@@ -1559,7 +1666,7 @@ const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed
       includes: includesRecorded,
       nodeModules: nodeModulesMode,
       vscode: vscodeMode,
-      install: resolveInstallPosture({ root, wtRoot: targetPath, fs }),
+      install: resolveInstallPosture({ root, wtRoot: targetPath, dependencyFree, fs }),
       ...orientationFields({ root, slug }),
     },
     fs,
