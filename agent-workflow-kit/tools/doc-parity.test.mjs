@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { checkBinding, checkParity, BINDINGS, main } from './doc-parity.mjs';
+import { INCLUDE_IDENTITY_RULE } from './worktrees.mjs';
 
 // A synthetic file surface: rel → text. A rel absent from the map THROWS (fails closed like a real
 // unreadable file).
@@ -135,6 +136,17 @@ describe('the REAL registry is consistent with the shipped contract docs (dogfoo
     assert.match(binding.token, /ignored lane/, 'the token states the single exempt lane');
     const helpResult = main(['--help']);
     assert.match(helpResult.stdout, /cleanup-ownership/, 'the HELP inventory must name the binding');
+  });
+
+  it('doc-parity registry carries the worktrees include-identity binding (F3)', () => {
+    const binding = BINDINGS.find((b) => b.constant === 'include-identity-rule');
+    assert.ok(binding, 'registry must bind the include-identity contract (F3)');
+    assert.deepEqual([...binding.files].sort(), ['references/modes/worktrees.md']);
+    assert.equal(binding.token, INCLUDE_IDENTITY_RULE, 'the token is the live exported constant');
+    assert.match(binding.token, /door-time queue/, 'the token states the door-time queue refusal');
+    assert.match(binding.token, /preflight recorded/, 'the token states the preflight identity binding');
+    const helpResult = main(['--help']);
+    assert.match(helpResult.stdout, /include-identity/, 'the HELP inventory must name the binding');
   });
 
   it('the registry binds the review-state clean-tree latent-arm notice to its mode doc', () => {

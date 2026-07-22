@@ -200,23 +200,126 @@ const readFileNoFollow = (fs, abs) => {
 
 const NOFOLLOW_WRITE = fsC.O_WRONLY | fsC.O_CREAT | fsC.O_EXCL | (fsC.O_NOFOLLOW ?? 0);
 const COPY_BUFFER_BYTES = 64 * 1024;
-const copyFileNoFollow = ({ srcAbs, dstAbs, sourceStat, rel, fs }) => {
+
+// The include-identity door (F3). `door` rides ONLY the --include copy lane: { queuePath } on
+// every crossing, plus { identity } for a FILE include root (a directory root is re-checked at
+// walk start instead; its children keep the same-call lstat↔open identity — path-based walk is
+// a stated residual). Every STOP here emits INCLUDE_IDENTITY_RULE.
+const includeIdentityStop = (rel, cause) => stop(`--include: ${cause}: ${rel}\n${INCLUDE_IDENTITY_RULE}`);
+
+// The fresh-preexist STOPs carry their own surgical recovery so the generic worktree-kept NOTE
+// never steers the operator into a blind --resume over the very node the door refused.
+const INCLUDE_PREEXIST_CAUSE = 'the include destination already exists at walk time — inspect the unexpected destination and remove it (single node: rm; directory: rm -rf), then finish with --resume';
+
+// Equal / ancestor / descendant, canonized PER PLATFORM: on a backslash-separator platform
+// `relative()` returns backslashes and path comparison is case-insensitive, so separators
+// normalize and case folds (fail-closed for a refusal guard — more refusals, never fewer); on
+// POSIX the compare stays LITERAL — a backslash is a valid filename character and case is
+// significant, so normalizing would conflate distinct names into false refusals. The separator
+// is injectable so both platforms' semantics are test-pinned from one host.
+export const includeRelsOverlap = (a, b, { separator = sep } = {}) => {
+  const canon = (p) => (separator === '\\' ? normalizeSlashes(p).toLowerCase() : p);
+  const left = canon(a);
+  const right = canon(b);
+  return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+};
+
+// Follows links deliberately (the door must land on the THEN-CURRENT canonical queue node);
+// O_NONBLOCK keeps a FIFO-shaped queue from blocking the door — its fstat classifies it.
+const QUEUE_DOOR_READ = fsC.O_RDONLY | (fsC.O_NONBLOCK ?? 0);
+
+// Runs while the SOURCE descriptor is open: open the LEXICAL queue path, fstat the OPEN
+// descriptor, compare identities with both descriptors open. lstat-ENOENT (truly absent) keeps
+// the lexical guard alone; a dangling link, unreadable, non-regular, or erroring queue is
+// unprovable → fail-closed STOP. Queue identity is never cached across crossings.
+const assertSourceIsNotDoorTimeQueue = ({ sourceStat, queuePath, rel, fs }) => {
+  // Absence is proven at the OPEN, never at the lstat alone — a queue born between the two
+  // still meets the descriptor compare. lstat's job is to tell truly-absent (both ENOENT)
+  // from a dangling link (lstat succeeds, open ENOENT), which stays a fail-closed STOP.
+  const lstatAbsent = (() => {
+    try {
+      fs.lstat(queuePath);
+      return false;
+    } catch (err) {
+      if (err?.code === 'ENOENT') return true;
+      throw includeIdentityStop(rel, `cannot probe the shared series index (${err?.code ?? 'fs error'})`);
+    }
+  })();
+  const handle = { fd: null };
+  const outcome = { error: null };
+  try {
+    try {
+      handle.fd = fs.open(queuePath, QUEUE_DOOR_READ);
+    } catch (err) {
+      if (err?.code === 'ENOENT' && lstatAbsent) return;
+      if (err?.code === 'ENOENT') throw includeIdentityStop(rel, 'the shared series index is a dangling link at copy time');
+      throw includeIdentityStop(rel, `cannot open the shared series index (${err?.code ?? 'fs error'})`);
+    }
+    const queueStat = (() => {
+      try {
+        return fs.fstat(handle.fd);
+      } catch (err) {
+        throw includeIdentityStop(rel, `cannot inspect the shared series index (${err?.code ?? 'fs error'})`);
+      }
+    })();
+    if (!queueStat.isFile()) throw includeIdentityStop(rel, 'the shared series index is not a regular file at copy time');
+    if (queueStat.dev === sourceStat.dev && queueStat.ino === sourceStat.ino) {
+      throw includeIdentityStop(rel, 'the source IS the door-time queue');
+    }
+  } catch (error) {
+    outcome.error = error;
+  }
+  if (handle.fd !== null) {
+    try {
+      fs.close(handle.fd);
+    } catch (closeError) {
+      if (!outcome.error) {
+        outcome.error = includeIdentityStop(rel, `cannot close the shared series index descriptor (${closeError?.code ?? 'fs error'})`);
+      } else {
+        outcome.error.message += ` (additionally: the shared series index descriptor failed to close: ${closeError?.code ?? 'fs error'})`;
+      }
+    }
+  }
+  if (outcome.error) throw outcome.error;
+};
+
+const copyFileNoFollow = ({ srcAbs, dstAbs, sourceStat, rel, fs, door = null, wtRoot }) => {
   const handles = { source: null, destination: null };
   const closeErrors = [];
   const outcome = { error: null };
   try {
+    const sourceWindowStop = () => (door
+      ? includeIdentityStop(rel, 'the source changed between lstat and open')
+      : stop(`copy source changed between lstat and open: ${rel}`));
     try {
       handles.source = fs.open(srcAbs, NOFOLLOW_READ);
     } catch (error) {
       if (error?.code === 'ENOENT' || error?.code === 'ELOOP') {
-        throw stop(`copy source changed between lstat and open: ${rel}`);
+        throw sourceWindowStop();
       }
+      if (door) throw includeIdentityStop(rel, `cannot prove the source identity (${error?.code ?? 'fs error'})`);
       throw error;
     }
-    const descriptorStat = fs.fstat(handles.source);
+    const descriptorStat = (() => {
+      try {
+        return fs.fstat(handles.source);
+      } catch (error) {
+        if (door) throw includeIdentityStop(rel, `cannot prove the source identity (${error?.code ?? 'fs error'})`);
+        throw error;
+      }
+    })();
     if (!descriptorStat.isFile() || descriptorStat.dev !== sourceStat.dev || descriptorStat.ino !== sourceStat.ino) {
-      throw stop(`copy source changed between lstat and open: ${rel}`);
+      throw sourceWindowStop();
     }
+    if (door?.identity && (descriptorStat.dev !== door.identity.dev || descriptorStat.ino !== door.identity.ino)) {
+      throw includeIdentityStop(rel, 'the source is not the node preflight approved');
+    }
+    if (door) assertSourceIsNotDoorTimeQueue({ sourceStat: descriptorStat, queuePath: door.queuePath, rel, fs });
+    // Destination preparation runs only AFTER every source-side proof — a refusal must leave no
+    // fresh parent-directory residue, in either lane.
+    guardDst(fs, wtRoot, dirname(dstAbs));
+    fs.mkdir(dirname(dstAbs));
+    guardDst(fs, wtRoot, dstAbs);
     try {
       // O_EXCL closes the create race; O_NOFOLLOW is defense-in-depth for nonstandard link handling.
       handles.destination = fs.open(dstAbs, NOFOLLOW_WRITE, sourceStat.mode & 0o666);
@@ -246,14 +349,32 @@ const copyFileNoFollow = ({ srcAbs, dstAbs, sourceStat, rel, fs }) => {
     try {
       fs.close(handles[key]);
     } catch (error) {
-      closeErrors.push(error);
+      closeErrors.push({ key, error });
     }
   }
   const withDestinationState = (error) => Object.assign(error, {
     copyDoorDestinationCreated: handles.destination !== null,
   });
-  if (outcome.error) throw withDestinationState(outcome.error);
-  if (closeErrors.length > 0) throw withDestinationState(closeErrors[0]);
+  // Every close failure surfaces with its OWN descriptor name, in close order — a latched
+  // primary error carries them all appended; without one, the first failure leads and the rest
+  // still ride along. The suffix ALSO travels as a field because the copy walk re-wraps
+  // non-STOP primaries into its own message (which would otherwise drop the close names).
+  const closeSuffix = (failures) => failures
+    .map(({ key, error }) => ` (additionally: the ${key} descriptor failed to close: ${error?.code ?? 'fs error'})`)
+    .join('');
+  if (outcome.error) {
+    const suffix = closeSuffix(closeErrors);
+    outcome.error.message += suffix;
+    if (suffix) outcome.error.closeFailureSuffix = suffix;
+    throw withDestinationState(outcome.error);
+  }
+  if (closeErrors.length > 0) {
+    const [first, ...rest] = closeErrors;
+    const suffix = ` (the ${first.key} descriptor failed to close)${closeSuffix(rest)}`;
+    first.error.message = `${first.error.message ?? ''}${suffix}`;
+    first.error.closeFailureSuffix = suffix;
+    throw withDestinationState(first.error);
+  }
 };
 
 const isInside = (root, path) => {
@@ -664,7 +785,7 @@ const failAfterCopy = ({ cause, dstAbs, wtRoot, fs }) => {
   throw stop(`${primary} — partial destination removed; re-run provision`);
 };
 
-const copyNode = ({ srcAbs, dstAbs, wtRoot, rel, fs, report, copied }) => {
+const copyNode = ({ srcAbs, dstAbs, wtRoot, rel, fs, report, copied, door = null }) => {
   if (EXCLUDED_BASENAMES.has(basename(srcAbs))) {
     report.push(`  skip (session sidecar): ${rel}`);
     return;
@@ -673,11 +794,21 @@ const copyNode = ({ srcAbs, dstAbs, wtRoot, rel, fs, report, copied }) => {
   try {
     st = fs.lstat(srcAbs);
   } catch (err) {
+    if (door) throw includeIdentityStop(rel, `cannot prove the source identity (${err?.code ?? 'fs error'})`);
     throw stop(`copy failed (${err?.code ?? 'fs error'}) reading ${rel}`);
+  }
+  // A preflight-approved FILE include routes ONLY to the regular-file door — a node that is no
+  // longer a plain regular file (kind is part of the preflight identity) stops before any branch
+  // could create a destination.
+  if (door?.identity && (st.isSymbolicLink() || !st.isFile())) {
+    throw includeIdentityStop(rel, 'the source is not the node preflight approved');
   }
   try {
     if (st.isSymbolicLink()) {
       if (lstatNoFollow(fs.lstat, dstAbs) !== null) {
+        // Fresh-provision include lane: an existing destination is aliasing the overlap
+        // comparator missed (nothing legitimate pre-populates it) — fail closed, never "kept".
+        if (door?.fresh) throw includeIdentityStop(rel, INCLUDE_PREEXIST_CAUSE);
         report.push(`  kept (already present): ${rel}`);
         return;
       }
@@ -716,22 +847,25 @@ const copyNode = ({ srcAbs, dstAbs, wtRoot, rel, fs, report, copied }) => {
       if (lstatNoFollow(fs.lstat, dstAbs) === null) {
         guardDst(fs, wtRoot, dstAbs);
         fs.mkdir(dstAbs);
+      } else if (door?.fresh) {
+        // Mirrors the file/symlink kept-exit STOPs: on a fresh provision no include destination
+        // node may pre-exist — an existing nested directory is aliasing or foreign content that
+        // must never fall under the include's ownership.
+        throw includeIdentityStop(rel, INCLUDE_PREEXIST_CAUSE);
       }
       for (const entry of fs.readdir(srcAbs)) {
-        copyNode({ srcAbs: join(srcAbs, entry), dstAbs: join(dstAbs, entry), wtRoot, rel: `${rel}/${entry}`, fs, report, copied });
+        copyNode({ srcAbs: join(srcAbs, entry), dstAbs: join(dstAbs, entry), wtRoot, rel: `${rel}/${entry}`, fs, report, copied, door });
       }
     } else if (st.isFile()) {
       if (lstatNoFollow(fs.lstat, dstAbs) !== null) {
+        if (door?.fresh) throw includeIdentityStop(rel, INCLUDE_PREEXIST_CAUSE);
         report.push(`  kept (already present): ${rel}`);
         return;
       }
-      guardDst(fs, wtRoot, dirname(dstAbs));
-      fs.mkdir(dirname(dstAbs));
-      guardDst(fs, wtRoot, dstAbs);
       try {
-        copyFileNoFollow({ srcAbs, dstAbs, sourceStat: st, rel, fs });
+        copyFileNoFollow({ srcAbs, dstAbs, sourceStat: st, rel, fs, door, wtRoot });
       } catch (err) {
-        const cause = err?.code === WORKTREES_STOP ? err : stop(`copy failed (${err?.code ?? 'fs error'}) at ${rel}`);
+        const cause = err?.code === WORKTREES_STOP ? err : stop(`copy failed (${err?.code ?? 'fs error'}) at ${rel}${err?.closeFailureSuffix ?? ''}`);
         if (err?.copyDoorDestinationCreated !== true) throw cause;
         failAfterCopy({ cause, dstAbs, wtRoot, fs });
       }
@@ -941,6 +1075,7 @@ export const NODE_MODULES_NONE = 'no-dependencies';
 // cleanup time — never provenance, never the handoff record. Doc-parity pins this exact sentence
 // into the worktrees mode doc; every ownership STOP emits it.
 export const CLEANUP_OWNERSHIP_RULE = "node_modules ownership is decided live: only a symlink whose raw target bytes equal MAIN's node_modules path, in the ignored lane, is provision-ephemeral; an absent node with no index entry is clean; every other state stops cleanup to protect user data or because inspection failed";
+export const INCLUDE_IDENTITY_RULE = 'An --include source is copied only through the identity door: a file include must still match the identity preflight recorded (device, inode, kind), a directory include root is re-checked at walk start, and every copied file is proven, with both descriptors open, not to be the node that IS the door-time queue — an absent queue keeps the lexical guard alone, and anything unprovable stops the copy';
 
 // The record is LINE-oriented and is parsed back for IDENTITY, so a value carrying a control byte
 // is refused rather than written: a newline spills a second line the parser reads as a real field
@@ -1078,19 +1213,22 @@ const assertIncludeRoundTrips = (rel) => {
 // to smuggle) falls back to the lexical compare alone; any other realpath failure (EACCES/EIO)
 // means the canonical identity cannot be established, and a silent fallback would quietly disable
 // the guard it exists to enforce.
-const assertIncludeNeverCopiesTheQueue = ({ rootReal, incReal, inc, fs }) => {
+const assertIncludeNeverCopiesTheQueue = ({ rootReal, incReal, inc, fs, contract = false }) => {
+  // `contract` marks the WALK-TIME (point-of-use) call: its failures are include-identity
+  // refusals and carry the door contract; the pre-mutation preflight call keeps the plain form.
+  const withContract = (message) => stop(contract ? `${message}\n${INCLUDE_IDENTITY_RULE}` : message);
   const queueLexical = join(rootReal, PLANS_REL, QUEUE_BASENAME);
   const queuePaths = [queueLexical];
   try {
     queuePaths.push(fs.realpath(queueLexical));
   } catch (err) {
     if (err?.code !== 'ENOENT') {
-      throw stop(`--include: cannot resolve the shared series index path (${err?.code ?? 'error'}), so the queue-copy guard cannot establish its canonical identity: ${PLANS_REL}/${QUEUE_BASENAME} — fix the path (or drop the --include) and re-run`);
+      throw withContract(`--include: cannot resolve the shared series index path (${err?.code ?? 'error'}), so the queue-copy guard cannot establish its canonical identity: ${PLANS_REL}/${QUEUE_BASENAME} — fix the path (or drop the --include) and re-run`);
     }
   }
   for (const queuePath of queuePaths) {
     if (incReal === queuePath || isInside(incReal, queuePath)) {
-      throw stop(`--include would copy the SHARED series index (${PLANS_REL}/${QUEUE_BASENAME}) into the worktree: ${inc}. The index lives only in main and is read there — a local copy silently diverges.`);
+      throw withContract(`--include would copy the SHARED series index (${PLANS_REL}/${QUEUE_BASENAME}) into the worktree: ${inc}. The index lives only in main and is read there — a local copy silently diverges.`);
     }
   }
 };
@@ -1182,20 +1320,45 @@ const writeSeedPlan = ({ wtRoot, srcAbs, name, fs, report }) => {
 // It is copied from that already-canonical `real`, NEVER re-resolved from the raw path: a fresh
 // realpath here (after the worktree exists) would re-open a TOCTOU where a swapped symlink could
 // redirect an include at the shared series index between the check and the copy.
-const provisionIncludes = ({ rootReal, wtRoot, includeSources, git, fs, report, copied }) => {
+const provisionIncludes = ({ rootReal, wtRoot, includeSources, resume, git, fs, report, copied }) => {
   const recorded = [];
-  for (const { rel, real } of includeSources) {
+  const queuePath = join(rootReal, PLANS_REL, QUEUE_BASENAME);
+  for (const { rel, real, identity } of includeSources) {
     // Defence in depth: re-assert the queue-copy prohibition on the canonical path at the POINT OF
     // USE, so it holds where the copy happens and not only where the path was first checked.
-    assertIncludeNeverCopiesTheQueue({ rootReal, incReal: real, inc: rel, fs });
-    const probeRel = fs.lstat(real).isDirectory() ? `${rel}/` : rel;
+    assertIncludeNeverCopiesTheQueue({ rootReal, incReal: real, inc: rel, fs, contract: true });
+    if (identity.kind === 'directory') {
+      // The walk-start ROOT recheck (a recheck, not a binding — the child walk stays path-based;
+      // a FILE root instead verifies its descriptor against the preflight identity at the door).
+      const live = (() => {
+        try {
+          return fs.lstat(real);
+        } catch (err) {
+          throw includeIdentityStop(rel, `cannot re-probe the include root (${err?.code ?? 'fs error'})`);
+        }
+      })();
+      if (!live.isDirectory() || live.dev !== identity.dev || live.ino !== identity.ino) {
+        throw includeIdentityStop(rel, 'the include root is not the node preflight approved');
+      }
+    }
+    const probeRel = identity.kind === 'directory' ? `${rel}/` : rel;
     if (!checkIgnored(git, probeRel, wtRoot)) {
       throw stop(
         `--include destination is not ignored in the worktree: ${rel} — it would become a land-preflight leftover. ` +
           'Recovery: ignore the path (shared exclude / .gitignore) or drop the --include.',
       );
     }
-    copyNode({ srcAbs: real, dstAbs: join(wtRoot, rel), wtRoot, rel, fs, report, copied });
+    // On a FRESH provision nothing may legitimately pre-populate an IGNORED include destination
+    // (overlaps refuse pre-mutation; a tracked rel was just refused above), so an existing
+    // destination root is filesystem aliasing the comparator missed — fail closed at the door.
+    // `--resume` keeps the copy-if-missing kept-exit (the stated prior-run residual).
+    if (!resume && lstatNoFollow(fs.lstat, join(wtRoot, rel)) !== null) {
+      throw includeIdentityStop(rel, INCLUDE_PREEXIST_CAUSE);
+    }
+    const door = identity.kind === 'file'
+      ? { identity, queuePath, fresh: !resume }
+      : { queuePath, fresh: !resume };
+    copyNode({ srcAbs: real, dstAbs: join(wtRoot, rel), wtRoot, rel, fs, report, copied, door });
     recorded.push(rel);
   }
   return recorded;
@@ -1571,6 +1734,16 @@ export const runProvision = ({ argvSlug, flags, cwd, git, deps, log }) => {
   const seed = validateSeedPlan({ root, rootReal, planFlag: flags.plan, asFlag: flags.as ?? null, fs });
 
   const sources = assertProvisionSourcesContained({ root, rootReal, fs, statFollow: deps.stat ?? statSync });
+  // FROZEN before any git mutation and used for BOTH the overlap refusal below and the copy loop
+  // in finishProvision — a re-computed set could admit a registry path that appeared after
+  // preflight inside an include root and copy it through the doorless copy-if-missing lane.
+  const provisionSet = provisionCopySet(root, deps);
+  const provisionSetRels = provisionSet.map((pattern) => patternToProbe(pattern).replace(/\/$/, ''));
+  const reservedRels = [
+    ...provisionSetRels,
+    `${PLANS_REL}/${seed.name}`,
+    `${PLANS_REL}/${handoffBasename(slug)}`,
+  ];
   const includeSources = [];
   for (const inc of flags.include) {
     const incAbs = resolve(root, inc);
@@ -1584,7 +1757,30 @@ export const runProvision = ({ argvSlug, flags, cwd, git, deps, log }) => {
     assertIncludeNeverCopiesTheQueue({ rootReal, incReal, inc, fs });
     const rel = relative(rootReal, incReal);
     assertIncludeRoundTrips(rel);
-    includeSources.push({ rel, real: incReal });
+    // Preflight identity (F3): {dev, ino, kind} of the canonical node, captured BEFORE any git
+    // mutation. A root that is neither a regular file nor a directory, or an erroring probe,
+    // refuses pre-mutation (a plain usage STOP — the door contract applies to the copy walk).
+    const incNode = (() => {
+      try {
+        return fs.lstat(incReal);
+      } catch (err) {
+        throw stop(`--include: cannot establish the identity of ${inc} (${err?.code ?? 'fs error'}) — fix the path (or drop the --include) and re-run`);
+      }
+    })();
+    const kind = incNode.isDirectory() ? 'directory' : incNode.isFile() ? 'file' : null;
+    if (kind === null) throw stop(`--include must be a regular file or a directory: ${inc}`);
+    // Overlap refusal (pre-mutation): an include rel that another provision lane also populates
+    // (the frozen registry footprint, the seeded plan, the handoff) — or another include root —
+    // would meet the copy-if-missing kept-exit and skip the identity door entirely.
+    const reserved = reservedRels.find((r) => includeRelsOverlap(rel, r));
+    if (reserved !== undefined) {
+      throw stop(`--include overlaps a path provision itself populates (${reserved}): ${inc} — the footprint, the seeded plan, and the handoff are copied by provision; drop the --include`);
+    }
+    const clashing = includeSources.find((prior) => includeRelsOverlap(rel, prior.rel));
+    if (clashing !== undefined) {
+      throw stop(`--include roots overlap: ${clashing.rel} and ${rel} — name each copied path once`);
+    }
+    includeSources.push({ rel, real: incReal, identity: { dev: incNode.dev, ino: incNode.ino, kind } });
   }
   assertTargetOutsideSources({ targetReal, sources: [...sources, ...includeSources] });
   // The TARGET path reaches the record too — the `install` field embeds the worktree dir — and it
@@ -1631,7 +1827,7 @@ export const runProvision = ({ argvSlug, flags, cwd, git, deps, log }) => {
   // any failure past this point leaves a real created worktree — the error must say so and
   // hand back the exact finish command, never just the local cause
   try {
-    return finishProvision({ root, rootReal, targetPath: targetReal, slug, branch, flags, seed, includeSources, git, deps, fs, report, log });
+    return finishProvision({ root, rootReal, targetPath: targetReal, slug, branch, flags, seed, includeSources, provisionSet, git, deps, fs, report, log });
   } catch (err) {
     if (!flags.resume && err?.message) {
       err.message += `\nNOTE: the worktree at ${targetReal} (branch ${branch}) was created and KEPT — finish with: ${composeProvisionArgv({ root, slug, flags: { ...flags, resume: true } })} (or reclaim it with the consented cleanup).`;
@@ -1640,18 +1836,18 @@ export const runProvision = ({ argvSlug, flags, cwd, git, deps, log }) => {
   }
 };
 
-const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed, includeSources, git, deps, fs, report, log }) => {
+const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed, includeSources, provisionSet, git, deps, fs, report, log }) => {
   writeHandoffStubIfAbsent({ root, wtRoot: targetPath, slug, branch, fs, report });
 
   const copied = new Set();
   report.push('copying the provision set (copy-if-missing; tracked files come from the checkout):');
-  for (const pattern of provisionCopySet(root, deps)) {
+  for (const pattern of provisionSet) {
     const rel = patternToProbe(pattern).replace(/\/$/, '');
     copyNode({ srcAbs: join(root, rel), dstAbs: join(targetPath, rel), wtRoot: targetPath, rel, fs, report, copied });
   }
 
   writeSeedPlan({ wtRoot: targetPath, srcAbs: seed.srcAbs, name: seed.name, fs, report });
-  const includesRecorded = provisionIncludes({ rootReal, wtRoot: targetPath, includeSources, git, fs, report, copied });
+  const includesRecorded = provisionIncludes({ rootReal, wtRoot: targetPath, includeSources, resume: flags.resume, git, fs, report, copied });
   // Computed ONCE, from the satellite's own checkout, and threaded to both consumers — the report
   // lane and the record must state the SAME verdict.
   const dependencyFree = declaresNoDependencies({ wtRoot: targetPath, fs });

@@ -4,7 +4,7 @@ import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync, readFileSync, lstatSync,
-  realpathSync,
+  openSync, realpathSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
@@ -102,7 +102,7 @@ describe('worktrees hardening — every destination mkdir is guarded BEFORE the 
     assert.equal(r.code, EXIT.stop);
     assert.ok(!mkdirCalls.some((p) => p.startsWith(join(wt, '.vscode'))));
   });
-  it('the copyNode file branch guards mkdir and the copy door separately (a swap between them STOPs the open)', () => {
+  it('the copyNode file branch guards mkdir and the copy door separately (a swap between them STOPs the destination open)', () => {
     const repo = makeRepo('hb-copy');
     const wt = provisionOk(repo, 'hb4');
     rmSync(join(wt, 'AGENTS.md'));
@@ -116,12 +116,18 @@ describe('worktrees hardening — every destination mkdir is guarded BEFORE the 
           if (p === dirname(join(wt, 'AGENTS.md'))) armed = true;
           mkdirSync(p, { recursive: true });
         },
-        open: (...args) => openCalls.push(args),
+        open: (...args) => {
+          openCalls.push(args);
+          return openSync(...args);
+        },
       },
     });
     assert.equal(r.code, EXIT.stop);
     assert.match(r.errText, /symlink/);
-    assert.deepEqual(openCalls, [], 'the copy door must never open after the post-mkdir swap');
+    // The source open precedes destination preparation by design (a refused source must leave no
+    // fresh directory residue); the pinned invariant is write-side: after the post-mkdir swap the
+    // DESTINATION is never opened.
+    assert.ok(!openCalls.some(([p]) => p === join(wt, 'AGENTS.md')), 'the destination must never open after the post-mkdir swap');
   });
 });
 
