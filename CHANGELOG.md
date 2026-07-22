@@ -7,6 +7,19 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-22 — AD-069 cleanup never deletes a node_modules it cannot prove ephemeral (kit 3.8.0)
+
+Routine non-abandon `worktrees cleanup` silently deleted an ignored user-built `node_modules` —
+it sat unconditionally in the provision-owned root lists. Ownership is now decided live at
+cleanup time from information content, never provenance and never the handoff record: the node is
+EPHEMERAL only as a symlink whose raw target bytes equal MAIN's `node_modules` path, crossed with
+a tracked-first lane; the single exempt state (the ignored-lane matching link) is re-proven
+immediately before the irreversible remove; every other state stops surgically with a lane- and
+kind-matched recovery (a tracked `node_modules` never gets an `rm`), and every probe error fails
+closed with no removal command. Clean-absent follows the legacy path, so landing a tracked
+`node_modules` removal still converges. The contract sentence ships as an exported constant,
+emitted on every ownership STOP and doc-parity-pinned into the worktrees mode doc.
+
 ## 2026-07-22 — AD-068 the worktrees-dir advisor item can finally converge (kit 3.7.0)
 
 The `recommendations` advisor's `worktrees-dir` item fired forever — its only convergence signal

@@ -54,8 +54,23 @@ own verbatim error through the existing Git-error surface.
 - `cleanup <slug> [--branch <name>] [--abandon]` — take the same transient lock and remove a LANDED
   worktree fail-closed after live landed-verification against main HEAD. Verification uses exactly
   the land exclusions (`docs/ai`, `docs/plans`), then checks untracked and ignored content before a
-  plain worktree remove, branch `-d`, and prune. Provision-derived ignored containers are ephemeral;
-  `node_modules` of any kind is provision-derivable because provision explicitly advises installs.
+  plain worktree remove, branch `-d`, and prune. Provision-derived ignored containers are ephemeral —
+  except `node_modules`, which is never assumed provision-owned:
+  node_modules ownership is decided live: only a symlink whose raw target bytes equal MAIN's node_modules path, in the ignored lane, is provision-ephemeral; an absent node with no index entry is clean; every other state stops cleanup to protect user data or because inspection failed.
+  The verdict is
+  computed once, after landed verification and before the untracked/ignored inventories (it also
+  catches tracked `node_modules` and empty untracked directories git never lists); the lane is
+  tracked-first (a tracked path or tracked descendant wins over any ignore rule; an absent node with
+  a live index entry is never clean-absent); the single exempt state is re-proven — same class, same
+  lane — immediately before `git worktree remove`, and any deviation or probe error is a fail-closed
+  STOP with no removal performed. STOP recovery is surgical and lane-specific: untracked/ignored
+  symlink, file, or special node → a single-node `rm`; directory → the recursive form; then re-run
+  cleanup — `--abandon` is always named second; a tracked `node_modules` never gets an `rm` (land the
+  removal from MAIN instead); a probe error gets no removal command at all. A clean-absent verdict
+  follows the legacy cleanup path and carries no post-reset ownership proof: git-invisible or ignored
+  content appearing after the inventories, or surviving inside a reset-restored tracked directory,
+  remains a pre-existing generic worktree-removal residual (not `node_modules`-specific). On Windows
+  a strict-bytes mismatch degrades to the surgical STOP — fail-closed friction, never deletion.
   Foreign content stops cleanup. `--abandon` is the ONE destructive arm: it DESTROYS unlanded work,
   requires the handoff identity, and is the only path where `--force` may appear.
 

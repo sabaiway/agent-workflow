@@ -123,6 +123,13 @@ const makeFixture = (name, {
     if (args[0] === 'ls-files' && args.includes('--others')) {
       return ok(cwd === main ? state.mainUntracked : state.worktreeUntracked);
     }
+    // The AD-069 ownership-gate lane probes (tracked-index + ignore), configurable per fixture.
+    if (args[0] === 'ls-files' && args.includes('--cached') && args.includes('node_modules')) {
+      return ok(state.nodeModulesTracked ?? '');
+    }
+    if (args[0] === 'check-ignore' && args.includes('node_modules')) {
+      return state.nodeModulesIgnored ? ok('node_modules\n') : { status: 1, stdout: '', stderr: '' };
+    }
     if (args[0] === 'diff') {
       if (args.includes('--binary')) return ok('synthetic binary patch\n');
       if (args.includes('docs/ai') && args.includes('docs/plans')) return ok();
@@ -194,20 +201,22 @@ const failingSyncSpawn = (command, args) => [command, ...args].join(' ').include
   : { status: 1, stdout: '', stderr: 'synthetic sync failure' };
 
 describe('landing coverage — removal door', () => {
+  // AD-069 moved node_modules out of the provision-owned roots (an untracked node_modules now
+  // STOPs at the ownership gate), so the removal-door mechanics ride another owned root.
   it('recurses through known directories and preserves causeCode on enumerate/rmdir/special failures', () => {
     const success = makeFixture('remove-tree-success', { prepared: PREPARED_TREE });
-    const successRoot = join(success.worktree, 'node_modules');
+    const successRoot = join(success.worktree, '.continue');
     mkdirSync(join(successRoot, 'nested'), { recursive: true });
     writeFileSync(join(successRoot, 'nested/file.txt'), 'x\n');
-    success.state.worktreeUntracked = 'node_modules/nested/file.txt\0';
+    success.state.worktreeUntracked = '.continue/nested/file.txt\0';
     assert.equal(cleanup(success).code, EXIT.ok);
     assert.equal(existsSync(successRoot), false);
 
     const enumerate = makeFixture('remove-tree-enumerate', { prepared: PREPARED_TREE });
-    const enumerateRoot = join(enumerate.worktree, 'node_modules');
-    mkdirSync(enumerateRoot);
+    const enumerateRoot = join(enumerate.worktree, '.continue');
+    mkdirSync(enumerateRoot, { recursive: true });
     writeFileSync(join(enumerateRoot, 'file.txt'), 'x\n');
-    enumerate.state.worktreeUntracked = 'node_modules/file.txt\0';
+    enumerate.state.worktreeUntracked = '.continue/file.txt\0';
     assert.throws(
       () => runCleanup({
         argvSlug: enumerate.slug,
@@ -226,10 +235,10 @@ describe('landing coverage — removal door', () => {
     );
 
     const removeDir = makeFixture('remove-tree-rmdir', { prepared: PREPARED_TREE });
-    const removeDirRoot = join(removeDir.worktree, 'node_modules');
-    mkdirSync(removeDirRoot);
+    const removeDirRoot = join(removeDir.worktree, '.continue');
+    mkdirSync(removeDirRoot, { recursive: true });
     writeFileSync(join(removeDirRoot, 'file.txt'), 'x\n');
-    removeDir.state.worktreeUntracked = 'node_modules/file.txt\0';
+    removeDir.state.worktreeUntracked = '.continue/file.txt\0';
     assert.throws(
       () => runCleanup({
         argvSlug: removeDir.slug,
@@ -248,11 +257,11 @@ describe('landing coverage — removal door', () => {
     );
 
     const special = makeFixture('remove-tree-special', { prepared: PREPARED_TREE });
-    const specialRoot = join(special.worktree, 'node_modules');
+    const specialRoot = join(special.worktree, '.continue');
     const specialLeaf = join(specialRoot, 'device');
-    mkdirSync(specialRoot);
+    mkdirSync(specialRoot, { recursive: true });
     writeFileSync(specialLeaf, 'placeholder\n');
-    special.state.worktreeUntracked = 'node_modules/device\0';
+    special.state.worktreeUntracked = '.continue/device\0';
     const specialResult = cleanup(special, [], {
       lstat: (path) => path === specialLeaf
         ? { isSymbolicLink: () => false, isDirectory: () => false, isFile: () => false }

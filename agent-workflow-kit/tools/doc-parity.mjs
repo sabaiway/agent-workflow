@@ -34,7 +34,7 @@ import {
 } from './recommendations.mjs';
 import { SKIPPED_READONLY } from './setup-backends.mjs';
 import { LATENT_ARM_NOTICE } from './review-state.mjs';
-import { QUEUE_SHARED_RULE, LANDING_FROM_MAIN, NO_DEPENDENCIES_POSTURE } from './worktrees.mjs';
+import { QUEUE_SHARED_RULE, LANDING_FROM_MAIN, NO_DEPENDENCIES_POSTURE, CLEANUP_OWNERSHIP_RULE } from './worktrees.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -105,6 +105,9 @@ export const BINDINGS = Object.freeze([
   valueBinding('queue-shared-rule', QUEUE_SHARED_RULE, QUEUE_SHARED_RULE, [WORKTREES_DOC]),
   valueBinding('landing-from-main', LANDING_FROM_MAIN, LANDING_FROM_MAIN, [WORKTREES_DOC]),
   valueBinding('no-dependencies-posture', NO_DEPENDENCIES_POSTURE, NO_DEPENDENCIES_POSTURE, [WORKTREES_DOC]),
+  // The cleanup-ownership contract (AD-069): the exact live sentence every ownership STOP emits —
+  // a reworded mode doc dropping the class × lane contract fails this pin plus the gate.
+  valueBinding('cleanup-ownership-rule', CLEANUP_OWNERSHIP_RULE, CLEANUP_OWNERSHIP_RULE, [WORKTREES_DOC]),
 ].map((b) => Object.freeze(b)));
 
 // ── the pure checker (readText is injectable for hermetic tests) ────────────────────────
@@ -151,8 +154,9 @@ Usage:
 A CLOSED, exported registry binds each live code constant — the autonomy-doctor contract (the EXIT
 table, the status tokens, the trusted-dir allowlist), the recommendations/upgrade presentation
 contract (section header, empty line, verdict templates), the acks-store path, the setup refresh
-degrade token, the review-state clean-tree latent-arm notice, and the worktrees provision-record
-orientation contract (shared-queue rule, landing-from-main, no-dependencies install posture) — to
+degrade token, the review-state clean-tree latent-arm notice, the worktrees provision-record
+orientation contract (shared-queue rule, landing-from-main, no-dependencies install posture), and
+the worktrees cleanup-ownership rule — to
 the exact token its references/modes/*.md contract must carry, and
 asserts the CURRENT value renders into every bound file. A drifted doc, an unreadable bound file,
 or an absent token FAILS CLOSED.

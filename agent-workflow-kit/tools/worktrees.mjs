@@ -937,6 +937,10 @@ export const NO_DEPENDENCIES_POSTURE = 'no install needed — the project declar
 // The recorded node_modules mode for that same verdict: provision neither advised nor created a
 // node_modules for this worktree.
 export const NODE_MODULES_NONE = 'no-dependencies';
+// The cleanup-ownership contract (AD-069): ownership is information content, decided live at
+// cleanup time — never provenance, never the handoff record. Doc-parity pins this exact sentence
+// into the worktrees mode doc; every ownership STOP emits it.
+export const CLEANUP_OWNERSHIP_RULE = "node_modules ownership is decided live: only a symlink whose raw target bytes equal MAIN's node_modules path, in the ignored lane, is provision-ephemeral; an absent node with no index entry is clean; every other state stops cleanup to protect user data or because inspection failed";
 
 // The record is LINE-oriented and is parsed back for IDENTITY, so a value carrying a control byte
 // is refused rather than written: a newline spills a second line the parser reads as a real field
@@ -2266,7 +2270,6 @@ const provisionKnownRoots = (identity) => {
     ...registryRoots(),
     ...identity.record.includes.map(safeRecordedPath),
     PLANS_REL,
-    'node_modules',
   ];
   if (identity.record.vscode === 'written') roots.push('.vscode/settings.json');
   return [...new Set(roots)];
@@ -2277,7 +2280,6 @@ const provisionKnownDirectoryRoots = ({ root, identity, fs }) => {
     ...KIT_OWN_PATHS.filter(isDirPattern),
     ...KNOWN_FOOTPRINT.filter((entry) => entry.type === 'dir').map((entry) => entry.pattern),
     PLANS_REL,
-    'node_modules',
   ].map((path) => normalizeSlashes(path).replace(/^\//, '').replace(/\/$/, ''));
   for (const include of identity.record.includes.map(safeRecordedPath)) {
     const kind = classifyNodeNoFollow(join(root, include), fs).kind;
@@ -2294,7 +2296,7 @@ const rootCoveringPath = (path, roots) => roots.find((root) => {
   return path === root || path.startsWith(`${root}/`);
 }) ?? null;
 
-const foreignIgnoredPaths = ({ root, git, identity, fs }) => {
+const foreignIgnoredPaths = ({ root, git, identity, fs, exemptNodeModules = false }) => {
   const result = gitRead(
     git, ['status', '--porcelain=v1', '-z', '--ignored', '--untracked-files=all'], root,
     'git status --ignored failed',
@@ -2305,6 +2307,9 @@ const foreignIgnoredPaths = ({ root, git, identity, fs }) => {
     for (const rawPath of entry.paths) {
       const normalized = normalizeSlashes(rawPath);
       const path = normalized.replace(/\/$/, '');
+      // The ONE ownership exemption (AD-069): the gate has already proven this exact node an
+      // ignored-lane matching symlink; it is neither re-probed nor reported here.
+      if (exemptNodeModules && path === NODE_MODULES_REL) continue;
       const kind = classifyNodeNoFollow(join(root, path), fs).kind;
       const rootType = kind === 'plain-directory' || kind === 'symlink-to-directory'
         ? 'directory'
@@ -2325,6 +2330,88 @@ const foreignIgnoredPaths = ({ root, git, identity, fs }) => {
     if (atRoot && rootType !== (directoryRoots.has(known) ? 'directory' : 'file')) return true;
     return !atRoot && !directoryRoots.has(known);
   }).map(([path]) => path);
+};
+
+// ── the node_modules ownership gate (AD-069) ──────────────────────────────────────────────
+// Class {absent, ephemeral, foreign} × lane {tracked, ignored, untracked}, decided live from
+// exactly one no-follow lstat + (symlink only) one buffer-form readlink + the git lane probes.
+// The record is never consulted; every probe error is FOREIGN fail-closed with no recovery
+// command. The single exempt state — the ignored-lane matching link — is re-proven immediately
+// before the irreversible worktree remove.
+
+const NODE_MODULES_REL = 'node_modules';
+
+const nodeModulesInspectStop = (nmPath, detail) => stop(
+  `cleanup stopped: cannot inspect ${nmPath} (${detail})\n${CLEANUP_OWNERSHIP_RULE}`,
+);
+
+const nodeModulesSnapshot = ({ wtRoot, mainRoot, git, fs }) => {
+  const nmPath = join(wtRoot, NODE_MODULES_REL);
+  const node = (() => {
+    try {
+      return { stat: fs.lstat(nmPath) };
+    } catch (error) {
+      return error?.code === 'ENOENT' ? { stat: null } : { error: error?.code ?? 'fs error' };
+    }
+  })();
+  if (node.error) throw nodeModulesInspectStop(nmPath, node.error);
+  const trackedProbe = git(['ls-files', '--cached', '-z', '--', NODE_MODULES_REL], wtRoot);
+  if (trackedProbe.status !== 0) {
+    throw nodeModulesInspectStop(nmPath, `git ls-files failed: ${(trackedProbe.stderr || trackedProbe.stdout).trim()}`);
+  }
+  const tracked = trackedProbe.stdout.length > 0;
+  if (node.stat === null) {
+    return { klass: 'absent', kind: 'absent', lane: tracked ? 'tracked' : null, nmPath };
+  }
+  const lane = tracked ? 'tracked' : (() => {
+    const probe = git(['check-ignore', '--', NODE_MODULES_REL], wtRoot);
+    if (probe.status === 0) return 'ignored';
+    if (probe.status === 1) return 'untracked';
+    throw nodeModulesInspectStop(nmPath, `git check-ignore failed: ${(probe.stderr || probe.stdout).trim()}`);
+  })();
+  if (!node.stat.isSymbolicLink()) {
+    const kind = node.stat.isDirectory() ? 'directory' : node.stat.isFile() ? 'file' : 'special';
+    return { klass: 'foreign', kind, lane, nmPath };
+  }
+  const target = (() => {
+    try {
+      return { bytes: fs.readlink(nmPath, { encoding: 'buffer' }) };
+    } catch (error) {
+      return { error: error?.code ?? 'fs error' };
+    }
+  })();
+  if (target.error) throw nodeModulesInspectStop(nmPath, target.error);
+  // Raw BYTES against MAIN's node_modules path — never decoded, never resolved: a relative or
+  // re-encoded form that merely RESOLVES to main stays foreign, and the target's kind is
+  // irrelevant (unlink touches only the link).
+  const matches = Buffer.compare(target.bytes, Buffer.from(join(mainRoot, NODE_MODULES_REL))) === 0;
+  return { klass: matches ? 'ephemeral' : 'foreign', kind: 'symlink', lane, nmPath };
+};
+
+const nodeModulesExemptVerdict = (snapshot) => snapshot.klass === 'ephemeral' && snapshot.lane === 'ignored';
+
+const composeNodeModulesStop = ({ snapshot, slug, branch, changed = false }) => {
+  const { klass, kind, lane, nmPath } = snapshot;
+  const kindDesc = kind === 'symlink'
+    ? (klass === 'ephemeral' ? 'a main-matching symlink' : 'a foreign symlink')
+    : kind === 'directory' ? 'a directory'
+      : kind === 'file' ? 'a regular file'
+        : kind === 'special' ? 'a special node' : 'absent';
+  const head = `cleanup stopped: ${nmPath} is ${kindDesc} in the ${lane} lane`
+    + `${changed ? ' (changed during cleanup)' : ''}\n${CLEANUP_OWNERSHIP_RULE}`;
+  if (lane === 'tracked') {
+    return stop([
+      head,
+      'this node_modules is tracked: removing it by hand only creates drift that stops cleanup earlier — land its removal from MAIN, then re-run cleanup',
+      destructiveRecovery({ slug, branch }),
+    ].join('\n'));
+  }
+  const removal = kind === 'directory' ? `rm -rf -- ${shellQuoteArg(nmPath)}` : `rm -- ${shellQuoteArg(nmPath)}`;
+  return stop([
+    head,
+    `remove it yourself, then re-run cleanup: ${removal}`,
+    destructiveRecovery({ slug, branch }),
+  ].join('\n'));
 };
 
 const composeCleanupCommand = ({ slug, branch, abandon }) =>
@@ -2380,6 +2467,7 @@ export const runCleanup = ({ argvSlug, flags, cwd, git, deps, log }) => {
 
     const knownRoots = provisionKnownRoots(identity);
     let removalRoots = [];
+    let nodeModulesExempt = false;
     if (!flags.abandon) {
       const mainHead = gitRead(git, ['rev-parse', 'HEAD'], root, 'cannot resolve main HEAD').stdout.trim();
       // Transfer verification excludes docs/ai and docs/plans; their tracked drift is checked separately before reset.
@@ -2422,6 +2510,16 @@ export const runCleanup = ({ argvSlug, flags, cwd, git, deps, log }) => {
         );
       }
 
+      // The ownership gate (AD-069) runs BEFORE the inventories: it also catches tracked
+      // node_modules and empty untracked directories git never lists. Clean-absent proceeds on
+      // the legacy path with no post-reset ownership arm; the single exemption is re-proven
+      // below, immediately before the irreversible remove.
+      const ownership = nodeModulesSnapshot({ wtRoot: entry.path, mainRoot: root, git, fs });
+      if (!nodeModulesExemptVerdict(ownership) && !(ownership.klass === 'absent' && ownership.lane !== 'tracked')) {
+        throw composeNodeModulesStop({ snapshot: ownership, slug, branch });
+      }
+      nodeModulesExempt = nodeModulesExemptVerdict(ownership);
+
       const untracked = untrackedPaths(git, entry.path);
       const foreign = [];
       for (const path of untracked) {
@@ -2435,7 +2533,7 @@ export const runCleanup = ({ argvSlug, flags, cwd, git, deps, log }) => {
           destructiveRecovery({ slug, branch }),
         );
       }
-      const foreignIgnored = foreignIgnoredPaths({ root: entry.path, git, identity, fs });
+      const foreignIgnored = foreignIgnoredPaths({ root: entry.path, git, identity, fs, exemptNodeModules: nodeModulesExempt });
       if (foreignIgnored.length > 0) {
         throw stop(`foreign ignored content requires --abandon:\n${foreignIgnored.join('\n')}`);
       }
@@ -2454,6 +2552,20 @@ export const runCleanup = ({ argvSlug, flags, cwd, git, deps, log }) => {
         .filter((path, index, all) => !all.slice(0, index).some((parent) => path.startsWith(`${parent}/`)));
       for (const rel of removalRoots) {
         removeNodeNoFollow({ root: entry.path, abs: join(entry.path, rel), fs, label: rel });
+      }
+      if (nodeModulesExempt) {
+        // The authoritative re-proof (AD-069): the verdict authorizing the irreversible remove
+        // postdates the last tree-mutating operation. Strict equality with the exempt state —
+        // never re-authorization: ANY deviation fails closed with no remove call.
+        const revalidated = nodeModulesSnapshot({ wtRoot: entry.path, mainRoot: root, git, fs });
+        if (!nodeModulesExemptVerdict(revalidated)) {
+          if (revalidated.klass === 'absent' && revalidated.lane !== 'tracked') {
+            throw stop(
+              `cleanup stopped: ${revalidated.nmPath} changed during cleanup (now absent) — re-run cleanup\n${CLEANUP_OWNERSHIP_RULE}`,
+            );
+          }
+          throw composeNodeModulesStop({ snapshot: revalidated, slug, branch, changed: true });
+        }
       }
     }
 
