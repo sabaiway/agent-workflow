@@ -127,6 +127,16 @@ describe('the REAL registry is consistent with the shipped contract docs (dogfoo
     );
   });
 
+  it('doc-parity registry carries the worktrees cleanup-ownership binding', () => {
+    const binding = BINDINGS.find((b) => b.constant === 'cleanup-ownership-rule');
+    assert.ok(binding, 'registry must bind the cleanup-ownership contract (AD-069)');
+    assert.deepEqual([...binding.files].sort(), ['references/modes/worktrees.md']);
+    assert.match(binding.token, /raw target bytes/, 'the token states the strict-bytes contract');
+    assert.match(binding.token, /ignored lane/, 'the token states the single exempt lane');
+    const helpResult = main(['--help']);
+    assert.match(helpResult.stdout, /cleanup-ownership/, 'the HELP inventory must name the binding');
+  });
+
   it('the registry binds the review-state clean-tree latent-arm notice to its mode doc', () => {
     const binding = BINDINGS.find((b) => b.constant === 'latent-arm-notice');
     assert.ok(binding, 'registry must bind the clean-tree latent-arm notice');

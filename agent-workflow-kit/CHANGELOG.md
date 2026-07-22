@@ -4,6 +4,39 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 3.8.0 — cleanup never deletes a node_modules it cannot prove ephemeral (AD-069)
+
+Routine non-abandon `worktrees cleanup` used to delete an ignored user-built `node_modules`
+silently: `node_modules` sat unconditionally in the provision-owned root lists, so real user data
+was treated as removable provision footprint. The ownership call is now made LIVE, at cleanup
+time, from what deleting the node would destroy — never from who created it, and never from the
+handoff record:
+
+- **The gate** classifies the worktree's `node_modules` with one no-follow lstat and (for a
+  symlink) one buffer-form readlink: EPHEMERAL exactly when the raw target bytes equal MAIN's
+  `node_modules` path — a relative or re-encoded target that merely resolves to main stays
+  foreign, and the target's kind is irrelevant. Everything else — directory, file, special node —
+  is FOREIGN. The lane is tracked-first: a tracked path or tracked descendant wins over any
+  ignore rule, and an absent node with a live index entry is never clean-absent.
+- **The one exemption** is the ignored-lane matching symlink (exactly what provision creates):
+  the ignored inventory skips it and plain `git worktree remove` unlinks it — after the gate's
+  verdict is RE-PROVEN, same class same lane, immediately before the irreversible remove. Any
+  change in between, or any probe error at any point, is a fail-closed STOP with no remove call.
+- **Every other state stops surgically**, and the recovery matches the lane and kind: ignored/
+  untracked symlink, file, or special node → the exact single-node `rm`; directory → the
+  recursive form; then re-run cleanup (`--abandon` always named second). A TRACKED
+  `node_modules` never gets an `rm` — land its removal from MAIN instead. Probe errors offer no
+  removal command at all. A clean-absent verdict follows the legacy path unchanged, so landing a
+  tracked `node_modules` removal still converges. `--abandon` behavior is unchanged.
+- The contract sentence ships as the exported `CLEANUP_OWNERSHIP_RULE`, emitted on every
+  ownership STOP and pinned into `references/modes/worktrees.md` by a new doc-parity binding.
+
+Honest residuals, stated in the mode doc: the revalidation→remove window stays open (git performs
+the removal; no door there, deliberately); content that git cannot see — or that appears after
+the inventories inside a reset-restored tracked directory — remains a pre-existing generic
+worktree-removal residual, no longer masked by a false ownership claim; on Windows a strict-bytes
+mismatch degrades to the surgical STOP, never a deletion.
+
 ## 3.7.0 — the worktrees-dir advisor item can finally converge (AD-068)
 
 The `recommendations` advisor's `worktrees-dir` item used to fire forever: its only convergence
