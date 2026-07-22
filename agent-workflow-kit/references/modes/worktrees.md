@@ -91,8 +91,13 @@ settings-native line (`sandbox.filesystem.allowWrite` in `.claude/settings.json`
 terminal command. On a settings-native host that honors the key, adding the parent can make later
 provision/cleanup promptless. On a harness-managed host that ignores project settings, grant the
 narrow parent through the host/session controls; if that is unavailable, use the printed terminal
-command for each operation. The `recommendations` mode surfaces this lane but treats write access
-as unverified without a trusted host-capability signal.
+command for each operation. The `recommendations` mode surfaces this lane and converges it two ways:
+a declared `sandbox.filesystem.allowWrite` entry covering the probed parent (either settings
+scope), or — on a host that ignores that key — the neutral dir-bound acknowledgement its
+consent-gated apply one-liner records into `docs/ai/acks.json` (`worktreesDirAck`; the dry-run
+preview prints the exact `--apply`). Neither is proof of write
+capability: the create+delete probe above stays the runtime truth, and the ack binds to the
+resolved probe dir, so the item re-fires only when that resolved dir changes.
 
 **Landing flow:** provision → work → handoff → land → re-attest → commit → cleanup. Satellite
 commits are outside v1: graph divergence stops land and prints cherry-pick/rebase recovery. A gate

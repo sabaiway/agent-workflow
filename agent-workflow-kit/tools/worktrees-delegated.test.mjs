@@ -276,13 +276,14 @@ describe('delegated finding 3 — access-positive writability stays unverified',
     });
     const item = items.find(({ key }) => key === 'worktrees-dir');
     assert.deepEqual(
-      item && { what: item.what, benefit: item.benefit, apply: item.apply },
+      item && { what: item.what, benefit: item.benefit, detail: item.detail },
       {
         what: `write access to the worktrees parent dir ${probeDir} is not confirmed — provision may still stop`,
         benefit: 'parallel features — the host-specific write allowance or terminal fallback is surfaced before provision',
-        apply: `HAND-APPLY: add ${JSON.stringify(probeDir)} to sandbox.filesystem.allowWrite in .claude/settings.json on settings-native hosts; on harness-managed hosts grant this dir for the session or use the provision terminal fallback`,
+        detail: `HAND-APPLY FIRST: add ${JSON.stringify(probeDir)} to sandbox.filesystem.allowWrite in .claude/settings.json on settings-native hosts; on harness-managed hosts grant this dir for the session or use the provision terminal fallback; THEN this item's apply one-liner previews the dir-bound ack and prints the exact --apply that records it`,
       },
     );
+    assert.match(item.apply, /--lane worktrees-dir/, 'the apply slot is the consent-gated dir-bound ack preview');
   });
 });
 

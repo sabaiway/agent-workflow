@@ -24,6 +24,11 @@ const UPGRADE_DOC = read('references/modes/upgrade.md');
 const VELOCITY_DOC = read('references/modes/velocity.md');
 const HOOK_DOC = read('references/modes/hook.md');
 const README = read('README.md');
+const WORKTREES_DOC = read('references/modes/worktrees.md');
+const GATE_HOOK_SOURCE = read('tools/gate-hook.mjs');
+const CHEAP_AGENT_TEMPLATES = ['mechanical-sweep', 'gate-triage', 'changelog-skeleton'].map(
+  (name) => [`references/agents/${name}.md`, read(`references/agents/${name}.md`)],
+);
 const TOOL_SOURCE = read('tools/recommendations.mjs');
 const TOOL_TEST = read('tools/recommendations.test.mjs');
 const PARITY_SOURCE = read('tools/doc-parity.mjs');
@@ -141,6 +146,69 @@ describe('recommendations contract — risk lives at the consent moment (D3, clo
     assert.match(README, /optional `recipe:` line/i, 'the README lists the optional `recipe:` line');
   });
 
+  it('recommendations-mode-doc-documents-the-new-detail-kind: the recipe: line is no longer sandbox-lane-only', () => {
+    // The `recipe:` detail now carries a SECOND kind — the worktrees-dir hand-apply-first grant
+    // advice — so the sandbox-lane-only wording on both surfaces would now be a false contract.
+    assert.doesNotMatch(
+      MODE_DOC,
+      /the `sandbox-lane` live recipe — egress hosts \+ resolved writable dirs — only/,
+      'the mode doc drops the sandbox-lane-ONLY wording',
+    );
+    assert.doesNotMatch(readmeRow, /\(sandbox-lane only\)/, 'the README row drops the sandbox-lane-ONLY wording');
+    assert.match(MODE_DOC, /--lane worktrees-dir/, 'the mode doc documents the worktrees-dir ack command');
+  });
+
+  it('worktrees-dir-consent-flow-waits-for-the-grant-then-runs-preview-and-printed-apply', () => {
+    // The ack RECORDS a maintainer choice; executing it straight from the render would converge
+    // the item with no grant made. The contract therefore sequences the item: HAND-APPLY is
+    // maintainer territory wherever it renders, and the ack preview (plus its printed --apply)
+    // runs only after the grant/fallback confirmation.
+    assert.match(MODE_DOC, /maintainer territory wherever it renders/i, 'HAND-APPLY is bound to territory, not to a slot');
+    assert.match(
+      MODE_DOC,
+      /wait for the maintainer to confirm the grant is applied \(or the terminal fallback chosen\)/i,
+      'the flow waits for the grant',
+    );
+    assert.match(
+      MODE_DOC,
+      /before running that preview and the exact `--apply` command it prints/i,
+      'the preview AND the printed --apply follow the confirmation',
+    );
+    assert.doesNotMatch(
+      MODE_DOC,
+      /acknowledgement carried by this item's rendered `recipe:` line/,
+      'the retired ack-in-recipe claim is gone',
+    );
+    assert.match(WORKTREES_DOC, /consent-gated apply one-liner records/i, 'worktrees.md names the apply lane');
+    assert.doesNotMatch(
+      WORKTREES_DOC,
+      /its rendered `recipe:` line records/,
+      'worktrees.md drops the retired recipe-line claim',
+    );
+  });
+
+  it('worktrees-mode-doc-matches-the-advisor: the worktrees mode doc states both convergence lanes', () => {
+    assert.doesNotMatch(
+      WORKTREES_DOC,
+      /treats write access as unverified without a trusted host-capability signal/,
+      'the never-converging claim is retired',
+    );
+    assert.match(WORKTREES_DOC, /allowWrite/, 'the declaration lane is named');
+    assert.match(WORKTREES_DOC, /acks\.json/, 'the ack fallback lane is named');
+    assert.match(WORKTREES_DOC, /worktreesDirAck/, 'the ack store key is named');
+  });
+
+  it('the ack-rebinding claim is bound to the RESOLVED probe dir, never to the configured parentDir', () => {
+    // resolveProbeDir climbs to the nearest EXISTING ancestor, so two different ABSENT parentDir
+    // values can resolve to the SAME dir and keep the same fingerprint — a doc claiming that any
+    // parentDir change re-fires the item would overstate the guarantee.
+    for (const [name, doc] of [['the mode doc', MODE_DOC], ['worktrees.md', WORKTREES_DOC]]) {
+      assert.doesNotMatch(doc, /changing `parentDir` moves the fingerprint/, `${name} drops the overstated claim`);
+      assert.doesNotMatch(doc, /a changed `parentDir` re-fires the item/, `${name} drops the overstated claim`);
+      assert.match(doc, /resolved probe dir/i, `${name} binds the fingerprint to the resolved probe dir`);
+    }
+  });
+
   it('the sandbox-lanes section explains the recipe per host class', () => {
     const lanes = between(MODE_DOC, '**Sandbox lanes', '**Invariants');
     assert.match(lanes, /settings-native/i);
@@ -194,5 +262,32 @@ describe('recommendations contract — the retired item key is gone from LIVE su
     const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
     assert.match(notes, /- `read-lane` —/, 'the read-lane posture note exists');
     assert.match(notes, /delete-to-reseed/i, 'the note names the stale-variant reseed recovery, not only the enable preview');
+  });
+});
+
+// D10 — the subagent promise. Whether a host fires hooks on a SUBAGENT's Bash is host behaviour the
+// kit cannot verify from inside; one shipped surface stated the coverage as flat fact while another
+// already hedged it. Every surface now carries the SAME qualifier, so the promise cannot drift apart
+// again — and the retired flat wordings are pinned absent in both directions.
+describe('the subagent promise is qualified on every shipped surface (D10)', () => {
+  const SUBAGENT_QUALIFIER = /where the host fires hooks on subagent Bash/;
+  const surfaces = [
+    ['tools/gate-hook.mjs', GATE_HOOK_SOURCE],
+    ['references/modes/recommendations.md', MODE_DOC],
+    ...CHEAP_AGENT_TEMPLATES,
+  ];
+
+  it('subagent-promise-is-qualified-everywhere: every surface claiming coverage carries the host qualifier', () => {
+    for (const [name, text] of surfaces) {
+      assert.match(text, /subagent/i, `${name} still speaks about subagents`);
+      assert.match(text, SUBAGENT_QUALIFIER, `${name} qualifies the subagent promise`);
+    }
+  });
+
+  it('subagent-promise-is-qualified-everywhere: the unqualified wordings never return', () => {
+    for (const [name, text] of surfaces) {
+      assert.doesNotMatch(text, /applies to every future session and to subagents' Bash/, `${name}: the flat claim is gone`);
+      assert.doesNotMatch(text, /\(it fires on subagent Bash too\)/, `${name}: the flat parenthetical is gone`);
+    }
   });
 });

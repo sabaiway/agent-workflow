@@ -1502,7 +1502,7 @@ describe('recommendations — the worktrees-dir arming item', () => {
     assert.ok(!skips.some((s) => s.key === 'worktrees-dir'));
   });
 
-  it('a negative trusted signal fires the item: the probed dir in the WHAT, the host-specific HAND-APPLY', () => {
+  it('worktrees-dir-apply-slot-stays-hand-apply-against-a-trusted-no: the probed dir in the WHAT, no ack lane', () => {
     const root = makeProject();
     const probed = realpathSync(dirname(resolve(root)));
     const seen = [];
@@ -1517,6 +1517,7 @@ describe('recommendations — the worktrees-dir arming item', () => {
     assert.ok(item.what.includes(probed), `the WHAT names the probed dir: ${item.what}`);
     assert.match(item.apply, /^HAND-APPLY: add ".+" to sandbox\.filesystem\.allowWrite in \.claude\/settings\.json/);
     assert.ok(item.apply.includes(probed), 'the HAND-APPLY names the same probed dir');
+    assert.equal(item.detail, null, 'the ack lane cannot converge against a trusted NO, so it is not offered');
     assert.equal(item.severity, SEVERITY_OPTIONAL);
     assert.equal(item.benefit, BENEFITS['worktrees-dir']);
   });
@@ -1557,6 +1558,286 @@ describe('recommendations — the worktrees-dir arming item', () => {
     rmSync(root, { recursive: true, force: true });
     assert.ok(!items.some((i) => i.key === 'worktrees-dir'));
     assert.ok(skips.some((s) => s.key === 'worktrees-dir' && /malformed JSON/.test(s.reason)));
+  });
+});
+
+// The item's ONLY convergence signal used to be deps.canWriteDir — injectable from tests, never
+// supplied in production (main passes `deps: ctx.deps ?? {}`), so it fired forever even once its own
+// advice had been applied. Convergence is now a DECLARATION confirmation (an allowWrite entry
+// covering the probed dir) plus a fingerprint ack for hosts that ignore the settings key; a supplied
+// host signal still overrides both, in either direction.
+describe('recommendations — worktrees-dir convergence lanes (D7)', () => {
+  const worktreesProject = (name) => {
+    const root = makeProject();
+    const dir = join(root, name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(root, 'docs', 'ai', 'worktrees.json'), JSON.stringify({ parentDir: dir }));
+    return { root, home: realpathSync(root), probed: realpathSync(dir) };
+  };
+  const writeSettings = (root, data) => {
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'settings.json'), JSON.stringify(data));
+  };
+  const allowWrite = (entries) => ({ sandbox: { filesystem: { allowWrite: entries } } });
+  const ackFor = (probed, home) => recipeFingerprint({ hosts: [], dirs: [probed], home });
+  const writeAckStore = (root, value) =>
+    writeFileSync(join(root, 'docs', 'ai', 'acks.json'), JSON.stringify({ worktreesDirAck: value }));
+  const probeItem = (root, home, extra = {}) => {
+    const r = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { home, ...extra }) });
+    return {
+      item: r.items.find((i) => i.key === 'worktrees-dir') ?? null,
+      skip: r.skips.find((s) => s.key === 'worktrees-dir') ?? null,
+    };
+  };
+
+  it('worktrees-dir-converges-on-declared-allowwrite: a declared entry covering the probed dir converges the item', () => {
+    const { root, home, probed } = worktreesProject('farm');
+    writeSettings(root, allowWrite([probed]));
+    const { item, skip } = probeItem(root, home);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(item, null, 'the declaration the item itself asks for converges it');
+    assert.equal(skip, null, 'convergence is a plain fall-through, never a skip');
+  });
+
+  it('worktrees-dir-converges-on-declared-allowwrite: an ANCESTOR entry covers, a DESCENDANT entry does not', () => {
+    const a = worktreesProject('farm');
+    writeSettings(a.root, allowWrite([a.home]));
+    const ancestor = probeItem(a.root, a.home);
+    rmSync(a.root, { recursive: true, force: true });
+    assert.equal(ancestor.item, null, 'granting an ancestor of the probed dir covers it');
+
+    const b = worktreesProject('farm');
+    writeSettings(b.root, allowWrite([join(b.probed, 'inner')]));
+    const descendant = probeItem(b.root, b.home);
+    rmSync(b.root, { recursive: true, force: true });
+    assert.ok(descendant.item, 'granting a CHILD of the probed dir does not grant the parent');
+  });
+
+  it('sibling-prefix-does-not-cover: a declared entry that is only a string prefix never converges', () => {
+    const { root, home, probed } = worktreesProject('farm');
+    writeSettings(root, allowWrite([`${probed}house`]));
+    const { item } = probeItem(root, home);
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(item, 'coverage is path-segment-aware, never a raw string prefix');
+  });
+
+  it('tilde-entries-resolve: a `~/…` declared entry resolves against home and converges', () => {
+    const { root, home } = worktreesProject('farm');
+    writeSettings(root, allowWrite(['~/farm']));
+    const { item } = probeItem(root, home);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(item, null, 'a tilde entry is expanded against the resolved home before matching');
+  });
+
+  it('tilde-entries-resolve: a bare `~` entry covers everything under home', () => {
+    const { root, home } = worktreesProject('farm');
+    writeSettings(root, allowWrite(['~']));
+    const { item } = probeItem(root, home);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(item, null, 'a bare tilde is the home dir itself');
+  });
+
+  it('converges-on-ack: a fingerprint ack in docs/ai/acks.json converges a managed host', () => {
+    const { root, home, probed } = worktreesProject('farm');
+    writeAckStore(root, ackFor(probed, home));
+    const { item, skip } = probeItem(root, home);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(item, null, 'the ack lane converges a host that ignores the settings key');
+    assert.equal(skip, null);
+  });
+
+  it('ack-rebinds-when-the-dir-changes: an ack minted for the old dir never converges the new one', () => {
+    const { root, home, probed } = worktreesProject('farm');
+    writeAckStore(root, ackFor(probed, home));
+    assert.equal(probeItem(root, home).item, null, 'the freshly-minted ack converges');
+
+    const moved = join(root, 'other-farm');
+    mkdirSync(moved, { recursive: true });
+    writeFileSync(join(root, 'docs', 'ai', 'worktrees.json'), JSON.stringify({ parentDir: moved }));
+    const after = probeItem(root, home);
+    const movedReal = realpathSync(moved);
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(after.item, 'a moved parent dir re-fires — the ack is bound to the dir, not to the item');
+    assert.ok(after.item.what.includes(movedReal), 'the re-fired item names the NEW probed dir');
+  });
+
+  it('converges-on-ack: a stale or non-string ack value re-fires, never a silent convergence', () => {
+    const stale = worktreesProject('farm');
+    writeAckStore(stale.root, '0123456789abcdef');
+    const staleResult = probeItem(stale.root, stale.home);
+    rmSync(stale.root, { recursive: true, force: true });
+    assert.ok(staleResult.item, 'a stale fingerprint is not a convergence');
+    assert.equal(staleResult.skip, null, 'a stale ack is a plain re-fire, never a skip');
+
+    const typed = worktreesProject('farm');
+    writeAckStore(typed.root, 42);
+    const typedResult = probeItem(typed.root, typed.home);
+    rmSync(typed.root, { recursive: true, force: true });
+    assert.ok(typedResult.item, 'a non-string ack value is tolerated on read and re-fires');
+  });
+
+  it('canwritedir-precedence-matrix: the host signal overrides both lanes; undefined defers to them', () => {
+    const observed = [];
+    for (const signal of ['true', 'false', 'undefined']) {
+      for (const declared of [false, true]) {
+        for (const acked of [false, true]) {
+          const { root, home, probed } = worktreesProject('farm');
+          if (declared) writeSettings(root, allowWrite([probed]));
+          if (acked) writeAckStore(root, ackFor(probed, home));
+          const extra = signal === 'undefined' ? {} : { canWriteDir: () => signal === 'true' };
+          const { item } = probeItem(root, home, extra);
+          rmSync(root, { recursive: true, force: true });
+          const expected = signal === 'true' ? false : signal === 'false' ? true : !(declared || acked);
+          observed.push({ signal, declared, acked, fired: item !== null, expected });
+        }
+      }
+    }
+    assert.equal(observed.length, 12, 'the full 3 × 2 × 2 grid is exercised');
+    for (const c of observed) {
+      assert.equal(c.fired, c.expected, `canWriteDir=${c.signal} declared=${c.declared} acked=${c.acked}`);
+    }
+  });
+
+  it('malformed-settings-rides-the-stated-skip-lane: a malformed .claude/settings.json skips with a stated reason', () => {
+    const { root, home } = worktreesProject('farm');
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'settings.json'), '{ nope');
+    const { item, skip } = probeItem(root, home);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(item, null, 'a broken declaration store is never read as "not declared"');
+    assert.ok(skip, 'it degrades to a stated skip line');
+    assert.match(skip.reason, /settings\.json/, 'the reason names the offending file');
+  });
+
+  it('symlinked-ancestor-or-leaf-never-yields-an-offer: a symlinked ack store is a fail-closed skip', () => {
+    const { root, home, probed } = worktreesProject('farm');
+    const outside = join(root, 'outside-acks.json');
+    writeFileSync(outside, JSON.stringify({ worktreesDirAck: ackFor(probed, home) }));
+    symlinkSync(outside, join(root, 'docs', 'ai', 'acks.json'));
+    const { item, skip } = probeItem(root, home);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(item, null, 'a symlinked leaf never yields an offer');
+    assert.ok(skip, 'it is a fail-closed stated skip — never an ack read from outside the project');
+  });
+
+  // The consent-flow executes only the APPLY slot; a HAND-APPLY line is maintainer territory and a
+  // recipe: detail is informational. So the runnable ack preview must BE the apply slot, and the
+  // grant advice — which no protocol step executes — rides the detail, labeled as the first step.
+  it('worktrees-dir-apply-slot-is-the-runnable-ack-preview-when-the-ack-lane-is-open', () => {
+    const { root, home, probed } = worktreesProject('farm');
+    const { item } = probeItem(root, home);
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(item, 'no declaration, no ack → the item fires');
+    assert.match(item.apply, /^node /, 'the apply slot is a runnable one-liner, never maintainer territory');
+    assert.match(item.apply, /ack-write\.mjs/, 'the apply names the consent-gated ack writer');
+    assert.match(item.apply, /--lane worktrees-dir/, 'the apply pins the ack lane');
+    assert.ok(item.apply.includes(ackFor(probed, home)), 'the apply carries the dir-bound fingerprint');
+    assert.doesNotMatch(item.apply, /--apply/, 'the slot is the dry-run preview — it prints the exact --apply the flow then runs');
+  });
+
+  it('worktrees-dir-detail-carries-the-grant-advice-when-the-ack-lane-is-open', () => {
+    const { root, home, probed } = worktreesProject('farm');
+    const { item } = probeItem(root, home);
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(item, 'no declaration, no ack → the item fires');
+    assert.ok(item.detail, 'the item carries a recipe: detail');
+    assert.match(item.detail, /^HAND-APPLY FIRST: /, 'the grant advice is labeled as the step to perform first');
+    assert.ok(item.detail.includes(probed), 'the grant advice names the probed dir');
+    assert.match(item.detail, /allowWrite/, 'the grant advice names the settings key');
+    assert.match(item.detail, /terminal fallback/, 'the harness-managed fallback stays stated');
+    assert.doesNotMatch(item.detail, /[\r\n]/u, 'the detail stays one line');
+  });
+
+  it('symlinked-ancestor-or-leaf-never-yields-an-offer: a symlinked settings.json is a fail-closed skip', () => {
+    const { root, home, probed } = worktreesProject('farm');
+    const outside = join(root, 'outside-settings.json');
+    writeFileSync(outside, JSON.stringify(allowWrite([probed])));
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    symlinkSync(outside, join(root, '.claude', 'settings.json'));
+    const { item, skip } = probeItem(root, home);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(item, null, 'a symlinked declaration store never yields an offer');
+    assert.ok(skip, 'a grant is never read THROUGH a link — the probe states a skip');
+  });
+
+  it('symlinked-ancestor-or-leaf-never-yields-an-offer: a symlinked .claude ancestor is a fail-closed skip', () => {
+    const { root, home, probed } = worktreesProject('farm');
+    const outsideDir = join(root, 'outside-claude');
+    mkdirSync(outsideDir, { recursive: true });
+    writeFileSync(join(outsideDir, 'settings.json'), JSON.stringify(allowWrite([probed])));
+    symlinkSync(outsideDir, join(root, '.claude'));
+    const { item, skip } = probeItem(root, home);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(item, null, 'a symlinked ANCESTOR never yields an offer either');
+    assert.ok(skip, 'the whole path chain is guarded, not just the leaf');
+  });
+
+  it('a NON-REGULAR settings target (a directory at the path) is a fail-closed skip, never a guess', () => {
+    const { root, home } = worktreesProject('farm');
+    mkdirSync(join(root, '.claude', 'settings.json'), { recursive: true });
+    const { item, skip } = probeItem(root, home);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(item, null);
+    assert.ok(skip, 'a non-regular declaration store is a stated skip');
+  });
+
+  // A declaration that SUPPRESSES a recommendation is never partially trusted: one bad entry
+  // invalidates the whole list rather than being filtered away beside a good one.
+  const MALFORMED_ALLOWWRITE = /allowWrite must be an array of non-empty strings/;
+
+  it('an EMPTY or whitespace-only allowWrite entry is never a grant of the project root', () => {
+    const { root, home } = worktreesProject('farm');
+    writeSettings(root, allowWrite(['', '   ']));
+    const { item, skip } = probeItem(root, home);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(item, null, 'a malformed declaration renders no offer');
+    assert.ok(skip, 'it rides the stated-skip lane');
+    assert.match(skip.reason, MALFORMED_ALLOWWRITE);
+  });
+
+  it('malformed-settings-rides-the-stated-skip-lane: a MIXED array never converges on its valid half', () => {
+    const { root, home, probed } = worktreesProject('farm');
+    writeSettings(root, allowWrite([probed, 42]));
+    const { item, skip } = probeItem(root, home);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(item, null, 'the valid entry does not rescue a malformed list');
+    assert.ok(skip, 'one bad entry invalidates the whole declaration');
+    assert.match(skip.reason, MALFORMED_ALLOWWRITE);
+  });
+
+  it('malformed-settings-rides-the-stated-skip-lane: a NON-ARRAY allowWrite is the same skip, never a silent ignore', () => {
+    const { root, home } = worktreesProject('farm');
+    writeSettings(root, { sandbox: { filesystem: { allowWrite: 'everything' } } });
+    const { item, skip } = probeItem(root, home);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(item, null);
+    assert.ok(skip);
+    assert.match(skip.reason, MALFORMED_ALLOWWRITE);
+  });
+
+  it('an ABSENT allowWrite is nothing declared, never a malformed declaration', () => {
+    const { root, home } = worktreesProject('farm');
+    writeSettings(root, { sandbox: { filesystem: {} } });
+    const { item, skip } = probeItem(root, home);
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(item, 'nothing declared → the item still fires');
+    assert.equal(skip, null, 'an absent key is not a shape violation');
+  });
+
+  it('json-contract-additive-only: the --json contract keeps its exact top-level and item keys', () => {
+    const { root, home } = worktreesProject('farm');
+    const r = main(['--cwd', root, '--json'], { deps: hermeticDeps(root, { home }) });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stderr);
+    const parsed = JSON.parse(r.stdout);
+    assert.deepEqual(Object.keys(parsed).sort(), ['items', 'root', 'skips'], 'the top-level shape is unchanged');
+    const item = parsed.items.find((i) => i.key === 'worktrees-dir');
+    assert.ok(item, 'the item is present in the JSON render');
+    assert.deepEqual(
+      Object.keys(item).sort(),
+      ['apply', 'benefit', 'detail', 'key', 'severity', 'what'],
+      'no item key renamed, none added — the public contract stays additive',
+    );
   });
 });
 
