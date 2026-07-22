@@ -4,6 +4,38 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 3.6.0 — the dependency-free install posture: a proof, never a default (AD-067)
+
+On a provably dependency-free project the provision record and the default-lane report no longer
+print a generic `npm install` hint: both state
+`no install needed — the project declares no dependencies` (recorded node_modules mode
+`no-dependencies`), and a `doc-parity` binding pins the posture string to the mode doc.
+
+The verdict is a PROOF granted only on evidence the tool actually read — the WORKTREE'S OWN LIVE
+checkout: what an install run there would actually read, exactly HEAD at provision time and the
+satellite's own committed state on `--resume`, never MAIN's mutable working tree (which can
+diverge from what the satellite actually holds; real-git tests pin both refresh directions).
+Everything the tool cannot vouch for leaves the posture UNKNOWN with the honest advice kept — the
+fail-safe direction, because a false "nothing to install" is worse than a redundant hint:
+
+- a `workspaces` field of ANY shape, outright — a workspace install materializes member links and
+  `.bin` shims even with zero dependencies, so a workspace tree is never provably install-free;
+- an external workspace manifest beside the root (`pnpm-workspace.yaml`/`.yml`, `lerna.json`);
+- a malformed manifest, dependency field, or `scripts` shape (three-valued verdicts — malformed is
+  `unknown`, never "none"; a lifecycle key with a non-string value fails closed);
+- an install-lifecycle script — dependency-free is NOT install-free: the CLOSED, test-pinned set
+  is the npm lifecycle (including the deprecated `prepublish`) plus `pnpm:devPreinstall`; a
+  native-addon manifest (`binding.gyp`) is a mandatory install too.
+
+The posture COMPOSES with the shipped record contract, and LIVE STATE WINS: a node already at the
+worktree — a directory, or a symlink left by an earlier provision, even dangling — records
+`present` before any MAIN-state early return, the AD-065 symlink unlink-first arm is untouched for
+every non-proven project, and `--install` remains an explicit request that is always answered with
+the isolated-install command while the record still states the posture.
+
+Third safe slice of the deferred parallel-track work (AD-063); node_modules ownership and
+resume-verify semantics stay separate redesigns.
+
 ## 3.5.0 — the provision record orients a fresh satellite session (AD-065)
 
 The worktrees provision record was an identity stub; a fresh satellite session could not derive

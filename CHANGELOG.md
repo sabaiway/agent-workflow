@@ -7,6 +7,20 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-22 — AD-067 the dependency-free install posture is a proof, never a default (kit 3.6.0)
+
+On a provably dependency-free project the worktrees provision record and the default-lane report
+now state `no install needed — the project declares no dependencies` instead of a generic
+`npm install` hint. The proof reads the WORKTREE'S OWN LIVE checkout — exactly HEAD at provision
+time, the satellite's own committed state on `--resume`, never MAIN's mutable working tree — and
+is granted only on evidence the tool actually read: a `workspaces` field of any shape
+(a workspace install materializes links even with zero dependencies), an external workspace
+manifest, a malformed manifest or field shape, an install-lifecycle script (dependency-free is
+NOT install-free), or a `binding.gyp` all leave the posture UNKNOWN and keep the honest advice.
+Composes with the shipped symlink unlink-first arm; a `doc-parity` binding pins the posture
+string. Third safe slice of the deferred parallel-track work (AD-063); node_modules ownership and
+resume-verify semantics stay separate redesigns.
+
 ## 2026-07-21 — AD-065 the provision record orients a fresh satellite session (kit 3.5.0)
 
 The worktrees provision record now carries the three facts a fresh satellite session cannot derive

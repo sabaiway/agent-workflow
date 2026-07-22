@@ -70,7 +70,7 @@ PLUS the three facts a fresh satellite session cannot derive from its own checko
   isolated-install command when the package manager is unambiguous, the honest install-by-hand
   advice when it is not, and — when the provisioned `node_modules` is a SYMLINK into main — the
   unlink-first form, because a plain install through the symlink writes into MAIN and is never
-  presented as isolated. `--install` remains an EXPLICIT request and is always answered with the
+  presented as isolated. When the WORKTREE'S OWN LIVE CHECKOUT is provably dependency-free (its `package.json` declares no dependencies, no `workspaces` field of any shape, no install-lifecycle script, no native-addon manifest, no external workspace manifest beside it — the evidence is what an install run in the satellite would actually read: exactly HEAD at provision time, the satellite's own committed state on `--resume`, never MAIN's mutable working tree) the record and the default-lane report both state `no install needed — the project declares no dependencies` and print no install command. A workspace tree is NEVER provably install-free — a workspace install materializes member links and `.bin` shims even with zero dependencies — and anything else the tool cannot enumerate (an absent or unparseable `package.json`, a malformed dependency or scripts field, an install-lifecycle script — dependency-free is not install-free) leaves the posture UNKNOWN and keeps the existing advice: a false "nothing to install" is worse than a redundant hint. `--install` remains an EXPLICIT request and is always answered with the
   isolated-install command.
 
 **Honesty:** there is NO preview step on the writers — over-warned by design. The tool never
