@@ -7,6 +7,18 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-23 — AD-071 install advice reads the worktree checkout (kit 3.10.0)
+
+The provision install advice picked its package manager from MAIN's manifest and lockfiles while
+its printed command targets the satellite — a dirty MAIN lockfile pushed the advice into
+ambiguity or the wrong manager, and a MAIN advanced past the satellite's base steered a
+satellite it no longer describes. The manager evidence (the `packageManager` field and the
+lockfile scan) now reads the worktree's own live checkout — the same live lane as the
+dependency-free proof and the symlink probe — so the evidence tree and the command's target tree
+are the same tree. The contract ships as one pinned mode-doc sentence (a named test locks the
+wording); the shipped clean-tree `--resume` STOP is pinned byte-exact — no resume tolerance is
+smuggled; MAIN state legitimately steers only the node_modules symlink lane, unchanged.
+
 ## 2026-07-22 — AD-070 the --include copy door proves what it copies (kit 3.9.0)
 
 The `--include` provision lane carried a preflight→walk gap: a source swapped after preflight

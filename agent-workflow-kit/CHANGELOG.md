@@ -4,6 +4,31 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 3.10.0 — install advice reads the worktree checkout (AD-071)
+
+The install advice picked its package manager from MAIN's `package.json` and lockfiles while the
+printed command targets the SATELLITE (`cd <worktree> && <manager> install`) — so a dirty MAIN
+lockfile could push the advice into ambiguity or the wrong manager, and a MAIN advanced past the
+satellite's base steered a satellite it no longer describes. The evidence and the target are now
+the SAME tree:
+
+- **Manager evidence reads the worktree's own live checkout** — the `packageManager` field and
+  the lockfile scan, the same live lane the dependency-free proof (3.6.0) and the node_modules
+  symlink probe already use. MAIN's mutable working tree never steers manager selection; MAIN
+  state legitimately steers only the symlink lane (the shared-cache link and its unlink-first
+  posture), unchanged.
+- **The contract ships in the worktrees mode doc as one pinned sentence** (a named test locks
+  the exact wording): all manifest/lockfile install evidence is read from the worktree's own
+  live files at the moment the posture is resolved — deliberately NOT «exactly HEAD», because a
+  `post-checkout` hook can shape the checkout before the posture is resolved.
+- **No resume-tolerance smuggling.** The shipped clean-tree `--resume` STOP is pinned byte-exact
+  by a real-git test; dirty-resume semantics remain a queued redesign. A satellite behind an
+  advanced MAIN now gets advice about ITSELF — pinned by a real-git test where MAIN's lockfile
+  advance does not re-steer the satellite's refreshed record.
+- **Honest residual:** a manager signal living only in MAIN's working tree (e.g. an ignored,
+  uncommitted lockfile) no longer steers the advice — the checkout is the truth even when that
+  yields the npm default.
+
 ## 3.9.0 — the --include copy door proves what it copies (AD-070)
 
 Nothing bound the node the provision copy walk read to the node `--include` preflight approved:

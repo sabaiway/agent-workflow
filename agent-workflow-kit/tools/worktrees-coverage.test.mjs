@@ -381,7 +381,8 @@ describe('worktrees coverage — door and parser defensive branches', () => {
 describe('worktrees coverage — install-advice and late-net defensive branches', () => {
   it('a lockfile lstat error degrades to the neutral install advice', () => {
     const repo = makeRepo('cov-lock-err');
-    const denied = join(repo, 'package-lock.json');
+    // The probe hits the WORKTREE's lockfile path: advice evidence is the satellite checkout.
+    const denied = join(dirname(repo), `${basename(repo)}--alpha`, 'package-lock.json');
     const r = run(['provision', 'alpha', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-alpha.md', '--install'], {
       cwd: repo,
       deps: {
