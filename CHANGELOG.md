@@ -7,6 +7,25 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-23 — AD-072 the record attests only a verified provision; tracked plans-chain paths refuse (kit 3.11.0)
+
+Slice R1 of the converged resume-verify design. The provision record is refreshed LAST — after
+the in-flight-plan check and the post-provision verify, in both lanes — so the record attests
+only a VERIFIED provision: a first provision failing after the stub write leaves the stub
+(identity still binds; a pre-write refusal leaves no handoff at all), a failed resume leaves
+the prior record bytes byte-exact, and a refresh failure after a clean verify keeps the
+worktree and names the exact re-run command. A TRACKED plans-chain path — the
+handoff or the seeded plan — now refuses fail-closed in both lanes (its drift is undeliverable
+at land, a manufactured dead end): the fresh lane proves both paths untracked at ONE captured
+commit (the same OID the branch is cut from) and re-probes the new worktree's index and branch
+HEAD before the first write (post-checkout hooks that force-add or even commit are caught);
+`--resume` probes the branch HEAD tree unconditionally plus the live index before reading the
+handoff identity. Recovery is surgical and kind-aware — pathspec-literal index removal,
+salvage-first with consented abandon only where identity binds, plain-git removal for the
+hook-poisoned fresh worktree, and NO recovery command for irregular entries. Resume tolerance
+is unchanged this release (the blanket clean-tree verify stays, pinned byte-exact); the
+per-owned-path tolerance flip is the next slice.
+
 ## 2026-07-23 — AD-071 install advice reads the worktree checkout (kit 3.10.0)
 
 The provision install advice picked its package manager from MAIN's manifest and lockfiles while

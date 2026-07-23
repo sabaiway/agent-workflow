@@ -4,6 +4,39 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 3.11.0 — the record attests only a verified provision; tracked plans-chain paths refuse (AD-072)
+
+Two provision honesty fixes from the converged resume-verify design (its slice R1; the
+tolerance flip is the next slice):
+
+- **The provision record is refreshed LAST — after the in-flight-plan check and the
+  post-provision verify, in BOTH lanes.** The record now attests only a VERIFIED provision: a
+  first provision that fails after the stub write leaves the STUB (identity still binds from
+  it — `--resume` completes as before; a pre-write refusal leaves no handoff at all), and a
+  failed resume leaves the PRIOR record bytes byte-exact. Previously a failed
+  run left a freshly refreshed record (the 3.6.0 stated residual — now eliminated). A refresh
+  failure after a clean verify keeps the worktree and names the exact re-run command in both
+  lanes, preserving the original failure cause.
+- **A TRACKED plans-chain path — the handoff or the seeded plan — refuses fail-closed in both
+  lanes.** Its drift is undeliverable (`land` categorically refuses docs/plans, and satellite
+  commits are not a lane), so tolerating it would strand the worktree. A fresh provision proves
+  both paths untracked at ONE captured commit — the same OID the branch is cut from — and
+  re-probes the new worktree's index and branch HEAD before the first write, catching
+  post-checkout hooks that force-add or even COMMIT them (a committed add leaves the tree
+  clean, invisible to the clean-tree verify). `--resume` probes the branch HEAD tree
+  unconditionally plus the live index before reading the handoff identity.
+- **Recovery is surgical and honest.** An index-only entry names a pathspec-LITERAL
+  `git rm --cached` (a magic-shaped seed name never touches a pattern-matching neighbor) plus
+  the ignore-rule restoration when the worktree's live rules lost it; a branch-HEAD-tracked
+  file names salvage FIRST, then consented `cleanup --abandon` ONLY where the record identity
+  binds (a malformed record routes to the shipped record recovery — abandon is never promised);
+  the post-add hook STOP names inspect/salvage, then plain-git removal (never `cleanup
+  --abandon` — no handoff identity exists yet); an irregular entry (tree / symlink / gitlink)
+  fails closed with NO recovery command. Recovery never routes through the landing lane.
+- **The mode doc states both contracts verbatim** (the corrected verify-then-refresh order and
+  the plans-chain refusal), each pinned by a named test. Resume tolerance is UNCHANGED this
+  release: the blanket clean-tree verify stays, pinned byte-exact.
+
 ## 3.10.0 — install advice reads the worktree checkout (AD-071)
 
 The install advice picked its package manager from MAIN's `package.json` and lockfiles while the
