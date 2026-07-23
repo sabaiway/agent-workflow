@@ -15,7 +15,9 @@ const HEAD = '2222222222222222222222222222222222222222';
 
 after(() => rmSync(TMP, { recursive: true, force: true }));
 
-const makeGit = (main) => {
+// `worktree add` materializes the HEAD checkout from headFiles — what the satellite receives,
+// which is NOT necessarily what main's working tree holds (the divergence the advice must respect).
+const makeGit = (main, headFiles = {}) => {
   const commonDir = join(main, '.git');
   const entries = [];
   const ok = (stdout = '') => ({ status: 0, stdout, stderr: '' });
@@ -38,6 +40,10 @@ const makeGit = (main) => {
       const requested = args[4];
       const canonical = join(realpathSync(dirname(requested)), basename(requested));
       mkdirSync(canonical, { recursive: true });
+      for (const [rel, body] of Object.entries(headFiles)) {
+        mkdirSync(dirname(join(canonical, rel)), { recursive: true });
+        writeFileSync(join(canonical, rel), body);
+      }
       entries.push({ path: canonical, branch });
       return ok();
     }
@@ -45,7 +51,7 @@ const makeGit = (main) => {
   };
 };
 
-const makeRepo = (name) => {
+const makeRepo = (name, headFiles = {}) => {
   const main = join(TMP, name);
   mkdirSync(main, { recursive: true });
   writeFileSync(join(main, 'README.md'), 'fixture\n');
@@ -54,7 +60,7 @@ const makeRepo = (name) => {
   writeFileSync(join(main, 'docs/ai/gates.json'), JSON.stringify({ gates: [] }));
   mkdirSync(join(main, 'docs/plans'), { recursive: true });
   writeFileSync(join(main, 'docs/plans/SEED-PROMPT-x.md'), '# body\n');
-  REPO_GITS.set(main, makeGit(main));
+  REPO_GITS.set(main, makeGit(main, headFiles));
   return main;
 };
 
@@ -161,14 +167,28 @@ describe('delegated2 finding 2 — resume plan compatibility is a zero-write pre
 });
 
 describe('delegated2 finding 3 — install advice follows one unambiguous package manager', () => {
+  // The manager evidence lives in the CHECKOUT (headFiles): the advice is about an install run
+  // in the satellite, so what main's working tree happens to hold must not steer it.
   it('lets packageManager win over a conflicting lockfile', () => {
-    const repo = makeRepo('manager-field-main');
-    writeFileSync(join(repo, 'package.json'), JSON.stringify({ packageManager: 'pnpm@9.15.0' }));
-    writeFileSync(join(repo, 'yarn.lock'), 'fixture\n');
+    const repo = makeRepo('manager-field-main', {
+      'package.json': JSON.stringify({ packageManager: 'pnpm@9.15.0' }),
+      'yarn.lock': 'fixture\n',
+    });
     const { result, worktree } = provisionOk(repo, 'field', ['--install']);
     assert.equal(
       nodeModulesReport(result),
       `  node_modules: install it yourself (zero spawn): cd ${worktree} && pnpm install`,
+    );
+  });
+
+  it('a dirty MAIN lockfile does not steer: advice follows the clean checkout', () => {
+    const repo = makeRepo('dirty-main-lock-main', { 'package-lock.json': 'fixture\n' });
+    writeFileSync(join(repo, 'package-lock.json'), 'fixture\n');
+    writeFileSync(join(repo, 'yarn.lock'), 'fixture\n');
+    const { result, worktree } = provisionOk(repo, 'dirtylock', ['--install']);
+    assert.equal(
+      nodeModulesReport(result),
+      `  node_modules: install it yourself (zero spawn): cd ${worktree} && npm install`,
     );
   });
 
@@ -183,8 +203,7 @@ describe('delegated2 finding 3 — install advice follows one unambiguous packag
       { name: 'lock-none', locks: [], expected: 'npm install' },
     ];
     const actual = cases.map(({ name, locks, expected }) => {
-      const repo = makeRepo(`${name}-main`);
-      for (const lock of locks) writeFileSync(join(repo, lock), 'fixture\n');
+      const repo = makeRepo(`${name}-main`, Object.fromEntries(locks.map((lock) => [lock, 'fixture\n'])));
       const { result, worktree } = provisionOk(repo, name, ['--install']);
       return {
         name,

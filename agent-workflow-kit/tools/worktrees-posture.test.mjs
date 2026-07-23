@@ -147,9 +147,18 @@ describe('a provably dependency-free checkout records the no-install posture', (
     assert.ok(readFileSync(WORKTREES_MODE_DOC, 'utf8').includes(NO_DEPENDENCIES_POSTURE));
   });
 
-  // The evidence is the satellite's LIVE content — what an install run there would actually read.
-  // At provision time that is exactly HEAD; on --resume it follows the session's own edits, in
-  // BOTH directions: gained dependencies revoke the proof, shed dependencies grant it.
+  // A green spec-pin (the sentence lands with the spec-first doc edit, before the code flip):
+  // a silent rewording of the advice-source contract goes red here.
+  it('the mode doc states the advice-source contract verbatim', () => {
+    const ADVICE_SOURCE_CONTRACT = 'All manifest/lockfile install evidence — the dependency-free proof AND the package-manager selection (the `packageManager` field, lockfiles) — is read from the worktree\'s own LIVE files at the moment the posture is resolved (on `--resume` too, where a dirty tree is then refused by the clean-tree verify); MAIN\'s mutable working tree never steers manager selection.';
+    assert.ok(readFileSync(WORKTREES_MODE_DOC, 'utf8').includes(ADVICE_SOURCE_CONTRACT));
+  });
+
+  // The evidence is the satellite's LIVE content — what an install run there would actually read
+  // at the moment the posture is resolved; on --resume it follows the session's own edits, in
+  // BOTH directions: gained dependencies revoke the proof, shed dependencies grant it. The mock
+  // git status stays clean by construction — the deliberate seam modeling the refresh lane;
+  // dirty-tree refusal is pinned against real git in worktrees-posture-integration.test.mjs.
   it('the posture follows the LIVE checkout on --resume: gained dependencies revoke the proof', () => {
     const { main, headFiles } = makeRepo('resume-gain-deps');
     const git = makeGit(main, headFiles);

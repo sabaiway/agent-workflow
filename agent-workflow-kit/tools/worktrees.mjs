@@ -1374,8 +1374,10 @@ const LOCKFILE_MANAGERS = Object.freeze([
 const NEUTRAL_INSTALL_ADVICE =
   'install command not printed — package manager is ambiguous or unknown; install dependencies in the worktree by hand';
 
-const resolveInstallAdvice = ({ root, wtRoot, fs }) => {
-  const pkg = readFileNoFollow(fs, join(root, 'package.json'));
+// Advice evidence = the WORKTREE'S OWN LIVE checkout (manifest AND lockfiles): the printed
+// command runs in the satellite, so what main's working tree happens to hold must not steer it.
+const resolveInstallAdvice = ({ wtRoot, fs }) => {
+  const pkg = readFileNoFollow(fs, join(wtRoot, 'package.json'));
   let manager = null;
   let inspectLocks = false;
   if (pkg.absent) {
@@ -1406,7 +1408,7 @@ const resolveInstallAdvice = ({ root, wtRoot, fs }) => {
     for (const [name, candidate] of LOCKFILE_MANAGERS) {
       let st;
       try {
-        st = fs.lstat(join(root, name));
+        st = fs.lstat(join(wtRoot, name));
       } catch (err) {
         if (err?.code === 'ENOENT') continue;
         return { command: null, instruction: NEUTRAL_INSTALL_ADVICE };
@@ -1481,9 +1483,10 @@ const declaresNativeBuild = (fs, dir) => lstatNoFollow(fs.lstat, join(dir, 'bind
 
 // PROVABLY dependency-free, or nothing — read from the WORKTREE'S OWN LIVE CHECKOUT, never from
 // MAIN's mutable working tree: the evidence is what an install run in THIS worktree would actually
-// read. At provision time that is exactly HEAD; on --resume it follows the session's own edits, in
-// both directions (gained dependencies revoke the proof, shed ones grant it) — the same live lane
-// as the node_modules symlink probe. A dirty main manifest must neither grant nor revoke a verdict
+// read, taken at the moment the posture is resolved (a post-checkout hook may already have shaped
+// the checkout; on --resume it follows the session's own edits, in both directions — gained
+// dependencies revoke the proof, shed ones grant it — the same live lane
+// as the node_modules symlink probe). A dirty main manifest must neither grant nor revoke a verdict
 // about content it does not describe. A `workspaces` field of ANY shape
 // is UNKNOWN outright — a workspace install materializes member links and `.bin` shims even with
 // zero dependencies, so a workspace tree is never provably install-free. Everything else the tool
@@ -1512,20 +1515,20 @@ const declaresNoDependencies = ({ wtRoot, fs }) => {
 // an earlier provision left — an install through it writes into MAIN, and the posture must never
 // hide that). Only then may a PROVEN dependency-free checkout short-circuit: a verdict of
 // "nothing to install" must not ride an install instruction.
-const resolveInstallPosture = ({ root, wtRoot, dependencyFree, fs }) => {
+const resolveInstallPosture = ({ wtRoot, dependencyFree, fs }) => {
   const nmPath = join(wtRoot, 'node_modules');
   const nm = lstatNoFollow(fs.lstat, nmPath);
   if (nm !== null && nm.isSymbolicLink()) {
-    const advice = resolveInstallAdvice({ root, wtRoot, fs });
+    const advice = resolveInstallAdvice({ wtRoot, fs });
     const separator = advice.command === null ? ' — ' : ' && ';
     return `the provisioned node_modules is a symlink into MAIN (an install through it writes into MAIN) — for isolation remove it first: rm ${shellQuoteArg(nmPath)}${separator}${advice.instruction}`;
   }
   if (dependencyFree) return NO_DEPENDENCIES_POSTURE;
-  return resolveInstallAdvice({ root, wtRoot, fs }).instruction;
+  return resolveInstallAdvice({ wtRoot, fs }).instruction;
 };
 
 const provisionNodeModules = ({ root, rootReal, wtRoot, installFlag, dependencyFree, git, fs, report }) => {
-  const install = resolveInstallAdvice({ root, wtRoot, fs });
+  const install = resolveInstallAdvice({ wtRoot, fs });
   if (installFlag) {
     const dst = join(wtRoot, 'node_modules');
     const existing = lstatNoFollow(fs.lstat, dst);
@@ -1866,7 +1869,7 @@ const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed
       includes: includesRecorded,
       nodeModules: nodeModulesMode,
       vscode: vscodeMode,
-      install: resolveInstallPosture({ root, wtRoot: targetPath, dependencyFree, fs }),
+      install: resolveInstallPosture({ wtRoot: targetPath, dependencyFree, fs }),
       ...orientationFields({ root, slug }),
     },
     fs,

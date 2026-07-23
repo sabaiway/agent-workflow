@@ -90,4 +90,38 @@ describe('the live posture follows the satellite\'s own committed state (real gi
     assert.equal(resumed.code, EXIT.ok, resumed.errText);
     assert.notEqual(readRecord(repo, 'gain').record.install, NO_DEPENDENCIES_POSTURE, 'the refreshed posture reads the live checkout, not MAIN');
   });
+
+  // The manifest carries a real dependency: a dependency-free checkout would short-circuit to
+  // the no-install posture and manager selection would never be exercised.
+  it('a satellite behind an advanced MAIN reads the SATELLITE checkout', () => {
+    const repo = makeRepo('int-advance', { name: 'r', version: '1.0.0', dependencies: { left: '^1.0.0' } });
+    writeFileSync(join(repo, 'yarn.lock'), 'fixture\n');
+    sh(['add', 'yarn.lock'], repo);
+    sh(['commit', '-q', '-m', 'lock'], repo);
+    const first = run(provisionArgs('advance'), repo);
+    assert.equal(first.code, EXIT.ok, first.errText);
+    sh(['rm', '-q', 'yarn.lock'], repo);
+    writeFileSync(join(repo, 'pnpm-lock.yaml'), 'fixture\n');
+    sh(['add', '-A'], repo);
+    sh(['commit', '-q', '-m', 'advance the lockfile on MAIN'], repo);
+    const resumed = run(provisionArgs('advance', ['--resume']), repo);
+    assert.equal(resumed.code, EXIT.ok, resumed.errText);
+    const { record } = readRecord(repo, 'advance');
+    assert.match(record.install, /yarn install/, 'the refreshed advice reads the satellite checkout, not the advanced MAIN');
+  });
+
+  it('an uncommitted worktree manifest edit refuses --resume at the shipped clean-tree STOP', () => {
+    const repo = makeRepo('int-dirty-stop', { name: 'r', version: '1.0.0', dependencies: { left: '^1.0.0' } });
+    const first = run(provisionArgs('dirtystop'), repo);
+    assert.equal(first.code, EXIT.ok, first.errText);
+    const { worktree } = readRecord(repo, 'dirtystop');
+    writeFileSync(join(worktree, 'package.json'), JSON.stringify({ name: 'r', version: '1.0.0' }));
+    const resumed = run(provisionArgs('dirtystop', ['--resume']), repo);
+    assert.equal(resumed.code, EXIT.stop, 'a dirty satellite tree refuses the resume');
+    assert.equal(
+      resumed.errText,
+      '[worktrees] [agent-workflow-kit] post-provision verify failed — the worktree status is not clean (everything provision places must be ignored-or-tracked):\n M package.json',
+      'the shipped clean-tree STOP, byte-exact — the advice-source flip must not smuggle resume tolerance',
+    );
+  });
 });
