@@ -1059,6 +1059,223 @@ const assertResumePlanCompatibility = ({ wtRoot, seedName, fs }) => {
   );
 };
 
+// ── D10: the tracked plans-chain refusal (slice R1 of the resume-verify design) ────────
+// A tracked handoff or seeded plan is a manufactured dead end: the landing lane
+// categorically refuses docs/plans (staged AND unstaged) and satellite commits are not a
+// lane, so drift on such a path can never be delivered. Both lanes refuse fail-closed
+// BEFORE any provision write. Probes are LITERAL by construction (D11): git lists the
+// docs/plans CONTAINER (that prefix carries no magic bytes) and each leaf is byte-compared
+// in code, so pathspec magic in a leaf name is inert.
+
+const PLANS_CHAIN_KIND = Object.freeze({
+  100644: 'regular', 100755: 'regular', 120000: 'symlink', 160000: 'gitlink', '040000': 'tree',
+});
+const plansChainKind = (mode) => PLANS_CHAIN_KIND[mode] ?? `mode-${mode}`;
+
+// `ls-tree -z`/`ls-files -z` lines: "<meta…>\t<path>" NUL-terminated → Map path → [entry].
+// A MULTIMAP on purpose: an unmerged index carries several stages of one path, and a
+// last-wins single value could hide an irregular stage behind a regular one. Each lister
+// maps its own meta shape (`ls-tree`: mode type oid · `ls-files --stage`: mode oid stage —
+// the STAGE is kept: a single stage-1/2/3 entry is unmerged even alone).
+const parseZPathEntries = (stdout, toEntry) => {
+  const entries = new Map();
+  for (const field of stdout.split('\0')) {
+    const tab = field.indexOf('\t');
+    if (tab === -1) continue;
+    const rel = field.slice(tab + 1);
+    if (!entries.has(rel)) entries.set(rel, []);
+    entries.get(rel).push(toEntry(field.slice(0, tab).split(' ')));
+  }
+  return entries;
+};
+
+// docs/plans entries of a tree-ish (an absent dir lists empty, exit 0).
+const listPlansTreeEntries = ({ git, cwd, treeish }) => {
+  const r = git(['ls-tree', '-z', treeish, `${PLANS_REL}/`], cwd);
+  if (r.status !== 0) return { error: (r.stderr || r.stdout).trim() || 'git ls-tree failed' };
+  return { entries: parseZPathEntries(r.stdout, (meta) => ({ mode: meta[0], stage: '0' })) };
+};
+
+const listPlansIndexEntries = ({ git, cwd }) => {
+  const r = git(['ls-files', '--cached', '--stage', '-z', '--', PLANS_REL], cwd);
+  if (r.status !== 0) return { error: (r.stderr || r.stdout).trim() || 'git ls-files failed' };
+  return { entries: parseZPathEntries(r.stdout, (meta) => ({ mode: meta[0], stage: meta[2] ?? '0' })) };
+};
+
+const plansChainRels = ({ slug, seedName }) =>
+  [...new Set([`${PLANS_REL}/${handoffBasename(slug)}`, `${PLANS_REL}/${seedName}`])];
+
+// The finding kind is decided over EVERY entry of the path from BOTH sources; an unmerged
+// index state — several stages OR a single non-zero stage — is irregular outright, never a
+// surgical-recovery candidate.
+const classifyPlansChainFinding = ({ headEntries = [], indexEntries = [] }) => {
+  const kinds = [...headEntries, ...indexEntries].map(({ mode }) => plansChainKind(mode));
+  const unmerged = indexEntries.length > 1 || indexEntries.some(({ stage }) => stage !== '0');
+  const irregular = unmerged || kinds.some((k) => k !== 'regular');
+  return { irregular, kind: unmerged ? 'unmerged-index' : (kinds.find((k) => k !== 'regular') ?? 'regular') };
+};
+
+const literalIndexRemoval = (rel) => `git rm --cached -- ${shellQuoteArg(`:(literal)${rel}`)}`;
+
+// FRESH, pre-mutation: the tree proof reads EXACTLY the captured commit — the same OID the
+// branch is cut from — so probe and mutation bind to one object.
+const assertPlansChainCleanAtCapturedOid = ({ git, root, oid, rels }) => {
+  const tree = listPlansTreeEntries({ git, cwd: root, treeish: oid });
+  if (tree.error) {
+    throw stop(`provision: the plans-chain tree probe failed at the captured commit ${oid}: ${tree.error}`);
+  }
+  for (const rel of rels) {
+    const headEntries = tree.entries.get(rel);
+    if (headEntries === undefined) continue;
+    const { irregular, kind } = classifyPlansChainFinding({ headEntries });
+    if (irregular) {
+      throw stop(`provision refuses: ${rel} is tracked as a ${kind} entry in the captured commit ${oid} — fail-closed; no worktree was created. ${PLANS_REL} must stay git-ignored and untracked.`);
+    }
+    // The reachable poisoned state usually has the removal ALREADY STAGED at main (with the
+    // path still index-tracked the docs/plans entry gate refuses first) — the advice must
+    // match the live index, else the printed command fails «pathspec did not match».
+    const index = listPlansIndexEntries({ git, cwd: root });
+    if (index.error) {
+      throw stop(`provision: the plans-chain index probe failed at main: ${index.error}`);
+    }
+    const stillIndexed = index.entries.has(rel);
+    throw stop([
+      `provision refuses: ${rel} is tracked in the captured commit ${oid} — a tracked plans-chain path is undeliverable and would strand the worktree. No worktree was created.`,
+      ...(stillIndexed
+        ? ['Recovery (surgical, at main): untrack it and commit the removal —', `  ${literalIndexRemoval(rel)}`, 'then commit and re-run provision.']
+        : ['Recovery (surgical, at main): the removal is already staged — commit it, then re-run provision.']),
+      `${PLANS_REL} must stay git-ignored and untracked.`,
+    ].join('\n'));
+  }
+};
+
+// FRESH, post-add, pre-write: a post-checkout hook may force-add or even COMMIT a
+// plans-chain path on the new branch (a committed add leaves the tree clean, invisible to
+// the blanket verify) — re-probe the live index AND the branch HEAD before the first write.
+const assertPlansChainCleanPostAdd = ({ git, wtRoot, branch, rels }) => {
+  const head = listPlansTreeEntries({ git, cwd: wtRoot, treeish: 'HEAD' });
+  if (head.error) throw stop(`provision: the post-add plans-chain probe failed in the new worktree: ${head.error}`);
+  const index = listPlansIndexEntries({ git, cwd: wtRoot });
+  if (index.error) throw stop(`provision: the post-add plans-chain probe failed in the new worktree: ${index.error}`);
+  const offending = rels
+    .filter((rel) => head.entries.has(rel) || index.entries.has(rel))
+    .map((rel) => ({ rel, ...classifyPlansChainFinding({ headEntries: head.entries.get(rel), indexEntries: index.entries.get(rel) }) }));
+  if (offending.length === 0) return;
+  // The kind matrix holds in every lane: ANY irregular entry → fail-closed, no recovery
+  // command at all. Both STOPs suppress the generic kept-worktree NOTE — its --resume advice
+  // would steer away from (or contradict) the honest lane here.
+  if (offending.some(({ irregular }) => irregular)) {
+    throw stop([
+      'provision refuses: the new worktree already tracks irregular plans-chain entr(y/ies) before any provision write — fail-closed:',
+      ...offending.map(({ rel, kind }) => `  ${rel} (${kind})`),
+      'Nothing was written into the worktree.',
+    ].join('\n'), { suppressKeptNote: true });
+  }
+  throw stop([
+    'provision refuses: the new worktree already tracks plans-chain path(s) before any provision write — a post-checkout hook force-added or committed:',
+    ...offending.map(({ rel }) => `  ${rel}`),
+    'A tracked plans-chain path is undeliverable and the worktree cannot converge; nothing was written into it.',
+    'Recovery, in order:',
+    '  1. inspect the worktree and copy OUT any hook-created content you value',
+    '  2. fix or remove the offending post-checkout hook',
+    '  3. with consent, remove the kept worktree from MAIN:',
+    `       git worktree remove --force ${shellQuoteArg(wtRoot)}`,
+    `       git branch -D ${shellQuoteArg(branch)}`,
+    '  4. re-run provision',
+  ].join('\n'), { suppressKeptNote: true });
+};
+
+// RESUME: the branch HEAD tree is probed UNCONDITIONALLY plus the live index, BEFORE the
+// handoff-identity reads — the probe result is collected first; the identity parse steers
+// only the recovery wording (a malformed record never cancels a tracked classification).
+const assertPlansChainCleanOnResume = ({ git, root, wtRoot, slug, branch, rels, fs }) => {
+  const head = listPlansTreeEntries({ git, cwd: wtRoot, treeish: 'HEAD' });
+  if (head.error) {
+    throw stop(`--resume: the plans-chain probe failed (branch HEAD tree): ${head.error} — the prior record is untouched`);
+  }
+  const index = listPlansIndexEntries({ git, cwd: wtRoot });
+  if (index.error) {
+    throw stop(`--resume: the plans-chain probe failed (live index): ${index.error} — the prior record is untouched`);
+  }
+  const headTracked = [];
+  const indexOnly = [];
+  for (const rel of rels) {
+    const headEntries = head.entries.get(rel);
+    const indexEntries = index.entries.get(rel);
+    if (headEntries !== undefined) headTracked.push({ rel, ...classifyPlansChainFinding({ headEntries, indexEntries }) });
+    else if (indexEntries !== undefined) indexOnly.push({ rel, ...classifyPlansChainFinding({ indexEntries }) });
+  }
+  if (headTracked.length === 0 && indexOnly.length === 0) return;
+
+  // Best-effort identity read, for RECOVERY WORDING only: destructive removal is offered
+  // ONLY where the record identity provably binds this worktree. The failure REASON is kept
+  // and printed INLINE — advising a re-run would loop (this probe fires before the shipped
+  // identity STOP can ever be reached).
+  const identity = (() => {
+    try {
+      const rf = readFileNoFollow(fs, join(wtRoot, PLANS_REL, handoffBasename(slug)));
+      if (!rf.bytes) return { binds: false, reason: 'the handoff is not readable as a regular file' };
+      const record = parseProvisionRecord(String(rf.bytes));
+      if (record.slug !== slug) return { binds: false, reason: `the record slug is ${record.slug ?? '(missing)'}, the live slug is ${slug}` };
+      if (record.branch !== branch) return { binds: false, reason: `the record branch is ${record.branch ?? '(missing)'}, the live branch is ${branch}` };
+      return { binds: true, reason: null };
+    } catch (err) {
+      return { binds: false, reason: errorText(err) };
+    }
+  })();
+
+  // The kind matrix governs the WHOLE set: any irregular finding (an irregular mode in
+  // EITHER source, or a multistage/unmerged index entry) withholds EVERY recovery command —
+  // destructive or surgical advice for a regular sibling would also cover the irregular
+  // content the contract fails closed on.
+  if ([...headTracked, ...indexOnly].some(({ irregular }) => irregular)) {
+    throw stop([
+      '--resume refuses: irregular plans-chain entr(y/ies) are tracked in this worktree — fail-closed, recovery commands withheld for the whole set:',
+      ...headTracked.map(({ rel, kind }) => `  ${rel} (${kind}, branch HEAD)`),
+      ...indexOnly.map(({ rel, kind }) => `  ${rel} (${kind}, index only)`),
+      'The prior provision record is untouched.',
+    ].join('\n'));
+  }
+
+  // A poisoned base dominates the scenario: consented abandon disposes the WHOLE worktree,
+  // so per-path index-only surgical commands beside it would be contradictory noise — the
+  // index-only paths are LISTED as findings and the one salvage-then-abandon lane covers all.
+  if (headTracked.length > 0) {
+    throw stop([
+      ...headTracked.map(({ rel }) =>
+        `--resume refuses: ${rel} is tracked in this worktree's branch HEAD — the legacy poisoned-base pathology; its drift is undeliverable, so this worktree cannot converge.`),
+      ...indexOnly.map(({ rel }) =>
+        `--resume refuses: ${rel} is staged in this worktree's index — undeliverable beside the poisoned base above.`),
+      'Recovery, in order:',
+      '  1. salvage FIRST: copy the live files (and anything else you value) OUT of the worktree — plain file copies, no identity needed',
+      identity.binds
+        ? `  2. then, with consent: ${composeOwnToolPrefix(root)} ${composeCleanupCommand({ slug, branch, abandon: true })} (DESTROYS unlanded work)`
+        : `  2. the handoff record does not bind: ${identity.reason} — a consented destructive removal is NOT offered; repair the record before any identity-bound lane can run`,
+    ].join('\n'));
+  }
+
+  const lines = [];
+  for (const { rel } of indexOnly) {
+    // The rule probe reads the EXACT offending path, index-independently: `--no-index` skips
+    // the index consultation that makes a plain check-ignore lie about tracked paths
+    // (live-probed), and a fabricated sibling name could disagree with the real rule set.
+    const rule = git(['check-ignore', '--no-index', '--', rel], wtRoot);
+    if (rule.status !== 0 && rule.status !== 1) {
+      throw stop(`--resume: the ignore-rule probe failed for ${rel}: ${(rule.stderr || rule.stdout).trim()} — the prior record is untouched`);
+    }
+    const ignoreRuleGone = rule.status === 1;
+    lines.push(
+      `--resume refuses: ${rel} is staged in this worktree's index (absent from the branch HEAD) — a session force-add whose staged entry can never be delivered.`,
+      'Recovery (surgical, in the worktree):',
+      `  1. ${literalIndexRemoval(rel)}`,
+      `     (if git refuses — the staged content differs from the live file — salvage the staged blob first: git show ${shellQuoteArg(`:${rel}`)} > <a file OUTSIDE this worktree>, then repeat with -f; the live file stays untouched)`,
+      ...(ignoreRuleGone ? [`  2. restore the git-ignore rule covering ${rel} (provision requires ${PLANS_REL} ignored)`] : []),
+      '  then re-run --resume.',
+    );
+  }
+  throw stop(lines.join('\n'));
+};
+
 // ── the handoff artifact (the tool's own record inside it; list/cleanup read it) ───────
 
 // The orientation facts a fresh satellite session cannot derive from its own checkout. They are
@@ -1809,13 +2026,22 @@ export const runProvision = ({ argvSlug, flags, cwd, git, deps, log }) => {
     }
     const wtCommon = gitLine(git, ['rev-parse', '--path-format=absolute', '--git-common-dir'], targetReal);
     if (wtCommon !== commonDir) throw stop(`--resume identity mismatch: ${targetReal} does not share this repo's git dir`);
+    assertPlansChainCleanOnResume({ git, root, wtRoot: targetReal, slug, branch, rels: plansChainRels({ slug, seedName: seed.name }), fs });
     assertResumeHandoffIdentity({ wtRoot: targetReal, slug, branch, fs });
     assertResumePlanCompatibility({ wtRoot: targetReal, seedName: seed.name, fs });
     runWritabilityProbe();
     report.push(`resuming provision at ${targetReal} (branch ${branch})`);
   } else {
     runWritabilityProbe();
-    const add = git(['worktree', 'add', '-b', branch, targetReal], root);
+    // ONE captured commit binds the plans-chain tree proof AND the branch cut: a clean
+    // captured OID with a subsequently-moved HEAD still cuts from the captured OID.
+    const capture = git(['rev-parse', 'HEAD'], root);
+    if (capture.status !== 0) {
+      throw stop(`provision: cannot capture the base commit (git rev-parse HEAD failed in the main repo): ${(capture.stderr || capture.stdout).trim()} — the plans-chain proof and the branch cut must bind to one commit`);
+    }
+    const capturedOid = capture.stdout.replace(/\r?\n$/, '');
+    assertPlansChainCleanAtCapturedOid({ git, root, oid: capturedOid, rels: plansChainRels({ slug, seedName: seed.name }) });
+    const add = git(['worktree', 'add', '-b', branch, targetReal, capturedOid], root);
     if (add.status !== 0) {
       throw stop(
         [
@@ -1830,9 +2056,12 @@ export const runProvision = ({ argvSlug, flags, cwd, git, deps, log }) => {
   // any failure past this point leaves a real created worktree — the error must say so and
   // hand back the exact finish command, never just the local cause
   try {
+    if (!flags.resume) {
+      assertPlansChainCleanPostAdd({ git, wtRoot: targetReal, branch, rels: plansChainRels({ slug, seedName: seed.name }) });
+    }
     return finishProvision({ root, rootReal, targetPath: targetReal, slug, branch, flags, seed, includeSources, provisionSet, git, deps, fs, report, log });
   } catch (err) {
-    if (!flags.resume && err?.message) {
+    if (!flags.resume && err?.message && !err.suppressKeptNote) {
       err.message += `\nNOTE: the worktree at ${targetReal} (branch ${branch}) was created and KEPT — finish with: ${composeProvisionArgv({ root, slug, flags: { ...flags, resume: true } })} (or reclaim it with the consented cleanup).`;
     }
     throw err;
@@ -1859,23 +2088,6 @@ const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed
 
   rebasePins({ root, wtRoot: targetPath, git, fs, report });
 
-  writeHandoffRecord({
-    wtRoot: targetPath,
-    slug,
-    branch,
-    fields: {
-      slug,
-      branch,
-      includes: includesRecorded,
-      nodeModules: nodeModulesMode,
-      vscode: vscodeMode,
-      install: resolveInstallPosture({ wtRoot: targetPath, dependencyFree, fs }),
-      ...orientationFields({ root, slug }),
-    },
-    fs,
-    report,
-  });
-
   const inFlight = plansInFlight(targetPath, fs.readdir);
   if (inFlight.length !== 1 || inFlight[0] !== seed.name) {
     throw stop(
@@ -1889,6 +2101,35 @@ const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed
     throw stop(
       `post-provision verify failed — the worktree status is not clean (everything provision places must be ignored-or-tracked):\n${porcelain.stdout.trimEnd()}`,
     );
+  }
+
+  // The record refresh runs LAST, after the in-flight check and the verify, in BOTH lanes —
+  // the record attests only a VERIFIED provision; a failed run leaves the prior record bytes
+  // (the stub on a failed first provision). On resume the generic kept-worktree NOTE does not
+  // fire, so a refresh failure here wraps its own: the verify PASSED and the exact re-run
+  // command is the honest recovery, with the original cause preserved.
+  try {
+    writeHandoffRecord({
+      wtRoot: targetPath,
+      slug,
+      branch,
+      fields: {
+        slug,
+        branch,
+        includes: includesRecorded,
+        nodeModules: nodeModulesMode,
+        vscode: vscodeMode,
+        install: resolveInstallPosture({ wtRoot: targetPath, dependencyFree, fs }),
+        ...orientationFields({ root, slug }),
+      },
+      fs,
+      report,
+    });
+  } catch (err) {
+    if (flags.resume && err?.message) {
+      err.message += `\nNOTE: the worktree at ${targetPath} (branch ${branch}) is KEPT — the provision verify PASSED and only the record refresh failed; finish with: ${composeProvisionArgv({ root, slug, flags })} (the prior record bytes are untouched).`;
+    }
+    throw err;
   }
 
   const base = gitLine(git, ['rev-parse', 'HEAD'], targetPath) ?? '(unknown)';

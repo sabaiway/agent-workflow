@@ -35,6 +35,7 @@ const makeGit = (main, { onAdd = null } = {}) => {
     if (args[0] === 'rev-parse' && args.includes('--git-common-dir')) return ok(`${commonDir}\n`);
     if (args[0] === 'rev-parse' && args.includes('HEAD')) return ok(`${HEAD}\n`);
     if (args[0] === 'check-ignore') return ok();
+    if (args[0] === 'ls-tree') return ok();
     if (args[0] === 'ls-files') return ok();
     if ((args[0] === 'status' && args[1] === '--porcelain')
       || (args[0] === '--no-optional-locks' && args[1] === 'status' && args[2] === '--porcelain')) return ok();

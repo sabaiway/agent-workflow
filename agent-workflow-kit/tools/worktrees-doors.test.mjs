@@ -50,14 +50,15 @@ const createGitSeam = (root) => {
     if (commandArgs[0] === 'rev-parse' && commandArgs.includes('--git-common-dir')) return ok(`${COMMON_GIT_DIR}\n`);
     if (commandArgs[0] === 'rev-parse' && commandArgs[1] === 'HEAD') return ok(`${HEAD_OID}\n`);
     if (commandArgs[0] === 'check-ignore') return ok(`${commandArgs.at(-1)}\n`);
+    if (commandArgs[0] === 'ls-tree') return ok();
     if (commandArgs[0] === 'ls-files') return ok();
     if (commandArgs[0] === 'status' && commandArgs[1] === '--porcelain') return ok();
     if (commandArgs[0] === 'worktree' && commandArgs[1] === 'list') {
       return ok(formatWorktreeList(state.entries, commandArgs.includes('-z')));
     }
     if (commandArgs[0] === 'worktree' && commandArgs[1] === 'add') {
-      const target = commandArgs.at(-1);
       const branch = commandArgs[commandArgs.indexOf('-b') + 1];
+      const target = commandArgs[commandArgs.indexOf('-b') + 2];
       mkdirSync(target, { recursive: true });
       state.entries.push({ path: target, head: HEAD_OID, branch: `refs/heads/${branch}` });
       return ok();

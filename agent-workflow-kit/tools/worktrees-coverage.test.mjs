@@ -230,13 +230,14 @@ describe('worktrees coverage — provision record section boundaries', () => {
         if (commandArgs[0] === 'rev-parse' && commandArgs.includes('--git-common-dir')) return ok(`${join(root, '.git')}\n`);
         if (commandArgs[0] === 'rev-parse' && commandArgs[1] === 'HEAD') return ok(`${head}\n`);
         if (commandArgs[0] === 'check-ignore') return ok(`${commandArgs.at(-1)}\n`);
+        if (commandArgs[0] === 'ls-tree') return ok();
         if (commandArgs[0] === 'ls-files' || commandArgs[0] === 'status') return ok();
         if (commandArgs[0] === 'worktree' && commandArgs[1] === 'list') {
           return ok(`${entries.map((entry) => `worktree ${entry.path}\0HEAD ${entry.head}\0branch ${entry.branch}\0\0`).join('')}\0`);
         }
         if (commandArgs[0] === 'worktree' && commandArgs[1] === 'add') {
-          const target = commandArgs.at(-1);
           const branch = commandArgs[commandArgs.indexOf('-b') + 1];
+          const target = commandArgs[commandArgs.indexOf('-b') + 2];
           mkdirSync(target, { recursive: true });
           entries.push({ path: target, head, branch: `refs/heads/${branch}` });
           return ok();
