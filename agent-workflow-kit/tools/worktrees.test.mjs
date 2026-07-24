@@ -426,17 +426,11 @@ describe('worktrees — provision (real git)', () => {
       rmSync(join(WT, 'docs/plans/second-plan.md'));
     }
   });
-  it('an untracked-not-ignored leftover fails the post-provision porcelain verify, listed per path', () => {
-    writeFileSync(join(WT, 'leftover.txt'), 'x\n');
-    try {
-      const r = run(['provision', 'alpha', '--resume', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-alpha.md'], { cwd: MAIN });
-      assert.equal(r.code, EXIT.stop);
-      assert.match(r.errText, /status is not clean/);
-      assert.match(r.errText, /leftover\.txt/);
-    } finally {
-      rmSync(join(WT, 'leftover.txt'));
-    }
-  });
+  // RETIRED in slice R2: an untracked-not-ignored leftover at a NON-owned path is the session's
+  // own work, which the per-owned-path resume verify tolerates by construction. The surviving
+  // contracts live in worktrees-resume-verify-r2.test.mjs — `untracked-scratch-resume-completes`
+  // (this fixture's behavior now) and `owned-path-untracked-lane-stops-with-surgical-recovery`
+  // (the lane that still STOPs). The FIRST-provision blanket verify is unchanged and pinned there.
 });
 
 // ── the R1 fold set: resume preservation · source containment · collision preflight ────

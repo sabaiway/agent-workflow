@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { checkBinding, checkParity, BINDINGS, main } from './doc-parity.mjs';
-import { INCLUDE_IDENTITY_RULE } from './worktrees.mjs';
+import { INCLUDE_IDENTITY_RULE, RESUME_VERIFY_RULE } from './worktrees.mjs';
 
 // A synthetic file surface: rel → text. A rel absent from the map THROWS (fails closed like a real
 // unreadable file).
@@ -147,6 +147,18 @@ describe('the REAL registry is consistent with the shipped contract docs (dogfoo
     assert.match(binding.token, /preflight recorded/, 'the token states the preflight identity binding');
     const helpResult = main(['--help']);
     assert.match(helpResult.stdout, /include-identity/, 'the HELP inventory must name the binding');
+  });
+
+  it('doc-parity registry carries the worktrees resume-verify binding (slice R2)', () => {
+    const binding = BINDINGS.find((b) => b.constant === 'resume-verify-rule');
+    assert.ok(binding, 'registry must bind the resume-verify contract (D6)');
+    assert.deepEqual([...binding.files].sort(), ['references/modes/worktrees.md']);
+    assert.equal(binding.token, RESUME_VERIFY_RULE, 'the token is the live exported constant');
+    assert.match(binding.token, /only what THIS run placed or kept/, 'the token states the per-owned-path scope');
+    assert.match(binding.token, /never probed and never a stop cause/, 'the token states the session guarantee');
+    assert.match(binding.token, /a first provision keeps the blanket clean-tree verify/, 'the token states the first-provision carve-out');
+    const helpResult = main(['--help']);
+    assert.match(helpResult.stdout, /resume-verify/, 'the HELP inventory must name the binding');
   });
 
   it('the registry binds the review-state clean-tree latent-arm notice to its mode doc', () => {

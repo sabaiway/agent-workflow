@@ -38,6 +38,36 @@ own verbatim error through the existing Git-error surface.
   record attests only a verified provision, and a failed run leaves the prior record bytes: on a
   first provision that failed after the stub write, the stub; a refusal BEFORE any provision
   write (the tracked-plans-chain and probe-error STOPs) leaves no handoff at all.
+  The post-provision verify is lane-specific:
+  the resume verify proves only what THIS run placed or kept: every journaled leaf must be tracked or ignored in the worktree, an untracked owned leaf or any probe error stops the run naming the exact leaf, and every other path — the session's own work — is never probed and never a stop cause; a first provision keeps the blanket clean-tree verify.
+  The proof list is THIS run's live placement journal — the closed-world placement registry (the
+  handoff stub, the seeded plan, copy-set leaves, include leaves, the `node_modules` link,
+  `.vscode/settings.json`, the pin-rebase targets, and the record refresh at its already-journaled
+  path), leaf-only (files and symlinks; directories are containers, never proof obligations) and
+  kind-gated: membership requires the live node's kind to match what that lane's SOURCE places, so
+  a directory, a special node, or a kind-mismatched link at an owned path is session content the
+  verifier never probes. The journal FREEZES at the verify. Lane probes are LITERAL — pathspec
+  magic in a placed name is inert — and tracked-priority (tracked > ignored > untracked). An
+  untracked owned leaf STOPs with the convergent fix first: restore the ignore rule (the only
+  convergent fix for a mandatory copy-set leaf, the `node_modules` link, and
+  `.vscode/settings.json` — each is placed only where a check-ignore gate proved the destination
+  ignored, and removing the node is non-convergent because the next resume re-places it). A
+  droppable `--include` instead gets ONE grouped instruction on its destination ROOT — dropping the
+  flag orphans every copy under that root, since cleanup derives ownership from the recorded
+  includes — namely: salvage or relocate the whole root OUT of the worktree AND drop
+  `--include <root>` in the same run, either alone recurs. No removal is ever derived there: the
+  journal cannot see session content or kind-excluded nodes inside that root, so no `rm` over it
+  could be proven safe; and leaving it in place is not offered either, because an orphaned
+  destination is exactly what stops land. A kept node is never advised away, an excluded dir
+  (`docs/plans`, `docs/ai`) never gets a tracking arm, and a probe error carries NO recovery
+  command. The tracked lane is proven by a byte-exact path match, never by a non-empty listing — a
+  pathspec naming a directory lists its descendants, which prove nothing about the path itself. Membership itself is kind-gated only for a KEPT node: a
+  node THIS attempt created is owned by construction and stays in the proof set whatever its live
+  kind became. So a `--resume` in a worked-in satellite completes
+  with the session's uncommitted tracked edits, untracked scratch, and hook-created files
+  untouched — while the FIRST provision stays deliberately stricter, refusing any dirt at the
+  blanket clean-tree verify (its untracked visibility is explicit, so repo `status` configuration
+  cannot blind it).
   `--include` sources are identity-bound: preflight records each include root's identity (device,
   inode, and kind of the canonical node) BEFORE `git worktree add`, and a root that is neither a
   regular file nor a directory — or whose identity probe fails — is refused before any mutation.
@@ -98,8 +128,10 @@ own verbatim error through the existing Git-error surface.
   Foreign content stops cleanup. `--abandon` is the ONE destructive arm: it DESTROYS unlanded work,
   requires the handoff identity, and is the only path where `--force` may appear.
 
-**Provision record (`docs/plans/handoff-<slug>.md`, `## Provision record` — tool-owned):** identity
-(`slug`, `branch`, `include`, `node_modules`, `vscode-settings`, and after a prepare `prepared-tree`)
+**Provision record (`docs/plans/handoff-<slug>.md`, `## Provision record` — tool-owned):** resume
+IDENTITY (`slug`, `branch`, and the seeded plan name — a mismatch STOPs) · recorded provision FACTS
+that never authorize a resume (`include`, `node_modules`, `vscode-settings`) · and, after a prepare,
+`prepared-tree`, which is a land/cleanup attestation-and-recovery surface, not resume identity —
 PLUS the three facts a fresh satellite session cannot derive from its own checkout:
 
 - `shared-queue` — the ABSOLUTE path to MAIN's `docs/plans/queue.md`, followed by the rule the record states verbatim: the series index is SHARED and lives ONLY in main: read it at the absolute path above, and never copy it into this worktree, because docs/plans is git-ignored and machine-local, so a copy silently diverges from what main and every other worktree are writing. This worktree never WRITES that file: reaching outside it is an fs_outside_repo action the autonomy policy denies by default. Put new findings in THIS handoff record instead — it is the channel that survives the landing, and main appends them to the index from here. Provision never seeds a copy: the queue is deliberately absent from the satellite, and the absolute path is the only pointer — `--include` refuses to copy the index (or any directory containing it) into the worktree.
@@ -109,9 +141,9 @@ PLUS the three facts a fresh satellite session cannot derive from its own checko
   isolated-install command when the package manager is unambiguous, the honest install-by-hand
   advice when it is not, and — when the provisioned `node_modules` is a SYMLINK into main — the
   unlink-first form, because a plain install through the symlink writes into MAIN and is never
-  presented as isolated. When the WORKTREE'S OWN LIVE CHECKOUT is provably dependency-free (its `package.json` declares no dependencies, no `workspaces` field of any shape, no install-lifecycle script, no native-addon manifest, no external workspace manifest beside it — the evidence is what an install run in the satellite would actually read: the checkout's LIVE files at the moment the posture is resolved; on `--resume` a dirty tree is then refused by the clean-tree verify, before the record refresh — a failed resume leaves the prior record bytes) the record and the default-lane report both state `no install needed — the project declares no dependencies` and print no install command. A workspace tree is NEVER provably install-free — a workspace install materializes member links and `.bin` shims even with zero dependencies — and anything else the tool cannot enumerate (an absent or unparseable `package.json`, a malformed dependency or scripts field, an install-lifecycle script — dependency-free is not install-free) leaves the posture UNKNOWN and keeps the existing advice: a false "nothing to install" is worse than a redundant hint. `--install` remains an EXPLICIT request and is always answered with the
+  presented as isolated. When the WORKTREE'S OWN LIVE CHECKOUT is provably dependency-free (its `package.json` declares no dependencies, no `workspaces` field of any shape, no install-lifecycle script, no native-addon manifest, no external workspace manifest beside it — the evidence is what an install run in the satellite would actually read: the checkout's LIVE files at the moment the posture is resolved; on `--resume` that includes the session's own uncommitted edits, which the per-owned-path verify tolerates, and a failed resume leaves the prior record bytes) the record and the default-lane report both state `no install needed — the project declares no dependencies` and print no install command. A workspace tree is NEVER provably install-free — a workspace install materializes member links and `.bin` shims even with zero dependencies — and anything else the tool cannot enumerate (an absent or unparseable `package.json`, a malformed dependency or scripts field, an install-lifecycle script — dependency-free is not install-free) leaves the posture UNKNOWN and keeps the existing advice: a false "nothing to install" is worse than a redundant hint. `--install` remains an EXPLICIT request and is always answered with the
   isolated-install command.
-  All manifest/lockfile install evidence — the dependency-free proof AND the package-manager selection (the `packageManager` field, lockfiles) — is read from the worktree's own LIVE files at the moment the posture is resolved (on `--resume` too, where a dirty tree is then refused by the clean-tree verify); MAIN's mutable working tree never steers manager selection.
+  All manifest/lockfile install evidence — the dependency-free proof AND the package-manager selection (the `packageManager` field, lockfiles) — is read from the worktree's own LIVE files at the moment the posture is resolved (on `--resume` too, over the session's own live edits); MAIN's mutable working tree never steers manager selection.
 
 **Honesty:** there is NO preview step on the writers — over-warned by design. The tool never
 commits, never pushes, never runs a subscription CLI. Every content read and regular-file copy

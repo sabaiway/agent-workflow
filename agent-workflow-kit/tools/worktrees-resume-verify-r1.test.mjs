@@ -105,19 +105,10 @@ describe('the record attests only a verified provision (real git)', () => {
       'the completing resume refreshed the record');
   });
 
-  it('failed-resume-verify-leaves-prior-record-bytes', () => {
-    const repo = makeRepo('r1-prior-bytes');
-    const first = run(provisionArgs('priorbytes'), repo);
-    assert.equal(first.code, EXIT.ok, first.errText);
-    const before = readHandoff(repo, 'priorbytes');
-    // The dirty edit is the MANIFEST, so a pre-fix refresh writes DIFFERENT record bytes
-    // (the live install posture follows the dirty manifest) — the AD-067 residual's tombstone.
-    writeFileSync(join(wtPath(repo, 'priorbytes'), 'package.json'),
-      JSON.stringify({ name: 'r', version: '1.0.0', dependencies: { left: '^1.0.0' } }));
-    const resumed = run(provisionArgs('priorbytes', ['--resume']), repo);
-    assert.equal(resumed.code, EXIT.stop, 'the blanket clean-tree verify still refuses (tolerance unchanged this slice)');
-    assert.equal(readHandoff(repo, 'priorbytes'), before, 'a failed resume leaves the PRIOR record bytes, byte-exact');
-  });
+  // `failed-resume-verify-leaves-prior-record-bytes` lived here on a DIRTY-MANIFEST fixture, which
+  // slice R2 legalized (the tolerance flip). The contract itself survives on the lanes that still
+  // STOP and is pinned in worktrees-resume-verify-r2.test.mjs under the same name — this file
+  // keeps the FRESH-lane record contracts only.
 
   it('successful-provision-record-bytes-unchanged', () => {
     const repo = makeRepo('r1-clean-resume');
@@ -515,8 +506,11 @@ describe('D10 — a tracked plans-chain path refuses fail-closed (real git)', ()
     sh(['add', '-f', '--', decoyRel], wt);
     rmSync(join(wt, decoyRel));
     const resumed = run(provisionArgs(slug, ['--resume'], asName), repo);
-    assert.equal(resumed.code, EXIT.stop, 'the staged decoy still dirties the tree');
-    assert.match(resumed.errText, /post-provision verify failed/, 'the failure is the blanket verify');
+    // Slice R2 re-fixtured the consequence: the staged decoy is SESSION content the per-owned-path
+    // verify never examines, so the resume COMPLETES. The literal-probe contract this arm was
+    // authored for is unchanged and still proven — a pattern interpretation of the magic-shaped
+    // seed name would have fired the plans-chain STOP on the decoy.
+    assert.equal(resumed.code, EXIT.ok, `literal probes leave the decoy alone: ${resumed.errText}`);
     assert.doesNotMatch(resumed.errText, /staged in this worktree's index|tracked in this worktree's branch HEAD/,
       'a pattern interpretation would have fired the plans-chain STOP on the decoy — literal probes do not');
   });
@@ -647,40 +641,37 @@ const mockArgs = (slug, extra = []) =>
   ['provision', slug, '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', `feature-${slug}.md`, ...extra];
 
 describe('ordering + probe-error contracts (injected git/fs)', () => {
+  // The FRESH lane keeps the blanket clean-tree verify, so its ordering is still spied on the
+  // porcelain call. Slice R2 replaced the resume lane's verify with the per-owned-path lane proof;
+  // that lane's ordering spy lives in worktrees-resume-verify-r2.test.mjs
+  // (`record-write-follows-the-resume-verify`).
   it('record-write-follows-every-verify', () => {
-    for (const lane of ['fresh', 'resume']) {
-      const main = makeMockRepo(`mock-order-${lane}`);
-      const order = [];
-      const git = makeMockGit(main, {
-        overrides: (args) => {
-          if (args[0] === 'status' && args[1] === '--porcelain') order.push('verify');
-          return null;
-        },
-      });
-      const deps = {
-        rename: (src, dst) => {
-          if (basename(dst).startsWith('handoff-')) order.push('record');
-          return renameSync(src, dst);
-        },
-        readdir: (p, opts) => {
-          if (basename(p) === 'plans' && p.includes(`mock-order-${lane}--ord`)) order.push('inflight');
-          return readdirSync(p, opts);
-        },
-      };
-      const first = runMock(mockArgs('ord'), main, git, deps);
-      assert.equal(first.code, EXIT.ok, first.errText);
-      if (lane === 'resume') {
-        order.length = 0;
-        const resumed = runMock(mockArgs('ord', ['--resume']), main, git, deps);
-        assert.equal(resumed.code, EXIT.ok, resumed.errText);
-      }
-      const inflight = order.indexOf('inflight');
-      const verify = order.indexOf('verify');
-      const record = order.lastIndexOf('record');
-      assert.ok(inflight !== -1 && verify !== -1 && record !== -1, `all three stages observed (${lane}): ${order.join(',')}`);
-      assert.ok(inflight < verify && verify < record,
-        `${lane}: in-flight check → verify → record refresh, got ${order.join(',')}`);
-    }
+    const main = makeMockRepo('mock-order-fresh');
+    const order = [];
+    const git = makeMockGit(main, {
+      overrides: (args) => {
+        if (args[0] === 'status' && args[1] === '--porcelain') order.push('verify');
+        return null;
+      },
+    });
+    const deps = {
+      rename: (src, dst) => {
+        if (basename(dst).startsWith('handoff-')) order.push('record');
+        return renameSync(src, dst);
+      },
+      readdir: (p, opts) => {
+        if (basename(p) === 'plans' && p.includes('mock-order-fresh--ord')) order.push('inflight');
+        return readdirSync(p, opts);
+      },
+    };
+    const first = runMock(mockArgs('ord'), main, git, deps);
+    assert.equal(first.code, EXIT.ok, first.errText);
+    const inflight = order.indexOf('inflight');
+    const verify = order.indexOf('verify');
+    const record = order.lastIndexOf('record');
+    assert.ok(inflight !== -1 && verify !== -1 && record !== -1, `all three stages observed: ${order.join(',')}`);
+    assert.ok(inflight < verify && verify < record,
+      `in-flight check → verify → record refresh, got ${order.join(',')}`);
   });
 
   it('record-refresh-failure-after-clean-verify-keeps-worktree-and-names-resume', () => {
@@ -829,6 +820,7 @@ describe('ordering + probe-error contracts (injected git/fs)', () => {
       const r = runMock(mockArgs('errmi'), main, git);
       assert.equal(r.code, EXIT.stop);
       assert.match(r.errText, /plans-chain index probe failed at main.*boom: main index/, 'the index-probe error is surfaced');
+      assert.doesNotMatch(r.errText, /rm --cached|--abandon|worktree remove/, 'no recovery command rides a failed probe');
       assert.equal(git.added.length, 0, 'no worktree add was attempted');
     }
     // RESUME, live-index probe failure (the HEAD-tree probe succeeded).
@@ -845,6 +837,7 @@ describe('ordering + probe-error contracts (injected git/fs)', () => {
       const r = runMock(mockArgs('errli', ['--resume']), main, git);
       assert.equal(r.code, EXIT.stop);
       assert.match(r.errText, /plans-chain probe failed \(live index\).*boom: live index/, 'the live-index error is surfaced');
+      assert.doesNotMatch(r.errText, /rm --cached|--abandon|worktree remove/, 'no recovery command rides a failed probe');
     }
     // RESUME, ignore-rule probe failure on an index-only finding.
     {
@@ -876,9 +869,12 @@ describe('ordering + probe-error contracts (injected git/fs)', () => {
 // ── mode-doc pins (spec-first — authored WITH the doc edit) ────────────────────────────
 
 describe('mode-doc pins (spec-first)', () => {
+  // Narrowed in slice R2 to the D4 ORDER-ONLY contract: the tolerance clause this pin used to
+  // quote was retired with the per-owned-path verify (the sanctioned D7 flip), while the ordering
+  // it was authored for is unchanged.
   it('the mode doc states the verify-then-refresh order verbatim', () => {
     const doc = readFileSync(WORKTREES_MODE_DOC, 'utf8');
-    assert.ok(doc.includes('on `--resume` a dirty tree is then refused by the clean-tree verify, before the record refresh — a failed resume leaves the prior record bytes'));
+    assert.ok(doc.includes('The provision record is refreshed LAST, after the post-provision verify, in both lanes'));
   });
   it('the mode doc states the tracked plans-chain refusal contract verbatim', () => {
     const doc = readFileSync(WORKTREES_MODE_DOC, 'utf8');
