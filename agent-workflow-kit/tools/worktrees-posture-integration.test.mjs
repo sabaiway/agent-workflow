@@ -1,8 +1,9 @@
 // worktrees-posture-integration.test.mjs — the live-posture contract against REAL git. The proof
 // reads the WORKTREE'S OWN LIVE checkout, so a satellite session that COMMITS a manifest change
 // and re-runs `--resume` gets a refreshed posture that follows its committed state, in both
-// directions — never MAIN's manifests. (An uncommitted tracked edit refuses the resume at the
-// shipped clean-tree verify; the committed lane is the real-git path where the refresh completes.)
+// directions — never MAIN's manifests. Since slice R2 the same holds for UNCOMMITTED session
+// edits: the per-owned-path resume verify never examines them, so the live-files lane is real in
+// both the committed and the dirty case.
 
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -110,18 +111,20 @@ describe('the live posture follows the satellite\'s own committed state (real gi
     assert.match(record.install, /yarn install/, 'the refreshed advice reads the satellite checkout, not the advanced MAIN');
   });
 
-  it('an uncommitted worktree manifest edit refuses --resume at the shipped clean-tree STOP', () => {
-    const repo = makeRepo('int-dirty-stop', { name: 'r', version: '1.0.0', dependencies: { left: '^1.0.0' } });
-    const first = run(provisionArgs('dirtystop'), repo);
+  // RETIRED in slice R2 — the deliberate, design-record-sanctioned D7 flip. This arm pinned the
+  // clean-tree STOP byte-exact so an unrelated slice could not smuggle resume tolerance; the
+  // tolerance is now the DESIGNED behavior, so the pin becomes its mirror: an uncommitted manifest
+  // edit COMPLETES the resume and steers the live posture.
+  it('an uncommitted worktree manifest edit completes --resume and steers the live posture', () => {
+    const repo = makeRepo('int-dirty-live', { name: 'r', version: '1.0.0', dependencies: { left: '^1.0.0' } });
+    const first = run(provisionArgs('dirtylive'), repo);
     assert.equal(first.code, EXIT.ok, first.errText);
-    const { worktree } = readRecord(repo, 'dirtystop');
+    const { worktree, record } = readRecord(repo, 'dirtylive');
+    assert.notEqual(record.install, NO_DEPENDENCIES_POSTURE, 'declared deps → the advice, at provision time');
     writeFileSync(join(worktree, 'package.json'), JSON.stringify({ name: 'r', version: '1.0.0' }));
-    const resumed = run(provisionArgs('dirtystop', ['--resume']), repo);
-    assert.equal(resumed.code, EXIT.stop, 'a dirty satellite tree refuses the resume');
-    assert.equal(
-      resumed.errText,
-      '[worktrees] [agent-workflow-kit] post-provision verify failed — the worktree status is not clean (everything provision places must be ignored-or-tracked):\n M package.json',
-      'the shipped clean-tree STOP, byte-exact — the advice-source flip must not smuggle resume tolerance',
-    );
+    const resumed = run(provisionArgs('dirtylive', ['--resume']), repo);
+    assert.equal(resumed.code, EXIT.ok, `the session's own uncommitted work is out of scope: ${resumed.errText}`);
+    assert.equal(readRecord(repo, 'dirtylive').record.install, NO_DEPENDENCIES_POSTURE,
+      'the refreshed posture follows the LIVE dirty checkout — the AD-067 live-files lane, no longer dead');
   });
 });

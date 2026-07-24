@@ -4,6 +4,50 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 3.12.0 — `--resume` tolerates the session's work: the verify proves per placed path (AD-073)
+
+`provision --resume` no longer refuses a satellite you have worked in. The closing slice of the
+resume-verify design: the post-provision verify stopped asking "is the whole tree clean?" and now
+asks "is every path THIS run placed or kept in a git lane provision can prove?" — so your
+uncommitted edits, untracked scratch and hook-created files are out of scope BY CONSTRUCTION.
+
+- **What `--resume` now tolerates:** uncommitted tracked edits (including a dirty `package.json`,
+  whose live state steers the refreshed install posture in both directions), untracked scratch at
+  any depth, renamed tracked files, hook-created content, and every ignored file. A worktree wedged
+  by a `post-checkout` hook that dirtied its fresh checkout now completes on `--resume` — previously
+  both lanes refused at the same verify and the only way out was deleting the hook's files by hand.
+- **What still refuses, fail-closed:** a path provision itself placed or kept whose lane is
+  UNTRACKED, and any lane probe that errors. The STOP names the exact leaf — never a directory, never
+  a session path — and carries the convergent fix first: restore the ignore rule (the only
+  convergent fix for copy-set leaves, the `node_modules` link and `.vscode/settings.json`, since the
+  next resume simply re-places a removed node). A droppable `--include` gets ONE instruction for its
+  whole destination ROOT — dropping the flag orphans every copy under it — namely: move the root OUT
+  of the worktree and drop `--include <root>` together. No removal command is ever derived (the tool
+  cannot see what else you put inside that directory), and leaving it in place is not offered either
+  (an orphan is what blocks landing). A node this attempt did not create is never advised away, and
+  an unprovable probe carries no recovery command at all.
+- **The proof set is a closed, frozen registry** (`PLACEMENT_REGISTRY`): the handoff stub, the seeded
+  plan, copy-set leaves, include leaves, the `node_modules` link, `.vscode/settings.json`,
+  pin-rebase targets, and the record refresh. It is leaf-only and kind-gated — a real `node_modules`
+  directory where the tool places a symlink is YOUR content, never probed and never touched — and it
+  freezes at the verify, so the record refresh can only write at the path the stub already
+  journaled. The kind gate applies to KEPT nodes only: anything the run itself created stays proven.
+- **The lane probes are literal.** Live-probed on git 2.43: `check-ignore` refuses pathspec magic and
+  otherwise answers for a name that glob-matches a TRACKED sibling, so a file literally named
+  `feature-[a].md` would read "not ignored" merely because `feature-a.md` is tracked. Tracked-ness is
+  decided first by an explicit literal pathspec whose output must match the path BYTE-EXACTLY (a
+  pathspec naming a directory lists its descendants, which prove nothing about the path itself), and
+  the ignore probe runs `--no-index`. A `.vscode/settings.json` an earlier run placed is proven even
+  when the current run's door skips writing it, so a lost ignore rule can no longer hide behind a
+  successful resume.
+- **The FIRST provision stays deliberately strict** — any dirt still refuses — and its untracked
+  visibility is now explicit, so a repo's `status.showUntrackedFiles=no` can no longer turn that
+  check into a silent no-op. Default behavior is unchanged.
+- **The contract ships as a live constant** (`RESUME_VERIFY_RULE`) printed on every resume-verify
+  STOP and pinned into the mode doc by the doc-parity gate. The record's fields are documented for
+  what they are: `slug`, `branch` and the seeded plan name authorize a resume; `include`,
+  `node_modules` and `vscode-settings` are recorded facts that never do.
+
 ## 3.11.0 — the record attests only a verified provision; tracked plans-chain paths refuse (AD-072)
 
 Two provision honesty fixes from the converged resume-verify design (its slice R1; the

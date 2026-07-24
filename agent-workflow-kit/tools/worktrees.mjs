@@ -785,7 +785,9 @@ const failAfterCopy = ({ cause, dstAbs, wtRoot, fs }) => {
   throw stop(`${primary} — partial destination removed; re-run provision`);
 };
 
-const copyNode = ({ srcAbs, dstAbs, wtRoot, rel, fs, report, copied, door = null }) => {
+const NO_JOURNAL = Object.freeze({ record: () => {} });
+
+const copyNode = ({ srcAbs, dstAbs, wtRoot, rel, fs, report, copied, door = null, journal = NO_JOURNAL, surface = 'copy-set-leaf', journalRoot = null }) => {
   if (EXCLUDED_BASENAMES.has(basename(srcAbs))) {
     report.push(`  skip (session sidecar): ${rel}`);
     return;
@@ -809,6 +811,7 @@ const copyNode = ({ srcAbs, dstAbs, wtRoot, rel, fs, report, copied, door = null
         // Fresh-provision include lane: an existing destination is aliasing the overlap
         // comparator missed (nothing legitimate pre-populates it) — fail closed, never "kept".
         if (door?.fresh) throw includeIdentityStop(rel, INCLUDE_PREEXIST_CAUSE);
+        journal.record({ rel, surface, outcome: 'kept', kind: 'symlink', root: journalRoot });
         report.push(`  kept (already present): ${rel}`);
         return;
       }
@@ -842,6 +845,7 @@ const copyNode = ({ srcAbs, dstAbs, wtRoot, rel, fs, report, copied, door = null
       guardDst(fs, wtRoot, dstAbs);
       fs.symlink(target, dstAbs);
       copied.add(rel);
+      journal.record({ rel, surface, outcome: 'written', kind: 'symlink', root: journalRoot });
       report.push(`  linked: ${rel} -> ${target}`);
     } else if (st.isDirectory()) {
       if (lstatNoFollow(fs.lstat, dstAbs) === null) {
@@ -854,11 +858,12 @@ const copyNode = ({ srcAbs, dstAbs, wtRoot, rel, fs, report, copied, door = null
         throw includeIdentityStop(rel, INCLUDE_PREEXIST_CAUSE);
       }
       for (const entry of fs.readdir(srcAbs)) {
-        copyNode({ srcAbs: join(srcAbs, entry), dstAbs: join(dstAbs, entry), wtRoot, rel: `${rel}/${entry}`, fs, report, copied, door });
+        copyNode({ srcAbs: join(srcAbs, entry), dstAbs: join(dstAbs, entry), wtRoot, rel: `${rel}/${entry}`, fs, report, copied, door, journal, surface, journalRoot });
       }
     } else if (st.isFile()) {
       if (lstatNoFollow(fs.lstat, dstAbs) !== null) {
         if (door?.fresh) throw includeIdentityStop(rel, INCLUDE_PREEXIST_CAUSE);
+        journal.record({ rel, surface, outcome: 'kept', root: journalRoot });
         report.push(`  kept (already present): ${rel}`);
         return;
       }
@@ -870,6 +875,7 @@ const copyNode = ({ srcAbs, dstAbs, wtRoot, rel, fs, report, copied, door = null
         failAfterCopy({ cause, dstAbs, wtRoot, fs });
       }
       copied.add(rel);
+      journal.record({ rel, surface, outcome: 'written', root: journalRoot });
       report.push(`  copied: ${rel}`);
     } else {
       throw stop(`refusing to copy a special file (device/FIFO/socket): ${rel}`);
@@ -1292,7 +1298,138 @@ export const NODE_MODULES_NONE = 'no-dependencies';
 // cleanup time — never provenance, never the handoff record. Doc-parity pins this exact sentence
 // into the worktrees mode doc; every ownership STOP emits it.
 export const CLEANUP_OWNERSHIP_RULE = "node_modules ownership is decided live: only a symlink whose raw target bytes equal MAIN's node_modules path, in the ignored lane, is provision-ephemeral; an absent node with no index entry is clean; every other state stops cleanup to protect user data or because inspection failed";
+export const RESUME_VERIFY_RULE = "the resume verify proves only what THIS run placed or kept: every journaled leaf must be tracked or ignored in the worktree, an untracked owned leaf or any probe error stops the run naming the exact leaf, and every other path — the session's own work — is never probed and never a stop cause; a first provision keeps the blanket clean-tree verify";
 export const INCLUDE_IDENTITY_RULE = 'An --include source is copied only through the identity door: a file include must still match the identity preflight recorded (device, inode, kind), a directory include root is re-checked at walk start, and every copied file is proven, with both descriptors open, not to be the node that IS the door-time queue — an absent queue keeps the lexical guard alone, and anything unprovable stops the copy';
+
+// ── the placement journal (slice R2) ───────────────────────────────────────────────────
+// The resume verify proves PER PLACED PATH, so it needs a proof list: this run's live placement
+// journal over a CLOSED-WORLD registry — the surfaces are enumerated POSITIVELY, so no universal
+// "every mutation" claim exists to puncture. Leaf-only (git tracks no directories), KIND-GATED (a
+// live node whose kind differs from what the lane's SOURCE places is the pre-existing kept-exit
+// residual — SESSION for the verifier), and FROZEN at the verify: the sole post-verify write, the
+// record refresh, is permitted only at its already-journaled path.
+export const PLACEMENT_REGISTRY = Object.freeze([
+  'handoff-stub',
+  'seed-plan',
+  'copy-set-leaf',
+  'include-leaf',
+  'node-modules-link',
+  'vscode-settings',
+  'pin-rebase-target',
+  'record-refresh',
+]);
+const PLACEMENT_SURFACES = new Set(PLACEMENT_REGISTRY);
+// The ONE droppable class: an --include destination may be salvaged/relocated together with
+// dropping its source. Every other surface is mandatory — the next resume re-places it, so removal
+// is not a convergent fix and is never advised.
+const DROPPABLE_SURFACES = new Set(['include-leaf']);
+
+const journalKindMatches = (fs, abs, kind) => {
+  const st = lstatNoFollow(fs.lstat, abs);
+  if (st === null) return false;
+  return kind === 'symlink' ? st.isSymbolicLink() : !st.isSymbolicLink() && st.isFile();
+};
+
+export const createPlacementJournal = ({ wtRoot, fs }) => {
+  const members = new Map();
+  const state = { frozen: false };
+  return {
+    record: ({ rel, surface, outcome, kind = 'file', root = null }) => {
+      if (!PLACEMENT_SURFACES.has(surface)) {
+        throw stop(`placement journal: "${surface}" is not a registry surface — the placement registry is closed`);
+      }
+      if (state.frozen) {
+        if (!members.has(rel)) {
+          throw stop(`placement journal: refusing a post-verify write at an unjournaled path: ${rel}`);
+        }
+        return;
+      }
+      // The kind gate is the KEPT-outcome residual only. A node THIS attempt created is owned by
+      // construction: dropping it here because its kind changed after the write would leave a path
+      // provision just placed unproven — the opposite of the fail-safe floor.
+      if (outcome !== 'written' && !journalKindMatches(fs, join(wtRoot, rel), kind)) return;
+      const entry = { rel, surface, outcome, ...(root === null ? {} : { root }) };
+      const prior = members.get(rel);
+      if (prior === undefined) members.set(rel, entry);
+      else if (outcome === 'written' && prior.outcome !== 'written') members.set(rel, { ...prior, outcome: 'written' });
+    },
+    freeze: () => {
+      state.frozen = true;
+      return [...members.values()];
+    },
+  };
+};
+
+// The per-owned-path lane probe, LITERAL by construction (D11) — live-probed against git 2.43:
+// `ls-files` accepts an explicit `:(literal)` pathspec, but `check-ignore` REFUSES pathspec magic
+// outright ("pathspec magic not supported by this command") AND, with the index in play, answers
+// for a name that GLOB-matches a tracked sibling — a file literally named `feature-[a].md` reads
+// as "not ignored" once `feature-a.md` is tracked. `--no-index` removes that shadow, leaving a
+// pure ignore-rule match. Tracked priority stays a VERSION-INDEPENDENT invariant precisely because
+// this probe decides it FIRST, on its own literal pathspec, instead of leaning on whatever
+// index-awareness a given git version bakes into `check-ignore`.
+const probeOwnedLane = ({ git, wtRoot, rel }) => {
+  const tracked = git(['ls-files', '-z', '--', literalPathspec(rel)], wtRoot);
+  if (tracked.status !== 0) {
+    return { lane: 'probe-error', detail: `git ls-files failed: ${(tracked.stderr || tracked.stdout).trim()}` };
+  }
+  // A non-empty result is NOT proof: live-probed on git 2.43, a pathspec naming a DIRECTORY lists
+  // its tracked DESCENDANTS (`:(literal)notes` → notes/note.md …). Only a field byte-equal to the
+  // probed path proves THIS path tracked; anything else falls through to the ignore/untracked
+  // proof, so a non-leaf member fails closed instead of passing on a descendant's back.
+  if (nulFields(tracked.stdout).includes(rel)) return { lane: 'tracked' };
+  const ignored = git(['check-ignore', '--no-index', '--', rel], wtRoot);
+  if (ignored.status === 0) return { lane: 'ignored' };
+  if (ignored.status === 1) return { lane: 'untracked' };
+  return { lane: 'probe-error', detail: `git check-ignore failed: ${(ignored.stderr || ignored.stdout).trim()}` };
+};
+
+// Recovery for a DROPPABLE surface is emitted ONCE per include ROOT, never per leaf: dropping the
+// flag orphans every copy under that root (cleanup derives its ownership from `record.includes`),
+// so leaf-only advice cannot converge. It never offers REMOVAL: the journal cannot see session
+// content or kind-excluded nodes sitting inside that root, so no derived `rm` could be proven safe.
+// It also never says "leave it here": an orphaned destination is exactly what stops land — the
+// convergent action is moving the whole root OUT of the worktree.
+const droppableRootRecovery = (root) =>
+  `  ${root}: salvage or relocate the whole include destination root OUT of the worktree — its contents are preserved wherever you move them — AND drop \`--include ${root}\` in the same run; either alone recurs (a remaining source re-creates the copy, and an orphaned destination stops land)`;
+
+const ownedRecoveryLines = (failures) => {
+  const lines = [];
+  const seenRoots = new Set();
+  for (const failure of failures) {
+    if (DROPPABLE_SURFACES.has(failure.surface) && failure.root) {
+      if (seenRoots.has(failure.root)) continue;
+      seenRoots.add(failure.root);
+      lines.push(droppableRootRecovery(failure.root));
+      continue;
+    }
+    lines.push(`  ${failure.rel}: restore the ignore rule covering it in this worktree (.gitignore or the shared exclude), then re-run --resume`);
+  }
+  return lines;
+};
+
+// A set containing an unprovable lane withholds EVERY recovery command: advice derived from a
+// half-read tree is worse than none (the R1 mixed-findings discipline).
+const composeOwnedVerifyStop = (failures) => [
+  'post-provision verify failed — provision cannot prove the git lane of a path it placed or kept:',
+  ...failures.map(({ rel, surface, outcome, lane, detail }) => (lane === 'probe-error'
+    ? `  ${rel} (${surface}, ${outcome}) — lane unprovable: ${detail}`
+    : `  ${rel} (${surface}, ${outcome}) — untracked`)),
+  ...(failures.some((f) => f.lane === 'probe-error')
+    ? ['No recovery command is offered: a lane probe failed, so the tree state is unproven.']
+    : ['Recovery (convergent — through land preflight, not merely the next resume):', ...ownedRecoveryLines(failures)]),
+  RESUME_VERIFY_RULE,
+].join('\n');
+
+const verifyPlacedPaths = ({ git, wtRoot, members }) => {
+  const failures = [];
+  for (const member of members) {
+    const probe = probeOwnedLane({ git, wtRoot, rel: member.rel });
+    if (probe.lane === 'tracked' || probe.lane === 'ignored') continue;
+    failures.push({ ...member, ...probe });
+  }
+  if (failures.length > 0) throw stop(composeOwnedVerifyStop(failures));
+};
 
 // The record is LINE-oriented and is parsed back for IDENTITY, so a value carrying a control byte
 // is refused rather than written: a newline spills a second line the parser reads as a real field
@@ -1454,10 +1591,12 @@ const pendingHandoffFields = ({ root, slug, branch }) =>
   ({ slug, branch, includes: [], nodeModules: 'pending', vscode: 'pending', install: 'pending', ...orientationFields({ root, slug }) });
 
 // The stub is written only when ABSENT; the final record surgically replaces the tool section.
-const writeHandoffStubIfAbsent = ({ root, wtRoot, slug, branch, fs, report }) => {
+const writeHandoffStubIfAbsent = ({ root, wtRoot, slug, branch, fs, report, journal = NO_JOURNAL }) => {
+  const rel = `${PLANS_REL}/${handoffBasename(slug)}`;
   const dst = join(wtRoot, PLANS_REL, handoffBasename(slug));
   const cur = readFileNoFollow(fs, dst);
   if (cur.bytes) {
+    journal.record({ rel, surface: 'handoff-stub', outcome: 'kept' });
     report.push('  handoff: kept (already present)');
     return;
   }
@@ -1467,14 +1606,18 @@ const writeHandoffStubIfAbsent = ({ root, wtRoot, slug, branch, fs, report }) =>
   guardDst(fs, wtRoot, dirname(dst));
   fs.mkdir(dirname(dst));
   writeContainedFileAtomic(wtRoot, dst, composeHandoffStub(pendingHandoffFields({ root, slug, branch })), fs, { stop: (m) => stop(m) });
+  journal.record({ rel, surface: 'handoff-stub', outcome: 'written' });
 };
 
-const writeHandoffRecord = ({ wtRoot, slug, branch, fields, fs, report }) => {
+const writeHandoffRecord = ({ wtRoot, slug, branch, fields, fs, report, journal = NO_JOURNAL }) => {
   const dst = join(wtRoot, PLANS_REL, handoffBasename(slug));
   const cur = readFileNoFollow(fs, dst);
   if (!cur.bytes) {
     throw stop(`the handoff at ${PLANS_REL}/${handoffBasename(slug)} is not readable as a regular file — fix or remove it, then re-run --resume`);
   }
+  // The freeze lock, checked AFTER the content door so a node problem keeps its own precise error:
+  // this is the ONLY post-verify write, and only at the path the stub already journaled.
+  journal.record({ rel: `${PLANS_REL}/${handoffBasename(slug)}`, surface: 'record-refresh', outcome: 'kept' });
   const section = locateProvisionRecordSection(String(cur.bytes));
   const updated = `${section.source.slice(0, section.start)}${composeProvisionRecordSection(fields)}${section.source.slice(section.end)}`;
   writeContainedFileAtomic(wtRoot, dst, updated, fs, { stop: (m) => stop(m) });
@@ -1518,9 +1661,10 @@ const validateSeedPlan = ({ root, rootReal, planFlag, asFlag, fs }) => {
   return { srcAbs: srcReal, name };
 };
 
-const writeSeedPlan = ({ wtRoot, srcAbs, name, fs, report }) => {
+const writeSeedPlan = ({ wtRoot, srcAbs, name, fs, report, journal = NO_JOURNAL }) => {
   const dst = join(wtRoot, PLANS_REL, name);
   if (lstatNoFollow(fs.lstat, dst) !== null) {
+    journal.record({ rel: `${PLANS_REL}/${name}`, surface: 'seed-plan', outcome: 'kept' });
     report.push(`  kept (already present): ${PLANS_REL}/${name}`);
     return;
   }
@@ -1529,6 +1673,7 @@ const writeSeedPlan = ({ wtRoot, srcAbs, name, fs, report }) => {
   guardDst(fs, wtRoot, dirname(dst));
   fs.mkdir(dirname(dst));
   writeContainedFileAtomic(wtRoot, dst, String(src.bytes), fs, { stop: (m) => stop(m) });
+  journal.record({ rel: `${PLANS_REL}/${name}`, surface: 'seed-plan', outcome: 'written' });
   report.push(`  seeded plan: ${PLANS_REL}/${name}`);
 };
 
@@ -1537,7 +1682,7 @@ const writeSeedPlan = ({ wtRoot, srcAbs, name, fs, report }) => {
 // It is copied from that already-canonical `real`, NEVER re-resolved from the raw path: a fresh
 // realpath here (after the worktree exists) would re-open a TOCTOU where a swapped symlink could
 // redirect an include at the shared series index between the check and the copy.
-const provisionIncludes = ({ rootReal, wtRoot, includeSources, resume, git, fs, report, copied }) => {
+const provisionIncludes = ({ rootReal, wtRoot, includeSources, resume, git, fs, report, copied, journal = NO_JOURNAL }) => {
   const recorded = [];
   const queuePath = join(rootReal, PLANS_REL, QUEUE_BASENAME);
   for (const { rel, real, identity } of includeSources) {
@@ -1575,7 +1720,7 @@ const provisionIncludes = ({ rootReal, wtRoot, includeSources, resume, git, fs, 
     const door = identity.kind === 'file'
       ? { identity, queuePath, fresh: !resume }
       : { queuePath, fresh: !resume };
-    copyNode({ srcAbs: real, dstAbs: join(wtRoot, rel), wtRoot, rel, fs, report, copied, door });
+    copyNode({ srcAbs: real, dstAbs: join(wtRoot, rel), wtRoot, rel, fs, report, copied, door, journal, surface: 'include-leaf', journalRoot: rel });
     recorded.push(rel);
   }
   return recorded;
@@ -1744,14 +1889,18 @@ const resolveInstallPosture = ({ wtRoot, dependencyFree, fs }) => {
   return resolveInstallAdvice({ wtRoot, fs }).instruction;
 };
 
-const provisionNodeModules = ({ root, rootReal, wtRoot, installFlag, dependencyFree, git, fs, report }) => {
+const provisionNodeModules = ({ root, rootReal, wtRoot, installFlag, dependencyFree, git, fs, report, journal = NO_JOURNAL }) => {
+  // The lane places ONLY a symlink, so the kind gate admits only a symlink at this path: a
+  // directory (a real install) is the user's, never provision's to prove or advise on.
+  const journalLink = (outcome) => journal.record({ rel: NODE_MODULES_REL, surface: 'node-modules-link', outcome, kind: 'symlink' });
   const install = resolveInstallAdvice({ wtRoot, fs });
   if (installFlag) {
-    const dst = join(wtRoot, 'node_modules');
+    const dst = join(wtRoot, NODE_MODULES_REL);
     const existing = lstatNoFollow(fs.lstat, dst);
     if (existing !== null && existing.isSymbolicLink()) {
       // isolation only exists BEFORE the link: an install through it would write into MAIN
       const separator = install.command === null ? ' — ' : ' && ';
+      journalLink('kept');
       report.push(`  node_modules: existing symlink kept — for isolation remove it first: rm ${shellQuoteArg(dst)}${separator}${install.instruction}`);
       return 'install-printed-unlink-first';
     }
@@ -1763,8 +1912,9 @@ const provisionNodeModules = ({ root, rootReal, wtRoot, installFlag, dependencyF
   // LIVE STATE WINS the whole default lane: a node already at the worktree — a directory, or a
   // symlink an earlier provision left, even dangling — is what the record states; reporting
   // MAIN's state (`absent`) beside an existing node would contradict record.install.
-  const dst = join(wtRoot, 'node_modules');
+  const dst = join(wtRoot, NODE_MODULES_REL);
   if (lstatNoFollow(fs.lstat, dst) !== null) {
+    journalLink('kept');
     report.push('  node_modules: already present in the worktree');
     return 'present';
   }
@@ -1816,12 +1966,20 @@ const provisionNodeModules = ({ root, rootReal, wtRoot, installFlag, dependencyF
     report.push(`  node_modules: symlink failed (${err?.code ?? 'error'}) — ${install.instruction}`);
     return 'symlink-failed';
   }
+  journalLink('written');
   report.push(`  node_modules: symlinked -> ${mainNm} (shared MUTABLE cache — writes through it hit MAIN's node_modules; isolation: --install; workspace self-links resolve to MAIN sources)`);
   return 'symlinked';
 };
 
-const provisionVscode = ({ root, wtRoot, slug, git, fs, report }) => {
+const provisionVscode = ({ root, wtRoot, slug, git, fs, report, journal = NO_JOURNAL }) => {
   const relPath = '.vscode/settings.json';
+  // An EXISTING satellite destination is journaled FIRST, before every source-side and gate-side
+  // early return: the doors decide only what this run WRITES, while the journal decides what gets
+  // PROVEN. Membership must not depend on MAIN's current state — a file an earlier run placed
+  // would otherwise skip here (MAIN lost its .vscode dir, MAIN's copy became tracked, or the
+  // ignore rule was lost) and ride a successful resume out as a land-blocking leftover.
+  const present = lstatNoFollow(fs.lstat, join(wtRoot, relPath)) !== null;
+  if (present) journal.record({ rel: relPath, surface: 'vscode-settings', outcome: 'kept' });
   const vscodeDir = lstatNoFollow(fs.lstat, join(root, '.vscode'));
   if (vscodeDir === null || !vscodeDir.isDirectory()) {
     report.push('  .vscode: main has no .vscode/ dir — window title not written');
@@ -1839,7 +1997,7 @@ const provisionVscode = ({ root, wtRoot, slug, git, fs, report }) => {
     report.push(`  .vscode: ${relPath} is not ignored in the worktree — skipped (it would become a land leftover)`);
     return 'skipped-not-ignored';
   }
-  if (lstatNoFollow(fs.lstat, join(wtRoot, relPath)) !== null) {
+  if (present) {
     report.push('  .vscode: kept (already present)');
     return 'kept';
   }
@@ -1868,6 +2026,7 @@ const provisionVscode = ({ root, wtRoot, slug, git, fs, report }) => {
   guardDst(fs, wtRoot, join(wtRoot, '.vscode'));
   fs.mkdir(join(wtRoot, '.vscode'));
   writeContainedFileAtomic(wtRoot, join(wtRoot, relPath), body, fs, { stop: (m) => stop(m) });
+  journal.record({ rel: relPath, surface: 'vscode-settings', outcome: 'written' });
   report.push(`  .vscode: ${relPath} written (window.title = ${slug})`);
   return 'written';
 };
@@ -1875,11 +2034,12 @@ const provisionVscode = ({ root, wtRoot, slug, git, fs, report }) => {
 // tracked/untracked is decided by GIT (a run-local copy log lies after a crash-resume); an
 // untracked pin-carrying file is rewritten ONLY when its bytes equal the MAIN source or its
 // already-rebased form — anything else is user work and stays byte-untouched (reported).
-const rebasePins = ({ root, wtRoot, git, fs, report }) => {
+const rebasePins = ({ root, wtRoot, git, fs, report, journal = NO_JOURNAL }) => {
   for (const target of REBASE_TARGETS) {
     const wtAbs = join(wtRoot, target);
     const cur = readFileNoFollow(fs, wtAbs);
     if (cur.absent) continue;
+    if (cur.bytes) journal.record({ rel: target, surface: 'pin-rebase-target', outcome: 'kept' });
     if (!cur.bytes) {
       report.push(`  ${target}: ${cur.unsafe ? 'not a regular file' : `unreadable (${cur.error})`} — left untouched`);
       continue;
@@ -2069,24 +2229,27 @@ export const runProvision = ({ argvSlug, flags, cwd, git, deps, log }) => {
 };
 
 const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed, includeSources, provisionSet, git, deps, fs, report, log }) => {
-  writeHandoffStubIfAbsent({ root, wtRoot: targetPath, slug, branch, fs, report });
+  // THIS run's proof set: every lane journals the leaf it placed or kept, and nothing else is ever
+  // examined by the resume verify — the session's own work is out of scope by construction.
+  const journal = createPlacementJournal({ wtRoot: targetPath, fs });
+  writeHandoffStubIfAbsent({ root, wtRoot: targetPath, slug, branch, fs, report, journal });
 
   const copied = new Set();
   report.push('copying the provision set (copy-if-missing; tracked files come from the checkout):');
   for (const pattern of provisionSet) {
     const rel = patternToProbe(pattern).replace(/\/$/, '');
-    copyNode({ srcAbs: join(root, rel), dstAbs: join(targetPath, rel), wtRoot: targetPath, rel, fs, report, copied });
+    copyNode({ srcAbs: join(root, rel), dstAbs: join(targetPath, rel), wtRoot: targetPath, rel, fs, report, copied, journal });
   }
 
-  writeSeedPlan({ wtRoot: targetPath, srcAbs: seed.srcAbs, name: seed.name, fs, report });
-  const includesRecorded = provisionIncludes({ rootReal, wtRoot: targetPath, includeSources, resume: flags.resume, git, fs, report, copied });
+  writeSeedPlan({ wtRoot: targetPath, srcAbs: seed.srcAbs, name: seed.name, fs, report, journal });
+  const includesRecorded = provisionIncludes({ rootReal, wtRoot: targetPath, includeSources, resume: flags.resume, git, fs, report, copied, journal });
   // Computed ONCE, from the satellite's own checkout, and threaded to both consumers — the report
   // lane and the record must state the SAME verdict.
   const dependencyFree = declaresNoDependencies({ wtRoot: targetPath, fs });
-  const nodeModulesMode = provisionNodeModules({ root, rootReal, wtRoot: targetPath, installFlag: flags.install, dependencyFree, git, fs, report });
-  const vscodeMode = provisionVscode({ root, wtRoot: targetPath, slug, git, fs, report });
+  const nodeModulesMode = provisionNodeModules({ root, rootReal, wtRoot: targetPath, installFlag: flags.install, dependencyFree, git, fs, report, journal });
+  const vscodeMode = provisionVscode({ root, wtRoot: targetPath, slug, git, fs, report, journal });
 
-  rebasePins({ root, wtRoot: targetPath, git, fs, report });
+  rebasePins({ root, wtRoot: targetPath, git, fs, report, journal });
 
   const inFlight = plansInFlight(targetPath, fs.readdir);
   if (inFlight.length !== 1 || inFlight[0] !== seed.name) {
@@ -2095,12 +2258,24 @@ const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed
     );
   }
 
-  const porcelain = git(['status', '--porcelain'], targetPath);
-  if (porcelain.status !== 0) throw stop(`git status failed in the worktree: ${porcelain.stderr.trim()}`);
-  if (porcelain.stdout.trim() !== '') {
-    throw stop(
-      `post-provision verify failed — the worktree status is not clean (everything provision places must be ignored-or-tracked):\n${porcelain.stdout.trimEnd()}`,
-    );
+  // The journal FREEZES here: the verify is the boundary, and the only write past it — the record
+  // refresh — is a registry surface permitted solely at its already-journaled path.
+  const placed = journal.freeze();
+  if (flags.resume) {
+    // The resume lane proves PER OWNED PATH. No `git status` runs here at all: the session's work
+    // is out of scope by construction, not by subtraction.
+    verifyPlacedPaths({ git, wtRoot: targetPath, members: placed });
+  } else {
+    // `--untracked-files=normal` is EXPLICIT: `status.showUntrackedFiles=no` empties porcelain
+    // output, which would silently turn this strict verify into a no-op. Default behavior is
+    // unchanged — `normal` IS the default shape.
+    const porcelain = git(['status', '--porcelain', '--untracked-files=normal'], targetPath);
+    if (porcelain.status !== 0) throw stop(`git status failed in the worktree: ${porcelain.stderr.trim()}`);
+    if (porcelain.stdout.trim() !== '') {
+      throw stop(
+        `post-provision verify failed — the worktree status is not clean (everything provision places must be ignored-or-tracked):\n${porcelain.stdout.trimEnd()}`,
+      );
+    }
   }
 
   // The record refresh runs LAST, after the in-flight check and the verify, in BOTH lanes —
@@ -2113,6 +2288,7 @@ const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed
       wtRoot: targetPath,
       slug,
       branch,
+      journal,
       fields: {
         slug,
         branch,

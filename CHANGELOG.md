@@ -7,6 +7,25 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-25 — AD-073 the resume verify proves per placed path; session work is out of scope (kit 3.12.0)
+
+The closing slice of the resume-verify design, and the end of that series. `provision --resume`
+no longer refuses a satellite you have worked in: instead of asking whether the whole tree is
+clean, the verify proves the git lane of every path THIS run placed or kept — a closed, frozen
+placement registry (leaf-only, kind-gated, frozen at the verify) — so uncommitted edits, untracked
+scratch, renames and hook-created files are out of scope BY CONSTRUCTION rather than by
+subtraction. What still refuses, fail-closed: an owned path in the untracked lane and any erroring
+lane probe, each naming the exact leaf with a convergent fix (restore the ignore rule; for a
+droppable `--include`, one grouped instruction to move the whole destination root out of the
+worktree paired with dropping the flag) and never deriving a removal command over content the tool
+cannot prove it owns. The lane probes are literal — live-probed on git 2.43, `check-ignore` refuses
+pathspec magic and otherwise answers for a name that glob-matches a tracked sibling, so tracked-ness
+is decided first by an explicit literal pathspec and the ignore probe runs `--no-index`. The FIRST
+provision stays deliberately strict, with its untracked visibility now explicit so repo `status`
+config cannot blind it. The contract ships as a live constant printed on every resume-verify STOP
+and doc-parity-pinned, and the AD-071 byte-exact dirty-resume pin is retired as the design record
+sanctioned.
+
 ## 2026-07-23 — AD-072 the record attests only a verified provision; tracked plans-chain paths refuse (kit 3.11.0)
 
 Slice R1 of the converged resume-verify design. The provision record is refreshed LAST — after

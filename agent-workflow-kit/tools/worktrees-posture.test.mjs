@@ -151,7 +151,7 @@ describe('a provably dependency-free checkout records the no-install posture', (
   // A green spec-pin (the sentence lands with the spec-first doc edit, before the code flip):
   // a silent rewording of the advice-source contract goes red here.
   it('the mode doc states the advice-source contract verbatim', () => {
-    const ADVICE_SOURCE_CONTRACT = 'All manifest/lockfile install evidence — the dependency-free proof AND the package-manager selection (the `packageManager` field, lockfiles) — is read from the worktree\'s own LIVE files at the moment the posture is resolved (on `--resume` too, where a dirty tree is then refused by the clean-tree verify); MAIN\'s mutable working tree never steers manager selection.';
+    const ADVICE_SOURCE_CONTRACT = 'All manifest/lockfile install evidence — the dependency-free proof AND the package-manager selection (the `packageManager` field, lockfiles) — is read from the worktree\'s own LIVE files at the moment the posture is resolved (on `--resume` too, over the session\'s own live edits); MAIN\'s mutable working tree never steers manager selection.';
     assert.ok(readFileSync(WORKTREES_MODE_DOC, 'utf8').includes(ADVICE_SOURCE_CONTRACT));
   });
 

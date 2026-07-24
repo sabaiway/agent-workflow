@@ -34,7 +34,7 @@ import {
 } from './recommendations.mjs';
 import { SKIPPED_READONLY } from './setup-backends.mjs';
 import { LATENT_ARM_NOTICE } from './review-state.mjs';
-import { QUEUE_SHARED_RULE, LANDING_FROM_MAIN, NO_DEPENDENCIES_POSTURE, CLEANUP_OWNERSHIP_RULE, INCLUDE_IDENTITY_RULE } from './worktrees.mjs';
+import { QUEUE_SHARED_RULE, LANDING_FROM_MAIN, NO_DEPENDENCIES_POSTURE, CLEANUP_OWNERSHIP_RULE, INCLUDE_IDENTITY_RULE, RESUME_VERIFY_RULE } from './worktrees.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -112,6 +112,10 @@ export const BINDINGS = Object.freeze([
   // a reworded mode doc dropping the preflight-binding × door-time-queue contract fails this pin
   // plus the gate.
   valueBinding('include-identity-rule', INCLUDE_IDENTITY_RULE, INCLUDE_IDENTITY_RULE, [WORKTREES_DOC]),
+  // The resume-verify contract (slice R2): the exact live sentence every resume-verify STOP emits —
+  // a reworded mode doc dropping the per-owned-path × session-never-probed contract fails this pin
+  // plus the gate.
+  valueBinding('resume-verify-rule', RESUME_VERIFY_RULE, RESUME_VERIFY_RULE, [WORKTREES_DOC]),
 ].map((b) => Object.freeze(b)));
 
 // ── the pure checker (readText is injectable for hermetic tests) ────────────────────────
@@ -160,7 +164,8 @@ table, the status tokens, the trusted-dir allowlist), the recommendations/upgrad
 contract (section header, empty line, verdict templates), the acks-store path, the setup refresh
 degrade token, the review-state clean-tree latent-arm notice, the worktrees provision-record
 orientation contract (shared-queue rule, landing-from-main, no-dependencies install posture), the
-worktrees cleanup-ownership rule, and the worktrees include-identity rule — to
+worktrees cleanup-ownership rule, the worktrees include-identity rule, and the worktrees
+resume-verify rule — to
 the exact token its references/modes/*.md contract must carry, and
 asserts the CURRENT value renders into every bound file. A drifted doc, an unreadable bound file,
 or an absent token FAILS CLOSED.
