@@ -222,7 +222,7 @@ const CATALOG = [
     invocation: invocationOf('commit-guard'),
     group: 'Orchestrate',
     kind: READ_ONLY,
-    oneLine: 'The read-only pre-commit guard: binds the LATEST completed run-gates --final receipt to the CURRENT tree — refusing on any fingerprint, declaration, evidence-hash, or lcov drift, a dangling later attempt, or unsatisfied review obligations; re-runs no gate or test.',
+    oneLine: 'The read-only pre-commit guard: FIRST refuses an INDEX that lags the working tree — so the commit cannot ship less than was verified, which deliberately blocks a partial commit (--no-verify stays the residual) — then binds the LATEST completed run-gates --final receipt to the CURRENT tree, refusing on any fingerprint, declaration, evidence-hash, or lcov drift, a dangling later attempt, or unsatisfied review obligations; re-runs no gate or test.',
   },
   {
     key: 'doc-parity',

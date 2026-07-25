@@ -152,29 +152,240 @@ export const computeTreeFingerprint = (cwd, fsx) => {
   return payload == null ? null : createHash('sha256').update(payload).digest('hex');
 };
 
-// Clean = nothing staged, nothing unstaged, no REVIEWABLE untracked-not-ignored paths — the same
-// never-committable filter as the fingerprint, so the two can never disagree about a masks-only
-// tree. Anchored at the work-tree ROOT (ls-files is cwd-scoped). Null when not decidable.
-export const isTreeClean = (cwd, { lstat = lstatSync } = {}) => {
-  const top = gitLine(['rev-parse', '--show-toplevel'], cwd);
-  if (top == null) return null;
-  const staged = gitRaw(['diff', '--cached', '--quiet'], top);
-  const unstaged = gitRaw(['diff', '--quiet'], top);
-  if (staged.error || unstaged.error || staged.status > 1 || unstaged.status > 1) return null;
-  const untrackedZ = gitBuf(['ls-files', '--others', '--exclude-standard', '-z'], top);
-  if (untrackedZ == null) return null;
-  const reviewable = untrackedZ
-    .toString('utf8')
-    .split('\0')
-    .filter(Boolean)
-    .filter((rel) => {
+// The index↔worktree split the fingerprint deliberately CANNOT see: the payload above concatenates
+// the staged and unstaged diffs, so against an otherwise-empty index a hunk moving into the index
+// leaves it byte-identical — while `git commit` builds the commit from the INDEX alone. This is the
+// ONE computation of that split; isTreeClean and the commit guard's index-lag arm both read it, so
+// they can never disagree about what "the index carries the verified tree" means. Submodule paths
+// are separated because a root-level `git add -A` cannot reach a submodule's own worktree, so they
+// need their own recovery. Anchored at the work-tree ROOT (ls-files is cwd-scoped); null when not
+// decidable — every consumer treats that as fail-closed, never as clean.
+const LS_FILES_TAG_SKIP_WORKTREE = 'S';
+const GITLINK_MODE = '160000';
+const SYMLINK_MODE = '120000';
+const EXECUTABLE_MODE = '100755';
+const OWNER_EXECUTE_BIT = 0o100;
+// `ls-files -v` lowercases the tag for assume-unchanged; skip-worktree is `S`, and an entry
+// carrying BOTH bits prints lowercase `s` (live-pinned by test). The skip test is therefore
+// case-INSENSITIVE — a case-sensitive one would lose skip-worktree on such an entry and turn a
+// legitimate sparse checkout into an endless refusal.
+const isAssumeUnchangedTag = (tag) => tag >= 'a' && tag <= 'z';
+const isSkipWorktreeTag = (tag) => tag.toUpperCase() === LS_FILES_TAG_SKIP_WORKTREE;
+
+// `git diff` SKIPS index entries carrying skip-worktree or assume-unchanged, so such a path can
+// hold worktree bytes the gates read while `git commit` takes the stale INDEX blob — the same
+// capture blindness one layer down, and invisible to the plain probe. Those entries are therefore
+// compared DIRECTLY against the worktree. A MISSING skip-worktree path is an ordinary sparse
+// checkout and never a lag; a missing assume-unchanged path is one. Gitlinks belong to the
+// submodule lane. Any probe that cannot answer counts the path as lagging (fail-safe).
+const flaggedIndexLag = (top, runGit, lstat, readlink) => {
+  const buf = (args) => {
+    const r = runGit(args, top);
+    return r.error || r.status !== 0 ? null : r.stdout;
+  };
+  const splitZ = (b) => b.toString('utf8').split('\0').filter(Boolean);
+  // Git emits raw path BYTES. Decoding to UTF-8 first turns a name carrying invalid bytes into a
+  // DIFFERENT path, whose lstat then answers ENOENT — which for a skip-worktree entry reads as a
+  // de-materialised sparse path and lets a stale index walk through. So each record keeps its
+  // original slice and a name that does not survive a byte round-trip is lagging by construction.
+  const splitZBytes = (b) => {
+    const out = [];
+    let start = 0;
+    for (let i = 0; i < b.length; i += 1) {
+      if (b[i] !== 0) continue;
+      if (i > start) out.push(b.subarray(start, i));
+      start = i + 1;
+    }
+    if (start < b.length) out.push(b.subarray(start));
+    return out;
+  };
+  const decodesExactly = (slice) => Buffer.from(slice.toString('utf8'), 'utf8').equals(slice);
+  const taggedZ = buf(['ls-files', '-v', '-z']);
+  if (taggedZ == null) return null;
+  // The two bits are INDEPENDENT — an entry can carry both (which is what lowercases the `S`), so
+  // they travel as a pair and the recovery clears whichever are actually set.
+  const flagged = splitZBytes(taggedZ)
+    .map((record) => {
+      const tag = record.subarray(0, 1).toString('utf8');
+      const pathBytes = record.subarray(2);
+      return {
+        rel: pathBytes.toString('utf8'),
+        pathBytes,
+        exactName: decodesExactly(pathBytes),
+        skipWorktree: isSkipWorktreeTag(tag),
+        assumeUnchanged: isAssumeUnchangedTag(tag),
+      };
+    })
+    .filter(({ skipWorktree, assumeUnchanged }) => skipWorktree || assumeUnchanged);
+  if (flagged.length === 0) return { paths: [], submodules: [], flagged: [] };
+  const stagedZ = buf(['ls-files', '-s', '-z']);
+  if (stagedZ == null) return null;
+  const entries = new Map();
+  for (const line of splitZ(stagedZ)) {
+    const tab = line.indexOf('\t');
+    if (tab === -1) continue;
+    const [mode, oid] = line.slice(0, tab).split(' ');
+    entries.set(line.slice(tab + 1), { mode, oid });
+  }
+  // `git diff` honours core.fileMode; mirroring it keeps a false-mode host (WSL, network mounts)
+  // from reading every executable bit as a lag. Exit 1 is the only "unset" (git's default is true);
+  // any other failure leaves the comparison undecidable rather than guessing.
+  const boolConfig = (key) => {
+    const r = runGit(['config', '--type=bool', '--get', key], top);
+    if (r.error || (r.status !== 0 && r.status !== 1)) return null; // undecidable — never guessed
+    return r.status === 1 || r.stdout.toString('utf8').trim() !== 'false'; // exit 1 = unset = git's default true
+  };
+  const honoursFileMode = boolConfig('core.fileMode');
+  // On a host without symlink support git materialises a symlink as a REGULAR FILE holding the
+  // target bytes; demanding a real link there would refuse forever.
+  const materialisesSymlinks = boolConfig('core.symlinks');
+  if (honoursFileMode === null || materialisesSymlinks === null) return null;
+  const lagging = [];
+  const laggingSubmodules = [];
+  const laggingFlags = [];
+  for (const { rel, pathBytes, exactName, skipWorktree, assumeUnchanged } of flagged) {
+    const entry = entries.get(rel);
+    if (entry === undefined) continue;
+    const isGitlink = entry.mode === GITLINK_MODE;
+    // Every path this loop reports needs its index bits cleared before ANY staging command can
+    // pick it up — `git add -A` alone is a recovery that silently does nothing here.
+    const lag = () => {
+      (isGitlink ? laggingSubmodules : lagging).push(rel);
+      laggingFlags.push({ rel, skipWorktree, assumeUnchanged, exactName });
+    };
+    // Probed by RAW BYTES, never by the decoded name: a lossy decode addresses a DIFFERENT path,
+    // and answering ENOENT for it would either wave a stale index through or — worse — call a
+    // legitimately absent sparse entry "lagging", whose prescribed bit-clear plus `git add -A`
+    // would then stage its DELETION.
+    const absPath = Buffer.concat([Buffer.from(top), Buffer.from(sep), pathBytes]);
+    let stat = null;
+    let absent = false;
+    try {
+      stat = lstat(absPath);
+    } catch (err) {
+      // ONLY a genuine absence is the sparse-checkout case; EACCES / EIO leave the path unproven,
+      // and an unproven path can never be waved through as "not materialised".
+      absent = err != null && err.code === 'ENOENT';
+    }
+    if (stat === null) {
+      if (!absent || !skipWorktree) lag();
+      continue;
+    }
+    if (!exactName) {
+      // Materialised, but the name cannot be addressed through an argv string, so it can never be
+      // PROVEN current — fail-safe. Absence was already decided above, on the real bytes.
+      lag();
+      continue;
+    }
+    // A flagged GITLINK is hidden from `git diff` too, so the submodule lane would never see it —
+    // and it is deliberately NOT proven current here. Three consecutive review rounds each found a
+    // new way for a nested probe to answer "clean" wrongly (inherited superproject GIT_*, status
+    // config blindness, the submodule's OWN flagged entries, a symlink standing in for the
+    // directory). The set was not shrinking, so the verdict is REDUCTION rather than another patch:
+    // a materialised flagged gitlink LAGS by construction. It is a refusal, never an endless one —
+    // the printed recovery (clear the bit, then git add -A) converges, and an UNflagged submodule
+    // is unaffected because the ordinary --ignore-submodules=none probe still judges it.
+    if (isGitlink) {
+      lag();
+      continue;
+    }
+    if (entry.mode === SYMLINK_MODE && !stat.isSymbolicLink() && !materialisesSymlinks) {
+      // The placeholder file's RAW bytes are the stored target — no filters ever apply to a link.
+      const placeholder = runGit(['hash-object', '--no-filters', '-t', 'blob', '--', join(top, rel)], top);
+      if (placeholder.error || placeholder.status !== 0 || placeholder.stdout.toString('utf8').trim() !== entry.oid) lag();
+      continue;
+    }
+    if (entry.mode === SYMLINK_MODE || stat.isSymbolicLink()) {
+      if (entry.mode !== SYMLINK_MODE || !stat.isSymbolicLink()) {
+        lag();
+        continue;
+      }
+      let target = null;
+      try {
+        target = readlink(join(top, rel));
+      } catch {
+        target = null;
+      }
+      if (target === null) {
+        lag(); // an unreadable link can never be proven current — fail-safe
+        continue;
+      }
+      const hashed = runGit(['hash-object', '-t', 'blob', '--stdin'], top, target);
+      if (hashed.error || hashed.status !== 0 || hashed.stdout.toString('utf8').trim() !== entry.oid) lag();
+      continue;
+    }
+    if (!stat.isFile()) {
+      lag();
+      continue;
+    }
+    // Git canonicalises the executable mode on the OWNER bit alone — a file with only group/other
+    // exec set is still `100644` to git, so testing 0o111 would call a stale index current.
+    if (honoursFileMode && (entry.mode === EXECUTABLE_MODE) !== ((stat.mode & OWNER_EXECUTE_BIT) !== 0)) {
+      lag();
+      continue;
+    }
+    const hashed = runGit(['hash-object', '--path', rel, '--', join(top, rel)], top);
+    if (hashed.error || hashed.status !== 0 || hashed.stdout.toString('utf8').trim() !== entry.oid) lag();
+  }
+  return { paths: lagging, submodules: laggingSubmodules, flagged: laggingFlags };
+};
+
+export const computeWorkingState = (cwd, { lstat = lstatSync, readlink = readlinkSync, runGit = null } = {}) => {
+  const run = runGit ?? ((args, dir, input, env) => spawnSync('git', args, { cwd: dir, input, env: env ?? process.env, maxBuffer: GIT_MAX_BUFFER, windowsHide: true }));
+  const topRun = run(['rev-parse', '--show-toplevel'], cwd);
+  if (topRun.error || topRun.status !== 0) return null;
+  const top = topRun.stdout.toString('utf8').replace(/\r?\n$/, '');
+  // `--ignore-submodules=none` on the staged probe too: a config-hidden STAGED gitlink would
+  // otherwise make stagedDirty false, and isTreeClean would call such a tree clean.
+  const staged = run(['diff', '--cached', '--quiet', '--ignore-submodules=none'], top);
+  // ONLY 0 or 1 is a usable answer: a signal-killed probe reports status null, which the old
+  // `> 1` guard let through as "nothing staged" — a fail-OPEN the whole arm cannot afford.
+  if (staged.error || (staged.status !== 0 && staged.status !== 1)) return null;
+  const buf = (args) => {
+    const r = run(args, top);
+    return r.error || r.status !== 0 ? null : r.stdout;
+  };
+  // The FULL probe forces submodules back in: diff.ignoreSubmodules / submodule.<n>.ignore would
+  // otherwise erase a dirty submodule from the comparison entirely.
+  const changedZ = buf(['diff', '--name-only', '-z', '--ignore-submodules=none']);
+  const plainZ = buf(['diff', '--name-only', '-z', '--ignore-submodules=all']);
+  const untrackedZ = buf(['ls-files', '--others', '--exclude-standard', '-z']);
+  if (changedZ == null || plainZ == null || untrackedZ == null) return null;
+  const split = (b) => b.toString('utf8').split('\0').filter(Boolean);
+  const changed = split(changedZ);
+  const plain = new Set(split(plainZ));
+  const flagged = flaggedIndexLag(top, run, lstat, readlink);
+  if (flagged == null) return null;
+  const unstaged = changed.filter((rel) => plain.has(rel));
+  const submodules = changed.filter((rel) => !plain.has(rel));
+  return {
+    stagedDirty: staged.status === 1,
+    unstagedPaths: [...unstaged, ...flagged.paths.filter((rel) => !unstaged.includes(rel))],
+    unstagedSubmodulePaths: [...submodules, ...flagged.submodules.filter((rel) => !submodules.includes(rel))],
+    // Which lagging paths carry index bits, and which — `git add -A` cannot restage these at all.
+    flaggedPaths: flagged.flagged,
+    untrackedPaths: split(untrackedZ).filter((rel) => {
       try {
         return !isNeverCommittableStat(lstat(join(top, rel)));
       } catch {
         return true;
       }
-    });
-  return staged.status === 0 && unstaged.status === 0 && reviewable.length === 0;
+    }),
+  };
+};
+
+// Clean = nothing staged, nothing unstaged, no REVIEWABLE untracked-not-ignored paths — the same
+// never-committable filter as the fingerprint, so the two can never disagree about a masks-only
+// tree. Null when not decidable.
+export const isTreeClean = (cwd, fsx) => {
+  const state = computeWorkingState(cwd, fsx);
+  if (state == null) return null;
+  return (
+    !state.stagedDirty &&
+    state.unstagedPaths.length === 0 &&
+    state.unstagedSubmodulePaths.length === 0 &&
+    state.untrackedPaths.length === 0
+  );
 };
 
 // ── the review-receipt read path + attesting predicate (ONE home) ────────────────────────────────

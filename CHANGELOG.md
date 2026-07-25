@@ -7,6 +7,24 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-25 — AD-074 the commit guard proves the INDEX carries the verified tree (kit 3.13.0)
+
+`commit-guard --check` now refuses an index that lags the working tree. The gates and the tree
+fingerprint both describe the WORKING tree while `git commit` builds the commit from the INDEX
+alone — and against an otherwise-empty index the fingerprint is byte-identical whether a hunk sits
+staged or unstaged. So a lagging index passed every gate and every guard arm, and the commit shipped
+a strict subset of what was verified. It fired on this repo's own 3.12.0 release commit: a fix
+landed without its regression arm, caught only by the publish dispatcher's dirty-tree refusal one
+step later. The new arm runs FIRST, before the fingerprint, and names the offending paths (bounded,
+safely escaped) with the complete whole-tree recovery; a dirty tracked submodule is named separately
+with the only recovery that works there; an undecidable git probe refuses fail-closed. A deliberate
+partial commit is now blocked by design — `git commit --no-verify` stays the stated residual and no
+opt-out flag was invented. The fingerprint domain is deliberately unchanged; one shared computation
+of the index↔worktree split now serves both the new arm and `isTreeClean`. Stated residual: this
+makes the COMMIT capture the whole working tree, not the RECEIPT unforgeable — a config-blinded
+fingerprint can still be reused after a submodule change, which is a receipt collision rather than
+an under-capture, and is tracked as its own class.
+
 ## 2026-07-25 — AD-073 the resume verify proves per placed path; session work is out of scope (kit 3.12.0)
 
 The closing slice of the resume-verify design, and the end of that series. `provision --resume`
