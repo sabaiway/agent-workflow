@@ -4,6 +4,66 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 3.13.0 — the commit guard proves the INDEX carries the verified tree (AD-074)
+
+`commit-guard --check` now refuses an index that lags the working tree, so «verified» and «about to
+be committed» are the same bytes by construction instead of by operator discipline.
+
+The gap it closes was real and it fired: the gates and the tree fingerprint both describe the
+WORKING tree, while `git commit` builds the commit from the INDEX alone — and against an
+otherwise-empty index the fingerprint is byte-identical whether a hunk sits staged or unstaged. A
+lagging index therefore passed every gate and every guard arm, and the commit shipped a strict
+subset of what was verified. The kit's own 3.12.0 release commit did exactly that: a fix landed
+without its regression arm, and only the publish dispatcher's dirty-tree refusal caught it, one step
+later.
+
+- **A new FIRST refusal, ahead of the fingerprint.** It fires on tracked paths differing
+  index↔worktree or on reviewable untracked-not-ignored paths — the same never-committable stat
+  filter the fingerprint applies, so ignored paths and device/FIFO/socket nodes never refuse. It runs
+  first because its recovery re-stages the tree and re-mints the receipt, which re-decides every arm
+  below it.
+- **The message is actionable and bounded.** Offending paths are named up to a cap with the
+  remainder stated, each rendered through the same escaper the review-state report uses, so no
+  filename can break or forge an output line. The recovery is the complete whole-tree sequence
+  (`git add -A`, re-run `--final`, commit the whole tree) — a truncated list cannot serve as a
+  complete `git add -- <paths>` argument.
+- **The probes cannot be blinded by configuration or index bits.** Entries carrying `skip-worktree`
+  or `assume-unchanged` are invisible to `git diff`, so they are compared directly against the
+  worktree — type, symlink target, executable bit where `core.fileMode` applies, and the blob oid
+  through git's own clean filters. A de-materialised skip-worktree path is an ordinary sparse
+  checkout and never refuses; a missing assume-unchanged path does. The submodule probe forces
+  `--ignore-submodules=none`, so `diff.ignoreSubmodules` cannot erase a dirty submodule either.
+- **A tracked submodule the index cannot prove current is named separately, with its own recovery**
+  (commit or clean inside the submodule, then stage the gitlink): a root-level `git add -A` cannot
+  reach a submodule's own worktree, so offering it there would be a recovery known in advance to
+  fail. A submodule whose gitlink itself carries one of those index bits is not probed at all — it
+  lags by construction. That reduction is deliberate: three review rounds each found a new way for a
+  nested probe to answer "clean" wrongly, so the guard stops asking rather than accumulate patches.
+  It stays a converging refusal (clear the bit and the guard falls silent), and an unflagged
+  submodule is judged exactly as before.
+- **Fail-closed.** An undecidable git probe refuses with its own named cause. The guard's claim is
+  that the committed bytes ARE the verified bytes; it cannot make that claim about a tree it failed
+  to read.
+
+**Behaviour change worth knowing:** a deliberate partial commit is now blocked. `git commit --only
+<path>` hands the hook a temporary index carrying less than the verified tree — precisely the
+blindness this closes — so it refuses. No opt-out flag exists, deliberately: a flag that suspends
+the arm would suspend the guard's whole claim. `git commit --no-verify` remains the stated residual.
+`git commit -a` is unaffected when it captures the whole verified tree, and refuses when a reviewable
+untracked path would be left behind.
+
+The tree fingerprint itself is unchanged — making it stage-sensitive would have closed the same gap
+at the cost of the lockstep with the wrappers' bash twin. Internally, one new computation of the
+index↔worktree split now serves both this arm and `isTreeClean`, so the two can never disagree.
+
+**Stated residual.** This makes the COMMIT capture the whole current working tree; it does not make
+the RECEIPT unforgeable. The fingerprint payload still runs its diffs without
+`--ignore-submodules=none`, so under `diff.ignoreSubmodules=all` a submodule can be changed and its
+gitlink staged after a green final run while the fingerprint stays put, and the stale receipt is
+reused. That is a receipt collision, not an under-capture — no commit ships less than the working
+tree because of it — and closing it means moving the node payload and both bash twins in one
+release. Tracked as its own class, deliberately not folded here.
+
 ## 3.12.0 — `--resume` tolerates the session's work: the verify proves per placed path (AD-073)
 
 `provision --resume` no longer refuses a satellite you have worked in. The closing slice of the

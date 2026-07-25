@@ -2,6 +2,15 @@
 // commit-guard.mjs — the read-only pre-commit guard (strip-the-kit 2.5, D10). It re-runs NO
 // gate/test subprocess: the heavy D3(b)/(c)/(d) verification lives in `run-gates --final`, whose
 // receipt this guard binds. `--check`:
+//   0. refuses an INDEX that lags the verified working tree — FIRST, before the fingerprint is
+//      computed. The gates and the fingerprint describe the WORKING tree while `git commit` builds
+//      the commit from the INDEX alone, and the fingerprint domain is identical either way, so
+//      without this arm a lagging index ships a strict SUBSET of what was verified. Refuses on
+//      tracked paths differing index↔worktree or reviewable untracked-not-ignored paths (the same
+//      never-committable filter the fingerprint applies; ignored paths never refuse), naming them
+//      up to INDEX_LAG_PATH_CAP with the remainder stated. A dirty tracked SUBMODULE is named
+//      separately with its own recovery. Fail-closed on an undecidable probe. This BLOCKS the
+//      deliberate partial commit by design — `--no-verify` is the stated residual, not a flag;
 //   1. recomputes the CURRENT tree fingerprint (the review-state export — read-only git plumbing);
 //   2. reads the LATEST completed final-run record from the core-evidence store (only the latest
 //      attempt at a fingerprint is authoritative — a green receipt is DEAD once a later attempt at
@@ -18,11 +27,11 @@
 
 import { readFileSync, lstatSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { computeTreeFingerprint, buildState, decideCheck } from './review-state.mjs';
-import { resolveEvidencePath, readEvidence, authoritativeOfKind, canonicalKindSerialization } from './core-evidence.mjs';
+import { computeTreeFingerprint, buildState, decideCheck, quoteReportName, shellQuoteArg } from './review-state.mjs';
+import { resolveEvidencePath, readEvidence, authoritativeOfKind, canonicalKindSerialization, computeWorkingState } from './core-evidence.mjs';
 import { resolveLcovPath } from './coverage-check.mjs';
 import { GATES_REL, loadDeclaration } from './run-gates.mjs';
 
@@ -44,10 +53,130 @@ export const resolveGitHooksPath = (projectDir) => {
   return line == null ? null : resolve(projectDir, line);
 };
 
+// How many offending paths the index-lag refusal names before it states a remainder count: enough
+// to act on, bounded so a wide lag cannot bury a pre-commit hook's output.
+export const INDEX_LAG_PATH_CAP = 10;
+
+// The recovery must name the run-gates the CONSUMER actually has. A repo-relative literal is only
+// correct inside this monorepo; every installed deployment keeps the tool beside this file. Shell-
+// quoted, because an install path carrying a space or a metacharacter would otherwise render an
+// instruction that is unrunnable at best and dangerous to paste at worst.
+const FINAL_RUN_TOOL = shellQuoteArg(fileURLToPath(new URL('./run-gates.mjs', import.meta.url)));
+
+// ONE budget across every named category — a per-category cap would print 2× the stated number.
+const renderBudgeted = (paths, budget) => ({
+  text: paths.slice(0, Math.max(budget, 0)).map(quoteReportName).join(', '),
+  used: Math.min(paths.length, Math.max(budget, 0)),
+});
+
+// The ONE ordered recovery plan — text and executable `argv` built from the SAME structure, so a
+// test can run exactly what the operator is shown instead of reconstructing its own commands.
+// Order matters: the submodule step first (staging and re-running --final before it would stale the
+// fresh receipt at once), then the index bits, because `git add -A` CANNOT restage a skip-worktree
+// or assume-unchanged entry — printing it alone is a recovery that silently does nothing. The two
+// bits get SEPARATE commands: one `update-index` invocation carrying both flags applies only one.
+// The text points at `git ls-files -v` rather than pasting names — the displayed list is capped,
+// and a name safe to display is not automatically safe to paste into a shell.
+export const buildIndexLagRecovery = (state) => {
+  const flags = state.flaggedPaths ?? [];
+  const steps = [];
+  if (state.unstagedSubmodulePaths.length > 0) {
+    steps.push({ text: 'commit or clean INSIDE every dirty submodule named above and stage its gitlink — a root-level git add -A cannot reach a submodule\'s own worktree' });
+  }
+  for (const [bit, key] of [['--no-skip-worktree', 'skipWorktree'], ['--no-assume-unchanged', 'assumeUnchanged']]) {
+    const affected = flags.filter((flag) => flag[key]);
+    if (affected.length === 0) continue;
+    // Scoped to the LAGGING paths only, never to `git ls-files -v`: that set also holds every
+    // de-materialised sparse-checkout entry, and clearing THEIR bit before `git add -A` would stage
+    // their deletions. The cap is handled by iteration, not by a wider enumeration. The executable
+    // form is offered ONLY when every affected name survives a byte round-trip — a lossily decoded
+    // name would address a DIFFERENT path, so there the text stands alone and says so.
+    const exact = affected.every((flag) => flag.exactName);
+    steps.push({
+      text: `clear the ${bit.slice(5)} bit on the bit-carrying path(s) named above — it is what makes git add -A a no-op on them — with git update-index ${bit} -- <path>, for those paths ONLY (never every entry git ls-files -v reports: that set includes de-materialised sparse paths whose deletions would then be staged)${exact ? '' : '; at least one of these names carries bytes that do not decode cleanly, so the name shown above is LOSSY and this refusal cannot give you a runnable command for it — its record is visible in git ls-files -v -z, and clearing that one is a by-hand step'}`,
+      ...(exact ? { argv: ['update-index', bit, '--', ...affected.map((flag) => flag.rel)] } : {}),
+    });
+  }
+  steps.push({ text: 'run git add -A from the work-tree root', argv: ['add', '-A'] });
+  steps.push({ text: `re-run node ${FINAL_RUN_TOOL} --final` });
+  steps.push({ text: 'commit the WHOLE tree' });
+  return steps;
+};
+
+// decideIndexLag(state) → a refusal, or null when the index already carries the verified tree.
+// The gates and the fingerprint both describe the WORKING tree; `git commit` takes the INDEX, and
+// the fingerprint domain cannot tell the two apart — so without this arm a lagging index ships a
+// strict subset of what was verified (it did, on 2026-07-25). FAIL-CLOSED on an undecidable probe:
+// the guard's whole claim is that the committed bytes ARE the verified bytes, and it cannot make
+// that claim about a tree it failed to read.
+export const decideIndexLag = (state) => {
+  if (state == null) {
+    return { code: 1, lines: ['commit-guard: REFUSED — the index/worktree comparison could not be decided (a git probe failed); re-run inside the work tree and inspect `git status` by hand before committing'] };
+  }
+  // THREE categories, because they take DIFFERENT recoveries. A bit-carrying path folded into the
+  // plain list would be un-actionable: its clause is the only one whose recovery is not `git add -A`,
+  // and on cap overflow the plain paths could hide every one of them.
+  const flaggedSet = new Set((state.flaggedPaths ?? []).map((flag) => flag.rel));
+  const all = [...state.unstagedPaths, ...state.untrackedPaths];
+  const plain = all.filter((rel) => !flaggedSet.has(rel));
+  const bitCarrying = all.filter((rel) => flaggedSet.has(rel));
+  const submodules = state.unstagedSubmodulePaths;
+  const total = plain.length + bitCarrying.length + submodules.length;
+  if (total === 0) return null;
+  // Every non-empty category reserves a slot before the budget is spent — a clause that names no
+  // path cannot deliver the recovery it exists to state.
+  const groups = [plain, bitCarrying, submodules];
+  const rendered = [];
+  let spent = 0;
+  groups.forEach((group, index) => {
+    if (group.length === 0) {
+      rendered[index] = { text: '', used: 0 };
+      return;
+    }
+    const stillToReserve = groups.slice(index + 1).filter((later) => later.length > 0).length;
+    rendered[index] = renderBudgeted(group, INDEX_LAG_PATH_CAP - spent - stillToReserve);
+    spent += rendered[index].used;
+  });
+  const hidden = total - spent;
+  const remainder = hidden > 0 ? `, plus ${hidden} further path(s) not listed` : '';
+  const clauses = [];
+  if (plain.length > 0) {
+    clauses.push(`paths the index does not carry: ${rendered[0].text}`);
+  }
+  if (bitCarrying.length > 0) {
+    clauses.push(`path(s) held back by a skip-worktree / assume-unchanged index bit: ${rendered[1].text}`);
+  }
+  if (submodules.length > 0) {
+    clauses.push(`tracked submodule(s) not proven current: ${rendered[2].text}`);
+  }
+  // ONE ordered recovery, and every step must actually converge. The submodule step comes FIRST:
+  // staging and re-running --final before it would stale the fresh receipt at once. The index-bit
+  // step comes next, because `git add -A` CANNOT restage a skip-worktree / assume-unchanged entry —
+  // printing it alone would be a recovery that silently does nothing. It deliberately points at
+  // `git ls-files -v` rather than pasting names: the list above is capped, and a filename safe to
+  // display is not automatically safe to paste into a shell.
+  const steps = buildIndexLagRecovery(state);
+  // The iterate-until-silent hint must also fire when the CAP hid work — otherwise a truncated
+  // list of submodules with no index bits would send the operator to --final and commit while
+  // unnamed ones are still unhandled.
+  const converge = hidden > 0 || (state.flaggedPaths ?? []).length > 0
+    ? ' The listed paths are capped: re-run this guard after each pass and it names the next batch, until it names none — that is the completion signal.'
+    : '';
+  return {
+    code: 1,
+    lines: [`commit-guard: REFUSED — the index does NOT carry the whole CURRENT working tree, so this commit would leave part of it behind: ${clauses.join('; ')}${remainder}. To recover, in order: ${steps.map((step, i) => `(${i + 1}) ${step.text}`).join('; ')}. An intentional partial commit stays git commit --no-verify.${converge}`],
+  };
+};
+
 // runGuard({ cwd, env }) → { code, lines }. Every refusal names its recovery.
 export const runGuard = ({ cwd = process.cwd(), env = process.env } = {}) => {
   const rootTop = gitLine(['rev-parse', '--show-toplevel'], cwd);
   if (rootTop == null) return { code: 1, lines: ['commit-guard: not a git work tree — nothing to guard'] };
+  // FIRST: a pure tree property needing no store read. Its recovery re-stages the tree and re-mints
+  // the receipt, so every arm below is re-decided anyway — naming a stale fingerprint ahead of it
+  // would send the operator down a recovery they must redo.
+  const indexLag = decideIndexLag(computeWorkingState(cwd));
+  if (indexLag !== null) return indexLag;
   const fingerprint = computeTreeFingerprint(cwd);
   // The guard's OWN reads resolve FIXED git-dir paths — a stray AW_CORE_EVIDENCE / AW_LCOV_FILE
   // in the committing shell must never redirect the LAST line of defense to a forged artifact
@@ -128,11 +257,13 @@ const HELP = `commit-guard — the read-only pre-commit guard (agent-workflow fa
 Usage:
   node commit-guard.mjs --check [--cwd <dir>]
 
-Re-runs NOTHING: recomputes the current tree fingerprint and binds the LATEST completed
-run-gates --final receipt — refusing on { no receipt for this tree · a red latest attempt ·
-before≠after · declaration content drift · evidence-hash drift · lcov drift · unsatisfied review
-obligations (the review-state decision) }. Wire it into pre-commit; \`git commit --no-verify\`
-stays the stated residual (self-discipline, not a security boundary).
+Re-runs NOTHING: refuses an INDEX that lags the verified working tree (FIRST — unstaged tracked
+paths, reviewable untracked paths, or a dirty tracked submodule, each named with its recovery;
+this deliberately blocks a partial commit), then recomputes the current tree fingerprint and binds
+the LATEST completed run-gates --final receipt — refusing on { no receipt for this tree · a red
+latest attempt · before≠after · declaration content drift · evidence-hash drift · lcov drift ·
+unsatisfied review obligations (the review-state decision) }. Wire it into pre-commit;
+\`git commit --no-verify\` stays the stated residual (self-discipline, not a security boundary).
 
 Exit codes: 0 pass; 1 refused (reason named); 2 usage.`;
 
