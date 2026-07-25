@@ -606,6 +606,31 @@ describe('slice R2 — what --resume tolerates (real git)', () => {
     assert.equal(readHandoff(repo, 'vscodedeig'), before, 'prior record bytes intact');
   });
 
+  it('a de-ignored vscode settings file is proven however MAIN changed', () => {
+    // Membership must not depend on MAIN's CURRENT state: both source-side early returns (MAIN lost
+    // its .vscode dir; MAIN's settings became tracked) used to skip before journaling, so a
+    // satellite file an earlier run wrote could ride a successful resume out as a leftover.
+    for (const [name, slug, mutateMain] of [
+      ['r2-vscode-main-gone', 'vsgone', (repo) => rmSync(join(repo, '.vscode'), { recursive: true, force: true })],
+      ['r2-vscode-main-tracked', 'vstracked', (repo) => {
+        sh(['add', '-f', '--', '.vscode/settings.json'], repo);
+        sh(['commit', '-q', '-m', 'track vscode settings in main'], repo);
+      }],
+    ]) {
+      const repo = makeRepo(name, { excludes: [...EXCLUDES, '/.vscode/'], vscode: true });
+      assert.equal(run(provisionArgs(slug), repo).code, EXIT.ok);
+      assert.ok(existsSync(join(wtPath(repo, slug), '.vscode/settings.json')), `${name}: the first run wrote it`);
+      const before = readHandoff(repo, slug);
+      mutateMain(repo);
+      deIgnore(repo, '/.vscode/');
+      const resumed = run(provisionArgs(slug, ['--resume']), repo);
+      assert.equal(resumed.code, EXIT.stop, `${name}: the satellite destination is proven regardless of MAIN`);
+      assert.ok(resumed.errText.includes('.vscode/settings.json (vscode-settings, kept) — untracked'), resumed.errText);
+      assert.ok(resumed.errText.includes(RESUME_VERIFY_RULE), `${name}: the rule rides the STOP`);
+      assert.equal(readHandoff(repo, slug), before, `${name}: prior record bytes intact`);
+    }
+  });
+
   it('include-root-recovery-converges-end-to-end', () => {
     // Follow the advice for real: move the whole include destination OUT of the worktree and drop
     // the flag — the next resume passes AND land's leftover probe finds nothing.
