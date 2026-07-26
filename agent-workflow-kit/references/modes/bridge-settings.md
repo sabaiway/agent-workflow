@@ -1,6 +1,5 @@
 ### Mode: bridge-settings
 
-<!-- opt-in-capability: agy-adddir -->
 <!-- opt-in-capability: codex-fast -->
 
 The reader + consent-gated **writer** for the **host-level** bridge settings file — the answer to *"turn on the codex Fast tier (or another bridge knob) once, predictably, so it survives kit upgrades."* The four bridge wrappers read `${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf` (`KEY=VALUE` lines, **parsed never sourced**); this is the ONLY writer for it. The file lives **outside every kit-managed tree**, so a kit refresh never writes or clobbers it — upgrade-survival is structural (D2). It **previews by default**; `--apply` writes. Hand-editing the file stays fully supported — this is an offered convenience, never a lock.
@@ -13,7 +12,8 @@ The reader + consent-gated **writer** for the **host-level** bridge settings fil
 | `CODEX_HARD_TIMEOUT` | codex | integer `1..86400` | hard wall-clock cap (seconds) via `timeout(1)`. |
 | `CODEX_REVIEW_MAX_TOTAL_BYTES` | codex | integer `1..100000000` | codex-review payload size above which the diff rides a temp file (never truncated). |
 | `AGY_HARD_TIMEOUT` | agy | duration `5m`/`30m`/`90s` (unit required, nonzero) | hard wall-clock cap via `timeout(1)`. |
-| `AGY_REVIEW_ALLOW_ADDDIR` | agy | `0` \| `1` | `1` re-enables the oversized-review `--add-dir` offload (Issue-001 stall risk, bounded by the timeout). |
+| `AGY_REVIEW_MAX_TOTAL_BYTES` | agy | integer `1..100000000` | the ceiling on the SUM of all outgoing prompt bytes an oversized `agy-review code` may feed (default 240000); past it the fed review refuses **before** spending turn 1. |
+| `AGY_REVIEW_ALLOW_ADDDIR` | agy | `0` \| `1` | **RETIRED** — still recognized (an existing line never warns as unknown) but it **arms nothing**; the writer refuses a new `--set` and `--unset` clears it. Headless agy auto-denies its own `read_file`, so the offload it armed could return a confident fabrication; an oversized code review is a **chunked feed with a per-part delivery proof** now. |
 
 **Invocations:**
 

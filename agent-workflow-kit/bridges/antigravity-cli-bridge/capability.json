@@ -3,7 +3,7 @@
   "schema": 1,
   "name": "antigravity-cli-bridge",
   "kind": "execution-backend",
-  "version": "4.1.0",
+  "version": "5.0.0",
   "provides": ["review", "probe"],
   "posture": { "model": "Gemini 3.1 Pro (High)" },
   "roles": {
@@ -30,7 +30,7 @@
           "agy-review --continue [--decided @f] [--focus \"…\"]",
           "agy-review --conversation <id> [--decided @f] [--focus \"…\"]"
         ],
-        "receipt": "side effect — a successful review appends one JSON receipt line to <git dir>/agent-workflow-review-receipts.jsonl (AW_REVIEW_RECEIPTS overrides; plan/diff outside a git tree: warn + skip unless overridden): fingerprint = sha256 over the canonical uncommitted-state payload (staged diff + unstaged diff + untracked-not-ignored contents — the review-payload domain; never-committable untracked paths — character/block devices, FIFOs, sockets — are excluded from the domain entirely, untracked symlinks/directories ride as name-only notes) in code mode, the artifact-file sha256 in plan/diff mode; verdict recorded verbatim from the mandated '### Verdict' section (SHIP / SHIP WITH NITS / REWORK); grounded = whether a NON-EMPTY --facts payload was supplied (code mode refuses pre-spend without one — no run, no receipt — unless --ungrounded/AGY_PROBE=1; in plan/diff an empty payload records grounded:false — fail-closed, the state gate rejects it), factsHash = sha256 of the facts payload; a continuation receipt is fresh:false (informational-only — it cannot attest the folded tree); probe = whether the run relaxed the quality guards (AGY_PROBE=1), written on EVERY receipt so it self-declares — the kit's review-state gate rejects a probe-marked receipt (a probe review never attests) and equally rejects an unmarked one (silence is not a declaration); posture = the ACTUAL run posture {model} (agy has no tier), written on EVERY receipt (D5) — the gate rejects a receipt with an absent/invalid posture (a pre-D5 wrapper minted it; re-run the review), one stderr banner line states the same posture, an ATTESTING review with AGY_MODEL explicitly emptied refuses pre-spend, and a model string carrying control bytes refuses pre-spend in every mode; a run whose output carries NO recognized '### Verdict' section — empty output included — exits 4 with NO receipt (D4: a FAILED review to RE-RUN, never a fatal session error); a write failure warns, never fails the review",
+        "receipt": "side effect — a successful review appends one JSON receipt line to <git dir>/agent-workflow-review-receipts.jsonl (AW_REVIEW_RECEIPTS overrides; plan/diff outside a git tree: warn + skip unless overridden): fingerprint = sha256 over the canonical uncommitted-state payload (staged diff + unstaged diff + untracked-not-ignored contents — the review-payload domain; never-committable untracked paths — character/block devices, FIFOs, sockets — are excluded from the domain entirely, untracked symlinks/directories ride as name-only notes) in code mode, the artifact-file sha256 in plan/diff mode; verdict recorded verbatim from the mandated '### Verdict' section (SHIP / SHIP WITH NITS / REWORK); grounded = whether a NON-EMPTY --facts payload was supplied (code mode refuses pre-spend without one — no run, no receipt — unless --ungrounded/AGY_PROBE=1; in plan/diff an empty payload records grounded:false — fail-closed, the state gate rejects it), factsHash = sha256 of the facts payload; a continuation receipt is fresh:false (informational-only — it cannot attest the folded tree); probe = whether the run relaxed the quality guards (AGY_PROBE=1), written on EVERY receipt so it self-declares — the kit's review-state gate rejects a probe-marked receipt (a probe review never attests) and equally rejects an unmarked one (silence is not a declaration); posture = the ACTUAL run posture {model} (agy has no tier), written on EVERY receipt (D5) — the gate rejects a receipt with an absent/invalid posture (a pre-D5 wrapper minted it; re-run the review), one stderr banner line states the same posture, an ATTESTING review with AGY_MODEL explicitly emptied refuses pre-spend, and a model string carrying control bytes refuses pre-spend in every mode; delivery = how the change set REACHED the model, currently emitted as 'inline' (the whole set rode one prompt — proven by construction) or 'fed' (a chunked feed whose per-part echo proof verified); REQUIRED on every agy code receipt and its ABSENCE is what stops a pre-fed-lane receipt attesting, while the gate accepts any well-formed declaration rather than a particular value; absent by construction on plan/diff/continuation receipts, which carry no change set; a run whose output carries NO recognized '### Verdict' section — empty output included — exits 4 with NO receipt (D4: a FAILED review to RE-RUN, never a fatal session error); a write failure warns, never fails the review",
         "notes": [
           "pre-dispatch host-diff: before the FIRST dispatch of this bridge, diff its declared networkHosts against the live sandbox allow-list — a missing host is surfaced to the maintainer BEFORE dispatching, never fired into a known prompt",
           "the review posture banner appends a banner-only timeout=<duration|uncapped> field — exactly the duration agy-run hands to timeout(1), uncapped when no timeout/gtimeout binary caps the run; INFORMATIONAL only: it never enters the receipt posture or the D5 banner↔receipt parity",
@@ -66,7 +66,7 @@
         { "value": "an ungrounded review guesses — stale-model and partial-diff false positives", "enforcement": "advisory", "source": "bin/agy-review.sh" },
         { "value": "without a non-empty --facts payload the run refuses BEFORE the spend (exit 2) — the only escapes are --ungrounded and AGY_PROBE=1", "enforcement": "enforced", "source": "bin/agy-review.sh" },
         { "value": "an ungrounded run records grounded:false and the review-state gate rejects it", "enforcement": "enforced", "source": "capability.json roles.review.contract.receipt" },
-        { "value": "an oversized prompt refuses rather than truncate", "enforcement": "enforced", "condition": "unless AGY_REVIEW_ALLOW_ADDDIR=1 offloads it to a private --add-dir staging dir", "source": "capability.json settings.AGY_REVIEW_ALLOW_ADDDIR" }
+        { "value": "an oversized prompt is never truncated", "enforcement": "enforced", "condition": "code mode DELIVERS it as a chunked feed whose per-part delivery proof must verify (a missing or wrong echo exits 4 with no receipt); plan/diff refuse over the cap", "source": "bin/agy-review.sh plan_fed_review + verify_delivery_proof" }
       ],
       "customHooks": ["AGY_PROBE"]
     },
@@ -213,7 +213,17 @@
       "kind": "boolean",
       "default": "0",
       "appliesTo": ["agy-review"],
-      "effect": "1 ⇒ an oversized code review offloads the change set to a private --add-dir staging dir (re-enables the Issue-001 stall risk; the hard timeout bounds it). Default 0: an oversized prompt refuses instead."
+      "retired": "the --add-dir offload is retired: headless agy AUTO-DENIES its own read_file tool, so an offloaded change set could return a confident fabrication with no way to tell. An oversized code review is now DELIVERED as a chunked feed with a per-part delivery proof. The key stays recognized so an existing settings line never warns as unknown, but it arms nothing; clear it with --unset.",
+      "effect": "RETIRED — recognized so an existing settings line never warns as unknown, but it arms NOTHING. A set value prints the retirement notice naming the chunked-feed lane that replaced it."
+    },
+    {
+      "key": "AGY_REVIEW_MAX_TOTAL_BYTES",
+      "kind": "integer",
+      "min": 1,
+      "max": 100000000,
+      "default": "240000",
+      "appliesTo": ["agy-review"],
+      "effect": "agy-review code: the ceiling on the SUM of all outgoing prompt bytes the chunked feed may send (every envelope, every body, the final turn). Checked BEFORE the first turn is spent; past it the fed review refuses. An economy guard, not the correctness guard — correctness is the per-part delivery echo."
     }
   ],
   "networkHosts": ["*.googleapis.com", "accounts.google.com", "antigravity-unleash.goog", "lh3.googleusercontent.com"],

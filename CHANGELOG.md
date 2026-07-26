@@ -7,6 +7,53 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-26 — AD-078 a large change set is delivered, and its delivery is proven (agy 5.0.0 · codex 3.2.0 · kit 4.0.0)
+
+An oversized `agy-review code` used to have two honest outcomes and one dishonest one. The dishonest
+one shipped findings: two BLOCKING items citing lines 612–767 of a 322-line file and functions that
+exist nowhere, delivered as an ordinary REWORK verdict with `file:line` citations. The lane that
+produced it pointed the model at a staging file and asked it to read it — and on a headless host that
+read is auto-denied, so it could return an invention or an empty SHIP with no way to tell which.
+
+The change set is now **delivered, not fetched**: cut at line boundaries into under-cap parts, fed
+over continuation turns, reviewed in a final one. Only the bodies concatenate — byte-for-byte — so
+nothing the wrapper adds ever enters the reviewed artifact. And delivery is **proven**: the wrapper
+picks one interior line per part after assembly and asks for it *by address only*; the answer must
+reproduce each line verbatim in a proof section that comes first, so output truncation cannot drop
+it. A missing, duplicated, unrequested or mismatched echo is a failed review — no receipt.
+
+`AGY_REVIEW_ALLOW_ADDDIR` is retired: still recognized so an existing settings line never warns as
+unknown, but it arms nothing, and the advisor no longer offers it. Receipts now declare how the code
+arrived, so a receipt minted by the old lane stops attesting — **re-run the review**; because that
+incompatibility is created by the kit's READER, the kit takes the MAJOR alone.
+
+**The cost model changes too:** an oversized review used to refuse and spend nothing, and now spends
+**N+1 subscription turns** — announced on stderr before the first one, and refused outright when the
+feed would exceed `AGY_REVIEW_MAX_TOTAL_BYTES` (default 240000). The repo file map — measured at
+28,735 bytes in this repository, 24% of the prompt budget, growing with repo size rather than change
+size — is now bounded to 8192 bytes for `agy`, degrading to the changed-path subset with a stated
+count of what it omitted.
+
+Two live limits are recorded rather than assumed: context retention was probed at 262,967 bytes, and
+at ~320,000 the final turn was lost twice to a tool the host denies — which is exactly what the
+shipped 240,000-byte ceiling refuses before spending anything.
+
+The kit also ships `review-lens`, a read-only review subagent with **no shell**: a read-only fan-out
+on a full-tool vehicle shells out for facts it could have read, and each command is an approval prompt
+nobody needed.
+
+A deny rung for the gate hook was built during this release and **removed before it shipped** — and
+that is the honest outcome, not a footnote. Six times while building this, an agent's reflexive
+`grep … 2>/dev/null` became an approval prompt for the maintainer. The rung would have refused only
+reads that provably discard their output, on the argument that such a refusal destroys nothing. The
+argument was fine; the byte-level proof was not. Three review rounds found five shell constructs that
+slipped through it — an fd dup that routes output back out of `/dev/null`, a quoted literal, a
+leading-token-only match that hid `&& npm test`, a bare `&`, and a `#` comment — each of them a false
+refusal of real work. On an *ask* rung an incomplete scan just over-asks; on a *deny* rung the same gap
+blocks something legitimate, and telling an operator from ordinary text means lexing the shell, which
+this hook deliberately does not do. The hook still never denies, the counterexamples are kept as the
+spec for a future attempt, and the prompt remains.
+
 ## 2026-07-26 — AD-076 a shipped opt-in now advertises itself (kit 3.15.0)
 
 `upgrade` and `recommendations` now offer the closing-block detector that 3.14.0 shipped. They did

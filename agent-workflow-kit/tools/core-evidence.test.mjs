@@ -454,6 +454,76 @@ describe('the D5 posture marker — absent/empty/invalid never attest, fail clos
   });
 });
 
+// ── the delivery marker (D8/D8b) — the posture-marker twin, scoped to backend=agy ─────────────────
+// classifyReviewReceiptForTree deliberately ignores wrapperVersion, so a receipt minted by the OLD
+// --add-dir offload at an unchanged fingerprint would still classify ATTESTING — and that lane was
+// observed returning a confident fabrication. An agy code receipt therefore SELF-DECLARES how the
+// change set was delivered; silence is not a declaration. The requirement is PRESENT-and-valid,
+// never a particular value (both `inline` and `fed` attest), and it is scoped to agy — codex
+// receipt semantics are untouched.
+describe('the delivery marker (D8b) — agy code receipts declare HOW the change set arrived', () => {
+  const fp = 'f'.repeat(64);
+  const agy = { schema: 1, artifact: 'code', fresh: true, fingerprint: fp, backend: 'agy', verdict: 'ship', grounded: true, probe: false, posture: { model: 'Gemini 3.1 Pro (High)' }, timestamp: 't' };
+  const codex = { ...agy, backend: 'codex', posture: { model: 'gpt-5.6-sol', effort: 'xhigh', tier: null } };
+
+  it('OLD agy receipt (no marker) → delivery-unmarked, never attesting', () => {
+    assert.equal(classifyReviewReceiptForTree(agy, fp), 'delivery-unmarked');
+  });
+
+  it('NEW agy inline and NEW agy fed both attest — present and valid, never a particular value', () => {
+    assert.equal(classifyReviewReceiptForTree({ ...agy, delivery: 'inline' }, fp), 'attesting');
+    assert.equal(classifyReviewReceiptForTree({ ...agy, delivery: 'fed' }, fp), 'attesting');
+  });
+
+  it('a MALFORMED delivery declaration → malformed-delivery, never attesting', () => {
+    for (const delivery of [null, '', 42, [], {}, ['fed'], 'FED', 'a fed lane', ' fed', 'fed\n']) {
+      assert.equal(classifyReviewReceiptForTree({ ...agy, delivery }, fp), 'malformed-delivery', `delivery=${JSON.stringify(delivery)}`);
+    }
+  });
+
+  it('CODEX receipt semantics are untouched — no marker required, a stray one never rejects', () => {
+    assert.equal(classifyReviewReceiptForTree(codex, fp), 'attesting', 'codex without a delivery field still attests');
+    assert.equal(classifyReviewReceiptForTree({ ...codex, delivery: 'inline' }, fp), 'attesting');
+  });
+
+  // Order is load-bearing in the OTHER direction: the delivery arm runs LAST, so it can only ever
+  // intercept a receipt that would otherwise be ATTESTING. Placing it earlier pulled delivery-less
+  // `unrecognized-verdict` / `ungrounded` receipts out of the latest-normal selection, which let an
+  // EARLIER ship survive a LATER bad receipt — the selection-first doctrine, silently broken.
+  it('order is load-bearing: the delivery arm runs LAST, after verdict and grounding', () => {
+    assert.equal(classifyReviewReceiptForTree({ ...agy, probe: true }, fp), 'probe', 'a marker-less probe still classifies probe');
+    assert.equal(classifyReviewReceiptForTree({ ...agy, posture: {} }, fp), 'malformed-posture', 'the posture arm still precedes it');
+    assert.equal(classifyReviewReceiptForTree({ ...agy, verdict: 'unknown' }, fp), 'unrecognized-verdict', 'an unrecognized verdict outranks a missing delivery');
+    assert.equal(classifyReviewReceiptForTree({ ...agy, grounded: false }, fp), 'ungrounded', 'ungrounded outranks a missing delivery');
+  });
+
+  // The exact regression the ordering exists to prevent, at the level where it bites: SELECTION.
+  it('a LATER delivery-less bad receipt still vetoes an EARLIER good one (selection-first holds)', () => {
+    const good = { ...agy, delivery: 'fed', verdict: 'ship' };
+    const laterUnknown = summarizeReviewReceiptsForTree([good, { ...agy, verdict: 'unknown' }], fp);
+    assert.equal(laterUnknown.state, 'unrecognized-verdict', 'the later unknown-verdict receipt is the one judged');
+    const laterUngrounded = summarizeReviewReceiptsForTree([good, { ...agy, grounded: false, verdict: 'rework' }], fp);
+    assert.equal(laterUngrounded.state, 'ungrounded', 'the later ungrounded receipt is the one judged');
+  });
+
+  it('summarize reports the class as its OWN reason — never mislabelled as probe', () => {
+    const s = summarizeReviewReceiptsForTree([agy, { ...agy, delivery: 7 }], fp);
+    assert.equal(s.state, 'rejected');
+    assert.equal(s.deliveryRejected, 2, 'both the unmarked and the malformed receipt are counted');
+    assert.equal(s.probeExcluded, 0, 'a delivery rejection is never counted as a probe');
+    const why = describeMissingReviewAttestation(s);
+    assert.match(why, /delivery/, 'the reason names the delivery class');
+    assert.doesNotMatch(why, /probe review never attests/, 'never the probe sentence');
+    assert.match(why, /re-run/, 'the stated recovery is to re-run the review');
+  });
+
+  it('a fresh fed receipt beside an old unmarked one attests (the latest normal receipt wins)', () => {
+    const s = summarizeReviewReceiptsForTree([agy, { ...agy, delivery: 'fed' }], fp);
+    assert.equal(s.state, 'current');
+    assert.equal(s.deliveryRejected, 1);
+  });
+});
+
 describe('review-domain primitives — the defensive arms of the canonical payload walk', () => {
   it('isBinaryFile: NUL bytes → binary; text → false; an unreadable read (EISDIR) → false via the catch', () => {
     const dir = mkdtempSync(join(tmpdir(), 'core-evidence-bin-'));

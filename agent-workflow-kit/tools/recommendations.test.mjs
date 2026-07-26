@@ -211,7 +211,7 @@ describe('recommendations — verdict-first contract (D1 state matrix)', () => {
 
   it('every built item carries the frozen registry severity; the severity registry is total over BENEFITS', () => {
     // Base keys == BENEFITS keys exactly; `<key>.<variant>` entries are allowed (a per-site arm
-    // may carry its own class — the agy-adddir invalid-env arm) and each names a real item key.
+    // may carry its own class — e.g. `read-lane.stale`) and each names a real item key.
     const baseKeys = new Set(Object.keys(SEVERITIES).map((k) => k.split('.')[0]));
     assert.deepEqual([...baseKeys].sort(), Object.keys(BENEFITS).sort());
     for (const key of Object.keys(BENEFITS)) assert.ok(key in SEVERITIES, `${key} has a base severity`);
@@ -329,7 +329,7 @@ const buildInventoryFixtures = () => {
   const root1 = makeProject();
   results.push(buildRecommendations({ cwd: root1, deps: hermeticDeps(root1, { platform: 'linux', hasBinary: () => false }) }));
   rmSync(root1, { recursive: true, force: true });
-  // (2) placed-but-unseeded bridges: bridge-tier + agy-adddir.
+  // (2) placed-but-unseeded bridges: bridge-tier.
   const root2 = makeProject();
   results.push(buildRecommendations({ cwd: root2, deps: hermeticDeps(root2, { findWrapper: (c) => c === 'agy-review' || c === 'codex-review' }) }));
   rmSync(root2, { recursive: true, force: true });
@@ -524,97 +524,39 @@ describe('recommendations — item probes over fixtures', () => {
     assert.ok(!sparse.items.some((i) => ['autonomy-render', 'autonomy-policy'].includes(i.key)), 'the defaults-equivalent seed fires neither autonomy item');
   });
 
-  it('agy placed without AGY_REVIEW_ALLOW_ADDDIR fires the bridge-settings one-liner; a configured env does not', () => {
-    const root = makeProject();
-    const deps = hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' });
-    const fired = buildRecommendations({ cwd: root, deps });
-    const item = fired.items.find((i) => i.key === 'agy-adddir');
-    assert.ok(item, 'fires when placed and unconfigured');
-    assert.equal(item.apply, `node ${join(HERE, 'bridge-settings.mjs')} --set AGY_REVIEW_ALLOW_ADDDIR=1 --apply`);
-    const configured = buildRecommendations({
-      cwd: root,
-      deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review', getenv: { AGY_REVIEW_ALLOW_ADDDIR: '0' } }),
-    });
-    assert.ok(!configured.items.some((i) => i.key === 'agy-adddir'), 'an env-configured knob is not re-recommended');
-    // env > file: an INVALID env value shadows the settings file — the file writer cannot fix it,
-    // so the apply is fix/unset-the-env guidance, never the bridge-settings one-liner (codex).
-    const invalidEnv = buildRecommendations({
-      cwd: root,
-      deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review', getenv: { AGY_REVIEW_ALLOW_ADDDIR: 'yes' } }),
-    });
-    rmSync(root, { recursive: true, force: true });
-    const envItem = invalidEnv.items.find((i) => i.key === 'agy-adddir');
-    assert.ok(envItem, 'an invalid env value fires');
-    assert.match(envItem.apply, /^HAND-APPLY: unset AGY_REVIEW_ALLOW_ADDDIR/, 'the apply targets the env var, not the shadowed file');
-  });
-
-  it('the invalid-env arm is an ATTENTION-class item — an invalid configured value is never "nothing is broken"', () => {
-    // A set-but-INVALID AGY_REVIEW_ALLOW_ADDDIR is a configured declaration that is invalid —
-    // the D1 attention definition; rendering it under optional would put "nothing is broken"
-    // beside a broken config. The unset arm stays an optional offer.
-    const root = makeProject();
-    const deps = hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review', getenv: { AGY_REVIEW_ALLOW_ADDDIR: 'yes' } });
-    const result = buildRecommendations({ cwd: root, deps });
-    rmSync(root, { recursive: true, force: true });
-    const item = result.items.find((i) => i.key === 'agy-adddir');
-    assert.ok(item, 'the invalid-env arm fires');
-    assert.equal(item.severity, SEVERITY_ATTENTION, 'an invalid configured value needs attention');
-    const verdict = formatRecommendations(result).split('\n')[2];
-    assert.ok(verdict.startsWith(fillCount(VERDICT_ATTENTION_TEMPLATE, 1)), `the verdict leads with the attention count: ${verdict}`);
-    assert.ok(!verdict.includes(VERDICT_NOTHING_BROKEN), 'no nothing-is-broken claim beside an invalid config');
-  });
-
-  it('a LONG invalid env value still renders a capped item — never a skipped probe (truncation holds the cap)', () => {
-    // templateBudget for the invalid-env WHAT is smaller than the truncation count-note — the
-    // helper must guarantee result.length <= cap even there (an overflow fell into the
-    // stated-skip lane instead of rendering).
-    const root = makeProject();
-    const deps = hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review', getenv: { AGY_REVIEW_ALLOW_ADDDIR: 'x'.repeat(300) } });
-    const { items, skips } = buildRecommendations({ cwd: root, deps });
-    rmSync(root, { recursive: true, force: true });
-    assert.ok(!skips.some((s) => s.key === 'agy-adddir'), 'a long value must not degrade the item to a skip');
-    const item = items.find((i) => i.key === 'agy-adddir');
-    assert.ok(item, 'the invalid-env arm fires');
-    assert.ok(item.what.length <= ITEM_LINE_CAP, `composed WHAT is ${item.what.length} chars (cap ${ITEM_LINE_CAP})`);
-  });
-
-  it('an INVALID bridge-settings value does not suppress the agy-adddir item', () => {
-    // agy-review validates the value and falls back to the default (refuse) on garbage — a
-    // presence-only check would suppress the item while the knob is effectively unset.
+  // The advisor used to OFFER to arm AGY_REVIEW_ALLOW_ADDDIR with the benefit "large reviews — an
+  // oversized agy code review offloads to a staging dir instead of refusing". That lane is retired:
+  // headless agy auto-denies its own read_file, so the offload could return a confident fabrication.
+  // The offer is WITHDRAWN, and the withdrawal is a CHECKED registry deletion (advisor-coverage's
+  // orphan guard fails on an add() key no capability claims, and its set-equality fails on a
+  // declaration with no row) — never a silent one.
+  it('a placed agy-review NEVER offers the retired add-dir knob, in any configuration', () => {
     const root = makeProject();
     mkdirSync(join(root, '.config', 'agent-workflow'), { recursive: true });
+    const configurations = [
+      hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }),
+      hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review', getenv: { AGY_REVIEW_ALLOW_ADDDIR: 'yes' } }),
+      hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review', getenv: { AGY_REVIEW_ALLOW_ADDDIR: '' } }),
+      hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review', getenv: { XDG_CONFIG_HOME: join(root, '.config') } }),
+    ];
     writeFileSync(join(root, '.config', 'agent-workflow', 'bridge-settings.conf'), 'AGY_REVIEW_ALLOW_ADDDIR=2\n');
-    const deps = hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review', getenv: { XDG_CONFIG_HOME: join(root, '.config') } });
-    const fired = buildRecommendations({ cwd: root, deps });
-    assert.ok(fired.items.some((i) => i.key === 'agy-adddir'), 'an invalid value is effectively unset — the item fires');
-    writeFileSync(join(root, '.config', 'agent-workflow', 'bridge-settings.conf'), 'AGY_REVIEW_ALLOW_ADDDIR=0\n');
-    const explicit = buildRecommendations({ cwd: root, deps });
+    const results = configurations.map((deps) => buildRecommendations({ cwd: root, deps }));
     rmSync(root, { recursive: true, force: true });
-    assert.ok(!explicit.items.some((i) => i.key === 'agy-adddir'), 'an explicit valid 0 is a user CHOICE — never nagged');
+    for (const { items, skips } of results) {
+      assert.ok(!items.some((i) => i.key === 'agy-adddir'), 'the retired knob is never offered');
+      assert.ok(!skips.some((s) => s.key === 'agy-adddir'), 'and never even probed');
+    }
   });
 
-  it('an EMPTY env AGY_REVIEW_ALLOW_ADDDIR is the wrapper opt-out shape — never nagged as invalid', () => {
-    // The wrapper's ${!key+x} check: a set-but-empty env var shadows the file and falls back to
-    // the built-in refuse default — an explicit user CHOICE (codex, Segment C opening).
-    const root = makeProject();
-    const deps = hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review', getenv: { AGY_REVIEW_ALLOW_ADDDIR: '' } });
-    const { items } = buildRecommendations({ cwd: root, deps });
-    rmSync(root, { recursive: true, force: true });
-    assert.ok(!items.some((i) => i.key === 'agy-adddir'), 'an explicit empty-env opt-out is respected');
-  });
-
-  it('a DUPLICATE-carrying bridge-settings file renders fix-duplicates-first HAND-APPLY — never the writer command it would refuse', () => {
-    const root = makeProject();
-    mkdirSync(join(root, '.config', 'agent-workflow'), { recursive: true });
-    writeFileSync(join(root, '.config', 'agent-workflow', 'bridge-settings.conf'), 'CODEX_SERVICE_TIER=priority\nCODEX_SERVICE_TIER=priority\n');
-    const deps = hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review', getenv: { XDG_CONFIG_HOME: join(root, '.config') } });
-    const { items } = buildRecommendations({ cwd: root, deps });
-    rmSync(root, { recursive: true, force: true });
-    const item = items.find((i) => i.key === 'agy-adddir');
-    assert.ok(item, 'the unset knob still fires the item');
-    assert.ok(item.apply.startsWith('HAND-APPLY'), 'the writer command would refuse a duplicate-carrying file — hand-fix first');
-    assert.match(item.apply, /CODEX_SERVICE_TIER/, 'the duplicates are named');
-    assert.match(item.apply, /--set AGY_REVIEW_ALLOW_ADDDIR=1 --apply/, 'the writer line follows the hand-fix');
+  it('no advisor text anywhere still sells the retired offload lane', () => {
+    for (const registry of [SEVERITIES, WHATS, BENEFITS]) {
+      for (const key of Object.keys(registry)) {
+        assert.ok(!key.startsWith('agy-adddir'), `${key} still names the retired capability`);
+      }
+    }
+    for (const text of Object.values(BENEFITS)) {
+      assert.ok(!/add-?dir|staging dir/i.test(text), `a benefit still advertises the offload: ${text}`);
+    }
   });
 
   it('an EXPLICIT policy declaring exactly the default values is a DECLARATION — the render item still fires', () => {
@@ -1265,17 +1207,6 @@ describe('recommendations — every probe degrades honestly (per-branch skip cov
     rmSync(root, { recursive: true, force: true });
     assert.ok(skips.some((s) => s.key === 'autonomy-policy' && /malformed JSON/.test(s.reason)));
     assert.ok(!items.some((i) => i.key === 'autonomy-policy'), 'a malformed policy is never re-declared as a fire');
-  });
-
-  it('a non-ENOENT bridge-settings read failure skips the agy-adddir item (never treated as unconfigured)', () => {
-    const root = makeProject();
-    const boom = () => {
-      throw Object.assign(new Error('EACCES conf'), { code: 'EACCES' });
-    };
-    const deps = hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review', readFile: boom });
-    const { skips } = buildRecommendations({ cwd: root, deps });
-    rmSync(root, { recursive: true, force: true });
-    assert.ok(skips.some((s) => s.key === 'agy-adddir' && /EACCES/.test(s.reason)));
   });
 
   it('a DEGRADING configured review recipe fires the review-recipe item (config says council, nothing is ready)', () => {
@@ -1949,7 +1880,8 @@ describe('recommendations — the cheap-agents offer (OPT-IN-SHIPS-INVISIBLE)', 
     assert.ok(item, 'a shipped opt-in capability must never be invisible');
     assert.equal(item.severity, SEVERITY_OPTIONAL);
     assert.match(item.apply, /cheap-agents\.mjs/u, 'the apply runs the writer that owns the placement');
-    assert.match(item.what, /\d+ cheap-model subagent/u, 'the WHAT states how many are missing');
+    assert.match(item.what, /\d+ read-only subagent/u, 'the WHAT states how many are missing');
+    assert.match(item.benefit, /no vehicle has a shell/u, 'the benefit states the property that makes a fan-out quiet');
     assert.ok(!skips.some((s) => s.key === 'agents'));
   });
 

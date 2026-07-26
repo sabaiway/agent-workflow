@@ -452,7 +452,21 @@ export const REVIEW_RECEIPT_CLASS = Object.freeze({
   MALFORMED_MARKER: 'malformed-marker',
   POSTURE_UNMARKED: 'posture-unmarked',
   MALFORMED_POSTURE: 'malformed-posture',
+  DELIVERY_UNMARKED: 'delivery-unmarked',
+  MALFORMED_DELIVERY: 'malformed-delivery',
 });
+
+// Backends whose `code` receipts must SELF-DECLARE how the change set reached the model (D8b).
+// Scoped, not universal: agy's oversized lane was the one observed returning a confident
+// fabrication, and codex's receipt semantics are deliberately untouched.
+const DELIVERY_DECLARING_BACKENDS = new Set(['agy']);
+
+// A delivery declaration is a lowercase token naming HOW delivery was established (`inline` when
+// the whole change set rode one prompt, `fed` when a chunked feed proved it by echo). The gate
+// requires PRESENT and WELL-FORMED, never a PARTICULAR value — which lane was used is the
+// wrapper's business; that the receipt declares one at all is the gate's.
+const isValidReceiptDelivery = (delivery) =>
+  typeof delivery === 'string' && delivery.length > 0 && delivery.length <= 32 && /^[a-z][a-z0-9-]*$/.test(delivery);
 
 // The D5 posture declaration (strip Phase 4): an object whose `model` is a NON-EMPTY string;
 // `effort` (when present) a non-empty string; `tier` (when present) a non-empty string or null.
@@ -483,6 +497,15 @@ export const classifyReviewReceiptForTree = (receipt, fingerprint) => {
   if (!isValidReceiptPosture(receipt.posture)) return REVIEW_RECEIPT_CLASS.MALFORMED_POSTURE;
   if (!isRecognizedVerdict(receipt.verdict)) return REVIEW_RECEIPT_CLASS.UNRECOGNIZED_VERDICT;
   if (receipt.grounded !== true) return REVIEW_RECEIPT_CLASS.UNGROUNDED;
+  // LAST on purpose. The delivery arm may only intercept a receipt that would otherwise ATTEST:
+  // placing it earlier pulled delivery-less `unrecognized-verdict` / `ungrounded` agy receipts out
+  // of summarize's latest-NORMAL selection, so an EARLIER ship survived a LATER bad receipt — the
+  // selection-first doctrine, broken silently. Those two classes stay byte-identical to before;
+  // the ONE class this arm changes is the previously-attesting one, which is the point.
+  if (DELIVERY_DECLARING_BACKENDS.has(receipt.backend)) {
+    if (!Object.hasOwn(receipt, 'delivery')) return REVIEW_RECEIPT_CLASS.DELIVERY_UNMARKED;
+    if (!isValidReceiptDelivery(receipt.delivery)) return REVIEW_RECEIPT_CLASS.MALFORMED_DELIVERY;
+  }
   return REVIEW_RECEIPT_CLASS.ATTESTING;
 };
 
@@ -504,6 +527,8 @@ export const summarizeReviewReceiptsForTree = (receipts, fingerprint) => {
   const malformedMarker = rowsFor(REVIEW_RECEIPT_CLASS.MALFORMED_MARKER);
   const postureUnmarked = rowsFor(REVIEW_RECEIPT_CLASS.POSTURE_UNMARKED);
   const malformedPosture = rowsFor(REVIEW_RECEIPT_CLASS.MALFORMED_POSTURE);
+  const deliveryUnmarked = rowsFor(REVIEW_RECEIPT_CLASS.DELIVERY_UNMARKED);
+  const malformedDelivery = rowsFor(REVIEW_RECEIPT_CLASS.MALFORMED_DELIVERY);
   const counts = {
     currentCount: classified.length,
     ungroundedCount: rowsFor(REVIEW_RECEIPT_CLASS.UNGROUNDED).length,
@@ -512,6 +537,7 @@ export const summarizeReviewReceiptsForTree = (receipts, fingerprint) => {
     markerRejected: malformedMarker.length,
     unmarkedRejected: unmarked.length,
     postureRejected: postureUnmarked.length + malformedPosture.length,
+    deliveryRejected: deliveryUnmarked.length + malformedDelivery.length,
   };
   if (normal.length > 0) {
     const latest = normal[normal.length - 1];
@@ -521,7 +547,7 @@ export const summarizeReviewReceiptsForTree = (receipts, fingerprint) => {
   }
   if (classified.length > 0) {
     return {
-      state: malformedMarker.length > 0 || unmarked.length > 0 || counts.postureRejected > 0 ? 'rejected' : 'probe',
+      state: malformedMarker.length > 0 || unmarked.length > 0 || counts.postureRejected > 0 || counts.deliveryRejected > 0 ? 'rejected' : 'probe',
       receipt: null,
       ...counts,
     };
@@ -537,12 +563,13 @@ export const describeMissingReviewAttestation = (summary) => {
     summary.markerRejected > 0 ? `${summary.markerRejected} receipt(s) with a malformed probe marker` : null,
     summary.unmarkedRejected > 0 ? `${summary.unmarkedRejected} receipt(s) with no probe marker` : null,
     (summary.postureRejected ?? 0) > 0 ? `${summary.postureRejected} receipt(s) with an absent/invalid run posture (a pre-D5 wrapper — re-run the review on the current bridge)` : null,
+    (summary.deliveryRejected ?? 0) > 0 ? `${summary.deliveryRejected} agy receipt(s) with an absent/invalid delivery declaration (minted before the change set was PROVEN delivered — re-run the review on the current bridge)` : null,
   ].filter(Boolean);
   const exclusionSuffix = exclusions.length > 0 ? `; excluded ${exclusions.join(', ')}` : '';
   if (summary.state === 'ungrounded') return `the latest normal receipt for the current tree is ungrounded${exclusionSuffix}`;
   if (summary.state === 'unrecognized-verdict') return `the latest normal receipt carries an unrecognized verdict (${JSON.stringify(summary.receipt?.verdict ?? null)}) — an unknown verdict never attests${exclusionSuffix}`;
   if (summary.state === 'probe') return 'only probe receipts exist for the current tree — a probe review never attests';
-  if (summary.state === 'rejected') return `current-tree receipts have an untrustworthy probe marker or run posture${exclusionSuffix}`;
+  if (summary.state === 'rejected') return `current-tree receipts have an untrustworthy probe marker, run posture or delivery declaration${exclusionSuffix}`;
   return 'no fresh code receipt exists for the current tree';
 };
 

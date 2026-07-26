@@ -42,6 +42,21 @@
 //   (d) everything else → NO decision: exit 0, no output — the normal permission flow proceeds
 //       unchanged. The hook NEVER emits `deny`.
 //
+// WHY THERE IS NO DENY RUNG (kit 4.0.0, three council rounds, AD-078). One was built and REMOVED
+// before release. It refused only a seeded read-only command that provably DISCARDS its output
+// (`2>/dev/null`), on the argument that such a refusal cannot destroy anything the caller wanted.
+// The argument was sound; the byte-level PROOF of "this command discards" was not, and could not be
+// made so here. Five constructs defeated it in three rounds — `1<&2` (an fd dup routes stdout back
+// out of /dev/null AFTER the approved `>`), a quoted literal `>/dev/null ` in an argument, a
+// leading-token-only segment match (`… && npm test`), a bare `&` (backgrounds the read, runs the
+// rest), and a `#` comment (bash never executes the redirect at all). Each was a FALSE REFUSAL.
+// The lesson, which any future deny rung must start from: on an ASK rung an incomplete scan merely
+// over-asks, which is safe; on a DENY rung the SAME incompleteness refuses real work. Deciding
+// whether a `>` is an operator or text requires lexing the shell, which this dependency-free hook
+// deliberately does not do. A deny rung therefore needs a justification that does not rest on
+// parsing command bytes. Design record + all five counterexamples: docs/plans/queue.md,
+// BARE-LANE-DENY-RUNG.
+//
 // Fail-safe invariant, decoupled per function: a DECLARATION anomaly (missing / unreadable /
 // malformed / schema-invalid gates.json) disables ONLY exact-gate approval (a) — the residual
 // guard (b) needs no declaration and keeps running (a broken gates.json must not silently

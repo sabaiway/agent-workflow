@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { main } from './bridge-settings.mjs';
+import { settingValueValid } from './manifest/validate.mjs';
 
 // Real temp XDG_CONFIG_HOME → the tool resolves + writes the real host path, exercising the real
 // out-of-tree atomic writer and the real bundled-manifest registry (CODEX_*/AGY_* knobs).
@@ -33,6 +34,23 @@ describe('bridge-settings — reader', () => {
     }
     // The tier row always carries the credit-rate caveat (D4), fact-only, from the manifest effect.
     assert.match(r.stdout, /2\.5x credit rate/);
+  });
+
+  // D3: recognition alone is not enough. A retired key stays in the registry (so an existing line
+  // never warns as unknown) but carries RETIRED metadata, and every reader surface must SAY so —
+  // "render as retired" is a different thing from "keep offering".
+  it('a RETIRED knob renders as retired wherever the reader shows it', () => {
+    seedConf('AGY_REVIEW_ALLOW_ADDDIR=1\n');
+    const r = main([], ctx());
+    assert.equal(r.code, 0);
+    const row = r.stdout.split('\n').find((l) => l.includes('AGY_REVIEW_ALLOW_ADDDIR'));
+    assert.ok(row, 'the retired key is still listed — recognition is preserved');
+    assert.match(r.stdout, /AGY_REVIEW_ALLOW_ADDDIR[\s\S]{0,400}?RETIRED/, 'the row states the retirement');
+    assert.doesNotMatch(r.stdout, /unknown keys[^\n]*AGY_REVIEW_ALLOW_ADDDIR/, 'a retired key is never "unknown"');
+    const json = main(['--json'], ctx());
+    const knob = JSON.parse(json.stdout).knobs.find((k) => k.key === 'AGY_REVIEW_ALLOW_ADDDIR');
+    assert.equal(knob.retired !== null && knob.retired !== undefined, true, 'the machine surface carries the stated retirement reason');
+    assert.ok(String(knob.retired).length >= 20, 'the reason is stated, not a bare flag');
   });
 
   it('a file-set knob → effective value with [file] source', () => {
@@ -132,9 +150,9 @@ describe('bridge-settings — writer preview/apply', () => {
   });
 
   it('multiple ops apply in one atomic write', () => {
-    const r = main(['--set', 'CODEX_SERVICE_TIER=priority', '--set', 'AGY_REVIEW_ALLOW_ADDDIR=1', '--apply'], ctx());
+    const r = main(['--set', 'CODEX_SERVICE_TIER=priority', '--set', 'AGY_HARD_TIMEOUT=30m', '--apply'], ctx());
     assert.equal(r.code, 0);
-    assert.equal(readFileSync(confPath, 'utf8'), 'CODEX_SERVICE_TIER=priority\nAGY_REVIEW_ALLOW_ADDDIR=1\n');
+    assert.equal(readFileSync(confPath, 'utf8'), 'CODEX_SERVICE_TIER=priority\nAGY_HARD_TIMEOUT=30m\n');
   });
 
   it('warns when an env var currently shadows the key being set', () => {
@@ -154,6 +172,30 @@ describe('bridge-settings — writer preview/apply', () => {
 // ── writer: refusals (the guarded contract) ─────────────────────────────────────────
 
 describe('bridge-settings — writer refusals', () => {
+  // D3: the retirement is REGISTRY-DRIVEN, so the writer refuses a NEW --set of a retired key while
+  // still letting a user CLEAR an existing line. Both directions matter: refusing --unset would trap
+  // the very line the retirement asks the user to remove.
+  it('--set refuses the retired key, naming the replacement lane; nothing written', () => {
+    const r = main(['--set', 'AGY_REVIEW_ALLOW_ADDDIR=1', '--apply'], ctx());
+    assert.equal(r.code, 2);
+    assert.match(r.stderr, /AGY_REVIEW_ALLOW_ADDDIR/);
+    assert.match(r.stderr, /retired/i);
+    assert.equal(existsSync(confPath), false, 'a refused set never writes');
+  });
+
+  it('--set refuses the retired key even at its default value (retirement is about the KEY, not the value)', () => {
+    const r = main(['--set', 'AGY_REVIEW_ALLOW_ADDDIR=0', '--apply'], ctx());
+    assert.equal(r.code, 2);
+    assert.match(r.stderr, /retired/i);
+  });
+
+  it('--unset still clears the retired key (the stated recovery must work)', () => {
+    seedConf('AGY_HARD_TIMEOUT=5m\nAGY_REVIEW_ALLOW_ADDDIR=1\n');
+    const r = main(['--unset', 'AGY_REVIEW_ALLOW_ADDDIR', '--apply'], ctx());
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(readFileSync(confPath, 'utf8'), 'AGY_HARD_TIMEOUT=5m\n');
+  });
+
   it('an unknown key → exit 2, nothing written', () => {
     const r = main(['--set', 'NOT_A_KNOB=1', '--apply'], ctx());
     assert.equal(r.code, 2);
@@ -179,9 +221,16 @@ describe('bridge-settings — writer refusals', () => {
     assert.equal(main(['--set', 'AGY_HARD_TIMEOUT=30m', '--apply'], ctx()).code, 0);
   });
 
-  it('a non-boolean → exit 2; "0"/"1" accepted', () => {
+  // The registry's ONLY boolean key is now RETIRED, so the writer refuses it before the value rule is
+  // even reached (proven above). The boolean rule itself is asserted against the shared predicate the
+  // writer, the validator and the wrappers' aw_settings_valid all share — the rule outlives the key.
+  it('the boolean value rule still holds where it is reachable ("0"/"1" only)', () => {
     assert.equal(main(['--set', 'AGY_REVIEW_ALLOW_ADDDIR=2', '--apply'], ctx()).code, 2);
-    assert.equal(main(['--set', 'AGY_REVIEW_ALLOW_ADDDIR=1', '--apply'], ctx()).code, 0);
+    assert.equal(main(['--set', 'AGY_REVIEW_ALLOW_ADDDIR=1', '--apply'], ctx()).code, 2, 'retired: refused whatever the value');
+    const boolEntry = { key: 'PROBE_BOOL', kind: 'boolean' };
+    assert.equal(settingValueValid(boolEntry, '0'), true);
+    assert.equal(settingValueValid(boolEntry, '1'), true);
+    assert.equal(settingValueValid(boolEntry, '2'), false);
   });
 
   it('a duplicate-carrying file → exit 1, file byte-untouched (never edits blindly around dups)', () => {
@@ -240,14 +289,30 @@ describe('bridge-settings — reconcile', () => {
     assert.equal(readFileSync(confPath, 'utf8'), before, 'reconcile never writes the file');
   });
 
-  it('an unknown/retired key → flagged + PRESERVED verbatim (the file is never edited)', () => {
-    const body = 'CODEX_SERVICE_TIER=priority\nRETIRED_KNOB=1\n# my note\n';
+  // A key NO bundled manifest declares at all — distinct from a manifest-RETIRED one, which has its
+  // own line below (the two have different recoveries: delete a stale line vs clear a dead knob).
+  it('an UNKNOWN key → flagged + PRESERVED verbatim (the file is never edited)', () => {
+    const body = 'CODEX_SERVICE_TIER=priority\nNO_SUCH_KNOB=1\n# my note\n';
     seedConf(body);
     const r = main(['--reconcile'], ctx());
     assert.equal(r.code, 0);
-    assert.match(r.stdout, /1 unknown\/retired key\(s\) preserved verbatim/);
-    assert.match(r.stdout, /RETIRED_KNOB/);
+    assert.match(r.stdout, /1 unknown key\(s\) preserved verbatim/);
+    assert.match(r.stdout, /NO_SUCH_KNOB/);
     assert.equal(readFileSync(confPath, 'utf8'), body, 'the reconcile flags but never edits — the key stays');
+  });
+
+  // A key the manifest RETIRED is still `registry.has(key)`, so the survival check used to file it
+  // under "recognized, all current" — the opposite of what the retirement contract promises. A dead
+  // knob must read as a dead knob on the one surface init/upgrade shows the user.
+  it('a manifest-RETIRED key is flagged as retired, never "all current"', () => {
+    const body = 'CODEX_SERVICE_TIER=priority\nAGY_REVIEW_ALLOW_ADDDIR=1\n';
+    seedConf(body);
+    const r = main(['--reconcile'], ctx());
+    assert.equal(r.code, 0);
+    assert.match(r.stdout, /AGY_REVIEW_ALLOW_ADDDIR/, 'the dead knob is named');
+    assert.match(r.stdout, /retired/i, 'and called retired');
+    assert.doesNotMatch(r.stdout, /2 key\(s\) recognized, all current/, 'never filed as current');
+    assert.equal(readFileSync(confPath, 'utf8'), body, 'reconcile still never edits the file');
   });
 
   it('a duplicate-carrying file → flagged, still exit 0, never edited', () => {

@@ -32,23 +32,49 @@ afterEach(() => {
 });
 
 const BUNDLE = readBundledAgents();
-const EXPECTED_VEHICLES = ['changelog-skeleton.md', 'gate-triage.md', 'mechanical-sweep.md'];
+const EXPECTED_VEHICLES = ['changelog-skeleton.md', 'gate-triage.md', 'mechanical-sweep.md', 'review-lens.md'];
+// The CHEAP subset is model-pinned to haiku/low. `review-lens` is deliberately NOT in it: it exists
+// so a read-only REVIEW has a vehicle at all, and a review on the cheap model would be theatre.
+const CHEAP_VEHICLES = new Set(['changelog-skeleton.md', 'gate-triage.md', 'mechanical-sweep.md']);
 
-// ── the bundled vehicles: content pins (haiku/low, bounded read-only tools) ────────────
+// ── the bundled vehicles: content pins (bounded read-only tools; cheap subset model-pinned) ────
 
-describe('bundled cheap-lane vehicles — frontmatter pins', () => {
-  it('ships exactly the three documented vehicles', () => {
+describe('bundled vehicles — frontmatter pins', () => {
+  it('ships exactly the documented vehicles', () => {
     assert.deepEqual(BUNDLE.map((t) => t.name), EXPECTED_VEHICLES);
+  });
+
+  // THE invariant that closes the recurring prompt-flood class: a read-only fan-out vehicle grants
+  // no shell, so it CANNOT reach for one no matter what it is asked to do. It holds for EVERY
+  // vehicle including the review lens — that is what makes the lens a safe place to send a review.
+  it('NO vehicle grants Bash — the property that makes a read-only fan-out structurally quiet', () => {
+    for (const template of BUNDLE) {
+      const tools = template.content.match(/^tools: (.+)$/m);
+      assert.ok(tools, `${template.name} declares a tools list`);
+      const toolList = tools[1].split(',').map((t) => t.trim());
+      assert.ok(!toolList.includes('Bash'), `${template.name} must not grant Bash`);
+      assert.ok(toolList.length > 0, `${template.name} grants at least one tool`);
+    }
   });
 
   const READ_ONLY_TOOLS = new Set(['Read', 'Grep', 'Glob']);
   for (const template of BUNDLE) {
-    it(`${template.name}: model haiku, effort low, read-only tools, name matches file, non-trivial prompt`, () => {
+    it(`${template.name}: bounded read-only tools, name matches file, non-trivial prompt`, () => {
       const fm = template.content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
       assert.ok(fm, 'has YAML frontmatter');
       const [, frontmatter, body] = fm;
-      assert.match(frontmatter, /^model: haiku$/m, 'the vehicle is pinned to the cheap model');
-      assert.match(frontmatter, /^effort: low$/m, 'the vehicle is pinned to low effort');
+      // EVERY vehicle pins an EXACT model. A `doesNotMatch(/haiku/)` was vacuous: a vehicle with no
+      // `model:` line at all passed it while INHERITING the caller's model — so a review lens driven
+      // from a cheap session would have been a cheap review wearing a review-capable label.
+      const model = frontmatter.match(/^model: (\S+)$/m);
+      assert.ok(model, `${template.name} must PIN a model, never inherit the caller's`);
+      if (CHEAP_VEHICLES.has(template.name)) {
+        assert.equal(model[1], 'haiku', 'a cheap-lane vehicle is pinned to the cheap model');
+        assert.match(frontmatter, /^effort: low$/m, 'a cheap-lane vehicle is pinned to low effort');
+      } else {
+        assert.equal(model[1], 'sonnet', 'the review lens is pinned to a review-capable model');
+        assert.match(frontmatter, /^effort: high$/m, 'and to an effort that can actually review');
+      }
       const name = frontmatter.match(/^name: (\S+)$/m);
       assert.equal(`${name?.[1]}.md`, template.name, 'frontmatter name matches the filename');
       const tools = frontmatter.match(/^tools: (.+)$/m);
@@ -85,7 +111,7 @@ describe('writeCheapAgents — preview-then-mutate', () => {
     const project = makeProject();
     const result = writeCheapAgents({ cwd: project, dryRun: true });
     assert.equal(result.wrote, false);
-    assert.deepEqual(result.plan.map((p) => p.action), ['place', 'place', 'place']);
+    assert.deepEqual(result.plan.map((p) => p.action), EXPECTED_VEHICLES.map(() => 'place'));
     assert.ok(!existsSync(join(project, AGENTS_DIR)), 'no directory created on dry-run');
   });
 
@@ -126,7 +152,7 @@ describe('writeCheapAgents — preview-then-mutate', () => {
       { writeFile: (path, content) => writes.push(path) },
     );
     assert.equal(again.wrote, false);
-    assert.deepEqual(again.plan.map((p) => p.action), ['already-current', 'already-current', 'already-current']);
+    assert.deepEqual(again.plan.map((p) => p.action), EXPECTED_VEHICLES.map(() => 'already-current'));
     assert.deepEqual(writes, [], 'no write call on an already-current set');
   });
 

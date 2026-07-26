@@ -82,10 +82,18 @@ What it does for you, and what YOU must supply:
   @round1-decisions.md --focus "only the still-open items"`. The continuation sends a small DELTA
   (restated posture + new focus + the output shape + the decided list) and never re-sends the artifact
   — `agy` holds it in the conversation.
-- **Oversized `code` review:** the byte ceiling (`AGY_MAX_PROMPT_BYTES`, default 120000) trips with
-  trim/split guidance. `AGY_REVIEW_ALLOW_ADDDIR=1` offloads ONLY the change set to a private staging
-  dir and passes it via `--add-dir` (the grounding stays inline) — this re-enables the Issue-001 stall
-  risk, bounded by the hard timeout; prefer splitting into focused per-area reviews.
+- **Oversized `code` review — a CHUNKED FEED, not a refusal.** Past the byte ceiling
+  (`AGY_MAX_PROMPT_BYTES`, default 120000) the assembled change set is cut into under-cap parts at
+  line boundaries, fed over continuation turns (each turn: reply `OK` only), and reviewed in a final
+  turn. **Delivery is proven, not assumed:** the wrapper picks an interior line from each part AFTER
+  assembly and asks for it BY ADDRESS in a `### Delivery proof` section that comes FIRST in the
+  output; a missing or non-matching echo is a FAILED review — `exit 4`, **no receipt**. The cost is
+  stated before it is spent (N parts = N+1 subscription turns) and `AGY_REVIEW_MAX_TOTAL_BYTES`
+  (default 240000) refuses an over-large feed BEFORE turn 1. `plan`/`diff` keep refusing over the cap
+  — their artifact is an operator-supplied file the operator can split.
+  `AGY_REVIEW_ALLOW_ADDDIR` is **RETIRED** (recognized, arms nothing): headless `agy` auto-denies its
+  own `read_file`, so the offload it armed could return a confident fabrication with no way to tell.
+  The kit never grants that permission — the feed exists so none is needed.
 - **Model:** frontier default `Gemini 3.1 Pro (High)`; any model is allowed (a sub-frontier one earns a
   silenceable `AGY_PROBE=1` advisory). The service can still **stall on large/substantive prompts**
   (Issue-001) — keep reviews **focused**; the hard timeout is the guard.

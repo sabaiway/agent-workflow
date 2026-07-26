@@ -57,13 +57,14 @@ agy-review --continue | --conversation <id>   [--decided @f] [--focus "…"]   #
 |---|---|---|
 | `AGY_MODEL` | `Gemini 3.1 Pro (High)` | frontier default; **any** model is allowed — a sub-frontier one earns a silenceable advisory (quality-first, not a gate) |
 | `AGY_PROBE` | `0` | `1` silences the off-frontier model advisory AND lets `code` run without `--facts` (an ungrounded probe never attests — its receipt is probe-marked) |
-| `AGY_REVIEW_ALLOW_ADDDIR` | `0` | `1` lets an oversized `code` review offload ONLY the change set to a private staging dir via `--add-dir` (the grounding stays inline; re-enables the Issue-001 stall risk — prefer splitting into focused reviews) |
+| `AGY_REVIEW_MAX_TOTAL_BYTES` | `240000` | the ceiling on the SUM of all outgoing prompt bytes an oversized `code` review's chunked feed may send; checked BEFORE the first turn is spent |
+| `AGY_REVIEW_ALLOW_ADDDIR` | `0` | **RETIRED** — recognized so an existing settings line never warns as unknown, but it arms nothing. An oversized `code` review is a chunked feed with a per-part delivery proof; the `--add-dir` offload it armed could not be verified (headless `agy` auto-denies `read_file`) |
 | `AGY_HARD_TIMEOUT` | `30m` | the review's hard cap (longer default than a probe — reviews are slower) |
-| `AGY_MAX_PROMPT_BYTES` | `120000` | the same single-argv byte ceiling; oversized → trim/split (or the `--add-dir` escape above) |
+| `AGY_MAX_PROMPT_BYTES` | `120000` | the same single-argv byte ceiling; oversized `code` is DELIVERED as a chunked feed (see above), oversized `plan`/`diff` refuses with trim/split guidance |
 
 `agy-review` is **read-only** and **advisory**: it never edits, commits, or passes a stray `--`
 passthrough (it owns the posture). The service can still **stall on large/substantive prompts**
-(Issue-001) regardless of `--add-dir`, so keep reviews **focused**; the hard timeout is the guard.
+(Issue-001), so keep reviews **focused**; the hard timeout is the guard.
 
 ## Models
 

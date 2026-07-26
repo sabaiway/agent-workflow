@@ -2,7 +2,7 @@
 name: antigravity-cli-bridge
 description: Delegate work to Google's Antigravity CLI (`agy`) — the successor to Gemini CLI — to reach Gemini, Claude, and GPT-OSS models under a Google AI Pro/Ultra subscription from the terminal. Use when the user wants to run a headless `agy` prompt, hand a focused task or second-opinion review to `agy`, install or authenticate Antigravity CLI, check or economise its quota/models, bridge project context into `agy`, set up a second delegated-execution backend beside Codex, or troubleshoot `agy` flags, models, auth, conversations, or its no-JSON headless behaviour.
 metadata:
-  version: '4.1.0'
+  version: '5.0.0'
 ---
 
 # antigravity-cli-bridge
@@ -86,7 +86,7 @@ agy-run @path/to/prompt.md                    # prompt from a file
 AGY_MODEL="Claude Opus 4.6 (Thinking)" agy-run "..."   # pick a model
 AGY_TIMEOUT=10m agy-run "..."                 # agy's soft --print-timeout
 AGY_HARD_TIMEOUT=8m agy-run "..."             # hard wall-clock cap via timeout(1)
-agy-run "..." -- --add-dir . --dangerously-skip-permissions   # passthrough agy flags
+agy-run "..." -- --add-dir .                  # passthrough agy flags (never a permission widener)
 ```
 
 `agy` is **headless-only** here (`-p`/`--print`) and there is **no JSON output mode** in v1.0.13 — you
@@ -101,9 +101,11 @@ after `--`. Full detail: [`references/models-and-flags.md`](references/models-an
 `${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf` holds `KEY=VALUE` lines,
 **parsed, never sourced** — a file line can never execute code. Precedence: explicit env (even
 empty — `KEY=` disables a knob for one run) > file > built-in default. File-settable keys for this
-bridge: `AGY_HARD_TIMEOUT` (duration string, e.g. `5m`/`30m`) and `AGY_REVIEW_ALLOW_ADDDIR`
-(`0`/`1`; arming the oversized `--add-dir` escape re-enables the Issue-001 stall risk — the hard
-timeout bounds it) — exactly the manifest `settings` block (the single source; the wrapper
+bridge: `AGY_HARD_TIMEOUT` (duration string, e.g. `5m`/`30m`) and `AGY_REVIEW_MAX_TOTAL_BYTES`
+(integer bytes, default `240000` — the ceiling on the SUM of all outgoing prompt bytes an oversized
+`code` review may feed). `AGY_REVIEW_ALLOW_ADDDIR` is **RETIRED**: still recognized so an existing
+line never warns as unknown, but it arms nothing — the writer refuses a new `--set` and `--unset`
+clears it — exactly the manifest `settings` block (the single source; the wrapper
 constants and `--help` are drift-guarded against it). Model keys are **not** file-settable. The
 file lives **outside every kit-managed tree**, so a kit refresh/upgrade can never wipe it; edit it
 by hand or via `/agent-workflow-kit bridge-settings` (preview-first, consent-gated).
@@ -142,9 +144,11 @@ hands to `timeout(1)`, or `uncapped`) — informational, never a receipt field. 
 banner verbatim** when labeling a dispatch.
 
 Frontier default `Gemini 3.1 Pro (High)`; **any** model is allowed (a sub-frontier one earns a
-silenceable `AGY_PROBE=1` advisory). An oversized `code` review trips the byte ceiling with trim/split
-guidance; `AGY_REVIEW_ALLOW_ADDDIR=1` offloads only the change set to a private `--add-dir` staging dir
-(grounding stays inline). The service can still **stall on large/substantive prompts** (Issue-001) — keep
+silenceable `AGY_PROBE=1` advisory). An oversized `code` review is **DELIVERED, not refused**: the
+change set is cut into under-cap parts, fed over continuation turns and reviewed in a final turn, and
+the answer must reproduce a line the wrapper picked from each part — a missing or wrong echo is a
+FAILED review (`exit 4`, no receipt). `plan`/`diff` still refuse over the cap (their artifact is a
+file the operator can split). The service can still **stall on large/substantive prompts** (Issue-001) — keep
 reviews **focused**; the inherited hard timeout is the guard. Full playbook:
 [`references/driving-agy.md`](references/driving-agy.md).
 

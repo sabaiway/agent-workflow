@@ -151,15 +151,27 @@ export const duplicateKeys = (parsed) => [...parsed.byKey.entries()].filter(([, 
 // The env keys the wrappers resolver-validate AFTER precedence (AD-061 aw_effective_timeout) —
 // exactly these mirror the wrapper's invalid-env → warn + built-in-default lane.
 const RESOLVER_VALIDATED_ENV = new Set(['CODEX_HARD_TIMEOUT', 'AGY_HARD_TIMEOUT']);
+// Keys whose wrapper REFUSES the run pre-spend on an invalid explicit env value instead of falling
+// back to a default. Reporting such an override as an active raw value would show a dead setting as
+// live — worse here than for a timeout, because this key exists to bound SPENDING. The wrapper also
+// canonicalizes a digits-only value (leading zeros stripped) before judging it, so the advisor must
+// canonicalize identically or it would disagree with the run it is describing.
+const ENV_REFUSING_KEYS = new Set(['AGY_REVIEW_MAX_TOTAL_BYTES']);
+const canonicalizeDigits = (v) => (/^[0-9]+$/.test(v) ? String(Number(v)) : v);
 // A control byte (C0 range + DEL) in a screened knob makes the wrapper EXIT 2 pre-spend — the
 // advisor must report that refusal, never a benign fallback, and never echo the raw byte into
 // the report (a newline could otherwise forge a `review posture:`/status line). safeShow escapes
 // every note value: JSON.stringify handles C0, an explicit pass handles DEL (JSON leaves it raw).
 const hasControlByte = (s) => /[\x01-\x1f\x7f]/.test(s);
 const safeShow = (s) => JSON.stringify(s).slice(1, -1).replace(/\x7f/g, '\\u007f');
-const REFUSED = (key, v) => ({ value: null, source: 'default', note: `env value "${safeShow(v)}" carries control bytes for ${key} — the wrapper REFUSES the run pre-spend` });
+const REFUSED = (key, v) => ({ value: null, source: 'default', configuredIn: 'env', note: `env value "${safeShow(v)}" carries control bytes for ${key} — the wrapper REFUSES the run pre-spend` });
 
 // The effective value of one knob + where it comes from. Fact-only; never a model claim.
+// `source` is where the EFFECTIVE value comes from; `configuredIn` is where the operator PUT the key,
+// which is NOT the same fact. An explicitly-set but INVALID or EMPTY env value resolves to the
+// built-in default (`source: 'default'`) while still being an explicit line the operator wrote — and
+// for a RETIRED knob that is exactly the line the retirement asks them to clear, so it must not
+// vanish from the surfaces (council fold: `AGY_REVIEW_ALLOW_ADDDIR=2` and `=` both disappeared).
 export const effectiveOf = (entry, parsed, getenv) => {
   const key = entry.key;
   if (Object.prototype.hasOwnProperty.call(getenv, key)) {
@@ -169,7 +181,7 @@ export const effectiveOf = (entry, parsed, getenv) => {
     // NOT "flag absent" (only the tier's built-in default happens to be "no flag"; the timeout / bytes /
     // add-dir knobs fall to their real built-in default). Report the manifest default (null ⇒ "wrapper
     // built-in applies"), not a misleading null-for-everything.
-    if (v === '') return { value: entry.default, source: 'default', note: 'the env KEY= suppresses the file override — the wrapper built-in applies' };
+    if (v === '') return { value: entry.default, source: 'default', configuredIn: 'env', note: 'the env KEY= suppresses the file override — the wrapper built-in applies' };
     // A control byte in a SCREENED knob (the tier + the resolver-validated timeouts) is a pre-spend
     // refusal in the wrapper — report it as such (the default value is inert; the run never happens).
     if (hasControlByte(v) && (entry.kind === 'enum' || RESOLVER_VALIDATED_ENV.has(key))) {
@@ -182,20 +194,27 @@ export const effectiveOf = (entry, parsed, getenv) => {
     // the advisor must never display a dead override as active. Every OTHER non-enum env value stays
     // the operator's RAW override (the wrappers run no resolver on it), shown as-is.
     if (entry.kind === 'enum' && !settingValueValid(entry, v)) {
-      return { value: entry.default, source: 'default', note: `env value "${safeShow(v)}" is not a supported ${key} — the wrapper runs the built-in default` };
+      return { value: entry.default, source: 'default', configuredIn: 'env', note: `env value "${safeShow(v)}" is not a supported ${key} — the wrapper runs the built-in default` };
     }
     if (RESOLVER_VALIDATED_ENV.has(key) && (!settingValueValid(entry, v) || v.match(/^\d*/)[0].length > 7)) {
-      return { value: entry.default, source: 'default', note: `env value "${safeShow(v)}" is invalid for ${key} — the wrapper falls back to the built-in default` };
+      return { value: entry.default, source: 'default', configuredIn: 'env', note: `env value "${safeShow(v)}" is invalid for ${key} — the wrapper falls back to the built-in default` };
     }
-    return { value: v, source: 'env' };
+    if (ENV_REFUSING_KEYS.has(key)) {
+      const canonical = canonicalizeDigits(v);
+      if (!settingValueValid(entry, canonical)) {
+        return { value: entry.default, source: 'default', configuredIn: 'env', note: `env value "${safeShow(v)}" is invalid for ${key} — the wrapper REFUSES the run pre-spend rather than ignoring a ceiling you set` };
+      }
+      return { value: canonical, source: 'env', configuredIn: 'env' };
+    }
+    return { value: v, source: 'env', configuredIn: 'env' };
   }
   const fileEntries = parsed.byKey.get(key);
   if (fileEntries && fileEntries.length) {
     const v = fileEntries[fileEntries.length - 1].value; // last occurrence wins
-    if (settingValueValid(entry, v)) return { value: v, source: 'file' };
-    return { value: entry.default, source: 'default', note: `file value "${safeShow(v)}" is invalid — falls back to the built-in default` };
+    if (settingValueValid(entry, v)) return { value: v, source: 'file', configuredIn: 'file' };
+    return { value: entry.default, source: 'default', configuredIn: 'file', note: `file value "${safeShow(v)}" is invalid — falls back to the built-in default` };
   }
-  return { value: entry.default, source: 'default' };
+  return { value: entry.default, source: 'default', configuredIn: null };
 };
 
 export const displayValue = (v) => (v == null ? '(unset — wrapper built-in applies)' : v);
@@ -224,8 +243,19 @@ export const settingsSnapshot = (ctx = {}) => {
       // ACTIVE = a non-default value is genuinely in effect (source env/file AND differs from the
       // built-in default). A value that merely equals the default keeps every surface byte-identical to
       // "nothing set" — the "status line unchanged unless a knob is active" contract.
-      if ((eff.source === 'env' || eff.source === 'file') && eff.value != null && eff.value !== entry.default) {
-        active.push({ key: entry.key, value: eff.value, source: eff.source, bridge: entry.bridge });
+      // A RETIRED knob surfaces whenever it is EXPLICITLY CONFIGURED, independently of whether its
+      // value differs from the default: `AGY_REVIEW_ALLOW_ADDDIR=0` is still a dead line in the
+      // user's file that the retirement asks them to clear, and the "retired keys still show"
+      // contract would be broken by silently filtering it out for equalling the default.
+      // A retired knob is surfaced on EXPLICIT CONFIGURATION, which is `configuredIn` — not `source`.
+      // An invalid or empty env value resolves to the built-in default, so keying off `source` hid the
+      // very lines the retirement exists to get cleared (council fold).
+      const worthShowing = eff.value != null && eff.value !== entry.default;
+      const surfaced = entry.retired
+        ? eff.configuredIn !== null
+        : (eff.source === 'env' || eff.source === 'file') && worthShowing;
+      if (surfaced) {
+        active.push({ key: entry.key, value: eff.value, source: eff.source, bridge: entry.bridge, retired: entry.retired ?? null });
       }
     }
     return {

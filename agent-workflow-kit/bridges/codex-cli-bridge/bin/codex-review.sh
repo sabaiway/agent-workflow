@@ -124,7 +124,7 @@ aw_settings_file() {
   printf '%s/agent-workflow/bridge-settings.conf' "${XDG_CONFIG_HOME:-$HOME/.config}"
 }
 aw_settings_known() {
-  case " CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR " in
+  case " CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR AGY_REVIEW_MAX_TOTAL_BYTES " in
     *" $1 "*) return 0 ;;
     *) return 1 ;;
   esac
@@ -147,6 +147,7 @@ aw_settings_valid() {
     CODEX_REVIEW_MAX_TOTAL_BYTES) [[ "$v" =~ $int_re ]] && aw_int_in_range "$v" 1 100000000 ;;
     AGY_HARD_TIMEOUT) [[ "$v" =~ $dur_re && ! "$v" =~ $zero_re ]] ;;
     AGY_REVIEW_ALLOW_ADDDIR) [[ "$v" == "0" || "$v" == "1" ]] ;;
+    AGY_REVIEW_MAX_TOTAL_BYTES) [[ "$v" =~ $int_re ]] && aw_int_in_range "$v" 1 100000000 ;;
     *) return 1 ;;
   esac
 }
@@ -265,7 +266,7 @@ DEFAULT_CODEX_EFFORT="xhigh"
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by codex-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="codex"
-AW_BRIDGE_VERSION="3.1.0"
+AW_BRIDGE_VERSION="3.2.0"
 CODEX_MODEL="${CODEX_MODEL:-$DEFAULT_CODEX_MODEL}"
 CODEX_EFFORT="${CODEX_EFFORT:-$DEFAULT_CODEX_EFFORT}"
 # Generous hard cap for a slow xhigh review (subscription latency varies).
@@ -273,6 +274,12 @@ CODEX_HARD_TIMEOUT="${CODEX_HARD_TIMEOUT:-1800}"
 # Above this assembled-payload size (bytes), the diff goes via a git-dir-local temp
 # file instead of inline — never truncated.
 CODEX_REVIEW_MAX_TOTAL_BYTES="${CODEX_REVIEW_MAX_TOTAL_BYTES:-1500000}"
+# The repo file map's share of the assembled payload (see emit_repo_file_map). A PINNED constant,
+# not a knob: a plain assignment, so an inherited environment value can never move it. codex has no
+# single-argv ceiling (the payload rides stdin, and past CODEX_REVIEW_MAX_TOTAL_BYTES a git-dir temp
+# file), so the budget is pinned at the DEFAULT inline-payload cap — the map can never outgrow the
+# whole payload, and every realistic repo's map assembles byte-unchanged.
+AW_REVIEW_MAP_BUDGET_BYTES=1500000
 # Codex service tier (quality-neutral speed knob; live-probed 2026-07-05): default EMPTY ⇒ no
 # service_tier flag (standard tier) — enabling Fast is a consented per-host SPEND act, never a
 # silent default. The only server-catalog tier id on this subscription is 'priority' (catalog
@@ -544,7 +551,7 @@ posture_json() {
 # itself instead of inferring it from this wrapper's version (which bumps in a different release
 # phase). Silence is not a declaration — an unmarked receipt is untrustworthy and the gate rejects it.
 write_review_receipt() {
-  local artifact="$1" fresh="$2" fingerprint="$3" verdict="$4" grounded="$5" facts_hash="$6" probe="${7:-false}"
+  local artifact="$1" fresh="$2" fingerprint="$3" verdict="$4" grounded="$5" facts_hash="$6" probe="${7:-false}" delivery="${8:-}"
   local receipts="${AW_REVIEW_RECEIPTS:-}"
   if [[ -z "$receipts" ]]; then
     local receipt_git_dir
@@ -554,27 +561,70 @@ write_review_receipt() {
     fi
     receipts="$receipt_git_dir/agent-workflow-review-receipts.jsonl"
   fi
-  local line probe_field=',"probe":false'
+  local line probe_field=',"probe":false' delivery_field=""
   if [[ "$probe" == "true" ]]; then probe_field=',"probe":true'; fi
-  line="$(printf '{"schema":1,"artifact":%s,"fresh":%s,"fingerprint":%s,"backend":"%s","verdict":"%s","grounded":%s,"factsHash":%s,"wrapperVersion":"%s","timestamp":"%s"%s,"posture":%s}' \
+  if [[ -n "$delivery" ]]; then delivery_field=",\"delivery\":\"$delivery\""; fi
+  line="$(printf '{"schema":1,"artifact":%s,"fresh":%s,"fingerprint":%s,"backend":"%s","verdict":"%s","grounded":%s,"factsHash":%s,"wrapperVersion":"%s","timestamp":"%s"%s,"posture":%s%s}' \
     "$(receipt_json_scalar "$artifact")" "$fresh" "$(receipt_json_scalar "$fingerprint")" \
     "$AW_RECEIPT_BACKEND" "$verdict" "$grounded" "$(receipt_json_scalar "$facts_hash")" \
-    "$AW_BRIDGE_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$probe_field" "$(posture_json)")"
+    "$AW_BRIDGE_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$probe_field" "$(posture_json)" "$delivery_field")"
   if ! printf '%s\n' "$line" >>"$receipts" 2>/dev/null; then
     echo "warning: could not append the review receipt to $receipts — the review itself succeeded;" >&2
     echo "         the review-state gate will read the current tree as un-receipted." >&2
   fi
 }
 
-# Emit the full review surface to stdout: repo map, status (never-committable untracked records
-# filtered), staged + unstaged diffs, and the CONTENTS of every untracked REGULAR file (NUL-safe
-# iteration over the SAME filtered walk as the fingerprint — the payload is byte-identical with
-# and without a device mask). Symlinks are shown as their target (never followed — no out-of-repo
-# leak); directories/vanished paths are noted, never read (a `cat` on a FIFO would hang BEFORE the
-# hard timeout applies — that class never reaches this loop).
+# The repo file map is a FIXED cost that scales with REPO SIZE, not change size (measured 28,735
+# bytes in the home repo — 24% of agy's 120000-byte single-argv ceiling), so an unbounded map taxes
+# the change budget of every review. AW_REVIEW_MAP_BUDGET_BYTES bounds it; the value is set by each
+# wrapper so THIS BODY stays byte-identical across both (review-fingerprint-parity.test.mjs
+# lockstep). Unset/0 = unbounded. Past the budget the map degrades to the CHANGED-path subset — cut
+# at the SAME budget, so a change touching very many long paths cannot re-breach the bound — plus a
+# stated omitted count; a truncation-with-count, never a silent cut. The map was never part of the
+# fingerprint domain (emit_fingerprint_payload does not contain it), so bounding it moves no receipt.
+emit_repo_file_map() {
+  local budget="${AW_REVIEW_MAP_BUDGET_BYTES:-0}" total shown omitted subset tracked
+  # ONE deduplicated tracked-path SNAPSHOT, captured once and reused for all four uses — the
+  # byte-budget predicate, the printed map, `total`, and the index intersection. Re-running the query
+  # per use let a concurrent index change make the budget decision, the map and the counts describe
+  # DIFFERENT snapshots. Dedupe: an UNMERGED index lists a path once per stage, so a predicate
+  # counting duplicates against a map printing unique paths would push a map that fits into the
+  # truncated arm. `ls-files` output is sorted by path, so one path's stages are adjacent and `uniq`
+  # is exact — no git version floor needed.
+  tracked="$(git ls-files | LC_ALL=C uniq)"
+  if (( budget <= 0 )) || (( $(printf '%s\n' "$tracked" | wc -c) <= budget )); then
+    if [[ -n "$tracked" ]]; then printf '%s\n' "$tracked"; fi
+    return 0
+  fi
+  total=$(( $(printf '%s\n' "$tracked" | wc -l) ))
+  # The subset is INTERSECTED with the index before budgeting, so `shown` and `total` live in ONE
+  # domain and `shown + omitted == total` holds exactly: a STAGED DELETION is a changed path that is
+  # no longer in `git ls-files`, and counting it as shown would make the stated arithmetic a lie.
+  # (The NR==FNR reader is safe here: an empty index returns through the in-budget arm above.)
+  # awk never `exit`s early: a closed pipe would SIGPIPE `sort` and pipefail would abort the run.
+  subset="$(LC_ALL=C awk 'NR == FNR { known[$0] = 1; next } ($0 in known)' <(printf '%s\n' "$tracked") <(git diff --name-only --no-ext-diff; git diff --cached --name-only --no-ext-diff) |
+    LC_ALL=C sort -u |
+    LC_ALL=C awk -v cap="$budget" '{ n = length($0) + 1; if (!over && used + n <= cap) { used += n; print } else over = 1 }')"
+  shown=0
+  if [[ -n "$subset" ]]; then
+    printf '%s\n' "$subset"
+    shown=$(( $(printf '%s\n' "$subset" | wc -l) ))
+  fi
+  omitted=$(( total - shown ))
+  if (( omitted < 0 )); then omitted=0; fi
+  printf '=== repo file map TRUNCATED to the changed-path subset: %s of %s tracked paths shown, %s omitted (map budget %s bytes) ===\n' \
+    "$shown" "$total" "$omitted" "$budget"
+}
+
+# Emit the full review surface to stdout: repo map (bounded, see emit_repo_file_map), status
+# (never-committable untracked records filtered), staged + unstaged diffs, and the CONTENTS of every
+# untracked REGULAR file (NUL-safe iteration over the SAME filtered walk as the fingerprint — the
+# payload is byte-identical with and without a device mask). Symlinks are shown as their target
+# (never followed — no out-of-repo leak); directories/vanished paths are noted, never read (a `cat`
+# on a FIFO would hang BEFORE the hard timeout applies — that class never reaches this loop).
 assemble_code_diff() {
   echo "=== repo file map (git ls-files) ==="
-  git ls-files
+  emit_repo_file_map
   echo
   echo "=== git status (porcelain) ==="
   emit_status_porcelain_filtered

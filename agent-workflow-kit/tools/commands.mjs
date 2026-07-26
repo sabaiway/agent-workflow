@@ -131,7 +131,7 @@ const CATALOG = [
     invocation: invocationOf('agents'),
     group: 'Configure',
     kind: WRITER,
-    oneLine: 'Place bundled cheap-model subagent definitions for mechanical work — sweeps, changelog skeletons, gate triage (Claude Code; opt-in; preview first).',
+    oneLine: 'Place bundled READ-ONLY subagent definitions, none of them granted a shell — three cheap-model ones for mechanical work (sweeps, changelog skeletons, gate triage) and a review lens (Claude Code; opt-in; preview first).',
   },
   {
     key: 'hook',
@@ -305,7 +305,7 @@ const TUNE_TAIL = Object.freeze([
   '',
   'Tune — opt-in accelerators (consent-first: every writer previews before writing; nothing runs without your yes)',
   `  ${BARE_INVOCATION} velocity      routine read-only commands stop prompting (incl. the --kit-tools tier for the kit's own read-only tools)`,
-  `  ${BARE_INVOCATION} agents        cheap-model subagents take the mechanical work (sweeps, changelog skeletons, gate triage)`,
+  `  ${BARE_INVOCATION} agents        shell-free subagents: cheap ones take the mechanical work, a review lens gives an extra read-only opinion`,
   `  ${BARE_INVOCATION} gates         run your declared gates (docs/ai/gates.json) as one batch; its guide also offers the consent-gated seeding preview — writes only on your yes`,
   `  ${BARE_INVOCATION} hook          auto-approve exactly your declared gate commands (byte-exact matches only)`,
   `  ${BARE_INVOCATION} set-recipe    put a ready review backend to work on plans and diffs`,

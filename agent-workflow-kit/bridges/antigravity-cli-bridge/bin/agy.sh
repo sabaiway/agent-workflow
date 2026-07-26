@@ -30,8 +30,8 @@
 #   AGY_HARD_TIMEOUT=8m agy-run "..."        # override the hard wall-clock cap (timeout(1))
 #   AGY_MAX_PROMPT_BYTES=60000 agy-run @big.md    # LOWER the single-argv byte ceiling (default 120000;
 #                                            # the override only tightens it — it can never exceed the OS ~131072 limit)
-#   agy-run "..." -- --add-dir . --dangerously-skip-permissions
-#                                            # passthrough agy flags (future flows)
+#   agy-run "..." -- --add-dir .             # passthrough agy flags (this wrapper stays
+#                                            # flow-agnostic; it never widens agy's own permissions)
 set -euo pipefail
 
 # --- --help / -h (pre-preflight: no agy, no login needed) ----------------------
@@ -94,7 +94,7 @@ aw_settings_file() {
   printf '%s/agent-workflow/bridge-settings.conf' "${XDG_CONFIG_HOME:-$HOME/.config}"
 }
 aw_settings_known() {
-  case " CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR " in
+  case " CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR AGY_REVIEW_MAX_TOTAL_BYTES " in
     *" $1 "*) return 0 ;;
     *) return 1 ;;
   esac
@@ -117,6 +117,7 @@ aw_settings_valid() {
     CODEX_REVIEW_MAX_TOTAL_BYTES) [[ "$v" =~ $int_re ]] && aw_int_in_range "$v" 1 100000000 ;;
     AGY_HARD_TIMEOUT) [[ "$v" =~ $dur_re && ! "$v" =~ $zero_re ]] ;;
     AGY_REVIEW_ALLOW_ADDDIR) [[ "$v" == "0" || "$v" == "1" ]] ;;
+    AGY_REVIEW_MAX_TOTAL_BYTES) [[ "$v" =~ $int_re ]] && aw_int_in_range "$v" 1 100000000 ;;
     *) return 1 ;;
   esac
 }

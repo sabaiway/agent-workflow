@@ -352,7 +352,10 @@ export const composeStatusLine = (detection, recommendation, settings = null, au
   // chars — collapse them to a single space so the "exactly one line" backend-status contract holds.
   const oneLine = (s) => String(s).replace(/[\s]+/g, ' ').trim();
   const active = settings?.active ?? [];
-  const suffix = active.length ? ` · settings: ${active.map((s) => `${oneLine(s.key)}=${oneLine(s.value)}`).join(' · ')}` : '';
+  // A RETIRED knob is rendered as retired, never as an armed capability (D3 Invariant E): the line
+  // exists in the user's file, so hiding it would be a silent deletion — but reading it as active
+  // would claim a capability the wrapper no longer has.
+  const suffix = active.length ? ` · settings: ${active.map((s) => `${oneLine(s.key)}=${oneLine(s.value)}${s.retired ? ' (RETIRED — arms nothing)' : ''}`).join(' · ')}` : '';
   // The autonomy segment (AD-044 Plan 4): rendered ONLY when the caller supplies the computed
   // facts (composeAutonomyFacts) — an omitted param keeps the line byte-identical (the settings-
   // suffix precedent). Fact-only: effective per-activity levels + the render-sync state; an absent

@@ -54,7 +54,13 @@ const makeRepo = ({ config = COUNCIL_CONFIG } = {}) => {
   writeFileSync(join(root, 'pending.txt'), 'uncommitted work\n');
   return root;
 };
-const mint = (root, overrides) => appendFileSync(join(root, '.git', RECEIPTS_BASENAME), `${JSON.stringify({ ...RECEIPT_FIXTURE, ...overrides })}\n`);
+// An agy `code` receipt SELF-DECLARES how the change set reached the model (D8b) — a single-turn
+// review is `inline`; an override may state otherwise (or `undefined` for a pre-marker receipt).
+const mint = (root, overrides) => {
+  const receipt = { ...RECEIPT_FIXTURE, ...overrides };
+  if (receipt.backend === 'agy' && !Object.hasOwn(overrides, 'delivery')) receipt.delivery = 'inline';
+  appendFileSync(join(root, '.git', RECEIPTS_BASENAME), `${JSON.stringify(receipt)}\n`);
+};
 
 // A hermetic clock: now() reads a mutable tick; sleep() advances it and fires an optional side effect
 // (the receipt-lands-mid-await case).

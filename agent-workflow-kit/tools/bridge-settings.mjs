@@ -42,8 +42,10 @@ const renderReader = (registry, parsed, fileState, ctx, path) => {
   for (const entry of registry.values()) {
     const eff = effectiveOf(entry, parsed, getenv);
     const note = eff.note ? `  — ${eff.note}` : '';
-    lines.push(`    ${entry.key} = ${displayValue(eff.value)}  [${eff.source}]${note}`);
+    const retired = entry.retired ? '  ⚠ RETIRED' : '';
+    lines.push(`    ${entry.key} = ${displayValue(eff.value)}  [${eff.source}]${retired}${note}`);
     lines.push(`        ${entry.bridge} · ${allowedLabel(entry)} · ${entry.effect}`);
+    if (entry.retired) lines.push(`        RETIRED — ${entry.retired}`);
   }
   const dups = duplicateKeys(parsed);
   const unknown = [...parsed.byKey.keys()].filter((k) => !registry.has(k));
@@ -61,7 +63,7 @@ const buildReaderJson = (registry, parsed, fileState, ctx, path) => {
     fileState: fileState.state,
     knobs: [...registry.values()].map((entry) => {
       const eff = effectiveOf(entry, parsed, getenv);
-      return { key: entry.key, bridge: entry.bridge, kind: entry.kind, effective: eff.value, source: eff.source, note: eff.note ?? null, default: entry.default };
+      return { key: entry.key, bridge: entry.bridge, kind: entry.kind, effective: eff.value, source: eff.source, note: eff.note ?? null, default: entry.default, retired: entry.retired ?? null };
     }),
     duplicateKeys: duplicateKeys(parsed),
     unknownKeys: [...parsed.byKey.keys()].filter((k) => !registry.has(k)),
@@ -85,14 +87,21 @@ export const reconcileSettings = (ctx = {}) => {
   if (fileState.state === 'absent') return { outcome: 'absent', lines: [`  bridge-settings: no settings file — skipped (${path})`] };
   if (fileState.state === 'unusable') return { outcome: 'unusable', lines: [`  bridge-settings: settings file is a symlink / not a regular file — skipped, never edited (${path})`] };
   const parsed = parseSettings(fileState.text);
-  const known = [...parsed.byKey.keys()].filter((k) => registry.has(k));
-  const unknown = [...parsed.byKey.keys()].filter((k) => !registry.has(k));
+  // RECOGNIZED and CURRENT are not the same thing: a manifest-RETIRED key is still in the registry
+  // (so an existing line never warns as unknown) but it arms nothing, and filing it under "all
+  // current" would be the survival check contradicting the retirement contract on the one surface
+  // init/upgrade actually shows.
+  const fileKeys = [...parsed.byKey.keys()];
+  const retired = fileKeys.filter((k) => registry.get(k)?.retired);
+  const known = fileKeys.filter((k) => registry.has(k) && !registry.get(k).retired);
+  const unknown = fileKeys.filter((k) => !registry.has(k));
   const dups = duplicateKeys(parsed);
   const lines = [];
-  if (unknown.length) lines.push(`  bridge-settings: ${unknown.length} unknown/retired key(s) preserved verbatim (never edited) — compare with the current knobs when convenient: ${unknown.join(', ')}`);
+  if (unknown.length) lines.push(`  bridge-settings: ${unknown.length} unknown key(s) preserved verbatim (never edited) — compare with the current knobs when convenient: ${unknown.join(', ')}`);
+  for (const key of retired) lines.push(`  bridge-settings: ${key} is RETIRED and arms nothing — preserved verbatim (never edited); clear it with --unset ${key} --apply. ${registry.get(key).retired}`);
   if (dups.length) lines.push(`  bridge-settings: duplicate key(s) — the reader takes the last; fix by hand before the writer will edit: ${dups.join(', ')}`);
-  if (!unknown.length && !dups.length) lines.push(`  bridge-settings: ${known.length} key(s) recognized, all current`);
-  return { outcome: unknown.length ? 'flagged' : dups.length ? 'duplicates' : 'ok', lines };
+  if (!unknown.length && !retired.length && !dups.length) lines.push(`  bridge-settings: ${known.length} key(s) recognized, all current`);
+  return { outcome: unknown.length || retired.length ? 'flagged' : dups.length ? 'duplicates' : 'ok', lines };
 };
 
 // ── writer ─────────────────────────────────────────────────────────────────────────
@@ -143,6 +152,12 @@ const validateOps = (ops, registry) => {
   for (const op of ops) {
     const entry = registry.get(op.key);
     if (!entry) throw fail(2, `unknown key "${op.key}" — not a settings knob of any bundled bridge. Known keys: ${[...registry.keys()].join(', ')}`);
+    // A RETIRED key (D3) is recognized so an existing line never warns as unknown — but writing a NEW
+    // one would arm nothing while reading as configuration. `--unset` stays allowed on purpose: it is
+    // the recovery the retirement notice tells the user to run.
+    if (op.kind === 'set' && entry.retired) {
+      throw fail(2, `${op.key} is RETIRED — ${entry.retired} Setting it would arm nothing; use --unset ${op.key} to clear an existing line.`);
+    }
     if (op.kind === 'set' && !settingValueValid(entry, op.value)) {
       throw fail(2, `invalid value "${op.value}" for ${op.key} — allowed: ${allowedLabel(entry)}`);
     }

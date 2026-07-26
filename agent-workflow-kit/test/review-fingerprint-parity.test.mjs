@@ -47,10 +47,11 @@ const SHARED_FNS = [
   'compute_tree_fingerprint',
   'receipt_json_scalar',
   'write_review_receipt',
+  'emit_repo_file_map',
   'assemble_code_diff',
 ];
 const FINGERPRINT_FNS = ['is_binary', 'sha256_stdin', 'is_never_committable_untracked', 'emit_untracked_paths_z', 'emit_fingerprint_payload', 'compute_tree_fingerprint'];
-const ASSEMBLE_FNS = ['is_binary', 'is_never_committable_untracked', 'emit_untracked_paths_z', 'emit_status_porcelain_filtered', 'assemble_code_diff'];
+const ASSEMBLE_FNS = ['is_binary', 'is_never_committable_untracked', 'emit_untracked_paths_z', 'emit_status_porcelain_filtered', 'emit_repo_file_map', 'assemble_code_diff'];
 const PREFLIGHT_FNS = ['is_never_committable_untracked', 'emit_untracked_paths_z', 'has_reviewable_untracked'];
 
 const fnsFrom = (wrapperPath, names) => {
@@ -164,6 +165,124 @@ describe('fingerprint domain == review-payload domain (behavioral proof)', () =>
     const fromBash = bashEval(`${fnsFrom(CODEX_WRAPPER, FINGERPRINT_FNS)}\nemit_fingerprint_payload`, root);
     const fromNode = computeFingerprintPayload(root).toString('utf8').replace(/\n$/, '');
     assert.equal(fromNode, fromBash);
+  });
+});
+
+// ── the repo file map budget (AD-078 Phase 2) ────────────────────────────────────────────────────
+// The map is a FIXED cost that scales with REPO SIZE, not change size — measured at 28,735 bytes in
+// this repo, 24% of agy's 120000-byte prompt cap, taxing every review's change budget. It is now
+// bounded by AW_REVIEW_MAP_BUDGET_BYTES, a per-wrapper variable so the function body stays
+// byte-identical across both wrappers. Past the budget the map degrades to the CHANGED-path subset
+// (bounded by the SAME budget) plus a stated omitted count — never a silent cut.
+describe('repo file map budget — the fixed preamble stops taxing the change budget', () => {
+  const MAP_HEADER = '=== repo file map (git ls-files) ===\n';
+  const STATUS_HEADER = '\n\n=== git status (porcelain) ===';
+  const LONG_DIR = 'deeply/nested/fixture/directory/for/the/repo/file/map/budget';
+  const FILE_COUNT = 80;
+  const BUDGET = 2000;
+  // The changed paths sort AFTER the untouched ones, so a naive prefix-truncation of the full map
+  // would show the untouched files and none of the changed ones — the degraded arm must show the
+  // CHANGED subset, which is what makes the assertions below non-vacuous.
+  const untouched = (i) => `${LONG_DIR}/aa-untouched-file-${String(i).padStart(3, '0')}.txt`;
+  const modified = (i) => `${LONG_DIR}/zz-modified-file-${String(i).padStart(3, '0')}.txt`;
+
+  let mapRoot;
+  before(() => {
+    mapRoot = mkdtempSync(join(tmpdir(), 'fp-map-budget-'));
+    const g = (...args) => {
+      const r = spawnSync('git', args, { cwd: mapRoot, encoding: 'utf8' });
+      assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+    };
+    g('init', '-q');
+    g('config', 'user.email', 'probe@example.com');
+    g('config', 'user.name', 'probe');
+    mkdirSync(join(mapRoot, LONG_DIR), { recursive: true });
+    for (let i = 0; i < FILE_COUNT; i += 1) {
+      writeFileSync(join(mapRoot, untouched(i)), `untouched ${i}\n`);
+      writeFileSync(join(mapRoot, modified(i)), `body ${i} v1\n`);
+    }
+    g('add', '-A');
+    g('commit', '-qm', 'base');
+    for (let i = 0; i < FILE_COUNT; i += 1) writeFileSync(join(mapRoot, modified(i)), `body ${i} v2 — changed\n`);
+  });
+  after(() => rmSync(mapRoot, { recursive: true, force: true }));
+
+  const assembleAt = (wrapper, cwd, budget) =>
+    bashEval(`${budget === null ? '' : `AW_REVIEW_MAP_BUDGET_BYTES=${budget}\n`}${fnsFrom(wrapper, ASSEMBLE_FNS)}\nassemble_code_diff`, cwd);
+  const mapSectionOf = (payload) => payload.slice(payload.indexOf(MAP_HEADER) + MAP_HEADER.length, payload.indexOf(STATUS_HEADER));
+
+  it('an over-budget repo map degrades with a stated count while the fingerprint is unchanged', () => {
+    for (const wrapper of [CODEX_WRAPPER, AGY_WRAPPER]) {
+      const generous = mapSectionOf(assembleAt(wrapper, mapRoot, 1000000));
+      assert.ok(generous.includes(untouched(0)), 'a generous budget lists the whole map');
+      assert.doesNotMatch(generous, /TRUNCATED/, 'an in-budget map carries no truncation note');
+
+      const bounded = mapSectionOf(assembleAt(wrapper, mapRoot, BUDGET));
+      assert.ok(bounded.includes(modified(0)), 'the degraded map keeps the CHANGED paths');
+      assert.ok(!bounded.includes(untouched(0)), 'the degraded map drops the untouched paths (not a prefix cut)');
+      assert.match(bounded, /=== repo file map TRUNCATED[^\n]*\b\d+ of \d+ tracked paths shown, \d+ omitted/, 'truncation-with-count, never a silent cut');
+
+      assert.equal(
+        bashFingerprint(wrapper, mapRoot),
+        bashEval(`AW_REVIEW_MAP_BUDGET_BYTES=${BUDGET}\n${fnsFrom(wrapper, FINGERPRINT_FNS)}\ncompute_tree_fingerprint`, mapRoot),
+        'the map never entered the fingerprint domain — bounding it moves no receipt',
+      );
+    }
+  });
+
+  it('the degraded subset is itself bounded by the same budget (a change touching many long paths)', () => {
+    for (const wrapper of [CODEX_WRAPPER, AGY_WRAPPER]) {
+      const bounded = mapSectionOf(assembleAt(wrapper, mapRoot, BUDGET));
+      const lines = bounded.split('\n');
+      const noteAt = lines.findIndex((l) => l.startsWith('=== repo file map TRUNCATED'));
+      assert.notEqual(noteAt, -1, 'the note closes the degraded section');
+      const pathBytes = Buffer.byteLength(lines.slice(0, noteAt).join('\n'), 'utf8');
+      assert.ok(pathBytes <= BUDGET, `the changed-path subset (${pathBytes} bytes) must stay inside the ${BUDGET}-byte budget`);
+      assert.ok(pathBytes > 0, 'the bounded subset is non-empty — the budget fits at least one path here');
+    }
+  });
+
+  // A STAGED DELETION is a changed path that is no longer in the index, so a naive changed-subset
+  // and an index-derived `total` describe two different sets and the stated counts stop adding up.
+  // The fixture keeps enough index paths to force the degraded branch — the branch the defect lived in.
+  it('the stated counts live in ONE domain: a staged deletion never fakes the arithmetic', () => {
+    const delRoot = mkdtempSync(join(tmpdir(), 'fp-map-del-'));
+    const g = (...args) => {
+      const r = spawnSync('git', args, { cwd: delRoot, encoding: 'utf8' });
+      assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+    };
+    g('init', '-q');
+    g('config', 'user.email', 'probe@example.com');
+    g('config', 'user.name', 'probe');
+    mkdirSync(join(delRoot, LONG_DIR), { recursive: true });
+    for (let i = 0; i < FILE_COUNT; i += 1) {
+      writeFileSync(join(delRoot, untouched(i)), `untouched ${i}\n`);
+      writeFileSync(join(delRoot, modified(i)), `body ${i} v1\n`);
+    }
+    g('add', '-A');
+    g('commit', '-qm', 'base');
+    for (let i = 0; i < FILE_COUNT; i += 1) writeFileSync(join(delRoot, modified(i)), `body ${i} v2 — changed\n`);
+    g('rm', '-q', '--cached', modified(0));           // staged deletion: changed, and OUT of the index
+    rmSync(join(delRoot, modified(0)));
+
+    for (const wrapper of [CODEX_WRAPPER, AGY_WRAPPER]) {
+      const section = mapSectionOf(assembleAt(wrapper, delRoot, BUDGET));
+      const note = section.match(/=== repo file map TRUNCATED to the changed-path subset: (\d+) of (\d+) tracked paths shown, (\d+) omitted/);
+      assert.ok(note, `the degraded branch must be exercised: ${section.slice(0, 200)}`);
+      const [, shown, total, omitted] = note.map(Number);
+      assert.equal(shown + omitted, total, 'shown + omitted == total — one domain, no invented arithmetic');
+      const lines = section.split('\n');
+      const noteAt = lines.findIndex((l) => l.startsWith('=== repo file map TRUNCATED'));
+      assert.ok(!lines.slice(0, noteAt).includes(modified(0)), 'a path deleted from the index is not in the repo file MAP');
+      assert.ok(lines.slice(0, noteAt).includes(modified(1)), 'a still-tracked changed path is');
+    }
+    rmSync(delRoot, { recursive: true, force: true });
+  });
+
+  it('an in-budget map assembles byte-identically to an unbudgeted run (no drift for ordinary repos)', () => {
+    for (const wrapper of [CODEX_WRAPPER, AGY_WRAPPER]) {
+      assert.equal(assembleAt(wrapper, root, 1000000), assembleAt(wrapper, root, null), 'a fitting map is untouched by the bound');
+    }
   });
 });
 

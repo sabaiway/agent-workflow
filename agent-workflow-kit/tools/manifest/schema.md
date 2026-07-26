@@ -83,6 +83,13 @@ this block). Each entry:
   union of both bridges' `settings` keys) and skips other wrappers' keys silently.
 - `effect` (string, required) — what the knob does, incl. built-in defaults and any spend/risk
   caveat (the credit-rate caveat rides here for the tier knob).
+- `retired` (string, optional; **>= 20 chars when present**) — the STATED reason a key is kept only
+  for RECOGNITION. Recognition alone is not enough: a retired key stays in the registry so an
+  existing settings line never starts warning as unknown, but it **arms nothing**. Runtime semantics
+  the field switches on: the writer REFUSES a new `--set` (and still permits `--unset`, which is the
+  stated recovery), the reader/`--json`/status/`procedures` render it as retired rather than active,
+  and the init/upgrade survival check reports it as flagged rather than "all current". A bare flag is
+  rejected by validation — a dead knob must explain itself wherever it surfaces.
 
 Wrappers never parse JSON at run time: each carries its own shell registry/validation constants,
 drift-guarded set-equal to this block by the bridge `bin/*.test.mjs` suites (help section keys,

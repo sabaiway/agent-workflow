@@ -4,6 +4,81 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 4.0.0 — a review receipt must say HOW the code reached the reviewer (AD-078)
+
+**BREAKING, and it costs money to ignore — read the two callouts before upgrading.**
+
+An `agy` code review that never received your change set can no longer produce a receipt that says it
+did — and a read-only review finally has a subagent vehicle that cannot flood you with approval
+prompts.
+
+> **Breaking 1 — existing `agy` code receipts stop attesting.** The reader now requires an `agy` code
+> receipt to declare `delivery`. Receipts written by any earlier bridge lack the field, so
+> `review-state --check` turns RED on a tree that was green before. **Migration: re-run the review.**
+> Nothing else is needed and no receipt file needs editing. This is the same call as kit 2.0.0
+> ([[AD-057]]): the incompatibility is created by the kit READER, so the kit takes the MAJOR alone.
+>
+> **Breaking 2 — the bundled `agy` bridge (5.0.0) changes what an OVERSIZED review COSTS.** It used
+> to refuse and spend nothing. It now DELIVERS the change set as a chunked feed, which spends **N+1
+> subscription turns** instead of one. The count is printed on stderr before the first turn is spent,
+> and `AGY_REVIEW_MAX_TOTAL_BYTES` (default **240000**) refuses the whole run pre-spend when the feed
+> would be larger than that. `AGY_REVIEW_ALLOW_ADDDIR` is retired: still recognized so an existing
+> settings line never warns as unknown, but it arms nothing — clear it with
+> `bridge-settings --unset AGY_REVIEW_ALLOW_ADDDIR --apply`. The bundled `codex` bridge (3.2.0) bounds
+> its repo file map by the same shared helper; for any realistic repo its assembled payload is
+> byte-unchanged.
+
+**Why this exists.** An oversized `agy` review once returned two BLOCKING findings citing lines
+612–767 of a 322-line file, naming functions that exist nowhere in the repository. It arrived as an
+ordinary REWORK verdict with `file:line` citations — indistinguishable, to anyone trusting the
+receipt, from a real review. The old escape hatch pointed the model at a staging file and asked it to
+read it; on a headless host that read is auto-denied, so the lane could return a confident invention
+or an empty SHIP with **no way to tell which**.
+
+**What changed here.** The receipt classifier now requires an `agy` code receipt to declare `delivery`
+— how the change set reached the model. Any well-formed declaration is accepted (the bridge emits
+`inline` or `fed`); what is rejected is SILENCE, because the classifier deliberately ignores wrapper
+versions and an old receipt at an unchanged fingerprint would otherwise still read as attesting.
+**Existing agy code receipts therefore stop satisfying the review-state gate — re-run the review.**
+The check runs after the verdict and grounding arms, so every other receipt class is byte-identical
+to before and a later bad receipt still vetoes an earlier ship.
+
+**The settings surface learned the word "retired".** A manifest entry can now carry a stated
+`retired` reason (validated, never a bare flag): the key stays RECOGNIZED so an existing line never
+starts warning as unknown, the writer refuses a new `--set` while `--unset` still clears it, and the
+reader, `--json`, the status line and the init/upgrade survival check all render it as retired rather
+than current. `AGY_REVIEW_ALLOW_ADDDIR` is the first such key, and the advisor item that used to
+recommend arming it is gone — a checked deletion, since the coverage guard fails on an offer no
+capability claims.
+
+**A read-only review now has a vehicle.** `/agent-workflow-kit agents` places a fourth subagent,
+`review-lens`: an additional independent read-only opinion on code your configured backends have
+already seen. The point is what it lacks — **no `Bash`**. A read-only fan-out sent to a full-tool
+subagent shells out for facts it could have read, and every shelled command is an approval prompt you
+never needed to see; three such floods in one session traced to this one gap, because the cheap
+vehicles are scoped away from review and a review-capable vehicle was always full-tool. The no-shell
+property is now asserted across the whole vehicle set, not one member. The lens never replaces your
+configured review recipe, and it is advisory like every review.
+
+**A deny rung was built for the gate hook, and REMOVED before release — the removal is the result.**
+The hook has exactly one answer for an agent's reflexive `grep … 2>/dev/null`: ask you. So the
+maintainer pays an approval for a decoration, over and over. The fix looked clean: refuse only a
+seeded read-only command that PROVABLY discards its output, since the shell was throwing that output
+away and a refusal could not destroy anything anyone wanted. The argument holds. The byte-level PROOF
+of "this command discards" does not, and could not be made to here — three council rounds produced
+five shell constructs that defeated it: `1<&2` (an fd dup routes stdout back out of `/dev/null` AFTER
+the approved `>`), a quoted literal `>/dev/null ` sitting in an argument, leading-token-only segment
+matching (`… && npm test` runs real work behind the read), a bare `&` (backgrounds the read, runs the
+rest), and a `#` comment (bash never executes that redirect at all). Every one was a FALSE REFUSAL.
+
+The general lesson, now written into the hook's own header: **on an ASK rung an incomplete scan merely
+over-asks, which is safe; on a DENY rung the identical incompleteness refuses real work.** Deciding
+whether a `>` is an operator or text requires lexing the shell, which this dependency-free hook
+deliberately does not do — so a deny rung needs a justification that does not rest on parsing command
+bytes. The hook therefore still **never emits `deny`**, the five counterexamples are kept as the
+specification for whoever attempts it next, and the prompt this was meant to remove is still there.
+Stating that plainly is worth more than shipping a refusal we cannot certify.
+
 ## 3.15.0 — a shipped opt-in now advertises itself (AD-076)
 
 `/agent-workflow-kit upgrade` and `recommendations` now offer the closing-block detector that 3.14.0

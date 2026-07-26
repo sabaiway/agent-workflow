@@ -50,8 +50,10 @@ export const CHEAP_AGENTS_BUNDLE = 'CHEAP_AGENTS_BUNDLE';
 
 const USAGE = `usage: cheap-agents [--dry-run | --apply] [--cwd <dir>] [--help]
 
-Places the bundled cheap-lane subagent definitions (haiku/low, read-only tools) into the
-project's ${AGENTS_DIR}/. Default is --dry-run (a preview; writes nothing). --apply writes.
+Places the bundled READ-ONLY subagent definitions into the project's ${AGENTS_DIR}/. No vehicle
+grants a shell: three ride a cheap model (haiku/low) for mechanical work — extraction sweeps,
+changelog fact-skeletons, gate triage — and review-lens is a read-only REVIEW vehicle on a
+review-capable model. Default is --dry-run (a preview; writes nothing). --apply writes.
 An existing file with DIFFERENT content is preserved and reported, never overwritten.`;
 
 export const fail = (exitCode, message) => Object.assign(new Error(message), { exitCode });
@@ -177,8 +179,8 @@ const ACTION_LABEL = {
 export const formatResult = (result) => {
   const lines = [
     result.dryRun
-      ? 'agent-workflow cheap-lane agents — DRY RUN (no changes)'
-      : 'agent-workflow cheap-lane agents — APPLY',
+      ? 'agent-workflow read-only subagents — DRY RUN (no changes)'
+      : 'agent-workflow read-only subagents — APPLY',
   ];
   for (const item of result.plan) {
     const verb = result.dryRun && item.action === 'place' ? 'would place' : ACTION_LABEL[item.action];
@@ -188,7 +190,8 @@ export const formatResult = (result) => {
     lines.push(`note: no current deployment stamp found (${result.stamp ?? 'none'}) — --apply will refuse until init/upgrade runs.`);
   }
   lines.push(
-    'the vehicles are Claude Code subagents (model: haiku, effort: low, read-only tools) for mechanical work only — judgment, review, and real code stay on your main lane.',
+    'the vehicles are Claude Code subagents with READ-ONLY tools and NO shell — so a fan-out can never turn into a wave of approval prompts.',
+    'three ride the cheap lane (model: haiku, effort: low) for mechanical work; review-lens is an ADDITIONAL read-only review opinion, not a replacement for your configured review recipe. Writing code and running gates stay on your main lane.',
   );
   // A preview must print the EXACT command that applies it. The advisor renders this dry-run as an
   // item's one-liner, and that flow's contract is "run the printed command, no improvisation" — a
