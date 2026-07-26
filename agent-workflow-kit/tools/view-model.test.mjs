@@ -101,6 +101,39 @@ describe('view-model — bridges / project / settings', () => {
     assert.deepEqual(vm.bridges[1].wrappers, [{ cmd: 'agy-review', state: 'unknown' }, { cmd: 'agy-run', state: 'unknown' }]);
   });
 
+  // A RETIRED knob is configured but arms nothing. Dropping the flag here rendered a dead key as an
+  // active setting on the one surface a user reads by default — the reader, --json, the status line
+  // and the survival check all said "retired" while `status` alone still said "on".
+  it('a retired bridge knob keeps its retirement flag into the status view model', () => {
+    const vm = toViewModel({
+      installed: [],
+      bridges: [{
+        member: 'antigravity-cli-bridge',
+        display: 'agy',
+        readiness: 'ready',
+        wrappers: [],
+        settings: { active: [{ key: 'AGY_REVIEW_ALLOW_ADDDIR', value: '1', source: 'file', bridge: 'antigravity-cli-bridge', retired: 'the offload is retired: it arms nothing' }] },
+      }],
+    });
+    const row = vm.bridges[0].settings.active[0];
+    assert.equal(row.key, 'AGY_REVIEW_ALLOW_ADDDIR');
+    assert.match(row.retired, /arms nothing/, 'the retirement reason reaches the renderer');
+  });
+
+  it('a NON-retired knob carries retired:null, never undefined (the renderer branches on it)', () => {
+    const vm = toViewModel({
+      installed: [],
+      bridges: [{
+        member: 'codex-cli-bridge',
+        display: 'codex',
+        readiness: 'ready',
+        wrappers: [],
+        settings: { active: [{ key: 'CODEX_SERVICE_TIER', value: 'priority', source: 'file', bridge: 'codex-cli-bridge' }] },
+      }],
+    });
+    assert.equal(vm.bridges[0].settings.active[0].retired, null);
+  });
+
   it('project stamps carry display/version only (never the internal filename); visibility → phrase', () => {
     const vm = toViewModel(fullEnvelope());
     assert.deepEqual(vm.project.deployStamps, [{ display: 'kit', version: '1.3.0' }, { display: 'memory', version: '1.0.0' }]);

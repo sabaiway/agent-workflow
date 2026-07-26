@@ -61,7 +61,7 @@ settings
   recipes       plan-authoring.review=reviewed · plan-execution.execute=delegated · plan-execution.review=council
   attribution   includeCoAuthoredBy effective=false
   velocity      defaultMode=acceptEdits · allow project/local=1/2
-  cheap agents  placed=1/3
+  subagents     placed=1/3
   gate hook     wired=yes · file=yes · gates.json=no · declared=0`;
 
 describe('renderers — plain (byte-exact golden)', () => {
@@ -169,7 +169,7 @@ describe('renderers — branch coverage (every replaced-function branch)', () =>
     assert.match(out, /recipes\s+error: docs\/ai\/orchestration\.json: bad json/);
     assert.match(out, /attribution\s+error: \.claude\/settings\.json: bad json/);
     assert.match(out, /velocity\s+error: \.claude\/settings\.local\.json: bad json/);
-    assert.match(out, /cheap agents\s+error: bundled agents dir unreadable/);
+    assert.match(out, /subagents\s+error: bundled agents dir unreadable/);
     assert.match(out, /gate hook\s+error: \.claude\/settings\.json: bad json/);
   });
 
@@ -208,6 +208,25 @@ describe('renderers — branch coverage (every replaced-function branch)', () =>
     ] });
     assert.match(out, /settings: CODEX_SERVICE_TIER=priority \[file\]/, 'the active knob is surfaced fact-only');
     assert.equal((out.match(/settings:/g) ?? []).length, 1, 'the bridge with no active knob adds no sub-line');
+  });
+
+  // A RETIRED knob must still SHOW — the line really is in the user's file — but never as an armed
+  // capability. `status` is the surface a user reads by default, so a bare `KEY=1 [file]` here would
+  // claim exactly the capability the retirement removed.
+  it('a RETIRED bridge knob renders as retired, with the command that clears it', () => {
+    const out = renderPlain({ installed: [], bridges: [
+      { display: 'antigravity-bridge', readiness: 'ready', wrappers: [{ cmd: 'agy-review', state: 'present' }], settings: { active: [{ key: 'AGY_REVIEW_ALLOW_ADDDIR', value: '1', source: 'file', retired: 'the offload is retired and arms nothing' }] } },
+    ] });
+    assert.match(out, /AGY_REVIEW_ALLOW_ADDDIR=1 \[file\] RETIRED — arms nothing/, 'the knob shows, flagged, never as active');
+    assert.match(out, /clear it with: bridge-settings --unset AGY_REVIEW_ALLOW_ADDDIR --apply/, 'and the recovery is runnable, not implied');
+  });
+
+  it('a NON-retired knob renders no retirement hint (the flag is what switches it)', () => {
+    const out = renderPlain({ installed: [], bridges: [
+      { display: 'codex-bridge', readiness: 'ready', wrappers: [{ cmd: 'codex-exec', state: 'present' }], settings: { active: [{ key: 'CODEX_SERVICE_TIER', value: 'priority', source: 'file', retired: null }] } },
+    ] });
+    assert.doesNotMatch(out, /RETIRED/, 'an ordinary active knob is never flagged');
+    assert.doesNotMatch(out, /--unset/, 'and gets no clear-it hint');
   });
 
   it('a bridge settings READ error renders a localized note, never a crash', () => {

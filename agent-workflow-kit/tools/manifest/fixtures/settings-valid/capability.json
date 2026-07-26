@@ -13,7 +13,8 @@
     { "key": "FIX_TIER", "kind": "enum", "values": ["fast"], "default": null, "appliesTo": ["fixture-exec"], "effect": "an enum knob" },
     { "key": "FIX_CAP", "kind": "integer", "min": 1, "max": 100, "default": "50", "appliesTo": ["fixture-review"], "effect": "an integer knob" },
     { "key": "FIX_WAIT", "kind": "duration", "default": "5m", "appliesTo": ["fixture-review"], "effect": "a duration knob" },
-    { "key": "FIX_FLAG", "kind": "boolean", "default": "0", "appliesTo": ["fixture-exec", "fixture-review"], "effect": "a boolean knob" }
+    { "key": "FIX_FLAG", "kind": "boolean", "default": "0", "appliesTo": ["fixture-exec", "fixture-review"], "effect": "a boolean knob" },
+    { "key": "FIX_GONE", "kind": "boolean", "default": "0", "appliesTo": ["fixture-exec"], "retired": "the lane this knob armed cannot be verified on a headless host, so it arms nothing; the key stays recognized only so an existing settings line never warns as unknown", "effect": "a RETIRED knob — recognized, arms nothing" }
   ],
   "cost": "subscription",
   "quota": { "kind": "subscription", "finite": true }

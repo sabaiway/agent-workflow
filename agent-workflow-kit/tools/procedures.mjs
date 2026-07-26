@@ -160,7 +160,10 @@ const resolveAllSlots = ({ activity, config, detection, overrides }) => {
     const contracts = dispatch
       .map((d) => ({ backend: d.backend, role: d.role, cmd: wrapperCmdFor(d.backend, d.role), contract: wrapperContractFor(d.backend, d.role) }))
       .filter((c) => c.cmd && c.contract)
-      .map((c) => ({ ...c, settings: knobsFor(c.cmd).map((k) => ({ key: k.key, allowed: allowedLabel(k) })) }));
+      // `retired` rides along: without it this surface advertised a RETIRED key as an ordinary
+      // settable knob, while the writer refuses to set it — a driving contract that contradicts the
+      // tool it points at.
+      .map((c) => ({ ...c, settings: knobsFor(c.cmd).map((k) => ({ key: k.key, allowed: allowedLabel(k), retired: k.retired ?? null })) }));
     return { slot, ...resolved, backends, contracts };
   });
 };
@@ -329,7 +332,11 @@ const contractLines = ({ cmd, contract, settings }) => {
   // branch — contractLines drops any contract key it does not name, so this must be enumerated here).
   if ((settings ?? []).length) {
     lines.push('        host settings (survive kit upgrades — set via /agent-workflow-kit bridge-settings):');
-    for (const s of settings) lines.push(`          ${s.key} — ${s.allowed}`);
+    for (const s of settings) {
+      lines.push(s.retired
+        ? `          ${s.key} — RETIRED: recognized but arms nothing; the writer refuses --set, --unset clears an existing line`
+        : `          ${s.key} — ${s.allowed}`);
+    }
   }
   return lines;
 };

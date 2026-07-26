@@ -83,6 +83,15 @@ const RECORDING_STUB = [
   '',
 ].join('\n');
 
+// Records the full argv it was invoked with, one token per line.
+const ARGV_STUB = [
+  '#!/usr/bin/env bash',
+  'if [[ -n "${AGY_STUB_ARGV:-}" ]]; then { for a in "$@"; do printf "%s\\n" "$a"; done; } > "$AGY_STUB_ARGV"; fi',
+  'echo "OK reply"',
+  'exit 0',
+  '',
+].join('\n');
+
 // Run the wrapper with an explicit argv (so a `@file` / `-` prompt form can be passed)
 // and optional stdin. AGY_MODEL='' drops --model so the stub argv stays clean.
 const runArgs = (home, { args, env = {}, input } = {}) =>
@@ -215,6 +224,20 @@ describe('agy.sh — --help (pre-preflight, candidate C)', () => {
       assert.match(r.stdout, /agy-run @path\/to\/prompt\.md/);
       assert.match(r.stdout, /agy-run <prompt\|-\|@file> -- <extra agy flags\.\.\.>/);
     }
+  });
+
+  // D3b: what Phase 4 retires is the AUTOMATICALLY-CONSTRUCTED --add-dir inside `agy-review code`.
+  // The PUBLIC passthrough contract is deliberately preserved: agy-run is a thin, flow-agnostic
+  // wrapper and an operator who asks for --add-dir explicitly still gets it.
+  it('agy-run keeps the direct --add-dir passthrough (the retirement is scoped to the review offload)', () => {
+    const home = makeSandbox(ARGV_STUB);
+    const argvFile = join(home, 'argv');
+    const r = runArgs(home, { args: ['prompt', '--', '--add-dir', '.'], env: { AGY_STUB_ARGV: argvFile } });
+    const argv = existsSync(argvFile) ? readFileSync(argvFile, 'utf8') : '';
+    rmSync(home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(argv, /(^|\n)--add-dir(\n|$)/, 'an operator-supplied --add-dir still reaches agy');
+    assert.match(argv, /(^|\n)\.(\n|$)/, 'with its argument intact');
   });
 
   it('--help after the -- separator is passthrough payload, never intercepted', () => {

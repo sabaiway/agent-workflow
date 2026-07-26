@@ -552,7 +552,7 @@ describe('procedures CLI — point-of-use driving contract: verbatim, manifest-d
   const manifestSettings = (bridge, cmd) =>
     (JSON.parse(readFileSync(join(REPO_ROOT, bridge, 'capability.json'), 'utf8')).settings ?? [])
       .filter((s) => (s.appliesTo ?? []).includes(cmd))
-      .map((s) => ({ key: s.key, allowed: allowedLabel(s) }));
+      .map((s) => ({ key: s.key, allowed: allowedLabel(s), retired: s.retired ?? null }));
   const norm = (s) => s.replace(/\s+/g, ' ').trim();
   // The advisor region below the verbatim canon section — scope the descriptor parse to it so a
   // canon edit mentioning a wrapper name can never leak into the set-equality.
@@ -628,7 +628,10 @@ describe('procedures CLI — point-of-use driving contract: verbatim, manifest-d
     const human = run(['plan-authoring', '--override', 'review=council'], { codex: READY, agy: READY }).stdout;
     assert.match(human, /host settings \(survive kit upgrades/);
     assert.match(human, /CODEX_SERVICE_TIER — "priority"/);
-    assert.match(human, /AGY_REVIEW_ALLOW_ADDDIR — "0" \| "1"/);
+    // A RETIRED key renders as clear-only, never as an ordinary settable knob — this surface points
+    // at the writer, and the writer refuses to set it.
+    assert.match(human, /AGY_REVIEW_ALLOW_ADDDIR — RETIRED: recognized but arms nothing/);
+    assert.match(human, /--unset clears an existing line/);
   });
 
   it('solo: no contract block in human output; contracts empty in --json (solo-omits holds)', () => {

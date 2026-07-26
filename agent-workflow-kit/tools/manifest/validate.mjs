@@ -596,6 +596,14 @@ export const validateManifest = (skillDir) => {
           seenKeys.add(entry.key);
         }
         if (typeof entry.effect !== 'string' || !entry.effect) errors.push(`${at}.effect must be a non-empty string`);
+        // RETIRED metadata (D3): recognition alone is not enough. A key kept only so an existing
+        // settings line never warns as unknown carries a STATED reason; the writer refuses a new
+        // `--set` of it and every reader surface renders it as retired. Optional, but never a bare
+        // flag — an unvalidated field must not be able to ship.
+        if (Object.hasOwn(entry, 'retired')
+            && (typeof entry.retired !== 'string' || entry.retired.trim().length < 20)) {
+          errors.push(`${at}.retired must be a string stating WHY the key is retired (>= 20 chars)`);
+        }
         if (!Array.isArray(entry.appliesTo) || entry.appliesTo.length === 0
             || !entry.appliesTo.every((c) => typeof c === 'string' && c)) {
           errors.push(`${at}.appliesTo must be a non-empty array of wrapper cmd names`);

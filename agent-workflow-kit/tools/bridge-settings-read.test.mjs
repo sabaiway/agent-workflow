@@ -28,14 +28,64 @@ describe('settingsSnapshot — active = differs from the built-in default (revie
   });
 
   it('a file value that EQUALS the built-in default is NOT active', () => {
-    // AGY_REVIEW_ALLOW_ADDDIR default "0"; CODEX_REVIEW_MAX_TOTAL_BYTES default "1500000".
-    seedConf('AGY_REVIEW_ALLOW_ADDDIR=0\nCODEX_REVIEW_MAX_TOTAL_BYTES=1500000\n');
+    // CODEX_REVIEW_MAX_TOTAL_BYTES default "1500000"; CODEX_HARD_TIMEOUT has no built-in here.
+    // A RETIRED key is the deliberate exception — it surfaces even at its default, because the line
+    // is a dead knob the user is being asked to clear (its own case is asserted below).
+    seedConf('CODEX_REVIEW_MAX_TOTAL_BYTES=1500000\n');
     assert.deepEqual(settingsSnapshot(ctx()).active, [], 'default-valued knobs are not "active"');
   });
 
   it('a value that DIFFERS from the default is active', () => {
     seedConf('AGY_REVIEW_ALLOW_ADDDIR=1\nCODEX_SERVICE_TIER=priority\n');
     assert.deepEqual(active(settingsSnapshot(ctx())), ['AGY_REVIEW_ALLOW_ADDDIR=1[file]', 'CODEX_SERVICE_TIER=priority[file]']);
+  });
+});
+
+describe('settingsSnapshot / effectiveOf — a knob whose wrapper REFUSES an invalid env override', () => {
+  it('an invalid env ceiling reports the pre-spend REFUSAL, never a live raw override', () => {
+    const eff = effectiveOf(
+      { key: 'AGY_REVIEW_MAX_TOTAL_BYTES', kind: 'integer', min: 1, max: 100000000, default: '240000' },
+      { byKey: new Map() },
+      { AGY_REVIEW_MAX_TOTAL_BYTES: 'lots' },
+    );
+    assert.equal(eff.source, 'default', 'a refused override is not an active value');
+    assert.match(eff.note, /REFUSES the run pre-spend/, 'the advisor states what the wrapper really does');
+  });
+
+  it('a leading-zero env ceiling is canonicalized exactly as the wrapper canonicalizes it', () => {
+    const eff = effectiveOf(
+      { key: 'AGY_REVIEW_MAX_TOTAL_BYTES', kind: 'integer', min: 1, max: 100000000, default: '240000' },
+      { byKey: new Map() },
+      { AGY_REVIEW_MAX_TOTAL_BYTES: '008000' },
+    );
+    assert.equal(eff.value, '8000', 'the advisor agrees with the run it describes');
+    assert.equal(eff.source, 'env');
+  });
+
+  it('an explicitly configured RETIRED key surfaces even at its default value', () => {
+    seedConf('AGY_REVIEW_ALLOW_ADDDIR=0\n');
+    const snap = settingsSnapshot(ctx());
+    const row = snap.active.find((a) => a.key === 'AGY_REVIEW_ALLOW_ADDDIR');
+    assert.ok(row, 'a dead line the retirement asks the user to clear must not vanish for equalling the default');
+    assert.ok(row.retired, 'and it carries its stated retirement reason');
+  });
+
+  // Council fold: the surfacing gate keyed off `source`, which an invalid or empty env value resets to
+  // `default` — so the two shapes MOST worth telling the user about disappeared from status/snapshot.
+  for (const [name, value] of [['an INVALID env value', '2'], ['an EMPTY env value', '']]) {
+    it(`a RETIRED key with ${name} still surfaces — it is an explicit line either way`, () => {
+      seedConf('');
+      const snap = settingsSnapshot(ctx({ AGY_REVIEW_ALLOW_ADDDIR: value }));
+      const row = snap.active.find((a) => a.key === 'AGY_REVIEW_ALLOW_ADDDIR');
+      assert.ok(row, `${name} must not hide a configured retired key`);
+      assert.ok(row.retired, 'and it carries its stated retirement reason');
+    });
+  }
+
+  it('a NON-retired key with an invalid env value stays absent — this fold changed nothing there', () => {
+    seedConf('');
+    const snap = settingsSnapshot(ctx({ CODEX_SERVICE_TIER: 'nope' }));
+    assert.ok(!snap.active.some((a) => a.key === 'CODEX_SERVICE_TIER'), 'a dead non-retired override is still not "active"');
   });
 });
 
@@ -71,7 +121,37 @@ describe('settingsSnapshot — env validation mirrors the wrapper (review-bridge
     // CODEX_REVIEW_MAX_TOTAL_BYTES has no effective-value resolver in the wrappers — the advisor
     // mirrors wrapper behavior, so a raw env override is shown as-is.
     const eff = effectiveOf({ key: 'CODEX_REVIEW_MAX_TOTAL_BYTES', kind: 'integer', min: 1, max: 100000000, default: '1500000' }, { byKey: new Map() }, { CODEX_REVIEW_MAX_TOTAL_BYTES: 'weird' });
-    assert.deepEqual(eff, { value: 'weird', source: 'env' });
+    assert.deepEqual(eff, { value: 'weird', source: 'env', configuredIn: 'env' });
+  });
+});
+
+// `source` says where the EFFECTIVE value came from; `configuredIn` says where the operator PUT the
+// key. They diverge exactly when an explicit setting is invalid or empty — and for a RETIRED knob
+// that divergence used to make the dead line the retirement asks about VANISH from every surface.
+describe('effectiveOf — configuredIn records the explicit line even when it does not win', () => {
+  const retiredEntry = { key: 'AGY_REVIEW_ALLOW_ADDDIR', kind: 'enum', values: ['0', '1'], default: '0', bridge: 'agy', retired: 'the lane it armed is retired — clear this line' };
+  const noFile = { byKey: new Map() };
+
+  it('an INVALID enum env value: source falls back, configuredIn still names env', () => {
+    const eff = effectiveOf(retiredEntry, noFile, { AGY_REVIEW_ALLOW_ADDDIR: '2' });
+    assert.equal(eff.source, 'default', 'the wrapper runs the built-in default');
+    assert.equal(eff.configuredIn, 'env', 'but the operator DID write the line');
+  });
+
+  it('an EMPTY env value: same divergence', () => {
+    const eff = effectiveOf(retiredEntry, noFile, { AGY_REVIEW_ALLOW_ADDDIR: '' });
+    assert.equal(eff.source, 'default');
+    assert.equal(eff.configuredIn, 'env');
+  });
+
+  it('an invalid FILE value keeps configuredIn=file', () => {
+    const eff = effectiveOf(retiredEntry, { byKey: new Map([['AGY_REVIEW_ALLOW_ADDDIR', [{ value: 'nope' }]]]) }, {});
+    assert.equal(eff.source, 'default');
+    assert.equal(eff.configuredIn, 'file');
+  });
+
+  it('genuinely unset: configuredIn is null', () => {
+    assert.equal(effectiveOf(retiredEntry, noFile, {}).configuredIn, null);
   });
 });
 

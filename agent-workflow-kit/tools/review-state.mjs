@@ -244,6 +244,7 @@ export const backendReceiptStatus = (receipts, backend, fingerprint) => {
     markerRejected: summary.markerRejected,
     unmarkedRejected: summary.unmarkedRejected,
     postureRejected: summary.postureRejected,
+    deliveryRejected: summary.deliveryRejected,
   };
   if (summary.state === 'current') {
     return { state: 'current', verdict: summary.receipt.verdict ?? 'unknown', shipClass: isShipVerdict(summary.receipt.verdict), grounded: true, timestamp: summary.receipt.timestamp ?? null, ...counts };
@@ -372,6 +373,9 @@ const rejectionCause = (b) => {
   }
   if ((b.postureRejected ?? 0) > 0) {
     parts.push(`${b.postureRejected} with an absent/invalid run posture (D5) — a pre-posture wrapper minted it; re-run the review on the current bridge`);
+  }
+  if ((b.deliveryRejected ?? 0) > 0) {
+    parts.push(`${b.deliveryRejected} with an absent/invalid delivery declaration (D8b) — the receipt never declared HOW the change set reached the model, so delivery was not proven; re-run the review on the current bridge`);
   }
   return parts.join(' + ');
 };

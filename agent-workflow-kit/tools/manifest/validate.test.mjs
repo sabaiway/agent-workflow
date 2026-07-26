@@ -102,6 +102,10 @@ describe('validateManifest — negative fixtures MUST fail (strict)', () => {
     ['settings-bad-appliesto', /`settings\[0\]`\.appliesTo names "not-a-declared-cmd" which is no roles\.\*\.cmd/],
     ['settings-missing-default', /`settings\[0\]`\.default is required/],
     ['settings-zero-duration', /`settings\[0\]`\.default must be null or a string value that passes the duration validation/],
+    // RETIRED metadata (D3): a key kept only for recognition must STATE why — a bare flag or a
+    // one-word reason would ship an unexplained refusal into the writer and every reader surface.
+    ['settings-bad-retired', /`settings\[0\]`\.retired must be a string stating WHY the key is retired/],
+    ['settings-bad-retired', /`settings\[1\]`\.retired must be a string stating WHY the key is retired/],
     // `networkHosts` (AD-044 Plan 4): entries are pasted verbatim into hand-applied allowlist
     // lines, so a malformed list fails --strict like `settings` — never a tolerated extra.
     ['network-hosts-bad-entry', /`networkHosts\[0\]` must be a bare hostname or a \*\.family wildcard/],

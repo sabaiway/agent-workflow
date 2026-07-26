@@ -41,8 +41,9 @@
 #   AGY_TIMEOUT              default = AGY_HARD_TIMEOUT (agy's soft --print-timeout)
 #   AGY_MAX_PROMPT_BYTES     default 120000 (single-argv byte ceiling; see agy.sh)
 #   AGY_PROBE=1              throwaway probe — silences the off-frontier model advisory
-#   AGY_REVIEW_ALLOW_ADDDIR=1  oversized CODE review: offload the change set to a private
-#                            staging dir and pass it via --add-dir (re-enables Issue-001 stall risk)
+#   AGY_REVIEW_MAX_TOTAL_BYTES default 240000 (the chunked feed's total outgoing prompt-byte ceiling)
+#   AGY_REVIEW_ALLOW_ADDDIR  RETIRED — recognized so an existing settings line never warns, but it
+#                            arms nothing; an oversized CODE review is delivered as a chunked feed
 #   AW_REVIEW_RECEIPTS       override the review-receipt file (default: <git dir>/
 #                            agent-workflow-review-receipts.jsonl — see the --help Receipt block)
 set -euo pipefail
@@ -108,14 +109,20 @@ Receipt:
   gate rejects a receipt with an absent/invalid posture (a pre-D5 wrapper minted it; re-run the
   review), one stderr banner line states the same posture, an ATTESTING review with AGY_MODEL
   explicitly emptied refuses pre-spend, and a model string carrying control bytes refuses
-  pre-spend in every mode; a run whose output carries NO recognized '### Verdict' section — empty
+  pre-spend in every mode; delivery = how the change set REACHED the model, currently emitted as
+  'inline' (the whole set rode one prompt — proven by construction) or 'fed' (a chunked feed whose
+  per-part echo proof verified); REQUIRED on every agy code receipt and its ABSENCE is what stops a
+  pre-fed-lane receipt attesting, while the gate accepts any well-formed declaration rather than a
+  particular value; absent by construction on plan/diff/continuation receipts, which carry no change
+  set; a run whose output carries NO recognized '### Verdict' section — empty
   output included — exits 4 with NO receipt (D4: a FAILED review to RE-RUN, never a fatal session
   error); a write failure warns, never fails the review
 
 Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):
   ${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf
   AGY_HARD_TIMEOUT — hard wall-clock cap, duration string like 5m/30m/90s (built-in default 30m)
-  AGY_REVIEW_ALLOW_ADDDIR — boolean 0/1: 1 arms the oversized --add-dir escape (re-enables the Issue-001 stall risk; default 0)
+  AGY_REVIEW_ALLOW_ADDDIR — RETIRED: still recognized (an existing line never warns as unknown) but it arms NOTHING; a set value prints the retirement notice. The oversized code review is a chunked feed now
+  AGY_REVIEW_MAX_TOTAL_BYTES — integer bytes 1..100000000 (default 240000): the ceiling on the SUM of all outgoing prompt bytes an over-cap CODE review's chunked feed may send; past it the fed review refuses before spending turn 1
 
 Honesty + posture (D4/D5):
   a run whose output carries NO recognized '### Verdict' section — empty output included — exits 4
@@ -127,7 +134,7 @@ Honesty + posture (D4/D5):
   AGY_PROBE=1 is exempt), and a model string carrying control bytes refuses pre-spend in every
   mode.
 
-Closed grammar: unknown flags are rejected; no '--' passthrough (the flag escape is --ungrounded; the env escapes are AGY_PROBE=1 and AGY_REVIEW_ALLOW_ADDDIR=1).
+Closed grammar: unknown flags are rejected; no '--' passthrough (the flag escape is --ungrounded; the env escape is AGY_PROBE=1).
 Requires at run time: the agy CLI on PATH + a Google AI subscription login (--help needs neither).
 HELP
     exit 0
@@ -135,7 +142,7 @@ HELP
 esac
 
 # This wrapper's applied settings-file subset (see the shared reader block below).
-AW_SETTINGS_APPLIED="AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR"
+AW_SETTINGS_APPLIED="AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR AGY_REVIEW_MAX_TOTAL_BYTES"
 
 # --- Bridge settings file (host-level, kit-independent) — byte-identical across the four wrappers ---
 # ${XDG_CONFIG_HOME:-$HOME/.config}/agent-workflow/bridge-settings.conf holds KEY=VALUE lines,
@@ -156,7 +163,7 @@ aw_settings_file() {
   printf '%s/agent-workflow/bridge-settings.conf' "${XDG_CONFIG_HOME:-$HOME/.config}"
 }
 aw_settings_known() {
-  case " CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR " in
+  case " CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR AGY_REVIEW_MAX_TOTAL_BYTES " in
     *" $1 "*) return 0 ;;
     *) return 1 ;;
   esac
@@ -179,6 +186,7 @@ aw_settings_valid() {
     CODEX_REVIEW_MAX_TOTAL_BYTES) [[ "$v" =~ $int_re ]] && aw_int_in_range "$v" 1 100000000 ;;
     AGY_HARD_TIMEOUT) [[ "$v" =~ $dur_re && ! "$v" =~ $zero_re ]] ;;
     AGY_REVIEW_ALLOW_ADDDIR) [[ "$v" == "0" || "$v" == "1" ]] ;;
+    AGY_REVIEW_MAX_TOTAL_BYTES) [[ "$v" =~ $int_re ]] && aw_int_in_range "$v" 1 100000000 ;;
     *) return 1 ;;
   esac
 }
@@ -240,6 +248,11 @@ aw_apply_settings() {
   done
   return 0
 }
+# Snapshot BEFORE the shared reader runs: it EXPORTS a settings-file value under the same name, so a
+# check made afterwards cannot tell a file value from an env override — and the retirement notice's
+# recovery differs by source (a file `--unset` cannot clear an env override).
+AGY_ALLOW_ADDDIR_FROM_ENV=0
+if [[ -n "${AGY_REVIEW_ALLOW_ADDDIR+x}" ]]; then AGY_ALLOW_ADDDIR_FROM_ENV=1; fi
 aw_apply_settings
 
 # --- Effective-timeout resolver (D5 banner honesty; AD-061) --------------------
@@ -296,7 +309,7 @@ DEFAULT_AGY_REVIEW_MODEL="Gemini 3.1 Pro (High)"
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by agy-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="agy"
-AW_BRIDGE_VERSION="4.1.0"
+AW_BRIDGE_VERSION="5.0.0"
 # `-` not `:-` so an EXPLICIT empty AGY_MODEL= survives (drop --model, use settings.json — agy.sh:52).
 AGY_MODEL="${AGY_MODEL-$DEFAULT_AGY_REVIEW_MODEL}"
 # D5 control-byte screen — IMMEDIATELY after resolution, BEFORE the off-frontier advisory (or any
@@ -330,7 +343,33 @@ AGY_PROBE="${AGY_PROBE:-0}"
 # review-state gate rejects it — a guards-relaxed review must never attest a tree.
 REVIEW_PROBE=false
 if [[ "$AGY_PROBE" == "1" ]]; then REVIEW_PROBE=true; fi
+# RETIRED (D3), not removed: the key stays RECOGNIZED by the shared settings registry so an existing
+# settings line never starts warning as unknown — but it arms NOTHING. The `--add-dir` offload told
+# agy to read a staging file; headless agy AUTO-DENIES its own read_file tool, so that lane could
+# return a confident fabrication or an empty SHIP with no way to tell. Setting it says so, loudly.
+# The notice keys on the key being CONFIGURED AT ALL, not on its value: a stale `=0` line is just as
+# dead as a `=1` one, and staying silent about it would leave the operator believing a knob they can
+# see still means something. The recovery is source-specific — a file `--unset` cannot clear an env
+# override, so telling an env user to run it would hand them a command that changes nothing.
+AGY_REVIEW_ALLOW_ADDDIR_SOURCE=""
+if (( AGY_ALLOW_ADDDIR_FROM_ENV == 1 )); then AGY_REVIEW_ALLOW_ADDDIR_SOURCE="env"; fi
 AGY_REVIEW_ALLOW_ADDDIR="${AGY_REVIEW_ALLOW_ADDDIR:-0}"
+if [[ -z "$AGY_REVIEW_ALLOW_ADDDIR_SOURCE" ]] && [[ -f "$(aw_settings_file)" ]] && grep -q "^AGY_REVIEW_ALLOW_ADDDIR=" "$(aw_settings_file)"; then
+  AGY_REVIEW_ALLOW_ADDDIR_SOURCE="file"
+fi
+if [[ -n "$AGY_REVIEW_ALLOW_ADDDIR_SOURCE" ]]; then
+  echo "notice: AGY_REVIEW_ALLOW_ADDDIR is set (${AGY_REVIEW_ALLOW_ADDDIR_SOURCE}) but it is RETIRED and arms nothing. An" >&2
+  echo "        oversized 'agy-review code' is now DELIVERED as a chunked feed with a per-part delivery" >&2
+  echo "        proof, so the change set never has to be read from disk — which headless agy cannot do" >&2
+  echo "        (read_file is auto-denied)." >&2
+  if [[ "$AGY_REVIEW_ALLOW_ADDDIR_SOURCE" == "env" ]]; then
+    echo "        Clear it where you set it: unset AGY_REVIEW_ALLOW_ADDDIR in the environment (a settings-file" >&2
+    echo "        --unset cannot clear an env override)." >&2
+  else
+    echo "        Clear the line: node <agent-workflow-kit>/tools/bridge-settings.mjs --unset" >&2
+    echo "        AGY_REVIEW_ALLOW_ADDDIR --apply" >&2
+  fi
+fi
 AGY_MAX_PROMPT_BYTES="${AGY_MAX_PROMPT_BYTES:-120000}"
 if [[ ! "$AGY_MAX_PROMPT_BYTES" =~ ^[0-9]+$ ]]; then
   echo "error: AGY_MAX_PROMPT_BYTES='$AGY_MAX_PROMPT_BYTES' is not a non-negative integer." >&2
@@ -344,6 +383,51 @@ if (( AGY_MAX_PROMPT_BYTES > AGY_ARGV_HARD_MAX )); then
   echo "       The override may LOWER the ceiling (stricter), never raise it past the OS limit." >&2
   exit 2
 fi
+# The repo file map's share of the prompt (see emit_repo_file_map). A PINNED constant, not a knob:
+# a plain assignment, so an inherited environment value can never widen or narrow it. 8192 = 6.8%
+# of agy's 120000-byte default ceiling — the map is context, the change set is the review.
+AW_REVIEW_MAP_BUDGET_BYTES=8192
+
+# --- The chunked-feed ceiling (D1b) -------------------------------------------
+# "The whole conversation" is not knowable before turn 1 (model response sizes are unknown), so the
+# bound is the SUM OF ALL OUTGOING PROMPT BYTES — every envelope, every body, and the final turn's
+# prompt — which IS computable up front. Set deliberately BELOW the 262,967 bytes a live probe
+# proved retained, because that probe measured part BODIES only and the shipped lane adds envelopes
+# and a final prompt on top. This is an ECONOMY guard, not the correctness guard: correctness is the
+# per-part body echo, which fails closed under this ceiling too.
+AGY_REVIEW_MAX_TOTAL_BYTES="${AGY_REVIEW_MAX_TOTAL_BYTES:-240000}"
+# CANONICALIZE BEFORE ANY ARITHMETIC. A hand-rolled `(( value < 1 ))` on `008000` makes bash read an
+# invalid OCTAL constant: the arithmetic errors, both range tests yield false, and the ceiling simply
+# stops existing — the guard silently absent, which is worse than no guard. Leading zeros are
+# stripped exactly as the shared settings reader does, then the value is judged by the wrapper's OWN
+# registry rule (aw_int_in_range is the overflow-safe comparator the manifest bounds are pinned to),
+# never by a second hand-written bound that could drift from the manifest.
+if [[ "$AGY_REVIEW_MAX_TOTAL_BYTES" =~ ^[0-9]+$ ]]; then
+  AGY_REVIEW_MAX_TOTAL_BYTES="${AGY_REVIEW_MAX_TOTAL_BYTES#"${AGY_REVIEW_MAX_TOTAL_BYTES%%[!0]*}"}"
+  AGY_REVIEW_MAX_TOTAL_BYTES="${AGY_REVIEW_MAX_TOTAL_BYTES:-0}"
+fi
+if ! aw_settings_valid AGY_REVIEW_MAX_TOTAL_BYTES "$AGY_REVIEW_MAX_TOTAL_BYTES"; then
+  # Only an EXPLICIT env override can reach here: the shared settings reader already drops an invalid
+  # FILE value before the wrapper body runs, leaving the built-in default, which is valid. So this is
+  # unconditionally a refusal — a warn-and-default arm would be dead code pretending to be a policy.
+  echo "error: AGY_REVIEW_MAX_TOTAL_BYTES='$AGY_REVIEW_MAX_TOTAL_BYTES' is not a valid byte ceiling (integer 1..100000000)." >&2
+  echo "       Refusing rather than running with a spending ceiling you set and this wrapper ignored." >&2
+  exit 2
+fi
+# The echo-candidate window (D1): long enough that a line is distinctive and cannot be guessed,
+# short enough that a model can reproduce it verbatim without truncating.
+# Mirrors agy.sh's `timeout --kill-after=10s`. A turn that ignores TERM survives this long past its
+# own cap, so the fed loop reserves it out of every turn's budget rather than letting the last turn
+# spend it past the shared deadline. Keep in lockstep with agy.sh.
+AGY_TURN_KILL_GRACE_S=10
+FED_ECHO_MIN_BYTES=24
+FED_ECHO_MAX_BYTES=200
+# The largest proof ADDRESS number the parser will convert. It exists because the numbers come from
+# the model: past this, awk's `%d` conversion is no longer faithful, and a silently-wrapped value
+# could land back inside the requested range and impersonate a real address. An entry naming a
+# bigger number is reported as address 0 — a value no request can ever carry — so it reads as an
+# address nobody requested and FAILS the proof, rather than vanishing from the check entirely.
+FED_PROOF_ADDRESS_MAX=1000000000
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -391,9 +475,8 @@ here and a known source of false positives. Review ONLY the engineering of the m
 AGAINST the grounded facts. If something contradicts your training, trust the facts, not your memory.
 GUARD
 }
-emit_shape() {
+emit_shape_sections() {
   cat <<'SHAPE'
-## Output — Markdown, this exact shape, nothing else
 ### Verdict
 One line: SHIP / SHIP WITH NITS / REWORK, plus a one-sentence reason.
 ### Blocking
@@ -403,6 +486,58 @@ Numbered. Simplifications, reuse, naming, missing tests. Cite file:line. Empty? 
 ### Questions
 Anything ambiguous that would change your verdict if answered.
 SHAPE
+}
+emit_shape() {
+  echo "## Output — Markdown, this exact shape, nothing else"
+  emit_shape_sections
+}
+# The FED shape (D1): '### Delivery proof' is the FIRST section, so output truncation cannot
+# silently drop the proof. The requested lines are named by ADDRESS only — revealing the text would
+# let a model that never held the body copy it back, which is exactly what the proof exists to catch.
+emit_shape_fed() {  # $1 = the requested addresses, "part K line L; part K line L"
+  echo "## Output — Markdown, this exact shape, nothing else"
+  cat <<'PROOF'
+### Delivery proof
+This section comes FIRST, before ### Verdict. For each requested address below print exactly one
+line, in this form and nothing else:
+  part <K> line <L>: <the text of line L of part K, VERBATIM>
+Count lines 1-based from the FIRST line after that part's BEGIN marker. Print the raw line text
+after the colon — no code fences, no backticks, no quotes, no commentary, no ellipsis, no
+re-indenting. If you cannot reproduce a line exactly, say so on that line rather than guessing.
+PROOF
+  # ONE ADDRESS PER LINE, and every address line is shorter than FED_ECHO_MIN_BYTES. That is not
+  # cosmetic: it makes a collision CONSTRUCTIVELY impossible. A proof candidate is a single line of
+  # at least FED_ECHO_MIN_BYTES, and a single line can never match across a newline, so no candidate
+  # can occur inside this list — which is what lets the selector pick in ONE pass instead of
+  # re-picking against a request that does not exist yet.
+  printf 'Requested addresses, one per line:\n%s\n' "$1"
+  emit_shape_sections
+}
+# One feed turn's ENVELOPE (D1a). Nothing here ever enters the reviewed artifact: only the BODY
+# between the BEGIN/END markers concatenates, and it concatenates byte-for-byte.
+emit_feed_frame() {  # $1 = part index, $2 = part count
+  printf '## Chunked delivery — part %s of %s\n' "$1" "$2"
+  cat <<'FEED'
+This is one piece of ONE change set being delivered to you in order.
+Reply with exactly OK and NOTHING else: do NOT review yet, do NOT summarise, do NOT comment, do NOT
+ask questions. The review request arrives after the last part. The text between the BEGIN and END
+markers below is the change set VERBATIM — the markers themselves are delivery framing and are not
+part of it.
+Work from THIS CONVERSATION only: do NOT use any tool, do NOT run any command, do NOT read any file.
+Everything you need is already in this conversation, and on this host EVERY tool is auto-denied — a
+denied tool produces no output at all and loses the whole answer.
+FEED
+}
+emit_fed_final_head() {
+  cat <<'FINAL'
+## The change set is fully delivered
+Every part above belongs to ONE change set, and it is now complete in this conversation. Review the
+WHOLE change set against the grounded facts from the first message, under the same read-only posture.
+Work from THIS CONVERSATION only: do NOT use any tool, do NOT run any command, do NOT read any file,
+do NOT try to count lines with a tool — count them by reading. Everything you need is already in this
+conversation, and on this host EVERY tool is auto-denied: a denied tool produces no output at all, so
+reaching for one loses your entire review. Observed live on this lane's first real run.
+FINAL
 }
 emit_resume_reminder() {
   cat <<'REMINDER'
@@ -565,7 +700,7 @@ posture_json() {
 # itself instead of inferring it from this wrapper's version (which bumps in a different release
 # phase). Silence is not a declaration — an unmarked receipt is untrustworthy and the gate rejects it.
 write_review_receipt() {
-  local artifact="$1" fresh="$2" fingerprint="$3" verdict="$4" grounded="$5" facts_hash="$6" probe="${7:-false}"
+  local artifact="$1" fresh="$2" fingerprint="$3" verdict="$4" grounded="$5" facts_hash="$6" probe="${7:-false}" delivery="${8:-}"
   local receipts="${AW_REVIEW_RECEIPTS:-}"
   if [[ -z "$receipts" ]]; then
     local receipt_git_dir
@@ -575,12 +710,13 @@ write_review_receipt() {
     fi
     receipts="$receipt_git_dir/agent-workflow-review-receipts.jsonl"
   fi
-  local line probe_field=',"probe":false'
+  local line probe_field=',"probe":false' delivery_field=""
   if [[ "$probe" == "true" ]]; then probe_field=',"probe":true'; fi
-  line="$(printf '{"schema":1,"artifact":%s,"fresh":%s,"fingerprint":%s,"backend":"%s","verdict":"%s","grounded":%s,"factsHash":%s,"wrapperVersion":"%s","timestamp":"%s"%s,"posture":%s}' \
+  if [[ -n "$delivery" ]]; then delivery_field=",\"delivery\":\"$delivery\""; fi
+  line="$(printf '{"schema":1,"artifact":%s,"fresh":%s,"fingerprint":%s,"backend":"%s","verdict":"%s","grounded":%s,"factsHash":%s,"wrapperVersion":"%s","timestamp":"%s"%s,"posture":%s%s}' \
     "$(receipt_json_scalar "$artifact")" "$fresh" "$(receipt_json_scalar "$fingerprint")" \
     "$AW_RECEIPT_BACKEND" "$verdict" "$grounded" "$(receipt_json_scalar "$facts_hash")" \
-    "$AW_BRIDGE_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$probe_field" "$(posture_json)")"
+    "$AW_BRIDGE_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$probe_field" "$(posture_json)" "$delivery_field")"
   if ! printf '%s\n' "$line" >>"$receipts" 2>/dev/null; then
     echo "warning: could not append the review receipt to $receipts — the review itself succeeded;" >&2
     echo "         the review-state gate will read the current tree as un-receipted." >&2
@@ -602,15 +738,380 @@ parse_agy_verdict() { # $1 = captured-output file
   fi
 }
 
-# Emit the full review surface to stdout: repo map, status (never-committable untracked records
-# filtered), staged + unstaged diffs, and the CONTENTS of every untracked REGULAR file (NUL-safe
-# iteration over the SAME filtered walk as the fingerprint — the payload is byte-identical with
-# and without a device mask). Symlinks are shown as their target (never followed — no out-of-repo
-# leak); directories/vanished paths are noted, never read (a `cat` on a FIFO would hang BEFORE the
-# hard timeout applies — that class never reaches this loop).
+# The repo file map is a FIXED cost that scales with REPO SIZE, not change size (measured 28,735
+# bytes in the home repo — 24% of agy's 120000-byte single-argv ceiling), so an unbounded map taxes
+# the change budget of every review. AW_REVIEW_MAP_BUDGET_BYTES bounds it; the value is set by each
+# wrapper so THIS BODY stays byte-identical across both (review-fingerprint-parity.test.mjs
+# lockstep). Unset/0 = unbounded. Past the budget the map degrades to the CHANGED-path subset — cut
+# at the SAME budget, so a change touching very many long paths cannot re-breach the bound — plus a
+# stated omitted count; a truncation-with-count, never a silent cut. The map was never part of the
+# fingerprint domain (emit_fingerprint_payload does not contain it), so bounding it moves no receipt.
+emit_repo_file_map() {
+  local budget="${AW_REVIEW_MAP_BUDGET_BYTES:-0}" total shown omitted subset tracked
+  # ONE deduplicated tracked-path SNAPSHOT, captured once and reused for all four uses — the
+  # byte-budget predicate, the printed map, `total`, and the index intersection. Re-running the query
+  # per use let a concurrent index change make the budget decision, the map and the counts describe
+  # DIFFERENT snapshots. Dedupe: an UNMERGED index lists a path once per stage, so a predicate
+  # counting duplicates against a map printing unique paths would push a map that fits into the
+  # truncated arm. `ls-files` output is sorted by path, so one path's stages are adjacent and `uniq`
+  # is exact — no git version floor needed.
+  tracked="$(git ls-files | LC_ALL=C uniq)"
+  if (( budget <= 0 )) || (( $(printf '%s\n' "$tracked" | wc -c) <= budget )); then
+    if [[ -n "$tracked" ]]; then printf '%s\n' "$tracked"; fi
+    return 0
+  fi
+  total=$(( $(printf '%s\n' "$tracked" | wc -l) ))
+  # The subset is INTERSECTED with the index before budgeting, so `shown` and `total` live in ONE
+  # domain and `shown + omitted == total` holds exactly: a STAGED DELETION is a changed path that is
+  # no longer in `git ls-files`, and counting it as shown would make the stated arithmetic a lie.
+  # (The NR==FNR reader is safe here: an empty index returns through the in-budget arm above.)
+  # awk never `exit`s early: a closed pipe would SIGPIPE `sort` and pipefail would abort the run.
+  subset="$(LC_ALL=C awk 'NR == FNR { known[$0] = 1; next } ($0 in known)' <(printf '%s\n' "$tracked") <(git diff --name-only --no-ext-diff; git diff --cached --name-only --no-ext-diff) |
+    LC_ALL=C sort -u |
+    LC_ALL=C awk -v cap="$budget" '{ n = length($0) + 1; if (!over && used + n <= cap) { used += n; print } else over = 1 }')"
+  shown=0
+  if [[ -n "$subset" ]]; then
+    printf '%s\n' "$subset"
+    shown=$(( $(printf '%s\n' "$subset" | wc -l) ))
+  fi
+  omitted=$(( total - shown ))
+  if (( omitted < 0 )); then omitted=0; fi
+  printf '=== repo file map TRUNCATED to the changed-path subset: %s of %s tracked paths shown, %s omitted (map budget %s bytes) ===\n' \
+    "$shown" "$total" "$omitted" "$budget"
+}
+
+# ── the chunked feed: partition, proof selection, turn targeting (Phase 3) ─────────────────────
+# Delivery framing. `printf --` because the format itself begins with a dash.
+FED_BEGIN_FMT='--- BEGIN CHANGE-SET PART %s OF %s ---\n'
+FED_END_FMT='\n--- END CHANGE-SET PART %s OF %s ---\n'
+FED_MODE=0
+FED_PART_COUNT=0
+FED_REQUESTED=""
+declare -a FED_ECHO_LINE=()
+declare -a FED_ECHO_TEXT=()
+
+# Byte-exact slice of a file. pipefail is disabled INSIDE the subshell only: `head -c` closes the
+# pipe early, which SIGPIPEs `tail` — under pipefail that would abort the whole run.
+slice_bytes() {  # $1 = file, $2 = 0-based byte offset, $3 = length
+  ( set +o pipefail; tail -c "+$(( $2 + 1 ))" "$1" | head -c "$3" )
+}
+
+# Part LENGTHS (bytes, one per line) cutting a file at LINE boundaries: part 1 up to $2, later parts
+# up to $3. Every cut lands on a line boundary, so a split multi-byte code point is impossible — there
+# is NO hard-cut fallback: a line that cannot fit an EMPTY active part makes the whole run refuse
+# (status 1) BEFORE any turn is spent, because a part built from fragments of one giant line carries
+# no line to prove delivery with anyway.
+#
+# Precisely what "does not fit an empty active part" means, because the loose version of this
+# sentence was a review finding: when the current part already holds content, the flush below moves
+# the long line into a later, LARGER part, and only a line longer than that later budget refuses.
+# When the active part is still empty the refusal is immediate against the CURRENT cap — for part 1
+# that is the smaller budget, since turn 1 also carries the grounding and a body-less turn would be
+# a turn spent on nothing. In practice part 1 always accumulates the assembled header first, so the
+# reachable refusal is a line longer than the LATER-part budget.
+#
+# The final record contributes no separator byte when the artifact does not end with a newline —
+# inventing one would split a part that actually fits and cost an entire extra turn.
+plan_fed_parts() {  # $1 = file, $2 = first-part budget, $3 = later-part budget, $4 = line count, $5 = 1 if the file ends with a newline
+  LC_ALL=C awk -v b1="$2" -v bk="$3" -v last="$4" -v final_nl="$5" '
+    function flush() { if (used > 0) { print used; used = 0; cap = bk } }
+    BEGIN { cap = b1; used = 0 }
+    {
+      n = length($0) + ((NR == last && final_nl == 0) ? 0 : 1)
+      if (used + n > cap) {
+        flush()
+        if (n > cap) exit 1
+      }
+      used += n
+    }
+    END { flush() }
+  ' "$1"
+}
+
+# ORDERED delivery-proof candidates for ONE part (D1), nearest that part's middle first: an INTERIOR
+# line whose trimmed text sits in the echo window and is unique as a WHOLE line across the change
+# set. This is only the cheap prefilter — the exact fixed-string checks (exactly one occurrence
+# across the bodies, ZERO anywhere the wrapper's own envelope text can reveal it) run in bash over
+# this list, because a candidate that is merely a unique LINE can still occur as a SUBSTRING of
+# another body's line, and a model without that part could then copy it.
+# The order is produced by WALKING OUTWARD from the part's middle, never by sorting: a comparison
+# sort here was quadratic, and the caller may walk the whole list, so the cost of merely ORDERING
+# candidates must not depend on how many there are. There is no cap — capping made the wrapper claim
+# "no usable candidate" while a usable one sat at position 26.
+list_echo_candidates() {  # $1 = part file, $2 = unique-trimmed-lines file → "<line number><TAB><text>"
+  LC_ALL=C awk -v minlen="$FED_ECHO_MIN_BYTES" -v maxlen="$FED_ECHO_MAX_BYTES" '
+    NR == FNR { uniq[$0] = 1; next }
+    { lines[FNR] = $0 }
+    function usable(i,   t) {
+      if (i < 2 || i >= FNR) return 0
+      t = lines[i]
+      gsub(/^[ \t]+|[ \t]+$/, "", t)
+      if (length(t) < minlen || length(lines[i]) > maxlen) return 0
+      return (t in uniq)
+    }
+    END {
+      mid = int((FNR + 1) / 2)
+      if (usable(mid)) printf "%s\t%s\n", mid, lines[mid]
+      for (d = 1; d <= FNR; d++) {
+        if (usable(mid - d)) printf "%s\t%s\n", mid - d, lines[mid - d]
+        if (usable(mid + d)) printf "%s\t%s\n", mid + d, lines[mid + d]
+      }
+    }' "$2" "$1"
+}
+
+# Exact FIXED-STRING occurrence count of $1 in file $2. `|| true`: grep exits 1 on no match, which
+# pipefail would otherwise turn into an aborted run.
+fixed_occurrences() {
+  local n
+  n="$( { LC_ALL=C grep -o -F -- "$1" "$2" || true; } | wc -l )"
+  printf '%s' "$(( n ))"
+}
+
+# The conversation id agy writes into its own run log (D9, Arm A). The format is agy's own to change,
+# which is exactly why an unparseable log DEGRADES LOUDLY to --continue instead of failing: the
+# correctness guarantee is the D1 echo proof, which fails closed if the wrong conversation answers.
+capture_conversation_id() {  # $1 = run log → the id, or empty
+  local id
+  [[ -f "$1" ]] || { printf ''; return 0; }
+  id="$(LC_ALL=C awk '/onversation/ && match($0, /[0-9a-fA-F]+-[0-9a-fA-F]+-[0-9a-fA-F]+-[0-9a-fA-F]+-[0-9a-fA-F]+/) { print substr($0, RSTART, RLENGTH); exit }' "$1")"
+  if [[ "$id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+    printf '%s' "$id"
+  else
+    printf ''
+  fi
+}
+
+# A validated duration string → integer seconds (floor 1). The fed lane needs arithmetic on the cap
+# because ONE wall-clock budget has to cover N+1 turns; the banner keeps printing the duration
+# verbatim, so this conversion never changes what the user is told about the cap itself.
+aw_duration_seconds() {  # $1 = duration string matching the settings grammar
+  LC_ALL=C awk -v d="$1" 'BEGIN {
+    u = substr(d, length(d), 1)
+    n = substr(d, 1, length(d) - 1) + 0
+    m = (u == "s") ? 1 : (u == "m") ? 60 : (u == "h") ? 3600 : 86400
+    s = int(n * m)
+    if (s < 1) s = 1
+    print s
+  }'
+}
+
+trim_ws() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s' "$s"
+}
+
+# A final turn that produced NO mandated section at all did not FAIL DELIVERY — it produced no
+# review. Blaming delivery sends the reader hunting the wrong bug. What the wrapper can HONESTLY say
+# is that it SENT every part and every feed turn exited zero; whether the model retained them is
+# exactly what the unanswered proof leaves unknown, so it is never claimed.
+fed_output_is_answerless() {  # $1 = captured final-turn output
+  ! LC_ALL=C grep -qi -e '^###[[:space:]]*Delivery proof' -e '^###[[:space:]]*Verdict' "$1"
+}
+
+# agy's OWN refusal line when headless mode auto-denies a tool it chose to call. Recognizing it lets
+# the wrapper name the real cause; anything else is reported as an UNKNOWN cause rather than guessed.
+fed_output_names_tool_denial() {  # $1 = captured final-turn output
+  LC_ALL=C grep -q 'no output produced.*permission that headless mode cannot prompt for' "$1"
+}
+
+# D1/D7: every part's selected line must come back VERBATIM, or the review FAILED — exit 4, no
+# receipt, and a message naming the cause. Never a downgraded verdict, never a warning beside a kept
+# receipt. The comparison tolerates surrounding whitespace only, never content.
+# The proof section is the FIRST '### Delivery proof' block only, ending at the next '###' heading.
+# Anything outside it is prose the model happens to have written and can never satisfy the proof.
+# The FIRST '###' heading of the answer must BE the proof heading — that is the whole point of
+# placing the proof first: output truncation can then never silently drop it. A proof block sitting
+# after '### Verdict' is not the mandated shape and is not searched for.
+fed_proof_section() {  # $1 = captured output
+  LC_ALL=C awk '
+    !seen && /^###/ {
+      if (tolower($0) ~ /^###[ \t]*delivery proof[ \t]*$/) { seen = 1; inside = 1; next }
+      exit
+    }
+    inside && /^###/ { exit }
+    inside { print }
+  ' "$1"
+}
+
+# One recognized echo per output line: "K<TAB>L<TAB>payload". The anchor is STRICT — optional leading
+# whitespace and at most ONE list marker that must itself be followed by whitespace, then the address
+# at the START of the line. A marker buried mid-sentence is prose, not an echo.
+#
+# Two properties are load-bearing. (1) The addresses are NORMALIZED here, at the parse boundary:
+# `%d` over `k + 0` hands bash a canonical decimal, because a model-written `part 08` would otherwise
+# reach bash arithmetic and an array index as OCTAL and abort the wrapper with `value too great for
+# base` instead of the contracted clean refusal — and a safely padded `01` would mismatch `1`. An
+# out-of-range number is REPORTED as address 0 — never dropped, because a dropped address is an
+# INVISIBLE one, and an answer carrying every correct echo plus one invented giant address would
+# otherwise satisfy a grammar whose whole point is that it is closed. (2) The anchor is
+# matched case-INSENSITIVELY on a lowered copy while the PAYLOAD is sliced from the ORIGINAL line:
+# tolerating `Part 1 Line 5:` removes a false refusal, but the echoed text must keep its own case or
+# the verbatim comparison would be checking something the model never wrote.
+fed_proof_entries() {  # reads the section on stdin
+  LC_ALL=C awk -v addrmax="$FED_PROOF_ADDRESS_MAX" '
+    {
+      line = $0
+      sub(/^[ \t]+/, "", line)
+      sub(/^[-*][ \t]+/, "", line)
+      probe = tolower(line)
+      if (match(probe, /^part[ \t]+[0-9]+[ \t]+line[ \t]+[0-9]+:/)) {
+        head = substr(probe, 1, RLENGTH)
+        rest = substr(line, RLENGTH + 1)
+        k = head; sub(/^part[ \t]+/, "", k); sub(/[ \t]+line.*$/, "", k)
+        l = head; sub(/^.*line[ \t]+/, "", l); sub(/:$/, "", l)
+        # An out-of-range address is REPORTED as address 0, never dropped: dropping it made a huge
+        # bogus address INVISIBLE, so an answer carrying every correct echo PLUS one invented
+        # `part 99999999999999999999 line …` satisfied the closed grammar and minted a receipt.
+        if (k + 0 > addrmax || l + 0 > addrmax) { printf "0\t0\t%s\n", rest; next }
+        printf "%d\t%d\t%s\n", k + 0, l + 0, rest
+      }
+    }'
+}
+
+verify_delivery_proof() {  # $1 = captured final-turn output
+  local k l payload want got section entries
+  local -a seen_count=() seen_payload=()
+  section="$(fed_proof_section "$1")"
+  entries="$(printf '%s\n' "$section" | fed_proof_entries)"
+  for (( k = 1; k <= FED_PART_COUNT; k++ )); do
+    seen_count[k]=0
+    seen_payload[k]=""
+  done
+  if [[ -n "$entries" ]]; then
+    while IFS=$'\t' read -r k l payload; do
+      if (( k == 0 )); then
+        echo "error: the review did NOT prove delivery — its proof section echoes an address whose numbers are" >&2
+        echo "       out of range (over ${FED_PROOF_ADDRESS_MAX}). An answer that invents its own addresses is not a proof:" >&2
+        echo "       NO receipt was written. Re-run the review." >&2
+        return 1
+      fi
+      if (( k < 1 || k > FED_PART_COUNT )) || [[ "$l" != "${FED_ECHO_LINE[k]}" ]]; then
+        echo "error: the review did NOT prove delivery — its proof section echoes 'part ${k} line ${l}', which" >&2
+        echo "       was never requested. An answer that invents its own addresses is not a proof: NO receipt" >&2
+        echo "       was written. Re-run the review." >&2
+        return 1
+      fi
+      seen_count[k]=$(( seen_count[k] + 1 ))
+      if (( seen_count[k] == 1 )); then seen_payload[k]="$payload"; fi
+    done <<< "$entries"
+  fi
+  for (( k = 1; k <= FED_PART_COUNT; k++ )); do
+    if (( seen_count[k] == 0 )); then
+      echo "error: the review did NOT prove delivery — its '### Delivery proof' section carries no echo for" >&2
+      echo "       part ${k} of ${FED_PART_COUNT} (requested: part ${k} line ${FED_ECHO_LINE[k]}). A review that cannot" >&2
+      echo "       reproduce a part's body never received it: NO receipt was written. Re-run the review." >&2
+      return 1
+    fi
+    if (( seen_count[k] > 1 )); then
+      echo "error: the review did NOT prove delivery — part ${k}'s address is echoed more than once" >&2
+      echo "       (${seen_count[k]} times). One address, one line: an ambiguous proof proves nothing, so NO" >&2
+      echo "       receipt was written. Re-run the review." >&2
+      return 1
+    fi
+    got="${seen_payload[k]}"
+    want="${FED_ECHO_TEXT[k]}"
+    if [[ "$(trim_ws "$got")" != "$(trim_ws "$want")" ]]; then
+      echo "error: the review did NOT prove delivery — part ${k}'s echoed line does not match the change set" >&2
+      echo "       (requested: part ${k} line ${FED_ECHO_LINE[k]}). Delivery is unproven, so NO receipt was written." >&2
+      echo "       Re-run the review; a model that DID receive every part but mis-transcribed one line is the" >&2
+      echo "       known false-refusal case." >&2
+      return 1
+    fi
+  done
+  return 0
+}
+
+# Dispatch the prebuilt turns. Invariant E: a feed turn's stdout is captured PRIVATELY — nothing it
+# produced (an OK, or a premature verdict) reaches this wrapper's stdout or the parsed capture, and
+# the FIRST non-zero feed turn stops the run so no later turn is spent.
+run_fed_review() {
+  local k conv_id="" log_file="$staging/turn1.log" feed_out="$staging/feed-turn-out" turn_rc turn_pass=()
+  # ONE wall-clock budget for the WHOLE fed review, not one per turn. Handing every call the full
+  # AGY_HARD_TIMEOUT multiplied the stated cap by the turn count — a 30m cap silently became up to
+  # 30m × (N+1). Each turn now gets only what is LEFT of the shared deadline, and a review that runs
+  # out of budget stops there instead of quietly outliving its own guarantee.
+  # The grace agy.sh hands timeout(1) as --kill-after: a turn that ignores TERM keeps running that
+  # much longer, so handing a turn the FULL remaining time lets the last one outlive the deadline by
+  # the grace. Each turn is therefore given remaining MINUS the grace, and the whole N+1 sequence
+  # stays inside the stated cap even when every turn has to be SIGKILLed.
+  local deadline remaining turn_hard turn_soft soft_budget budget
+  deadline=$(( $(date +%s) + $(aw_duration_seconds "$AGY_HARD_TIMEOUT") ))
+  soft_budget=$(aw_duration_seconds "$AGY_TIMEOUT")
+  for (( k = 1; k <= FED_PART_COUNT; k++ )); do
+    remaining=$(( deadline - $(date +%s) ))
+    # A turn needs strictly more than the SIGKILL grace to be dispatchable: hand it 1s and a
+    # TERM-ignoring process still runs grace+1 seconds, breaking the very cap this loop enforces.
+    # Too little left is therefore a refusal, never a shrunken turn.
+    if (( remaining <= AGY_TURN_KILL_GRACE_S )); then
+      echo "error: the fed review exhausted its hard wall-clock cap (AGY_HARD_TIMEOUT=${AGY_HARD_TIMEOUT}) before" >&2
+      echo "       feed turn ${k} of ${FED_PART_COUNT} — ${remaining}s left, and a turn needs more than the" >&2
+      echo "       ${AGY_TURN_KILL_GRACE_S}s SIGKILL grace to run without outliving the cap. The cap covers the WHOLE" >&2
+      echo "       review, not each turn — no later turn is spent and NO receipt is written." >&2
+      echo "       Re-run with a larger cap, or a smaller change set." >&2
+      return 124
+    fi
+    budget=$(( remaining - AGY_TURN_KILL_GRACE_S ))
+    turn_hard="${budget}s"
+    turn_soft="$(( soft_budget < budget ? soft_budget : budget ))s"
+    if (( k == 1 )); then turn_pass=(--log-file "$log_file")
+    elif [[ -n "$conv_id" ]]; then turn_pass=(--conversation "$conv_id")
+    else turn_pass=(--continue)
+    fi
+    set +e
+    # Dispatched from the STAGING dir, never the work tree: agy surfaces the cwd's context file
+    # (AGENTS.md / GEMINI.md / .antigravity.md) automatically, and that is text the model can see
+    # which is NOT a body. The delivery proof is only sound when the wrapper knows every non-body
+    # byte the model can read, so the fed lane removes the uncontrolled input instead of guessing
+    # at it. Nothing is lost: the grounded facts already carry what the review must know.
+    ( cd "$staging" && AGY_MODEL="$AGY_MODEL" AGY_TIMEOUT="$turn_soft" AGY_HARD_TIMEOUT="$turn_hard" \
+      "$AGY_RUN" "@$staging/turn-$k" -- "${turn_pass[@]}" ) > "$feed_out"
+    turn_rc=$?
+    set -e
+    if (( turn_rc != 0 )); then
+      echo "error: feed turn ${k} of ${FED_PART_COUNT} failed (exit ${turn_rc}) — the change set was never fully" >&2
+      echo "       delivered, so no later turn is spent and NO receipt is written. Re-run the review." >&2
+      return "$turn_rc"
+    fi
+    if (( k == 1 )); then
+      conv_id="$(capture_conversation_id "$log_file")"
+      if [[ -z "$conv_id" ]]; then
+        echo "notice: could not capture the conversation id from agy's run log — the remaining turns ride" >&2
+        echo "        --continue instead. Stated, never silent; the delivery proof still fails closed if" >&2
+        echo "        another conversation answers." >&2
+      fi
+    fi
+  done
+  if [[ -n "$conv_id" ]]; then turn_pass=(--conversation "$conv_id"); else turn_pass=(--continue); fi
+  remaining=$(( deadline - $(date +%s) ))
+  if (( remaining <= AGY_TURN_KILL_GRACE_S )); then
+    echo "error: the fed review exhausted its hard wall-clock cap (AGY_HARD_TIMEOUT=${AGY_HARD_TIMEOUT}) before the" >&2
+    echo "       final review turn — ${remaining}s left, less than the ${AGY_TURN_KILL_GRACE_S}s SIGKILL grace a turn" >&2
+    echo "       needs. Every part was delivered but the review itself was never asked for." >&2
+    echo "       NO receipt was written. Re-run with a larger cap, or a smaller change set." >&2
+    return 124
+  fi
+  budget=$(( remaining - AGY_TURN_KILL_GRACE_S ))
+  turn_hard="${budget}s"
+  turn_soft="$(( soft_budget < budget ? soft_budget : budget ))s"
+  set +e
+  ( cd "$staging" && AGY_MODEL="$AGY_MODEL" AGY_TIMEOUT="$turn_soft" AGY_HARD_TIMEOUT="$turn_hard" \
+    "$AGY_RUN" "@$staging/turn-final" -- "${turn_pass[@]}" ) | tee "$review_out_file"
+  turn_rc=${PIPESTATUS[0]}
+  set -e
+  return "$turn_rc"
+}
+
+# Emit the full review surface to stdout: repo map (bounded, see emit_repo_file_map), status
+# (never-committable untracked records filtered), staged + unstaged diffs, and the CONTENTS of every
+# untracked REGULAR file (NUL-safe iteration over the SAME filtered walk as the fingerprint — the
+# payload is byte-identical with and without a device mask). Symlinks are shown as their target
+# (never followed — no out-of-repo leak); directories/vanished paths are noted, never read (a `cat`
+# on a FIFO would hang BEFORE the hard timeout applies — that class never reaches this loop).
 assemble_code_diff() {
   echo "=== repo file map (git ls-files) ==="
-  git ls-files
+  emit_repo_file_map
   echo
   echo "=== git status (porcelain) ==="
   emit_status_porcelain_filtered
@@ -671,6 +1172,11 @@ PLAN_CONTENT=""
 DIFF_CONTENT=""
 REVIEW_ARTIFACT=""
 REVIEW_FINGERPRINT=""
+# D8/D8b: an agy `code` receipt SELF-DECLARES how the change set reached the model — `inline` when
+# the whole set rode ONE prompt (delivery proven BY CONSTRUCTION), `fed` when a chunked feed proved
+# it by echo. The kit's gate requires the field present and valid, never a particular value, and a
+# receipt that does not declare one no longer attests (the old --add-dir lane could not).
+REVIEW_DELIVERY=""
 if [[ -z "$resume_mode" ]]; then
   mode="${1:-}"; shift || true
   case "$mode" in
@@ -727,7 +1233,7 @@ while [[ $# -gt 0 ]]; do
       need_value "$1" "${2:-}"; FOCUS_PARTS+=("$2"); shift 2 ;;
     --)
       echo "error: this wrapper OWNS the review posture — no '--' passthrough. The only escapes are" >&2
-      echo "       AGY_PROBE=1 (off-frontier model) and AGY_REVIEW_ALLOW_ADDDIR=1 (oversized code review)." >&2
+      echo "       AGY_PROBE=1 (off-frontier model). An oversized code review is a chunked feed, not a flag." >&2
       exit 2 ;;
     --*)
       echo "error: unknown flag '$1'." >&2; usage; exit 2 ;;
@@ -864,6 +1370,7 @@ else
     # so the receipt attests exactly the reviewed state.
     REVIEW_ARTIFACT="code"
     REVIEW_FINGERPRINT="$(compute_tree_fingerprint || true)"
+    REVIEW_DELIVERY="inline"
   fi
 
   emit_artifact() {
@@ -894,46 +1401,193 @@ else
     fi
   }
 
+  # Partition the assembled change set into under-cap parts, pick each part's delivery-proof line,
+  # and BUILD every turn's prompt UP FRONT — so the per-turn ceiling and the total outgoing byte
+  # count (D1b) are both checked BEFORE a single subscription turn is spent. A refusal here costs
+  # nothing; a refusal after turn 1 would have burned quota for no review.
+  plan_fed_review() {
+    local artifact_file="$staging/change-set" uniques="$staging/uniques" nonbody="$staging/nonbody"
+    local grounding_bytes frame_bytes begin_bytes end_bytes overhead1 overheadk budget1 budgetk
+    local artifact_bytes concat_bytes offset len k n picked built total_bytes
+    local art_lines final_nl part_lengths
+
+    ( umask 077; emit_artifact > "$artifact_file" )
+    ( umask 077; emit_grounding > "$staging/grounding" )
+    artifact_bytes=$(( $(wc -c < "$artifact_file") ))
+    grounding_bytes=$(( $(wc -c < "$staging/grounding") ))
+    # Measured at the WIDEST index rendering the loop can produce, so a part count that only becomes
+    # known during planning can never push an already-budgeted turn past the ceiling.
+    frame_bytes=$(( $(emit_feed_frame 9999 9999 | wc -c) ))
+    begin_bytes=$(( $(printf -- "$FED_BEGIN_FMT" 9999 9999 | wc -c) ))
+    end_bytes=$(( $(printf -- "$FED_END_FMT" 9999 9999 | wc -c) ))
+    overhead1=$(( grounding_bytes + frame_bytes + begin_bytes + end_bytes ))
+    overheadk=$(( frame_bytes + begin_bytes + end_bytes ))
+    budget1=$(( AGY_MAX_PROMPT_BYTES - overhead1 ))
+    budgetk=$(( AGY_MAX_PROMPT_BYTES - overheadk ))
+    if (( budget1 < 1 || budgetk < 1 )); then
+      echo "error: the fed lane's fixed overhead (grounding ${grounding_bytes} B + delivery framing ${overheadk} B)" >&2
+      echo "       leaves no room for a change-set body under AGY_MAX_PROMPT_BYTES=${AGY_MAX_PROMPT_BYTES}." >&2
+      echo "       Trim --facts / --decided / --focus, or raise AGY_MAX_PROMPT_BYTES (never past ~${AGY_ARGV_HARD_MAX})." >&2
+      exit 2
+    fi
+
+    art_lines=$(( $(LC_ALL=C awk 'END { print NR + 0 }' "$artifact_file") ))
+    final_nl=1
+    if [[ "$(tail -c 1 "$artifact_file" | wc -l)" -eq 0 ]]; then final_nl=0; fi
+    # Run the partitioner ONCE into a variable: a refusal must be seen, and a `< <(…)` process
+    # substitution would swallow its status.
+    if ! part_lengths="$(plan_fed_parts "$artifact_file" "$budget1" "$budgetk" "$art_lines" "$final_nl")"; then
+      echo "error: a single change-set line does not fit even an EMPTY fed part (first part budget" >&2
+      echo "       ${budget1} B, later parts ${budgetk} B). The lane cuts only at line boundaries, and a part" >&2
+      echo "       built from fragments of one giant line carries no line to prove delivery with —" >&2
+      echo "       refusing before any turn is spent. Exclude the oversized file, or review it alone." >&2
+      exit 2
+    fi
+    offset=0
+    k=0
+    if [[ -n "$part_lengths" ]]; then
+      while IFS= read -r len; do
+        k=$(( k + 1 ))
+        if (( len < 1 )); then
+          echo "error: the partitioner produced an empty part — refusing rather than spending a turn on nothing." >&2
+          exit 2
+        fi
+        ( umask 077; slice_bytes "$artifact_file" "$offset" "$len" > "$staging/part-$k" )
+        offset=$(( offset + len ))
+      done <<< "$part_lengths"
+    fi
+    n=$k
+    concat_bytes=0
+    for (( k = 1; k <= n; k++ )); do concat_bytes=$(( concat_bytes + $(wc -c < "$staging/part-$k") )); done
+    if (( n < 1 || concat_bytes != artifact_bytes )); then
+      echo "error: the change-set partition does not reassemble to the assembled change set" >&2
+      echo "       (${concat_bytes} of ${artifact_bytes} bytes across ${n} part(s)) — refusing rather than" >&2
+      echo "       reviewing a change set the model would receive incompletely." >&2
+      exit 2
+    fi
+
+    ( umask 077; LC_ALL=C awk '{ t = $0; gsub(/^[ \t]+|[ \t]+$/, "", t); c[t]++ } END { for (l in c) if (c[l] == 1) print l }' "$artifact_file" > "$uniques" )
+    if [[ ! -s "$uniques" ]]; then
+      echo "error: the change set carries no line unique enough to serve as a delivery proof — refusing," >&2
+      echo "       because an unprovable delivery is exactly what this lane exists to prevent." >&2
+      exit 2
+    fi
+    # Everything the wrapper itself will SEND that is not a BODY. A candidate occurring anywhere in
+    # here would be revealed to a model that never received its part, so the proof would prove
+    # nothing. Rendered with the REAL part indices, because the frames carry them.
+    ( umask 077; {
+        cat "$staging/grounding"
+        for (( k = 1; k <= n; k++ )); do
+          emit_feed_frame "$k" "$n"
+          printf -- "$FED_BEGIN_FMT" "$k" "$n"
+          printf -- "$FED_END_FMT" "$k" "$n"
+        done
+        emit_fed_final_head
+        emit_shape_fed "(addresses are appended below)"
+      } > "$nonbody" )
+
+    # ONE pass, no re-picking. The address list cannot reveal a candidate BY CONSTRUCTION (see
+    # emit_shape_fed: one address per line, every such line shorter than a candidate's minimum), so
+    # there is nothing to re-check once the addresses exist — the earlier two-pass blacklist loop was
+    # solving a problem the FORMAT removes, and it could not be made a complete search anyway.
+    local cand_no cand_text cand_trim address
+    FED_REQUESTED=""
+    for (( k = 1; k <= n; k++ )); do
+      picked=""
+      while IFS=$'\t' read -r cand_no cand_text; do
+        cand_trim="$(trim_ws "$cand_text")"
+        [[ -n "$cand_trim" ]] || continue
+        (( $(fixed_occurrences "$cand_trim" "$artifact_file") == 1 )) || continue
+        (( $(fixed_occurrences "$cand_trim" "$nonbody") == 0 )) || continue
+        picked="${cand_no}"$'\t'"${cand_text}"
+        break
+      done < <(list_echo_candidates "$staging/part-$k" "$uniques")
+      if [[ -z "$picked" ]]; then
+        echo "error: part ${k} of ${n} carries no line the wrapper can use as a delivery proof — it needs an" >&2
+        echo "       interior line of ${FED_ECHO_MIN_BYTES}..${FED_ECHO_MAX_BYTES} bytes that occurs exactly ONCE in the whole change set and" >&2
+        echo "       nowhere in the wrapper's own framing. Refusing: delivery could not be proven." >&2
+        exit 2
+      fi
+      FED_ECHO_LINE[k]="${picked%%$'\t'*}"
+      FED_ECHO_TEXT[k]="${picked#*$'\t'}"
+      address="part ${k} line ${FED_ECHO_LINE[k]}"
+      # The invariant the one-pass selection rests on, ASSERTED rather than assumed: an address line
+      # long enough to contain a candidate would break the constructive guarantee.
+      if (( ${#address} >= FED_ECHO_MIN_BYTES )); then
+        echo "error: the address '${address}' is ${#address} bytes, at or past the ${FED_ECHO_MIN_BYTES}-byte proof-candidate minimum —" >&2
+        echo "       the request list could then reveal a candidate. Refusing rather than sending an unsound proof." >&2
+        exit 2
+      fi
+      if [[ -n "$FED_REQUESTED" ]]; then FED_REQUESTED+=$'\n'; fi
+      FED_REQUESTED+="$address"
+    done
+
+    for (( k = 1; k <= n; k++ )); do
+      ( umask 077; {
+          if (( k == 1 )); then cat "$staging/grounding"; fi
+          emit_feed_frame "$k" "$n"
+          printf -- "$FED_BEGIN_FMT" "$k" "$n"
+          cat "$staging/part-$k"
+          printf -- "$FED_END_FMT" "$k" "$n"
+        } > "$staging/turn-$k" )
+    done
+    ( umask 077; { emit_fed_final_head; echo; emit_shape_fed "$FED_REQUESTED"; } > "$staging/turn-final" )
+
+    total_bytes=0
+    for (( k = 1; k <= n; k++ )); do
+      built=$(( $(wc -c < "$staging/turn-$k") ))
+      if (( built > AGY_MAX_PROMPT_BYTES )); then
+        echo "error: fed turn ${k} would be ${built} bytes, over AGY_MAX_PROMPT_BYTES=${AGY_MAX_PROMPT_BYTES} —" >&2
+        echo "       refusing before any turn is spent." >&2
+        exit 2
+      fi
+      total_bytes=$(( total_bytes + built ))
+    done
+    built=$(( $(wc -c < "$staging/turn-final") ))
+    if (( built > AGY_MAX_PROMPT_BYTES )); then
+      echo "error: the final review turn would be ${built} bytes, over AGY_MAX_PROMPT_BYTES=${AGY_MAX_PROMPT_BYTES}." >&2
+      echo "       Trim --facts / --decided / --focus." >&2
+      exit 2
+    fi
+    total_bytes=$(( total_bytes + built ))
+    if (( total_bytes > AGY_REVIEW_MAX_TOTAL_BYTES )); then
+      echo "error: the fed review would send ${total_bytes} outgoing prompt bytes across $(( n + 1 )) turns," >&2
+      echo "       over AGY_REVIEW_MAX_TOTAL_BYTES=${AGY_REVIEW_MAX_TOTAL_BYTES} — refusing BEFORE the first turn is spent." >&2
+      echo "       Split the change set into focused per-area reviews, or raise AGY_REVIEW_MAX_TOTAL_BYTES" >&2
+      echo "       knowing that retention past ~263000 bytes of body has never been probed." >&2
+      exit 2
+    fi
+
+    FED_PART_COUNT=$n
+    echo "notice: the assembled prompt is ${prompt_bytes} bytes (> AGY_MAX_PROMPT_BYTES=${AGY_MAX_PROMPT_BYTES}) —" >&2
+    echo "        feeding the change set in ${n} part(s) over $(( n + 1 )) subscription turns, then reviewing." >&2
+    echo "        Total outgoing prompt bytes: ${total_bytes} (AGY_REVIEW_MAX_TOTAL_BYTES=${AGY_REVIEW_MAX_TOTAL_BYTES})." >&2
+    # 4.3: state the boundary fact at the point of use. agy's own denial names the permission rule it
+    # wants; granting it would widen a boundary for ALL agy use on this machine, so the kit surfaces
+    # it and never writes it. The feed exists precisely so no permission is needed.
+    echo "        (The change set is DELIVERED, not read: headless agy auto-denies its own read_file" >&2
+    echo "        tool, and this kit never grants that permission — it would widen a boundary for every" >&2
+    echo "        agy run on this machine. Delivery is proven per part instead.)" >&2
+  }
+
   # Full prompt = grounding + artifact (inline) + shape.
   ( umask 077; { emit_grounding; emit_artifact; echo; emit_shape; } > "$prompt_file" )
   prompt_bytes=$(( $(wc -c < "$prompt_file") ))
 
   if (( prompt_bytes > AGY_MAX_PROMPT_BYTES )); then
-    if [[ "$AGY_REVIEW_ALLOW_ADDDIR" == "1" ]]; then
-      # Offload ONLY the artifact to a private 0600 file; the -p prompt still carries the full grounding
-      # inline and points agy at the file. --add-dir targets the private staging dir, never .git/work-tree.
-      artifact_file="$staging/precomputed-change-set"
-      ( umask 077; emit_artifact > "$artifact_file" )
-      ( umask 077; {
-          emit_grounding
-          echo "## The change set under review"
-          echo "The full change set is too large to inline. It is in the precomputed file at:"
-          echo "  $artifact_file"
-          echo "Read it IN FULL, then review it against the grounded facts above."
-          echo
-          emit_shape
-        } > "$prompt_file" )
-      small_bytes=$(( $(wc -c < "$prompt_file") ))
-      if (( small_bytes > AGY_MAX_PROMPT_BYTES )); then
-        echo "error: even the grounding-only prompt is ${small_bytes} bytes (> AGY_MAX_PROMPT_BYTES=${AGY_MAX_PROMPT_BYTES})." >&2
-        echo "       Trim --facts / --decided / --focus." >&2
-        exit 2
-      fi
-      echo "warning: the assembled prompt was ${prompt_bytes} bytes (> AGY_MAX_PROMPT_BYTES=${AGY_MAX_PROMPT_BYTES})." >&2
-      echo "         AGY_REVIEW_ALLOW_ADDDIR=1 — offloading the change set to a private staging dir and" >&2
-      echo "         passing it via --add-dir. This RE-ENABLES the Issue-001 stall risk (heavy agentic" >&2
-      echo "         roaming); the inherited hard timeout (AGY_HARD_TIMEOUT=$AGY_HARD_TIMEOUT) bounds it." >&2
-      run_passthrough=(--add-dir "$staging")
+    if [[ "$mode" == "code" ]]; then
+      # The change set cannot be FETCHED on this host (agy's native read_file is auto-denied
+      # headlessly), so it is DELIVERED: under-cap parts over continuation turns, proven by echo.
+      plan_fed_review
+      FED_MODE=1
+      REVIEW_DELIVERY="fed"
     else
+      # D2: chunking is code-mode only — a plan/diff artifact is an operator-supplied file the
+      # operator can split, so those modes keep the refuse-over-cap contract verbatim.
       echo "error: the assembled prompt is ${prompt_bytes} bytes, over AGY_MAX_PROMPT_BYTES=${AGY_MAX_PROMPT_BYTES}." >&2
       echo "       agy takes the prompt as a single argv; past ~131072 bytes it fails with a cryptic" >&2
       echo "       'Argument list too long'. Trim to the relevant hunks, or split into focused per-area" >&2
-      if [[ "$mode" == "code" ]]; then
-        echo "       reviews. For a large CODE review, AGY_REVIEW_ALLOW_ADDDIR=1 offloads the change set via" >&2
-        echo "       a private --add-dir staging dir (re-enables the Issue-001 stall risk)." >&2
-      else
-        echo "       reviews (split the $mode into focused parts)." >&2
-      fi
+      echo "       reviews (split the $mode into focused parts)." >&2
       exit 2
     fi
   fi
@@ -966,7 +1620,10 @@ echo "review posture: model=${AGY_MODEL:-<agy settings default>} timeout=$aw_tim
 # parsed into the review receipt — the user-facing stream is unchanged.
 review_out_file="$staging/review-output"
 set +e
-if (( ${#run_passthrough[@]} > 0 )); then
+if (( FED_MODE == 1 )); then
+  run_fed_review
+  rc=$?
+elif (( ${#run_passthrough[@]} > 0 )); then
   AGY_MODEL="$AGY_MODEL" AGY_TIMEOUT="$AGY_TIMEOUT" AGY_HARD_TIMEOUT="$AGY_HARD_TIMEOUT" \
     "$AGY_RUN" "@$prompt_file" -- "${run_passthrough[@]}" | tee "$review_out_file"
   rc=${PIPESTATUS[0]}
@@ -982,6 +1639,29 @@ set -e
 # included — is a FAILED review: non-zero exit, NO receipt. This is a failed review to RE-RUN,
 # never a fatal session error (documented in --help).
 if [[ $rc -eq 0 ]]; then
+  # D1/D7: on the fed lane, delivery is checked BEFORE the verdict is even parsed — an unproven
+  # delivery is never a downgraded verdict and never a warning beside a kept receipt.
+  if (( FED_MODE == 1 )); then
+    if fed_output_is_answerless "$review_out_file"; then
+      echo "error: the fed review produced no review at all — the final turn returned neither a" >&2
+      echo "       '### Delivery proof' nor a '### Verdict' section. The wrapper SENT every one of" >&2
+      echo "       the ${FED_PART_COUNT} part(s) and every feed turn exited zero; whether the model retained them is" >&2
+      echo "       precisely what the unanswered proof leaves unknown, so nothing is claimed here." >&2
+      if fed_output_names_tool_denial "$review_out_file"; then
+        echo "       CAUSE (named by agy itself): it called a tool and headless mode auto-denied it, which" >&2
+        echo "       produces NO output at all. Observed on very large fed reviews; the fix is a SMALLER" >&2
+        echo "       review — split the change set, or leave AGY_REVIEW_MAX_TOTAL_BYTES at its default so" >&2
+        echo "       an oversized feed refuses before spending any turn." >&2
+      else
+        echo "       CAUSE: unknown — agy returned no recognizable diagnostic. Inspect the run output." >&2
+      fi
+      echo "       NO receipt was written. Re-run the review." >&2
+      exit 4
+    fi
+    if ! verify_delivery_proof "$review_out_file"; then
+      exit 4
+    fi
+  fi
   verdict="$(parse_agy_verdict "$review_out_file")"
   if [[ "$verdict" == "unknown" ]]; then
     echo "error: the review output carries no recognized '### Verdict' section (closed vocabulary:" >&2
@@ -1003,7 +1683,7 @@ if [[ $rc -eq 0 ]]; then
       grounded=true
       facts_hash="$(printf '%s' "$FACTS_CONTENT" | sha256_stdin || true)"
     fi
-    write_review_receipt "$REVIEW_ARTIFACT" true "$REVIEW_FINGERPRINT" "$verdict" "$grounded" "$facts_hash" "$REVIEW_PROBE"
+    write_review_receipt "$REVIEW_ARTIFACT" true "$REVIEW_FINGERPRINT" "$verdict" "$grounded" "$facts_hash" "$REVIEW_PROBE" "$REVIEW_DELIVERY"
   fi
 fi
 exit $rc

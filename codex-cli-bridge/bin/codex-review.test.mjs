@@ -765,6 +765,44 @@ describe('codex-review.sh — source-level reverse guard (parser arms ⟷ manife
   });
 });
 
+// ── the repo file map budget (Phase 2) ────────────────────────────────────────────
+// The shared emit_repo_file_map bounds the map in BOTH wrappers (byte-identical, kit parity test).
+// codex has no single-argv ceiling — its payload rides stdin, and past CODEX_REVIEW_MAX_TOTAL_BYTES
+// a git-dir temp file — so its budget is set at the default inline cap: the map can never outgrow
+// the whole payload, and every realistic repo's map assembles byte-UNCHANGED. Behaviour alone
+// cannot tell "a huge budget" from "no budget at all", so the pinned value is asserted at source.
+describe('codex-review.sh — repo file map budget (Phase 2)', () => {
+  const MAP_DIR = 'deeply/nested/fixture/directory/for/the/repo/file/map/budget';
+
+  it("codex-review's assembled payload is byte-unchanged by the map budget", () => {
+    const sb = makeSandbox();
+    const g = (...a) => spawnSync('git', a, { cwd: sb.repo, encoding: 'utf8' });
+    mkdirSync(join(sb.repo, MAP_DIR), { recursive: true });
+    for (let i = 0; i < 100; i += 1) {
+      writeFileSync(join(sb.repo, `${MAP_DIR}/aa-untouched-file-${String(i).padStart(3, '0')}.txt`), `untouched ${i}\n`);
+      writeFileSync(join(sb.repo, `${MAP_DIR}/zz-modified-file-${String(i).padStart(3, '0')}.txt`), `body ${i} v1\n`);
+    }
+    g('add', '-A');
+    g('commit', '-qm', 'map fixture');
+    for (let i = 0; i < 100; i += 1) writeFileSync(join(sb.repo, `${MAP_DIR}/zz-modified-file-${String(i).padStart(3, '0')}.txt`), `body ${i} v2 — changed\n`);
+    const r = run(sb, { args: ['code'] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.capStdin, /TRUNCATED/, 'a 17 KB map is far inside the budget — no degradation');
+    assert.ok(r.capStdin.includes(`${MAP_DIR}/aa-untouched-file-000.txt`), 'the whole map is still listed');
+    assert.ok(r.capStdin.includes(`${MAP_DIR}/aa-untouched-file-099.txt`), 'including its last entry');
+  });
+
+  it('the wrapper pins a map budget no smaller than its default inline-payload cap', () => {
+    const source = readFileSync(WRAPPER, 'utf8');
+    const pinned = source.match(/^AW_REVIEW_MAP_BUDGET_BYTES=(\d+)$/m);
+    assert.ok(pinned, 'codex-review.sh must PIN AW_REVIEW_MAP_BUDGET_BYTES (a plain assignment, never an env knob)');
+    const inlineCap = source.match(/^CODEX_REVIEW_MAX_TOTAL_BYTES="\$\{CODEX_REVIEW_MAX_TOTAL_BYTES:-(\d+)\}"$/m);
+    assert.ok(inlineCap, 'the default inline-payload cap is readable at source');
+    assert.ok(Number(pinned[1]) >= Number(inlineCap[1]), `map budget ${pinned[1]} must not be smaller than the inline cap ${inlineCap[1]}`);
+  });
+});
+
 // ── mode catalog ⟷ wrapper reality (BRIDGE-MODES-CATALOG) ─────────────────────────
 // The kit validator owns the catalog's INTERNAL shape; these arms pin what only the wrapper source
 // can settle — the catalog documents THIS wrapper's real modes and real escape hatches, and every

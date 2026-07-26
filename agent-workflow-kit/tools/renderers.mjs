@@ -60,8 +60,17 @@ const renderBridges = (vm, { glyph, color }) => {
     // Absent when no knob is active, so the block stays byte-identical to before when nothing is set.
     if (b.settings?.error) lines.push(`  ${pad('', MEMBER_COL)}${glyph.note} couldn't read bridge settings (${b.settings.error})`);
     else if (b.settings?.active?.length) {
-      const active = b.settings.active.map((s) => `${s.key}=${s.value} [${s.source}]`).join(' · ');
+      // A RETIRED knob is CONFIGURED but arms nothing. It must still SHOW — the line really is in
+      // the user's file — but rendering it like any other active setting would claim a capability
+      // the wrapper no longer has, which is the exact confusion the retirement exists to prevent.
+      const active = b.settings.active
+        .map((s) => `${s.key}=${s.value} [${s.source}]${s.retired ? ' RETIRED — arms nothing' : ''}`)
+        .join(' · ');
       lines.push(`  ${pad('', MEMBER_COL)}settings: ${active}`);
+      const retired = b.settings.active.filter((s) => s.retired);
+      for (const s of retired) {
+        lines.push(`  ${pad('', MEMBER_COL)}${glyph.note} ${s.key} is retired — clear it with: bridge-settings --unset ${s.key} --apply`);
+      }
     }
   }
   return lines;

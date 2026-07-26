@@ -37,7 +37,9 @@ const bridgeVm = (b) => ({
   settings: b.settings?.error
     ? { error: b.settings.error }
     : b.settings?.active?.length
-      ? { active: b.settings.active.map((a) => ({ key: a.key, value: a.value, source: a.source })) }
+      // `retired` rides along: a retired knob is CONFIGURED but arms nothing, and dropping the flag
+      // here rendered a dead key as an active setting on the one surface a user reads by default.
+      ? { active: b.settings.active.map((a) => ({ key: a.key, value: a.value, source: a.source, retired: a.retired ?? null })) }
       : null,
 });
 

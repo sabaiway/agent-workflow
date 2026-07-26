@@ -28,7 +28,8 @@ const FAKE_AGY = [
   'printf invoked > "$AGY_FAKE_SENTINEL"',
   '{ for a in "$@"; do printf "%s\\n" "$a"; done; } > "$AGY_FAKE_ARGV"',
   '{ echo "FOO_API_KEY=${FOO_API_KEY:-<unset>}"; echo "ANTIGRAVITY_API_KEY=${ANTIGRAVITY_API_KEY:-<unset>}"; } > "$AGY_FAKE_ENV"',
-  'prev=""; for a in "$@"; do [[ "$prev" == "-p" ]] && printf "%s" "$a" > "$AGY_FAKE_PROMPT"; prev="$a"; done',
+  'prompt=""',
+  'prev=""; for a in "$@"; do if [[ "$prev" == "-p" ]]; then prompt="$a"; printf "%s" "$a" > "$AGY_FAKE_PROMPT"; fi; prev="$a"; done',
   'prev=""; for a in "$@"; do',
   '  if [[ "$prev" == "--add-dir" ]]; then',
   '    printf "%s" "$a" > "${AGY_FAKE_ADDDIR:-/dev/null}"',
@@ -38,6 +39,71 @@ const FAKE_AGY = [
   '  fi; prev="$a"',
   'done',
   'if [[ -n "${AGY_FAKE_SLEEP:-}" ]]; then sleep "$AGY_FAKE_SLEEP"; fi',
+  // ── multi-turn support (the fed lane) ──────────────────────────────────────────────────────────
+  // The single-file captures above record the LAST invocation; a chunked feed needs a PER-TURN
+  // record, so each invocation also writes prompt/argv to "<file>.<turn>" and bumps a counter file.
+  'turn=1',
+  'if [[ -n "${AGY_FAKE_TURNS:-}" ]]; then',
+  '  if [[ -s "$AGY_FAKE_TURNS" ]]; then turn=$(( $(cat "$AGY_FAKE_TURNS") + 1 )); fi',
+  '  printf "%s" "$turn" > "$AGY_FAKE_TURNS"',
+  '  printf "%s" "$prompt" > "${AGY_FAKE_PROMPT}.$turn"',
+  '  { for a in "$@"; do printf "%s\\n" "$a"; done; } > "${AGY_FAKE_ARGV}.$turn"',
+  'fi',
+  // agy writes the conversation id into its --log-file; AGY_FAKE_BAD_CONV_LOG=1 writes a log the
+  // wrapper cannot parse (the D9 degrade arm).
+  'prev=""; for a in "$@"; do',
+  '  if [[ "$prev" == "--log-file" ]]; then',
+  '    if [[ "${AGY_FAKE_BAD_CONV_LOG:-}" == "1" ]]; then printf "no conversation marker here\\n" > "$a"',
+  '    else printf "Starting new conversation %s\\n" "${AGY_FAKE_CONV_ID:-11111111-2222-3333-4444-555555555555}" > "$a"; fi',
+  '  fi; prev="$a"',
+  'done',
+  'if [[ -n "${AGY_FAKE_FAIL_TURN:-}" && "$turn" == "${AGY_FAKE_FAIL_TURN}" ]]; then',
+  '  printf "FAKE_TURN_FAILURE\\n" >&2; exit 3',
+  'fi',
+  // A FEED turn: the model was told to reply OK only. This fake deliberately misbehaves — it emits a
+  // PREMATURE verdict — so the isolation invariant (feed output never reaches stdout or the parsed
+  // capture) is proven against the worst case, not the polite one.
+  'if [[ -z "${AGY_FAKE_OUTPUT+x}" && "$prompt" == *"--- BEGIN CHANGE-SET PART "* && "$prompt" != *"Requested addresses"* ]]; then',
+  '  printf "PREMATURE_FEED_CHATTER\\n### Verdict\\nREWORK\\n"; exit 0',
+  'fi',
+  // The FINAL turn carries the delivery-proof request. The fake answers it the only honest way:
+  // by reading the bodies it was actually fed, turn by turn — so a wrapper that never delivered a
+  // part cannot be satisfied by this stub either.
+  'if [[ -z "${AGY_FAKE_OUTPUT+x}" && "$prompt" == *"Requested addresses"* ]]; then',
+  '  req="$(printf "%s" "$prompt" | awk "/^Requested addresses/{f=1; next} f && /^###/{exit} f{print}")"',
+  '  entries=()',
+  '  mapfile -t _items <<< "$req"',
+  '  for _it in "${_items[@]}"; do',
+  '    [[ -n "$_it" ]] || continue',
+  '    k="$(printf "%s" "$_it" | awk "{print \\$2}")"; l="$(printf "%s" "$_it" | awk "{print \\$4}")"',
+  '    src="$k"',
+  '    if [[ "${AGY_FAKE_PROOF_DUP:-}" == "1" ]]; then src=1; fi',
+  '    if [[ "${AGY_FAKE_PROOF_OMIT:-}" == "$k" ]]; then continue; fi',
+  '    body="$(awk -v want="$l" "f && /^--- END CHANGE-SET PART /{exit} f{c++; if (c==want) {print; exit}} /^--- BEGIN CHANGE-SET PART /{f=1}" "${AGY_FAKE_PROMPT}.$src")"',
+  '    if [[ "${AGY_FAKE_PROOF_CORRUPT:-}" == "$k" ]]; then body="${body}X"; fi',
+  '    entry="$(printf "part %s line %s: %s" "$k" "$l" "$body")"',
+  // Shape knobs the grammar must survive (a bullet) or reject (everything else).
+  '    if [[ "${AGY_FAKE_PROOF_BULLET:-}" == "1" ]]; then entry="- $entry"; fi',
+  '    if [[ "${AGY_FAKE_PROOF_NESTED:-}" == "$k" ]]; then entry="note: I believe $entry"; fi',
+  '    if [[ "${AGY_FAKE_PROOF_PAD:-}" == "1" ]]; then entry="$(printf "part %02d line %04d: %s" "$k" "$l" "$body")"; fi',
+  '    if [[ "${AGY_FAKE_PROOF_CASE:-}" == "1" ]]; then entry="$(printf "Part %s Line %s: %s" "$k" "$l" "$body")"; fi',
+  '    if [[ "${AGY_FAKE_PROOF_HUGE:-}" == "$k" ]]; then entry="$(printf "part %s line 99999999999999999999: %s" "$k" "$body")"; fi',
+  '    entries+=("$entry")',
+  '    if [[ "${AGY_FAKE_PROOF_TWICE:-}" == "1" ]]; then entries+=("$entry"); fi',
+  '  done',
+  '  if [[ "${AGY_FAKE_PROOF_EXTRA:-}" == "1" ]]; then entries+=("part 99 line 1: an address nobody asked for"); fi',
+  '  if [[ "${AGY_FAKE_PROOF_HUGE_EXTRA:-}" == "1" ]]; then entries+=("part 99999999999999999999 line 1: an invented giant address"); fi',
+  '  if [[ "${AGY_FAKE_PROOF_LATE:-}" == "1" ]]; then printf "### Verdict\\nSHIP\\n"; fi',
+  '  if [[ "${AGY_FAKE_PROOF_CASE:-}" == "1" ]]; then printf "### Delivery Proof\\n"; else printf "### Delivery proof\\n"; fi',
+  '  if [[ "${AGY_FAKE_PROOF_OUTSIDE:-}" == "1" ]]; then',
+  '    printf "(nothing here)\\n### Verdict\\nSHIP\\n"',
+  '    if (( ${#entries[@]} > 0 )); then printf "%s\\n" "${entries[@]}"; fi',
+  '  else',
+  '    if (( ${#entries[@]} > 0 )); then printf "%s\\n" "${entries[@]}"; fi',
+  '    printf "### Verdict\\nSHIP\\n"',
+  '  fi',
+  '  exit 0',
+  'fi',
   // Unset AGY_FAKE_OUTPUT → a verdict-carrying default (D4: a verdict-less run is a FAILURE, so
   // the success-path tests need one); an EXPLICIT empty value exercises the empty-output failure.
   'if [[ -z "${AGY_FAKE_OUTPUT+x}" ]]; then printf "FAKE_AGY_REVIEW_OUTPUT\\n### Verdict\\nSHIP\\n"; else printf "%s\\n" "$AGY_FAKE_OUTPUT"; fi',
@@ -107,14 +173,18 @@ const makeSandbox = ({ clean = false } = {}) => {
   return { home, bin, repo, g };
 };
 
+// Capture files are per-INVOCATION: a second run() on the same sandbox must not inherit the first
+// run's turn counter or per-turn prompt files (the fed lane reads them back by turn index).
+let runSeq = 0;
 const run = (sb, { args, env = {}, cwd } = {}) => {
   const { home, bin, repo } = sb;
   const farm = farmFor(['agy', 'agy-run']);
+  const tag = `cap-${++runSeq}`;
   const cap = {
-    argv: join(home, 'cap-argv'), env: join(home, 'cap-env'), prompt: join(home, 'cap-prompt'),
-    sentinel: join(home, 'cap-sentinel'), adddir: join(home, 'cap-adddir'),
-    adddirMode: join(home, 'cap-adddir-mode'), artifactMode: join(home, 'cap-artifact-mode'),
-    artifactCopy: join(home, 'cap-artifact-copy'),
+    argv: join(home, `${tag}-argv`), env: join(home, `${tag}-env`), prompt: join(home, `${tag}-prompt`),
+    sentinel: join(home, `${tag}-sentinel`), adddir: join(home, `${tag}-adddir`),
+    adddirMode: join(home, `${tag}-adddir-mode`), artifactMode: join(home, `${tag}-artifact-mode`),
+    artifactCopy: join(home, `${tag}-artifact-copy`), turns: join(home, `${tag}-turns`),
   };
   const r = spawnSync('bash', [WRAPPER, ...args], {
     cwd: cwd || repo,
@@ -129,16 +199,26 @@ const run = (sb, { args, env = {}, cwd } = {}) => {
       AGY_FAKE_ARGV: cap.argv, AGY_FAKE_ENV: cap.env, AGY_FAKE_PROMPT: cap.prompt,
       AGY_FAKE_SENTINEL: cap.sentinel, AGY_FAKE_ADDDIR: cap.adddir, AGY_FAKE_ADDDIR_MODE: cap.adddirMode,
       AGY_FAKE_ARTIFACT_MODE: cap.artifactMode, AGY_FAKE_ARTIFACT_COPY: cap.artifactCopy,
+      AGY_FAKE_TURNS: cap.turns,
       ...env,
     },
   });
   const readIf = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '');
+  // Per-turn captures are read EAGERLY: callers rmSync the sandbox before asserting.
+  const turns = existsSync(cap.turns) ? Number(readFileSync(cap.turns, 'utf8')) : 0;
+  const prompts = [];
+  const argvs = [];
+  for (let i = 1; i <= turns; i += 1) {
+    prompts.push(readIf(`${cap.prompt}.${i}`));
+    argvs.push(readIf(`${cap.argv}.${i}`));
+  }
   return {
     ...r,
     invoked: existsSync(cap.sentinel),
     argv: readIf(cap.argv), capEnv: readIf(cap.env), prompt: readIf(cap.prompt),
     adddir: readIf(cap.adddir).trim(), adddirMode: readIf(cap.adddirMode).trim(),
     artifactMode: readIf(cap.artifactMode).trim(), artifactCopy: readIf(cap.artifactCopy),
+    turns, prompts, argvs,
   };
 };
 
@@ -403,45 +483,809 @@ describe('agy-review.sh — code-mode precomputed diff (4, 5, 8)', () => {
   });
 });
 
-describe('agy-review.sh — size ceiling + gated --add-dir escape (6)', () => {
-  it('default: oversized prompt exits 2 with guidance, agy not invoked', () => {
-    const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: '50' } });
-    rmSync(sb.home, { recursive: true, force: true });
-    assert.equal(r.status, 2, r.stderr);
-    assert.match(r.stderr, /over AGY_MAX_PROMPT_BYTES=50/);
-    assert.match(r.stderr, /Trim to the relevant hunks/);
-    assert.equal(r.invoked, false, 'an oversized prompt must not spend a run by default');
-  });
+// ── the repo file map budget (Phase 2) ───────────────────────────────────────────────────────────
+// The kit's extracted-helper parity test proves the SHARED emit_repo_file_map bounds the map; it
+// cannot prove this REAL wrapper sets the budget. These cases run the wrapper end to end.
+const MAP_DIR = 'deeply/nested/fixture/directory/for/the/repo/file/map/budget';
+const AGY_MAP_BUDGET_BYTES = 8192;
+const MAP_HEADER = '=== repo file map (git ls-files) ===\n';
+const untouchedPath = (i) => `${MAP_DIR}/aa-untouched-file-${String(i).padStart(3, '0')}.txt`;
+const modifiedPath = (i) => `${MAP_DIR}/zz-modified-file-${String(i).padStart(3, '0')}.txt`;
 
-  // A ceiling ABOVE the grounding-only prompt (~1.3 KB) but BELOW the full prompt (a big artifact),
-  // so the escape can actually offload the artifact while the grounding still fits inline.
-  it('AGY_REVIEW_ALLOW_ADDDIR=1: offloads the artifact to a 0700/0600 staging dir via --add-dir', () => {
+// A tracked map far past the budget (~200 long paths ≈ 17 KB) whose CHANGED subset is ALSO past it
+// (~100 paths ≈ 8.7 KB) — the fixture Invariant B needs: a change touching very many long paths.
+const seedOversizedMap = (sb, count = 100) => {
+  mkdirSync(join(sb.repo, MAP_DIR), { recursive: true });
+  for (let i = 0; i < count; i += 1) {
+    writeFileSync(join(sb.repo, untouchedPath(i)), `untouched ${i}\n`);
+    writeFileSync(join(sb.repo, modifiedPath(i)), `body ${i} v1\n`);
+  }
+  sb.g('add', '-A');
+  sb.g('commit', '-qm', 'map fixture');
+  for (let i = 0; i < count; i += 1) writeFileSync(join(sb.repo, modifiedPath(i)), `body ${i} v2 — changed\n`);
+  return count;
+};
+const mapSectionOf = (prompt) =>
+  prompt.slice(prompt.indexOf(MAP_HEADER) + MAP_HEADER.length, prompt.indexOf('\n\n=== git status (porcelain) ==='));
+
+describe('agy-review.sh — repo file map budget (Phase 2)', () => {
+  it('agy-review sets the map budget and degrades an over-budget map', () => {
     const sb = makeSandbox();
-    writeFileSync(join(sb.repo, 'unique.txt'), `OVERSIZE_UNIQUE_MARKER\n${'x'.repeat(8000)}\n`);
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: '2000', AGY_REVIEW_ALLOW_ADDDIR: '1' } });
+    const count = seedOversizedMap(sb);
+    const r = run(sb, { args: ['code', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(r.invoked, true, 'the escape hatch lets the run proceed');
-    assert.match(r.argv, /--add-dir/, 'agy is given --add-dir');
-    assert.ok(r.adddir && !r.adddir.includes('.git'), `--add-dir must NOT point at .git (got ${r.adddir})`);
-    assert.ok(r.adddir && r.adddir !== sb.repo, '--add-dir must NOT be the work tree');
-    assert.equal(r.adddirMode, '700', 'the staging dir must be mode 0700');
-    assert.equal(r.artifactMode, '600', 'the offloaded artifact must be mode 0600');
-    assert.match(r.artifactCopy, /OVERSIZE_UNIQUE_MARKER/, 'the artifact file holds the full change set');
-    assert.match(r.prompt, /Grounded facts/, 'the -p prompt STILL carries the full grounding inline');
-    assert.doesNotMatch(r.prompt, /repo file map/, 'the artifact is offloaded, not inlined into -p');
-    assert.match(r.stderr, /RE-ENABLES the Issue-001 stall risk/);
+    const note = r.prompt.match(new RegExp(`=== repo file map TRUNCATED to the changed-path subset: (\\d+) of (\\d+) tracked paths shown, (\\d+) omitted \\(map budget ${AGY_MAP_BUDGET_BYTES} bytes\\) ===`));
+    assert.ok(note, 'the wrapper must set the budget and state the truncation with its counts');
+    const [, shown, total, omitted] = note.map(Number);
+    assert.ok(total >= 2 * count, 'the fixture map really carries every seeded path');
+    assert.equal(shown + omitted, total, 'the stated counts add up — a truncation-with-count, never a silent cut');
+    assert.ok(shown < total, 'the map really degraded');
+    assert.ok(r.prompt.includes(modifiedPath(0)), 'the degraded map keeps the CHANGED paths');
+    assert.ok(!r.prompt.includes(untouchedPath(0)), 'an untouched path is dropped, and it appears nowhere else in the payload');
+  });
+
+  it('the degraded changed-path subset itself stays inside the wrapper budget', () => {
+    const sb = makeSandbox();
+    seedOversizedMap(sb);
+    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    const lines = mapSectionOf(r.prompt).split('\n');
+    const noteAt = lines.findIndex((l) => l.startsWith('=== repo file map TRUNCATED'));
+    assert.notEqual(noteAt, -1, 'the note closes the degraded section');
+    const pathBytes = Buffer.byteLength(lines.slice(0, noteAt).join('\n'), 'utf8');
+    assert.ok(pathBytes > 0, 'the subset is non-empty');
+    assert.ok(pathBytes <= AGY_MAP_BUDGET_BYTES, `the subset (${pathBytes} bytes) must stay inside the ${AGY_MAP_BUDGET_BYTES}-byte budget`);
+  });
+
+  it('an ordinary in-budget repo keeps the whole map, unnoted', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.prompt, /=== repo file map \(git ls-files\) ===\nbase\.txt\n/);
+    assert.doesNotMatch(r.prompt, /TRUNCATED/, 'a fitting map is untouched by the bound');
+  });
+});
+
+// ── the chunked-feed code review with PROVEN delivery (Phase 3) ──────────────────────────────────
+// agy takes its prompt as ONE argv, and this host AUTO-DENIES agy's native read_file tool — so an
+// over-cap change set can never be FETCHED by the model. It is DELIVERED instead: partitioned into
+// under-cap parts, fed over continuation turns, then reviewed in a final turn. Delivery is PROVEN,
+// never assumed: the wrapper picks a line from each part's body AFTER assembly and the final answer
+// must reproduce every picked line verbatim. Envelope and body are formally separate — only BODIES
+// concatenate, and they concatenate to the change set byte-for-byte.
+const ARTIFACT_HEADER = '## The change set under review (assembled working-tree diff — repo-complete)';
+const SHAPE_HEADER = '\n## Output — Markdown, this exact shape, nothing else';
+const FED_CAP = 6000;
+
+// A change set big enough to need several parts under FED_CAP.
+const seedFedChangeSet = (sb, { lines = 400, multibyte = false } = {}) => {
+  const body = Array.from({ length: lines }, (_, i) =>
+    multibyte
+      ? `строка ${String(i).padStart(4, '0')} — многобайтовый маркер ${'ю'.repeat(20)}`
+      : `unique change-set line ${String(i).padStart(4, '0')} — a distinctive body marker ${'x'.repeat(20)}`).join('\n');
+  writeFileSync(join(sb.repo, 'oversized.txt'), `${body}\n`);
+};
+
+const inlineArtifactOf = (prompt) => prompt.slice(prompt.indexOf(ARTIFACT_HEADER), prompt.indexOf(SHAPE_HEADER));
+const bodyOf = (turnPrompt) => {
+  const begin = turnPrompt.match(/--- BEGIN CHANGE-SET PART \d+ OF \d+ ---\n/);
+  if (!begin) return null;
+  const start = begin.index + begin[0].length;
+  return turnPrompt.slice(start, turnPrompt.indexOf('\n--- END CHANGE-SET PART ', start));
+};
+// The addresses ride ONE PER LINE — that format is what makes a collision with a proof candidate
+// constructively impossible, so the parser reads lines, never a delimiter-joined field.
+const requestedBlockOf = (finalPrompt) => {
+  const start = finalPrompt.indexOf('Requested addresses');
+  assert.notEqual(start, -1, 'the final turn states which lines it requires');
+  const after = finalPrompt.slice(finalPrompt.indexOf('\n', start) + 1);
+  return after.slice(0, after.indexOf('\n###')).split('\n').filter(Boolean);
+};
+const requestedOf = (finalPrompt) => requestedBlockOf(finalPrompt).map((item) => {
+  const [, part, line] = item.match(/^part (\d+) line (\d+)$/);
+  return { part: Number(part), line: Number(line) };
+});
+const fedRun = (sb, extraEnv = {}) =>
+  run(sb, { args: ['code', '--facts', 'grounded fact'], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP), ...extraEnv } });
+
+describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)', () => {
+  it('an over-cap code review feeds every part and the concatenated BODIES reproduce the change set exactly', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const inline = run(sb, { args: ['code', '--facts', 'grounded fact'], env: { AGY_MAX_PROMPT_BYTES: '130000' } });
+    const fed = fedRun(sb);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(inline.status, 0, inline.stderr);
+    assert.equal(fed.status, 0, fed.stderr);
+    assert.ok(fed.turns >= 3, `the fixture must really chunk (got ${fed.turns} turns)`);
+    const bodies = fed.prompts.slice(0, -1).map(bodyOf);
+    assert.ok(bodies.every((b) => b !== null), 'every turn but the last carries exactly one body');
+    assert.equal(bodies.join(''), inlineArtifactOf(inline.prompt), 'the bodies concatenate to the change set byte-for-byte');
+  });
+
+  it('no envelope text appears in the reconstructed review artifact', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb);
+    rmSync(sb.home, { recursive: true, force: true });
+    const reconstructed = fed.prompts.slice(0, -1).map(bodyOf).join('');
+    for (const envelope of ['--- BEGIN CHANGE-SET PART', '--- END CHANGE-SET PART', 'Chunked delivery', 'Reply with exactly OK', 'Grounded facts', 'Requested:']) {
+      assert.ok(!reconstructed.includes(envelope), `envelope text leaked into the artifact: ${envelope}`);
+    }
+  });
+
+  it('every fed turn prompt is under AGY_MAX_PROMPT_BYTES', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, fed.stderr);
+    for (const [i, p] of fed.prompts.entries()) {
+      assert.ok(Buffer.byteLength(p, 'utf8') <= FED_CAP, `turn ${i + 1} is ${Buffer.byteLength(p, 'utf8')} bytes, over the ${FED_CAP} ceiling`);
+    }
+  });
+
+  it('the shape block appears only on the final turn, and every feed turn carries the acknowledge-only instruction', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb);
+    rmSync(sb.home, { recursive: true, force: true });
+    const feed = fed.prompts.slice(0, -1);
+    const final = fed.prompts[fed.prompts.length - 1];
+    for (const [i, p] of feed.entries()) {
+      assert.ok(!p.includes('## Output — Markdown'), `feed turn ${i + 1} must not carry the output shape`);
+      assert.ok(!p.includes('### Verdict'), `feed turn ${i + 1} must not ask for a verdict`);
+      assert.match(p, /Reply with exactly OK and NOTHING else/, `feed turn ${i + 1} must be acknowledge-only`);
+    }
+    assert.match(final, /## Output — Markdown/);
+    assert.match(final, /### Delivery proof/);
+    assert.ok(final.indexOf('### Delivery proof') < final.indexOf('### Verdict'), 'the proof section is FIRST in the mandated shape');
+    assert.ok(bodyOf(final) === null, 'the final turn carries no body — the change set is already delivered');
+  });
+
+  // Observed LIVE on the first real over-cap dispatch: the final turn reached for a tool to count
+  // lines, headless agy auto-denied it ("no output produced — a tool required the \"command\"
+  // permission"), and the whole answer was lost. Every turn must forbid tool use outright — the
+  // change set is already IN the conversation, so no tool can add anything.
+  it('every turn forbids tool use — a denied tool loses the whole answer on this host', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, fed.stderr);
+    for (const [i, p] of fed.prompts.entries()) {
+      assert.match(p, /do NOT use any tool/i, `turn ${i + 1} must forbid tool use`);
+      assert.match(p, /already in this conversation|from THIS CONVERSATION only/i, `turn ${i + 1} must say why no tool is needed`);
+    }
+  });
+
+  // The delivery verdict must not blame delivery for a run that produced no answer at all: the parts
+  // WERE fed, the model was blocked from replying. Reporting it as "the change set never arrived"
+  // sends the reader hunting the wrong bug.
+  it('a final turn that produced NO answer reports that cause, never a delivery failure', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_FAKE_OUTPUT: 'jetski: no output produced — a tool required the "command" permission that headless mode cannot prompt for, so it was auto-denied.' });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 4, fed.stderr);
+    assert.match(fed.stderr, /produced no review/i, 'the cause is the empty answer');
+    assert.doesNotMatch(fed.stderr, /never received it/, 'never the delivery accusation');
+    assert.match(fed.stderr, /SENT every one of/, 'it claims only what it can: the parts were sent');
+    assert.doesNotMatch(fed.stderr, /delivery was proven|WAS delivered/, 'retention is exactly what the unanswered proof leaves unknown');
+    assert.match(fed.stderr, /CAUSE \(named by agy itself\)/, 'the KNOWN denial signature is recognized, not guessed');
+    assert.equal(receipts.length, 0, 'still no receipt — an unanswered review attests nothing');
+  });
+
+  it('an answerless final turn with NO recognizable diagnostic reports the cause as unknown', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_FAKE_OUTPUT: 'something the wrapper has never seen before' });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 4, fed.stderr);
+    assert.match(fed.stderr, /CAUSE: unknown/, 'an unrecognized failure is never dressed up as a known one');
+    assert.doesNotMatch(fed.stderr, /named by agy itself/);
+  });
+
+  it('the grounding rides turn 1 only', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_MAX_PROMPT_BYTES: String(FED_CAP) });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.match(fed.prompts[0], /## Grounded facts — review AGAINST these/);
+    assert.match(fed.prompts[0], /grounded fact/);
+    for (const p of fed.prompts.slice(1)) assert.ok(!p.includes('## Grounded facts'), 'the grounding is not re-sent');
+  });
+
+  it('a multibyte body is cut at LINE boundaries — every part decodes cleanly and concatenation stays byte-exact', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb, { multibyte: true, lines: 400 });
+    const inline = run(sb, { args: ['code', '--facts', 'grounded fact'], env: { AGY_MAX_PROMPT_BYTES: '130000' } });
+    const fed = fedRun(sb);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, fed.stderr);
+    assert.ok(fed.turns >= 3, 'the multibyte fixture really chunks');
+    const bodies = fed.prompts.slice(0, -1).map(bodyOf);
+    for (const [i, b] of bodies.entries()) {
+      assert.equal(Buffer.from(b, 'utf8').toString('utf8'), b, `part ${i + 1} carries no split code point`);
+      if (i < bodies.length - 1) assert.ok(b.endsWith('\n'), `part ${i + 1} ends on a line boundary`);
+    }
+    assert.equal(bodies.join(''), inlineArtifactOf(inline.prompt), 'byte-exact concatenation survives multibyte content');
+  });
+
+  // The partitioner's two boundary defects, both caught at review: an invented separator byte on an
+  // unterminated last line (an extra part and an extra TURN), and an over-eager refusal for a line
+  // that is merely longer than the FIRST part's smaller budget.
+  it('an artifact with NO trailing newline yields no extra or empty part, and reassembles byte-exactly', () => {
+    const sb = makeSandbox();
+    // An untracked file with no final newline: the assembled change set ends without one too.
+    writeFileSync(join(sb.repo, 'oversized.txt'), `${Array.from({ length: 400 }, (_, i) => `unique change-set line ${String(i).padStart(4, '0')} — a distinctive body marker ${'x'.repeat(20)}`).join('\n')}`);
+    const inline = run(sb, { args: ['code', '--facts', 'grounded fact'], env: { AGY_MAX_PROMPT_BYTES: '130000' } });
+    const fed = fedRun(sb);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, fed.stderr);
+    const bodies = fed.prompts.slice(0, -1).map(bodyOf);
+    for (const [i, b] of bodies.entries()) assert.ok(b.length > 0, `part ${i + 1} is non-empty`);
+    assert.equal(bodies.join(''), inlineArtifactOf(inline.prompt), 'byte-exact reassembly without a final newline');
+    const announced = fed.stderr.match(/feeding the change set in (\d+) part\(s\) over (\d+) subscription turns/);
+    assert.equal(Number(announced[1]), bodies.length, 'the announced part count is the count really sent — no phantom part');
+    assert.equal(Number(announced[2]), fed.turns, 'and no phantom turn');
+  });
+
+  it('a line longer than the FIRST part budget but not the later one is placed, not refused', () => {
+    const sb = makeSandbox();
+    // Turn 1 carries the grounding too, so its body budget is SMALLER by exactly the grounding size.
+    // A fat grounding opens a real window between the two budgets; a line inside that window must be
+    // moved to a later part, not made to fail the whole run.
+    const facts = `grounded fact ${'g'.repeat(2000)}`;
+    // Every filler line must be GLOBALLY UNIQUE — the proof selector rejects a repeated line, so a
+    // restarted counter would starve the part of candidates and hide what this case is testing.
+    const filler = (from, n) => Array.from({ length: n }, (_, i) => `unique change-set line ${String(from + i).padStart(4, '0')} — a distinctive body marker ${'x'.repeat(20)}`).join('\n');
+    const longLine = `unique long marker line ${'y'.repeat(4200)}`;
+    writeFileSync(join(sb.repo, 'oversized.txt'), `${filler(0, 20)}\n${longLine}\n${filler(20, 60)}\n`);
+    const fed = run(sb, { args: ['code', '--facts', facts], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP) } });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, `a placeable long line must not refuse the run: ${fed.stderr}`);
+    const bodies = fed.prompts.slice(0, -1).map(bodyOf);
+    assert.ok(bodies.some((b) => b.includes(longLine)), 'the long line rode a part whole');
+    assert.ok(!bodies[0].includes(longLine), 'and it was moved OFF the smaller first part');
+  });
+
+  it('a line that fits NO part refuses before any turn is spent', () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.repo, 'oversized.txt'), `head\n${'z'.repeat(FED_CAP * 2)}\ntail\n`);
+    const fed = fedRun(sb);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 2, fed.stderr);
+    assert.equal(fed.invoked, false, 'not one turn is spent');
+    assert.match(fed.stderr, /does not fit even an EMPTY fed part/);
+  });
+
+  it('feed-turn output never reaches stdout or the parsed capture (a premature verdict is discarded)', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb);
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, fed.stderr);
+    assert.ok(!fed.stdout.includes('PREMATURE_FEED_CHATTER'), 'a feed turn never publishes to stdout');
+    assert.ok(!fed.stdout.includes('REWORK'), 'a feed turn`s premature verdict never reaches the reader');
+    assert.equal(receipts.length, 1);
+    assert.equal(receipts[0].verdict, 'SHIP', 'only the FINAL turn is parsed into the receipt');
+  });
+
+  it('a non-zero feed turn stops the run, spends no later turn, and writes NO receipt', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_FAKE_FAIL_TURN: '2' });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.notEqual(fed.status, 0, 'a failed feed turn is a failed review');
+    assert.equal(fed.turns, 2, 'the run stops at the first failure — no later turn is spent');
+    assert.equal(receipts.length, 0, 'a run whose delivery never completed mints nothing');
+  });
+
+  // The hard cap is ONE wall-clock budget for the whole review. Handing each of the N+1 calls the
+  // full AGY_HARD_TIMEOUT multiplied the stated guarantee by the turn count — a 30m cap could run
+  // for hours. Each turn now gets only what is LEFT of a shared deadline.
+  it('the hard cap is ONE budget for the whole review, not one per turn', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb, { lines: 150 });
+    const fed = run(sb, {
+      args: ['code', '--facts', 'grounded fact'],
+      env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP), AGY_HARD_TIMEOUT: '600s', AGY_TIMEOUT: '600s', AGY_FAKE_SLEEP: '1' },
+    });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, fed.stderr);
+    const timeouts = fed.argvs.map((argv) => {
+      const tokens = argv.split('\n');
+      return Number((tokens[tokens.indexOf('--print-timeout') + 1] ?? '').replace(/s$/, ''));
+    });
+    assert.ok(timeouts.length >= 3, `the fixture must really chunk (got ${timeouts.length} turns)`);
+    for (const [i, t] of timeouts.entries()) {
+      assert.ok(t > 0 && t <= 600, `turn ${i + 1} asked for ${t}s, outside the shared 600s budget`);
+    }
+    assert.ok(timeouts[timeouts.length - 1] < timeouts[0], 'the budget SHRINKS across turns — a per-turn cap would keep handing out the full 600s');
+    // council R1-M5: agy.sh hands timeout(1) `--kill-after=10s`, so a turn given the FULL remaining
+    // time can outlive the shared deadline by that grace when it ignores TERM. Every turn must
+    // therefore be handed strictly less than what is left.
+    assert.ok(timeouts[0] <= 600 - 10, `turn 1 asked for ${timeouts[0]}s — the SIGKILL grace is not reserved`);
+  });
+
+  // council R2-M2: shrinking a turn to 1s does not save the cap — a TERM-ignoring process still runs
+  // for the SIGKILL grace on top. Too little budget left is a REFUSAL, never a tiny turn.
+  it('a cap smaller than the SIGKILL grace refuses BEFORE spending a single turn', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb, { lines: 150 });
+    const fed = run(sb, {
+      args: ['code', '--facts', 'grounded fact'],
+      env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP), AGY_HARD_TIMEOUT: '5s', AGY_TIMEOUT: '5s' },
+    });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 124, fed.stderr);
+    assert.equal(fed.turns, 0, 'not one turn is dispatched — the refusal is pre-spend');
+    assert.match(fed.stderr, /SIGKILL grace/u, 'the refusal names the real cause');
+    assert.equal(receipts.length, 0, 'a refused review mints NO receipt');
+  });
+
+  it('the fed lane announces part and turn counts before the first dispatch (D5 quota honesty)', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb);
+    rmSync(sb.home, { recursive: true, force: true });
+    const announce = fed.stderr.match(/feeding the change set in (\d+) part\(s\) over (\d+) subscription turns/);
+    assert.ok(announce, `the cost must be stated before it is spent: ${fed.stderr}`);
+    assert.equal(Number(announce[1]) + 1, Number(announce[2]), 'N parts cost N+1 turns');
+    assert.equal(Number(announce[2]), fed.turns, 'the announced turn count is the count really spent');
+  });
+
+  // The ceiling is a SPENDING guard, so a value the operator sets and the wrapper cannot honour must
+  // never be silently ignored. `008000` used to make bash evaluate an invalid octal constant: both
+  // range tests errored to false and the ceiling simply stopped existing.
+  it('a leading-zero ceiling is canonicalized, not read as octal — and it still refuses', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_REVIEW_MAX_TOTAL_BYTES: '008000' });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 2, fed.stderr);
+    assert.equal(fed.invoked, false, 'the ceiling really bound — not one turn was spent');
+    assert.match(fed.stderr, /over AGY_REVIEW_MAX_TOTAL_BYTES=8000\b/, 'canonicalized to 8000, and enforced at that value');
+    assert.doesNotMatch(fed.stderr, /value too great for base|invalid arithmetic/, 'no octal diagnostic anywhere');
+  });
+
+  it('an explicit env ceiling the wrapper cannot honour REFUSES, never silently defaults', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    for (const bad of ['999999999999999999999', '200000000', 'lots']) {
+      const fed = fedRun(sb, { AGY_REVIEW_MAX_TOTAL_BYTES: bad });
+      assert.equal(fed.status, 2, `${bad}: ${fed.stderr}`);
+      assert.equal(fed.invoked, false, `${bad}: no run is spent under an unhonoured ceiling`);
+      assert.match(fed.stderr, /not a valid byte ceiling/, `${bad}: the refusal names the cause`);
+    }
+    rmSync(sb.home, { recursive: true, force: true });
+  });
+
+  it('the DEFAULT ceiling still lets an ordinary fed review through', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_REVIEW_MAX_TOTAL_BYTES: '240000' });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, fed.stderr);
+    assert.equal(receipts[0].delivery, 'fed');
+  });
+
+  it('a change set whose total outgoing prompt bytes exceed AGY_REVIEW_MAX_TOTAL_BYTES refuses before the first turn is spent', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_REVIEW_MAX_TOTAL_BYTES: '9000' });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 2, fed.stderr);
+    assert.equal(fed.invoked, false, 'not one subscription turn is spent');
+    assert.match(fed.stderr, /over AGY_REVIEW_MAX_TOTAL_BYTES=9000/);
+    assert.equal(receipts.length, 0);
+  });
+
+  it('a fixed overhead that cannot fit refuses rather than emitting an empty body', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_MAX_PROMPT_BYTES: '900' });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 2, fed.stderr);
+    assert.equal(fed.invoked, false);
+    assert.match(fed.stderr, /leaves no room/);
+  });
+});
+
+// 4.3: agy's own denial names the permission rule it wants. The kit SURFACES that fact and never
+// applies it — granting read_file would widen a boundary for ALL agy use on the machine to re-arm
+// the one lane whose failure mode is undetectable by construction.
+describe('agy-review.sh — the agy permission fact is surfaced, never applied', () => {
+  const BRIDGE_ROOT = resolve(HERE, '..');
+
+  it('the over-cap path states why the change set is delivered rather than read', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, fed.stderr);
+    assert.match(fed.stderr, /read_file/, 'the notice names the denied tool');
+    assert.match(fed.stderr, /never (grants|writes)/, 'and states that the kit does not grant it');
+  });
+
+  it('the bridge docs state the never-applied posture (doc contract)', () => {
+    const prompt = readFileSync(join(BRIDGE_ROOT, 'references', 'review-prompt.md'), 'utf8');
+    assert.match(prompt, /read_file/, 'the denial is named');
+    assert.match(prompt, /never writes it|never applied/i, 'the never-applied posture is stated');
+    assert.match(prompt, /dangerously-skip-permissions/, 'and the strictly-worse alternative is named as not offered');
+    assert.doesNotMatch(prompt, /grant (the )?read_file permission to (fix|enable)/i, 'the docs never RECOMMEND granting it');
+  });
+
+  it('no wrapper or doc surface ever writes an agy permission rule', () => {
+    for (const rel of [join('bin', 'agy-review.sh'), join('bin', 'agy.sh')]) {
+      const text = readFileSync(join(BRIDGE_ROOT, rel), 'utf8');
+      assert.doesNotMatch(text, /--dangerously-skip-permissions/, `${rel} must never pass the blanket-permission flag`);
+    }
+  });
+});
+
+describe('agy-review.sh — fed lane: turn targeting (D9)', () => {
+  it('every turn after the first pins the captured conversation id', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_FAKE_CONV_ID: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, fed.stderr);
+    assert.match(fed.argvs[0], /(^|\n)--log-file(\n|$)/, 'turn 1 asks agy for its run log');
+    assert.ok(!fed.argvs[0].includes('--conversation'), 'turn 1 is fresh');
+    for (const argv of fed.argvs.slice(1)) {
+      assert.match(argv, /(^|\n)--conversation(\n|$)/);
+      assert.match(argv, /(^|\n)aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee(\n|$)/);
+    }
+  });
+
+  it('an unparseable log degrades to --continue with a stated notice, not silently', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_FAKE_BAD_CONV_LOG: '1' });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, fed.stderr);
+    assert.match(fed.stderr, /could not capture the conversation id/, 'the degrade is STATED');
+    for (const argv of fed.argvs.slice(1)) assert.match(argv, /(^|\n)--continue(\n|$)/);
+  });
+});
+
+describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1, D7)', () => {
+  it('a fed review reproducing every selected line writes a fresh code receipt at the tree fingerprint', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb);
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, fed.stderr);
+    assert.equal(receipts.length, 1);
+    assert.equal(receipts[0].artifact, 'code');
+    assert.equal(receipts[0].fresh, true);
+    assert.match(receipts[0].fingerprint, /^[0-9a-f]{64}$/);
+    assert.equal(receipts[0].delivery, 'fed', 'the receipt declares HOW delivery was established');
+  });
+
+  it('a fed review whose output omits a part`s echo exits 4 and writes NO receipt', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_FAKE_PROOF_OMIT: '2' });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 4, fed.stderr);
+    assert.match(fed.stderr, /delivery/i, 'the cause names delivery, not a generic missing verdict');
+    assert.ok(!/no recognized '### Verdict' section/.test(fed.stderr), 'never the generic verdict-less message');
+    assert.equal(receipts.length, 0);
+  });
+
+  it('a fed review whose echo differs from the recorded line exits 4 and writes NO receipt', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_FAKE_PROOF_CORRUPT: '2' });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 4, fed.stderr);
+    assert.match(fed.stderr, /delivery/i);
+    assert.equal(receipts.length, 0);
+  });
+
+  it('a fed review echoing one part`s line for two parts exits 4 and writes NO receipt', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_FAKE_PROOF_DUP: '1' });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 4, fed.stderr);
+    assert.equal(receipts.length, 0);
+  });
+
+  // The proof GRAMMAR, pinned red→green (Test-as-spec). A substring search over the whole answer
+  // accepted every shape below except the bullet — which is the one shape that should pass.
+  it('an echo placed OUTSIDE the proof section does not count', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_FAKE_PROOF_OUTSIDE: '1' });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 4, fed.stderr);
+    assert.equal(receipts.length, 0);
+  });
+
+  // The proof comes FIRST so output truncation can never silently drop it. A block that arrives
+  // after a verdict is not that shape, so it is not searched for — otherwise the "first" in the
+  // contract would be decoration.
+  it('a proof block placed AFTER the verdict does not count — the proof must be the first section', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_FAKE_PROOF_LATE: '1' });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 4, fed.stderr);
+    assert.equal(receipts.length, 0);
+  });
+
+  it('an address echoed TWICE fails — one address, one line', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_FAKE_PROOF_TWICE: '1' });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 4, fed.stderr);
+    assert.match(fed.stderr, /more than once/i);
+    assert.equal(receipts.length, 0);
+  });
+
+  it('an UNREQUESTED address in the proof section fails', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_FAKE_PROOF_EXTRA: '1' });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 4, fed.stderr);
+    assert.match(fed.stderr, /was never requested/i);
+    assert.equal(receipts.length, 0);
+  });
+
+  it('a marker BURIED inside a sentence is not an echo (the anchor is real)', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_FAKE_PROOF_NESTED: '2' });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 4, fed.stderr);
+    assert.equal(receipts.length, 0);
+  });
+
+  // Numbers arriving from the MODEL are untrusted input. `part 08 line 09` reached bash arithmetic
+  // and array indexing as `08`, which bash reads as OCTAL — the wrapper crashed with `value too
+  // great for base` instead of the contracted clean refusal, and a safely padded `01` also mismatched
+  // the unpadded `1`. Both die at the PARSE boundary now: awk hands bash plain decimals.
+  it('a zero-padded proof address is normalized, never an octal crash and never a false refusal', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_FAKE_PROOF_PAD: '1' });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, `a padded address must pass, not crash: ${fed.stderr}`);
+    assert.doesNotMatch(fed.stderr, /value too great for base/, 'never bash octal arithmetic on model input');
+    assert.equal(receipts.length, 1);
+    assert.equal(receipts[0].delivery, 'fed');
+  });
+
+  it('a capitalized heading and anchor still count — and the payload keeps its own case', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_FAKE_PROOF_CASE: '1' });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, `a capitalization must not fail a real delivery: ${fed.stderr}`);
+    assert.equal(receipts.length, 1, 'the review attests');
+  });
+
+  it('an absurd proof address never reaches bash arithmetic — no crash, no impersonated address', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_FAKE_PROOF_HUGE: '2' });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 4, fed.stderr);
+    assert.doesNotMatch(fed.stderr, /value too great for base|syntax error/, 'an absurd number never reaches bash arithmetic');
+    assert.equal(receipts.length, 0);
+  });
+
+  // Dropping an out-of-range address made it INVISIBLE: an answer with every correct echo plus one
+  // invented giant address then satisfied a grammar whose whole point is that it is closed.
+  it('a VALID proof carrying one extra out-of-range address still fails — an invented address is never invisible', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_FAKE_PROOF_HUGE_EXTRA: '1' });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 4, fed.stderr);
+    assert.match(fed.stderr, /out of range/, 'the refusal names what was wrong with it');
+    assert.equal(receipts.length, 0, 'a closed grammar does not mint a receipt beside an invented address');
+  });
+
+  // The candidate cap was 25, so a change set whose first 25 middle-nearest candidates all fail the
+  // fixed-string checks earned a false "no usable candidate" refusal while candidate 26 was fine.
+  it('a part whose first 25 candidates are unusable still finds the one after them', () => {
+    const sb = makeSandbox();
+    // Each decoy is a unique WHOLE line (so it survives the cheap prefilter) that also occurs as a
+    // SUBSTRING of a longer line — exactly the case the exact occurrence check must reject.
+    const decoys = Array.from({ length: 30 }, (_, i) => `decoy candidate ${String(i).padStart(3, '0')} — appears twice as a substring`);
+    const echoes = decoys.map((d) => `carrier line wrapping ${d} inside a longer line`);
+    const filler = (from, n) => Array.from({ length: n }, (_, i) => `unique change-set line ${String(from + i).padStart(4, '0')} — a distinctive body marker ${'x'.repeat(20)}`);
+    const body = [...filler(0, 40), ...decoys, ...filler(40, 40), ...echoes, ...filler(80, 60)];
+    writeFileSync(join(sb.repo, 'oversized.txt'), `${body.join('\n')}\n`);
+    const fed = fedRun(sb);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, `a usable candidate past position 25 must be found: ${fed.stderr}`);
+    const final = fed.prompts[fed.prompts.length - 1];
+    const bodies = fed.prompts.slice(0, -1).map(bodyOf);
+    for (const { part, line } of requestedOf(final)) {
+      const chosen = bodies[part - 1].split('\n')[line - 1].trim();
+      assert.ok(!decoys.includes(chosen), `a twice-occurring decoy was chosen for part ${part}: ${chosen}`);
+    }
+  });
+
+  it('a harmless `- ` bullet still counts — the anchor is strict, not brittle', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_FAKE_PROOF_BULLET: '1' });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, `a bulleted proof must not be a false refusal: ${fed.stderr}`);
+    assert.equal(receipts.length, 1);
+    assert.equal(receipts[0].delivery, 'fed');
+  });
+
+  it('the selected lines never appear in any envelope the wrapper sends', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, fed.stderr);
+    const final = fed.prompts[fed.prompts.length - 1];
+    const bodies = fed.prompts.slice(0, -1).map(bodyOf);
+    const requested = requestedOf(final);
+    assert.equal(requested.length, bodies.length, 'one requested line per fed part');
+    for (const { part, line } of requested) {
+      const expected = bodies[part - 1].split('\n')[line - 1];
+      assert.ok(expected && expected.trim().length > 0, `part ${part} line ${line} resolves to a real body line`);
+      assert.ok(!final.includes(expected), 'the final turn asks for the line by ADDRESS — it never reveals it');
+      for (const [i, p] of fed.prompts.entries()) {
+        if (i === part - 1) continue;
+        const envelope = p.replace(bodies[i] ?? '', '');
+        assert.ok(!envelope.includes(expected), `part ${part}'s expected line leaked into turn ${i + 1}'s envelope`);
+      }
+    }
+  });
+
+  // The blocker, both halves. A candidate is only sound if the model CANNOT have seen its text
+  // anywhere but the body it is being asked to prove — so it must occur exactly once across the
+  // bodies AND nowhere in what the wrapper itself sends, including the request line that names the
+  // addresses (which only exists once every address is chosen).
+  it('a change-set line that duplicates the wrapper`s own framing is never chosen as a proof', () => {
+    const sb = makeSandbox();
+    // The change set contains lines copied verbatim out of the envelope the wrapper will send.
+    const framing = [
+      'This is one piece of ONE change set being delivered to you in order.',
+      'Work from THIS CONVERSATION only: do NOT use any tool, do NOT run any command, do NOT read any file.',
+      'One line: SHIP / SHIP WITH NITS / REWORK, plus a one-sentence reason.',
+    ];
+    const filler = Array.from({ length: 400 }, (_, i) => `unique change-set line ${String(i).padStart(4, '0')} — a distinctive body marker ${'x'.repeat(20)}`);
+    const woven = filler.flatMap((l, i) => (i % 40 === 20 ? [framing[(i / 40) | 0 % framing.length] ?? framing[0], l] : [l]));
+    writeFileSync(join(sb.repo, 'oversized.txt'), `${woven.join('\n')}\n`);
+    const fed = fedRun(sb);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, fed.stderr);
+    const final = fed.prompts[fed.prompts.length - 1];
+    const bodies = fed.prompts.slice(0, -1).map(bodyOf);
+    for (const { part, line } of requestedOf(final)) {
+      const chosen = bodies[part - 1].split('\n')[line - 1].trim();
+      assert.ok(!framing.includes(chosen), `a framing line was chosen as part ${part}'s proof: ${chosen}`);
+      // The real invariant behind it: the chosen text appears nowhere the model could read it
+      // except its own body — not in another body, and not in any envelope.
+      const inBodies = bodies.join('\n').split(chosen).length - 1;
+      assert.equal(inBodies, 1, `part ${part}'s proof text must occur exactly once across the bodies`);
+      for (const [i, p] of fed.prompts.entries()) {
+        const envelope = p.replace(bodies[i] ?? '', '');
+        assert.ok(!envelope.includes(chosen), `part ${part}'s proof text leaked into turn ${i + 1}'s envelope`);
+      }
+    }
+  });
+
+  it('a change-set line whose text IS a request address is never chosen (the request would reveal it)', () => {
+    const sb = makeSandbox();
+    // Seed every plausible address form the request line could carry, so a naive selector that
+    // filters only against the PRE-request envelope can pick one of them.
+    const addresses = Array.from({ length: 60 }, (_, i) => `part ${(i % 6) + 1} line ${i + 3}`);
+    const filler = Array.from({ length: 400 }, (_, i) => `unique change-set line ${String(i).padStart(4, '0')} — a distinctive body marker ${'x'.repeat(20)}`);
+    const woven = filler.flatMap((l, i) => (i % 7 === 3 && addresses[(i / 7) | 0] ? [addresses[(i / 7) | 0], l] : [l]));
+    writeFileSync(join(sb.repo, 'oversized.txt'), `${woven.join('\n')}\n`);
+    const fed = fedRun(sb);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, fed.stderr);
+    const final = fed.prompts[fed.prompts.length - 1];
+    const addressBlock = requestedBlockOf(final);
+    const bodies = fed.prompts.slice(0, -1).map(bodyOf);
+    for (const address of addressBlock) {
+      assert.ok(address.length < 24, `every address line must stay under the proof-candidate minimum, got ${address.length}: ${address}`);
+    }
+    for (const { part, line } of requestedOf(final)) {
+      const chosen = bodies[part - 1].split('\n')[line - 1].trim();
+      assert.ok(!addressBlock.some((a) => a.includes(chosen)), `part ${part}'s proof text is revealed by an address line: ${chosen}`);
+    }
+  });
+
+  it('an UNDER-cap single-turn review declares delivery `inline` and still attests', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipts[0].delivery, 'inline', 'the single-turn path proves delivery BY CONSTRUCTION and says so');
+  });
+});
+
+describe('agy-review.sh — size ceiling + gated --add-dir escape (6)', () => {
+  // D2: chunking is CODE-mode only. A plan/diff artifact is an operator-supplied file the operator
+  // can split, so those modes keep today's refuse-over-cap behaviour verbatim.
+  it('plan mode: an oversized prompt exits 2 with guidance, agy not invoked (chunking is code-only)', () => {
+    const sb = makeSandbox();
+    writeFileSync(join(sb.repo, 'big-plan.md'), `# plan\n${'a plan line that is long enough to matter\n'.repeat(400)}`);
+    const r = run(sb, { args: ['plan', 'big-plan.md', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: '4000' } });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /over AGY_MAX_PROMPT_BYTES=4000/);
+    assert.match(r.stderr, /Trim to the relevant hunks/);
+    assert.match(r.stderr, /split the plan into focused parts/);
+    assert.equal(r.invoked, false, 'an oversized plan must not spend a run');
+  });
+
+  // D3: the offload is RETIRED, not removed. The key stays recognized (an existing settings line must
+  // never start warning as unknown) but it arms nothing, and setting it says so.
+  it('a set AGY_REVIEW_ALLOW_ADDDIR prints the retirement notice and does not pass --add-dir', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP), AGY_REVIEW_ALLOW_ADDDIR: '1' } });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /AGY_REVIEW_ALLOW_ADDDIR is set \(env\) but it is RETIRED/, 'the notice names the retirement AND where the dead value came from');
+    assert.match(r.stderr, /unset AGY_REVIEW_ALLOW_ADDDIR in the environment/, 'an env override gets the recovery that actually clears it');
+    assert.match(r.stderr, /chunked feed/, 'and names the lane that replaced it');
+    assert.ok(!r.argv.includes('--add-dir'), 'the retired knob arms NOTHING');
+    assert.match(r.stderr, /feeding the change set in \d+ part\(s\)/, 'the fed lane runs regardless of the retired knob');
+  });
+
+  it('the settings registry still recognizes the retired key (an existing line never warns as unknown)', () => {
+    const sb = makeSandbox();
+    writeSettings(sb, 'AGY_REVIEW_ALLOW_ADDDIR=1\n');
+    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stderr, /unknown key 'AGY_REVIEW_ALLOW_ADDDIR'/);
   });
 
   it('the staging dir is trap-cleaned on exit (no leftover after the run)', () => {
     const sb = makeSandbox();
-    writeFileSync(join(sb.repo, 'unique.txt'), `MARKER\n${'x'.repeat(8000)}\n`);
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: '2000', AGY_REVIEW_ALLOW_ADDDIR: '1' } });
-    const stagingPath = r.adddir;
+    seedFedChangeSet(sb);
+    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP) } });
+    // Turn 1 hands agy `--log-file <staging>/turn1.log`, so the fed lane's own argv names the dir.
+    const logFile = r.argvs[0].split('\n')[r.argvs[0].split('\n').indexOf('--log-file') + 1];
+    const stagingPath = logFile ? dirname(logFile) : '';
     const stillThere = stagingPath ? existsSync(stagingPath) : false;
     rmSync(sb.home, { recursive: true, force: true });
-    assert.ok(stagingPath, 'the escape must have fired (a staging path was captured)');
+    assert.ok(stagingPath, 'a staging path was captured from the run');
     assert.equal(stillThere, false, 'the private staging dir must be removed by the EXIT trap');
   });
 });
@@ -930,7 +1774,7 @@ describe('agy-review.sh — declared contract is really accepted (forward guard)
 // The normative fixture: the AD-038 shape + the D3 self-declaring probe marker (backend/verdict here
 // carry this bridge's vocabulary; dynamic values are asserted by shape):
 const RECEIPT_FIXTURE = JSON.parse(
-  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"revise","grounded":true,"factsHash":null,"wrapperVersion":"2.3.0","timestamp":"2026-07-03T12:00:00Z","probe":false,"posture":{"model":"<display>"}}',
+  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"revise","grounded":true,"factsHash":null,"wrapperVersion":"2.3.0","timestamp":"2026-07-03T12:00:00Z","probe":false,"posture":{"model":"<display>"},"delivery":"inline"}',
 );
 const RECEIPTS_REL = join('.git', 'agent-workflow-review-receipts.jsonl');
 const readReceipts = (repo) => {
@@ -1044,7 +1888,9 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
     assert.equal(r.status, 0, r.stderr);
     assert.equal(receipts.length, 1);
     const receipt = receipts[0];
-    assert.deepEqual(Object.keys(receipt), Object.keys(RECEIPT_FIXTURE), 'same fixture shape');
+    // A continuation delivers NOTHING (agy holds the original round server-side), so it declares no
+    // delivery — the marker is a claim about a change set this receipt does not carry.
+    assert.deepEqual(Object.keys(receipt), Object.keys(RECEIPT_FIXTURE).filter((k) => k !== 'delivery'), 'the fixture shape minus the delivery declaration');
     assert.equal(receipt.fresh, false, 'a continuation cannot attest the folded tree');
     assert.equal(receipt.artifact, null);
     assert.equal(receipt.fingerprint, null);
@@ -1137,48 +1983,50 @@ const writeSettings = (sb, text) => {
 const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 
 describe('agy-review.sh — bridge settings file (bridges 2.3.0)', { concurrency: true }, () => {
-  it('a file-set AGY_REVIEW_ALLOW_ADDDIR=1 arms the oversized --add-dir escape', () => {
+  it('a file-set AGY_REVIEW_ALLOW_ADDDIR=1 arms nothing and states its retirement', () => {
     const sb = makeSandbox();
-    writeFileSync(join(sb.repo, 'unique.txt'), `OVERSIZE_UNIQUE_MARKER\n${'x'.repeat(8000)}\n`);
+    seedFedChangeSet(sb);
     writeSettings(sb, 'AGY_REVIEW_ALLOW_ADDDIR=1\n');
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: '2000' } });
+    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP) } });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(r.invoked, true, 'the file-armed escape lets the run proceed');
-    assert.match(r.argv, /--add-dir/);
-    assert.match(r.stderr, /RE-ENABLES the Issue-001 stall risk/);
+    assert.match(r.stderr, /AGY_REVIEW_ALLOW_ADDDIR is set \(file\) but it is RETIRED/, 'a FILE-set value is named as such, not as an env override');
+    assert.match(r.stderr, /bridge-settings\.mjs --unset/, 'and gets the recovery that actually clears a file line');
+    assert.ok(!r.argv.includes('--add-dir'));
   });
 
-  it('env overrides file: AGY_REVIEW_ALLOW_ADDDIR env=0 file=1 → the refusal stands', () => {
+  // With the knob DISARMED an over-cap code review is no longer a refusal — it is the fed lane. So
+  // "env wins over file" is now proven by which LANE runs, not by which error prints.
+  it('env overrides file: AGY_REVIEW_ALLOW_ADDDIR env=0 file=1 → the offload stays disarmed and the fed lane runs', () => {
     const sb = makeSandbox();
-    writeFileSync(join(sb.repo, 'unique.txt'), `MARKER\n${'x'.repeat(8000)}\n`);
+    seedFedChangeSet(sb);
     writeSettings(sb, 'AGY_REVIEW_ALLOW_ADDDIR=1\n');
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: '2000', AGY_REVIEW_ALLOW_ADDDIR: '0' } });
+    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP), AGY_REVIEW_ALLOW_ADDDIR: '0' } });
     rmSync(sb.home, { recursive: true, force: true });
-    assert.equal(r.status, 2, r.stderr);
-    assert.match(r.stderr, /over AGY_MAX_PROMPT_BYTES=2000/);
-    assert.equal(r.invoked, false);
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(!r.argv.includes('--add-dir'), 'the file-set knob is overridden — no offload');
+    assert.match(r.stderr, /feeding the change set in \d+ part\(s\)/);
   });
 
   it('an EXPLICITLY EMPTY env (AGY_REVIEW_ALLOW_ADDDIR=) disables the file knob', () => {
     const sb = makeSandbox();
-    writeFileSync(join(sb.repo, 'unique.txt'), `MARKER\n${'x'.repeat(8000)}\n`);
+    seedFedChangeSet(sb);
     writeSettings(sb, 'AGY_REVIEW_ALLOW_ADDDIR=1\n');
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: '2000', AGY_REVIEW_ALLOW_ADDDIR: '' } });
+    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP), AGY_REVIEW_ALLOW_ADDDIR: '' } });
     rmSync(sb.home, { recursive: true, force: true });
-    assert.equal(r.status, 2, 'env wins over file — empty means knob off (built-in default 0)');
-    assert.equal(r.invoked, false);
+    assert.equal(r.status, 0, 'env wins over file — empty means knob off (built-in default 0)');
+    assert.ok(!r.argv.includes('--add-dir'));
   });
 
-  it('an invalid boolean warns and falls back to the built-in default (refusal stands)', () => {
+  it('an invalid boolean warns and falls back to the built-in default (the offload stays disarmed)', () => {
     const sb = makeSandbox();
-    writeFileSync(join(sb.repo, 'unique.txt'), `MARKER\n${'x'.repeat(8000)}\n`);
+    seedFedChangeSet(sb);
     writeSettings(sb, 'AGY_REVIEW_ALLOW_ADDDIR=yes\n');
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: '2000' } });
+    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP) } });
     rmSync(sb.home, { recursive: true, force: true });
-    assert.equal(r.status, 2, r.stderr);
+    assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /invalid value 'yes'/);
-    assert.equal(r.invoked, false);
+    assert.ok(!r.argv.includes('--add-dir'));
   });
 
   it('a file-set AGY_HARD_TIMEOUT flows through the agy-run delegation (killed at the file cap)', async () => {

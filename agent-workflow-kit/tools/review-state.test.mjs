@@ -47,7 +47,14 @@ const detect = (codex, agy) => () => [
 const RECEIPT_FIXTURE = JSON.parse(
   '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"ship","grounded":true,"factsHash":null,"wrapperVersion":"2.2.0","timestamp":"2026-07-03T12:00:00Z","probe":false,"posture":{"model":"<display>"}}',
 );
-const receiptLine = (overrides) => `${JSON.stringify({ ...RECEIPT_FIXTURE, ...overrides })}\n`;
+// An agy `code` receipt additionally SELF-DECLARES how the change set reached the model (D8b); the
+// current-generation value for a single-turn review is `inline`. Fixtures that exercise the
+// pre-marker class pass `delivery: undefined` explicitly (JSON.stringify then drops the key).
+const receiptLine = (overrides) => {
+  const receipt = { ...RECEIPT_FIXTURE, ...overrides };
+  if (receipt.backend === 'agy' && !Object.hasOwn(overrides, 'delivery')) receipt.delivery = 'inline';
+  return `${JSON.stringify(receipt)}\n`;
+};
 
 const COUNCIL_CONFIG = JSON.stringify({ 'plan-execution': { execute: 'solo', review: 'council' } });
 const SOLO_CONFIG = JSON.stringify({ 'plan-execution': { review: 'solo' } });
@@ -488,6 +495,39 @@ describe('review-state — probe receipts never attest the tree (D3)', () => {
     assert.match(report.stdout, /re-run the review on the current bridge/, 'the recovery is stated');
   });
 
+  // D8b: an agy `code` receipt minted before the delivery marker existed cannot be told apart from a
+  // proven one by fingerprint alone (the classifier deliberately ignores wrapperVersion), and the
+  // old --add-dir lane was observed returning a confident fabrication under exactly that shape.
+  it('a DELIVERY-LESS agy receipt renders its own rejection with the stated recovery (D8b)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    mint(root, { backend: 'agy', fingerprint: fp, delivery: undefined }); // no delivery key — a pre-fed-lane wrapper
+    const gate = check(root);
+    const report = check(root, { args: [] });
+    const json = check(root, { args: ['--check', '--json'] });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(gate.code, 1, 'an undeclared delivery never satisfies the council gate');
+    assert.match(report.stdout, /agy: current-tree receipts rejected — 1 with an absent\/invalid delivery declaration/, 'the delivery rejection names itself, never the probe words');
+    assert.doesNotMatch(report.stdout, /agy: only probe receipts/);
+    assert.match(report.stdout, /re-run the review on the current bridge/, 'the recovery is stated');
+    const agyRow = JSON.parse(json.stdout).backends.find((b) => b.backend === 'agy');
+    assert.equal(agyRow.state, 'rejected');
+    assert.equal(agyRow.deliveryRejected, 1, 'the machine surface counts what it dropped');
+  });
+
+  it('an agy receipt DECLARING its delivery satisfies the gate — inline and fed alike (D8b)', () => {
+    for (const delivery of ['inline', 'fed']) {
+      const { root } = makeRepo();
+      const fp = computeTreeFingerprint(root);
+      mint(root, { backend: 'codex', fingerprint: fp });
+      mint(root, { backend: 'agy', fingerprint: fp, delivery });
+      const gate = check(root);
+      rmSync(root, { recursive: true, force: true });
+      assert.equal(gate.code, 0, `delivery=${delivery} must satisfy: ${gate.stdout}`);
+    }
+  });
+
   it('the default report and --json carry the probe state too (every surface, not just --check)', () => {
     const { root } = makeRepo();
     const fp = computeTreeFingerprint(root);
@@ -661,8 +701,8 @@ describe('backendReceiptStatus — the latest grounded receipt wins', () => {
   it('prefers a grounded current receipt over an earlier ungrounded one', () => {
     const fp = 'f'.repeat(64);
     const receipts = [
-      { ...RECEIPT_FIXTURE, backend: 'agy', fingerprint: fp, grounded: false },
-      { ...RECEIPT_FIXTURE, backend: 'agy', fingerprint: fp, grounded: true, verdict: 'SHIP' },
+      { ...RECEIPT_FIXTURE, backend: 'agy', fingerprint: fp, grounded: false, delivery: 'inline' },
+      { ...RECEIPT_FIXTURE, backend: 'agy', fingerprint: fp, grounded: true, verdict: 'SHIP', delivery: 'inline' },
     ];
     const s = backendReceiptStatus(receipts, 'agy', fp);
     assert.equal(s.state, 'current');
@@ -680,8 +720,8 @@ describe('backendReceiptStatus — the latest grounded receipt wins', () => {
   it('the REVERSE order pins selection-first: a grounded SHIP followed by a LATER ungrounded → ungrounded (the earlier SHIP never survives)', () => {
     const fp = 'f'.repeat(64);
     const receipts = [
-      { ...RECEIPT_FIXTURE, backend: 'agy', fingerprint: fp, grounded: true, verdict: 'SHIP' },
-      { ...RECEIPT_FIXTURE, backend: 'agy', fingerprint: fp, grounded: false, verdict: 'SHIP' },
+      { ...RECEIPT_FIXTURE, backend: 'agy', fingerprint: fp, grounded: true, verdict: 'SHIP', delivery: 'inline' },
+      { ...RECEIPT_FIXTURE, backend: 'agy', fingerprint: fp, grounded: false, verdict: 'SHIP', delivery: 'inline' },
     ];
     const s = backendReceiptStatus(receipts, 'agy', fp);
     assert.equal(s.state, 'ungrounded', 'the LATEST normal receipt is selected first and then judged');

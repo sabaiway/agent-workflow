@@ -286,7 +286,11 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 162 = 160 + the CONTINUATION-STALL Stop-hook detector pair: references/hooks/
     //       state-block-guard.mjs (the runtime) + references/modes/state-block-guard.md (the 28th
     //       mode-ref, which carries the paste-ready wiring because the mode ships no writer).
-    assert.equal(packed.length, 162, `tarball file count drifted (${packed.length} ≠ 162)`);
+    // 163 = 162 + references/agents/review-lens.md — the read-only REVIEW vehicle. A read-only
+    //       fan-out that needs judgment previously had no vehicle at all (the cheap ones are scoped
+    //       away from review, and a review-capable full-tool subagent shells out and floods the
+    //       maintainer with approval prompts), so the lens ships with NO Bash grant.
+    assert.equal(packed.length, 163, `tarball file count drifted (${packed.length} ≠ 163)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

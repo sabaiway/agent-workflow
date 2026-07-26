@@ -1,0 +1,17 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "fixture-settings-bad-retired",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "provides": ["execute"],
+  "roles": {
+    "execute": { "cmd": "fixture-exec", "source": "bin/run.sh" }
+  },
+  "settings": [
+    { "key": "FIX_BARE", "kind": "boolean", "default": "0", "appliesTo": ["fixture-exec"], "retired": true, "effect": "a bare retirement flag with no stated reason" },
+    { "key": "FIX_TERSE", "kind": "boolean", "default": "0", "appliesTo": ["fixture-exec"], "retired": "gone", "effect": "a retirement reason too short to inform anyone" }
+  ],
+  "cost": "subscription",
+  "quota": { "kind": "subscription", "finite": true }
+}

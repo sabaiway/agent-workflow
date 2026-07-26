@@ -57,7 +57,7 @@ import { shellQuoteArg } from './review-state.mjs';
 import { isFinalCapableDeclaration } from './run-gates.mjs';
 import { resolveGitHooksPath } from './commit-guard.mjs';
 import { loadConfig } from './orchestration-config.mjs';
-import { DEFAULT_BUNDLE_ROOT, SETTINGS_FILENAME, settingsPath, parseSettings, duplicateKeys } from './bridge-settings-read.mjs';
+import { DEFAULT_BUNDLE_ROOT } from './bridge-settings-read.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
 import { loadWorktreesConfig, resolveProbeDir } from './worktrees.mjs';
 import { preflightCheapAgents } from './cheap-agents.mjs';
@@ -109,8 +109,6 @@ export const SEVERITIES = Object.freeze({
   agents: SEVERITY_OPTIONAL,
   'family-freshness': SEVERITY_ATTENTION,
   'sandbox-masks': SEVERITY_OPTIONAL,
-  'agy-adddir': SEVERITY_OPTIONAL,
-  'agy-adddir.invalid-env': SEVERITY_ATTENTION,
   'sandbox-lane': SEVERITY_OPTIONAL,
   'worktrees-dir': SEVERITY_OPTIONAL,
 });
@@ -165,12 +163,10 @@ export const WHATS = Object.freeze({
   'read-lane.stale': 'the read-lane is ON but the placed gate hook is stale — an old hook never reads lanes.json, so the lane is silently dark; reseed it',
   'read-lane.missing': 'the gate hook is wired but its placed file is missing — every Bash call errors and the read-lane is dark; re-place it',
   'state-block': 'nothing checks the closing state block — a turn that ends on «nothing needed from you», or on a promise it never started, passes unseen',
-  agents: '{n} cheap-model subagent(s) not placed (Claude Code) — mechanical work still runs on the frontier model; the apply PREVIEWS first',
+  agents: '{n} read-only subagent(s) not placed (Claude Code) — no shell-free vehicle for that work; the apply PREVIEWS first',
   'family-freshness': '{parts}',
   'sandbox-masks': '{n} sandbox device mask(s) clutter git status — the managed exclude block is absent or stale',
   'sandbox-masks.stale-real': '{n} sandbox device mask(s) clutter git status — the exclude block is stale; {m} fenced entr(ies) are REAL paths (a fresh apply drops them)',
-  'agy-adddir': 'agy-review is placed but AGY_REVIEW_ALLOW_ADDDIR is not set ({file}) — an oversized code review refuses instead of offloading',
-  'agy-adddir.invalid-env': 'AGY_REVIEW_ALLOW_ADDDIR is set to an INVALID value ({value}) — refuse-mode applies and the settings file is shadowed while it is set',
   'sandbox-lane': 'the wired review wrappers declare a session-sandbox recipe (egress hosts + writable state dirs) not yet acknowledged for this project',
   'worktrees-dir': 'write access to the worktrees parent dir {dir} is not confirmed — provision may still stop',
 });
@@ -220,10 +216,9 @@ export const BENEFITS = Object.freeze({
   'commit-guard': 'integrity — commits require the ONE green --final receipt at the exact staged fingerprint (consented pre-commit arm)',
   'read-lane': 'velocity — pipes/chains of your seeded read-only commands auto-approve instead of prompting (opt-in, conservatively classified)',
   'state-block': 'no silent stalls — a turn ending on «you are not needed», or on work it never started, warns at once instead of waiting to be spotted',
-  agents: 'cost — on Claude Code, mechanical work runs on a cheap model with bounded read-only tools instead of spending frontier tokens',
+  agents: 'cost and quiet — mechanical work runs on a cheap model, and no vehicle has a shell, so a read-only fan-out cannot flood you with prompts',
   'family-freshness': 'currency — placed family members carry the latest shipped fixes and features',
   'sandbox-masks': 'zero clutter — git status shows only your changes (the review domain already ignores the masks by construction)',
-  'agy-adddir': 'large reviews — an oversized agy code review offloads to a staging dir instead of refusing',
   'sandbox-lane': 'discoverability — the manifest-declared observed sandbox recipe for bridge runs surfaces itself instead of waiting to be asked',
   'worktrees-dir': 'parallel features — the host-specific write allowance or terminal fallback is surfaced before provision',
 });
@@ -259,7 +254,6 @@ export const OPT_IN_CAPABILITIES = Object.freeze([
   { id: 'sandbox-masks', mode: 'sandbox-masks', advisorKey: 'sandbox-masks' },
   { id: 'worktrees-dir', mode: 'worktrees', advisorKey: 'worktrees-dir' },
   { id: 'family-freshness', mode: 'upgrade', advisorKey: 'family-freshness' },
-  { id: 'agy-adddir', mode: 'bridge-settings', advisorKey: 'agy-adddir' },
   { id: 'review-recipe', mode: 'set-recipe', advisorKey: 'review-recipe' },
   // The execute slot is a DISTINCT opt-in from the review slot, and the same probe reports both —
   // which is why the review-recipe benefit is worded for either slot rather than for review alone.
@@ -597,53 +591,13 @@ const probeMasksItem = ({ root, deps, add, skip }) => {
   }
 };
 
-const probeAgyAdddir = ({ deps, add, skip }) => {
-  try {
-    const probePlaced = deps.findWrapper ?? ((cmd) => findOnPath(cmd, deps).state === 'present');
-    if (!probePlaced('agy-review')) return;
-    // Configured means a VALID boolean value (the wrapper validates and falls back to the default
-    // on garbage — presence alone proves nothing). An explicit valid 0 is a user CHOICE
-    // (refuse mode) — respected, never nagged. env > file, the wrappers' own precedence.
-    const isValidBool = (v) => v === '0' || v === '1';
-    const env = deps.getenv ?? process.env;
-    if (env.AGY_REVIEW_ALLOW_ADDDIR != null) {
-      if (isValidBool(env.AGY_REVIEW_ALLOW_ADDDIR)) return; // an explicit valid env choice — respected
-      // A SET-BUT-EMPTY env var is the wrapper's opt-out shape (${!key+x}: it shadows the file
-      // and falls back to the built-in refuse default) — a user CHOICE, never nagged (codex).
-      if (env.AGY_REVIEW_ALLOW_ADDDIR === '') return;
-      // env > file: while ANY env value is set the wrapper ignores the settings file, so the file
-      // writer cannot fix an invalid env — the honest apply is to fix/unset the env var (codex).
-      const value = truncatedTo(oneLineOf(JSON.stringify(env.AGY_REVIEW_ALLOW_ADDDIR)), templateBudget(WHATS['agy-adddir.invalid-env']));
-      add('agy-adddir', fillTemplate(WHATS['agy-adddir.invalid-env'], { value }), 'HAND-APPLY: unset AGY_REVIEW_ALLOW_ADDDIR in the environment (or export it as 1), THEN configure it durably via the bridge-settings writer', 'agy-adddir.invalid-env');
-      return;
-    }
-    const confPath = settingsPath({ getenv: env, home: deps.home });
-    const readFile = deps.readFile ?? readFileSync;
-    const text = (() => {
-      try {
-        return readFile(confPath, 'utf8');
-      } catch (err) {
-        if (err?.code === 'ENOENT') return '';
-        throw err;
-      }
-    })();
-    const parsed = parseSettings(text);
-    const fileEntries = parsed.byKey.get('AGY_REVIEW_ALLOW_ADDDIR');
-    const fileValue = fileEntries?.length ? fileEntries[fileEntries.length - 1].value : null;
-    if (fileValue != null && isValidBool(fileValue)) return; // env is absent here — a valid file value governs
-    // The settings writer REFUSES a duplicate-carrying file — rendering its command would hand
-    // the user a guaranteed failure; the honest apply is fix-duplicates-first (codex terminal).
-    const dups = duplicateKeys(parsed);
-    const what = fillTemplate(WHATS['agy-adddir'], { file: SETTINGS_FILENAME });
-    if (dups.length > 0) {
-      add('agy-adddir', what, `HAND-APPLY: ${SETTINGS_FILENAME} carries duplicate key(s) (${dups.join(', ')}) and the settings writer refuses to edit it — remove the duplicate lines by hand, THEN run: node ${q(toolPath('bridge-settings.mjs'))} --set AGY_REVIEW_ALLOW_ADDDIR=1 --apply`);
-      return;
-    }
-    add('agy-adddir', what, `node ${q(toolPath('bridge-settings.mjs'))} --set AGY_REVIEW_ALLOW_ADDDIR=1 --apply`);
-  } catch (err) {
-    skip('agy-adddir', err);
-  }
-};
+// probeAgyAdddir is GONE, not silenced. It offered to arm AGY_REVIEW_ALLOW_ADDDIR with the benefit
+// "large reviews — an oversized agy code review offloads to a staging dir instead of refusing".
+// Headless agy AUTO-DENIES its own read_file tool, so that lane could return a confident fabrication
+// (two BLOCKING findings citing lines of a file that has none, observed) or an empty SHIP, with no
+// way to tell — the advisor was recommending the one lane whose failure mode is undetectable. The
+// knob is retired in the wrappers (recognized, arms nothing) and an oversized code review is now a
+// chunked feed with a per-part delivery proof, so there is nothing left to offer.
 
 // The manifest-declared session-sandbox recipe surfaces of every BUNDLED bridge whose review
 // wrapper is in the wired set — networkHosts ∪ writableDirs, derived from the manifests (the
@@ -808,7 +762,7 @@ const readAckValue = (root, deps, ackKey) => {
 // false (the lane is off — offer it). `readLane === true` → enabled (converged). A parse/IO error on
 // an EXISTING file, a symlinked ancestor/leaf, an escape, or a non-object root THROWS — the probe
 // turns it into a stated skip (a BROKEN toggle the writer would refuse to overwrite is not "off").
-// A present-but-non-boolean `readLane` is a valid store the writer merges → false (offer), never a skip.
+// A present-but-non-boolean value is a valid store the writer merges → false (offer), never a skip.
 const readReadLaneToggle = (root, deps) => {
   const readFile = deps.readFile ?? readFileSync;
   const lstat = deps.lstat ?? lstatSync;
@@ -834,7 +788,7 @@ const readReadLaneToggle = (root, deps) => {
 // D3: the risk-marked keys — every key here has a per-item posture note in the mode doc, surfaced
 // at the consent moment; the static contract test asserts EXACT bidirectional coverage
 // (risk-marked keys == mode-doc note keys — a dropped note goes red, not silent).
-export const RISK_NOTED_KEYS = Object.freeze(['agy-adddir', 'sandbox-lane', 'read-lane', 'worktrees-dir']);
+export const RISK_NOTED_KEYS = Object.freeze(['sandbox-lane', 'read-lane', 'worktrees-dir']);
 
 const probeSandboxLane = ({ root, deps, add, skip }) => {
   try {
@@ -1024,7 +978,6 @@ const PROBES = Object.freeze([
   probeCheapAgents,
   probeFamilyFreshness,
   probeMasksItem,
-  probeAgyAdddir,
   probeSandboxLane,
   probeWorktreesDir,
 ]);
