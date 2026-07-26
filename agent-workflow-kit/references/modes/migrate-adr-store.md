@@ -1,5 +1,7 @@
 ### Mode: migrate-adr-store
 
+<!-- opt-in-capability: none — the old-layout condition is already reported by status and upgrade; the advisor does not duplicate a report the same run prints -->
+
 The **guarded ADR-store migration** — a one-time, opt-in move of an existing project's `docs/ai` from the retired 3-tier ADR cascade (HOT `decisions.md` → the WARM/COLD `decisions-archive*.md` monoliths) to the durable **one-file-per-ADR store** (HOT `decisions.md` + `docs/ai/adr/AD-NNN-slug.md` records + the `docs/ai/adr/log.md` navigator). **In-agent, opt-in**, and reached ONLY here: a normal `upgrade` never installs the new-scheme rotator into an un-migrated project — the new rotator arrives ONLY through this mode, which migrates in the same step (AD-051). Run **`--dry-run` first, always**, show the user the plan in plain language, get explicit consent, then re-run with `--apply`. It **never commits**.
 
 When to run it: `status` (or `upgrade`) reports an *old ADR layout* (a `decisions-archive*.md` monolith is still on disk). A project already on the one-file-per-ADR store — or a fresh deployment seeded with it — needs nothing here (the mode is a stated no-op).

@@ -1,5 +1,7 @@
 ### Mode: agents
 
+<!-- opt-in-capability: agents -->
+
 The opt-in **cheap-lane subagent writer** — the family's second `.claude/` writer, on the velocity discipline. It places the bundled cheap-lane subagent definitions (`references/agents/*.md`) into the project's `.claude/agents/` so mechanical work — extraction sweeps, changelog fact-skeletons, gate-failure triage — runs on a **cheap model** (`model: haiku`, `effort: low`, bounded read-only tools) instead of the frontier main lane. **Claude-Code-specific** (like velocity): other agent hosts ignore `.claude/agents/`. Judgment, review, real code, and user-facing copy never move to these vehicles — they are extraction/drafting only, and the orchestrator verifies their output.
 
 Run `node ${CLAUDE_SKILL_DIR}/tools/cheap-agents.mjs [--dry-run | --apply] [--cwd <dir>]`:

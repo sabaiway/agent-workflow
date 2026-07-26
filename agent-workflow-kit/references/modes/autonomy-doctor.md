@@ -1,5 +1,7 @@
 ### Mode: autonomy-doctor
 
+<!-- opt-in-capability: sandbox-provision -->
+
 The **sandbox provisioner "doctor"** — the answer to *"can this machine run the Claude sandbox, and can you fix it?"* (AD-044: macOS Seatbelt built-in / Linux+WSL2 `bwrap`+`socat` / native Windows → WSL2). **Division of labor:** YOU narrate the diagnosis and relay the consent question; the KIT does the deterministic detect → consent-gated install → verify. It is **guarded**: the privileged lane runs ONLY with the per-run consent tuple, always faces the harness permission prompt (the mode sits outside every velocity auto-approve tier), **never auto-runs, never writes repo files, and never commits**.
 
 Run **`node ${CLAUDE_SKILL_DIR}/tools/autonomy-doctor.mjs [--verify | --apply <pm>:<pkg[,pkg...]>]`**:

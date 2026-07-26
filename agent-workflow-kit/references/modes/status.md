@@ -1,5 +1,7 @@
 ### Mode: status
 
+<!-- opt-in-capability: none — an inspection surface that configures nothing -->
+
 Requires: ${CLAUDE_SKILL_DIR}/references/shared/report-footer.md
 
 Read-only. The **single answer to "versions + deployment + settings + bridges"** across the whole family — `tools/family-registry.mjs` aggregates every member's `capability.json` and surveys the project. It **never writes, never commits, and never runs a subscription CLI**.

@@ -28,6 +28,7 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { shellQuoteArg } from './review-state.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -176,7 +177,7 @@ const ACTION_LABEL = {
 export const formatResult = (result) => {
   const lines = [
     result.dryRun
-      ? 'agent-workflow cheap-lane agents — DRY RUN (no changes; re-run with --apply)'
+      ? 'agent-workflow cheap-lane agents — DRY RUN (no changes)'
       : 'agent-workflow cheap-lane agents — APPLY',
   ];
   for (const item of result.plan) {
@@ -189,6 +190,12 @@ export const formatResult = (result) => {
   lines.push(
     'the vehicles are Claude Code subagents (model: haiku, effort: low, read-only tools) for mechanical work only — judgment, review, and real code stay on your main lane.',
   );
+  // A preview must print the EXACT command that applies it. The advisor renders this dry-run as an
+  // item's one-liner, and that flow's contract is "run the printed command, no improvisation" — a
+  // bare "re-run with --apply" would leave the caller to reconstruct --cwd and its quoting.
+  if (result.dryRun && result.plan.some((item) => item.action === 'place')) {
+    lines.push(`to apply, run exactly: node ${shellQuoteArg(fileURLToPath(import.meta.url))} --apply --cwd ${shellQuoteArg(result.projectDir)}`);
+  }
   if (!result.dryRun && result.wrote) {
     lines.push('hidden-mode note: if this deployment is hidden, run the hide-footprint reconcile so the placed files stay out of `git status`.');
   }

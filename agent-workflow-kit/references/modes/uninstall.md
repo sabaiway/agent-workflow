@@ -1,5 +1,7 @@
 ### Mode: uninstall
 
+<!-- opt-in-capability: none — removal of what setup placed, never a capability a user could enable -->
+
 The **guarded teardown** — the inverse of `init` (the kit + engine skills) + `setup` (the bridges) + a hidden deploy. **In-agent, opt-in**, and built around one hard rule: **it never deletes user-authored content.** Run **`--dry-run` first, always**, show the user the classified plan in plain language, get explicit consent, then re-run with `--yes`. It **never commits**.
 
 Run `node ${CLAUDE_SKILL_DIR}/tools/uninstall.mjs [<member>] [--dir <project>] [--bindir <path>] [--dry-run | --yes]`:

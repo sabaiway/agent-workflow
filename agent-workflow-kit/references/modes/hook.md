@@ -1,5 +1,8 @@
 ### Mode: hook
 
+<!-- opt-in-capability: gate-hook -->
+<!-- opt-in-capability: read-lane -->
+
 The opt-in **gate-approval PreToolUse hook** — the family's third `.claude/` writer (velocity discipline), and the shipped closure of the velocity trust-posture residual (**AD-021 scope C, probe-proven in AD-037**). It places a **self-contained** hook runtime at `.claude/hooks/agent-workflow-gates.mjs` (no kit imports — it keeps working if the kit is uninstalled) and wires ONE `PreToolUse` `"Bash"` entry into `.claude/settings.json`. Per Bash call the hook then walks a decision ladder, first match wins:
 
 - **Auto-approve** a command **byte-identical** (leading/trailing trim only — no whitespace collapsing, no quote/glob/variable interpretation, no prefix or pattern matching, ever: patterns are what made AD-021 auto-seeding rejected) to a gate `cmd` declared in `docs/ai/gates.json` — read **LIVE on every call** (editing gates.json never needs re-wiring; one declaration, two consumers with `${CLAUDE_SKILL_DIR}/references/modes/gates.md`) — invoked **from the project root** (gates run from the root by contract; the same bytes from a subdirectory are NOT approved) and under `default`/`acceptEdits` permission mode (an approval never loosens `plan`/`bypassPermissions`).

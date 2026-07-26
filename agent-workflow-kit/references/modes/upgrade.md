@@ -1,5 +1,7 @@
 ### Mode: upgrade
 
+<!-- opt-in-capability: family-freshness -->
+
 Requires: ${CLAUDE_SKILL_DIR}/references/shared/report-footer.md · ${CLAUDE_SKILL_DIR}/references/shared/composition-handoff.md · ${CLAUDE_SKILL_DIR}/references/shared/deploy-tail.md · ${CLAUDE_SKILL_DIR}/references/shared/command-shapes.md
 
 1. Read `docs/ai/.workflow-version` (the project's stamped lineage). If missing, treat as a pre-versioned deployment and offer to re-bootstrap conservatively.

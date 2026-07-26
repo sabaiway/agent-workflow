@@ -1,5 +1,7 @@
 ### Mode: state-block-guard
 
+<!-- opt-in-capability: state-block -->
+
 The opt-in **closing-state-block detector**, wired as a Claude Code `Stop` hook. It ships as a
 **self-contained** runtime at `references/hooks/state-block-guard.mjs` (no kit imports — a placed
 copy keeps working if the kit is uninstalled) and it **writes nothing**: this mode is read-only, and

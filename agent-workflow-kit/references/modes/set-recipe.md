@@ -1,5 +1,8 @@
 ### Mode: set-recipe
 
+<!-- opt-in-capability: review-recipe -->
+<!-- opt-in-capability: delegated-execution -->
+
 The **config writer** for `docs/ai/orchestration.json` — the answer to *"set my standing recipe preference without hand-editing JSON."* **Division of labor (AD-025):** YOU turn the user's plain language into explicit ops; the KIT does the deterministic validate → merge → preview → write. It **previews by default** (writes nothing); `--write` applies. It **never runs a backend and never commits**. Hand-editing `docs/ai/orchestration.json` stays fully supported — this is an offered convenience, never a lock.
 
 **Map the user's plain language → explicit ops** (the kit ships no NL parser; it performs no `all`-magic, so you expand scope explicitly, asking when unclear):

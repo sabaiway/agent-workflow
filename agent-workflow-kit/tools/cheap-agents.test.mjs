@@ -10,6 +10,7 @@ import {
   BUNDLED_AGENTS_DIR,
   readBundledAgents,
   writeCheapAgents,
+  formatResult,
   parseArgs,
   main,
   CHEAP_AGENTS_STAMP,
@@ -86,6 +87,24 @@ describe('writeCheapAgents — preview-then-mutate', () => {
     assert.equal(result.wrote, false);
     assert.deepEqual(result.plan.map((p) => p.action), ['place', 'place', 'place']);
     assert.ok(!existsSync(join(project, AGENTS_DIR)), 'no directory created on dry-run');
+  });
+
+  // The advisor renders this dry-run as an item's apply one-liner, and that consent flow's contract
+  // is «run the printed command, no improvisation». A bare "re-run with --apply" would leave the
+  // caller to reconstruct --cwd and its quoting — so the preview must print the EXACT follow-up.
+  it('the preview prints the exact runnable --apply follow-up, with --cwd, not a bare hint', () => {
+    const project = makeProject();
+    const out = formatResult(writeCheapAgents({ cwd: project, dryRun: true }));
+    assert.match(out, /to apply, run exactly: node .*cheap-agents\.mjs.* --apply --cwd /u);
+    assert.ok(out.includes(project), 'the printed command pins the SAME project dir the preview ran against');
+    assert.doesNotMatch(out, /re-run with --apply/u, 'the vague hint is gone');
+  });
+
+  it('a converged project prints NO apply follow-up (nothing to place)', () => {
+    const project = makeProject();
+    writeCheapAgents({ cwd: project, dryRun: false });
+    const out = formatResult(writeCheapAgents({ cwd: project, dryRun: true }));
+    assert.doesNotMatch(out, /to apply, run exactly/u, 'no follow-up when there is nothing to do');
   });
 
   it('apply places exactly the bundled set, byte-identical', () => {

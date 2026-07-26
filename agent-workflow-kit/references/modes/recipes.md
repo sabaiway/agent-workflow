@@ -1,5 +1,7 @@
 ### Mode: recipes
 
+<!-- opt-in-capability: none — an inspection surface that configures nothing -->
+
 Read-only **orchestration advisor**. Answers *"how should I compose the optional execution-backends into plan → execute → review here, and which recipe fits?"* It **never writes, never commits, never runs a subscription CLI, and never executes a recipe** — the orchestrator (you) runs the chosen recipe through the bridge skills and makes the single commit; a backend is advisory or delegated, never autonomous.
 
 The four recipes (defined over each bridge's `provides` roles — `codex`: execute + review; `agy`: review + probe), canonical narrative in the **installed engine** (`references/orchestration.md`):
