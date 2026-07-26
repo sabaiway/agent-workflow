@@ -141,6 +141,13 @@ const CATALOG = [
     oneLine: 'Auto-approve your own declared gate commands (docs/ai/gates.json) via a Claude Code hook — exact matches only, previews first (opt-in).',
   },
   {
+    key: 'state-block-guard',
+    invocation: invocationOf('state-block-guard'),
+    group: 'Configure',
+    kind: READ_ONLY,
+    oneLine: 'Warn when a turn ends on a defective closing state block — a "nothing needed from you" answer or a promise of work that never started (Claude Code Stop hook; detection, never prevention; you paste the wiring).',
+  },
+  {
     key: 'bridge-settings',
     invocation: invocationOf('bridge-settings'),
     group: 'Configure',
