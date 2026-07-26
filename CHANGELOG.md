@@ -7,6 +7,22 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-26 — AD-076 a shipped opt-in now advertises itself (kit 3.15.0)
+
+`upgrade` and `recommendations` now offer the closing-block detector that 3.14.0 shipped. They did
+not: 3.14.0 added it with a mode doc, a catalog row and a README row — every surface an agent reads —
+and no advisor entry, so a user who installed the update was told «nothing is broken — process is
+optimal» while the new capability sat unwired and unmentioned.
+
+The item fires when no `Stop` hook runs the detector's runtime and points at the mode doc for the
+exact wiring block. Matched on the runtime file name, not an exact command: with no writer every user
+pastes their own path.
+
+Why it was invited rather than merely missed: every other surface of a new mode fails a test when
+omitted; the advisor is the one with no such guard, and the only one a user receives without asking.
+The guard that closes that needs an accurate claim for all 28 modes and is the next slice's first
+item.
+
 ## 2026-07-26 — AD-075 the closing state block gets a checker (kit 3.14.0)
 
 An opt-in `Stop` hook now reads the turn's final assistant message and warns when the closing state

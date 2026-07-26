@@ -131,7 +131,7 @@ form this family already sanctions. When the detector has earned a writer in rea
            "hooks": [
              {
                "type": "command",
-               "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/state-block-guard.mjs\" --require-block",
+               "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/state-block-guard.mjs\"",
                "timeout": 10
              }
            ]
@@ -141,10 +141,12 @@ form this family already sanctions. When the detector has earned a writer in rea
    }
    ```
 
-Drop `--require-block` if your project has not adopted the three-part closing block and you only want
-the two lying-slot checks. `--require-block` is the **only** argument accepted: an unrecognised one
-makes the guard refuse to judge the turn and say so, rather than quietly running in the weaker mode
-you did not choose.
+**Add `--require-block` to that command IF your project requires the three-part block on every
+message** — then a turn that drops the block entirely is reported too. It is left OFF above on
+purpose: this kit does not mandate the block, so switching it on for a project that never adopted it
+would warn after nearly every turn. `--require-block` is the **only** argument accepted: an
+unrecognised one makes the guard refuse to judge the turn and say so, rather than quietly running in
+the weaker mode you did not choose.
 
 A `Stop` hook is read at session start, so it becomes live in the **next** session, not the current
 one.

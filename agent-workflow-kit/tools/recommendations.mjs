@@ -104,6 +104,7 @@ export const SEVERITIES = Object.freeze({
   'read-lane': SEVERITY_OPTIONAL,
   'read-lane.stale': SEVERITY_ATTENTION,
   'read-lane.missing': SEVERITY_ATTENTION,
+  'state-block': SEVERITY_OPTIONAL,
   'family-freshness': SEVERITY_ATTENTION,
   'sandbox-masks': SEVERITY_OPTIONAL,
   'agy-adddir': SEVERITY_OPTIONAL,
@@ -161,6 +162,7 @@ export const WHATS = Object.freeze({
   'read-lane': 'the gate hook is wired but the read-only compound lane is off — pipes/chains of seeded reads still prompt one by one',
   'read-lane.stale': 'the read-lane is ON but the placed gate hook is stale — an old hook never reads lanes.json, so the lane is silently dark; reseed it',
   'read-lane.missing': 'the gate hook is wired but its placed file is missing — every Bash call errors and the read-lane is dark; re-place it',
+  'state-block': 'nothing checks the closing state block — a turn that ends on «nothing needed from you», or on a promise it never started, passes unseen',
   'family-freshness': '{parts}',
   'sandbox-masks': '{n} sandbox device mask(s) clutter git status — the managed exclude block is absent or stale',
   'sandbox-masks.stale-real': '{n} sandbox device mask(s) clutter git status — the exclude block is stale; {m} fenced entr(ies) are REAL paths (a fresh apply drops them)',
@@ -214,6 +216,7 @@ export const BENEFITS = Object.freeze({
   'gate-hook': 'velocity — your own declared gate commands auto-approve byte-exactly (opt-in PreToolUse hook)',
   'commit-guard': 'integrity — commits require the ONE green --final receipt at the exact staged fingerprint (consented pre-commit arm)',
   'read-lane': 'velocity — pipes/chains of your seeded read-only commands auto-approve instead of prompting (opt-in, conservatively classified)',
+  'state-block': 'no silent stalls — a turn ending on «you are not needed», or on work it never started, warns at once instead of waiting to be spotted',
   'family-freshness': 'currency — placed family members carry the latest shipped fixes and features',
   'sandbox-masks': 'zero clutter — git status shows only your changes (the review domain already ignores the masks by construction)',
   'agy-adddir': 'large reviews — an oversized agy code review offloads to a staging dir instead of refusing',
@@ -439,6 +442,26 @@ const probeReadLane = ({ root, deps, add, skip }) => {
   }
 };
 
+// The state-block-guard offer (AD-075 · OPT-IN-SHIPS-INVISIBLE). This item exists because its absence
+// fired: 3.14.0 shipped the detector with a mode doc, a catalog row and a README row — and no advisor
+// entry — so `upgrade` reported «nothing is broken» to a user who did not have it. There is no writer
+// for this hook, so the apply is a HAND-APPLY pointer at the mode doc, which carries the exact block
+// and the three merge cases.
+const probeStateBlockHook = ({ root, deps, add, skip }) => {
+  try {
+    const project = readSettingsFile(join(root, SETTINGS_FILE), { ...deps, cwd: root });
+    const local = readSettingsFile(join(root, SETTINGS_LOCAL_FILE), { ...deps, cwd: root });
+    if (isStateBlockGuardWired(project.data) || isStateBlockGuardWired(local.data)) return; // converged
+    add(
+      'state-block',
+      fillTemplate(WHATS['state-block'], {}),
+      `HAND-APPLY: add a Stop hook running ${STATE_BLOCK_HOOK_COMMAND} to ${SETTINGS_FILE} — the exact block and the three merge cases are in references/modes/state-block-guard.md`,
+    );
+  } catch (err) {
+    skip('state-block', err);
+  }
+};
+
 const probeFamilyFreshness = ({ deps, add, skip }) => {
   try {
     const survey = deps.surveyFamily ?? surveyFamily;
@@ -616,6 +639,29 @@ export const READ_LANE_KEY = 'readLane';
 // reads lanes.json — so it must surface as an ATTENTION reseed, not a silent convergence.
 const GATE_HOOK_REL = '.claude/hooks/agent-workflow-gates.mjs';
 const BUNDLED_HOOK_ABS = join(HERE, '..', 'references', 'hooks', 'gate-approve.mjs');
+
+// The state-block-guard wiring the advisor looks for. Matched on the RUNTIME FILE NAME inside the
+// command, not on an exact string: the hook has no writer, so every user pastes their own path —
+// a copy under `.claude/hooks/`, a kit-source path, `--require-block` or not. Any Stop entry that
+// runs this runtime counts as wired, which is the honest question ("is it watching?").
+export const STATE_BLOCK_HOOK_RUNTIME = 'state-block-guard.mjs';
+// NO `--require-block` in the offered command. That flag turns on the absent-block report, and this
+// kit does not mandate the three-part closing block — recommending it to every project would hand
+// them a hook that warns after nearly every turn. The mode doc explains when to add it. (Offering the
+// strict flag by default would also contradict the very reason the report was made opt-in.)
+export const STATE_BLOCK_HOOK_COMMAND = `node "$CLAUDE_PROJECT_DIR/.claude/hooks/${STATE_BLOCK_HOOK_RUNTIME}"`;
+const runsStateBlockGuard = (hook) => typeof hook?.command === 'string' && hook.command.includes(STATE_BLOCK_HOOK_RUNTIME);
+// Both entry shapes count. The matcher-group form (an object carrying its own `hooks` array) is what
+// this family ships and what was observed firing; a flat entry is accepted too, because the question
+// this probe answers is "is anything watching?" — and guessing NO for a wiring that works would nag
+// someone who already did the work.
+const isStateBlockGuardWired = (data) => {
+  const entries = data?.hooks?.Stop;
+  if (!Array.isArray(entries)) return false;
+  return entries.some((entry) => (Array.isArray(entry?.hooks)
+    ? entry.hooks.some(runsStateBlockGuard)
+    : runsStateBlockGuard(entry)));
+};
 
 // Byte-compare the placed gate hook against the bundled runtime. A read error (an unreadable placed
 // hook, a broken kit bundle) propagates → the probe states a skip, never a wrong currency verdict.
@@ -879,6 +925,7 @@ const PROBES = Object.freeze([
   probeGates,
   probeCommitGuard,
   probeReadLane,
+  probeStateBlockHook,
   probeFamilyFreshness,
   probeMasksItem,
   probeAgyAdddir,

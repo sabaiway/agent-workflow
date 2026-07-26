@@ -1015,6 +1015,71 @@ describe('recommendations — item probes over fixtures', () => {
   });
 });
 
+// This item exists because its ABSENCE fired: kit 3.14.0 shipped the state-block detector with a mode
+// doc, a catalog row and a README row but NO advisor entry, so `upgrade` told a user who did not have
+// it that «nothing is broken». Filed as OPT-IN-SHIPS-INVISIBLE.
+describe('recommendations — the state-block-guard offer (AD-075)', () => {
+  const stopWiring = (command) => JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command }] }] } });
+  const flatStopWiring = (command) => JSON.stringify({ hooks: { Stop: [{ type: 'command', command }] } });
+
+  it('a project with no Stop hook is OFFERED the detector, with a hand-apply pointing at the mode doc', () => {
+    const root = makeProject();
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    const item = items.find((i) => i.key === 'state-block');
+    assert.ok(item, 'a shipped opt-in capability must never be invisible');
+    assert.equal(item.severity, SEVERITY_OPTIONAL);
+    assert.match(item.apply, /^HAND-APPLY: /u, 'there is no writer — the apply is an honest hand-edit pointer');
+    assert.match(item.apply, /references\/modes\/state-block-guard\.md/u, 'and it names where the exact block lives');
+    assert.ok(!skips.some((s) => s.key === 'state-block'));
+  });
+
+  // The offered command must NOT carry --require-block: that flag turns on the absent-block report,
+  // and this kit does not mandate the three-part block — recommending it to every project would hand
+  // them a hook that warns after nearly every turn.
+  it('the offered wiring does NOT enable the strict absent-block report', () => {
+    const root = makeProject();
+    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    assert.doesNotMatch(items.find((i) => i.key === 'state-block').apply, /--require-block/u);
+  });
+
+  it('a FLAT Stop entry converges it too — the question is whether anything is watching', () => {
+    const root = makeProject();
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'settings.json'), flatStopWiring('node ./.claude/hooks/state-block-guard.mjs'));
+    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!items.some((i) => i.key === 'state-block'), 'a working wiring must never be nagged');
+  });
+
+  // Matched on the RUNTIME FILE NAME: with no writer every user pastes their own path, so an exact
+  // command comparison would keep offering the item to someone who already wired it.
+  for (const command of [
+    'node "$CLAUDE_PROJECT_DIR/.claude/hooks/state-block-guard.mjs" --require-block',
+    'node "$CLAUDE_PROJECT_DIR/.claude/hooks/state-block-guard.mjs"',
+    'node /abs/path/agent-workflow-kit/references/hooks/state-block-guard.mjs --require-block',
+  ]) {
+    it(`converges on any Stop entry that runs the runtime: «${command.slice(0, 52)}…»`, () => {
+      const root = makeProject();
+      mkdirSync(join(root, '.claude'), { recursive: true });
+      writeFileSync(join(root, '.claude', 'settings.json'), stopWiring(command));
+      const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+      rmSync(root, { recursive: true, force: true });
+      assert.ok(!items.some((i) => i.key === 'state-block'), 'already watching — do not nag');
+    });
+  }
+
+  it('an unrelated Stop hook does NOT converge it', () => {
+    const root = makeProject();
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'settings.json'), stopWiring('node ./scripts/something-else.mjs'));
+    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(items.some((i) => i.key === 'state-block'), 'someone else\'s Stop hook is not this detector');
+  });
+});
+
 describe('recommendations — the read-lane offer (AD-055 Part II, Help-through-Recommendations)', () => {
   const HOOK_CMD = 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/agent-workflow-gates.mjs"';
   // The REAL bundled hook the advisor byte-compares the placed hook against (council B7).
