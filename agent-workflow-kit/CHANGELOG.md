@@ -4,6 +4,38 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 3.14.0 — the closing state block gets a checker (AD-075)
+
+A new opt-in `Stop` hook reads the turn's final assistant message and warns when the closing state
+block lies about the turn that just ended.
+
+Every mechanised bar in this kit gates FILES — the gate declaration, release-scan, doc-parity, the
+commit guard. The closing state block is CHAT output, which no file gate can see, and that is the
+structural reason one contract recurred five times across three sessions while every file-level bar
+held. This closes the gap for two shapes that a `Stop` hook can judge as FALSE rather than merely
+discouraged, because at Stop time the turn is over: a «what I need from you» slot answering
+*nothing* — a turn that has ended always needs a resume, so the slot must name it — and a
+first-person promise of imminent work in a turn that produced none.
+
+**It is detection, never prevention, and that is stated on every surface.** A `Stop` hook cannot
+un-send the message it judges. What it buys is that a recurrence stops being silent.
+
+The warning rides `systemMessage` on stdout at exit 0, because a `Stop` hook's stderr at exit 0
+reaches the debug log and nobody else — a guard warning down an invisible channel would be
+decoration. It never emits a blocking field and exits 0 on every path, including every failure path;
+a guard that cannot see the turn says so rather than going quiet.
+
+The absent-block report is opt-in behind `--require-block`: this kit does not mandate the
+three-part block, and a hook that runs on every turn must not warn on every turn. An unrecognised
+argument refuses the turn loudly instead of silently running weaker than you asked for.
+
+`references/modes/state-block-guard.md` carries the check-first wiring block, the trust posture, and
+every residual by name — including the ones that are limits of a lexical layer rather than bugs
+awaiting a fix. There is **no writer** yet, and the reason is in that doc rather than hidden: a
+second placement path through the gate-approval writer would grow a flag matrix on the component
+that wires command auto-approval, and a dedicated second writer would duplicate hardened placement
+logic.
+
 ## 3.13.0 — the commit guard proves the INDEX carries the verified tree (AD-074)
 
 `commit-guard --check` now refuses an index that lags the working tree, so «verified» and «about to

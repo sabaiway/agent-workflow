@@ -3,7 +3,7 @@ name: agent-workflow-kit
 description: Deploy or upgrade a portable AI-agent memory-and-workflow system in any project. Use when the user wants to bootstrap `docs/ai/` + an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) + cap/archive/index enforcement in a new or existing repo, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-kit` / `/agent-workflow-kit upgrade`. Triggers on phrases like "set up the memory system", "deploy the AI workflow here", "bootstrap docs/ai", "upgrade the workflow".
 disable-model-invocation: true
 metadata:
-  version: '3.13.0'
+  version: '3.14.0'
 ---
 
 # agent-workflow-kit
@@ -158,6 +158,10 @@ writer — read `${CLAUDE_SKILL_DIR}/references/modes/agents.md` before acting.
 ### Mode: hook
 
 writer — read `${CLAUDE_SKILL_DIR}/references/modes/hook.md` before acting.
+
+### Mode: state-block-guard
+
+read-only — read `${CLAUDE_SKILL_DIR}/references/modes/state-block-guard.md` before acting.
 
 ### Mode: bridge-settings
 

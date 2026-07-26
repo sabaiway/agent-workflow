@@ -116,6 +116,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the gate-approval PreToolUse hook: writer + the bundled self-contained runtime
       'tools/gate-hook.mjs',
       'references/hooks/gate-approve.mjs',
+      // the CONTINUATION-STALL detector: a Stop hook that judges the closing state block, plus its
+      // contract doc — the mode ships no writer, so the doc IS the wiring surface
+      'references/hooks/state-block-guard.mjs',
+      'references/modes/state-block-guard.md',
       // the AD-038 review-enforcement pair: the read-only receipt checker + the facts assembler
       'tools/review-state.mjs',
       'tools/grounding.mjs',
@@ -279,7 +283,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       mode-ref). The *.test.mjs sibling is stripped by files[].
     // 160 = 159 + references/shared/command-shapes.md (AD-061 — the shared promptless
     //       command-shapes contract the probe-instructing modes Requires:-declare).
-    assert.equal(packed.length, 160, `tarball file count drifted (${packed.length} ≠ 160)`);
+    // 162 = 160 + the CONTINUATION-STALL Stop-hook detector pair: references/hooks/
+    //       state-block-guard.mjs (the runtime) + references/modes/state-block-guard.md (the 28th
+    //       mode-ref, which carries the paste-ready wiring because the mode ships no writer).
+    assert.equal(packed.length, 162, `tarball file count drifted (${packed.length} ≠ 162)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

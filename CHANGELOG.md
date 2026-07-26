@@ -7,6 +7,24 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-26 — AD-075 the closing state block gets a checker (kit 3.14.0)
+
+An opt-in `Stop` hook now reads the turn's final assistant message and warns when the closing state
+block lies about the turn that just ended: a «what I need from you» slot answering *nothing* — false
+by construction, since a turn that has ended needs a resume — or a first-person promise of imminent
+work in a turn that produced none.
+
+The gap was structural, not careless: every mechanised bar in this family gates FILES, and the
+closing block is chat output that no file gate can see. One contract recurred five times across
+three sessions while every file-level bar held.
+
+It is **detection, never prevention** — a `Stop` hook cannot un-send the message it judges — and the
+limit is stated on every surface. The warning rides `systemMessage` on stdout, because at exit 0 a
+`Stop` hook's stderr reaches the debug log and nobody else. The absent-block report is opt-in behind
+`--require-block`, since this kit does not mandate the block and a hook that runs every turn must
+not warn every turn. No writer ships with it; the mode doc carries a check-first wiring block and
+names every residual, including the limits of a lexical layer that no further rule would close.
+
 ## 2026-07-25 — AD-074 the commit guard proves the INDEX carries the verified tree (kit 3.13.0)
 
 `commit-guard --check` now refuses an index that lags the working tree. The gates and the tree
