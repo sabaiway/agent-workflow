@@ -1,5 +1,7 @@
 ### Mode: coverage-check
 
+<!-- opt-in-capability: none — a read-only gate entry; declaring the gate matrix is covered by gates-declaration -->
+
 The **final-run checker** (strip-the-kit D3(c)+(d)) — two deterministic arms over ONE fixed artifact path, every refusal naming its locations `file:line`, never a bare count. It reads the lcov file the declared `unit-tests` gate cmd produced at `<git dir>/agent-workflow-lcov.info` (the constant this tool exports; `AW_LCOV_FILE` overrides, a test seam; the git dir is outside the fingerprint domain and never committable by construction) and prints `coverage-check: lcov-sha256=<hex|none>` — the sha of the EXACT bytes it consumed, which the `run-gates --final` receipt binds and re-hashes (exactly ONE such line attests).
 
 Run `node ${CLAUDE_SKILL_DIR}/tools/coverage-check.mjs --check [--cwd <dir>]`:

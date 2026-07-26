@@ -1,5 +1,7 @@
 ### Mode: sandbox-masks
 
+<!-- opt-in-capability: sandbox-masks -->
+
 **Cosmetic exclude lane for sandbox-injected device masks** (AD-044). An OS sandbox (Claude Code) injects character-device masks into the work tree (`.bashrc`, `.gitconfig`, `.vscode`, …); git lists them as untracked noise. The **review domain already ignores them by construction** — never-committable untracked classes (character/block devices, FIFOs, sockets) are excluded from the fingerprint, the assembled review payload, and the clean checks in both bridge wrappers and the kit checker. This mode is the optional **cosmetic** half: it hides the masks from `git status` (and every other `--exclude-standard` untracked walk) via **one managed fenced block** in the file `git rev-parse --git-path info/exclude` names.
 
 Run `node ${CLAUDE_SKILL_DIR}/tools/sandbox-masks.mjs [--cwd <project-root>]`:

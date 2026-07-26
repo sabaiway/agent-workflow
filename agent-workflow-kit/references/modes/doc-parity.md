@@ -1,5 +1,7 @@
 ### Mode: doc-parity
 
+<!-- opt-in-capability: none — a read-only gate entry; declaring the gate matrix is covered by gates-declaration -->
+
 The DOC-PARITY lint (BUGFREE-3 / AD-049, session-economics item (b)) — the deterministic doc-drift killer. A recurring class of review churn came from a mode-contract doc silently lagging a code constant (a `--check` doc still reading "300" after the diff cap moved to 400, caught only in a later review round). This read-only tool closes that class mechanically: a **closed, exported registry** ties each live code constant to the exact token its `references/modes/*.md` contract must carry, and asserts the CURRENT value renders into every bound file.
 
 **Run** — `node ${CLAUDE_SKILL_DIR}/tools/doc-parity.mjs [--check | --json]`:

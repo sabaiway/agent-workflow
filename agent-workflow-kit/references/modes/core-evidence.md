@@ -1,5 +1,7 @@
 ### Mode: core-evidence
 
+<!-- opt-in-capability: none — an on-demand evidence writer that leaves no persistent opt-in state -->
+
 The ONE **loop-evidence writer** (strip-the-kit D6a/D7) — every core evidence record lands in a single append-only JSONL store **inside the git dir** (`<git dir>/agent-workflow-core-evidence.jsonl` — never committable by construction; `AW_CORE_EVIDENCE` overrides, a test seam). Records carry a versioned schema and a per-kind KEY; the **LATEST record per key is authoritative** (supersession, file order); a byte-identical replayed line is refused as a duplicate; a malformed line fails every reader CLOSED. The store holds four kinds: `red-proof` and `degrade` (written HERE), plus `final-start`/`final` (written only by `run-gates --final` — the same sole-writer module, a different entry point).
 
 Run `node ${CLAUDE_SKILL_DIR}/tools/core-evidence.mjs <verb> …`:

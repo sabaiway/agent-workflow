@@ -1,5 +1,7 @@
 ### Mode: setup
 
+<!-- opt-in-capability: none — placing a third-party subscription CLI is the user purchase decision; the advisor surfaces it only when a CONFIGURED recipe degrades (review-recipe) -->
+
 The **only writer** among the backend modes, and **opt-in / in-agent only** — **placement** is **never** part of `init`. The npx installer deploys the *kit* and bundles the bridge skills in its tarball, but **does not place** them (that honesty claim is load-bearing — see `decisions.md` AD-009 / AD-011); **once placed** by `setup`, `init` and `${CLAUDE_SKILL_DIR}/references/modes/upgrade.md` keep the placed copy fresh via the refresh-only `--refresh-placed` (below) — **never a first placement, never a downgrade**. `setup` owns exactly the two deterministic, secret-free steps and **guides** the rest. It **never commits and never runs a subscription CLI**.
 
 Run `node ${CLAUDE_SKILL_DIR}/tools/setup-backends.mjs [<backend>] [--bindir <path>] [--dry-run]`:

@@ -1,5 +1,7 @@
 ### Mode: set-autonomy
 
+<!-- opt-in-capability: autonomy-policy -->
+
 The **policy writer** for `docs/ai/autonomy.json` — the answer to *"set my autonomy policy without hand-editing JSON."* **Division of labor:** YOU turn the user's plain language into explicit ops; the KIT does the deterministic validate → merge → preview → write. It **previews by default** (writes nothing); `--write` applies. It **never renders enforcement** (that is the separate velocity autonomy mode — this writer touches only the policy file), **never runs a backend, and never commits**. Hand-editing `docs/ai/autonomy.json` stays fully supported — an offered convenience, never a lock.
 
 **The policy** has two parts: **red-lines** (always hold, segment-independent) + a **per-activity autonomy level**.

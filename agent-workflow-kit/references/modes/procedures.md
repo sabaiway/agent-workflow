@@ -1,5 +1,7 @@
 ### Mode: procedures
 
+<!-- opt-in-capability: none — an inspection surface that configures nothing -->
+
 Read-only **activity-procedures advisor**. Answers *"what are the steps of this named activity, and which recipe applies at each slot here?"* It composes the orchestration recipes (`${CLAUDE_SKILL_DIR}/references/modes/recipes.md`) into **named activities** with **typed recipe slots**. It **never writes, never commits, never runs a subscription CLI** — the deterministic resolution lives in the kit; the orchestrator runs the resolved recipe via the bridge skills and **owns any commit when the activity has a commit boundary** (a backend never commits). Not every activity commits: `plan-authoring` ends at approval and produces no commit (plans are ephemeral, never committed); `plan-execution` commits per Step.
 
 The two v1 activities (canon in the **installed engine**, `references/procedures.md`):

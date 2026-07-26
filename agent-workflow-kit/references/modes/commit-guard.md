@@ -1,5 +1,7 @@
 ### Mode: commit-guard
 
+<!-- opt-in-capability: commit-guard -->
+
 The **read-only pre-commit guard** (strip-the-kit D10) — the last line of the loop: a commit is permitted only against the LATEST completed `run-gates --final` receipt that binds EXACTLY the current tree. It re-runs NO gate or test subprocess — the heavy D3 verification lives in the final run; the guard recomputes the tree fingerprint (read-only git plumbing) and compares file contents.
 
 Run `node ${CLAUDE_SKILL_DIR}/tools/commit-guard.mjs --check [--cwd <dir>]` — it refuses, each with a named recovery, on:

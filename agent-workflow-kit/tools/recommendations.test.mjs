@@ -11,7 +11,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, lstatSync, chmodSync, symlinkSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, lstatSync, chmodSync, symlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1933,5 +1933,87 @@ describe('recommendations — read-only by construction', () => {
     rmSync(root, { recursive: true, force: true });
     assert.equal(after, before);
     assert.equal(claudeDirExists, false, 'the advisor never creates .claude');
+  });
+});
+
+// The cheap-agents offer. Unlike every other item here, this one was NOT found by an incident — the
+// opt-in coverage registry surfaced it: `agents` is the family's second `.claude/` writer and the
+// `help` Tune tail advertises it, yet the advisor had no entry, so a user who never ran `help` never
+// learned it existed while the advisor reported the deployment optimal.
+describe('recommendations — the cheap-agents offer (OPT-IN-SHIPS-INVISIBLE)', () => {
+  it('a project with no placed subagents is OFFERED them, with a runnable consent-gated apply', () => {
+    const root = makeProject();
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    const item = items.find((i) => i.key === 'agents');
+    assert.ok(item, 'a shipped opt-in capability must never be invisible');
+    assert.equal(item.severity, SEVERITY_OPTIONAL);
+    assert.match(item.apply, /cheap-agents\.mjs/u, 'the apply runs the writer that owns the placement');
+    assert.match(item.what, /\d+ cheap-model subagent/u, 'the WHAT states how many are missing');
+    assert.ok(!skips.some((s) => s.key === 'agents'));
+  });
+
+  // The writer's contract is «--dry-run first, ALWAYS» (references/modes/agents.md invariants), so
+  // the rendered line must be the PREVIEW. Rendering --apply would skip the per-vehicle plan the user
+  // is supposed to see BEFORE consenting — and «already current» vs «customized, preserved» is
+  // exactly what that plan discloses.
+  it('renders the PREVIEW, never a bare --apply that would skip the mandated dry-run', () => {
+    const root = makeProject();
+    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    const item = items.find((i) => i.key === 'agents');
+    assert.doesNotMatch(item.apply, /--apply/u, 'the dry-run default must not be bypassed');
+    assert.match(item.what, /PREVIEWS/u, 'and the two-step semantics are stated in the WHAT');
+  });
+
+  // `.claude/agents/` is a Claude Code surface — the saving is not universal, and claiming it
+  // unconditionally would overstate the benefit on any other harness.
+  it('the offer is scoped to Claude Code rather than claiming a universal saving', () => {
+    const root = makeProject();
+    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    const item = items.find((i) => i.key === 'agents');
+    assert.match(`${item.what} ${item.benefit}`, /Claude Code/u, 'the harness scope is stated, not assumed');
+  });
+
+  // The apply PLACES; in a hidden-mode deployment the placed dir then needs the reconcile or it
+  // surfaces in `git status` — and the item would already read as converged. The reconcile must NOT
+  // ride the apply line (it is wrong to run on a visible deployment), so it rides the detail.
+  it('names the hidden-mode reconcile follow-up WITHOUT putting it on the apply line', () => {
+    const root = makeProject();
+    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    const item = items.find((i) => i.key === 'agents');
+    assert.ok(item.detail, 'the follow-up is stated');
+    assert.match(item.detail, /hide-footprint\.mjs/u);
+    assert.match(item.detail, /--reconcile/u);
+    assert.match(item.detail, /hidden-mode/u, 'and it is scoped to the deployments it applies to');
+    assert.doesNotMatch(item.apply, /hide-footprint/u, 'the apply stays the placement command alone');
+  });
+
+  // `already-current` is convergence and `customized-preserved` is the user's own edit, which the
+  // writer never clobbers — neither is a gap, and nagging about either would be a defect.
+  it('a project whose subagents are all placed gets NO offer (converged)', () => {
+    const root = makeProject();
+    mkdirSync(join(root, '.claude', 'agents'), { recursive: true });
+    for (const name of readdirSync(join(HERE, '..', 'references', 'agents')).filter((f) => f.endsWith('.md'))) {
+      writeFileSync(join(root, '.claude', 'agents', name), readFileSync(join(HERE, '..', 'references', 'agents', name), 'utf8'));
+    }
+    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!items.some((i) => i.key === 'agents'), 'already placed — do not nag');
+  });
+
+  // The writer refuses below the expected lineage, so rendering its command would hand the user a
+  // guaranteed failure. The honest surface is a stated skip naming the recovery — never a crash.
+  it('a project below the expected lineage becomes a stated skip, never a crash or a doomed apply', () => {
+    const root = makeProject();
+    writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '0.0.1\n');
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!items.some((i) => i.key === 'agents'), 'no offer whose apply would refuse');
+    const skip = skips.find((s) => s.key === 'agents');
+    assert.ok(skip, 'the check that could not run says so');
+    assert.match(skip.reason, /upgrade/u, 'and names the recovery');
   });
 });

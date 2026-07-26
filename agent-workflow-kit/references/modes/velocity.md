@@ -1,5 +1,12 @@
 ### Mode: velocity
 
+<!-- opt-in-capability: velocity-core -->
+<!-- opt-in-capability: kit-tools-tier -->
+<!-- opt-in-capability: bridge-tier -->
+<!-- opt-in-capability: autonomy-render -->
+<!-- opt-in-capability: sandbox-lane -->
+<!-- opt-in-capability: accept-edits -->
+
 Requires: ${CLAUDE_SKILL_DIR}/references/shared/command-shapes.md
 
 The opt-in onboarding **velocity profile** — it seeds a fixed, audited **read-only** Claude Code allowlist into `.claude/settings.json` so an agent stops idling on approval prompts for routine read-only commands while the maintainer is away. It is the family's **first programmatic `.claude/settings.json` writer** (attribution stayed an agent-driven prose merge). **In-agent, opt-in, writes only `.claude/settings.json`**, on one hard rule: **it never allowlists `commit`/`push`/`publish`** — so a direct commit/push/publish still ASKs; the only caveat is the trust-posture residual (below) — its closure is **shipped, opt-in: `${CLAUDE_SKILL_DIR}/references/modes/hook.md`**.

@@ -1,5 +1,7 @@
 ### Mode: grounding
 
+<!-- opt-in-capability: none — an on-demand assembler that leaves no persistent state the advisor could observe -->
+
 The **grounded-review facts assembler** (AD-038) — an ungrounded `agy` review GUESSES, and while the grounding contract is mechanized (`agy-review code --facts @f`), populating the facts file was a manual chore. This mode emits the **mechanical** facts sources of a payload (constraints / autonomy / plan / ledger digest); the orchestrator still owns any judgment-bearing additions. **Catalogued honestly as a WRITER** — `--out <path>` writes one file — with the invariant: `--out` accepts **only system-temp destinations outside the repo ($TMPDIR / /tmp — rewritable scratch) or a FRESH gitignored in-repo path (create-only, exclusive write)** and REFUSES everything else: a tracked path, an in-repo not-ignored path (a new untracked file would itself move the review fingerprint the facts are about to ground), an EXISTING in-repo file even when gitignored (the `.env` clobber class — this writer is bridge-tier auto-allowable), any other outside-repo destination, and symlink/non-regular leaves; **stdout is the default**. It never commits and never runs a subscription CLI.
 
 Run `node ${CLAUDE_SKILL_DIR}/tools/grounding.mjs [--constraints] [--autonomy] [--plan <path>] [--reserve-bytes <n>] [--out <path>]`:

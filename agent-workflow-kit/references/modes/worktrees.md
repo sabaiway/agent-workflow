@@ -1,5 +1,7 @@
 ### Mode: worktrees
 
+<!-- opt-in-capability: worktrees-dir -->
+
 Parallel feature worktrees (v1) — several features implemented simultaneously in DIFFERENT agent
 sessions on one machine/repo, zero interference on working-tree files (the ONE exception: the
 default `node_modules` symlink is a shared MUTABLE dependency cache — see below), unambiguous

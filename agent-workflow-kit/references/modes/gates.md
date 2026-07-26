@@ -1,5 +1,7 @@
 ### Mode: gates
 
+<!-- opt-in-capability: gates-declaration -->
+
 The **generic project gate runner** — it batches the project's OWN declared verification commands into one run. The runner itself **writes nothing on a plain run, never commits, and never runs a subscription CLI**; what it EXECUTES is the project's own declaration, with the caller's privileges (trust posture: a batching convenience over commands the project already runs by hand — **not a sandbox**). **`--final`** is the ONE writing mode: it runs the FULL declared matrix as the D3(a) final verification run and mints the receipt the commit guard consumes (step 4).
 
 Run `node ${CLAUDE_SKILL_DIR}/tools/run-gates.mjs [--cwd <project>] [--only <id>]… [--final]`:

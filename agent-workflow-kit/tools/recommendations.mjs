@@ -60,6 +60,7 @@ import { loadConfig } from './orchestration-config.mjs';
 import { DEFAULT_BUNDLE_ROOT, SETTINGS_FILENAME, settingsPath, parseSettings, duplicateKeys } from './bridge-settings-read.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
 import { loadWorktreesConfig, resolveProbeDir } from './worktrees.mjs';
+import { preflightCheapAgents } from './cheap-agents.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const toolPath = (rel) => join(HERE, rel);
@@ -105,6 +106,7 @@ export const SEVERITIES = Object.freeze({
   'read-lane.stale': SEVERITY_ATTENTION,
   'read-lane.missing': SEVERITY_ATTENTION,
   'state-block': SEVERITY_OPTIONAL,
+  agents: SEVERITY_OPTIONAL,
   'family-freshness': SEVERITY_ATTENTION,
   'sandbox-masks': SEVERITY_OPTIONAL,
   'agy-adddir': SEVERITY_OPTIONAL,
@@ -163,6 +165,7 @@ export const WHATS = Object.freeze({
   'read-lane.stale': 'the read-lane is ON but the placed gate hook is stale — an old hook never reads lanes.json, so the lane is silently dark; reseed it',
   'read-lane.missing': 'the gate hook is wired but its placed file is missing — every Bash call errors and the read-lane is dark; re-place it',
   'state-block': 'nothing checks the closing state block — a turn that ends on «nothing needed from you», or on a promise it never started, passes unseen',
+  agents: '{n} cheap-model subagent(s) not placed (Claude Code) — mechanical work still runs on the frontier model; the apply PREVIEWS first',
   'family-freshness': '{parts}',
   'sandbox-masks': '{n} sandbox device mask(s) clutter git status — the managed exclude block is absent or stale',
   'sandbox-masks.stale-real': '{n} sandbox device mask(s) clutter git status — the exclude block is stale; {m} fenced entr(ies) are REAL paths (a fresh apply drops them)',
@@ -211,18 +214,74 @@ export const BENEFITS = Object.freeze({
   'autonomy-policy': 'clarity — the per-activity autonomy policy becomes an explicit, versioned declaration instead of implicit computed defaults',
   'autonomy-render': `velocity — confined commands auto-allow per your declared policy; ${DUAL_SECURITY_BENEFIT}`,
   'sandbox-provision': `velocity — confined ad-hoc commands stop prompting; ${DUAL_SECURITY_BENEFIT}`,
-  'review-recipe': 'review coverage — the review recipe you configured actually runs instead of silently degrading',
+  'review-recipe': 'recipe coverage — the review AND execution recipes you configured actually run instead of silently degrading',
   'gates-declaration': 'velocity — your project’s gates run as ONE declared batch with a PASS/FAIL table',
   'gate-hook': 'velocity — your own declared gate commands auto-approve byte-exactly (opt-in PreToolUse hook)',
   'commit-guard': 'integrity — commits require the ONE green --final receipt at the exact staged fingerprint (consented pre-commit arm)',
   'read-lane': 'velocity — pipes/chains of your seeded read-only commands auto-approve instead of prompting (opt-in, conservatively classified)',
   'state-block': 'no silent stalls — a turn ending on «you are not needed», or on work it never started, warns at once instead of waiting to be spotted',
+  agents: 'cost — on Claude Code, mechanical work runs on a cheap model with bounded read-only tools instead of spending frontier tokens',
   'family-freshness': 'currency — placed family members carry the latest shipped fixes and features',
   'sandbox-masks': 'zero clutter — git status shows only your changes (the review domain already ignores the masks by construction)',
   'agy-adddir': 'large reviews — an oversized agy code review offloads to a staging dir instead of refusing',
   'sandbox-lane': 'discoverability — the manifest-declared observed sandbox recipe for bridge runs surfaces itself instead of waiting to be asked',
   'worktrees-dir': 'parallel features — the host-specific write allowance or terminal fallback is surfaced before provision',
 });
+
+// ── the CLOSED opt-in capability registry (OPT-IN-SHIPS-INVISIBLE) ──────────────────────────────
+// 3.14.0 shipped a capability with every surface an AGENT reads and NO advisor entry, so `upgrade`
+// told a user their setup was optimal while the thing that had just shipped sat unwired. Every other
+// surface of a mode is drift-guarded; the advisor was the one that was not, and it is the only
+// surface a user receives PASSIVELY.
+//
+// Keyed by CAPABILITY, not by mode: a per-mode registry cannot detect a new opt-in added INSIDE an
+// already-registered mode (the read-lane belongs to mode `hook`), because the mode set does not move.
+// Each id is DECLARED at its point of use in references/modes/<mode>.md and this registry is asserted
+// set-equal to those declarations (test/advisor-coverage.test.mjs), mirroring the catalog ⟷ SKILL.md
+// ⟷ mode-docs triangle commands.test.mjs already enforces.
+//
+// Every row carries EXACTLY ONE of `advisorKey` (the offer that observes its unconfigured state) or
+// `exempt` (a stated reason it legitimately has none). Adding a capability ADDS a checked row; it
+// never widens a blocklist.
+export const OPT_IN_CAPABILITIES = Object.freeze([
+  { id: 'velocity-core', mode: 'velocity', advisorKey: 'velocity-core' },
+  { id: 'kit-tools-tier', mode: 'velocity', advisorKey: 'kit-tools-tier' },
+  { id: 'bridge-tier', mode: 'velocity', advisorKey: 'bridge-tier' },
+  { id: 'autonomy-render', mode: 'velocity', advisorKey: 'autonomy-render' },
+  { id: 'sandbox-lane', mode: 'velocity', advisorKey: 'sandbox-lane' },
+  { id: 'autonomy-policy', mode: 'set-autonomy', advisorKey: 'autonomy-policy' },
+  { id: 'sandbox-provision', mode: 'autonomy-doctor', advisorKey: 'sandbox-provision' },
+  { id: 'gates-declaration', mode: 'gates', advisorKey: 'gates-declaration' },
+  { id: 'gate-hook', mode: 'hook', advisorKey: 'gate-hook' },
+  { id: 'read-lane', mode: 'hook', advisorKey: 'read-lane' },
+  { id: 'commit-guard', mode: 'commit-guard', advisorKey: 'commit-guard' },
+  { id: 'state-block', mode: 'state-block-guard', advisorKey: 'state-block' },
+  { id: 'sandbox-masks', mode: 'sandbox-masks', advisorKey: 'sandbox-masks' },
+  { id: 'worktrees-dir', mode: 'worktrees', advisorKey: 'worktrees-dir' },
+  { id: 'family-freshness', mode: 'upgrade', advisorKey: 'family-freshness' },
+  { id: 'agy-adddir', mode: 'bridge-settings', advisorKey: 'agy-adddir' },
+  { id: 'review-recipe', mode: 'set-recipe', advisorKey: 'review-recipe' },
+  // The execute slot is a DISTINCT opt-in from the review slot, and the same probe reports both —
+  // which is why the review-recipe benefit is worded for either slot rather than for review alone.
+  { id: 'delegated-execution', mode: 'set-recipe', advisorKey: 'review-recipe' },
+  { id: 'agents', mode: 'agents', advisorKey: 'agents' },
+  // Exempt, not un-audited. `acceptEdits` auto-applies Edit/Write and auto-runs mkdir/touch/mv/cp:
+  // a TRUST-POSTURE change. The kit never nudges a user toward weakening their approval posture (the
+  // same doctrine that keeps sandbox network/filesystem allowances HAND-APPLY); velocity presents the
+  // full honest posture at its own consent moment, where the user is already deciding.
+  {
+    id: 'accept-edits',
+    mode: 'velocity',
+    exempt: 'a trust-posture change (auto-applied edits, auto-run mkdir/touch/mv/cp) — the kit never nudges a user toward weakening their own approval posture; velocity states the full posture at its own consent moment',
+  },
+  // Exempt for the mirror-image reason: the Fast tier bills at a higher credit rate, so an unprompted
+  // offer would be the kit nudging the user to spend money.
+  {
+    id: 'codex-fast',
+    mode: 'bridge-settings',
+    exempt: 'a paid SPEND knob (the priority tier bills at a higher credit rate) — the kit never nudges a user toward spending money; bridge-settings surfaces it with its cost caveat when asked',
+  },
+].map((c) => Object.freeze(c)));
 
 // A typed usage failure (exit 2) — the codebase's typed-error idiom (no classes).
 const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 });
@@ -459,6 +518,42 @@ const probeStateBlockHook = ({ root, deps, add, skip }) => {
     );
   } catch (err) {
     skip('state-block', err);
+  }
+};
+
+// The cheap-agents offer (OPT-IN-SHIPS-INVISIBLE). This item exists because the coverage registry
+// surfaced its absence: `agents` is the family's SECOND `.claude/` writer, the `help` Tune tail
+// advertises it, and the advisor had no entry for it — so a user who never runs `help` never learned
+// it existed while the advisor reported the deployment optimal. Found by the guard, not by an incident.
+// Only a PLACE action counts as a gap: `already-current` is converged and `customized-preserved` is
+// the user's own edit, which the writer never clobbers and the advisor must never nag about.
+const probeCheapAgents = ({ root, deps, add, skip }) => {
+  try {
+    const preflight = preflightCheapAgents({ cwd: root }, deps);
+    // The writer refuses below the expected lineage, so offering its command would hand the user a
+    // guaranteed failure — the honest surface is a stated skip naming the recovery.
+    if (!preflight.stampOk) {
+      skip('agents', new Error(`not a deployed agent-workflow project at the current lineage (found ${preflight.stamp ?? 'none'}) — run upgrade first`));
+      return;
+    }
+    const toPlace = preflight.plan.filter((item) => item.action === 'place');
+    if (toPlace.length === 0) return; // converged
+    // The writer's contract is «--dry-run first, ALWAYS» (references/modes/agents.md, and its stated
+    // invariant «preview by default»), so the rendered line is the PREVIEW — this item joins the
+    // dry-run-preview class the mode doc already documents for the gates-declaration seeder, where the
+    // same confirmation then runs the follow-up the preview prints. Rendering --apply here would have
+    // skipped the per-vehicle plan the user is supposed to see before consenting.
+    // The hidden-mode reconcile rides the detail, never the apply line: it is wrong to run on a
+    // VISIBLE deployment, and the apply slot must stay one pure executable command.
+    add(
+      'agents',
+      fillTemplate(WHATS.agents, { n: toPlace.length }),
+      `node ${q(toolPath('cheap-agents.mjs'))} --cwd ${q(root)}`,
+      'agents',
+      `hidden-mode deployments only: after the --apply the preview prints, run node ${q(toolPath('hide-footprint.mjs'))} --dir ${q(root)} --reconcile so the placed .claude/agents/ stays invisible to git status`,
+    );
+  } catch (err) {
+    skip('agents', err);
   }
 };
 
@@ -926,6 +1021,7 @@ const PROBES = Object.freeze([
   probeCommitGuard,
   probeReadLane,
   probeStateBlockHook,
+  probeCheapAgents,
   probeFamilyFreshness,
   probeMasksItem,
   probeAgyAdddir,
@@ -946,7 +1042,8 @@ export const buildRecommendations = ({ cwd, deps = {} } = {}) => {
   // its class differs from the base (the invalid-env attention arm).
   // `detail` (optional) is an extra rendered `recipe:` line — factual context that is TOO LONG for
   // the capped WHAT and does NOT belong in the pure-command apply (the sandbox-lane live recipe:
-  // egress hosts + resolved writable dirs). Single-line like apply; absent for every other item.
+  // egress hosts + resolved writable dirs; the worktrees-dir hand-apply-first grant advice; the
+  // agents hidden-mode reconcile follow-up). Single-line like apply; absent for every other item.
   const add = (key, what, apply, severityKey = key, detail = null) => {
     const problems = [];
     if (!(key in BENEFITS)) problems.push(`unregistered item key ${JSON.stringify(key)}`);
@@ -1005,7 +1102,8 @@ Usage:
 Computes the deterministic Recommendations section every kit upgrade ends with — VERDICT-FIRST:
 one composed verdict line opens every non-optimal render, then per item {severity · what is
 sub-optimal · the benefit in one plain line · an optional \`recipe:\` line (the sandbox-lane live
-recipe, or the worktrees-dir hand-apply-first grant advice) · the exact consent-gated apply one-liner}. --cwd is
+recipe, the worktrees-dir hand-apply-first grant advice, or the agents hidden-mode reconcile
+follow-up) · the exact consent-gated apply one-liner}. --cwd is
 REQUIRED (the target project is explicit, never inferred from the shell's current directory). The
 section renders present-even-when-empty ("${RECOMMENDATIONS_EMPTY_LINE}"); a probe failure is a
 stated skipped-item line. Apply lines are cwd-independent (absolute tool paths, a pinned --cwd;

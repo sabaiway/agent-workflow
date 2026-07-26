@@ -1,5 +1,7 @@
 ### Mode: bootstrap
 
+<!-- opt-in-capability: none — the deployment action itself; the advisor only renders inside an existing deployment -->
+
 Requires: ${CLAUDE_SKILL_DIR}/references/shared/report-footer.md · ${CLAUDE_SKILL_DIR}/references/shared/composition-handoff.md · ${CLAUDE_SKILL_DIR}/references/shared/deploy-tail.md · ${CLAUDE_SKILL_DIR}/references/shared/command-shapes.md
 
 > Bundled sources below (templates, scripts) live in **this skill's own directory** — `${CLAUDE_SKILL_DIR}/` in Claude Code, or the folder containing this `SKILL.md` in Codex / other agents. Use that as the copy/read source; the working directory is the **target project**, not the skill.

@@ -1,5 +1,8 @@
 ### Mode: bridge-settings
 
+<!-- opt-in-capability: agy-adddir -->
+<!-- opt-in-capability: codex-fast -->
+
 The reader + consent-gated **writer** for the **host-level** bridge settings file — the answer to *"turn on the codex Fast tier (or another bridge knob) once, predictably, so it survives kit upgrades."* The four bridge wrappers read `${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf` (`KEY=VALUE` lines, **parsed never sourced**); this is the ONLY writer for it. The file lives **outside every kit-managed tree**, so a kit refresh never writes or clobbers it — upgrade-survival is structural (D2). It **previews by default**; `--apply` writes. Hand-editing the file stays fully supported — this is an offered convenience, never a lock.
 
 **The knobs are the bundled bridges' own `settings` blocks** (manifest-as-source, D6) — the tool never invents a key or a value rule, and what it writes always passes the wrappers' own validation. Model/effort are **NOT** settable here (the wrappers' quality-first guard is untouched, D4). Run **`node ${CLAUDE_SKILL_DIR}/tools/bridge-settings.mjs`** to see the live list; today:
