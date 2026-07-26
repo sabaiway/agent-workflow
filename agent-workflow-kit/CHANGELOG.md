@@ -4,6 +4,29 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 3.15.0 — a shipped opt-in now advertises itself (AD-076)
+
+`/agent-workflow-kit upgrade` and `recommendations` now offer the closing-block detector that 3.14.0
+shipped.
+
+They did not, and that was the whole defect. 3.14.0 added the detector with a mode doc, a catalog row
+and a README row — every surface an agent reads — and no advisor entry. So a user who installed the
+update and ran `upgrade` was told «nothing is broken — process is optimal» while the capability from
+that very version sat unwired and unmentioned. Both statements were true alone. Together they meant
+the only route to the new feature was reading this file or interrogating the agent.
+
+The new item fires when no `Stop` hook runs the detector's runtime, states what goes unseen without
+it, and carries a hand-apply pointer to the mode doc — there is still no writer for this hook, and the
+doc carries the exact block plus the three merge cases. It matches on the runtime FILE NAME rather
+than an exact command, because with no writer every user pastes their own path: an exact comparison
+would keep nagging someone who already wired it.
+
+The reason this was structurally invited is worth stating. Every other surface of a new mode is
+drift-guarded — omit the `SKILL.md` row, the catalog entry or the mode doc and a test fails. The
+advisor is the one surface with no such guard, and the only one a user receives without asking. The
+guard that would close it needs an accurate claim for all 28 modes, so it is the next slice's first
+item rather than a hurried addition here.
+
 ## 3.14.0 — the closing state block gets a checker (AD-075)
 
 A new opt-in `Stop` hook reads the turn's final assistant message and warns when the closing state
