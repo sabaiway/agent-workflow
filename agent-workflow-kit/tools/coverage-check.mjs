@@ -117,6 +117,68 @@ export const keyFor = (rootTop, rel) => {
   }
 };
 
+// ── the attestation handshake (the provenance precondition) ───────────────────────────────────────
+// An LCOV on disk carries NO evidence of the tree it was produced from, so reading one and issuing
+// a verdict certifies whatever happens to be there. The STALE-FAILURE direction was observed live
+// (2026-07-27, an identical failure list and sha after tests were added); the FALSE GREEN — the
+// dangerous one — was reproduced HERMETICALLY: a line appended after the suite ran has no DA entry,
+// and lcov.mjs:9-13 states that reads as non-executable, i.e. "nothing to cover".
+//
+// Provenance is a CONSEQUENCE inside exactly one context: a `run-gates --final` run deletes the
+// artifact before any gate spawns, so anything present came from that run. The runner mints a random
+// nonce and writes `final-start.attempt` as a one-way COMMITMENT over {nonce, fingerprint, base};
+// the raw nonce rides the environment to this child, which recomputes the commitment and requires
+// the record to carry it. Neither half suffices alone: a bare nonce is unverifiable (any later value
+// would do), a persisted attempt id alone is replayable (it is reconstructible from public repo
+// state, which is how the first two designs certified foreign evidence). The commitment also BINDS
+// THE BASE, which is persisted nowhere else — the only way a base check is possible at all.
+//
+// Residual, stated: an operator who runs both processes can forge the store or the code. That is the
+// kit's standing posture (review-state.mjs HUMAN residual), not a new weakening. What this removes
+// is the ACCIDENTAL false green — an interrupted run plus an ordinary later test run, nobody trying.
+export const ATTEST_NONCE_ENV = 'AW_FINAL_ATTEST_NONCE';
+export const ATTEST_FINGERPRINT_ENV = 'AW_FINAL_ATTEST_FINGERPRINT';
+export const ATTEST_BASE_ENV = 'AW_FINAL_ATTEST_BASE';
+const ATTEST_ENV_VARS = Object.freeze([ATTEST_NONCE_ENV, ATTEST_FINGERPRINT_ENV, ATTEST_BASE_ENV]);
+
+// The commitment bytes: newline-joined, which is unambiguous because every field is hex or empty
+// (the nonce and fingerprint by construction, the base a git object id or '' on an unborn branch).
+export const commitmentFor = (nonce, fingerprint, base) =>
+  createHash('sha256').update(`${nonce}\n${fingerprint}\n${base ?? ''}`).digest('hex');
+
+// A child of this process must never inherit a LIVE capability: the red-proof arm spawns `node --test`
+// probes, and a detached descendant holding the raw nonce could attest later.
+export const withoutAttestEnv = (env) => {
+  const out = { ...env };
+  for (const key of ATTEST_ENV_VARS) delete out[key];
+  return out;
+};
+
+// → { attesting: true } | { attesting: false, reason } | { refusal } — a refusal is an exit-1
+// identity failure (the runner handed a context that no longer describes this tree), DISTINCT from
+// the ordinary non-attesting case, which is exit 0 and merely withholds the verdict.
+// Exported as a test seam (the keyFor idiom): the undecidable-identity arm below cannot be reached
+// through the CLI, where a resolvable work tree is a precondition of getting this far.
+export const attestationState = ({ env, records, fingerprint, base }) => {
+  const nonce = env[ATTEST_NONCE_ENV];
+  if (typeof nonce !== 'string' || nonce === '') {
+    return { attesting: false, reason: 'no final-run attestation context — a verdict is issued only inside the run that owns the lcov (run-gates.mjs --final); findings below are informational' };
+  }
+  const passedFingerprint = env[ATTEST_FINGERPRINT_ENV] ?? '';
+  const passedBase = env[ATTEST_BASE_ENV] ?? '';
+  if (fingerprint == null) {
+    return { refusal: 'the attestation context cannot be verified — this tree has no computable fingerprint' };
+  }
+  if (passedFingerprint !== fingerprint || passedBase !== (base ?? '')) {
+    return { refusal: `the tree MOVED under the final run (the attestation context describes ${passedFingerprint.slice(0, 12)}…@${passedBase.slice(0, 12) || 'unborn'}, this tree is ${fingerprint.slice(0, 12)}…@${(base ?? '').slice(0, 12) || 'unborn'}) — a gate changed the working tree after the suite produced the lcov; re-run run-gates.mjs --final` };
+  }
+  const want = commitmentFor(nonce, fingerprint, base ?? '');
+  if (!records.some((r) => r.kind === 'final-start' && r.attempt === want)) {
+    return { refusal: 'the attestation context matches no recorded final-run attempt — the evidence store lost or never received the start record; re-run run-gates.mjs --final' };
+  }
+  return { attesting: true };
+};
+
 // ── the red-proof verification arm (D3(c)) ────────────────────────────────────────────────────────
 
 // verifyRedProofs({ rootTop, cwd, env }) → { failures: [...], verified: n } | { storeFailure }.
@@ -175,6 +237,12 @@ export const runCheck = ({ cwd = process.cwd(), env = process.env } = {}) => {
   const lcovPath = resolveLcovPath(cwd, env);
   const lines = [];
   let failed = false;
+  // The identity is read BEFORE the coverage arm and again AFTER it: a single up-front comparison
+  // leaves a window in which the tree moves between the surface walk and the verdict.
+  const identityBefore = { fingerprint: computeTreeFingerprint(cwd), base: resolveBase(cwd) };
+  const storePath = resolveEvidencePath(cwd, env);
+  const storeRecords = storePath ? readEvidence(storePath).records : [];
+  const attestBefore = attestationState({ env, records: storeRecords, ...identityBefore });
   const cov = checkCoverage({ rootTop, lcovPath });
   // The machine line the final-run receipt binds (M2): the sha of the exact bytes THIS check
   // consumed — `none` states loudly that no lcov was read.
@@ -189,7 +257,8 @@ export const runCheck = ({ cwd = process.cwd(), env = process.env } = {}) => {
       for (const f of cov.failures) lines.push(`  ${f}`);
     }
   }
-  const red = verifyRedProofs({ rootTop, cwd, env });
+  // The probes must never inherit a live attestation capability (a detached descendant could keep it).
+  const red = verifyRedProofs({ rootTop, cwd, env: withoutAttestEnv(env) });
   if (red.storeFailure) {
     failed = true;
     lines.push(`coverage-check: FAIL — ${red.storeFailure}`);
@@ -202,7 +271,24 @@ export const runCheck = ({ cwd = process.cwd(), env = process.env } = {}) => {
       lines.push(`coverage-check: ${red.verified} red-proof record(s) verified green N/N with custody intact`);
     }
   }
-  if (!failed && !cov.skipped && cov.failures.length === 0) {
+  // Re-read the identity AFTER the coverage arm and re-decide: the attestation must describe the
+  // tree the verdict was actually computed over, not the one it started over.
+  const identityAfter = { fingerprint: computeTreeFingerprint(cwd), base: resolveBase(cwd) };
+  const attestAfter = attestationState({ env, records: storeRecords, ...identityAfter });
+  const attestation = attestBefore.refusal ? attestBefore : attestAfter;
+  const attesting = attestation.attesting === true && attestBefore.attesting === true;
+  // EXACTLY ONE fully anchored machine line, the lcov-sha256 contract's sibling — the runner binds
+  // it, so a missing/duplicated/injected one is an integrity failure rather than a silent green.
+  lines.push(`coverage-check: attested=${attesting ? 'yes' : 'no'}`);
+  if (attestation.refusal) {
+    failed = true;
+    lines.push(`coverage-check: REFUSED — ${attestation.refusal}`);
+  } else if (!attesting) {
+    lines.push(`coverage-check: NO VERDICT — ${attestation.reason}`);
+  }
+  // The attestation gates ONLY the coverage claim. Every pre-existing fail-closed refusal above
+  // (symlinked lcov, malformed evidence store, unmet red-proof obligation) keeps its own exit 1.
+  if (attesting && !failed && !cov.skipped && cov.failures.length === 0) {
     lines.push('coverage-check: PASS — every changed Node line is covered');
   }
   return { code: failed ? 1 : 0, lines };
@@ -225,9 +311,21 @@ An absent lcov file is a LOUD skipped-no-lcov (exit 0 — NO coverage check ran,
 symlinked lcov path, an uncovered line, a broken red-proof obligation, or a malformed evidence
 store fails (exit 1).
 
+A coverage VERDICT is issued ONLY inside the run that owns the artifact's lifetime: run-gates
+--final deletes the lcov before any gate spawns and hands this checker an attestation context
+(a nonce whose one-way commitment over {nonce, fingerprint, base} is the final-start attempt id).
+One anchored machine line rides every run: coverage-check: attested=<yes|no>.
+  attested=yes → the verdict, exactly as before.
+  attested=no  → NO VERDICT (exit 0): findings are still printed, uncovered lines still exit 1;
+                 only the PASS attestation is withheld.
+  REFUSED (exit 1) → the context describes another tree, or matches no recorded attempt.
+Residual, stated: ownership of the fixed path is CONVENTION, not enforcement — a concurrent writer
+to it can still place foreign evidence (queued as LCOV-EXCLUSIVE-OWNERSHIP).
+
 Sandbox-safe: no network; writes nothing; spawns read-only git queries and the bound-test
-probes (node --test, shell-free) — the D4 sandbox lane.
-Read-only. Exit codes: 0 pass/skipped-loud; 1 fail; 2 usage.`;
+probes (node --test, shell-free) — the D4 sandbox lane. The attestation variables are consumed and
+removed from this process's environment before anything spawns, so no child inherits the capability.
+Read-only. Exit codes: 0 pass / no-verdict / skipped-loud; 1 fail or REFUSED; 2 usage.`;
 
 export const main = (argv, ctx = {}) => {
   const env = ctx.env ?? process.env;
@@ -253,7 +351,17 @@ export const main = (argv, ctx = {}) => {
 
 const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isDirectRun) {
-  const r = main(process.argv.slice(2));
+  // The capability is CONSUMED here: snapshot it, then remove it from this process's environment
+  // before anything spawns. Every `git` query and every bound-test probe below inherits
+  // process.env, so leaving it in place would hand a live attestation context to each of them —
+  // and a detached descendant could then certify a foreign lcov long after this run ended.
+  const attest = Object.fromEntries(
+    [ATTEST_NONCE_ENV, ATTEST_FINGERPRINT_ENV, ATTEST_BASE_ENV]
+      .filter((k) => process.env[k] !== undefined)
+      .map((k) => [k, process.env[k]]),
+  );
+  for (const k of Object.keys(attest)) delete process.env[k];
+  const r = main(process.argv.slice(2), { env: { ...process.env, ...attest } });
   if (r.stdout) process.stdout.write(r.stdout.endsWith('\n') ? r.stdout : `${r.stdout}\n`);
   if (r.stderr) process.stderr.write(r.stderr.endsWith('\n') ? r.stderr : `${r.stderr}\n`);
   process.exitCode = r.code;

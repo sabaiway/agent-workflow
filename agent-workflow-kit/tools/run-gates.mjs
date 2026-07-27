@@ -34,8 +34,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import { computeTreeFingerprint } from './review-state.mjs';
 // The D3(a) final receipt rides the core-evidence SOLE WRITER (the sole-writer boundary — this
 // runner never opens the store itself) + the canonical per-kind serialization its hashes bind.
-import { appendEvidenceRecord, resolveEvidencePath, readEvidence, canonicalKindSerialization, EVIDENCE_SCHEMA_VERSION } from './core-evidence.mjs';
-import { LCOV_BASENAME } from './coverage-check.mjs';
+import { appendEvidenceRecord, resolveEvidencePath, readEvidence, canonicalKindSerialization, EVIDENCE_SCHEMA_VERSION, resolveBase } from './core-evidence.mjs';
+import {
+  LCOV_BASENAME,
+  commitmentFor,
+  ATTEST_NONCE_ENV,
+  ATTEST_FINGERPRINT_ENV,
+  ATTEST_BASE_ENV,
+} from './coverage-check.mjs';
 
 // The per-project declaration (strict JSON, hand-editable). cwd-relative — errors show a path the
 // user can open (the orchestration-config CONFIG_REL idiom).
@@ -196,10 +202,19 @@ export const selectGates = (gates, onlyIds) => {
 // silently attest against the wrong git dir or lcov instead of the computed one.
 export const RESERVED_PRODUCER_ENV = Object.freeze(['AW_GIT_DIR', 'AW_LCOV_FILE']);
 
+// The attestation variables ride the same STRIP but are NOT producer variables: a producer variable
+// is something a gate cmd may legitimately reference, and a missing one refuses the run up front.
+// A capability is the opposite — no gate may reference it, exactly one gate is handed it, and every
+// other child (and any descendant it spawns) must see it absent, host-set copies included, or that
+// descendant could certify a foreign lcov later. Conflating the two lists made a gate that merely
+// MENTIONS the name refuse the whole run.
+export const RESERVED_CAPABILITY_ENV = Object.freeze([ATTEST_NONCE_ENV, ATTEST_FINGERPRINT_ENV, ATTEST_BASE_ENV]);
+
 export const spawnGateViaBash = (cmd, cwd, extraEnv = {}) => {
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
   for (const name of RESERVED_PRODUCER_ENV) delete env[name];
+  for (const name of RESERVED_CAPABILITY_ENV) delete env[name];
   return spawnSync('bash', ['-c', cmd], { cwd, env: { ...env, ...extraEnv }, encoding: 'utf8', maxBuffer: MAX_GATE_OUTPUT_BYTES });
 };
 
@@ -327,13 +342,22 @@ const matchesCanonicalCheck = (check, cmd, projectDir) => {
   }
 };
 
+// canonicalCheckerGates(gates, projectDir) → every gate that IS the canonical coverage-check. The
+// count is load-bearing twice over: --final refuses more than one (the attestation capability would
+// reach more than one process) and this predicate must refuse the same declaration, or a consumer
+// would advertise final-capability for a declaration --final then rejects.
+export const canonicalCheckerGates = (gates, projectDir) =>
+  gates.filter((g) => matchesCanonicalCheck(FINAL_CORE_CHECKS[1], g.cmd, projectDir));
+
 // isFinalCapableDeclaration(gates, projectDir) → whether --final would accept this declaration
-// (every canonical core check present + the checker LAST) — the ONE home consumers (the
-// recommendations guard-install probe) read instead of re-deriving the rule.
+// (every canonical core check present + EXACTLY ONE canonical checker + that checker LAST) — the
+// ONE home consumers (the recommendations guard-install probe, the worktrees report) read instead
+// of re-deriving the rule.
 export const isFinalCapableDeclaration = (gates, projectDir) => {
   if (!Array.isArray(gates) || gates.length === 0) return false;
   const missing = FINAL_CORE_CHECKS.filter((c) => !gates.some((g) => matchesCanonicalCheck(c, g.cmd, projectDir)));
   if (missing.length > 0) return false;
+  if (canonicalCheckerGates(gates, projectDir).length !== 1) return false;
   return matchesCanonicalCheck(FINAL_CORE_CHECKS[1], gates[gates.length - 1].cmd, projectDir);
 };
 const sha256Hex = (data) => createHash('sha256').update(data).digest('hex');
@@ -389,6 +413,13 @@ export const runCli = (argv, deps = {}) => {
       if (missing.length > 0) {
         throw fail(EXIT.malformed, `--final refuses a weakened declaration — missing the canonical core check(s): ${missing.map((c) => c.name).join(', ')} (each must be ONE plain --check invocation of the kit's OWN tool in ${GATES_REL} — a masked form, a compound, or a lookalike path never counts)`);
       }
+      // EXACTLY ONE canonical checker. Two gates may carry the same canonical cmd under different
+      // ids, and the capability is handed to every match — so without this the "exactly one gate
+      // holds it" guarantee is prose, and an extra copy would run with a live attestation context.
+      const canonicalCheckers = canonicalCheckerGates(declaration.gates, projectDir);
+      if (canonicalCheckers.length > 1) {
+        throw fail(EXIT.malformed, `--final refuses the declaration — ${canonicalCheckers.length} gates are the canonical coverage-check (${canonicalCheckers.map((g) => JSON.stringify(g.id)).join(', ')}); exactly ONE may be, or the attestation context would be handed to more than one process`);
+      }
       const lastGate = declaration.gates[declaration.gates.length - 1];
       if (!matchesCanonicalCheck(FINAL_CORE_CHECKS[1], lastGate.cmd, projectDir)) {
         throw fail(EXIT.malformed, `--final refuses the declaration — the CANONICAL coverage-check gate must be the LAST declared gate (nothing may run after the checker consumed the lcov; "${lastGate.id}" is declared last)`);
@@ -430,7 +461,29 @@ export const runCli = (argv, deps = {}) => {
     }
     // --final needs the pre-run fingerprint (the receipt binds before == after == current).
     const finalFingerprintBefore = opts.final ? fingerprint(projectDir) : null;
-    const finalAttempt = opts.final ? randomUUID() : null;
+    const finalBase = opts.final ? resolveBase(projectDir) ?? '' : null;
+    // The attestation handshake (see coverage-check.mjs): a fresh random nonce rides the child
+    // environment, and the attempt id this run records is the one-way COMMITMENT over it plus the
+    // identity. Persisting only the commitment is what makes the context unreproducible from the
+    // repository afterwards — a plain recorded id is public, and attesting from one let an ordinary
+    // interrupted run certify a later run's lcov. The commitment is also the only place the BASE is
+    // bound, since no record stores it.
+    const finalNonce = opts.final ? randomUUID() : null;
+    const finalAttempt = opts.final ? commitmentFor(finalNonce, finalFingerprintBefore ?? '', finalBase) : null;
+    if (opts.final) {
+      // ONLY the canonical checker receives the capability — the same predicate the --final preflight
+      // uses to recognise it. Every other gate gets the producer variables and nothing else.
+      gateSpawn = (cmd, cwd2) => {
+        const producers = { AW_GIT_DIR: gitDir, AW_LCOV_FILE: join(gitDir, LCOV_BASENAME) };
+        if (!matchesCanonicalCheck(FINAL_CORE_CHECKS[1], cmd, projectDir)) return spawn(cmd, cwd2, producers);
+        return spawn(cmd, cwd2, {
+          ...producers,
+          [ATTEST_NONCE_ENV]: finalNonce,
+          [ATTEST_FINGERPRINT_ENV]: finalFingerprintBefore ?? '',
+          [ATTEST_BASE_ENV]: finalBase,
+        });
+      };
+    }
     let finalError = null;
     let startEvidenceHashes = null;
     if (opts.final) {
@@ -458,6 +511,19 @@ export const runCli = (argv, deps = {}) => {
     const results = runGates(selected, { cwd: projectDir, spawn: gateSpawn, log, now });
     for (const line of formatTable(results)) log(line);
     const allGreen = results.every((result) => result.ok);
+    // A green gate's stdout is deliberately not echoed — the table IS the report. But the checker
+    // exits 0 both when it certifies and when it WITHHOLDS a verdict, so on a plain run the table
+    // would read PASS over a coverage claim that was never made: the same false reassurance one
+    // layer up from the defect this whole mechanism exists to close. Surface it, and only it.
+    if (!opts.final) {
+      const checkerAt = selected.findIndex((gate) => matchesCanonicalCheck(FINAL_CORE_CHECKS[1], gate.cmd, projectDir));
+      const checkerRow = checkerAt === -1 ? null : results[checkerAt];
+      if (checkerRow?.ok && /^coverage-check: attested=no$/m.test(String(checkerRow.stdout ?? ''))) {
+        log(`── ${checkerRow.id} — NO COVERAGE VERDICT (the gate passed; it did not certify)`);
+        for (const line of String(checkerRow.stdout).split(/\r?\n/).filter((l) => /^coverage-check: (NO VERDICT|skipped-no-lcov)/.test(l))) log(line);
+        log('   A coverage verdict is issued only by run-gates.mjs --final, which owns the lcov for the whole run.');
+      }
+    }
     if (opts.final) {
       // The checker's verbatim diagnostics surface even on green — skipped-no-lcov and the
       // out-of-domain/unsupported lists must never vanish into a suppressed green stdout.
@@ -493,6 +559,22 @@ export const runCli = (argv, deps = {}) => {
         const shaLines = String(checkerRow?.stdout ?? '').split(/\r?\n/).filter((l) => shaLineRe.test(l));
         const shaValue = shaLines.length === 1 ? shaLineRe.exec(shaLines[0])[1] : null;
         const lcovSha256 = shaValue !== null && shaValue !== 'none' ? shaValue : null;
+        // The attestation line, on the SAME exactly-one-anchored-line contract as the sha: a green
+        // exit status alone never proves the checker certified anything — it exits 0 both when it
+        // attests and when it withholds a verdict. Without this arm a gate that removed the start
+        // record mid-run would yield a green receipt carrying no coverage claim at all.
+        const attestLineRe = /^coverage-check: attested=(yes|no)$/;
+        const attestLines = String(checkerRow?.stdout ?? '').split(/\r?\n/).filter((l) => attestLineRe.test(l));
+        const attested = attestLines.length === 1 ? attestLineRe.exec(attestLines[0])[1] : null;
+        if (allGreen && integrityFailure === null && lcovSha256 !== null) {
+          if (attestLines.length !== 1) {
+            integrityFailure = attestLines.length === 0
+              ? 'the coverage-check gate printed no attested= line — whether coverage was certified is unknowable (fail closed)'
+              : `the coverage-check gate printed ${attestLines.length} attested= lines — exactly ONE full machine line binds the receipt`;
+          } else if (attested !== 'yes') {
+            integrityFailure = 'the coverage-check gate consumed an lcov but did NOT certify it — the final run reached the checker without a valid attestation context';
+          }
+        }
         if (allGreen && integrityFailure === null) {
           if (shaLines.length !== 1) {
             integrityFailure = shaLines.length === 0
@@ -543,7 +625,10 @@ export const runCli = (argv, deps = {}) => {
         logError(`[run-gates] --final could not write its receipt: ${err.message}`);
       }
     }
-    log(composeSummaryLine({ status: allGreen ? 'ok' : 'fail', results }));
+    // The summary line is the MACHINE report, so it must agree with the exit code: an integrity
+    // failure mints a RED receipt and exits finalFailed, and a line still saying status=ok there
+    // would be a silent green in the one place a reader parses instead of reads.
+    log(composeSummaryLine({ status: allGreen && finalError === null ? 'ok' : 'fail', results }));
     if (finalError) return EXIT.finalFailed;
     return allGreen ? EXIT.ok : EXIT.fail;
   } catch (err) {

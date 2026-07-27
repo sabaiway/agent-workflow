@@ -7,6 +7,31 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-27 — AD-081 the coverage gate stops certifying evidence that predates your edit (kit 4.3.0)
+
+`coverage-check --check` read whatever LCOV sat at the fixed path and issued a verdict, with nothing
+tying that artifact to the tree it judged. Seen live during the AD-080 release in the harmless
+direction — an identical failure list and an identical sha after tests were added — and reproduced
+hermetically in the dangerous one: attest three lines, append one the suite never ran, and the
+checker prints `PASS`. LCOV has no executability signal, so a line that did not exist at suite time
+reads as nothing to cover.
+
+The gap was visible inside a single runner: `review-state` failed loudly on its own staleness while
+`coverage-check` passed judgment silently, in the same `--final` run.
+
+**Two designs were built and withdrawn** under a stop rule declared to the reviewers before the round
+that met it — a stamp sidecar (killed by the runner's own "writes nothing on a plain run" boundary)
+and attestation from a dangling start record (both backends independently produced the same
+counterexample: a record about a RUN cannot attest an ARTIFACT). What shipped is smaller than either:
+`--final` mints a nonce whose one-way commitment over `{nonce, fingerprint, base}` IS the attempt id
+it already recorded, and the checker certifies only when it can recompute it. No new artifact, no
+schema change, no migration.
+
+Outside that run the checker reports and states `NO VERDICT`; a context describing another tree is a
+refusal. Findings are unchanged — uncovered lines still exit 1, listed `file:line` — so this is a
+minor release. Deliberately left open and named: the base commit is persisted nowhere, so
+`commit-guard` stays fingerprint-only.
+
 ## 2026-07-27 — AD-080 a search whose pattern contains `>` no longer has to ask (kit 4.2.0)
 
 4.1.0 established that the guard cannot be narrowed. This release stops sending the search through
