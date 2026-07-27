@@ -323,6 +323,40 @@ jobs:
             echo "Tag $tag already on the remote at $GITHUB_SHA — ensured locally too."
           fi
 
+          # A DRAFT release is NOT addressable by tag — `gh release view/edit <tag>` answers
+          # "release not found" until it is published, even when the tag exists on the remote. So
+          # un-drafting goes through the API by release ID. This is the kit 4.1.0 failure: npm had
+          # published, the tag was pushed, and the run still went red on the un-draft line, leaving
+          # a stranded draft that had to be published by hand.
+          draft_id() {
+            gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+              --jq "[.[] | select(.tag_name == \"$1\" and .draft) | .id] | first // empty"
+          }
+          undraft() {
+            id="$(draft_id "$1")"
+            if [ -z "$id" ]; then
+              echo "::error::no DRAFT release found for tag $1 — cannot publish it."
+              return 1
+            fi
+            gh api "repos/$GITHUB_REPOSITORY/releases/$id" -X PATCH -F draft=false >/dev/null
+          }
+
+          # A stranded DRAFT must be handled BEFORE `gh release view`, which cannot see it: the tag
+          # lookup below would report "no release" and try to create a second one. Resolve by ID.
+          existing_draft="$(draft_id "$tag")"
+          if [ -n "$existing_draft" ]; then
+            echo "A DRAFT Release $tag already exists (id $existing_draft) — completing it, not recreating."
+            if gh api "repos/$GITHUB_REPOSITORY/releases/$existing_draft" --jq '.assets[].name' | grep -Fxq "$asset"; then
+              undraft "$tag"
+              echo "✓ Completed DRAFT Release $tag"
+              exit 0
+            fi
+            # `gh release upload <tag>` cannot address a draft either, so do NOT guess: say what is
+            # missing and stop. Recovery is one API upload followed by a re-run.
+            echo "::error::DRAFT Release $tag (id $existing_draft) is missing asset $asset — attach it, then re-run."
+            exit 1
+          fi
+
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             isDraft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')
             if gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fxq "$asset"; then
@@ -342,12 +376,11 @@ jobs:
               echo "  Recover manually: recreate the release as a draft with the asset (if immutability permits) or ship a new version."
               exit 1
             fi
-            # Still a DRAFT — safe to complete: attach the asset if missing, then un-draft.
-            echo "Completing DRAFT Release $tag (hasAsset=$hasAsset) without republishing."
-            [ "$hasAsset" = "true" ] || gh release upload "$tag" "$asset_path" --repo "$GITHUB_REPOSITORY" --clobber
-            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
-            echo "✓ Completed Release $tag"
-            exit 0
+            # Unreachable by contract: a draft is invisible to `gh release view` and was already
+            # handled by the ID lookup above. If we land here, gh's addressability changed — say so
+            # rather than acting on a stale assumption.
+            echo "::error::Release $tag reports isDraft=$isDraft through a tag lookup, which drafts do not answer. Re-check gh behaviour before publishing."
+            exit 1
           fi
 
           # No release yet — create a DRAFT with the asset attached (draft-first, so the asset is in place
@@ -359,5 +392,5 @@ jobs:
             --title "$title" \
             --notes-file "$notes" \
             "$asset_path"
-          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
+          undraft "$tag"
           echo "✓ Created GitHub Release $tag at $GITHUB_SHA (draft → published, asset $asset attached)"
