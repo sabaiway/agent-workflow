@@ -7,6 +7,33 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-27 — AD-079 why the gate hook still over-asks, established rather than assumed (kit 4.1.0)
+
+Twenty-nine times the maintainer approved a command that never needed approving, and for months the
+cause was misattributed to the agent that wrote the command. Two live probes settled it: a command
+outside the hook's frozen core, wearing the exact decoration from the corpus, ran silently — and so
+did the same command redirecting into a real file. The hook cannot fire on a non-core command, so
+only the harness decided those calls, and it did not ask. **The prompts were the hook's own.**
+
+**Three mechanisms were BUILT to stop it and none shipped**, each removed on a rule declared before
+the round that met it; a fourth direction never got built. Deleting the redirection class outright —
+rejected at PLAN review, because the kit's own velocity profile seeds the allowlist that turns a
+redirect on `cat` into a silent write, so the guard closes a hole the kit itself opens, and every
+pre-existing test would have had to go. A quote-aware reading — one quote in each of two heredoc
+bodies opens and later closes a spurious span across the `$(…)` between them, so the walker ends
+balanced, never falls back, and the guard goes silent on a nested command. An fd-duplication
+exemption — `grep x f >&12file` writes the file `12file` and slipped
+through a pattern with no token boundary. A null-device exemption, boundary included — JavaScript's
+`\s` counts U+00A0 as a word boundary and bash does not, so a no-break space turns `/dev/null` into
+an ordinary filename and the span was deleted anyway. Every counterexample was verified live and
+ships as a test.
+
+**The finding is the deliverable:** this hook cannot decide what a redirection byte MEANS — not by
+parsing it, and not even by deleting it — because JavaScript's token boundaries and bash's disagree.
+On an ASK rung that costs a prompt, which is safe, and it is exactly why the same scan must never
+become a DENY. **The deny direction is retired**: a refusal cannot remove a prompt the hook itself
+raises. What ships as behaviour is one line — `>(…)` named in the class it belongs to.
+
 ## 2026-07-26 — AD-078 a large change set is delivered, and its delivery is proven (agy 5.0.0 · codex 3.2.0 · kit 4.0.0)
 
 An oversized `agy-review code` used to have two honest outcomes and one dishonest one. The dishonest

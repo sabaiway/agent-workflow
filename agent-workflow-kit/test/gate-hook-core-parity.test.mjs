@@ -31,6 +31,11 @@ describe('gate hook ↔ velocity-profile constant parity', () => {
       for (const opener of ['${ ', '${\t', '${\n', '${\r', '${|']) {
         assert.ok(forms.includes(opener), `commandSubstitutions must include the funsub opener ${JSON.stringify(opener)}`);
       }
+      // Both process substitutions RUN a nested command; `>(` must not silently drop back to being
+      // covered only by the redirection scan's coincidental `>` match (AD-079).
+      for (const opener of ['<(', '>(']) {
+        assert.ok(forms.includes(opener), `commandSubstitutions must include the process substitution ${JSON.stringify(opener)}`);
+      }
     }
     for (const forms of [RUNTIME_RESIDUAL_FORMS.lineContinuations, RESIDUAL_FORMS.lineContinuations]) {
       for (const form of ['\\\n', '\\\r']) {

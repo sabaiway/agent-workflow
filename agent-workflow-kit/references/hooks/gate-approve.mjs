@@ -29,10 +29,13 @@
 //       the command carries a documented runtime residual (output redirection, command
 //       substitution, the bounded `--output` write-flag family) that a settings-level allow
 //       rule cannot see. Most-restrictive-wins: this surfaces a human prompt even where a
-//       seeded allow rule would have silently approved. Detection is deliberately string-level
-//       and conservative (no shell parsing in a dependency-free hook): a quoted metacharacter
-//       may over-ASK, never under-allow. Covers the kit-SEEDED core only, never arbitrary
-//       user-added rules.
+//       seeded allow rule would have silently approved. Covers the kit-SEEDED core only, never
+//       arbitrary user-added rules.
+//       Detection is deliberately string-level and conservative (no shell parsing in a
+//       dependency-free hook): a quoted metacharacter may over-ASK, never under-allow. That
+//       over-ask is a KNOWN COST, not an oversight — searching for `=>`, or a plain read wearing
+//       `2>/dev/null`, prompts. Three mechanisms to narrow it were built and removed; the note
+//       above `detectResidualClasses` records all three with their counterexamples.
 //   (c) read-lane allow (OPT-IN) → allow. Only when docs/ai/lanes.json enables it
 //       (`{ "readLane": true }`, read LIVE per call, fail-closed): a command every separator-split
 //       segment of which is a plain frozen read-only core prefix, with ZERO shell metaprogramming
@@ -42,20 +45,23 @@
 //   (d) everything else → NO decision: exit 0, no output — the normal permission flow proceeds
 //       unchanged. The hook NEVER emits `deny`.
 //
-// WHY THERE IS NO DENY RUNG (kit 4.0.0, three council rounds, AD-078). One was built and REMOVED
-// before release. It refused only a seeded read-only command that provably DISCARDS its output
-// (`2>/dev/null`), on the argument that such a refusal cannot destroy anything the caller wanted.
-// The argument was sound; the byte-level PROOF of "this command discards" was not, and could not be
-// made so here. Five constructs defeated it in three rounds — `1<&2` (an fd dup routes stdout back
-// out of /dev/null AFTER the approved `>`), a quoted literal `>/dev/null ` in an argument, a
+// WHY THERE IS NO DENY RUNG, AND WHY THE DIRECTION IS RETIRED (kit 4.0.0 built one, AD-078
+// removed it; the class was closed from the other side instead). The withdrawn rung refused a
+// seeded read-only command that provably DISCARDED its output, on the argument that such a refusal
+// cannot destroy anything the caller wanted. The argument was sound; the byte-level PROOF was not.
+// Five constructs defeated it in three rounds — `1<&2` (an fd dup routes stdout back out of
+// /dev/null AFTER the approved `>`), a quoted literal `>/dev/null ` in an argument, a
 // leading-token-only segment match (`… && npm test`), a bare `&` (backgrounds the read, runs the
-// rest), and a `#` comment (bash never executes the redirect at all). Each was a FALSE REFUSAL.
-// The lesson, which any future deny rung must start from: on an ASK rung an incomplete scan merely
-// over-asks, which is safe; on a DENY rung the SAME incompleteness refuses real work. Deciding
-// whether a `>` is an operator or text requires lexing the shell, which this dependency-free hook
-// deliberately does not do. A deny rung therefore needs a justification that does not rest on
-// parsing command bytes. Design record + all five counterexamples: docs/plans/queue.md,
-// BARE-LANE-DENY-RUNG.
+// rest), and a `#` comment (bash never executes the redirect at all). Each was a FALSE REFUSAL,
+// because on an ASK rung an incomplete scan merely over-asks — safe — while on a DENY rung the
+// SAME incompleteness refuses real work.
+// The direction is retired, not deferred, for a reason bigger than that: the prompts it was meant
+// to prevent were being raised BY THIS HOOK. A deny cannot remove a prompt the hook itself is
+// causing — correcting what the guard reports does, and it does it without ever refusing anything.
+// Correcting what the guard REPORTS can, and refuses nothing — but three attempts at that
+// correction were also built and removed (see the note above `detectResidualClasses`). The prompts
+// are still there, and are stated rather than papered over.
+// Design record: docs/plans/queue.md, BARE-LANE-DENY-RUNG.
 //
 // Fail-safe invariant, decoupled per function: a DECLARATION anomaly (missing / unreadable /
 // malformed / schema-invalid gates.json) disables ONLY exact-gate approval (a) — the residual
@@ -129,13 +135,16 @@ export const SEEDED_READONLY_CORE = Object.freeze([
 // settings-level allow rule cannot see). Drift-guarded — never edit here alone.
 export const RESIDUAL_FORMS = Object.freeze({
   writeRedirections: Object.freeze(['>', '>>', '1>', '2>', '&>', '>|']),
-  // `$(…)` + backtick + process substitution `<(…)` all RUN a nested command (`>(…)` is caught by
-  // the `>` redirection scan). Bare `<` is input redirection (reads a file — read-only commands may
+  // `$(…)` + backtick + BOTH process substitutions `<(…)` / `>(…)` RUN a nested command. `>(…)` is
+  // named here explicitly because that is the class it is IN: the redirection scan also happens to
+  // match its `>`, but a command that RUNS something must be reported as running something, and a
+  // classification must not depend on another class's coincidence. Bare `<` is input redirection
+  // (reads a file — read-only commands may
   // already do that), so it is deliberately NOT here. The bash-5.3 function substitutions `${ cmd; }`
   // (a blank — space/tab/newline/CR — right after `${`) and `${| cmd; }` also RUN a nested command —
   // matched as the literal openers `${ ` / `${\t` / `${\n` / `${\r` / `${|` (AD-055 Part II). Ordinary
   // `${VAR}` has no blank after `${`, so it trips none of these (kept rung-(b)-silent).
-  commandSubstitutions: Object.freeze(['$(', '`', '<(', '${ ', '${\t', '${\n', '${\r', '${|']),
+  commandSubstitutions: Object.freeze(['$(', '`', '<(', '>(', '${ ', '${\t', '${\n', '${\r', '${|']),
   // A backslash immediately before a newline/CR is a bash LINE CONTINUATION: bash removes it and
   // splices the two lines into ONE word, reconstructing a residual token (`--output`, `$(`, `${ …; }`)
   // a raw substring scan on the pre-splice string misses. Guards a settings-allowed SINGLE (rung c
@@ -264,6 +273,29 @@ export const matchSeededCorePrefix = (command) => {
 // direction (rung (c) forbids every construction character per segment, so this guards rung (b) singles).
 const WORD_CONSTRUCTION_CHARS = /["'\\[\]{}*?]/gu;
 
+// THREE MECHANISMS WERE BUILT TO NARROW THIS SCAN AND ALL THREE WERE REMOVED (AD-079). They are
+// recorded here because each died to a DIFFERENT counterexample, and together they say something
+// the next attempt needs: this hook cannot decide what a redirection byte MEANS — not by parsing
+// it, and not even by deleting it — because JavaScript's idea of a token boundary and bash's do not
+// agree. Each counterexample was verified LIVE, each ships as a test, and each was removed on a
+// stop rule declared to the reviewing bridge BEFORE the round that met it.
+//   1. A quote/escape-aware ACTIVE VIEW, so a `>` inside a search pattern would stop reading as an
+//      operator. Defeated by HEREDOCS: their bodies are not shell code, and one quote in each of
+//      TWO bodies opens a spurious span and later closes it, with a genuinely active `$(…)` sitting
+//      BETWEEN them. The walker ends balanced, so the ambiguity fallback never engages, and the
+//      guard goes silent on a nested command. Exact sequence: the test below.
+//   2. An fd-DUPLICATION exemption (`2>&1` writes nothing). Defeated by a missing token boundary:
+//      `>&word` duplicates only when the word is a bare number, and `grep x f >&12file` writes the
+//      FILE `12file`, whose `>&12` prefix the pattern deleted.
+//   3. A NULL-DEVICE exemption (a redirect into `/dev/null` writes nothing), with a boundary this
+//      time. Defeated by U+00A0: JavaScript `\s` counts a no-break space as a boundary and bash does
+//      not, so `grep x f >/dev/null<U+00A0>sink` names the FILE `/dev/null<U+00A0>sink` and the span
+//      was deleted anyway.
+// What survives is the original scan, unchanged, plus `>(` named in the substitution class where it
+// belongs. The over-asks stay — a `>` that is ordinary text, and an fd duplication — and they are
+// documented as open rather than papered over. AD-078's lesson, now one layer deeper: on an ASK rung
+// an incomplete scan merely over-asks, which is safe; every attempt to make it exact has been a
+// claim about bash that a dependency-free string scanner is not in a position to make.
 export const detectResidualClasses = (command) => {
   const deSpliced = command.replace(WORD_CONSTRUCTION_CHARS, '');
   const scan = (form) => command.includes(form) || deSpliced.includes(form);
