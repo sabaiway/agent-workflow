@@ -254,15 +254,18 @@ export const SHELL_METACHARACTERS = Object.freeze([
 // test/gate-hook-core-parity.test.mjs alongside UNIVERSAL_READONLY_ALLOWLIST.
 export const RUNTIME_RESIDUAL_FORMS = Object.freeze({
   writeRedirections: Object.freeze(['>', '>>', '1>', '2>', '&>', '>|']),
-  // `$(…)` + backtick + process substitution `<(…)` all RUN a nested command (`>(…)` is caught by
-  // the `>` redirection scan). Bare `<` is input redirection (reads a file — read-only commands may
+  // `$(…)` + backtick + BOTH process substitutions `<(…)` / `>(…)` RUN a nested command. `>(…)` is
+  // named here explicitly because that is the class it is IN: the redirection scan also happens to
+  // match its `>`, but a command that RUNS something must be reported as running something, and a
+  // classification must not depend on another class's coincidence. Bare `<` is input redirection
+  // (reads a file — read-only commands may
   // already do that), so it is deliberately NOT here. The bash-5.3 function substitutions `${ cmd; }`
   // (a blank — space/tab/newline/CR — right after `${`) and `${| cmd; }` (runs a command, assigns
   // REPLY) also execute a nested command — matched as the literal openers `${ ` / `${\t` / `${\n` /
   // `${\r` / `${|` (AD-055 Part II; the `\r` opener guards CRLF payloads — council agy nit). An
   // ordinary `${VAR}` parameter expansion has NO blank after `${`, so it trips none of these — kept
   // rung-(b)-silent on a settings-allowed single (rung (c) excludes all `$`).
-  commandSubstitutions: Object.freeze(['$(', '`', '<(', '${ ', '${\t', '${\n', '${\r', '${|']),
+  commandSubstitutions: Object.freeze(['$(', '`', '<(', '>(', '${ ', '${\t', '${\n', '${\r', '${|']),
   // A backslash immediately before a newline/CR is a bash LINE CONTINUATION: bash removes it and
   // splices the two lines into ONE word, which can reconstruct a residual token (`--output`, `$(`,
   // `${ …; }`) that a raw substring scan on the pre-splice string misses (`--outp\<newline>ut=f` →

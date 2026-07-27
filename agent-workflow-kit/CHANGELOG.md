@@ -4,6 +4,49 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 4.1.0 — why the gate hook still over-asks, established rather than assumed (AD-079)
+
+**Read this if the hook has ever made you approve `grep -rn "=>" src` or a plain read wearing
+`2>/dev/null`.** Those prompts are still here. What changed is that the reason is now measured,
+written down at the point of use, and pinned by tests — and one whole fix direction is formally
+retired instead of being re-proposed every few releases.
+
+**One behaviour change.** `>(…)` is now named in the command-substitution class, where it belongs: it
+RUNS a nested command, and it must not depend on the redirection scan to catch it as a side effect.
+
+**Three mechanisms were BUILT to stop the over-asking, and all three were REMOVED in review** — each
+on a stop rule declared before the round that met it, each counterexample verified live and kept as
+a regression test. (A fourth direction, deleting the redirection class outright, was rejected at plan
+review before it was built: the velocity profile seeds the allowlist that turns a redirect on `cat`
+into a silent write, so the guard closes a hole the kit itself opens.)
+
+1. **A quote/escape-aware reading of the command**, so a `>` inside a search pattern would stop being
+   read as an operator. Defeated by HEREDOCS: their bodies are not shell code, and one quote in each
+   of two bodies opens a spurious quoted span and later closes it, with a genuinely active `$(…)`
+   sitting between them — the walker ends balanced, so it never falls back, and the guard goes
+   silent on a nested command.
+2. **An fd-duplication exemption** (`2>&1` creates no file). Defeated by a missing token boundary:
+   `>&word` duplicates only when the word is a bare number, and `grep x f >&12file` writes the FILE
+   `12file`.
+3. **A null-device exemption** (a redirect into `/dev/null` writes nothing), boundary included.
+   Defeated by U+00A0: JavaScript's `\s` counts a no-break space as a word boundary and bash does
+   not, so `grep x f >/dev/null` + U+00A0 + `sink` names a FILE and the span was deleted anyway.
+
+**The transferable finding, now in the hook's own header:** this hook cannot decide what a
+redirection byte MEANS — not by parsing it, and not even by deleting it — because JavaScript's notion
+of a token boundary and bash's do not agree. On an ASK rung that costs an extra prompt, which is
+safe. It is also exactly why the same scan must never become a DENY.
+
+**What did NOT change.** Every guard the hook had, it still has, and every pre-existing acceptance
+test is green and unmodified.
+
+**The deny direction is retired.** A rung that REFUSED decorated reads was built for 4.0.0 and
+withdrawn after five shell constructs defeated its proof. It is not coming back.
+
+**Re-place the hook to get this.** The placed copy at `.claude/hooks/agent-workflow-gates.mjs` is a
+self-contained snapshot: `rm .claude/hooks/agent-workflow-gates.mjs` then re-run
+`/agent-workflow-kit hook --apply`.
+
 ## 4.0.0 — a review receipt must say HOW the code reached the reviewer (AD-078)
 
 **BREAKING, and it costs money to ignore — read the two callouts before upgrading.**

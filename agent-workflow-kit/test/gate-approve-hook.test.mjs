@@ -29,6 +29,9 @@ import {
   LANES_REL,
   READ_LANE_KEY,
   HOOK_EVENT_NAME,
+  RESIDUAL_CLASS_OUTPUT_FLAG,
+  RESIDUAL_CLASS_REDIRECTION,
+  RESIDUAL_CLASS_SUBSTITUTION,
   RESIDUAL_FORMS,
   decideBashCall,
   detectResidualClasses,
@@ -704,5 +707,133 @@ describe('decideBashCall — ladder order and invariants as a pure function', ()
     assert.deepEqual(detectResidualClasses('grep x'), []);
     assert.equal(detectResidualClasses('grep x > f').length, 1);
     assert.equal(detectResidualClasses('git log --output=f $(x) > y').length, 3);
+  });
+});
+
+
+describe("residual guard — the guard's real value is UNCHANGED (characterization, green before and after)", () => {
+  const stillAsks = [
+    'cat a > b',
+    'grep x f >> out',
+    'grep x f > "$TARGET"',
+    'cat a >| b',
+    'git log --output=f',
+    'git log --out"put"=f',
+    'cat $(rm x)',
+    'cat `rm x`',
+    'cat <(rm x)',
+    'cat >(rm x)',
+    'git log ${ rm x; }',
+    'grep -rn "never deny\\|never \\`deny\\`\\|NEVER emits" agent-workflow-kit --output=f',
+  ];
+  for (const command of stillAsks) {
+    it(`still asks: ${command}`, () => {
+      assert.ok(detectResidualClasses(command).length > 0);
+      assert.equal(decisionOf(runHook(bashPayload(command), hookDeps(undefined))), DECISION_ASK);
+    });
+  }
+});
+
+
+describe('residual guard — the UNMODELED constructs keep today\'s behaviour (pinned, not wished)', () => {
+  it('an expansion-assembled write flag is silent TODAY and stays silent (pre-existing gap, named in the plan)', () => {
+    assert.deepEqual(detectResidualClasses('git log "${AW_GUARD_A:---out}${AW_GUARD_B:-put=/tmp/owned}"'), []);
+  });
+
+  it('an ANSI-C assembled write flag is silent TODAY and stays silent (pre-existing gap)', () => {
+    assert.deepEqual(detectResidualClasses("git log $'--out\\x70ut=/tmp/owned'"), []);
+  });
+
+  it('the deliberate write-flag SUBSTRING over-ask survives', () => {
+    assert.deepEqual(detectResidualClasses('git diff --output-indicator-new=X'), [RESIDUAL_CLASS_OUTPUT_FLAG]);
+  });
+
+  it('a redirect inside a comment over-asks like any other inert byte', () => {
+    assert.deepEqual(detectResidualClasses('grep needle file # 2>/dev/null'), [RESIDUAL_CLASS_REDIRECTION]);
+    assert.deepEqual(detectResidualClasses('grep needle file # > out'), [RESIDUAL_CLASS_REDIRECTION]);
+  });
+});
+
+describe('read-lane rung (c) — a redirection byte still closes the lane (I6 characterization)', () => {
+  const laneOn = hookDepsLane(undefined, { [READ_LANE_KEY]: true });
+  const outside = [
+    ['a discard in the FIRST segment', 'grep x f 2>/dev/null | head'],
+    ['a discard in a LATER segment', 'ls | grep x 2>/dev/null'],
+    ['an input redirection', 'grep needle < f'],
+    ['a write redirection', 'cat a > b'],
+  ];
+  for (const [name, command] of outside) {
+    it(`${name} → never a lane allow`, () => {
+      assert.equal(isReadLaneCommand(command), false);
+      assert.notEqual(decisionOf(runHook(bashPayload(command), laneOn)), DECISION_ALLOW);
+    });
+  }
+});
+
+// ── the quote-aware reading that was BUILT and REMOVED (AD-079, diff round 1) ──────────
+// A quote/escape-aware active view would have stopped a `>` inside a search pattern being read as
+// an operator. It was removed when the council named a construct that defeats it, on a stop rule
+// declared before the round. These tests pin BOTH halves of that outcome so neither can drift: the
+// counterexample must keep asking, and the false-ASK class it forced us to leave open is recorded
+// here at its real value rather than a wished one.
+
+describe('the three removed mechanisms — each counterexample must keep ASKING', () => {
+  // 2. The fd-DUPLICATION exemption: `>&word` duplicates only when the word is a bare number, so
+  //    bash writes the FILE `12file` here. A pattern without a token boundary deleted the prefix.
+  it('the fd-duplication counterexample ASKS — a removal never hides a real write', () => {
+    assert.deepEqual(detectResidualClasses('grep x f >&12file'), [RESIDUAL_CLASS_REDIRECTION]);
+    assert.equal(decisionOf(runHook(bashPayload('grep x f >&12file'), hookDeps(undefined))), DECISION_ASK);
+  });
+
+  // 3. The NULL-DEVICE exemption, boundary and all: JavaScript `\s` counts U+00A0 as a boundary and
+  //    bash does not, so the target word here is the FILE `/dev/null sink`.
+  it('the no-break-space counterexample ASKS — JS and bash disagree on word boundaries', () => {
+    const command = `grep x f >/dev/null${String.fromCodePoint(0x00a0)}sink`;
+    assert.deepEqual(detectResidualClasses(command), [RESIDUAL_CLASS_REDIRECTION]);
+    assert.equal(decisionOf(runHook(bashPayload(command), hookDeps(undefined))), DECISION_ASK);
+  });
+
+  it('no span-removal helper is exported (a re-introduction needs its own council round)', async () => {
+    const hook = await import('../references/hooks/gate-approve.mjs');
+    assert.equal(hook.stripNonWritingRedirections, undefined);
+  });
+});
+
+describe('the quote-aware reading is ABSENT — its counterexample is the reason', () => {
+  // A heredoc body is not shell code. Two quotes inside two bodies flip a quote-state walker twice,
+  // so it never unbalances and never falls back — and the `$(…)` between them reads as quoted text
+  // while bash runs it. `cat` is a frozen-core prefix, so this is exactly rung (b)'s territory.
+  const heredocCounterexample = ["cat <<A", "'", 'A', '$(touch owned)', 'cat <<B', "'", 'B'].join('\n');
+
+  it('the heredoc counterexample ASKS — a nested command is never silently allowed', () => {
+    assert.deepEqual(detectResidualClasses(heredocCounterexample), [RESIDUAL_CLASS_SUBSTITUTION]);
+    assert.equal(decisionOf(runHook(bashPayload(heredocCounterexample), hookDeps(undefined))), DECISION_ASK);
+  });
+
+  it('no quote-aware reading is exported (a re-introduction must come with its own council round)', async () => {
+    const hook = await import('../references/hooks/gate-approve.mjs');
+    assert.equal(hook.buildActiveCommandView, undefined);
+  });
+});
+
+describe('KNOWN OPEN — the false-ASK class the removal leaves behind (recorded, not fixed)', () => {
+  const stillAsksAndShouldNot = [
+    ['a redirection byte inside a quoted search PATTERN (corpus firing 29)', 'grep -rln "2>/dev/null" agent-workflow-kit'],
+    ['the JavaScript arrow token as a search pattern', 'grep -rn "=>" src'],
+    ['an fd duplication (corpus firings 27 and 28)', 'grep -rn "x" dirs 2>&1 | head -20'],
+    ['an fd duplication on its own', 'ls 1>&2'],
+  ];
+  for (const [name, command] of stillAsksAndShouldNot) {
+    it(`still asks, and that is the open defect: ${name}`, () => {
+      assert.deepEqual(detectResidualClasses(command), [RESIDUAL_CLASS_REDIRECTION]);
+      assert.equal(decisionOf(runHook(bashPayload(command), hookDeps(undefined))), DECISION_ASK);
+    });
+  }
+
+  // The release's ONLY behaviour change, pinned by the class it must produce — a `length > 0` check
+  // would have passed before it too, because the `>` alone already matched the redirection class.
+  it('`>(…)` is reported as a SUBSTITUTION, not only as a redirection', () => {
+    assert.ok(detectResidualClasses('cat >(rm x)').includes(RESIDUAL_CLASS_SUBSTITUTION));
+    assert.ok(RESIDUAL_FORMS.commandSubstitutions.includes('>('));
   });
 });
