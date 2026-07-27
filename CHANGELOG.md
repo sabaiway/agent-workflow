@@ -7,6 +7,29 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-27 — AD-080 a search whose pattern contains `>` no longer has to ask (kit 4.2.0)
+
+4.1.0 established that the guard cannot be narrowed. This release stops sending the search through
+the guard instead. The corpus stood at 31 firings, two of them minutes apart during unrelated
+research: one a reflexive `2>/dev/null`, one a `>` sitting inside a quoted search pattern.
+
+**The fix turned out to be small, and the fact enabling it had been in the previous session's
+handover the whole time**: the residual scan is gated on seeded-core membership, so a command outside
+that core never reaches it. A plain kit tool therefore cannot raise the residual ask, whatever bytes
+its arguments carry. Two full design-council rounds went to an MCP-server proposal that was not
+needed before a reviewing bridge cited the code.
+
+**Shipped: `tools/repo-search.mjs`**, literal search, two lanes — `--pattern` for ordinary patterns,
+`--pattern-file` for byte-carrying ones, whose bytes never enter the command string. The tool's
+prefix also joins the hook's scanned list, so a real redirection or substitution on its own
+invocation still asks — coverage GAINED, since a non-core command had none. Picking the wrong lane
+earns a refusal that names the right one, which is why the rule does not rest on the agent
+remembering it.
+
+**Stated residuals:** a bare `grep` still prompts (nothing forces the lane); a literal inline `$(`
+stays indistinguishable from an active one, permanently; bytes in search paths still over-ask; and
+promptlessness rests on the allow rule, because "no decision" is not "allow".
+
 ## 2026-07-27 — AD-079 why the gate hook still over-asks, established rather than assumed (kit 4.1.0)
 
 Twenty-nine times the maintainer approved a command that never needed approving, and for months the

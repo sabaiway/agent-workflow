@@ -321,6 +321,11 @@ describe('router contract — command-shapes promptless bar (f)', () => {
     'no redirects', 'no pipes', 'no command substitution', 'file-edit tools',
     'OUTSIDE this contract', 'plain pipeline per call', 'host/config-dependent',
     'read-lane may auto-approve', 'slip past a prefix allow rule',
+    // The search clause: the ordered lanes, the tool, the byte-carrying lane, and the honest
+    // residual. Pinned by token so the clause cannot be dropped or softened silently — the whole
+    // point is that a byte-carrying pattern has NO promptless shell spelling.
+    'Searching for TEXT', 'repo-search.mjs', '--pattern-file', 'Quoting is not a workaround',
+    'a bare `grep` still', 'never enter the command string',
   ];
 
   it('the probe-instructing modes — and ONLY those — declare command-shapes.md', () => {

@@ -16,6 +16,14 @@ and improvised shapes are where approval prompts come from. The bar:
   promptless by construction.
 - **Improvised file writes ride the host's file-edit tools** (Write/Edit or the equivalent) —
   never an ad-hoc heredoc or shell-redirect write.
+- **Searching for TEXT is its own case.** A pattern carrying `>`, `` ` `` or `$(` prompts on a
+  seeded-core command however it is quoted — the guard scans the raw string and a quote-stripped
+  copy. Quoting is not a workaround. (`|`/`&&` do not trip it.) Use the host's search tool if it has
+  one; else, where the kit tier is seeded, `node <kit>/tools/repo-search.mjs --pattern <literal>`,
+  switching to `--pattern-file <path>` for a byte-carrying pattern — written with the file-write tool
+  above, so its bytes never enter the command string; else one plain command, accepting the prompt.
+  A wrong lane earns a refusal that NAMES the file lane. Residual: a bare `grep` still prompts, and
+  the file lane needs promptless host writes.
 
 **Scope — improvised shapes only.** The executable commands a mode doc itself prescribes (the
 `node …/tools/…` dispatch lines, `--apply` lanes, install/symlink steps) are OUTSIDE this

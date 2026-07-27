@@ -261,6 +261,33 @@ export const matchSeededCorePrefix = (command) => {
   return matched ? matched.join(' ') : null;
 };
 
+// Kit tools whose invocations rung (b) scans even though they are NOT in the seeded read-only core.
+// The distinction is deliberate and load-bearing: CORING one of these would also hand it the
+// rung (c) read-lane allow, which is exactly what a tool taking caller-supplied arguments must not
+// have. This SEPARATE list buys the residual coverage without that side effect.
+//
+// AD-079 line: this is the SAME unchanged scan run over a different prefix — it never asks what a
+// byte MEANS, so it is on the permitted side. Nothing here parses or deletes a span.
+// KIT-QUALIFIED, forward-slash canonical. Matching on the bare basename was the first attempt and
+// review killed it: it would pull ANY unrelated `repo-search.mjs` into rung (b2), turning a
+// pre-existing NO decision into an ASK — a change to a decision path this release has no business
+// touching.
+export const SCANNED_TOOL_PATHS = Object.freeze(['agent-workflow-kit/tools/repo-search.mjs']);
+
+// Quotes stripped and separators canonicalised, so a relative, absolute, quoted or Windows-separated
+// spelling all compare the same. SUBSTRING, not equality, and scanned across EVERY token rather than
+// just the one after `node`: both reviewers found the strict form under-inclusive, one through node
+// flags (`node --no-warnings <tool>`), one through an operator attached to the path
+// (`node <tool>>out`). A missed invocation silently restores the unscanned behaviour on exactly the
+// surface this exists to cover, while a spurious match merely over-asks — so inclusiveness wins.
+const canonicalToken = (token) => token.replace(/["']/gu, '').replace(/\\/gu, '/');
+
+export const matchScannedToolPrefix = (command) => {
+  const tokens = tokenizeCommand(command).map(canonicalToken);
+  const hit = SCANNED_TOOL_PATHS.find((path) => tokens.some((token) => token.includes(path)));
+  return hit ?? null;
+};
+
 // String-level, conservative: the hook sees the PRE-SHELL command string, so every class is a raw
 // substring scan (never a whitespace-token check — a token check misses `"--output=f"` / `'>' f`
 // where the quotes are still in the string but the shell will strip them). A quoted metacharacter
@@ -377,6 +404,19 @@ export const decideBashCall = ({ command, permissionMode, cwdIsProjectRoot, gate
       return {
         permissionDecision: DECISION_ASK,
         permissionDecisionReason: `agent-workflow residual guard: read-only-seeded "${corePrefix}" carries ${residualClasses.join(' + ')} — a settings allow rule cannot see runtime shape; confirm by hand`,
+      };
+    }
+  }
+  // (b2) the same guard over the scanned kit tools. The refusal NAMES the lane that avoids it, so a
+  // caller who picked the inline lane for a shell-significant pattern is corrected by the mechanism
+  // rather than expected to have remembered the rule.
+  const scannedTool = matchScannedToolPrefix(trimmed);
+  if (scannedTool !== null) {
+    const residualClasses = detectResidualClasses(trimmed);
+    if (residualClasses.length > 0) {
+      return {
+        permissionDecision: DECISION_ASK,
+        permissionDecisionReason: `agent-workflow residual guard: "${scannedTool}" carries ${residualClasses.join(' + ')} — pass the pattern with --pattern-file (its bytes then never enter the command string), or confirm by hand if the byte is really part of the invocation`,
       };
     }
   }

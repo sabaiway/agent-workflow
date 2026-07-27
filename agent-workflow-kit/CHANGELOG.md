@@ -4,6 +4,43 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 4.2.0 — a search whose pattern contains `>` no longer has to ask (AD-080)
+
+**Read this if you have ever approved `grep -rn "=>" src`.** 4.1.0 explained why that prompt cannot
+be fixed inside the guard. This release stops routing the search through the guard at all.
+
+**New: `tools/repo-search.mjs`** — a literal, read-only repository search with two lanes.
+
+- `--pattern <literal>` for an ordinary pattern.
+- `--pattern-file <path>` for a pattern containing `>`, `` ` `` or `$(` — the bytes the residual scan
+  actually matches (`|` and `&&` do not trip it; they only take a command off the compound
+  read-lane). Write the pattern with your host's file-write tool and pass the plain path. **The
+  pattern's bytes never enter the command string**, so the scan has nothing to scan. That is not
+  obfuscation — encoding would disguise bytes that stay on the shell surface where bash can still run
+  them; these leave the surface entirely.
+
+**You do not have to remember which lane to use.** The tool's invocation prefix is now in the hook's
+scanned list, so picking the inline lane for a byte-carrying pattern earns a refusal that NAMES
+`--pattern-file`. A wrong choice costs one guiding prompt; it never costs silence.
+
+**The hook gained coverage, it did not lose any.** A non-core command never reached the residual scan
+before — that is exactly why a plain kit tool is promptless — so a real redirection or command
+substitution on this tool's own invocation would have gone unexamined. It is examined now, by the
+UNCHANGED scan run over one more prefix. Nothing about what a byte MEANS was re-litigated; AD-079
+stands, and the tool is deliberately NOT in the seeded read-only core, so it inherits no compound
+read-lane allow.
+
+**Scope, kept narrow on purpose.** Literal search only — an arbitrary synchronous regex cannot be
+bounded by checks between work units, so the class is removed rather than mitigated. Only regular
+files are read (a FIFO or device read hangs and defeats every bound). Any bound that fires returns a
+structured `incomplete` naming which bound it was — never a silent empty result. The pattern file is
+excluded from its own search by resolved path, so an exotic query cannot match itself.
+
+**Honest residual.** Nothing forces the lane on a caller who ignores it: a bare `grep` prompts exactly
+as before. A literal inline `$(` is still indistinguishable from an active one, permanently — use the
+file lane. Bytes in search PATHS still over-ask. And promptlessness rests on your settings honouring
+the tool's allow rule: the hook returning "no decision" is not the same as an allow.
+
 ## 4.1.0 — why the gate hook still over-asks, established rather than assumed (AD-079)
 
 **Read this if the hook has ever made you approve `grep -rn "=>" src` or a plain read wearing

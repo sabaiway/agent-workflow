@@ -144,6 +144,11 @@ export const KIT_READONLY_TOOLS = Object.freeze([
   KIT_RUN_GATES_TOOL,
   'tools/manifest/validate.mjs',
   'tools/release-scan.mjs',
+  // The literal search lane. It is in the tier for the ordinary reason (a pure reader the agent
+  // calls constantly), and its promptlessness additionally depends on it: a non-core command gets
+  // NO decision from the hook, which is not the same as an allow, so without this rule the lane
+  // falls through to whatever the host policy happens to be.
+  'tools/repo-search.mjs',
 ]);
 // Writer previews: ONLY writers whose ARG-FREE invocation is a documented dry-run ("Default is
 // --dry-run" in their usage) seed an EXACT preview byte-string — every --apply/--write/--yes keeps
