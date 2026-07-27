@@ -4,6 +4,59 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 4.3.0 — the coverage gate no longer certifies evidence it cannot bind to your tree (AD-081)
+
+**Read this if you have ever run `coverage-check --check` on its own.** Until now it read whatever
+LCOV happened to be at the fixed path and gave you a verdict. Nothing tied that file to the tree it
+was judging.
+
+**The harmless direction is the one you may have already seen:** you add tests, re-run the checker
+alone, and it prints the *identical* failure list and the *identical* `lcov-sha256` — because the
+LCOV is produced by your `unit-tests` gate and nothing regenerated it.
+
+**The same mechanism prints a false PASS,** and that is why this shipped as a fix. Run the suite,
+append one executable line, re-run the checker alone: it certifies "every changed Node line is
+covered". LCOV carries no executability signal, so a line that did not exist when the suite ran has
+no `DA` entry and reads as *non-executable* — nothing to cover.
+
+**What changed: a coverage VERDICT is now an outcome of `run-gates --final`, and nowhere else.**
+That run already owns the artifact end to end — it deletes the LCOV before any gate starts, so inside
+it "this came from this tree" is a fact rather than a hope. It now mints a random nonce and records
+the attempt as a one-way commitment over `{nonce, tree fingerprint, base}`; the checker recomputes
+that commitment and refuses to certify without it. The commitment is also the only place your base
+commit is bound, so an identical dirty diff at a moved `HEAD` no longer looks like the same tree.
+
+**Three outcomes replace two — and your findings are unchanged:**
+
+- inside `--final` → the verdict, exactly as before;
+- anywhere else → `attested=no` and `NO VERDICT`, exit 0, with **every finding still printed**;
+- a context describing a different tree, or matching no recorded attempt → `REFUSED`, exit 1.
+
+**Uncovered lines still exit 1 and are still listed `file:line`.** Nothing that was red turns green;
+only the *attestation* is withdrawn where it was never earned — which is why this is a minor release.
+
+**Two more places where a green could hide:** the runner no longer trusts the checker's exit status,
+because that code is 0 both when it certifies and when it withholds — it now reads one anchored
+`attested=` line, so **a run that actually consumed an LCOV can no longer mint a green receipt
+without certifying it**. (A run that produced no LCOV at all still records a green receipt with
+`lcovSha256: null` and a loud `skipped-no-lcov`, exactly as before — that path is unchanged.) And a
+plain run prints the withheld verdict aloud instead of leaving a PASS row standing over a claim
+nobody made.
+
+**Stated honestly — what this does NOT cover.** Whoever runs both processes can still forge the store
+or the code; that is the same self-discipline posture the receipts have always had. And "the run owns
+the artifact" is exclusive **by convention over a fixed path, not enforced**: if something else writes
+that path while a `--final` is in flight — a second `run-gates`, a hand-run `--only unit-tests`, an
+orphaned test process — the verdict can still land on evidence this run did not produce. Closing that
+needs a per-attempt artifact path, which means your `unit-tests` gate cmd would have to reference
+`$AW_LCOV_FILE`; it is queued rather than rushed into a release, because this is verification code.
+Your base commit is likewise persisted nowhere, so `commit-guard` stays fingerprint-only.
+
+**What IS gone** is the false green that needs no second process and nobody trying: evidence that
+simply predates your edit. That is the case that was observed live, and it is pinned by a regression
+test that was watched failing before the fix existed.
+
+
 ## 4.2.0 — a search whose pattern contains `>` no longer has to ask (AD-080)
 
 **Read this if you have ever approved `grep -rn "=>" src`.** 4.1.0 explained why that prompt cannot

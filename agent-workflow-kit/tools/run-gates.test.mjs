@@ -17,6 +17,7 @@ import {
   runCli,
   BASH_PROBE_CMD,
   spawnGateViaBash,
+  isFinalCapableDeclaration,
 } from './run-gates.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -721,6 +722,112 @@ describe('run-gates --final — the ONE receipt the commit guard consumes', () =
     assert.equal(code, EXIT.finalFailed, out.join('\n'));
     assert.equal(done.status, 'red');
     assert.match(done.integrityFailure ?? '', /exactly ONE/);
+  });
+
+  // The checker exits 0 both when it certifies and when it WITHHOLDS a verdict, so a green exit
+  // status alone never proves a coverage claim was made. Without these arms a gate that removed the
+  // attestation context mid-run would mint a green receipt carrying no coverage claim at all.
+  it('a checker that consumed an lcov but did NOT certify it is an integrity failure (green exit is not a claim)', () => {
+    const produce = { id: 'produce-lcov', title: 'p', cmd: 'printf "SF:%s/pending.mjs\\nDA:1,1\\nend_of_record\\n" "$PWD" > "$AW_LCOV_FILE"' };
+    const root = makeRepo([CANONICAL[0], produce, CANONICAL[1]]);
+    const denyAttest = (cmd, cwd2, extra) => {
+      const r = spawnGateViaBash(cmd, cwd2, extra);
+      if (/coverage-check\.mjs/.test(cmd)) r.stdout = String(r.stdout ?? '').replace(/^coverage-check: attested=yes$/m, 'coverage-check: attested=no');
+      return r;
+    };
+    const out = [];
+    const code = runCli(['--final', '--cwd', root], { env: fixtureEnv(), spawn: denyAttest, log: (l) => out.push(String(l)), logError: (l) => out.push(String(l)) });
+    const done = finalRecords(root).filter((r) => r.kind === 'final').pop();
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.finalFailed, out.join('\n'));
+    assert.equal(done.status, 'red');
+    assert.match(done.integrityFailure ?? '', /did NOT certify/);
+  });
+
+  it('a checker stdout MISSING the attested= line is an integrity failure (fail closed on the unknowable)', () => {
+    const produce = { id: 'produce-lcov', title: 'p', cmd: 'printf "SF:%s/pending.mjs\\nDA:1,1\\nend_of_record\\n" "$PWD" > "$AW_LCOV_FILE"' };
+    const root = makeRepo([CANONICAL[0], produce, CANONICAL[1]]);
+    const stripAttest = (cmd, cwd2, extra) => {
+      const r = spawnGateViaBash(cmd, cwd2, extra);
+      if (/coverage-check\.mjs/.test(cmd)) r.stdout = String(r.stdout ?? '').replace(/^coverage-check: attested=.*\n?/m, '');
+      return r;
+    };
+    const out = [];
+    const code = runCli(['--final', '--cwd', root], { env: fixtureEnv(), spawn: stripAttest, log: (l) => out.push(String(l)), logError: (l) => out.push(String(l)) });
+    const done = finalRecords(root).filter((r) => r.kind === 'final').pop();
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.finalFailed, out.join('\n'));
+    assert.match(done.integrityFailure ?? '', /no attested= line/);
+  });
+
+  it('TWO canonical coverage-check gates are refused pre-spend, and the shared predicate agrees', () => {
+    const twin = { ...CANONICAL[1], id: 'coverage-check-twin' };
+    const root = makeRepo([CANONICAL[0], twin, CANONICAL[1]]);
+    const { code, out } = runFinal(root, ['--final']);
+    const capable = isFinalCapableDeclaration([CANONICAL[0], twin, CANONICAL[1]], root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.malformed, out);
+    assert.match(out, /2 gates are the canonical coverage-check/);
+    assert.equal(capable, false, 'a consumer must never advertise final-capability for a declaration --final rejects');
+  });
+
+  it('an integrity failure never leaves the machine summary line saying status=ok', () => {
+    const produce = { id: 'produce-lcov', title: 'p', cmd: 'printf "SF:%s/pending.mjs\\nDA:1,1\\nend_of_record\\n" "$PWD" > "$AW_LCOV_FILE"' };
+    const root = makeRepo([CANONICAL[0], produce, CANONICAL[1]]);
+    const stripAttest = (cmd, cwd2, extra) => {
+      const r = spawnGateViaBash(cmd, cwd2, extra);
+      if (/coverage-check\.mjs/.test(cmd)) r.stdout = String(r.stdout ?? '').replace(/^coverage-check: attested=.*\n?/m, '');
+      return r;
+    };
+    const out = [];
+    const code = runCli(['--final', '--cwd', root], { env: fixtureEnv(), spawn: stripAttest, log: (l) => out.push(String(l)), logError: (l) => out.push(String(l)) });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.finalFailed);
+    assert.match(out.join('\n'), /status=fail/, 'the machine line must agree with the exit code');
+    assert.doesNotMatch(out.join('\n'), /status=ok/);
+  });
+
+  it('the attestation capability reaches the CANONICAL checker ONLY — never another gate, never the host env', () => {
+    // The gate itself is the assertion: it FAILS if any attestation variable reaches it, so a leak
+    // reddens the run rather than hiding in a green gate's unechoed stdout.
+    const leak = { id: 'leak', title: 'l', cmd: 'test -z "$AW_FINAL_ATTEST_NONCE"' };
+    const root = makeRepo([CANONICAL[0], leak, CANONICAL[1]]);
+    const seen = [];
+    const watch = (cmd, cwd2, extra) => {
+      seen.push({ cmd, keys: Object.keys(extra ?? {}) });
+      return spawnGateViaBash(cmd, cwd2, extra);
+    };
+    const out = [];
+    // The forgery must live in the REAL process env: spawnGateViaBash composes its child env from
+    // process.env, so a value injected through runCli's ctx would never reach the strip and the
+    // test would pass without exercising it at all.
+    const hadNonce = Object.hasOwn(process.env, 'AW_FINAL_ATTEST_NONCE');
+    const priorNonce = process.env.AW_FINAL_ATTEST_NONCE;
+    process.env.AW_FINAL_ATTEST_NONCE = 'host-forged';
+    let code;
+    try {
+      code = runCli(['--final', '--cwd', root], {
+        env: fixtureEnv(), spawn: watch, log: (l) => out.push(String(l)), logError: (l) => out.push(String(l)),
+      });
+    } finally {
+      if (hadNonce) process.env.AW_FINAL_ATTEST_NONCE = priorNonce;
+      else delete process.env.AW_FINAL_ATTEST_NONCE;
+    }
+    rmSync(root, { recursive: true, force: true });
+    const carriers = seen.filter((s) => s.keys.includes('AW_FINAL_ATTEST_NONCE'));
+    assert.equal(carriers.length, 1, 'exactly one gate is HANDED the capability');
+    assert.match(carriers[0].cmd, /coverage-check\.mjs/);
+    assert.equal(code, EXIT.ok, `the leak gate saw a nonce it must never see: ${out.join('\n')}`);
+  });
+
+  it('a PLAIN run surfaces the withheld verdict — a green table must never read as a coverage claim', () => {
+    const produce = { id: 'produce-lcov', title: 'p', cmd: 'printf "SF:%s/pending.mjs\\nDA:1,1\\nend_of_record\\n" "$PWD" > "$AW_GIT_DIR/agent-workflow-lcov.info"' };
+    const root = makeRepo([CANONICAL[0], produce, CANONICAL[1]]);
+    const { code, out } = runFinal(root, []);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.ok, out);
+    assert.match(out, /NO COVERAGE VERDICT/);
+    assert.match(out, /run-gates\.mjs --final/);
   });
 
   it('a full [unit-tests → core checks] declaration SPAWNS the suite and binds its produced lcov (no credit lane exists)', () => {

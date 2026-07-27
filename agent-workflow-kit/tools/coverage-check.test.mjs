@@ -24,6 +24,12 @@ const {
   resolveLcovPath,
   keyFor,
   main,
+  commitmentFor,
+  withoutAttestEnv,
+  attestationState,
+  ATTEST_NONCE_ENV,
+  ATTEST_FINGERPRINT_ENV,
+  ATTEST_BASE_ENV,
 } = cov ?? {};
 
 const gitInit = (root) => {
@@ -95,6 +101,27 @@ describe('coverage-check --check — the coverage arm', () => {
     const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.code, 0, r.stdout);
+  });
+
+  // The defect: the lcov is produced by the unit-tests gate, so a standalone --check reads whatever
+  // is on disk. The stale-FAILURE direction was seen live during the AD-080 release; this — the
+  // false GREEN, the dangerous direction — was reproduced hermetically. Append one executable line
+  // AFTER the suite ran and LCOV carries no DA entry for it — which lcov.mjs:9-13 states reads as
+  // NON-EXECUTABLE, not as uncovered. The tool therefore certifies a line the suite never executed.
+  it('does NOT certify a line added after the lcov was produced — the false-green regression', () => {
+    const { root } = makeRepo();
+    writeLcov(root, lcovFor(root, [1, 2, 3]));
+    writeFileSync(
+      join(root, 'lib.mjs'),
+      'export const a = 1;\nexport const b = 2;\nexport const c = 3;\nexport const neverExecuted = (n) => n * 2;\n',
+    );
+    const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.doesNotMatch(
+      r.stdout,
+      /PASS — every changed Node line is covered/,
+      'evidence that predates the edit must never produce a coverage attestation',
+    );
   });
 
   it('an ABSENT lcov file reports skipped-no-lcov LOUDLY (exit 0, never a silent green)', () => {
@@ -169,6 +196,144 @@ describe('coverage-check --check — the coverage arm', () => {
     const gone = keyFor(root, 'vanished-under-us.mjs');
     assert.equal(gone, join(root, 'vanished-under-us.mjs'), 'the fallback key reads as absent-from-map → file-level red');
     rmSync(root, { recursive: true, force: true });
+  });
+});
+
+// The provenance precondition. `run-gates --final` deletes the lcov before any gate spawns, so
+// inside that run "the artifact came from this tree" is a consequence rather than a claim; the
+// handshake is how the checker learns it is in that run. The attempt id is a ONE-WAY COMMITMENT
+// over {nonce, fingerprint, base}, so the persisted half cannot be replayed and the base — stored
+// nowhere else — is bound too.
+describe('coverage-check --check — the attestation handshake', () => {
+  const attestEnv = (root, { nonce = 'n0nce', fingerprint, base } = {}) => {
+    const fp = fingerprint ?? computeTreeFingerprint(root);
+    const b = base ?? resolveBase(root) ?? '';
+    return fixtureEnv({
+      [ATTEST_NONCE_ENV]: nonce,
+      [ATTEST_FINGERPRINT_ENV]: fp,
+      [ATTEST_BASE_ENV]: b,
+    });
+  };
+  const recordStart = (root, { nonce = 'n0nce', fingerprint, base } = {}) => {
+    const fp = fingerprint ?? computeTreeFingerprint(root);
+    const b = base ?? resolveBase(root) ?? '';
+    writeFileSync(storeOf(root), `${JSON.stringify({
+      schema: 1, kind: 'final-start', fingerprint: fp,
+      attempt: commitmentFor(nonce, fp, b), timestamp: '2026-07-27T00:00:00Z',
+    })}\n`);
+  };
+
+  it('a valid handshake ATTESTS — the PASS line returns', () => {
+    const { root } = makeRepo();
+    writeLcov(root, lcovFor(root, [1, 2, 3]));
+    recordStart(root);
+    const r = main(['--check', '--cwd', root], { env: attestEnv(root) });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stdout);
+    assert.match(r.stdout, /^coverage-check: attested=yes$/m);
+    assert.match(r.stdout, /PASS — every changed Node line is covered/);
+  });
+
+  it('no handshake withholds the verdict WITHOUT failing — exit 0, findings still printed', () => {
+    const { root } = makeRepo();
+    writeLcov(root, lcovFor(root, [1, 2, 3]));
+    const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stdout);
+    assert.match(r.stdout, /^coverage-check: attested=no$/m);
+    assert.match(r.stdout, /NO VERDICT/);
+  });
+
+  it('uncovered lines still exit 1 WITHOUT a handshake — the findings contract is unchanged', () => {
+    const { root } = makeRepo();
+    writeLcov(root, lcovFor(root, [1, 3]));
+    const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /lib\.mjs:2/);
+  });
+
+  it('a handshake describing ANOTHER tree is a refusal, never a verdict', () => {
+    const { root } = makeRepo();
+    writeLcov(root, lcovFor(root, [1, 2, 3]));
+    recordStart(root);
+    const r = main(['--check', '--cwd', root], { env: attestEnv(root, { fingerprint: 'a'.repeat(64) }) });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /REFUSED — the tree MOVED/);
+    assert.doesNotMatch(r.stdout, /PASS — every changed Node line is covered/);
+  });
+
+  it('a handshake matching NO recorded attempt is a refusal (the store lost the start)', () => {
+    const { root } = makeRepo();
+    writeLcov(root, lcovFor(root, [1, 2, 3]));
+    const r = main(['--check', '--cwd', root], { env: attestEnv(root) });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /REFUSED — the attestation context matches no recorded final-run attempt/);
+  });
+
+  it('a DIFFERENT nonce never matches the recorded commitment (the persisted half is not replayable)', () => {
+    const { root } = makeRepo();
+    writeLcov(root, lcovFor(root, [1, 2, 3]));
+    recordStart(root, { nonce: 'the-real-nonce' });
+    const r = main(['--check', '--cwd', root], { env: attestEnv(root, { nonce: 'a-guess' }) });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /REFUSED/);
+  });
+
+  it('an UNDECIDABLE identity refuses rather than attesting (the seam the CLI cannot reach)', () => {
+    const state = attestationState({
+      env: { [ATTEST_NONCE_ENV]: 'n', [ATTEST_FINGERPRINT_ENV]: 'f', [ATTEST_BASE_ENV]: 'b' },
+      records: [], fingerprint: null, base: null,
+    });
+    assert.equal(state.attesting, undefined);
+    assert.match(state.refusal, /no computable fingerprint/);
+  });
+
+  it('the raw nonce never reaches a child process — a detached descendant would hold a live capability', () => {
+    const stripped = withoutAttestEnv({
+      PATH: '/usr/bin',
+      [ATTEST_NONCE_ENV]: 'n', [ATTEST_FINGERPRINT_ENV]: 'f', [ATTEST_BASE_ENV]: 'b',
+    });
+    assert.deepEqual(Object.keys(stripped), ['PATH']);
+  });
+
+  // The unit above only proves the pure helper copies correctly. THIS one runs the real CLI with the
+  // capability inherited and asks a genuine child process what it can see — the leak that matters is
+  // the one into the checker's own subprocesses, and a helper test would stay green through it.
+  // The unit above only proves the pure helper copies correctly. THIS one runs the checker as a REAL
+  // process with the capability inherited and asks an actual child what it can see: the leak that
+  // matters is the one into the checker's own subprocesses, and a helper test stays green through it.
+  // The child is `git` itself — a shim earlier on PATH that reports the variables it was handed.
+  it('a REAL CLI run leaves no attestation variable for any child to inherit', () => {
+    const { root } = makeRepo();
+    const bin = mkdtempSync(join(tmpdir(), 'coverage-check-bin-'));
+    const seenFile = join(bin, 'seen.txt');
+    const shim = join(bin, 'git');
+    // "CALLED" proves the shim actually ran: without it a checker that never spawns git would make
+    // this test pass vacuously — the exact defect that put it here.
+    writeFileSync(shim, `#!/bin/sh\necho CALLED >> ${JSON.stringify(seenFile)}\nfor v in ${ATTEST_NONCE_ENV} ${ATTEST_FINGERPRINT_ENV} ${ATTEST_BASE_ENV}; do\n  eval "val=\\$$v"\n  [ -n "$val" ] && echo "LEAKED:$v" >> ${JSON.stringify(seenFile)}\ndone\nexit 1\n`, { mode: 0o755 });
+    const TOOL = new URL('./coverage-check.mjs', import.meta.url).pathname;
+    spawnSync(process.execPath, [TOOL, '--check', '--cwd', root], {
+      cwd: root, encoding: 'utf8',
+      env: {
+        ...fixtureEnv(), PATH: `${bin}:${process.env.PATH}`,
+        [ATTEST_NONCE_ENV]: 'n', [ATTEST_FINGERPRINT_ENV]: 'f', [ATTEST_BASE_ENV]: 'b',
+      },
+    });
+    const leaked = (() => {
+      try {
+        return readFileSync(seenFile, 'utf8');
+      } catch {
+        return '';
+      }
+    })();
+    rmSync(bin, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+    assert.match(leaked, /CALLED/, 'the git shim never ran — this test would pass vacuously');
+    assert.doesNotMatch(leaked, /LEAKED:/, `a real child process inherited the capability: ${leaked}`);
   });
 });
 
