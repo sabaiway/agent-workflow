@@ -108,6 +108,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'references/templates/gates.json',
       // the dependency-free LCOV parser (the D3(d) coverage arm's consumption path)
       'tools/lcov.mjs',
+      // the promptless literal search lane — reverse-pinned by NAME, not only by the exact count,
+      // so dropping it from the payload fails loudly instead of merely shifting a number
+      'tools/repo-search.mjs',
       // the cheap-lane subagent writer + its bundled vehicles
       'tools/cheap-agents.mjs',
       'references/agents/mechanical-sweep.md',
@@ -290,7 +293,13 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       fan-out that needs judgment previously had no vehicle at all (the cheap ones are scoped
     //       away from review, and a review-capable full-tool subagent shells out and floods the
     //       maintainer with approval prompts), so the lens ships with NO Bash grant.
-    assert.equal(packed.length, 163, `tarball file count drifted (${packed.length} ≠ 163)`);
+    // 164 = 163 + tools/repo-search.mjs — the promptless LITERAL search lane. A pattern carrying a
+    //       shell-significant byte cannot ride a seeded-core command without the residual ASK (the
+    //       scan reads the raw string and a quote-stripped copy), so the search moves off that
+    //       surface: --pattern-file keeps the bytes out of the command string entirely, and the
+    //       tool's own prefix is in the hook's scanned list so a byte on the INVOCATION still asks.
+    //       Its *.test.mjs sibling is stripped by files[].
+    assert.equal(packed.length, 164, `tarball file count drifted (${packed.length} ≠ 164)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

@@ -296,6 +296,21 @@ describe('residual guard asks on seeded-core commands carrying the documented re
     assert.equal(runHook(bashPayload('node build.js > out.log'), noDeclaration), null);
   });
 
+  it('a kit-tool invocation with a residual byte INSIDE a quoted argument → NO decision, while the same byte in a core command asks', () => {
+    // Characterization of EXISTING behaviour (green from the start, never a red-first test): rung (b)
+    // is gated on seeded-core membership — `matchSeededCorePrefix` runs BEFORE
+    // `detectResidualClasses` — so a kit tool never reaches the residual scan whatever bytes its
+    // arguments carry. THIS test is the evidence for that claim; a dispatched command is not, because
+    // an approved prompt and a never-prompted command are indistinguishable from the caller's side.
+    const kitToolCall = 'node agent-workflow-kit/tools/release-scan.mjs "a>b"';
+    assert.equal(matchSeededCorePrefix(kitToolCall), null, 'a kit tool must never be a seeded-core prefix');
+    assert.equal(runHook(bashPayload(kitToolCall), noDeclaration), null);
+    // The contrast IS the point — the identical byte in a seeded-core command asks, which is the
+    // mechanism behind the quoted-pattern firings. Quoting protects nothing: the scan also runs over
+    // a copy with quote characters stripped.
+    assert.equal(decisionOf(runHook(bashPayload('grep -n "a>b" file'), noDeclaration)), DECISION_ASK);
+  });
+
   it('a seeded-core command WITHOUT residual → NO decision (the guard never blanket-asks)', () => {
     assert.equal(runHook(bashPayload('grep -r pattern .'), noDeclaration), null);
   });
@@ -835,5 +850,70 @@ describe('KNOWN OPEN — the false-ASK class the removal leaves behind (recorded
   it('`>(…)` is reported as a SUBSTITUTION, not only as a redirection', () => {
     assert.ok(detectResidualClasses('cat >(rm x)').includes(RESIDUAL_CLASS_SUBSTITUTION));
     assert.ok(RESIDUAL_FORMS.commandSubstitutions.includes('>('));
+  });
+});
+
+// ── the repo-search lane's scanned prefix (RED until the rung (b) change lands) ──────
+// The search tool is deliberately NOT in the seeded read-only core (so it never inherits the
+// rung (c) read-lane allow), but its invocation prefix joins a SEPARATE scanned list that rung (b)
+// checks before running the UNCHANGED detectResidualClasses. That buys back the coverage a plain
+// non-core tool would not have: a real substitution or redirection ON THE INVOCATION still asks,
+// while the pattern itself travels by file and never reaches the command string at all.
+//
+// Asserted at the BEHAVIOUR level on purpose: importing a not-yet-existing symbol would throw at
+// module load and redden the whole file, destroying the signal these cases carry.
+describe('repo-search scanned prefix — rung (b) covers the tool without coring it', () => {
+  const noDeclaration = hookDeps(undefined);
+  const TOOL = 'node agent-workflow-kit/tools/repo-search.mjs';
+
+  it('an inline pattern carrying a residual byte ASKS, and the reason names the file lane', () => {
+    const result = runHook(bashPayload(`${TOOL} --pattern "a>b" --path src`), noDeclaration);
+    assert.equal(decisionOf(result), DECISION_ASK);
+    assert.match(result.permissionDecisionReason, /--pattern-file/u);
+  });
+
+  it('the same search through the file lane gets NO decision (the bytes never enter the command)', () => {
+    assert.equal(runHook(bashPayload(`${TOOL} --pattern-file .aw-search-7f3a.txt --path src`), noDeclaration), null);
+  });
+
+  it('a REAL write redirection on the tool invocation still ASKS', () => {
+    assert.equal(decisionOf(runHook(bashPayload(`${TOOL} --pattern-file p.txt > out.log`), noDeclaration)), DECISION_ASK);
+  });
+
+  it('a REAL command substitution on the tool invocation still ASKS', () => {
+    assert.equal(decisionOf(runHook(bashPayload(`${TOOL} --pattern-file $(evil) --path src`), noDeclaration)), DECISION_ASK);
+  });
+
+  it('the tool is never a seeded-core prefix — it must not inherit the rung (c) read-lane allow', () => {
+    assert.equal(matchSeededCorePrefix(`${TOOL} --pattern foo`), null);
+    assert.equal(isReadLaneCommand(`${TOOL} --pattern foo`), false);
+  });
+
+  // Both reviewers found the first matcher under-inclusive in different ways. An invocation the
+  // matcher misses is WORSE than one it over-matches: a miss silently restores the unscanned
+  // behaviour on exactly the surface this change exists to cover.
+  it('node FLAGS before the script do not hide the invocation from the scan', () => {
+    const cmd = `node --no-warnings agent-workflow-kit/tools/repo-search.mjs --pattern "a>b"`;
+    assert.equal(decisionOf(runHook(bashPayload(cmd), noDeclaration)), DECISION_ASK);
+  });
+
+  it('a residual operator ATTACHED to the script path does not hide the invocation', () => {
+    const cmd = `node agent-workflow-kit/tools/repo-search.mjs>out --pattern-file p.txt`;
+    assert.equal(decisionOf(runHook(bashPayload(cmd), noDeclaration)), DECISION_ASK);
+  });
+
+  it('an ABSOLUTE and a Windows-separated path both match', () => {
+    const abs = `node /opt/x/agent-workflow-kit/tools/repo-search.mjs --pattern "a>b"`;
+    const win = `node C:\\x\\agent-workflow-kit\\tools\\repo-search.mjs --pattern "a>b"`;
+    assert.equal(decisionOf(runHook(bashPayload(abs), noDeclaration)), DECISION_ASK);
+    assert.equal(decisionOf(runHook(bashPayload(win), noDeclaration)), DECISION_ASK);
+  });
+
+  // Matching on the BASENAME alone would pull an unrelated script of the same name into rung (b2),
+  // turning a pre-existing NO decision into an ASK — a change to someone else's decision path that
+  // this release has no business making. The match is on the kit-qualified suffix.
+  it('a FOREIGN script that merely shares the basename keeps its previous NO decision', () => {
+    const cmd = `node /somewhere/else/repo-search.mjs --pattern "a>b"`;
+    assert.equal(runHook(bashPayload(cmd), noDeclaration), null);
   });
 });
