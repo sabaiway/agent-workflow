@@ -154,14 +154,28 @@ describe('advisor coverage — every capability is offered or exempt with a reas
       const at = TOOL_SOURCE.search(new RegExp(`\\badd\\(\\s*'${row.advisorKey}'`));
       assert.notEqual(at, -1, `${row.advisorKey} has no add() call site — nothing can ever emit it`);
       const before = TOOL_SOURCE.slice(0, at);
-      const declAt = before.lastIndexOf('\nconst probe');
-      assert.notEqual(declAt, -1, `${row.advisorKey}'s add() site is not inside a probe function`);
-      const probeName = before.slice(declAt + '\nconst '.length).match(/^(\w+)/)[1];
+      // An `export` in front of the declaration must not hide it: matching only `\nconst probe`
+      // attributed an exported probe's add() site to the PREVIOUS probe, so removing the exported
+      // one from the PROBES chain would have left this guard green.
+      const decls = [...before.matchAll(/\n(?:export )?const (probe\w*)/g)];
+      assert.notEqual(decls.length, 0, `${row.advisorKey}'s add() site is not inside a probe function`);
+      const probeName = decls[decls.length - 1][1];
       assert.ok(
         probeNames.has(probeName),
         `${row.advisorKey} is emitted by ${probeName}, which is NOT in the PROBES chain — the offer can never fire`,
       );
     }
+  });
+
+  // Non-vacuity for the EXPORTED-probe case: an `export const probeX` whose add() site follows a
+  // plain `const probeY` must resolve to probeX, not to probeY.
+  it('non-vacuous: an exported probe declaration is attributed to ITSELF, not the previous probe', () => {
+    const sample = "\nconst probeAlpha = () => {\n  add('alpha', 1, 2);\n};\n\nexport const probeBeta = () => {\n  add('beta', 1, 2);\n};\n";
+    const at = sample.search(/\badd\(\s*'beta'/);
+    const decls = [...sample.slice(0, at).matchAll(/\n(?:export )?const (probe\w*)/g)];
+    assert.equal(decls[decls.length - 1][1], 'probeBeta');
+    const legacy = sample.slice(0, at).lastIndexOf('\nconst probe');
+    assert.equal(sample.slice(legacy + '\nconst '.length).match(/^(\w+)/)[1], 'probeAlpha', 'the old parser mis-attributed it');
   });
 
   // Non-vacuity for the reachability guard itself: a name that is only a PREFIX of a real chain entry

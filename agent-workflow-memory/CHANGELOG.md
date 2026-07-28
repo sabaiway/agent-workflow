@@ -4,6 +4,17 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 3.2.0 — the ADR rotation can be asked whether a seed is safe, without seeding (AD-083)
+
+`archive-decisions.mjs --write-navigator` now honours `--dry-run`. It runs exactly the checks the
+real write runs — the heading parse, the half-migrated guard, and the store-integrity check — and
+then stops before touching anything, reporting how many decisions it validated.
+
+Why it exists: a guarded caller (the kit's ADR-store migration) had no way to find out whether
+seeding the store would succeed except by seeding it. A tree with a malformed decisions file could
+therefore be told «go ahead», and only discover the problem after files had been written. The same
+code now answers that question first. Nothing about the normal `--write-navigator` behaviour changes.
+
 ## 3.1.0 — plain-language communication bar in §2.5 of the agent_rules template (AD-061)
 
 The `agent_rules.md` template's **§2.5 Communication** section gains a plain-language bar: every

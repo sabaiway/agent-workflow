@@ -1,11 +1,13 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { main, parseArgs, planScriptRefresh, MIGRATE_ADR_STORE_STOP } from './migrate-adr-store.mjs';
+import { surveyProject } from './family-registry.mjs';
+import { runCli as runArchiveDecisions } from '../references/scripts/archive-decisions.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const KIT_SCRIPTS = resolve(HERE, '..', 'references', 'scripts');
@@ -82,13 +84,273 @@ describe('migrate-adr-store — no-op detection', () => {
     assert.match(io.out(), /nothing to migrate/);
   });
 
-  it('an already-migrated tree (adr/ present, no monoliths) is a stated no-op (exit 0)', () => {
-    cwd = mkdtempSync(join(tmpdir(), 'migrate-adr-done-'));
+  // RE-CUT: a store DIRECTORY on disk does not prove the crossing finished. A crash between the
+  // mkdir and the navigator write leaves exactly this shape, and the old no-op turned the retry into
+  // a dead end — the tree stayed un-finalised forever while the detector read it as migrated.
+  // Finalisation is now the tree's OWN gate: the navigator exists and --check passes.
+  it('a store dir with NO navigator is NOT "already migrated" — --apply finalises it', () => {
+    cwd = mkdtempSync(join(tmpdir(), 'migrate-adr-half-'));
     dirs.push(cwd);
     mkdirSync(join(cwd, 'docs', 'ai', 'adr'), { recursive: true });
     const io = quiet();
-    assert.equal(run([], io), 0);
+    assert.equal(run(['--apply'], io), 0);
+    assert.ok(existsSync(join(cwd, 'docs', 'ai', 'adr', 'log.md')), 'the navigator is written');
+    assert.match(io.out(), /seeded/);
+  });
+
+  it('a FINALISED tree (store + navigator + green gate) is a stated no-op, and --apply is idempotent', () => {
+    cwd = mkdtempSync(join(tmpdir(), 'migrate-adr-done-'));
+    dirs.push(cwd);
+    mkdirSync(join(cwd, 'docs', 'ai', 'adr'), { recursive: true });
+    assert.equal(run(['--apply'], quiet()), 0, 'first apply finalises');
+    const nav = readFileSync(join(cwd, 'docs', 'ai', 'adr', 'log.md'), 'utf8');
+    const io = quiet();
+    assert.equal(run(['--apply'], io), 0, 'a second apply is a no-op, not a re-crossing');
     assert.match(io.out(), /already migrated/);
+    assert.equal(readFileSync(join(cwd, 'docs', 'ai', 'adr', 'log.md'), 'utf8'), nav, 'the navigator is byte-identical');
+  });
+});
+
+// ── the un-rotated old-scheme tree (no monolith was ever produced) ────────────────
+//
+// The cohort the signal used to miss entirely: the deployed rotator predates the store, the tree
+// never rotated, so there is no monolith to detect. Its own gate says "OK — every tier is within its
+// cap" forever. The discriminator is that deployed script's provenance.
+
+const mkUnrotatedLayout = ({ rotatorIsNew = false, extraScripts = ['check-docs-size.mjs'] } = {}) => {
+  cwd = mkdtempSync(join(tmpdir(), 'migrate-adr-unrotated-'));
+  dirs.push(cwd);
+  mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
+  writeFileSync(join(cwd, 'docs', 'ai', 'decisions.md'), tier('Architecture Decision Records (ADRs)', 500, { id: '001', t: 'First' }, { id: '002', t: 'Second' }));
+  const scripts = join(cwd, 'scripts');
+  mkdirSync(scripts, { recursive: true });
+  const rotator = rotatorIsNew
+    ? readFileSync(join(KIT_SCRIPTS, 'archive-decisions.mjs'), 'utf8')
+    : "// a pre-migration rotator: three tiers, no store\nexport const HOT_REL = 'docs/ai/decisions.md';\n";
+  writeFileSync(join(scripts, 'archive-decisions.mjs'), rotator);
+  for (const name of extraScripts) writeFileSync(join(scripts, name), '// an OLD deployed enforcement script (pre-migration)\n');
+  return cwd;
+};
+
+const canonBytes = (name) => readFileSync(join(KIT_SCRIPTS, name), 'utf8');
+
+describe('migrate-adr-store — the un-rotated old-scheme crossing', () => {
+  it('--dry-run names snapshot + refresh + store seeding, and writes NOTHING', () => {
+    mkUnrotatedLayout();
+    const hotBefore = readFileSync(join(cwd, 'docs', 'ai', 'decisions.md'), 'utf8');
+    const rotatorBefore = readFileSync(join(cwd, 'scripts', 'archive-decisions.mjs'), 'utf8');
+    const io = quiet();
+    assert.equal(run([], io), 0);
+    assert.match(io.out(), /predates the one-file-per-ADR store/);
+    assert.match(io.out(), /snapshot →/);
+    assert.match(io.out(), /refresh 2 enforcement script/);
+    assert.match(io.out(), /seed the store/);
+    assert.match(io.out(), /with --apply/, 'the go-ahead is printed for a tree that can converge');
+    assert.ok(!existsSync(join(cwd, 'docs', 'ai', 'adr')), 'no store written on dry-run');
+    assert.equal(readFileSync(join(cwd, 'docs', 'ai', 'decisions.md'), 'utf8'), hotBefore, 'HOT byte-identical');
+    assert.equal(readFileSync(join(cwd, 'scripts', 'archive-decisions.mjs'), 'utf8'), rotatorBefore, 'the rotator is NOT refreshed by a dry-run');
+  });
+
+  it('a malformed substrate: --dry-run exits non-zero, prints NO go-ahead, and writes nothing', () => {
+    mkUnrotatedLayout();
+    writeFileSync(join(cwd, 'docs', 'ai', 'decisions.md'), '---\nmaxLines: 500\n---\n\n# ADRs\n\n## not a canonical heading\n\nBody.\n');
+    const io = quiet();
+    assert.equal(run([], io), 1);
+    assert.doesNotMatch(io.out(), /with --apply/, 'a tree that cannot converge never gets a go-ahead');
+    assert.ok(!existsSync(join(cwd, 'docs', 'ai', 'adr')), 'nothing written');
+  });
+
+  it('--apply seeds the store, leaves the tree gate-green, and the layout survey then reads migrated', () => {
+    mkUnrotatedLayout();
+    assert.equal(surveyProject(cwd).adrLayout, 'old-unrotated', 'the detector flags it before the crossing');
+    const io = quiet();
+    assert.equal(run(['--apply'], io), 0);
+    assert.ok(existsSync(join(cwd, 'docs', 'ai', 'adr', 'log.md')), 'the navigator exists');
+    assert.equal(readFileSync(join(cwd, 'scripts', 'archive-decisions.mjs'), 'utf8'), canonBytes('archive-decisions.mjs'), 'the rotator is refreshed to the kit canon');
+    // The convergence bind: the crossing and the detector are asserted against EACH OTHER, so the
+    // signal provably goes quiet — the advisor guard could never disarm otherwise.
+    assert.equal(surveyProject(cwd).adrLayout, 'migrated', 'the crossed tree is migrated');
+  });
+
+  it('every refresh target matches the canon in BYTES and in MODE — not just the discriminator', () => {
+    mkUnrotatedLayout();
+    assert.equal(run(['--apply'], quiet()), 0);
+    for (const name of ['archive-decisions.mjs', 'check-docs-size.mjs']) {
+      assert.equal(readFileSync(join(cwd, 'scripts', name), 'utf8'), canonBytes(name), `${name} bytes`);
+      assert.equal(statSync(join(cwd, 'scripts', name)).mode & 0o777, statSync(join(KIT_SCRIPTS, name)).mode & 0o777, `${name} mode`);
+    }
+  });
+
+  // The convergence bind in its sharpest form: the detector calls an old rotator beside a finished
+  // store `old-unrotated`, so if the tool called that tree done the signal would stay lit forever
+  // with nothing able to clear it.
+  it('an OLD rotator beside a FINALISED store still converges — apply refreshes it and the layout reads migrated', () => {
+    mkUnrotatedLayout();
+    assert.equal(run(['--apply'], quiet()), 0, 'first crossing');
+    // put the pre-migration rotator back: the store is finished, the script is not
+    writeFileSync(join(cwd, 'scripts', 'archive-decisions.mjs'), "// a pre-migration rotator\nexport const HOT_REL = 'docs/ai/decisions.md';\n");
+    assert.equal(surveyProject(cwd).adrLayout, 'old-unrotated', 'the detector still flags it');
+    const io = quiet();
+    assert.equal(run(['--apply'], io), 0);
+    assert.doesNotMatch(io.out(), /already migrated/, 'a stale rotator is not a finished migration');
+    assert.equal(surveyProject(cwd).adrLayout, 'migrated', 'and now it converges');
+  });
+
+  // The consent preview must describe THIS tree. Keying the wording on "is there a store" called an
+  // already-refreshed rotator outdated — in the one message whose whole job is to be accurate.
+  it('the dry-run preview STATES the two facts and summarises neither', () => {
+    // A current rotator beside stale siblings is a supported state, so any sentence that summarises
+    // "the scripts" is wrong for it. The preview reports the rotator and the store separately, and
+    // which scripts are stale is the refresh line's job alone.
+    mkUnrotatedLayout({ rotatorIsNew: true });
+    const io = quiet();
+    assert.equal(run([], io), 0);
+    assert.match(io.out(), /archive-decisions\.mjs: already names the store/);
+    assert.match(io.out(), /docs\/ai\/adr\/: absent/);
+    assert.doesNotMatch(io.out(), /predates the one-file-per-ADR store/, 'a current rotator is never called outdated');
+    assert.doesNotMatch(io.out(), /scripts are current/, 'the sibling scripts are NOT claimed current');
+  });
+
+  // The preview may not infer "nothing to refresh" from an absent rotator: a SIBLING script can
+  // still be stale, and the very next line would then contradict it.
+  it('an absent rotator is reported as absent, never as "nothing to refresh"', () => {
+    mkUnrotatedLayout();
+    rmSync(join(cwd, 'scripts', 'archive-decisions.mjs'));
+    mkdirSync(join(cwd, 'docs', 'ai', 'adr'), { recursive: true }); // a store, so the no-rotator no-op does not fire
+    const io = quiet();
+    assert.equal(run([], io), 0);
+    assert.match(io.out(), /archive-decisions\.mjs: not deployed$/m);
+    assert.match(io.out(), /refresh 1 enforcement script/, 'a stale sibling IS still refreshed');
+  });
+
+  // A tree the tool could not READ must never be reported as a tree with nothing in it.
+  it('an UNREADABLE substrate is a loud refusal, never a confident "nothing to migrate"', () => {
+    mkUnrotatedLayout();
+    const io = quiet();
+    const eacces = (p) => {
+      if (String(p).endsWith('docs/ai/adr') || String(p).endsWith('docs/ai/decisions.md')) {
+        throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+      }
+      return statSync(p);
+    };
+    assert.equal(run([], io, { statSync: eacces }), 1);
+    assert.match(io.err(), /could not inspect/);
+    assert.doesNotMatch(io.out(), /nothing to migrate/, 'an unreadable tree is never called empty');
+  });
+
+  // Every path in this arm asks the same way: no `existsSync` survives to turn a permission error
+  // into "not there". The navigator is the one an earlier fold left behind.
+  it('an unreadable NAVIGATOR is loud too, not silently "not finalised"', () => {
+    mkUnrotatedLayout();
+    assert.equal(run(['--apply'], quiet()), 0, 'crossing completes');
+    const io = quiet();
+    const eacces = (p) => {
+      if (String(p).endsWith('docs/ai/adr/log.md')) throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+      return statSync(p);
+    };
+    assert.equal(run(['--apply'], io, { statSync: eacces }), 1);
+    assert.match(io.err(), /could not inspect/);
+  });
+
+  it('the same two facts on an old-scheme tree', () => {
+    mkUnrotatedLayout();
+    const io = quiet();
+    assert.equal(run([], io), 0);
+    assert.match(io.out(), /archive-decisions\.mjs: predates the one-file-per-ADR store/);
+    assert.match(io.out(), /docs\/ai\/adr\/: absent/);
+  });
+
+  it('a PARTIALLY refreshed tree (rotator already new, siblings stale) is completed, not skipped', () => {
+    // Exactly the crash state: the discriminator flipped, the rest of the refresh never happened.
+    mkUnrotatedLayout({ rotatorIsNew: true });
+    assert.equal(run(['--apply'], quiet()), 0);
+    assert.equal(readFileSync(join(cwd, 'scripts', 'check-docs-size.mjs'), 'utf8'), canonBytes('check-docs-size.mjs'), 'the sibling the resume could have skipped is refreshed');
+    assert.equal(surveyProject(cwd).adrLayout, 'migrated');
+  });
+
+  it('a crash during seeding converges on retry (the crossing is idempotent)', () => {
+    mkUnrotatedLayout();
+    let attempt = 0;
+    const failingSeed = (argv, opts) => {
+      if (argv[0] === '--write-navigator' && !argv.includes('--dry-run') && attempt++ === 0) return 1;
+      return runArchiveDecisions(argv, opts);
+    };
+    const io = quiet();
+    assert.equal(run(['--apply'], io, { runArchiveDecisions: failingSeed }), 1, 'the failed seed is LOUD');
+    assert.match(io.err(), /snapshot is at/, 'the failure names the snapshot');
+    assert.equal(run(['--apply'], quiet(), { runArchiveDecisions: failingSeed }), 0, 'the retry converges');
+    assert.equal(surveyProject(cwd).adrLayout, 'migrated');
+  });
+
+  // The retry has to repair what the failure left behind. `--check` never looks at the index, so a
+  // finalisation test built on it alone reported "already migrated" over a stale index forever.
+  it('after a FAILED index regeneration, the retry repairs it instead of reporting already-migrated', () => {
+    mkUnrotatedLayout();
+    let failIndex = true;
+    const regen = () => (failIndex ? { ok: false, detail: 'the index generator is not beside this script' } : { ok: true, detail: '' });
+    assert.equal(run(['--apply'], quiet(), { regenerateIndex: regen }), 1, 'the first run fails closed');
+    assert.ok(existsSync(join(cwd, 'docs', 'ai', 'adr', 'log.md')), 'the navigator did land');
+    failIndex = false;
+    const io = quiet();
+    // A stale index must NOT read as finalised: the retry re-seeds and regenerates it.
+    assert.equal(run(['--apply'], io, { regenerateIndex: regen, spawnSync: () => ({ status: 1 }) }), 0);
+    assert.doesNotMatch(io.out(), /already migrated/, 'a tree with a stale index is not "already migrated"');
+    assert.match(io.out(), /seeded/);
+  });
+
+  it('a failed index regeneration fails the crossing CLOSED', () => {
+    mkUnrotatedLayout();
+    const io = quiet();
+    assert.equal(run(['--apply'], io, { regenerateIndex: () => ({ ok: false, detail: 'the index generator is not beside this script' }) }), 1);
+    assert.match(io.err(), /index\.md was NOT regenerated/);
+    assert.match(io.err(), /snapshot is at/);
+  });
+
+  it('--dry-run refuses the go-ahead when no out-of-tree snapshot location exists', () => {
+    mkUnrotatedLayout();
+    const io = quiet();
+    // the fallback would land INSIDE the work tree, so it is not a durable snapshot base
+    assert.equal(run([], io, { snapshotFallbackBase: cwd }), 1);
+    assert.match(io.err(), /no out-of-tree snapshot location/);
+    assert.doesNotMatch(io.out(), /with --apply/, 'never green-light an apply that would refuse');
+  });
+
+  it('--apply runs the preflight FIRST: a malformed substrate touches nothing', () => {
+    mkUnrotatedLayout();
+    const rotatorBefore = readFileSync(join(cwd, 'scripts', 'archive-decisions.mjs'), 'utf8');
+    writeFileSync(join(cwd, 'docs', 'ai', 'decisions.md'), '---\nmaxLines: 500\n---\n\n# ADRs\n\n## not a canonical heading\n\nBody.\n');
+    const io = quiet();
+    assert.equal(run(['--apply'], io), 1);
+    assert.match(io.err(), /refusing to touch the tree/);
+    assert.equal(readFileSync(join(cwd, 'scripts', 'archive-decisions.mjs'), 'utf8'), rotatorBefore, 'no script was refreshed');
+    assert.ok(!existsSync(join(cwd, 'docs', 'ai', 'adr')), 'no store was seeded');
+  });
+
+  it("a seeded store whose own gate still fails is LOUD and names the snapshot", () => {
+    mkUnrotatedLayout();
+    const io = quiet();
+    const checkFails = (argv, opts) => (argv[0] === '--check' ? 1 : runArchiveDecisions(argv, opts));
+    assert.equal(run(['--apply'], io, { runArchiveDecisions: checkFails }), 1);
+    assert.match(io.err(), /its own gate does not pass/);
+    assert.match(io.err(), /snapshot is at/);
+  });
+
+  it('an old-scheme tree with NEITHER HOT nor store is a neutral no-op — never "a fresh new-scheme tree"', () => {
+    mkUnrotatedLayout();
+    rmSync(join(cwd, 'docs', 'ai', 'decisions.md'));
+    const io = quiet();
+    assert.equal(run([], io), 0);
+    assert.match(io.out(), /no ADR substrate/);
+    assert.doesNotMatch(io.out(), /new-scheme/, 'an old-scheme tree is never described as new-scheme');
+  });
+
+  it('no deployed rotation script at all is a stated no-op that points at upgrade (No-Node included)', () => {
+    mkUnrotatedLayout();
+    rmSync(join(cwd, 'scripts'), { recursive: true });
+    const io = quiet();
+    assert.equal(run([], io), 0);
+    assert.match(io.out(), /no deployed rotation script/);
+    assert.ok(!existsSync(join(cwd, 'docs', 'ai', 'adr')), 'a tree with nothing to maintain a store is never given one');
   });
 });
 

@@ -29,7 +29,10 @@
 //                      HOT preamble, and only THEN removes the monoliths — gated on conservation AND
 //                      the snapshot. Re-run skips byte-identical records (crash-resumable).
 //   --write-navigator  regenerate docs/ai/adr/log.md AND re-trigger the index regen (the authoring /
-//                      supersession write-side; the --write-index analog).
+//                      supersession write-side; the --write-index analog). With --dry-run it runs
+//                      EXACTLY the same validation (parse, half-migrated guard, store integrity) and
+//                      stops before every write — the read-only preflight a guarded caller needs to
+//                      earn a go-ahead without risking a partial write.
 //   --dry-run          print the planned rotation move-set, change nothing.
 //   --today=YYYY-MM-DD pin the lastUpdated stamp (tests / reproducible runs).
 //
@@ -693,7 +696,7 @@ const runMigrate = (root, flags, today, deps, log, logError) => {
   return 0;
 };
 
-const runWriteNavigator = (root, today, deps, log, logError) => {
+const runWriteNavigator = (root, flags, today, deps, log, logError) => {
   if (!existsSync(resolve(root, HOT_REL)) && !existsSync(resolve(root, ADR_DIR_REL))) {
     log(`[archive-decisions] SKIP — no ADR substrate (neither ${HOT_REL} nor ${ADR_DIR_REL}); nothing to write.`);
     return 0;
@@ -704,6 +707,14 @@ const runWriteNavigator = (root, today, deps, log, logError) => {
   const adrEntries = loadAdrStore(root);
   assertStoreIntegrity(hotEntries, adrEntries); // never emit a duplicate-row / corrupt navigator
   const corpus = [...hotEntries, ...adrEntries];
+  // --dry-run runs EXACTLY the validation above and stops before every write: the parse, the
+  // half-migrated guard and the store-integrity check are the same code the write path uses, so a
+  // caller (the guarded ADR-store crossing) can earn a go-ahead without a partial write. A separate
+  // re-implementation of these checks would be an approximation that can disagree with the writer.
+  if (flags.dryRun) {
+    log(`[archive-decisions] --write-navigator DRY-RUN — no files will be changed; ${corpus.length} ADR(s) validated.`);
+    return 0;
+  }
   writeNavigatorFile(root, corpus, today);
   const regen = (deps.regenerateIndex ?? defaultRegenerateIndex)(root, today);
   log(`[archive-decisions] wrote ${NAV_REL} (${corpus.length} ADRs in the corpus).`);
@@ -828,7 +839,7 @@ export const runCli = (argv, deps = {}) => {
     const today = todayOpt ?? new Date().toISOString().slice(0, 10);
 
     if (flags.migrate) return runMigrate(root, flags, today, deps, log, logError);
-    if (flags.writeNavigator) return runWriteNavigator(root, today, deps, log, logError);
+    if (flags.writeNavigator) return runWriteNavigator(root, flags, today, deps, log, logError);
     if (flags.check) return runCheck(root, today, log, logError);
 
     if (!existsSync(resolve(root, HOT_REL))) {

@@ -1,5 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import {
+  HOT_REL as ROTATOR_HOT_REL,
+  WARM_REL as ROTATOR_WARM_REL,
+  COLD_REL as ROTATOR_COLD_REL,
+  ADR_DIR_REL as ROTATOR_ADR_DIR_REL,
+} from '../references/scripts/archive-decisions.mjs';
 import { readFileSync, writeFileSync, mkdtempSync, rmSync, cpSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -9,6 +15,8 @@ import {
   classifyMember,
   surveyFamily,
   surveyProject,
+  surveyAdrLayoutStrict,
+  ADR_LAYOUT_PATHS,
   buildEnvelope,
   DISPLAY_NAMES,
   MEMORY_ORCH_TEMPLATE_REL,
@@ -258,6 +266,11 @@ describe('surveyFamily', () => {
 describe('surveyProject', () => {
   const projectDeps = ({ files }) => ({
     exists: (p) => Object.prototype.hasOwnProperty.call(files, p) || Object.keys(files).some((k) => k === p),
+    // The ADR-layout survey asks for the TYPE, not just presence — a null value declares a directory.
+    statPath: (p) => {
+      if (!Object.prototype.hasOwnProperty.call(files, p)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      return files[p] === null ? 'dir' : 'file';
+    },
     readFile: (p) => {
       if (!Object.prototype.hasOwnProperty.call(files, p)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
       return files[p];
@@ -287,7 +300,9 @@ describe('surveyProject', () => {
     assert.equal(r.deployed, false);
     assert.equal(r.hiddenFence, false);
     assert.ok(r.stamps.every((s) => s.version === null));
-    assert.equal(r.adrLayout, 'none', 'no ADR substrate → none');
+    // Re-cut with the discriminator arm: `none` here means no monolith, no store, no HOT window AND
+    // no deployed rotator — not merely "nothing matched the two old probes".
+    assert.equal(r.adrLayout, 'none', 'no ADR substrate and no deployed rotator → none');
   });
 
   it('the ADR-layout probe never throws — an exists() error degrades to none (read-only invariant)', () => {
@@ -299,11 +314,136 @@ describe('surveyProject', () => {
     const dir = '/proj';
     const old = surveyProject(dir, projectDeps({ files: { [join(dir, 'docs/ai/history/decisions-archive.md')]: '' } }));
     assert.equal(old.adrLayout, 'old', 'a retired decisions-archive monolith → old (needs migration)');
-    const migrated = surveyProject(dir, projectDeps({ files: { [join(dir, 'docs/ai/adr')]: '' } }));
+    const migrated = surveyProject(dir, projectDeps({ files: { [join(dir, 'docs/ai/adr')]: null } }));
     assert.equal(migrated.adrLayout, 'migrated', 'the one-file-per-ADR adr/ store, no monolith → migrated');
     // A monolith present WINS over an adr/ dir (a half-migrated tree still needs the migration to finish).
-    const half = surveyProject(dir, projectDeps({ files: { [join(dir, 'docs/ai/history/decisions-archive-early.md')]: '', [join(dir, 'docs/ai/adr')]: '' } }));
+    const half = surveyProject(dir, projectDeps({ files: { [join(dir, 'docs/ai/history/decisions-archive-early.md')]: '', [join(dir, 'docs/ai/adr')]: null } }));
     assert.equal(half.adrLayout, 'old', 'a monolith still on disk keeps the layout old even beside adr/');
+  });
+});
+
+// ── the ADR-layout discriminator: the old-scheme tree that never rotated ──────────
+//
+// A consumer on the retired 3-tier scheme that never rotated far enough to produce a monolith read
+// `none` — no status line, no upgrade instruct, and the migration tool called their tree "a fresh
+// new-scheme tree". The discriminator is the DEPLOYED rotator's own provenance: the new-scheme file
+// names the store path, the pre-migration one does not (verified: `git show
+// 1517e4e:.../archive-decisions.mjs` contains zero occurrences of it). Never "has decisions.md,
+// lacks adr/" — that shape false-positives a tree whose NEW rotator already reds its own gate, and
+// every No-Node project.
+
+describe('surveyAdrLayout — the old-unrotated arm', () => {
+  const dir = '/proj';
+  const HOT = join(dir, 'docs/ai/decisions.md');
+  const STORE = join(dir, 'docs/ai/adr');
+  const ROTATOR = join(dir, 'scripts/archive-decisions.mjs');
+  const MONOLITH = join(dir, 'docs/ai/history/decisions-archive.md');
+  const OLD_ROTATOR = "export const HOT_REL = 'docs/ai/decisions.md';\nexport const WARM_REL = 'docs/ai/history/decisions-archive.md';\n";
+  const NEW_ROTATOR = `${OLD_ROTATOR}export const ADR_DIR_REL = 'docs/ai/adr';\n`;
+
+  // A tree is declared as {path: contents}; a path whose value is null is a DIRECTORY.
+  const treeDeps = (files) => ({
+    exists: (p) => Object.prototype.hasOwnProperty.call(files, p),
+    statPath: (p) => {
+      if (!Object.prototype.hasOwnProperty.call(files, p)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      return files[p] === null ? 'dir' : 'file';
+    },
+    readFile: (p) => {
+      if (!Object.prototype.hasOwnProperty.call(files, p)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      return files[p];
+    },
+  });
+
+  it('old-scheme rotator + HOT window, no monolith, no store → old-unrotated', () => {
+    const r = surveyProject(dir, treeDeps({ [HOT]: '', [ROTATOR]: OLD_ROTATOR }));
+    assert.equal(r.adrLayout, 'old-unrotated', 'the deployed rotator predates the store — this tree needs the crossing');
+  });
+
+  it('new-scheme rotator, no store → none (cohort A: its OWN gate already reds, actionably)', () => {
+    const r = surveyProject(dir, treeDeps({ [HOT]: '', [ROTATOR]: NEW_ROTATOR }));
+    assert.equal(r.adrLayout, 'none', 'a tree whose own --check names --write-navigator is never nagged twice');
+  });
+
+  it('rotator absent → none (upgrade seed-if-missing owns it; a No-Node project too)', () => {
+    const r = surveyProject(dir, treeDeps({ [HOT]: '' }));
+    assert.equal(r.adrLayout, 'none', 'no deployed rotator means no evidence of scheme, and nothing actionable');
+  });
+
+  it('old-scheme rotator but NEITHER HOT nor store → none (no ADR substrate to migrate)', () => {
+    const r = surveyProject(dir, treeDeps({ [ROTATOR]: OLD_ROTATOR }));
+    assert.equal(r.adrLayout, 'none', 'the crossing cannot seed a store with no substrate, so the detector must not ask for it');
+  });
+
+  it('a monolith wins over every rotator arm — including a tree with no rotator at all', () => {
+    assert.equal(surveyProject(dir, treeDeps({ [MONOLITH]: '', [HOT]: '' })).adrLayout, 'old');
+    assert.equal(surveyProject(dir, treeDeps({ [MONOLITH]: '', [HOT]: '', [ROTATOR]: NEW_ROTATOR })).adrLayout, 'old');
+  });
+
+  it('a store beside a NEW rotator is migrated; beside an OLD one it is still actionable', () => {
+    assert.equal(surveyProject(dir, treeDeps({ [HOT]: '', [STORE]: null, [ROTATOR]: NEW_ROTATOR })).adrLayout, 'migrated');
+    // `upgrade` preserves an existing rotator, so an old-scheme one beside a store will write a
+    // monolith again the next time it rotates. A store on disk is not proof the crossing finished.
+    assert.equal(surveyProject(dir, treeDeps({ [HOT]: '', [STORE]: null, [ROTATOR]: OLD_ROTATOR })).adrLayout, 'old-unrotated');
+  });
+
+  it('a store with no deployed rotator at all is still migrated (nothing to demote it)', () => {
+    assert.equal(surveyProject(dir, treeDeps({ [HOT]: '', [STORE]: null })).adrLayout, 'migrated');
+  });
+
+  it('the TYPE is part of the answer: a regular FILE named docs/ai/adr is not a store', () => {
+    const r = surveyProject(dir, treeDeps({ [HOT]: '', [STORE]: 'not a directory', [ROTATOR]: OLD_ROTATOR }));
+    assert.equal(r.adrLayout, 'old-unrotated', 'a name alone never earns the migrated verdict');
+  });
+
+  it('a DIRECTORY named archive-decisions.mjs is not a rotator', () => {
+    const r = surveyProject(dir, treeDeps({ [HOT]: '', [ROTATOR]: null }));
+    assert.equal(r.adrLayout, 'none', 'nothing readable declares a scheme, so nothing is claimed');
+  });
+});
+
+describe('surveyAdrLayoutStrict — an error may never become an absence', () => {
+  const dir = '/proj';
+
+  // The advisor cannot reuse the lenient survey: it turns every failure into `none`, which would
+  // render "flow optimal" over an unreadable old layout. The strict core propagates instead — and
+  // that is only real if the DEFAULT probe can report a failure at all (existsSync returns false
+  // for EACCES exactly as it does for a missing file, so a strict policy layered on it is vacuous).
+  const throwing = (code) => () => {
+    throw Object.assign(new Error(code), { code });
+  };
+
+  it('an EACCES-class failure PROPAGATES from the strict survey', () => {
+    assert.throws(() => surveyAdrLayoutStrict(dir, { statPath: throwing('EACCES') }), /EACCES/);
+  });
+
+  it('ENOTDIR propagates too — a file where a directory belongs is corruption, not absence', () => {
+    assert.throws(() => surveyAdrLayoutStrict(dir, { statPath: throwing('ENOTDIR') }), /ENOTDIR/);
+  });
+
+  it('an unreadable ROTATOR propagates as well — the provenance question stays unanswered', () => {
+    const onlyRotator = (p) => {
+      if (!p.endsWith('archive-decisions.mjs')) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      return 'file';
+    };
+    assert.throws(
+      () => surveyAdrLayoutStrict(dir, { statPath: onlyRotator, readFile: throwing('EACCES') }),
+      /EACCES/,
+    );
+  });
+
+  it('ENOENT is the ONLY absence', () => {
+    assert.equal(surveyAdrLayoutStrict(dir, { statPath: throwing('ENOENT') }), 'none');
+  });
+
+  it('surveyProject still degrades to none over the same failure (the read-only view never crashes)', () => {
+    assert.equal(surveyProject(dir, { statPath: throwing('EACCES'), exists: throwing('EACCES') }).adrLayout, 'none');
+  });
+
+  it('the registry path literals equal the rotator canon (drift guard)', () => {
+    assert.equal(ADR_LAYOUT_PATHS.hot, ROTATOR_HOT_REL);
+    assert.equal(ADR_LAYOUT_PATHS.store, ROTATOR_ADR_DIR_REL);
+    assert.deepEqual(ADR_LAYOUT_PATHS.monoliths, [ROTATOR_WARM_REL, ROTATOR_COLD_REL]);
+    assert.ok(ADR_LAYOUT_PATHS.storeMarker.length > 0 && ROTATOR_ADR_DIR_REL.includes(ADR_LAYOUT_PATHS.storeMarker));
   });
 });
 

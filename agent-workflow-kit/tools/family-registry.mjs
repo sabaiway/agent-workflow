@@ -342,23 +342,89 @@ const hasHiddenFence = (projectDir, deps = {}) => {
 // The retired 3-tier ADR monoliths (AD-051): their presence is the old-layout signal a consumer must
 // migrate away from via the opt-in `migrate-adr-store` mode. Stable relative paths (a status probe
 // never imports the rotator).
-const DECISIONS_MONOLITHS = ['docs/ai/history/decisions-archive.md', 'docs/ai/history/decisions-archive-early.md'];
-const ADR_STORE_DIR = 'docs/ai/adr';
+// The ADR-layout probe's paths. LOCAL literals, not an import: this module backs the read-only
+// `status` view and importing the rotator would drag child_process + crypto into a status read. A
+// drift guard in family-registry.test.mjs pins each literal to the rotator's exported constant —
+// the same baked-frozen-copy shape the gate hook uses for its velocity constants.
+export const ADR_LAYOUT_PATHS = Object.freeze({
+  hot: 'docs/ai/decisions.md',
+  monoliths: Object.freeze(['docs/ai/history/decisions-archive.md', 'docs/ai/history/decisions-archive-early.md']),
+  store: 'docs/ai/adr',
+  // The DEPLOYED rotator is the discriminator: the new-scheme file names the store path, the
+  // pre-migration one does not. Never "has decisions.md, lacks adr/" — that shape false-positives a
+  // tree whose NEW rotator already reds its own gate, and every No-Node project.
+  rotator: 'scripts/archive-decisions.mjs',
+  storeMarker: 'docs/ai/adr',
+});
+const ENOENT = 'ENOENT';
 
 // The ADR-store layout axis: 'old' (a retired decisions-archive monolith is still on disk — needs
 // the opt-in migration), 'migrated' (the one-file-per-ADR adr/ store is in place), or 'none' (no ADR
 // substrate at all). Keys on the monolith presence, NOT on the stamp/head (Decision 6/13).
-const surveyAdrLayout = (dir, exists) => {
-  const safe = (rel) => {
+// The STRICT core. Absence is ENOENT and nothing else: existsSync collapses EVERY failure to false
+// (EACCES included), so a strict policy layered on it would be vacuous in production and observable
+// only through injected deps — and ENOTDIR means a file where a directory belongs, i.e. corruption,
+// not "not there". Everything else propagates, so the advisor can degrade to a STATED SKIP instead
+// of printing "flow optimal" over a layout it could not read.
+export const PATH_DIR = 'dir';
+export const PATH_FILE = 'file';
+export const PATH_OTHER = 'other';
+const probeStat = (path) => {
+  const st = statSync(path);
+  return st.isDirectory() ? PATH_DIR : st.isFile() ? PATH_FILE : PATH_OTHER;
+};
+
+export const surveyAdrLayoutStrict = (dir, deps = {}) => {
+  const stat = deps.statPath ?? probeStat;
+  const read = deps.readFile ?? readFileSync;
+  const absent = (err) => err && err.code === ENOENT;
+  // The TYPE is part of the question: a regular file named `docs/ai/adr` is not a store, and a
+  // directory named `archive-decisions.mjs` is not a rotator. Answering `migrated` off a name alone
+  // is the same fail-open this survey exists to avoid.
+  const typeAt = (rel) => {
     try {
-      return exists(join(dir, rel));
-    } catch {
-      return false;
+      return stat(join(dir, rel));
+    } catch (err) {
+      if (absent(err)) return null;
+      throw err;
     }
   };
-  if (DECISIONS_MONOLITHS.some(safe)) return 'old';
-  if (safe(ADR_STORE_DIR)) return 'migrated';
-  return 'none';
+  const isA = (rel, kind) => typeAt(rel) === kind;
+
+  if (ADR_LAYOUT_PATHS.monoliths.some((rel) => isA(rel, PATH_FILE))) return 'old';
+
+  // Rotator provenance is resolved BEFORE any verdict, because it also disambiguates a tree that
+  // HAS a store: an old-scheme rotator beside a store is not finished — `upgrade` preserves that
+  // script and it will write a monolith again the next time it rotates.
+  const rotatorScheme = (() => {
+    if (!isA(ADR_LAYOUT_PATHS.rotator, PATH_FILE)) return null;
+    try {
+      return String(read(join(dir, ADR_LAYOUT_PATHS.rotator), 'utf8')).includes(ADR_LAYOUT_PATHS.storeMarker) ? 'new' : 'old';
+    } catch (err) {
+      if (absent(err)) return null;
+      throw err;
+    }
+  })();
+
+  if (isA(ADR_LAYOUT_PATHS.store, PATH_DIR)) return rotatorScheme === 'old' ? 'old-unrotated' : 'migrated';
+  // No substrate at all: the crossing cannot seed a store with nothing to put in it, so the
+  // detector must not ask for one (this is also what the rotator's own no-substrate skip does).
+  if (!isA(ADR_LAYOUT_PATHS.hot, PATH_FILE)) return 'none';
+  // No deployed rotator: no evidence of scheme, and nothing actionable — upgrade's seed-if-missing
+  // owns that path, and on a No-Node project a Node tool would be a permanent unactionable nag.
+  // A NEW-scheme rotator with no store is cohort A: its own --check already reds on every commit
+  // naming --write-navigator, so it is never nagged twice.
+  return rotatorScheme === 'old' ? 'old-unrotated' : 'none';
+};
+
+// The LENIENT wrapper — the read-only status view must never crash, so any failure reads `none`.
+// One implementation, two stated policies; the advisor uses the strict core deliberately.
+const surveyAdrLayout = (dir, deps) => {
+  try {
+    return surveyAdrLayoutStrict(dir, deps);
+  } catch {
+    return 'none';
+  }
 };
 
 // surveyProject → the deploy axis for a target project dir: the per-member deployment stamps, whether
@@ -378,7 +444,7 @@ export const surveyProject = (projectDir, deps = {}) => {
     }
   })();
   const deployed = stamps.some((s) => s.version != null) || docsAiPresent;
-  return { dir, deployed, docsAiPresent, adrLayout: surveyAdrLayout(dir, exists), hiddenFence: hasHiddenFence(dir, deps), stamps };
+  return { dir, deployed, docsAiPresent, adrLayout: surveyAdrLayout(dir, deps), hiddenFence: hasHiddenFence(dir, deps), stamps };
 };
 
 // ── report ───────────────────────────────────────────────────────────────────────
@@ -615,7 +681,7 @@ export const buildEnvelope = (family, project = null, extras = {}) => {
       dir: project.dir,
       deployed: project.deployed,
       docsAi: project.docsAiPresent,
-      adrLayout: project.adrLayout, // 'old' | 'migrated' | 'none' — a user-safe token, never a raw path
+      adrLayout: project.adrLayout, // 'old' | 'old-unrotated' | 'migrated' | 'none' — a user-safe token, never a raw path
       // member + display + version only — never the internal stamp FILENAME (s.file).
       deployStamps: project.stamps.map((s) => ({ member: s.name, display: displayOf(s.name), version: s.version ?? null })),
     };

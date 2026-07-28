@@ -7,6 +7,25 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-28 — AD-083 the ADR-store migration finds the projects that could never hear about it (kit 4.5.0, memory 3.2.0)
+
+The one-file-per-ADR migration has worked since AD-051. It could not be *reached* by an entire class
+of projects: the old-layout check keyed on a retired archive file being on disk, so a project whose
+decisions file never grew big enough to roll one over was reported as having nothing to do — and the
+migration tool greeted it as «a fresh new-scheme tree». Its own pre-commit check agreed, printing
+«OK — every tier is within its cap» about a layout that no longer exists.
+
+The check now reads the rotation script the project actually deploys, which either knows about the
+store or does not. That is a fact about the tree rather than an inference from filenames, and it
+deliberately stays silent for the two groups the obvious heuristic would have accused wrongly. The
+migration gained the matching arm and, more importantly, can now be re-run to completion after any
+interruption — a store folder on its own is no longer mistaken for a finished job. `upgrade` stops
+reporting «flow optimal» to a project sitting on the retired layout, through a recommendation whose
+runnable half is the preview and never the migration itself.
+
+Memory ships the piece that makes the preview honest: the rotation can now be asked whether seeding
+would succeed, running exactly the checks the real write runs and touching nothing.
+
 ## 2026-07-28 — AD-082 the guard stops charging you for answers it already has (kit 4.4.0)
 
 For two months a guard rung that DENIES instead of asking looked like the answer to a growing corpus

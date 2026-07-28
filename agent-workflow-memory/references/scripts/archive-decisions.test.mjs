@@ -643,6 +643,33 @@ describe('1.5 navigator — governing heads (computed), superseded drop out but 
     assert.doesNotMatch(gov, /\| AD-002 \|/, 'the Proposed ADR is NOT a governing head (accepted & not-superseded only)');
   });
 
+  // The read-only preflight a guarded caller needs: the SAME parse / half-migrated guard / store
+  // integrity the writer runs, stopping before every write. Without it a caller can only learn that
+  // seeding is safe by seeding.
+  it('--write-navigator --dry-run validates and writes NOTHING', () => {
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['005', '006'], storeIds: ['001'] });
+    const navBefore = readFileSync(join(root, NAV_REL), 'utf8');
+    rmSync(join(root, NAV_REL));
+    const r = run(['--write-navigator', '--dry-run', '--today=2026-07-09'], root);
+    assert.equal(r.code, 0);
+    assert.match(r.out.join('\n'), /DRY-RUN/, 'the run states it changed nothing');
+    assert.equal(existsSync(join(root, NAV_REL)), false, 'the navigator was NOT written by the dry-run');
+    // and the real run still produces exactly what the dry-run validated
+    assert.equal(run(['--write-navigator', '--today=2026-07-09'], root).code, 0);
+    assert.equal(readFileSync(join(root, NAV_REL), 'utf8'), navBefore);
+  });
+
+  it('--write-navigator --dry-run REFUSES a corrupt store instead of green-lighting it', () => {
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['005', '006'], storeIds: ['001'] });
+    // a record whose id also lives in the HOT window — the store would hold the ADR twice
+    writeFileSync(join(root, ADR_DIR_REL, 'AD-005-dup.md'), '---\n---\n\n## AD-005 — Dup\n\nBody.\n');
+    const r = run(['--write-navigator', '--dry-run', '--today=2026-07-09'], root);
+    assert.notEqual(r.code, 0, 'a corrupt store fails the preflight');
+    assert.doesNotMatch(r.out.join('\n'), /DRY-RUN/, 'no go-ahead is printed for a tree that cannot converge');
+  });
+
   it('authoring a new HOT ADR then --write-navigator keeps --check green; a stale nav with NO write → exit 1, then --write-navigator fixes it', () => {
     const root = makeRoot();
     seedMigrated(root, { hotIds: ['005', '006'], storeIds: ['001'] });
