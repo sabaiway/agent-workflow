@@ -10,7 +10,9 @@ maxLines: 700
 # AI Session Changelog
 
 > One entry per session. Newest at the top. Entries roll off to `history/recent.md` (WARM) then `history/YYYY-MM.md` (COLD) via the archive script.
-> Heading format is load-bearing for rotation: `## YYYY.MM.DD — <title>`.
+> Heading format is load-bearing for rotation: `## YYYY-MM-DD — <title>`. The rotator also still
+> reads the legacy dotted form `## YYYY.MM.DD`, so existing archives keep working — but write ISO,
+> the form every other date in this substrate uses, including `lastUpdated:` above.
 
 ## {{DATE}} — Bootstrap
 

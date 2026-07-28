@@ -511,6 +511,31 @@ describe('migrate-adr-store — planScriptRefresh is directional', () => {
   });
 });
 
+describe('migrate-adr-store — companion seed keeps refreshed archivers loadable', () => {
+  // The refresh is directional (never ADDS a basename), but this kit's archivers import
+  // ./markdown-blocks.mjs — refreshing an OLD deployment without seeding the module would leave
+  // every refreshed archiver crashing on a missing import until a separate upgrade run.
+  it('--apply seeds the markdown-blocks pair beside refreshed archivers, and they import cleanly', async () => {
+    mkOldLayout({ git: true, deployedScripts: ['archive-decisions.mjs', 'archive-changelog.mjs', 'check-docs-size.mjs'] });
+    const io = quiet();
+    assert.equal(run(['--apply'], io), 0, io.err() || io.out());
+    assert.ok(existsSync(join(cwd, 'scripts', 'markdown-blocks.mjs')), 'the runtime companion module is seeded');
+    assert.ok(existsSync(join(cwd, 'scripts', 'markdown-blocks.test.mjs')), 'its deploy-payload test is seeded');
+    // The load probe that matters: the refreshed deployed archivers resolve their imports.
+    const { pathToFileURL } = await import('node:url');
+    await import(pathToFileURL(join(cwd, 'scripts', 'archive-decisions.mjs')).href);
+    await import(pathToFileURL(join(cwd, 'scripts', 'archive-changelog.mjs')).href);
+  });
+
+  it('a dry run names the companion seed in the plan and writes nothing', () => {
+    mkOldLayout({ git: true, deployedScripts: ['archive-decisions.mjs', 'check-docs-size.mjs'] });
+    const io = quiet();
+    assert.equal(run([], io), 0);
+    assert.match(io.out(), /markdown-blocks\.mjs/);
+    assert.ok(!existsSync(join(cwd, 'scripts', 'markdown-blocks.mjs')), 'dry run seeds nothing');
+  });
+});
+
 describe('migrate-adr-store — parseArgs', () => {
   it('defaults to dry-run; --apply flips it; --cwd captures a value', () => {
     assert.equal(parseArgs([]).apply, false);

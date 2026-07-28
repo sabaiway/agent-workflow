@@ -57,6 +57,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
+import { tokenizeMarkdown } from './markdown-blocks.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = resolve(__dirname, '..');
@@ -78,8 +79,10 @@ const NAV_RECENT_WINDOW = 15;
 
 // AD-\d{3,}: 3-digit ids stay valid, AD-1000+ parse; ordering is always NUMERIC (never lexical).
 export const HEADING_RE = /^## AD-(\d{3,}) — (.+)$/;
-const ANY_H2_RE = /^## /;
-const FRONTMATTER_RE = /^(---\n[\s\S]*?\n---\n)/;
+// AD-SHAPE, deliberately wider than the grammar: the AD- prefix at ANY level and indent (space or
+// tab separated), so `### AD-051 — …`, `  ## AD-051 — …` and a tab-separated form refuse loudly
+// instead of being absorbed as body text.
+const AD_SHAPED_HEADING_RE = /^\s*#{1,6}[ \t]+AD-\d/;
 const RECORD_FILE_RE = /^AD-(\d{3,})-.*\.md$/;
 
 export const fail = (exitCode, message) => Object.assign(new Error(message), { exitCode });
@@ -126,26 +129,38 @@ const extractLifecycle = (block) => {
   return { status, date, supersedes, supersededBy };
 };
 
-// Parse one tier's text → { frontmatter, cap, preamble, entries }. Every `## ` line must be a
-// canonical AD heading — anything else is exit 1 naming file:line (Issue-009).
+// Parse one tier's text → { frontmatter, cap, preamble, entries }. The text is read through the
+// shared block tokenizer, so a `## ` line inside a fenced sample is BODY (an ADR documenting a
+// heading format is no longer falsely refused), an unclosed fence is a loud error, and CRLF never
+// changes a parse. Every column-0 H2 heading TOKEN must be a canonical AD heading, and an
+// AD-shaped heading at any other level or indent refuses too — anything else is exit 1 naming
+// file:line (Issue-009).
 export const parseDecisionsText = (text, label) => {
-  const fmMatch = text.match(FRONTMATTER_RE);
-  const frontmatter = fmMatch ? fmMatch[1] : '';
-  const fmLines = frontmatter === '' ? 0 : frontmatter.split('\n').length - 1;
-  const rest = text.slice(frontmatter.length);
-  const lines = rest.split('\n');
+  const { frontmatter, frontLines, lines, headings } = tokenizeMarkdown(text, label);
+  const fileLine = (index) => frontLines + index + 1;
 
   const startIdxs = [];
-  lines.forEach((line, i) => {
-    if (!ANY_H2_RE.test(line)) return;
-    if (!HEADING_RE.test(line)) {
+  const matchByIdx = new Map();
+  for (const heading of headings) {
+    if (heading.level === 2 && heading.text.startsWith('## ')) {
+      const m = HEADING_RE.exec(heading.text);
+      if (!m) {
+        throw fail(
+          1,
+          `${label}:${fileLine(heading.index)}: non-canonical H2 heading "${heading.text}" — every "## " heading must be \`## AD-NNN — <title>\` (AD-\\d{3,}; never silently glued to the previous entry; fix the heading, then re-run)`,
+        );
+      }
+      startIdxs.push(heading.index);
+      matchByIdx.set(heading.index, m);
+      continue;
+    }
+    if (AD_SHAPED_HEADING_RE.test(heading.text)) {
       throw fail(
         1,
-        `${label}:${fmLines + i + 1}: non-canonical H2 heading "${line}" — every "## " heading must be \`## AD-NNN — <title>\` (AD-\\d{3,}; never silently glued to the previous entry; fix the heading, then re-run)`,
+        `${label}:${fileLine(heading.index)}: "${heading.text}" is AD-shaped but not a canonical ADR heading — expected \`## AD-NNN — <title>\` (level 2, column 0). It would previously have been silently treated as body text; fix the heading, then re-run`,
       );
     }
-    startIdxs.push(i);
-  });
+  }
 
   const preambleEnd = startIdxs.length > 0 ? startIdxs[0] : lines.length;
   const preamble = lines.slice(0, preambleEnd).join('\n').trim();
@@ -153,7 +168,7 @@ export const parseDecisionsText = (text, label) => {
   const entries = startIdxs.map((idx, i) => {
     const end = i + 1 < startIdxs.length ? startIdxs[i + 1] : lines.length;
     const blockLines = stripTrailingSeparators(lines.slice(idx, end));
-    const m = HEADING_RE.exec(lines[idx]);
+    const m = matchByIdx.get(idx);
     const block = blockLines.join('\n');
     return {
       id: m[1],
@@ -751,7 +766,9 @@ const runCheck = (root, today, log, logError) => {
 
   const problems = [];
   if (hot) {
-    log(`[archive-decisions] ${HOT_REL}: ${hot.rawLines}/${hot.cap}`);
+    // Arm B: the verdict names the parsed unit count, not just raw lines — with the loud parse
+    // path, zero can only mean genuinely empty, never a populated file read as nothing.
+    log(`[archive-decisions] ${HOT_REL}: ${hot.rawLines}/${hot.cap} lines, ${hot.entries.length} ADR(s) in the HOT window`);
     if (hot.cap !== null && hot.rawLines > hot.cap) problems.push(`${HOT_REL} is over its cap (${hot.rawLines}/${hot.cap}) — run \`node scripts/archive-decisions.mjs\` to explode the oldest entries`);
   }
   log(`[archive-decisions] ${ADR_DIR_REL}: ${adrEntries.length} record(s)`);
