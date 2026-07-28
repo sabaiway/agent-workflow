@@ -152,6 +152,14 @@ describe('renderers — branch coverage (every replaced-function branch)', () =>
     assert.doesNotMatch(none, /ADR store/, 'no ADR substrate shows no note');
   });
 
+  // The old-scheme tree that never rotated far enough to make a monolith. The user's situation and
+  // the remedy are identical to `old` — only the internal discriminator differs — so the line is the
+  // same line, never a second wording for the same instruction.
+  it('an OLD-UNROTATED layout renders the SAME actionable line as old', () => {
+    const unrotated = renderPlain({ installed: [], project: { dir: '/p', deployed: true, adrLayout: 'old-unrotated', deployStamps: [] } });
+    assert.match(unrotated, /ADR store\s+old layout — run \/agent-workflow-kit migrate-adr-store/);
+  });
+
   it('a member with TWO notes (engine missing both fragments) prints both as ↳ sub-lines', () => {
     const out = renderPlain({
       installed: [{ member: 'agent-workflow-engine', display: 'engine', version: '1.1.0', state: 'installed', notes: ['engine present but does not supply the recipes pointer', 'engine present but does not ship the activity-procedures canon'], refresh: { behind: true, recommend: 'npx @sabaiway/agent-workflow-engine@latest init' } }],

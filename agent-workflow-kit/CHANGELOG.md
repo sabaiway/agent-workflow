@@ -4,6 +4,37 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 4.5.0 — the ADR-store migration finds the projects that could never hear about it (AD-083)
+
+**If your project still keeps its decisions in one big archive file, this release is the first thing
+that will actually tell you so.** A whole class of projects was invisible to the old check.
+
+**1. The old-layout check stopped guessing from filenames.** It used to say «old layout» only when a
+retired `docs/ai/history/decisions-archive*.md` file was on disk. A project that never grew one — its
+decisions file simply never got big enough to roll over — was reported as having nothing to do, and
+running the migration greeted it with *«a fresh new-scheme tree»*. Its own pre-commit check agreed:
+«OK — every tier is within its cap», forever, describing a retired layout as healthy. The check now
+looks at the rotation script your project actually deploys: the current one knows about the
+`docs/ai/adr/` store, the older one does not. That is a fact about your tree, not a guess — and it
+deliberately stays quiet for two groups it would otherwise nag wrongly: projects whose current script
+already reds their own commit with an actionable fix, and projects that run no Node at all.
+
+**2. `migrate-adr-store` now finishes the job on those projects, and can always be re-run.** On a
+project with no archive file to explode it snapshots, refreshes the enforcement scripts and seeds the
+store (`docs/ai/adr/` + the navigator + a regenerated `docs/ai/index.md`). Interrupt it anywhere and
+run it again: a store folder alone is no longer mistaken for «done» (the navigator has to exist and
+your own check has to pass), the script refresh is re-planned in full each run, and a failed index
+regeneration now fails the run loudly instead of reporting success. The preview earns its go-ahead —
+it runs exactly the checks the real run does and writes nothing.
+
+**3. `upgrade` stops saying «flow optimal» to a project on the old layout.** The recommendations
+section now carries the migration as an item. It is HAND-APPLY on purpose: the one-liner it hands you
+is the **preview**, and the real migration is a separate step you run only after seeing the plan and
+agreeing to it — this crossing overwrites and deletes files your project already has, which is why it
+never rides the ordinary one-click apply. Honest limit, stated plainly:
+this reaches you through `status` and `upgrade`, so it mechanizes a door you already walk through — it
+is not a new one for someone who never runs either.
+
 ## 4.4.0 — the guard stops charging you for answers it already has (AD-082)
 
 **If the agent keeps asking you to approve its own `2>/dev/null`, this release is for you.** Two

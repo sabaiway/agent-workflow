@@ -15,6 +15,10 @@ const READINESS_COL = 14;
 const STAMP_COL = 26;
 const SETTINGS_COL = 14;
 
+// The ADR-layout tokens that carry an action for the user. Kept as a list, not a chain of equality
+// checks, so a future token joins the render by joining this line.
+const ACTIONABLE_ADR_LAYOUTS = Object.freeze(['old', 'old-unrotated']);
+
 const SGR = Object.freeze({ bold: '\x1b[1m', reset: '\x1b[0m' });
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 export const visibleLength = (s) => s.replace(ANSI_RE, '').length;
@@ -86,8 +90,10 @@ const renderProject = (vm, { color }) => {
   }
   for (const s of p.deployStamps) lines.push(`  ${pad(s.display, STAMP_COL)}${s.version ?? '—'}`);
   lines.push(`  ${pad('docs/ai present', STAMP_COL)}${p.docsAi ? 'yes' : 'no'}`);
-  // Only the actionable 'old' layout renders a line — a migrated/none store needs no note (AD-051).
-  if (p.adrLayout === 'old') {
+  // Only an ACTIONABLE layout renders a line — a migrated/none store needs no note (AD-051). Both
+  // actionable tokens render the SAME line: 'old' (a monolith on disk) and 'old-unrotated' (an
+  // old-scheme rotator that never rotated) differ only in the discriminator, never in the remedy.
+  if (ACTIONABLE_ADR_LAYOUTS.includes(p.adrLayout)) {
     lines.push(`  ${pad('ADR store', STAMP_COL)}old layout — run /agent-workflow-kit migrate-adr-store`);
   }
   if (p.visibility) {

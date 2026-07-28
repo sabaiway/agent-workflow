@@ -43,6 +43,7 @@ import {
   SANDBOX_LANE_ACK_PARENT,
   SANDBOX_LANE_ACK_KEY,
   RISK_NOTED_KEYS,
+  probeAdrStore,
 } from './recommendations.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -279,6 +280,81 @@ describe('recommendations — shape is contract (D2 static registry gate)', () =
   });
 });
 
+// ── the ADR-store crossing item ───────────────────────────────────────────────────
+//
+// This mode used to declare it had NO advisor capability, so `upgrade` ended with "flow optimal"
+// for a project sitting on the retired layout. The probe reads the STRICT layout survey on purpose:
+// the lenient one turns an unreadable tree into "nothing here", which is the one answer that must
+// never be produced by a failure.
+
+describe('recommendations — the ADR-store crossing offer', () => {
+  // The probe reads the survey, so drive it through the survey's own dep shape: a tree whose files
+  // are declared by the fixture. Simpler and truer than stubbing the survey itself.
+  // A tree is declared as {suffix: contents}; a null value declares a DIRECTORY.
+  const treeDeps = (files) => ({
+    probes: [probeAdrStore],
+    statPath: (p) => {
+      const hit = Object.keys(files).find((k) => p.endsWith(k));
+      if (hit === undefined) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      return files[hit] === null ? 'dir' : 'file';
+    },
+    readFile: (p) => {
+      const hit = Object.keys(files).find((k) => p.endsWith(k));
+      if (hit === undefined) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      return files[hit];
+    },
+  });
+  const itemsFor = (files) => buildRecommendations({ cwd: HERE, deps: treeDeps(files) });
+
+  const OLD_ROTATOR = "export const HOT_REL = 'docs/ai/decisions.md';\n";
+  const NEW_ROTATOR = `${OLD_ROTATOR}export const ADR_DIR_REL = 'docs/ai/adr';\n`;
+
+  it('fires on a legacy archive file still on disk', () => {
+    const { items } = itemsFor({ 'docs/ai/history/decisions-archive.md': '' });
+    assert.equal(items.length, 1);
+    assert.equal(items[0].key, 'adr-store-migration');
+    assert.match(items[0].what, /legacy archive file is still on disk/);
+  });
+
+  it('fires on a deployed rotation script that predates the store', () => {
+    const { items } = itemsFor({ 'docs/ai/decisions.md': '', 'scripts/archive-decisions.mjs': OLD_ROTATOR });
+    assert.equal(items.length, 1);
+    assert.match(items[0].what, /predates the store/);
+  });
+
+  it('is SILENT once migrated', () => {
+    const { items, skips } = itemsFor({ 'docs/ai/decisions.md': '', 'docs/ai/adr': null, 'scripts/archive-decisions.mjs': NEW_ROTATOR });
+    assert.deepEqual([items.length, skips.length], [0, 0]);
+  });
+
+  it('is SILENT for a project whose NEW rotator already reds its own gate, and for one with no rotator', () => {
+    assert.equal(itemsFor({ 'docs/ai/decisions.md': '', 'scripts/archive-decisions.mjs': NEW_ROTATOR }).items.length, 0);
+    assert.equal(itemsFor({ 'docs/ai/decisions.md': '' }).items.length, 0);
+  });
+
+  it('an UNREADABLE layout becomes a stated skip — never silence, and the verdict withholds the optimality claim', () => {
+    const { items, skips } = buildRecommendations({
+      cwd: HERE,
+      deps: { probes: [probeAdrStore], statPath: () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); } },
+    });
+    assert.equal(items.length, 0);
+    assert.equal(skips.length, 1, 'the failure is REPORTED, not swallowed into "nothing here"');
+    assert.equal(skips[0].key, 'adr-store-migration');
+    assert.match(formatRecommendations({ items, skips }), /NOT attested/, 'optimality is not claimed over a probe that could not run');
+  });
+
+  it('the apply lane is HAND-APPLY and previews — the consent flow never auto-runs a tree-mutating crossing', () => {
+    const { items } = itemsFor({ 'docs/ai/history/decisions-archive.md': '' });
+    assert.match(items[0].apply, /^HAND-APPLY: /);
+    assert.match(items[0].apply, /fresh consent/);
+    // The RUNNABLE half — everything before the prose that follows the em dash — must be the
+    // preview. The mutation may only be NAMED in the prose, never handed over ready to run.
+    const runnable = items[0].apply.split(' — ')[0];
+    assert.match(runnable, /--dry-run/);
+    assert.doesNotMatch(runnable, /--apply/, 'the runnable half is the PREVIEW, never the mutation');
+  });
+});
+
 describe('recommendations — the add() runtime backstop (D2)', () => {
   const run = (probe) => buildRecommendations({ cwd: HERE, deps: { probes: [probe] } });
 
@@ -393,6 +469,12 @@ const buildInventoryFixtures = () => {
   const root9 = makeProject();
   results.push(buildRecommendations({ cwd: root9, deps: hermeticDeps(root9, { canWriteDir: () => false }) }));
   rmSync(root9, { recursive: true, force: true });
+  // (10) a project still carrying a retired ADR archive file: adr-store-migration.
+  const root10 = makeProject();
+  mkdirSync(join(root10, 'docs', 'ai', 'history'), { recursive: true });
+  writeFileSync(join(root10, 'docs', 'ai', 'history', 'decisions-archive.md'), '# retired archive\n');
+  results.push(buildRecommendations({ cwd: root10, deps: hermeticDeps(root10) }));
+  rmSync(root10, { recursive: true, force: true });
   return results;
 };
 

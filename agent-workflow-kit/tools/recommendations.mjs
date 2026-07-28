@@ -51,7 +51,7 @@ import { loadAutonomy, isSparseSeedConfig, AUTONOMY_REL } from './autonomy-confi
 import { deriveDoctorPlan } from './autonomy-doctor.mjs';
 import { detectBackends, findOnPath } from './detect-backends.mjs';
 import { ACTIVITIES, resolveActivityRecipe } from './recipes.mjs';
-import { surveyFamily, surveyGateHook } from './family-registry.mjs';
+import { surveyFamily, surveyGateHook, surveyAdrLayoutStrict } from './family-registry.mjs';
 import { probeSandboxMasks, needsMasksApply } from './sandbox-masks.mjs';
 import { shellQuoteArg } from './review-state.mjs';
 import { isFinalCapableDeclaration } from './run-gates.mjs';
@@ -108,6 +108,7 @@ export const SEVERITIES = Object.freeze({
   'state-block': SEVERITY_OPTIONAL,
   agents: SEVERITY_OPTIONAL,
   'family-freshness': SEVERITY_ATTENTION,
+  'adr-store-migration': SEVERITY_ATTENTION,
   'sandbox-masks': SEVERITY_OPTIONAL,
   'sandbox-lane': SEVERITY_OPTIONAL,
   'worktrees-dir': SEVERITY_OPTIONAL,
@@ -165,6 +166,7 @@ export const WHATS = Object.freeze({
   'state-block': 'nothing checks the closing state block — a turn that ends on «nothing needed from you», or on a promise it never started, passes unseen',
   agents: '{n} read-only subagent(s) not placed (Claude Code) — no shell-free vehicle for that work; the apply PREVIEWS first',
   'family-freshness': '{parts}',
+  'adr-store-migration': 'still on the retired 3-tier ADR layout — {shape}',
   'sandbox-masks': '{n} sandbox device mask(s) clutter git status — the managed exclude block is absent or stale',
   'sandbox-masks.stale-real': '{n} sandbox device mask(s) clutter git status — the exclude block is stale; {m} fenced entr(ies) are REAL paths (a fresh apply drops them)',
   'sandbox-lane': 'the wired review wrappers declare a session-sandbox recipe (egress hosts + writable state dirs) not yet acknowledged for this project',
@@ -218,6 +220,7 @@ export const BENEFITS = Object.freeze({
   'state-block': 'no silent stalls — a turn ending on «you are not needed», or on work it never started, warns at once instead of waiting to be spotted',
   agents: 'cost and quiet — mechanical work runs on a cheap model, and no vehicle has a shell, so a read-only fan-out cannot flood you with prompts',
   'family-freshness': 'currency — placed family members carry the latest shipped fixes and features',
+  'adr-store-migration': 'durability — every decision becomes its own file with a generated navigator, instead of one hand-rotated pile',
   'sandbox-masks': 'zero clutter — git status shows only your changes (the review domain already ignores the masks by construction)',
   'sandbox-lane': 'discoverability — the manifest-declared observed sandbox recipe for bridge runs surfaces itself instead of waiting to be asked',
   'worktrees-dir': 'parallel features — the host-specific write allowance or terminal fallback is surfaced before provision',
@@ -254,6 +257,7 @@ export const OPT_IN_CAPABILITIES = Object.freeze([
   { id: 'sandbox-masks', mode: 'sandbox-masks', advisorKey: 'sandbox-masks' },
   { id: 'worktrees-dir', mode: 'worktrees', advisorKey: 'worktrees-dir' },
   { id: 'family-freshness', mode: 'upgrade', advisorKey: 'family-freshness' },
+  { id: 'adr-store-migration', mode: 'migrate-adr-store', advisorKey: 'adr-store-migration' },
   { id: 'review-recipe', mode: 'set-recipe', advisorKey: 'review-recipe' },
   // The execute slot is a DISTINCT opt-in from the review slot, and the same probe reports both —
   // which is why the review-recipe benefit is worded for either slot rather than for review alone.
@@ -788,7 +792,7 @@ const readReadLaneToggle = (root, deps) => {
 // D3: the risk-marked keys — every key here has a per-item posture note in the mode doc, surfaced
 // at the consent moment; the static contract test asserts EXACT bidirectional coverage
 // (risk-marked keys == mode-doc note keys — a dropped note goes red, not silent).
-export const RISK_NOTED_KEYS = Object.freeze(['sandbox-lane', 'read-lane', 'worktrees-dir']);
+export const RISK_NOTED_KEYS = Object.freeze(['sandbox-lane', 'read-lane', 'worktrees-dir', 'adr-store-migration']);
 
 const probeSandboxLane = ({ root, deps, add, skip }) => {
   try {
@@ -965,6 +969,40 @@ const probeWorktreesDir = ({ root, deps, add, skip }) => {
   }
 };
 
+// The ADR-store crossing. Until now this mode declared it had NO advisor capability, on the argument
+// that status and upgrade already report the old layout — but they only reported the MONOLITH shape,
+// so a project whose deployed rotator merely predates the store was told nothing by anything.
+//
+// Honest scope: the advisor is the deterministic section every `upgrade` run ends with, so this is
+// NOT a new door for someone who never runs status or upgrade — it MECHANIZES the upgrade door.
+//
+// It reads the STRICT layout survey deliberately: the lenient one turns every fs failure into
+// "no ADR layout here", which would print «flow optimal» over a layout the probe could not read. A
+// failure must become a STATED SKIP, never an absence.
+// Each shape states a fact about THIS tree that holds whether or not a store directory exists —
+// `old-unrotated` also covers a tree whose store is already there but whose rotation script is not,
+// and saying "the store is not in place" there would be false.
+const ADR_LAYOUT_SHAPES = Object.freeze({
+  old: 'a legacy archive file is still on disk and must be exploded into the per-file store',
+  'old-unrotated': 'the deployed rotation script predates the store and keeps writing the retired layout',
+});
+export const probeAdrStore = ({ root, deps, add, skip }) => {
+  try {
+    const shape = ADR_LAYOUT_SHAPES[surveyAdrLayoutStrict(root, deps)];
+    if (!shape) return; // migrated, or no ADR substrate at all — nothing to offer
+    // HAND-APPLY, not the standard lane: the consent flow executes the apply slot against the
+    // confirmation given BEFORE the preview, and this crossing requires informed consent AFTER its
+    // dry-run. A runnable one-liner here would auto-run a tree-mutating migration on stale consent.
+    add(
+      'adr-store-migration',
+      fillTemplate(WHATS['adr-store-migration'], { shape }),
+      `HAND-APPLY: node ${q(toolPath('migrate-adr-store.mjs'))} --dry-run --cwd ${q(root)} — then re-run with --apply ONLY after showing the plan and getting fresh consent`,
+    );
+  } catch (err) {
+    skip('adr-store-migration', err);
+  }
+};
+
 // ── assembly (frozen presentation order) ─────────────────────────────────────────────────────────
 const PROBES = Object.freeze([
   probeVelocityItems,
@@ -977,6 +1015,7 @@ const PROBES = Object.freeze([
   probeStateBlockHook,
   probeCheapAgents,
   probeFamilyFreshness,
+  probeAdrStore,
   probeMasksItem,
   probeSandboxLane,
   probeWorktreesDir,

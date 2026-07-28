@@ -1,10 +1,12 @@
 ### Mode: migrate-adr-store
 
-<!-- opt-in-capability: none — the old-layout condition is already reported by status and upgrade; the advisor does not duplicate a report the same run prints -->
+<!-- opt-in-capability: adr-store-migration -->
 
 The **guarded ADR-store migration** — a one-time, opt-in move of an existing project's `docs/ai` from the retired 3-tier ADR cascade (HOT `decisions.md` → the WARM/COLD `decisions-archive*.md` monoliths) to the durable **one-file-per-ADR store** (HOT `decisions.md` + `docs/ai/adr/AD-NNN-slug.md` records + the `docs/ai/adr/log.md` navigator). **In-agent, opt-in**, and reached ONLY here: a normal `upgrade` never installs the new-scheme rotator into an un-migrated project — the new rotator arrives ONLY through this mode, which migrates in the same step (AD-051). Run **`--dry-run` first, always**, show the user the plan in plain language, get explicit consent, then re-run with `--apply`. It **never commits**.
 
-When to run it: `status` (or `upgrade`) reports an *old ADR layout* (a `decisions-archive*.md` monolith is still on disk). A project already on the one-file-per-ADR store — or a fresh deployment seeded with it — needs nothing here (the mode is a stated no-op).
+When to run it: `status` (or `upgrade`) reports an *old ADR layout*. That covers **two** shapes, and the remedy is the same for both — (1) a `decisions-archive*.md` monolith is still on disk, and (2) **no monolith was ever produced**: the project's deployed `scripts/archive-decisions.mjs` simply predates the store, so its own gate reports the retired three-tier world as healthy and would never mention the store. The second shape is detected by that deployed script's own provenance — never by "has `decisions.md`, lacks `adr/`", which would falsely accuse a project whose NEW rotator already reds its gate with an actionable fix, and every project that runs no Node. A project already on the one-file-per-ADR store with a fresh navigator — or a fresh deployment seeded with it — needs nothing here (the mode is a stated no-op).
+
+On the no-monolith shape `--apply` does the same work minus the explosion: snapshot → refresh the deployed enforcement scripts → **seed** the store (`docs/ai/adr/` + the navigator + a regenerated `docs/ai/index.md`) → verify. It is **re-runnable to completion from any interruption**: a store directory alone never counts as finished (the navigator must exist and the project's own `--check` must pass), the whole script refresh is re-planned on every run with the rotation script written last, and a failed index regeneration fails the run **closed** rather than reporting success.
 
 Run `node ${CLAUDE_SKILL_DIR}/tools/migrate-adr-store.mjs [--dry-run | --apply] [--cwd <project>]`:
 
