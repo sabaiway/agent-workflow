@@ -326,6 +326,10 @@ describe('router contract — command-shapes promptless bar (f)', () => {
     // point is that a byte-carrying pattern has NO promptless shell spelling.
     'Searching for TEXT', 'repo-search.mjs', '--pattern-file', 'Quoting is not a workaround',
     'a bare `grep` still', 'never enter the command string',
+    // A byte-carrying TARGET has the same problem as a byte-carrying pattern, and the canon taught
+    // only the pattern half — which is the doc an agent reads when choosing its shell shape, so a
+    // stale half here is the reason to improvise a compound.
+    '--paths-file',
   ];
 
   it('the probe-instructing modes — and ONLY those — declare command-shapes.md', () => {

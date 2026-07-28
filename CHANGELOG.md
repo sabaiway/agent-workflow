@@ -7,6 +7,34 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-28 — AD-082 the guard stops charging you for answers it already has (kit 4.4.0)
+
+For two months a guard rung that DENIES instead of asking looked like the answer to a growing corpus
+of avoidable approval prompts. It was designed, reviewed and withdrawn twice, and the reason is worth
+recording: a command substitution embeds an arbitrary command **without any separator byte**, so
+`node …/repo-search.mjs --pattern-file $(git commit -am wip >out)` slips past every "is this a single
+command" test and a refusal there destroys work it never meant to touch. Both review backends found
+that independently, in the same round. The guard still never denies.
+
+**What closed the gap instead was the channel nobody had checked.** Every deny design existed for one
+reason: a deny is the only hook outcome that reaches the *agent*. An allow is silent, and an ask is
+answered by the human whose dialog the agent never sees. `additionalContext` on `PreToolUse` is that
+same channel with no refusal — probed live here with a throwaway hook and a distinct marker per
+variant, delivered on `allow`, on no decision, and on `ask`. Both residual rungs now carry it, so an
+ask names the promptless lane to the agent that composed the command. A host that ignores the field
+degrades to silence, which is precisely the old behaviour: the withdrawn mechanisms had to be RIGHT
+about a command's bytes, this one only has to be USEFUL.
+
+**Two lanes ship with it**, because the corpus's own evidence is that the shell gets composed when no
+single call answers the question: `path-inventory.mjs` (existence, type, size, `wc -l` lines,
+one-level listing, small-file contents for N paths in ONE call — and a missing path is a RESULT, not
+an error), and `repo-search.mjs --paths-file` (the TARGET half of the out-of-band lane the pattern
+half already had). Promptlessness needs a re-run of `velocity --kit-tools`: allow rules are values
+already in your settings, and upgrading the kit does not edit them.
+
+Honest ceiling, stated rather than implied: this makes the promptless path the cheapest path. It does
+not make a composed shell impossible.
+
 ## 2026-07-27 — AD-081 the coverage gate stops certifying evidence that predates your edit (kit 4.3.0)
 
 `coverage-check --check` read whatever LCOV sat at the fixed path and issued a verdict, with nothing

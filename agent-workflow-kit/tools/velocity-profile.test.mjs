@@ -253,7 +253,7 @@ const RUN_GATES_EXACT = `Bash(node ${join(KIT_ROOT, 'tools/run-gates.mjs')} --cw
 const PREVIEW_FORBIDDEN_FLAGS = ['--apply', '--write', '--yes', '--refresh-placed'];
 
 describe('KIT_READONLY_TOOLS tier — frozen membership + derivation', () => {
-  it('matches the frozen 11-member tool list + count sentinel', () => {
+  it('matches the frozen 12-member tool list + count sentinel', () => {
     const expected = [
       'tools/recipes.mjs',
       'tools/procedures.mjs',
@@ -266,12 +266,14 @@ describe('KIT_READONLY_TOOLS tier — frozen membership + derivation', () => {
       'tools/manifest/validate.mjs',
       'tools/release-scan.mjs',
       'tools/repo-search.mjs',
+      'tools/path-inventory.mjs',
     ];
     assert.equal(Object.isFrozen(KIT_READONLY_TOOLS), true);
     // 9 → 10: AD-044 Plan 4 Phase 3 — the recommendations advisor joins the tier.
     // 10 → 11: the literal search lane. Its allow rule is not a convenience here — a non-core
     // command gets NO decision from the hook, and no decision is not an allow.
-    assert.equal(KIT_READONLY_TOOLS.length, 11, 'kit-tools tier count sentinel - edit deliberately');
+    // 11 → 12: the inventory lane, for the same reason on the other half of the corpus.
+    assert.equal(KIT_READONLY_TOOLS.length, 12, 'kit-tools tier count sentinel - edit deliberately');
     assert.deepEqual([...KIT_READONLY_TOOLS], expected);
     assert.equal(KIT_RUN_GATES_TOOL, 'tools/run-gates.mjs');
   });
@@ -286,14 +288,15 @@ describe('KIT_READONLY_TOOLS tier — frozen membership + derivation', () => {
     for (const rel of KIT_WRITER_PREVIEW_TOOLS) assert.equal(KIT_READONLY_TOOLS.includes(rel), false, rel);
   });
 
-  it('derives 10 wildcard entries + the exact run-gates entry + 3 exact previews (count sentinel 14)', () => {
+  it('derives 11 wildcard entries + the exact run-gates entry + 3 exact previews (count sentinel 15)', () => {
     const derived = tierEntries();
     assert.equal(Object.isFrozen(derived), true);
     // 12 → 13: AD-044 Plan 4 Phase 3 — the recommendations advisor joins KIT_READONLY_TOOLS.
     // 13 → 14: the literal search lane joins as a wildcard entry.
-    assert.equal(derived.length, 14, 'derived tier count sentinel - edit deliberately');
+    // 14 → 15: the inventory lane joins as a wildcard entry.
+    assert.equal(derived.length, 15, 'derived tier count sentinel - edit deliberately');
     const wildcards = derived.filter((e) => e.endsWith(':*)'));
-    assert.equal(wildcards.length, 10);
+    assert.equal(wildcards.length, 11);
     for (const rel of KIT_READONLY_TOOLS) {
       if (rel === KIT_RUN_GATES_TOOL) continue;
       assert.equal(derived.includes(wildcardEntryOf(rel)), true, rel);
@@ -792,9 +795,26 @@ describe('velocity profile CLI — the opt-in --kit-tools tier', () => {
     const dry = runMain(['--kit-tools'], cwd);
 
     assert.equal(dry.code, EXIT_OK);
-    assert.match(dry.stdout, /would add kit-tools tier entries: 14/);
+    assert.match(dry.stdout, /would add kit-tools tier entries: 15/);
     assert.equal(existsSync(settingsPath(cwd)), false);
     assert.equal(existsSync(pathOf(cwd, CLAUDE_DIR)), false);
+  });
+
+  // THE RESEED BOUNDARY, as a mechanism rather than a release note. Registry membership governs only
+  // what the profile seeds on its NEXT run: a project whose settings were written by an earlier kit
+  // does NOT gain a new tool's allow rule by upgrading. What makes that recoverable rather than
+  // silent is that the delta is computed against the project's OWN allow list, so the missing entry
+  // is reported and the advisor can offer the one-line re-run.
+  it('a project seeded by an EARLIER kit is told exactly which tier entries it is missing', (t) => {
+    const cwd = makeTempProject(t);
+    ensureClaudeDir(cwd);
+    const already = derivedFor(cwd).filter((entry) => !entry.includes('path-inventory.mjs'));
+    writeJson(settingsPath(cwd), { permissions: { allow: already } });
+
+    const dry = runMain(['--kit-tools'], cwd);
+    assert.equal(dry.code, EXIT_OK);
+    assert.match(dry.stdout, /would add kit-tools tier entries: 1/);
+    assert.match(dry.stdout, /path-inventory\.mjs/);
   });
 
   it('--kit-tools output names run-gates as project-exec, never read-only', (t) => {

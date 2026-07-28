@@ -149,6 +149,10 @@ export const KIT_READONLY_TOOLS = Object.freeze([
   // NO decision from the hook, which is not the same as an allow, so without this rule the lane
   // falls through to whatever the host policy happens to be.
   'tools/repo-search.mjs',
+  // The inventory lane, in the tier for the same reason and with the same dependency: the corpus of
+  // useless approvals is mostly small path questions batched into a composed shell because no single
+  // call answered them, and a lane the agent must still ask about is not a lane.
+  'tools/path-inventory.mjs',
 ]);
 // Writer previews: ONLY writers whose ARG-FREE invocation is a documented dry-run ("Default is
 // --dry-run" in their usage) seed an EXACT preview byte-string — every --apply/--write/--yes keeps
@@ -342,7 +346,7 @@ const USAGE = `usage: velocity-profile [--dry-run | --apply] [--kit-tools] [--br
 
 Allowlist mode (default): seeds the fixed read-only Claude Code allowlist into .claude/settings.json.
 Default is --dry-run. --apply writes; --accept-edits only sets defaultMode when applying.
---kit-tools additionally seeds the audited kit-tool tier: 9 read-only kit tools by resolved
+--kit-tools additionally seeds the audited kit-tool tier: ${KIT_WILDCARD_TOOLS.length} read-only kit tools by resolved
 absolute path (args wildcard), run-gates.mjs as ONE exact project-root-pinned byte-string
 (project-exec - it runs YOUR declared gates.json), and the writers' exact arg-free dry-run
 preview byte-strings. Never touches settings.local.json.
@@ -644,7 +648,7 @@ const formatAllowlist = (result) => [
 // The tier's honest posture, printed on every --kit-tools run: run-gates is project-exec (never
 // "read-only"), previews stay dry-run-only, and the tier gets none of the hook's residual ask-net.
 const KIT_TIER_NOTICE =
-  'kit-tools tier: paths are resolved absolute at seed time (fail-safe - a moved skill or stale path simply prompts again); run-gates.mjs is seeded as ONE exact byte-string pinned to this project root and is project-exec - it runs YOUR declared gates.json commands, never "read-only"; writer previews are exact dry-run byte-strings - every --apply/--write/--yes still prompts; tier entries get NO PreToolUse-hook residual coverage (settings-level posture only - see the velocity mode notes).';
+  'kit-tools tier: paths are resolved absolute at seed time (fail-safe - a moved skill or stale path simply prompts again); run-gates.mjs is seeded as ONE exact byte-string pinned to this project root and is project-exec - it runs YOUR declared gates.json commands, never "read-only"; writer previews are exact dry-run byte-strings - every --apply/--write/--yes still prompts; tier entries get NO PreToolUse-hook residual coverage EXCEPT repo-search.mjs and path-inventory.mjs, whose invocations the hook scans because they take caller-supplied argument bytes (settings-level posture only for the rest - see the velocity mode notes).';
 
 const formatKitTier = (result) =>
   result.kitTools

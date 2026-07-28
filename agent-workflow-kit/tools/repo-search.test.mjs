@@ -13,7 +13,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, readSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +24,9 @@ import {
   EXIT_ERROR,
   EXIT_USAGE,
   EXIT_INCOMPLETE,
+  HARD_MAX_TARGETS,
+  assertNameableTarget,
+  requiresDirectory,
   main,
   patternDigest,
   resolvePattern,
@@ -363,6 +366,171 @@ describe('repo-search — the failure branches are exercised, not merely written
   });
 });
 
+// ONE closed acceptance predicate replaced seven checks that had been found one review round at a
+// time. They were all the same defect: a caller string reaches `path.resolve()` before it is checked,
+// and `resolve()`'s semantics differ from the operating system's, so the tool could answer about a
+// DIFFERENT object than the string denotes. This table IS the surface — an accepted case that should
+// be refused, or a refused case that should be accepted, goes red here rather than in round eleven.
+describe('the target acceptance predicate — the closed rule set, in one table', () => {
+  const REFUSED = [
+    ['empty', '', /must not be empty/u],
+    ['a NUL byte', 'a\0b', /NUL/u],
+    ['a `..` component', 'note.txt/../a.txt', /\.\./u],
+    ['a leading `..`', '../outside', /\.\./u],
+    ['a bare `..`', '..', /\.\./u],
+  ];
+  const ACCEPTED = [
+    ['an ordinary relative path', 'sub/a.txt'],
+    ['a trailing separator, which asserts a directory rather than being invalid', 'sub/'],
+    ['a trailing `.`, the same assertion in the other spelling', 'sub/.'],
+    ['a `.` component, which the OS resolves the same way', './sub/a.txt'],
+    ['repeated separators, which the OS collapses the same way', 'sub//a.txt'],
+    ['edge whitespace, which is a legal name', ' spaced '],
+    ['a backtick, which is a legal name', 'we`ird'],
+    ['a backslash, which on POSIX is an ordinary name byte', '\\..'],
+    ['a name that merely CONTAINS dots', 'a..b'],
+  ];
+  // A trailing separator or `.` is an ASSERTION, checked after resolution — not a rejection. Both
+  // directions are pinned: the assertion must hold for a directory and must fail for a file.
+  const DIRECTORY_ASSERTED = [['a trailing separator', 'sub/'], ['a trailing dot', 'sub/.'], ['a bare dot', '.']];
+  const NOT_ASSERTED = [['a plain path', 'sub/a.txt'], ['a name ending in a dot', 'a.'], ['a name containing a dot', 'a.b']];
+
+  for (const [name, target] of DIRECTORY_ASSERTED) {
+    it(`treats ${name} as an assertion that the target is a directory`, () => {
+      assert.equal(requiresDirectory(target), true, JSON.stringify(target));
+    });
+  }
+  for (const [name, target] of NOT_ASSERTED) {
+    it(`does not read ${name} as a directory assertion`, () => {
+      assert.equal(requiresDirectory(target), false, JSON.stringify(target));
+    });
+  }
+
+  for (const [name, target, message] of REFUSED) {
+    it(`refuses ${name}`, () => {
+      assert.throws(() => assertNameableTarget(target), message, `expected ${JSON.stringify(target)} to be refused`);
+    });
+  }
+
+  for (const [name, target] of ACCEPTED) {
+    it(`accepts ${name}`, () => {
+      assert.doesNotThrow(() => assertNameableTarget(target), `expected ${JSON.stringify(target)} to be accepted`);
+    });
+  }
+
+  // The walk budget counts ENTRIES; without a byte ceiling a run reads up to the per-file limit for
+  // every entry. The sibling inventory tool already had this budget — the asymmetry was the defect.
+  it('the AGGREGATE read budget stops the search and names itself', () => {
+    const root = seed(scratch(), { 'a.txt': `${'x'.repeat(400)}needle\n`, 'b.txt': `${'y'.repeat(400)}needle\n` });
+    const r = run(['--pattern', 'needle', '--path', '.', '--max-total-bytes', '300'], root);
+    assert.equal(r.code, EXIT_INCOMPLETE);
+    assert.equal(r.result.incomplete.bound, '--max-total-bytes');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('a paths file repeating ONE target 5001 times names one target, not 5001', () => {
+    const root = seed(scratch(), { 'a.txt': 'needle\n' });
+    writeFileSync(join(root, 'targets.lst'), Array.from({ length: HARD_MAX_TARGETS + 1 }, () => 'a.txt').join('\n'));
+    const r = run(['--pattern', 'needle', '--paths-file', 'targets.lst'], root);
+    assert.equal(r.code, EXIT_OK, 'the ceiling counts TARGETS, not lines');
+    assert.equal(r.result.matches.length, 1);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  // End to end, both spellings, both tools: the OS answers ENOTDIR for a REGULAR FILE named as a
+  // directory, and neither tool may quietly search or report the file instead.
+  it('a regular file named with a trailing separator or dot is not searched', () => {
+    const root = seed(scratch(), { 'a.txt': 'needle\n' });
+    assert.equal(run(['--pattern', 'needle', '--path', 'a.txt/'], root).code, EXIT_ERROR);
+    assert.equal(run(['--pattern', 'needle', '--path', 'a.txt/.'], root).code, EXIT_ERROR);
+    assert.equal(run(['--pattern', 'needle', '--path', 'a.txt'], root).result.matches.length, 1, 'the plain spelling still works');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('an existing DIRECTORY named with a trailing separator is searched normally', () => {
+    const root = seed(scratch(), { 'sub/a.txt': 'needle\n' });
+    const r = run(['--pattern', 'needle', '--path', 'sub/'], root);
+    assert.equal(r.code, EXIT_OK, 'the assertion holds, so the target is not refused');
+    assert.equal(r.result.matches.length, 1);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('once the aggregate budget is exactly spent, a later target is not opened at all', () => {
+    const root = seed(scratch(), { 'a.txt': 'needle\n', 'b.txt': 'needle\n' });
+    const r = run(['--pattern', 'needle', '--path', 'a.txt', '--path', 'b.txt', '--max-total-bytes', '7'], root);
+    assert.equal(r.code, EXIT_INCOMPLETE);
+    assert.equal(r.result.incomplete.bound, '--max-total-bytes');
+    assert.equal(r.result.matches.length, 1, 'the first target was searched, the second was not');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  // A short read still moved bytes. Charging only on success would let a failing file do real I/O the
+  // budget never learns about — the budget would bound successful work rather than work.
+  it('bytes moved by a FAILED read are still charged against the aggregate budget', () => {
+    const root = seed(scratch(), { 'a.txt': 'needle\n', 'b.txt': 'needle\n' });
+    let firstCall = true;
+    const partialRead = (fd, buf, offset, length, position) => {
+      if (firstCall) {
+        firstCall = false;
+        return 3;
+      }
+      return offset === 0 ? readSync(fd, buf, offset, length, position) : 0;
+    };
+    const result = search({
+      root: realpathSync(root),
+      pattern: 'needle',
+      paths: ['a.txt', 'b.txt'],
+      max: 10,
+      maxBytes: 1024,
+      maxTotalBytes: 5,
+      io: { read: partialRead },
+    });
+    assert.equal(result.incomplete.bound, '--max-total-bytes', 'the 3 bytes the failed read moved were charged');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  // The charge has to happen per chunk, not after the loop: a read that THROWS mid-file would
+  // otherwise move real bytes the budget never learns about.
+  it('bytes moved before a mid-file read FAULT are charged, not lost', () => {
+    const root = seed(scratch(), { 'a.txt': 'needle and more text\n' });
+    let calls = 0;
+    const faultingRead = () => {
+      calls += 1;
+      if (calls === 1) return 4;
+      throw Object.assign(new Error('device fell over'), { code: 'EIO' });
+    };
+    const result = search({
+      root: realpathSync(root),
+      pattern: 'needle',
+      paths: ['a.txt'],
+      max: 10,
+      maxBytes: 1024,
+      maxTotalBytes: 1024,
+      io: { read: faultingRead },
+    });
+    // A mid-read fault is a COUNTED skip, not a crash — and the four bytes it moved are charged.
+    assert.equal(result.skipped.unreadable, 1);
+    assert.equal(result.bytesRead, 4, 'the bytes moved before the fault are charged, not lost');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('the aggregate budget is reported, so a partial read is visible rather than internal', () => {
+    const root = seed(scratch(), { 'a.txt': 'needle\n' });
+    const whole = search({ root: realpathSync(root), pattern: 'needle', paths: ['a.txt'], max: 10, maxBytes: 1024 });
+    assert.equal(whole.bytesRead, 7);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('a SINGLE file larger than the remaining aggregate budget is not read whole', () => {
+    const root = seed(scratch(), { 'big.txt': `${'x'.repeat(4096)}needle\n` });
+    const r = run(['--pattern', 'needle', '--path', '.', '--max-total-bytes', '256'], root);
+    assert.equal(r.code, EXIT_INCOMPLETE);
+    assert.equal(r.result.incomplete.bound, '--max-total-bytes');
+    assert.equal(r.result.matches.length, 0, 'the file was never searched, so it cannot have matched');
+    rmSync(root, { recursive: true, force: true });
+  });
+});
+
 describe('repo-search — only regular files are read', () => {
   it('a symlink is never followed and is counted as skipped, not silently ignored', () => {
     const root = seed(scratch(), { 'real.txt': 'needle\n' });
@@ -379,5 +547,147 @@ describe('repo-search — only regular files are read', () => {
     assert.equal(r.result.matches.length, 1);
     assert.ok(r.result.skipped.binary >= 1);
     rmSync(root, { recursive: true, force: true });
+  });
+});
+
+// --paths-file is the TARGET half of the same idea --pattern-file already carries for the pattern:
+// a path that cannot survive in a command string (a backtick, `$(`, `>`) reaches the tool by file, so
+// the residual guard has nothing to scan. Without it a search may name a pattern it cannot spell but
+// not a PATH it cannot spell, and the promptless lane covers only half the arguments.
+describe('repo-search — --paths-file carries targets the command string cannot', () => {
+  it('each line of the file becomes a target', () => {
+    const root = seed(scratch(), { 'a/one.txt': 'needle\n', 'b/two.txt': 'needle\n', 'c/three.txt': 'needle\n' });
+    writeFileSync(join(root, 'targets.lst'), 'a\nb\n');
+    const r = run(['--pattern', 'needle', '--paths-file', 'targets.lst'], root);
+    assert.equal(r.code, EXIT_OK);
+    assert.equal(r.result.matches.length, 2, 'only the two listed targets are searched');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('a target whose name carries shell-significant bytes is reachable ONLY through the file lane', () => {
+    const root = seed(scratch(), { 'we`ird$(dir)/x.txt': 'needle\n' });
+    writeFileSync(join(root, 'targets.lst'), 'we`ird$(dir)\n');
+    const r = run(['--pattern', 'needle', '--paths-file', 'targets.lst'], root);
+    assert.equal(r.code, EXIT_OK);
+    assert.equal(r.result.matches.length, 1);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('composes with --pattern-file, and unions with --path', () => {
+    const root = seed(scratch(), { 'a/one.txt': 'a>b\n', 'b/two.txt': 'a>b\n', 'c/three.txt': 'a>b\n' });
+    writeFileSync(join(root, 'p.txt'), 'a>b\n');
+    writeFileSync(join(root, 'targets.lst'), 'a\n');
+    const r = run(['--pattern-file', 'p.txt', '--paths-file', 'targets.lst', '--path', 'b'], root);
+    assert.equal(r.code, EXIT_OK);
+    assert.equal(r.result.matches.length, 2, 'the union of --path and --paths-file is searched');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('CRLF, a trailing delimiter, empty lines and duplicates are all normalised', () => {
+    const root = seed(scratch(), { 'a/one.txt': 'needle\n', 'b/two.txt': 'needle\n' });
+    writeFileSync(join(root, 'targets.lst'), 'a\r\n\nb\na\n');
+    const r = run(['--pattern', 'needle', '--paths-file', 'targets.lst'], root);
+    assert.equal(r.code, EXIT_OK);
+    assert.equal(r.result.matches.length, 2, 'an empty line is never the root, and a duplicate never doubles a hit');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  // The lane exists to carry names a command string cannot. Trimming would silently rewrite the
+  // caller's target — the exact failure the lane removes — so a name with edge whitespace survives
+  // byte-for-byte and a whitespace-only line is a real target, not a stand-in for the root.
+  it('a target name with LEADING and TRAILING spaces survives the lane unchanged', () => {
+    const root = seed(scratch(), { ' spaced dir /x.txt': 'needle\n' });
+    writeFileSync(join(root, 'targets.lst'), ' spaced dir \n');
+    const r = run(['--pattern', 'needle', '--paths-file', 'targets.lst'], root);
+    assert.equal(r.code, EXIT_OK);
+    assert.equal(r.result.matches.length, 1);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('BOTH lane files are excluded from the search by real path, and the skip is COUNTED', () => {
+    const root = seed(scratch(), { 'a.txt': 'needle\n' });
+    writeFileSync(join(root, 'p.txt'), 'needle\n');
+    writeFileSync(join(root, 'targets.lst'), '.\n');
+    const r = run(['--pattern-file', 'p.txt', '--paths-file', 'targets.lst'], root);
+    assert.equal(r.code, EXIT_OK);
+    assert.equal(r.result.matches.length, 1, 'neither lane file may match its own contents');
+    assert.equal(r.result.skipped.patternFile, 1);
+    assert.equal(r.result.skipped.pathsFile, 1);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('a missing paths file is an I/O failure — exit 1, at PARITY with --pattern-file', () => {
+    const root = seed(scratch(), { 'a.txt': 'needle\n' });
+    const missingPaths = run(['--pattern', 'needle', '--paths-file', 'nope.lst'], root);
+    const missingPattern = run(['--pattern-file', 'nope.txt', '--path', '.'], root);
+    assert.equal(missingPaths.code, EXIT_ERROR);
+    assert.equal(missingPattern.code, EXIT_ERROR, 'the two file lanes classify the same failure the same way');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('a paths file naming only EMPTY lines is a usage error, never a silent search of everything', () => {
+    const root = seed(scratch(), { 'a.txt': 'needle\n' });
+    writeFileSync(join(root, 'targets.lst'), '\n\n\n');
+    const r = run(['--pattern', 'needle', '--paths-file', 'targets.lst'], root);
+    assert.equal(r.code, EXIT_USAGE);
+    // The lane must refuse for its OWN reason: an unknown-argument rejection is also EXIT_USAGE and
+    // would let this pass while checking nothing.
+    assert.doesNotMatch(r.stderr, /unknown argument/u);
+    assert.match(r.stderr, /no target/u);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('too many entries names the bound instead of truncating silently', () => {
+    const root = seed(scratch(), { 'a.txt': 'needle\n' });
+    writeFileSync(join(root, 'targets.lst'), Array.from({ length: HARD_MAX_TARGETS + 1 }, (_, i) => `d${i}`).join('\n'));
+    const r = run(['--pattern', 'needle', '--paths-file', 'targets.lst'], root);
+    assert.equal(r.code, EXIT_USAGE);
+    assert.doesNotMatch(r.stderr, /unknown argument/u);
+    assert.match(r.stderr, new RegExp(String(HARD_MAX_TARGETS), 'u'));
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('the ceiling holds over the UNION of both lanes, not just within the file', () => {
+    const root = seed(scratch(), { 'a.txt': 'needle\n' });
+    const argv = ['--pattern', 'needle', ...Array.from({ length: HARD_MAX_TARGETS + 1 }, (_, i) => ['--path', `d${i}`]).flat()];
+    const r = run(argv, root);
+    assert.equal(r.code, EXIT_USAGE);
+    assert.match(r.stderr, new RegExp(String(HARD_MAX_TARGETS), 'u'));
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  // A lossy decode would not fail — it would name a DIFFERENT path that happens to exist, which is
+  // the one outcome worse than any refusal in a lane built to carry names verbatim.
+  it('a paths file whose bytes are not valid UTF-8 is REFUSED, never lossily decoded', () => {
+    const root = seed(scratch(), { 'a.txt': 'needle\n' });
+    writeFileSync(join(root, 'targets.lst'), Buffer.from([0x61, 0xff, 0xfe, 0x0a]));
+    const r = run(['--pattern', 'needle', '--paths-file', 'targets.lst'], root);
+    assert.equal(r.code, EXIT_USAGE);
+    assert.match(r.stderr, /UTF-8/u);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  // A decoder that strips a leading U+FEFF rewrites a legitimate name into a different one — the same
+  // silent substitution as a lossy decode, one layer down.
+  it('a target name STARTING with U+FEFF survives the lane unchanged', () => {
+    const root = seed(scratch(), { '﻿bom-dir/x.txt': 'needle\n' });
+    writeFileSync(join(root, 'targets.lst'), '﻿bom-dir\n');
+    const r = run(['--pattern', 'needle', '--paths-file', 'targets.lst'], root);
+    assert.equal(r.code, EXIT_OK);
+    assert.equal(r.result.matches.length, 1);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('a PATTERN starting with U+FEFF is searched as written, not silently trimmed', () => {
+    const root = seed(scratch(), { 'a.txt': '﻿needle\n' });
+    writeFileSync(join(root, 'p.txt'), '﻿needle\n');
+    const r = run(['--pattern-file', 'p.txt', '--path', '.'], root);
+    assert.equal(r.code, EXIT_OK);
+    assert.equal(r.result.matches.length, 1);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('--help documents the target lane the way it documents the pattern lane', () => {
+    assert.match(run(['--help'], process.cwd()).stdout, /--paths-file/u);
   });
 });
