@@ -29,7 +29,7 @@ export const stop = (message, fields = {}) =>
 // ── registries ────────────────────────────────────────────────────────────────
 
 // The kit's OWN footprint — canonical anchored patterns. `/docs/ai/` subsumes the deployment stamp
-// (`.workflow-version`); the 8 enforcement scripts are enumerated (no bare `/scripts/` — a host repo
+// (`.workflow-version`); the enforcement scripts are enumerated (no bare `/scripts/` — a host repo
 // may have unrelated scripts). `/.claude/settings.json` is carried HIDDEN-ONLY: in hidden mode the
 // kit's own attribution file is a footprint; in visible mode the kit commits it and never runs this
 // tool. It passes the same tracked→ASK classifier, so a project that already commits it gets an ASK,
@@ -43,13 +43,17 @@ export const KIT_OWN_PATHS = [
   '/scripts/_expect-shim.mjs',
   '/scripts/archive-changelog.mjs',
   '/scripts/archive-changelog.test.mjs',
+  '/scripts/archive-conservation.test.mjs',
   '/scripts/archive-decisions.mjs',
   '/scripts/archive-decisions.test.mjs',
   '/scripts/archive-issues.mjs',
   '/scripts/archive-issues.test.mjs',
+  '/scripts/archiver-structure.test.mjs',
   '/scripts/check-docs-size.mjs',
   '/scripts/check-docs-size.test.mjs',
   '/scripts/install-git-hooks.mjs',
+  '/scripts/markdown-blocks.mjs',
+  '/scripts/markdown-blocks.test.mjs',
   '/docs/plans/',
   '/.claude/settings.local.json',
   '/.claude/settings.json',

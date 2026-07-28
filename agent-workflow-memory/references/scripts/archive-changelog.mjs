@@ -6,6 +6,13 @@
 // COLD (history/YYYY-MM.md)         — entries older than WARM_DAYS, compressed
 // META (history/condensed-index.md) — one-line TL;DRs of every archived entry
 //
+// The file is read through the shared block tokenizer (markdown-blocks.mjs): headings are
+// recognised only OUTSIDE fenced regions, CRLF and trailing whitespace never change the block
+// structure, and an unclosed fence is a loud error instead of a silent absorber. On top of the
+// tokens this archiver applies its own unit grammar and FAILS CLOSED: a date-shaped heading that
+// does not parse as an entry refuses with file:line — it is never glued into the previous entry,
+// never duplicated into the footer, never normalised into a different calendar date.
+//
 // NOTE (multi-year scaling): condensed-index.md grows O(total archived entries),
 // so on a multi-year horizon it approaches its cap (~1159 lines over 2y in a stress
 // test). When it nears the cap, shard it per-year (condensed-index-YYYY.md) or switch
@@ -17,15 +24,18 @@
 //   --dry-run   print planned distribution, do not change files
 //   --check     exit 1 if changelog.md still holds entries that should be archived
 //
+// Every mode parses every source BEFORE any write, so a refusal fires identically for the
+// default run, --dry-run and --check, and nothing is written on a refused input.
+//
 // CLI overrides:
-//   --hot-days=N  (default 7)
+//   --hot-days=N  (default 3)
 //   --warm-days=N (default 30)
 //   --today=YYYY-MM-DD (default today UTC) — useful for tests / reproducible runs
 
-import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises';
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, resolve, relative, basename } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
+import { dirname, resolve, basename } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { tokenizeMarkdown, findParagraphBreak, fail } from './markdown-blocks.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -42,90 +52,46 @@ const readProjectName = () => {
 };
 const PROJECT_NAME = readProjectName();
 
-const CHANGELOG_PATH = resolve(ROOT, 'docs/ai/changelog.md');
-const HISTORY_DIR = resolve(ROOT, 'docs/ai/history');
-const RECENT_PATH = resolve(HISTORY_DIR, 'recent.md');
-const INDEX_PATH = resolve(HISTORY_DIR, 'condensed-index.md');
+const CHANGELOG_REL = 'docs/ai/changelog.md';
+const HISTORY_REL = 'docs/ai/history';
+const RECENT_REL = 'docs/ai/history/recent.md';
+const LEGACY_REL = 'docs/ai/changelog-archive.md';
 
 const DEFAULT_HOT_DAYS = 3;
 const DEFAULT_WARM_DAYS = 30;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-const ENTRY_HEADING_RE = /^## (\d{4})\.(\d{2})\.(\d{2})(?: [—–] (.*))?$/;
+// Both separators are ACCEPTED on read: deployed archives on disk are dotted, while every other
+// date surface in the family — `lastUpdated:` included — is ISO. The backreference forbids a mixed
+// form (`2026-07.20`). ISO is what gets WRITTEN into new templates; re-emission preserves each
+// entry's source form verbatim.
+const ENTRY_HEADING_RE = /^## (\d{4})([.-])(\d{2})\2(\d{2})(?: [—–] (.*))?$/;
+// Kept exactly as shipped (Decision 3, L5): once the loud path exists this pattern is inert on the
+// entry side — an entry heading never reaches it — and it still names what a footer boundary IS.
+// Widening it was proven to convert a visible defect into a silent one; do not touch it.
 const NON_ENTRY_H2_RE = /^## (?!\d{4}\.\d{2}\.\d{2})/;
+// Unit-shape: a heading whose text begins with a plausible date attempt — deliberately WIDER than
+// the entry grammar, at ANY heading level and indent, so `### 2026-07-20`, `  ## 2026.07.20`,
+// `## 2026-07` and `## 20260720` all refuse loudly instead of being absorbed, while a prose
+// heading that merely starts with a year (`## 2026 vision`) stays prose.
+const DATE_LIKE_RE = /^\s*#{1,6}[ \t]+\d{4}[./-]?\d/;
+
+const USAGE =
+  'Usage: archive-changelog.mjs [--dry-run|--check] [--hot-days=N] [--warm-days=N] [--today=YYYY-MM-DD]';
 
 const parseArgs = (argv) => {
-  const flags = { dryRun: false, check: false };
+  const flags = { dryRun: false, check: false, help: false };
   const opts = { hotDays: DEFAULT_HOT_DAYS, warmDays: DEFAULT_WARM_DAYS, today: null };
-  for (const arg of argv.slice(2)) {
+  for (const arg of argv) {
     if (arg === '--dry-run') flags.dryRun = true;
     else if (arg === '--check') flags.check = true;
+    else if (arg === '--help' || arg === '-h') flags.help = true;
     else if (arg.startsWith('--hot-days=')) opts.hotDays = Number(arg.slice('--hot-days='.length));
     else if (arg.startsWith('--warm-days=')) opts.warmDays = Number(arg.slice('--warm-days='.length));
     else if (arg.startsWith('--today=')) opts.today = arg.slice('--today='.length);
-    else if (arg === '--help' || arg === '-h') {
-      console.log(
-        'Usage: archive-changelog.mjs [--dry-run|--check] [--hot-days=N] [--warm-days=N] [--today=YYYY-MM-DD]',
-      );
-      process.exit(0);
-    } else {
-      console.error(`Unknown argument: ${arg}`);
-      process.exit(2);
-    }
+    else throw fail(2, `unknown argument: ${arg}\n${USAGE}`);
   }
   return { flags, opts };
-};
-
-export const parseChangelogText = (text) => {
-  const fmMatch = text.match(/^(---\n[\s\S]*?\n---\n)/);
-  const frontmatter = fmMatch ? fmMatch[1] : '';
-  const rest = text.slice(frontmatter.length);
-  const lines = rest.split('\n');
-
-  const entryStartIdxs = [];
-  let firstNonEntryH2Idx = -1;
-  for (let i = 0; i < lines.length; i += 1) {
-    if (ENTRY_HEADING_RE.test(lines[i])) {
-      entryStartIdxs.push(i);
-    } else if (
-      firstNonEntryH2Idx === -1 &&
-      entryStartIdxs.length > 0 &&
-      NON_ENTRY_H2_RE.test(lines[i])
-    ) {
-      // Only treat a non-entry H2 as the footer boundary if it appears AFTER at least one date
-      // entry. Otherwise a previously-inserted "## History" pointer in the preamble would be
-      // mis-detected and cause every entry to be slurped into `footer`.
-      firstNonEntryH2Idx = i;
-    }
-  }
-
-  const preambleEnd = entryStartIdxs.length > 0 ? entryStartIdxs[0] : lines.length;
-  const preamble = lines.slice(0, preambleEnd).join('\n');
-
-  const entries = entryStartIdxs.map((idx, i) => {
-    const isFollowedByEntry = i + 1 < entryStartIdxs.length;
-    const tentativeEnd = isFollowedByEntry
-      ? entryStartIdxs[i + 1]
-      : firstNonEntryH2Idx !== -1 && firstNonEntryH2Idx > idx
-        ? firstNonEntryH2Idx
-        : lines.length;
-    const block = lines.slice(idx, tentativeEnd).join('\n').replace(/\n+$/, '');
-    const cleanedBlock = stripTrailingSeparator(block);
-    const m = ENTRY_HEADING_RE.exec(lines[idx]);
-    return {
-      dateStr: `${m[1]}.${m[2]}.${m[3]}`,
-      dateObj: new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00Z`),
-      year: m[1],
-      month: m[2],
-      day: m[3],
-      title: m[4] ?? '',
-      block: cleanedBlock,
-    };
-  });
-
-  const footer = firstNonEntryH2Idx !== -1 ? lines.slice(firstNonEntryH2Idx).join('\n').trim() : '';
-
-  return { frontmatter, preamble: preamble.trim(), entries, footer };
 };
 
 const TRAILING_FOOTER_PATTERNS = [
@@ -141,6 +107,95 @@ export const stripTrailingSeparator = (block) => {
   };
   while (lines.length > 0 && isStripLine(lines[lines.length - 1])) lines.pop();
   return lines.join('\n');
+};
+
+// Parse one tier's text → { frontmatter, preamble, entries, footer }. Fails closed: any
+// unit-shaped heading that does not parse as an entry is exit 1 naming `label:line`, and an entry
+// appearing after the footer boundary refuses rather than being duplicated into the footer.
+export const parseChangelogText = (text, label = 'changelog') => {
+  const { frontmatter, frontLines, lines, headings } = tokenizeMarkdown(text, label);
+  const fileLine = (index) => frontLines + index + 1;
+
+  const entryHeadings = [];
+  let footerIdx = -1;
+  for (const heading of headings) {
+    const m = ENTRY_HEADING_RE.exec(heading.text);
+    if (m) {
+      const [, year, , month, day] = m;
+      const dateObj = new Date(`${year}-${month}-${day}T00:00:00Z`);
+      const roundTrips =
+        dateObj.getUTCFullYear() === Number(year) &&
+        dateObj.getUTCMonth() + 1 === Number(month) &&
+        dateObj.getUTCDate() === Number(day);
+      if (!roundTrips) {
+        throw fail(
+          1,
+          `${label}:${fileLine(heading.index)}: "${heading.text}" is date-shaped but ` +
+            `${year}-${month}-${day} is not a real calendar date — it would previously have been ` +
+            'silently normalised into a different month; fix the date, then re-run.',
+        );
+      }
+      if (footerIdx !== -1) {
+        throw fail(
+          1,
+          `${label}:${fileLine(heading.index)}: entry heading "${heading.text}" appears after the ` +
+            `footer boundary at line ${fileLine(footerIdx)} — the footer must be the last section; ` +
+            'it would previously have been silently duplicated into the footer; move the entry ' +
+            'above the footer, then re-run.',
+        );
+      }
+      entryHeadings.push({ index: heading.index, match: m });
+      continue;
+    }
+    if (DATE_LIKE_RE.test(heading.text)) {
+      throw fail(
+        1,
+        `${label}:${fileLine(heading.index)}: "${heading.text}" is date-shaped but does not parse ` +
+          'as an entry heading — expected `## YYYY-MM-DD — title` or `## YYYY.MM.DD — title` at ' +
+          'column 0 with a real calendar date. It would previously have been silently absorbed ' +
+          'into the previous entry; fix the heading, then re-run.',
+      );
+    }
+    if (heading.level === 2 && entryHeadings.length > 0 && footerIdx === -1 && NON_ENTRY_H2_RE.test(heading.text)) {
+      // Only a non-entry H2 AFTER at least one date entry is the footer boundary. Otherwise a
+      // previously-inserted "## History" pointer in the preamble would be mis-detected and cause
+      // every entry to be slurped into `footer`.
+      footerIdx = heading.index;
+    }
+  }
+
+  const preambleEnd = entryHeadings.length > 0 ? entryHeadings[0].index : lines.length;
+  // The trailing `---` before the entries block is the BUILDER's structural separator, not
+  // preamble content — keeping it made every rebuild of an archive-less tree add one more.
+  const preamble = stripTrailingSeparator(lines.slice(0, preambleEnd).join('\n')).trim();
+
+  const entries = entryHeadings.map(({ index, match }, i) => {
+    const end =
+      i + 1 < entryHeadings.length
+        ? entryHeadings[i + 1].index
+        : footerIdx !== -1
+          ? footerIdx
+          : lines.length;
+    const block = stripTrailingSeparator(lines.slice(index, end).join('\n'));
+    const [, year, separator, month, day, title] = match;
+    return {
+      // dateStr is the DEDUPE IDENTITY and the grouping key, so it stays separator-insensitive —
+      // one entry written both ways collapses to one. dateSource preserves what the file said, and
+      // is what gets RENDERED, so an index line matches the heading it links to.
+      dateStr: `${year}.${month}.${day}`,
+      dateSource: `${year}${separator}${month}${separator}${day}`,
+      dateObj: new Date(`${year}-${month}-${day}T00:00:00Z`),
+      year,
+      month,
+      day,
+      title: title ?? '',
+      block,
+    };
+  });
+
+  const footer = footerIdx !== -1 ? lines.slice(footerIdx).join('\n').trim() : '';
+
+  return { frontmatter, preamble, entries, footer };
 };
 
 export const stripBlockquoteHistoryNotice = (preamble) => {
@@ -195,18 +250,33 @@ export const categorize = (entries, cutoffs) => {
 };
 
 export const compressEntry = (entry) => {
-  const lines = entry.block.split('\n');
+  // The block came out of a tokenized document, so its fences are balanced by construction; the
+  // paragraph split below is fence-aware, so compression can no longer cut a fenced block in half
+  // and write an archive the next run refuses.
+  const { lines, fencedLines } = tokenizeMarkdown(entry.block, 'entry block');
   const heading = lines[0];
   const body = lines.slice(1).join('\n');
 
-  const extractFirstParagraph = (text) => {
-    const paragraphs = text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
-    for (const para of paragraphs) {
-      if (para.startsWith('#')) continue;
-      if (/^(\*\*Goal|\*\*Problem|\*\*Context|\*\*Why|\*\*Session)/i.test(para)) return para;
-    }
-    return paragraphs.find((p) => !p.startsWith('#')) ?? '';
-  };
+  const paragraphs = [];
+  let cursor = 1;
+  while (cursor < lines.length) {
+    const brk = findParagraphBreak(lines, fencedLines, cursor);
+    const end = brk === -1 ? lines.length : brk;
+    const para = lines.slice(cursor, end).join('\n').trim();
+    if (para !== '') paragraphs.push(para);
+    cursor = end + 1;
+  }
+
+  // A previously-generated `**Result:**` line is never summary material and is PRESERVED as the
+  // metric below instead of being re-extracted — re-harvesting metrics from our own output made
+  // every COLD rewrite append another copy (`12 tests` → `12 tests, 12 tests`).
+  const isResultLine = (p) => /^\*\*Result:\*\*/.test(p);
+  const summary =
+    paragraphs.find(
+      (p) => !p.startsWith('#') && !isResultLine(p) && /^(\*\*Goal|\*\*Problem|\*\*Context|\*\*Why|\*\*Session)/i.test(p),
+    ) ??
+    paragraphs.find((p) => !p.startsWith('#') && !isResultLine(p)) ??
+    '';
 
   const extractFileBullets = (text) => {
     const filesSectionMatch = text.match(/\*\*(?:Changes|Files|Files touched|Files changed|Touched)[^\n]*\*\*([\s\S]*?)(?:\n\s*\n|\n##|$)/i);
@@ -225,16 +295,23 @@ export const compressEntry = (entry) => {
     return `**Result:** ${metricsMatch.slice(0, 3).join(', ')}`;
   };
 
-  const summary = extractFirstParagraph(body);
-  const files = extractFileBullets(body);
-  const metric = extractMetric(body);
+  const existingResult = paragraphs.find(isResultLine);
+  const metric = existingResult ?? extractMetric(body);
 
-  return [heading, '', summary, files, metric].filter(Boolean).join('\n\n').trim();
+  // The writer never emits what the reader refuses, by construction: the summary is whole
+  // fence-aware paragraphs (balanced fences), bullet lines and the metric line cannot open a
+  // fence, and the heading is a heading. The harness's self-consumption property pins this, and
+  // the WARM/COLD byte-fixed-point property pins that re-compression changes nothing.
+  return [heading, '', summary, extractFileBullets(body), metric]
+    .filter(Boolean)
+    .join('\n\n')
+    .trim();
 };
 
 const summarizeEntry = (entry, sourceLink) => {
   const titleSnippet = entry.title.slice(0, 110).replace(/\n/g, ' ');
-  return `- **${entry.dateStr}** — ${titleSnippet} — [${sourceLink}](./${sourceLink})`;
+  // Render the form the entry was WRITTEN in, so an index line matches the heading it links to.
+  return `- **${entry.dateSource ?? entry.dateStr}** — ${titleSnippet} — [${sourceLink}](./${sourceLink})`;
 };
 
 const renderEntries = (entries) =>
@@ -314,125 +391,156 @@ export const groupByMonth = (entries) => {
   return map;
 };
 
-const main = async () => {
-  const { flags, opts } = parseArgs(process.argv);
-  const cutoffs = computeCutoffs(opts.today, opts.hotDays, opts.warmDays);
-  const todayStr = cutoffs.today.toISOString().slice(0, 10);
-
-  const changelogText = await readFile(CHANGELOG_PATH, 'utf8');
-  const parsed = parseChangelogText(changelogText);
-
-  // Pull in legacy archive file if present (one-time inhalation).
-  const legacyArchivePath = resolve(ROOT, 'docs/ai/changelog-archive.md');
-  let legacyEntries = [];
-  if (existsSync(legacyArchivePath)) {
-    const legacyText = await readFile(legacyArchivePath, 'utf8');
-    legacyEntries = parseChangelogText(legacyText).entries;
-  }
-
-  // Read existing archive files so rotation is idempotent and does not drop entries
-  // already in WARM/COLD when only HOT changed.
-  let warmExistingEntries = [];
-  if (existsSync(RECENT_PATH)) {
-    const recentText = await readFile(RECENT_PATH, 'utf8');
-    warmExistingEntries = parseChangelogText(recentText).entries;
-  }
-  let coldExistingEntries = [];
-  if (existsSync(HISTORY_DIR)) {
-    const archiveEntries = await readdir(HISTORY_DIR);
-    for (const name of archiveEntries) {
-      if (!/^\d{4}-\d{2}\.md$/.test(name)) continue;
-      const text = await readFile(resolve(HISTORY_DIR, name), 'utf8');
-      coldExistingEntries.push(...parseChangelogText(text).entries);
+export const runCli = (argv, deps = {}) => {
+  const { root = ROOT, log = console.log, logError = console.error } = deps;
+  try {
+    const { flags, opts } = parseArgs(argv);
+    if (flags.help) {
+      log(USAGE);
+      return 0;
     }
-  }
+    const cutoffs = computeCutoffs(opts.today, opts.hotDays, opts.warmDays);
+    const todayStr = cutoffs.today.toISOString().slice(0, 10);
 
-  // Dedupe by (date + title) — favour the freshest occurrence by file source order.
-  const seen = new Set();
-  const allEntries = [
-    ...parsed.entries,
-    ...legacyEntries,
-    ...warmExistingEntries,
-    ...coldExistingEntries,
-  ]
-    .filter((e) => {
-      const key = `${e.dateStr}|${e.title}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .sort((a, b) => b.dateObj.getTime() - a.dateObj.getTime());
-  const { hot, warm, cold } = categorize(allEntries, cutoffs);
-  const coldByMonth = groupByMonth(cold);
+    const changelogPath = resolve(root, CHANGELOG_REL);
+    const historyDir = resolve(root, HISTORY_REL);
+    const recentPath = resolve(root, RECENT_REL);
+    const indexPath = resolve(historyDir, 'condensed-index.md');
+    const legacyPath = resolve(root, LEGACY_REL);
 
-  const summary = {
-    today: todayStr,
-    hotCutoff: cutoffs.hotCutoff.toISOString().slice(0, 10),
-    warmCutoff: cutoffs.warmCutoff.toISOString().slice(0, 10),
-    totals: { all: allEntries.length, hot: hot.length, warm: warm.length, cold: cold.length },
-    hotDates: hot.map((e) => e.dateStr),
-    warmDates: warm.map((e) => e.dateStr),
-    coldDates: cold.map((e) => e.dateStr),
-    coldFiles: [...coldByMonth.keys()].sort(),
-  };
+    if (!existsSync(changelogPath)) {
+      logError(`[archive-changelog] ${CHANGELOG_REL} not found — nothing to do.`);
+      return 1;
+    }
 
-  if (flags.check) {
-    const tooOldInHot = parsed.entries.filter((e) => e.dateObj < cutoffs.hotCutoff);
-    if (tooOldInHot.length > 0) {
-      console.error(
-        `[archive-changelog] FAIL: ${tooOldInHot.length} entries in changelog.md are older than ${opts.hotDays} days (relative to ${todayStr}).`,
+    // EVERY mode parses EVERY source before any write: a refusal in the main file, the legacy
+    // archive, recent.md or a monthly COLD file fires identically for the default run, --dry-run
+    // and --check, naming that file's own file:line — and nothing is written.
+    const perFile = {};
+    const parsed = parseChangelogText(readFileSync(changelogPath, 'utf8'), CHANGELOG_REL);
+    perFile[CHANGELOG_REL] = parsed.entries.length;
+
+    let legacyEntries = [];
+    if (existsSync(legacyPath)) {
+      legacyEntries = parseChangelogText(readFileSync(legacyPath, 'utf8'), LEGACY_REL).entries;
+      perFile[LEGACY_REL] = legacyEntries.length;
+    }
+    let warmExistingEntries = [];
+    if (existsSync(recentPath)) {
+      warmExistingEntries = parseChangelogText(readFileSync(recentPath, 'utf8'), RECENT_REL).entries;
+      perFile[RECENT_REL] = warmExistingEntries.length;
+    }
+    const coldExistingEntries = [];
+    if (existsSync(historyDir)) {
+      for (const name of readdirSync(historyDir)) {
+        if (!/^\d{4}-\d{2}\.md$/.test(name)) continue;
+        const rel = `${HISTORY_REL}/${name}`;
+        const entries = parseChangelogText(readFileSync(resolve(historyDir, name), 'utf8'), rel).entries;
+        perFile[rel] = entries.length;
+        coldExistingEntries.push(...entries);
+      }
+    }
+
+    // Dedupe by (date + title) — favour the freshest occurrence by file source order.
+    const seen = new Set();
+    const allEntries = [
+      ...parsed.entries,
+      ...legacyEntries,
+      ...warmExistingEntries,
+      ...coldExistingEntries,
+    ]
+      .filter((e) => {
+        const key = `${e.dateStr}|${e.title}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((a, b) => b.dateObj.getTime() - a.dateObj.getTime());
+    const { hot, warm, cold } = categorize(allEntries, cutoffs);
+    const coldByMonth = groupByMonth(cold);
+
+    const summary = {
+      today: todayStr,
+      hotCutoff: cutoffs.hotCutoff.toISOString().slice(0, 10),
+      warmCutoff: cutoffs.warmCutoff.toISOString().slice(0, 10),
+      totals: { all: allEntries.length, hot: hot.length, warm: warm.length, cold: cold.length },
+      perFile,
+      hotDates: hot.map((e) => e.dateStr),
+      warmDates: warm.map((e) => e.dateStr),
+      coldDates: cold.map((e) => e.dateStr),
+      coldFiles: [...coldByMonth.keys()].sort(),
+    };
+
+    if (flags.check) {
+      const tooOldInHot = parsed.entries.filter((e) => e.dateObj < cutoffs.hotCutoff);
+      if (tooOldInHot.length > 0) {
+        logError(
+          `[archive-changelog] FAIL: ${tooOldInHot.length} entries in ${CHANGELOG_REL} are older than ${opts.hotDays} days (relative to ${todayStr}).`,
+        );
+        for (const e of tooOldInHot) logError(`  - ${e.dateStr} — ${e.title}`);
+        logError('Run the changelog archive script (without --check) to rotate.');
+        return 1;
+      }
+      // The verdict names what it acted on: a zero-entry tier is a DECISION — with the loud path
+      // above, zero can only mean nothing unit-shaped is present, never a file that failed to parse.
+      log(
+        `[archive-changelog] OK — ${CHANGELOG_REL}: ${parsed.entries.length} parsed entries, all within ` +
+          `${opts.hotDays} days of ${todayStr}; corpus ${allEntries.length} (HOT ${hot.length} / WARM ${warm.length} / COLD ${cold.length}).`,
       );
-      for (const e of tooOldInHot) console.error(`  - ${e.dateStr} — ${e.title}`);
-      console.error('Run the changelog archive script (without --check) to rotate.');
-      process.exit(1);
+      return 0;
     }
-    console.log(`[archive-changelog] OK — all changelog.md entries are within ${opts.hotDays} days of ${todayStr}.`);
-    process.exit(0);
-  }
 
-  if (flags.dryRun) {
-    console.log('[archive-changelog] DRY-RUN — no files will be changed.');
-    console.log(JSON.stringify(summary, null, 2));
-    return;
-  }
+    if (flags.dryRun) {
+      log('[archive-changelog] DRY-RUN — no files will be changed.');
+      log(JSON.stringify(summary, null, 2));
+      return 0;
+    }
 
-  await mkdir(HISTORY_DIR, { recursive: true });
+    // Zero-corpus policy, default mode: with the loud path above, zero entries across EVERY
+    // source can only mean genuinely nothing to rotate — a stated no-op, never a gratuitous
+    // mkdir + rewrite. Checked against allEntries (not just HOT) so an empty HOT never blocks
+    // servicing existing WARM/COLD entries.
+    if (allEntries.length === 0) {
+      log('[archive-changelog] nothing to rotate — 0 entries across every source.');
+      return 0;
+    }
 
-  const newChangelog = buildChangelog({
-    frontmatter: parsed.frontmatter || FRONTMATTER('history', 700, todayStr),
-    preamble: parsed.preamble,
-    hot,
-    footer: parsed.footer,
-    hasArchive: warm.length > 0 || cold.length > 0,
-  });
-  await writeFile(CHANGELOG_PATH, newChangelog, 'utf8');
+    mkdirSync(historyDir, { recursive: true });
 
-  if (warm.length > 0) {
-    await writeFile(RECENT_PATH, buildRecent(warm, todayStr), 'utf8');
-  }
+    const newChangelog = buildChangelog({
+      frontmatter: parsed.frontmatter || FRONTMATTER('history', 700, todayStr),
+      preamble: parsed.preamble,
+      hot,
+      footer: parsed.footer,
+      hasArchive: warm.length > 0 || cold.length > 0,
+    });
+    writeFileSync(changelogPath, newChangelog, 'utf8');
 
-  for (const [key, entries] of coldByMonth) {
-    const [year, month] = key.split('-');
-    const path = resolve(HISTORY_DIR, `${year}-${month}.md`);
-    await writeFile(path, buildCold(year, month, entries, todayStr), 'utf8');
-  }
+    if (warm.length > 0) {
+      writeFileSync(recentPath, buildRecent(warm, todayStr), 'utf8');
+    }
 
-  if (warm.length > 0 || cold.length > 0) {
-    await writeFile(INDEX_PATH, buildCondensedIndex(warm, coldByMonth, todayStr), 'utf8');
-  }
+    for (const [key, entries] of coldByMonth) {
+      const [year, month] = key.split('-');
+      writeFileSync(resolve(historyDir, `${year}-${month}.md`), buildCold(year, month, entries, todayStr), 'utf8');
+    }
 
-  console.log('[archive-changelog] migrated:');
-  console.log(`  HOT (${relative(ROOT, CHANGELOG_PATH)}): ${hot.length}`);
-  console.log(`  WARM (${relative(ROOT, RECENT_PATH)}): ${warm.length}`);
-  for (const key of coldByMonth.keys()) {
-    console.log(`  COLD (history/${key}.md): ${coldByMonth.get(key).length}`);
+    if (warm.length > 0 || cold.length > 0) {
+      writeFileSync(indexPath, buildCondensedIndex(warm, coldByMonth, todayStr), 'utf8');
+    }
+
+    log('[archive-changelog] migrated:');
+    log(`  HOT (${CHANGELOG_REL}): ${hot.length}`);
+    log(`  WARM (${RECENT_REL}): ${warm.length}`);
+    for (const key of coldByMonth.keys()) {
+      log(`  COLD (${HISTORY_REL}/${key}.md): ${coldByMonth.get(key).length}`);
+    }
+    return 0;
+  } catch (err) {
+    logError(`[archive-changelog] ${err.message}`);
+    return err.exitCode ?? 1;
   }
 };
 
 const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) {
-  main().catch((err) => {
-    console.error(err);
-    process.exit(1);
-  });
-}
+if (isDirectRun) process.exitCode = runCli(process.argv.slice(2));

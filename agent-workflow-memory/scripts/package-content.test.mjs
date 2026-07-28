@@ -138,9 +138,12 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
   it('retains the deploy payload tests (reverse pins)', () => {
     const required = [
       'references/scripts/archive-changelog.test.mjs',
+      'references/scripts/archive-conservation.test.mjs',
       'references/scripts/archive-decisions.test.mjs',
       'references/scripts/archive-issues.test.mjs',
+      'references/scripts/archiver-structure.test.mjs',
       'references/scripts/check-docs-size.test.mjs',
+      'references/scripts/markdown-blocks.test.mjs',
     ];
     const missing = required.filter((p) => !packed.includes(p));
     assert.deepEqual(missing, [], 'a deploy payload test was dropped from the tarball');
@@ -152,6 +155,7 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
       'references/scripts/archive-decisions.mjs',
       'references/scripts/archive-issues.mjs',
       'references/scripts/check-docs-size.mjs',
+      'references/scripts/markdown-blocks.mjs',
       'references/scripts/_expect-shim.mjs',
       'references/scripts/install-git-hooks.mjs',
       'references/scripts/migrate-gates.mjs',
@@ -199,6 +203,11 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
     // 50 = 49 + references/scripts/check-docs-size-cli.test.mjs (Phase-5 coverage fill: the
     //      runCli refusal-branch pins the subprocess smokes cannot reach; the main spec file
     //      is parity-frozen, so the pins ride a colocated deploy-payload file; kit-mirrored).
-    assert.equal(packed.length, 50, `tarball file count drifted (${packed.length} ≠ 50)`);
+    // 54 = 50 + the fail-closed archiver core (memory 4.0.0): references/scripts/markdown-blocks.mjs
+    //      (the ONE shared block tokenizer all three archivers read through) + its deploy-payload
+    //      test + references/scripts/archive-conservation.test.mjs (the conservation/round-trip
+    //      harness) + references/scripts/archiver-structure.test.mjs (the no-raw-scan structural
+    //      pin). All four kit-mirrored via sync-mirrors.
+    assert.equal(packed.length, 54, `tarball file count drifted (${packed.length} ≠ 54)`);
   });
 });

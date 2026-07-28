@@ -309,7 +309,12 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       It shares repo-search's paths-file format and failure classes by IMPORT, so the two file
     //       lanes cannot drift into classifying the same failure differently. Its *.test.mjs sibling
     //       is stripped by files[].
-    assert.equal(packed.length, 165, `tarball file count drifted (${packed.length} ≠ 165)`);
+    // 169 = 165 + the fail-closed archiver core mirrored from the memory canon (kit 5.0.0):
+    //       references/scripts/markdown-blocks.mjs (the ONE shared block tokenizer) + its
+    //       deploy-payload test + references/scripts/archive-conservation.test.mjs (the
+    //       conservation/round-trip harness) + references/scripts/archiver-structure.test.mjs
+    //       (the no-raw-scan structural pin).
+    assert.equal(packed.length, 169, `tarball file count drifted (${packed.length} ≠ 169)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

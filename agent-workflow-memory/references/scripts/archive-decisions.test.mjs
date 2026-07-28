@@ -111,6 +111,99 @@ const run = (argv, root, opts = {}) => {
 const adrFiles = (root) => (existsSync(join(root, ADR_DIR_REL)) ? readdirSync(join(root, ADR_DIR_REL)).filter((n) => /^AD-\d{3,}-/.test(n)).sort() : []);
 const idsIn = (root, rel) => parseDecisionsText(readFileSync(join(root, rel), 'utf8'), rel).entries.map((e) => e.id);
 
+// ── tokenizer contract (Phase 2) — fences, CRLF and mis-levelled AD headings ──────────
+//
+// The parser reads through markdown-blocks.mjs: a `## ` line inside a fenced sample is BODY (the
+// shipped false-refusal — an ADR documenting the changelog heading format was refused), an
+// unclosed fence is loud, CRLF never changes a parse, and an AD-shaped heading at the wrong level
+// or indent refuses instead of being silently absorbed as body text.
+
+describe('tokenizer contract — fences, CRLF and mis-levelled AD headings', () => {
+  const refusal = (fn) => {
+    let threw = null;
+    try {
+      fn();
+    } catch (err) {
+      threw = err;
+    }
+    assert.ok(threw, 'expected a typed refusal');
+    assert.equal(threw.exitCode, 1, `a refusal carries exitCode 1 (${threw.message})`);
+    return threw;
+  };
+
+  it('an ADR documenting the changelog format parses — a fenced non-AD sample is body', () => {
+    const block = [
+      '## AD-050 — documents the changelog heading format',
+      '',
+      '**Date:** 2026-01-01 · **Status:** Accepted',
+      '',
+      'Write entries like:',
+      '',
+      '```markdown',
+      '## 2026-07-20 — an example entry',
+      '```',
+      '',
+      'end.',
+    ].join('\n');
+    const p = parseDecisionsText(tierText(500, '# T', [block]), 'x');
+    assert.deepEqual(p.entries.map((e) => e.id), ['050']);
+    assert.match(p.entries[0].block, /## 2026-07-20 — an example entry/);
+  });
+
+  it('a fenced AD-heading sample never splits the enclosing block either', () => {
+    const block = [
+      '## AD-050 — shows a record heading',
+      '',
+      '```markdown',
+      '## AD-999 — a sample record heading',
+      '```',
+      '',
+      'end.',
+    ].join('\n');
+    const p = parseDecisionsText(tierText(500, '# T', [block]), 'x');
+    assert.deepEqual(p.entries.map((e) => e.id), ['050']);
+    assert.match(p.entries[0].block, /AD-999/);
+  });
+
+  it('an unclosed fence refuses loudly instead of being scanned through', () => {
+    const block = ['## AD-050 — opens a fence', '', '```markdown', '## AD-051 — hidden behind it'].join('\n');
+    const err = refusal(() => parseDecisionsText(tierText(500, '# T', [block]), 'x'));
+    assert.match(err.message, /never closed/);
+  });
+
+  it('an AD-shaped heading at the wrong level or indent refuses naming file and line', () => {
+    for (const bad of ['### AD-051 — wrong level', '  ## AD-051 — indented', '##\tAD-051 — tab separated']) {
+      const err = refusal(() => parseDecisionsText(tierText(500, '# T', [adrBlock('050'), `${bad}\n\norphan body`]), 'x'));
+      assert.match(err.message, /^x:\d+:/);
+      assert.match(err.message, /AD-051/);
+    }
+  });
+
+  it('a CRLF decisions file parses identically to its LF twin', () => {
+    const lf = tierText(500, '# T', [adrBlock('050'), adrBlock('051')]);
+    const a = parseDecisionsText(lf, 'x');
+    const b = parseDecisionsText(lf.replace(/\n/g, '\r\n'), 'x');
+    assert.deepEqual(b.entries.map((e) => e.id), a.entries.map((e) => e.id));
+    assert.deepEqual(b.entries.map((e) => e.status), a.entries.map((e) => e.status));
+  });
+
+  it('the check verdict names the parsed HOT ADR count, zero included', () => {
+    const withTwo = makeRoot();
+    seedLegacy(withTwo, { hot: ['050', '051'] });
+    assert.equal(run(['--write-navigator'], withTwo).code, 0);
+    const two = run(['--check'], withTwo);
+    assert.equal(two.code, 0);
+    assert.match(two.text, /2 ADR\(s\) in the HOT window/);
+
+    const empty = makeRoot();
+    seedLegacy(empty, { hot: [] });
+    assert.equal(run(['--write-navigator'], empty).code, 0);
+    const zero = run(['--check'], empty);
+    assert.equal(zero.code, 0);
+    assert.match(zero.text, /0 ADR\(s\) in the HOT window/);
+  });
+});
+
 // ── 1.1 — the widened grammar + real-corpus parser + status/date/lifecycle extraction ──
 
 describe('1.1 parser — real-corpus formats, widened grammar, verbatim blocks', () => {

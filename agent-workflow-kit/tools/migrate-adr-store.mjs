@@ -119,6 +119,26 @@ export const planScriptRefresh = (cwd, deps = {}) => {
   return out;
 };
 
+// COMPANION seeds: modules the refreshed archivers IMPORT. The refresh above is deliberately
+// directional (never ADDS a basename the consumer lacks), but refreshing an OLD deployment's
+// archivers to this kit's canon without their runtime dependency would leave every refreshed
+// script crashing on a missing `./markdown-blocks.mjs` import until a separate upgrade run — so
+// the dependency rides the SAME apply, atomically, written before its importers.
+const COMPANION_SEEDS = ['markdown-blocks.mjs', 'markdown-blocks.test.mjs'];
+export const planCompanionSeeds = (cwd, refresh, deps = {}) => {
+  if (refresh.length === 0) return [];
+  const exists = deps.exists ?? existsSync;
+  const kitScripts = deps.kitScripts ?? KIT_SCRIPTS;
+  const consumerScripts = join(cwd, CONSUMER_SCRIPTS_REL);
+  const out = [];
+  for (const name of COMPANION_SEEDS) {
+    const canon = join(kitScripts, name);
+    const dst = join(consumerScripts, name);
+    if (exists(canon) && !exists(dst)) out.push({ name, canon, dst });
+  }
+  return out;
+};
+
 const gitDirOf = (cwd, spawn) => {
   const r = spawn('git', ['rev-parse', '--absolute-git-dir'], { cwd, encoding: 'utf8' });
   return r && r.status === 0 && r.stdout ? r.stdout.trim() : null;
@@ -206,10 +226,15 @@ const applyScriptRefresh = (cwd, refresh, deps = {}) => {
   const read = deps.read ?? readFileSync;
   const chmod = deps.chmod ?? chmodSync;
   const stat = deps.stat ?? statSync;
-  for (const { canon, dst, name } of refreshOrder(refresh)) {
+  // Companion modules FIRST (a dependency must land before its importers), refresh order after —
+  // the discriminator still last, so an interrupted apply always re-plans in full. Returns the
+  // seeded names (computed pre-write; recomputing after would see them present and report none).
+  const seeds = planCompanionSeeds(cwd, refresh, deps);
+  for (const { canon, dst, name } of [...seeds, ...refreshOrder(refresh)]) {
     writeContainedFileAtomic(cwd, dst, read(canon, 'utf8'), deps, { stop, label: `${CONSUMER_SCRIPTS_REL}/${name}` });
     chmod(dst, stat(canon).mode & 0o777); // the exec bit is the git-tracked axis the mirror guard pins
   }
+  return seeds.map((s) => s.name);
 };
 
 // ── the no-monolith crossing ─────────────────────────────────────────────────────
@@ -307,6 +332,7 @@ const crossWithoutMonolith = (cwd, args, stamp, { log, error, runMigrate, deps }
     log(`  ${ADR_DIR_REL}/: ${hasStore ? 'present, but the crossing has not been completed' : 'absent'}`);
     log(`  snapshot → ${preview.dir ? `${preview.dir} (${preview.viaGitDir ? 'git dir' : 'out-of-tree fallback'})` : 'NONE — no out-of-tree location; run inside a git repo (apply would refuse otherwise)'}`);
     log(`  refresh ${refresh.length} enforcement script(s) to this kit's version${drifted.length ? ` (${drifted.length} locally differ: ${drifted.map((r) => r.name).join(', ')})` : ''}`);
+    for (const s of planCompanionSeeds(cwd, refresh, deps)) log(`  seed companion module ${CONSUMER_SCRIPTS_REL}/${s.name} (imported by the refreshed archivers; absent at the consumer)`);
     log(`  then seed the store: create ${ADR_DIR_REL}/, write ${NAV_REL} and regenerate docs/ai/index.md`);
     const code = preflight((m) => error(`    ${m}`));
     if (code !== EXIT_OK) {
@@ -328,7 +354,7 @@ const crossWithoutMonolith = (cwd, args, stamp, { log, error, runMigrate, deps }
   const snapshot = writeSnapshot(cwd, refresh, stamp, deps);
   // The FULL refresh is re-planned and re-applied on every entry, so an interrupted one always
   // completes; the discriminator script is written last (see refreshOrder).
-  applyScriptRefresh(cwd, refresh, deps);
+  const seededNames = applyScriptRefresh(cwd, refresh, deps);
 
   // Capture the index-regeneration verdict instead of matching log prose: the rotator logs a failed
   // regeneration and still returns 0, so "the gates are green" would not mean the index is fresh.
@@ -359,7 +385,7 @@ const crossWithoutMonolith = (cwd, args, stamp, { log, error, runMigrate, deps }
   // interrupted crossing whose scripts were already current, which no "old-scheme" claim covers.
   log('[migrate-adr-store] crossing complete — the one-file-per-ADR store is in place (no legacy monolith was present):');
   log(`  snapshot: ${snapshot.dir} (${snapshot.viaGitDir ? 'git dir' : 'out-of-tree fallback'}, ${snapshot.fileCount} file(s))`);
-  log(`  refreshed ${refresh.length} enforcement script(s) to this kit's version`);
+  log(`  refreshed ${refresh.length} enforcement script(s) to this kit's version${seededNames.length ? ` + seeded ${seededNames.join(', ')}` : ''}`);
   log(`  seeded ${ADR_DIR_REL}/ with ${NAV_REL} and regenerated docs/ai/index.md`);
   log('  next: run the normal upgrade (it re-stamps the deployment lineage to the current head),');
   log('  then review the migrated docs/ai/ tree and the re-stamp together and commit them yourself — this command never commits.');
@@ -394,6 +420,7 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
       log(`  old layout: ${monoliths.join(', ')} (will be exploded into ${ADR_DIR_REL}/ then retired)`);
       log(`  snapshot → ${preview.dir ? `${preview.dir} (${preview.viaGitDir ? 'git dir' : 'out-of-tree fallback'})` : 'NONE — no out-of-tree location; run inside a git repo (apply would refuse otherwise)'}`);
       log(`  refresh ${refresh.length} enforcement script(s) to this kit's version${drifted.length ? ` (${drifted.length} locally differ: ${drifted.map((r) => r.name).join(', ')})` : ''}`);
+    for (const s of planCompanionSeeds(cwd, refresh, deps)) log(`  seed companion module ${CONSUMER_SCRIPTS_REL}/${s.name} (imported by the refreshed archivers; absent at the consumer)`);
       log('  then the conservation-checked rotation:');
       // Surface the rotation's own exit code: a failed dry-run must NOT print the
       // "run with --apply" go-ahead nor exit 0 — it would send the user to --apply on an unsafe tree.
@@ -419,14 +446,14 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
     }
 
     const snapshot = writeSnapshot(cwd, refresh, stamp, deps);
-    applyScriptRefresh(cwd, refresh, deps);
+    const seededNames = applyScriptRefresh(cwd, refresh, deps);
     const code = runMigrate(['--migrate', '--apply'], { root: cwd, log, logError: error });
     if (code !== EXIT_OK) {
       throw stop(`the rotation failed (exit ${code}) — the pre-migration snapshot is at ${snapshot.dir}; resolve the reported problem and re-run (the migration is idempotent).`);
     }
     log('[migrate-adr-store] migrated the 3-tier ADR cascade → one-file-per-ADR store:');
     log(`  snapshot: ${snapshot.dir} (${snapshot.viaGitDir ? 'git dir' : 'out-of-tree fallback'}, ${snapshot.fileCount} file(s))`);
-    log(`  refreshed ${refresh.length} enforcement script(s) to this kit's version`);
+    log(`  refreshed ${refresh.length} enforcement script(s) to this kit's version${seededNames.length ? ` + seeded ${seededNames.join(', ')}` : ''}`);
     log('  next: run the normal upgrade (it re-stamps the deployment lineage to the current head),');
     log('  then review the migrated docs/ai/ tree and the re-stamp together and commit them yourself — this command never commits.');
     return EXIT_OK;

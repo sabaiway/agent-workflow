@@ -137,18 +137,22 @@ describe('frozen snapshot', () => {
       '/scripts/_expect-shim.mjs',
       '/scripts/archive-changelog.mjs',
       '/scripts/archive-changelog.test.mjs',
+      '/scripts/archive-conservation.test.mjs',
       '/scripts/archive-decisions.mjs',
       '/scripts/archive-decisions.test.mjs',
       '/scripts/archive-issues.mjs',
       '/scripts/archive-issues.test.mjs',
+      '/scripts/archiver-structure.test.mjs',
       '/scripts/check-docs-size.mjs',
       '/scripts/check-docs-size.test.mjs',
       '/scripts/install-git-hooks.mjs',
+      '/scripts/markdown-blocks.mjs',
+      '/scripts/markdown-blocks.test.mjs',
       '/docs/plans/',
       '/.claude/settings.local.json',
       '/.claude/settings.json',
     ];
-    assert.equal(KIT_OWN_PATHS.length, 16, 'KIT_OWN_PATHS count sentinel — edit deliberately');
+    assert.equal(KIT_OWN_PATHS.length, 20, 'KIT_OWN_PATHS count sentinel — edit deliberately');
     assert.deepEqual(KIT_OWN_PATHS, expected);
   });
 
