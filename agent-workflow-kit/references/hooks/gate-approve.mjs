@@ -45,6 +45,12 @@
 //   (d) everything else → NO decision: exit 0, no output — the normal permission flow proceeds
 //       unchanged. The hook NEVER emits `deny`.
 //
+// EVERY ASK ALSO CARRIES A CALLER-FACING HINT (`additionalContext`). The ask itself goes to the
+// HUMAN and its reason never reaches the caller that composed the command — so the guard knew the
+// right lane and could not say it, which is the one thing every withdrawn deny design was buying.
+// The hint is that channel without the refusal, and a host that ignores the field degrades to
+// silence, i.e. to the previous behaviour. See the note above `HINT_CORE`.
+//
 // WHY THERE IS NO DENY RUNG, AND WHY THE DIRECTION IS RETIRED (kit 4.0.0 built one, AD-078
 // removed it; the class was closed from the other side instead). The withdrawn rung refused a
 // seeded read-only command that provably DISCARDED its output, on the argument that such a refusal
@@ -272,7 +278,16 @@ export const matchSeededCorePrefix = (command) => {
 // review killed it: it would pull ANY unrelated `repo-search.mjs` into rung (b2), turning a
 // pre-existing NO decision into an ASK — a change to a decision path this release has no business
 // touching.
-export const SCANNED_TOOL_PATHS = Object.freeze(['agent-workflow-kit/tools/repo-search.mjs']);
+// The RECOVERY is per tool, not a constant. When repo-search was the only entry the reason named the
+// literal `--pattern-file`, and that was wrong the moment a second tool joined: wrong for a tool with
+// no such flag, and already incomplete for repo-search itself once its TARGET half gained a lane. An
+// ask whose named recovery does not exist is worse than an ask with no advice, so the advice is
+// derived from whichever tool matched.
+export const SCANNED_TOOL_LANES = Object.freeze({
+  'agent-workflow-kit/tools/repo-search.mjs': '--pattern-file / --paths-file',
+  'agent-workflow-kit/tools/path-inventory.mjs': '--paths-file',
+});
+export const SCANNED_TOOL_PATHS = Object.freeze(Object.keys(SCANNED_TOOL_LANES));
 
 // Quotes stripped and separators canonicalised, so a relative, absolute, quoted or Windows-separated
 // spelling all compare the same. SUBSTRING, not equality, and scanned across EVERY token rather than
@@ -282,10 +297,13 @@ export const SCANNED_TOOL_PATHS = Object.freeze(['agent-workflow-kit/tools/repo-
 // surface this exists to cover, while a spurious match merely over-asks — so inclusiveness wins.
 const canonicalToken = (token) => token.replace(/["']/gu, '').replace(/\\/gu, '/');
 
-export const matchScannedToolPrefix = (command) => {
+export const matchScannedToolPrefix = (command) => matchScannedTools(command)[0] ?? null;
+
+// ALL matches, not just the first. A command naming two scanned tools would otherwise be advised
+// about whichever happens to sit earlier in the registry, and the residual may belong to the other.
+export const matchScannedTools = (command) => {
   const tokens = tokenizeCommand(command).map(canonicalToken);
-  const hit = SCANNED_TOOL_PATHS.find((path) => tokens.some((token) => token.includes(path)));
-  return hit ?? null;
+  return SCANNED_TOOL_PATHS.filter((path) => tokens.some((token) => token.includes(path)));
 };
 
 // String-level, conservative: the hook sees the PRE-SHELL command string, so every class is a raw
@@ -381,6 +399,35 @@ export const isReadLaneCommand = (command) => {
   });
 };
 
+// ── the caller-facing hint (rides an ask; refuses nothing) ────────────────────────────
+//
+// WHY THIS EXISTS, AND WHY IT IS NOT A DENY. An ask is answered by the HUMAN: `permissionDecisionReason`
+// is context for THEIR dialog and never reaches the caller that composed the command. So for the whole
+// life of this guard it has known the right lane and had no way to say it — which is the single reason
+// every withdrawn deny design looked attractive, since a deny is refusal-shaped and does reach the
+// caller. `additionalContext` is the same channel without the refusal. Probed live on 2026-07-28 with
+// a throwaway hook: a distinct marker was delivered to the model on `allow`, on `ask`, AND on no
+// decision at all.
+// FAIL-SAFE BY CONSTRUCTION: a host that does not honour the field simply drops it, which is exactly
+// the behaviour that existed before — silence. Nothing is refused, so a hint that is wrong for a
+// particular command costs the caller a sentence, never their work. That is the property no deny
+// design could ever claim.
+export const HINT_CORE = 'agent-workflow: this read left the promptless lane — a plain read-only command with no redirection, no banner and no quotes stays inside it. If the byte is a decoration you do not need, drop it and re-issue; if it is ordinary text inside an argument, a search belongs in `repo-search.mjs` (`--pattern-file`), and several path questions (exists / size / line count / listing / small-file contents) are ONE `path-inventory.mjs` call. If the byte is a deliberate operator, keep it and confirm by hand.';
+
+// The hint must not GUESS which of the two causes produced the residual — the guard cannot tell a
+// byte that is ordinary text inside an argument from a real shell operator, and pretending otherwise
+// is the exact claim AD-079 closed. So it names BOTH recoveries and lets the caller pick: the one
+// that fits is always present, and the one that does not costs a clause.
+// The hint never tells the caller to delete an operator it cannot read the intent of: dropping a
+// real `> report.json` would change what the command DOES, and a guard that silently edits meaning is
+// the failure this whole area was built to avoid. It names the out-of-band lane, notes that these
+// tools already bound and print their own result (so a decoration is usually redundant), and leaves a
+// deliberate operator to the human confirmation that already exists.
+const hintForScannedTools = (tools) => {
+  const lanes = tools.map((tool) => `\`${tool}\` → ${SCANNED_TOOL_LANES[tool]}`).join('; ');
+  return `agent-workflow: the residual guard stopped this. If the byte is part of an ARGUMENT, pass it out of band — ${lanes} — and its bytes then never enter the command string, so this guard has nothing to scan (whether the clean form still prompts depends on your settings allow rules, which this hook does not read). If the byte is a decoration you do not need, drop it: these tools bound and print their own result. If it is a deliberate operator, keep it and confirm by hand — that is what the prompt is for.`;
+};
+
 // ── the decision ladder (pure core) ───────────────────────────────────────────────────
 
 export const decideBashCall = ({ command, permissionMode, cwdIsProjectRoot, gates, readLaneOn = false }) => {
@@ -404,19 +451,23 @@ export const decideBashCall = ({ command, permissionMode, cwdIsProjectRoot, gate
       return {
         permissionDecision: DECISION_ASK,
         permissionDecisionReason: `agent-workflow residual guard: read-only-seeded "${corePrefix}" carries ${residualClasses.join(' + ')} — a settings allow rule cannot see runtime shape; confirm by hand`,
+        additionalContext: HINT_CORE,
       };
     }
   }
   // (b2) the same guard over the scanned kit tools. The refusal NAMES the lane that avoids it, so a
   // caller who picked the inline lane for a shell-significant pattern is corrected by the mechanism
   // rather than expected to have remembered the rule.
-  const scannedTool = matchScannedToolPrefix(trimmed);
-  if (scannedTool !== null) {
+  const scannedTools = matchScannedTools(trimmed);
+  if (scannedTools.length > 0) {
     const residualClasses = detectResidualClasses(trimmed);
     if (residualClasses.length > 0) {
+      const named = scannedTools.map((tool) => `"${tool}"`).join(' + ');
+      const lanes = [...new Set(scannedTools.map((tool) => SCANNED_TOOL_LANES[tool]))].join(' / ');
       return {
         permissionDecision: DECISION_ASK,
-        permissionDecisionReason: `agent-workflow residual guard: "${scannedTool}" carries ${residualClasses.join(' + ')} — pass the pattern with --pattern-file (its bytes then never enter the command string), or confirm by hand if the byte is really part of the invocation`,
+        permissionDecisionReason: `agent-workflow residual guard: ${named} carries ${residualClasses.join(' + ')} — pass the byte-carrying argument out of band with ${lanes} (its bytes then never enter the command string), or confirm by hand if the byte is really part of the invocation`,
+        additionalContext: hintForScannedTools(scannedTools),
       };
     }
   }

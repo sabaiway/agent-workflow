@@ -4,6 +4,57 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 4.4.0 — the guard stops charging you for answers it already has (AD-082)
+
+**If the agent keeps asking you to approve its own `2>/dev/null`, this release is for you.** Two
+things changed, and neither refuses anything.
+
+**1. The ask now talks to the AGENT, not only to you.** Until now, when the guard stopped a read
+carrying a redirection it explained itself in *your* approval dialog — and the agent that composed the
+command never heard a word of it. So it composed the same shape again next turn. The ask now also
+carries a hint back to the agent naming the lane that would not have prompted at all. Nothing is
+blocked and nothing new is approved; if your host does not support the field, you get exactly the old
+behaviour. **You should see the same class of prompt arrive less often, not disappear** — the honest
+claim, stated because the alternative would be a promise this cannot keep.
+
+**2. Two lanes so several small questions stop becoming one composed shell.**
+
+- **`path-inventory.mjs` (new).** Does this exist, what type is it, how big, how many lines, what is
+  in that directory, what does this small config say — for any number of paths, in ONE call, promptless.
+  **A path that does not exist is a normal answer** (`exists:false`, exit 0), because "does either of
+  these exist" is a question whose interesting answer is "no", and a tool that errors on it sends you
+  straight back to writing a shell one-liner. Symlinks are reported by type and never followed;
+  binaries are reported, never decoded; every bound names itself instead of truncating quietly.
+- **`repo-search.mjs --paths-file`.** The pattern half already had a file lane; the TARGET half did
+  not, so a path containing a backtick or `$(` could not be searched without a prompt however you
+  quoted it. Now it can. Both lane files are excluded from the search itself, by real path.
+
+**What you must do to get the promptless part.** Re-run `/agent-workflow-kit velocity --kit-tools`.
+Allow rules are values already written into your `.claude/settings.json`; upgrading the kit does not
+edit them. The advisor now tells you exactly which entries you are missing.
+
+**Also in this release:** the guard's recovery advice is derived per tool (it used to name
+`--pattern-file` for every scanned tool, which was wrong the moment a second one existed), and it now
+names both possibilities — pass the byte out of band if it is part of an argument, drop it if it is a
+real redirect — because the guard cannot tell those apart and should not pretend to.
+
+**One consequence worth knowing about.** The guard's scanned-tool match is a substring match across
+the command, deliberately inclusive because an over-match only ever costs an extra prompt. Adding a
+second tool extends that: a command that merely MENTIONS `path-inventory.mjs` and carries a
+redirection now asks where it previously got no decision at all. That is the same licensed over-ask
+`repo-search.mjs` has had since 4.2.0, on one more path string.
+
+**One rule worth knowing if you pass paths to either tool.** A target must name exactly one thing:
+no empty value, no NUL byte, no `..` component (Node collapses it before the filesystem is consulted,
+so the tool could answer about a different file than you named). A trailing `/` or `/.` is not
+rejected — it asserts "this is a directory", exactly as it does to your shell. Awkward names are
+still supported: spaces at the edges, backticks, control bytes — that is what the file lanes carry.
+
+**Not in this release, deliberately.** A guard rung that DENIES instead of asking was designed,
+reviewed and withdrawn — for the second time — because a command substitution can embed an arbitrary
+command with no separator byte, so any such refusal can destroy work it never meant to touch. The
+guard still never denies.
+
 ## 4.3.0 — the coverage gate no longer certifies evidence it cannot bind to your tree (AD-081)
 
 **Read this if you have ever run `coverage-check --check` on its own.** Until now it read whatever

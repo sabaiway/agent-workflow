@@ -111,6 +111,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the promptless literal search lane — reverse-pinned by NAME, not only by the exact count,
       // so dropping it from the payload fails loudly instead of merely shifting a number
       'tools/repo-search.mjs',
+      // the promptless inventory lane, pinned by NAME for the same reason: a count alone would let it
+      // fall out of the payload unnoticed if some other file leaked in at the same time
+      'tools/path-inventory.mjs',
       // the cheap-lane subagent writer + its bundled vehicles
       'tools/cheap-agents.mjs',
       'references/agents/mechanical-sweep.md',
@@ -299,7 +302,14 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       surface: --pattern-file keeps the bytes out of the command string entirely, and the
     //       tool's own prefix is in the hook's scanned list so a byte on the INVOCATION still asks.
     //       Its *.test.mjs sibling is stripped by files[].
-    assert.equal(packed.length, 164, `tarball file count drifted (${packed.length} ≠ 164)`);
+    // 165 = 164 + tools/path-inventory.mjs — the promptless INVENTORY lane, the other half of the
+    //       same idea. The corpus of useless approvals is mostly small path questions (exists, size,
+    //       line count, listing, a small file's contents) batched into a composed shell with `echo`
+    //       banners, because no single call answered them; the composition is what raises the prompt.
+    //       It shares repo-search's paths-file format and failure classes by IMPORT, so the two file
+    //       lanes cannot drift into classifying the same failure differently. Its *.test.mjs sibling
+    //       is stripped by files[].
+    assert.equal(packed.length, 165, `tarball file count drifted (${packed.length} ≠ 165)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

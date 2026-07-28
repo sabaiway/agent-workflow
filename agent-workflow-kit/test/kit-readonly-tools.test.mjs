@@ -55,6 +55,7 @@ const NON_MODE_BACKED = Object.freeze([
   'tools/manifest/validate.mjs',
   'tools/release-scan.mjs',
   'tools/repo-search.mjs',
+  'tools/path-inventory.mjs',
 ]);
 // Writer previews are exact BECAUSE these are writers — the map pins that they stay writers.
 const PREVIEW_TOOL_TO_MODE = Object.freeze({
@@ -64,7 +65,7 @@ const PREVIEW_TOOL_TO_MODE = Object.freeze({
 });
 
 describe('kit-tools tier ↔ commands.mjs catalog partition', () => {
-  it('the tier is exactly the 8 mode-backed tools + the 3 non-mode-backed direct tools (set equality)', () => {
+  it('the tier is exactly the 8 mode-backed tools + the 4 non-mode-backed direct tools (set equality)', () => {
     const expected = [...Object.keys(MODE_BACKED_TOOL_TO_MODE), ...NON_MODE_BACKED].sort();
     assert.deepEqual([...KIT_READONLY_TOOLS].sort(), expected);
   });

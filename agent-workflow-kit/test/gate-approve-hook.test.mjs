@@ -599,6 +599,54 @@ describe('read-lane rung (c) — the adversarial no-allow battery (lane ON; neve
     });
   }
 
+  // An ask is answered by the HUMAN and its reason never reaches the caller that composed the
+  // command, so for two months the guard has known the right lane and had no way to say it. Probed
+  // live 2026-07-28: `additionalContext` is delivered to the model on allow, on ask, and on no
+  // decision alike. It rides the ASK here — the refusal-shaped channel is what seven withdrawn
+  // mechanisms were chasing, and this one refuses nothing. A host that ignores the field degrades to
+  // exactly today's behaviour: silence.
+  describe('the ask teaches the caller, not only the human', () => {
+    const noDeclaration = hookDeps(undefined);
+
+    it('a residual on a seeded-core read carries a lane hint addressed to the caller', () => {
+      const result = runHook(bashPayload('wc -l a b c 2>/dev/null'), noDeclaration);
+      assert.equal(decisionOf(result), DECISION_ASK);
+      assert.match(result.additionalContext, /path-inventory/u);
+    });
+
+    it('a residual on a scanned kit tool names THAT tool\'s out-of-band lane to the caller', () => {
+      const result = runHook(bashPayload('node agent-workflow-kit/tools/repo-search.mjs --pattern "a>b"'), noDeclaration);
+      assert.equal(decisionOf(result), DECISION_ASK);
+      assert.match(result.additionalContext, /--pattern-file/u);
+    });
+
+    // A command naming BOTH scanned tools must not be advised about whichever sits earlier in the
+    // registry — the residual may belong to the other one.
+    it('a command naming two scanned tools is advised about BOTH', () => {
+      const cmd = 'node agent-workflow-kit/tools/repo-search.mjs --pattern-file p.txt --path "$(node agent-workflow-kit/tools/path-inventory.mjs --path src)"';
+      const result = runHook(bashPayload(cmd), noDeclaration);
+      assert.equal(decisionOf(result), DECISION_ASK);
+      assert.match(result.additionalContext, /--pattern-file/u);
+      assert.match(result.additionalContext, /path-inventory/u);
+      assert.match(result.permissionDecisionReason, /repo-search/u);
+      assert.match(result.permissionDecisionReason, /path-inventory/u);
+    });
+
+    it('an ALLOW carries no hint — a command that is already right has nothing to be taught', () => {
+      const laneOn = hookDepsLane(undefined, { readLane: true });
+      const allowed = runHook(bashPayload('git status && ls -la'), laneOn);
+      assert.equal(decisionOf(allowed), DECISION_ALLOW);
+      assert.equal(allowed.additionalContext, undefined);
+    });
+
+    it('the hint is carried in the emitted JSON, not merely computed', () => {
+      const result = runHook(bashPayload('wc -l a b c 2>/dev/null'), noDeclaration);
+      const emitted = JSON.parse(formatDecision(result));
+      assert.match(emitted.hookSpecificOutput.additionalContext, /path-inventory/u);
+      assert.equal(emitted.hookSpecificOutput.hookEventName, HOOK_EVENT_NAME);
+    });
+  });
+
   it('anti-shrink: RESIDUAL_FORMS still carries backtick + $( (rung (b) coverage cannot silently thin)', () => {
     assert.ok(RESIDUAL_FORMS.commandSubstitutions.includes('`'));
     assert.ok(RESIDUAL_FORMS.commandSubstitutions.includes('$('));
@@ -915,5 +963,45 @@ describe('repo-search scanned prefix — rung (b) covers the tool without coring
   it('a FOREIGN script that merely shares the basename keeps its previous NO decision', () => {
     const cmd = `node /somewhere/else/repo-search.mjs --pattern "a>b"`;
     assert.equal(runHook(bashPayload(cmd), noDeclaration), null);
+  });
+
+  // The recovery the reason names is the rung's whole value. It was written as the literal string
+  // `--pattern-file` when repo-search was the only scanned tool, which made it wrong twice the moment
+  // a second tool joined: wrong for a tool that has no such flag, and incomplete for repo-search
+  // itself once its TARGET half got a lane. The reason is derived per tool, so it cannot drift.
+  it('the recovery reason names the lanes of the tool that was actually matched', () => {
+    const search = runHook(bashPayload(`${TOOL} --pattern "a>b"`), noDeclaration);
+    assert.match(search.permissionDecisionReason, /--pattern-file/u);
+    assert.match(search.permissionDecisionReason, /--paths-file/u);
+  });
+});
+
+describe('path-inventory scanned prefix — the inventory lane carries the same residual coverage', () => {
+  const noDeclaration = hookDeps(undefined);
+  const INVENTORY = 'node agent-workflow-kit/tools/path-inventory.mjs';
+
+  it('a target carrying a residual byte ASKS, and the reason names the file lane it does have', () => {
+    const result = runHook(bashPayload(`${INVENTORY} --path "a>b"`), noDeclaration);
+    assert.equal(decisionOf(result), DECISION_ASK);
+    assert.match(result.permissionDecisionReason, /--paths-file/u);
+    assert.doesNotMatch(result.permissionDecisionReason, /--pattern-file/u,
+      'advising a flag this tool does not have is worse than not advising at all');
+  });
+
+  it('a clean invocation still takes NO decision — the settings allow rule is what approves it', () => {
+    assert.equal(runHook(bashPayload(`${INVENTORY} --paths-file t.lst --json`), noDeclaration), null);
+  });
+
+  it('a REAL write redirection on the invocation ASKS', () => {
+    assert.equal(decisionOf(runHook(bashPayload(`${INVENTORY} --path src > out.log`), noDeclaration)), DECISION_ASK);
+  });
+
+  it('the tool is never a seeded-core prefix — it must not inherit the rung (c) read-lane allow', () => {
+    assert.equal(matchSeededCorePrefix(`${INVENTORY} --path src`), null);
+    assert.equal(isReadLaneCommand(`${INVENTORY} --path src`), false);
+  });
+
+  it('a FOREIGN script sharing the basename keeps its previous NO decision', () => {
+    assert.equal(runHook(bashPayload(`node /somewhere/else/path-inventory.mjs --path "a>b"`), noDeclaration), null);
   });
 });
