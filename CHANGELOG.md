@@ -7,6 +7,22 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-29 — AD-084 the archivers stop reporting green on files they did not understand (memory 4.0.0, kit 5.0.0)
+
+The rolling-window archivers — the changelog, known-issues and decisions rotators every deployed
+project runs as gates — used to fail OPEN: a file they parsed nothing from earned a green `OK`.
+One real deployment's changelog gate passed 36 consecutive sessions without parsing a single
+entry, and this repo's own issues file sat one line under its cap because the drain had never
+once recognised a real resolution marker.
+
+Both packages go MAJOR because the fix is a findings-contract change: a `--check` that silently
+passed can now refuse — with `file:line`, the offending text, and the remedy in the message. All
+three archivers now read through one shared markdown tokenizer (fences, frontmatter, CRLF, loud
+unclosed-fence errors), recognise the resolution-marker shapes real files actually use, refuse
+recognisable-but-malformed input instead of guessing, and rewrite files verbatim under a
+conservation guard — category headings and the closing footer can no longer be carried into an
+archive by a rotation. Engine is untouched and byte-identical.
+
 ## 2026-07-28 — AD-083 the ADR-store migration finds the projects that could never hear about it (kit 4.5.0, memory 3.2.0)
 
 The one-file-per-ADR migration has worked since AD-051. It could not be *reached* by an entire class
