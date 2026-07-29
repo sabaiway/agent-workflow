@@ -139,6 +139,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the strip-the-kit core-evidence writer (D3(b)/(c) + D6/D6a/D7): the git-dir evidence store
       // (red-proof / degrade / summary) the hardened self-control core rides on
       'tools/core-evidence.mjs',
+      // the closed flow-record vocabulary (flow-orchestration Phase 1) — the flow store/checker's
+      // record contract; pinned by NAME so it cannot fall out of the payload behind the count
+      'tools/flow-record.mjs',
       // the D3(c)+(d) final-run checker (fixed git-dir lcov path + red-proof verification) and the
       // D10 read-only pre-commit guard that binds the run-gates --final receipt
       'tools/coverage-check.mjs',
@@ -314,7 +317,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       deploy-payload test + references/scripts/archive-conservation.test.mjs (the
     //       conservation/round-trip harness) + references/scripts/archiver-structure.test.mjs
     //       (the no-raw-scan structural pin).
-    assert.equal(packed.length, 169, `tarball file count drifted (${packed.length} ≠ 169)`);
+    // 170 = 169 + tools/flow-record.mjs — the closed flow-record vocabulary (flow-orchestration
+    //       Phase 1: kinds/purposes, per-kind arms, transition table, per-record canonical digest).
+    //       Its *.test.mjs sibling is stripped by files[].
+    assert.equal(packed.length, 170, `tarball file count drifted (${packed.length} ≠ 170)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
