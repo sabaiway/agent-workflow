@@ -142,6 +142,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the closed flow-record vocabulary (flow-orchestration Phase 1) — the flow store/checker's
       // record contract; pinned by NAME so it cannot fall out of the payload behind the count
       'tools/flow-record.mjs',
+      // the flow-store IO (flow-orchestration Phase 2) — common-dir resolution, fail-closed reader,
+      // lock/CAS serialized append; pinned by NAME for the same reason
+      'tools/flow-store.mjs',
       // the D3(c)+(d) final-run checker (fixed git-dir lcov path + red-proof verification) and the
       // D10 read-only pre-commit guard that binds the run-gates --final receipt
       'tools/coverage-check.mjs',
@@ -320,7 +323,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 170 = 169 + tools/flow-record.mjs — the closed flow-record vocabulary (flow-orchestration
     //       Phase 1: kinds/purposes, per-kind arms, transition table, per-record canonical digest).
     //       Its *.test.mjs sibling is stripped by files[].
-    assert.equal(packed.length, 170, `tarball file count drifted (${packed.length} ≠ 170)`);
+    // 171 = 170 + tools/flow-store.mjs — the flow-store IO (flow-orchestration Phase 2: common-dir
+    //       path resolution, fail-closed reader, lock/CAS serialized append with semantic
+    //       preflight). Its *.test.mjs siblings are stripped by files[].
+    assert.equal(packed.length, 171, `tarball file count drifted (${packed.length} ≠ 171)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
