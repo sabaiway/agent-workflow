@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { main } from './set-recipe.mjs';
-import { CONFIG_REL, CANON_README, serializeConfig } from './orchestration-config.mjs';
+import { CONFIG_REL, CANON_README, serializeConfig, FLOW_SCHEMA_VERSION } from './orchestration-config.mjs';
 import { READY, NEEDS_SKILL } from './detect-backends.mjs';
 
 const CODEX = 'codex-cli-bridge';
@@ -207,6 +207,44 @@ describe('set-recipe — post-write active-recipe echo (AD-038 discovery)', () =
     const r = run(['--set', 'plan-authoring.review=solo', '--write'], { codex: READY, agy: READY });
     assert.equal(r.code, 0);
     assert.doesNotMatch(r.stdout, /active recipes \(/);
+  });
+});
+
+describe('set-recipe — a flow-carrying config is writable (FLOW-TOLERATE)', () => {
+  it('a --set --write over a config carrying a valid flow block succeeds (applySetOps re-validates)', () => {
+    write(serializeConfig({ _README: 'note', flow: { schema: FLOW_SCHEMA_VERSION, anything: ['goes'] }, 'plan-execution': { execute: 'solo', review: 'solo' } }));
+    const r = run(['--set', 'plan-execution.review=council', '--write'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /wrote docs\/ai\/orchestration\.json/);
+    assert.equal(JSON.parse(read())['plan-execution'].review, 'council');
+  });
+});
+
+// Green characterization: the merge path needs NO writer change — applySetOps deep-clones and
+// preserves every untouched top-level key. The criterion is JSON-VALUE equality after merge +
+// canonical serialization; byte identity is explicitly NOT the contract (serializeConfig is
+// content-preserving, not byte-preserving).
+describe('set-recipe — flow preservation characterization (merge + canonical serialization)', () => {
+  const FLOW = { schema: FLOW_SCHEMA_VERSION, future: { bytes: [1, 2, 3] }, note: 'uninterpreted' };
+
+  it('a REAL slot change preserves the flow subtree JSON-value-equal', () => {
+    write(serializeConfig({ _README: 'my note', flow: structuredClone(FLOW), 'plan-execution': { execute: 'solo', review: 'solo' } }));
+    const r = run(['--set', 'plan-execution.review=council', '--write'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    const cfg = JSON.parse(read());
+    assert.deepEqual(cfg.flow, FLOW, 'the flow subtree survives a touched write JSON-value-equal');
+    assert.equal(cfg['plan-execution'].review, 'council');
+    assert.equal(cfg._README, 'my note');
+  });
+
+  it('a NO-OP --write over a flow-carrying config changes nothing (flow subtree JSON-value-equal)', () => {
+    write(serializeConfig({ flow: structuredClone(FLOW), 'plan-execution': { execute: 'solo', review: 'solo' } }));
+    const before = read();
+    const r = run(['--set', 'plan-execution.review=solo', '--write'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /no change/i);
+    assert.equal(read(), before, 'a no-op write leaves the file untouched');
+    assert.deepEqual(JSON.parse(read()).flow, FLOW);
   });
 });
 

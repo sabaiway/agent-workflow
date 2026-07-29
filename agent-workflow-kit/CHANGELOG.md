@@ -4,6 +4,35 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 5.1.0 — the config learns to carry the flow block before anything writes one (AD-085)
+
+**Upgrade this before any flow feature arrives — that ordering IS the release.** The shared
+`docs/ai/orchestration.json` is read by every collaborator's kit, and the validator is strict on
+purpose: an unknown top-level key fails the config load loudly (exit 1) and reddens that machine's
+entire gate matrix. The upcoming orchestration-flow feature adds a `flow` block to that file, so
+the fleet has to tolerate the block before the first writer exists. This release is that
+tolerance, shipped first and alone.
+
+- `orchestration.json` may now carry a reserved `"flow"` object whose `"schema"` is the NUMBER
+  `1` (`FLOW_SCHEMA_VERSION`, exported — flow-aware releases import it, never re-type it). Every
+  other byte of the block is deliberately uninterpreted: nothing in 5.1.0 reads it, nothing
+  writes it (the writer arrives with the flow store).
+- Refusals stay loud and name the contract: a non-object `flow`, an absent or unknown `schema`,
+  and the STRING form `"1"` each fail with the accepted version in the message; every other
+  unknown top-level key refuses exactly as before.
+- No writer change was needed for safety: `set-recipe` runs and the `_README` refresh carry a
+  present `flow` block through JSON-value-equal (content-preserving, not byte-preserving —
+  characterized for no-op runs, real slot changes, and all three README-refresh arms).
+- Honest limit, doc-parity-bound so it cannot be reworded away: this release enforces NO version
+  floor against a pre-flow reader — a kit older than 5.1.0 that meets a `flow` block still fails
+  loudly. Tolerate-first ordering is the only mitigation until enforcement arms on the
+  `set-flow` path (a later release); `references/modes/procedures.md` states both halves on its
+  contract lines, pinned by two new doc-parity bindings.
+- Groundwork pinned green: the floor mechanics the rollout leans on (the four `semver-lite`
+  consumers, including the installer's never-downgrade lane) are characterized, and the
+  characterization surfaced a `null >= 0` coercion trap the future arming floor must guard —
+  queued, with the guarded comparison shape documented in the test.
+
 ## 5.0.0 — the deployed rotation gates fail closed (memory 4.0.0 mirrored; AD-084)
 
 > ### ⚠ BREAKING — inherited from memory 4.0.0
