@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { checkBinding, checkParity, BINDINGS, main } from './doc-parity.mjs';
 import { INCLUDE_IDENTITY_RULE, RESUME_VERIFY_RULE } from './worktrees.mjs';
+import { FLOW_SCHEMA_VERSION, FLOW_LAGGING_KIT_CONTRACT } from './orchestration-config.mjs';
 
 // A synthetic file surface: rel → text. A rel absent from the map THROWS (fails closed like a real
 // unreadable file).
@@ -159,6 +160,30 @@ describe('the REAL registry is consistent with the shipped contract docs (dogfoo
     assert.match(binding.token, /a first provision keeps the blanket clean-tree verify/, 'the token states the first-provision carve-out');
     const helpResult = main(['--help']);
     assert.match(helpResult.stdout, /resume-verify/, 'the HELP inventory must name the binding');
+  });
+
+  // The flow tolerate contract (FLOW-TOLERATE doc pins): a deleted binding would re-open the silent
+  // doc-drift lane for BOTH procedures.md contract lines, so each pin is itself pinned here.
+  it('the registry binds the accepted flow schema version to the procedures mode doc', () => {
+    const binding = BINDINGS.find((b) => b.constant === 'flow-schema-version');
+    assert.ok(binding, 'registry must bind FLOW_SCHEMA_VERSION (the flow allowed-shape doc pin)');
+    assert.equal(binding.value, FLOW_SCHEMA_VERSION, 'the value is the live exported constant');
+    assert.equal(binding.token, `\`"schema": ${FLOW_SCHEMA_VERSION}\``, 'the token renders the NUMERIC wire value');
+    assert.deepEqual([...binding.files].sort(), ['references/modes/procedures.md']);
+    const helpResult = main(['--help']);
+    assert.match(helpResult.stdout, /flow schema/, 'the HELP inventory must name the binding');
+  });
+
+  it('the registry binds the honest lagging-kit contract sentence to the procedures mode doc', () => {
+    const binding = BINDINGS.find((b) => b.constant === 'flow-lagging-kit');
+    assert.ok(binding, 'registry must bind FLOW_LAGGING_KIT_CONTRACT (the exit-1 contract doc pin)');
+    assert.equal(binding.token, FLOW_LAGGING_KIT_CONTRACT, 'the token is the live exported constant');
+    assert.match(binding.token, /config load loudly/, 'the sentence states the pre-flow failure');
+    assert.match(binding.token, /enforces NO version floor/, 'the sentence admits the enforcement gap');
+    assert.match(binding.token, /tolerate-first/, 'the sentence names the only mitigation');
+    assert.deepEqual([...binding.files].sort(), ['references/modes/procedures.md']);
+    const helpResult = main(['--help']);
+    assert.match(helpResult.stdout, /lagging-kit/, 'the HELP inventory must name the binding');
   });
 
   it('the registry binds the review-state clean-tree latent-arm notice to its mode doc', () => {

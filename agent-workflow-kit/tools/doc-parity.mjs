@@ -35,6 +35,9 @@ import {
 import { SKIPPED_READONLY } from './setup-backends.mjs';
 import { LATENT_ARM_NOTICE } from './review-state.mjs';
 import { QUEUE_SHARED_RULE, LANDING_FROM_MAIN, NO_DEPENDENCIES_POSTURE, CLEANUP_OWNERSHIP_RULE, INCLUDE_IDENTITY_RULE, RESUME_VERIFY_RULE } from './worktrees.mjs';
+// The flow tolerate contract (tolerate-only release): the accepted schema version + the honest
+// lagging-kit sentence, both owned by the config validator and pinned into procedures.md.
+import { FLOW_SCHEMA_VERSION, FLOW_LAGGING_KIT_CONTRACT } from './orchestration-config.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -45,6 +48,7 @@ const VELOCITY_DOC = 'references/modes/velocity.md';
 const SETUP_DOC = 'references/modes/setup.md';
 const REVIEW_STATE_DOC = 'references/modes/review-state.md';
 const WORKTREES_DOC = 'references/modes/worktrees.md';
+const PROCEDURES_DOC = 'references/modes/procedures.md';
 
 // A typed usage failure (exit 2) for the CLI parser — the codebase's typed-error idiom (no classes).
 const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 });
@@ -116,6 +120,13 @@ export const BINDINGS = Object.freeze([
   // a reworded mode doc dropping the per-owned-path × session-never-probed contract fails this pin
   // plus the gate.
   valueBinding('resume-verify-rule', RESUME_VERIFY_RULE, RESUME_VERIFY_RULE, [WORKTREES_DOC]),
+  // The flow tolerate contract: (a) the accepted NUMERIC `flow` schema version renders into the
+  // procedures.md allowed-shape contract line — a bumped constant with an unchanged doc fails this
+  // pin plus the gate; (b) the honest lagging-kit sentence — what a pre-flow kit does on meeting a
+  // `flow` block, and that this release enforces nothing against such a reader — renders as the
+  // exact exported sentence into the exit-1 contract line, so the admission cannot be reworded away.
+  valueBinding('flow-schema-version', FLOW_SCHEMA_VERSION, `\`"schema": ${FLOW_SCHEMA_VERSION}\``, [PROCEDURES_DOC]),
+  valueBinding('flow-lagging-kit', FLOW_LAGGING_KIT_CONTRACT, FLOW_LAGGING_KIT_CONTRACT, [PROCEDURES_DOC]),
 ].map((b) => Object.freeze(b)));
 
 // ── the pure checker (readText is injectable for hermetic tests) ────────────────────────
@@ -164,8 +175,9 @@ table, the status tokens, the trusted-dir allowlist), the recommendations/upgrad
 contract (section header, empty line, verdict templates), the acks-store path, the setup refresh
 degrade token, the review-state clean-tree latent-arm notice, the worktrees provision-record
 orientation contract (shared-queue rule, landing-from-main, no-dependencies install posture), the
-worktrees cleanup-ownership rule, the worktrees include-identity rule, and the worktrees
-resume-verify rule — to
+worktrees cleanup-ownership rule, the worktrees include-identity rule, the worktrees
+resume-verify rule, and the flow tolerate contract (the accepted flow schema version + the
+lagging-kit sentence, procedures.md) — to
 the exact token its references/modes/*.md contract must carry, and
 asserts the CURRENT value renders into every bound file. A drifted doc, an unreadable bound file,
 or an absent token FAILS CLOSED.

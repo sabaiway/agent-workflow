@@ -7,6 +7,23 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-07-29 — AD-085 the flow rollout starts with tolerance, not features (kit 5.1.0)
+
+The converged orchestration-flow design will add a `flow` block to the shared
+`docs/ai/orchestration.json`. That file is a wire protocol between kit versions: the validator is
+strict, so a kit that has never heard of the key fails the whole config load loudly and every gate
+on that collaborator's machine goes red. The safe order is therefore fixed before any feature
+ships: first a release every collaborator can upgrade to that tolerates the block, only later the
+writer that puts one into a config.
+
+Kit 5.1.0 is that release. It accepts a versioned `"flow"` object (numeric `"schema": 1`),
+interprets nothing inside it, and changes no behaviour for any existing config. The one thing it
+adds beyond tolerance is honesty about what it does NOT do: it carries no version floor against
+older readers, and that admission ships as an exported sentence the doc-parity gate pins into the
+mode doc, so the wording cannot drift while the gap is real. Enforcement arms with the `set-flow`
+writer in a later release; the floor mechanics it will lean on are characterized green now, and
+the characterization already caught a `null >= 0` coercion trap the arming check must guard.
+
 ## 2026-07-29 — AD-084 the archivers stop reporting green on files they did not understand (memory 4.0.0, kit 5.0.0)
 
 The rolling-window archivers — the changelog, known-issues and decisions rotators every deployed

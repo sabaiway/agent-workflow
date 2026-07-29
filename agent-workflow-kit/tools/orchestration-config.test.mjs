@@ -20,7 +20,9 @@ import {
   CANON_README,
   KNOWN_PRIOR_README,
   SEED_CONFIG,
+  FLOW_SCHEMA_VERSION,
 } from './orchestration-config.mjs';
+import { ACTIVITIES, resolveActivityRecipe } from './recipes.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const KIT_ROOT = join(HERE, '..');
@@ -69,6 +71,31 @@ describe('orchestration-config — loadConfig + validateConfig', () => {
   it('a dangling symlink at the config path is unreadable (fail(1)), not silently absent', () => {
     symlinkSync(join(cwd, 'nowhere.json'), join(cwd, CONFIG_REL));
     assert.throws(() => loadConfig(cwd), (e) => e.exitCode === 1 && /unreadable/.test(e.message));
+  });
+});
+
+// ── characterization: the unknown-top-level-key refusal (the lagging-kit failure shape) ──
+// A kit that predates a reserved top-level key sees it as an unknown activity: the config LOAD
+// fails loudly (exit 1), reddening every consumer surface that shares loadConfig. Pinned green on
+// the validator as-is — this IS the documented behavior a pre-flow kit exhibits on a `flow` block.
+describe('orchestration-config — unknown-top-level-key characterization (lagging-kit failure shape)', () => {
+  let cwd;
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'orch-lag-'));
+    mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
+  });
+  afterEach(() => rmSync(cwd, { recursive: true, force: true }));
+
+  it('validateConfig refuses an unknown top-level key loudly, naming the key and the known activities', () => {
+    assert.throws(
+      () => validateConfig({ 'not-an-activity': { schema: 1 } }),
+      (e) => e.exitCode === 1 && /unknown activity "not-an-activity"/.test(e.message) && /known: /.test(e.message),
+    );
+  });
+
+  it('loadConfig surfaces the refusal as a loud config-load failure — never a silent fallback to defaults', () => {
+    writeFileSync(join(cwd, CONFIG_REL), JSON.stringify({ 'not-an-activity': {}, 'plan-authoring': { review: 'council' } }));
+    assert.throws(() => loadConfig(cwd), (e) => e.exitCode === 1 && /unknown activity "not-an-activity"/.test(e.message));
   });
 });
 
@@ -254,5 +281,111 @@ describe('orchestration-config — canonical refresh', () => {
   it('refreshReadme is idempotent on an already-current _README', () => {
     const r = refreshReadme({ _README: CANON_README, 'plan-authoring': { review: 'solo' } });
     assert.equal(r.changed, false);
+  });
+});
+
+// ── FLOW-TOLERATE — the versioned, uninterpreted `flow` top-level key (tolerate-only release) ──
+describe('orchestration-config — flow tolerate branch (FLOW-TOLERATE)', () => {
+  let cwd;
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'orch-flow-'));
+    mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
+  });
+  afterEach(() => rmSync(cwd, { recursive: true, force: true }));
+  const write = (obj) => writeFileSync(join(cwd, CONFIG_REL), JSON.stringify(obj));
+
+  it('a flow object carrying the known numeric schema loads; every other byte is uninterpreted', () => {
+    const cfg = {
+      flow: { schema: FLOW_SCHEMA_VERSION, records: [{ kind: 'anything' }], nested: { deep: ['bytes'] } },
+      'plan-authoring': { review: 'council' },
+    };
+    assert.deepEqual(validateConfig(cfg), cfg);
+    write(cfg);
+    const { config, source } = loadConfig(cwd);
+    assert.equal(source, CONFIG_REL);
+    assert.deepEqual(config.flow, cfg.flow);
+  });
+
+  it('the acceptance check and the refusal message share the ONE exported constant (numeric wire pin)', () => {
+    assert.equal(typeof FLOW_SCHEMA_VERSION, 'number');
+    assert.doesNotThrow(() => validateConfig({ flow: { schema: FLOW_SCHEMA_VERSION } }));
+    assert.throws(
+      () => validateConfig({ flow: { schema: FLOW_SCHEMA_VERSION + 1 } }),
+      (e) => e.exitCode === 1 && /"flow"/.test(e.message) && e.message.includes(String(FLOW_SCHEMA_VERSION)),
+    );
+  });
+
+  it('the STRING form of the accepted version refuses loudly, naming the key and the accepted version', () => {
+    assert.throws(
+      () => validateConfig({ flow: { schema: String(FLOW_SCHEMA_VERSION) } }),
+      (e) => e.exitCode === 1 && /"flow"/.test(e.message) && e.message.includes(String(FLOW_SCHEMA_VERSION)),
+    );
+  });
+
+  it('an absent schema refuses loudly, naming the key and the accepted version', () => {
+    assert.throws(
+      () => validateConfig({ flow: { records: [] } }),
+      (e) => e.exitCode === 1 && /"flow"/.test(e.message) && e.message.includes(String(FLOW_SCHEMA_VERSION)),
+    );
+  });
+
+  it('a non-object flow (string / array / null) refuses loudly, naming the key and the accepted version', () => {
+    for (const bad of ['v1', [], null]) {
+      assert.throws(
+        () => validateConfig({ flow: bad }),
+        (e) => e.exitCode === 1 && /"flow"/.test(e.message) && e.message.includes(String(FLOW_SCHEMA_VERSION)),
+        `flow=${JSON.stringify(bad)} must refuse naming the accepted version`,
+      );
+    }
+  });
+
+  it('any OTHER unknown top-level key still refuses exactly as today', () => {
+    assert.throws(
+      () => validateConfig({ flows: { schema: FLOW_SCHEMA_VERSION } }),
+      (e) => e.exitCode === 1 && /unknown activity "flows"/.test(e.message),
+    );
+  });
+
+  it('loader-level consumer proof: a valid flow block changes NOTHING about recipe resolution', () => {
+    const activities = { 'plan-authoring': { review: 'council' }, 'plan-execution': { execute: 'solo', review: 'reviewed' } };
+    write({ flow: { schema: FLOW_SCHEMA_VERSION, ignored: { by: 'this release' } }, ...activities });
+    const withFlow = loadConfig(cwd).config;
+    for (const [activity, def] of Object.entries(ACTIVITIES)) {
+      for (const slot of Object.keys(def.slots)) {
+        assert.deepEqual(
+          resolveActivityRecipe({ config: withFlow, readiness: [], activity, slot }),
+          resolveActivityRecipe({ config: activities, readiness: [], activity, slot }),
+          `${activity}.${slot} resolves identically with and without the flow block`,
+        );
+      }
+    }
+  });
+});
+
+// Green characterization of the upgrade path: refreshReadme (the rewrite `upgrade` drives) touches
+// ONLY `_README` — a present flow subtree rides through JSON-value-equal in all three cases.
+describe('orchestration-config — upgrade-path flow preservation (refreshReadme characterization)', () => {
+  const FLOW = { schema: FLOW_SCHEMA_VERSION, future: { bytes: true } };
+
+  it('absent _README: seeded + changed, flow subtree JSON-value-equal through serialization', () => {
+    const r = refreshReadme({ flow: structuredClone(FLOW), 'plan-authoring': { review: 'solo' } });
+    assert.equal(r.changed, true);
+    assert.equal(r.config._README, CANON_README);
+    assert.deepEqual(r.config.flow, FLOW);
+    assert.deepEqual(JSON.parse(serializeConfig(r.config)).flow, FLOW);
+  });
+
+  it('known-prior canonical _README: refreshed, flow subtree JSON-value-equal', () => {
+    const r = refreshReadme({ _README: KNOWN_PRIOR_README[0], flow: structuredClone(FLOW), 'plan-authoring': { review: 'solo' } });
+    assert.equal(r.changed, true);
+    assert.equal(r.config._README, CANON_README);
+    assert.deepEqual(r.config.flow, FLOW);
+  });
+
+  it('customized _README: preserved verbatim, flow subtree JSON-value-equal', () => {
+    const r = refreshReadme({ _README: 'my own note', flow: structuredClone(FLOW), 'plan-authoring': { review: 'solo' } });
+    assert.equal(r.changed, false);
+    assert.equal(r.config._README, 'my own note');
+    assert.deepEqual(r.config.flow, FLOW);
   });
 });

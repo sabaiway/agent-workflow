@@ -113,10 +113,24 @@ export const parseOp = (kind, token) => {
 
 // ── config validation (config errors → exit 1) ──────────────────────────────────────
 
+// The accepted `flow` schema version — the SINGLE source both the acceptance check and the refusal
+// message use; future flow-aware releases IMPORT this constant, never re-type it. The wire value is
+// pinned NUMERIC (the string form is a named refusal case).
+export const FLOW_SCHEMA_VERSION = 1;
+
+// The honest lagging-kit contract sentence (tolerate-first ordering): what a kit WITHOUT the flow
+// branch does when it meets a `flow` block, and that this release enforces nothing against such a
+// reader. doc-parity binds it VERBATIM into the procedures mode doc's exit-1 contract line, so the
+// doc can never soften the admission while the gap is real (enforcement arms with `set-flow`).
+export const FLOW_LAGGING_KIT_CONTRACT =
+  'a kit predating the `"flow"` key that reads a config carrying one fails this config load loudly (exit `1`, reddening its full gate matrix); this kit release enforces NO version floor against such a pre-flow reader — tolerate-first ordering is the only mitigation until a flow-aware release arms enforcement on the `set-flow` path';
+
 // Validate a parsed orchestration.json object against the schema. Strict: an unknown top-level
 // activity, an unknown slot for an activity, or a recipe invalid-for-slot is an error. All slots are
-// optional. An optional "_README" string key is allowed + ignored (self-documentation). Never a silent
-// fallback — every rejection is a loud `path: reason` (exit 1). Returns the config on success.
+// optional. An optional "_README" string key is allowed + ignored (self-documentation). A versioned
+// "flow" object key is TOLERATED when its `schema` strict-equals FLOW_SCHEMA_VERSION — every other
+// byte of the block is deliberately uninterpreted here (nothing in this kit reads or writes it yet).
+// Never a silent fallback — every rejection is a loud `path: reason` (exit 1). Returns the config on success.
 export const validateConfig = (config) => {
   if (config === null || typeof config !== 'object' || Array.isArray(config)) {
     throw fail(1, `${CONFIG_REL}: must be a JSON object of activity → { slot: recipe }`);
@@ -124,6 +138,16 @@ export const validateConfig = (config) => {
   for (const [key, val] of Object.entries(config)) {
     if (key === '_README') {
       if (typeof val !== 'string') throw fail(1, `${CONFIG_REL}: "_README" must be a string`);
+      continue;
+    }
+    if (key === 'flow') {
+      if (val === null || typeof val !== 'object' || Array.isArray(val)) {
+        throw fail(1, `${CONFIG_REL}: "flow" must be a JSON object carrying { "schema": ${FLOW_SCHEMA_VERSION} }`);
+      }
+      if (val.schema !== FLOW_SCHEMA_VERSION) {
+        const got = 'schema' in val ? JSON.stringify(val.schema) : 'absent';
+        throw fail(1, `${CONFIG_REL}: "flow".schema must be the number ${FLOW_SCHEMA_VERSION} (got ${got})`);
+      }
       continue;
     }
     const activityDef = ACTIVITIES[key];
