@@ -1,26 +1,31 @@
 #!/usr/bin/env node
-// Rotate FIXED issues from docs/ai/known_issues.md → docs/ai/history/issues-resolved.md.
+// Rotate resolved issues from docs/ai/known_issues.md → docs/ai/history/issues-resolved.md.
 //
-// The file is read through the shared block tokenizer (markdown-blocks.mjs): section boundaries
-// are column-0 level-3 heading TOKENS — a heading inside a fenced sample never starts a section,
-// CRLF never changes a classification, and an unclosed fence is a loud error. An ISSUE-shaped
-// heading anywhere else (wrong level, indented) refuses with file:line instead of being silently
-// glued into the preceding section. A prose H3 still bounds a section but is never classified as
-// an issue.
+// The file is read through the shared block tokenizer (markdown-blocks.mjs). The section model:
+// H2 and H3 heading tokens bound chunks; an H3 chunk is a SECTION, everything else — the preamble,
+// category H2s (## 🔴 Open / ## 🟢 Resolved) and the trailing `---` + blockquote footer — is a
+// FILE-structural chunk that survives every rotation untouched. A section contains only its own
+// issue. Rewrites are VERBATIM: kept chunks re-emit byte-exact, archived sections land in the
+// archive byte-exact, so kept + archive conserve the input line for line.
 //
-// Rule (Phase 2 state): an issue is archivable when
-//   - its heading is wrapped in ~~strikethrough~~  AND
-//   - its body contains `**Status:** ✅ FIXED (YYYY.MM.DD)` with a date older than CUTOFF_DAYS.
-// The marker contract (the real-world resolution shapes) and the section model (category H2s,
-// the file footer) are the next slice — until they land, unmatched markers stay untouched.
+// Archivability (Decision 7): a recognised, line-leading, dated resolution marker decides ALONE —
+// strikethrough on the heading is cosmetic. The marker is the FIRST `**Status:**` / `**Resolved:**`
+// field line (list-item prefix optional, fenced samples ignored):
+//   - **Resolved:** <date> …                 the taught shape (see the template)
+//   - **Status:** ✅ FIXED (<date>) …        legacy
+//   - **Status:** **Resolved** (FIXED <date>, …) …
+// Both separators (YYYY-MM-DD / YYYY.MM.DD) read, with a strict calendar round-trip. Arm C: a
+// resolution claim with NO recognisable date, or a malformed/impossible date, REFUSES loudly with
+// file:line in every mode — never a silent skip. An explicit non-resolved Status (Open, Mitigated)
+// classifies open; a later stray date never overrides it.
 //
 // Modes:
-//   (default)   append matching issues to history/issues-resolved.md, remove from known_issues.md
+//   (default)   append archivable sections to history/issues-resolved.md, remove from known_issues.md
 //   --dry-run   print plan, no file changes
 //   --check     exit 1 if known_issues.md still has archivable issues
 //
-// Every mode parses the file BEFORE any write, so a refusal fires identically for the default
-// run, --dry-run and --check, and nothing is written on a refused input.
+// Every mode parses and classifies BEFORE any write, so a refusal fires identically for the
+// default run, --dry-run and --check, and nothing is written on a refused input.
 //
 // CLI:
 //   --cutoff-days=N (default 14)
@@ -54,7 +59,6 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 const ISSUE_HEADING_RE = /^### (.+?)$/;
 const STRIKETHROUGH_RE = /^~~(.+)~~$/;
-const FIXED_WITH_DATE_RE = /\*\*Status:\*\*\s*✅\s*FIXED\s*\((\d{4})\.(\d{2})\.(\d{2})\)/;
 // The canonical issue-heading form, named in code: a column-0 level-3 heading whose title starts
 // `Issue-NNN` (strikethrough optional). ISSUE-SHAPE is deliberately wider — the same prefix at any
 // level or indent — so a mis-levelled or indented issue heading refuses loudly instead of being
@@ -65,7 +69,40 @@ const ISSUE_SHAPED_HEADING_RE = /^\s*#{1,6}[ \t]+~{0,2}Issue-\d/;
 // that misses it by ANY whitespace (double space, a tab, an indent) refuses — `###  Issue-123`
 // would otherwise slip past the level-3 boundary test and silently declassify to prose.
 const ISSUE_CANONICAL_RE = /^### ~{0,2}Issue-\d/;
-const SECTION_BOUNDARY_RE = /^### /;
+
+// The resolution-marker grammar. The FIELD anchors the residual (Decision 7): only a line-leading
+// Status/Resolved field is ever read — a date in prose, or in a Discovered/Update field, is inert.
+const MARKER_FIELD_RE = /^(?:- )?\*\*(Status|Resolved):\*\*\s*(.*)$/;
+// Optional leading emoji and optional ** emphasis around either keyword — `**FIXED** (…)`,
+// `✅ **Resolved** (…)` are resolution claims, not silently-open sections. Case stays exact.
+const RESOLVED_SIGNAL_RE = /^(?:✅\s*)?\*{0,2}(?:FIXED|Resolved)\b/;
+// The explicitly-open vocabulary — ONLY consulted under a struck heading, where the strike itself
+// signals resolution: `~~Issue~~ + Status: Closed/DONE/Wontfix` is an undated resolution claim
+// (Arm C loud), while UNSTRUCK sections keep a free status vocabulary and can never false-red.
+const OPEN_STATUS_RE = /^(?:Open|Mitigated|Accepted)\b/;
+// Loose finds anything date-shaped; strict validates one separator form with 2-digit fields. The
+// FIRST date-shaped token is the marker's date — loose-but-not-strict is a refusal, never a skip.
+const STRICT_MARKER_DATE_RE = /(?<!\d)(\d{4})([.-])(\d{2})\2(\d{2})(?!\d)/;
+const LOOSE_MARKER_DATE_RE = /(?<!\d)\d{4}[./-]\d{1,2}[./-]\d{1,2}(?!\d)/;
+
+const FOOTER_QUOTE_RE = /^ {0,3}>/;
+// The canonical closing note the template seeds. The trailing `---` + blockquote run is a FILE
+// footer ONLY when its quote text normalises to exactly this sentence — an issue-owned trailing
+// quote (even one naming the archive path) stays with its section and archives WITH it, never
+// orphaned in the kept file. A reworded note falls back to the section-owned attribution.
+export const CANONICAL_FOOTER_NOTE =
+  'Resolved issues older than the window are rotated to `history/issues-resolved.md` by the issue-archive script.';
+// The exact resolved-example heading the pre-4.0.0 template seeded (legacy-compat, see classify).
+const LEGACY_TEMPLATE_BLANK_HEADING = '### Issue-XXX — {{Title}}';
+const matchable = (line) => line.replace(/\s+$/, '');
+const normalizeQuoteRun = (lines) =>
+  lines
+    .map((line) => matchable(line))
+    .filter((line) => FOOTER_QUOTE_RE.test(line))
+    .map((line) => line.replace(/^ {0,3}>\s?/, ''))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 
 const USAGE = 'Usage: archive-issues.mjs [--dry-run|--check] [--cutoff-days=N] [--today=YYYY-MM-DD]';
 
@@ -83,12 +120,14 @@ const parseArgs = (argv) => {
   return { flags, opts };
 };
 
-// Parse → { frontmatter, sections }. A section's `heading` is the trailing-whitespace-free token
-// text (so CRLF never leaks into classification); its `lines` stay byte-exact for re-emission.
+// Parse → { frontmatter, frontLines, sections }. A chunk's `heading` is the trailing-whitespace-free
+// token text (null for the preamble and the footer); `structural` marks chunks that belong to the
+// FILE; `lines` stay byte-exact for re-emission; `start` is the chunk's body-line index; `fenced`
+// holds chunk-relative indexes of fenced lines so classification never reads a fenced sample.
 export const parseKnownIssues = (text, label = KNOWN_REL) => {
-  const { frontmatter, frontLines, lines, headings } = tokenizeMarkdown(text, label);
+  const { frontmatter, frontLines, lines, headings, fencedLines } = tokenizeMarkdown(text, label);
 
-  const boundaryText = new Map();
+  const boundaries = new Map();
   for (const heading of headings) {
     if (ISSUE_SHAPED_HEADING_RE.test(heading.text) && !ISSUE_CANONICAL_RE.test(heading.text)) {
       throw fail(
@@ -99,51 +138,158 @@ export const parseKnownIssues = (text, label = KNOWN_REL) => {
           'into the section above it or declassified to prose; fix the heading, then re-run.',
       );
     }
-    if (SECTION_BOUNDARY_RE.test(heading.text)) boundaryText.set(heading.index, heading.text);
+    if (heading.level === 2 || heading.level === 3) boundaries.set(heading.index, heading);
   }
 
+  // The trailing footer belongs to the FILE: a terminal run of blank / blockquote lines introduced
+  // by a `---` thematic break (outside any fence), whose quote text IS the canonical closing note.
+  let footerStart = -1;
+  let tail = lines.length - 1;
+  while (tail >= 0 && !fencedLines.has(tail) && (matchable(lines[tail]) === '' || FOOTER_QUOTE_RE.test(lines[tail]))) tail -= 1;
+  if (
+    tail >= 0 &&
+    !fencedLines.has(tail) &&
+    /^ {0,3}---$/.test(matchable(lines[tail])) &&
+    normalizeQuoteRun(lines.slice(tail + 1)) === CANONICAL_FOOTER_NOTE
+  ) {
+    footerStart = tail;
+  }
+
+  const end = footerStart === -1 ? lines.length : footerStart;
   const sections = [];
-  let current = { heading: null, lines: [] };
+  let current = { heading: null, structural: true, start: 0, lines: [] };
   const flush = () => {
     if (current.heading !== null || current.lines.length > 0) sections.push(current);
   };
-  for (let i = 0; i < lines.length; i += 1) {
-    if (boundaryText.has(i)) {
+  for (let i = 0; i < end; i += 1) {
+    const boundary = boundaries.get(i);
+    if (boundary) {
       flush();
-      current = { heading: boundaryText.get(i), lines: [lines[i]] };
-    } else {
-      current.lines.push(lines[i]);
+      current = { heading: boundary.text, structural: boundary.level !== 3, start: i, lines: [] };
     }
+    current.lines.push(lines[i]);
   }
   flush();
-  return { frontmatter, sections };
+  if (footerStart !== -1) sections.push({ heading: null, structural: true, start: footerStart, lines: lines.slice(footerStart) });
+
+  for (const section of sections) {
+    section.fenced = new Set();
+    for (let i = 0; i < section.lines.length; i += 1) {
+      if (fencedLines.has(section.start + i)) section.fenced.add(i);
+    }
+  }
+
+  verifySectionPartition(sections, lines, label);
+
+  return { frontmatter, frontLines, sections };
+};
+
+// Partition tripwire: the concatenated chunks must reproduce the body EXACTLY — element-wise, in
+// order — or nothing proceeds. Unreachable through a correct chunk loop by construction — it
+// exists so a future edit that drops, duplicates or reorders lines (an equal-cardinality
+// corruption included) refuses BEFORE any write instead of silently losing data.
+export const verifySectionPartition = (sections, bodyLines, label = KNOWN_REL) => {
+  const rebuilt = sections.flatMap((s) => s.lines);
+  const exact = rebuilt.length === bodyLines.length && rebuilt.every((line, i) => line === bodyLines[i]);
+  if (!exact) {
+    throw fail(
+      1,
+      `${label}: internal section-model error — the ${rebuilt.length}-line section partition does ` +
+        `not reproduce the ${bodyLines.length}-line body; refusing before any write.`,
+    );
+  }
+};
+
+const scanMarkerDate = (value) => {
+  const loose = LOOSE_MARKER_DATE_RE.exec(value);
+  if (!loose) return null;
+  const strict = STRICT_MARKER_DATE_RE.exec(loose[0]);
+  if (strict && strict[0] === loose[0]) {
+    const [, year, , month, day] = strict;
+    const date = new Date(`${year}-${month}-${day}T00:00:00Z`);
+    // Round-trip, never trust Date: V8 rolls 2026-02-30 into March instead of rejecting it.
+    if (!Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === `${year}-${month}-${day}`) {
+      return { date };
+    }
+  }
+  return { invalid: loose[0] };
 };
 
 export const classifySection = (section, cutoffDate) => {
-  if (section.heading === null) return { kind: 'preamble' };
+  if (section.structural || section.heading === null) return { kind: 'structure' };
   const headingMatch = ISSUE_HEADING_RE.exec(section.heading);
   if (!headingMatch) return { kind: 'other' };
   const title = headingMatch[1];
-  // A prose H3 bounds a section but is never an ISSUE — it can neither archive nor rot silently.
-  if (!ISSUE_TITLE_RE.test(title)) return { kind: 'other' };
-  const stricken = STRIKETHROUGH_RE.exec(title);
-  if (!stricken) return { kind: 'open' };
+  // The pre-4.0.0 template seeded this EXACT example section — the literal heading is a safe
+  // identity (no real issue carries `{{Title}}`), so a pristine OR half-substituted legacy blank
+  // is inert BEFORE any marker/conflict/date classification and can never red a gate or archive.
+  if (section.heading === LEGACY_TEMPLATE_BLANK_HEADING) return { kind: 'template-blank' };
+  const stricken = STRIKETHROUGH_RE.test(title);
 
-  const blockText = section.lines.join('\n');
-  const dateMatch = FIXED_WITH_DATE_RE.exec(blockText);
-  if (!dateMatch) return { kind: 'fixed-undated' };
+  let claims = null;
+  let nonClaims = null;
+  for (let i = 0; i < section.lines.length; i += 1) {
+    if (section.fenced?.has(i)) continue;
+    const field = MARKER_FIELD_RE.exec(matchable(section.lines[i]));
+    if (!field) continue;
+    const isClaim = field[1] === 'Resolved' || RESOLVED_SIGNAL_RE.test(field[2]);
+    if (isClaim && claims === null) claims = { line: i, raw: matchable(section.lines[i]), value: field[2] };
+    else if (!isClaim && nonClaims === null) nonClaims = { line: i, raw: matchable(section.lines[i]), value: field[2] };
+    if (claims && nonClaims) break;
+  }
 
-  const fixedDate = new Date(`${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}T00:00:00Z`);
-  return fixedDate < cutoffDate ? { kind: 'archivable', fixedDate } : { kind: 'fixed-recent', fixedDate };
+  // Contradictory state refuses: Resolved-priority would silently ARCHIVE a genuinely reopened
+  // issue, Status-priority would silently skip a resolved one forever — loud hides nothing.
+  if (claims && nonClaims) {
+    return { kind: 'conflict', markerLine: claims.line, marker: claims.raw, openLine: nonClaims.line, openMarker: nonClaims.raw };
+  }
+  if (claims) {
+    const scanned = scanMarkerDate(claims.value);
+    if (!scanned) return { kind: 'fixed-undated', markerLine: claims.line, marker: claims.raw };
+    if (scanned.invalid) return { kind: 'bad-date', markerLine: claims.line, marker: claims.raw, raw: scanned.invalid };
+    return scanned.date < cutoffDate
+      ? { kind: 'archivable', fixedDate: scanned.date }
+      : { kind: 'fixed-recent', fixedDate: scanned.date };
+  }
+  // An explicit non-resolution Status decides — strikethrough is cosmetic in BOTH directions, so
+  // a reopened-but-still-struck issue never refuses every mode. EXCEPT: under a struck heading an
+  // UNRECOGNISED status value (Closed, DONE, Wontfix …) is a resolution claim without a date.
+  if (nonClaims) {
+    if (stricken && !OPEN_STATUS_RE.test(nonClaims.value)) {
+      return { kind: 'fixed-undated', markerLine: nonClaims.line, marker: nonClaims.raw };
+    }
+    return { kind: ISSUE_TITLE_RE.test(title) ? 'open' : 'other' };
+  }
+  // A struck heading with NO status/resolved field still claims resolution — undated is loud.
+  if (stricken) return { kind: 'fixed-undated', markerLine: 0, marker: section.heading };
+  return { kind: ISSUE_TITLE_RE.test(title) ? 'open' : 'other' };
 };
 
 export const buildResolvedFile = (existing, newSections, todayStr) => {
   const header = existing
     ? existing
     : `---\ntype: history\nlastUpdated: ${todayStr}\nscope: permanent\nstaleAfter: never\nowner: none\nmaxLines: 3500\n---\n\n# Resolved Issues — ${PROJECT_NAME}\n\n> Append-only archive of issues closed > 14 days ago. Sourced from \`../known_issues.md\`.\n\n---\n`;
-  const newBlocks = newSections.map((s) => s.lines.join('\n').replace(/\n+$/, '')).join('\n\n---\n\n');
-  if (!newBlocks) return header;
-  return `${header}\n${newBlocks}\n`;
+  if (newSections.length === 0) return header;
+  // Sections are appended VERBATIM — every archived CONTENT line lands in the archive byte-exact.
+  // Only the trailing blank run (the source's section separator) is normalised to exactly one
+  // blank line, the same droppable-decoration accounting the changelog conservation harness uses.
+  // Blank trimming is per-ELEMENT (trim() eats a CR), and the separator follows the block's own
+  // line-ending flavor — a CRLF corpus gets exact `\r\n\r\n` separators, never mixed EOL runs.
+  const blocks = newSections
+    .map((s) => {
+      const kept = [...s.lines];
+      while (kept.length > 0 && kept[kept.length - 1].trim() === '') kept.pop();
+      const separator = kept.length > 0 && kept[kept.length - 1].endsWith('\r') ? '\n\r\n' : '\n\n';
+      return kept.join('\n') + separator;
+    })
+    .join('');
+  // The header/blocks separator follows the HEADER's own EOL flavor, and the trailing run
+  // collapses to ONE terminator of its own flavor — an existing CRLF archive never gains a
+  // mixed `\r\n\n` run on append. (An archive whose existing content and new blocks use
+  // different flavors stays mixed at that boundary by nature; only runs are guaranteed pure.)
+  const headerEndsBlank = /(\r?\n){2}$/.test(header);
+  const headerEol = header.endsWith('\r\n') ? '\r\n' : '\n';
+  return (header + (headerEndsBlank ? '' : headerEol) + blocks).replace(/(\r?\n)+$/, '$1');
 };
 
 export const runCli = (argv, deps = {}) => {
@@ -170,15 +316,43 @@ export const runCli = (argv, deps = {}) => {
       return 1;
     }
 
-    const { frontmatter, sections } = parseKnownIssues(readFileSync(knownIssuesPath, 'utf8'), KNOWN_REL);
+    const { frontmatter, frontLines, sections } = parseKnownIssues(readFileSync(knownIssuesPath, 'utf8'), KNOWN_REL);
     const classified = sections.map((s) => ({ section: s, ...classifySection(s, cutoffDate) }));
+
+    // Arm C: a resolution claim the parser cannot date — or contradictory open/resolved state —
+    // is a refusal in EVERY mode, before any write.
+    const loud = classified.filter((c) => c.kind === 'fixed-undated' || c.kind === 'bad-date' || c.kind === 'conflict');
+    if (loud.length > 0) {
+      for (const c of loud) {
+        const line = frontLines + c.section.start + (c.markerLine ?? 0) + 1;
+        if (c.kind === 'conflict') {
+          const openLine = frontLines + c.section.start + c.openLine + 1;
+          logError(
+            `[archive-issues] ${KNOWN_REL}:${line}: "${c.marker.trim()}" contradicts the explicit open status ` +
+              `"${c.openMarker.trim()}" (line ${openLine}) — an issue is either open or resolved; delete the ` +
+              'stale line, then re-run.',
+          );
+        } else {
+          logError(
+            c.kind === 'bad-date'
+              ? `[archive-issues] ${KNOWN_REL}:${line}: resolution marker date "${c.raw}" in "${c.marker.trim()}" ` +
+                  'is not a valid calendar date in one separator form (YYYY-MM-DD or YYYY.MM.DD) — fix the date, then re-run.'
+              : `[archive-issues] ${KNOWN_REL}:${line}: "${(c.marker ?? c.section.heading).trim()}" claims resolution ` +
+                  'but carries no recognisable date — add a line-leading `- **Resolved:** YYYY-MM-DD` (or ' +
+                  '`- **Status:** … FIXED (YYYY-MM-DD)`). Previously this section was silently skipped forever.',
+          );
+        }
+      }
+      return 1;
+    }
+
     const archivable = classified.filter((c) => c.kind === 'archivable');
     const counts = {};
     for (const c of classified) {
-      if (c.kind === 'preamble') continue;
+      if (c.kind === 'structure') continue;
       counts[c.kind] = (counts[c.kind] ?? 0) + 1;
     }
-    const issueSectionCount = classified.filter((c) => c.kind !== 'preamble').length;
+    const issueSectionCount = classified.filter((c) => c.kind !== 'structure').length;
     const countLine = Object.entries(counts)
       .map(([kind, n]) => `${kind} ${n}`)
       .join(' / ');
@@ -219,17 +393,14 @@ export const runCli = (argv, deps = {}) => {
     const updatedResolved = buildResolvedFile(existing, archivable.map((c) => c.section), todayStr);
     writeFileSync(resolvedPath, updatedResolved, 'utf8');
 
-    const keptSections = classified.filter((c) => c.kind !== 'archivable').map((c) => c.section);
-    // Rebuild known_issues.md
-    const rebuilt = [
-      frontmatter.trim(),
-      '',
-      ...keptSections.map((s) => s.lines.join('\n').replace(/\n+$/, '')),
-      '',
-    ]
-      .join('\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim() + '\n';
+    // VERBATIM rebuild: the kept chunks re-emit byte-exact in original order — structural chunks
+    // (preamble, category H2s, the footer) survive by construction, nothing is re-flowed.
+    const rebuilt =
+      frontmatter +
+      classified
+        .filter((c) => c.kind !== 'archivable')
+        .flatMap((c) => c.section.lines)
+        .join('\n');
     writeFileSync(knownIssuesPath, rebuilt, 'utf8');
 
     log(`[archive-issues] archived ${archivable.length} issue(s) to ${RESOLVED_REL}`);

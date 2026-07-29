@@ -4,6 +4,26 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 5.0.0 — the deployed rotation gates fail closed (memory 4.0.0 mirrored; AD-084)
+
+> ### ⚠ BREAKING — inherited from memory 4.0.0
+>
+> The kit deploys the archive scripts into every consumer's `scripts/`, so it inherits the memory
+> 4.0.0 findings-contract change: a rotation `--check` that silently passed over unparseable
+> content now refuses with `file:line` and a remedy. The refusal IS the fix arriving — see the
+> memory 4.0.0 changelog for the full contract and the upgrade notes.
+
+- `references/scripts/` mirrors memory 4.0.0 byte-for-byte: the shared `markdown-blocks.mjs`
+  tokenizer (NEW file — deployed alongside the archivers on every path, including
+  `migrate-adr-store --apply` companion-seeding), the fail-closed `archive-changelog.mjs` /
+  `archive-issues.mjs` / `archive-decisions.mjs`, and their suites.
+- `references/templates/changelog.md` + `known_issues.md` fallback copies follow: ISO taught on
+  both `{{DATE}}` consumers; the known-issues resolved shape taught inside a fenced sample in the
+  file preamble with a line-leading ISO-dated `**Resolved:**` field; the exact pre-5.0.0 template
+  example section is recognised as an inert blank, so a legacy deployment's gate stays green.
+- The deployed pre-commit template-seed test gains a stated deployed-context skip (a consumer has
+  no `../templates`), so a consumer's pre-commit can never ENOENT on it.
+
 ## 4.5.0 — the ADR-store migration finds the projects that could never hear about it (AD-083)
 
 **If your project still keeps its decisions in one big archive file, this release is the first thing

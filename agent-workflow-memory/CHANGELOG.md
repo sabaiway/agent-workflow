@@ -4,6 +4,59 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 4.0.0 — the archivers stop reporting green on files they did not understand (AD-084)
+
+> ### ⚠ BREAKING — the rotation gates fail CLOSED now
+>
+> A `--check` that silently passed over unparseable content now **refuses with `file:line` and a
+> remedy**. If your changelog carries a malformed date heading, an issue claims resolution without
+> a recognisable date, or one section carries both an open `Status:` and a dated `Resolved:` line,
+> the gate goes red — that red is the fix arriving, not a regression. Every refusal message names
+> exactly what to change. Nothing is ever rewritten on a refused input.
+
+For years the failure mode of these scripts was a **green lie**: a changelog gate that printed
+`OK` over a file it parsed nothing from (one real deployment passed 36 consecutive sessions
+unparsed), and an issues gate that reported `archivable: 0` while nine resolved sections aged in
+place and the file crept to one line under its cap. This release ends the class, not the instance:
+
+- **One shared block tokenizer** (`references/scripts/markdown-blocks.mjs`, NEW): frontmatter,
+  fenced regions, heading tokens outside fences; CRLF-safe; an unclosed fence is a loud error.
+  All three archivers read through it — a structural test refuses any future raw-line scan.
+- **Fail-closed contract, all three archivers:** every unit-shaped heading either parses or
+  refuses naming `file:line`; every verdict names the counts it acted on; a zero-unit outcome is
+  a stated decision; every reading mode refuses identically and **writes nothing** on refusal.
+- **ISO dates are first-class:** `## YYYY-MM-DD — title` entry headings parse everywhere the
+  legacy dotted form does; each entry re-emits in its **source form, verbatim**. Write ISO; the
+  dotted archives keep working untouched.
+- **The issues marker contract:** a resolved issue is recognised by a line-leading
+  `- **Resolved:** YYYY-MM-DD …` or `- **Status:** … FIXED (YYYY-MM-DD) …` field — the shapes
+  real files use, list prefix optional, emphasis/emoji variants read, both separators, strict
+  calendar validation (the old code accepted `2026.02.30` — JS Date silently rolls it into
+  March). Strikethrough is cosmetic in BOTH directions: the dated marker decides alone, and an
+  explicit open `Status:` keeps a reopened-but-still-struck issue open. A resolution claim
+  **without** a recognisable date, a struck heading with an unrecognised status word, and
+  contradictory open+resolved state all refuse loudly instead of being skipped forever. The
+  exact pre-4.0.0 template example section stays inert, so a pristine legacy deployment never
+  reds its own gate.
+- **The issues section model conserves your file:** category headings (`## 🟢 Resolved`), the
+  preamble and the canonical closing footer belong to the FILE and survive rotation; an issue
+  section contains only its own issue; rewrites are verbatim, guarded by an element-wise
+  partition tripwire and a line-accounting conservation test. (Previously the first real
+  rotation would have carried the category heading and footer into the archive and deleted them
+  from your file.) Stated residual: a **reworded or localized** closing note is not recognised
+  as the footer and travels with the last archived issue into the archive — conserved and
+  recoverable, never lost.
+- **The templates stopped contradicting the parsers:** the changelog seed teaches ISO on both
+  `{{DATE}}` consumers; the known-issues template teaches ONE resolved shape inside a fenced
+  sample in the file preamble, so neither a fresh project nor a section inserted under a
+  category can ever red or lose the teaching text.
+
+**Upgrading:** run your three `--check` gates once. If they refuse, the message names the line
+and the remedy (typically: add the missing resolution date, repair a malformed date heading, or
+delete the stale half of an open+resolved contradiction). The new `markdown-blocks.mjs` rides
+every deploy path — old-layout projects get it companion-seeded by the kit's
+`migrate-adr-store --apply`.
+
 ## 3.2.0 — the ADR rotation can be asked whether a seed is safe, without seeding (AD-083)
 
 `archive-decisions.mjs --write-navigator` now honours `--dry-run`. It runs exactly the checks the
