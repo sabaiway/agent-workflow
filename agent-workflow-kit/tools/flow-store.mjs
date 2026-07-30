@@ -17,9 +17,9 @@
 //
 // Declared residuals no dependency-free core-Node mechanism can close: the pathname lstat→rename
 // and reread→rename windows (no flock/fcntl, no inode-conditional unlink or rename) and bind-mount
-// aliasing. Plan-3 scope lives with flow-check composition: decideCheck arms, guard/gates wiring,
-// the park/resume/complete writer CLI. Records remain forgeable — a self-discipline mechanism in
-// the git dir, not a security boundary.
+// aliasing. The decideCheck arms and guard/gates wiring are LIVE (Plan 3 Phase 2); the remaining
+// Plan-3 surface is the arming + writer CLIs (set-flow, the park/resume/complete writer — Phase 3).
+// Records remain forgeable — a self-discipline mechanism in the git dir, not a security boundary.
 
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, writeSync, readSync, rmSync, lstatSync, realpathSync, openSync, closeSync, fstatSync, renameSync, readlinkSync, constants as fsConstants } from 'node:fs';
@@ -653,7 +653,7 @@ const PLAN_ID_FRONTMATTER_HINT = 'planId: <your-stable-plan-id>';
 
 // Identity binds only a CLOSED leading frontmatter block — an unterminated block never yields an
 // id; CRLF is normalized per line so line endings never fork chain identity.
-const readPlanFrontmatterId = (text) => {
+export const readPlanFrontmatterId = (text) => {
   const lines = text.split('\n').map((line) => line.replace(/\r$/, ''));
   if (lines[0]?.trim() !== '---') return null;
   const close = lines.findIndex((line, i) => i > 0 && line.trim() === '---');

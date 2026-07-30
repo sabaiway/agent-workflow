@@ -33,9 +33,10 @@
 //   • ids derive kebab-case from script names (build:prod → build-prod) and every offered entry
 //     passes the runner's validateDeclaration (this module imports the validator — NEVER the
 //     reverse: run-gates.mjs stays a runner that writes nothing);
-//   • the review-state candidate appears ONLY when docs/ai/orchestration.json DECLARES
-//     reviewed/council on plan-execution.review — the slot the checker enforces — with the
-//     resolved, QUOTED tool path (spaces survive; executes from the project root).
+//   • the review-state candidate appears when docs/ai/orchestration.json DECLARES
+//     reviewed/council on plan-execution.review OR carries a flow block (the P21 trio — under
+//     flow + solo the internal-only arm runs INSIDE review-state), with the resolved, QUOTED
+//     tool path (spaces survive; executes from the project root).
 //
 // Write discipline: preview (dry-run) is the DEFAULT and writes NOTHING — a declined offer leaves
 // the file byte-identical. `--apply` appends EXACTLY the consented entries (`--only <id>`
@@ -61,6 +62,7 @@ const KIT_ROOT = resolve(HERE, '..');
 const TEMPLATE_PATH = join(KIT_ROOT, 'references', 'templates', 'gates.json');
 const REVIEW_STATE_TOOL = join(KIT_ROOT, 'tools', 'review-state.mjs');
 const COVERAGE_CHECK_TOOL = join(KIT_ROOT, 'tools', 'coverage-check.mjs');
+const FLOW_CHECK_TOOL = join(KIT_ROOT, 'tools', 'flow-check.mjs');
 const STAMP_REL = join('docs', 'ai', '.workflow-version');
 
 const EXIT_OK = 0;
@@ -274,20 +276,28 @@ const deriveScripts = (cwd, deps = {}) => {
 export const deriveScriptEntries = (cwd, deps = {}) => deriveScripts(cwd, deps).entries;
 
 // The conditional review-state candidate — keyed on the SLOT the checker enforces
-// (plan-execution.review, tools/review-state.mjs), read via the shared config reader. Offered only
-// when the config DECLARES reviewed/council there; solo configs and a council-on-plan-authoring-only
-// config never see it. The cmd carries the resolved, QUOTED tool path and passes the validator.
+// (plan-execution.review, tools/review-state.mjs), read via the shared config reader. Offered when
+// the config DECLARES reviewed/council there OR carries a flow block (reviewSlotWantsChecker); a
+// plain solo config never sees it. The cmd carries the resolved, QUOTED tool path and passes the
+// validator.
 // Double-quote-unsafe shell metacharacters: inside `"…"` bash still expands `$`, backticks and
 // backslashes, and a `"` breaks the quoting entirely. A candidate cmd is hook-auto-approvable, so a
 // path that cannot be safely double-quoted is WITHHELD with a loud note — never offered wrongly.
 const DQ_UNSAFE_PATH_PATTERN = /["$`\\\r\n]/;
 
+// Under a flow block the offer covers the full checker TRIO whatever the recipe (P21): with flow +
+// a solo recipe the internal-only arm executes INSIDE review-state, so offering flow-check alone
+// would arm half the surface.
+const reviewSlotWantsChecker = (config) => {
+  const declared = config?.['plan-execution']?.review;
+  return declared === 'reviewed' || declared === 'council' || config?.flow != null;
+};
+
 export const reviewStateCandidate = (cwd, deps = {}) => {
   const toolPath = deps.reviewStateTool ?? REVIEW_STATE_TOOL;
   try {
     const { config } = loadConfig(resolve(cwd), deps.readFile ?? readFileSync, deps.lstat ?? lstatSync);
-    const declared = config?.['plan-execution']?.review;
-    if (declared !== 'reviewed' && declared !== 'council') return { candidate: null, note: null };
+    if (!reviewSlotWantsChecker(config)) return { candidate: null, note: null };
     if (DQ_UNSAFE_PATH_PATTERN.test(toolPath)) {
       return {
         candidate: null,
@@ -314,7 +324,7 @@ export const reviewStateCandidate = (cwd, deps = {}) => {
 };
 
 // The conditional COVERAGE-CHECK candidate (D3(a)) — the SAME consent + conditional rule as the
-// review-state candidate (offered ONLY when plan-execution.review is reviewed/council), keyed on
+// review-state candidate (reviewSlotWantsChecker: reviewed/council OR a flow block), keyed on
 // the same slot, path resolved + QUOTED. Together they are the canonical core pair `run-gates
 // --final` requires (the checker declared LAST — buildOffer appends it last so a whole-offer
 // apply lands final-ready); review-state gates receipt satisfaction, coverage-check verifies the
@@ -323,8 +333,7 @@ export const coverageCheckCandidate = (cwd, deps = {}) => {
   const toolPath = deps.coverageCheckTool ?? COVERAGE_CHECK_TOOL;
   try {
     const { config } = loadConfig(resolve(cwd), deps.readFile ?? readFileSync, deps.lstat ?? lstatSync);
-    const declared = config?.['plan-execution']?.review;
-    if (declared !== 'reviewed' && declared !== 'council') return { candidate: null, note: null };
+    if (!reviewSlotWantsChecker(config)) return { candidate: null, note: null };
     if (DQ_UNSAFE_PATH_PATTERN.test(toolPath)) {
       return {
         candidate: null,
@@ -350,6 +359,37 @@ export const coverageCheckCandidate = (cwd, deps = {}) => {
   }
 };
 
+// The conditional FLOW-CHECK candidate (P21) — offered ONLY when the orchestration config carries
+// a `flow` block; the same consent + path-quoting discipline as the pair above.
+export const flowCheckCandidate = (cwd, deps = {}) => {
+  const toolPath = deps.flowCheckTool ?? FLOW_CHECK_TOOL;
+  try {
+    const { config } = loadConfig(resolve(cwd), deps.readFile ?? readFileSync, deps.lstat ?? lstatSync);
+    if (config?.flow == null) return { candidate: null, note: null };
+    if (DQ_UNSAFE_PATH_PATTERN.test(toolPath)) {
+      return {
+        candidate: null,
+        note:
+          `the flow-check candidate was withheld: the resolved kit path contains shell ` +
+          `metacharacters that do not survive double-quoting (${toolPath}) — declare the gate by hand`,
+      };
+    }
+    return {
+      candidate: {
+        id: 'flow-check',
+        title: 'Flow-store chain state clean for this worktree (flow-orchestration)',
+        cmd: `node "${toolPath}" --check`,
+      },
+      note: null,
+    };
+  } catch (err) {
+    return {
+      candidate: null,
+      note: `orchestration config unreadable (${err.message}) — the flow-check candidate was not evaluated`,
+    };
+  }
+};
+
 // Every --only id must name an OFFERED entry — enforced in BOTH paths (dry-run and apply), before
 // any empty-offer shortcut, so a typo is a loud usage error, never a silent filter or a silent
 // "nothing to offer" success.
@@ -361,18 +401,20 @@ const assertOnlyIdsOffered = (offer, onlyIds = []) => {
   }
 };
 
-// The full offer: script entries + the conditional review-state + coverage-check candidates
-// (coverage-check LAST — the `run-gates --final` declaration-shape rule requires the checker as
-// the last declared gate, so a whole-offer apply is final-ready by construction). Both key on the
-// same slot (plan-execution.review reviewed/council) but gate distinct axes.
+// The full offer: script entries + the conditional review-state / flow-check / coverage-check
+// candidates (coverage-check LAST — the `run-gates --final` declaration-shape rule requires the
+// checker as the last declared gate, so a whole-offer apply is final-ready by construction). The
+// pair keys on plan-execution.review reviewed/council OR a flow block (the P21 trio); flow-check
+// itself appears only under a flow block.
 export const buildOffer = (cwd, deps = {}) => {
   const scripts = deriveScripts(cwd, deps);
   const rs = reviewStateCandidate(cwd, deps);
+  const fc = flowCheckCandidate(cwd, deps);
   const cc = coverageCheckCandidate(cwd, deps);
-  const candidates = [rs.candidate, cc.candidate].filter(Boolean);
+  const candidates = [rs.candidate, fc.candidate, cc.candidate].filter(Boolean);
   return {
     entries: [...scripts.entries, ...candidates],
-    notes: [...scripts.notes, rs.note, cc.note].filter(Boolean),
+    notes: [...scripts.notes, rs.note, fc.note, cc.note].filter(Boolean),
   };
 };
 

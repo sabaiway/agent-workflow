@@ -20,8 +20,15 @@
 //      from the recorded one · evidence hashes that no longer match the store's canonical
 //      red-proof/degrade serializations · an lcov file whose sha moved. The guard's own reads
 //      resolve FIXED git-dir paths (env overrides are producer test seams, never guard inputs);
-//   3. re-computes the review-state decision (the ship-receipt arm) — a missing/vetoed ship
-//      receipt refuses.
+//   3. consults the flow decision (Plan 3 Phase 2, two-tier): with NO flow store file the guard is
+//      byte-identical to the pre-flow guard; a PRESENT store must read clean and its refusals
+//      (open own chain, base motion, coverage, ordering) refuse the commit with the flow-check
+//      reason verbatim — a foreign worktree's chain stays advisory; the armed state extends the
+//      PASS line;
+//   4. re-computes the review-state decision (the ship-receipt arm) — a missing/vetoed ship
+//      receipt refuses. The env it hands over is SANITIZED (receipts/evidence/flow-store producer
+//      seams stripped) so a poisoned override can neither redirect nor mask any store this guard
+//      reads.
 // `git commit --no-verify` stays the stated residual (a self-discipline mechanism, not a security
 // boundary). Read-only; dependency-free; Node >= 22. No side effects on import.
 
@@ -34,6 +41,7 @@ import { computeTreeFingerprint, buildState, decideCheck, quoteReportName, shell
 import { resolveEvidencePath, readEvidence, authoritativeOfKind, canonicalKindSerialization, computeWorkingState } from './core-evidence.mjs';
 import { resolveLcovPath } from './coverage-check.mjs';
 import { GATES_REL, loadDeclaration } from './run-gates.mjs';
+import { computeFlowDecision } from './flow-check.mjs';
 
 const usageFail = (message) => Object.assign(new Error(`[agent-workflow-kit] ${message}`), { exitCode: 2 });
 const sha = (text) => createHash('sha256').update(text).digest('hex');
@@ -238,18 +246,37 @@ export const runGuard = ({ cwd = process.cwd(), env = process.env } = {}) => {
       return { code: 1, lines: ['commit-guard: REFUSED — the lcov file the receipt consumed moved or vanished; re-run run-gates.mjs --final'] };
     }
   }
-  // The ship-receipt arm: the SAME normative decision review-state --check computes (configured
-  // obligations, ship-class-only, veto, degrade escape) — a file-read recompute, no subprocess —
-  // over a SANITIZED env: the store overrides are producer test seams, and honoring them HERE
-  // would let a forged receipts/degrade store bypass the fixed-path reads above.
+  // The flow arm (#43/P3, two-tier over FIXED git-derived paths): no store file ⇒ byte-exact
+  // prior behavior; a present store's refusals (malformed reads included) refuse with the
+  // flow-check reason verbatim.
+  const flow = computeFlowDecision({ cwd });
+  if (flow.present && flow.refusals.length > 0) {
+    return {
+      code: 1,
+      lines: [
+        `commit-guard: REFUSED — the flow store refuses this commit: ${flow.refusals[0]}`,
+        ...flow.refusals.slice(1).map((r) => `commit-guard: flow refusal — ${r}`),
+      ],
+    };
+  }
+  // The ship-receipt arm: the SAME normative decision review-state --check computes, over a
+  // SANITIZED env — the receipts/evidence/flow-store overrides are producer test seams, and
+  // honoring them HERE would let a forged store bypass the fixed-path reads above.
   const reviewEnv = { ...env };
   delete reviewEnv.AW_REVIEW_RECEIPTS;
   delete reviewEnv.AW_CORE_EVIDENCE;
+  delete reviewEnv.AW_FLOW_STORE;
   const review = decideCheck(buildState({ cwd, env: reviewEnv }));
   if (review.code !== 0) {
     return { code: 1, lines: [`commit-guard: REFUSED — the review obligations are not satisfied: ${review.reason}`] };
   }
-  return { code: 0, lines: [`commit-guard: PASS — a green final receipt binds this exact tree (${fingerprint.slice(0, 12)}…), the declaration and evidence hashes match, and the review obligations are satisfied`] };
+  const flowSuffix = flow.present && flow.armed
+    ? ` — flow: armed${review.flowLabels?.length ? ` (${review.flowLabels.join('; ')})` : ''}`
+    : '';
+  const flowAdvisoryLines = flow.present && flow.armed
+    ? flow.advisories.map((a) => `commit-guard: flow advisory — ${a}`)
+    : [];
+  return { code: 0, lines: [`commit-guard: PASS — a green final receipt binds this exact tree (${fingerprint.slice(0, 12)}…), the declaration and evidence hashes match, and the review obligations are satisfied${flowSuffix}`, ...flowAdvisoryLines] };
 };
 
 const HELP = `commit-guard — the read-only pre-commit guard (agent-workflow family, D10).
@@ -262,8 +289,11 @@ paths, reviewable untracked paths, or a dirty tracked submodule, each named with
 this deliberately blocks a partial commit), then recomputes the current tree fingerprint and binds
 the LATEST completed run-gates --final receipt — refusing on { no receipt for this tree · a red
 latest attempt · before≠after · declaration content drift · evidence-hash drift · lcov drift ·
-unsatisfied review obligations (the review-state decision) }. Wire it into pre-commit;
-\`git commit --no-verify\` stays the stated residual (self-discipline, not a security boundary).
+a flow-store refusal (a PRESENT store's open own chain / base motion / coverage — verbatim; no
+store file = byte-exact pre-flow behavior) · unsatisfied review obligations (the review-state
+decision, over a sanitized env — receipts/evidence/flow-store seams stripped) }. Wire it into
+pre-commit; \`git commit --no-verify\` stays the stated residual (self-discipline, not a security
+boundary).
 
 Exit codes: 0 pass; 1 refused (reason named); 2 usage.`;
 

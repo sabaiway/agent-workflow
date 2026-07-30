@@ -32,6 +32,7 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
 import { computeTreeFingerprint } from './review-state.mjs';
+import { CONFIG_REL, loadConfig } from './orchestration-config.mjs';
 // The D3(a) final receipt rides the core-evidence SOLE WRITER (the sole-writer boundary — this
 // runner never opens the store itself) + the canonical per-kind serialization its hashes bind.
 import { appendEvidenceRecord, resolveEvidencePath, readEvidence, canonicalKindSerialization, EVIDENCE_SCHEMA_VERSION, resolveBase } from './core-evidence.mjs';
@@ -72,7 +73,14 @@ const SPAWN_FAILED_CODE = -1;
 const MAX_GATE_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 const USAGE = [
-  'usage: run-gates.mjs [--cwd <dir>] [--only <id>]... [--final] [--help]',
+  'usage: run-gates.mjs [--cwd <dir>] [--only <id>]... [--final] [--pre-review] [--help]',
+  '',
+  '--pre-review runs the DERIVED mechanical subset (#66): the full matrix minus every gate whose',
+  'cmd is a canonical kit checker invocation (review-state / commit-guard / coverage-check /',
+  'flow-check --check, resolved by realpath — never by gate id) minus a validated',
+  'flow.pregateExclude from docs/ai/orchestration.json (an unknown exclude id refuses loudly).',
+  'A failing subset gate gets the named review-dependent diagnosis and never counts toward a',
+  'hard stop. Mutually exclusive with --only and --final.',
   '',
   '--final runs the FULL declared matrix as the D3(a) final verification run: it refuses a',
   'declaration lacking the canonical core checks (the review-state + coverage-check gates),',
@@ -293,7 +301,7 @@ export const composeSummaryLine = ({ status, results = [] }) => {
 // ── CLI ───────────────────────────────────────────────────────────────────────────────
 
 const parseArgs = (argv) => {
-  const opts = { cwd: null, only: [], final: false, help: false };
+  const opts = { cwd: null, only: [], final: false, preReview: false, help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') {
@@ -308,12 +316,20 @@ const parseArgs = (argv) => {
       opts.only.push(argv[i]);
     } else if (arg === '--final') {
       opts.final = true;
+    } else if (arg === '--pre-review') {
+      opts.preReview = true;
     } else {
       throw fail(EXIT.usage, `unknown argument "${arg}"\n${USAGE}`);
     }
   }
   if (opts.final && opts.only.length > 0) {
     throw fail(EXIT.usage, '--final refuses --only — a subset never attests (the D3(a) receipt binds the FULL declaration)');
+  }
+  if (opts.preReview && opts.only.length > 0) {
+    throw fail(EXIT.usage, '--pre-review refuses --only — the subset is DERIVED from canonical checker paths, never hand-picked (P27)');
+  }
+  if (opts.preReview && opts.final) {
+    throw fail(EXIT.usage, '--final refuses --pre-review — the final run attests the FULL declared matrix, never the derived subset (P27)');
   }
   return opts;
 };
@@ -362,6 +378,19 @@ export const isFinalCapableDeclaration = (gates, projectDir) => {
 };
 const sha256Hex = (data) => createHash('sha256').update(data).digest('hex');
 
+// The review-dependent predicate (#66/P14): a gate is review-dependent iff its cmd IS the plain
+// canonical `--check` invocation of one of the kit's OWN checkers, resolved by realpath — never a
+// project-authored id. A project abstracting the invocation behind its own script declares it in
+// flow.pregateExclude (the mode doc states this plainly).
+const REVIEW_DEPENDENT_CHECKS = ['review-state', 'commit-guard', 'coverage-check', 'flow-check'].map((name) => ({
+  name,
+  re: coreCheckRe(`${name}\\.mjs`),
+  canonical: fileURLToPath(new URL(`./${name}.mjs`, import.meta.url)),
+}));
+
+export const isReviewDependentGate = (gate, projectDir) =>
+  REVIEW_DEPENDENT_CHECKS.some((check) => matchesCanonicalCheck(check, gate.cmd, projectDir));
+
 // The full CLI, dependency-injected for hermetic tests. Returns the process exit code; the two
 // output sinks split human-facing report (log) from error channel (logError). The summary line is
 // emitted via `log` as the final line of every non-usage outcome.
@@ -399,7 +428,29 @@ export const runCli = (argv, deps = {}) => {
       log(composeSummaryLine({ status: 'empty' }));
       return EXIT.empty;
     }
-    const selected = selectGates(declaration.gates, opts.only);
+    let selected = selectGates(declaration.gates, opts.only);
+    // --pre-review (#66, Decision 7): the full matrix minus the DERIVED review-dependent gates
+    // minus a validated flow.pregateExclude. The orchestration config is loaded ONLY here — a
+    // plain run and --final stay byte-neutral to it.
+    if (opts.preReview) {
+      // loadConfig pins malformed config as exit 1; the summary-line contract still holds — the
+      // machine line is the LAST line for every non-usage outcome (M5).
+      let config;
+      try {
+        ({ config } = loadConfig(projectDir));
+      } catch (err) {
+        logError(`[run-gates] --pre-review: ${err.message}`);
+        log(composeSummaryLine({ status: 'fail' }));
+        return EXIT.fail;
+      }
+      const exclude = config?.flow?.pregateExclude ?? [];
+      const declaredIds = new Set(declaration.gates.map((gate) => gate.id));
+      const unknownExcludes = exclude.filter((id) => !declaredIds.has(id));
+      if (unknownExcludes.length > 0) {
+        throw fail(EXIT.malformed, `--pre-review: ${CONFIG_REL} flow.pregateExclude names gate id(s) not declared in ${GATES_REL}: ${unknownExcludes.join(', ')} (declared: ${declaration.gates.map((gate) => gate.id).join(', ')})`);
+      }
+      selected = declaration.gates.filter((gate) => !isReviewDependentGate(gate, projectDir) && !exclude.includes(gate.id));
+    }
     // AW_GIT_DIR rides EVERY gate child inside a git tree (plain and --only alike): declared
     // cmds reference fixed git-dir artifacts (the unit-tests lcov destination) — a plain red-run
     // must exercise the SAME cmd line --final will, never a broken-only-outside---final variant.
@@ -511,6 +562,14 @@ export const runCli = (argv, deps = {}) => {
     const results = runGates(selected, { cwd: projectDir, spawn: gateSpawn, log, now });
     for (const line of formatTable(results)) log(line);
     const allGreen = results.every((result) => result.ok);
+    if (opts.preReview) {
+      // The named diagnosis (#66): review-dependence is derived, so an abstracted checker can only
+      // surface as an ordinary failure — say so, and say a pre-review failure never hard-stops
+      // (the counter itself is Plan 4, Decision 7).
+      for (const failed of results.filter((result) => !result.ok)) {
+        log(`[run-gates] "${failed.id}" failed under --pre-review — review-dependent? declare it in ${CONFIG_REL} flow.pregateExclude and the subset will skip it; a pre-review failure never counts toward a hard stop (the counter rides Plan 4)`);
+      }
+    }
     // A green gate's stdout is deliberately not echoed — the table IS the report. But the checker
     // exits 0 both when it certifies and when it WITHHOLDS a verdict, so on a plain run the table
     // would read PASS over a coverage claim that was never made: the same false reassurance one

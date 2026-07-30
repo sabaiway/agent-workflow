@@ -125,11 +125,81 @@ export const FLOW_SCHEMA_VERSION = 1;
 export const FLOW_LAGGING_KIT_CONTRACT =
   'a kit predating the `"flow"` key that reads a config carrying one fails this config load loudly (exit `1`, reddening its full gate matrix); this kit release enforces NO version floor against such a pre-flow reader — tolerate-first ordering is the only mitigation until a flow-aware release arms enforcement on the `set-flow` path';
 
+// ── the closed flow schema-1 surface (P20) — ONE literal fixture for BOTH consumers ─────
+// The structural validator below and the set-flow arming path (Phase 3) walk the SAME closed key
+// set; a drift-guarded named test validates the literal fixture. Shape-only here (#31): every
+// environment floor (tracked-ness, symlink/dir classes, the kit min-version comparison) lives
+// exclusively on the arming path.
+
+export const FLOW_SCHEMA_1_KEYS = Object.freeze([
+  'schema', 'preset', 'candidates', 'councilRounds', 'debtQueue', 'convergenceSummary',
+  'debtQueueExcluded', 'convergenceSummaryExcluded', 'pregateExclude', 'kitMinVersion',
+]);
+export const FLOW_PRESET_VALUES = Object.freeze(['council', 'reviewed', 'internal-only']);
+export const FLOW_CANDIDATE_CLASSES = Object.freeze(['review', 'execution']);
+// The arming path (set-flow, Phase 3) compares kitMinVersion via the null-guarded semver shape
+// characterized in the FLOW-VERSION-FLOORS block of semver-lite.test.mjs (Decision 6).
+export const FLOW_MIN_VERSION_COMPARISON = 'semver-lite null-guarded comparison (FLOW-VERSION-FLOORS characterization)';
+export const FLOW_SCHEMA_1_FIXTURE = Object.freeze({
+  schema: FLOW_SCHEMA_VERSION,
+  preset: 'council',
+  candidates: Object.freeze([
+    Object.freeze({ name: 'codex', class: 'review' }),
+    Object.freeze({ name: 'agy', class: 'review' }),
+  ]),
+  councilRounds: 3,
+  debtQueue: 'docs/debt.md',
+  convergenceSummary: 'docs/convergence.md',
+  debtQueueExcluded: false,
+  convergenceSummaryExcluded: false,
+  pregateExclude: Object.freeze([]),
+  kitMinVersion: '5.1.0',
+});
+
+// The per-key STRUCTURAL checks of the schema-1 flow block (P7/P20) — shape only, loud
+// `path: reason`; every environment floor lives on the set-flow arming path (#31). A failure
+// message, or null when the value fits the key's shape.
+const flowKeyFailure = (key, value) => {
+  if (key === 'preset') {
+    return FLOW_PRESET_VALUES.includes(value) ? null : `must be one of ${FLOW_PRESET_VALUES.join(' | ')} (got ${JSON.stringify(value)})`;
+  }
+  if (key === 'candidates') {
+    if (!Array.isArray(value)) return 'must be an array of typed { name, class } objects (#30)';
+    for (const c of value) {
+      if (c === null || typeof c !== 'object' || Array.isArray(c)) return 'must hold only { name, class } objects';
+      const stray = Object.keys(c).find((k) => k !== 'name' && k !== 'class');
+      if (stray !== undefined) return `candidate objects carry exactly { name, class } — unknown field "${stray}"`;
+      if (typeof c.name !== 'string' || c.name === '') return 'every candidate name must be a non-empty string';
+      if (!FLOW_CANDIDATE_CLASSES.includes(c.class)) return `every candidate class must be one of ${FLOW_CANDIDATE_CLASSES.join(' | ')} (got ${JSON.stringify(c.class)})`;
+    }
+    return null;
+  }
+  if (key === 'councilRounds') {
+    return Number.isInteger(value) && value >= 1 ? null : `must be a positive integer — the #45 refresh-cap source (got ${JSON.stringify(value)})`;
+  }
+  if (key === 'debtQueue' || key === 'convergenceSummary') {
+    return typeof value === 'string' && value.length > 0 ? null : `must be a non-empty repo-relative path string (got ${JSON.stringify(value)})`;
+  }
+  if (key === 'debtQueueExcluded' || key === 'convergenceSummaryExcluded') {
+    return typeof value === 'boolean' ? null : `must be a boolean (the declared-excluded form, #31/#37; got ${JSON.stringify(value)})`;
+  }
+  if (key === 'pregateExclude') {
+    if (!Array.isArray(value) || !value.every((id) => typeof id === 'string' && id.length > 0)) {
+      return `must be an array of non-empty gate-id strings (#47; got ${JSON.stringify(value)})`;
+    }
+    return new Set(value).size === value.length ? null : 'must not carry duplicate gate ids (#47)';
+  }
+  if (key === 'kitMinVersion') {
+    return typeof value === 'string' && value.length > 0 ? null : `must be a non-empty version string — the #54 floor, compared on the arming path via the ${FLOW_MIN_VERSION_COMPARISON} (got ${JSON.stringify(value)})`;
+  }
+  return null; // schema — checked before the key walk
+};
+
 // Validate a parsed orchestration.json object against the schema. Strict: an unknown top-level
 // activity, an unknown slot for an activity, or a recipe invalid-for-slot is an error. All slots are
-// optional. An optional "_README" string key is allowed + ignored (self-documentation). A versioned
-// "flow" object key is TOLERATED when its `schema` strict-equals FLOW_SCHEMA_VERSION — every other
-// byte of the block is deliberately uninterpreted here (nothing in this kit reads or writes it yet).
+// optional. An optional "_README" string key is allowed + ignored (self-documentation). The
+// versioned "flow" object key validates against the FULL structural schema-1 surface (closed key
+// set + per-key shapes — P7/P20); deep environment floors stay on the set-flow arming path (#31).
 // Never a silent fallback — every rejection is a loud `path: reason` (exit 1). Returns the config on success.
 export const validateConfig = (config) => {
   if (config === null || typeof config !== 'object' || Array.isArray(config)) {
@@ -147,6 +217,13 @@ export const validateConfig = (config) => {
       if (val.schema !== FLOW_SCHEMA_VERSION) {
         const got = 'schema' in val ? JSON.stringify(val.schema) : 'absent';
         throw fail(1, `${CONFIG_REL}: "flow".schema must be the number ${FLOW_SCHEMA_VERSION} (got ${got})`);
+      }
+      for (const [flowKey, flowValue] of Object.entries(val)) {
+        if (!FLOW_SCHEMA_1_KEYS.includes(flowKey)) {
+          throw fail(1, `${CONFIG_REL}: "flow" carries unknown key "${flowKey}" — the schema-1 key set is closed (${FLOW_SCHEMA_1_KEYS.join(', ')})`);
+        }
+        const failure = flowKeyFailure(flowKey, flowValue);
+        if (failure !== null) throw fail(1, `${CONFIG_REL}: "flow".${flowKey} ${failure}`);
       }
       continue;
     }

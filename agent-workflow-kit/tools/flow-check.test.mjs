@@ -339,11 +339,12 @@ describe('flow-check — consumer env discipline + the thin CLI', () => {
     assert.match(r.stdout, /flow-check: PASS/);
   });
 
-  it('--help exits 0 and states the deliberate non-wiring', () => {
+  it('--help exits 0 and states the LIVE composition — the undeclared-probe clause is gone (header truth, Step 2.3)', () => {
     const r = runCli(['--help'], TMP);
     assert.equal(r.status, 0);
     assert.match(r.stdout, /flow-check/);
-    assert.match(r.stdout, /Plan 3|composition/i);
+    assert.match(r.stdout, /review-state|commit-guard/);
+    assert.doesNotMatch(r.stdout, /DELIBERATELY UNDECLARED/);
   });
 
   it('a malformed argument exits 2', () => {
@@ -1107,5 +1108,140 @@ describe('flow-check — round-2 fold regressions (projection, prefix scoping, c
   it('a receipt from a backend outside the relied-on set never demands binding', () => {
     const refusals = collectReceiptCoverageRefusals({ flowRecords: recordsOf([adoption()]), receipts: [receipt('codex', 'ship', FP)], tree: { base: BASE, fingerprint: FP }, owner: 'main', backends: ['agy'] });
     assert.deepEqual(refusals, []);
+  });
+});
+
+// ── Phase 2 (flow Plan 3): computeFlowDecision — the two-tier presence + armed answer consumers read ──
+import { computeFlowDecision, selectReliedOnReceipt } from './flow-check.mjs';
+
+describe('flow-check — the relied-on selector spans the delta lift (#42/#61, round-3 folds)', () => {
+  const DECLARED = ['docs/notes.md'];
+  const liftedFixtures = () => {
+    const first = adoption();
+    const d = delta({ timestamp: TS(1) });
+    const reattest = refresh(canonicalFlowDigest(d), { fingerprintBefore: d.fingerprintAfter, fingerprintAfter: d.fingerprintAfter, timestamp: TS(3) });
+    const rec = receipt('codex', 'ship', D('aa'));
+    const tree = { base: BASE, fingerprint: D('ab') };
+    return { first, d, reattest, rec, tree };
+  };
+
+  it('an unbound delta-LIFTED receipt refuses — the lift never escapes #42', () => {
+    const { first, d, reattest, rec, tree } = liftedFixtures();
+    const refusals = collectReceiptCoverageRefusals({
+      flowRecords: recordsOf([first, d, reattest]), receipts: [rec], tree, owner: 'main',
+      backends: ['codex'], declaredPaths: DECLARED, refreshCap: 3,
+    });
+    assert.equal(refusals.length, 1, `the lifted receipt is relied on and must be ledger-bound: ${refusals}`);
+    assert.match(refusals[0], /unbound receipt/);
+  });
+
+  it('a ledger-bound LIFTED receipt passes at its own fingerprint', () => {
+    const { first, d, reattest, rec, tree } = liftedFixtures();
+    const entry = { backend: 'codex', dispatchBase: BASE, receiptWatermark: 0, dispatchNonce: 'n-1', receiptDigest: canonicalFlowDigest(rec), findingManifestDigest: D('fe') };
+    const round = opener(canonicalFlowDigest(first), { fingerprint: D('aa'), dispatches: [entry], timestamp: TS(2) });
+    const refusals = collectReceiptCoverageRefusals({
+      flowRecords: recordsOf([first, round, d, reattest]), receipts: [rec], tree, owner: 'main',
+      backends: ['codex'], declaredPaths: DECLARED, refreshCap: 3,
+    });
+    assert.deepEqual(refusals, []);
+    const selected = selectReliedOnReceipt({ receipts: [rec], backend: 'codex', tree, records: recordsOf([first, d, reattest]), declaredPaths: DECLARED, refreshCap: 3 });
+    assert.equal(selected.receipt.fingerprint, D('aa'));
+    assert.equal(selected.lifted, 1, 'the selector carries the lift metadata the PASS labels consume');
+  });
+
+  it('a dispatchBase mismatch never covers — the ledger binds the round base', () => {
+    const rec = receipt('codex', 'ship', FP);
+    const entry = { backend: 'codex', dispatchBase: BASE2, receiptWatermark: 0, dispatchNonce: 'n-1', receiptDigest: canonicalFlowDigest(rec), findingManifestDigest: D('fe') };
+    const first = adoption();
+    const round = opener(canonicalFlowDigest(first), { dispatches: [entry], timestamp: TS(1) });
+    const refusals = collectReceiptCoverageRefusals({
+      flowRecords: recordsOf([first, round]), receipts: [rec], tree: { base: BASE, fingerprint: FP }, owner: 'main', backends: ['codex'],
+    });
+    assert.equal(refusals.length, 1, 'a foreign-base ledger entry is no binding (P16)');
+    assert.match(refusals[0], /unbound receipt/);
+  });
+});
+
+describe('flow-check — computeFlowDecision (the guard-facing two-tier answer)', () => {
+  it('absent store: present=false and the decision still runs over the core store', () => {
+    const root = makeRepo();
+    const d = computeFlowDecision({ cwd: root });
+    assert.equal(d.present, false);
+    assert.equal(d.owner, 'main');
+    assert.deepEqual(d.refusals, []);
+  });
+
+  it('present-valid-unadopted: present=true, armed=false, no refusal', () => {
+    const root = makeRepo();
+    writeFileSync(resolveFlowStorePath(root, {}), '');
+    const d = computeFlowDecision({ cwd: root });
+    assert.equal(d.present, true);
+    assert.equal(d.armed, false);
+    assert.deepEqual(d.refusals, []);
+  });
+
+  it('present-malformed: refuses fail-closed', () => {
+    const root = makeRepo();
+    writeFileSync(resolveFlowStorePath(root, {}), 'junk line\n');
+    const d = computeFlowDecision({ cwd: root });
+    assert.equal(d.present, true);
+    assert.equal(d.armed, false);
+    assert.equal(d.refusals.length, 1);
+    assert.match(d.refusals[0], /malformed/);
+  });
+
+  it('the evidence input composes the three Phase-1 rungs; absent evidence stays byte-identical', () => {
+    const withoutEvidence = decideFlowCheck({ flowRead: flowReadOf([adoption()]), coreRead: coreReadOf([coreRedFinal('a1', FP, 1)]), owner: 'main' });
+    assert.deepEqual(withoutEvidence, { refusals: [], advisories: [] }, 'no evidence input — the decision is byte-identical to Plan 2');
+    const tree = { base: BASE, fingerprint: FP };
+    const red = decideFlowCheck({ flowRead: flowReadOf([adoption()]), coreRead: coreReadOf([coreRedFinal('a1', FP, 1)]), owner: 'main', evidence: { receipts: [], tree, receiptBackends: [], degradeBackends: [] } });
+    assert.ok(red.refusals.some((r) => /red final/.test(r) && /#65/.test(r)), `the unanswered-red rung composes: ${red.refusals}`);
+    const degrade = decideFlowCheck({ flowRead: flowReadOf([adoption()]), coreRead: coreReadOf([coreDegrade(FP, 3)]), owner: 'main', evidence: { receipts: [], tree, receiptBackends: [], degradeBackends: ['agy'] } });
+    assert.ok(degrade.refusals.some((r) => /backend "agy"/.test(r)), `the degrade-coverage rung composes: ${degrade.refusals}`);
+    const rec = receipt('codex', 'ship', FP);
+    const unbound = decideFlowCheck({ flowRead: flowReadOf([adoption()]), coreRead: coreReadOf([]), owner: 'main', evidence: { receipts: [rec], tree, receiptBackends: ['codex'], degradeBackends: [] } });
+    assert.ok(unbound.refusals.some((r) => /unbound receipt/.test(r)), `the receipt-coverage rung composes: ${unbound.refusals}`);
+    const strayDegrade = decideFlowCheck({ flowRead: flowReadOf([adoption()]), coreRead: coreReadOf([coreDegrade(FP, 3)]), owner: 'main', evidence: { receipts: [], tree, receiptBackends: ['agy'], degradeBackends: [] } });
+    assert.deepEqual(strayDegrade.refusals, [], 'the split sets are independent — a stray degrade outside the degrade set never blocks');
+  });
+
+  it('the composed decision resolves the config at the git TOPLEVEL — a subdirectory invocation answers identically', () => {
+    const root = makeRepo();
+    mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
+    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), 'not json');
+    const first = adoption();
+    writeFileSync(resolveFlowStorePath(root, {}), `${JSON.stringify(first)}\n`);
+    const sub = join(root, 'sub');
+    mkdirSync(sub, { recursive: true });
+    const atRoot = computeFlowDecision({ cwd: root });
+    const atSub = computeFlowDecision({ cwd: sub });
+    assert.ok(atSub.refusals.some((r) => /relied-on backend set cannot be derived/.test(r)), `the subdir invocation must see the toplevel config failure: ${atSub.refusals}`);
+    assert.deepEqual(atSub.refusals, atRoot.refusals, 'root and subdirectory answers are identical');
+  });
+
+  it('the CLI scopes semantic refusals to an ADOPTED store — an unattested delta on an unadopted store passes (P3 t2)', () => {
+    const root = makeRepo();
+    writeFileSync(resolveFlowStorePath(root, {}), `${JSON.stringify(delta())}\n`);
+    const r = spawnSync(process.execPath, [TOOL, '--check'], { cwd: root, encoding: 'utf8' });
+    assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+    assert.match(r.stdout, /flow-check: PASS/);
+  });
+
+  it('present-armed: armed=true; an own open chain is a refusal, a foreign one an advisory', () => {
+    const root = makeRepo();
+    const first = adoption();
+    const step1 = opener(canonicalFlowDigest(first), { timestamp: TS(1) });
+    writeFileSync(resolveFlowStorePath(root, {}), `${JSON.stringify(first)}\n${JSON.stringify(step1)}\n`);
+    const own = computeFlowDecision({ cwd: root });
+    assert.equal(own.present, true);
+    assert.equal(own.armed, true);
+    assert.ok(own.refusals.some((r) => /OPEN chain owned by this worktree/.test(r)));
+    const foreignFirst = adoption({ owner: 'worktree:elsewhere' });
+    const foreignStep = opener(canonicalFlowDigest(foreignFirst), { owner: 'worktree:elsewhere', timestamp: TS(1) });
+    writeFileSync(resolveFlowStorePath(root, {}), `${JSON.stringify(foreignFirst)}\n${JSON.stringify(foreignStep)}\n`);
+    const foreign = computeFlowDecision({ cwd: root });
+    assert.equal(foreign.armed, true);
+    assert.deepEqual(foreign.refusals, []);
+    assert.equal(foreign.advisories.length, 1);
   });
 });
