@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { decideFlowCheck, runFlowCheck } from './flow-check.mjs';
+import {
+  decideFlowCheck, runFlowCheck, classifyDeltaChain, evaluateVetoOverride,
+  collectUnansweredRedRefusals, classifyBaseMotion, collectDegradeCoverageRefusals,
+  collectReceiptCoverageRefusals, computeAllPathBaseDelta, computeAllPathWorktreeSurface,
+} from './flow-check.mjs';
 import { resolveFlowStorePath, parseFlowStoreText } from './flow-store.mjs';
 import { FLOW_SCHEMA_VERSION, canonicalFlowDigest } from './flow-record.mjs';
 import { EVIDENCE_SCHEMA_VERSION, resolveEvidencePath, parseEvidenceText } from './core-evidence.mjs';
@@ -72,8 +76,50 @@ const coreFinal = (attempt, fp, n) => ({
 
 const flowReadOf = (records) => parseFlowStoreText(records.map((r) => JSON.stringify(r)).join('\n'));
 const coreReadOf = (records) => parseEvidenceText(records.map((r) => JSON.stringify(r)).join('\n'));
-const decide = (flowRecords, { core = [], owner = 'main', flowRead } = {}) =>
-  decideFlowCheck({ flowRead: flowRead ?? flowReadOf(flowRecords), coreRead: coreReadOf(core), owner });
+const decide = (flowRecords, { core = [], owner = 'main', flowRead, motion } = {}) =>
+  decideFlowCheck({ flowRead: flowRead ?? flowReadOf(flowRecords), coreRead: coreReadOf(core), owner, motion });
+
+// Phase-1 fixtures. recordsOf/coreOf keep every fixture shape-valid — a malformed fixture would
+// otherwise turn an arm test into a store-health test silently.
+const BASE2 = 'be'.repeat(20);
+const F3 = 'c3'.repeat(32);
+const short = (digest) => `${digest.slice(0, 12)}…`;
+const coreRedFinal = (attempt, fp, n) => ({ ...coreFinal(attempt, fp, n), status: 'red', results: [{ id: 'g', ok: false, code: 1 }] });
+const receipt = (backend, verdict, fp, over = {}) => ({
+  schema: 1, artifact: 'code', fresh: true, probe: false, grounded: true, fingerprint: fp,
+  backend, verdict, posture: { model: 'frontier' }, delivery: 'inline', timestamp: TS(0), ...over,
+});
+const downMark = (backend, over = {}) => ({
+  schema: FLOW_SCHEMA_VERSION, kind: 'down-mark', fingerprint: FP, backend, reason: 'quota stall',
+  expiresAt: TS(30), base: BASE, timestamp: TS(1), ...over,
+});
+const markClear = (target, backend, over = {}) => ({
+  schema: FLOW_SCHEMA_VERSION, kind: 'down-mark-clear', fingerprint: FP, backend, target, base: BASE, timestamp: TS(2), ...over,
+});
+const justification = (mark, degradeRecord, over = {}) => ({
+  schema: FLOW_SCHEMA_VERSION, kind: 'degrade-justification', fingerprint: FP,
+  downMark: canonicalFlowDigest(mark), degradeDigest: canonicalFlowDigest(degradeRecord),
+  base: BASE, timestamp: TS(5), ...over,
+});
+const rerunCause = (attempt, fp, over = {}) => ({
+  schema: FLOW_SCHEMA_VERSION, kind: 'rerun-cause', fingerprint: fp, cause: 'confirmed retry after the fix landed',
+  attempt, base: BASE, timestamp: TS(6), ...over,
+});
+const override = (vetoRecord, over = {}) => ({
+  schema: FLOW_SCHEMA_VERSION, kind: 'maintainer-override', fingerprint: FP,
+  vetoReceiptDigest: canonicalFlowDigest(vetoRecord), backend: vetoRecord.backend, verdict: vetoRecord.verdict,
+  chainRecord: D('00'), supersedes: null, base: BASE, timestamp: TS(7), ...over,
+});
+const recordsOf = (recs) => {
+  const read = flowReadOf(recs);
+  assert.equal(read.malformed, 0, read.malformedReasons[0]);
+  return read.records;
+};
+const coreOf = (recs) => {
+  const read = coreReadOf(recs);
+  assert.equal(read.malformed, 0, read.malformedReasons[0]);
+  return read.records;
+};
 
 describe('flow-check — fail-closed store health', () => {
   it('a malformed flow store is itself a refusal — an unknown kind fails closed, never a silent empty', () => {
@@ -344,5 +390,722 @@ describe('flow-check — consumer env discipline + the thin CLI', () => {
     assert.equal(probe.status, 0);
     assert.equal(probe.stdout, 'imported-clean');
     assert.equal(probe.stderr, '');
+  });
+});
+
+describe('flow-check — Phase-1 characterization (unarmed Plan-2 outputs pinned byte-exact)', () => {
+  it('the empty-store decision is byte-exact {refusals: [], advisories: []}', () => {
+    assert.deepEqual(decide([]), { refusals: [], advisories: [] });
+  });
+
+  it('the own-open-chain refusal line is pinned byte-exact', () => {
+    const first = adoption();
+    const step1 = opener(canonicalFlowDigest(first), { timestamp: TS(1) });
+    const requires = { kind: 'chain', purpose: 'park', planId: 'plan-a', cycle: 1, round: 1, stepId: null, fingerprint: '<the parked tree fingerprint>' };
+    assert.deepEqual(decide([first, step1]), {
+      refusals: [`plan "plan-a" has an OPEN chain owned by this worktree ("main"): step "step-1" is not converged — a commit closes only at a terminal. recovery (structured, Plan-2 interim): ${JSON.stringify({ action: 'park', requires })} — the pasteable park command ships with the Plan-3 writer and replaces this structured form in the same commit`],
+      advisories: [],
+    });
+  });
+
+  it('the foreign-advisory line is pinned byte-exact', () => {
+    const first = adoption({ owner: 'worktree:elsewhere' });
+    const step1 = opener(canonicalFlowDigest(first), { owner: 'worktree:elsewhere', timestamp: TS(1) });
+    assert.deepEqual(decide([first, step1]), {
+      refusals: [],
+      advisories: ['plan "plan-a": an OPEN chain owned by "worktree:elsewhere" (a foreign worktree) — advisory visibility only, never this tree\'s refusal (#57)'],
+    });
+  });
+
+  it('the delta re-attestation refusal is pinned byte-exact', () => {
+    const theDelta = delta();
+    assert.deepEqual(decide([theDelta]), {
+      refusals: [`bookkeeping-delta at docs/notes.md: no satisfying re-attestation — a SUBSEQUENT chain refresh must bind {refreshedRecord: ${short(canonicalFlowDigest(theDelta))}, fingerprintBefore: ${short(theDelta.fingerprintAfter)}}; an earlier or fingerprint-mismatched record never satisfies. recovery (structured, Plan-2 interim): mint that refresh record — the pasteable command ships with the Plan-3 writer`],
+      advisories: [],
+    });
+  });
+
+  it('the degrade-ordering refusal is pinned byte-exact', () => {
+    assert.deepEqual(decide([], { core: [coreStart(FP, 'a1', 1), coreDegrade(FP, 2), coreFinal('a1', FP, 3)] }), {
+      refusals: [`a core degrade (backend "agy") landed AFTER a final-start at its fingerprint (${short(FP)}) with no later completed re-run at it — degrades mint strictly BEFORE the final run (#64); re-run run-gates.mjs --final on this tree`],
+      advisories: [],
+    });
+  });
+});
+
+describe('flow-check — delta-chain classification + cap attribution (#61, Step 1.1)', () => {
+  const DECLARED = ['docs/notes.md', 'docs/summary.md'];
+  const delta2 = () => delta({
+    fingerprintBefore: D('ab'), fingerprintAfter: D('ac'), path: 'docs/summary.md',
+    custodyProof: { ...delta().custodyProof, maskedFingerprint: D('ab') }, timestamp: TS(1),
+  });
+  const chainB = () => {
+    const first = adoption({ planId: 'plan-b', timestamp: TS(0) });
+    return [first, opener(canonicalFlowDigest(first), { planId: 'plan-b', timestamp: TS(1) })];
+  };
+  const reattest = (theDelta, over = {}) => refresh(canonicalFlowDigest(theDelta), {
+    planId: 'plan-b', fingerprintBefore: theDelta.fingerprintAfter, fingerprintAfter: theDelta.fingerprintAfter, timestamp: TS(4), ...over,
+  });
+  const classify = (records, over = {}) => classifyDeltaChain({
+    records, fromFingerprint: D('aa'), toFingerprint: D('ac'), declaredPaths: DECLARED, refreshCap: 3, ...over,
+  });
+
+  it('an unbroken declared-path delta chain classifies CURRENT, each link re-attested by a chain refresh', () => {
+    const d1 = delta();
+    const d2 = delta2();
+    const c = classify(recordsOf([...chainB(), d1, d2, reattest(d1), reattest(d2, { timestamp: TS(5) })]));
+    assert.equal(c.classification, 'current');
+    assert.equal(c.links.length, 2);
+    assert.deepEqual(c.attribution, [{ planId: 'plan-b', cycle: 1, links: 2, refreshes: 2 }]);
+  });
+
+  it('an equal from/to fingerprint classifies CURRENT with an empty chain', () => {
+    const c = classify([], { toFingerprint: D('aa') });
+    assert.equal(c.classification, 'current');
+    assert.deepEqual(c.links, []);
+    assert.deepEqual(c.attribution, []);
+  });
+
+  it('a gap in the delta chain refuses — classification never bridges a missing link (fail closed)', () => {
+    const d1 = delta();
+    const c = classify(recordsOf([...chainB(), d1, reattest(d1)]));
+    assert.equal(c.classification, 'refused');
+    assert.match(c.reason, /no bookkeeping-delta continues the chain/);
+    assert.match(c.reason, new RegExp(short(D('ab'))));
+  });
+
+  it('a fork — two authoritative deltas leaving one fingerprint — refuses by name', () => {
+    const d1 = delta();
+    const forked = delta({ fingerprintAfter: D('ac'), path: 'docs/summary.md' });
+    const c = classify(recordsOf([...chainB(), d1, forked, reattest(d1), reattest(forked, { timestamp: TS(5) })]), { toFingerprint: D('ab') });
+    assert.equal(c.classification, 'refused');
+    assert.match(c.reason, /fork/);
+  });
+
+  it('an undeclared-path delta never enters the chain — the refusal names the path (fail closed)', () => {
+    const stray = delta({ path: 'src/code.mjs' });
+    const c = classify(recordsOf([...chainB(), stray, reattest(stray)]), { toFingerprint: D('ab') });
+    assert.equal(c.classification, 'refused');
+    assert.match(c.reason, /src\/code\.mjs/);
+    assert.match(c.reason, /DECLARED bookkeeping path/);
+  });
+
+  it('a link with no satisfying re-attestation refuses — a mismatched refresh never carries the chain', () => {
+    const d1 = delta();
+    const unattested = classify(recordsOf([...chainB(), d1]), { toFingerprint: D('ab') });
+    assert.equal(unattested.classification, 'refused');
+    assert.match(unattested.reason, /re-attestation/);
+    const mismatched = classify(recordsOf([...chainB(), d1, reattest(d1, { fingerprintBefore: D('77'), fingerprintAfter: D('77') })]), { toFingerprint: D('ab') });
+    assert.equal(mismatched.classification, 'refused');
+  });
+
+  it('a delta cycle refuses — the walk never loops (fail closed)', () => {
+    const d1 = delta();
+    const back = delta({ fingerprintBefore: D('ab'), fingerprintAfter: D('aa'), custodyProof: { ...delta().custodyProof, maskedFingerprint: D('ab') }, timestamp: TS(1) });
+    const c = classify(recordsOf([...chainB(), d1, back, reattest(d1), reattest(back, { timestamp: TS(5) })]), { toFingerprint: D('ff') });
+    assert.equal(c.classification, 'refused');
+    assert.match(c.reason, /cycle|revisit/i);
+  });
+
+  it("cap attribution lands on the refresh record's own chain, never the delta's neighborhood", () => {
+    const d1 = delta();
+    const c = classify(recordsOf([adoption({ timestamp: TS(0) }), ...chainB(), d1, reattest(d1)]), { toFingerprint: D('ab') });
+    assert.equal(c.classification, 'current');
+    assert.deepEqual(c.attribution, [{ planId: 'plan-b', cycle: 1, links: 1, refreshes: 1 }]);
+  });
+
+  it('cap exhaustion classifies as ESCALATION, never a silent pass (#45)', () => {
+    const d1 = delta();
+    const c = classify(recordsOf([...chainB(), d1, reattest(d1, { timestamp: TS(3) }), reattest(d1, { timestamp: TS(4) })]), { toFingerprint: D('ab'), refreshCap: 1 });
+    assert.equal(c.classification, 'escalation');
+    assert.match(c.reason, /plan-b/);
+    assert.match(c.reason, /cap/);
+  });
+
+  it('a non-positive-integer cap input refuses — the cap arrives as an input, never a guess (#45)', () => {
+    const c = classify([], { refreshCap: 0 });
+    assert.equal(c.classification, 'refused');
+    assert.match(c.reason, /cap/);
+  });
+});
+
+describe('flow-check — maintainer-override evaluation (#56/#38/#48, Step 1.2)', () => {
+  const veto = receipt('codex', 'revise', FP);
+  const tree = { base: BASE, fingerprint: FP };
+  const armed = () => {
+    const first = adoption();
+    const step1 = opener(canonicalFlowDigest(first), { timestamp: TS(1) });
+    return { first, step1, chainDigest: canonicalFlowDigest(step1) };
+  };
+
+  it('an unarmed flow leaves the override arm inert — the veto stands', () => {
+    const o = override(veto);
+    const d = evaluateVetoOverride({ records: recordsOf([o]), vetoReceipt: veto, tree });
+    assert.equal(d.lifted, false);
+    assert.match(d.reason, /unarmed/);
+  });
+
+  it('a standing veto with no override never lifts — degradation never lifts a veto (#48)', () => {
+    const { first, step1 } = armed();
+    const d = evaluateVetoOverride({ records: recordsOf([first, step1, downMark('codex')]), vetoReceipt: veto, tree });
+    assert.equal(d.lifted, false);
+    assert.match(d.reason, /degradation never lifts/);
+  });
+
+  it('lifting requires the FULL bound set — each field mismatch refuses by name', () => {
+    const { first, step1, chainDigest } = armed();
+    const strayMark = downMark('codex');
+    const orphanRound = opener(D('0d'), { planId: 'plan-c', timestamp: TS(2) });
+    const cases = [
+      [{ backend: 'agy' }, /backend/, []],
+      [{ verdict: 'rework' }, /verdict/, []],
+      [{ base: BASE2 }, /base/, []],
+      [{ fingerprint: F2 }, /fingerprint/, []],
+      [{ chainRecord: D('99') }, /chainRecord/, []],
+      [{ chainRecord: canonicalFlowDigest(strayMark) }, /chainRecord/, [strayMark]],
+      [{ chainRecord: canonicalFlowDigest(orphanRound) }, /chainRecord/, [orphanRound]],
+    ];
+    for (const [bad, re, extra] of cases) {
+      const o = override(veto, { chainRecord: chainDigest, ...bad });
+      const d = evaluateVetoOverride({ records: recordsOf([first, step1, ...extra, o]), vetoReceipt: veto, tree });
+      assert.equal(d.lifted, false, JSON.stringify(bad));
+      assert.match(d.reason, re, JSON.stringify(bad));
+    }
+  });
+
+  it('a superseded override never lifts — only the head of the veto instance is consulted', () => {
+    const { first, step1, chainDigest } = armed();
+    const good = override(veto, { chainRecord: chainDigest });
+    const worse = override(veto, { chainRecord: chainDigest, verdict: 'rework', supersedes: canonicalFlowDigest(good), timestamp: TS(8) });
+    const d = evaluateVetoOverride({ records: recordsOf([first, step1, good, worse]), vetoReceipt: veto, tree });
+    assert.equal(d.lifted, false);
+    assert.match(d.reason, /verdict/);
+  });
+
+  it('a matching head lifts exactly its veto instance and carries the durable label', () => {
+    const { first, step1, chainDigest } = armed();
+    const other = receipt('agy', 'rethink', FP);
+    const o = override(veto, { chainRecord: chainDigest });
+    const records = recordsOf([first, step1, o]);
+    const lifted = evaluateVetoOverride({ records, vetoReceipt: veto, tree });
+    assert.equal(lifted.lifted, true);
+    assert.equal(lifted.label, `veto lifted by maintainer-override ${short(canonicalFlowDigest(o))} — backend "codex" verdict "revise" (checkpoint-approved, #38/#56)`);
+    const stands = evaluateVetoOverride({ records, vetoReceipt: other, tree });
+    assert.equal(stands.lifted, false);
+  });
+});
+
+describe('flow-check — unanswered-red-on-base rung (#65, Step 1.3)', () => {
+  const armedAt = (fp, over = {}) => chainRec('freeze', { fingerprint: fp, timestamp: TS(2), ...over });
+  const ownChain = () => {
+    const first = adoption();
+    return [first, opener(canonicalFlowDigest(first), { timestamp: TS(1) })];
+  };
+  const rung = (flowRecords, coreRecords, currentBase = BASE, owner = 'main') =>
+    collectUnansweredRedRefusals({ flowRecords, coreRecords, currentBase, owner });
+
+  it('the rung is scoped to ARMED flows — a foreign-owner adoption never fires it for this tree', () => {
+    assert.deepEqual(rung([], coreOf([coreRedFinal('a1', FP, 1)])), []);
+    assert.deepEqual(rung(recordsOf([adoption({ owner: 'worktree:elsewhere' })]), coreOf([coreRedFinal('a1', FP, 1)])), []);
+  });
+
+  it('a red final buried by a scratch-file fingerprint move still refuses on the same base', () => {
+    const refusals = rung(recordsOf(ownChain()), coreOf([coreRedFinal('a1', FP, 1)]));
+    assert.equal(refusals.length, 1);
+    assert.match(refusals[0], /red final \(attempt "a1"\) on the CURRENT base/);
+    assert.match(refusals[0], /rerun-cause/);
+  });
+
+  it('a rerun-cause clears exactly one confirmed completed retry', () => {
+    const flow = recordsOf([...ownChain(), armedAt(F2), rerunCause('a1', F2)]);
+    const core = coreOf([coreRedFinal('a1', FP, 1), coreStart(F2, 'a2', 2), coreFinal('a2', F2, 3)]);
+    assert.deepEqual(rung(flow, core), []);
+  });
+
+  it('a second red after the cleared retry refuses', () => {
+    const flow = recordsOf([...ownChain(), armedAt(F2), rerunCause('a1', F2)]);
+    const core = coreOf([coreRedFinal('a1', FP, 1), coreFinal('a2', F2, 2), coreRedFinal('a3', F2, 3)]);
+    const refusals = rung(flow, core);
+    assert.equal(refusals.length, 1);
+    assert.match(refusals[0], /attempt "a3"/);
+  });
+
+  it('one rerun-cause never answers a foreign red — each red needs its own cause naming its attempt', () => {
+    const flow = recordsOf([...ownChain(), armedAt(F2), rerunCause('a1', F2)]);
+    const core = coreOf([coreRedFinal('a1', FP, 1), coreRedFinal('a3', FP, 2), coreFinal('a4', F2, 3)]);
+    const refusals = rung(flow, core);
+    assert.equal(refusals.length, 1);
+    assert.match(refusals[0], /attempt "a3"/);
+  });
+
+  it('an uncleared retry never answers — the red refuses without a matching rerun-cause', () => {
+    const flow = recordsOf([...ownChain(), armedAt(F2)]);
+    const core = coreOf([coreRedFinal('a1', FP, 1), coreFinal('a2', F2, 2)]);
+    const refusals = rung(flow, core);
+    assert.equal(refusals.length, 1);
+    assert.match(refusals[0], /attempt "a1"/);
+  });
+
+  it('the help text names the armed base-motion arm', () => {
+    const probe = spawnSync(process.execPath, [TOOL, '--help'], { encoding: 'utf8' });
+    assert.equal(probe.status, 0);
+    assert.match(probe.stdout, /base motion/);
+  });
+
+  it('a replayed retry attempt never stretches its rerun-cause — only the FIRST completion is cleared', () => {
+    const flow = recordsOf([...ownChain(), armedAt(F2), rerunCause('a1', F2)]);
+    const core = coreOf([coreRedFinal('a1', FP, 1), coreFinal('a2', F2, 2), coreRedFinal('a3', F2, 3), coreFinal('a2', F2, 4)]);
+    const refusals = rung(flow, core);
+    assert.equal(refusals.length, 1);
+    assert.match(refusals[0], /attempt "a3"/);
+  });
+
+  it('the zero-base correlation lane refuses by name', () => {
+    const refusals = rung(recordsOf(ownChain()), coreOf([coreRedFinal('a1', F2, 1)]));
+    assert.equal(refusals.length, 1);
+    assert.match(refusals[0], /no flow record carries its tree fingerprint/);
+  });
+
+  it('the multi-base correlation lane refuses by name', () => {
+    const flow = recordsOf([...ownChain(), armedAt(FP, { base: BASE2, timestamp: TS(3) })]);
+    const refusals = rung(flow, coreOf([coreRedFinal('a1', FP, 1)]));
+    assert.equal(refusals.length, 1);
+    assert.match(refusals[0], /distinct bases/);
+  });
+
+  it('a red resolved to a NON-current base never fires the rung — base motion is the other lane', () => {
+    assert.deepEqual(rung(recordsOf(ownChain()), coreOf([coreRedFinal('a1', FP, 1)]), BASE2), []);
+  });
+});
+
+describe('flow-check — base-intersection classification + decide wiring (#62/#21, Step 1.4)', () => {
+  const ok = (paths) => ({ ok: true, paths });
+  const motionInput = (over = {}) => ({
+    currentBase: BASE2,
+    resolveBaseDelta: () => ok(['docs/queue.md']),
+    resolveChangedSurface: () => ok(['tools/flow-check.mjs']),
+    ...over,
+  });
+  const openOwn = () => {
+    const first = adoption();
+    return [first, opener(canonicalFlowDigest(first), { timestamp: TS(1) })];
+  };
+
+  it('a disjoint base delta classifies re-baseline-sufficient', () => {
+    const c = classifyBaseMotion({ baseDelta: ok(['docs/queue.md']), changedSurface: ok(['tools/flow-check.mjs']) });
+    assert.deepEqual(c, { motion: 'disjoint', requires: 're-baseline' });
+  });
+
+  it('an intersecting base delta classifies refresh-REQUIRED', () => {
+    const c = classifyBaseMotion({ baseDelta: ok(['tools/flow-check.mjs', 'docs/queue.md']), changedSurface: ok(['tools/flow-check.mjs']) });
+    assert.equal(c.motion, 'intersecting');
+    assert.equal(c.requires, 'refresh');
+    assert.equal(c.witness, 'tools/flow-check.mjs');
+  });
+
+  it('a base delta touching ONLY a test file is still an intersection — the all-path lane never excludes tests', () => {
+    const c = classifyBaseMotion({ baseDelta: ok(['tools/x.test.mjs']), changedSurface: ok(['tools/x.test.mjs']) });
+    assert.equal(c.motion, 'intersecting');
+  });
+
+  it('an undecidable surface fails closed — refresh is REQUIRED and the reason says why', () => {
+    const c = classifyBaseMotion({ baseDelta: { ok: false, reason: 'unknown object' }, changedSurface: ok([]) });
+    assert.equal(c.motion, 'undecidable');
+    assert.equal(c.requires, 'refresh');
+    assert.match(c.reason, /unknown object/);
+    const s = classifyBaseMotion({ baseDelta: ok([]), changedSurface: { ok: false, reason: 'no surface' } });
+    assert.equal(s.motion, 'undecidable');
+    assert.equal(s.requires, 'refresh');
+  });
+
+  it('computeAllPathBaseDelta includes test files and fails closed on an unknown or null sha', () => {
+    const root = makeRepo();
+    const from = sh(['rev-parse', 'HEAD'], root).trim();
+    mkdirSync(join(root, 'tools'), { recursive: true });
+    writeFileSync(join(root, 'tools', 'x.test.mjs'), 'export {};\n');
+    sh(['add', '-A'], root);
+    sh(['commit', '-q', '-m', 'add a test file'], root);
+    const to = sh(['rev-parse', 'HEAD'], root).trim();
+    assert.deepEqual(computeAllPathBaseDelta(root, from, to), { ok: true, paths: ['tools/x.test.mjs'] });
+    assert.equal(computeAllPathBaseDelta(root, 'de'.repeat(20), to).ok, false);
+    assert.equal(computeAllPathBaseDelta(root, null, to).ok, false);
+  });
+
+  it('computeAllPathWorktreeSurface includes tracked changes, untracked files and test files; a non-repo fails closed', () => {
+    const root = makeRepo();
+    writeFileSync(join(root, 'base.txt'), 'changed\n');
+    writeFileSync(join(root, 'notes.test.mjs'), 'export {};\n');
+    const s = computeAllPathWorktreeSurface(root);
+    assert.equal(s.ok, true);
+    assert.deepEqual([...s.paths].sort(), ['base.txt', 'notes.test.mjs']);
+    const dir = join(TMP, 'no-repo-surface');
+    mkdirSync(dir, { recursive: true });
+    assert.equal(computeAllPathWorktreeSurface(dir).ok, false);
+  });
+
+  it('decideFlowCheck refuses an own OPEN chain on a moved base and names the missing record class', () => {
+    const disjoint = decide(openOwn(), { motion: motionInput() });
+    const moved = disjoint.refusals.filter((r) => /base moved under the armed chain/.test(r));
+    assert.equal(moved.length, 1);
+    assert.match(moved[0], /re-baseline record/);
+    const intersecting = decide(openOwn(), { motion: motionInput({ resolveChangedSurface: () => ok(['docs/queue.md']) }) });
+    assert.match(intersecting.refusals.find((r) => /base moved/.test(r)), /refresh dispatch is REQUIRED/);
+    const undecidable = decide(openOwn(), { motion: motionInput({ resolveBaseDelta: () => ({ ok: false, reason: 'object missing' }) }) });
+    assert.match(undecidable.refusals.find((r) => /base moved/.test(r)), /refresh dispatch is REQUIRED/);
+  });
+
+  it("a landed re-baseline record ends the refusal — the chain's recorded base reaches the current base", () => {
+    const rebased = chainRec('re-baseline', { base: BASE2, baseBefore: BASE, fingerprint: F2, timestamp: TS(2) });
+    const d = decide([...openOwn(), rebased], { motion: motionInput() });
+    assert.equal(d.refusals.filter((r) => /base moved/.test(r)).length, 0);
+    assert.equal(d.refusals.length, 1, 'the OPEN-chain refusal alone remains');
+  });
+
+  it('base motion on a PARKED or foreign chain never fires the arm', () => {
+    const parked = decide([...openOwn(), chainRec('park', { stepId: null, timestamp: TS(2) })], { motion: motionInput() });
+    assert.deepEqual(parked.refusals, []);
+    const first = adoption({ owner: 'worktree:elsewhere' });
+    const foreign = decide([first, opener(canonicalFlowDigest(first), { owner: 'worktree:elsewhere', timestamp: TS(1) })], { motion: motionInput() });
+    assert.deepEqual(foreign.refusals, []);
+    assert.equal(foreign.advisories.length, 1);
+  });
+
+  it('without a motion input the decision stays byte-exact — the arm is optional and inert (unarmed neutrality)', () => {
+    assert.deepEqual(decide([], { motion: motionInput() }), { refusals: [], advisories: [] });
+  });
+});
+
+describe('flow-check — exact-coverage rungs (#42/#25/#39, Step 1.5)', () => {
+  const tree = { base: BASE, fingerprint: FP };
+  const armed = () => [adoption()];
+  const theDegrade = coreDegrade(FP, 3);
+  const mark = downMark('agy');
+  const covered = () => [...armed(), mark, justification(mark, theDegrade)];
+  const degradeRung = (flowRecords, coreRecords, over = {}) =>
+    collectDegradeCoverageRefusals({ flowRecords, coreRecords, tree, owner: 'main', backends: ['agy'], ...over });
+  const receiptRung = (flowRecords, receipts, over = {}) =>
+    collectReceiptCoverageRefusals({ flowRecords, receipts, tree, owner: 'main', backends: ['codex'], ...over });
+
+  it('a covered degrade passes — the justification binds {downMark, degradeDigest, base} on a then-unexpired mark', () => {
+    assert.deepEqual(degradeRung(recordsOf(covered()), coreOf([theDegrade])), []);
+  });
+
+  it('an uncovered degrade refuses by backend name', () => {
+    const refusals = degradeRung(recordsOf(armed()), coreOf([theDegrade]));
+    assert.equal(refusals.length, 1);
+    assert.match(refusals[0], /backend "agy"/);
+  });
+
+  it('an expired-at-mint mark refuses', () => {
+    const late = justification(mark, theDegrade, { timestamp: TS(31) });
+    const refusals = degradeRung(recordsOf([...armed(), mark, late]), coreOf([theDegrade]));
+    assert.equal(refusals.length, 1);
+    assert.match(refusals[0], /active window|expired/);
+  });
+
+  it('an unparseable justification instant refuses by name', () => {
+    const fuzzy = justification(mark, theDegrade, { timestamp: 'around noon' });
+    const refusals = degradeRung(recordsOf([...armed(), mark, fuzzy]), coreOf([theDegrade]));
+    assert.equal(refusals.length, 1);
+    assert.match(refusals[0], /canonical UTC ISO instant/);
+    assert.match(refusals[0], /around noon/);
+  });
+
+  it('a mark closed by up/clear before the justification minted refuses', () => {
+    const closed = [...armed(), mark, markClear(canonicalFlowDigest(mark), 'agy'), justification(mark, theDegrade)];
+    const refusals = degradeRung(recordsOf(closed), coreOf([theDegrade]));
+    assert.equal(refusals.length, 1);
+    assert.match(refusals[0], /closed/);
+  });
+
+  it("a justification riding another backend's mark refuses", () => {
+    const foreignMark = downMark('codex');
+    const refusals = degradeRung(recordsOf([...armed(), foreignMark, justification(foreignMark, theDegrade)]), coreOf([theDegrade]));
+    assert.equal(refusals.length, 1);
+    assert.match(refusals[0], /backend/);
+  });
+
+  it('a justification minted on another base refuses — the binding includes base', () => {
+    const offBase = justification(mark, theDegrade, { base: BASE2 });
+    const refusals = degradeRung(recordsOf([...armed(), mark, offBase]), coreOf([theDegrade]));
+    assert.equal(refusals.length, 1);
+    assert.match(refusals[0], /base/);
+  });
+
+  it('a relied-on receipt bound by a round dispatch-ledger entry passes; a stale receipt needs no binding', () => {
+    const rec = receipt('codex', 'ship', FP);
+    const entry = { backend: 'codex', dispatchBase: BASE, receiptWatermark: 0, dispatchNonce: 'n-1', receiptDigest: canonicalFlowDigest(rec), findingManifestDigest: D('fe') };
+    const first = adoption();
+    const round = opener(canonicalFlowDigest(first), { dispatches: [entry], timestamp: TS(1) });
+    assert.deepEqual(receiptRung(recordsOf([first, round]), [rec]), []);
+    assert.deepEqual(receiptRung(recordsOf([first, round]), [receipt('codex', 'ship', F3)]), []);
+  });
+
+  it('an uncovered receipt refuses — an unbound receipt never satisfies an armed flow', () => {
+    const refusals = receiptRung(recordsOf(armed()), [receipt('codex', 'ship', FP)]);
+    assert.equal(refusals.length, 1);
+    assert.match(refusals[0], /backend "codex"/);
+    assert.match(refusals[0], /unbound receipt/);
+  });
+
+  it("a foreign worktree's round never covers this tree's receipt", () => {
+    const rec = receipt('codex', 'ship', FP);
+    const entry = { backend: 'codex', dispatchBase: BASE, receiptWatermark: 0, dispatchNonce: 'n-1', receiptDigest: canonicalFlowDigest(rec), findingManifestDigest: D('fe') };
+    const foreignFirst = adoption({ planId: 'plan-b', owner: 'worktree:elsewhere' });
+    const foreignRound = opener(canonicalFlowDigest(foreignFirst), { planId: 'plan-b', owner: 'worktree:elsewhere', dispatches: [entry], timestamp: TS(1) });
+    const refusals = receiptRung(recordsOf([...armed(), foreignFirst, foreignRound]), [rec]);
+    assert.equal(refusals.length, 1);
+  });
+
+  it('the rungs are scoped to ARMED flows — an unarmed store never fires either', () => {
+    assert.deepEqual(degradeRung([], coreOf([theDegrade])), []);
+    assert.deepEqual(receiptRung([], [receipt('codex', 'ship', FP)]), []);
+  });
+
+  it('wall-clock never enters either decision — Date.now is poisoned during the check (#39)', () => {
+    const rec = receipt('codex', 'ship', FP);
+    const entry = { backend: 'codex', dispatchBase: BASE, receiptWatermark: 0, dispatchNonce: 'n-1', receiptDigest: canonicalFlowDigest(rec), findingManifestDigest: D('fe') };
+    const first = adoption();
+    const round = opener(canonicalFlowDigest(first), { dispatches: [entry], timestamp: TS(1) });
+    const flow = recordsOf([first, round, mark, justification(mark, theDegrade)]);
+    const core = coreOf([theDegrade]);
+    const originalNow = Date.now;
+    Date.now = () => { throw new Error('wall-clock consulted at decide time'); };
+    try {
+      assert.deepEqual(degradeRung(flow, core), []);
+      assert.deepEqual(receiptRung(flow, [rec]), []);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+});
+
+describe('flow-check — round-1 fold regressions (base-transition classes + helper hardening)', () => {
+  const ok = (paths) => ({ ok: true, paths });
+  const motion = (over = {}) => ({
+    currentBase: BASE2,
+    resolveBaseDelta: () => ok(['docs/queue.md']),
+    resolveChangedSurface: () => ok(['tools/flow-check.mjs']),
+    ...over,
+  });
+  const intersectingMotion = () => motion({ resolveBaseDelta: () => ok(['tools/flow-check.mjs']) });
+  const openAt = () => {
+    const first = adoption();
+    return [first, opener(canonicalFlowDigest(first), { timestamp: TS(1) })];
+  };
+  const movedRefusals = (d) => d.refusals.filter((r) => /mid-step base transition|baseBefore/.test(r));
+
+  it('a mid-step re-baseline answering an INTERSECTING delta refuses naming the refresh record', () => {
+    const rebased = chainRec('re-baseline', { base: BASE2, baseBefore: BASE, fingerprint: F2, timestamp: TS(2) });
+    const d = decide([...openAt(), rebased], { motion: intersectingMotion() });
+    const moved = movedRefusals(d);
+    assert.equal(moved.length, 1);
+    assert.match(moved[0], /requires a refresh record/);
+  });
+
+  it('a refresh answering a PROVEN-disjoint delta refuses naming the re-baseline record', () => {
+    const chain = openAt();
+    const movedRefresh = refresh(canonicalFlowDigest(chain[0]), { base: BASE2, fingerprintBefore: FP, fingerprintAfter: F2, timestamp: TS(2) });
+    const d = decide([...chain, movedRefresh], { motion: motion() });
+    const found = movedRefusals(d);
+    assert.equal(found.length, 1);
+    assert.match(found[0], /requires a re-baseline record/);
+  });
+
+  it('a converged record landing a new base refuses — a terminal never hides base motion', () => {
+    const d = decide([...openAt(), chainRec('converged', { base: BASE2, fingerprint: F2, timestamp: TS(2) })], { motion: intersectingMotion() });
+    assert.equal(d.refusals.length, 1, 'the converged chain otherwise passes — the transition refusal stands alone');
+    assert.match(d.refusals[0], /mid-step base transition/);
+  });
+
+  it('a mid-step park landing a new base refuses', () => {
+    const d = decide([...openAt(), chainRec('park', { stepId: null, base: BASE2, fingerprint: F2, timestamp: TS(2) })], { motion: intersectingMotion() });
+    assert.equal(d.refusals.length, 1, 'the parked chain otherwise passes');
+    assert.match(d.refusals[0], /mid-step base transition/);
+  });
+
+  it("a re-baseline whose baseBefore mismatches the previous record's base refuses", () => {
+    const rebased = chainRec('re-baseline', { base: BASE2, baseBefore: D('fe'), fingerprint: F2, timestamp: TS(2) });
+    const d = decide([...openAt(), rebased], { motion: motion() });
+    const moved = movedRefusals(d);
+    assert.equal(moved.length, 1);
+    assert.match(moved[0], /baseBefore/);
+  });
+
+  it('a disjoint mid-step re-baseline with the true baseBefore passes the motion arm', () => {
+    const rebased = chainRec('re-baseline', { base: BASE2, baseBefore: BASE, fingerprint: F2, timestamp: TS(2) });
+    const d = decide([...openAt(), rebased], { motion: motion() });
+    assert.deepEqual(movedRefusals(d), []);
+    assert.equal(d.refusals.length, 1, 'only the OPEN-chain refusal remains');
+  });
+
+  it('boundary and park/resume transitions stay exempt — the scan judges only the last segment', () => {
+    const first = adoption();
+    const step1 = opener(canonicalFlowDigest(first), { timestamp: TS(1) });
+    const converged1 = chainRec('converged', { timestamp: TS(2) });
+    const boundaryRebase = chainRec('re-baseline', { base: BASE2, baseBefore: BASE, fingerprint: F2, timestamp: TS(3) });
+    const step2 = opener(canonicalFlowDigest(converged1), { stepId: 'step-2', base: BASE2, fingerprint: F2, commitEpoch: 1, timestamp: TS(4) });
+    const d = decide([first, step1, converged1, boundaryRebase, step2], { motion: motion() });
+    assert.equal(d.refusals.length, 1, 'only the OPEN-chain refusal of step-2');
+    assert.match(d.refusals[0], /OPEN chain/);
+  });
+
+  it('a down-mark appended AFTER the justification never covers — resolution is prefix-scoped', () => {
+    const theDegrade = coreDegrade(FP, 3);
+    const mark = downMark('agy');
+    const flow = recordsOf([adoption(), justification(mark, theDegrade), mark]);
+    const refusals = collectDegradeCoverageRefusals({ flowRecords: flow, coreRecords: coreOf([theDegrade]), tree: { base: BASE, fingerprint: FP }, owner: 'main', backends: ['agy'] });
+    assert.equal(refusals.length, 1);
+    assert.match(refusals[0], /does not ride a down-mark/);
+  });
+
+  it('the helpers resolve the repository toplevel — a nested cwd sees the whole tree with root-relative paths', () => {
+    const root = makeRepo();
+    const from = sh(['rev-parse', 'HEAD'], root).trim();
+    writeFileSync(join(root, 'inner.txt'), 'inner\n');
+    sh(['add', '-A'], root);
+    sh(['commit', '-q', '-m', 'second'], root);
+    const to = sh(['rev-parse', 'HEAD'], root).trim();
+    const sub = join(root, 'sub');
+    mkdirSync(sub, { recursive: true });
+    writeFileSync(join(root, 'outside.test.mjs'), 'export {};\n');
+    writeFileSync(join(root, 'base.txt'), 'changed\n');
+    assert.deepEqual(computeAllPathWorktreeSurface(sub), computeAllPathWorktreeSurface(root));
+    assert.deepEqual([...computeAllPathWorktreeSurface(sub).paths].sort(), ['base.txt', 'outside.test.mjs']);
+    assert.deepEqual(computeAllPathBaseDelta(sub, from, to), computeAllPathBaseDelta(root, from, to));
+    assert.deepEqual(computeAllPathBaseDelta(sub, from, to).paths, ['inner.txt']);
+  });
+
+  it('a suppressed submodule delta is still seen — diff.ignoreSubmodules=all never hides a gitlink', () => {
+    const root = makeRepo();
+    sh(['update-index', '--add', '--cacheinfo', `160000,${'a1'.repeat(20)},sub`], root);
+    sh(['commit', '-q', '-m', 'gitlink'], root);
+    const from = sh(['rev-parse', 'HEAD'], root).trim();
+    sh(['update-index', '--add', '--cacheinfo', `160000,${'b2'.repeat(20)},sub`], root);
+    sh(['commit', '-q', '-m', 'gitlink bump'], root);
+    const to = sh(['rev-parse', 'HEAD'], root).trim();
+    sh(['config', 'diff.ignoreSubmodules', 'all'], root);
+    assert.deepEqual(computeAllPathBaseDelta(root, from, to), { ok: true, paths: ['sub'] });
+    sh(['update-index', '--add', '--cacheinfo', `160000,${'c3'.repeat(20)},sub`], root);
+    const surface = computeAllPathWorktreeSurface(root);
+    assert.equal(surface.ok, true);
+    assert.deepEqual(surface.paths, ['sub']);
+  });
+});
+
+describe('flow-check — round-2 fold regressions (projection, prefix scoping, candidate coverage)', () => {
+  const ok = (paths) => ({ ok: true, paths });
+  const motion = (over = {}) => ({
+    currentBase: BASE2,
+    resolveBaseDelta: () => ok(['docs/queue.md']),
+    resolveChangedSurface: () => ok(['tools/flow-check.mjs']),
+    ...over,
+  });
+  const intersectingMotion = () => motion({ resolveBaseDelta: () => ok(['tools/flow-check.mjs']) });
+  const openAt = () => {
+    const first = adoption();
+    return [first, opener(canonicalFlowDigest(first), { timestamp: TS(1) })];
+  };
+  const revisionOf = (op) => ({
+    ...op,
+    dispatches: [{ backend: 'codex', dispatchBase: op.base, receiptWatermark: 0, dispatchNonce: 'n-1', receiptDigest: null, findingManifestDigest: null }],
+    timestamp: TS(9),
+  });
+
+  it('a round ledger revision never resets the motion scan — the projection keeps lifecycle order', () => {
+    const [first, op] = openAt();
+    const rebased = chainRec('re-baseline', { base: BASE2, baseBefore: BASE, fingerprint: F2, timestamp: TS(2) });
+    const d = decide([first, op, rebased, revisionOf(op)], { motion: motion() });
+    assert.equal(d.refusals.filter((r) => /mid-step base transition|base moved/.test(r)).length, 0);
+    assert.equal(d.refusals.length, 1, 'only the OPEN-chain refusal remains');
+  });
+
+  it('a wrong-class transition never hides behind a same-index round revision', () => {
+    const [first, op] = openAt();
+    const movedRefresh = refresh(canonicalFlowDigest(first), { base: BASE2, fingerprintBefore: FP, fingerprintAfter: F2, timestamp: TS(2) });
+    const d = decide([first, op, movedRefresh, revisionOf(op)], { motion: motion() });
+    const classRefusal = d.refusals.find((r) => /mid-step base transition/.test(r));
+    assert.ok(classRefusal, 'the class refusal must survive the revision');
+    assert.match(classRefusal, /requires a re-baseline record/);
+  });
+
+  it('an override recorded before its adoption or chain record never lifts — forward references refuse', () => {
+    const veto = receipt('codex', 'revise', FP);
+    const tree = { base: BASE, fingerprint: FP };
+    const first = adoption();
+    const step1 = opener(canonicalFlowDigest(first), { timestamp: TS(1) });
+    const o = override(veto, { chainRecord: canonicalFlowDigest(step1) });
+    const beforeAll = evaluateVetoOverride({ records: recordsOf([o, first, step1]), vetoReceipt: veto, tree });
+    assert.equal(beforeAll.lifted, false);
+    assert.match(beforeAll.reason, /unarmed/);
+    const beforeTarget = evaluateVetoOverride({ records: recordsOf([first, o, step1]), vetoReceipt: veto, tree });
+    assert.equal(beforeTarget.lifted, false);
+    assert.match(beforeTarget.reason, /chainRecord/);
+  });
+
+  it('a stale off-base justification never masks a later valid one — any full match covers', () => {
+    const theDegrade = coreDegrade(FP, 3);
+    const oldMark = downMark('agy');
+    const oldJust = justification(oldMark, theDegrade, { base: BASE2, timestamp: TS(5) });
+    const newMark = downMark('agy', { timestamp: TS(7), expiresAt: TS(50) });
+    const newJust = justification(newMark, theDegrade, { timestamp: TS(8) });
+    const flow = recordsOf([adoption(), oldMark, oldJust, markClear(canonicalFlowDigest(oldMark), 'agy', { timestamp: TS(6) }), newMark, newJust]);
+    const refusals = collectDegradeCoverageRefusals({ flowRecords: flow, coreRecords: coreOf([theDegrade]), tree: { base: BASE, fingerprint: FP }, owner: 'main', backends: ['agy'] });
+    assert.deepEqual(refusals, []);
+  });
+
+  it('an intersecting transition with a wrong-baseBefore re-baseline names the required refresh class', () => {
+    const [first, op] = openAt();
+    const rebased = chainRec('re-baseline', { base: BASE2, baseBefore: D('fe'), fingerprint: F2, timestamp: TS(2) });
+    const d = decide([first, op, rebased], { motion: intersectingMotion() });
+    const classRefusal = d.refusals.find((r) => /mid-step base transition/.test(r));
+    assert.ok(classRefusal, 'the class requirement outranks the baseBefore detail');
+    assert.match(classRefusal, /requires a refresh record/);
+  });
+
+  it('a justification minted at another tree never covers — the fingerprint binding is exact', () => {
+    const theDegrade = coreDegrade(FP, 3);
+    const mark = downMark('agy');
+    const offTree = justification(mark, theDegrade, { fingerprint: F2 });
+    const refusals = collectDegradeCoverageRefusals({ flowRecords: recordsOf([adoption(), mark, offTree]), coreRecords: coreOf([theDegrade]), tree: { base: BASE, fingerprint: FP }, owner: 'main', backends: ['agy'] });
+    assert.equal(refusals.length, 1);
+    assert.match(refusals[0], /minted at another tree/);
+  });
+
+  it('a reference-broken chain never grows a secondary base-motion recovery', () => {
+    const first = adoption();
+    const dangling = opener(D('9f'), { timestamp: TS(1) });
+    const d = decide([first, dangling], { motion: motion() });
+    assert.equal(d.refusals.length, 1, 'the reference refusal stands alone');
+    assert.match(d.refusals[0], /does not match the store/);
+  });
+
+  it('an assume-unchanged entry poisons the worktree surface — flagged paths refuse loudly', () => {
+    const root = makeRepo();
+    sh(['update-index', '--assume-unchanged', 'base.txt'], root);
+    const s = computeAllPathWorktreeSurface(root);
+    assert.equal(s.ok, false);
+    assert.match(s.reason, /base\.txt/);
+    assert.match(s.reason, /assume-unchanged/);
+  });
+
+  it('a skip-worktree entry poisons the worktree surface — flagged paths refuse loudly', () => {
+    const root = makeRepo();
+    sh(['update-index', '--skip-worktree', 'base.txt'], root);
+    const s = computeAllPathWorktreeSurface(root);
+    assert.equal(s.ok, false);
+    assert.match(s.reason, /base\.txt/);
+    assert.match(s.reason, /skip-worktree/);
+  });
+
+  it('a degrade for a backend outside the relied-on set never demands coverage', () => {
+    const theDegrade = coreDegrade(FP, 3);
+    const refusals = collectDegradeCoverageRefusals({ flowRecords: recordsOf([adoption()]), coreRecords: coreOf([theDegrade]), tree: { base: BASE, fingerprint: FP }, owner: 'main', backends: ['codex'] });
+    assert.deepEqual(refusals, []);
+  });
+
+  it('a receipt from a backend outside the relied-on set never demands binding', () => {
+    const refusals = collectReceiptCoverageRefusals({ flowRecords: recordsOf([adoption()]), receipts: [receipt('codex', 'ship', FP)], tree: { base: BASE, fingerprint: FP }, owner: 'main', backends: ['agy'] });
+    assert.deepEqual(refusals, []);
   });
 });
