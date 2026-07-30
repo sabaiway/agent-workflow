@@ -937,3 +937,120 @@ describe('runCli — producer-env precondition (a reference the run will not sat
     assert.equal(code, EXIT.ok);
   });
 });
+
+// ── Phase 2 (flow Plan 3): the --pre-review derived subset (#66, Decision 7, P14/P27) ──
+import { isReviewDependentGate } from './run-gates.mjs';
+const RS_TOOL = fileURLToPath(new URL('./review-state.mjs', import.meta.url));
+const CG_TOOL = fileURLToPath(new URL('./commit-guard.mjs', import.meta.url));
+const CC_TOOL = fileURLToPath(new URL('./coverage-check.mjs', import.meta.url));
+const FC_TOOL = fileURLToPath(new URL('./flow-check.mjs', import.meta.url));
+
+describe('run-gates — --pre-review derived subset (#66/P14/P27)', () => {
+  const canonicalGates = [
+    { id: 'unit', title: 'U', cmd: 'node --test x' },
+    { id: 'receipts', title: 'R', cmd: `node "${RS_TOOL}" --check` },
+    { id: 'guard-probe', title: 'G', cmd: `node "${CG_TOOL}" --check` },
+    { id: 'chain-state', title: 'F', cmd: `node "${FC_TOOL}" --check` },
+    { id: 'coverage-check', title: 'C', cmd: `node "${CC_TOOL}" --check` },
+  ];
+
+  it('--pre-review is mutually exclusive with --only (exit 2, named)', () => {
+    const r = runHermetic({ gates: canonicalGates, argv: ['--pre-review', '--only', 'unit'] });
+    assert.equal(r.code, EXIT.usage);
+    assert.match(r.errText, /--pre-review refuses --only/);
+  });
+
+  it('--pre-review is mutually exclusive with --final (exit 2, named)', () => {
+    const r = runHermetic({ gates: canonicalGates, argv: ['--final', '--pre-review'] });
+    assert.equal(r.code, EXIT.usage);
+    assert.match(r.errText, /--final refuses --pre-review|--pre-review refuses --final/);
+  });
+
+  it('the subset derives from canonical checker paths in cmd CONTENT — project-authored ids never decide', () => {
+    const r = runHermetic({ gates: canonicalGates, argv: ['--pre-review'], byCmd: { 'node --test x': GREEN } });
+    assert.equal(r.code, EXIT.ok, r.errText);
+    const ran = r.calls.filter((c) => c.cmd !== BASH_PROBE_CMD).map((c) => c.cmd);
+    assert.deepEqual(ran, ['node --test x'], 'every canonical-checker gate is derived OUT, whatever its id');
+  });
+
+  it('isReviewDependentGate matches the resolved canonical tool, never an id or a masked form', () => {
+    assert.equal(isReviewDependentGate({ id: 'anything', title: 'x', cmd: `node "${RS_TOOL}" --check` }, '/proj'), true);
+    assert.equal(isReviewDependentGate({ id: 'anything', title: 'x', cmd: `node "${FC_TOOL}" --check` }, '/proj'), true);
+    assert.equal(isReviewDependentGate({ id: 'review-state', title: 'x', cmd: 'echo review-state' }, '/proj'), false);
+    assert.equal(isReviewDependentGate({ id: 'x', title: 'x', cmd: `node "${CG_TOOL}" --check --help` }, '/proj'), false);
+  });
+
+  const tickNow = () => {
+    let tick = 0;
+    return () => {
+      tick += 100;
+      return tick;
+    };
+  };
+  const runReal = (dir, argv, byCmd) => {
+    const out = [];
+    const err = [];
+    const calls = [];
+    const code = runCli(argv, {
+      cwd: dir,
+      log: (l) => out.push(l),
+      logError: (l) => err.push(l),
+      spawn: scriptedSpawn(byCmd, calls),
+      now: tickNow(),
+    });
+    return { code, calls, text: out.join('\n'), errText: err.join('\n') };
+  };
+  const tempProject = (flow, gates, { rawConfig = null } = {}) => {
+    const dir = mkdtempSync(join(tmpdir(), 'run-gates-pre-'));
+    mkdirSync(join(dir, 'docs', 'ai'), { recursive: true });
+    writeFileSync(join(dir, GATES_REL), declarationOf(gates));
+    writeFileSync(join(dir, 'docs', 'ai', 'orchestration.json'), rawConfig ?? JSON.stringify({ flow }));
+    return dir;
+  };
+
+  it('an unknown flow.pregateExclude id is a loud refusal naming the id', () => {
+    const dir = tempProject({ schema: 1, pregateExclude: ['nope'] }, [{ id: 'unit', title: 'U', cmd: 'node --test x' }]);
+    const r = runReal(dir, ['--pre-review'], {});
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, EXIT.malformed);
+    assert.match(r.errText, /nope/);
+    assert.match(r.errText, /pregateExclude/);
+  });
+
+  it('a validated pregateExclude id is skipped by the subset', () => {
+    const dir = tempProject({ schema: 1, pregateExclude: ['integration'] }, [
+      { id: 'unit', title: 'U', cmd: 'node --test x' },
+      { id: 'integration', title: 'I', cmd: 'echo slow' },
+    ]);
+    const r = runReal(dir, ['--pre-review'], { 'node --test x': GREEN });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, EXIT.ok, r.errText);
+    assert.deepEqual(r.calls.filter((c) => c.cmd !== BASH_PROBE_CMD).map((c) => c.cmd), ['node --test x']);
+  });
+
+  it('an unmatched-but-FAILING gate yields the named review-dependent diagnosis, never a hard-stop count', () => {
+    const dir = tempProject({ schema: 1 }, [{ id: 'maybe-review', title: 'M', cmd: 'check-review' }]);
+    const r = runReal(dir, ['--pre-review'], { 'check-review': { status: 1, stdout: '', stderr: 'no receipts' } });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, EXIT.fail);
+    assert.match(r.text, /review-dependent\? declare it in/);
+    assert.match(r.text, /pregateExclude/);
+  });
+
+  it('a plain run never loads the orchestration config — --final and plain stay byte-neutral to a broken flow block', () => {
+    const dir = tempProject(null, [{ id: 'unit', title: 'U', cmd: 'node --test x' }], { rawConfig: 'not json' });
+    const r = runReal(dir, [], { 'node --test x': GREEN });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, EXIT.ok, `a plain run must not consult orchestration.json: ${r.errText}`);
+  });
+
+  it('a config-load failure under --pre-review exits 1 with a status=fail summary as the LAST line', () => {
+    const dir = tempProject(null, [{ id: 'unit', title: 'U', cmd: 'node --test x' }], { rawConfig: 'not json' });
+    const r = runReal(dir, ['--pre-review'], {});
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.code, EXIT.fail, 'loadConfig pins malformed config as exit 1 — never the declaration-malformed 5');
+    const lines = r.text.split('\n').filter((l) => l.length > 0);
+    assert.equal(lines[lines.length - 1], composeSummaryLine({ status: 'fail' }), 'the machine summary is the last line for every non-usage outcome');
+    assert.match(r.errText, /orchestration\.json/);
+  });
+});

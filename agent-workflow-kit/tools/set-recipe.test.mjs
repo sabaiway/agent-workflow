@@ -210,9 +210,9 @@ describe('set-recipe — post-write active-recipe echo (AD-038 discovery)', () =
   });
 });
 
-describe('set-recipe — a flow-carrying config is writable (FLOW-TOLERATE)', () => {
+describe('set-recipe — a flow-carrying config is writable (schema-1 structural keys)', () => {
   it('a --set --write over a config carrying a valid flow block succeeds (applySetOps re-validates)', () => {
-    write(serializeConfig({ _README: 'note', flow: { schema: FLOW_SCHEMA_VERSION, anything: ['goes'] }, 'plan-execution': { execute: 'solo', review: 'solo' } }));
+    write(serializeConfig({ _README: 'note', flow: { schema: FLOW_SCHEMA_VERSION, councilRounds: 3 }, 'plan-execution': { execute: 'solo', review: 'solo' } }));
     const r = run(['--set', 'plan-execution.review=council', '--write'], { codex: READY, agy: READY });
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /wrote docs\/ai\/orchestration\.json/);
@@ -225,7 +225,7 @@ describe('set-recipe — a flow-carrying config is writable (FLOW-TOLERATE)', ()
 // canonical serialization; byte identity is explicitly NOT the contract (serializeConfig is
 // content-preserving, not byte-preserving).
 describe('set-recipe — flow preservation characterization (merge + canonical serialization)', () => {
-  const FLOW = { schema: FLOW_SCHEMA_VERSION, future: { bytes: [1, 2, 3] }, note: 'uninterpreted' };
+  const FLOW = { schema: FLOW_SCHEMA_VERSION, councilRounds: 3, debtQueue: 'docs/debt.md' };
 
   it('a REAL slot change preserves the flow subtree JSON-value-equal', () => {
     write(serializeConfig({ _README: 'my note', flow: structuredClone(FLOW), 'plan-execution': { execute: 'solo', review: 'solo' } }));

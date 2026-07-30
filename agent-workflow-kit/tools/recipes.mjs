@@ -43,6 +43,27 @@ export const BACKEND_ROLES = {
   [AGY]: ['review', 'probe'],
 };
 
+// Review obligations from the CONFIGURED plan-execution.review recipe — the RAW config value,
+// never the readiness-degraded effective recipe (a computed readiness-degrade NEVER silently
+// becomes solo). Homed HERE (cycle-free) so review-state AND flow-check consume the SAME consumed
+// backend set (#42 exact coverage must never fall open on the computed-default class).
+//   solo     → no obligation; reviewed → ONE ship-class from ANY backend (minShip 1);
+//   council  → EVERY backend ship-class or degrade-recorded, and never all (minShip 1).
+export const requiredBackendsForConfiguredRecipe = ({ config, readiness = [], detectionFailed = false } = {}) => {
+  const configured = config?.['plan-execution']?.review;
+  const providers = Object.values(DISPLAY_ALIASES); // every review-capable backend, codex first
+  if (configured == null && detectionFailed) {
+    // No config + no readiness signal: the computed default is UNKNOWABLE — fail closed upstream.
+    return { recipe: null, source: 'default', backends: [], minShip: 0, perBackend: false, unknowable: true };
+  }
+  const anyReady = readiness.some((b) => b.readiness === READY);
+  const recipe = configured ?? (anyReady ? 'reviewed' : 'solo');
+  const source = configured != null ? 'config' : 'default';
+  if (recipe === 'solo') return { recipe, source, backends: [], minShip: 0, perBackend: false, unknowable: false };
+  if (recipe === 'council') return { recipe, source, backends: providers, minShip: 1, perBackend: true, unknowable: false };
+  return { recipe, source, backends: providers, minShip: 1, perBackend: false, unknowable: false };
+};
+
 // Advisory metadata the DETECTION object does not carry (it has no cost/quota — those live only in
 // capability.json). cost/quota are drift-guarded against the manifests; the agy `health` advisory is
 // static project knowledge (Issue-001: the Antigravity service can stall on substantive prompts —

@@ -1145,3 +1145,227 @@ describe('resolveGitHooksPath — the ONE hooks-path answer consumers read', () 
     rmSync(plain, { recursive: true, force: true });
   });
 });
+
+// ── Phase 2 (flow Plan 3): the commit-guard flow arm (two-tier activation, #43/P3) ──
+// Static imports (hoisted): a late top-level await here would let a filtered run drain the root
+// suite — and its template-removing after() hook — before this block even registers.
+import { resolveFlowStorePath as flowPathOf } from './flow-store.mjs';
+import { FLOW_SCHEMA_VERSION as FLOW_SCHEMA, canonicalFlowDigest as flowDigest } from './flow-record.mjs';
+import { resolveBase as baseOf } from './core-evidence.mjs';
+
+describe('commit-guard — flow arm (two-tier activation, #43/P3)', () => {
+  const FLOW_TS = '2026-07-30T00:00:00.000Z';
+  const passLineOf = (fp) => `commit-guard: PASS — a green final receipt binds this exact tree (${fp.slice(0, 12)}…), the declaration and evidence hashes match, and the review obligations are satisfied`;
+  const writeFlow = (root, records) =>
+    writeFileSync(flowPathOf(root, {}), records.map((r) => `${JSON.stringify(r)}\n`).join(''));
+  const chainRecords = (root, owner) => {
+    const base = baseOf(root);
+    const first = {
+      schema: FLOW_SCHEMA, kind: 'chain', purpose: 'adoption', planId: 'plan-g', cycle: 1, round: 0,
+      commitEpoch: 0, owner, base, timestamp: FLOW_TS, stepId: null, fingerprint: 'a1'.repeat(32),
+      planLabel: 'Plan G', createdAt: FLOW_TS, planDigest: 'b2'.repeat(32),
+    };
+    const opener = {
+      schema: FLOW_SCHEMA, kind: 'chain', purpose: 'round', planId: 'plan-g', cycle: 1, round: 1,
+      commitEpoch: 0, owner, base, timestamp: '2026-07-30T00:00:01.000Z', stepId: 's1',
+      fingerprint: 'a1'.repeat(32), opensFrom: flowDigest(first), dispatches: [], dispositions: [],
+    };
+    const park = {
+      schema: FLOW_SCHEMA, kind: 'chain', purpose: 'park', planId: 'plan-g', cycle: 1, round: 1,
+      commitEpoch: 0, owner, base, timestamp: '2026-07-30T00:00:02.000Z', stepId: null, fingerprint: 'a1'.repeat(32),
+    };
+    return { first, opener, park };
+  };
+
+  it('characterization: NO flow store — the PASS line is byte-exact (absent lane, t1)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    seedFinal(root, fp);
+    const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.equal(r.stdout, passLineOf(fp));
+  });
+
+  it('characterization: a present-VALID-UNADOPTED store — the PASS line stays byte-exact (t2)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    seedFinal(root, fp);
+    writeFileSync(flowPathOf(root, {}), '');
+    const empty = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    assert.equal(empty.code, 0, empty.stdout + empty.stderr);
+    assert.equal(empty.stdout, passLineOf(fp));
+    writeFlow(root, [{ schema: FLOW_SCHEMA, kind: 'down-mark', fingerprint: 'a1'.repeat(32), backend: 'agy', reason: 'quota stall', expiresAt: '2026-07-30T01:00:00.000Z', base: null, timestamp: FLOW_TS }]);
+    const unadopted = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(unadopted.code, 0, unadopted.stdout + unadopted.stderr);
+    assert.equal(unadopted.stdout, passLineOf(fp));
+  });
+
+  it('a present-but-MALFORMED flow store refuses the commit fail-closed (t1)', () => {
+    const { root } = makeRepo();
+    seedFinal(root, computeTreeFingerprint(root));
+    writeFileSync(flowPathOf(root, {}), 'junk line\n');
+    const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, r.stdout);
+    assert.match(r.stdout, /flow/);
+    assert.match(r.stdout, /malformed/);
+  });
+
+  it('an OWN OPEN chain refuses the commit with the flow-check reason verbatim', () => {
+    const { root } = makeRepo();
+    seedFinal(root, computeTreeFingerprint(root));
+    const { first, opener } = chainRecords(root, 'main');
+    writeFlow(root, [first, opener]);
+    const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, r.stdout);
+    assert.match(r.stdout, /OPEN chain owned by this worktree/);
+  });
+
+  it('a FOREIGN worktree chain stays advisory — the guard passes and labels the armed flow', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    seedFinal(root, fp);
+    const { first, opener } = chainRecords(root, 'worktree:elsewhere');
+    writeFlow(root, [first, opener]);
+    const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stdout);
+    assert.equal(r.stdout.split('\n')[0], `${passLineOf(fp)} — flow: armed`);
+    assert.match(r.stdout, /advisory/);
+  });
+
+  it('an armed store with a clean chain state PASSES with the armed flow label', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    seedFinal(root, fp);
+    const { first, opener, park } = chainRecords(root, 'main');
+    writeFlow(root, [first, opener, park]);
+    const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stdout);
+    assert.equal(r.stdout.split('\n')[0], `${passLineOf(fp)} — flow: armed`);
+  });
+
+  it('a present-valid-UNADOPTED store with an unattested bookkeeping delta still changes NOTHING (t2)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    seedFinal(root, fp);
+    const orphanDelta = {
+      schema: FLOW_SCHEMA, kind: 'bookkeeping-delta', fingerprintBefore: 'a1'.repeat(32), fingerprintAfter: 'b2'.repeat(32),
+      path: 'docs/notes.md', contentDigest: 'cd'.repeat(32),
+      custodyProof: { preClass: 'absent', tracked: false, headDigest: null, indexDigest: null, worktreeDigest: null, maskedFingerprint: 'a1'.repeat(32) },
+      base: null, timestamp: FLOW_TS,
+    };
+    writeFlow(root, [orphanDelta]);
+    const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, `semantic refusals bind only an ADOPTED store (P3 t2): ${r.stdout}`);
+    assert.equal(r.stdout, passLineOf(fp));
+  });
+
+  it('an armed flow with an UNANSWERED RED final on the current base refuses the commit (#65)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    seedFinal(root, fp);
+    const base = baseOf(root);
+    const redFp = 'ee'.repeat(32);
+    const red = {
+      schema: 1, kind: 'final', status: 'red', attempt: 'red-attempt-1', fingerprintBefore: redFp, fingerprintAfter: redFp,
+      declared: GATES.gates.map(({ id, cmd }) => ({ id, cmd })), results: [{ id: 'noop', ok: false, code: 1 }],
+      evidenceHashes: { redProof: 'a'.repeat(64), degrade: 'b'.repeat(64) }, lcovSha256: null, integrityFailure: null,
+      timestamp: '2026-07-17T00:00:02Z',
+    };
+    writeFileSync(storeOf(root), `${JSON.stringify(red)}\n`, { flag: 'a' });
+    const { first } = chainRecords(root, 'main');
+    writeFlow(root, [{ ...first, fingerprint: redFp }]);
+    const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, r.stdout);
+    assert.match(r.stdout, /red final/);
+    assert.match(r.stdout, /#65/);
+  });
+
+  it('an armed flow refuses an UNCOVERED core degrade the gate relies on (#25)', () => {
+    const { root } = makeCouncilRepo();
+    const fp = computeTreeFingerprint(root);
+    const degradeRecord = { schema: 1, kind: 'degrade', backend: 'agy', reason: 'quota exhausted', fingerprint: fp, timestamp: '2026-07-17T00:00:03Z' };
+    writeFileSync(storeOf(root), `${JSON.stringify(degradeRecord)}\n`, { flag: 'a' });
+    seedFinal(root, fp);
+    writeFileSync(join(root, '.git', 'agent-workflow-review-receipts.jsonl'), `${shipReceipt(fp, 'codex')}\n${shipReceipt(fp, 'agy')}\n`);
+    const { first } = chainRecords(root, 'main');
+    writeFlow(root, [first]);
+    const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, r.stdout);
+    assert.match(r.stdout, /degrade/);
+    assert.match(r.stdout, /#25|justification/);
+  });
+
+  it('an armed flow refuses a relied-on receipt bound by NO round dispatch-ledger entry (#42)', () => {
+    const { root } = makeCouncilRepo();
+    const fp = computeTreeFingerprint(root);
+    seedFinal(root, fp);
+    writeFileSync(join(root, '.git', 'agent-workflow-review-receipts.jsonl'), `${shipReceipt(fp, 'codex')}\n${shipReceipt(fp, 'agy')}\n`);
+    const { first } = chainRecords(root, 'main');
+    writeFlow(root, [first]);
+    const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, r.stdout);
+    assert.match(r.stdout, /unbound receipt|dispatch-ledger/);
+  });
+
+  it('an override lifts the veto but never the #42 binding — an unbound overridden receipt still refuses', () => {
+    const { root } = makeRepo();
+    mkdirSync(join(root, 'docs', 'plans'), { recursive: true });
+    const plan = '---\nplanId: plan-g\n---\n# p\n';
+    writeFileSync(join(root, 'docs', 'plans', 'active-plan.md'), plan);
+    spawnSync('git', ['add', '-A'], { cwd: root, encoding: 'utf8' });
+    const fp = computeTreeFingerprint(root);
+    seedFinal(root, fp);
+    const base = baseOf(root);
+    const vetoReceipt = { schema: 1, artifact: 'code', fresh: true, probe: false, grounded: true, fingerprint: fp, backend: 'codex', verdict: 'revise', factsHash: null, wrapperVersion: '2.2.0', timestamp: 't', posture: { model: 'x' } };
+    writeFileSync(join(root, '.git', 'agent-workflow-review-receipts.jsonl'), `${JSON.stringify(vetoReceipt)}\n`);
+    const planDigest = createHash('sha256').update(Buffer.from(plan)).digest('hex');
+    const first = {
+      schema: FLOW_SCHEMA, kind: 'chain', purpose: 'adoption', planId: 'plan-g', cycle: 1, round: 0,
+      commitEpoch: 0, owner: 'main', base, timestamp: FLOW_TS, stepId: null, fingerprint: 'a1'.repeat(32),
+      planLabel: 'Plan G', createdAt: FLOW_TS, planDigest,
+    };
+    const override = {
+      schema: FLOW_SCHEMA, kind: 'maintainer-override', fingerprint: fp,
+      vetoReceiptDigest: flowDigest(vetoReceipt), backend: 'codex', verdict: 'revise',
+      chainRecord: flowDigest(first), supersedes: null, base, timestamp: FLOW_TS,
+    };
+    const attestation = {
+      schema: FLOW_SCHEMA, kind: 'internal-attestation', fingerprint: fp, planId: 'plan-g',
+      stepId: 's1', cycle: 1, round: 1, lenses: ['correctness'], degraded: [],
+      posture: { model: 'frontier', effort: null, tier: null }, authority: 'orchestrator',
+      base, timestamp: FLOW_TS,
+    };
+    writeFlow(root, [first, override, attestation]);
+    const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, r.stdout);
+    assert.match(r.stdout, /unbound receipt|dispatch-ledger/);
+  });
+
+  it('the AW_FLOW_STORE seam is ignored — a poisoned override neither redirects nor masks the guard reads', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    seedFinal(root, fp);
+    writeFileSync(join(root, '.git', 'poison.jsonl'), 'junk line\n');
+    const poisoned = main(['--check', '--cwd', root], { env: fixtureEnv({ AW_FLOW_STORE: join(root, '.git', 'poison.jsonl') }) });
+    assert.equal(poisoned.code, 0, poisoned.stdout + poisoned.stderr);
+    assert.equal(poisoned.stdout, passLineOf(fp), 'a poisoned override never redirects the guard to a junk store');
+    const { first, opener } = chainRecords(root, 'main');
+    writeFlow(root, [first, opener]);
+    writeFileSync(join(root, '.git', 'decoy.jsonl'), '');
+    const masked = main(['--check', '--cwd', root], { env: fixtureEnv({ AW_FLOW_STORE: join(root, '.git', 'decoy.jsonl') }) });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(masked.code, 1, 'the REAL git-derived store decides — a clean decoy cannot mask an own open chain');
+    assert.match(masked.stdout, /OPEN chain/);
+  });
+});

@@ -850,3 +850,34 @@ describe('gates-init — refusal and degradation branches', () => {
     assert.equal(main(['--cwd', cwd], io2), 0, 'the preview works on any deployment');
   });
 });
+
+// ── Phase 2 (flow Plan 3): the flow-check candidate + the checker TRIO under a flow block (P21) ──
+import { flowCheckCandidate } from './gates-init.mjs';
+
+describe('gates-init — the checker TRIO under a flow block (P21)', () => {
+  it('a flow block + a SOLO recipe offers the full TRIO — the internal-only arm runs INSIDE review-state, so flow-check alone would arm half the surface', () => {
+    mkProject({ config: { 'plan-execution': { review: 'solo' }, flow: { schema: 1 } } });
+    const offer = buildOffer(cwd);
+    assert.deepEqual(offer.entries.map((e) => e.id), ['review-state', 'flow-check', 'coverage-check']);
+  });
+
+  it('a flow block + council offers the TRIO with coverage-check declared LAST', () => {
+    mkProject({ config: { 'plan-execution': { review: 'council' }, flow: { schema: 1 } } });
+    const offer = buildOffer(cwd);
+    assert.deepEqual(offer.entries.map((e) => e.id), ['review-state', 'flow-check', 'coverage-check']);
+    assert.equal(offer.entries[offer.entries.length - 1].id, 'coverage-check');
+  });
+
+  it('no flow block: the candidate set stays the existing pair — flow-check never appears', () => {
+    mkProject({ config: { 'plan-execution': { review: 'council' } } });
+    const offer = buildOffer(cwd);
+    assert.deepEqual(offer.entries.map((e) => e.id), ['review-state', 'coverage-check']);
+  });
+
+  it('a DQ-unsafe flow-check tool path is WITHHELD with a loud note, never offered wrongly', () => {
+    mkProject({ config: { 'plan-execution': { review: 'council' }, flow: { schema: 1 } } });
+    const r = flowCheckCandidate(cwd, { flowCheckTool: '/tmp/has"quote/flow-check.mjs' });
+    assert.equal(r.candidate, null);
+    assert.match(r.note, /withheld/);
+  });
+});

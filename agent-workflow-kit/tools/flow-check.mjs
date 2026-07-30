@@ -9,13 +9,15 @@
 // Phase 1 adds the pure decision cores (#61/#56/#65/#62/#42/#25); each keys on an ARMED flow, so
 // an unarmed tree sees byte-identical behavior.
 //
-// DELIBERATELY UNDECLARED in gates.json and the catalogs: composition into review-state /
-// commit-guard / the gate matrix is Plan 3 — until then this is a standalone read-only probe.
+// COMPOSED (Plan 3 Phase 2): review-state's decideCheck consumes the decision cores as gated
+// arms, commit-guard consults computeFlowDecision as its flow arm, and gates-init offers this
+// CLI as a declarable gate whenever the orchestration config carries a flow block.
 //
 // Consumer env discipline: the checker resolves FIXED git-derived store paths; AW_FLOW_STORE /
 // AW_CORE_EVIDENCE stay PRODUCER test seams this consumer ignores (the commit-guard sanitization
 // discipline) — a poisoned override can neither redirect nor mask the real stores.
 
+import { lstatSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
@@ -28,7 +30,11 @@ import {
 } from './flow-store.mjs';
 import {
   resolveEvidencePath, readEvidence, resolveBase, authoritativeOfKind, summarizeReviewReceiptsForTree,
+  resolveReceiptsPath, readReceipts, computeTreeFingerprint,
 } from './core-evidence.mjs';
+import { loadConfig } from './orchestration-config.mjs';
+import { requiredBackendsForConfiguredRecipe, DISPLAY_ALIASES } from './recipes.mjs';
+import { detectBackends } from './detect-backends.mjs';
 
 const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 });
 
@@ -381,17 +387,38 @@ export const collectDegradeCoverageRefusals = ({ flowRecords, coreRecords, tree,
   return refusals;
 };
 
-// #42: each relied-on backend's selected receipt must ride an OWN round's dispatch ledger.
-export const collectReceiptCoverageRefusals = ({ flowRecords, receipts, tree, owner, backends }) => {
+// The ONE relied-on receipt selector (#42/#61): the latest normal receipt at the CURRENT tree,
+// else — through an unbroken declared-path bookkeeping-delta chain — the backend's LAST receipt
+// judged at its own tree, carrying the lift metadata the PASS labels consume.
+export const selectReliedOnReceipt = ({ receipts, backend, tree, records, declaredPaths, refreshCap }) => {
+  const own = receipts.filter((r) => r.backend === backend);
+  const current = summarizeReviewReceiptsForTree(own, tree.fingerprint);
+  if (current.state === 'current') return { receipt: current.receipt, lifted: 0 };
+  const last = own[own.length - 1];
+  const candidateFp = typeof last?.fingerprint === 'string' ? last.fingerprint : null;
+  if (candidateFp == null || candidateFp === tree.fingerprint) return { receipt: null, lifted: 0 };
+  const atCandidate = summarizeReviewReceiptsForTree(own, candidateFp);
+  if (atCandidate.state !== 'current') return { receipt: null, lifted: 0 };
+  const chain = classifyDeltaChain({ records, fromFingerprint: candidateFp, toFingerprint: tree.fingerprint, declaredPaths, refreshCap });
+  if (chain.classification !== 'current') return { receipt: null, lifted: 0 };
+  return { receipt: atCandidate.receipt, lifted: chain.links.length };
+};
+
+// #42: each relied-on backend's selected receipt must ride an OWN round's dispatch ledger; with
+// lift inputs supplied the selection spans the delta lift, so a LIFTED receipt demands its
+// binding at ITS OWN fingerprint; the entry's dispatchBase must equal the round's recorded base.
+export const collectReceiptCoverageRefusals = ({ flowRecords, receipts, tree, owner, backends, declaredPaths = null, refreshCap = null }) => {
   if (!hasOwnAdoption(flowRecords, owner)) return [];
   const refusals = [];
   const rounds = authoritativeFlowRecords(flowRecords).filter((r) => r.kind === CHAIN_KIND && r.purpose === 'round' && r.owner === owner);
   for (const backend of [...new Set(backends)]) {
-    const relied = summarizeReviewReceiptsForTree(receipts.filter((r) => r.backend === backend), tree.fingerprint).receipt;
+    const relied = declaredPaths != null
+      ? selectReliedOnReceipt({ receipts, backend, tree, records: flowRecords, declaredPaths, refreshCap }).receipt
+      : summarizeReviewReceiptsForTree(receipts.filter((r) => r.backend === backend), tree.fingerprint).receipt;
     if (relied == null) continue;
     const digest = canonicalFlowDigest(relied);
     const covered = rounds.some((round) => round.fingerprint === relied.fingerprint
-      && round.dispatches.some((e) => e.receiptDigest === digest && e.backend === relied.backend));
+      && round.dispatches.some((e) => e.receiptDigest === digest && e.backend === relied.backend && e.dispatchBase === round.base));
     if (!covered) {
       refusals.push(`the review receipt the decision relies on (backend "${backend}", verdict ${JSON.stringify(relied.verdict)}) is bound by NO round dispatch-ledger entry of this worktree's chains — an unbound receipt never satisfies an armed flow (#42); land the {receiptDigest, backend, dispatchBase} entry through a round revision`);
     }
@@ -450,11 +477,13 @@ export const computeAllPathWorktreeSurface = (cwd) => {
   return { ok: true, paths: [...new Set([...tracked, ...untracked])] };
 };
 
-// decideFlowCheck({ flowRead, coreRead, owner, motion? }) → { refusals, advisories }. Pure —
-// consumes the FULL read-results of both stores; store health fails closed BEFORE any content
-// judgment. `motion` ({ currentBase, resolveBaseDelta, resolveChangedSurface }) arms the Step-1.4
-// base-motion refusals; absent, the decision is byte-identical to the Plan-2 checker.
-export const decideFlowCheck = ({ flowRead, coreRead, owner, flowPath = 'the flow store', corePath = 'the core evidence store', motion = null }) => {
+// decideFlowCheck({ flowRead, coreRead, owner, motion?, evidence? }) → { refusals, advisories }.
+// Pure — consumes the FULL read-results of both stores; store health fails closed BEFORE any
+// content judgment. `motion` ({ currentBase, resolveBaseDelta, resolveChangedSurface }) arms the
+// Step-1.4 base-motion refusals; `evidence` ({ receipts, tree, backends }) arms the three Phase-1
+// rungs (#65/#25/#42 — each self-gates on an OWN adoption). Absent inputs keep the decision
+// byte-identical to the Plan-2 checker.
+export const decideFlowCheck = ({ flowRead, coreRead, owner, flowPath = 'the flow store', corePath = 'the core evidence store', motion = null, evidence = null }) => {
   const refusals = [];
   const advisories = [];
   if (flowRead.readError) refusals.push(`the flow store is unreadable (${flowRead.readError}) — the checker consumes the FULL read-result; inspect ${flowPath} (fail closed)`);
@@ -473,30 +502,109 @@ export const decideFlowCheck = ({ flowRead, coreRead, owner, flowPath = 'the flo
   }
   refusals.push(...deltaRefusals(records));
   refusals.push(...degradeOrderingRefusals(coreRead.records));
+  if (evidence != null) {
+    refusals.push(...collectUnansweredRedRefusals({ flowRecords: records, coreRecords: coreRead.records, currentBase: evidence.tree.base, owner }));
+    refusals.push(...collectDegradeCoverageRefusals({ flowRecords: records, coreRecords: coreRead.records, tree: evidence.tree, owner, backends: evidence.degradeBackends }));
+    refusals.push(...collectReceiptCoverageRefusals({ flowRecords: records, receipts: evidence.receipts, tree: evidence.tree, owner, backends: evidence.receiptBackends, declaredPaths: evidence.declaredPaths, refreshCap: evidence.refreshCap }));
+  }
   return { refusals, advisories };
 };
 
-// runFlowCheck({ cwd }) → { code, lines }. Resolution runs on an EMPTY env by construction — see
-// the consumer env discipline in the header.
-export const runFlowCheck = ({ cwd = process.cwd() } = {}) => {
+// computeFlowDecision({ cwd }) → { present, owner, armed, broken, refusals, advisories } — the
+// two-tier answer EVERY composed consumer reads (P3): `present` is tier 1 (store-file existence;
+// an unstatable leaf reads as a fail-closed health failure), `armed` is tier 2 (>=1 adoption on a
+// clean read). Store HEALTH (flow or core) always refuses; SEMANTIC refusals bind only an ARMED
+// store — a valid store with no adoption changes nothing. Under an armed store the decision also
+// carries the three evidence rungs, with `backends` = the SAME consumed set review-state derives
+// (the configured recipe; the computed default consults offline readiness — #42 never falls open).
+export const computeFlowDecision = ({ cwd = process.cwd() } = {}) => {
   const owner = deriveFlowOwner(cwd);
-  if (owner == null) return { code: 1, lines: ['flow-check: not a git work tree — there is no flow store to check'] };
+  if (owner == null) return { present: false, owner: null, armed: false, broken: null, refusals: [], advisories: [] };
   const flowPath = resolveFlowStorePath(cwd, {});
   const corePath = resolveEvidencePath(cwd, {});
-  const flowRead = readFlowStore(flowPath);
+  const flowStat = (() => {
+    if (flowPath == null) return null;
+    try {
+      return lstatSync(flowPath);
+    } catch (err) {
+      return err && err.code === 'ENOENT' ? null : 'unstatable';
+    }
+  })();
+  const present = flowStat !== null;
+  const flowRead = !present ? { records: [], authoritative: [], malformed: 0, malformedReasons: [] }
+    : flowStat === 'unstatable' ? { records: [], authoritative: [], malformed: 0, malformedReasons: [], readError: 'the store leaf cannot be stat-ed (fail closed)' }
+    : readFlowStore(flowPath);
   const coreRead = readEvidence(corePath);
+  const healthBroken = flowRead.readError != null || flowRead.malformed > 0
+    || coreRead.readError != null || (coreRead.malformed ?? 0) > 0;
+  const armed = !healthBroken && flowRead.records.some((r) => r.kind === CHAIN_KIND && r.purpose === 'adoption');
   const motion = {
     currentBase: resolveBase(cwd),
     resolveBaseDelta: (from, to) => computeAllPathBaseDelta(cwd, from, to),
     resolveChangedSurface: () => computeAllPathWorktreeSurface(cwd),
   };
-  const { refusals, advisories } = decideFlowCheck({ flowRead, coreRead, owner, flowPath, corePath, motion });
+  const evidenceRefusals = [];
+  let evidence = null;
+  if (armed) {
+    // The config anchors at the git TOPLEVEL — the same anchor review-state's buildState uses —
+    // so a subdirectory invocation can never derive a different recipe.
+    const top = resolveGitToplevel(cwd);
+    let config = null;
+    let configFailure = top == null ? 'the git toplevel is unresolvable' : null;
+    if (configFailure == null) {
+      try {
+        config = loadConfig(top).config;
+      } catch (err) {
+        configFailure = (err && err.message) || String(err);
+      }
+    }
+    let readiness = [];
+    let detectionFailed = false;
+    if (configFailure == null && config?.['plan-execution']?.review == null) {
+      try {
+        readiness = detectBackends();
+      } catch {
+        detectionFailed = true;
+      }
+    }
+    const obligations = configFailure == null
+      ? requiredBackendsForConfiguredRecipe({ config, readiness, detectionFailed })
+      : null;
+    if (configFailure != null) {
+      evidenceRefusals.push(`the relied-on backend set cannot be derived (${configFailure}) — exact coverage is undecidable on an armed flow (fail closed)`);
+    } else if (obligations.unknowable) {
+      evidenceRefusals.push('the relied-on backend set cannot be derived (no configured recipe and the backend detector is down) — exact coverage is undecidable on an armed flow (fail closed)');
+    } else {
+      // Split sets (P2 council ruling): the solo floor consults EVERY provider's latest receipt,
+      // so receipt coverage binds all providers under solo; the degrade escape is never consulted
+      // under solo, so a stray degrade must not demand coverage there.
+      const receiptsPath = resolveReceiptsPath(cwd, {});
+      evidence = {
+        receipts: receiptsPath ? readReceipts(receiptsPath).receipts : [],
+        tree: { base: motion.currentBase, fingerprint: computeTreeFingerprint(cwd) },
+        receiptBackends: obligations.recipe === 'solo' ? Object.values(DISPLAY_ALIASES) : obligations.backends,
+        degradeBackends: obligations.backends,
+        declaredPaths: [config?.flow?.debtQueue, config?.flow?.convergenceSummary].filter((p) => typeof p === 'string'),
+        refreshCap: config?.flow?.councilRounds ?? null,
+      };
+    }
+  }
+  const { refusals, advisories } = decideFlowCheck({ flowRead, coreRead, owner, flowPath, corePath, motion, evidence });
+  const effectiveRefusals = healthBroken ? refusals : (armed ? [...refusals, ...evidenceRefusals] : []);
+  return { present, owner, armed, broken: healthBroken ? refusals[0] ?? 'store health failed closed' : null, refusals: effectiveRefusals, advisories: armed ? advisories : [] };
+};
+
+// runFlowCheck({ cwd }) → { code, lines }. Resolution runs on an EMPTY env by construction — see
+// the consumer env discipline in the header.
+export const runFlowCheck = ({ cwd = process.cwd() } = {}) => {
+  const d = computeFlowDecision({ cwd });
+  if (d.owner == null) return { code: 1, lines: ['flow-check: not a git work tree — there is no flow store to check'] };
   const lines = [
-    ...advisories.map((a) => `flow-check: advisory — ${a}`),
-    ...refusals.map((r) => `flow-check: REFUSED — ${r}`),
+    ...d.advisories.map((a) => `flow-check: advisory — ${a}`),
+    ...d.refusals.map((r) => `flow-check: REFUSED — ${r}`),
   ];
-  if (refusals.length === 0) lines.push(`flow-check: PASS — no flow refusal for this tree (owner ${owner})`);
-  return { code: refusals.length === 0 ? 0 : 1, lines };
+  if (d.refusals.length === 0) lines.push(`flow-check: PASS — no flow refusal for this tree (owner ${d.owner})`);
+  return { code: d.refusals.length === 0 ? 0 : 1, lines };
 };
 
 const HELP = `flow-check — the standalone flow-store checker (flow-orchestration).
@@ -512,8 +620,9 @@ degrade-before-final ordering (raw order, grouped by fingerprint), and armed bas
 (in-step transitions must land the class the delta requires: re-baseline or refresh). Reads FIXED
 git-derived store paths — the AW_* overrides stay producer test seams this consumer ignores.
 
-DELIBERATELY UNDECLARED in gates.json and the catalogs: composition into review-state /
-commit-guard / the gate matrix is Plan 3 — until then this CLI is a standalone read-only probe.
+COMPOSED (Plan 3 Phase 2): the same decision feeds review-state's gated arms and the
+commit-guard flow arm; declare this CLI as a gates.json gate (the gates-init candidate offers
+it whenever the orchestration config carries a flow block).
 
 Exit codes: 0 pass (advisories may print); 1 refused (reason + recovery named); 2 usage.`;
 

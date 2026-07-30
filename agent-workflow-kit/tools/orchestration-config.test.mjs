@@ -294,9 +294,9 @@ describe('orchestration-config — flow tolerate branch (FLOW-TOLERATE)', () => 
   afterEach(() => rmSync(cwd, { recursive: true, force: true }));
   const write = (obj) => writeFileSync(join(cwd, CONFIG_REL), JSON.stringify(obj));
 
-  it('a flow object carrying the known numeric schema loads; every other byte is uninterpreted', () => {
+  it('a flow object carrying the known numeric schema loads through the file reader (schema-1 keys only)', () => {
     const cfg = {
-      flow: { schema: FLOW_SCHEMA_VERSION, records: [{ kind: 'anything' }], nested: { deep: ['bytes'] } },
+      flow: { schema: FLOW_SCHEMA_VERSION, councilRounds: 3, debtQueue: 'docs/debt.md' },
       'plan-authoring': { review: 'council' },
     };
     assert.deepEqual(validateConfig(cfg), cfg);
@@ -348,7 +348,7 @@ describe('orchestration-config — flow tolerate branch (FLOW-TOLERATE)', () => 
 
   it('loader-level consumer proof: a valid flow block changes NOTHING about recipe resolution', () => {
     const activities = { 'plan-authoring': { review: 'council' }, 'plan-execution': { execute: 'solo', review: 'reviewed' } };
-    write({ flow: { schema: FLOW_SCHEMA_VERSION, ignored: { by: 'this release' } }, ...activities });
+    write({ flow: { schema: FLOW_SCHEMA_VERSION, councilRounds: 2 }, ...activities });
     const withFlow = loadConfig(cwd).config;
     for (const [activity, def] of Object.entries(ACTIVITIES)) {
       for (const slot of Object.keys(def.slots)) {
@@ -387,5 +387,67 @@ describe('orchestration-config — upgrade-path flow preservation (refreshReadme
     assert.equal(r.changed, false);
     assert.equal(r.config._README, 'my own note');
     assert.deepEqual(r.config.flow, FLOW);
+  });
+});
+
+// ── Phase 2 (flow Plan 3): full STRUCTURAL schema-1 validation of the flow block (P7/P20) ──
+import {
+  FLOW_SCHEMA_1_KEYS, FLOW_SCHEMA_1_FIXTURE, FLOW_PRESET_VALUES, FLOW_CANDIDATE_CLASSES,
+} from './orchestration-config.mjs';
+
+describe('orchestration-config — flow structural schema-1 validation (P7/P20)', () => {
+  it('the full literal fixture validates — the ONE fixture the validator and the arming path share', () => {
+    assert.doesNotThrow(() => validateConfig({ flow: { ...FLOW_SCHEMA_1_FIXTURE } }));
+  });
+
+  it('drift-guard: the fixture carries EXACTLY the closed key set, a fixture preset value, and fixture candidate classes', () => {
+    assert.deepEqual(Object.keys(FLOW_SCHEMA_1_FIXTURE), [...FLOW_SCHEMA_1_KEYS]);
+    assert.ok(FLOW_PRESET_VALUES.includes(FLOW_SCHEMA_1_FIXTURE.preset));
+    for (const c of FLOW_SCHEMA_1_FIXTURE.candidates) {
+      assert.deepEqual(Object.keys(c), ['name', 'class']);
+      assert.ok(FLOW_CANDIDATE_CLASSES.includes(c.class));
+    }
+    assert.equal(FLOW_SCHEMA_1_FIXTURE.schema, FLOW_SCHEMA_VERSION);
+  });
+
+  it('an unknown flow key refuses loudly naming the key and the closed schema-1 key set', () => {
+    assert.throws(
+      () => validateConfig({ flow: { schema: FLOW_SCHEMA_VERSION, records: [] } }),
+      (e) => e.exitCode === 1 && /"records"/.test(e.message) && FLOW_SCHEMA_1_KEYS.every((k) => e.message.includes(k)),
+    );
+  });
+
+  it('every schema-1 key refuses its malformed forms with a loud path: reason naming the key', () => {
+    const bad = [
+      ['preset', 'nonsense', /preset/],
+      ['preset', 42, /preset/],
+      ['candidates', 'codex', /candidates/],
+      ['candidates', [{ name: '', class: 'review' }], /candidates/],
+      ['candidates', [{ name: 'codex', class: 'judge' }], /candidates/],
+      ['candidates', [{ name: 'codex', class: 'review', extra: 1 }], /candidates/],
+      ['councilRounds', 0, /councilRounds/],
+      ['councilRounds', '3', /councilRounds/],
+      ['debtQueue', '', /debtQueue/],
+      ['debtQueue', 42, /debtQueue/],
+      ['convergenceSummary', null, /convergenceSummary/],
+      ['debtQueueExcluded', 'yes', /debtQueueExcluded/],
+      ['convergenceSummaryExcluded', 1, /convergenceSummaryExcluded/],
+      ['pregateExclude', 'unit', /pregateExclude/],
+      ['pregateExclude', ['a', 'a'], /pregateExclude/],
+      ['pregateExclude', [''], /pregateExclude/],
+      ['kitMinVersion', 5, /kitMinVersion/],
+      ['kitMinVersion', '', /kitMinVersion/],
+    ];
+    for (const [key, value, re] of bad) {
+      assert.throws(
+        () => validateConfig({ flow: { schema: FLOW_SCHEMA_VERSION, [key]: value } }),
+        (e) => e.exitCode === 1 && re.test(e.message) && e.message.includes(CONFIG_REL),
+        `flow.${key}=${JSON.stringify(value)} must refuse by name`,
+      );
+    }
+  });
+
+  it('a minimal { schema: 1 } block still validates — every other schema-1 key is optional', () => {
+    assert.doesNotThrow(() => validateConfig({ flow: { schema: FLOW_SCHEMA_VERSION } }));
   });
 });

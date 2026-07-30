@@ -66,6 +66,20 @@
 // bridge's capability.json roles.review.contract.receipt, and the bash twin lives in both
 // wrappers — cross-checked by test/review-fingerprint-parity.test.mjs.
 //
+// Phase-2 flow arms (flow-orchestration Plan 3, #43/#61/#68/#48 — two-tier activation, P3): with
+// NO flow store file the decision is byte-identical to the pre-flow checker; a present-but-
+// malformed store FAILS the dirty-tree check closed; a valid store with no adoption changes
+// nothing. Under an ARMED store (an adoption record exists): (a) a STALE receipt lifts to CURRENT
+// through an unbroken declared-path bookkeeping-delta chain (#61, labeled in the PASS reason);
+// (b) a standing veto lifted by a valid maintainer-override PASSES with the durable label in the
+// check reason and the human report (#38/#56); (c) the SOLO obligations class (no reviewers
+// configured — configured solo or the computed solo default) gains the reduced internal-only
+// floor as an OBLIGATION (#34/#43): every in-flight plan must be covered by an adopted chain
+// (planId + content digest + owner, P13/P19) AND carry an internal-attestation at the current
+// tree; an uncovered plan REFUSES, never relaxes (#68), and a standing current-tree veto still
+// blocks the floor (#48). A configured reviewed/council NEVER takes the reduced floor — its
+// missing backends keep the degrade-record bar (the full degraded-council set arms in Phase 4).
+//
 // HUMAN residual (accepted, documented): `git commit --no-verify` skips any pre-commit gate, and
 // deleting/editing the receipt file forges state — receipts live in the git dir (never committable)
 // as an honest self-discipline mechanism, not a security boundary.
@@ -74,13 +88,17 @@
 // (read-only queries) to compute the fingerprint — stated honestly in the catalog. Dependency-free,
 // Node >= 22. No side effects on import (the isDirectRun idiom).
 
-import { readdirSync, lstatSync } from 'node:fs';
+import { readdirSync, lstatSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { detectBackends, READY } from './detect-backends.mjs';
-import { resolveActivityRecipe, DISPLAY_ALIASES } from './recipes.mjs';
+import { resolveActivityRecipe, DISPLAY_ALIASES, requiredBackendsForConfiguredRecipe } from './recipes.mjs';
 import { CONFIG_REL, fail, loadConfig } from './orchestration-config.mjs';
+import { resolveFlowStorePath, readFlowStore, deriveFlowOwner, readPlanFrontmatterId } from './flow-store.mjs';
+import { CHAIN_KIND, authoritativeFlowRecords } from './flow-record.mjs';
+import { selectReliedOnReceipt, evaluateVetoOverride } from './flow-check.mjs';
 // The canonical review-domain primitives live in the core-evidence DAG bottom (ONE home for the
 // fingerprint, the receipt read path, and the attesting predicate); this module RE-EXPORTS its
 // historical public API from there and consumes the degrade records the same store owns.
@@ -220,6 +238,31 @@ export const plansInFlight = (cwd, readdir = readdirSync) => {
     .sort();
 };
 
+// The in-flight-plan → adopted-chain coverage map (P13/P19): ONE bounded read + ONE hash per plan
+// file; coverage requires the frontmatter planId, the FULL content digest, and the owner to match
+// the adoption record — a mismatch on any axis refuses internal-only arming by name.
+export const computePlanAdoptionCoverage = ({ root, plans, records, owner, readFile = readFileSync }) =>
+  plans.map((plan) => {
+    let bytes;
+    try {
+      bytes = readFile(join(root, PLANS_REL, plan));
+    } catch (err) {
+      return { plan, planId: null, covered: false, reason: `the plan file is unreadable (${(err && err.code) || (err && err.message) || err})` };
+    }
+    const buf = typeof bytes === 'string' ? Buffer.from(bytes) : bytes;
+    const planId = readPlanFrontmatterId(buf.toString('utf8'));
+    if (planId == null) return { plan, planId: null, covered: false, reason: 'no frontmatter planId — plan filenames are never chain identity (#58); adopt the plan through the flow writer' };
+    const adoptionRecord = records.find((r) => r.kind === CHAIN_KIND && r.purpose === 'adoption' && r.planId === planId);
+    if (adoptionRecord === undefined) return { plan, planId, covered: false, reason: `no adoption record for planId "${planId}"` };
+    if (adoptionRecord.planDigest !== createHash('sha256').update(buf).digest('hex')) {
+      return { plan, planId, covered: false, reason: 'the plan content no longer matches its adoption record (edited after adoption)' };
+    }
+    if (adoptionRecord.owner !== owner) {
+      return { plan, planId, covered: false, reason: `the adoption is owned by "${adoptionRecord.owner}", not this worktree ("${owner}") — a foreign-owner adoption never arms internal-only here` };
+    }
+    return { plan, planId, covered: true };
+  });
+
 // ── receipts (path + reader re-exported from the core-evidence one-home above) ──────
 
 // Per-backend receipt status for the current fingerprint, over the ONE shared attesting-receipt
@@ -261,29 +304,10 @@ export const backendReceiptStatus = (receipts, backend, fingerprint) => {
 // ── obligations from the CONFIGURED recipe + the D3(b) degrade-record escape ────────
 
 // Obligations derive from the CONFIGURED recipe — the RAW orchestration.json value — never the
-// readiness-degraded effective recipe: the resolver degrades council→reviewed→solo BEFORE any
-// check would see the missing backend, which would silently drop an obligation (a computed
-// readiness-degrade NEVER silently becomes solo). The resolver stays for display/diagnostics
-// only. The computed DEFAULT (absent config) is readiness-aware by design — a default never
-// mints an unsatisfiable obligation; an EXPLICIT configured recipe never degrades here.
-//   solo     → no obligation (the existing honest exit-0 contract);
-//   reviewed → ONE ship-class attestation from ANY review-capable backend (minShip 1);
-//   council  → EVERY review-capable backend attests ship-class OR carries a current-tree degrade
-//              record — and NEVER all degraded (minShip 1 stands whenever >=1 backend is configured).
-export const requiredBackendsForConfiguredRecipe = ({ config, readiness = [], detectionFailed = false } = {}) => {
-  const configured = config?.[ACTIVITY]?.[SLOT];
-  const providers = Object.values(DISPLAY_ALIASES); // every review-capable backend, codex first
-  if (configured == null && detectionFailed) {
-    // No config + no readiness signal: the computed default is UNKNOWABLE — fail closed upstream.
-    return { recipe: null, source: 'default', backends: [], minShip: 0, perBackend: false, unknowable: true };
-  }
-  const anyReady = readiness.some((b) => b.readiness === READY);
-  const recipe = configured ?? (anyReady ? 'reviewed' : 'solo');
-  const source = configured != null ? 'config' : 'default';
-  if (recipe === 'solo') return { recipe, source, backends: [], minShip: 0, perBackend: false, unknowable: false };
-  if (recipe === 'council') return { recipe, source, backends: providers, minShip: 1, perBackend: true, unknowable: false };
-  return { recipe, source, backends: providers, minShip: 1, perBackend: false, unknowable: false };
-};
+// readiness-degraded effective recipe (a computed readiness-degrade NEVER silently becomes solo).
+// The derivation is homed in recipes.mjs (cycle-free) so flow-check's exact-coverage rungs consume
+// the SAME consumed backend set; re-exported here for this module's historical public API.
+export { requiredBackendsForConfiguredRecipe };
 
 // degradeRecordSet — the D3(b) escape: an EXPLICIT per-backend, per-tree degrade RECORD in the
 // core-evidence store is the ONLY exemption lane. Fail-closed: an unreadable/malformed store
@@ -307,7 +331,7 @@ export const degradeRecordSet = ({ cwd, env = process.env, fingerprint }) => {
 // work-tree ROOT when one exists — the fingerprint is root-anchored, so a subdirectory invocation
 // must read the same config/plans or a dirty unreceipted tree could false-PASS as "no plan in
 // flight". Outside a git tree the cwd is the only anchor (and --check exits 0).
-export const buildState = ({ cwd, env = process.env, detect = detectBackends, lstat = lstatSync } = {}) => {
+export const buildState = ({ cwd, env = process.env, detect = detectBackends, lstat = lstatSync, readFile = readFileSync } = {}) => {
   const root = gitLine(['rev-parse', '--show-toplevel'], cwd) ?? cwd;
   const { config, source: configSource } = loadConfig(root);
   let detection = [];
@@ -338,12 +362,77 @@ export const buildState = ({ cwd, env = process.env, detect = detectBackends, ls
   const base = resolveBase(cwd);
   const degrade = degradeRecordSet({ cwd, env, fingerprint });
   const degradedExempt = requiredBackends.filter((b) => degrade.set.has(b));
+  // ── the Phase-2 flow arms' state (two-tier activation, P3) ──
+  // Tier 1 is store-file PRESENCE: no file ⇒ every field below stays inert and the decision is
+  // byte-identical to the pre-flow checker (the unarmed fast path also reads NO plan file).
+  const flowPath = resolveFlowStorePath(cwd, env);
+  const flowStat = (() => {
+    if (flowPath == null) return null;
+    try {
+      return lstat(flowPath);
+    } catch (err) {
+      return err && err.code === 'ENOENT' ? null : 'unstatable';
+    }
+  })();
+  const flowPresent = flowStat !== null;
+  const flowRead = flowPresent && flowStat !== 'unstatable' ? readFlowStore(flowPath) : null;
+  const flowBrokenReason = !flowPresent ? null
+    : flowStat === 'unstatable' ? 'the store leaf cannot be stat-ed (fail closed)'
+    : flowRead.readError != null ? `read error: ${flowRead.readError}`
+    : flowRead.malformed > 0 ? `${flowRead.malformed} malformed line(s) (${flowRead.malformedReasons[0]})`
+    : null;
+  const flowArmed = flowPresent && flowBrokenReason == null
+    && flowRead.records.some((r) => r.kind === CHAIN_KIND && r.purpose === 'adoption');
+  const flowOwner = flowArmed ? deriveFlowOwner(cwd) : null;
+  const planCoverage = flowArmed
+    ? computePlanAdoptionCoverage({ root, plans, records: flowRead.records, owner: flowOwner, readFile })
+    : [];
+  const attestedPlanIds = flowArmed
+    ? [...new Set(authoritativeFlowRecords(flowRead.records)
+        .filter((r) => r.kind === 'internal-attestation' && r.base === base && r.fingerprint === fingerprint)
+        .map((r) => r.planId))]
+    : [];
+  const flowConfig = config?.flow ?? null;
+  // #61: the SHARED relied-on selector (one home with the flow-check coverage rung) — an unbroken
+  // declared-path bookkeeping-delta chain lifts the backend's last receipt; any break, fork, or
+  // cap exhaustion stays stale.
+  const liftStale = (row, backend) => {
+    if (!flowArmed || row.state !== 'stale') return row;
+    const selected = selectReliedOnReceipt({
+      receipts, backend, tree: { base, fingerprint },
+      records: flowRead.records,
+      declaredPaths: [flowConfig?.debtQueue, flowConfig?.convergenceSummary].filter((p) => typeof p === 'string'),
+      refreshCap: flowConfig?.councilRounds,
+    });
+    if (selected.receipt == null || selected.lifted === 0) return row;
+    return {
+      ...row, state: 'current', verdict: selected.receipt.verdict ?? 'unknown',
+      shipClass: isShipVerdict(selected.receipt.verdict), grounded: true,
+      timestamp: selected.receipt.timestamp ?? null, deltaLift: selected.lifted,
+    };
+  };
+  // #56/#38: a standing CURRENT-tree veto consults its override instance; a delta-lifted veto has
+  // no override lane here (the bound set pins the veto receipt's own tree).
+  const consumeOverride = (row) => {
+    if (!flowArmed || !(row.state === 'current' && !row.shipClass) || row.deltaLift != null) return row;
+    const own = receipts.filter((r) => r.backend === row.backend);
+    const summary = summarizeReviewReceiptsForTree(own, fingerprint);
+    if (summary.state !== 'current') return row;
+    const lift = evaluateVetoOverride({ records: flowRead.records, vetoReceipt: summary.receipt, tree: { base, fingerprint } });
+    return lift.lifted ? { ...row, overrideLabel: lift.label } : row;
+  };
+  const armedBackends = backends.map((b) => consumeOverride(liftStale(b, b.backend)));
+  // The solo-class veto probe (#48): under an armed solo recipe every review-capable backend's
+  // CURRENT-tree receipt is still consulted, so a recipe flip to solo never buries a standing veto.
+  const soloVetoRows = flowArmed && obligations.recipe === 'solo'
+    ? Object.values(DISPLAY_ALIASES).map((b) => consumeOverride(liftStale({ backend: b, ...backendReceiptStatus(receipts, b, fingerprint) }, b)))
+    : [];
   return {
     resolved,
     configSource,
     obligations,
     requiredBackends,
-    backends,
+    backends: armedBackends,
     plans,
     root,
     fingerprint,
@@ -360,6 +449,14 @@ export const buildState = ({ cwd, env = process.env, detect = detectBackends, ls
     degradedExempt,
     maskedUntracked: countNeverCommittableUntracked(cwd, { lstat }),
     detectionWarning,
+    anyReviewerReady: detection.some((b) => b.readiness === READY),
+    flowPresent,
+    flowArmed,
+    flowBrokenReason,
+    flowOwner,
+    planCoverage,
+    attestedPlanIds,
+    soloVetoRows,
   };
 };
 
@@ -411,7 +508,7 @@ export const decideCheck = (state) => {
   if (state.obligations.unknowable) {
     return { code: 1, reason: `cannot verify receipts — ${state.detectionWarning} No configured ${ACTIVITY}.${SLOT} recipe: the computed default is unknowable while the detector is down (fail closed).${earlyNotes}` };
   }
-  if (state.obligations.recipe === 'solo') {
+  if (state.obligations.recipe === 'solo' && !state.flowArmed && state.flowBrokenReason == null) {
     const why = state.obligations.source === 'config'
       ? `configured ${ACTIVITY}.${SLOT} recipe is solo`
       : `no reviewer backend is ready — the computed ${ACTIVITY}.${SLOT} default is solo`;
@@ -427,9 +524,47 @@ export const decideCheck = (state) => {
     const named = state.plans.map((p) => quoteReportName(p)).join(', ');
     return { code: 0, reason: `${CLEAN_TREE_PASS} — ${state.plans.length} plan(s) in flight: ${named} — ${LATENT_ARM_NOTICE}${earlyNotes}` };
   }
+  // Tier-1 fail-closed (P3): a PRESENT flow store must read clean before the decision leans on
+  // receipts — the flow arms cannot be evaluated over a store of unknown content.
+  if (state.flowBrokenReason != null) {
+    return { code: 1, reason: `the flow store is unavailable (${state.flowBrokenReason}) — the flow arms fail closed; inspect the store${earlyNotes}` };
+  }
+  // The no-reviewers-configured floor (#34/#43): an ARMED flow makes the reduced record set an
+  // OBLIGATION for the solo class — every in-flight plan covered by an adopted chain AND
+  // internally attested at the current tree; a standing current-tree veto still blocks (#48),
+  // whatever the recipe consults, so a recipe flip to solo can never bury one.
+  if (state.obligations.recipe === 'solo') {
+    if (state.receiptsReadError != null) {
+      return { code: 1, reason: `the receipts store is unreadable (${state.receiptsReadError}) — "no standing veto" cannot be established, so the internal-only floor fails closed; inspect ${state.receiptsPath}${earlyNotes}` };
+    }
+    const standing = state.soloVetoRows.filter((b) => (b.state === 'current' && !b.shipClass && !b.overrideLabel) || b.state === 'unrecognized-verdict');
+    if (standing.length > 0) {
+      return { code: 1, reason: `${standing.map((b) => backendFailurePart(b, state)).join('; ')} — a standing veto blocks the internal-only floor (#48)${earlyNotes}` };
+    }
+    const uncovered = state.planCoverage.filter((p) => !p.covered);
+    if (uncovered.length > 0) {
+      return { code: 1, reason: `internal-only arming refused (#68): ${uncovered.map((p) => `plan ${quoteReportName(p.plan)} — ${p.reason}`).join('; ')} — an uncovered in-flight plan is a refusal, never a relaxation${earlyNotes}` };
+    }
+    const missing = state.planCoverage.filter((p) => !state.attestedPlanIds.includes(p.planId));
+    if (missing.length > 0) {
+      return { code: 1, reason: `internal-only floor: no internal-attestation record at the current tree for plan(s) ${missing.map((p) => quoteReportName(p.plan)).join(', ')} — the reduced record set (#34/#43) requires one per covered plan (minting rides the Plan-4 round machinery)${earlyNotes}` };
+    }
+    const floorLabels = [
+      ...state.soloVetoRows.filter((b) => b.deltaLift != null).map((b) => `${b.backend}: receipt lifted to CURRENT through an unbroken bookkeeping-delta chain (${b.deltaLift} link(s), #61)`),
+      ...state.soloVetoRows.filter((b) => b.overrideLabel).map((b) => b.overrideLabel),
+      'internal-only (downgraded class)',
+    ];
+    const liftedTail = floorLabels.length > 1 ? ` — ${floorLabels.slice(0, -1).join('; ')}` : '';
+    return {
+      code: 0,
+      reason: `internal-only floor satisfied (DOWNGRADED class, #28/#43): the solo recipe under an ARMED flow consumes the reduced record set — every in-flight plan (${state.planCoverage.map((p) => quoteReportName(p.plan)).join(', ')}) is covered by an adopted chain and internally attested at the current tree; self-authored review, disclosed${liftedTail}${earlyNotes}`,
+      flowLabels: floorLabels,
+    };
+  }
   const exempt = new Set(state.degradedExempt);
   const satisfied = state.backends.filter((b) => b.state === 'current' && b.shipClass);
-  const vetoed = state.backends.filter((b) => b.state === 'current' && !b.shipClass);
+  const vetoed = state.backends.filter((b) => b.state === 'current' && !b.shipClass && !b.overrideLabel);
+  const overridden = state.backends.filter((b) => b.state === 'current' && !b.shipClass && b.overrideLabel);
   // The marker note is PATH-AWARE (no silent rejections on any exit): it counts every backend's
   // untrusted-marker exclusions EXCEPT those whose printed part already names them — i.e. only a
   // PRINTED `rejected` row (backendFailurePart's rejectionCause) suppresses its own counts; a
@@ -452,36 +587,50 @@ export const decideCheck = (state) => {
   if (unconditional.length > 0) {
     return { code: 1, reason: `${unconditional.map((b) => backendFailurePart(b, state)).join('; ')}${notesFor(new Set(unconditional.map((b) => b.backend)))}` };
   }
+  // The armed-flow PASS labels (#61/#38): the delta-lift and override facts ride every PASS reason
+  // and the flowLabels field the commit-guard PASS line consumes. Empty (and absent) unarmed.
+  const flowNotes = [
+    ...state.backends.filter((b) => b.deltaLift != null)
+      .map((b) => `${b.backend}: receipt lifted to CURRENT through an unbroken bookkeeping-delta chain (${b.deltaLift} link(s), #61)`),
+    ...overridden.map((b) => b.overrideLabel),
+  ];
+  const flowSuffix = flowNotes.length > 0 ? ` — ${flowNotes.join('; ')}` : '';
+  const pass = (reason) => (state.flowArmed ? { code: 0, reason, flowLabels: flowNotes } : { code: 0, reason });
+  const perBackendFailing = state.backends.filter((b) => !(b.state === 'current' && b.shipClass) && !exempt.has(b.backend) && !b.overrideLabel);
   // Never all degraded: >=1 ship-class attestation whenever >=1 backend is configured. An
   // already-exempt backend renders its own honest part — never the "record an explicit degrade"
   // recovery it has already taken.
   if (satisfied.length < state.obligations.minShip) {
-    const failing = state.backends.filter((b) => !(b.state === 'current' && b.shipClass));
+    const failing = state.backends.filter((b) => !(b.state === 'current' && b.shipClass) && !b.overrideLabel);
     const allExempt = failing.length > 0 && failing.every((b) => exempt.has(b.backend));
-    const head = allExempt
-      ? `every configured backend is degrade-recorded for this tree — never all degraded: >=1 non-degraded ship-class attestation is required; run at least one real review`
-      : failing
-          .map((b) => (exempt.has(b.backend)
-            ? `${b.backend}: degrade-recorded for this tree — a degrade never counts toward the >=1 ship-class floor; run a real review on another backend`
-            : backendFailurePart(b, state)))
-          .join('; ');
+    const head = failing.length === 0
+      ? 'every configured backend is veto-overridden for this tree — >=1 non-overridden ship-class attestation is required; run at least one real review'
+      : allExempt
+        ? `every configured backend is ${overridden.length > 0 ? 'degrade-recorded or veto-overridden' : 'degrade-recorded'} for this tree — never all degraded: >=1 ${overridden.length > 0 ? 'non-degraded, non-overridden' : 'non-degraded'} ship-class attestation is required; run at least one real review`
+        : failing
+            .map((b) => (exempt.has(b.backend)
+              ? `${b.backend}: degrade-recorded for this tree — a degrade never counts toward the >=1 ship-class floor; run a real review on another backend`
+              : backendFailurePart(b, state)))
+            .join('; ');
     // Only backends that actually rendered their backendFailurePart suppress their counts — an
     // exempt row prints the degrade string (no rejectionCause), so its exclusions stay named.
     return { code: 1, reason: `${head}${notesFor(new Set(failing.filter((b) => !exempt.has(b.backend)).map((b) => b.backend)))}` };
   }
   if (state.obligations.perBackend) {
-    // Council: EVERY configured backend must attest ship-class OR carry a current-tree degrade record.
-    const failing = state.backends.filter((b) => !(b.state === 'current' && b.shipClass) && !exempt.has(b.backend));
-    if (failing.length > 0) {
-      return { code: 1, reason: `${failing.map((b) => backendFailurePart(b, state)).join('; ')}${notesFor(new Set(failing.map((b) => b.backend)))}` };
+    // Council: EVERY configured backend must attest ship-class OR carry a current-tree degrade
+    // record OR a lifted maintainer-override.
+    if (perBackendFailing.length > 0) {
+      return { code: 1, reason: `${perBackendFailing.map((b) => backendFailurePart(b, state)).join('; ')}${notesFor(new Set(perBackendFailing.map((b) => b.backend)))}` };
     }
-    if (exempt.size === 0) {
-      return { code: 0, reason: `every configured backend attests ship-class for the current tree (${state.requiredBackends.join(' + ')})${notesFor(NONE_PRINTED)}` };
+    if (exempt.size === 0 && overridden.length === 0) {
+      return pass(`every configured backend attests ship-class for the current tree (${state.requiredBackends.join(' + ')})${flowSuffix}${notesFor(NONE_PRINTED)}`);
     }
-    return { code: 0, reason: `council satisfied: ship-class attestation(s) from ${satisfied.map((b) => b.backend).join(' + ')}; degrade-recorded for this tree: ${[...exempt].join(', ')}${notesFor(NONE_PRINTED)}` };
+    const clauses = [`council satisfied: ship-class attestation(s) from ${satisfied.map((b) => b.backend).join(' + ')}`];
+    if (exempt.size > 0) clauses.push(`degrade-recorded for this tree: ${[...exempt].join(', ')}`);
+    return pass(`${clauses.join('; ')}${flowSuffix}${notesFor(NONE_PRINTED)}`);
   }
   // Reviewed: >=1 ship-class attestation from any review-capable backend satisfies.
-  return { code: 0, reason: `reviewed satisfied: ship-class attestation from ${satisfied.map((b) => b.backend).join(' + ')} for the current tree${notesFor(NONE_PRINTED)}` };
+  return pass(`reviewed satisfied: ship-class attestation from ${satisfied.map((b) => b.backend).join(' + ')} for the current tree${flowSuffix}${notesFor(NONE_PRINTED)}`);
 };
 
 // ── rendering ───────────────────────────────────────────────────────────────────────
@@ -524,10 +673,12 @@ const formatHuman = (state, check) => {
     const excludedTag = b.probeExcluded || b.markerRejected || b.unmarkedRejected
       ? ` [excluded: ${b.probeExcluded} probe, ${b.markerRejected} malformed-marker, ${b.unmarkedRejected} unmarked]`
       : '';
+    const liftTag = b.deltaLift != null ? ` — lifted to CURRENT through ${b.deltaLift} bookkeeping-delta link(s) (#61)` : '';
+    const overrideTag = b.overrideLabel ? ` — ${b.overrideLabel}` : '';
     // ⊘ only where the escape actually applies: a PRODUCED receipt outranks the record — a
-    // negative/unknown verdict keeps its ✗ (the degrade lifts neither).
-    const escapeApplies = exempt.has(b.backend) && b.state !== 'current' && b.state !== 'unrecognized-verdict';
-    lines.push(`    ${escapeApplies ? '⊘' : glyphFor(b)} ${b.backend}: ${detail}${excludedTag}${exemptTag}`);
+    // negative/unknown verdict keeps its ✗ (a degrade lifts neither; a maintainer-override does).
+    const escapeApplies = (exempt.has(b.backend) && b.state !== 'current' && b.state !== 'unrecognized-verdict') || Boolean(b.overrideLabel);
+    lines.push(`    ${escapeApplies ? '⊘' : glyphFor(b)} ${b.backend}: ${detail}${liftTag}${overrideTag}${excludedTag}${exemptTag}`);
   }
   lines.push(`  check: ${check.code === 0 ? 'PASS' : 'FAIL'} — ${check.reason}`);
   return lines.join('\n');
@@ -556,6 +707,12 @@ not-a-git-tree / obligations satisfied (reviewed: >=1 ship-class attestation;
 council: every backend ship-class or degrade-recorded, >=1 real ship); 1 on a veto, an
 unrecognized verdict, a missing/stale/ungrounded/probe-only backend without a degrade record,
 an all-degraded tree, or a down detector with no configured recipe.
+Under an ARMED flow store (flow-orchestration Plan 3): a stale receipt can lift to CURRENT
+through an unbroken bookkeeping-delta chain (#61), a maintainer-override can lift a standing
+veto (#38/#56), and the SOLO obligations class gains the reduced internal-only floor as an
+OBLIGATION (covered + internally attested plans; a standing veto still blocks, #43/#68/#48) —
+each labeled in the check reason; a present-but-malformed flow store fails the dirty-tree
+check closed; no store file means byte-identical pre-flow behavior.
 Declare it as a project gate by hand (docs/ai/gates.json) or via the
 explicit-consent init preview (tools/gates-init.mjs) — never without consent.
 
@@ -576,7 +733,7 @@ export const main = (argv, ctx = {}) => {
     if (argv.includes('--help') || argv.includes('-h')) return { code: 0, stdout: HELP, stderr: '' };
     const unknown = argv.find((a) => !KNOWN_ARGS.has(a));
     if (unknown !== undefined) throw fail(2, `unknown argument: ${unknown}`);
-    const state = buildState({ cwd, env, detect, lstat: ctx.lstat });
+    const state = buildState({ cwd, env, detect, lstat: ctx.lstat, readFile: ctx.readFile });
     const check = decideCheck(state);
     // The mask advisory is NON-FAILING by contract: one notice line, never an exit-code arm.
     const advisory = maskAdvisoryLine(state);

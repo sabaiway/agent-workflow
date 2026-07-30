@@ -1300,3 +1300,380 @@ describe('review-state --check — a clean tree still reports the plan inventory
     assert.doesNotMatch(r.stdout, /arms as soon as the tree is dirty/, 'the forward notice belongs to the clean branch only — the gate has already armed');
   });
 });
+
+// ── Phase 2 (flow Plan 3): the gated flow arms (#43/#68/#61/#48, P3/P13/P19) ──
+// Static imports (hoisted): a late top-level await here would let a filtered run drain the root
+// suite — and its template-removing after() hook — before this block even registers.
+import { buildState, computePlanAdoptionCoverage } from './review-state.mjs';
+import { resolveFlowStorePath } from './flow-store.mjs';
+import { FLOW_SCHEMA_VERSION, canonicalFlowDigest } from './flow-record.mjs';
+import { resolveBase } from './core-evidence.mjs';
+import { createHash } from 'node:crypto';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const fingerprintOf = computeTreeFingerprint;
+
+describe('review-state — Phase-2 flow arms (two-tier activation + the three gated arms)', () => {
+  const FLOW_TS = '2026-07-30T00:00:00.000Z';
+  const FLOW_TS_2 = '2026-07-30T00:00:01.000Z';
+  const flowStoreAt = (root) => resolveFlowStorePath(root, {});
+  const writeFlowStore = (root, records) =>
+    writeFileSync(flowStoreAt(root), records.map((r) => `${JSON.stringify(r)}\n`).join(''));
+  const flowAdoption = (over = {}) => ({
+    schema: FLOW_SCHEMA_VERSION, kind: 'chain', purpose: 'adoption', planId: 'plan-x', cycle: 1, round: 0,
+    commitEpoch: 0, owner: 'main', base: null, timestamp: FLOW_TS, stepId: null, fingerprint: 'a1'.repeat(32),
+    planLabel: 'Plan X', createdAt: FLOW_TS, planDigest: 'b2'.repeat(32), ...over,
+  });
+  const attestationAt = (root, planId, over = {}) => ({
+    schema: FLOW_SCHEMA_VERSION, kind: 'internal-attestation', fingerprint: fingerprintOf(root), planId,
+    stepId: 's1', cycle: 1, round: 1, lenses: ['correctness'], degraded: [],
+    posture: { model: 'frontier', effort: null, tier: null }, authority: 'orchestrator',
+    base: resolveBase(root), timestamp: FLOW_TS, ...over,
+  });
+  const PLAN_WITH_ID = '---\nplanId: plan-x\n---\n# active plan\n';
+  const digestOf = (text) => createHash('sha256').update(Buffer.from(text)).digest('hex');
+  const planPath = (root) => join(root, 'docs', 'plans', 'active-plan.md');
+  const TOOLS_DIR = dirname(fileURLToPath(import.meta.url));
+  const degradeHint = (backend) =>
+    `${backend}: no receipt — run its review wrapper, or record an explicit degrade (node ${join(TOOLS_DIR, 'core-evidence.mjs')} degrade --backend ${backend} --reason "...")`;
+
+  it('characterization: the unarmed council missing-receipts refusal is byte-exact', () => {
+    const { root } = makeRepo();
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.equal(r.stdout, `review-state check: FAIL — ${degradeHint('codex')}; ${degradeHint('agy')}`);
+  });
+
+  it('characterization: the unarmed council PASS reason is byte-exact', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    mint(root, { backend: 'agy', fingerprint: fp });
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stdout);
+    assert.equal(r.stdout, 'review-state check: PASS — every configured backend attests ship-class for the current tree (codex + agy)');
+  });
+
+  it('characterization: the unarmed veto refusal is byte-exact', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'agy', fingerprint: fp });
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'revise' });
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.equal(r.stdout, 'review-state check: FAIL — codex: latest recognized verdict is "revise" — a recognized negative is an authoritative veto; fold and re-review');
+  });
+
+  it('a present-valid-UNADOPTED store changes nothing — the PASS stays byte-exact (t2)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    mint(root, { backend: 'agy', fingerprint: fp });
+    writeFileSync(flowStoreAt(root), '');
+    const empty = check(root);
+    assert.equal(empty.code, 0, empty.stdout);
+    assert.equal(empty.stdout, 'review-state check: PASS — every configured backend attests ship-class for the current tree (codex + agy)');
+    writeFlowStore(root, [{ schema: FLOW_SCHEMA_VERSION, kind: 'down-mark', fingerprint: 'a1'.repeat(32), backend: 'agy', reason: 'quota stall', expiresAt: '2026-07-30T01:00:00.000Z', base: null, timestamp: FLOW_TS }]);
+    const unadopted = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(unadopted.code, 0, unadopted.stdout);
+    assert.equal(unadopted.stdout, 'review-state check: PASS — every configured backend attests ship-class for the current tree (codex + agy)');
+  });
+
+  it('a present-but-MALFORMED flow store refuses fail-closed even when receipts satisfy (t1)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    mint(root, { backend: 'agy', fingerprint: fp });
+    writeFileSync(flowStoreAt(root), 'junk line\n');
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, r.stdout);
+    assert.match(r.stdout, /flow store/);
+  });
+
+  it('internal-only floor: armed + covered plan + internal-attestation at the current tree PASSES with the downgraded-class label', () => {
+    const { root } = makeRepo({ config: SOLO_CONFIG });
+    writeFileSync(planPath(root), PLAN_WITH_ID);
+    writeFlowStore(root, [
+      flowAdoption({ planDigest: digestOf(PLAN_WITH_ID) }),
+      attestationAt(root, 'plan-x'),
+    ]);
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stdout);
+    assert.match(r.stdout, /internal-only/);
+    assert.match(r.stdout, /downgraded/i);
+  });
+
+  it('internal-only floor: an UNCOVERED in-flight plan is a refusal, never a relaxation (#68)', () => {
+    const { root } = makeRepo({ config: SOLO_CONFIG });
+    writeFlowStore(root, [flowAdoption({ planId: 'plan-other' }), attestationAt(root, 'plan-other')]);
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, r.stdout);
+    assert.match(r.stdout, /active-plan\.md/);
+    assert.match(r.stdout, /planId/);
+  });
+
+  it('internal-only floor: a plan EDITED after adoption refuses by name (P19 digest mismatch)', () => {
+    const { root } = makeRepo({ config: SOLO_CONFIG });
+    writeFileSync(planPath(root), PLAN_WITH_ID);
+    writeFlowStore(root, [flowAdoption({ planDigest: digestOf(PLAN_WITH_ID) }), attestationAt(root, 'plan-x')]);
+    writeFileSync(planPath(root), `${PLAN_WITH_ID}\nedited after adoption\n`);
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, r.stdout);
+    assert.match(r.stdout, /edited after adoption|no longer matches/);
+  });
+
+  it('internal-only floor: a FOREIGN-OWNER adoption refuses internal-only arming (P19)', () => {
+    const { root } = makeRepo({ config: SOLO_CONFIG });
+    writeFileSync(planPath(root), PLAN_WITH_ID);
+    writeFlowStore(root, [
+      flowAdoption({ owner: 'worktree:elsewhere', planDigest: digestOf(PLAN_WITH_ID) }),
+      attestationAt(root, 'plan-x'),
+    ]);
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, r.stdout);
+    assert.match(r.stdout, /foreign-owner|owned by "worktree:elsewhere"/);
+  });
+
+  it('internal-only floor: covered but NO internal-attestation at the current tree refuses by name', () => {
+    const { root } = makeRepo({ config: SOLO_CONFIG });
+    writeFileSync(planPath(root), PLAN_WITH_ID);
+    writeFlowStore(root, [flowAdoption({ planDigest: digestOf(PLAN_WITH_ID) })]);
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, r.stdout);
+    assert.match(r.stdout, /internal-attestation/);
+  });
+
+  it('the internal-only branch is evaluated only when no unconditional veto stands (#48)', () => {
+    const { root } = makeRepo({ config: SOLO_CONFIG });
+    writeFileSync(planPath(root), PLAN_WITH_ID);
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'revise' });
+    writeFlowStore(root, [flowAdoption({ planDigest: digestOf(PLAN_WITH_ID) }), attestationAt(root, 'plan-x')]);
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'a standing current-tree veto blocks the floor even though solo consults no receipts (#48)');
+    assert.match(r.stdout, /blocks the internal-only floor/);
+  });
+
+  it('the solo class hits tier-1 too — a present-but-MALFORMED store refuses the dirty-tree check under solo', () => {
+    const { root } = makeRepo({ config: SOLO_CONFIG });
+    writeFileSync(planPath(root), PLAN_WITH_ID);
+    writeFileSync(flowStoreAt(root), 'junk line\n');
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, r.stdout);
+    assert.match(r.stdout, /flow store/);
+  });
+
+  it('the floor fails closed on an UNREADABLE receipts store — "no standing veto" cannot be established', () => {
+    const { root } = makeRepo({ config: SOLO_CONFIG });
+    writeFileSync(planPath(root), PLAN_WITH_ID);
+    mkdirSync(join(root, '.git', RECEIPTS_BASENAME), { recursive: true });
+    writeFlowStore(root, [flowAdoption({ planDigest: digestOf(PLAN_WITH_ID) }), attestationAt(root, 'plan-x')]);
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, r.stdout);
+    assert.match(r.stdout, /no standing veto|receipts store/i);
+  });
+
+  it('the minShip head names BOTH escape classes when overridden vetoes mix with degrade-recorded backends', () => {
+    const { root } = makeRepo();
+    writeFileSync(planPath(root), PLAN_WITH_ID);
+    const fp = computeTreeFingerprint(root);
+    const base = resolveBase(root);
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'revise' });
+    const vetoReceipt = JSON.parse(receiptLine({ backend: 'codex', fingerprint: fp, verdict: 'revise' }));
+    const first = flowAdoption({ base });
+    const o = {
+      schema: FLOW_SCHEMA_VERSION, kind: 'maintainer-override', fingerprint: fp,
+      vetoReceiptDigest: canonicalFlowDigest(vetoReceipt), backend: 'codex', verdict: 'revise',
+      chainRecord: canonicalFlowDigest(first), supersedes: null, base, timestamp: FLOW_TS,
+    };
+    writeFlowStore(root, [first, o]);
+    const degradeTool = join(TOOLS_DIR, 'core-evidence.mjs');
+    const seeded = spawnSync(process.execPath, [degradeTool, 'degrade', '--backend', 'agy', '--reason', 'quota', '--cwd', root], { encoding: 'utf8' });
+    assert.equal(seeded.status, 0, seeded.stderr);
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'an override lifts a veto but never manufactures the >=1 ship attestation');
+    assert.match(r.stdout, /degrade-recorded or veto-overridden/);
+  });
+
+  it('a CONFIGURED council never takes the reduced floor — an attestation is no substitute for its obligations', () => {
+    const { root } = makeRepo();
+    writeFileSync(planPath(root), PLAN_WITH_ID);
+    writeFlowStore(root, [flowAdoption({ planDigest: digestOf(PLAN_WITH_ID) }), attestationAt(root, 'plan-x')]);
+    const r = check(root, { codex: NEEDS_SKILL, agy: NEEDS_SKILL });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'the configured council keeps the degrade-record bar — no silent weakening');
+    assert.match(r.stdout, /degrade/);
+    assert.doesNotMatch(r.stdout, /internal-only floor satisfied/);
+  });
+
+  it('a veto lifted by a maintainer-override PASSES the floor carrying BOTH labels (the combined path)', () => {
+    const { root } = makeRepo({ config: SOLO_CONFIG });
+    writeFileSync(planPath(root), PLAN_WITH_ID);
+    const fp = computeTreeFingerprint(root);
+    const base = resolveBase(root);
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'revise' });
+    const vetoReceipt = JSON.parse(receiptLine({ backend: 'codex', fingerprint: fp, verdict: 'revise' }));
+    const first = flowAdoption({ base, planDigest: digestOf(PLAN_WITH_ID) });
+    const o = {
+      schema: FLOW_SCHEMA_VERSION, kind: 'maintainer-override', fingerprint: fp,
+      vetoReceiptDigest: canonicalFlowDigest(vetoReceipt), backend: 'codex', verdict: 'revise',
+      chainRecord: canonicalFlowDigest(first), supersedes: null, base, timestamp: FLOW_TS,
+    };
+    writeFlowStore(root, [first, o, attestationAt(root, 'plan-x')]);
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stdout);
+    assert.match(r.stdout, /veto lifted by maintainer-override/);
+    assert.match(r.stdout, /internal-only/);
+  });
+
+  it('delta-chain arm: an unbroken declared-path chain lifts a stale SHIP receipt to CURRENT with the #61 label', () => {
+    const flowBlock = { schema: 1, councilRounds: 3, debtQueue: 'docs/notes.md', convergenceSummary: 'docs/summary.md' };
+    const { root } = makeRepo({ config: JSON.stringify({ 'plan-execution': { review: 'council' }, flow: flowBlock }) });
+    const fp0 = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp0 });
+    mint(root, { backend: 'agy', fingerprint: fp0 });
+    writeFileSync(join(root, 'docs', 'notes.md'), 'queued: the R7 minor\n');
+    const fp1 = computeTreeFingerprint(root);
+    const first = flowAdoption();
+    const theDelta = {
+      schema: FLOW_SCHEMA_VERSION, kind: 'bookkeeping-delta', fingerprintBefore: fp0, fingerprintAfter: fp1,
+      path: 'docs/notes.md', contentDigest: 'cd'.repeat(32),
+      custodyProof: { preClass: 'absent', tracked: false, headDigest: null, indexDigest: null, worktreeDigest: null, maskedFingerprint: fp0 },
+      base: null, timestamp: FLOW_TS,
+    };
+    const reattest = {
+      schema: FLOW_SCHEMA_VERSION, kind: 'chain', purpose: 'refresh', planId: 'plan-x', cycle: 1, round: 1,
+      commitEpoch: 0, owner: 'main', base: null, timestamp: FLOW_TS_2, stepId: 's1',
+      fingerprintBefore: fp1, fingerprintAfter: fp1, cause: 'bookkeeping re-attestation',
+      refreshedRecord: canonicalFlowDigest(theDelta),
+    };
+    writeFlowStore(root, [first, theDelta, reattest]);
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stdout);
+    assert.match(r.stdout, /lifted to CURRENT/);
+    assert.match(r.stdout, /#61/);
+  });
+
+  it('delta-chain arm: a BROKEN chain never lifts — the stale refusal stands (fail closed)', () => {
+    const flowBlock = { schema: 1, councilRounds: 3, debtQueue: 'docs/notes.md', convergenceSummary: 'docs/summary.md' };
+    const { root } = makeRepo({ config: JSON.stringify({ 'plan-execution': { review: 'council' }, flow: flowBlock }) });
+    const fp0 = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp0 });
+    mint(root, { backend: 'agy', fingerprint: fp0 });
+    writeFileSync(join(root, 'docs', 'notes.md'), 'queued: the R7 minor\n');
+    writeFlowStore(root, [flowAdoption()]);
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'no delta chain, no lift');
+    assert.match(r.stdout, /edited after review/);
+  });
+
+  it('override consumption: a valid maintainer-override lifts the veto — PASS carries the durable label in the check reason AND the human report', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    const base = resolveBase(root);
+    mint(root, { backend: 'agy', fingerprint: fp });
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'revise' });
+    const vetoReceipt = JSON.parse(receiptLine({ backend: 'codex', fingerprint: fp, verdict: 'revise' }));
+    const first = flowAdoption({ base });
+    const o = {
+      schema: FLOW_SCHEMA_VERSION, kind: 'maintainer-override', fingerprint: fp,
+      vetoReceiptDigest: canonicalFlowDigest(vetoReceipt), backend: 'codex', verdict: 'revise',
+      chainRecord: canonicalFlowDigest(first), supersedes: null, base, timestamp: FLOW_TS,
+    };
+    writeFlowStore(root, [first, o]);
+    const checked = check(root);
+    const human = main([], { cwd: root, env: {}, detect: detect(READY, READY) });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(checked.code, 0, checked.stdout);
+    assert.match(checked.stdout, /veto lifted by maintainer-override/);
+    assert.match(human.stdout, /veto lifted by maintainer-override/);
+  });
+
+  it('override consumption: a bound-set mismatch never lifts — the veto stands (pin)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    const base = resolveBase(root);
+    mint(root, { backend: 'agy', fingerprint: fp });
+    mint(root, { backend: 'codex', fingerprint: fp, verdict: 'revise' });
+    const vetoReceipt = JSON.parse(receiptLine({ backend: 'codex', fingerprint: fp, verdict: 'revise' }));
+    const first = flowAdoption({ base });
+    const o = {
+      schema: FLOW_SCHEMA_VERSION, kind: 'maintainer-override', fingerprint: fp,
+      vetoReceiptDigest: canonicalFlowDigest(vetoReceipt), backend: 'codex', verdict: 'rework',
+      chainRecord: canonicalFlowDigest(first), supersedes: null, base, timestamp: FLOW_TS,
+    };
+    writeFlowStore(root, [first, o]);
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'a mismatched override never lifts');
+    assert.match(r.stdout, /authoritative veto/);
+  });
+
+  it('the coverage map reads each plan file ONCE and never on the unarmed fast path (P13/P19)', () => {
+    const { root } = makeRepo();
+    writeFileSync(planPath(root), PLAN_WITH_ID);
+    const reads = [];
+    const readFile = (p, ...rest) => {
+      reads.push(String(p));
+      return readFileSync(p, ...rest);
+    };
+    buildState({ cwd: root, env: {}, detect: detect(READY, READY), readFile });
+    assert.deepEqual(reads.filter((p) => p.includes('active-plan')), [], 'no store — the fast path reads no plan file');
+    writeFlowStore(root, [flowAdoption({ planDigest: digestOf(PLAN_WITH_ID) })]);
+    const armed = buildState({ cwd: root, env: {}, detect: detect(READY, READY), readFile });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(reads.filter((p) => p.includes('active-plan')).length, 1, 'armed — exactly one bounded read per plan');
+    assert.equal(armed.planCoverage.length, 1);
+    assert.equal(armed.planCoverage[0].covered, true);
+    assert.equal(armed.planCoverage[0].planId, 'plan-x');
+  });
+
+  it('computePlanAdoptionCoverage names each uncovered class: no planId · no adoption · digest mismatch · foreign owner', () => {
+    const records = [flowAdoption({ planDigest: digestOf(PLAN_WITH_ID) }), flowAdoption({ planId: 'plan-f', owner: 'worktree:elsewhere', planDigest: digestOf('---\nplanId: plan-f\n---\n') })];
+    const files = {
+      'no-id.md': '# no frontmatter\n',
+      'no-adoption.md': '---\nplanId: plan-missing\n---\n',
+      'edited.md': `${PLAN_WITH_ID}tail\n`,
+      'foreign.md': '---\nplanId: plan-f\n---\n',
+    };
+    const coverage = computePlanAdoptionCoverage({
+      root: '/fixture',
+      plans: [...Object.keys(files), 'ghost.md'].sort(),
+      records,
+      owner: 'main',
+      readFile: (p) => {
+        const name = Object.keys(files).find((n) => String(p).endsWith(n));
+        if (name === undefined) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+        return Buffer.from(files[name]);
+      },
+    });
+    const byPlan = Object.fromEntries(coverage.map((c) => [c.plan, c]));
+    assert.equal(byPlan['no-id.md'].covered, false);
+    assert.match(byPlan['no-id.md'].reason, /planId/);
+    assert.equal(byPlan['no-adoption.md'].covered, false);
+    assert.match(byPlan['no-adoption.md'].reason, /no adoption/);
+    assert.equal(byPlan['edited.md'].covered, false);
+    assert.match(byPlan['edited.md'].reason, /edited after adoption|no longer matches/);
+    assert.equal(byPlan['foreign.md'].covered, false);
+    assert.match(byPlan['foreign.md'].reason, /foreign|owned by/);
+    assert.equal(byPlan['ghost.md'].covered, false, 'an unreadable plan file is uncovered, never skipped');
+    assert.match(byPlan['ghost.md'].reason, /unreadable/);
+  });
+});
