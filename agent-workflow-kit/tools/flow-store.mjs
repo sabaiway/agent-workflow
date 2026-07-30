@@ -10,19 +10,26 @@
 // validation, malformed-store refusal, replay refusal, chain-sequence and supersession legality) —
 // an illegal record never lands.
 //
+// Phase 3 adds the mint primitives that need the tree: the adoption mint (frontmatter planId +
+// plan content digest, #58), the canonical owning-worktree identity (#49), the generic reference
+// validator + prior-terminal resolution in the append preflight (#63), and the bookkeeping-delta
+// custody proof (masked revert-and-recompute, #60).
+//
 // Declared residuals no dependency-free core-Node mechanism can close: the pathname lstat→rename
 // and reread→rename windows (no flock/fcntl, no inode-conditional unlink or rename) and bind-mount
-// aliasing. Plan-3 scope lives with flow-check: store-level reference resolution, mint primitives,
-// decideCheck arms, whole-store health. Records remain forgeable — a self-discipline mechanism in
+// aliasing. Plan-3 scope lives with flow-check composition: decideCheck arms, guard/gates wiring,
+// the park/resume/complete writer CLI. Records remain forgeable — a self-discipline mechanism in
 // the git dir, not a security boundary.
 
-import { readFileSync, writeFileSync, writeSync, readSync, rmSync, lstatSync, realpathSync, openSync, closeSync, fstatSync, renameSync, constants as fsConstants } from 'node:fs';
-import { join, dirname, basename, isAbsolute, normalize, sep } from 'node:path';
+import { createHash } from 'node:crypto';
+import { readFileSync, writeFileSync, writeSync, readSync, rmSync, lstatSync, realpathSync, openSync, closeSync, fstatSync, renameSync, readlinkSync, constants as fsConstants } from 'node:fs';
+import { join, dirname, basename, isAbsolute, normalize, resolve, sep } from 'node:path';
 import { hostname } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { writeContainedFileAtomic, lstatNoFollow } from './atomic-write.mjs';
 import { parsePositiveIntKnob } from './changed-surface.mjs';
-import { CHAIN_KIND, validateFlowRecord, validateChainSequence, validateSupersessions, authoritativeFlowRecords } from './flow-record.mjs';
+import { FLOW_SCHEMA_VERSION, CHAIN_KIND, validateFlowRecord, validateChainSequence, validateSupersessions, authoritativeFlowRecords, canonicalFlowDigest } from './flow-record.mjs';
+import { isNeverCommittableStat, isBinaryFile, lexicalRepoRelative, resolveBase, computeTreeFingerprint } from './core-evidence.mjs';
 
 export const FLOW_STORE_STOP = 'FLOW_STORE_STOP';
 const stop = (message) => Object.assign(new Error(`[agent-workflow-kit] ${message}`), { name: 'FlowStoreStop', code: FLOW_STORE_STOP });
@@ -35,11 +42,16 @@ export const FLOW_LOCK_WAIT_MS = 10_000;
 export const FLOW_LOCK_POLL_MS = 100;
 
 const GIT_MAX_BUFFER = 256 * 1024 * 1024;
-const gitLine = (args, cwd) => {
+const gitBuf = (args, cwd) => {
   const r = spawnSync('git', args, { cwd, maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
   if (r.error || r.status !== 0) return null;
-  return r.stdout.toString('utf8').replace(/\r?\n$/, '');
+  return r.stdout;
 };
+const gitLine = (args, cwd) => {
+  const buf = gitBuf(args, cwd);
+  return buf == null ? null : buf.toString('utf8').replace(/\r?\n$/, '');
+};
+const sha256Hex = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
 // ── path resolution (common dir + the AW_FLOW_STORE producer seam) ────────────────────────────────
 
@@ -461,6 +473,21 @@ const appendUnderLock = ({ storePath, line, snapshot, deps }) => {
       if (!candidateSeq.ok) {
         throw stop(`refusing an illegal chain record: ${candidateSeq.reason} — the append-only store never absorbs a record that permanently reddens the checker; nothing was written`);
       }
+      // Reference RESOLUTION (#63) on top of the structural half above: a step-OPENING round must
+      // digest-reference the chain's prior terminal; a round REVISION re-states its reference
+      // byte-bound (validateRoundRevision), so it is never re-classified against a moved terminal.
+      if (snapshot.purpose === 'round' && snapshot.opensFrom !== null && walkChainState(chain).mode === 'boundary') {
+        const ref = validateOpenerReference(parsed.records, snapshot);
+        if (!ref.ok) throw stop(`refusing a step-opening round: ${ref.reason} — nothing was written`);
+      }
+      if (snapshot.purpose === 'refresh') {
+        if (resolveRecordReference(parsed.records, snapshot.refreshedRecord) === undefined) {
+          throw stop(`refusing a refresh whose refreshedRecord does not match the store (no record digests to ${snapshot.refreshedRecord.slice(0, 12)}…) — a re-attestation binds an existing record; nothing was written`);
+        }
+        if (!isAuthoritativeReferenceTarget(parsed.records, snapshot.refreshedRecord)) {
+          throw stop('refusing a refresh whose refreshedRecord targets a superseded record — a re-attestation binds the authoritative latest record of its key; nothing was written');
+        }
+      }
     }
     const existingSup = validateSupersessions(parsed.records);
     if (!existingSup.ok) {
@@ -519,5 +546,434 @@ const appendUnderLock = ({ storePath, line, snapshot, deps }) => {
   } finally {
     if (snapshotFd !== null) { try { closeSync(snapshotFd); } catch { /* the failure above stays primary */ } }
   }
+};
+
+// ── chain-state walk + the generic reference validator (#63) ──────────────────────────────────────
+
+const TERMINAL_PURPOSES = ['adoption', 'converged', 'complete'];
+const HEX64_RE = /^[0-9a-f]{64}$/;
+
+// The record a step-opening round must reference: the latest converged/complete, else the adoption
+// record itself (the plan's first step — the exemption is explicit, never inferred).
+export const priorChainTerminal = (chain) => {
+  let terminal = null;
+  for (const r of chain) {
+    if (r.purpose === 'adoption' && terminal === null) terminal = r;
+    else if (r.purpose === 'converged' || r.purpose === 'complete') terminal = r;
+  }
+  return terminal;
+};
+
+// walkChainState(chain) → { mode, parked, completed, cycle, round, stepId, openers, lastTerminal }
+// over ONE plan's raw-order chain. Legality lives in validateChainSequence — callers run it first;
+// this walk only derives state, including each opener with its at-that-point prior terminal.
+export const walkChainState = (chain) => {
+  const state = {
+    mode: 'boundary', parked: false, completed: false,
+    cycle: chain[0]?.cycle ?? null, round: chain[0]?.round ?? null, stepId: null,
+    openers: [], lastTerminal: null,
+  };
+  for (const r of chain) {
+    state.cycle = r.cycle;
+    if (r.purpose === 'adoption') { state.lastTerminal = r; state.round = r.round; continue; }
+    if (r.purpose === 'park') { state.parked = true; continue; }
+    if (r.purpose === 'resume') { state.parked = false; continue; }
+    if (r.purpose === 'complete') { state.completed = true; state.lastTerminal = r; continue; }
+    if (r.purpose === 'converged') { state.mode = 'boundary'; state.lastTerminal = r; state.stepId = null; continue; }
+    if (r.purpose === 'unfreeze' && state.mode === 'boundary') { state.mode = 'in-step'; state.stepId = r.stepId; state.round = r.round; continue; }
+    if (r.purpose === 'round') {
+      if (state.mode === 'boundary') {
+        state.openers.push({ record: r, priorTerminal: state.lastTerminal });
+        state.mode = 'in-step';
+        state.stepId = r.stepId;
+        state.round = r.round;
+      } else if (r.round > state.round) state.round = r.round;
+    }
+  }
+  return state;
+};
+
+// Reference checks live ENTIRELY in the digest domain — two byte-different records with one
+// canonical serialization are ONE identity, so object identity never decides resolution or
+// authority. resolveRecordReference returns the LAST matching record (consistent with the
+// latest-per-key authoritative selection); the prefix (records BEFORE the referencing one) is the
+// resolution domain, so an out-of-order reference never resolves.
+export const resolveRecordReference = (prefixRecords, digest) =>
+  prefixRecords.findLast((r) => canonicalFlowDigest(r) === digest);
+
+export const isAuthoritativeReferenceTarget = (scopeRecords, digest) =>
+  authoritativeFlowRecords(scopeRecords).some((r) => canonicalFlowDigest(r) === digest);
+
+// validateOpenerReference(prefixRecords, candidate) → { ok } | { ok: false, reason }. The named
+// classification of a step-opening round's prior-terminal reference: unresolved · non-chain ·
+// another plan · non-terminal · superseded · not-the-prior-terminal.
+export const validateOpenerReference = (prefixRecords, candidate) => {
+  const target = resolveRecordReference(prefixRecords, candidate.opensFrom);
+  if (target === undefined) {
+    return { ok: false, reason: `the prior-terminal reference does not match the store — no record digests to ${candidate.opensFrom.slice(0, 12)}…` };
+  }
+  if (target.kind !== CHAIN_KIND) {
+    return { ok: false, reason: `the prior-terminal reference targets a ${target.kind} record, not a chain terminal` };
+  }
+  if (target.planId !== candidate.planId) {
+    return { ok: false, reason: `the prior-terminal reference targets another plan's record ("${target.planId}") — a step never opens from a foreign chain` };
+  }
+  if (!TERMINAL_PURPOSES.includes(target.purpose)) {
+    return { ok: false, reason: `the prior-terminal reference targets a non-terminal record (purpose "${target.purpose}") — an opener references adoption, converged, or complete only` };
+  }
+  const chain = prefixRecords.filter((r) => r.kind === CHAIN_KIND && r.planId === candidate.planId);
+  if (!isAuthoritativeReferenceTarget(chain, candidate.opensFrom)) {
+    return { ok: false, reason: 'the prior-terminal reference targets a superseded record — reference the latest record of that key' };
+  }
+  const prior = priorChainTerminal(chain);
+  if (prior == null || canonicalFlowDigest(prior) !== candidate.opensFrom) {
+    return { ok: false, reason: `the prior-terminal reference must target the chain's PRIOR terminal (${prior == null ? 'none' : `${canonicalFlowDigest(prior).slice(0, 12)}…`}), not another step's or an earlier terminal — step minting cannot manufacture fresh budgets` };
+  }
+  return { ok: true };
+};
+
+// ── the canonical owning-worktree identity (#49) ──────────────────────────────────────────────────
+
+// STABLE and git-derived, never caller-supplied and never the raw path: the main tree is "main"
+// (a repo-root relocation keeps it); a linked worktree is "worktree:<admin-dir name>" — the
+// <common>/worktrees/<name> admin dir survives both a path-alias invocation (git canonicalizes)
+// and `git worktree move` (the admin dir is not renamed), so relocation cannot silently turn an
+// own open chain into foreign advisory. Null outside a git work tree.
+export const deriveFlowOwner = (cwd) => {
+  if (gitLine(['rev-parse', '--is-inside-work-tree'], cwd) !== 'true') return null;
+  const gitDir = gitLine(['rev-parse', '--path-format=absolute', '--git-dir'], cwd);
+  const commonDir = gitLine(['rev-parse', '--path-format=absolute', '--git-common-dir'], cwd);
+  if (gitDir == null || commonDir == null) return null;
+  return gitDir === commonDir ? 'main' : `worktree:${basename(gitDir)}`;
+};
+
+// ── the adoption mint (#58) — frontmatter planId + plan content digest, read-only plan file ──────
+
+const PLAN_ID_FRONTMATTER_HINT = 'planId: <your-stable-plan-id>';
+
+// Identity binds only a CLOSED leading frontmatter block — an unterminated block never yields an
+// id; CRLF is normalized per line so line endings never fork chain identity.
+const readPlanFrontmatterId = (text) => {
+  const lines = text.split('\n').map((line) => line.replace(/\r$/, ''));
+  if (lines[0]?.trim() !== '---') return null;
+  const close = lines.findIndex((line, i) => i > 0 && line.trim() === '---');
+  if (close === -1) return null;
+  for (const line of lines.slice(1, close)) {
+    const m = /^planId:[ \t]*(\S+)[ \t]*$/.exec(line);
+    if (m) return m[1];
+  }
+  return null;
+};
+
+export const mintAdoption = ({ cwd = process.cwd(), env = process.env, deps = {}, planPath, planLabel, cycle = 1, commitEpoch = 0, timestamp = new Date().toISOString() } = {}) => {
+  const owner = deriveFlowOwner(cwd);
+  if (owner == null) throw stop('not inside a git work tree — the adoption mint derives the owning worktree and the tree fingerprint from git (fail closed)');
+  let planBytes;
+  try {
+    planBytes = readFileSync(resolve(cwd, planPath));
+  } catch (err) {
+    throw stop(`cannot read the plan file ${planPath} (${(err && err.code) || (err && err.message) || err}) — the adoption mint READS an existing plan file (fail closed)`);
+  }
+  const planId = readPlanFrontmatterId(planBytes.toString('utf8'));
+  if (planId == null) {
+    throw stop(`the plan file ${planPath} carries no frontmatter planId — plan filenames are never chain identity. Add this line inside a leading "---" frontmatter block:\n${PLAN_ID_FRONTMATTER_HINT}\nand re-run; the plan file is never written by this mint (fail closed)`);
+  }
+  const planDigest = sha256Hex(planBytes);
+  // A pre-append read purely for the NAMED refusal: the locked append would refuse a second
+  // adoption anyway, but only this comparison can surface whether the plan content still matches.
+  const resolved = resolveFlowStorePath(cwd, env);
+  const adopted = resolved == null ? undefined : readFlowStore(resolved).records
+    .find((r) => r.kind === CHAIN_KIND && r.purpose === 'adoption' && r.planId === planId);
+  if (adopted !== undefined) {
+    throw stop(adopted.planDigest === planDigest
+      ? `plan "${planId}" is already adopted (content digest unchanged — a rename never resets chain identity); adoption is only ever the chain's first record`
+      : `plan "${planId}" is already adopted and the plan file content no longer matches its adoption record (recorded ${adopted.planDigest.slice(0, 12)}…, current ${planDigest.slice(0, 12)}…) — re-adopting edited plan content is refused; the digest mismatch is surfaced, never silent`);
+  }
+  const fingerprint = computeTreeFingerprint(cwd);
+  if (fingerprint == null) throw stop('cannot compute the tree fingerprint — the adoption record binds {base, fingerprint} (fail closed)');
+  const record = {
+    schema: FLOW_SCHEMA_VERSION, kind: CHAIN_KIND, purpose: 'adoption', planId, cycle, round: 0,
+    commitEpoch, owner, base: resolveBase(cwd), timestamp, stepId: null, fingerprint,
+    planLabel: planLabel ?? planId, createdAt: timestamp, planDigest,
+  };
+  const { writtenPath } = appendFlowRecord({ cwd, record, env, deps });
+  return { writtenPath, record, digest: canonicalFlowDigest(record) };
+};
+
+// ── the bookkeeping-delta custody proof (#60) — masked revert-and-recompute at mint time ─────────
+
+// The supported pre-state model; everything else refuses BY NAME (fail closed): the delta lives in
+// the WORKTREE layer of one plain-ASCII, non-binary, non-executable regular path. A tracked path
+// must be CLEAN at the path before the delta (pre-change worktree bytes = its index entry), so the
+// pre-state contributes NO unstaged diff section and the mask is pure section REMOVAL plus
+// untracked-entry splicing — the recompute never regenerates git diff bytes, whose exact form this
+// module cannot promise. Supported transitions: present→present, present→absent, absent→present.
+
+const GIT_PLAIN_PATH_RE = /^[\x20-\x7e]+$/;
+const pathNeedsGitQuoting = (rel) => !GIT_PLAIN_PATH_RE.test(rel) || rel.includes('"') || rel.includes('\\');
+const bufferLooksBinary = (buf) => buf.subarray(0, 8192).includes(0);
+const REGULAR_FILE_MODE = '100644';
+
+const defaultRunGit = (args, dir) => spawnSync('git', args, { cwd: dir, maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
+
+// The declared path enters git as a LITERAL pathspec and comes back through a strict -z parse:
+// exactly one NUL-terminated record whose path field EQUALS the declared rel, full-octal mode,
+// an OID of exactly 40 or 64 hex — a glob-capable name ([]*?) or a prefix-valid truncated answer
+// can then never bind the proof to another file (fail closed on every mismatch).
+const OID_PART = '(?:[0-9a-f]{40}|[0-9a-f]{64})';
+const INDEX_META_RE = new RegExp(`^([0-7]{6}) (${OID_PART}) (\\d)$`);
+const TREE_META_RE = new RegExp(`^([0-7]{6}) (\\w+) (${OID_PART})$`);
+
+const parseZRecords = (stdout) => {
+  const text = stdout.toString('utf8');
+  if (text === '') return [];
+  if (!text.endsWith('\0')) return null;
+  return text.slice(0, -1).split('\0');
+};
+
+const splitZEntry = (entry, metaRe) => {
+  const at = entry.indexOf('\t');
+  if (at === -1) return null;
+  const meta = metaRe.exec(entry.slice(0, at));
+  return meta == null ? null : { meta, path: entry.slice(at + 1) };
+};
+
+const readIndexEntry = (top, rel, runGit) => {
+  const out = runGit(['ls-files', '-s', '-z', '--', `:(literal)${rel}`], top);
+  if (out.error || out.status !== 0) throw stop(`cannot read the index entry of ${rel} (git ls-files failed) — refusing to mint (fail closed)`);
+  const recordsZ = parseZRecords(out.stdout);
+  if (recordsZ == null) throw stop(`cannot parse the index entry of ${rel} (unterminated git ls-files output) — refusing to mint (fail closed)`);
+  if (recordsZ.length === 0) return null;
+  const entry = splitZEntry(recordsZ[0], INDEX_META_RE);
+  if (recordsZ.length > 1 || entry == null || entry.meta[3] !== '0' || entry.path !== rel) {
+    throw stop(`the declared path ${rel} carries an unmerged or unparseable index entry — an unsupported pre-state class (fail closed)`);
+  }
+  return { mode: entry.meta[1], sha: entry.meta[2] };
+};
+
+// An absent HEAD layer is PROVEN unborn, never assumed: rev-parse must answer with EXACTLY the
+// clean verify-miss status (1) AND HEAD must still resolve as a symbolic ref; any operational
+// fault fails closed. "No entry" is ONLY an empty ls-tree stdout — a non-empty answer must parse
+// as exactly one entry line, else the repository is at fault (a false custody proof otherwise).
+const GIT_VERIFY_MISS_STATUS = 1;
+const readHeadEntry = (top, rel, runGit) => {
+  const probe = runGit(['rev-parse', '--verify', '--quiet', 'HEAD'], top);
+  if (probe.error || probe.status !== 0) {
+    const verifyMiss = !probe.error && probe.status === GIT_VERIFY_MISS_STATUS;
+    const sym = verifyMiss ? runGit(['symbolic-ref', '--quiet', 'HEAD'], top) : null;
+    if (sym == null || sym.error || sym.status !== 0) {
+      throw stop('cannot decide the HEAD state (git rev-parse --verify HEAD did not answer with a clean verify miss, or symbolic-ref HEAD failed) — refusing to mint (fail closed)');
+    }
+    return null;
+  }
+  const out = runGit(['ls-tree', '-z', 'HEAD', '--', `:(literal)${rel}`], top);
+  if (out.error || out.status !== 0) throw stop(`cannot read the HEAD entry of ${rel} (git ls-tree failed with an existing HEAD) — refusing to mint (fail closed)`);
+  const recordsZ = parseZRecords(out.stdout);
+  if (recordsZ == null) throw stop(`cannot parse the HEAD entry of ${rel} (unterminated git ls-tree output) — refusing to mint (fail closed)`);
+  if (recordsZ.length === 0) return null;
+  const entry = splitZEntry(recordsZ[0], TREE_META_RE);
+  if (recordsZ.length > 1 || entry == null || entry.path !== rel) {
+    throw stop(`cannot parse the HEAD entry of ${rel} (unexpected git ls-tree output) — refusing to mint (fail closed)`);
+  }
+  if (entry.meta[2] !== 'blob') {
+    throw stop(`the HEAD entry of ${rel} is a ${entry.meta[2]}, not a blob — an unsupported pre-state class (fail closed)`);
+  }
+  return { mode: entry.meta[1], sha: entry.meta[3] };
+};
+
+const readBlob = (top, sha, runGit) => {
+  const out = runGit(['cat-file', 'blob', sha], top);
+  if (out.error || out.status !== 0) throw stop(`cannot read blob ${sha} from the object store — refusing to mint (fail closed)`);
+  return out.stdout;
+};
+
+// Byte-level removal of ONE file's section from a git diff buffer. Hunk lines start with
+// [ +\-\\@], so a line starting "diff --git " is always a section header; the declared path is
+// plain-ASCII by refusal, so its header is these exact bytes. No section = a no-op mask.
+const DIFF_SECTION_START = Buffer.from('\ndiff --git ');
+const removeDiffSection = (buf, rel) => {
+  const header = Buffer.from(`diff --git a/${rel} b/${rel}\n`);
+  let at = -1;
+  if (buf.subarray(0, header.length).equals(header)) at = 0;
+  else {
+    const i = buf.indexOf(Buffer.concat([Buffer.from('\n'), header]));
+    if (i !== -1) at = i + 1;
+  }
+  if (at === -1) return buf;
+  const next = buf.indexOf(DIFF_SECTION_START, at + header.length - 1);
+  const end = next === -1 ? buf.length : next + 1;
+  return Buffer.concat([buf.subarray(0, at), buf.subarray(end)]);
+};
+
+// One untracked entry's payload chunks, branch-for-branch the frozen core's discipline
+// (computeFingerprintPayload) — the NULL-mask parity test pins the byte equality.
+const untrackedEntryChunks = (top, rel, lstat) => {
+  const full = join(top, rel);
+  let stat = null;
+  try {
+    stat = lstat(full);
+  } catch {
+    stat = null;
+  }
+  if (isNeverCommittableStat(stat)) return [];
+  if (stat?.isSymbolicLink()) {
+    let target = '?';
+    try {
+      target = readlinkSync(full);
+    } catch {
+      target = '?';
+    }
+    return [Buffer.from(`untracked-symlink:${rel} -> ${target}\n`)];
+  }
+  if (!stat?.isFile()) return [Buffer.from(`untracked-nonregular:${rel}\n`)];
+  if (isBinaryFile(full)) return [Buffer.from(`untracked-binary:${rel}\n`)];
+  return [Buffer.from(`untracked:${rel}\n`), readFileSync(full)];
+};
+
+// ONE captured read set — every assembly over it (masked and unmasked) binds the SAME tree
+// snapshot, so a tree move between two independent snapshots can never be certified. The three
+// git reads themselves are separate processes; that window is the frozen core's own inherent
+// residual and stays declared, not closed.
+const captureFingerprintPieces = (cwd, { lstat = lstatSync } = {}) => {
+  const top = gitLine(['rev-parse', '--show-toplevel'], cwd);
+  if (top == null) return null;
+  const staged = gitBuf(['diff', '--cached', '--no-ext-diff'], top);
+  const unstaged = gitBuf(['diff', '--no-ext-diff'], top);
+  const untrackedZ = gitBuf(['ls-files', '--others', '--exclude-standard', '-z'], top);
+  if (staged == null || unstaged == null || untrackedZ == null) return null;
+  const entries = untrackedZ.toString('utf8').split('\0').filter(Boolean)
+    .map((rel) => ({ rel, chunks: untrackedEntryChunks(top, rel, lstat) }));
+  return { staged, unstaged, entries };
+};
+
+// mask: null = the exact frozen-core payload; { layer: 'diff', rel } removes the path's unstaged
+// section (its pre-state section is EMPTY by the clean-at-path rule); { layer: 'untracked', rel,
+// insert, preBytes } splices the untracked entry (git emits ls-files sorted by path bytes).
+const assembleMaskedPayload = (pieces, mask) => {
+  const unstaged = mask?.layer === 'diff' ? removeDiffSection(pieces.unstaged, mask.rel) : pieces.unstaged;
+  let entries = pieces.entries;
+  if (mask?.layer === 'untracked') {
+    entries = entries.filter((e) => e.rel !== mask.rel);
+    if (mask.insert) {
+      const at = entries.findIndex((e) => e.rel > mask.rel);
+      entries = [...entries];
+      entries.splice(at === -1 ? entries.length : at, 0, { rel: mask.rel, chunks: [Buffer.from(`untracked:${mask.rel}\n`), mask.preBytes] });
+    }
+  }
+  return Buffer.concat([pieces.staged, unstaged, ...entries.flatMap((e) => e.chunks)]);
+};
+
+export const computeMaskedFingerprintPayload = (cwd, mask = null, fsx) => {
+  const pieces = captureFingerprintPieces(cwd, fsx);
+  return pieces == null ? null : assembleMaskedPayload(pieces, mask);
+};
+
+// mintBookkeepingDelta: the FULL pre-state arrives as EXPLICIT inputs (pre-change worktree bytes +
+// the presence class; tracked-ness derives from the window-constant HEAD/index layers) — never
+// reconstructed from ambient git state. The computation only READS: the working tree is never
+// mutated. The mint refuses unless the masked recompute reproduces fingerprintBefore — an
+// unconfined delta never lands; the proof payload persists so the checker can verify a PROVEN
+// mint against a bare declaration.
+export const mintBookkeepingDelta = ({ cwd = process.cwd(), env = process.env, deps = {}, path: rel, fingerprintBefore, preContent = null, timestamp = new Date().toISOString() } = {}) => {
+  if (typeof fingerprintBefore !== 'string' || !HEX64_RE.test(fingerprintBefore)) {
+    throw stop('fingerprintBefore must be the 64-hex PRE-DELTA tree fingerprint — the proof compares the masked recompute against it (fail closed)');
+  }
+  const lex = lexicalRepoRelative(rel);
+  if (!lex.ok) throw stop(`the declared path must be lexically repo-relative — ${lex.reason} (fail closed)`);
+  if (pathNeedsGitQuoting(rel)) {
+    throw stop(`the declared path "${rel}" needs git diff-header quoting — an unsupported pre-state class (the masked recompute matches plain header bytes only; fail closed)`);
+  }
+  const top = gitLine(['rev-parse', '--show-toplevel'], cwd);
+  if (top == null) throw stop('not inside a git work tree — the custody proof has no meaning outside the fingerprint domain; refusing to mint');
+  const preBytes = preContent == null ? null : Buffer.from(preContent);
+  if (preBytes !== null && bufferLooksBinary(preBytes)) {
+    throw stop(`the pre-change bytes of ${rel} carry binary content — an unsupported pre-state class (fail closed)`);
+  }
+  const full = join(top, rel);
+  const st = lstatNoFollow(full, deps.lstat ?? lstatSync);
+  if (st?.isSymbolicLink()) throw stop(`the declared path ${rel} is a symlink — an unsupported pre-state class (fail closed)`);
+  if (st && !st.isFile()) throw stop(`the declared path ${rel} is a ${describeNonRegular(st)} — an unsupported pre-state class (fail closed)`);
+  if (st && (st.mode & 0o111) !== 0) throw stop(`the declared path ${rel} carries an executable mode — an unsupported pre-state class (mode motion cannot be expressed; fail closed)`);
+  const nowBytes = st ? readFileSync(full) : null;
+  if (nowBytes !== null && bufferLooksBinary(nowBytes)) {
+    throw stop(`the declared path ${rel} carries binary content — an unsupported pre-state class (fail closed)`);
+  }
+  const preClass = preBytes === null ? 'absent' : 'present';
+  if (preClass === 'absent' && nowBytes === null) {
+    throw stop('the absent→absent transition is unsupported — supported: present→present, present→absent, absent→present (fail closed)');
+  }
+  const runGit = deps.runGit ?? defaultRunGit;
+  const index = readIndexEntry(top, rel, runGit);
+  const head = readHeadEntry(top, rel, runGit);
+  for (const [layer, entry] of [['index', index], ['HEAD', head]]) {
+    if (entry && entry.mode !== REGULAR_FILE_MODE) {
+      throw stop(`the ${layer} entry of ${rel} carries mode ${entry.mode} — an unsupported pre-state class (only plain ${REGULAR_FILE_MODE} regular files are expressible; fail closed)`);
+    }
+  }
+  if (index == null && head != null) {
+    throw stop(`the declared path ${rel} has a HEAD entry but no index entry (a staged deletion) — an unsupported pre-state class (fail closed)`);
+  }
+  const tracked = index != null || head != null;
+  const headBytes = head == null ? null : readBlob(top, head.sha, runGit);
+  const indexBytes = index == null ? null : readBlob(top, index.sha, runGit);
+  let mask;
+  if (tracked) {
+    if (preClass === 'absent') {
+      throw stop(`the declared path ${rel} is tracked while its pre-change worktree state is absent — a dirty pre-state at the declared path is an unsupported pre-state class (the masked proof covers a clean-at-path pre-state only; fail closed)`);
+    }
+    if (!preBytes.equals(indexBytes)) {
+      throw stop(`the declared path ${rel} has a dirty pre-state (the pre-change worktree bytes do not equal the index entry) — an unsupported pre-state class (the masked proof covers a clean-at-path pre-state only; fail closed)`);
+    }
+    mask = { layer: 'diff', rel };
+  } else {
+    // --no-index: the ignore ANSWER must come from the rules alone — with the index consulted, a
+    // tracked glob neighbor (feature-a.md vs the literal feature-[a].md) flips the answer and a
+    // genuinely ignored path would spuriously refuse to mint.
+    const ig = runGit(['check-ignore', '-q', '--no-index', '--', rel], top);
+    if (ig.error || (ig.status !== 0 && ig.status !== 1)) {
+      throw stop(`cannot decide the ignore state of ${rel} (git check-ignore failed) — refusing to mint (fail closed)`);
+    }
+    // An ignored path is outside the fingerprint domain in BOTH states — the mask is a no-op there.
+    // Honest limit: an untracked path's MODE is likewise invisible to the frozen payload in both
+    // states (an entry is name + bytes only) — untracked mode motion is neither expressible nor
+    // claimed; only the CURRENT tree's non-plain modes refuse by name above.
+    mask = { layer: 'untracked', rel, insert: preClass === 'present' && ig.status !== 0, preBytes };
+  }
+  const pieces = captureFingerprintPieces(cwd, deps);
+  if (pieces == null) throw stop('cannot capture the fingerprint read set (a git probe failed) — refusing to mint (fail closed)');
+  // Bracket: the declared path must still be EXACTLY what the class checks and contentDigest
+  // observed — the no-follow class checks repeat first, then presence + bytes must match, so the
+  // digest and the captured payload can never bind two different post-states.
+  const stAfter = lstatNoFollow(full, deps.lstat ?? lstatSync);
+  if (stAfter?.isSymbolicLink()) throw stop(`the declared path ${rel} is a symlink — an unsupported pre-state class (fail closed)`);
+  if (stAfter && !stAfter.isFile()) throw stop(`the declared path ${rel} is a ${describeNonRegular(stAfter)} — an unsupported pre-state class (fail closed)`);
+  if (stAfter && (stAfter.mode & 0o111) !== 0) throw stop(`the declared path ${rel} carries an executable mode — an unsupported pre-state class (mode motion cannot be expressed; fail closed)`);
+  const bytesAfter = stAfter ? readFileSync(full) : null;
+  const declaredMoved = (stAfter == null) !== (nowBytes === null)
+    || (nowBytes !== null && bytesAfter !== null && !bytesAfter.equals(nowBytes));
+  if (declaredMoved) {
+    throw stop(`the declared path ${rel} moved under the mint (its bytes or presence changed during the capture) — contentDigest and the captured payload must bind ONE post-state; retry on a quiescent tree (fail closed)`);
+  }
+  const maskedFingerprint = sha256Hex(assembleMaskedPayload(pieces, mask));
+  if (maskedFingerprint !== fingerprintBefore) {
+    throw stop(`the delta is NOT confined to the declared path ${rel} — the masked revert-and-recompute (${maskedFingerprint.slice(0, 12)}…) does not reproduce fingerprintBefore (${fingerprintBefore.slice(0, 12)}…); something else moved in the window (fail closed)`);
+  }
+  // Both fingerprints derive from the ONE captured read set — a tree move between two independent
+  // snapshots can never be certified as a confined delta.
+  const fingerprintAfter = sha256Hex(assembleMaskedPayload(pieces, null));
+  const record = {
+    schema: FLOW_SCHEMA_VERSION, kind: 'bookkeeping-delta', fingerprintBefore, fingerprintAfter,
+    path: rel, contentDigest: nowBytes === null ? null : sha256Hex(nowBytes),
+    custodyProof: {
+      preClass, tracked,
+      headDigest: headBytes === null ? null : sha256Hex(headBytes),
+      indexDigest: indexBytes === null ? null : sha256Hex(indexBytes),
+      worktreeDigest: preBytes === null ? null : sha256Hex(preBytes),
+      maskedFingerprint,
+    },
+    base: resolveBase(cwd), timestamp,
+  };
+  const { writtenPath } = appendFlowRecord({ cwd, record, env, deps });
+  return { writtenPath, record, digest: canonicalFlowDigest(record) };
 };
 
