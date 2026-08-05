@@ -48,6 +48,12 @@ export const CHEAP_AGENTS_STAMP = 'CHEAP_AGENTS_STAMP';
 export const CHEAP_AGENTS_SYMLINK = 'CHEAP_AGENTS_SYMLINK';
 export const CHEAP_AGENTS_BUNDLE = 'CHEAP_AGENTS_BUNDLE';
 
+// The fallback-lens contract, formalized where it lives (flow-orchestration #15/#3, Phase 4.3):
+// the internal-attestation evaluation consumes this sentence — a lens set claiming a configured
+// backend's slot without a then-active down-mark REFUSES, quoting it (substitution is recorded,
+// never silent).
+export const FALLBACK_LENS_ADDITIONAL_ONLY = 'review-lens is an ADDITIONAL read-only review opinion, not a replacement for your configured review recipe.';
+
 const USAGE = `usage: cheap-agents [--dry-run | --apply] [--cwd <dir>] [--help]
 
 Places the bundled READ-ONLY subagent definitions into the project's ${AGENTS_DIR}/. No vehicle
@@ -191,7 +197,7 @@ export const formatResult = (result) => {
   }
   lines.push(
     'the vehicles are Claude Code subagents with READ-ONLY tools and NO shell — so a fan-out can never turn into a wave of approval prompts.',
-    'three ride the cheap lane (model: haiku, effort: low) for mechanical work; review-lens is an ADDITIONAL read-only review opinion, not a replacement for your configured review recipe. Writing code and running gates stay on your main lane.',
+    `three ride the cheap lane (model: haiku, effort: low) for mechanical work; ${FALLBACK_LENS_ADDITIONAL_ONLY} Writing code and running gates stay on your main lane.`,
   );
   // A preview must print the EXACT command that applies it. The advisor renders this dry-run as an
   // item's one-liner, and that flow's contract is "run the printed command, no improvisation" — a

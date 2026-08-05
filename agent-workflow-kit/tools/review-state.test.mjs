@@ -1453,6 +1453,36 @@ describe('review-state — Phase-2 flow arms (two-tier activation + the three ga
     assert.match(r.stdout, /internal-attestation/);
   });
 
+  // The lens-substitution rung (#15/#3, Phase 4.3): an attestation whose lens set claims a review
+  // provider's slot needs a THEN-ACTIVE down-mark — substitution is recorded, never silent.
+  it('lens substitution: an attestation claiming a provider slot WITHOUT a down-mark never counts — the floor refuses naming the contract', () => {
+    const { root } = makeRepo({ config: SOLO_CONFIG });
+    writeFileSync(planPath(root), PLAN_WITH_ID);
+    writeFlowStore(root, [
+      flowAdoption({ planDigest: digestOf(PLAN_WITH_ID) }),
+      attestationAt(root, 'plan-x', { lenses: ['correctness', 'codex'] }),
+    ]);
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, r.stdout);
+    assert.match(r.stdout, /claims backend "codex"'s slot without a then-active down-mark/);
+    assert.match(r.stdout, /ADDITIONAL read-only review opinion/, 'the refusal quotes the additional-only contract');
+  });
+
+  it('lens substitution: a THEN-ACTIVE down-mark for the claimed backend admits the attestation — the floor passes', () => {
+    const { root } = makeRepo({ config: SOLO_CONFIG });
+    writeFileSync(planPath(root), PLAN_WITH_ID);
+    writeFlowStore(root, [
+      flowAdoption({ planDigest: digestOf(PLAN_WITH_ID) }),
+      { schema: FLOW_SCHEMA_VERSION, kind: 'down-mark', fingerprint: 'a1'.repeat(32), backend: 'codex', reason: 'quota stall', expiresAt: '2026-07-31T00:00:00.000Z', base: null, timestamp: FLOW_TS },
+      attestationAt(root, 'plan-x', { lenses: ['codex'], timestamp: FLOW_TS_2 }),
+    ]);
+    const r = check(root);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stdout);
+    assert.match(r.stdout, /internal-only/);
+  });
+
   it('the internal-only branch is evaluated only when no unconditional veto stands (#48)', () => {
     const { root } = makeRepo({ config: SOLO_CONFIG });
     writeFileSync(planPath(root), PLAN_WITH_ID);

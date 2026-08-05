@@ -1880,6 +1880,119 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
     }
   });
 
+  // The wrapper-minted finding manifest (flow-orchestration Phase 4.2, Decision 2/P5/P24-25):
+  // nonce-supplied dispatches mint {schema, backend, nonce, fingerprint, findings} beside the
+  // receipt, atomic + no-clobber + ORDERED — a failed mint EXCLUDES the receipt append.
+  describe('finding manifest (AW_REVIEW_NONCE)', () => {
+    const manifestPath = (repo, nonce) => join(repo, '.git', `agent-workflow-finding-manifest-agy-${nonce}.json`);
+
+    it('a nonce-supplied grounded code dispatch mints the {backend, nonce}-named manifest carrying the captured findings + the receipt fingerprint', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'r1-d2' } });
+      const receipts = readReceipts(sb.repo);
+      const manifest = JSON.parse(readFileSync(manifestPath(sb.repo, 'r1-d2'), 'utf8'));
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(receipts.length, 1, 'the receipt landed beside the manifest');
+      assert.deepEqual(Object.keys(manifest), ['schema', 'backend', 'nonce', 'fingerprint', 'findings'], 'the closed manifest key set, in order');
+      assert.equal(manifest.schema, 1);
+      assert.equal(manifest.backend, 'agy');
+      assert.equal(manifest.nonce, 'r1-d2');
+      assert.equal(manifest.fingerprint, receipts[0].fingerprint, 'the manifest binds the SAME reviewed-tree fingerprint as the receipt');
+      assert.equal(manifest.findings, `${VERDICT_OUTPUT}\n`, 'findings = the captured review output VERBATIM');
+    });
+
+    it('a nonce-less invocation mints NO manifest and keeps the receipt contract byte-exact (Decision 2 both branches)', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+      const receipts = readReceipts(sb.repo);
+      const gitEntries = readdirSync(join(sb.repo, '.git')).filter((n) => n.startsWith('agent-workflow-finding-manifest-'));
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(gitEntries.length, 0, 'no nonce, no manifest');
+      assert.deepEqual(Object.keys(receipts[0]), Object.keys(RECEIPT_FIXTURE), 'the receipt line field set is unchanged');
+    });
+
+    it('DIFFERENT bytes at the derived name refuse loudly AND EXCLUDE the receipt append (ordering, behaviorally)', () => {
+      const sb = makeSandbox();
+      writeFileSync(manifestPath(sb.repo, 'r1-d2'), '{"schema":1,"backend":"agy","nonce":"r1-d2","fingerprint":null,"findings":"other bytes"}\n');
+      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'r1-d2' } });
+      const receipts = readReceipts(sb.repo);
+      const manifest = readFileSync(manifestPath(sb.repo, 'r1-d2'), 'utf8');
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 0, 'the review itself still succeeds (the artifact lane failed loudly)');
+      assert.match(r.stderr, /DIFFERENT bytes or is not a regular file — no-clobber refuses loudly/);
+      assert.match(r.stderr, /receipt append is EXCLUDED/);
+      assert.equal(receipts.length, 0, 'a nonce-supplied dispatch never lands a receipt without its manifest');
+      assert.match(manifest, /other bytes/, 'the pre-existing manifest is never clobbered');
+    });
+
+    it('a SYMLINK at the derived manifest path refuses and EXCLUDES the receipt — even when its target is byte-identical', () => {
+      const sb = makeSandbox();
+      assert.equal(run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'sym2' } }).status, 0);
+      const mPath = manifestPath(sb.repo, 'sym2');
+      const target = join(sb.repo, '.git', 'manifest-target-copy.json');
+      writeFileSync(target, readFileSync(mPath));
+      rmSync(mPath);
+      symlinkSync(target, mPath);
+      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'sym2' } });
+      const receipts = readReceipts(sb.repo);
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 0, 'the review itself still succeeds (the artifact lane failed loudly)');
+      assert.match(r.stderr, /receipt append is EXCLUDED/);
+      assert.equal(receipts.length, 1, 'the second receipt is EXCLUDED — a symlinked manifest is never read through as the idempotent no-op');
+    });
+
+    it('a FIFO at the derived manifest path refuses fast and EXCLUDES the receipt (O_NONBLOCK — no hang; fix characterization)', () => {
+      const sb = makeSandbox();
+      const mPath = manifestPath(sb.repo, 'fifo2');
+      assert.equal(spawnSync('mkfifo', [mPath], { encoding: 'utf8' }).status, 0, 'mkfifo fixture');
+      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'fifo2' } });
+      const receipts = readReceipts(sb.repo);
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stderr, /receipt append is EXCLUDED/);
+      assert.equal(receipts.length, 0, 'a FIFO manifest is never read (fstat-first) and the receipt is excluded');
+    });
+
+    it('a BOM-prefixed captured output round-trips VERBATIM into the manifest (U+FEFF preserved)', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: `\uFEFFpreamble\n${VERDICT_OUTPUT}`, AW_REVIEW_NONCE: 'b2' } });
+      const manifest = JSON.parse(readFileSync(manifestPath(sb.repo, 'b2'), 'utf8'));
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(manifest.findings, `\uFEFFpreamble\n${VERDICT_OUTPUT}\n`, 'the captured output is VERBATIM — a stripped BOM would move the findingDigest');
+    });
+
+    it('an unsafe nonce refuses PRE-SPEND (exit 2, agy never runs) — a non-ASCII letter refuses under a UTF-8 locale too', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AW_REVIEW_NONCE: 'a/b' } });
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 2);
+      assert.match(r.stderr, /safe nonce grammar/);
+      assert.equal(r.invoked, false, 'the containment refusal fires before any CLI spend');
+      // The grammar ENUMERATES the ASCII set (no ranges): a locale-collated [A-Za-z] could admit a
+      // non-ASCII letter the kit's JS reader then refuses, breaking correlation after a paid run.
+      const utf8 = makeSandbox();
+      const r2 = run(utf8, { args: ['code', '--facts', 'a tiny fact'], env: { AW_REVIEW_NONCE: 'r\u00e91', LC_ALL: 'en_US.UTF-8', LANG: 'en_US.UTF-8' } });
+      rmSync(utf8.home, { recursive: true, force: true });
+      assert.equal(r2.status, 2, 'a non-ASCII nonce letter refuses whatever the locale collation says');
+      assert.match(r2.stderr, /safe nonce grammar/);
+    });
+
+    it('a nonce-supplied CONTINUATION mints its manifest with fingerprint null (the receipt identity is null too)', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['--continue'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'r2-c1' } });
+      const receipts = readReceipts(sb.repo);
+      const manifest = JSON.parse(readFileSync(manifestPath(sb.repo, 'r2-c1'), 'utf8'));
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(receipts.length, 1);
+      assert.equal(manifest.fingerprint, null, 'a continuation carries no tree identity — the manifest says so honestly');
+      assert.equal(manifest.findings, `${VERDICT_OUTPUT}\n`);
+    });
+  });
+
   it('a continuation receipt is fresh:false with null identity fields, and the wrapper prints the fresh-run notice', () => {
     const sb = makeSandbox();
     const r = run(sb, { args: ['--continue', '--decided', 'already folded'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
@@ -2311,18 +2424,43 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', () => {
     assert.match(r.stderr, /control/i);
   });
 
-  it('timeout honesty: no timeout/gtimeout on PATH → timeout=uncapped, never a fabricated number', () => {
+  // The two-stage cap guarantee: the parent preflight fails closed, and the seam
+  // (AGY_REQUIRE_TIMEOUT_BIN=1) makes the CHILD's missing-binary lane refuse too — but only a
+  // child that HONORS the seam. A stale installed agy-run that never reads it could run uncapped
+  // past the parent preflight, so the parent verifies the resolved child carries the seam token
+  // and refuses loudly naming the refresh recovery otherwise.
+  it('a STALE agy-run child that does not honor the timeout seam refuses fail-closed (never a silently uncapped dispatch)', () => {
+    const sb = makeSandbox();
+    const staleDir = join(sb.home, 'stale-bin');
+    mkdirSync(staleDir, { recursive: true });
+    writeFileSync(join(staleDir, 'agy-run'), '#!/usr/bin/env bash\nprintf "FAKE_AGY_REVIEW_OUTPUT\\n### Verdict\\nSHIP\\n"\n', { mode: 0o755 });
+    const r = run(sb, {
+      args: ['code', '--facts', 'a tiny fact'],
+      env: { PATH: `${staleDir}:${sb.bin}:${farmFor(['agy-run'])}` },
+    });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 127, 'a seam-blind child is a stale bridge install — refuse, never dispatch uncapped');
+    assert.match(r.stderr, /does not honor the AGY_REQUIRE_TIMEOUT_BIN seam/);
+    assert.equal(receipts.length, 0, 'no dispatch, no receipt');
+  });
+
+  // Flow-orchestration Phase 4.2 (#26): the uncapped lane is CLOSED — without a capping binary the
+  // preflight refuses by name BEFORE any CLI run (the pre-fix wrapper printed timeout=uncapped and
+  // ran anyway). The shadow-proof resolver discipline now surfaces as the REFUSAL, not a banner.
+  it('fails CLOSED when no timeout/gtimeout is on PATH — refuses by name, agy never runs', () => {
     const sb = makeSandbox();
     const r = run(sb, {
       args: ['code', '--facts', 'a tiny fact'],
       env: { PATH: `${sb.bin}:${farmFor(['agy', 'agy-run', 'timeout', 'gtimeout'])}` },
     });
     rmSync(sb.home, { recursive: true, force: true });
-    assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /^review posture: .* timeout=uncapped$/m);
+    assert.equal(r.status, 127, 'the hard-timeout preflight is a refusal, never a warned uncapped run');
+    assert.match(r.stderr, /hard-timeout preflight fails CLOSED/);
+    assert.equal(r.invoked, false, 'agy must NOT be invoked when the preflight refuses');
   });
 
-  it('an EXPORTED shell function shadowing timeout never fools the banner (type -P discipline)', () => {
+  it('an EXPORTED shell function shadowing timeout never fools the preflight (type -P discipline)', () => {
     const sb = makeSandbox();
     const r = run(sb, {
       args: ['code', '--facts', 'a tiny fact'],
@@ -2332,8 +2470,8 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', () => {
       },
     });
     rmSync(sb.home, { recursive: true, force: true });
-    assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /^review posture: .* timeout=uncapped$/m, 'a shell function is not a capping binary');
+    assert.equal(r.status, 127, 'a shell function is not a capping binary — the preflight still refuses');
+    assert.match(r.stderr, /hard-timeout preflight fails CLOSED/);
   });
 
   it('an EXPORTED `type` function faking a path never fools the resolver (builtin type discipline)', () => {
@@ -2346,8 +2484,8 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', () => {
       },
     });
     rmSync(sb.home, { recursive: true, force: true });
-    assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /^review posture: .* timeout=uncapped$/m, 'builtin type bypasses an exported type function');
+    assert.equal(r.status, 127, 'builtin type bypasses an exported type function — the preflight still refuses');
+    assert.match(r.stderr, /hard-timeout preflight fails CLOSED/);
   });
 
   it('a DEL (0x7f) byte in a banner field refuses pre-spend like the C0 range', () => {

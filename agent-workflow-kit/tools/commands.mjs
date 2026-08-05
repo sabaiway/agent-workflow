@@ -208,7 +208,7 @@ const CATALOG = [
     invocation: invocationOf('flow-writer'),
     group: 'Orchestrate',
     kind: WRITER,
-    oneLine: 'Record an explicit review-flow step (adoption/park/resume/complete of a plan, re-baseline, a rerun cause, a reviewer down-mark, a degrade justification, a checkpoint-approved override) into the shared flow record store — flow-check refusals print the exact command to paste, and the store itself validates every append.',
+    oneLine: 'Record an explicit review-flow step (adoption/park/resume/complete of a plan, re-baseline, a rerun cause, a reviewer down-mark, a degrade justification, a checkpoint-approved override, a manifest-bound consult attestation) into the shared flow record store — flow-check refusals print the exact command to paste, and the store itself validates every append.',
   },
   {
     key: 'review-state',
@@ -216,6 +216,13 @@ const CATALOG = [
     group: 'Orchestrate',
     kind: READ_ONLY,
     oneLine: 'Check that every configured review backend has receipted the current uncommitted tree with a fresh grounded review; --check turns it into a gate exit code.',
+  },
+  {
+    key: 'receipt-deadline',
+    invocation: invocationOf('receipt-deadline'),
+    group: 'Orchestrate',
+    kind: READ_ONLY,
+    oneLine: 'Wait for ONE dispatched review to answer — a strictly-newer receipt line from that backend past the pre-dispatch watermark (or its nonce-named finding manifest); a shrunken or rewritten receipts file refuses loudly, and the timeout names the watermark.',
   },
   {
     key: 'grounding',

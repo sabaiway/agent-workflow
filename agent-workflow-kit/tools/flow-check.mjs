@@ -34,6 +34,7 @@ import {
 import { loadConfig } from './orchestration-config.mjs';
 import { requiredBackendsForConfiguredRecipe, DISPLAY_ALIASES } from './recipes.mjs';
 import { detectBackends } from './detect-backends.mjs';
+import { FALLBACK_LENS_ADDITIONAL_ONLY } from './cheap-agents.mjs';
 
 const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 });
 
@@ -411,6 +412,40 @@ export const collectDegradeCoverageRefusals = ({ flowRecords, coreRecords, tree,
     if (!failures.includes(null)) refusals.push(failures[0]);
   }
   return refusals;
+};
+
+// evaluateInternalAttestationLenses (#15/#3, Phase 4.3): an internal-attestation whose lens set
+// CLAIMS a review provider's slot (a lens named like a configured backend) must ride a
+// THEN-ACTIVE down-mark for that backend — substitution is recorded, never silent; the refusal
+// quotes the fallback lens's additional-only contract from its one home. "Then-active" is decided
+// in the RAW prefix strictly before the attestation (mint-time order, the #25 discipline): the
+// mark is unclosed there and its TTL window contains the attestation's instant — an unparseable
+// attestation instant refuses by name, never passes.
+export const evaluateInternalAttestationLenses = ({ record, records, providerBackends }) => {
+  const at = records.indexOf(record);
+  if (at === -1) {
+    return { ok: false, reason: 'the internal-attestation record does not belong to the supplied record list — prefix scoping is undecidable (fail closed)' };
+  }
+  const prefix = records.slice(0, at);
+  for (const lens of record.lenses) {
+    if (!providerBackends.includes(lens)) continue;
+    let active = null;
+    for (const r of prefix) {
+      if (r.kind === 'down-mark' && r.backend === lens) active = r;
+      else if ((r.kind === 'down-mark-up' || r.kind === 'down-mark-clear') && r.backend === lens) active = null;
+    }
+    const failure = active === null
+      ? `no down-mark for backend "${lens}" is open at the attestation's position`
+      : !isCanonicalInstant(record.timestamp)
+        ? `the attestation instant ${JSON.stringify(record.timestamp)} is not a canonical UTC ISO instant, so then-activity is undecidable`
+        : !(Date.parse(record.timestamp) >= Date.parse(active.timestamp) && Date.parse(record.timestamp) < Date.parse(active.expiresAt))
+          ? `the down-mark for backend "${lens}" is outside its active window at the attestation's instant`
+          : null;
+    if (failure !== null) {
+      return { ok: false, reason: `the internal-attestation's lens set claims backend "${lens}"'s slot without a then-active down-mark (${failure}) — ${FALLBACK_LENS_ADDITIONAL_ONLY} (fail closed)` };
+    }
+  }
+  return { ok: true };
 };
 
 // The ONE relied-on receipt selector (#42/#61): the latest normal receipt at the CURRENT tree,

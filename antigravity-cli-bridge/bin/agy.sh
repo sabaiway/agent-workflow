@@ -183,8 +183,9 @@ aw_apply_settings
 
 # --- Effective-timeout resolver (D5 banner honesty; AD-061) --------------------
 # ONE rule, both bridges: the posture banner prints EXACTLY the duration handed to timeout(1) —
-# an integer-seconds value rendered with the `s` suffix, a duration string verbatim — and
-# `timeout=uncapped` when no timeout/gtimeout binary can cap the run; never a fabricated number.
+# an integer-seconds value rendered with the `s` suffix, a duration string verbatim; without a
+# capping binary the EXEC wrappers print `timeout=uncapped` and run, while the REVIEW wrappers
+# refuse pre-spend (fail-closed preflight) — never a fabricated number.
 # The EFFECTIVE value (env included — closing the aw_settings_valid env bypass) is validated by
 # the same per-key rule as the settings file, plus a 7-digit integer-part bound (overflow); an
 # invalid value warns + falls back to the built-in default — a typo never silently masquerades
@@ -331,6 +332,15 @@ agy_cmd=(agy "${model_flag[@]}" --print-timeout "$AGY_TIMEOUT" "${passthrough[@]
 timeout_bin="$(aw_resolve_timeout_bin)"
 
 if [[ -z "$timeout_bin" ]]; then
+  # The review child seam (flow-orchestration Phase 4): agy-review fails CLOSED at its own
+  # preflight and exports this seam so a delete-between race can never void the cap through the
+  # child's re-resolution; the legacy warn+uncapped lane stays for direct agy-run use.
+  if [[ "${AGY_REQUIRE_TIMEOUT_BIN:-}" == "1" ]]; then
+    echo "error: no 'timeout'/'gtimeout' binary on PATH — the hard-timeout preflight fails CLOSED:" >&2
+    echo "       the invoking review wrapper requires a capped run (AGY_REQUIRE_TIMEOUT_BIN=1)." >&2
+    echo "       Install coreutils (timeout; on macOS: brew install coreutils), then re-run." >&2
+    exit 127
+  fi
   echo "warning: no 'timeout'/'gtimeout' on PATH — running agy WITHOUT a hard wall-clock cap" >&2
   echo "         (install coreutils to enable AGY_HARD_TIMEOUT=$AGY_HARD_TIMEOUT)." >&2
   exec "${agy_cmd[@]}"

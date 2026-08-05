@@ -41,6 +41,7 @@ import { QUEUE_SHARED_RULE, LANDING_FROM_MAIN, NO_DEPENDENCIES_POSTURE, CLEANUP_
 import { FLOW_SCHEMA_VERSION, FLOW_LAGGING_KIT_CONTRACT } from './orchestration-config.mjs';
 import { FLOW_BOOKKEEPING_FLOOR_RESIDUAL } from './set-flow.mjs';
 import { FLOW_ARMED_HALVES_HEADER } from './procedures.mjs';
+import { RECEIPT_DEADLINE_CONTRACT } from './receipt-deadline.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -53,6 +54,7 @@ const REVIEW_STATE_DOC = 'references/modes/review-state.md';
 const WORKTREES_DOC = 'references/modes/worktrees.md';
 const PROCEDURES_DOC = 'references/modes/procedures.md';
 const SET_FLOW_DOC = 'references/modes/set-flow.md';
+const RECEIPT_DEADLINE_DOC = 'references/modes/receipt-deadline.md';
 
 // A typed usage failure (exit 2) for the CLI parser — the codebase's typed-error idiom (no classes).
 const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 });
@@ -136,6 +138,10 @@ export const BINDINGS = Object.freeze([
   valueBinding('flow-lagging-kit', FLOW_LAGGING_KIT_CONTRACT, FLOW_LAGGING_KIT_CONTRACT, [PROCEDURES_DOC, SET_FLOW_DOC]),
   valueBinding('flow-bookkeeping-floor-residual', FLOW_BOOKKEEPING_FLOOR_RESIDUAL, FLOW_BOOKKEEPING_FLOOR_RESIDUAL, [SET_FLOW_DOC]),
   valueBinding('flow-armed-halves-header', FLOW_ARMED_HALVES_HEADER, FLOW_ARMED_HALVES_HEADER, [PROCEDURES_DOC]),
+  // The receipt-deadline runner's contract sentence (Plan-3 Phase 4.1): arrival — never obligation
+  // satisfaction — is the tool's identity; a mode doc silently drifting off it would re-open the
+  // #50 misclassification this runner exists to close.
+  valueBinding('receipt-deadline-contract', RECEIPT_DEADLINE_CONTRACT, RECEIPT_DEADLINE_CONTRACT, [RECEIPT_DEADLINE_DOC]),
 ].map((b) => Object.freeze(b)));
 
 // ── the pure checker (readText is injectable for hermetic tests) ────────────────────────

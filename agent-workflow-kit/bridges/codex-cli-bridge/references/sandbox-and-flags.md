@@ -146,8 +146,8 @@ from stdout (no `-o` needed). Only a *raw* `codex exec resume` outside the wrapp
 A backgrounded/hung run survives otherwise, so both wrappers wrap codex in `timeout`/`gtimeout`
 (`--kill-after=15s`): `CODEX_HARD_TIMEOUT` defaults to **3600s (exec)** / **1800s (review)**, sized for a
 slow `xhigh` run. Exit 124/137 ⇒ "exceeded the hard cap" (raise the cap or narrow the task). If neither
-`timeout` nor `gtimeout` is on `PATH`, the wrapper **warns loudly and runs uncapped** — never a silent
-no-op.
+`timeout` nor `gtimeout` is on `PATH`, `codex-exec` **warns loudly and runs uncapped** — never a silent
+no-op — while `codex-review` **refuses pre-spend** (the fail-closed hard-timeout preflight).
 
 ## Subscription / config invariant
 

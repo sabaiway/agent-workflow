@@ -104,8 +104,9 @@ records the same `posture {model, effort, tier}` (tier `null` on the standard ti
 in a posture value refuse pre-spend in every mode. `codex-exec` states its posture the same way —
 ONE `exec posture: model=… effort=… tier=… sandbox=workspace-write session=fresh|resume:<id>
 timeout=…` stderr line before dispatch (the resume id validated pre-spend). The `timeout=` field
-is **banner-only** (exactly the duration handed to `timeout(1)`, or `uncapped`) — informational,
-never a receipt field. **Quote the posture banner verbatim** when labeling a dispatch.
+is **banner-only** (exactly the duration handed to `timeout(1)`; on exec `uncapped` without a
+capping binary, while `codex-review` **fails CLOSED pre-spend** there) — informational, never a
+receipt field. **Quote the posture banner verbatim** when labeling a dispatch.
 
 `codex exec` is headless: there is **no TTY**, so `approval_policy=never` — anything needing
 escalation is refused and reported, never interactively approved. The wrappers capture only codex's
@@ -126,10 +127,11 @@ defeat a policy is guarded — see [§ Models](#models-quality-first-pinned).
 |---|---|---|
 | `CODEX_MODEL` | `gpt-5.6-sol` (pinned) | model; non-default REFUSED unless `CODEX_PROBE=1` |
 | `CODEX_EFFORT` | `xhigh` (pinned) | reasoning effort; non-default REFUSED unless `CODEX_PROBE=1` |
-| `CODEX_HARD_TIMEOUT` | `3600` (exec) / `1800` (review) | hard wall-clock cap (seconds) via `timeout`/`gtimeout`; exit 124/137 ⇒ "exceeded hard cap". No `timeout` binary ⇒ loud warning + uncapped (never silent). |
+| `CODEX_HARD_TIMEOUT` | `3600` (exec) / `1800` (review) | hard wall-clock cap (seconds) via `timeout`/`gtimeout`; exit 124/137 ⇒ "exceeded hard cap". No `timeout` binary ⇒ exec warns loudly + runs uncapped; `codex-review` REFUSES pre-spend (fail-closed preflight). |
 | `CODEX_SERVICE_TIER` | unset (standard tier) | **SPEND knob**: `priority` (catalog name "Fast") = ~1.5× token speed at a **2.5× credit rate** on gpt-5.6-sol — quality-neutral (same model). codex accepts any `-c service_tier` string silently (probe-pinned 2026-07-05), so the wrapper validates: an unsupported value warns and runs standard. Env or settings file. |
 | `CODEX_SESSION_FILE` | `./.codex-last-session` | where `codex-exec` records the session id and where `--resume-last` reads it |
 | `CODEX_REVIEW_MAX_TOTAL_BYTES` | `1500000` | `codex-review code`: above this the assembled diff goes via a git-dir temp file instead of inline — never truncated |
+| `AW_REVIEW_NONCE` | unset | the flow dispatch nonce (safe grammar `[A-Za-z0-9._-]{1,64}` — anything else refuses pre-spend). When supplied, a successful review first mints the finding MANIFEST `agent-workflow-finding-manifest-codex-<nonce>.json` beside the receipts file (atomic, no-clobber, ORDERED before the receipt append) — a failed mint EXCLUDES the receipt, so a nonce-supplied dispatch never lands a receipt without its readable manifest; nonce-less runs are byte-exact today and mint nothing |
 | `CODEX_REVIEW_SCHEMA` | unset | `codex-review`: `=1` returns findings as a validated JSON object (`--output-schema`), with a raw-text fallback. Default off. |
 | `CODEX_PROBE` | unset | `=1` ⇒ throwaway-probe mode: relaxes the model/effort guard AND the tier-2 passthrough guard (echoed loudly). Never for real work. |
 
@@ -223,7 +225,8 @@ The wrappers work in any git repo where `codex` is installed and authenticated. 
   restates it via `-c`; only a *raw* `codex exec resume` (bypassing the wrapper) loses the posture.
 - **Hard timeout** — a hung run is killed at `CODEX_HARD_TIMEOUT` (exec 3600s / review 1800s) and
   reported (exit 124/137); raise it for a known-healthy slow run. If neither `timeout` nor `gtimeout`
-  is on `PATH` the wrapper warns loudly and runs uncapped (never silently).
+  is on `PATH`, `codex-exec` warns loudly and runs uncapped; `codex-review` refuses pre-spend
+  (the fail-closed preflight — an uncapped review run no longer exists).
 - **Native `codex review` is out of scope** — it rejects `--ignore-user-config` (would load a personal
   `config.toml` and break the subscription/config-isolation invariant) and can't be cleanly captured;
   `codex-review` runs `codex exec` over a precomputed diff instead.

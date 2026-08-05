@@ -418,6 +418,26 @@ const appendUnderLock = ({ storePath, line, snapshot, deps }) => {
         throw stop('refusing a degrade-justification whose down-mark is already closed by up/clear — minted-after-close can never satisfy (#25); nothing was written');
       }
     }
+    // The same P3-26 discipline for the consult-attestation (Phase-4): the writer derives
+    // {cycle, stepId, round} lock-free, so a concurrent converged/park/complete can close or move
+    // the step first — under the lock the named plan's chain must be LEGAL and hold an OPEN step
+    // (in-step, not parked, not completed) whose {cycle, stepId, round} EQUALS the record's; a
+    // stale consult context can never satisfy the decide layer, so the store refuses to strand it.
+    if (snapshot.kind === 'consult-attestation') {
+      const chain = parsed.records.filter((r) => r.kind === CHAIN_KIND && r.planId === snapshot.planId);
+      const seq = chain.length === 0 ? { ok: false, reason: 'no chain exists for that plan' } : validateChainSequence(chain);
+      if (!seq.ok) {
+        throw stop(`refusing a consult-attestation: the plan "${snapshot.planId}" chain is not a legal open carrier under the lock (${seq.reason}); nothing was written`);
+      }
+      const state = walkChainState(chain);
+      const open = state.mode === 'in-step' && !state.parked && !state.completed;
+      if (!open || state.stepId !== snapshot.stepId || state.cycle !== snapshot.cycle || state.round !== snapshot.round) {
+        const shown = !open
+          ? (state.completed ? 'the plan is completed' : state.parked ? 'the plan is parked' : 'no step is open')
+          : `the open step is "${state.stepId}" (cycle ${state.cycle}, round ${state.round})`;
+        throw stop(`refusing a consult-attestation whose {cycle, stepId, round} does not match the OPEN step under the lock — ${shown}; a consult binds the open step's round, and a stale context can never satisfy; nothing was written`);
+      }
+    }
     const existingSup = validateSupersessions(parsed.records);
     if (!existingSup.ok) {
       throw stop(`refusing to append to a flow store whose existing records already violate supersession legality (${existingSup.reason}) — inspect ${storePath}; nothing was written (fail closed)`);

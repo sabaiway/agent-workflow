@@ -100,8 +100,9 @@ What it does for you, and what YOU must supply:
 - **Posture banner — quote it verbatim.** Every review states its ACTUAL posture on ONE stderr line
   (`review posture: model=… timeout=…`). When you label a dispatch for a user or a record, **quote
   the posture banner verbatim** — the banner is the machine-stated posture; a prose re-type drifts.
-  The `timeout=` field is **banner-only** (exactly the duration `agy-run` hands to `timeout(1)`, or
-  `uncapped` when no capping binary is on PATH) — informational, never part of the receipt posture.
+  The `timeout=` field is **banner-only** (exactly the duration `agy-run` hands to `timeout(1)`;
+  without a capping binary `agy-review` fails CLOSED pre-spend, so an uncapped review banner no
+  longer exists) — informational, never part of the receipt posture.
 
 ## Escalation policy (edits, network, git)
 

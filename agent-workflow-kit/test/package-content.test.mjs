@@ -343,7 +343,12 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       never DIRECTLY imports the append-capable store module (the orchestration-write
     //       import-split rule, extended); flow-store.mjs re-exports it. Full transitive graph
     //       purity is queued (FLOW-READ-GRAPH-PURITY), not claimed.
-    assert.equal(packed.length, 177, `tarball file count drifted (${packed.length} ≠ 177)`);
+    // 179 = 177 + the Phase-4 deadline runner, EXACTLY two files: tools/receipt-deadline.mjs
+    //       (the receipt-ARRIVAL waiter — watermark + in-process prefix binding + the preferred
+    //       nonce-manifest correlation) + its mode doc references/modes/receipt-deadline.md.
+    //       The *.test.mjs sibling is stripped by files[]. (The Phase-4 wrapper manifest lane
+    //       and the consult-attestation arm live in already-counted files.)
+    assert.equal(packed.length, 179, `tarball file count drifted (${packed.length} ≠ 179)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
