@@ -1,10 +1,11 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { main, extractSection, CONFIG_REL } from './procedures.mjs';
+import { main, extractSection, CONFIG_REL, FLOW_ARMED_HALVES_HEADER, defaultFlowProbe } from './procedures.mjs';
 import { READY, NEEDS_SKILL } from './detect-backends.mjs';
 import { allowedLabel } from './bridge-settings-read.mjs';
 
@@ -285,6 +286,8 @@ describe('procedures CLI — --json schema (§2.0)', () => {
     const r = run(['plan-execution', '--json'], { codex: READY, agy: NEEDS_SKILL });
     assert.equal(r.code, 0, r.stderr);
     const j = JSON.parse(r.stdout);
+    // The unarmed JSON key set stays byte-exact to the pre-flow shape — the flowHalves key is
+    // CONDITIONAL on a flow block (unarmed neutrality), unlike the unconditional additive keys.
     assert.deepEqual(Object.keys(j).sort(), ['activity', 'autonomy', 'configSource', 'costLanes', 'groundingPreStep', 'reviewLoop', 'section', 'slots', 'warnings'].sort());
     assert.equal(j.activity, 'plan-execution');
     assert.match(j.section, /## plan-execution/);
@@ -699,5 +702,85 @@ describe('extractSection (unit) — boundary + verbatim', () => {
 
   it('throws (engine-too-old) when the activity section is absent', () => {
     assert.throws(() => extractSection(FIXTURE, 'plan-nope'), /has no "## plan-nope" section/);
+  });
+});
+
+describe('procedures CLI — the flow armed-halves block (P8)', () => {
+  const FLOW_BLOCK = {
+    schema: 1, preset: 'council', councilRounds: 3, kitMinVersion: '5.1.0',
+    debtQueue: 'docs/debt.md', convergenceSummary: 'docs/convergence.md', convergenceSummaryExcluded: true,
+  };
+  const runWithProbe = (argv, probe) => {
+    const calls = [];
+    const r = main(argv, {
+      cwd, env: { AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR }, detect: detect(READY, READY),
+      flowProbe: (probeCwd) => { calls.push(probeCwd); return probe; },
+    });
+    return { ...r, calls };
+  };
+
+  it('no flow block → byte-neutral: no armed-halves header and NO store probe', () => {
+    const r = runWithProbe(['plan-execution'], { present: false, armed: false, broken: null });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!r.stdout.includes(FLOW_ARMED_HALVES_HEADER), 'an unarmed config renders no flow block');
+    assert.deepEqual(r.calls, [], 'the store probe never runs without a flow block');
+  });
+
+  it('a flow block renders the three halves — config, chain (probe-driven), bookkeeping tracked/declared-excluded', () => {
+    writeConfig(JSON.stringify({ flow: FLOW_BLOCK }));
+    const r = runWithProbe(['plan-execution'], { present: false, armed: false, broken: null });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(r.stdout.includes(FLOW_ARMED_HALVES_HEADER));
+    assert.match(r.stdout, /config: ARMED — preset council · councilRounds 3 · kitMinVersion 5\.1\.0/);
+    assert.match(r.stdout, /chain: UNARMED — no flow store file yet \(plan adoption arms it: flow-writer adoption <plan-file>\)/);
+    assert.match(r.stdout, /bookkeeping\.debtQueue: docs\/debt\.md — declared non-excluded \(the tracked-file floor verifies on the set-flow arming path, #37\)/);
+    assert.match(r.stdout, /bookkeeping\.convergenceSummary: docs\/convergence\.md — DECLARED-EXCLUDED \(loud, #31\)/);
+    assert.deepEqual(r.calls, [cwd], 'the probe runs exactly once, on the config cwd');
+  });
+
+  it('the chain half tracks the probe: armed, unadopted, and fail-closed BROKEN wordings', () => {
+    writeConfig(JSON.stringify({ flow: FLOW_BLOCK }));
+    assert.match(runWithProbe(['plan-execution'], { present: true, armed: true, broken: null }).stdout,
+      /chain: ARMED — the flow store carries an adoption record/);
+    assert.match(runWithProbe(['plan-execution'], { present: true, armed: false, broken: null }).stdout,
+      /chain: UNARMED — a store file exists but no chain is adopted \(semantic arms stay inert, #52\)/);
+    assert.match(runWithProbe(['plan-execution'], { present: true, armed: false, broken: '2 malformed line(s)' }).stdout,
+      /chain: store BROKEN — 2 malformed line\(s\); every composed checker fails closed on it/);
+  });
+
+  it('the DEFAULT probe reads the real store on the checker path — absent, armed, and broken lanes', () => {
+    const root = mkdtempSync(join(tmpdir(), 'procedures-probe-'));
+    const g = (...args) => {
+      const r = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+      assert.equal(r.status, 0, r.stderr);
+    };
+    g('init', '-q', '-b', 'main');
+    mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
+    writeFileSync(join(root, CONFIG_REL), JSON.stringify({ flow: FLOW_BLOCK }));
+    const probeRun = () => main(['plan-execution'], { cwd: root, env: { AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR }, detect: detect(READY, READY) });
+    assert.match(probeRun().stdout, /chain: UNARMED — no flow store file yet/, 'absent store → the no-store lane');
+    const store = join(root, '.git', 'agent-workflow-flow.jsonl');
+    writeFileSync(store, 'not json\n');
+    assert.match(probeRun().stdout, /chain: store BROKEN — 1 malformed line/, 'malformed store → the fail-closed lane');
+    const adoption = {
+      schema: 1, kind: 'chain', purpose: 'adoption', planId: 'p1', cycle: 1, round: 0, commitEpoch: 0,
+      owner: 'main', base: null, timestamp: '2026-08-01T00:00:00.000Z', stepId: null,
+      fingerprint: 'a1'.repeat(32), planLabel: 'p1', createdAt: '2026-08-01T00:00:00.000Z', planDigest: '1a'.repeat(32),
+    };
+    writeFileSync(store, `${JSON.stringify(adoption)}\n`);
+    assert.match(probeRun().stdout, /chain: ARMED — the flow store carries an adoption record/, 'adopted store → the armed lane');
+    const unstatable = defaultFlowProbe(root, () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); });
+    assert.deepEqual(unstatable, { present: true, armed: false, broken: 'the store leaf cannot be stat-ed (fail closed)' }, 'a non-ENOENT stat failure reads as present-but-broken (fail closed)');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('--json carries the structured flowHalves (empty without a flow block)', () => {
+    const empty = runWithProbe(['plan-execution', '--json'], { present: false, armed: false, broken: null });
+    assert.equal('flowHalves' in JSON.parse(empty.stdout), false, 'no flow block → no flowHalves key (unarmed JSON neutrality)');
+    writeConfig(JSON.stringify({ flow: FLOW_BLOCK }));
+    const armed = runWithProbe(['plan-execution', '--json'], { present: true, armed: true, broken: null });
+    const halves = JSON.parse(armed.stdout).flowHalves;
+    assert.equal(halves[0], FLOW_ARMED_HALVES_HEADER);
+    assert.equal(halves.length, 5, 'header + config + chain + two bookkeeping lines');
   });
 });

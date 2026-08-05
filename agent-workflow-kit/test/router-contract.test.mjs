@@ -220,7 +220,10 @@ const BUDGET = {
   // THREE pointers (the autonomy slot: step-3 wording, the (a)(iii) anchor-absent soft-skip lane,
   // the No-Node walk, the step-4/8 report row) — ~575 B of new contract content over 179 B of
   // headroom; a documented KB-multiple bump, never a silent re-pin.)
-  fullReadSet: 65536, // router + mode + its declared shared files. 63488 → 65536 (64 KB):
+  fullReadSet: 66560, // router + mode + its declared shared files. 65536 → 66560 (65 KB): flow
+  // Plan 3 Phase 3 — the set-flow + flow-writer mode headers land in the router (two lines riding
+  // EVERY read set), overflowing upgrade's set (65745 B) by 209 B — the same documented KB-multiple
+  // bump, never a silent re-pin. History: 63488 → 65536 (64 KB):
   // AD-061 Phase 3 — upgrade.md gains the Communication-section reconcile contract (the
   // enumerated outcome set on steps 3/4, the step-8 row) AND composition-handoff.md gains the
   // Communication half of the both-paths refresh paragraph, against 83 B of headroom; the
@@ -258,14 +261,16 @@ const BUDGET = {
   // Then 54272 → 55296 (54 KB): AD-044 Plan 3 — the same three-pointer contract also lands in
   // composition-handoff.md (a shared file in upgrade's read set), overflowing the pair by ~949 B;
   // the same documented KB-multiple bump.
-  daily: 18432, // the no-shared daily modes (help/backends/recipes/procedures/gates). 16384 →
+  daily: 19456, // the no-shared daily modes (help/backends/recipes/procedures/gates). 16384 →
   // 17408 (17 KB): AD-052 replaces gates.md's one-sentence offer description with the closed-world
   // contract paragraph (allowlist membership + the uniform `<pm> exec` hook-free form + the per-PM
   // fail-closed floor + the runtime-residual disclosure), 738 B of new contract content against
   // 471 B of headroom, overflowing by 267 B after trimming — a documented KB-multiple bump, never
   // a silent re-pin. Then 17408 → 18432 (18 KB): AD-060 — the worktrees mode header lands in the
   // router (one line riding EVERY daily read set), overflowing gates by 67 B; the same documented
-  // KB-multiple bump.
+  // KB-multiple bump. Then 18432 → 19456 (19 KB): flow Plan 3 Phase 3 — the set-flow + flow-writer
+  // mode headers land in the router (two lines riding EVERY daily read set), overflowing gates
+  // (18639 B) by 207 B; the same documented KB-multiple bump.
 };
 const DAILY = ['help', 'backends', 'recipes', 'procedures', 'gates'];
 

@@ -333,7 +333,17 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       pure checker predicates over both stores + the standalone --check CLI, deliberately
     //       UNDECLARED in gates.json until Plan 3 wires composition). Its *.test.mjs sibling is
     //       stripped by files[].
-    assert.equal(packed.length, 172, `tarball file count drifted (${packed.length} ≠ 172)`);
+    // 176 = 172 + the flow arming + writer surfaces (flow-orchestration Plan 3 Phase 3), EXACTLY
+    //       four files: tools/set-flow.mjs (the preview-first arming writer — deep floors live
+    //       there) + tools/flow-writer.mjs (the explicit record writer — the store preflight is
+    //       the single legality door) + their two mode docs references/modes/set-flow.md +
+    //       references/modes/flow-writer.md. The *.test.mjs siblings are stripped by files[].
+    // 177 = 176 + tools/flow-store-read.mjs — the read half of the flow store (owns no write
+    //       API), extracted by a Phase-3 review disposition: the read-only procedures advisor
+    //       never DIRECTLY imports the append-capable store module (the orchestration-write
+    //       import-split rule, extended); flow-store.mjs re-exports it. Full transitive graph
+    //       purity is queued (FLOW-READ-GRAPH-PURITY), not claimed.
+    assert.equal(packed.length, 177, `tarball file count drifted (${packed.length} ≠ 177)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

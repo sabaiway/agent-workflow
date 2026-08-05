@@ -35,9 +35,12 @@ import {
 import { SKIPPED_READONLY } from './setup-backends.mjs';
 import { LATENT_ARM_NOTICE } from './review-state.mjs';
 import { QUEUE_SHARED_RULE, LANDING_FROM_MAIN, NO_DEPENDENCIES_POSTURE, CLEANUP_OWNERSHIP_RULE, INCLUDE_IDENTITY_RULE, RESUME_VERIFY_RULE } from './worktrees.mjs';
-// The flow tolerate contract (tolerate-only release): the accepted schema version + the honest
-// lagging-kit sentence, both owned by the config validator and pinned into procedures.md.
+// The flow contract constants: the accepted schema version + the honest lagging-kit sentence
+// (owned by the config validator), and the set-flow bookkeeping-floor residual (owned by the
+// arming writer) — each pinned byte-exact into its mode doc(s).
 import { FLOW_SCHEMA_VERSION, FLOW_LAGGING_KIT_CONTRACT } from './orchestration-config.mjs';
+import { FLOW_BOOKKEEPING_FLOOR_RESIDUAL } from './set-flow.mjs';
+import { FLOW_ARMED_HALVES_HEADER } from './procedures.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -49,6 +52,7 @@ const SETUP_DOC = 'references/modes/setup.md';
 const REVIEW_STATE_DOC = 'references/modes/review-state.md';
 const WORKTREES_DOC = 'references/modes/worktrees.md';
 const PROCEDURES_DOC = 'references/modes/procedures.md';
+const SET_FLOW_DOC = 'references/modes/set-flow.md';
 
 // A typed usage failure (exit 2) for the CLI parser — the codebase's typed-error idiom (no classes).
 const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 });
@@ -120,13 +124,18 @@ export const BINDINGS = Object.freeze([
   // a reworded mode doc dropping the per-owned-path × session-never-probed contract fails this pin
   // plus the gate.
   valueBinding('resume-verify-rule', RESUME_VERIFY_RULE, RESUME_VERIFY_RULE, [WORKTREES_DOC]),
-  // The flow tolerate contract: (a) the accepted NUMERIC `flow` schema version renders into the
+  // The flow contract pins: (a) the accepted NUMERIC `flow` schema version renders into the
   // procedures.md allowed-shape contract line — a bumped constant with an unchanged doc fails this
   // pin plus the gate; (b) the honest lagging-kit sentence — what a pre-flow kit does on meeting a
-  // `flow` block, and that this release enforces nothing against such a reader — renders as the
-  // exact exported sentence into the exit-1 contract line, so the admission cannot be reworded away.
+  // `flow` block, and exactly what the now-armed set-flow floor can and cannot reach — renders as
+  // the exact exported sentence into BOTH flow-facing mode docs (amended with set-flow, P12);
+  // (c) the set-flow bookkeeping-floor residual — the honest boundary of what the arming floors
+  // decide — renders byte-exact into the set-flow mode doc; (d) the procedures armed-halves header —
+  // the session-start flow-state surface (P8) — renders into procedures.md.
   valueBinding('flow-schema-version', FLOW_SCHEMA_VERSION, `\`"schema": ${FLOW_SCHEMA_VERSION}\``, [PROCEDURES_DOC]),
-  valueBinding('flow-lagging-kit', FLOW_LAGGING_KIT_CONTRACT, FLOW_LAGGING_KIT_CONTRACT, [PROCEDURES_DOC]),
+  valueBinding('flow-lagging-kit', FLOW_LAGGING_KIT_CONTRACT, FLOW_LAGGING_KIT_CONTRACT, [PROCEDURES_DOC, SET_FLOW_DOC]),
+  valueBinding('flow-bookkeeping-floor-residual', FLOW_BOOKKEEPING_FLOOR_RESIDUAL, FLOW_BOOKKEEPING_FLOOR_RESIDUAL, [SET_FLOW_DOC]),
+  valueBinding('flow-armed-halves-header', FLOW_ARMED_HALVES_HEADER, FLOW_ARMED_HALVES_HEADER, [PROCEDURES_DOC]),
 ].map((b) => Object.freeze(b)));
 
 // ── the pure checker (readText is injectable for hermetic tests) ────────────────────────

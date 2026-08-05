@@ -197,6 +197,20 @@ const CATALOG = [
     oneLine: 'Set the per-project autonomy policy from plain language — which actions always ask (commit/push/publish/network) and how autonomously each activity runs; previews the change, then writes the policy when you confirm.',
   },
   {
+    key: 'set-flow',
+    invocation: invocationOf('set-flow'),
+    group: 'Orchestrate',
+    kind: WRITER,
+    oneLine: 'Arm the per-project review-flow settings from a preset plus explicit keys — previews the merged flow block, verifies the declared bookkeeping files and the kit version floor, then writes the config when you confirm.',
+  },
+  {
+    key: 'flow-writer',
+    invocation: invocationOf('flow-writer'),
+    group: 'Orchestrate',
+    kind: WRITER,
+    oneLine: 'Record an explicit review-flow step (adoption/park/resume/complete of a plan, re-baseline, a rerun cause, a reviewer down-mark, a degrade justification, a checkpoint-approved override) into the shared flow record store — flow-check refusals print the exact command to paste, and the store itself validates every append.',
+  },
+  {
     key: 'review-state',
     invocation: invocationOf('review-state'),
     group: 'Orchestrate',
@@ -271,8 +285,9 @@ export const kindOf = (key) => byKey.get(key)?.kind ?? null;
 // (`upgrade`) OR the full slash form (`/agent-workflow-kit upgrade`); the first word is significant
 // and trailing args are ignored. Precise semantics:
 //   undefined / null / '' / whitespace-only / the exact bare invocation → 'bootstrap'
-//   a known first token (upgrade/status/setup/backends/recipes/procedures/velocity/agents/hook/
-//     gates/set-recipe/uninstall/migrate-adr-store/help) → that mode
+//   a known first token (any non-bootstrap catalog key — upgrade/status/setup/backends/recipes/
+//     procedures/velocity/agents/hook/gates/set-recipe/set-flow/flow-writer/uninstall/
+//     migrate-adr-store/help/…) → that mode
 //   anything else (unrecognized / ambiguous) → 'help'  (read-only — NEVER a writer/guarded mode)
 export const routeInvocation = (token) => {
   if (token == null) return BARE_INVOCATION_MODE;

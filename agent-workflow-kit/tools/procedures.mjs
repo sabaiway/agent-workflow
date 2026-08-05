@@ -27,16 +27,24 @@ import { loadRegistry, allowedLabel } from './bridge-settings-read.mjs';
 import { ACTIVITIES, resolveActivityRecipe, planRecipe } from './recipes.mjs';
 import { resolveEngineDir, readEngineFragment, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
 // The plan-in-flight detector (AD-038) — imported from the READ-ONLY checker (review-state.mjs
-// performs no fs writes, so the "procedures never reaches a writer" import-split invariant holds;
-// the WRITER-capable grounding.mjs is only NAMED in rendered text, never imported).
+// performs no fs writes of its own; no transitive writer-free claim is made for its graph); the
+// WRITER-capable grounding.mjs is only NAMED in rendered text, never imported.
 import { plansInFlight, PLANS_REL } from './review-state.mjs';
 // The config schema/read core lives in orchestration-config.mjs (the single config contract). procedures
 // is READ-ONLY: it imports the reader + the SHARED slot/recipe validity, never the fs-writer
-// (orchestration-write.mjs) — so "the read-only advisor can never reach a writer" is STRUCTURALLY true
-// (an import-split test pins it). CONFIG_REL is RE-EXPORTED so existing importers (procedures.test.mjs,
-// historically) keep their import site working.
+// (orchestration-write.mjs) DIRECTLY — the import-split test pins the direct-import rule.
+// CONFIG_REL is RE-EXPORTED so existing importers (procedures.test.mjs, historically) keep their
+// import site working.
 import { CONFIG_REL, fail, loadConfig, assertSlotRecipe } from './orchestration-config.mjs';
 import { AUTONOMY_REL, loadAutonomy, resolveAutonomy, isSparseSeedConfig } from './autonomy-config.mjs';
+// The flow armed-halves probe (P8): read-only store presence/adoption facts for the session-start
+// surface, imported from the read module that OWNS no write API — this advisor never imports the
+// mixed flow-store module (append API) DIRECTLY, like it never imports orchestration-write (the
+// import-split test pins both direct rules). Honest boundary: the transitive graph still reaches
+// mixed modules (via flow-record and review-state) — full graph purity is queued
+// (FLOW-READ-GRAPH-PURITY), never claimed here.
+import { resolveFlowStorePath, readFlowStore } from './flow-store-read.mjs';
+import { CHAIN_KIND } from './flow-record.mjs';
 export { CONFIG_REL };
 
 // ── argument + override parsing (usage errors → exit 2) ─────────────────────────────
@@ -305,6 +313,55 @@ const costLanesAdvice = () => [
   '  • The prompt-economy clause narrows TOOLS for read-only work only — judgment, code, synthesis stay at the frontier lane; a task that genuinely needs to run or write keeps a full-tool subagent. Honest limit: no deterministic gate classifies a dispatch — enforcement is the canon at the point of use + the placed vehicles + the retro loop.',
 ];
 
+// ── the flow armed-halves block (P8 — design §5 read side) ─────────────────────────
+// Rendered ONLY when the config carries a `flow` block (an unarmed project sees byte-identical
+// output and NO store probe). Three halves: config-armed (the block's own keys), chain-armed (the
+// flow store's adoption state — a light read-only probe on the checker's FIXED path, env ignored),
+// bookkeeping (per declared path: tracked-at-arming vs loudly declared-excluded).
+
+export const FLOW_ARMED_HALVES_HEADER = 'Flow (schema 1) — armed halves (config · chain · bookkeeping):';
+
+export const defaultFlowProbe = (cwd, lstat = lstatSync) => {
+  const storePath = resolveFlowStorePath(cwd, {});
+  if (storePath == null) return { present: false, armed: false, broken: null };
+  try {
+    lstat(storePath);
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return { present: false, armed: false, broken: null };
+    return { present: true, armed: false, broken: 'the store leaf cannot be stat-ed (fail closed)' };
+  }
+  const read = readFlowStore(storePath);
+  const broken = read.readError ?? (read.malformed > 0 ? `${read.malformed} malformed line(s) (${read.malformedReasons[0]})` : null);
+  return {
+    present: true,
+    armed: broken == null && read.records.some((r) => r.kind === CHAIN_KIND && r.purpose === 'adoption'),
+    broken,
+  };
+};
+
+const flowHalvesAdvice = (flow, probe) => {
+  if (flow == null) return [];
+  const chainLine = probe.broken != null
+    ? `  chain: store BROKEN — ${probe.broken}; every composed checker fails closed on it`
+    : !probe.present
+      ? '  chain: UNARMED — no flow store file yet (plan adoption arms it: flow-writer adoption <plan-file>)'
+      : probe.armed
+        ? '  chain: ARMED — the flow store carries an adoption record'
+        : '  chain: UNARMED — a store file exists but no chain is adopted (semantic arms stay inert, #52)';
+  const bookkeeping = [
+    ['debtQueue', flow.debtQueue, flow.debtQueueExcluded],
+    ['convergenceSummary', flow.convergenceSummary, flow.convergenceSummaryExcluded],
+  ].map(([key, rel, excluded]) => `  bookkeeping.${key}: ${rel == null
+    ? '(undeclared)'
+    : `${rel} — ${excluded === true ? 'DECLARED-EXCLUDED (loud, #31)' : 'declared non-excluded (the tracked-file floor verifies on the set-flow arming path, #37)'}`}`);
+  return [
+    FLOW_ARMED_HALVES_HEADER,
+    `  config: ARMED — preset ${flow.preset ?? '(unset)'} · councilRounds ${flow.councilRounds ?? '(unset)'} · kitMinVersion ${flow.kitMinVersion ?? '(none declared)'}`,
+    chainLine,
+    ...bookkeeping,
+  ];
+};
+
 // The verbatim per-backend DRIVING CONTRACT block (M-contract): the exact invocation descriptor(s),
 // the closed flag set, the grounding note, the round-2/continue delta, and the guarded passthrough
 // tiers — every descriptor printed VERBATIM from the registry mirror of the bridge manifest
@@ -341,7 +398,7 @@ const contractLines = ({ cmd, contract, settings }) => {
   return lines;
 };
 
-const formatHuman = ({ activity, section, slots, warnings, plans, autonomy }) => {
+const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flowHalves }) => {
   const lines = [
     section,
     '',
@@ -353,6 +410,7 @@ const formatHuman = ({ activity, section, slots, warnings, plans, autonomy }) =>
     if (s.reason) lines.push(`      ↳ ${s.reason}`);
     for (const c of s.contracts ?? []) lines.push(...contractLines(c));
   }
+  if ((flowHalves ?? []).length) lines.push('', ...flowHalves);
   const autonomyBlock = autonomyAdvice(activity, autonomy);
   if (autonomyBlock.length) lines.push('', ...autonomyBlock);
   const grounding = groundingPreStepAdvice(activity, slots, plans);
@@ -367,7 +425,7 @@ const formatHuman = ({ activity, section, slots, warnings, plans, autonomy }) =>
   return lines.join('\n');
 };
 
-const buildJson = ({ activity, section, slots, configSource, warnings, plans, autonomy }) => ({
+const buildJson = ({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves }) => ({
   activity,
   section,
   slots: Object.fromEntries(
@@ -382,6 +440,9 @@ const buildJson = ({ activity, section, slots, configSource, warnings, plans, au
   costLanes: costLanesAdvice(),
   // ADDITIVE (AD-044 Plan 4): the per-activity autonomy block, structured (empty when unresolvable).
   autonomy: autonomyAdvice(activity, autonomy),
+  // CONDITIONAL (flow P8): the armed-halves block rides ONLY a flow-carrying config — the unarmed
+  // JSON key set stays byte-exact (unarmed neutrality outranks the additive-key precedent).
+  ...(flowHalves == null ? {} : { flowHalves }),
   configSource,
   warnings,
 });
@@ -451,9 +512,13 @@ export const main = (argv, ctx = {}) => {
         return { error: (err && err.message) || String(err) };
       }
     })();
+    // The flow armed-halves block (P8): probed ONLY when the config carries a flow block — an
+    // unarmed project keeps byte-identical output (human AND JSON) and never pays the store probe.
+    const flowProbe = ctx.flowProbe ?? defaultFlowProbe;
+    const flowHalves = config?.flow == null ? null : flowHalvesAdvice(config.flow, flowProbe(cwd));
     const stdout = json
-      ? JSON.stringify(buildJson({ activity, section, slots, configSource, warnings, plans, autonomy }), null, 2)
-      : formatHuman({ activity, section, slots, warnings, plans, autonomy });
+      ? JSON.stringify(buildJson({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves }), null, 2)
+      : formatHuman({ activity, section, slots, warnings, plans, autonomy, flowHalves });
     if (autonomy?.error) {
       return { code: 1, stdout, stderr: `procedures: malformed ${AUTONOMY_REL} — ${autonomy.error}` };
     }

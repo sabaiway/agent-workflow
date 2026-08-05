@@ -101,6 +101,15 @@ describe('orchestration-write — symlink + TOCTOU hardening', () => {
 // is enforced by MODULE STRUCTURE (procedures.mjs does not import orchestration-write.mjs), so it cannot
 // be defeated at runtime — only by an edit this guard catches.
 describe('import-split guard — procedures.mjs never imports the writer', () => {
+  it('procedures.mjs source contains no DIRECT import of the mixed (append-capable) flow-store module', () => {
+    // Honest scope: this pins the DIRECT import rule only (like the orchestration-write rule
+    // above) — the transitive graph still reaches mixed modules via flow-record/review-state;
+    // full graph purity is queued (FLOW-READ-GRAPH-PURITY), never claimed by this test.
+    const src = readFileSync(new URL('./procedures.mjs', import.meta.url), 'utf8');
+    const importsMixedStore = /from\s+['"][^'"]*flow-store\.mjs/.test(src) || /import\(\s*['"][^'"]*flow-store\.mjs/.test(src);
+    assert.equal(importsMixedStore, false, 'the read-only advisor imports flow-store-read.mjs (no write API of its own) — never the append-capable store module directly');
+  });
+
   it('procedures.mjs source contains no import of orchestration-write', () => {
     const src = readFileSync(join(HERE, 'procedures.mjs'), 'utf8');
     // Match an actual import (static `from '…orchestration-write…'` or dynamic `import('…')`) — NOT a
