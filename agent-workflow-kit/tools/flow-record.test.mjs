@@ -26,6 +26,10 @@ import {
   findingManifestBasename,
   validateFindingManifest,
   decodeFindingManifest,
+  subsetFoldBatchDigest,
+  subsetGateIdsDigest,
+  ownerScopedFlowProjection,
+  flowProjectionHash,
 } from './flow-record.mjs';
 import { FLOW_SCHEMA_VERSION as CONFIG_FLOW_SCHEMA_VERSION } from './orchestration-config.mjs';
 import { canonicalKindSerialization } from './core-evidence.mjs';
@@ -107,6 +111,16 @@ const globalRecord = (kind, over = {}) => {
       findingDigest: D('4e'),
       proposedFixDigest: D('5d'),
     },
+    'subset-attempt': {
+      planId: 'plan-a',
+      cycle: 1,
+      stepId: '1.1',
+      foldBatch: D('a3'),
+      subsetDigest: D('b4'),
+      attemptIndex: 1,
+      status: 'green',
+      fingerprint: FP,
+    },
   };
   return { ...globalCommon, kind, ...shapes[kind], ...over };
 };
@@ -125,6 +139,10 @@ const DESIGN_SECTION5_SEED = [
   'consult-attestation',
 ];
 
+// The ONE post-seed vocabulary addition (Plan 4 Decision 7 — the subset hard-stop carrier).
+// Recorded here AND in the module header; anything else appearing in GLOBAL_KINDS is drift.
+const PLAN4_DECISION7_ADDITIONS = ['subset-attempt'];
+
 describe('flow-record vocabulary (Phase 1.1)', () => {
   it('flow-record vocabulary is closed and covers the locked family assignment exactly', () => {
     assert.deepEqual([...Object.keys(DESIGN_SEED_ASSIGNMENT)].sort(), [...DESIGN_SECTION5_SEED].sort());
@@ -132,7 +150,8 @@ describe('flow-record vocabulary (Phase 1.1)', () => {
     const globalAssigned = Object.values(DESIGN_SEED_ASSIGNMENT).filter((a) => a.family === 'global').map((a) => a.kind);
     assert.equal(chainAssigned.length + globalAssigned.length, DESIGN_SECTION5_SEED.length, 'every seed member is assigned to exactly one family');
     assert.deepEqual([...chainAssigned].sort(), [...CHAIN_PURPOSES].sort());
-    assert.deepEqual([...globalAssigned].sort(), [...GLOBAL_KINDS].sort());
+    assert.deepEqual([...globalAssigned, ...PLAN4_DECISION7_ADDITIONS].sort(), [...GLOBAL_KINDS].sort(), 'the shipped globals are exactly the seed assignment plus the recorded Plan-4 Decision-7 addition');
+    assert.ok(PLAN4_DECISION7_ADDITIONS.every((k) => !(k in DESIGN_SEED_ASSIGNMENT)), 'a Plan-4 addition never back-writes the verbatim design seed');
     assert.equal(DESIGN_SEED_ASSIGNMENT['round-chain'].purpose, 'round', 'the round purpose realizes design §5 round-chain');
     assert.deepEqual([...FLOW_KINDS].sort(), [CHAIN_KIND, ...GLOBAL_KINDS].sort());
     assert.deepEqual([...STEP_SCOPED_PURPOSES, ...PLAN_LANE_PURPOSES].sort(), [...CHAIN_PURPOSES].sort(), 'step and plan lanes partition the purposes');
@@ -929,6 +948,136 @@ describe('flow-record supersessions (Phase 1.1 + 1.2)', () => {
 // The wrapper finding manifest (Phase 4.2, Decision 2 / P5 / P24): the findings schema is THIS
 // literal fixture — the named test the plan demands — plus the safe nonce grammar and the
 // {backend, nonce}-derived name (containment-checked, no cross-backend collision).
+describe('subset-attempt — the Plan-4 Decision-7/8 carrier (literal fixture, kind-scoped fields, keys)', () => {
+  const attempt = (over = {}) => globalRecord('subset-attempt', over);
+
+  it('the literal plan fixture validates: stepId "1.1" and null, status green and red', () => {
+    assert.deepEqual(validateFlowRecord(attempt()), { ok: true });
+    assert.deepEqual(validateFlowRecord(attempt({ stepId: null })), { ok: true }, 'the adoption context carries stepId: null');
+    assert.deepEqual(validateFlowRecord(attempt({ status: 'red' })), { ok: true });
+    assert.deepEqual(validateFlowRecord(attempt({ base: null })), { ok: true }, 'an unborn-branch base stays expressible');
+  });
+
+  it('kind-scoped where names collide: attemptIndex is a positive integer, rerun-cause attempt stays the untouched string', () => {
+    for (const bad of [0, -1, 1.5, '1', null]) {
+      const res = validateFlowRecord(attempt({ attemptIndex: bad }));
+      assert.equal(res.ok, false, `attemptIndex ${JSON.stringify(bad)} must refuse`);
+      assert.match(res.reason, /attemptIndex/);
+    }
+    const numericAttempt = validateFlowRecord(globalRecord('rerun-cause', { attempt: 7 }));
+    assert.equal(numericAttempt.ok, false, 'rerun-cause attempt stays the STRING id — the regression pin');
+    assert.match(numericAttempt.reason, /attempt/);
+    assert.deepEqual(validateFlowRecord(globalRecord('rerun-cause')), { ok: true }, 'rerun-cause validation is byte-unchanged');
+  });
+
+  it('status is the closed green | red enum; an unknown or extra field refuses', () => {
+    const amber = validateFlowRecord(attempt({ status: 'amber' }));
+    assert.equal(amber.ok, false);
+    assert.match(amber.reason, /green \| red/);
+    const stray = validateFlowRecord(attempt({ countable: true }));
+    assert.equal(stray.ok, false, 'no countable field exists — every subset-run red counts (Decision 1)');
+    assert.match(stray.reason, /unknown field "countable"/);
+  });
+
+  it('diagnosis rides ONLY attemptIndex 3 and later (Decision 8): forbidden on 1-2, shape-OPTIONAL from 3, non-empty when present', () => {
+    const early = validateFlowRecord(attempt({ diagnosis: 'too early' }));
+    assert.equal(early.ok, false);
+    assert.match(early.reason, /blind budget/);
+    assert.deepEqual(validateFlowRecord(attempt({ attemptIndex: 3 })), { ok: true },
+      "REQUIRED-ness keys on the key's red count (>= 2) and lives in the store gate — a record-local shape cannot see the history, and a green history never owes a diagnosis");
+    assert.deepEqual(validateFlowRecord(attempt({ attemptIndex: 3, diagnosis: 'the fixture races the store teardown' })), { ok: true });
+    const empty = validateFlowRecord(attempt({ attemptIndex: 3, diagnosis: '' }));
+    assert.equal(empty.ok, false);
+    assert.match(empty.reason, /diagnosis/);
+  });
+
+  it('the supersession key is {planId, cycle, stepId, foldBatch, subsetDigest} — attemptIndex is payload, never identity', () => {
+    const first = attempt({ attemptIndex: 1, status: 'red' });
+    const second = attempt({ attemptIndex: 2, status: 'green' });
+    assert.equal(flowRecordKey(first), flowRecordKey(second), 'attempts at one counting context share ONE key');
+    assert.deepEqual(authoritativeFlowRecords([first, second]), [second], 'the latest attempt is the authoritative head');
+    for (const [field, value] of [['planId', 'plan-b'], ['cycle', 2], ['stepId', null], ['foldBatch', D('c5')], ['subsetDigest', D('d6')]]) {
+      assert.notEqual(flowRecordKey(attempt({ [field]: value })), flowRecordKey(first), `${field} is part of the counting-context identity`);
+    }
+  });
+
+  it('foldBatch derives from the IMMUTABLE round identity: a ledger revision keeps it, a new round moves it', () => {
+    const identity = { planId: 'plan-a', cycle: 1, stepId: 'step-1', round: 1 };
+    const opened = chain('round', { round: 1 });
+    const revised = chain('round', { round: 1, dispatches: [PENDING_DISPATCH], timestamp: TS_LATER });
+    const projectionOf = (r) => ({ planId: r.planId, cycle: r.cycle, stepId: r.stepId, round: r.round });
+    assert.equal(subsetFoldBatchDigest(projectionOf(opened)), subsetFoldBatchDigest(identity));
+    assert.equal(subsetFoldBatchDigest(projectionOf(revised)), subsetFoldBatchDigest(identity), 'a round-ledger revision never resets the budget (#47)');
+    assert.notEqual(subsetFoldBatchDigest({ ...identity, round: 2 }), subsetFoldBatchDigest(identity), 'a NEW round is a fresh budget');
+    assert.notEqual(subsetFoldBatchDigest({ ...identity, stepId: null }), subsetFoldBatchDigest(identity), 'the adoption context is its own budget');
+  });
+
+  it('a pregateExclude change moves the subsetDigest — the mechanical counting-context reset (#47)', () => {
+    assert.equal(subsetGateIdsDigest(['unit', 'lint']), subsetGateIdsDigest(['unit', 'lint']));
+    assert.notEqual(subsetGateIdsDigest(['unit', 'lint']), subsetGateIdsDigest(['unit']), 'excluding a gate opens a fresh context');
+    assert.notEqual(subsetGateIdsDigest(['unit', 'lint']), subsetGateIdsDigest(['lint', 'unit']), 'the subset identity is the ORDERED gate-id list');
+  });
+
+  it('ALLOWED_TRANSITIONS is byte-unchanged (Plan-4 characterization — the closed vocabulary stays closed)', () => {
+    assert.deepEqual(ALLOWED_TRANSITIONS, {
+      stepOpening: 'round',
+      withinStep: {
+        round: ['round', 'refresh', 're-baseline', 'freeze', 'converged'],
+        refresh: ['round', 'refresh', 're-baseline', 'freeze', 'converged'],
+        're-baseline': ['round', 'refresh', 're-baseline', 'freeze', 'converged'],
+        freeze: ['unfreeze', 'converged'],
+        unfreeze: ['round', 'refresh', 're-baseline', 'freeze', 'converged'],
+        converged: ['unfreeze'],
+      },
+      planLane: {
+        adoption: ['round', 'park', 'complete'],
+        park: ['resume'],
+        resume: ['round', 'park', 'complete'],
+        complete: [],
+      },
+      boundary: ['round', 'unfreeze', 're-baseline'],
+    });
+  });
+});
+
+describe('owner-scoped flow projection (Plan 4 Decision 2 / D10) — the ONE shared pure hash helper', () => {
+  const OWNER = 'main';
+  const ctx = { owner: OWNER, currentFingerprint: FP };
+  const ownAdoption = chain('adoption', { owner: OWNER });
+  const foreignAdoption = chain('adoption', { owner: 'worktree:elsewhere', planId: 'plan-f' });
+
+  it('(a) own chain records are in; a FOREIGN worktree chain is out', () => {
+    const projected = ownerScopedFlowProjection([ownAdoption, foreignAdoption], ctx);
+    assert.deepEqual(projected, [ownAdoption]);
+  });
+
+  it('(b) a planId-bearing global rides its chain ownership — owned in, foreign out', () => {
+    const ownConsult = globalRecord('consult-attestation');
+    const foreignConsult = globalRecord('consult-attestation', { planId: 'plan-f', nonce: 'nonce-8' });
+    const projected = ownerScopedFlowProjection([ownAdoption, foreignAdoption, ownConsult, foreignConsult], ctx);
+    assert.deepEqual(projected, [ownAdoption, ownConsult]);
+  });
+
+  it('(c) a planId-less global is in iff its tree identity touches the owned-fingerprint set ∪ current tree', () => {
+    const atCurrent = globalRecord('down-mark', { fingerprint: FP });
+    const atForeign = globalRecord('down-mark', { fingerprint: 'ee'.repeat(32), backend: 'backend-b' });
+    const transition = globalRecord('bookkeeping-delta', { fingerprintBefore: 'ee'.repeat(32), fingerprintAfter: FP });
+    const projected = ownerScopedFlowProjection([ownAdoption, atCurrent, atForeign, transition], ctx);
+    assert.deepEqual(projected, [ownAdoption, atCurrent, transition], 'the transition identity is fingerprintAfter; a foreign-tree global never moves the hash');
+    const noChains = ownerScopedFlowProjection([atCurrent], { owner: OWNER, currentFingerprint: FP });
+    assert.deepEqual(noChains, [atCurrent], 'a same-fingerprint foreign global is IN by (c) — same tree, same decision context');
+  });
+
+  it('the projection hash moves on ANY in-projection append and stays fixed under out-of-projection appends', () => {
+    const base = [ownAdoption];
+    const withForeign = [ownAdoption, foreignAdoption];
+    const withOwn = [ownAdoption, globalRecord('rerun-cause')];
+    assert.equal(flowProjectionHash(withForeign, ctx), flowProjectionHash(base, ctx), 'a foreign append never reds a final, never stales the guard');
+    assert.notEqual(flowProjectionHash(withOwn, ctx), flowProjectionHash(base, ctx), 'an own-projection append moves the hash');
+    assert.notEqual(flowProjectionHash([], ctx), flowProjectionHash(base, ctx));
+  });
+});
+
 describe('finding manifest — the literal fixture, the safe nonce grammar, the derived name', () => {
   const MANIFEST_FIXTURE = JSON.parse(
     '{"schema":1,"backend":"codex","nonce":"nx7","fingerprint":"9c2e4d8f1a6b3c7d0e5f2a8b4c6d1e3f7a9b0c2d4e6f8a1b3c5d7e9f0a2b4c6d","findings":"[major] — a.txt:1 — x — y\\nVerdict: revise\\n"}',

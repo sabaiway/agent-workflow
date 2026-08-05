@@ -248,9 +248,14 @@ export const runGuard = ({ cwd = process.cwd(), env = process.env } = {}) => {
   }
   // The flow arm (#43/P3, two-tier over FIXED git-derived paths): no store file ⇒ byte-exact
   // prior behavior; a present store's refusals (malformed reads included) refuse with the
-  // flow-check reason verbatim.
-  const flow = computeFlowDecision({ cwd });
-  if (flow.present && flow.refusals.length > 0) {
+  // flow-check reason verbatim. The commit-guard consumer mode arms the D10 flow→final
+  // comparison (Plan 4 Decision 2) — the in-matrix flow-check gate stays inert on it.
+  const flow = computeFlowDecision({ cwd, consumer: 'commit-guard' });
+  // NOT gated on flow.present: the D10 binding refusal fires precisely when a receipt carries
+  // evidenceHashes.flow and the store has since VANISHED (present=false) — a deletion must
+  // never un-arm the binding. A no-store repo with no flow-bearing receipt still yields zero
+  // refusals (byte-exact pre-flow behavior).
+  if (flow.refusals.length > 0) {
     return {
       code: 1,
       lines: [

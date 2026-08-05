@@ -29,7 +29,7 @@ import { hostname } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { writeContainedFileAtomic, lstatNoFollow } from './atomic-write.mjs';
 import { parsePositiveIntKnob } from './changed-surface.mjs';
-import { FLOW_SCHEMA_VERSION, CHAIN_KIND, validateFlowRecord, validateChainSequence, validateSupersessions, authoritativeFlowRecords, canonicalFlowDigest } from './flow-record.mjs';
+import { FLOW_SCHEMA_VERSION, CHAIN_KIND, validateFlowRecord, validateChainSequence, validateSupersessions, authoritativeFlowRecords, canonicalFlowDigest, flowRecordKey, subsetFoldBatchDigest, subsetGateIdsDigest, SUBSET_ATTEMPT_DIAGNOSIS_FROM } from './flow-record.mjs';
 import { isNeverCommittableStat, isBinaryFile, lexicalRepoRelative, resolveBase, computeTreeFingerprint } from './core-evidence.mjs';
 // The read half lives in flow-store-read.mjs (it OWNS no write API — read-only surfaces like the
 // procedures advisor import it directly) and is RE-EXPORTED here — every existing consumer keeps
@@ -332,12 +332,19 @@ const releaseFlowLock = (lockPath, lockFd, lockIdentity, deps) => {
 // bypass the absolute-normalization door the AW_FLOW_STORE seam enforces. Read, write, and unlock
 // all use the CANONICAL pair acquire returned — nothing is re-derived mid-append.
 export const appendFlowRecord = ({ cwd = process.cwd(), record, env = process.env, deps = {} } = {}) => {
-  const resolved = resolveFlowStorePath(cwd, env);
-  if (resolved == null) {
-    throw stop('not inside a git work tree (and no AW_FLOW_STORE override) — there is no flow store to append to');
+  const { line, snapshot } = captureRecordSnapshot(record);
+  // Round-9 fold: subset-attempt records are minted ONLY by the locked factory — foldBatch,
+  // subsetDigest, and attemptIndex are DERIVED inside its critical section, and a hand-built
+  // record could forge a fresh counting context and bypass the hard-stop budget.
+  if (snapshot.kind === 'subset-attempt') {
+    throw stop('subset-attempt records are minted ONLY by the locked append factory (appendSubsetAttempt) — a hand-built record could forge a fresh counting context and bypass the hard-stop budget (fail closed)');
   }
-  // ONE serialization captured up front; validation and every preflight walk run on its PARSED
-  // snapshot — a toJSON or getter can never make the written line differ from what validated.
+  return appendResolvedFlowRecord({ cwd, env, deps, makeRecord: () => ({ line, snapshot }) });
+};
+
+// ONE serialization captured up front; validation and every preflight walk run on its PARSED
+// snapshot — a toJSON or getter can never make the written line differ from what validated.
+const captureRecordSnapshot = (record) => {
   let line;
   let snapshot;
   try {
@@ -348,8 +355,20 @@ export const appendFlowRecord = ({ cwd = process.cwd(), record, env = process.en
   }
   const v = validateFlowRecord(snapshot);
   if (!v.ok) throw stop(`refusing to write a malformed flow record: ${v.reason}`);
+  return { line, snapshot };
+};
+
+// The lock-serialized core both append lanes share: resolve → acquire → makeRecord (UNDER the
+// lock, over the captured store snapshot) → semantic preflights → atomic write → custody release.
+// The Decision-7 factory lane COMPUTES its record inside the critical section — attemptIndex and
+// the hard-stop state cannot be derived lock-free — so makeRecord runs under the lock by contract.
+const appendResolvedFlowRecord = ({ cwd, env, deps, makeRecord }) => {
+  const resolved = resolveFlowStorePath(cwd, env);
+  if (resolved == null) {
+    throw stop('not inside a git work tree (and no AW_FLOW_STORE override) — there is no flow store to append to');
+  }
   const { storePath, lockPath, lockFd, lockIdentity } = acquireFlowLock(resolved, env, deps);
-  const body = appendUnderLock({ storePath, line, snapshot, deps });
+  const body = appendUnderLock({ storePath, makeRecord, deps });
   const releaseIssue = releaseFlowLock(lockPath, lockFd, lockIdentity, deps);
   if (body.err) {
     if (releaseIssue) {
@@ -364,7 +383,7 @@ export const appendFlowRecord = ({ cwd = process.cwd(), record, env = process.en
 
 // Captured-result shape ({ value } | { err }) — never throws past the caller, so release always
 // runs. The snapshot fd is held until after the final rename and closed on every exit lane.
-const appendUnderLock = ({ storePath, line, snapshot, deps }) => {
+const appendUnderLock = ({ storePath, makeRecord, deps }) => {
   let snapshotFd = null;
   try {
     const storeRead = readRegularFileNoFollow(storePath, { keepFd: true });
@@ -380,6 +399,7 @@ const appendUnderLock = ({ storePath, line, snapshot, deps }) => {
     if (parsed.malformed > 0) {
       throw stop(`refusing to append to a flow store carrying ${parsed.malformed} malformed line(s) (${parsed.malformedReasons[0]}) — inspect ${storePath}; nothing was written (fail closed)`);
     }
+    const { line, snapshot } = makeRecord(parsed.records);
     if (existing.split('\n').some((l) => l === line)) {
       throw stop('refusing a byte-identical replayed line (duplicate) — a genuine new record carries new content or timestamp; nothing was written');
     }
@@ -438,6 +458,12 @@ const appendUnderLock = ({ storePath, line, snapshot, deps }) => {
         throw stop(`refusing a consult-attestation whose {cycle, stepId, round} does not match the OPEN step under the lock — ${shown}; a consult binds the open step's round, and a stale context can never satisfy; nothing was written`);
       }
     }
+    // The Decision-7/8 counting-context gate runs UNDER the lock for BOTH append lanes (the
+    // factory computes a passing record; a hand-built one must satisfy the same rules).
+    if (snapshot.kind === 'subset-attempt') {
+      const gate = subsetAttemptGate(parsed.records, snapshot);
+      if (!gate.ok) throw stop(`refusing a subset-attempt: ${gate.reason} — nothing was written`);
+    }
     const existingSup = validateSupersessions(parsed.records);
     if (!existingSup.ok) {
       throw stop(`refusing to append to a flow store whose existing records already violate supersession legality (${existingSup.reason}) — inspect ${storePath}; nothing was written (fail closed)`);
@@ -495,6 +521,198 @@ const appendUnderLock = ({ storePath, line, snapshot, deps }) => {
   } finally {
     if (snapshotFd !== null) { try { closeSync(snapshotFd); } catch { /* the failure above stays primary */ } }
   }
+};
+
+// ── the Decision-7/8 subset-attempt lane (Plan 4) — counting-context gate + locked factory ────────
+
+// The waste bound is the CAP, not the prose (Decision 8): a counting context allows at most
+// THREE red attempts (two blind + one diagnosed) on its own; past that, no diagnosis reopens it —
+// only a recorded FRESH-EYES consult verdict does, one further attempt per consult.
+export const SUBSET_ATTEMPT_MAX_REDS = 3;
+
+// Past the SECOND red every further attempt at the key rides a recorded diagnosis — the
+// obligation keys on REDS, never on the attempt index (a green history stays blind-legal).
+export const SUBSET_ATTEMPT_DIAGNOSIS_REDS = 2;
+
+// subsetAttemptState(records, probe) → { attempts, nextIndex, reds, credits, exhausted } — the
+// ONE Decision-7/8 budget walk both consumers share (the locked gate below re-runs it under the
+// lock; run-gates' pre-gate check reads it lock-free). The exhaustion ladder is PERMIT-based
+// and foldBatch-GLOBAL (round-3 disposition): red counts stay per key, but permits and their
+// consumption span EVERY subsetDigest of the round context — one consult verdict is exactly
+// ONE further attempt across the whole foldBatch, whichever subset spends it. Consult identity
+// {backend, nonce} is tracked STORE-WIDE before any relevance filtering, so a replay from
+// another round (or any seen identity — pre-exhaustion or spent) never credits; a credit is
+// granted only for a NEW identity whose {planId, cycle, stepId, round} digests to this
+// foldBatch while SOME key of the foldBatch is base-exhausted at that point in raw order.
+// EVERY attempt recorded past its own key's base budget consumes one credit, whatever its
+// status; a tampered store that drove credits negative stays exhausted (fail closed).
+export const subsetAttemptState = (records, probe) => {
+  const key = flowRecordKey({ kind: 'subset-attempt', ...probe });
+  const attempts = [];
+  const seenConsults = new Set();
+  const redsByKey = new Map();
+  let credits = 0;
+  const someKeyExhausted = () => [...redsByKey.values()].some((n) => n >= SUBSET_ATTEMPT_MAX_REDS);
+  for (const r of records) {
+    if (r.kind === 'subset-attempt' && r.foldBatch === probe.foldBatch) {
+      const rKey = flowRecordKey(r);
+      const priorReds = redsByKey.get(rKey) ?? 0;
+      if (priorReds >= SUBSET_ATTEMPT_MAX_REDS) credits -= 1;
+      if (r.status === 'red') redsByKey.set(rKey, priorReds + 1);
+      if (rKey === key) attempts.push(r);
+    } else if (r.kind === 'consult-attestation') {
+      const identity = JSON.stringify([r.backend, r.nonce]);
+      const relevant = subsetFoldBatchDigest({ planId: r.planId, cycle: r.cycle, stepId: r.stepId, round: r.round }) === probe.foldBatch;
+      if (relevant && !seenConsults.has(identity) && someKeyExhausted()) credits += 1;
+      seenConsults.add(identity);
+    }
+  }
+  const reds = redsByKey.get(key) ?? 0;
+  return {
+    attempts,
+    nextIndex: attempts.reduce((m, r) => Math.max(m, r.attemptIndex), 0) + 1,
+    reds,
+    credits,
+    exhausted: reds >= SUBSET_ATTEMPT_MAX_REDS && credits <= 0,
+  };
+};
+
+export const subsetExhaustionRemedy = 'the fresh-eyes lane reopens it (Decision 8 — never a human wait-state): dispatch a MANDATORY grounded bridge consult (a different model) carrying the full attempt/diagnosis trail; its recorded consult-attestation at this round context reopens exactly ONE further diagnosed attempt. Otherwise park the stuck work with its trail and switch to independent work; a fresh context opens with the next round (new foldBatch) or a declared pregateExclude change (new subsetDigest)';
+
+// The under-lock rules the factory does NOT already enforce itself: the exhaustion ladder and
+// the byte-distinct diagnosis (blind thrashing refuses; a NEW hypothesis proceeds). The
+// monotonic index and the reds-based diagnosis REQUIREMENT live in the factory alone — it is
+// the ONLY entry for this kind (the generic lane refuses it by name, round-9 fold), computes
+// the index from the SAME locked snapshot this gate sees, and throws its own named stops first.
+const subsetAttemptGate = (records, snapshot) => {
+  const { attempts, reds, exhausted } = subsetAttemptState(records, snapshot);
+  if (exhausted) {
+    return { ok: false, reason: `this counting context already holds ${reds} red attempts — EXHAUSTED (two blind + one diagnosed, Decision 8) and no diagnosis reopens it; ${subsetExhaustionRemedy}` };
+  }
+  const prior = attempts.find((r) => r.attemptIndex === snapshot.attemptIndex - 1);
+  if (typeof snapshot.diagnosis === 'string' && prior != null && prior.diagnosis === snapshot.diagnosis) {
+    return { ok: false, reason: "the diagnosis is byte-identical to the prior attempt's — a diagnosed continuation states a NEW hypothesis (Decision 8); blind thrashing refuses" };
+  }
+  return { ok: true };
+};
+
+// ── the Decision-7 subset-run serializer (round-6 fold) ──────────────────────────────────────────
+
+// --pre-review's WHOLE armed cycle (budget preflight → gates → append) holds this lock: without
+// it a parallel run executes gates whose red can no longer be recorded once the winner lands,
+// and an unrecorded red undercounts the budget ("EVERY subset-run red counts"). A SEPARATE lock
+// file beside the store — never the store lock itself, so appends from other lanes never block
+// behind a minutes-long gate run — riding the same CAS/fd-custody/holder-liveness discipline: a
+// crashed holder surfaces as the named DEAD refusal with its rm recovery; a live holder is a
+// bounded loud wait (the queued run then re-reads the budget and re-decides).
+export const SUBSET_RUN_LOCK_INFIX = '.subset-run';
+
+export const acquireSubsetRunLock = ({ cwd = process.cwd(), env = process.env, deps = {} } = {}) => {
+  const resolved = resolveFlowStorePath(cwd, env);
+  if (resolved == null) {
+    throw stop('not inside a git work tree (and no AW_FLOW_STORE override) — there is no flow store to serialize a subset run against');
+  }
+  const { lockPath, lockFd, lockIdentity } = acquireFlowLock(`${resolved}${SUBSET_RUN_LOCK_INFIX}`, env, deps);
+  return { lockPath, release: () => releaseFlowLock(lockPath, lockFd, lockIdentity, deps) };
+};
+
+// The pre-gate append-lock readiness probe (round-8 fold): acquire and immediately release the
+// ORDINARY append lock through the full acquire discipline — a DEAD/foreign/malformed lock or
+// an unwritable parent surfaces BEFORE any gate spends, with the acquire's own named refusal.
+// Stated residual: a lock landing between this probe and the post-run append still refuses at
+// append time — closing that would mean holding the append lock across the whole gate run.
+export const probeFlowAppendLock = ({ cwd = process.cwd(), env = process.env, deps = {} } = {}) => {
+  const resolved = resolveFlowStorePath(cwd, env);
+  if (resolved == null) {
+    throw stop('not inside a git work tree (and no AW_FLOW_STORE override) — there is no flow store to probe');
+  }
+  const { lockPath, lockFd, lockIdentity } = acquireFlowLock(resolved, env, deps);
+  const issue = releaseFlowLock(lockPath, lockFd, lockIdentity, deps);
+  if (issue != null) throw issue;
+};
+
+// appendSubsetAttempt — the Decision-7 locked append factory: the chain identity is captured
+// BEFORE the gates run (the caller's `expected` {planId, cycle, stepId, round}) and re-checked
+// under the append lock against the OPEN owning chain; attemptIndex, foldBatch/subsetDigest
+// derivation, and the hard-stop state are computed from the captured store snapshot INSIDE the
+// critical section — a concurrent appender never duplicates an index, and a round/park/complete
+// landing mid-run refuses the append (never a silent misfile). subsetGateIds is TRUSTED caller
+// input under the store's self-discipline model (round-10 disposition): the canonical deriving
+// caller is run-gates --pre-review (declaration minus canonical checkers minus validated
+// pregateExclude) — the derivation cannot live here without an import cycle; once the checker
+// predicate moves to a leaf module (the FLOW-READ-GRAPH-PURITY extraction), the factory can
+// re-derive the ids itself.
+export const appendSubsetAttempt = ({ cwd = process.cwd(), env = process.env, deps = {}, expected, subsetGateIds, status, diagnosis = null, base, fingerprint, timestamp = new Date().toISOString() } = {}) => {
+  const owner = deriveFlowOwner(cwd);
+  if (owner == null) throw stop('not inside a git work tree — the subset-attempt mint derives the owning worktree from git (fail closed)');
+  if (expected == null || typeof expected.planId !== 'string' || expected.planId.length === 0
+    || !Number.isInteger(expected.cycle) || !Number.isInteger(expected.round)
+    || (expected.stepId !== null && typeof expected.stepId !== 'string')) {
+    throw stop('the captured chain identity must be {planId, cycle, stepId|null, round} — the factory re-checks exactly this projection under the lock (fail closed)');
+  }
+  if (!Array.isArray(subsetGateIds)) throw stop("subsetGateIds must be the derived subset's ordered gate-id array (fail closed)");
+  if (status !== 'green' && status !== 'red') throw stop(`status must be green | red (got ${JSON.stringify(status)}) — an unrunnable subset refuses with NO attempt record (fail closed)`);
+  if (diagnosis !== null && (typeof diagnosis !== 'string' || diagnosis.length === 0)) {
+    throw stop(`diagnosis must be null or a non-empty string (got ${JSON.stringify(diagnosis)}) — a mistyped input would otherwise record diagnosis-less silently (round-11 fold; fail closed)`);
+  }
+  let minted = null;
+  const value = appendResolvedFlowRecord({ cwd, env, deps, makeRecord: (records) => {
+    const chain = records.filter((r) => r.kind === CHAIN_KIND && r.planId === expected.planId);
+    if (chain.length === 0) throw stop(`no chain exists for plan "${expected.planId}" under the lock — the captured identity is stale; re-run the subset under the current context (fail closed)`);
+    const seq = validateChainSequence(chain);
+    if (!seq.ok) throw stop(`the plan "${expected.planId}" chain is illegal under the lock (${seq.reason}) — refusing to bind an attempt to it (fail closed)`);
+    if (chain[0].owner !== owner) throw stop(`the plan "${expected.planId}" chain is owned by "${chain[0].owner}", not this worktree ("${owner}") — a foreign chain never records this tree's attempts (fail closed)`);
+    const state = walkChainState(chain);
+    const open = !state.completed && !state.parked;
+    const held = open && state.cycle === expected.cycle && state.stepId === expected.stepId && (state.round ?? 0) === expected.round;
+    if (!held) {
+      const shown = state.completed ? 'the plan completed' : state.parked ? 'the plan parked' : `the open context is {cycle ${state.cycle}, step ${JSON.stringify(state.stepId)}, round ${state.round ?? 0}}`;
+      throw stop(`the chain identity moved under the run — captured {cycle ${expected.cycle}, step ${JSON.stringify(expected.stepId)}, round ${expected.round}}, but ${shown} under the lock (a round/park/complete landed mid-run); re-run the subset under the current context (fail closed)`);
+    }
+    if (expected.stepId === null && state.openers.length > 0) {
+      throw stop(`the plan "${expected.planId}" chain sits at a post-convergence boundary — the stepId-null context is legal only before the FIRST round (the adoption context, round-6 fold); open the next step round first (fail closed)`);
+    }
+    // Round-9 fold: the EXACTLY-ONE-open-owning-chain rule is re-derived UNDER the lock — an
+    // adoption/resume landing after the caller's preflight would otherwise record the attempt
+    // into an already-ambiguous context. (After the specific refusals above, so a parked or
+    // moved TARGET chain keeps its own named diagnosis.)
+    const openOwn = [...new Set(records.filter((r) => r.kind === CHAIN_KIND && r.owner === owner).map((r) => r.planId))].filter((planId) => {
+      const c = records.filter((r) => r.kind === CHAIN_KIND && r.planId === planId);
+      if (c[0].purpose !== 'adoption' || c[0].owner !== owner || !validateChainSequence(c).ok) return false;
+      const s = walkChainState(c);
+      return !s.completed && !s.parked;
+    });
+    if (openOwn.length !== 1 || openOwn[0] !== expected.planId) {
+      throw stop(`this worktree ("${owner}") owns ${openOwn.length} open chains under the lock (${openOwn.join(', ') || 'none'}) — an attempt records only when exactly ONE open owning chain exists and it is the captured one ("${expected.planId}"); a chain landed mid-run — re-run the subset under the current context (fail closed)`);
+    }
+    const probe = { planId: expected.planId, cycle: expected.cycle, stepId: expected.stepId, foldBatch: subsetFoldBatchDigest(expected), subsetDigest: subsetGateIdsDigest(subsetGateIds) };
+    const budget = subsetAttemptState(records, probe);
+    const attemptIndex = budget.nextIndex;
+    if (budget.reds >= SUBSET_ATTEMPT_DIAGNOSIS_REDS && (typeof diagnosis !== 'string' || diagnosis.length === 0)) {
+      throw stop(`attempt ${attemptIndex} follows ${budget.reds} reds at this counting context and requires a recorded diagnosis (Decision 8 — the blind budget is spent): investigate, then re-run with a non-empty diagnosis byte-distinct from the prior attempt's; never a wait-for-maintainer`);
+    }
+    if (attemptIndex < SUBSET_ATTEMPT_DIAGNOSIS_FROM && diagnosis != null) {
+      throw stop(`attempt ${attemptIndex} is inside the blind budget (attempts 1-2) — a diagnosis rides only attempt ${SUBSET_ATTEMPT_DIAGNOSIS_FROM} and later (Decision 8); drop the diagnosis input (the captured context may be stale — fail closed, never silently dropped)`);
+    }
+    const { line, snapshot } = captureRecordSnapshot({
+      schema: FLOW_SCHEMA_VERSION, kind: 'subset-attempt', planId: expected.planId, cycle: expected.cycle,
+      stepId: expected.stepId, foldBatch: probe.foldBatch, subsetDigest: probe.subsetDigest, attemptIndex,
+      ...(typeof diagnosis === 'string' ? { diagnosis } : {}), status, base, fingerprint, timestamp,
+    });
+    // Computed UNDER the lock from the captured snapshot — a lock-free preflight state could
+    // pick the wrong message under a concurrent append.
+    const consumedPermit = budget.reds >= SUBSET_ATTEMPT_MAX_REDS;
+    const redsAfter = budget.reds + (status === 'red' ? 1 : 0);
+    const creditsAfter = budget.credits - (consumedPermit ? 1 : 0);
+    minted = {
+      attemptIndex,
+      redsAtKey: redsAfter,
+      reopened: consumedPermit,
+      exhaustedAfter: redsAfter >= SUBSET_ATTEMPT_MAX_REDS && creditsAfter <= 0,
+    };
+    return { line, snapshot };
+  } });
+  return { ...value, ...minted, digest: canonicalFlowDigest(value.record) };
 };
 
 // ── chain-state walk + the generic reference validator (#63) ──────────────────────────────────────

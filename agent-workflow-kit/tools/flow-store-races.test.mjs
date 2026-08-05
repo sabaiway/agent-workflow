@@ -8,6 +8,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import {
   FLOW_STORE_STOP, FLOW_LOCK_SUFFIX, FLOW_LOCK_WAIT_MS, FLOW_LOCK_POLL_MS,
   resolveFlowStorePath, resolveFlowLockPath, readFlowStore, appendFlowRecord,
+  acquireSubsetRunLock, probeFlowAppendLock,
 } from './flow-store.mjs';
 import { FLOW_SCHEMA_VERSION } from './flow-record.mjs';
 
@@ -129,6 +130,52 @@ describe('flow-store races — lock/CAS across real child processes', () => {
     const read = readFlowStore(plain);
     assert.equal(read.malformed, 0, `torn or malformed lines: ${read.malformedReasons}`);
     assert.equal(read.records.length, 8, 'both alias spellings must funnel through one store and one lock');
+  });
+});
+
+describe('flow-store races — the Decision-7 locked subset-attempt factory across real child processes', () => {
+  const FACTORY_SCRIPT = `import { appendSubsetAttempt } from ${JSON.stringify(STORE_URL)};\nappendSubsetAttempt(JSON.parse(process.argv[1]));`;
+  const childMint = (cwd, args) => new Promise((done) => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', FACTORY_SCRIPT, JSON.stringify(args)], {
+      cwd, env: { ...process.env, AW_FLOW_STORE: '' },
+    });
+    let stderr = '';
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('close', (code) => done({ code, stderr }));
+  });
+
+  it('two concurrent factory mints at ONE counting context land indices 1..2 — no duplicate, no false refusal', async () => {
+    const root = makeRepo();
+    const adoption = {
+      schema: FLOW_SCHEMA_VERSION, kind: 'chain', purpose: 'adoption', planId: 'plan-a', cycle: 1,
+      round: 0, commitEpoch: 0, owner: 'main', base: BASE, timestamp: TS, stepId: null,
+      fingerprint: FP, planLabel: 'Plan A', createdAt: TS, planDigest: 'ab'.repeat(32),
+    };
+    const seeded = await childAppend(root, adoption);
+    assert.equal(seeded.code, 0, `the adoption seed must land: ${seeded.stderr}`);
+    const args = (i) => ({
+      expected: { planId: 'plan-a', cycle: 1, stepId: null, round: 0 },
+      subsetGateIds: ['unit', 'lint'], status: 'green',
+      base: BASE, fingerprint: FP, timestamp: `2026-07-29T00:00:0${i}.000Z`,
+    });
+    // Two processes — the blind budget's own width: attempt 3+ would legitimately demand a
+    // diagnosis (Decision 8), which is not what this race exercises.
+    const results = await Promise.all(Array.from({ length: 2 }, (_, i) => childMint(root, args(i))));
+    for (const r of results) assert.equal(r.code, 0, `a concurrent factory mint must never falsely refuse: ${r.stderr}`);
+    const read = readFlowStore(resolveFlowStorePath(root, {}));
+    assert.equal(read.malformed, 0, `torn or malformed lines: ${read.malformedReasons}`);
+    const indices = read.records.filter((r) => r.kind === 'subset-attempt').map((r) => r.attemptIndex).sort();
+    assert.deepEqual(indices, [1, 2], 'the index is computed INSIDE the critical section — no duplicate, no gap');
+    assert.ok(!existsSync(resolveFlowLockPath(resolveFlowStorePath(root, {}))), 'the lock is released after the contention drains');
+  });
+});
+
+describe('flow-store races — the run-lock lanes refuse outside a git work tree', () => {
+  it('acquireSubsetRunLock and probeFlowAppendLock both refuse by name with no store to resolve', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aw-flow-nogit-'));
+    throwsStop(() => acquireSubsetRunLock({ cwd: dir, env: {} }), /no flow store to serialize/);
+    throwsStop(() => probeFlowAppendLock({ cwd: dir, env: {} }), /no flow store to probe/);
+    rmSync(dir, { recursive: true, force: true });
   });
 });
 

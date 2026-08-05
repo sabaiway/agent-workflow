@@ -11,9 +11,9 @@ import { spawnSync } from 'node:child_process';
 import {
   FLOW_STORE_BASENAME, FLOW_STORE_STOP, FLOW_LOCK_SUFFIX,
   resolveFlowStorePath, resolveFlowLockPath, parseFlowStoreText, readFlowStore, appendFlowRecord,
-  mintBookkeepingDelta, computeMaskedFingerprintPayload,
+  mintBookkeepingDelta, computeMaskedFingerprintPayload, appendSubsetAttempt, SUBSET_ATTEMPT_MAX_REDS,
 } from './flow-store.mjs';
-import { FLOW_SCHEMA_VERSION, canonicalFlowDigest } from './flow-record.mjs';
+import { FLOW_SCHEMA_VERSION, canonicalFlowDigest, subsetFoldBatchDigest, subsetGateIdsDigest } from './flow-record.mjs';
 import { lstatNoFollowRead } from './flow-store-read.mjs';
 import { computeTreeFingerprint, computeFingerprintPayload } from './core-evidence.mjs';
 
@@ -612,6 +612,260 @@ describe('flow-store — append: validate-before-write, semantic preflight, atom
       () => appendFlowRecord({ cwd: bare, record: rerunCause('a-1'), env: {} }),
       /not inside a git work tree/,
     );
+  });
+});
+
+describe('flow-store — the Decision-7/8 locked subset-attempt factory (compute-under-lock)', () => {
+  const ADOPTION_CTX = { planId: 'plan-a', cycle: 1, stepId: null, round: 0 };
+  const SUBSET = ['unit', 'lint'];
+  const armedRepo = () => {
+    const root = makeRepo();
+    appendFlowRecord({ cwd: root, record: adoption({ owner: 'main' }) });
+    return root;
+  };
+  const mint = (root, over = {}) => appendSubsetAttempt({
+    cwd: root, expected: ADOPTION_CTX, subsetGateIds: SUBSET, status: 'green',
+    base: BASE, fingerprint: FP, timestamp: TS, ...over,
+  });
+  const attemptsIn = (root) => readFlowStore(resolveFlowStorePath(root, {})).records.filter((r) => r.kind === 'subset-attempt');
+
+  it('mints attemptIndex 1 under the adoption context (stepId null) with the DERIVED foldBatch and subsetDigest', () => {
+    const root = armedRepo();
+    const minted = mint(root);
+    assert.equal(minted.attemptIndex, 1);
+    assert.equal(minted.redsAtKey, 0);
+    const [rec] = attemptsIn(root);
+    assert.equal(rec.stepId, null);
+    assert.equal(rec.foldBatch, subsetFoldBatchDigest(ADOPTION_CTX), 'foldBatch is DERIVED from the identity projection, never an input');
+    assert.equal(rec.subsetDigest, subsetGateIdsDigest(SUBSET));
+    assert.equal('diagnosis' in rec, false, 'the blind budget carries no diagnosis field');
+  });
+
+  it('the index is computed under the lock: sequential mints land 1, 2 and a hand-built record refuses the GENERIC lane outright', () => {
+    const root = armedRepo();
+    mint(root);
+    assert.equal(mint(root, { timestamp: '2026-07-29T00:00:01.000Z' }).attemptIndex, 2);
+    const hand = (attemptIndex) => ({
+      schema: FLOW_SCHEMA_VERSION, kind: 'subset-attempt', planId: 'plan-a', cycle: 1, stepId: null,
+      foldBatch: subsetFoldBatchDigest(ADOPTION_CTX), subsetDigest: subsetGateIdsDigest(SUBSET),
+      attemptIndex, status: 'green', base: BASE, fingerprint: FP, timestamp: '2026-07-29T00:00:02.000Z',
+    });
+    throwsStop(() => appendFlowRecord({ cwd: root, record: hand(2) }), /minted ONLY by the locked append factory/);
+    throwsStop(() => appendFlowRecord({ cwd: root, record: { ...hand(5), diagnosis: 'a gap never lands' } }), /minted ONLY by the locked append factory/);
+  });
+
+  it('a FORGED counting context never enters through the generic lane — no chain, arbitrary digests, still refused (round-9 fold)', () => {
+    const root = makeRepo();
+    const forged = {
+      schema: FLOW_SCHEMA_VERSION, kind: 'subset-attempt', planId: 'plan-ghost', cycle: 1, stepId: null,
+      foldBatch: D('9a'), subsetDigest: D('9b'), attemptIndex: 1, status: 'green',
+      base: BASE, fingerprint: FP, timestamp: TS,
+    };
+    throwsStop(() => appendFlowRecord({ cwd: root, record: forged }), /minted ONLY by the locked append factory/);
+    assert.deepEqual(readFlowStore(resolveFlowStorePath(root, {})).records, [], 'a forged fresh context can never bypass the hard-stop budget');
+  });
+
+  it('an adoption landing mid-run makes the owning context AMBIGUOUS — the factory refuses under the append lock (round-9 fold)', () => {
+    const root = armedRepo();
+    mint(root);
+    appendFlowRecord({ cwd: root, record: adoption({ owner: 'main', planId: 'plan-b', timestamp: TS2 }) });
+    throwsStop(
+      () => mint(root, { timestamp: '2026-07-29T00:00:03.000Z' }),
+      /owns 2 open chains|exactly ONE open owning chain/,
+    );
+  });
+
+  it('the Decision-8 ladder: two blind reds → diagnosis required, byte-distinct, and the third red EXHAUSTS the key', () => {
+    const root = armedRepo();
+    assert.equal(mint(root, { status: 'red' }).redsAtKey, 1);
+    assert.equal(mint(root, { status: 'red', timestamp: '2026-07-29T00:00:01.000Z' }).redsAtKey, 2);
+    throwsStop(() => mint(root, { status: 'red', timestamp: '2026-07-29T00:00:02.000Z' }), /requires a recorded diagnosis/);
+    const third = mint(root, { status: 'red', diagnosis: 'the fixture races the teardown', timestamp: '2026-07-29T00:00:03.000Z' });
+    assert.equal(third.attemptIndex, 3);
+    assert.equal(third.redsAtKey, SUBSET_ATTEMPT_MAX_REDS);
+    assert.equal(third.record.diagnosis, 'the fixture races the teardown');
+    throwsStop(
+      () => mint(root, { status: 'green', diagnosis: 'a fresh hypothesis', timestamp: '2026-07-29T00:00:04.000Z' }),
+      /EXHAUSTED[\s\S]*no diagnosis reopens it/,
+    );
+  });
+
+  it('a FRESH-EYES consult permit is CONSUMED by the next attempt — replays and pre-exhaustion consults never stack credits', () => {
+    const root = makeRepo();
+    const first = adoption({ owner: 'main' });
+    appendFlowRecord({ cwd: root, record: first });
+    appendFlowRecord({ cwd: root, record: openerRound(canonicalFlowDigest(first), { owner: 'main' }) });
+    const stepCtx = { planId: 'plan-a', cycle: 1, stepId: 'step-1', round: 1 };
+    const mintStep = (over = {}) => appendSubsetAttempt({
+      cwd: root, expected: stepCtx, subsetGateIds: SUBSET, status: 'red',
+      base: BASE, fingerprint: FP, timestamp: TS, ...over,
+    });
+    const consult = (nonce, ts) => appendFlowRecord({ cwd: root, record: {
+      schema: FLOW_SCHEMA_VERSION, kind: 'consult-attestation', fingerprint: FP, backend: 'codex',
+      nonce, planId: 'plan-a', cycle: 1, stepId: 'step-1', round: 1,
+      findingDigest: '4e'.repeat(32), proposedFixDigest: '5d'.repeat(32), base: BASE, timestamp: ts,
+    } });
+    consult('pre-1', '2026-07-29T00:00:00.000Z');
+    mintStep({ timestamp: '2026-07-29T00:00:01.000Z' });
+    mintStep({ timestamp: '2026-07-29T00:00:02.000Z' });
+    mintStep({ diagnosis: 'hypothesis A', timestamp: '2026-07-29T00:00:03.000Z' });
+    throwsStop(
+      () => mintStep({ diagnosis: 'hypothesis B', timestamp: '2026-07-29T00:00:04.000Z' }),
+      /EXHAUSTED[\s\S]*fresh-eyes/,
+    );
+    consult('pre-1', '2026-07-29T00:00:05.000Z');
+    throwsStop(
+      () => mintStep({ diagnosis: 'hypothesis B', timestamp: '2026-07-29T00:00:06.000Z' }),
+      /EXHAUSTED/,
+    );
+    consult('fresh-1', '2026-07-29T00:00:07.000Z');
+    const reopened = mintStep({ status: 'green', diagnosis: 'hypothesis B', timestamp: '2026-07-29T00:00:08.000Z' });
+    assert.equal(reopened.attemptIndex, 4, 'one fresh permit = exactly one further diagnosed attempt (pre-exhaustion identities never credit, even replayed after the third red)');
+    throwsStop(
+      () => mintStep({ status: 'green', diagnosis: 'hypothesis C', timestamp: '2026-07-29T00:00:09.000Z' }),
+      /EXHAUSTED/,
+    );
+    consult('fresh-1', '2026-07-29T00:00:10.000Z');
+    throwsStop(
+      () => mintStep({ status: 'green', diagnosis: 'hypothesis C', timestamp: '2026-07-29T00:00:11.000Z' }),
+      /EXHAUSTED/,
+    );
+    consult('fresh-2', '2026-07-29T00:00:12.000Z');
+    assert.equal(mintStep({ diagnosis: 'hypothesis C', timestamp: '2026-07-29T00:00:13.000Z' }).attemptIndex, 5, 'a genuinely NEW consult identity grants exactly one more attempt — a spent permit identity never re-credits');
+  });
+
+  it('a diagnosis byte-identical to the prior attempt\'s refuses; a distinct one proceeds', () => {
+    const root = armedRepo();
+    mint(root, { status: 'red' });
+    mint(root, { status: 'green', timestamp: '2026-07-29T00:00:01.000Z' });
+    const third = mint(root, { status: 'red', diagnosis: 'hypothesis A', timestamp: '2026-07-29T00:00:02.000Z' });
+    assert.equal(third.attemptIndex, 3);
+    throwsStop(
+      () => mint(root, { status: 'green', diagnosis: 'hypothesis A', timestamp: '2026-07-29T00:00:03.000Z' }),
+      /byte-identical to the prior attempt/,
+    );
+    assert.equal(mint(root, { status: 'green', diagnosis: 'hypothesis B', timestamp: '2026-07-29T00:00:03.000Z' }).attemptIndex, 4);
+  });
+
+  it('one consult permit spans the WHOLE round context (foldBatch-global) and cross-round identity replays never re-credit', () => {
+    const root = makeRepo();
+    const first = adoption({ owner: 'main' });
+    appendFlowRecord({ cwd: root, record: first });
+    appendFlowRecord({ cwd: root, record: openerRound(canonicalFlowDigest(first), { owner: 'main' }) });
+    let tick = 0;
+    const ts = () => `2026-07-29T00:${String(Math.floor(tick / 60)).padStart(2, '0')}:${String((tick += 1) % 60).padStart(2, '0')}.000Z`;
+    const mintAt = (round, subset, over = {}) => appendSubsetAttempt({
+      cwd: root, expected: { planId: 'plan-a', cycle: 1, stepId: 'step-1', round },
+      subsetGateIds: subset, status: 'red', base: BASE, fingerprint: FP, timestamp: ts(), ...over,
+    });
+    const consultAt = (round, nonce) => appendFlowRecord({ cwd: root, record: {
+      schema: FLOW_SCHEMA_VERSION, kind: 'consult-attestation', fingerprint: FP, backend: 'codex',
+      nonce, planId: 'plan-a', cycle: 1, stepId: 'step-1', round,
+      findingDigest: '4e'.repeat(32), proposedFixDigest: '5d'.repeat(32), base: BASE, timestamp: ts(),
+    } });
+    const exhaust = (round, subset, tag) => {
+      mintAt(round, subset);
+      mintAt(round, subset);
+      mintAt(round, subset, { diagnosis: `${tag} third hypothesis` });
+    };
+    exhaust(1, ['unit', 'lint'], 'A');
+    exhaust(1, ['unit'], 'B');
+    consultAt(1, 'nx-f1');
+    const spentOnB = mintAt(1, ['unit'], { status: 'green', diagnosis: 'B fourth hypothesis' });
+    assert.equal(spentOnB.attemptIndex, 4, 'the permit may be spent on ANY subset of the round');
+    throwsStop(
+      () => mintAt(1, ['unit', 'lint'], { diagnosis: 'A fourth hypothesis' }),
+      /EXHAUSTED/,
+    );
+    appendFlowRecord({ cwd: root, record: openerRound(null, { owner: 'main', round: 2, opensFrom: null, timestamp: ts() }) });
+    exhaust(2, ['unit', 'lint'], 'R2');
+    consultAt(2, 'nx-f1');
+    throwsStop(
+      () => mintAt(2, ['unit', 'lint'], { diagnosis: 'R2 fourth hypothesis' }),
+      /EXHAUSTED/,
+    );
+    consultAt(2, 'nx-f2');
+    assert.equal(mintAt(2, ['unit', 'lint'], { status: 'green', diagnosis: 'R2 fourth hypothesis' }).attemptIndex, 4, 'a fresh identity at the new round credits exactly once');
+  });
+
+  it('the diagnosis obligation keys on reds >= 2, never on the attempt index — a green history stays blind-legal', () => {
+    const root = armedRepo();
+    mint(root, { status: 'red' });
+    mint(root, { status: 'green', timestamp: '2026-07-29T00:00:01.000Z' });
+    const third = mint(root, { status: 'green', timestamp: '2026-07-29T00:00:02.000Z' });
+    assert.equal(third.attemptIndex, 3, 'reds = 1 — attempt 3 proceeds WITHOUT a diagnosis');
+    assert.equal('diagnosis' in third.record, false);
+    const fourth = mint(root, { status: 'red', timestamp: '2026-07-29T00:00:03.000Z' });
+    assert.equal(fourth.redsAtKey, 2);
+    throwsStop(
+      () => mint(root, { status: 'green', timestamp: '2026-07-29T00:00:04.000Z' }),
+      /requires a recorded diagnosis/,
+    );
+    assert.equal(mint(root, { status: 'green', diagnosis: 'hypothesis D', timestamp: '2026-07-29T00:00:05.000Z' }).attemptIndex, 5, 'past the second red only a diagnosed attempt proceeds');
+  });
+
+  it('a non-string diagnosis input refuses up front — never silently dropped (round-11 fold)', () => {
+    const root = armedRepo();
+    mint(root, { status: 'red' });
+    mint(root, { status: 'green', timestamp: '2026-07-29T00:00:01.000Z' });
+    throwsStop(
+      () => mint(root, { status: 'green', diagnosis: 42, timestamp: '2026-07-29T00:00:02.000Z' }),
+      /diagnosis must be null or a non-empty string/,
+    );
+    assert.equal(attemptsIn(root).length, 2, 'nothing landed — a mistyped diagnosis never records diagnosis-less');
+  });
+
+  it('a diagnosis inside the blind budget refuses — a stale captured context is never silently dropped', () => {
+    const root = armedRepo();
+    throwsStop(() => mint(root, { diagnosis: 'premature' }), /blind budget/);
+    assert.deepEqual(attemptsIn(root), [], 'nothing landed');
+  });
+
+  it('the pre-run identity capture is re-checked under the lock: a round landing mid-run refuses the append', () => {
+    const root = armedRepo();
+    const first = adoption({ owner: 'main' });
+    appendFlowRecord({ cwd: root, record: openerRound(canonicalFlowDigest(first), { owner: 'main' }) });
+    throwsStop(() => mint(root), /identity moved under the run[\s\S]*round\/park\/complete/);
+    const stepCtx = { planId: 'plan-a', cycle: 1, stepId: 'step-1', round: 1 };
+    const minted = appendSubsetAttempt({ cwd: root, expected: stepCtx, subsetGateIds: SUBSET, status: 'green', base: BASE, fingerprint: FP, timestamp: TS });
+    assert.equal(minted.attemptIndex, 1, 'the CURRENT context mints — a new round is a fresh budget');
+    assert.equal(minted.record.foldBatch, subsetFoldBatchDigest(stepCtx));
+  });
+
+  it('a POST-CONVERGENCE boundary never mints the stepId-null context — the adoption context is legal only before the FIRST round', () => {
+    const root = armedRepo();
+    const first = adoption({ owner: 'main' });
+    appendFlowRecord({ cwd: root, record: openerRound(canonicalFlowDigest(first), { owner: 'main' }) });
+    appendFlowRecord({ cwd: root, record: {
+      schema: FLOW_SCHEMA_VERSION, kind: 'chain', purpose: 'converged', planId: 'plan-a', cycle: 1,
+      round: 1, commitEpoch: 0, owner: 'main', base: BASE, timestamp: TS2, stepId: 'step-1', fingerprint: FP,
+    } });
+    throwsStop(
+      () => appendSubsetAttempt({ cwd: root, expected: { planId: 'plan-a', cycle: 1, stepId: null, round: 1 }, subsetGateIds: SUBSET, status: 'green', base: BASE, fingerprint: FP, timestamp: '2026-07-29T00:00:03.000Z' }),
+      /post-convergence boundary[\s\S]*before the FIRST round/,
+    );
+  });
+
+  it('a parked plan, a foreign owner, and a missing chain each refuse by name', () => {
+    const root = armedRepo();
+    appendFlowRecord({ cwd: root, record: {
+      schema: FLOW_SCHEMA_VERSION, kind: 'chain', purpose: 'park', planId: 'plan-a', cycle: 1,
+      round: 0, commitEpoch: 0, owner: 'main', base: BASE, timestamp: TS2, stepId: null, fingerprint: FP,
+    } });
+    throwsStop(() => mint(root), /parked/);
+    const foreignRoot = makeRepo();
+    appendFlowRecord({ cwd: foreignRoot, record: adoption({ owner: 'worktree:elsewhere' }) });
+    throwsStop(() => appendSubsetAttempt({ cwd: foreignRoot, expected: ADOPTION_CTX, subsetGateIds: SUBSET, status: 'green', base: BASE, fingerprint: FP, timestamp: TS }), /owned by "worktree:elsewhere"/);
+    const bareRoot = makeRepo();
+    throwsStop(() => appendSubsetAttempt({ cwd: bareRoot, expected: ADOPTION_CTX, subsetGateIds: SUBSET, status: 'green', base: BASE, fingerprint: FP, timestamp: TS }), /no chain exists/);
+  });
+
+  it('input shape refusals are named: identity, gate ids, status', () => {
+    const root = armedRepo();
+    throwsStop(() => appendSubsetAttempt({ cwd: root, expected: { planId: 'plan-a' }, subsetGateIds: SUBSET, status: 'green', base: BASE, fingerprint: FP }), /captured chain identity/);
+    throwsStop(() => appendSubsetAttempt({ cwd: root, expected: ADOPTION_CTX, subsetGateIds: 'unit', status: 'green', base: BASE, fingerprint: FP }), /ordered gate-id array/);
+    throwsStop(() => appendSubsetAttempt({ cwd: root, expected: ADOPTION_CTX, subsetGateIds: SUBSET, status: 'amber', base: BASE, fingerprint: FP }), /green \| red/);
+    assert.deepEqual(attemptsIn(root), [], 'every refusal lands nothing');
   });
 });
 

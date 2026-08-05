@@ -23,6 +23,13 @@
 // a malformed field, and an unknown EXTRA field are all refusals — the per-record canonical digest
 // is the record's identity, so a stray key would fork it.
 //
+// Plan-4 addition (Decision 7/8 — NOT a design-§5 seed member; the drift-guard test records it as
+// the one post-seed addition): the store-global kind "subset-attempt" — the --pre-review subset
+// hard-stop counter. Key {planId, cycle, stepId, foldBatch, subsetDigest}; attemptIndex is the
+// monotonic per-key index (the locked append factory in flow-store.mjs computes it under the
+// lock); `diagnosis` rides ONLY attemptIndex >= 3 (Decision 8 — the recorded, self-servable
+// continuation past two reds; never a wait-for-maintainer).
+//
 // Tree identity (#21): every record carries {base, fingerprint}; the transition-shaped records
 // (chain/refresh, bookkeeping-delta) carry {fingerprintBefore, fingerprintAfter} and their singular
 // identity fingerprint IS fingerprintAfter (flowTreeIdentity). The bookkeeping-delta custody proof
@@ -63,7 +70,7 @@ export const CHAIN_KIND = 'chain';
 export const CHAIN_PURPOSES = deepFreeze(['adoption', 'round', 'refresh', 're-baseline', 'freeze', 'unfreeze', 'park', 'resume', 'converged', 'complete']);
 export const STEP_SCOPED_PURPOSES = deepFreeze(['round', 'refresh', 're-baseline', 'freeze', 'unfreeze', 'converged']);
 export const PLAN_LANE_PURPOSES = deepFreeze(['adoption', 'park', 'resume', 'complete']);
-export const GLOBAL_KINDS = deepFreeze(['internal-attestation', 'down-mark', 'down-mark-up', 'down-mark-clear', 'degrade-justification', 'rerun-cause', 'bookkeeping-delta', 'maintainer-override', 'consult-attestation']);
+export const GLOBAL_KINDS = deepFreeze(['internal-attestation', 'down-mark', 'down-mark-up', 'down-mark-clear', 'degrade-justification', 'rerun-cause', 'bookkeeping-delta', 'maintainer-override', 'consult-attestation', 'subset-attempt']);
 export const FLOW_KINDS = deepFreeze([CHAIN_KIND, ...GLOBAL_KINDS]);
 
 // Reserved lane-typed terminals (#16): converged terminates a CYCLE (its step's sequence), complete
@@ -182,6 +189,11 @@ const FIELD_CHECKS = {
   authority: { ok: isNonEmptyString, want: 'the non-empty attesting authority' },
   findingDigest: { ok: isHex64, want: 'the 64-hex digest of the consulted finding' },
   proposedFixDigest: { ok: isHex64, want: 'the 64-hex digest of the proposed fix under consult' },
+  foldBatch: { ok: isHex64, want: 'the 64-hex digest of the owning round identity projection {planId, cycle, stepId, round}' },
+  subsetDigest: { ok: isHex64, want: "the 64-hex digest of the derived subset's ordered gate ids" },
+  attemptIndex: { ok: (v) => Number.isInteger(v) && v >= 1, want: 'a positive integer attempt index (monotonic per counting context)' },
+  status: { ok: (v) => v === 'green' || v === 'red', want: 'the closed enum green | red' },
+  diagnosis: { ok: isNonEmptyString, want: 'a non-empty diagnosis statement (Decision 8 — the recorded continuation past two reds)' },
 };
 
 const CHAIN_COMMON_FIELDS = ['planId', 'cycle', 'round', 'commitEpoch', 'owner', 'base', 'timestamp'];
@@ -213,7 +225,20 @@ const GLOBAL_SHAPES = {
   'bookkeeping-delta': ['fingerprintBefore', 'fingerprintAfter', 'path', 'contentDigest', 'custodyProof', 'base', 'timestamp'],
   'maintainer-override': ['fingerprint', 'vetoReceiptDigest', 'backend', 'verdict', 'chainRecord', 'supersedes', 'base', 'timestamp'],
   'consult-attestation': ['fingerprint', 'backend', 'nonce', 'planId', 'cycle', 'stepId', 'round', 'findingDigest', 'proposedFixDigest', 'base', 'timestamp'],
+  'subset-attempt': ['planId', 'cycle', 'stepId', 'foldBatch', 'subsetDigest', 'attemptIndex', 'status', 'base', 'fingerprint', 'timestamp'],
 };
+
+// Kind-scoped check overrides where a field name collides across kinds (Decision 7): the
+// subset-attempt stepId is nullable — attempts before any round key the ADOPTION context.
+const GLOBAL_FIELD_CHECK_OVERRIDES = {
+  'subset-attempt': { stepId: 'stepIdOrNull' },
+};
+
+// Decision 8: attempts 1-2 are the blind budget and never carry a diagnosis — this is the
+// earliest index one MAY ride. REQUIRED-ness keys on the key's red count (>= 2, past the second
+// red) and lives in the store gate + the locked factory: a record-local validator cannot see
+// the key history, and a green history never owes a diagnosis.
+export const SUBSET_ATTEMPT_DIAGNOSIS_FROM = 3;
 
 const refuse = (reason) => ({ ok: false, reason });
 
@@ -356,7 +381,14 @@ export const validateFlowRecord = (record) => {
     if (!dispatches.ok) return dispatches;
     return validateDispositions(label, record.dispositions);
   }
-  const fieldToCheck = Object.fromEntries(GLOBAL_SHAPES[record.kind].map((f) => [f, f]));
+  const overrides = GLOBAL_FIELD_CHECK_OVERRIDES[record.kind] ?? {};
+  const fieldToCheck = Object.fromEntries(GLOBAL_SHAPES[record.kind].map((f) => [f, overrides[f] ?? f]));
+  if (record.kind === 'subset-attempt' && 'diagnosis' in record) {
+    if (!(Number.isInteger(record.attemptIndex) && record.attemptIndex >= SUBSET_ATTEMPT_DIAGNOSIS_FROM)) {
+      return refuse(`subset-attempt: diagnosis rides only attemptIndex ${SUBSET_ATTEMPT_DIAGNOSIS_FROM} and later (Decision 8) — attempts 1-2 are the blind budget and never carry one`);
+    }
+    fieldToCheck.diagnosis = 'diagnosis';
+  }
   const checked = checkFields(record.kind, record, fieldToCheck);
   if (!checked.ok) return checked;
   if (record.kind === 'down-mark') {
@@ -382,6 +414,7 @@ export const flowRecordKey = (record) =>
   : record.kind === 'bookkeeping-delta' ? JSON.stringify([record.kind, record.fingerprintBefore, record.fingerprintAfter, record.path])
   : record.kind === 'maintainer-override' ? JSON.stringify([record.kind, record.vetoReceiptDigest])
   : record.kind === 'consult-attestation' ? JSON.stringify([record.kind, record.backend, record.nonce])
+  : record.kind === 'subset-attempt' ? JSON.stringify([record.kind, record.planId, record.cycle, record.stepId, record.foldBatch, record.subsetDigest])
   : null;
 
 // The authoritative subset: the LATEST record per key, in file order of that latest appearance.
@@ -424,6 +457,49 @@ const serializeCanonical = (v) => {
 export const flowCanonicalSerialization = (record) => serializeCanonical(record);
 
 export const canonicalFlowDigest = (record) => createHash('sha256').update(flowCanonicalSerialization(record), 'utf8').digest('hex');
+
+// ── Decision-7 derivation helpers (Plan 4) — pure digests over canonical bytes ────────────────────
+
+// foldBatch keys the IMMUTABLE round identity projection: a round-ledger REVISION keeps
+// {planId, cycle, stepId, round} (same digest — the budget never resets on supersession, #47),
+// a NEW round moves it (fresh budget).
+export const subsetFoldBatchDigest = ({ planId, cycle, stepId, round }) =>
+  createHash('sha256').update(flowCanonicalSerialization({ planId, cycle, stepId, round }), 'utf8').digest('hex');
+
+// The derived subset's counting identity — declaring pregateExclude changes the ordered gate-id
+// list, therefore the key, therefore the counting context (#47/#66).
+export const subsetGateIdsDigest = (gateIds) =>
+  createHash('sha256').update(flowCanonicalSerialization(gateIds), 'utf8').digest('hex');
+
+// ── the owner-scoped projection (Plan 4 Decision 2 / D10) — ONE pure helper, producer + consumer ──
+
+// The hash domain is the OWNER-SCOPED projection, never the whole common store (#57): (a) every
+// chain record whose owner is the committing worktree; (b) every planId-bearing global whose
+// planId belongs to an owned chain; (c) every planId-less global (the down-mark family,
+// degrade-justification, rerun-cause, bookkeeping-delta, maintainer-override — the rule is
+// structural over every planId-less kind) whose tree identity (fingerprintAfter for transitions)
+// is in {fingerprints appearing in owned-chain records} ∪ {the current tree fingerprint}. A
+// foreign worktree's records fall outside (a)-(c) and never move the hash; a same-fingerprint
+// foreign global is IN by (c) — same tree, same decision context. Raw store order is preserved:
+// the projection hash is order-sensitive, so any in-projection append moves it.
+export const ownerScopedFlowProjection = (records, { owner, currentFingerprint }) => {
+  const ownedChain = records.filter((r) => r.kind === CHAIN_KIND && r.owner === owner);
+  const ownedPlanIds = new Set(ownedChain.map((r) => r.planId));
+  const fingerprints = new Set(currentFingerprint == null ? [] : [currentFingerprint]);
+  for (const r of ownedChain) {
+    for (const field of ['fingerprint', 'fingerprintBefore', 'fingerprintAfter']) {
+      if (typeof r[field] === 'string') fingerprints.add(r[field]);
+    }
+  }
+  return records.filter((r) => {
+    if (r.kind === CHAIN_KIND) return r.owner === owner;
+    if (typeof r.planId === 'string') return ownedPlanIds.has(r.planId);
+    return fingerprints.has(flowTreeIdentity(r).fingerprint);
+  });
+};
+
+export const flowProjectionHash = (records, ctx) =>
+  createHash('sha256').update(ownerScopedFlowProjection(records, ctx).map(flowCanonicalSerialization).join('\n'), 'utf8').digest('hex');
 
 // A same-index round REVISION re-states its round: opensFrom/base/fingerprint/commitEpoch are
 // byte-equal to the previous version (the receipt attests the DISPATCHED tree, even when the live

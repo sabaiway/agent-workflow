@@ -664,6 +664,11 @@ export const validateEvidenceRecord = (record) => {
       || typeof record.evidenceHashes.degrade !== 'string' || !HEX64_RE.test(record.evidenceHashes.degrade)) {
       return { ok: false, reason: 'final: evidenceHashes must carry 64-hex sha256 of the canonical red-proof and degrade serializations' };
     }
+    // The D10 flow binding (Plan 4 Decision 2) is ADDITIVE: absent = a pre-flow-binding final
+    // (still valid); present must be the 64-hex owner-scoped projection hash.
+    if ('flow' in record.evidenceHashes && (typeof record.evidenceHashes.flow !== 'string' || !HEX64_RE.test(record.evidenceHashes.flow))) {
+      return { ok: false, reason: 'final: evidenceHashes.flow, when present, must be a 64-hex sha256 of the owner-scoped flow projection' };
+    }
     if (record.lcovSha256 !== null && (typeof record.lcovSha256 !== 'string' || !HEX64_RE.test(record.lcovSha256))) {
       return { ok: false, reason: 'final: lcovSha256 must be a 64-hex sha256 of the consumed lcov file, or null when none was produced' };
     }

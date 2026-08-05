@@ -1,10 +1,10 @@
 import { describe, it, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, cpSync, existsSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, cpSync, existsSync, readFileSync, linkSync } from 'node:fs';
+import { tmpdir, hostname } from 'node:os';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { resolveBase } from './core-evidence.mjs';
 import {
@@ -1052,5 +1052,612 @@ describe('run-gates — --pre-review derived subset (#66/P14/P27)', () => {
     const lines = r.text.split('\n').filter((l) => l.length > 0);
     assert.equal(lines[lines.length - 1], composeSummaryLine({ status: 'fail' }), 'the machine summary is the last line for every non-usage outcome');
     assert.match(r.errText, /orchestration\.json/);
+  });
+});
+
+// ── Plan 4 Decision 7/8: --pre-review under an ARMED flow is a RECORDED attempt with a budget ──
+import { resolveFlowStorePath as flowStorePathOf, readFlowStore as readFlowStoreOf, appendSubsetAttempt } from './flow-store.mjs';
+import {
+  FLOW_SCHEMA_VERSION as FLOW_SCHEMA, canonicalFlowDigest as flowDigestOf,
+  subsetFoldBatchDigest, subsetGateIdsDigest, flowProjectionHash as projectionHashOf,
+} from './flow-record.mjs';
+import { validateEvidenceRecord } from './core-evidence.mjs';
+
+describe('run-gates — --pre-review under an ARMED flow (Plan 4 Decision 7/8)', () => {
+  const ATMP = mkdtempSync(join(tmpdir(), 'run-gates-armed-'));
+  after(() => rmSync(ATMP, { recursive: true, force: true }));
+  const FLOW_TS = '2026-08-05T00:00:00.000Z';
+  const AFP = 'a1'.repeat(32);
+  let aseq = 0;
+  const gitIn = (root, ...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+  const writeFlowStore = (root, records) => writeFileSync(flowStorePathOf(root, {}), records.map((r) => `${JSON.stringify(r)}\n`).join(''));
+  const makeFlowRepo = (gates, { config = { 'plan-execution': { review: 'solo' } } } = {}) => {
+    const root = join(ATMP, `repo-${aseq += 1}`);
+    mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
+    gitIn(root, 'init', '-q', '-b', 'main');
+    gitIn(root, 'config', 'user.email', 'probe@example.com');
+    gitIn(root, 'config', 'user.name', 'probe');
+    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify(config));
+    writeFileSync(join(root, GATES_REL), declarationOf(gates));
+    writeFileSync(join(root, 'base.txt'), 'base\n');
+    gitIn(root, 'add', '-A');
+    gitIn(root, 'commit', '-qm', 'base');
+    return root;
+  };
+  const adoptionRec = (root, over = {}) => ({
+    schema: FLOW_SCHEMA, kind: 'chain', purpose: 'adoption', planId: 'plan-a', cycle: 1, round: 0,
+    commitEpoch: 0, owner: 'main', base: resolveBase(root), timestamp: FLOW_TS, stepId: null,
+    fingerprint: AFP, planLabel: 'Plan A', createdAt: FLOW_TS, planDigest: 'b2'.repeat(32), ...over,
+  });
+  const attemptsIn = (root) => readFlowStoreOf(flowStorePathOf(root, {})).records.filter((r) => r.kind === 'subset-attempt');
+  const runArmed = (root, argv, byCmd) => {
+    const out = [];
+    const err = [];
+    const calls = [];
+    const code = runCli(argv, {
+      cwd: root,
+      log: (l) => out.push(String(l)),
+      logError: (l) => err.push(String(l)),
+      spawn: scriptedSpawn(byCmd, calls),
+      now: (() => { let t = 0; return () => (t += 100); })(),
+    });
+    return { code, calls, text: out.join('\n'), errText: err.join('\n') };
+  };
+  const gateCalls = (calls) => calls.filter((c) => c.cmd !== BASH_PROBE_CMD).map((c) => c.cmd);
+  const UNIT = { id: 'unit', title: 'U', cmd: 'node --test x' };
+  const RED = { status: 1, stdout: 'boom\n', stderr: '' };
+
+  it('an adoption landing while an UNARMED run executes refuses the result loudly — never a silent unrecorded run (round-11 fold)', () => {
+    const root = makeFlowRepo([UNIT]);
+    const out = [];
+    const err = [];
+    const spawnFn = (cmd) => {
+      if (cmd === BASH_PROBE_CMD) return { status: 0, stdout: '', stderr: '' };
+      writeFlowStore(root, [adoptionRec(root)]);
+      return GREEN;
+    };
+    const code = runCli(['--pre-review', '--cwd', root], {
+      log: (l) => out.push(String(l)),
+      logError: (l) => err.push(String(l)),
+      spawn: spawnFn,
+      now: (() => { let t = 0; return () => (t += 100); })(),
+    });
+    assert.equal(code, EXIT.fail);
+    assert.match(err.join('\n'), /ARMED while this run executed/);
+    assert.match(out[out.length - 1], /^\[run-gates\] status=fail /, 'the machine summary stays LAST and agrees with the refusal');
+    assert.deepEqual(attemptsIn(root), [], 'a pre-arming run records nothing — and says so loudly');
+    const next = runArmed(root, ['--pre-review'], { 'node --test x': GREEN });
+    assert.equal(next.code, EXIT.ok, next.errText);
+    assert.match(next.text, /attempt #1 recorded/, "the first ARMED run starts the budget fresh — the pre-arming run never counted");
+  });
+
+  it('an UNARMED repo is byte-unchanged: no flow store appears, no attempt line prints', () => {
+    const root = makeFlowRepo([UNIT]);
+    const r = runArmed(root, ['--pre-review'], { 'node --test x': GREEN });
+    assert.equal(r.code, EXIT.ok, r.errText);
+    assert.equal(existsSync(flowStorePathOf(root, {})), false, 'the compatibility floor: an unarmed run writes NOTHING');
+    assert.doesNotMatch(r.text, /subset attempt/);
+  });
+
+  it('an armed green run appends attemptIndex 1 under the ADOPTION context (stepId null, derived digests)', () => {
+    const root = makeFlowRepo([UNIT]);
+    writeFlowStore(root, [adoptionRec(root)]);
+    const r = runArmed(root, ['--pre-review'], { 'node --test x': GREEN });
+    assert.equal(r.code, EXIT.ok, r.errText);
+    assert.match(r.text, /pre-review subset attempt #1 recorded \(green\)/);
+    const [rec] = attemptsIn(root);
+    assert.equal(rec.attemptIndex, 1);
+    assert.equal(rec.stepId, null, 'before any round the attempt keys the adoption context');
+    assert.equal(rec.foldBatch, subsetFoldBatchDigest({ planId: 'plan-a', cycle: 1, stepId: null, round: 0 }), 'foldBatch is DERIVED — no CLI input exists for it');
+    assert.equal(rec.subsetDigest, subsetGateIdsDigest(['unit']));
+    const again = runArmed(root, ['--pre-review'], { 'node --test x': GREEN });
+    assert.equal(again.code, EXIT.ok, again.errText);
+    assert.match(again.text, /attempt #2 recorded/, 'the counter is read from the STORE — a fresh invocation continues, never restarts');
+  });
+
+  it('foldBatch derives from the OPEN round identity once a round exists', () => {
+    const root = makeFlowRepo([UNIT]);
+    const first = adoptionRec(root);
+    const opened = {
+      schema: FLOW_SCHEMA, kind: 'chain', purpose: 'round', planId: 'plan-a', cycle: 1, round: 1,
+      commitEpoch: 0, owner: 'main', base: resolveBase(root), timestamp: '2026-08-05T00:00:01.000Z',
+      stepId: 'step-1', fingerprint: AFP, opensFrom: flowDigestOf(first), dispatches: [], dispositions: [],
+    };
+    writeFlowStore(root, [first, opened]);
+    const r = runArmed(root, ['--pre-review'], { 'node --test x': GREEN });
+    assert.equal(r.code, EXIT.ok, r.errText);
+    const [rec] = attemptsIn(root);
+    assert.equal(rec.stepId, 'step-1');
+    assert.equal(rec.foldBatch, subsetFoldBatchDigest({ planId: 'plan-a', cycle: 1, stepId: 'step-1', round: 1 }));
+    assert.notEqual(rec.foldBatch, subsetFoldBatchDigest({ planId: 'plan-a', cycle: 1, stepId: null, round: 0 }), 'a new round is a fresh budget');
+  });
+
+  it('red→fix→green consumes the retry: both attempts land at ONE counting context', () => {
+    const root = makeFlowRepo([UNIT]);
+    writeFlowStore(root, [adoptionRec(root)]);
+    const redRun = runArmed(root, ['--pre-review'], { 'node --test x': RED });
+    assert.equal(redRun.code, EXIT.fail);
+    assert.match(redRun.text, /attempt #1 recorded \(red\)/);
+    const greenRun = runArmed(root, ['--pre-review'], { 'node --test x': GREEN });
+    assert.equal(greenRun.code, EXIT.ok, greenRun.errText);
+    assert.match(greenRun.text, /attempt #2 recorded \(green\)/);
+    const [a1, a2] = attemptsIn(root);
+    assert.deepEqual([a1.status, a2.status], ['red', 'green']);
+    assert.equal(a1.foldBatch, a2.foldBatch);
+    assert.equal(a1.subsetDigest, a2.subsetDigest);
+  });
+
+  it('the run producing the SECOND red completes, records, exits red, and prints the diagnosis rule (Decision 8)', () => {
+    const root = makeFlowRepo([UNIT]);
+    writeFlowStore(root, [adoptionRec(root)]);
+    runArmed(root, ['--pre-review'], { 'node --test x': RED });
+    const second = runArmed(root, ['--pre-review'], { 'node --test x': RED });
+    assert.equal(second.code, EXIT.fail);
+    assert.match(second.text, /attempt #2 recorded \(red\)/, 'the second red COMPLETES and records before exiting');
+    assert.match(second.text, /SECOND red/);
+    assert.match(second.text, /--diagnosis/, 'the printed rule names the self-servable continuation, never a maintainer wait');
+    assert.equal(attemptsIn(root).length, 2);
+  });
+
+  it('over two reds: a blind run refuses pre-gates; a --diagnosis run proceeds and records the diagnosed attempt', () => {
+    const root = makeFlowRepo([UNIT]);
+    writeFlowStore(root, [adoptionRec(root)]);
+    runArmed(root, ['--pre-review'], { 'node --test x': RED });
+    runArmed(root, ['--pre-review'], { 'node --test x': RED });
+    const blind = runArmed(root, ['--pre-review'], { 'node --test x': GREEN });
+    assert.equal(blind.code, EXIT.fail);
+    assert.deepEqual(gateCalls(blind.calls), [], 'the refusal is PRE-GATES — nothing spawned');
+    assert.match(blind.errText, /proceeds ONLY with a recorded diagnosis/);
+    const diagnosed = runArmed(root, ['--pre-review', '--diagnosis', 'the fixture races the teardown'], { 'node --test x': GREEN });
+    assert.equal(diagnosed.code, EXIT.ok, diagnosed.errText);
+    assert.match(diagnosed.text, /attempt #3 recorded \(green\)/);
+    assert.equal(attemptsIn(root)[2].diagnosis, 'the fixture races the teardown');
+  });
+
+  it('after the THIRD red every further solo run refuses — a diagnosis does not reopen it, the fresh-eyes remedy is named', () => {
+    const root = makeFlowRepo([UNIT]);
+    writeFlowStore(root, [adoptionRec(root)]);
+    runArmed(root, ['--pre-review'], { 'node --test x': RED });
+    runArmed(root, ['--pre-review'], { 'node --test x': RED });
+    const third = runArmed(root, ['--pre-review', '--diagnosis', 'hypothesis A'], { 'node --test x': RED });
+    assert.equal(third.code, EXIT.fail);
+    assert.match(third.text, /red attempt 3 EXHAUSTS/);
+    assert.match(third.text, /fresh-eyes/);
+    const fourth = runArmed(root, ['--pre-review', '--diagnosis', 'hypothesis B'], { 'node --test x': GREEN });
+    assert.equal(fourth.code, EXIT.fail);
+    assert.deepEqual(gateCalls(fourth.calls), [], 'no gates run over an exhausted context');
+    assert.match(fourth.errText, /EXHAUSTED/);
+    assert.match(fourth.errText, /fresh-eyes[\s\S]*consult/);
+    assert.match(fourth.errText, /park the stuck work/);
+    assert.equal(attemptsIn(root).length, 3, 'nothing lands past the exhaustion bound');
+  });
+
+  it('a recorded FRESH-EYES consult verdict at the round context reopens exactly ONE further diagnosed run (Decision 8)', () => {
+    const root = makeFlowRepo([UNIT]);
+    const first = adoptionRec(root);
+    const opened = {
+      schema: FLOW_SCHEMA, kind: 'chain', purpose: 'round', planId: 'plan-a', cycle: 1, round: 1,
+      commitEpoch: 0, owner: 'main', base: resolveBase(root), timestamp: '2026-08-05T00:00:01.000Z',
+      stepId: 'step-1', fingerprint: AFP, opensFrom: flowDigestOf(first), dispatches: [], dispositions: [],
+    };
+    writeFlowStore(root, [first, opened]);
+    runArmed(root, ['--pre-review'], { 'node --test x': RED });
+    runArmed(root, ['--pre-review'], { 'node --test x': RED });
+    runArmed(root, ['--pre-review', '--diagnosis', 'hypothesis A'], { 'node --test x': RED });
+    const blocked = runArmed(root, ['--pre-review', '--diagnosis', 'hypothesis B'], { 'node --test x': GREEN });
+    assert.equal(blocked.code, EXIT.fail);
+    assert.match(blocked.errText, /fresh-eyes/);
+    const consult = {
+      schema: FLOW_SCHEMA, kind: 'consult-attestation', fingerprint: AFP, backend: 'codex', nonce: 'nx7',
+      planId: 'plan-a', cycle: 1, stepId: 'step-1', round: 1,
+      findingDigest: 'c3'.repeat(32), proposedFixDigest: 'd4'.repeat(32), base: resolveBase(root), timestamp: '2026-08-05T00:00:02.000Z',
+    };
+    writeFileSync(flowStorePathOf(root, {}), `${readFileSync(flowStorePathOf(root, {}), 'utf8')}${JSON.stringify(consult)}\n`);
+    const reopened = runArmed(root, ['--pre-review', '--diagnosis', 'hypothesis B'], { 'node --test x': GREEN });
+    assert.equal(reopened.code, EXIT.ok, reopened.errText);
+    assert.match(reopened.text, /attempt #4 recorded \(green\)/);
+    const spent = runArmed(root, ['--pre-review', '--diagnosis', 'hypothesis C'], { 'node --test x': GREEN });
+    assert.equal(spent.code, EXIT.fail, 'the permit was CONSUMED by the reopened attempt — a further run needs a fresh consult verdict');
+    assert.deepEqual(gateCalls(spent.calls), []);
+    assert.match(spent.errText, /EXHAUSTED/);
+  });
+
+  it('a red on the REOPENED attempt prints the exhausted-again wording, never "THIRD red"', () => {
+    const root = makeFlowRepo([UNIT]);
+    const first = adoptionRec(root);
+    const opened = {
+      schema: FLOW_SCHEMA, kind: 'chain', purpose: 'round', planId: 'plan-a', cycle: 1, round: 1,
+      commitEpoch: 0, owner: 'main', base: resolveBase(root), timestamp: '2026-08-05T00:00:01.000Z',
+      stepId: 'step-1', fingerprint: AFP, opensFrom: flowDigestOf(first), dispatches: [], dispositions: [],
+    };
+    writeFlowStore(root, [first, opened]);
+    runArmed(root, ['--pre-review'], { 'node --test x': RED });
+    runArmed(root, ['--pre-review'], { 'node --test x': RED });
+    runArmed(root, ['--pre-review', '--diagnosis', 'hypothesis A'], { 'node --test x': RED });
+    const consult = {
+      schema: FLOW_SCHEMA, kind: 'consult-attestation', fingerprint: AFP, backend: 'codex', nonce: 'nx8',
+      planId: 'plan-a', cycle: 1, stepId: 'step-1', round: 1,
+      findingDigest: 'c3'.repeat(32), proposedFixDigest: 'd4'.repeat(32), base: resolveBase(root), timestamp: '2026-08-05T00:00:02.000Z',
+    };
+    writeFileSync(flowStorePathOf(root, {}), `${readFileSync(flowStorePathOf(root, {}), 'utf8')}${JSON.stringify(consult)}\n`);
+    const reopenedRed = runArmed(root, ['--pre-review', '--diagnosis', 'hypothesis B'], { 'node --test x': RED });
+    assert.equal(reopenedRed.code, EXIT.fail);
+    assert.match(reopenedRed.text, /attempt #4 recorded \(red\)/);
+    assert.match(reopenedRed.text, /exhausted AGAIN/);
+    assert.doesNotMatch(reopenedRed.text, /THIRD red/);
+  });
+
+  it('a POST-CONVERGENCE boundary refuses pre-gates — the null context is legal only before the FIRST round (round-6 fold)', () => {
+    const root = makeFlowRepo([UNIT]);
+    const first = adoptionRec(root);
+    const opened = {
+      schema: FLOW_SCHEMA, kind: 'chain', purpose: 'round', planId: 'plan-a', cycle: 1, round: 1,
+      commitEpoch: 0, owner: 'main', base: resolveBase(root), timestamp: '2026-08-05T00:00:01.000Z',
+      stepId: 'step-1', fingerprint: AFP, opensFrom: flowDigestOf(first), dispatches: [], dispositions: [],
+    };
+    const converged = {
+      schema: FLOW_SCHEMA, kind: 'chain', purpose: 'converged', planId: 'plan-a', cycle: 1, round: 1,
+      commitEpoch: 0, owner: 'main', base: resolveBase(root), timestamp: '2026-08-05T00:00:02.000Z',
+      stepId: 'step-1', fingerprint: AFP,
+    };
+    writeFlowStore(root, [first, opened, converged]);
+    const r = runArmed(root, ['--pre-review'], { 'node --test x': GREEN });
+    assert.equal(r.code, EXIT.fail);
+    assert.deepEqual(gateCalls(r.calls), [], 'refused pre-gates — a fake adoption-like context is never recorded');
+    assert.match(r.errText, /post-convergence boundary/);
+    assert.deepEqual(attemptsIn(root), []);
+  });
+
+  it('two CONCURRENT armed --pre-review runs never leave a red unrecorded — the run lock serializes the whole cycle (round-6 fold)', async () => {
+    const root = makeFlowRepo([{ id: 'unit', title: 'U', cmd: 'sleep 1 && false' }]);
+    writeFlowStore(root, [adoptionRec(root)]);
+    appendSubsetAttempt({
+      cwd: root, expected: { planId: 'plan-a', cycle: 1, stepId: null, round: 0 },
+      subsetGateIds: ['unit'], status: 'red', base: resolveBase(root), fingerprint: AFP,
+      timestamp: '2026-08-05T00:00:01.000Z',
+    });
+    const cleanChildEnv = () => {
+      const env = { ...process.env };
+      for (const k of Object.keys(env)) if (k.startsWith('AW_')) delete env[k];
+      return env;
+    };
+    const RUN_GATES_TOOL = fileURLToPath(new URL('./run-gates.mjs', import.meta.url));
+    const spawnChild = () => new Promise((done) => {
+      const proc = spawn(process.execPath, [RUN_GATES_TOOL, '--pre-review', '--cwd', root], { env: cleanChildEnv() });
+      let out = '';
+      proc.stdout.on('data', (d) => { out += d; });
+      proc.stderr.on('data', (d) => { out += d; });
+      proc.on('close', (code) => done({ code, out }));
+    });
+    const [a, b] = await Promise.all([spawnChild(), spawnChild()]);
+    const outputs = [a, b];
+    const recorded = outputs.filter((r) => /attempt #2 recorded \(red\)/.test(r.out));
+    assert.equal(recorded.length, 1, `exactly ONE run records red #2: ${a.out}\n---\n${b.out}`);
+    const loser = outputs.find((r) => !/attempt #2 recorded \(red\)/.test(r.out));
+    assert.ok(!/── unit/.test(loser.out), `the loser never SPENDS the gates — it re-reads the budget under the run lock and refuses pre-gates: ${loser.out}`);
+    assert.match(loser.out, /recorded diagnosis|EXHAUSTED|another --pre-review/);
+    const reds = attemptsIn(root).filter((r) => r.status === 'red');
+    assert.equal(reds.length, 2, 'the store counts EVERY executed red — no unrecorded red run exists');
+  });
+
+  it('an UNAPPENDABLE store refuses before any gate spends: supersession violations, hard links, a dead append lock (round-8 fold)', () => {
+    const supersessionRoot = makeFlowRepo([UNIT]);
+    const badMark = (ts) => ({
+      schema: FLOW_SCHEMA, kind: 'down-mark', fingerprint: AFP, backend: 'agy',
+      reason: 'quota stall', expiresAt: '2027-01-01T00:00:00.000Z', base: null, timestamp: ts,
+    });
+    writeFlowStore(supersessionRoot, [adoptionRec(supersessionRoot), badMark('2026-08-05T00:00:01.000Z'), badMark('2026-08-05T00:00:02.000Z')]);
+    const sup = runArmed(supersessionRoot, ['--pre-review'], { 'node --test x': GREEN });
+    assert.equal(sup.code, EXIT.fail);
+    assert.deepEqual(gateCalls(sup.calls), [], 'a store the append would refuse never spends the gates');
+    assert.match(sup.errText, /cannot take the attempt append/);
+    const linkedRoot = makeFlowRepo([UNIT]);
+    writeFlowStore(linkedRoot, [adoptionRec(linkedRoot)]);
+    linkSync(flowStorePathOf(linkedRoot, {}), join(linkedRoot, '.git', 'flow-alias.jsonl'));
+    const linked = runArmed(linkedRoot, ['--pre-review'], { 'node --test x': GREEN });
+    assert.equal(linked.code, EXIT.fail);
+    assert.deepEqual(gateCalls(linked.calls), [], 'the hard-link refusal is pre-spend');
+    assert.match(linked.errText, /hard links/);
+    const deadLockRoot = makeFlowRepo([UNIT]);
+    writeFlowStore(deadLockRoot, [adoptionRec(deadLockRoot)]);
+    const dead = spawnSync(process.execPath, ['-e', '']);
+    assert.equal(dead.status, 0);
+    writeFileSync(`${flowStorePathOf(deadLockRoot, {})}.lock`, JSON.stringify({ pid: dead.pid, host: hostname(), startedAt: '2026-08-05T00:00:01.000Z' }));
+    const blocked = runArmed(deadLockRoot, ['--pre-review'], { 'node --test x': GREEN });
+    assert.equal(blocked.code, EXIT.fail);
+    assert.deepEqual(gateCalls(blocked.calls), [], 'a dead append lock refuses pre-spend, never post-run');
+    assert.match(blocked.errText, /append lock is not acquirable[\s\S]*DEAD process/);
+  });
+
+  it('a subset-run-lock release failure surfaces BEFORE the machine summary on early refusal branches (round-7 fold)', () => {
+    const root = makeFlowRepo([UNIT]);
+    writeFlowStore(root, [adoptionRec(root), adoptionRec(root, { planId: 'plan-b' })]);
+    const lines = [];
+    const code = runCli(['--pre-review', '--cwd', root], {
+      log: (l) => lines.push(String(l)),
+      logError: (l) => lines.push(String(l)),
+      spawn: scriptedSpawn({ 'node --test x': GREEN }, []),
+      flowLockDeps: { rm: () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); } },
+    });
+    assert.equal(code, EXIT.fail);
+    const summaryAt = lines.findIndex((l) => l.startsWith('[run-gates] status='));
+    const issueAt = lines.findIndex((l) => /cannot remove the flow-store lock at release/.test(l));
+    assert.ok(issueAt !== -1, `the custody violation stays loud: ${lines.join('\n')}`);
+    assert.ok(issueAt < summaryAt, 'the release issue precedes the machine line — the summary stays LAST across BOTH sinks');
+    assert.equal(lines[lines.length - 1], composeSummaryLine({ status: 'fail' }), 'the machine summary is the last line of the combined stream');
+  });
+
+  it('a SET AW_FLOW_STORE refuses the recording lane up front — a VALID decoy override can never hide the armed store (round-5 fold)', () => {
+    const root = makeFlowRepo([UNIT]);
+    writeFlowStore(root, [adoptionRec(root)]);
+    const decoy = join(ATMP, `decoy-${aseq += 1}.jsonl`);
+    writeFileSync(decoy, '');
+    const out = [];
+    const err = [];
+    const calls = [];
+    const code = runCli(['--pre-review', '--cwd', root], {
+      env: { ...process.env, AW_FLOW_STORE: decoy },
+      log: (l) => out.push(String(l)),
+      logError: (l) => err.push(String(l)),
+      spawn: scriptedSpawn({ 'node --test x': GREEN }, calls),
+    });
+    assert.equal(code, EXIT.fail);
+    assert.deepEqual(calls.filter((c) => c.cmd !== BASH_PROBE_CMD), [], 'refused BEFORE any spawn — the hard-stop budget is never bypassed through a redirected store');
+    assert.match(err.join('\n'), /AW_FLOW_STORE is set/);
+    assert.equal(out[out.length - 1], composeSummaryLine({ status: 'fail' }));
+    assert.deepEqual(attemptsIn(root), [], 'nothing lands in the canonical store, nothing in the decoy lane');
+  });
+
+  it('an unresolvable AW_FLOW_STORE under --pre-review keeps the summary contract (exit 1, machine line LAST)', () => {
+    const root = makeFlowRepo([UNIT]);
+    const out = [];
+    const err = [];
+    const code = runCli(['--pre-review', '--cwd', root], {
+      env: { ...process.env, AW_FLOW_STORE: 'relative/never-absolute.jsonl' },
+      log: (l) => out.push(String(l)),
+      logError: (l) => err.push(String(l)),
+      spawn: scriptedSpawn({ 'node --test x': GREEN }, []),
+    });
+    assert.equal(code, EXIT.fail);
+    assert.equal(out[out.length - 1], composeSummaryLine({ status: 'fail' }), 'the machine summary stays the LAST line — a thrown path resolution never bypasses it');
+    assert.match(err.join('\n'), /AW_FLOW_STORE/);
+  });
+
+  it('a spawn failure records NO attempt — an infrastructure failure is not a gate red', () => {
+    const root = makeFlowRepo([UNIT]);
+    writeFlowStore(root, [adoptionRec(root)]);
+    const r = runArmed(root, ['--pre-review'], { 'node --test x': { error: { code: 'ENOENT' }, status: null, stdout: '', stderr: '' } });
+    assert.equal(r.code, EXIT.fail);
+    assert.match(r.errText, /NO subset-attempt was recorded/);
+    assert.deepEqual(attemptsIn(root), []);
+  });
+
+  it('armed + AMBIGUOUS owning context refuses loudly: zero own open chains, several, and a parked own chain', () => {
+    const zeroOwn = makeFlowRepo([UNIT]);
+    writeFlowStore(zeroOwn, [adoptionRec(zeroOwn, { owner: 'worktree:elsewhere' })]);
+    const zero = runArmed(zeroOwn, ['--pre-review'], { 'node --test x': GREEN });
+    assert.equal(zero.code, EXIT.fail);
+    assert.match(zero.errText, /owns no open/);
+    const twoOwn = makeFlowRepo([UNIT]);
+    writeFlowStore(twoOwn, [adoptionRec(twoOwn), adoptionRec(twoOwn, { planId: 'plan-b' })]);
+    const two = runArmed(twoOwn, ['--pre-review'], { 'node --test x': GREEN });
+    assert.equal(two.code, EXIT.fail);
+    assert.match(two.errText, /owns 2 open chains/);
+    const parkedOwn = makeFlowRepo([UNIT]);
+    writeFlowStore(parkedOwn, [adoptionRec(parkedOwn), {
+      schema: FLOW_SCHEMA, kind: 'chain', purpose: 'park', planId: 'plan-a', cycle: 1, round: 0,
+      commitEpoch: 0, owner: 'main', base: resolveBase(parkedOwn), timestamp: '2026-08-05T00:00:01.000Z', stepId: null, fingerprint: AFP,
+    }]);
+    const parked = runArmed(parkedOwn, ['--pre-review'], { 'node --test x': GREEN });
+    assert.equal(parked.code, EXIT.fail);
+    assert.match(parked.errText, /owns no open/);
+    for (const root of [zeroOwn, twoOwn, parkedOwn]) assert.deepEqual(attemptsIn(root), []);
+  });
+
+  it('a BROKEN flow store refuses the run fail-closed — the armed state is undecidable', () => {
+    const root = makeFlowRepo([UNIT]);
+    writeFileSync(flowStorePathOf(root, {}), 'junk line\n');
+    const r = runArmed(root, ['--pre-review'], { 'node --test x': GREEN });
+    assert.equal(r.code, EXIT.fail);
+    assert.match(r.errText, /malformed/);
+    assert.deepEqual(gateCalls(r.calls), []);
+  });
+
+  it('declaring pregateExclude opens a FRESH counting context (new subsetDigest), and the hint names it', () => {
+    const root = makeFlowRepo([UNIT, { id: 'flaky', title: 'F', cmd: 'run-flaky' }]);
+    writeFlowStore(root, [adoptionRec(root)]);
+    const red = runArmed(root, ['--pre-review'], { 'node --test x': GREEN, 'run-flaky': RED });
+    assert.equal(red.code, EXIT.fail);
+    assert.match(red.text, /"flaky" failed under --pre-review/);
+    assert.match(red.text, /FRESH counting context/);
+    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'solo' }, flow: { schema: 1, pregateExclude: ['flaky'] } }));
+    const green = runArmed(root, ['--pre-review'], { 'node --test x': GREEN });
+    assert.equal(green.code, EXIT.ok, green.errText);
+    assert.match(green.text, /attempt #1 recorded \(green\)/, 'the excluded subset is a NEW context — the budget restarts at 1');
+    const [a1, a2] = attemptsIn(root);
+    assert.notEqual(a1.subsetDigest, a2.subsetDigest);
+    assert.equal(a1.foldBatch, a2.foldBatch, 'the round identity did not move — only the subset did');
+  });
+
+  it('the --diagnosis obligation keys on reds >= 2, never on the attempt index — green histories never demand it', () => {
+    const allGreenRoot = makeFlowRepo([UNIT]);
+    writeFlowStore(allGreenRoot, [adoptionRec(allGreenRoot)]);
+    runArmed(allGreenRoot, ['--pre-review'], { 'node --test x': GREEN });
+    runArmed(allGreenRoot, ['--pre-review'], { 'node --test x': GREEN });
+    const third = runArmed(allGreenRoot, ['--pre-review'], { 'node --test x': GREEN });
+    assert.equal(third.code, EXIT.ok, third.errText);
+    assert.match(third.text, /attempt #3 recorded \(green\)/, 'two greens owe nothing — the blind budget counts REDS');
+    const mixedRoot = makeFlowRepo([UNIT]);
+    writeFlowStore(mixedRoot, [adoptionRec(mixedRoot)]);
+    runArmed(mixedRoot, ['--pre-review'], { 'node --test x': RED });
+    runArmed(mixedRoot, ['--pre-review'], { 'node --test x': GREEN });
+    const afterRetry = runArmed(mixedRoot, ['--pre-review'], { 'node --test x': RED });
+    assert.equal(afterRetry.code, EXIT.fail);
+    assert.match(afterRetry.text, /attempt #3 recorded \(red\)/, 'red→green→red: one red on the books, the third attempt stays blind-legal');
+    const fourth = runArmed(mixedRoot, ['--pre-review'], { 'node --test x': GREEN });
+    assert.equal(fourth.code, EXIT.fail);
+    assert.deepEqual(gateCalls(fourth.calls), [], 'reds reached 2 — the next run demands --diagnosis pre-gates');
+    assert.match(fourth.errText, /recorded diagnosis/);
+    const diagnosed = runArmed(mixedRoot, ['--pre-review', '--diagnosis', 'the retry regressed on a second axis'], { 'node --test x': GREEN });
+    assert.equal(diagnosed.code, EXIT.ok, diagnosed.errText);
+    assert.match(diagnosed.text, /attempt #4 recorded \(green\)/);
+  });
+
+  it('a REPLAYED identical --diagnosis refuses PRE-GATES — zero spawns, the run is never left unrecorded (round-4 fold)', () => {
+    const root = makeFlowRepo([UNIT]);
+    writeFlowStore(root, [adoptionRec(root)]);
+    runArmed(root, ['--pre-review'], { 'node --test x': RED });
+    runArmed(root, ['--pre-review'], { 'node --test x': RED });
+    const first = runArmed(root, ['--pre-review', '--diagnosis', 'hypothesis A'], { 'node --test x': GREEN });
+    assert.equal(first.code, EXIT.ok, first.errText);
+    const replay = runArmed(root, ['--pre-review', '--diagnosis', 'hypothesis A'], { 'node --test x': GREEN });
+    assert.equal(replay.code, EXIT.fail);
+    assert.deepEqual(gateCalls(replay.calls), [], 'the replay refuses BEFORE any gate spawns — the gates are never spent on an unrecordable run');
+    assert.match(replay.errText, /byte-identical/);
+    const distinct = runArmed(root, ['--pre-review', '--diagnosis', 'hypothesis B'], { 'node --test x': GREEN });
+    assert.equal(distinct.code, EXIT.ok, distinct.errText);
+  });
+
+  it('--diagnosis outside --pre-review is usage; unarmed or blind-budget --diagnosis refuses loudly', () => {
+    const usage = runHermetic({ gates: [UNIT], argv: ['--diagnosis', 'x'] });
+    assert.equal(usage.code, EXIT.usage);
+    assert.match(usage.errText, /--diagnosis rides --pre-review only/);
+    const emptyValue = runHermetic({ gates: [UNIT], argv: ['--pre-review', '--diagnosis', ''] });
+    assert.equal(emptyValue.code, EXIT.usage);
+    const unarmed = makeFlowRepo([UNIT]);
+    const r = runArmed(unarmed, ['--pre-review', '--diagnosis', 'x'], { 'node --test x': GREEN });
+    assert.equal(r.code, EXIT.fail);
+    assert.match(r.errText, /unarmed/);
+    const armed = makeFlowRepo([UNIT]);
+    writeFlowStore(armed, [adoptionRec(armed)]);
+    const blind = runArmed(armed, ['--pre-review', '--diagnosis', 'x'], { 'node --test x': GREEN });
+    assert.equal(blind.code, EXIT.fail);
+    assert.match(blind.errText, /blind budget/);
+    assert.deepEqual(gateCalls(blind.calls), [], 'refused pre-gates');
+  });
+});
+
+// ── Plan 4 Decision 2 / D10: --final binds the flow store through the owner-scoped projection ──
+describe('run-gates — --final binds the flow store (Plan 4 Decision 2 / D10)', () => {
+  const FTMP = mkdtempSync(join(tmpdir(), 'run-gates-final-flow-'));
+  after(() => rmSync(FTMP, { recursive: true, force: true }));
+  const FLOW_TS = '2026-08-05T00:00:00.000Z';
+  const AFP = 'a1'.repeat(32);
+  let fseq = 0;
+  const gitIn = (root, ...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+  const CANON = [
+    { id: 'review-state', title: 'rs', cmd: `node "${join(HERE, 'review-state.mjs')}" --check` },
+    { id: 'coverage-check', title: 'cc', cmd: `node "${join(HERE, 'coverage-check.mjs')}" --check` },
+  ];
+  const makeFinalRepo = (extraGates = []) => {
+    const root = join(FTMP, `repo-${fseq += 1}`);
+    mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
+    gitIn(root, 'init', '-q', '-b', 'main');
+    gitIn(root, 'config', 'user.email', 'probe@example.com');
+    gitIn(root, 'config', 'user.name', 'probe');
+    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'solo' } }));
+    writeFileSync(join(root, GATES_REL), JSON.stringify({ gates: [CANON[0], ...extraGates, CANON[1]] }));
+    writeFileSync(join(root, 'base.txt'), 'base\n');
+    gitIn(root, 'add', '-A');
+    gitIn(root, 'commit', '-qm', 'base');
+    return root;
+  };
+  const cleanEnv = (extra = {}) => {
+    const env = { ...process.env };
+    for (const k of Object.keys(env)) if (k.startsWith('AW_')) delete env[k];
+    return { ...env, ...extra };
+  };
+  const runFinalFlow = (root) => {
+    const out = [];
+    const code = runCli(['--final', '--cwd', root], { env: cleanEnv(), log: (l) => out.push(String(l)), logError: (l) => out.push(String(l)) });
+    return { code, out: out.join('\n') };
+  };
+  const lastFinal = (root) => readFileSync(join(root, '.git', 'agent-workflow-core-evidence.jsonl'), 'utf8')
+    .split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.kind === 'final').pop();
+  const adoptionRec = (root, over = {}) => ({
+    schema: FLOW_SCHEMA, kind: 'chain', purpose: 'adoption', planId: 'plan-a', cycle: 1, round: 0,
+    commitEpoch: 0, owner: 'main', base: resolveBase(root), timestamp: FLOW_TS, stepId: null,
+    fingerprint: AFP, planLabel: 'Plan A', createdAt: FLOW_TS, planDigest: 'b2'.repeat(32), ...over,
+  });
+  const parkRec = (root) => ({
+    schema: FLOW_SCHEMA, kind: 'chain', purpose: 'park', planId: 'plan-a', cycle: 1, round: 0,
+    commitEpoch: 0, owner: 'main', base: resolveBase(root), timestamp: '2026-08-05T00:00:01.000Z', stepId: null, fingerprint: AFP,
+  });
+  const writeFlowStore = (root, records) => writeFileSync(flowStorePathOf(root, {}), records.map((r) => `${JSON.stringify(r)}\n`).join(''));
+
+  it('NO flow store → the receipt carries no flow field and still validates (absent = pre-flow-binding)', () => {
+    const root = makeFinalRepo();
+    const { code, out } = runFinalFlow(root);
+    assert.equal(code, EXIT.ok, out);
+    const done = lastFinal(root);
+    assert.equal('flow' in done.evidenceHashes, false);
+    assert.deepEqual(validateEvidenceRecord(done), { ok: true });
+  });
+
+  it('a PRESENT store → the minted receipt carries the owner-scoped projection hash and validates', () => {
+    const root = makeFinalRepo();
+    const records = [adoptionRec(root), parkRec(root)];
+    writeFlowStore(root, records);
+    const { code, out } = runFinalFlow(root);
+    assert.equal(code, EXIT.ok, out);
+    const done = lastFinal(root);
+    assert.equal(done.evidenceHashes.flow, projectionHashOf(records, { owner: 'main', currentFingerprint: done.fingerprintBefore }));
+    assert.deepEqual(validateEvidenceRecord(done), { ok: true });
+  });
+
+  it('an OWN-projection append DURING the final run reds the receipt (integrity drift)', () => {
+    const root = makeFinalRepo([{ id: 'sneak', title: 's', cmd: 'PLACEHOLDER' }]);
+    writeFlowStore(root, [adoptionRec(root), parkRec(root)]);
+    const sneaked = JSON.stringify({
+      schema: FLOW_SCHEMA, kind: 'rerun-cause', fingerprint: AFP,
+      cause: 'appended mid-final', attempt: 'sneak-1', base: null, timestamp: FLOW_TS,
+    });
+    const gates = JSON.parse(readFileSync(join(root, GATES_REL), 'utf8'));
+    gates.gates[1].cmd = `printf '%s\\n' '${sneaked}' >> "$AW_GIT_DIR/agent-workflow-flow.jsonl"`;
+    writeFileSync(join(root, GATES_REL), JSON.stringify(gates));
+    const { code, out } = runFinalFlow(root);
+    const done = lastFinal(root);
+    assert.equal(code, EXIT.finalFailed, out);
+    assert.equal(done.status, 'red');
+    assert.match(done.integrityFailure ?? '', /flow store moved under the final run/);
+  });
+
+  it('a FOREIGN worktree append DURING the final run does NOT red the receipt (outside the projection)', () => {
+    const root = makeFinalRepo([{ id: 'sneak', title: 's', cmd: 'PLACEHOLDER' }]);
+    writeFlowStore(root, [adoptionRec(root), parkRec(root)]);
+    const foreign = JSON.stringify({
+      schema: FLOW_SCHEMA, kind: 'down-mark', fingerprint: 'ee'.repeat(32), backend: 'agy',
+      reason: 'quota stall on another tree', expiresAt: '2027-01-01T00:00:00.000Z', base: null, timestamp: FLOW_TS,
+    });
+    const gates = JSON.parse(readFileSync(join(root, GATES_REL), 'utf8'));
+    gates.gates[1].cmd = `printf '%s\\n' '${foreign}' >> "$AW_GIT_DIR/agent-workflow-flow.jsonl"`;
+    writeFileSync(join(root, GATES_REL), JSON.stringify(gates));
+    const { code, out } = runFinalFlow(root);
+    const done = lastFinal(root);
+    assert.equal(code, EXIT.ok, out);
+    assert.equal(done.status, 'green', 'cross-tree stays advisory — a foreign append never reds a final');
+    assert.equal(done.integrityFailure, null);
+  });
+
+  it('a BROKEN flow store refuses the attempt up front — zero evidence writes (fail closed)', () => {
+    const root = makeFinalRepo();
+    writeFileSync(flowStorePathOf(root, {}), 'junk line\n');
+    const { code, out } = runFinalFlow(root);
+    assert.equal(code, EXIT.finalFailed, out);
+    assert.match(out, /flow→final binding fails closed/);
+    assert.equal(existsSync(join(root, '.git', 'agent-workflow-core-evidence.jsonl')), false, 'not even the start record lands');
+  });
+
+  it('an unresolvable AW_FLOW_STORE under --final is finalFailed with the machine summary as the LAST line', () => {
+    const root = makeFinalRepo();
+    const out = [];
+    const code = runCli(['--final', '--cwd', root], {
+      env: cleanEnv({ AW_FLOW_STORE: 'relative/never-absolute.jsonl' }),
+      log: (l) => out.push(String(l)),
+      logError: (l) => out.push(String(l)),
+    });
+    assert.equal(code, EXIT.finalFailed);
+    assert.equal(out[out.length - 1], composeSummaryLine({ status: 'fail' }), 'a thrown path resolution never bypasses the summary contract');
+    assert.equal(existsSync(join(root, '.git', 'agent-workflow-core-evidence.jsonl')), false, 'zero evidence writes');
   });
 });
