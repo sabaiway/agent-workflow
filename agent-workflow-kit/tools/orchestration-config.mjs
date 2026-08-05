@@ -15,8 +15,8 @@
 //                                                by the _README refresh and the injected-slot refresh.
 //
 // This module performs NO filesystem WRITES — only reads (loadConfig). The single fs-writer lives in
-// orchestration-write.mjs, which procedures.mjs never imports, so "procedures never reaches a writer"
-// is structurally true. Pure-where-possible (fs injectable), dependency-free, Node >= 22. No side
+// orchestration-write.mjs, which procedures.mjs never imports DIRECTLY (the pinned import-split
+// rule). Pure-where-possible (fs injectable), dependency-free, Node >= 22. No side
 // effects on import.
 
 import { readFileSync, lstatSync } from 'node:fs';
@@ -118,12 +118,12 @@ export const parseOp = (kind, token) => {
 // pinned NUMERIC (the string form is a named refusal case).
 export const FLOW_SCHEMA_VERSION = 1;
 
-// The honest lagging-kit contract sentence (tolerate-first ordering): what a kit WITHOUT the flow
-// branch does when it meets a `flow` block, and that this release enforces nothing against such a
-// reader. doc-parity binds it VERBATIM into the procedures mode doc's exit-1 contract line, so the
-// doc can never soften the admission while the gap is real (enforcement arms with `set-flow`).
+// The honest lagging-kit contract sentence: what a kit WITHOUT the flow branch does when it meets
+// a `flow` block, and what the now-armed `set-flow` floor can and cannot reach. doc-parity binds
+// it VERBATIM into the procedures and set-flow mode docs, so the admission can never be reworded
+// away: no in-config floor protects a reader that dies on the unknown key itself.
 export const FLOW_LAGGING_KIT_CONTRACT =
-  'a kit predating the `"flow"` key that reads a config carrying one fails this config load loudly (exit `1`, reddening its full gate matrix); this kit release enforces NO version floor against such a pre-flow reader — tolerate-first ordering is the only mitigation until a flow-aware release arms enforcement on the `set-flow` path';
+  'a kit predating the `"flow"` key that reads a config carrying one fails this config load loudly (exit `1`, reddening its full gate matrix); the `set-flow` arming path now enforces the declared `kitMinVersion` floor with a null-guarded comparison (an unparseable version never passes), while tolerate-first ordering remains the only protection for readers older than the `"flow"` key itself — no in-config floor can reach a kit that dies on the unknown key';
 
 // ── the closed flow schema-1 surface (P20) — ONE literal fixture for BOTH consumers ─────
 // The structural validator below and the set-flow arming path (Phase 3) walk the SAME closed key

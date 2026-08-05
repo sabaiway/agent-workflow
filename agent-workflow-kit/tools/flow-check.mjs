@@ -1,10 +1,8 @@
 // flow-check.mjs — the checker refusal core (flow-orchestration, Phase 3): pure refusal predicates
 // over the FULL read-results of BOTH stores (flow + core evidence) and the tree context, plus a
 // standalone --check CLI. A malformed or unreadable store is itself a fail-closed refusal, never a
-// silent empty; every refusal names its recovery — park/resume/complete print the Plan-2 INTERIM
-// structured form (the named action + the record it requires), because their writer CLI is a
-// Plan-3 surface; the verbatim pasteable command replaces that form in the same commit that ships
-// the writer.
+// silent empty; every refusal names its recovery as a VERBATIM pasteable flow-writer command
+// (Decision 3/8 — the writer CLI ships beside this checker, so a refusal is never a dead end).
 //
 // Phase 1 adds the pure decision cores (#61/#56/#65/#62/#42/#25); each keys on an ARMED flow, so
 // an unarmed tree sees byte-identical behavior.
@@ -18,7 +16,8 @@
 // discipline) — a poisoned override can neither redirect nor mask the real stores.
 
 import { lstatSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
+import { join, dirname } from 'node:path';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
   CHAIN_KIND, validateChainSequence, validateSupersessions, canonicalFlowDigest,
@@ -40,12 +39,18 @@ const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 }
 
 const short = (digest) => `${digest.slice(0, 12)}…`;
 
-// The Plan-2 INTERIM structured recovery (#59): the checker only refuses — park/resume/complete
-// are explicit writer actions, and their CLI ships with Plan 3.
-const parkRecovery = (planId, state) => {
-  const requires = { kind: 'chain', purpose: 'park', planId, cycle: state.cycle, round: state.round, stepId: null, fingerprint: '<the parked tree fingerprint>' };
-  return `recovery (structured, Plan-2 interim): ${JSON.stringify({ action: 'park', requires })} — the pasteable park command ships with the Plan-3 writer and replaces this structured form in the same commit`;
-};
+// The verbatim pasteable recovery lane (Decision 3/8): every refusal that names a mintable record
+// class prints the exact flow-writer command that mints it. The tool path is absolute (pasteable
+// from any cwd) and POSIX single-quoted — raw path/id bytes must never execute on paste.
+const FLOW_WRITER_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'flow-writer.mjs');
+const shellQuote = (v) => `'${String(v).replaceAll("'", "'\\''")}'`;
+const writerCommand = (args) => `node ${shellQuote(FLOW_WRITER_TOOL)} ${args}`;
+
+// The checker only refuses — park/resume/complete are explicit writer actions (#59). Printed
+// operand shapes: flag values ride the inline --flag='value' form and positionals follow a
+// literal ` -- ` — one shape for EVERY id, so a leading-dash operand stays recoverable.
+const parkRecovery = (planId) =>
+  `recovery (pasteable): ${writerCommand(`park -- ${shellQuote(planId)}`)}`;
 
 // Arms in dependency order; the first failing arm reports, and integrityClean gates the caller's
 // dependent arms (base motion) off a broken chain.
@@ -77,7 +82,7 @@ const planRefusals = (records, chain, planId, owner, advisories) => {
     advisories.push(`plan "${planId}": an OPEN chain owned by "${chain[0].owner}" (a foreign worktree) — advisory visibility only, never this tree's refusal (#57)`);
     return { integrityClean: true, refusals: [] };
   }
-  return { integrityClean: true, refusals: [`plan "${planId}" has an OPEN chain owned by this worktree ("${owner}"): step "${state.stepId}" is not converged — a commit closes only at a terminal. ${parkRecovery(planId, state)}`] };
+  return { integrityClean: true, refusals: [`plan "${planId}" has an OPEN chain owned by this worktree ("${owner}"): step "${state.stepId}" is not converged — a commit closes only at a terminal. ${parkRecovery(planId)}`] };
 };
 
 // The custody arm verifies the PERSISTED proof against a bare declaration (#60): the masked
@@ -86,8 +91,26 @@ const planRefusals = (records, chain, planId, owner, advisories) => {
 // — an earlier or fingerprint-mismatched record never satisfies (raw order decides). Satisfaction
 // is STORE-GLOBAL: the locked delta shape carries no chain field, so WHICH chain's refresh cap
 // the re-attestation consumes is the Plan-3 decideCheck arm (#61), not a Plan-2 refusal.
-const deltaRefusals = (records) => {
+// The recovery lane needs the invoker's OWN OPEN chains: a refresh is a within-step record, so
+// only such a chain can carry the re-attestation (and its refresh cap is what the mint consumes,
+// #61). A command under a "pasteable" label is always CONCRETE — with no own open chain the
+// recovery states the precondition instead of printing a placeholder command.
+const ownOpenChainPlanIds = (records, owner) =>
+  [...new Set(records.filter((r) => r.kind === CHAIN_KIND).map((r) => r.planId))].filter((planId) => {
+    const chain = records.filter((r) => r.kind === CHAIN_KIND && r.planId === planId);
+    if (chain[0].owner !== owner || chain[0].purpose !== 'adoption' || !validateChainSequence(chain).ok) return false;
+    const state = walkChainState(chain);
+    return !state.completed && !state.parked && state.mode === 'in-step';
+  });
+
+const deltaRefusals = (records, owner) => {
   const refusals = [];
+  const openPlanIds = ownOpenChainPlanIds(records, owner);
+  // The re-attestation OBLIGATION binds only AUTHORITATIVE deltas: a superseded same-key delta
+  // never enters classifyDeltaChain and the refresh preflight refuses to reference it, so
+  // demanding its refresh would be exactly the unrecoverable red the plan bans — supersession is
+  // the store's own recovery valve. Custody and mint checks stay RAW-wide (tamper detection).
+  const authoritative = new Set(authoritativeFlowRecords(records));
   records.forEach((r, i) => {
     if (r.kind !== 'bookkeeping-delta') return;
     if (r.custodyProof.maskedFingerprint !== r.fingerprintBefore) {
@@ -106,11 +129,15 @@ const deltaRefusals = (records) => {
       refusals.push(`bookkeeping-delta at ${r.path}: the persisted custody proof violates a mint invariant — ${mintInvariant}; an unmintable proof never passes (fail closed)`);
       return;
     }
+    if (!authoritative.has(r)) return;
     const digest = canonicalFlowDigest(r);
     const satisfied = records.some((s, j) => j > i && s.kind === CHAIN_KIND && s.purpose === 'refresh'
       && s.refreshedRecord === digest && s.fingerprintBefore === r.fingerprintAfter);
     if (!satisfied) {
-      refusals.push(`bookkeeping-delta at ${r.path}: no satisfying re-attestation — a SUBSEQUENT chain refresh must bind {refreshedRecord: ${short(digest)}, fingerprintBefore: ${short(r.fingerprintAfter)}}; an earlier or fingerprint-mismatched record never satisfies. recovery (structured, Plan-2 interim): mint that refresh record — the pasteable command ships with the Plan-3 writer`);
+      const recovery = openPlanIds.length > 0
+        ? `recovery (pasteable; choose the chain whose refresh cap this consumes, #61): ${openPlanIds.map((planId) => writerCommand(`refresh --cause='bookkeeping delta re-attestation' --refreshed-record=${digest} -- ${shellQuote(planId)}`)).join('  OR  ')}`
+        : `recovery: no own OPEN chain can carry the re-attestation yet — open the owning plan's step round, then mint the refresh binding --refreshed-record=${digest}`;
+      refusals.push(`bookkeeping-delta at ${r.path}: no satisfying re-attestation — a SUBSEQUENT chain refresh must bind {refreshedRecord: ${short(digest)}, fingerprintBefore: ${short(r.fingerprintAfter)}}; an earlier or fingerprint-mismatched record never satisfies. ${recovery}`);
     }
   });
   return refusals;
@@ -258,8 +285,7 @@ export const collectUnansweredRedRefusals = ({ flowRecords, coreRecords, current
     }
     if (bases[0] !== currentBase) continue;
     if (!answeredBy(r, i)) {
-      const requires = { kind: 'rerun-cause', attempt: '<this red final attempt id>', fingerprint: '<the retry tree fingerprint>', cause: '<the stated cause>' };
-      refusals.push(`a red final (attempt "${r.attempt}") on the CURRENT base (${bases[0] == null ? 'null' : short(bases[0])}) has no later completed retry cleared by a rerun-cause — an unanswered red never passes an armed flow (#65). recovery (structured, interim): ${JSON.stringify({ action: 'rerun-cause', requires })} — the pasteable command ships with the Plan-3 writer and replaces this structured form in the same commit`);
+      refusals.push(`a red final (attempt "${r.attempt}") on the CURRENT base (${bases[0] == null ? 'null' : short(bases[0])}) has no later completed retry cleared by a rerun-cause — an unanswered red never passes an armed flow (#65). recovery (edit the quoted cause, then paste; mint on the RETRY tree): ${writerCommand(`rerun-cause --attempt=${shellQuote(r.attempt)} --cause='<the stated cause>'`)}`);
     }
   }
   return refusals;
@@ -330,13 +356,13 @@ const baseMotionRefusals = (chain, planId, owner, motion) => {
   const recorded = lifecycle[lifecycle.length - 1].base;
   if (recorded === motion.currentBase) return refusals;
   const cls = classify(recorded, motion.currentBase);
-  const requires = cls.requires === 're-baseline'
-    ? { kind: 'chain', purpose: 're-baseline', planId, baseBefore: '<the recorded base>', fingerprint: '<the current tree fingerprint>' }
-    : { kind: 'chain', purpose: 'refresh', planId, cause: 'base motion', refreshedRecord: '<the re-attested record digest>' };
+  const recovery = cls.requires === 're-baseline'
+    ? writerCommand(`re-baseline -- ${shellQuote(planId)}`)
+    : writerCommand(`refresh --cause='base motion' --refreshed-record=${canonicalFlowDigest(chain[chain.length - 1])} -- ${shellQuote(planId)}`);
   const tailRequirement = cls.requires === 're-baseline'
     ? 'a re-baseline record suffices (the delta is disjoint from the plan surface)'
     : `a refresh dispatch is REQUIRED (${cls.motion === 'intersecting' ? `the delta intersects the plan surface at ${cls.witness}` : cls.reason})`;
-  refusals.push(`plan "${planId}": the base moved under the armed chain (recorded ${display(recorded)} → current ${display(motion.currentBase)}) and no ${cls.requires} record landed — ${tailRequirement}; final gates must re-run after base motion (#62). recovery (structured, interim): ${JSON.stringify({ action: cls.requires, requires })} — the pasteable command ships with the Plan-3 writer and replaces this structured form in the same commit`);
+  refusals.push(`plan "${planId}": the base moved under the armed chain (recorded ${display(recorded)} → current ${display(motion.currentBase)}) and no ${cls.requires} record landed — ${tailRequirement}; final gates must re-run after base motion (#62). recovery (pasteable): ${recovery}`);
   return refusals;
 };
 
@@ -378,7 +404,7 @@ export const collectDegradeCoverageRefusals = ({ flowRecords, coreRecords, tree,
     const digest = canonicalFlowDigest(degrade);
     const candidates = justifications.filter((x) => x.degradeDigest === digest);
     if (candidates.length === 0) {
-      refusals.push(`a core degrade (backend "${degrade.backend}") the gate relies on at the current tree has no flow degrade-justification binding it — exact coverage refuses uncovered degrades on an armed flow (#25/#42); mint the justification through the Plan-3 writer`);
+      refusals.push(`a core degrade (backend "${degrade.backend}") the gate relies on at the current tree has no flow degrade-justification binding it — exact coverage refuses uncovered degrades on an armed flow (#25/#42). recovery (pasteable, needs a then-active down-mark): ${writerCommand(`degrade-justification --backend=${shellQuote(degrade.backend)}`)}`);
       continue;
     }
     const failures = candidates.map((j) => justificationFailure(j, degrade));
@@ -500,7 +526,7 @@ export const decideFlowCheck = ({ flowRead, coreRead, owner, flowPath = 'the flo
     refusals.push(...plan.refusals);
     if (motion != null && plan.integrityClean) refusals.push(...baseMotionRefusals(chain, planId, owner, motion));
   }
-  refusals.push(...deltaRefusals(records));
+  refusals.push(...deltaRefusals(records, owner));
   refusals.push(...degradeOrderingRefusals(coreRead.records));
   if (evidence != null) {
     refusals.push(...collectUnansweredRedRefusals({ flowRecords: records, coreRecords: coreRead.records, currentBase: evidence.tree.base, owner }));

@@ -174,16 +174,28 @@ describe('the REAL registry is consistent with the shipped contract docs (dogfoo
     assert.match(helpResult.stdout, /flow schema/, 'the HELP inventory must name the binding');
   });
 
-  it('the registry binds the honest lagging-kit contract sentence to the procedures mode doc', () => {
+  it('the registry binds the honest lagging-kit contract sentence to BOTH flow-facing mode docs (P12)', () => {
     const binding = BINDINGS.find((b) => b.constant === 'flow-lagging-kit');
     assert.ok(binding, 'registry must bind FLOW_LAGGING_KIT_CONTRACT (the exit-1 contract doc pin)');
     assert.equal(binding.token, FLOW_LAGGING_KIT_CONTRACT, 'the token is the live exported constant');
     assert.match(binding.token, /config load loudly/, 'the sentence states the pre-flow failure');
-    assert.match(binding.token, /enforces NO version floor/, 'the sentence admits the enforcement gap');
-    assert.match(binding.token, /tolerate-first/, 'the sentence names the only mitigation');
-    assert.deepEqual([...binding.files].sort(), ['references/modes/procedures.md']);
+    assert.match(binding.token, /null-guarded comparison/, 'the sentence states the now-armed set-flow floor (P12)');
+    assert.match(binding.token, /no in-config floor can reach a kit that dies on the unknown key/, 'the honest limit of the armed floor stays admitted');
+    assert.match(binding.token, /tolerate-first ordering remains the only protection/, 'the sentence keeps the pre-flow-reader admission');
+    assert.deepEqual([...binding.files].sort(), ['references/modes/procedures.md', 'references/modes/set-flow.md']);
     const helpResult = main(['--help']);
     assert.match(helpResult.stdout, /lagging-kit/, 'the HELP inventory must name the binding');
+  });
+
+  it('the registry binds the set-flow bookkeeping-floor residual and the procedures armed-halves header', () => {
+    const residual = BINDINGS.find((b) => b.constant === 'flow-bookkeeping-floor-residual');
+    assert.ok(residual, 'registry must bind FLOW_BOOKKEEPING_FLOOR_RESIDUAL (the honest floor boundary)');
+    assert.match(residual.token, /not a pretended rule/, 'the residual admits its boundary');
+    assert.deepEqual([...residual.files], ['references/modes/set-flow.md']);
+    const header = BINDINGS.find((b) => b.constant === 'flow-armed-halves-header');
+    assert.ok(header, 'registry must bind FLOW_ARMED_HALVES_HEADER (the P8 session-start surface)');
+    assert.match(header.token, /armed halves/, 'the header names the three halves surface');
+    assert.deepEqual([...header.files], ['references/modes/procedures.md']);
   });
 
   it('the registry binds the review-state clean-tree latent-arm notice to its mode doc', () => {

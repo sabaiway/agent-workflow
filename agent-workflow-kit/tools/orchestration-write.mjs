@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // orchestration-write.mjs — the ONLY filesystem WRITER for docs/ai/orchestration.json. It is imported
-// by the set-recipe writer alone; procedures.mjs never imports it, so "the read-only procedures advisor
-// can never reach a writer" is a STRUCTURAL invariant (an import-split test pins it), not just an
-// assertion. Splitting the writer out of the schema/read module keeps the read surface fs-write-free.
+// by the config WRITERS alone (set-recipe, set-flow); procedures.mjs never imports it DIRECTLY —
+// the import-split test pins that direct-import rule. Splitting the writer out of the schema/read
+// module keeps the read surface fs-write-free.
 //
 // The hardened write flow (deployment gate → symlink STOPs → containment guard → exclusive-create
 // tmp + rename with a TOCTOU re-check → tmp cleanup; LAST-WRITER-WINS, documented) lives in the

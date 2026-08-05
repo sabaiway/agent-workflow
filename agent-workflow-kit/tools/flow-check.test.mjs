@@ -15,6 +15,10 @@ import { FLOW_SCHEMA_VERSION, canonicalFlowDigest } from './flow-record.mjs';
 import { EVIDENCE_SCHEMA_VERSION, resolveEvidencePath, parseEvidenceText } from './core-evidence.mjs';
 
 const TOOL = fileURLToPath(new URL('./flow-check.mjs', import.meta.url));
+// The pasteable-recovery command anchor: the SAME absolute tool path + POSIX single-quoting the
+// checker composes (byte-pinned below).
+const WRITER_TOOL = fileURLToPath(new URL('./flow-writer.mjs', import.meta.url));
+const q = (v) => `'${String(v).replaceAll("'", "'\\''")}'`;
 const TMP = mkdtempSync(join(tmpdir(), 'aw-flow-check-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
 
@@ -196,16 +200,13 @@ describe('flow-check — worktree scoping', () => {
     assert.match(d.advisories[0], /advisory/);
   });
 
-  it('the committing tree own open chain refuses, printing the Plan-2 INTERIM structured recovery', () => {
+  it('the committing tree own open chain refuses, printing the verbatim pasteable park command', () => {
     const first = adoption();
     const step1 = opener(canonicalFlowDigest(first), { timestamp: TS(1) });
     const d = decide([first, step1], { owner: 'main' });
     assert.equal(d.refusals.length, 1);
     assert.match(d.refusals[0], /OPEN chain owned by this worktree/);
-    assert.match(d.refusals[0], /"action":"park"/, 'the structured recovery names the action');
-    assert.match(d.refusals[0], /"purpose":"park"/, 'the structured recovery names the record it requires');
-    assert.match(d.refusals[0], /"planId":"plan-a"/);
-    assert.match(d.refusals[0], /Plan-3 writer/, 'the interim form states the verbatim command arrives with the Plan-3 writer');
+    assert.ok(d.refusals[0].includes(`recovery (pasteable): node ${q(WRITER_TOOL)} park -- ${q('plan-a')}`), 'the recovery is the verbatim pasteable writer command (Decision 3; the -- terminator keeps a leading-dash id recoverable)');
   });
 });
 
@@ -402,9 +403,8 @@ describe('flow-check — Phase-1 characterization (unarmed Plan-2 outputs pinned
   it('the own-open-chain refusal line is pinned byte-exact', () => {
     const first = adoption();
     const step1 = opener(canonicalFlowDigest(first), { timestamp: TS(1) });
-    const requires = { kind: 'chain', purpose: 'park', planId: 'plan-a', cycle: 1, round: 1, stepId: null, fingerprint: '<the parked tree fingerprint>' };
     assert.deepEqual(decide([first, step1]), {
-      refusals: [`plan "plan-a" has an OPEN chain owned by this worktree ("main"): step "step-1" is not converged — a commit closes only at a terminal. recovery (structured, Plan-2 interim): ${JSON.stringify({ action: 'park', requires })} — the pasteable park command ships with the Plan-3 writer and replaces this structured form in the same commit`],
+      refusals: [`plan "plan-a" has an OPEN chain owned by this worktree ("main"): step "step-1" is not converged — a commit closes only at a terminal. recovery (pasteable): node ${q(WRITER_TOOL)} park -- ${q('plan-a')}`],
       advisories: [],
     });
   });
@@ -418,12 +418,31 @@ describe('flow-check — Phase-1 characterization (unarmed Plan-2 outputs pinned
     });
   });
 
-  it('the delta re-attestation refusal is pinned byte-exact', () => {
+  it('the delta re-attestation refusal is pinned byte-exact (no own open chain → no pasteable label)', () => {
     const theDelta = delta();
     assert.deepEqual(decide([theDelta]), {
-      refusals: [`bookkeeping-delta at docs/notes.md: no satisfying re-attestation — a SUBSEQUENT chain refresh must bind {refreshedRecord: ${short(canonicalFlowDigest(theDelta))}, fingerprintBefore: ${short(theDelta.fingerprintAfter)}}; an earlier or fingerprint-mismatched record never satisfies. recovery (structured, Plan-2 interim): mint that refresh record — the pasteable command ships with the Plan-3 writer`],
+      refusals: [`bookkeeping-delta at docs/notes.md: no satisfying re-attestation — a SUBSEQUENT chain refresh must bind {refreshedRecord: ${short(canonicalFlowDigest(theDelta))}, fingerprintBefore: ${short(theDelta.fingerprintAfter)}}; an earlier or fingerprint-mismatched record never satisfies. recovery: no own OPEN chain can carry the re-attestation yet — open the owning plan's step round, then mint the refresh binding --refreshed-record=${canonicalFlowDigest(theDelta)}`],
       advisories: [],
     });
+  });
+
+  it("a superseded same-key delta never demands re-attestation — supersession is the store's own recovery valve", () => {
+    const first = delta();
+    const second = delta({ timestamp: TS(9) });
+    const d = decide([first, second]);
+    const deltaRefusals = d.refusals.filter((r) => r.includes('no satisfying re-attestation'));
+    assert.equal(deltaRefusals.length, 1, 'only the AUTHORITATIVE delta carries the obligation');
+    assert.ok(deltaRefusals[0].includes(canonicalFlowDigest(second)), 'the printed recovery references the authoritative digest');
+    assert.ok(!deltaRefusals[0].includes(canonicalFlowDigest(first)), 'the superseded digest is never demanded — the refresh preflight refuses it, so demanding it would be unrecoverably red');
+  });
+
+  it('with an own OPEN chain the delta recovery is a concrete pasteable refresh command naming that chain', () => {
+    const first = adoption();
+    const step1 = opener(canonicalFlowDigest(first), { timestamp: TS(1) });
+    const theDelta = delta();
+    const d = decide([first, step1, theDelta]);
+    const deltaRefusal = d.refusals.find((r) => r.includes('no satisfying re-attestation'));
+    assert.ok(deltaRefusal.includes(`recovery (pasteable; choose the chain whose refresh cap this consumes, #61): node ${q(WRITER_TOOL)} refresh --cause='bookkeeping delta re-attestation' --refreshed-record=${canonicalFlowDigest(theDelta)} -- ${q('plan-a')}`), `the recovery names the own open chain with the FULL digest; got: ${deltaRefusal}`);
   });
 
   it('the degrade-ordering refusal is pinned byte-exact', () => {
@@ -615,6 +634,8 @@ describe('flow-check — unanswered-red-on-base rung (#65, Step 1.3)', () => {
     assert.equal(refusals.length, 1);
     assert.match(refusals[0], /red final \(attempt "a1"\) on the CURRENT base/);
     assert.match(refusals[0], /rerun-cause/);
+    assert.match(refusals[0], /recovery \(edit the quoted cause, then paste; mint on the RETRY tree\)/, 'a command carrying a placeholder is never labeled plainly pasteable');
+    assert.match(refusals[0], /--attempt='a1'/);
   });
 
   it('a rerun-cause clears exactly one confirmed completed retry', () => {
@@ -749,8 +770,12 @@ describe('flow-check — base-intersection classification + decide wiring (#62/#
     const moved = disjoint.refusals.filter((r) => /base moved under the armed chain/.test(r));
     assert.equal(moved.length, 1);
     assert.match(moved[0], /re-baseline record/);
-    const intersecting = decide(openOwn(), { motion: motionInput({ resolveChangedSurface: () => ok(['docs/queue.md']) }) });
-    assert.match(intersecting.refusals.find((r) => /base moved/.test(r)), /refresh dispatch is REQUIRED/);
+    assert.ok(moved[0].includes(`recovery (pasteable): node ${q(WRITER_TOOL)} re-baseline -- ${q('plan-a')}`), 'the disjoint recovery is the concrete re-baseline command');
+    const chain = openOwn();
+    const intersecting = decide(chain, { motion: motionInput({ resolveChangedSurface: () => ok(['docs/queue.md']) }) });
+    const need = intersecting.refusals.find((r) => /base moved/.test(r));
+    assert.match(need, /refresh dispatch is REQUIRED/);
+    assert.ok(need.includes(`--refreshed-record=${canonicalFlowDigest(chain[1])} -- ${q('plan-a')}`), `the refresh recovery binds the chain tail's FULL digest — no placeholder under a pasteable label; got: ${need}`);
     const undecidable = decide(openOwn(), { motion: motionInput({ resolveBaseDelta: () => ({ ok: false, reason: 'object missing' }) }) });
     assert.match(undecidable.refusals.find((r) => /base moved/.test(r)), /refresh dispatch is REQUIRED/);
   });

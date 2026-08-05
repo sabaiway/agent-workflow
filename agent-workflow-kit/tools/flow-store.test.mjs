@@ -14,6 +14,7 @@ import {
   mintBookkeepingDelta, computeMaskedFingerprintPayload,
 } from './flow-store.mjs';
 import { FLOW_SCHEMA_VERSION, canonicalFlowDigest } from './flow-record.mjs';
+import { lstatNoFollowRead } from './flow-store-read.mjs';
 import { computeTreeFingerprint, computeFingerprintPayload } from './core-evidence.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-flow-store-'));
@@ -298,6 +299,16 @@ describe('flow-store — the fail-closed reader', () => {
   });
 });
 
+describe('flow-store-read — the local no-follow lstat (writer-free helper)', () => {
+  it('returns null ONLY on a true ENOENT and rethrows every other failure', () => {
+    assert.equal(lstatNoFollowRead(join(TMP, 'definitely-absent')), null);
+    assert.throws(
+      () => lstatNoFollowRead('/x', () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); }),
+      /EACCES/,
+    );
+  });
+});
+
 describe('flow-store — append: validate-before-write, semantic preflight, atomic transition', () => {
   it('a valid record appends atomically and the lock is released — no tmp or lock file remains', () => {
     const root = makeRepo();
@@ -318,6 +329,24 @@ describe('flow-store — append: validate-before-write, semantic preflight, atom
     const read = readFlowStore(resolveFlowStorePath(root, {}));
     assert.equal(read.malformed, 0);
     assert.deepEqual(read.records.map((r) => r.attempt), ['a-main', 'a-linked']);
+  });
+
+  it('a degrade-justification whose down-mark is already closed by up/clear refuses at the LOCKED preflight — minted-after-close can never satisfy', () => {
+    const dir = join(TMP, 'append-closed-mark');
+    mkdirSync(dir, { recursive: true });
+    const store = join(dir, 'flow.jsonl');
+    const mark = { schema: FLOW_SCHEMA_VERSION, kind: 'down-mark', fingerprint: FP, backend: 'agy', reason: 'quota', expiresAt: '2026-09-01T00:00:00.000Z', base: BASE, timestamp: '2026-08-01T00:00:00.000Z' };
+    const up = { schema: FLOW_SCHEMA_VERSION, kind: 'down-mark-up', fingerprint: FP, backend: 'agy', target: canonicalFlowDigest(mark), base: BASE, timestamp: '2026-08-01T01:00:00.000Z' };
+    appendFlowRecord({ record: mark, env: { AW_FLOW_STORE: store } });
+    appendFlowRecord({ record: up, env: { AW_FLOW_STORE: store } });
+    throwsStop(
+      () => appendFlowRecord({
+        record: { schema: FLOW_SCHEMA_VERSION, kind: 'degrade-justification', fingerprint: FP, downMark: canonicalFlowDigest(mark), degradeDigest: D('ab'), base: BASE, timestamp: '2026-08-01T02:00:00.000Z' },
+        env: { AW_FLOW_STORE: store },
+      }),
+      /already closed by up\/clear[\s\S]*minted-after-close can never satisfy/,
+    );
+    assert.equal(readFlowStore(store).records.length, 2, 'nothing landed past the refusal — the race window is closed under the lock');
   });
 
   it('a malformed record is refused before any write', () => {

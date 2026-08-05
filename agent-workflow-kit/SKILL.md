@@ -131,6 +131,14 @@ writer — read `${CLAUDE_SKILL_DIR}/references/modes/set-recipe.md` before acti
 
 writer — read `${CLAUDE_SKILL_DIR}/references/modes/set-autonomy.md` before acting.
 
+### Mode: set-flow
+
+writer — read `${CLAUDE_SKILL_DIR}/references/modes/set-flow.md` before acting.
+
+### Mode: flow-writer
+
+writer — read `${CLAUDE_SKILL_DIR}/references/modes/flow-writer.md` before acting.
+
 ### Mode: autonomy-doctor
 
 guarded — read `${CLAUDE_SKILL_DIR}/references/modes/autonomy-doctor.md` before acting.

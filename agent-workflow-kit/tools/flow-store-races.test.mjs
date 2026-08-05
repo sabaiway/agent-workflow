@@ -1,6 +1,6 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readdirSync, readFileSync, existsSync, symlinkSync, realpathSync, chmodSync, lstatSync, renameSync, openSync, linkSync, appendFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readdirSync, readFileSync, existsSync, symlinkSync, realpathSync, chmodSync, lstatSync, fstatSync, renameSync, openSync, closeSync, linkSync, appendFileSync } from 'node:fs';
 import { tmpdir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -819,5 +819,239 @@ describe('flow-store races — the lock releases on EVERY failure lane', () => {
     );
     assert.ok(!existsSync(resolveFlowLockPath(store)), 'the write-failure lane must release the lock');
     assert.equal(readFileSync(store, 'utf8'), prior, 'a failed write leaves the store bytes untouched');
+  });
+});
+
+describe('flow-store races — the DEAD re-verify binds through the HELD fd (FLOW-LOCK-HOLDER-FD-RECHECK)', () => {
+  const deadHolderLock = (dirName) => {
+    const dir = join(TMP, dirName);
+    mkdirSync(dir, { recursive: true });
+    const store = join(dir, 'flow.jsonl');
+    const lock = resolveFlowLockPath(store);
+    const dead = spawnSync(process.execPath, ['-e', '']);
+    assert.equal(dead.status, 0);
+    writeFileSync(lock, holderLine({ pid: dead.pid }));
+    return { store, lock };
+  };
+
+  it('a lock released under the re-verify while the pathname claims the SAME {dev, ino} is retried, never refused as DEAD', () => {
+    const { store, lock } = deadHolderLock('recycle-retry');
+    const observed = lstatSync(lock);
+    let lockCalls = 0;
+    const record = rerunCause('a-1');
+    appendFlowRecord({
+      record,
+      env: { AW_FLOW_STORE: store, ...TIGHT_KNOBS },
+      deps: {
+        lstat: (p) => {
+          if (p === lock) {
+            lockCalls += 1;
+            if (lockCalls === 2) {
+              // The window: the dead holder's lock is released DURING the re-verify and the
+              // pathname claims an inode with the same {dev, ino} — the recycled-identity lie a
+              // closed-fd re-verify cannot see through. The held fd proves the unlink (nlink 0).
+              rmSync(lock, { force: true });
+              return observed;
+            }
+          }
+          return lstatSync(p);
+        },
+      },
+    });
+    assert.equal(lockCalls >= 2, true, 'the re-verify lane must have fired');
+    assert.deepEqual(readFlowStore(store).records.map((r) => r.attempt), ['a-1'], 'the recycled lock is retried and the append lands');
+    assert.ok(!existsSync(lock), 'the winning append releases its own lock');
+  });
+
+  it('a recycled lock re-stamped by a LIVE holder refuses as still-held, never as DEAD with an rm instruction', () => {
+    const { store, lock } = deadHolderLock('recycle-live');
+    const observed = lstatSync(lock);
+    let lockCalls = 0;
+    const err = (() => {
+      try {
+        appendFlowRecord({
+          record: rerunCause('a-1'),
+          env: { AW_FLOW_STORE: store, ...TIGHT_KNOBS },
+          deps: {
+            lstat: (p) => {
+              if (p === lock) {
+                lockCalls += 1;
+                if (lockCalls === 2) {
+                  rmSync(lock, { force: true });
+                  writeFileSync(lock, holderLine());
+                  return observed;
+                }
+              }
+              return lstatSync(p);
+            },
+          },
+        });
+        return null;
+      } catch (e) { return e; }
+    })();
+    assert.equal(err?.code, FLOW_STORE_STOP);
+    assert.match(err.message, new RegExp(`still held by pid ${process.pid} .*after the full 80ms wait`));
+    assert.ok(!err.message.includes('DEAD'), 'a re-stamped live lock is never mis-bound as DEAD');
+    assert.ok(!err.message.includes('rm -- '), 'no removal instruction is ever printed against a possibly-live lock');
+    assert.ok(existsSync(lock), 'the live holder keeps its lock');
+  });
+
+  it('an fstat failure on the held descriptor during the re-verify is a typed STOP, never a guessed verdict', () => {
+    const { store, lock } = deadHolderLock('recheck-fstat-fail');
+    let fstatCalls = 0;
+    throwsStop(
+      () => appendFlowRecord({
+        record: rerunCause('a-1'),
+        env: { AW_FLOW_STORE: store, ...TIGHT_KNOBS },
+        deps: {
+          holderIo: {
+            // call 1 is the holder read's own post-open fstat; call 2 is the re-verify through
+            // the HELD descriptor — the lane under test.
+            fstat: (fd) => {
+              fstatCalls += 1;
+              if (fstatCalls === 2) throw Object.assign(new Error('EIO'), { code: 'EIO' });
+              return fstatSync(fd);
+            },
+          },
+        },
+      }),
+      /cannot re-verify the flow-store lock through its held descriptor .*EIO/,
+    );
+    assert.equal(fstatCalls, 2, 'the re-verify fstat must be the one that fired');
+    assert.ok(existsSync(lock), 'the unverifiable lock is never removed');
+  });
+});
+
+describe('flow-store races — the held holder descriptor closes on EVERY exit lane (P28)', () => {
+  const countingIo = () => {
+    const counts = { opens: 0, closes: 0 };
+    const io = {
+      open: (...args) => { counts.opens += 1; return openSync(...args); },
+      close: (fd) => { counts.closes += 1; return closeSync(fd); },
+    };
+    return { counts, io };
+  };
+  const lockFixture = (dirName, body) => {
+    const dir = join(TMP, dirName);
+    mkdirSync(dir, { recursive: true });
+    const store = join(dir, 'flow.jsonl');
+    writeFileSync(resolveFlowLockPath(store), body);
+    return store;
+  };
+
+  it('the dead-refusal lane holds the holder fd through the verdict and closes it', () => {
+    const dead = spawnSync(process.execPath, ['-e', '']);
+    assert.equal(dead.status, 0);
+    const store = lockFixture('fd-lane-dead', holderLine({ pid: dead.pid }));
+    const { counts, io } = countingIo();
+    throwsStop(
+      () => appendFlowRecord({ record: rerunCause('a-1'), env: { AW_FLOW_STORE: store, ...TIGHT_KNOBS }, deps: { holderIo: io } }),
+      /DEAD process/,
+    );
+    assert.ok(counts.opens >= 1, 'the holder read must ride the held-fd lane');
+    assert.equal(counts.closes, counts.opens, 'every held holder descriptor closes');
+  });
+
+  it('the recycled-retry lane closes the held fd before retrying', () => {
+    const dead = spawnSync(process.execPath, ['-e', '']);
+    assert.equal(dead.status, 0);
+    const store = lockFixture('fd-lane-recycle', holderLine({ pid: dead.pid }));
+    const lock = resolveFlowLockPath(store);
+    const observed = lstatSync(lock);
+    const { counts, io } = countingIo();
+    let lockCalls = 0;
+    appendFlowRecord({
+      record: rerunCause('a-1'),
+      env: { AW_FLOW_STORE: store, ...TIGHT_KNOBS },
+      deps: {
+        holderIo: io,
+        lstat: (p) => {
+          if (p === lock) {
+            lockCalls += 1;
+            if (lockCalls === 2) {
+              rmSync(lock, { force: true });
+              return observed;
+            }
+          }
+          return lstatSync(p);
+        },
+      },
+    });
+    assert.ok(counts.opens >= 1, 'the holder read must ride the held-fd lane');
+    assert.equal(counts.closes, counts.opens, 'the retry lane never leaks the held descriptor');
+  });
+
+  it('the malformed-holder lane closes the held fd on every poll iteration', () => {
+    const store = lockFixture('fd-lane-malformed', 'not json');
+    const { counts, io } = countingIo();
+    throwsStop(
+      () => appendFlowRecord({ record: rerunCause('a-1'), env: { AW_FLOW_STORE: store, ...TIGHT_KNOBS }, deps: { holderIo: io } }),
+      /UNREADABLE or malformed holder/,
+    );
+    assert.ok(counts.opens >= 1, 'the holder read must ride the held-fd lane');
+    assert.equal(counts.closes, counts.opens, 'the malformed-holder lane never leaks the held descriptor');
+  });
+
+  it('the live-holder deadline lane closes the held fd of every poll read', () => {
+    const store = lockFixture('fd-lane-deadline', holderLine());
+    const { counts, io } = countingIo();
+    throwsStop(
+      () => appendFlowRecord({ record: rerunCause('a-1'), env: { AW_FLOW_STORE: store, ...TIGHT_KNOBS }, deps: { holderIo: io } }),
+      /still held by pid/,
+    );
+    assert.ok(counts.opens >= 2, 'the wait loop re-reads the holder — each read holds a descriptor');
+    assert.equal(counts.closes, counts.opens, 'the deadline lane never leaks a held descriptor');
+  });
+
+  it('a holder-descriptor close failure is a typed STOP, never a silent leak', () => {
+    const store = lockFixture('fd-close-fail', holderLine());
+    throwsStop(
+      () => appendFlowRecord({
+        record: rerunCause('a-1'),
+        env: { AW_FLOW_STORE: store, ...TIGHT_KNOBS },
+        deps: { holderIo: { close: () => { throw Object.assign(new Error('EBADF'), { code: 'EBADF' }); } } },
+      }),
+      /cannot close the held flow-store holder descriptor .*EBADF/,
+    );
+  });
+
+  it('a reader-internal close failure on the early error lane is the typed custody STOP, never a raw error', () => {
+    const store = lockFixture('fd-reader-close-fail', holderLine());
+    const err = (() => {
+      try {
+        appendFlowRecord({
+          record: rerunCause('a-1'),
+          env: { AW_FLOW_STORE: store, ...TIGHT_KNOBS },
+          deps: {
+            holderIo: {
+              fstat: () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); },
+              close: () => { throw Object.assign(new Error('EBADF'), { code: 'EBADF' }); },
+            },
+          },
+        });
+        return null;
+      } catch (e) { return e; }
+    })();
+    assert.equal(err?.code, FLOW_STORE_STOP, `the custody failure must surface as the typed STOP, got: ${err?.code} — ${err?.message}`);
+    assert.match(err.message, /read\/close custody failed/);
+  });
+
+  it('a close failure never masks the DEAD refusal — it rides as holderCloseFailure', () => {
+    const dead = spawnSync(process.execPath, ['-e', '']);
+    assert.equal(dead.status, 0);
+    const store = lockFixture('fd-close-fail-dead', holderLine({ pid: dead.pid }));
+    const err = (() => {
+      try {
+        appendFlowRecord({
+          record: rerunCause('a-1'),
+          env: { AW_FLOW_STORE: store, ...TIGHT_KNOBS },
+          deps: { holderIo: { close: () => { throw Object.assign(new Error('EBADF'), { code: 'EBADF' }); } } },
+        });
+        return null;
+      } catch (e) { return e; }
+    })();
+    assert.equal(err?.code, FLOW_STORE_STOP);
+    assert.match(err.message, /DEAD process/, 'the DEAD refusal stays primary');
+    assert.match(err.holderCloseFailure ?? '', /cannot close the held flow-store holder descriptor/, 'the close failure rides along, never lost');
   });
 });

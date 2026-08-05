@@ -17,25 +17,35 @@
 //
 // Declared residuals no dependency-free core-Node mechanism can close: the pathname lstat→rename
 // and reread→rename windows (no flock/fcntl, no inode-conditional unlink or rename) and bind-mount
-// aliasing. The decideCheck arms and guard/gates wiring are LIVE (Plan 3 Phase 2); the remaining
-// Plan-3 surface is the arming + writer CLIs (set-flow, the park/resume/complete writer — Phase 3).
-// Records remain forgeable — a self-discipline mechanism in the git dir, not a security boundary.
+// aliasing. The decideCheck arms, guard/gates wiring, and the arming + writer CLIs (set-flow,
+// flow-writer) are LIVE (Plan 3 Phases 2–3); the remaining Plan-3 surface is the deadline runner +
+// wrapper manifest lane (Phase 4). Records remain forgeable — a self-discipline mechanism in the
+// git dir, not a security boundary.
 
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, writeSync, readSync, rmSync, lstatSync, realpathSync, openSync, closeSync, fstatSync, renameSync, readlinkSync, constants as fsConstants } from 'node:fs';
-import { join, dirname, basename, isAbsolute, normalize, resolve, sep } from 'node:path';
+import { readFileSync, writeFileSync, writeSync, readSync, rmSync, lstatSync, realpathSync, openSync, closeSync, fstatSync, renameSync, readlinkSync } from 'node:fs';
+import { join, dirname, basename, resolve } from 'node:path';
 import { hostname } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { writeContainedFileAtomic, lstatNoFollow } from './atomic-write.mjs';
 import { parsePositiveIntKnob } from './changed-surface.mjs';
 import { FLOW_SCHEMA_VERSION, CHAIN_KIND, validateFlowRecord, validateChainSequence, validateSupersessions, authoritativeFlowRecords, canonicalFlowDigest } from './flow-record.mjs';
 import { isNeverCommittableStat, isBinaryFile, lexicalRepoRelative, resolveBase, computeTreeFingerprint } from './core-evidence.mjs';
+// The read half lives in flow-store-read.mjs (it OWNS no write API — read-only surfaces like the
+// procedures advisor import it directly) and is RE-EXPORTED here — every existing consumer keeps
+// its import site.
+import {
+  FLOW_STORE_STOP, flowStoreStop, FLOW_STORE_BASENAME, FLOW_LOCK_SUFFIX, gitLine,
+  resolveFlowStorePath, resolveFlowLockPath, parseFlowStoreText, readFlowStore,
+  readRegularFileNoFollow, deriveFlowOwner, describeNonRegular,
+} from './flow-store-read.mjs';
 
-export const FLOW_STORE_STOP = 'FLOW_STORE_STOP';
-const stop = (message) => Object.assign(new Error(`[agent-workflow-kit] ${message}`), { name: 'FlowStoreStop', code: FLOW_STORE_STOP });
+export {
+  FLOW_STORE_STOP, FLOW_STORE_BASENAME, FLOW_LOCK_SUFFIX,
+  resolveFlowStorePath, resolveFlowLockPath, parseFlowStoreText, readFlowStore, deriveFlowOwner,
+};
 
-export const FLOW_STORE_BASENAME = 'agent-workflow-flow.jsonl';
-export const FLOW_LOCK_SUFFIX = '.lock';
+const stop = flowStoreStop;
 
 // Wait bound + poll cadence; the env knobs keep hermetic tests off wall-clock.
 export const FLOW_LOCK_WAIT_MS = 10_000;
@@ -47,75 +57,7 @@ const gitBuf = (args, cwd) => {
   if (r.error || r.status !== 0) return null;
   return r.stdout;
 };
-const gitLine = (args, cwd) => {
-  const buf = gitBuf(args, cwd);
-  return buf == null ? null : buf.toString('utf8').replace(/\r?\n$/, '');
-};
 const sha256Hex = (bytes) => createHash('sha256').update(bytes).digest('hex');
-
-// ── path resolution (common dir + the AW_FLOW_STORE producer seam) ────────────────────────────────
-
-// resolveFlowStorePath(cwd, env) → the ABSOLUTE store path, or null outside a git WORK tree.
-// is-inside-work-tree gates explicitly (--git-common-dir also succeeds in a bare repo, and the
-// probe prints "false" WITH exit 0, so the STRING is compared). AW_FLOW_STORE must be absolute —
-// a relative override would resolve a different store from each cwd.
-export const resolveFlowStorePath = (cwd, env = process.env) => {
-  if (env.AW_FLOW_STORE) {
-    if (!isAbsolute(env.AW_FLOW_STORE)) {
-      throw stop(`AW_FLOW_STORE must be an ABSOLUTE path (got "${env.AW_FLOW_STORE}") — a relative override resolves a different store from each worktree/cwd (fail closed)`);
-    }
-    const normalized = normalize(env.AW_FLOW_STORE);
-    // A trailing separator survives normalize() but not the appender's basename/join — refuse the fork.
-    if (normalized.endsWith(sep) || normalized.endsWith('/')) {
-      throw stop(`AW_FLOW_STORE must not end with a path separator (got "${env.AW_FLOW_STORE}") — a store is a file, not a directory (fail closed)`);
-    }
-    return normalized;
-  }
-  if (gitLine(['rev-parse', '--is-inside-work-tree'], cwd) !== 'true') return null;
-  const commonDir = gitLine(['rev-parse', '--path-format=absolute', '--git-common-dir'], cwd);
-  return commonDir == null ? null : join(commonDir, FLOW_STORE_BASENAME);
-};
-
-// The lock is a SIBLING derived from the resolved store path — one store, one lock, everywhere.
-export const resolveFlowLockPath = (storePath) => `${storePath}${FLOW_LOCK_SUFFIX}`;
-
-// ── the fail-closed reader ────────────────────────────────────────────────────────────────────────
-
-// parseFlowStoreText(raw) → { records, authoritative, malformed, malformedReasons }. Both views on
-// every result: `records` is RAW file order (the only view ordering checks may consume, #65),
-// `authoritative` is the latest-per-key selection (#22).
-export const parseFlowStoreText = (raw) => {
-  const records = [];
-  const malformedReasons = [];
-  const lines = String(raw).split('\n');
-  for (let i = 0; i < lines.length; i += 1) {
-    if (lines[i].trim() === '') continue;
-    let parsed;
-    try {
-      parsed = JSON.parse(lines[i]);
-    } catch {
-      malformedReasons.push(`line ${i + 1}: invalid JSON`);
-      continue;
-    }
-    const v = validateFlowRecord(parsed);
-    if (v.ok) records.push(parsed);
-    else malformedReasons.push(`line ${i + 1}: ${v.reason}`);
-  }
-  return { records, authoritative: authoritativeFlowRecords(records), malformed: malformedReasons.length, malformedReasons };
-};
-
-// readFlowStore(path, io?) → { records, authoritative, malformed, malformedReasons, readError? }.
-// Absent → empty (no records yet is not an error); any other failure → readError, and consumers
-// fail closed on malformed > 0 or readError. A dangling symlink must NOT read as an empty store —
-// that would be a fail-open for the checker.
-export const readFlowStore = (path, io = {}) => {
-  const empty = () => ({ records: [], authoritative: [], malformed: 0, malformedReasons: [] });
-  const read = readRegularFileNoFollow(path, io);
-  if (read.outcome === 'absent') return empty();
-  if (read.outcome === 'foreign') return { ...empty(), readError: `the store is a ${read.className}, not a regular file — refusing to read it (fail closed)` };
-  if (read.outcome === 'error') return { ...empty(), readError: read.code };
-  return parseFlowStoreText(read.content);
-};
 
 // ── the lock/CAS ──────────────────────────────────────────────────────────────────────────────────
 
@@ -128,9 +70,6 @@ const monotonicNowMs = () => performance.now();
 // POSIX single-quoting for paths pasted into recovery commands — a raw interpolation would execute
 // path bytes on paste.
 const shellQuotePath = (p) => `'${p.replaceAll("'", "'\\''")}'`;
-
-const describeNonRegular = (st) =>
-  st.isSymbolicLink() ? 'symlink' : st.isFIFO() ? 'FIFO' : st.isDirectory() ? 'directory' : 'non-regular file';
 
 const foreignObjectStop = (noun, path, className, isDirectory) =>
   stop(`the ${noun} ${path} is a ${className}, not a regular file — refusing to touch it. To recover: inspect it, then remove it by hand: ${isDirectory ? 'rmdir' : 'rm'} -- ${shellQuotePath(path)} — it is never removed silently (fail closed)`);
@@ -158,75 +97,6 @@ const fdContentEquals = (fd, expected) => {
     position += n;
   }
   return readSync(fd, buf, 0, 1, position) === 0; // any byte here means the store GREW
-};
-
-// fatal: a lossy decode would fold invalid bytes to U+FFFD and silently fork a record's digest.
-// ignoreBOM: a BOM must surface as malformed line 1, not vanish and get rewritten without it.
-const FATAL_UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
-const hasOpenFlag = (v) => typeof v === 'number' && v !== 0;
-
-// The ONE race-free read for store/lock bytes: open O_NOFOLLOW|O_NONBLOCK, fstat the DESCRIPTOR,
-// read through it, decode fatally — a pathname swapped after the open cannot change what the fd
-// reads. Without O_NONBLOCK (nonzero-integer check) it fails closed before any open — a FIFO open
-// would block and no check helps a blocked syscall; without only O_NOFOLLOW it lstat-classifies
-// first and binds the open to the observed {dev, ino}. Open failures outside ENOENT/ELOOP/EISDIR
-// fall back to a classification-only lstat (no read ever follows a path-based check).
-const readRegularFileNoFollow = (path, io = {}) => {
-  const consts = io.constants ?? fsConstants;
-  const open = io.open ?? openSync;
-  const fstat = io.fstat ?? fstatSync;
-  const readFd = io.readFile ?? readFileSync;
-  const close = io.close ?? closeSync;
-  const lstat = io.lstat ?? lstatSync;
-  if (!hasOpenFlag(consts.O_NONBLOCK)) {
-    return { outcome: 'error', code: 'this platform exposes no usable O_NONBLOCK open flag — refusing to open (a FIFO would block forever; fail closed)' };
-  }
-  const noFollow = hasOpenFlag(consts.O_NOFOLLOW);
-  let preStat = null;
-  if (!noFollow) {
-    try {
-      preStat = lstatNoFollow(path, lstat);
-    } catch (err) {
-      return { outcome: 'error', code: (err && err.code) || (err && err.message) || 'lstat failed' };
-    }
-    if (preStat == null) return { outcome: 'absent' };
-    if (!preStat.isFile()) return { outcome: 'foreign', className: describeNonRegular(preStat), isDirectory: preStat.isDirectory() };
-  }
-  let fd = null;
-  try {
-    fd = open(path, (consts.O_RDONLY ?? 0) | (noFollow ? consts.O_NOFOLLOW : 0) | consts.O_NONBLOCK);
-    const st = fstat(fd);
-    if (!st.isFile()) return { outcome: 'foreign', className: describeNonRegular(st), isDirectory: st.isDirectory() };
-    if (preStat !== null && (st.dev !== preStat.dev || st.ino !== preStat.ino)) {
-      return { outcome: 'error', code: 'the leaf changed identity between lstat and open (fail closed)' };
-    }
-    const bytes = readFd(fd);
-    let content;
-    try {
-      content = typeof bytes === 'string' ? bytes : FATAL_UTF8.decode(bytes);
-    } catch {
-      return { outcome: 'error', code: 'invalid UTF-8 in the file (fail closed)' };
-    }
-    if (io.keepFd) {
-      // While the caller holds this fd the inode cannot be recycled — a later pathname stat
-      // matching {dev, ino} is proof of the same file.
-      const heldFd = fd;
-      fd = null;
-      return { outcome: 'ok', content, dev: st.dev, ino: st.ino, nlink: st.nlink, fd: heldFd, bytes: typeof bytes === 'string' ? Buffer.from(bytes, 'utf8') : bytes };
-    }
-    return { outcome: 'ok', content, dev: st.dev, ino: st.ino };
-  } catch (err) {
-    if (err && err.code === 'ENOENT') return { outcome: 'absent' };
-    if (err && err.code === 'ELOOP') return { outcome: 'foreign', className: 'symlink', isDirectory: false };
-    if (err && err.code === 'EISDIR') return { outcome: 'foreign', className: 'directory', isDirectory: true };
-    try {
-      const st = lstatNoFollow(path, lstat);
-      if (st && !st.isFile()) return { outcome: 'foreign', className: describeNonRegular(st), isDirectory: st.isDirectory() };
-    } catch { /* the open error stays the surfaced one */ }
-    return { outcome: 'error', code: (err && err.code) || (err && err.message) || 'read failed' };
-  } finally {
-    if (fd !== null) close(fd);
-  }
 };
 
 // Trusted only with parsed, valid metadata; anything else is the crash/corruption lane — never
@@ -326,46 +196,96 @@ const acquireFlowLock = (resolvedStorePath, env, deps) => {
         if (!won) { try { closeSync(fd); } catch { /* the stamp failure above already decided the lane */ } }
       }
     }
-    const holderRead = readRegularFileNoFollow(lockPath);
-    if (holderRead.outcome === 'absent') {
-      refuseIfPastDeadline('the lock kept appearing and vanishing (churn)');
-      continue; // released between attempts — retry the CAS at once
+    // The holder read HOLDS its fd (keepFd) until the lane decides: while the fd is open the
+    // inode cannot be recycled, so the DEAD re-verify below can trust an identity match only
+    // together with the held inode still being linked (FLOW-LOCK-HOLDER-FD-RECHECK). The lane
+    // verdict is computed FIRST (its error captured), the held fd then closes unconditionally,
+    // and a close failure is a typed STOP — thrown alone, or preserved on the primary error as
+    // holderCloseFailure (the releaseFlowLock never-mask discipline; P28).
+    const holderIo = deps.holderIo ?? {};
+    // The read itself is wrapped: on the early error/foreign lanes the reader closes its own fd
+    // in a finally, and a close throw there would otherwise escape as a RAW error outside the
+    // typed-STOP guarantee.
+    let holderRead;
+    try {
+      holderRead = readRegularFileNoFollow(lockPath, { ...holderIo, keepFd: true });
+    } catch (err) {
+      throw stop(`cannot read the flow-store lock holder (${(err && err.code) || (err && err.message) || err}) — the read/close custody failed (fail closed)`);
     }
-    if (holderRead.outcome === 'foreign') throw foreignObjectStop('flow-store lock', lockPath, holderRead.className, holderRead.isDirectory);
-    let holder = null;
-    if (holderRead.outcome === 'ok') {
-      try {
-        holder = JSON.parse(holderRead.content);
-      } catch { holder = null; }
+    const holderFd = holderRead.outcome === 'ok' ? holderRead.fd : null;
+    let verdict = null;
+    let primary = null;
+    try {
+      verdict = (() => {
+        if (holderRead.outcome === 'absent') {
+          refuseIfPastDeadline('the lock kept appearing and vanishing (churn)');
+          return { retry: true }; // released between attempts — retry the CAS at once
+        }
+        if (holderRead.outcome === 'foreign') throw foreignObjectStop('flow-store lock', lockPath, holderRead.className, holderRead.isDirectory);
+        let holder = null;
+        if (holderRead.outcome === 'ok') {
+          try {
+            holder = JSON.parse(holderRead.content);
+          } catch { holder = null; }
+        }
+        const validHolder = isValidHolder(holder);
+        if (validHolder && isProvablyDead(holder)) {
+          // The DEAD verdict binds to the inode the holder was read from — a lock released or
+          // replaced since then means the observed holder is gone: retry, never refuse a
+          // vanished lock.
+          let lockNow = null;
+          try {
+            lockNow = lstatNoFollow(lockPath, lstat); // null ONLY on a true ENOENT
+          } catch (err) {
+            throw stop(`cannot re-verify the flow-store lock identity before the DEAD refusal (${(err && err.code) || (err && err.message) || err}) — refusing to guess (fail closed)`);
+          }
+          if (lockNow == null || lockNow.dev !== holderRead.dev || lockNow.ino !== holderRead.ino) {
+            refuseIfPastDeadline('the observed dead holder was released (churn)');
+            return { retry: true };
+          }
+          // A pathname identity match alone can be a recycled lie (release + re-create landing
+          // the same {dev, ino}); the held fd settles it — an unlinked held inode (nlink 0)
+          // proves the observed holder's lock is GONE, whatever the pathname claims.
+          let heldNow;
+          try {
+            heldNow = (holderIo.fstat ?? fstatSync)(holderFd);
+          } catch (err) {
+            throw stop(`cannot re-verify the flow-store lock through its held descriptor (${(err && err.code) || (err && err.message) || err}) — refusing to guess (fail closed)`);
+          }
+          if (heldNow.nlink === 0) {
+            refuseIfPastDeadline('the observed dead holder was released (churn)');
+            return { retry: true };
+          }
+          throw stop(`the flow-store lock ${lockPath} is held by a DEAD process (${describeHolder(holder)}) — a crashed appender left it behind. To recover: inspect it, then remove it by hand: rm -- ${shellQuotePath(lockPath)} — it is never stolen silently (a steal could tear a live append; fail closed)`);
+        }
+        // ONE observation drives the deadline check AND the sleep cap — no overshoot by a full poll.
+        const observedAt = now();
+        if (observedAt >= deadline) {
+          if (!validHolder) {
+            throw stop(`the flow-store lock ${lockPath} carries an UNREADABLE or malformed holder after the full ${waitBoundMs}ms wait — a crashed appender may have died before writing its holder line, or the file is corrupted. To recover: inspect it, then remove it by hand: rm -- ${shellQuotePath(lockPath)} — it is never stolen silently (fail closed)`);
+          }
+          if (holder.host !== hostname()) {
+            throw stop(`the flow-store lock ${lockPath} is still held by pid ${holder.pid} on host ${holder.host} (liveness unprobeable from ${hostname()}) after the full ${waitBoundMs}ms wait — retry after that holder finishes, or raise AW_FLOW_LOCK_WAIT_MS`);
+          }
+          throw stop(`the flow-store lock ${lockPath} is still held by ${describeHolder(holder)} after the full ${waitBoundMs}ms wait — retry after the holder finishes, or raise AW_FLOW_LOCK_WAIT_MS`);
+        }
+        return { sleepMs: Math.min(pollMs, deadline - observedAt) };
+      })();
+    } catch (err) {
+      primary = err;
     }
-    const validHolder = isValidHolder(holder);
-    if (validHolder && isProvablyDead(holder)) {
-      // The DEAD verdict binds to the inode the holder was read from — a lock released or replaced
-      // since then means the observed holder is gone: retry, never refuse a vanished lock.
-      let lockNow = null;
+    if (holderFd !== null) {
       try {
-        lockNow = lstatNoFollow(lockPath, lstat); // null ONLY on a true ENOENT
+        (holderIo.close ?? closeSync)(holderFd);
       } catch (err) {
-        throw stop(`cannot re-verify the flow-store lock identity before the DEAD refusal (${(err && err.code) || (err && err.message) || err}) — refusing to guess (fail closed)`);
+        const closeStop = stop(`cannot close the held flow-store holder descriptor (${(err && err.code) || (err && err.message) || err}) — the fd-custody guarantee is violated (fail closed)`);
+        if (primary == null) primary = closeStop;
+        else primary.holderCloseFailure = closeStop.message;
       }
-      if (lockNow == null || lockNow.dev !== holderRead.dev || lockNow.ino !== holderRead.ino) {
-        refuseIfPastDeadline('the observed dead holder was released (churn)');
-        continue;
-      }
-      throw stop(`the flow-store lock ${lockPath} is held by a DEAD process (${describeHolder(holder)}) — a crashed appender left it behind. To recover: inspect it, then remove it by hand: rm -- ${shellQuotePath(lockPath)} — it is never stolen silently (a steal could tear a live append; fail closed)`);
     }
-    // ONE observation drives the deadline check AND the sleep cap — no overshoot by a full poll.
-    const observedAt = now();
-    if (observedAt >= deadline) {
-      if (!validHolder) {
-        throw stop(`the flow-store lock ${lockPath} carries an UNREADABLE or malformed holder after the full ${waitBoundMs}ms wait — a crashed appender may have died before writing its holder line, or the file is corrupted. To recover: inspect it, then remove it by hand: rm -- ${shellQuotePath(lockPath)} — it is never stolen silently (fail closed)`);
-      }
-      if (holder.host !== hostname()) {
-        throw stop(`the flow-store lock ${lockPath} is still held by pid ${holder.pid} on host ${holder.host} (liveness unprobeable from ${hostname()}) after the full ${waitBoundMs}ms wait — retry after that holder finishes, or raise AW_FLOW_LOCK_WAIT_MS`);
-      }
-      throw stop(`the flow-store lock ${lockPath} is still held by ${describeHolder(holder)} after the full ${waitBoundMs}ms wait — retry after the holder finishes, or raise AW_FLOW_LOCK_WAIT_MS`);
-    }
-    sleep(Math.min(pollMs, deadline - observedAt));
+    if (primary != null) throw primary;
+    if (verdict.retry) continue;
+    sleep(verdict.sleepMs);
   }
 };
 
@@ -487,6 +407,15 @@ const appendUnderLock = ({ storePath, line, snapshot, deps }) => {
         if (!isAuthoritativeReferenceTarget(parsed.records, snapshot.refreshedRecord)) {
           throw stop('refusing a refresh whose refreshedRecord targets a superseded record — a re-attestation binds the authoritative latest record of its key; nothing was written');
         }
+      }
+    }
+    // The closure rule runs UNDER the lock on the captured snapshot — a writer's lock-free
+    // usability pre-check can race a concurrent up/clear, and a justification minted after its
+    // mark closed can never satisfy the decide layer (#25), so the store refuses to strand it.
+    if (snapshot.kind === 'degrade-justification') {
+      const closed = parsed.records.some((r) => (r.kind === 'down-mark-up' || r.kind === 'down-mark-clear') && r.target === snapshot.downMark);
+      if (closed) {
+        throw stop('refusing a degrade-justification whose down-mark is already closed by up/clear — minted-after-close can never satisfy (#25); nothing was written');
       }
     }
     const existingSup = validateSupersessions(parsed.records);
@@ -630,21 +559,6 @@ export const validateOpenerReference = (prefixRecords, candidate) => {
     return { ok: false, reason: `the prior-terminal reference must target the chain's PRIOR terminal (${prior == null ? 'none' : `${canonicalFlowDigest(prior).slice(0, 12)}…`}), not another step's or an earlier terminal — step minting cannot manufacture fresh budgets` };
   }
   return { ok: true };
-};
-
-// ── the canonical owning-worktree identity (#49) ──────────────────────────────────────────────────
-
-// STABLE and git-derived, never caller-supplied and never the raw path: the main tree is "main"
-// (a repo-root relocation keeps it); a linked worktree is "worktree:<admin-dir name>" — the
-// <common>/worktrees/<name> admin dir survives both a path-alias invocation (git canonicalizes)
-// and `git worktree move` (the admin dir is not renamed), so relocation cannot silently turn an
-// own open chain into foreign advisory. Null outside a git work tree.
-export const deriveFlowOwner = (cwd) => {
-  if (gitLine(['rev-parse', '--is-inside-work-tree'], cwd) !== 'true') return null;
-  const gitDir = gitLine(['rev-parse', '--path-format=absolute', '--git-dir'], cwd);
-  const commonDir = gitLine(['rev-parse', '--path-format=absolute', '--git-common-dir'], cwd);
-  if (gitDir == null || commonDir == null) return null;
-  return gitDir === commonDir ? 'main' : `worktree:${basename(gitDir)}`;
 };
 
 // ── the adoption mint (#58) — frontmatter planId + plan content digest, read-only plan file ──────
