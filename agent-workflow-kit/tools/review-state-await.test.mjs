@@ -177,6 +177,48 @@ describe('review-state --await', () => {
     assert.match(r.stderr, /TIMEOUT after 3s/);
   });
 
+  // Decision 4 (#50, Plan-3 Phase 4.1): a LANDED NEGATIVE verdict is the dispatched review's
+  // ANSWER — the wait ends loudly BEFORE the deadline, never reclassified as a timeout.
+  it('an authoritative VETO already landed ends --await loudly before the deadline (exit 1, VETO — never TIMEOUT)', async () => {
+    const root = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    mint(root, { backend: 'agy', fingerprint: fp, factsHash: 'a'.repeat(64), verdict: 'REWORK' });
+    let slept = 0;
+    const r = await mainAwait(['--await', '--timeout', '600'], { cwd: root, env: {}, detect: detect(), ...fakeClock(() => { slept += 1; }) });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.equal(slept, 0, 'the landed negative ends the wait on the FIRST poll — no deadline is spent');
+    assert.match(r.stderr, /--await: VETO — /, 'the exit names the veto class');
+    assert.match(r.stderr, /authoritative veto/, 'the reason carries the veto wording, not a timeout');
+    assert.doesNotMatch(r.stderr, /TIMEOUT/, 'a landed negative is never misclassified as a timeout');
+  });
+
+  it('a negative landing MID-await ends the wait loudly on that poll (Decision 4)', async () => {
+    const root = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    let slept = 0;
+    const clock = fakeClock(() => { slept += 1; if (slept === 1) mint(root, { backend: 'agy', fingerprint: fp, factsHash: 'b'.repeat(64), verdict: 'REWORK' }); });
+    const r = await mainAwait(['--await', '--timeout', '600'], { cwd: root, env: {}, detect: detect(), ...clock });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.equal(slept, 1, 'the veto ends the wait on the poll that sees it');
+    assert.match(r.stderr, /--await: VETO — /);
+  });
+
+  it('an UNRECOGNIZED verdict does NOT take the veto exit — it stays a fail-closed wait (TIMEOUT)', async () => {
+    const root = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    mint(root, { backend: 'codex', fingerprint: fp });
+    mint(root, { backend: 'agy', fingerprint: fp, factsHash: 'c'.repeat(64), verdict: 'MAYBE' });
+    const r = await mainAwait(['--await', '--timeout', '10'], { cwd: root, env: {}, detect: detect(), ...fakeClock() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /TIMEOUT/, 'only the AUTHORITATIVE veto class ends the wait early');
+    assert.doesNotMatch(r.stderr, /--await: VETO/);
+  });
+
   it('resolves instantly (0) under a solo recipe — nothing to await', async () => {
     const root = makeRepo({ config: SOLO_CONFIG });
     let slept = 0;

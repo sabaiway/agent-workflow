@@ -9,7 +9,9 @@ import {
   decideFlowCheck, runFlowCheck, classifyDeltaChain, evaluateVetoOverride,
   collectUnansweredRedRefusals, classifyBaseMotion, collectDegradeCoverageRefusals,
   collectReceiptCoverageRefusals, computeAllPathBaseDelta, computeAllPathWorktreeSurface,
+  evaluateInternalAttestationLenses,
 } from './flow-check.mjs';
+import { FALLBACK_LENS_ADDITIONAL_ONLY } from './cheap-agents.mjs';
 import { resolveFlowStorePath, parseFlowStoreText } from './flow-store.mjs';
 import { FLOW_SCHEMA_VERSION, canonicalFlowDigest } from './flow-record.mjs';
 import { EVIDENCE_SCHEMA_VERSION, resolveEvidencePath, parseEvidenceText } from './core-evidence.mjs';
@@ -1268,5 +1270,72 @@ describe('flow-check — computeFlowDecision (the guard-facing two-tier answer)'
     assert.equal(foreign.armed, true);
     assert.deepEqual(foreign.refusals, []);
     assert.equal(foreign.advisories.length, 1);
+  });
+});
+
+// The lens-substitution rung (#15/#3, Phase 4.3): pure over an in-memory record list — an
+// internal-attestation whose lens set claims a review provider's slot needs a THEN-ACTIVE
+// down-mark for that backend; the refusal quotes the fallback lens's additional-only contract.
+describe('evaluateInternalAttestationLenses — substitution is recorded, never silent', () => {
+  const PROVIDERS = ['codex', 'agy'];
+  const mark = (backend, over = {}) => ({
+    schema: FLOW_SCHEMA_VERSION, kind: 'down-mark', fingerprint: 'a1'.repeat(32), backend,
+    reason: 'unreachable', timestamp: '2026-08-01T00:00:00.000Z', expiresAt: '2026-08-09T00:00:00.000Z',
+    base: 'ad'.repeat(20), ...over,
+  });
+  const attestation = (lenses, over = {}) => ({
+    schema: FLOW_SCHEMA_VERSION, kind: 'internal-attestation', fingerprint: 'a1'.repeat(32),
+    planId: 'plan-a', stepId: 'step-1', cycle: 1, round: 1, lenses, degraded: [],
+    posture: { model: 'm', effort: null, tier: null }, authority: 'orchestrator',
+    base: 'ad'.repeat(20), timestamp: '2026-08-05T00:00:00.000Z', ...over,
+  });
+
+  it('a lens set claiming a provider slot WITHOUT any down-mark refuses, quoting the additional-only contract', () => {
+    const record = attestation(['correctness', 'codex']);
+    const r = evaluateInternalAttestationLenses({ record, records: [record], providerBackends: PROVIDERS });
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /claims backend "codex"'s slot without a then-active down-mark/);
+    assert.ok(r.reason.includes(FALLBACK_LENS_ADDITIONAL_ONLY), 'the refusal quotes the one-home contract sentence');
+  });
+
+  it('a THEN-ACTIVE down-mark for the claimed backend admits the substitution (recorded, not silent)', () => {
+    const record = attestation(['codex']);
+    const r = evaluateInternalAttestationLenses({ record, records: [mark('codex'), record], providerBackends: PROVIDERS });
+    assert.deepEqual(r, { ok: true });
+  });
+
+  it('a mark CLOSED before the attestation, a LATER mark, and an out-of-window instant each refuse by name', () => {
+    const record = attestation(['codex']);
+    const closed = { schema: FLOW_SCHEMA_VERSION, kind: 'down-mark-clear', fingerprint: 'a1'.repeat(32), backend: 'codex', target: 'cc'.repeat(32), base: 'ad'.repeat(20), timestamp: '2026-08-02T00:00:00.000Z' };
+    const closedFirst = evaluateInternalAttestationLenses({ record, records: [mark('codex'), closed, record], providerBackends: PROVIDERS });
+    assert.equal(closedFirst.ok, false, 'a closed mark admits nothing');
+    const laterMark = evaluateInternalAttestationLenses({ record, records: [record, mark('codex')], providerBackends: PROVIDERS });
+    assert.equal(laterMark.ok, false, 'mint-time order decides — a later mark never covers (prefix scope)');
+    const lateRecord = attestation(['codex'], { timestamp: '2026-08-20T00:00:00.000Z' });
+    const expired = evaluateInternalAttestationLenses({
+      record: lateRecord,
+      records: [mark('codex'), lateRecord], providerBackends: PROVIDERS,
+    });
+    assert.equal(expired.ok, false);
+    assert.match(expired.reason, /outside its active window/);
+  });
+
+  it('a record ABSENT from the supplied list refuses — prefix scoping is undecidable (fail closed)', () => {
+    const record = attestation(['codex']);
+    const r = evaluateInternalAttestationLenses({ record, records: [mark('codex')], providerBackends: PROVIDERS });
+    assert.equal(r.ok, false, 'a non-member record would read the WHOLE list as its prefix — a later mark could legalize');
+    assert.match(r.reason, /does not belong to the supplied record list/);
+  });
+
+  it('an unparseable attestation instant refuses by name (then-activity is undecidable — fail closed)', () => {
+    const record = attestation(['agy'], { timestamp: 'yesterday-ish' });
+    const r = evaluateInternalAttestationLenses({ record, records: [mark('agy'), record], providerBackends: PROVIDERS });
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /not a canonical UTC ISO instant/);
+  });
+
+  it('a lens set naming NO provider is untouched — ordinary lenses never need a down-mark', () => {
+    const record = attestation(['correctness', 'security', 'review-lens']);
+    assert.deepEqual(evaluateInternalAttestationLenses({ record, records: [record], providerBackends: PROVIDERS }), { ok: true });
   });
 });

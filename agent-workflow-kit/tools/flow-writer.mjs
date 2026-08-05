@@ -2,10 +2,13 @@
 // flow-writer.mjs — the flow-store writer CLI (flow-orchestration, Plan 3 Step 3.2). The explicit
 // arm set is Decision 8: park / resume / complete / adoption / refresh / re-baseline /
 // rerun-cause / down-mark / down-mark-up / down-mark-clear / degrade-justification /
-// maintainer-override — EVERY record class a Plan-3 refusal names as its recovery has a pasteable
-// mint arm here, so an armed chain can never become unrecoverably red. (round / freeze / unfreeze
-// / converged / internal-attestation minting rides Plan 4 with the dogfood round machinery; the
-// consult-attestation arm lands beside the wrapper manifest lane in Phase 4.2.)
+// maintainer-override / consult-attestation — EVERY record class a Plan-3 refusal names as its
+// recovery has a pasteable mint arm here, so an armed chain can never become unrecoverably red.
+// (round / freeze / unfreeze / converged / internal-attestation minting rides Plan 4 with the
+// dogfood round machinery.) The consult-attestation arm (Phase 4.2, Decision 8) binds {backend,
+// nonce, findingDigest} FROM the wrapper-minted finding manifest — the digest is computed over the
+// manifest's findings payload, never hand-supplied — while proposedFixDigest stays the EXPLICIT
+// consult-time input (the digest of the proposed-fix payload the orchestrator submits).
 //
 // Every arm computes its tree context (owner, base, fingerprint; cycle/round/commitEpoch from the
 // chain walk) and appends through appendFlowRecord — the store's semantic preflight is the SINGLE
@@ -31,11 +34,16 @@
 import { readFileSync, lstatSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { FLOW_SCHEMA_VERSION, CHAIN_KIND, canonicalFlowDigest, flowTreeIdentity } from './flow-record.mjs';
+import { createHash } from 'node:crypto';
+import {
+  FLOW_SCHEMA_VERSION, CHAIN_KIND, canonicalFlowDigest, flowTreeIdentity,
+  SAFE_NONCE_RE, findingManifestBasename, decodeFindingManifest,
+} from './flow-record.mjs';
 import {
   FLOW_STORE_STOP, resolveFlowStorePath, readFlowStore, deriveFlowOwner, walkChainState,
   appendFlowRecord, mintAdoption, readPlanFrontmatterId, resolveRecordReference,
 } from './flow-store.mjs';
+import { readFileBytesNoFollow } from './flow-store-read.mjs';
 import {
   resolveBase, computeTreeFingerprint, lexicalRepoRelative,
   resolveReceiptsPath, readReceipts, summarizeReviewReceiptsForTree,
@@ -309,6 +317,47 @@ const buildOverride = ({ planId, backend, vetoReceipt, chainRecord, cwd, env, ti
   return { record, boundSet };
 };
 
+// The consult-attestation arm reads the {backend, nonce}-named finding manifest beside the
+// receipts file fail-closed: findingDigest is COMPUTED from the manifest's findings payload
+// (form-provable binding — a hand-supplied digest could name findings nobody delivered), and the
+// record binds the open step's {cycle, stepId, round} from the chain walk.
+const buildConsultAttestation = ({ planId, backend, nonce, proposedFixDigest, cwd, env, timestamp }) => {
+  if (!SAFE_NONCE_RE.test(nonce)) throw usageFail(`--nonce must satisfy the safe nonce grammar ([A-Za-z0-9._-]{1,64}) — got ${JSON.stringify(nonce)}`);
+  const tree = treeContext(cwd);
+  const records = readStoreRecords(cwd, env);
+  const { state } = chainContext(records, planId, tree.owner);
+  if (state.stepId == null) throw refuse(`plan "${planId}" has no open step — a consult-attestation binds an open step's round; open the step's round first`);
+  const receiptsPath = resolveReceiptsPath(cwd, env);
+  if (receiptsPath == null) throw refuse('the receipts path is unresolvable (no git dir and no AW_REVIEW_RECEIPTS) — the finding manifest lives beside the receipts file (fail closed)');
+  const basename = findingManifestBasename(backend, nonce);
+  if (basename == null) throw refuse(`no manifest name composes for {backend ${JSON.stringify(backend)}, nonce ${JSON.stringify(nonce)}} under the safe grammar — an unsafe token never resolves a manifest (fail closed)`);
+  const manifestPath = join(dirname(receiptsPath), basename);
+  // The kit's ONE race-free reader: an attestation never binds through a link, a FIFO can never
+  // block the mint, and a foreign node refuses by class (the wrapper mints regular files only).
+  const read = readFileBytesNoFollow(manifestPath);
+  if (read.outcome === 'absent') {
+    throw refuse(`no readable finding manifest for {backend "${backend}", nonce "${nonce}"} at ${manifestPath} (ENOENT) — the wrapper mints it on a nonce-supplied dispatch; a consult binds a real manifest (fail closed)`);
+  }
+  if (read.outcome === 'foreign') {
+    throw refuse(`the finding manifest at ${manifestPath} is a ${read.className}, not a regular file — an attestation never binds through a symlink or a FIFO (fail closed)`);
+  }
+  if (read.outcome !== 'ok') {
+    throw refuse(`the finding manifest at ${manifestPath} is unreadable (${read.code}) — fail closed`);
+  }
+  const decoded = decodeFindingManifest(read.bytes);
+  if (!decoded.ok) throw refuse(`the finding manifest at ${manifestPath} is malformed — ${decoded.reason} — it never mints a consult-attestation`);
+  const manifest = decoded.manifest;
+  if (manifest.backend !== backend || manifest.nonce !== nonce) {
+    throw refuse(`the finding manifest at ${manifestPath} declares {backend "${manifest.backend}", nonce "${manifest.nonce}"} — a foreign-identity manifest never mints a consult-attestation (fail closed)`);
+  }
+  return {
+    schema: FLOW_SCHEMA_VERSION, kind: 'consult-attestation', fingerprint: tree.fingerprint,
+    backend, nonce, planId, cycle: state.cycle, stepId: state.stepId, round: state.round,
+    findingDigest: createHash('sha256').update(manifest.findings, 'utf8').digest('hex'),
+    proposedFixDigest, base: tree.base, timestamp,
+  };
+};
+
 // ── write-plan-id (#58 — bounded frontmatter write; the mint itself stays read-only) ─
 
 // Pure composer: insert the planId line into an existing closed leading frontmatter block, or
@@ -370,7 +419,7 @@ const writePlanId = ({ planPath, planId, cwd, ctx }) => {
 
 // ── main ────────────────────────────────────────────────────────────────────────────
 
-const ARMS = ['park', 'resume', 'complete', 'adoption', 'refresh', 're-baseline', 'rerun-cause', 'down-mark', 'down-mark-up', 'down-mark-clear', 'degrade-justification', 'maintainer-override', 'write-plan-id'];
+const ARMS = ['park', 'resume', 'complete', 'adoption', 'refresh', 're-baseline', 'rerun-cause', 'down-mark', 'down-mark-up', 'down-mark-clear', 'degrade-justification', 'maintainer-override', 'consult-attestation', 'write-plan-id'];
 
 const HELP = `flow-writer — the explicit flow-store writer (flow-orchestration; the store preflight is the single legality door).
 
@@ -387,6 +436,7 @@ Usage:
   node flow-writer.mjs down-mark-clear --backend <name> [--target <digest>]
   node flow-writer.mjs degrade-justification --backend <name> [--down-mark <digest>] [--degrade-digest <digest>]
   node flow-writer.mjs maintainer-override <planId> --backend <name> --checkpoint-approved [--veto-receipt <digest>] [--chain-record <digest>]
+  node flow-writer.mjs consult-attestation <planId> --backend <name> --nonce <nonce> --proposed-fix-digest <digest>
   node flow-writer.mjs write-plan-id <plan-file> --plan-id <id>
 
 Operand shapes: a positional may follow a literal -- and a value flag accepts --flag=<value>
@@ -477,6 +527,15 @@ export const main = (argv, ctx = {}) => {
           backend: requireValue(values, 'backend', arm),
           downMark: values['down-mark'] === undefined ? undefined : requireDigest(values['down-mark'], 'down-mark'),
           degradeDigest: values['degrade-digest'] === undefined ? undefined : requireDigest(values['degrade-digest'], 'degrade-digest'),
+          cwd, env, timestamp,
+        });
+      }
+      if (arm === 'consult-attestation') {
+        const { values, positionals } = parseFlags(rest, { '--backend': 'value', '--nonce': 'value', '--proposed-fix-digest': 'value' });
+        return buildConsultAttestation({
+          planId: onePlanId(positionals, arm), backend: requireValue(values, 'backend', arm),
+          nonce: requireValue(values, 'nonce', arm),
+          proposedFixDigest: requireDigest(requireValue(values, 'proposed-fix-digest', arm), 'proposed-fix-digest'),
           cwd, env, timestamp,
         });
       }

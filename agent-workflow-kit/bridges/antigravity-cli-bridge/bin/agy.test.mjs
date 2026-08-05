@@ -70,6 +70,24 @@ describe('agy.sh — hard wall-clock cap (timeout(1))', { concurrency: true }, (
     assert.equal(r.status, 3, 'a genuine agy failure code must pass through');
     assert.doesNotMatch(r.stderr, /exceeded the hard cap/, 'must not mislabel a non-timeout failure');
   });
+
+  // The review child seam (flow-orchestration Phase 4): agy-review fails CLOSED at ITS preflight,
+  // but this child re-resolves the binary — the seam closes the delete-between window; the legacy
+  // warn+uncapped lane stays for direct agy-run use.
+  it('AGY_REQUIRE_TIMEOUT_BIN=1 fails CLOSED without a capping binary; the legacy lane stays without the seam', async () => {
+    const home = makeSandbox('#!/usr/bin/env bash\necho "OK reply"\nexit 0\n');
+    const farm = makePathWithout(FARM_ROOT, ['agy', 'timeout', 'gtimeout']);
+    const path = `${join(home, '.local', 'bin')}:${farm}`;
+    const sealed = await runWrapperAsync(home, { PATH: path, AGY_MODEL: '', AGY_REQUIRE_TIMEOUT_BIN: '1' });
+    assert.equal(sealed.status, 127, 'the seam turns the uncapped lane into a refusal');
+    assert.match(sealed.stderr, /fails CLOSED/);
+    assert.doesNotMatch(sealed.stdout, /OK reply/, 'agy never runs under the sealed lane');
+    const legacy = await runWrapperAsync(home, { PATH: path, AGY_MODEL: '' });
+    rmSync(home, { recursive: true, force: true });
+    assert.equal(legacy.status, 0, 'without the seam the legacy warn+uncapped lane is unchanged');
+    assert.match(legacy.stderr, /WITHOUT a hard wall-clock cap/);
+    assert.match(legacy.stdout, /OK reply/);
+  });
 });
 
 // A stub that records (via a SENTINEL file) whether agy was actually invoked, so a

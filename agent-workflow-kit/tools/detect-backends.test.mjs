@@ -16,6 +16,7 @@ import {
   KNOWN_BACKENDS,
   wrapperCmdFor,
   wrapperContractFor,
+  backendCapability,
 } from './detect-backends.mjs';
 
 const REPO = fileURLToPath(new URL('../../', import.meta.url)); // …/agent-workflow-kit/tools/ → repo root
@@ -411,6 +412,39 @@ const needsSkillStatus = {
   readiness: 'needs-skill',
   setupHint: { url: 'https://example.test/agy' },
 };
+
+// The declared capability block (flow-orchestration #15, Plan-3 Phase 4.3): roles, review-contract
+// presence, and the deadline default — sourced OFFLINE from KNOWN_BACKENDS alone; no live CLI run.
+describe('backendCapability — the offline per-backend capability block (#15)', () => {
+  it('the capability block shape: roles, review-contract presence, deadline default (registry-sourced)', () => {
+    const codex = backendCapability('codex-cli-bridge');
+    assert.deepEqual(codex, { roles: ['execute', 'review'], reviewContract: true, deadlineDefaultS: 1800 });
+    const agy = backendCapability('antigravity-cli-bridge');
+    assert.deepEqual(agy, { roles: ['review', 'probe'], reviewContract: true, deadlineDefaultS: 1800 });
+    assert.equal(backendCapability('unknown-bridge'), null, 'an unknown backend has no capability block');
+  });
+
+  it('detectBackend carries the capability block even when EVERY probe reports missing (offline, readiness-independent)', () => {
+    const deps = {
+      exists: () => false,
+      stat: () => { throw enoent(); },
+      validate: () => { throw new Error('never reached — the marker is absent'); },
+      probeCli: (bin) => ({ bin, state: 'missing', path: null }),
+      probeWrapper: (cmd) => ({ name: cmd, state: 'missing' }),
+      probeCredentials: () => ({ state: 'missing', path: '/nowhere' }),
+      getenv: {}, home: HOME,
+    };
+    for (const entry of KNOWN_BACKENDS) {
+      const status = detectBackend(entry, deps);
+      assert.deepEqual(status.capability, backendCapability(entry.name), `${entry.name}: the block is the pure registry derivation, whatever the probes said`);
+    }
+  });
+
+  it('the spawn seam is asserted at source: the detector module imports NO process-spawning API (no live CLI run, ever)', () => {
+    const source = readFileSync(join(KIT, 'tools', 'detect-backends.mjs'), 'utf8');
+    assert.doesNotMatch(source, /child_process|spawnSync|execFile|execSync/, 'detection is fs-only — a live subscription CLI run can never hide in it');
+  });
+});
 
 describe('formatReport', () => {
   const out = formatReport([readyStatus, needsSkillStatus]);

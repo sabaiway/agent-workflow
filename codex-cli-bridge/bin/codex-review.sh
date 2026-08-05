@@ -70,7 +70,14 @@ Receipt:
   wrapper minted it; re-run the review), one stderr banner line states the same posture, and a
   posture value carrying control bytes refuses pre-spend in every mode; a run whose final message
   carries NO recognized 'Verdict: <ship|revise|rethink>' line — empty or missing output included —
-  exits 4 with NO receipt (D4: a FAILED review to RE-RUN, never a fatal session error); a write
+  exits 4 with NO receipt (D4: a FAILED review to RE-RUN, never a fatal session error); when the
+  dispatch nonce seam AW_REVIEW_NONCE is supplied (safe grammar [A-Za-z0-9._-]{1,64} — anything
+  else refuses pre-spend), the wrapper first mints the finding MANIFEST {schema, backend, nonce,
+  fingerprint, findings} beside the receipts file (agent-workflow-finding-manifest-<backend>-<nonce>.json;
+  atomic, no-clobber — a byte-identical rewrite is an idempotent no-op, different bytes refuse
+  loudly) ORDERED before the receipt append — a failed manifest write EXCLUDES the receipt append,
+  so a nonce-supplied dispatch can never land a receipt without its readable manifest; a nonce-less
+  invocation keeps this receipt contract byte-exact and mints nothing; a write
   failure warns, never fails the review
 
 Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):
@@ -80,9 +87,10 @@ Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins ov
   CODEX_REVIEW_MAX_TOTAL_BYTES — inline-payload cap, integer bytes 1..100000000 (default 1500000); above it the diff rides via a git-dir temp file
 
 Notes:
-  the review posture banner appends a banner-only timeout=<duration|uncapped> field — exactly the
-  duration handed to timeout(1), uncapped when no timeout/gtimeout binary caps the run;
-  INFORMATIONAL only: it never enters the receipt posture or the D5 banner↔receipt parity
+  the review posture banner appends a banner-only timeout=<duration> field — exactly the duration
+  handed to timeout(1); the hard-timeout preflight fails CLOSED when no timeout/gtimeout binary
+  exists (the wrapper refuses by name before any CLI run, so an uncapped review run can no longer
+  happen), and the field never enters the receipt posture or the D5 banner↔receipt parity
   quote the posture banner verbatim when labeling this dispatch — the banner is the machine-stated
   posture; a prose re-type drifts
 
@@ -95,7 +103,7 @@ Honesty + posture (D4/D5):
   posture banner verbatim when labeling this dispatch. A posture value carrying control bytes
   refuses pre-spend in every mode.
 
-Environment: CODEX_REVIEW_SCHEMA=1 (structured JSON findings), CODEX_HARD_TIMEOUT (seconds, default 1800), CODEX_PROBE=1 (throwaway probe only), AW_REVIEW_RECEIPTS (receipt file override).
+Environment: CODEX_REVIEW_SCHEMA=1 (structured JSON findings), CODEX_HARD_TIMEOUT (seconds, default 1800), CODEX_PROBE=1 (throwaway probe only), AW_REVIEW_RECEIPTS (receipt file override), AW_REVIEW_NONCE (dispatch nonce — mints the finding manifest beside the receipt).
 Requires at run time: the codex CLI on PATH, a ChatGPT-subscription login, a git work tree with a root AGENTS.md (--help needs none of these).
 HELP
     exit 0
@@ -213,8 +221,9 @@ aw_apply_settings
 
 # --- Effective-timeout resolver (D5 banner honesty; AD-061) --------------------
 # ONE rule, both bridges: the posture banner prints EXACTLY the duration handed to timeout(1) —
-# an integer-seconds value rendered with the `s` suffix, a duration string verbatim — and
-# `timeout=uncapped` when no timeout/gtimeout binary can cap the run; never a fabricated number.
+# an integer-seconds value rendered with the `s` suffix, a duration string verbatim; without a
+# capping binary the EXEC wrappers print `timeout=uncapped` and run, while the REVIEW wrappers
+# refuse pre-spend (fail-closed preflight) — never a fabricated number.
 # The EFFECTIVE value (env included — closing the aw_settings_valid env bypass) is validated by
 # the same per-key rule as the settings file, plus a 7-digit integer-part bound (overflow); an
 # invalid value warns + falls back to the built-in default — a typo never silently masquerades
@@ -297,6 +306,14 @@ for _posture_pair in "CODEX_MODEL=$CODEX_MODEL" "CODEX_EFFORT=$CODEX_EFFORT" "CO
     exit 2
   fi
 done
+# The dispatch nonce seam (flow-orchestration Decision 2/P5): validated pre-spend under the SAFE
+# grammar — a nonce that would escape the derived manifest name refuses before any CLI run. The
+# bracket expression ENUMERATES the ASCII set (no ranges): a range like A-Z is locale-collation-
+# dependent and could admit a non-ASCII nonce the kit's JS reader then refuses.
+if [[ -n "${AW_REVIEW_NONCE:-}" && ! "${AW_REVIEW_NONCE}" =~ ^[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]{1,64}$ ]]; then
+  echo "error: AW_REVIEW_NONCE fails the safe nonce grammar ([A-Za-z0-9._-]{1,64}) — the derived manifest name would be unsafe; fix the nonce and re-run." >&2
+  exit 2
+fi
 CODEX_HARD_TIMEOUT="$(aw_effective_timeout CODEX_HARD_TIMEOUT 1800)"
 if [[ -n "$CODEX_SERVICE_TIER" ]] && ! aw_settings_valid CODEX_SERVICE_TIER "$CODEX_SERVICE_TIER"; then
   echo "warning: CODEX_SERVICE_TIER='$CODEX_SERVICE_TIER' is not a supported service tier ('priority') — running on the standard tier." >&2
@@ -312,11 +329,19 @@ CHATGPT_LOGIN_GUARD="Logged in using ChatGPT"
 # The control-byte screen already ran above (BEFORE tier validation); the banner states the
 # EFFECTIVE posture (post tier validation) and the receipt records the same fields — except
 # `timeout`, a BANNER-ONLY informational field (AD-061): it prints exactly the duration handed
-# to timeout(1), or `uncapped` without a capping binary, and never enters the receipt.
+# to timeout(1) (the fail-closed preflight below guarantees a capping binary) and never enters
+# the receipt.
 # aw_resolve_timeout_bin: builtin type -P (an exported function can shadow neither `timeout` nor
 # `type` itself), normalized to an ABSOLUTE path fail-closed; the dispatch below reuses this SAME
-# resolved path (banner and run never make independent conclusions).
+# resolved path (banner and run never make independent conclusions). The preflight fails CLOSED
+# without a capping binary (flow-orchestration #26): an uncapped review run is refused pre-spend.
 timeout_bin="$(aw_resolve_timeout_bin)"
+if [[ -z "$timeout_bin" ]]; then
+  echo "error: no 'timeout'/'gtimeout' binary on PATH — the hard-timeout preflight fails CLOSED:" >&2
+  echo "       an uncapped review run is refused before any CLI spend. Install coreutils (timeout;" >&2
+  echo "       on macOS: brew install coreutils for gtimeout), then re-run." >&2
+  exit 127
+fi
 aw_timeout_banner="$(aw_timeout_label "$timeout_bin" "$CODEX_HARD_TIMEOUT")"
 echo "review posture: model=$CODEX_MODEL effort=$CODEX_EFFORT tier=${CODEX_SERVICE_TIER:-standard} timeout=$aw_timeout_banner" >&2
 
@@ -540,7 +565,97 @@ posture_json() {
     "$(json_string_escape "$CODEX_MODEL")" "$(json_string_escape "$CODEX_EFFORT")" "$tier_json"
 }
 
-# write_review_receipt <artifact|""> <fresh: true|false> <fingerprint|""> <verdict> <grounded: true|false> <factsHash|""> [probe: true|false]
+# write_finding_manifest <receipts-path> <fingerprint|""> <findings-file> — the wrapper-minted
+# finding MANIFEST (flow-orchestration Decision 2 / P5 / P24-25), minted ONLY when the dispatch
+# nonce seam AW_REVIEW_NONCE is supplied: {schema, backend, nonce, fingerprint, findings} lands
+# beside the receipts file under the {backend, nonce}-derived name. The write is ATOMIC (temp +
+# hard-link publish) and NO-CLOBBER: a byte-identical re-write is an idempotent no-op, different
+# bytes refuse loudly. Returns non-zero on ANY failure — the caller then EXCLUDES the receipt
+# append, so a nonce-supplied dispatch can never land a receipt without its readable manifest.
+# A nonce-less invocation returns 0 untouched (today's receipt contract stays byte-exact).
+write_finding_manifest() {
+  local receipts="$1" fingerprint="$2" findings_file="$3" nonce="${AW_REVIEW_NONCE:-}"
+  [[ -n "$nonce" ]] || return 0
+  if [[ ! "$nonce" =~ ^[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]{1,64}$ ]]; then
+    echo "error: AW_REVIEW_NONCE fails the safe nonce grammar ([A-Za-z0-9._-]{1,64}) — the derived manifest name would be unsafe; NO manifest was written." >&2
+    return 1
+  fi
+  if [[ -z "$findings_file" || ! -f "$findings_file" ]]; then
+    echo "error: no captured findings file to mint the manifest from — NO manifest was written." >&2
+    return 1
+  fi
+  local manifest mint_rc
+  manifest="$(dirname -- "$receipts")/agent-workflow-finding-manifest-${AW_RECEIPT_BACKEND}-${nonce}.json"
+  # The WHOLE mint core rides ONE node script (a family floor; the verdict parse already leans on
+  # it): FATAL UTF-8 compose (BOM kept — invalid bytes refuse rather than silently mutate the
+  # digest domain), an UNPREDICTABLE sibling temp opened with "wx" (O_CREAT|O_EXCL — a planted
+  # node at the name refuses, and ONLY a temp we provably created is ever unlinked), a hard-link
+  # publish (atomic no-clobber), and an EEXIST loser judged through ONE O_NOFOLLOW|O_NONBLOCK
+  # descriptor whose fstat must say REGULAR before the same-fd byte compare — no TOCTOU window,
+  # no symlink read-through, no FIFO hang. Exit: 0 minted or byte-identical no-op; 3 different
+  # bytes or a non-regular/symlink manifest; 5 minted-but-temp-left (SUCCESS with the orphan path
+  # on stdout — the caller warns loudly, never silently); 1 unreadable/non-UTF-8 findings or an
+  # fs failure.
+  local mint_out
+  mint_out="$( umask 077; node -e '
+const fs = require("node:fs");
+const { join, dirname, basename } = require("node:path");
+const { randomBytes } = require("node:crypto");
+const [file, backend, nonce, fingerprint, manifest] = process.argv.slice(1);
+let code = 1;
+let tmp = null;
+try {
+  const findings = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(fs.readFileSync(file));
+  const bytes = Buffer.from(`${JSON.stringify({ schema: 1, backend, nonce, fingerprint: fingerprint || null, findings })}\n`);
+  const candidate = join(dirname(manifest), `.${basename(manifest)}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`);
+  const fd = fs.openSync(candidate, "wx", 0o600);
+  tmp = candidate;
+  try {
+    fs.writeFileSync(fd, bytes);
+  } finally {
+    fs.closeSync(fd);
+  }
+  try {
+    fs.linkSync(tmp, manifest);
+    code = 0;
+  } catch (err) {
+    if (err && err.code === "EEXIST") {
+      try {
+        const mfd = fs.openSync(manifest, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+        try {
+          code = !fs.fstatSync(mfd).isFile() ? 3 : fs.readFileSync(mfd).equals(bytes) ? 0 : 3;
+        } finally {
+          fs.closeSync(mfd);
+        }
+      } catch {
+        code = 3;
+      }
+    }
+  }
+} catch {
+  code = 1;
+}
+if (tmp !== null) { try { fs.unlinkSync(tmp); } catch { if (code === 0) { code = 5; process.stdout.write(tmp); } } }
+process.exit(code);
+' "$findings_file" "$AW_RECEIPT_BACKEND" "$nonce" "$fingerprint" "$manifest" 2>/dev/null )"
+  mint_rc=$?
+  if [[ $mint_rc -eq 5 ]]; then
+    echo "warning: the finding manifest was minted, but its temporary sibling could not be removed —" >&2
+    echo "         orphan left at: ${mint_out} — remove it by hand (the manifest and the receipt are intact)." >&2
+    return 0
+  fi
+  if [[ $mint_rc -eq 3 ]]; then
+    echo "error: the finding manifest $manifest already exists with DIFFERENT bytes or is not a regular file — no-clobber refuses loudly (one dispatch identity, one manifest)." >&2
+    return 1
+  fi
+  if [[ $mint_rc -ne 0 ]]; then
+    echo "error: could not compose or write the finding manifest (unreadable or non-UTF-8 findings, or an fs failure) — NO manifest was written." >&2
+    return 1
+  fi
+  return 0
+}
+
+# write_review_receipt <artifact|""> <fresh: true|false> <fingerprint|""> <verdict> <grounded: true|false> <factsHash|""> [probe: true|false] [delivery|""] [findings-file]
 # Appends ONE receipt line (the AD-038 fixture shape) as a side effect of a SUCCESSFUL review —
 # to $AW_REVIEW_RECEIPTS when set, else <git dir>/agent-workflow-review-receipts.jsonl (inside the
 # git dir by construction, so it is never committable). Fail-safe: every failure here warns loudly
@@ -550,8 +665,10 @@ posture_json() {
 # marker is written ALWAYS, true or false: the receipt SELF-DECLARES, so the gate reads the fact
 # itself instead of inferring it from this wrapper's version (which bumps in a different release
 # phase). Silence is not a declaration — an unmarked receipt is untrustworthy and the gate rejects it.
+# The 9th argument feeds the finding-manifest mint: on a nonce-supplied dispatch the manifest is
+# minted FIRST (atomic, no-clobber, ORDERED) and a failed mint EXCLUDES the receipt append.
 write_review_receipt() {
-  local artifact="$1" fresh="$2" fingerprint="$3" verdict="$4" grounded="$5" facts_hash="$6" probe="${7:-false}" delivery="${8:-}"
+  local artifact="$1" fresh="$2" fingerprint="$3" verdict="$4" grounded="$5" facts_hash="$6" probe="${7:-false}" delivery="${8:-}" findings_file="${9:-}"
   local receipts="${AW_REVIEW_RECEIPTS:-}"
   if [[ -z "$receipts" ]]; then
     local receipt_git_dir
@@ -560,6 +677,12 @@ write_review_receipt() {
       return 0
     fi
     receipts="$receipt_git_dir/agent-workflow-review-receipts.jsonl"
+  fi
+  if ! write_finding_manifest "$receipts" "$fingerprint" "$findings_file"; then
+    echo "warning: the finding manifest could not be minted — the receipt append is EXCLUDED (a" >&2
+    echo "         nonce-supplied dispatch never lands a receipt without its readable manifest);" >&2
+    echo "         the review itself succeeded — re-run it to mint the pair." >&2
+    return 0
   fi
   local line probe_field=',"probe":false' delivery_field=""
   if [[ "$probe" == "true" ]]; then probe_field=',"probe":true'; fi
@@ -780,25 +903,16 @@ fence_env=(env
   CODEX_HOME="$real_codex_home")
 
 # --- Hard wall-clock cap via timeout(1) (gtimeout on macOS) -------------------
-# $timeout_bin was resolved ONCE (absolute path, type -P) at the banner emit above — the run
-# reuses the exact binary the banner reported.
-if [[ -z "$timeout_bin" ]]; then
-  echo "warning: no 'timeout'/'gtimeout' on PATH — running codex WITHOUT a hard wall-clock cap" >&2
-  echo "         (install coreutils to enable CODEX_HARD_TIMEOUT=$CODEX_HARD_TIMEOUT)." >&2
-fi
+# $timeout_bin was resolved ONCE (absolute path, type -P) at the banner emit above and is
+# guaranteed non-empty there (the fail-closed preflight) — the run reuses the exact binary the
+# banner reported.
 
 # Run codex with the current ${codex_cmd[@]}; capture rc, stream → $trace.
 invoke_codex() {
   set +e
-  if [[ -n "$timeout_bin" ]]; then
-    printf '%s' "$prompt" \
-      | "${fence_env[@]}" "$timeout_bin" --kill-after=15s "$CODEX_HARD_TIMEOUT" "${codex_cmd[@]}" >"$trace" 2>&1
-    rc=$?
-  else
-    printf '%s' "$prompt" \
-      | "${fence_env[@]}" "${codex_cmd[@]}" >"$trace" 2>&1
-    rc=$?
-  fi
+  printf '%s' "$prompt" \
+    | "${fence_env[@]}" "$timeout_bin" --kill-after=15s "$CODEX_HARD_TIMEOUT" "${codex_cmd[@]}" >"$trace" 2>&1
+  rc=$?
   set -e
 }
 
@@ -875,4 +989,4 @@ fi
 # codex is grounded by construction (AGENTS.md auto-merge + the precomputed change set): grounded
 # true, factsHash null (native grounding — no separate facts payload exists). Every codex run is a
 # full fresh run (one-shot, no resume) → fresh:true. $REVIEW_PROBE marks a guards-relaxed run.
-write_review_receipt "$REVIEW_ARTIFACT" true "$REVIEW_FINGERPRINT" "$verdict" true "" "$REVIEW_PROBE"
+write_review_receipt "$REVIEW_ARTIFACT" true "$REVIEW_FINGERPRINT" "$verdict" true "" "$REVIEW_PROBE" "" "$out"

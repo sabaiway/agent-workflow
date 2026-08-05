@@ -349,6 +349,62 @@ describe('flow-store — append: validate-before-write, semantic preflight, atom
     assert.equal(readFlowStore(store).records.length, 2, 'nothing landed past the refusal — the race window is closed under the lock');
   });
 
+  // The P3-26 precedent extended (Phase-4 R6): the writer derives the consult's {cycle, stepId,
+  // round} lock-free, so a concurrent converged/complete can close the step first — the LOCKED
+  // preflight is where the stale context must refuse.
+  it('a consult-attestation with a STALE step context refuses at the LOCKED preflight — a closed step never carries a consult', () => {
+    const dir = join(TMP, 'append-stale-consult');
+    mkdirSync(dir, { recursive: true });
+    const store = join(dir, 'flow.jsonl');
+    const a = adoption();
+    const opener = openerRound(canonicalFlowDigest(a));
+    const converged = { schema: FLOW_SCHEMA_VERSION, kind: 'chain', purpose: 'converged', planId: 'plan-a', cycle: 1, round: 1, commitEpoch: 0, owner: 'wt-main', base: BASE, timestamp: '2026-07-29T00:00:02.000Z', stepId: 'step-1', fingerprint: FP };
+    appendFlowRecord({ record: a, env: { AW_FLOW_STORE: store } });
+    appendFlowRecord({ record: opener, env: { AW_FLOW_STORE: store } });
+    appendFlowRecord({ record: converged, env: { AW_FLOW_STORE: store } });
+    throwsStop(
+      () => appendFlowRecord({
+        record: {
+          schema: FLOW_SCHEMA_VERSION, kind: 'consult-attestation', fingerprint: FP, backend: 'codex',
+          nonce: 'nx7', planId: 'plan-a', cycle: 1, stepId: 'step-1', round: 1,
+          findingDigest: D('4e'), proposedFixDigest: D('5d'), base: BASE, timestamp: '2026-07-29T00:00:03.000Z',
+        },
+        env: { AW_FLOW_STORE: store },
+      }),
+      /consult-attestation[\s\S]*OPEN step under the lock/,
+    );
+    assert.equal(readFlowStore(store).records.length, 3, 'the stale consult never landed');
+  });
+
+  it('the consult-attestation OPEN check is exact: an advanced round and a PARKED plan both refuse; the matching context lands', () => {
+    const consult = (over = {}) => ({
+      schema: FLOW_SCHEMA_VERSION, kind: 'consult-attestation', fingerprint: FP, backend: 'codex',
+      nonce: 'nx8', planId: 'plan-a', cycle: 1, stepId: 'step-1', round: 1,
+      findingDigest: D('4e'), proposedFixDigest: D('5d'), base: BASE, timestamp: '2026-07-29T00:00:04.000Z', ...over,
+    });
+    const dir = join(TMP, 'append-consult-open');
+    mkdirSync(dir, { recursive: true });
+    const store = join(dir, 'flow.jsonl');
+    const a = adoption();
+    appendFlowRecord({ record: a, env: { AW_FLOW_STORE: store } });
+    appendFlowRecord({ record: openerRound(canonicalFlowDigest(a)), env: { AW_FLOW_STORE: store } });
+    appendFlowRecord({ record: openerRound(null, { round: 2, timestamp: '2026-07-29T00:00:03.000Z' }), env: { AW_FLOW_STORE: store } });
+    throwsStop(
+      () => appendFlowRecord({ record: consult(), env: { AW_FLOW_STORE: store } }),
+      /the open step is "step-1" \(cycle 1, round 2\)/,
+    );
+    appendFlowRecord({ record: consult({ round: 2 }), env: { AW_FLOW_STORE: store } });
+    const parkedDir = join(TMP, 'append-consult-parked');
+    mkdirSync(parkedDir, { recursive: true });
+    const parkedStore = join(parkedDir, 'flow.jsonl');
+    appendFlowRecord({ record: a, env: { AW_FLOW_STORE: parkedStore } });
+    appendFlowRecord({ record: { schema: FLOW_SCHEMA_VERSION, kind: 'chain', purpose: 'park', planId: 'plan-a', cycle: 1, round: 0, commitEpoch: 0, owner: 'wt-main', base: BASE, timestamp: TS2, stepId: null, fingerprint: FP }, env: { AW_FLOW_STORE: parkedStore } });
+    throwsStop(
+      () => appendFlowRecord({ record: consult(), env: { AW_FLOW_STORE: parkedStore } }),
+      /the plan is parked/,
+    );
+  });
+
   it('a malformed record is refused before any write', () => {
     const dir = join(TMP, 'append-malformed');
     mkdirSync(dir, { recursive: true });

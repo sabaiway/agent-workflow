@@ -46,6 +46,8 @@
 #                            arms nothing; an oversized CODE review is delivered as a chunked feed
 #   AW_REVIEW_RECEIPTS       override the review-receipt file (default: <git dir>/
 #                            agent-workflow-review-receipts.jsonl — see the --help Receipt block)
+#   AW_REVIEW_NONCE          the dispatch nonce (safe grammar [A-Za-z0-9._-]{1,64}) — when supplied,
+#                            a successful review first mints the finding manifest beside the receipt
 set -euo pipefail
 
 # --- --help / -h (pre-preflight: no agy, no login, no git tree needed) ---------
@@ -78,9 +80,10 @@ Notes:
   pre-dispatch host-diff: before the FIRST dispatch of this bridge, diff its declared networkHosts
   against the live sandbox allow-list — a missing host is surfaced to the maintainer BEFORE
   dispatching, never fired into a known prompt
-  the review posture banner appends a banner-only timeout=<duration|uncapped> field — exactly the
-  duration agy-run hands to timeout(1), uncapped when no timeout/gtimeout binary caps the run;
-  INFORMATIONAL only: it never enters the receipt posture or the D5 banner↔receipt parity
+  the review posture banner appends a banner-only timeout=<duration> field — exactly the duration
+  agy-run hands to timeout(1); the hard-timeout preflight fails CLOSED when no timeout/gtimeout
+  binary exists (the wrapper refuses by name before any CLI run, so an uncapped review run can no
+  longer happen), and the field never enters the receipt posture or the D5 banner↔receipt parity
   quote the posture banner verbatim when labeling this dispatch — the banner is the machine-stated
   posture; a prose re-type drifts
 
@@ -116,7 +119,14 @@ Receipt:
   particular value; absent by construction on plan/diff/continuation receipts, which carry no change
   set; a run whose output carries NO recognized '### Verdict' section — empty
   output included — exits 4 with NO receipt (D4: a FAILED review to RE-RUN, never a fatal session
-  error); a write failure warns, never fails the review
+  error); when the dispatch nonce seam AW_REVIEW_NONCE is supplied (safe grammar
+  [A-Za-z0-9._-]{1,64} — anything else refuses pre-spend), the wrapper first mints the finding
+  MANIFEST {schema, backend, nonce, fingerprint, findings} beside the receipts file
+  (agent-workflow-finding-manifest-<backend>-<nonce>.json; atomic, no-clobber — a byte-identical
+  rewrite is an idempotent no-op, different bytes refuse loudly) ORDERED before the receipt
+  append — a failed manifest write EXCLUDES the receipt append, so a nonce-supplied dispatch can
+  never land a receipt without its readable manifest; a nonce-less invocation keeps this receipt
+  contract byte-exact and mints nothing; a write failure warns, never fails the review
 
 Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):
   ${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf
@@ -257,8 +267,9 @@ aw_apply_settings
 
 # --- Effective-timeout resolver (D5 banner honesty; AD-061) --------------------
 # ONE rule, both bridges: the posture banner prints EXACTLY the duration handed to timeout(1) —
-# an integer-seconds value rendered with the `s` suffix, a duration string verbatim — and
-# `timeout=uncapped` when no timeout/gtimeout binary can cap the run; never a fabricated number.
+# an integer-seconds value rendered with the `s` suffix, a duration string verbatim; without a
+# capping binary the EXEC wrappers print `timeout=uncapped` and run, while the REVIEW wrappers
+# refuse pre-spend (fail-closed preflight) — never a fabricated number.
 # The EFFECTIVE value (env included — closing the aw_settings_valid env bypass) is validated by
 # the same per-key rule as the settings file, plus a 7-digit integer-part bound (overflow); an
 # invalid value warns + falls back to the built-in default — a typo never silently masquerades
@@ -343,6 +354,14 @@ AGY_PROBE="${AGY_PROBE:-0}"
 # review-state gate rejects it — a guards-relaxed review must never attest a tree.
 REVIEW_PROBE=false
 if [[ "$AGY_PROBE" == "1" ]]; then REVIEW_PROBE=true; fi
+# The dispatch nonce seam (flow-orchestration Decision 2/P5): validated pre-spend under the SAFE
+# grammar — a nonce that would escape the derived manifest name refuses before any CLI run. The
+# bracket expression ENUMERATES the ASCII set (no ranges): a range like A-Z is locale-collation-
+# dependent and could admit a non-ASCII nonce the kit's JS reader then refuses.
+if [[ -n "${AW_REVIEW_NONCE:-}" && ! "${AW_REVIEW_NONCE}" =~ ^[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]{1,64}$ ]]; then
+  echo "error: AW_REVIEW_NONCE fails the safe nonce grammar ([A-Za-z0-9._-]{1,64}) — the derived manifest name would be unsafe; fix the nonce and re-run." >&2
+  exit 2
+fi
 # RETIRED (D3), not removed: the key stays RECOGNIZED by the shared settings registry so an existing
 # settings line never starts warning as unknown — but it arms NOTHING. The `--add-dir` offload told
 # agy to read a staging file; headless agy AUTO-DENIES its own read_file tool, so that lane could
@@ -442,12 +461,35 @@ if ! command -v agy >/dev/null 2>&1; then
   echo "error: 'agy' (Antigravity CLI) not found on PATH. See this skill's setup/README.md." >&2
   exit 127
 fi
+# The hard-timeout cap is a TWO-STAGE guarantee (flow-orchestration #26): (1) THIS parent
+# preflight fails CLOSED without a capping binary — an uncapped review run is refused before any
+# CLI spend; (2) the agy-run child re-resolves the binary at dispatch time, so the exported seam
+# below makes ITS missing-binary lane refuse too — a delete-between race can never silently void
+# the cap. The banner uses the parent-resolved path; the child's mandatory recheck is the seam's.
+aw_review_timeout_bin="$(aw_resolve_timeout_bin)"
+if [[ -z "$aw_review_timeout_bin" ]]; then
+  echo "error: no 'timeout'/'gtimeout' binary on PATH — the hard-timeout preflight fails CLOSED:" >&2
+  echo "       an uncapped review run is refused before any CLI spend. Install coreutils (timeout;" >&2
+  echo "       on macOS: brew install coreutils for gtimeout), then re-run." >&2
+  exit 127
+fi
+export AGY_REQUIRE_TIMEOUT_BIN=1
 # Delegate execution to agy-run (the single home of the timeout + subscription + byte-ceiling guards);
 # fall back to the sibling agy.sh on a fresh checkout / hermetic test where agy-run is not yet linked.
 if command -v agy-run >/dev/null 2>&1; then
   AGY_RUN="agy-run"
 else
   AGY_RUN="$HERE/agy.sh"
+fi
+# The seam is a guarantee only when the RESOLVED child honors it: a stale installed agy-run that
+# never reads AGY_REQUIRE_TIMEOUT_BIN would keep its uncapped lane past the parent preflight —
+# refuse loudly and name the refresh recovery instead of dispatching on a hope.
+aw_child_path="$(command -v "$AGY_RUN" 2>/dev/null || printf '%s' "$AGY_RUN")"
+if ! grep -q "AGY_REQUIRE_TIMEOUT_BIN" "$aw_child_path" 2>/dev/null; then
+  echo "error: the resolved agy-run child ($aw_child_path) does not honor the AGY_REQUIRE_TIMEOUT_BIN seam —" >&2
+  echo "       a stale bridge install could run uncapped past the parent preflight. Refresh the placed" >&2
+  echo "       bridges (/agent-workflow-kit setup --refresh-placed), then re-run." >&2
+  exit 127
 fi
 
 # --- Model policy (advisory, NOT a gate) -------------------------------------
@@ -689,7 +731,97 @@ posture_json() {
   fi
 }
 
-# write_review_receipt <artifact|""> <fresh: true|false> <fingerprint|""> <verdict> <grounded: true|false> <factsHash|""> [probe: true|false]
+# write_finding_manifest <receipts-path> <fingerprint|""> <findings-file> — the wrapper-minted
+# finding MANIFEST (flow-orchestration Decision 2 / P5 / P24-25), minted ONLY when the dispatch
+# nonce seam AW_REVIEW_NONCE is supplied: {schema, backend, nonce, fingerprint, findings} lands
+# beside the receipts file under the {backend, nonce}-derived name. The write is ATOMIC (temp +
+# hard-link publish) and NO-CLOBBER: a byte-identical re-write is an idempotent no-op, different
+# bytes refuse loudly. Returns non-zero on ANY failure — the caller then EXCLUDES the receipt
+# append, so a nonce-supplied dispatch can never land a receipt without its readable manifest.
+# A nonce-less invocation returns 0 untouched (today's receipt contract stays byte-exact).
+write_finding_manifest() {
+  local receipts="$1" fingerprint="$2" findings_file="$3" nonce="${AW_REVIEW_NONCE:-}"
+  [[ -n "$nonce" ]] || return 0
+  if [[ ! "$nonce" =~ ^[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]{1,64}$ ]]; then
+    echo "error: AW_REVIEW_NONCE fails the safe nonce grammar ([A-Za-z0-9._-]{1,64}) — the derived manifest name would be unsafe; NO manifest was written." >&2
+    return 1
+  fi
+  if [[ -z "$findings_file" || ! -f "$findings_file" ]]; then
+    echo "error: no captured findings file to mint the manifest from — NO manifest was written." >&2
+    return 1
+  fi
+  local manifest mint_rc
+  manifest="$(dirname -- "$receipts")/agent-workflow-finding-manifest-${AW_RECEIPT_BACKEND}-${nonce}.json"
+  # The WHOLE mint core rides ONE node script (a family floor; the verdict parse already leans on
+  # it): FATAL UTF-8 compose (BOM kept — invalid bytes refuse rather than silently mutate the
+  # digest domain), an UNPREDICTABLE sibling temp opened with "wx" (O_CREAT|O_EXCL — a planted
+  # node at the name refuses, and ONLY a temp we provably created is ever unlinked), a hard-link
+  # publish (atomic no-clobber), and an EEXIST loser judged through ONE O_NOFOLLOW|O_NONBLOCK
+  # descriptor whose fstat must say REGULAR before the same-fd byte compare — no TOCTOU window,
+  # no symlink read-through, no FIFO hang. Exit: 0 minted or byte-identical no-op; 3 different
+  # bytes or a non-regular/symlink manifest; 5 minted-but-temp-left (SUCCESS with the orphan path
+  # on stdout — the caller warns loudly, never silently); 1 unreadable/non-UTF-8 findings or an
+  # fs failure.
+  local mint_out
+  mint_out="$( umask 077; node -e '
+const fs = require("node:fs");
+const { join, dirname, basename } = require("node:path");
+const { randomBytes } = require("node:crypto");
+const [file, backend, nonce, fingerprint, manifest] = process.argv.slice(1);
+let code = 1;
+let tmp = null;
+try {
+  const findings = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(fs.readFileSync(file));
+  const bytes = Buffer.from(`${JSON.stringify({ schema: 1, backend, nonce, fingerprint: fingerprint || null, findings })}\n`);
+  const candidate = join(dirname(manifest), `.${basename(manifest)}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`);
+  const fd = fs.openSync(candidate, "wx", 0o600);
+  tmp = candidate;
+  try {
+    fs.writeFileSync(fd, bytes);
+  } finally {
+    fs.closeSync(fd);
+  }
+  try {
+    fs.linkSync(tmp, manifest);
+    code = 0;
+  } catch (err) {
+    if (err && err.code === "EEXIST") {
+      try {
+        const mfd = fs.openSync(manifest, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+        try {
+          code = !fs.fstatSync(mfd).isFile() ? 3 : fs.readFileSync(mfd).equals(bytes) ? 0 : 3;
+        } finally {
+          fs.closeSync(mfd);
+        }
+      } catch {
+        code = 3;
+      }
+    }
+  }
+} catch {
+  code = 1;
+}
+if (tmp !== null) { try { fs.unlinkSync(tmp); } catch { if (code === 0) { code = 5; process.stdout.write(tmp); } } }
+process.exit(code);
+' "$findings_file" "$AW_RECEIPT_BACKEND" "$nonce" "$fingerprint" "$manifest" 2>/dev/null )"
+  mint_rc=$?
+  if [[ $mint_rc -eq 5 ]]; then
+    echo "warning: the finding manifest was minted, but its temporary sibling could not be removed —" >&2
+    echo "         orphan left at: ${mint_out} — remove it by hand (the manifest and the receipt are intact)." >&2
+    return 0
+  fi
+  if [[ $mint_rc -eq 3 ]]; then
+    echo "error: the finding manifest $manifest already exists with DIFFERENT bytes or is not a regular file — no-clobber refuses loudly (one dispatch identity, one manifest)." >&2
+    return 1
+  fi
+  if [[ $mint_rc -ne 0 ]]; then
+    echo "error: could not compose or write the finding manifest (unreadable or non-UTF-8 findings, or an fs failure) — NO manifest was written." >&2
+    return 1
+  fi
+  return 0
+}
+
+# write_review_receipt <artifact|""> <fresh: true|false> <fingerprint|""> <verdict> <grounded: true|false> <factsHash|""> [probe: true|false] [delivery|""] [findings-file]
 # Appends ONE receipt line (the AD-038 fixture shape) as a side effect of a SUCCESSFUL review —
 # to $AW_REVIEW_RECEIPTS when set, else <git dir>/agent-workflow-review-receipts.jsonl (inside the
 # git dir by construction, so it is never committable). Fail-safe: every failure here warns loudly
@@ -699,8 +831,10 @@ posture_json() {
 # marker is written ALWAYS, true or false: the receipt SELF-DECLARES, so the gate reads the fact
 # itself instead of inferring it from this wrapper's version (which bumps in a different release
 # phase). Silence is not a declaration — an unmarked receipt is untrustworthy and the gate rejects it.
+# The 9th argument feeds the finding-manifest mint: on a nonce-supplied dispatch the manifest is
+# minted FIRST (atomic, no-clobber, ORDERED) and a failed mint EXCLUDES the receipt append.
 write_review_receipt() {
-  local artifact="$1" fresh="$2" fingerprint="$3" verdict="$4" grounded="$5" facts_hash="$6" probe="${7:-false}" delivery="${8:-}"
+  local artifact="$1" fresh="$2" fingerprint="$3" verdict="$4" grounded="$5" facts_hash="$6" probe="${7:-false}" delivery="${8:-}" findings_file="${9:-}"
   local receipts="${AW_REVIEW_RECEIPTS:-}"
   if [[ -z "$receipts" ]]; then
     local receipt_git_dir
@@ -709,6 +843,12 @@ write_review_receipt() {
       return 0
     fi
     receipts="$receipt_git_dir/agent-workflow-review-receipts.jsonl"
+  fi
+  if ! write_finding_manifest "$receipts" "$fingerprint" "$findings_file"; then
+    echo "warning: the finding manifest could not be minted — the receipt append is EXCLUDED (a" >&2
+    echo "         nonce-supplied dispatch never lands a receipt without its readable manifest);" >&2
+    echo "         the review itself succeeded — re-run it to mint the pair." >&2
+    return 0
   fi
   local line probe_field=',"probe":false' delivery_field=""
   if [[ "$probe" == "true" ]]; then probe_field=',"probe":true'; fi
@@ -1607,12 +1747,11 @@ if [[ -z "$AGY_MODEL" && -z "$resume_mode" && "$REVIEW_PROBE" != "true" && "$REV
   exit 2
 fi
 # The timeout field is BANNER-ONLY (AD-061): it prints exactly the duration agy-run hands to
-# timeout(1), or `uncapped` without a capping binary, and never enters the receipt posture.
-# aw_resolve_timeout_bin: builtin type -P (an exported function can shadow neither `timeout` nor
-# `type` itself), normalized to an absolute path fail-closed — the banner can never claim a cap
-# the agy-run child would not have.
-aw_banner_timeout_bin="$(aw_resolve_timeout_bin)"
-aw_timeout_banner="$(aw_timeout_label "$aw_banner_timeout_bin" "$AGY_HARD_TIMEOUT")"
+# timeout(1) and never enters the receipt posture. The banner uses the PARENT-preflight-resolved
+# path (builtin type -P, absolute); the child re-resolves at dispatch under the exported
+# AGY_REQUIRE_TIMEOUT_BIN seam, whose missing-binary lane refuses — so an uncapped review
+# dispatch cannot exist on either stage.
+aw_timeout_banner="$(aw_timeout_label "$aw_review_timeout_bin" "$AGY_HARD_TIMEOUT")"
 echo "review posture: model=${AGY_MODEL:-<agy settings default>} timeout=$aw_timeout_banner" >&2
 
 # --- Execute via agy-run (single home of timeout + subscription + byte ceiling) ---
@@ -1673,7 +1812,7 @@ if [[ $rc -eq 0 ]]; then
     # A continuation never re-embeds the current artifact (agy holds the ORIGINAL round server-side;
     # --facts is rejected above), so it cannot attest the folded tree: fresh:false, artifact /
     # fingerprint / factsHash null, grounded false — informational-only, ignored by the state gate.
-    write_review_receipt "" false "" "$verdict" false "" "$REVIEW_PROBE"
+    write_review_receipt "" false "" "$verdict" false "" "$REVIEW_PROBE" "" "$review_out_file"
     echo "notice: a continuation receipt is fresh:false (informational-only) — only a fresh grounded run" >&2
     echo "        (agy-review code --facts @f) mints a receipt that satisfies the review-state gate." >&2
   else
@@ -1683,7 +1822,7 @@ if [[ $rc -eq 0 ]]; then
       grounded=true
       facts_hash="$(printf '%s' "$FACTS_CONTENT" | sha256_stdin || true)"
     fi
-    write_review_receipt "$REVIEW_ARTIFACT" true "$REVIEW_FINGERPRINT" "$verdict" "$grounded" "$facts_hash" "$REVIEW_PROBE" "$REVIEW_DELIVERY"
+    write_review_receipt "$REVIEW_ARTIFACT" true "$REVIEW_FINGERPRINT" "$verdict" "$grounded" "$facts_hash" "$REVIEW_PROBE" "$REVIEW_DELIVERY" "$review_out_file"
   fi
 fi
 exit $rc

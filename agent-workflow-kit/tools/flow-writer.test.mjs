@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { main, composePlanIdFrontmatter } from './flow-writer.mjs';
 import { resolveFlowStorePath, readFlowStore, appendFlowRecord, readPlanFrontmatterId } from './flow-store.mjs';
 import { FLOW_SCHEMA_VERSION, CHAIN_KIND, canonicalFlowDigest } from './flow-record.mjs';
@@ -492,6 +493,143 @@ describe('flow-writer — maintainer-override (#38/#56: the bound set prints; th
     const r = run(root, ['maintainer-override', 'plan-a', '--backend', 'codex', '--checkpoint-approved', '--veto-receipt', canonicalFlowDigest(stale)]);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /not the backend's authoritative CURRENT-tree receipt/);
+  });
+});
+
+// The consult-attestation arm (Phase 4.2, Decision 8): findingDigest is COMPUTED from the
+// {backend, nonce}-named finding manifest beside the receipts file — the round-trip named test
+// P29 demands, plus every fail-closed lane.
+describe('flow-writer — consult-attestation (manifest → attestation round-trip)', () => {
+  const MANIFEST_FINDINGS = '[major] — a.txt:1 — x — y\nVerdict: revise\n';
+  const writeManifest = (root, backend, nonce, overrides = {}) => {
+    const manifest = { schema: FLOW_SCHEMA_VERSION, backend, nonce, fingerprint: 'c'.repeat(64), findings: MANIFEST_FINDINGS, ...overrides };
+    writeFileSync(join(root, '.git', `agent-workflow-finding-manifest-${backend}-${nonce}.json`), `${JSON.stringify(manifest)}\n`);
+    return manifest;
+  };
+
+  it('round-trips manifest → attestation record: {backend, nonce, findingDigest} from the manifest, proposedFixDigest explicit, step context from the chain walk', () => {
+    const root = makeRepo();
+    adopt(root);
+    openRound(root);
+    writeManifest(root, 'codex', 'nx7');
+    const fix = 'd'.repeat(64);
+    const r = run(root, ['consult-attestation', 'plan-a', '--backend', 'codex', '--nonce', 'nx7', '--proposed-fix-digest', fix]);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /appended consult-attestation — digest [0-9a-f]{64}/);
+    const record = storeOf(root).records.at(-1);
+    assert.equal(record.kind, 'consult-attestation');
+    assert.equal(record.backend, 'codex');
+    assert.equal(record.nonce, 'nx7');
+    assert.equal(record.planId, 'plan-a');
+    assert.equal(record.stepId, 'step-1');
+    assert.equal(record.round, 1);
+    assert.equal(record.findingDigest, createHash('sha256').update(MANIFEST_FINDINGS, 'utf8').digest('hex'), 'findingDigest = sha256 of the manifest findings payload — never hand-supplied');
+    assert.equal(record.proposedFixDigest, fix);
+    assert.equal(record.fingerprint, computeTreeFingerprint(root));
+  });
+
+  it('refuses without an open step — a consult binds an open step round', () => {
+    const root = makeRepo();
+    adopt(root);
+    writeManifest(root, 'codex', 'nx7');
+    const r = run(root, ['consult-attestation', 'plan-a', '--backend', 'codex', '--nonce', 'nx7', '--proposed-fix-digest', 'd'.repeat(64)]);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /no open step — a consult-attestation binds an open step's round/);
+  });
+
+  it('refuses fail-closed on a MISSING manifest, naming the {backend, nonce} path', () => {
+    const root = makeRepo();
+    adopt(root);
+    openRound(root);
+    const r = run(root, ['consult-attestation', 'plan-a', '--backend', 'codex', '--nonce', 'nx7', '--proposed-fix-digest', 'd'.repeat(64)]);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /no readable finding manifest for \{backend "codex", nonce "nx7"\}/);
+  });
+
+  it('refuses a MALFORMED manifest: invalid JSON, a stray key, and an empty findings payload each by name', () => {
+    const root = makeRepo();
+    adopt(root);
+    openRound(root);
+    const path = join(root, '.git', 'agent-workflow-finding-manifest-codex-nx7.json');
+    const attempt = () => run(root, ['consult-attestation', 'plan-a', '--backend', 'codex', '--nonce', 'nx7', '--proposed-fix-digest', 'd'.repeat(64)]);
+    writeFileSync(path, 'not json\n');
+    assert.match(attempt().stderr, /not valid JSON/);
+    writeManifest(root, 'codex', 'nx7', { extra: true });
+    assert.match(attempt().stderr, /unknown field "extra"/);
+    writeManifest(root, 'codex', 'nx7', { findings: '' });
+    assert.match(attempt().stderr, /findings must be the non-empty captured findings payload/);
+  });
+
+  it('refuses a manifest carrying INVALID UTF-8 by name — a lossy decode never enters the findingDigest domain', () => {
+    const root = makeRepo();
+    adopt(root);
+    openRound(root);
+    const bytes = Buffer.concat([
+      Buffer.from('{"schema":1,"backend":"codex","nonce":"nx7","fingerprint":null,"findings":"x'),
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from('y"}'),
+    ]);
+    writeFileSync(join(root, '.git', 'agent-workflow-finding-manifest-codex-nx7.json'), bytes);
+    const r = run(root, ['consult-attestation', 'plan-a', '--backend', 'codex', '--nonce', 'nx7', '--proposed-fix-digest', 'd'.repeat(64)]);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /UTF-8/, 'invalid bytes refuse by name — a U+FFFD-substituted text must never be digested');
+  });
+
+  it('refuses a findings string carrying a LONE SURROGATE by name — ill-formed UTF-16 never reaches the findingDigest', () => {
+    const root = makeRepo();
+    adopt(root);
+    openRound(root);
+    writeFileSync(join(root, '.git', 'agent-workflow-finding-manifest-codex-nx7.json'), '{"schema":1,"backend":"codex","nonce":"nx7","fingerprint":null,"findings":"x\\ud800y"}\n');
+    const r = run(root, ['consult-attestation', 'plan-a', '--backend', 'codex', '--nonce', 'nx7', '--proposed-fix-digest', 'd'.repeat(64)]);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /well-formed Unicode/);
+  });
+
+  it('a FIFO manifest refuses FAST in a child run — the consult read never blocks (watchdog-proven)', () => {
+    const root = makeRepo();
+    adopt(root);
+    openRound(root);
+    assert.equal(spawnSync('mkfifo', [join(root, '.git', 'agent-workflow-finding-manifest-codex-nx7.json')], { encoding: 'utf8' }).status, 0, 'mkfifo fixture');
+    const r = spawnSync(process.execPath, [WRITER_TOOL, 'consult-attestation', 'plan-a', '--backend', 'codex', '--nonce', 'nx7', '--proposed-fix-digest', 'd'.repeat(64)], {
+      cwd: root, encoding: 'utf8', timeout: 5000,
+    });
+    assert.equal(r.signal, null, 'the child must refuse, never hang into the watchdog');
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /not a regular file/);
+  });
+
+  it('refuses a SYMLINKED manifest by class — an attestation never binds through a link', () => {
+    const root = makeRepo();
+    adopt(root);
+    openRound(root);
+    const real = join(root, '.git', 'real-manifest-target.json');
+    writeFileSync(real, `${JSON.stringify({ schema: FLOW_SCHEMA_VERSION, backend: 'codex', nonce: 'nx7', fingerprint: 'c'.repeat(64), findings: MANIFEST_FINDINGS })}\n`);
+    symlinkSync(real, join(root, '.git', 'agent-workflow-finding-manifest-codex-nx7.json'));
+    const r = run(root, ['consult-attestation', 'plan-a', '--backend', 'codex', '--nonce', 'nx7', '--proposed-fix-digest', 'd'.repeat(64)]);
+    assert.equal(r.code, 1, 'a link at the derived name must never mint — the wrapper mints regular files only');
+    assert.match(r.stderr, /symlink/);
+  });
+
+  it('refuses a FOREIGN-identity manifest (bytes declaring another backend at the derived name)', () => {
+    const root = makeRepo();
+    adopt(root);
+    openRound(root);
+    writeManifest(root, 'codex', 'nx7', { backend: 'agy' });
+    const r = run(root, ['consult-attestation', 'plan-a', '--backend', 'codex', '--nonce', 'nx7', '--proposed-fix-digest', 'd'.repeat(64)]);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /foreign-identity manifest never mints/);
+  });
+
+  it('usage lanes: an unsafe nonce and a malformed --proposed-fix-digest refuse as usage (exit 2)', () => {
+    const root = makeRepo();
+    adopt(root);
+    openRound(root);
+    const bad = run(root, ['consult-attestation', 'plan-a', '--backend', 'codex', '--nonce', '../escape', '--proposed-fix-digest', 'd'.repeat(64)]);
+    assert.equal(bad.code, 2);
+    assert.match(bad.stderr, /safe nonce grammar/);
+    const fix = run(root, ['consult-attestation', 'plan-a', '--backend', 'codex', '--nonce', 'nx7', '--proposed-fix-digest', 'zz']);
+    assert.equal(fix.code, 2);
+    assert.match(fix.stderr, /--proposed-fix-digest must be a 64-hex/);
   });
 });
 

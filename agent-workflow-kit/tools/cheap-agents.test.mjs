@@ -15,6 +15,7 @@ import {
   main,
   CHEAP_AGENTS_STAMP,
   CHEAP_AGENTS_SYMLINK,
+  FALLBACK_LENS_ADDITIONAL_ONLY,
 } from './cheap-agents.mjs';
 
 const tempDirs = [];
@@ -101,6 +102,21 @@ describe('bundled vehicles — frontmatter pins', () => {
       assert.match(template.content, /never `node -e`/u, `${template.name} bans node -e`);
       assert.match(template.content, /read-lane/u, `${template.name} names the read-lane mechanism`);
     }
+  });
+});
+
+// The fallback-lens additional-only sentence is an EXPORTED constant (flow-orchestration #15/#3,
+// Phase 4.3): the internal-attestation evaluation consumes it, and the apply report renders it —
+// one home, two consumers, no drift.
+describe('FALLBACK_LENS_ADDITIONAL_ONLY — the formalized fallback-lens contract', () => {
+  it('the constant is the exact additional-only sentence and the report renders it verbatim', () => {
+    assert.equal(
+      FALLBACK_LENS_ADDITIONAL_ONLY,
+      'review-lens is an ADDITIONAL read-only review opinion, not a replacement for your configured review recipe.',
+    );
+    const project = makeProject();
+    const out = formatResult(writeCheapAgents({ cwd: project, dryRun: true }));
+    assert.ok(out.includes(FALLBACK_LENS_ADDITIONAL_ONLY), 'the report line consumes the one-home constant');
   });
 });
 

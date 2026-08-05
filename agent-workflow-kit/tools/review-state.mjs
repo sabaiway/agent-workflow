@@ -98,7 +98,7 @@ import { resolveActivityRecipe, DISPLAY_ALIASES, requiredBackendsForConfiguredRe
 import { CONFIG_REL, fail, loadConfig } from './orchestration-config.mjs';
 import { resolveFlowStorePath, readFlowStore, deriveFlowOwner, readPlanFrontmatterId } from './flow-store.mjs';
 import { CHAIN_KIND, authoritativeFlowRecords } from './flow-record.mjs';
-import { selectReliedOnReceipt, evaluateVetoOverride } from './flow-check.mjs';
+import { selectReliedOnReceipt, evaluateVetoOverride, evaluateInternalAttestationLenses } from './flow-check.mjs';
 // The canonical review-domain primitives live in the core-evidence DAG bottom (ONE home for the
 // fingerprint, the receipt read path, and the attesting predicate); this module RE-EXPORTS its
 // historical public API from there and consumes the degrade records the same store owns.
@@ -387,9 +387,21 @@ export const buildState = ({ cwd, env = process.env, detect = detectBackends, ls
   const planCoverage = flowArmed
     ? computePlanAdoptionCoverage({ root, plans, records: flowRead.records, owner: flowOwner, readFile })
     : [];
+  // The lens-substitution rung (#15/#3): an attestation whose lens set claims a review provider's
+  // slot without a then-active down-mark never counts — and its refusal is NAMED, never silent
+  // (lensRefusedAttestations feeds the internal-only floor's failure reason).
+  const lensRefusedAttestations = [];
   const attestedPlanIds = flowArmed
     ? [...new Set(authoritativeFlowRecords(flowRead.records)
         .filter((r) => r.kind === 'internal-attestation' && r.base === base && r.fingerprint === fingerprint)
+        .filter((r) => {
+          const lensCheck = evaluateInternalAttestationLenses({ record: r, records: flowRead.records, providerBackends: Object.values(DISPLAY_ALIASES) });
+          if (!lensCheck.ok) {
+            lensRefusedAttestations.push({ planId: r.planId, reason: lensCheck.reason });
+            return false;
+          }
+          return true;
+        })
         .map((r) => r.planId))]
     : [];
   const flowConfig = config?.flow ?? null;
@@ -456,6 +468,7 @@ export const buildState = ({ cwd, env = process.env, detect = detectBackends, ls
     flowOwner,
     planCoverage,
     attestedPlanIds,
+    lensRefusedAttestations,
     soloVetoRows,
   };
 };
@@ -539,7 +552,10 @@ export const decideCheck = (state) => {
     }
     const standing = state.soloVetoRows.filter((b) => (b.state === 'current' && !b.shipClass && !b.overrideLabel) || b.state === 'unrecognized-verdict');
     if (standing.length > 0) {
-      return { code: 1, reason: `${standing.map((b) => backendFailurePart(b, state)).join('; ')} — a standing veto blocks the internal-only floor (#48)${earlyNotes}` };
+      // `veto` marks the AUTHORITATIVE-veto class only (a recognized negative) — the Decision-4
+      // --await early exit keys on it; an unrecognized verdict stays a plain fail-closed refusal.
+      const authoritative = standing.some((b) => b.state === 'current' && !b.shipClass);
+      return { code: 1, reason: `${standing.map((b) => backendFailurePart(b, state)).join('; ')} — a standing veto blocks the internal-only floor (#48)${earlyNotes}`, ...(authoritative ? { veto: true } : {}) };
     }
     const uncovered = state.planCoverage.filter((p) => !p.covered);
     if (uncovered.length > 0) {
@@ -547,7 +563,11 @@ export const decideCheck = (state) => {
     }
     const missing = state.planCoverage.filter((p) => !state.attestedPlanIds.includes(p.planId));
     if (missing.length > 0) {
-      return { code: 1, reason: `internal-only floor: no internal-attestation record at the current tree for plan(s) ${missing.map((p) => quoteReportName(p.plan)).join(', ')} — the reduced record set (#34/#43) requires one per covered plan (minting rides the Plan-4 round machinery)${earlyNotes}` };
+      // A lens-refused attestation is a NAMED cause, never a silent gap — the refusal rides the
+      // floor's failure reason for exactly the plans it starved.
+      const lensNotes = (state.lensRefusedAttestations ?? []).filter((x) => missing.some((p) => p.planId === x.planId));
+      const lensSuffix = lensNotes.length > 0 ? `; ${lensNotes.map((x) => x.reason).join('; ')}` : '';
+      return { code: 1, reason: `internal-only floor: no internal-attestation record at the current tree for plan(s) ${missing.map((p) => quoteReportName(p.plan)).join(', ')} — the reduced record set (#34/#43) requires one per covered plan (minting rides the Plan-4 round machinery)${lensSuffix}${earlyNotes}` };
     }
     const floorLabels = [
       ...state.soloVetoRows.filter((b) => b.deltaLift != null).map((b) => `${b.backend}: receipt lifted to CURRENT through an unbroken bookkeeping-delta chain (${b.deltaLift} link(s), #61)`),
@@ -585,7 +605,9 @@ export const decideCheck = (state) => {
   const unrecognized = state.backends.filter((b) => b.state === 'unrecognized-verdict');
   const unconditional = [...vetoed, ...unrecognized];
   if (unconditional.length > 0) {
-    return { code: 1, reason: `${unconditional.map((b) => backendFailurePart(b, state)).join('; ')}${notesFor(new Set(unconditional.map((b) => b.backend)))}` };
+    // `veto` marks the AUTHORITATIVE-veto class only (Decision 4): --await ends the wait loudly on
+    // it — a landed negative is the dispatched review's ANSWER, never a condition to out-wait.
+    return { code: 1, reason: `${unconditional.map((b) => backendFailurePart(b, state)).join('; ')}${notesFor(new Set(unconditional.map((b) => b.backend)))}`, ...(vetoed.length > 0 ? { veto: true } : {}) };
   }
   // The armed-flow PASS labels (#61/#38): the delta-lift and override facts ride every PASS reason
   // and the flowLabels field the commit-guard PASS line consumes. Empty (and absent) unarmed.
@@ -802,6 +824,10 @@ export const mainAwait = async (argv, ctx = {}) => {
       const check = decideCheck(buildState({ cwd, env, detect }));
       lastReason = check.reason;
       if (check.code === 0) return { code: 0, stdout: `review-state --await: READY — ${check.reason}`, stderr: '' };
+      // Decision 4 (#50): an AUTHORITATIVE veto ends the wait loudly BEFORE the deadline — the
+      // dispatched review answered with a landed negative; classifying that as a timeout was the
+      // misclassification this amendment closes. Only a fresh review can move it, never waiting.
+      if (check.veto === true) return { code: 1, stdout: '', stderr: `review-state --await: VETO — ${check.reason}` };
       await sleep(Math.min(pollMs, timeoutMs - elapsed));
     }
   } catch (err) {

@@ -159,6 +159,25 @@ export const readRegularFileNoFollow = (path, io = {}) => {
   }
 };
 
+// readFileBytesNoFollow(path, io?) → { outcome: 'ok', bytes } | absent | foreign | error — the
+// BYTES twin of the reader above for consumers whose domain is byte offsets (the Phase-4
+// receipt-deadline watermark, the finding-manifest digest domain): keepFd internally so the raw
+// bytes come back, then the fd is closed HERE with a fail-closed close (a close failure becomes
+// an error outcome, never a leak and never a swallowed throw). Balance: one open, one close, on
+// every outcome — pinned by an injectable-io counting test.
+export const readFileBytesNoFollow = (path, io = {}) => {
+  const r = readRegularFileNoFollow(path, { ...io, keepFd: true });
+  if (r.outcome !== 'ok') return r;
+  let closeFailure = null;
+  try {
+    (io.close ?? closeSync)(r.fd);
+  } catch (err) {
+    closeFailure = (err && err.code) || (err && err.message) || 'close failed';
+  }
+  if (closeFailure !== null) return { outcome: 'error', code: `held-descriptor close failed (${closeFailure}) — fail closed` };
+  return { outcome: 'ok', bytes: r.bytes };
+};
+
 // parseFlowStoreText(raw) → { records, authoritative, malformed, malformedReasons }. Both views on
 // every result: `records` is RAW file order (the only view ordering checks may consume, #65),
 // `authoritative` is the latest-per-key selection (#22).

@@ -1,0 +1,16 @@
+### Mode: receipt-deadline
+
+<!-- opt-in-capability: none — a read-only per-dispatch waiter; it guards no repeatable surface (the review obligations gate is review-state, already covered) -->
+
+The **per-dispatch receipt-ARRIVAL deadline runner** (flow-orchestration #41/#50): it waits for ONE dispatched review to **answer**, never for the review obligations to be satisfied — satisfaction is receipt ARRIVAL past the watermark — a strictly-newer parseable receipt line from the dispatched backend (or its nonce-matched finding manifest, preferred when present) — never obligation satisfaction. For "block until `--check` would PASS" use `review-state --await` instead; this runner answers the narrower per-dispatch question "did THIS dispatch come back at all?", which is what the round dispatch ledger's deadline discipline needs.
+
+Run **`node ${CLAUDE_SKILL_DIR}/tools/receipt-deadline.mjs --backend <name> --watermark <bytes> [--nonce <nonce>] [--timeout <s>]`**:
+
+1. **`--watermark`** is the receipts-file **byte length minted BEFORE the dispatch** (the round dispatch-ledger `receiptWatermark`). The runner additionally binds the file **prefix below that offset IN-PROCESS at start**: a shrunken file or a rewritten prefix refuses **loudly for the lifetime of the run** — a truncate-and-rewrite can never masquerade as arrival — and the watermark must sit **on a line boundary** (a positive offset whose preceding byte is not a newline refuses loudly at start: the pre-dispatch tail was unterminated, so an appended receipt would physically continue that malformed line). Honest limit: the prefix binding is a **runtime guard, never a persisted proof** (the persisted ledger watermark stays the plain integer).
+2. **Arrival** = a newline-terminated, parseable receipt line **from that backend** starting at/after the watermark offset. A malformed line never satisfies (and never masks a later valid one); a foreign backend's line never satisfies; a partial (unterminated) append is not a receipt yet.
+3. **`--nonce`** (the dispatch nonce under the safe grammar `[A-Za-z0-9._-]{1,64}`): when the `{backend, nonce}`-named finding manifest exists beside the receipts file, the runner **prefers that correlation** — the manifest is minted atomically BEFORE the receipt append, and it carries the dispatch identity, so it can never be another dispatch's receipt. A malformed or foreign-identity manifest refuses loudly.
+4. **Timeout** (default 900s) fires ONLY when no receipt landed, and its wording **names the watermark**. An authoritative NEGATIVE verdict is not this tool's business — arrival is arrival, whatever the verdict says; the obligations verdict lives in `review-state`.
+
+**Exit codes:** `0` arrived; `1` timeout or a loud refusal (shrunken/rewritten store, malformed manifest, no git tree); `2` usage (including an unsafe nonce).
+
+**Invariants:** read-only · never writes, never commits, never runs a subscription CLI · the clock is injectable for tests · the receipts path is `<git dir>/agent-workflow-review-receipts.jsonl` (`AW_REVIEW_RECEIPTS` overrides).

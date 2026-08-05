@@ -21,6 +21,11 @@ import {
   validateSupersessions,
   flowCanonicalSerialization,
   canonicalFlowDigest,
+  SAFE_NONCE_RE,
+  FINDING_MANIFEST_PREFIX,
+  findingManifestBasename,
+  validateFindingManifest,
+  decodeFindingManifest,
 } from './flow-record.mjs';
 import { FLOW_SCHEMA_VERSION as CONFIG_FLOW_SCHEMA_VERSION } from './orchestration-config.mjs';
 import { canonicalKindSerialization } from './core-evidence.mjs';
@@ -918,5 +923,57 @@ describe('flow-record supersessions (Phase 1.1 + 1.2)', () => {
     assert.equal(flowRecordKey(alien), null);
     const kept = authoritativeFlowRecords([alien, globalRecord('rerun-cause')]);
     assert.deepEqual(kept, [globalRecord('rerun-cause')]);
+  });
+});
+
+// The wrapper finding manifest (Phase 4.2, Decision 2 / P5 / P24): the findings schema is THIS
+// literal fixture — the named test the plan demands — plus the safe nonce grammar and the
+// {backend, nonce}-derived name (containment-checked, no cross-backend collision).
+describe('finding manifest — the literal fixture, the safe nonce grammar, the derived name', () => {
+  const MANIFEST_FIXTURE = JSON.parse(
+    '{"schema":1,"backend":"codex","nonce":"nx7","fingerprint":"9c2e4d8f1a6b3c7d0e5f2a8b4c6d1e3f7a9b0c2d4e6f8a1b3c5d7e9f0a2b4c6d","findings":"[major] — a.txt:1 — x — y\\nVerdict: revise\\n"}',
+  );
+
+  it('the literal findings-schema fixture validates (the named fixture test)', () => {
+    assert.deepEqual(validateFindingManifest(MANIFEST_FIXTURE), { ok: true });
+    assert.deepEqual(Object.keys(MANIFEST_FIXTURE), ['schema', 'backend', 'nonce', 'fingerprint', 'findings'], 'the closed key set, in fixture order');
+  });
+
+  it('every shape violation refuses by name: stray key · missing key · wrong schema · empty findings · bad fingerprint', () => {
+    assert.match(validateFindingManifest({ ...MANIFEST_FIXTURE, extra: 1 }).reason, /unknown field "extra"/);
+    const { findings, ...missing } = MANIFEST_FIXTURE;
+    assert.match(validateFindingManifest(missing).reason, /missing field "findings"/);
+    assert.match(validateFindingManifest({ ...MANIFEST_FIXTURE, schema: 2 }).reason, /unknown schema 2/);
+    assert.match(validateFindingManifest({ ...MANIFEST_FIXTURE, findings: '' }).reason, /non-empty captured findings payload/);
+    assert.match(validateFindingManifest({ ...MANIFEST_FIXTURE, fingerprint: 'zz' }).reason, /64-hex tree fingerprint, or null/);
+    assert.deepEqual(validateFindingManifest({ ...MANIFEST_FIXTURE, fingerprint: null }), { ok: true }, 'null fingerprint is the stated wrapper-could-not-compute lane');
+    assert.match(validateFindingManifest('nope').reason, /not an object/);
+  });
+
+  it('the safe nonce grammar is containment-checked — no separator, no traversal, no empty, no overlength', () => {
+    for (const good of ['nx7', 'A.b_c-9', 'x'.repeat(64), '..']) assert.equal(SAFE_NONCE_RE.test(good), true, good);
+    for (const bad of ['', 'a/b', 'a\\b', 'a b', 'x'.repeat(65), 'a\nb', 'п1']) assert.equal(SAFE_NONCE_RE.test(bad), false, JSON.stringify(bad));
+  });
+
+  it('decodeFindingManifest — the ONE shared reader: fatal UTF-8 (BOM preserved), JSON, shape, well-formed findings', () => {
+    const okBytes = Buffer.from(JSON.stringify(MANIFEST_FIXTURE));
+    const ok = decodeFindingManifest(okBytes);
+    assert.equal(ok.ok, true);
+    assert.deepEqual(ok.manifest, MANIFEST_FIXTURE);
+    const invalidUtf8 = Buffer.concat([Buffer.from('{"schema":1,"backend":"codex","nonce":"nx7","fingerprint":null,"findings":"x'), Buffer.from([0xff, 0xfe]), Buffer.from('y"}')]);
+    assert.match(decodeFindingManifest(invalidUtf8).reason, /not valid UTF-8/, 'a lossy decode never substitutes U+FFFD into the digest domain');
+    const bom = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), okBytes]);
+    assert.match(decodeFindingManifest(bom).reason, /not valid JSON/, 'ignoreBOM preserves the BOM char, so a BOM-prefixed manifest keeps refusing (no widening)');
+    assert.match(decodeFindingManifest(Buffer.from('not json')).reason, /not valid JSON/);
+    assert.match(decodeFindingManifest(Buffer.from('{"schema":1,"backend":"codex","nonce":"nx7","fingerprint":null,"findings":"x\\ud800y"}')).reason, /well-formed Unicode/, 'an escaped lone surrogate refuses — ill-formed UTF-16 never reaches the findingDigest');
+    assert.match(decodeFindingManifest(Buffer.from(JSON.stringify({ ...MANIFEST_FIXTURE, schema: 2 }))).reason, /unknown schema/, 'shape refusals pass through the validator');
+  });
+
+  it('the manifest name derives from the DISPATCH IDENTITY {backend, nonce} — no cross-backend collision; unsafe halves yield null', () => {
+    assert.equal(findingManifestBasename('codex', 'nx7'), `${FINDING_MANIFEST_PREFIX}codex-nx7.json`);
+    assert.notEqual(findingManifestBasename('codex', 'n1'), findingManifestBasename('agy', 'n1'), 'two backends never collide on one nonce (P24)');
+    assert.equal(findingManifestBasename('codex', '../x'), null);
+    assert.equal(findingManifestBasename('bad/backend', 'n1'), null);
+    assert.equal(findingManifestBasename('codex', ''), null);
   });
 });

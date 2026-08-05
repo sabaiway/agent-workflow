@@ -315,14 +315,16 @@ describe('codex-review.sh — hard timeout (1.3)', { concurrency: true }, () => 
     assert.match(r.stderr, /exceeded the hard cap/);
   });
 
-  it('warns and runs uncapped when neither timeout nor gtimeout is on PATH', () => {
+  // Flow-orchestration Phase 4.2 (#26): the uncapped lane is CLOSED — without a capping binary the
+  // preflight refuses by name BEFORE any CLI run (the pre-fix wrapper warned and ran uncapped).
+  it('fails CLOSED when neither timeout nor gtimeout is on PATH — refuses by name, codex never runs', () => {
     const sb = makeSandbox();
     const path = `${sb.bin}:${farmFor(['timeout', 'gtimeout'])}`;
     const r = run(sb, { path });
     rmSync(sb.root, { recursive: true, force: true });
-    assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /WITHOUT a hard wall-clock cap/);
-    assert.match(r.stdout, /FAKE_FINAL_MESSAGE/);
+    assert.equal(r.status, 127, 'the hard-timeout preflight is a refusal, never a warned uncapped run');
+    assert.match(r.stderr, /hard-timeout preflight fails CLOSED/);
+    assert.equal(r.capStdin, '', 'codex must NOT be invoked when the preflight refuses');
   });
 });
 
@@ -1033,6 +1035,158 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
     assert.equal(r.status, 0, r.stderr);
     assert.equal(inGitDir.length, 0, 'nothing written to the default path');
     assert.match(atOverride, /"backend":"codex"/);
+  });
+
+  // The wrapper-minted finding manifest (flow-orchestration Phase 4.2, Decision 2/P5/P24-25):
+  // nonce-supplied dispatches mint {schema, backend, nonce, fingerprint, findings} beside the
+  // receipt, atomic + no-clobber + ORDERED — a failed mint EXCLUDES the receipt append.
+  describe('finding manifest (AW_REVIEW_NONCE)', () => {
+    const manifestPath = (repo, nonce) => join(repo, '.git', `agent-workflow-finding-manifest-codex-${nonce}.json`);
+    // Capture files ride /dev/null so repeated runs see an UNCHANGED tree (the manifest binds the
+    // fingerprint — a moved tree would legitimately change its bytes).
+    const quiet = { CODEX_FAKE_ARGV: '/dev/null', CODEX_FAKE_ENV: '/dev/null', CODEX_FAKE_STDIN: '/dev/null', CODEX_FAKE_FINAL: 'Verdict: ship' };
+
+    it('a nonce-supplied code dispatch mints the {backend, nonce}-named manifest carrying the captured findings + the receipt fingerprint', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'r1-d1' } });
+      const receipts = readReceipts(sb.repo);
+      const manifest = JSON.parse(readFileSync(manifestPath(sb.repo, 'r1-d1'), 'utf8'));
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(receipts.length, 1, 'the receipt landed beside the manifest');
+      assert.deepEqual(Object.keys(manifest), ['schema', 'backend', 'nonce', 'fingerprint', 'findings'], 'the closed manifest key set, in order');
+      assert.equal(manifest.schema, 1);
+      assert.equal(manifest.backend, 'codex');
+      assert.equal(manifest.nonce, 'r1-d1');
+      assert.equal(manifest.fingerprint, receipts[0].fingerprint, 'the manifest binds the SAME reviewed-tree fingerprint as the receipt');
+      assert.equal(manifest.findings, 'Verdict: ship\n', 'findings = the captured final message VERBATIM');
+    });
+
+    it('a nonce-less invocation mints NO manifest and keeps the receipt contract byte-exact (Decision 2 both branches)', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { env: { ...quiet } });
+      const receipts = readReceipts(sb.repo);
+      const gitEntries = readdirSync(join(sb.repo, '.git')).filter((n) => n.startsWith('agent-workflow-finding-manifest-'));
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(gitEntries.length, 0, 'no nonce, no manifest');
+      assert.deepEqual(Object.keys(receipts[0]), Object.keys(RECEIPT_FIXTURE), 'the receipt line field set is unchanged');
+    });
+
+    it('a byte-identical re-mint is an idempotent no-op — the second receipt still lands', () => {
+      const sb = makeSandbox();
+      assert.equal(run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'r1-d1' } }).status, 0);
+      const before = readFileSync(manifestPath(sb.repo, 'r1-d1'), 'utf8');
+      const r2 = run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'r1-d1' } });
+      const receipts = readReceipts(sb.repo);
+      const after = readFileSync(manifestPath(sb.repo, 'r1-d1'), 'utf8');
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(r2.status, 0, r2.stderr);
+      assert.equal(receipts.length, 2, 'both receipts landed — the idempotent manifest no-op never excludes');
+      assert.equal(after, before, 'the manifest bytes are untouched');
+    });
+
+    it('DIFFERENT bytes at the derived name refuse loudly AND EXCLUDE the receipt append (ordering, behaviorally)', () => {
+      const sb = makeSandbox();
+      writeFileSync(manifestPath(sb.repo, 'r1-d1'), '{"schema":1,"backend":"codex","nonce":"r1-d1","fingerprint":null,"findings":"other bytes"}\n');
+      const r = run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'r1-d1' } });
+      const receipts = readReceipts(sb.repo);
+      const manifest = readFileSync(manifestPath(sb.repo, 'r1-d1'), 'utf8');
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(r.status, 0, 'the review itself still succeeds (the artifact lane failed loudly)');
+      assert.match(r.stderr, /DIFFERENT bytes or is not a regular file — no-clobber refuses loudly/);
+      assert.match(r.stderr, /receipt append is EXCLUDED/);
+      assert.equal(receipts.length, 0, 'a nonce-supplied dispatch never lands a receipt without its manifest');
+      assert.match(manifest, /other bytes/, 'the pre-existing manifest is never clobbered');
+    });
+
+    it('a tmp-unlink failure after a successful mint warns with the ORPHAN PATH and still appends the receipt (preload-forced; parity carries the agy twin)', () => {
+      const sb = makeSandbox();
+      const preload = join(sb.root, 'unlink-fail-preload.cjs');
+      writeFileSync(preload, "const fs = require('node:fs');\nconst real = fs.unlinkSync;\nfs.unlinkSync = (p) => { if (String(p).includes('.tmp')) { const e = new Error('EPERM'); e.code = 'EPERM'; throw e; } return real(p); };\n");
+      const r = run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'orph1', NODE_OPTIONS: `--require ${preload}` } });
+      const receipts = readReceipts(sb.repo);
+      const manifestExists = existsSync(manifestPath(sb.repo, 'orph1'));
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stderr, /orphan left at: \S*\.tmp/, 'the warning names the exact orphan path — never a silent leftover');
+      assert.equal(manifestExists, true, 'the manifest itself was published');
+      assert.equal(receipts.length, 1, 'the pair guarantee holds — minted + receipted, the orphan stated');
+    });
+
+    it('a SYMLINK at the derived manifest path refuses and EXCLUDES the receipt — even when its target is byte-identical', () => {
+      const sb = makeSandbox();
+      assert.equal(run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'sym1' } }).status, 0);
+      const mPath = manifestPath(sb.repo, 'sym1');
+      const target = join(sb.repo, '.git', 'manifest-target-copy.json');
+      writeFileSync(target, readFileSync(mPath));
+      rmSync(mPath);
+      symlinkSync(target, mPath);
+      const r = run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'sym1' } });
+      const receipts = readReceipts(sb.repo);
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(r.status, 0, 'the review itself still succeeds (the artifact lane failed loudly)');
+      assert.match(r.stderr, /receipt append is EXCLUDED/);
+      assert.equal(receipts.length, 1, 'the second receipt is EXCLUDED — a symlinked manifest is never read through as the idempotent no-op');
+    });
+
+    it('a FIFO at the derived manifest path refuses fast and EXCLUDES the receipt (O_NONBLOCK — no hang; fix characterization)', () => {
+      const sb = makeSandbox();
+      const mPath = manifestPath(sb.repo, 'fifo1');
+      assert.equal(spawnSync('mkfifo', [mPath], { encoding: 'utf8' }).status, 0, 'mkfifo fixture');
+      const r = run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'fifo1' } });
+      const receipts = readReceipts(sb.repo);
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stderr, /receipt append is EXCLUDED/);
+      assert.equal(receipts.length, 0, 'a FIFO manifest is never read (fstat-first) and the receipt is excluded');
+    });
+
+    it('a BOM-prefixed findings payload round-trips VERBATIM into the manifest (U+FEFF preserved)', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { env: { ...quiet, CODEX_FAKE_FINAL: '\uFEFFFinding A\nVerdict: ship', AW_REVIEW_NONCE: 'b1' } });
+      const manifest = JSON.parse(readFileSync(manifestPath(sb.repo, 'b1'), 'utf8'));
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(manifest.findings, '\uFEFFFinding A\nVerdict: ship\n', 'the captured findings are VERBATIM — a stripped BOM would move the findingDigest');
+    });
+
+    it('an unsafe nonce refuses PRE-SPEND (exit 2, codex never runs) — a non-ASCII letter refuses under a UTF-8 locale too', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { env: { AW_REVIEW_NONCE: '../escape' } });
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(r.status, 2);
+      assert.match(r.stderr, /safe nonce grammar/);
+      assert.equal(r.capStdin, '', 'the containment refusal fires before any CLI spend');
+      // The grammar ENUMERATES the ASCII set (no ranges): a locale-collated [A-Za-z] could admit a
+      // non-ASCII letter the kit's JS reader then refuses, breaking correlation after a paid run.
+      const utf8 = makeSandbox();
+      const r2 = run(utf8, { env: { AW_REVIEW_NONCE: 'ré1', LC_ALL: 'en_US.UTF-8', LANG: 'en_US.UTF-8' } });
+      rmSync(utf8.root, { recursive: true, force: true });
+      assert.equal(r2.status, 2, 'a non-ASCII nonce letter refuses whatever the locale collation says');
+      assert.match(r2.stderr, /safe nonce grammar/);
+    });
+
+    it('plan mode with a nonce mints the manifest too (fingerprint = the artifact sha256)', () => {
+      const sb = makeSandbox();
+      const planBytes = readFileSync(join(sb.repo, 'plan.md'));
+      const r = run(sb, { args: ['plan', 'plan.md'], env: { CODEX_FAKE_FINAL: 'Verdict: ship', AW_REVIEW_NONCE: 'p1' } });
+      const manifest = JSON.parse(readFileSync(manifestPath(sb.repo, 'p1'), 'utf8'));
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(manifest.fingerprint, sha256Hex(planBytes));
+    });
+
+    it('a FAILED review (no verdict) mints neither receipt nor manifest — the pair rides success only', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { env: { CODEX_FAKE_FINAL: 'no verdict here', AW_REVIEW_NONCE: 'r9' } });
+      const receipts = readReceipts(sb.repo);
+      const exists = existsSync(manifestPath(sb.repo, 'r9'));
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.notEqual(r.status, 0);
+      assert.equal(receipts.length, 0);
+      assert.equal(exists, false, 'no success, no manifest');
+    });
   });
 
   it('a receipt write failure warns loudly but never fails the review (fail-safe direction)', () => {
