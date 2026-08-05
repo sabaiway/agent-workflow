@@ -13,8 +13,8 @@ import {
 } from './flow-check.mjs';
 import { FALLBACK_LENS_ADDITIONAL_ONLY } from './cheap-agents.mjs';
 import { resolveFlowStorePath, parseFlowStoreText } from './flow-store.mjs';
-import { FLOW_SCHEMA_VERSION, canonicalFlowDigest } from './flow-record.mjs';
-import { EVIDENCE_SCHEMA_VERSION, resolveEvidencePath, parseEvidenceText } from './core-evidence.mjs';
+import { FLOW_SCHEMA_VERSION, canonicalFlowDigest, flowProjectionHash } from './flow-record.mjs';
+import { EVIDENCE_SCHEMA_VERSION, resolveEvidencePath, parseEvidenceText, computeTreeFingerprint } from './core-evidence.mjs';
 
 const TOOL = fileURLToPath(new URL('./flow-check.mjs', import.meta.url));
 // The pasteable-recovery command anchor: the SAME absolute tool path + POSIX single-quoting the
@@ -1270,6 +1270,109 @@ describe('flow-check — computeFlowDecision (the guard-facing two-tier answer)'
     assert.equal(foreign.armed, true);
     assert.deepEqual(foreign.refusals, []);
     assert.equal(foreign.advisories.length, 1);
+  });
+});
+
+// The D10 consumer-mode split (Plan 4 Decision 2): the flow→final comparison runs ONLY on the
+// commit-guard lane — the in-matrix flow-check gate stays inert, or during a final run the
+// "latest final" (by construction the PREVIOUS one) would make a new green final unreachable.
+describe('flow-check — the D10 consumer-mode split (Plan 4 Decision 2)', () => {
+  const seedArmedRepo = () => {
+    const root = makeRepo();
+    const first = adoption();
+    writeFileSync(resolveFlowStorePath(root, {}), `${JSON.stringify(first)}\n`);
+    const fp = computeTreeFingerprint(root);
+    return { root, first, fp };
+  };
+  const seedGreenFinal = (root, fp, over = {}) => {
+    const green = { ...coreFinal('attempt-d10', fp, 1), ...over };
+    writeFileSync(resolveEvidencePath(root, {}), `${JSON.stringify(green)}\n`);
+    return green;
+  };
+
+  it('armed + a green final LACKING the field: the matrix lane stays INERT, the commit-guard lane refuses', () => {
+    const { root, fp } = seedArmedRepo();
+    seedGreenFinal(root, fp);
+    const inert = computeFlowDecision({ cwd: root });
+    assert.ok(!inert.refusals.some((r) => /evidenceHashes\.flow|flow store moved after/.test(r)), `the in-matrix lane never reads the binding: ${inert.refusals}`);
+    const guard = computeFlowDecision({ cwd: root, consumer: 'commit-guard' });
+    assert.ok(guard.refusals.some((r) => /NO evidenceHashes\.flow/.test(r) && /re-run run-gates\.mjs --final/.test(r)), `the commit-guard lane fails closed on a pre-upgrade final: ${guard.refusals}`);
+  });
+
+  it('a MATCHING bound hash passes the commit-guard lane; a store append then refuses with the tail hypothesis', () => {
+    const { root, first, fp } = seedArmedRepo();
+    seedGreenFinal(root, fp, { evidenceHashes: { redProof: D('aa'), degrade: D('bb'), flow: flowProjectionHash([first], { owner: 'main', currentFingerprint: fp }) } });
+    const bound = computeFlowDecision({ cwd: root, consumer: 'commit-guard' });
+    assert.ok(!bound.refusals.some((r) => /evidenceHashes\.flow|flow store moved after/.test(r)), `a matching binding never refuses: ${bound.refusals}`);
+    const appended = rerunCause('post-final-1', fp);
+    writeFileSync(resolveFlowStorePath(root, {}), `${JSON.stringify(first)}\n${JSON.stringify(appended)}\n`);
+    const moved = computeFlowDecision({ cwd: root, consumer: 'commit-guard' });
+    const hit = moved.refusals.find((r) => /flow store moved after the final run/.test(r));
+    assert.ok(hit, `the moved projection refuses on the commit-guard lane: ${moved.refusals}`);
+    assert.match(hit, /DIAGNOSTIC hypothesis/);
+    assert.match(hit, /rerun-cause record/, 'the live projection tail is named as the hypothesis');
+    assert.ok(!computeFlowDecision({ cwd: root }).refusals.some((r) => /flow store moved after/.test(r)), 'the matrix lane stays inert on the moved projection too');
+  });
+
+  it('a RED latest final never reaches the hash comparison — the dead-green ordering decides first', () => {
+    const { root, fp } = seedArmedRepo();
+    seedGreenFinal(root, fp, { status: 'red', results: [{ id: 'g', ok: false, code: 1 }] });
+    const guard = computeFlowDecision({ cwd: root, consumer: 'commit-guard' });
+    assert.ok(!guard.refusals.some((r) => /evidenceHashes\.flow|flow store moved after/.test(r)), `the D10 arm binds GREEN finals only (the guard's own red arm refuses the red): ${guard.refusals}`);
+  });
+
+  it('deleting or truncating the flow store after a BOUND green final refuses on the commit-guard lane — disappearance is movement', () => {
+    const { root, first, fp } = seedArmedRepo();
+    seedGreenFinal(root, fp, { evidenceHashes: { redProof: D('aa'), degrade: D('bb'), flow: flowProjectionHash([first], { owner: 'main', currentFingerprint: fp }) } });
+    const bound = computeFlowDecision({ cwd: root, consumer: 'commit-guard' });
+    assert.ok(!bound.refusals.some((r) => /flow/.test(r)), `the bound receipt passes first: ${bound.refusals}`);
+    rmSync(resolveFlowStorePath(root, {}));
+    const gone = computeFlowDecision({ cwd: root, consumer: 'commit-guard' });
+    assert.equal(gone.present, false);
+    assert.ok(gone.refusals.some((r) => /ABSENT/.test(r) && /re-run run-gates\.mjs --final/.test(r)), `an absent store never un-arms the binding: ${gone.refusals}`);
+    assert.deepEqual(computeFlowDecision({ cwd: root }).refusals, [], 'the in-matrix lane stays inert on the disappearance too');
+    writeFileSync(resolveFlowStorePath(root, {}), '');
+    const truncated = computeFlowDecision({ cwd: root, consumer: 'commit-guard' });
+    assert.ok(truncated.refusals.some((r) => /flow store moved after the final run/.test(r)), `a truncated (present-unadopted) store mismatches the bound projection: ${truncated.refusals}`);
+  });
+
+  it('an unresolvable owner or fingerprint fails CLOSED on the commit-guard lane — never a silent D10 skip', () => {
+    const plain = mkdtempSync(join(tmpdir(), 'aw-flow-noowner-'));
+    const gateLane = computeFlowDecision({ cwd: plain });
+    assert.deepEqual(gateLane.refusals, [], 'the default consumer keeps the not-a-work-tree shape (the CLI owns that message)');
+    const guardLane = computeFlowDecision({ cwd: plain, consumer: 'commit-guard' });
+    assert.ok(guardLane.refusals.some((r) => /owning worktree identity is unresolvable/.test(r)), `a dead owner probe must refuse on the guard lane: ${guardLane.refusals}`);
+    rmSync(plain, { recursive: true, force: true });
+    const { root, first, fp } = seedArmedRepo();
+    seedGreenFinal(root, fp, { evidenceHashes: { redProof: D('aa'), degrade: D('bb'), flow: flowProjectionHash([first], { owner: 'main', currentFingerprint: fp }) } });
+    const blind = computeFlowDecision({ cwd: root, consumer: 'commit-guard', probes: { fingerprint: () => null } });
+    assert.ok(blind.refusals.some((r) => /fingerprint is unresolvable/.test(r)), `a dead fingerprint probe must refuse, never silently skip the D10 comparison: ${blind.refusals}`);
+  });
+
+  it('a no-store final followed by a FOREIGN-ONLY adoption never stales the guard — the missing-field refusal binds owner-scoped relevance (round-8 fold)', () => {
+    const root = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    const green = coreFinal('attempt-nostore', fp, 1);
+    writeFileSync(resolveEvidencePath(root, {}), `${JSON.stringify(green)}\n`);
+    writeFileSync(resolveFlowStorePath(root, {}), `${JSON.stringify(adoption({ owner: 'worktree:elsewhere' }))}\n`);
+    const foreignOnly = computeFlowDecision({ cwd: root, consumer: 'commit-guard' });
+    assert.deepEqual(foreignOnly.refusals, [], `foreign records never stale the guard — an empty owner-scoped projection has nothing the receipt failed to bind: ${foreignOnly.refusals}`);
+    const ownMark = downMark('agy', { fingerprint: fp, base: null });
+    writeFileSync(resolveFlowStorePath(root, {}), `${JSON.stringify(adoption({ owner: 'worktree:elsewhere' }))}\n${JSON.stringify(ownMark)}\n`);
+    const ownRelevant = computeFlowDecision({ cwd: root, consumer: 'commit-guard' });
+    assert.ok(ownRelevant.refusals.some((r) => /NO evidenceHashes\.flow/.test(r)), `an owner-relevant record makes the unverifiable binding refuse: ${ownRelevant.refusals}`);
+  });
+
+  it('an UNADOPTED store with a MATCHING bound field passes — the field attests store EXISTENCE, never armed-ness', () => {
+    const root = makeRepo();
+    const stray = downMark('agy');
+    writeFileSync(resolveFlowStorePath(root, {}), `${JSON.stringify(stray)}\n`);
+    const fp = computeTreeFingerprint(root);
+    const green = { ...coreFinal('attempt-d10-unadopted', fp, 1), evidenceHashes: { redProof: D('aa'), degrade: D('bb'), flow: flowProjectionHash([stray], { owner: 'main', currentFingerprint: fp }) } };
+    writeFileSync(resolveEvidencePath(root, {}), `${JSON.stringify(green)}\n`);
+    const d = computeFlowDecision({ cwd: root, consumer: 'commit-guard' });
+    assert.equal(d.armed, false);
+    assert.deepEqual(d.refusals, [], `a valid-unadopted store also mints the field at --final — a matching binding must never brick the commit: ${d.refusals}`);
   });
 });
 

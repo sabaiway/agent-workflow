@@ -164,6 +164,24 @@ describe('validateEvidenceRecord — versioned schema, closed kinds, per-kind fi
     const key2 = evidenceKey({ ...done, status: 'red', results: [] });
     assert.equal(key1, key2, 'completed attempts key on fingerprintBefore — the LATEST attempt is authoritative');
   });
+  it('evidenceHashes.flow is ADDITIVE (Plan 4 D10): absent valid, 64-hex valid, anything else malformed', () => {
+    const done = {
+      schema: 1, kind: 'final', status: 'green', attempt: 'a1',
+      fingerprintBefore: 'c'.repeat(64), fingerprintAfter: 'c'.repeat(64),
+      declared: [{ id: 'unit-tests', cmd: 'node --test x' }],
+      results: [{ id: 'unit-tests', ok: true, code: 0 }],
+      evidenceHashes: { redProof: 'a'.repeat(64), degrade: 'b'.repeat(64) },
+      lcovSha256: null, integrityFailure: null, timestamp: 't',
+    };
+    assert.equal(validateEvidenceRecord(done).ok, true, 'a pre-upgrade final (no flow field) stays valid to the new reader');
+    const bound = { ...done, evidenceHashes: { ...done.evidenceHashes, flow: 'd'.repeat(64) } };
+    assert.equal(validateEvidenceRecord(bound).ok, true, 'a flow-bearing final validates (the additive cross-version claim)');
+    for (const bad of ['zz', 42, null, '']) {
+      const v = validateEvidenceRecord({ ...done, evidenceHashes: { ...done.evidenceHashes, flow: bad } });
+      assert.equal(v.ok, false, `flow=${JSON.stringify(bad)} must be malformed`);
+      assert.match(v.reason, /evidenceHashes\.flow/);
+    }
+  });
   it('the final kinds enforce attempt linkage, 1:1 ordered results, and status consistency (fail closed)', () => {
     const done = {
       schema: 1, kind: 'final', status: 'green', attempt: 'a1',

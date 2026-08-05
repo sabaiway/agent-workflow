@@ -12,7 +12,7 @@
 
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, readFileSync, cpSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, readFileSync, cpSync, symlinkSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -65,11 +65,19 @@ const storeOf = (root) => join(root, '.git', 'agent-workflow-core-evidence.jsonl
 const sha = (text) => createHash('sha256').update(text).digest('hex');
 
 // Seed a COMPLETED final-run record at the given fingerprint (the D3(a) receipt run-gates --final
-// mints — seeded directly here; provenance is run-gates' own suite).
+// mints — seeded directly here; provenance is run-gates' own suite). When a flow store already
+// exists at seed time the receipt carries evidenceHashes.flow over the owner-scoped projection —
+// the D10 binding a real --final would mint; seed the flow store FIRST when a test wants a bound
+// receipt, or seed the final first to model a PRE-UPGRADE receipt (field absent).
 let attemptSeq = 0;
 const seedFinal = (root, fingerprint, over = {}) => {
   const { records } = readEvidence(storeOf(root));
   attemptSeq += 1;
+  const flowStore = flowPathOf(root, {});
+  const flowRead = existsSync(flowStore) ? readFlowStore(flowStore) : null;
+  const flowHash = flowRead != null && !flowRead.readError && flowRead.malformed === 0
+    ? { flow: projectionHashOf(flowRead.records, { owner: 'main', currentFingerprint: fingerprint }) }
+    : {};
   const record = {
     schema: 1,
     kind: 'final',
@@ -82,6 +90,7 @@ const seedFinal = (root, fingerprint, over = {}) => {
     evidenceHashes: {
       redProof: sha(canonicalKindSerialization(records, 'red-proof')),
       degrade: sha(canonicalKindSerialization(records, 'degrade')),
+      ...flowHash,
     },
     lcovSha256: null,
     integrityFailure: null,
@@ -1149,8 +1158,8 @@ describe('resolveGitHooksPath — the ONE hooks-path answer consumers read', () 
 // ── Phase 2 (flow Plan 3): the commit-guard flow arm (two-tier activation, #43/P3) ──
 // Static imports (hoisted): a late top-level await here would let a filtered run drain the root
 // suite — and its template-removing after() hook — before this block even registers.
-import { resolveFlowStorePath as flowPathOf } from './flow-store.mjs';
-import { FLOW_SCHEMA_VERSION as FLOW_SCHEMA, canonicalFlowDigest as flowDigest } from './flow-record.mjs';
+import { resolveFlowStorePath as flowPathOf, readFlowStore } from './flow-store.mjs';
+import { FLOW_SCHEMA_VERSION as FLOW_SCHEMA, canonicalFlowDigest as flowDigest, flowProjectionHash as projectionHashOf } from './flow-record.mjs';
 import { resolveBase as baseOf } from './core-evidence.mjs';
 
 describe('commit-guard — flow arm (two-tier activation, #43/P3)', () => {
@@ -1227,9 +1236,9 @@ describe('commit-guard — flow arm (two-tier activation, #43/P3)', () => {
   it('a FOREIGN worktree chain stays advisory — the guard passes and labels the armed flow', () => {
     const { root } = makeRepo();
     const fp = computeTreeFingerprint(root);
-    seedFinal(root, fp);
     const { first, opener } = chainRecords(root, 'worktree:elsewhere');
     writeFlow(root, [first, opener]);
+    seedFinal(root, fp);
     const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.code, 0, r.stdout);
@@ -1240,13 +1249,95 @@ describe('commit-guard — flow arm (two-tier activation, #43/P3)', () => {
   it('an armed store with a clean chain state PASSES with the armed flow label', () => {
     const { root } = makeRepo();
     const fp = computeTreeFingerprint(root);
-    seedFinal(root, fp);
     const { first, opener, park } = chainRecords(root, 'main');
     writeFlow(root, [first, opener, park]);
+    seedFinal(root, fp);
     const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.code, 0, r.stdout);
     assert.equal(r.stdout.split('\n')[0], `${passLineOf(fp)} — flow: armed`);
+  });
+
+  // ── the D10 flow→final binding (Plan 4 Decision 2) — the guard consumes evidenceHashes.flow ──
+
+  it('a post-final OWN-projection flow append refuses the commit naming the fresh-final remedy (D10)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    const { first, opener, park } = chainRecords(root, 'main');
+    writeFlow(root, [first, opener, park]);
+    seedFinal(root, fp);
+    const bound = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    assert.equal(bound.code, 0, `the bound receipt passes first: ${bound.stdout}`);
+    const stale = {
+      schema: FLOW_SCHEMA, kind: 'rerun-cause', fingerprint: fp,
+      cause: 'appended after the final run', attempt: 'post-final-1', base: baseOf(root), timestamp: FLOW_TS,
+    };
+    writeFlow(root, [first, opener, park, stale]);
+    const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, r.stdout);
+    assert.match(r.stdout, /flow store moved after the final run/);
+    assert.match(r.stdout, /re-run run-gates\.mjs --final/);
+    assert.match(r.stdout, /DIAGNOSTIC hypothesis/, 'an aggregate hash cannot prove WHICH record appended — the tail is a hypothesis');
+  });
+
+  it('a FOREIGN-tree append after the final never stales the guard (outside the owner-scoped projection)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    const { first, opener, park } = chainRecords(root, 'main');
+    writeFlow(root, [first, opener, park]);
+    seedFinal(root, fp);
+    const foreign = {
+      schema: FLOW_SCHEMA, kind: 'down-mark', fingerprint: 'ee'.repeat(32), backend: 'agy',
+      reason: 'quota stall on another tree', expiresAt: '2027-01-01T00:00:00.000Z', base: null, timestamp: FLOW_TS,
+    };
+    writeFlow(root, [first, opener, park, foreign]);
+    const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, `cross-tree stays advisory — a foreign-tree global never moves the projection: ${r.stdout}`);
+    assert.equal(r.stdout.split('\n')[0], `${passLineOf(fp)} — flow: armed`);
+  });
+
+  it('a newer RED final is never bypassed by an older green whose flow hash matches (green→red)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    const { first, opener, park } = chainRecords(root, 'main');
+    writeFlow(root, [first, opener, park]);
+    seedFinal(root, fp);
+    seedFinal(root, fp, { status: 'red', results: [{ id: 'noop', ok: false, code: 1 }] });
+    const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, r.stdout);
+    assert.match(r.stdout, /RED/, 'the dead-green contract decides BEFORE any hash comparison');
+  });
+
+  it('deleting the flow store after the BOUND final refuses AT THE GUARD — present=false still consumes the D10 refusal', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    const { first, opener, park } = chainRecords(root, 'main');
+    writeFlow(root, [first, opener, park]);
+    seedFinal(root, fp);
+    const bound = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    assert.equal(bound.code, 0, `the bound receipt passes first: ${bound.stdout}`);
+    rmSync(flowPathOf(root, {}));
+    const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, r.stdout);
+    assert.match(r.stdout, /ABSENT/);
+    assert.match(r.stdout, /re-run run-gates\.mjs --final/);
+  });
+
+  it('armed flow + a green final LACKING evidenceHashes.flow (a pre-upgrade final) refuses demanding a fresh --final', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    seedFinal(root, fp); // no flow store yet — the receipt is minted WITHOUT the binding
+    const { first, opener, park } = chainRecords(root, 'main');
+    writeFlow(root, [first, opener, park]);
+    const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, r.stdout);
+    assert.match(r.stdout, /NO evidenceHashes\.flow/);
+    assert.match(r.stdout, /re-run run-gates\.mjs --final/);
   });
 
   it('a present-valid-UNADOPTED store with an unattested bookkeeping delta still changes NOTHING (t2)', () => {

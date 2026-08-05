@@ -21,7 +21,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
   CHAIN_KIND, validateChainSequence, validateSupersessions, canonicalFlowDigest,
-  authoritativeFlowRecords, flowTreeIdentity,
+  authoritativeFlowRecords, flowTreeIdentity, ownerScopedFlowProjection, flowProjectionHash,
 } from './flow-record.mjs';
 import {
   resolveFlowStorePath, readFlowStore, deriveFlowOwner,
@@ -571,16 +571,32 @@ export const decideFlowCheck = ({ flowRead, coreRead, owner, flowPath = 'the flo
   return { refusals, advisories };
 };
 
-// computeFlowDecision({ cwd }) → { present, owner, armed, broken, refusals, advisories } — the
-// two-tier answer EVERY composed consumer reads (P3): `present` is tier 1 (store-file existence;
-// an unstatable leaf reads as a fail-closed health failure), `armed` is tier 2 (>=1 adoption on a
-// clean read). Store HEALTH (flow or core) always refuses; SEMANTIC refusals bind only an ARMED
-// store — a valid store with no adoption changes nothing. Under an armed store the decision also
-// carries the three evidence rungs, with `backends` = the SAME consumed set review-state derives
-// (the configured recipe; the computed default consults offline readiness — #42 never falls open).
-export const computeFlowDecision = ({ cwd = process.cwd() } = {}) => {
+// computeFlowDecision({ cwd, consumer }) → { present, owner, armed, broken, refusals, advisories }
+// — the two-tier answer EVERY composed consumer reads (P3): `present` is tier 1 (store-file
+// existence; an unstatable leaf reads as a fail-closed health failure), `armed` is tier 2 (>=1
+// adoption on a clean read). Store HEALTH (flow or core) always refuses; SEMANTIC refusals bind
+// only an ARMED store — a valid store with no adoption changes nothing. Under an armed store the
+// decision also carries the three evidence rungs, with `backends` = the SAME consumed set
+// review-state derives (the configured recipe; the computed default consults offline readiness —
+// #42 never falls open). `consumer` (Plan 4 Decision 2): the D10 flow→final comparison runs ONLY
+// on the 'commit-guard' lane — the default 'gate' lane (the in-matrix flow-check --check gate)
+// stays inert on it, because during a final run the "latest final" is by construction the
+// PREVIOUS one and an in-matrix comparison would make a new green final unreachable.
+export const computeFlowDecision = ({ cwd = process.cwd(), consumer = 'gate', probes = {} } = {}) => {
+  const fingerprintProbe = probes.fingerprint ?? computeTreeFingerprint;
   const owner = deriveFlowOwner(cwd);
-  if (owner == null) return { present: false, owner: null, armed: false, broken: null, refusals: [], advisories: [] };
+  if (owner == null) {
+    // The guard reaches this arm only INSIDE a work tree, so a dead owner probe there must
+    // refuse — a silent empty answer would skip the D10 comparison (round-3 disposition). The
+    // default 'gate' consumer keeps the empty shape (the CLI owns the not-a-work-tree message).
+    return {
+      present: false, owner: null, armed: false, broken: null,
+      refusals: consumer === 'commit-guard'
+        ? ['the owning worktree identity is unresolvable — the D10 flow binding cannot be verified (fail closed); re-run inside the git work tree']
+        : [],
+      advisories: [],
+    };
+  }
   const flowPath = resolveFlowStorePath(cwd, {});
   const corePath = resolveEvidencePath(cwd, {});
   const flowStat = (() => {
@@ -642,7 +658,7 @@ export const computeFlowDecision = ({ cwd = process.cwd() } = {}) => {
       const receiptsPath = resolveReceiptsPath(cwd, {});
       evidence = {
         receipts: receiptsPath ? readReceipts(receiptsPath).receipts : [],
-        tree: { base: motion.currentBase, fingerprint: computeTreeFingerprint(cwd) },
+        tree: { base: motion.currentBase, fingerprint: fingerprintProbe(cwd) },
         receiptBackends: obligations.recipe === 'solo' ? Object.values(DISPLAY_ALIASES) : obligations.backends,
         degradeBackends: obligations.backends,
         declaredPaths: [config?.flow?.debtQueue, config?.flow?.convergenceSummary].filter((p) => typeof p === 'string'),
@@ -650,8 +666,51 @@ export const computeFlowDecision = ({ cwd = process.cwd() } = {}) => {
       };
     }
   }
+  // The D10 arm (Plan 4 Decision 2 + the round-2 sharpening) — commit-guard lane ONLY, and NOT
+  // gated on `armed`: evidenceHashes.flow attests "a flow store EXISTED at final time" (a
+  // valid-unadopted store also mints it), so a receipt carrying the field demands a LIVE store
+  // and a matching projection whatever the current armed state — deletion or truncation after
+  // the final is movement. The MISSING-field refusal stays armed-gated (a pre-upgrade final
+  // under an unarmed flow passes unchanged). Ordering respects the dead-green contract: the
+  // authoritative completed final at the CURRENT fingerprint, status green FIRST (a newer red
+  // is never bypassed by an older green's matching hash — the guard's own red arm refuses it),
+  // then the hash comparison.
+  const bindingRefusals = [];
+  if (consumer === 'commit-guard' && !healthBroken) {
+    const currentFingerprint = evidence?.tree.fingerprint ?? fingerprintProbe(cwd);
+    if (currentFingerprint == null) {
+      bindingRefusals.push('the current tree fingerprint is unresolvable — the D10 flow binding cannot be verified (fail closed); re-run run-gates.mjs --final on a healthy tree');
+    }
+    const currentFinal = currentFingerprint == null ? undefined : authoritativeOfKind(coreRead.records, 'final')
+      .find((r) => r.fingerprintBefore === currentFingerprint);
+    if (currentFinal !== undefined && currentFinal.status === 'green') {
+      const bound = currentFinal.evidenceHashes?.flow;
+      if (typeof bound === 'string') {
+        if (!present) {
+          bindingRefusals.push('the green final receipt carries evidenceHashes.flow but the flow store is ABSENT — the store the receipt attested vanished after the final run (disappearance is movement; fail closed); restore the flow store or re-run run-gates.mjs --final');
+        } else {
+          const projectionCtx = { owner, currentFingerprint };
+          const live = flowProjectionHash(flowRead.records, projectionCtx);
+          if (live !== bound) {
+            const projection = ownerScopedFlowProjection(flowRead.records, projectionCtx);
+            const tail = projection[projection.length - 1];
+            const tailShown = tail === undefined
+              ? 'the live projection is EMPTY'
+              : `the live projection tail is a ${tail.kind === CHAIN_KIND ? `chain/${tail.purpose}` : tail.kind} record (${short(canonicalFlowDigest(tail))})`;
+            bindingRefusals.push(`the flow store moved after the final run — the live owner-scoped projection (${short(live)}) no longer matches the receipt's evidenceHashes.flow (${short(bound)}). DIAGNOSTIC hypothesis only (an aggregate hash cannot prove WHICH record appended): ${tailShown}; re-run run-gates.mjs --final`);
+          }
+        }
+      } else if (armed && ownerScopedFlowProjection(flowRead.records, { owner, currentFingerprint }).length > 0) {
+        // Owner-scoped relevance (round-8 fold): an EMPTY projection has nothing the receipt
+        // failed to bind — a foreign-only store stays advisory and never stales the guard.
+        bindingRefusals.push('the green final receipt at this tree carries NO evidenceHashes.flow (a pre-upgrade final) — the flow→final binding cannot be verified on an armed flow (fail closed); re-run run-gates.mjs --final');
+      }
+    }
+  }
   const { refusals, advisories } = decideFlowCheck({ flowRead, coreRead, owner, flowPath, corePath, motion, evidence });
-  const effectiveRefusals = healthBroken ? refusals : (armed ? [...refusals, ...evidenceRefusals] : []);
+  // Semantic refusals bind only an ARMED store; the D10 binding refusals ride the commit-guard
+  // lane UNCONDITIONALLY — a deleted or truncated store must never un-arm the binding.
+  const effectiveRefusals = healthBroken ? refusals : [...(armed ? [...refusals, ...evidenceRefusals] : []), ...bindingRefusals];
   return { present, owner, armed, broken: healthBroken ? refusals[0] ?? 'store health failed closed' : null, refusals: effectiveRefusals, advisories: armed ? advisories : [] };
 };
 
