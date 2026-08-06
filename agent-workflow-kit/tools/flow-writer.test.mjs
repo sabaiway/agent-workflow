@@ -1,13 +1,13 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, symlinkSync, appendFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, symlinkSync, appendFileSync, chmodSync, openSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { main, composePlanIdFrontmatter } from './flow-writer.mjs';
-import { resolveFlowStorePath, readFlowStore, appendFlowRecord, readPlanFrontmatterId } from './flow-store.mjs';
+import { resolveFlowStorePath, readFlowStore, appendFlowRecord, readPlanFrontmatterId, mintBookkeepingDelta } from './flow-store.mjs';
 import { FLOW_SCHEMA_VERSION, CHAIN_KIND, canonicalFlowDigest } from './flow-record.mjs';
 import { computeTreeFingerprint, resolveBase, RECEIPTS_BASENAME, EVIDENCE_BASENAME, EVIDENCE_SCHEMA_VERSION } from './core-evidence.mjs';
 import { runFlowCheck } from './flow-check.mjs';
@@ -689,5 +689,906 @@ describe('flow-writer — usage lanes (exit 2)', () => {
     const help = run(root, []);
     assert.equal(help.code, 0);
     assert.match(help.stdout, /the store preflight is the single legality door/);
+  });
+});
+
+// ── Plan 4 Phase 3: the round machinery (round-open · round-land · freeze · unfreeze ·
+// converged) + the internal-attestation arm with the #68 arming predicate. The arm --help usage
+// lines ARE the public contract (pinned below); digests are computed FROM real files, never
+// hand-supplied; every design cap is enforced at the arm and every cap refusal is self-servable
+// (Decision 8 — an over-cap mint rides an explicit --justification, never a human wait-state).
+
+const RECEIPT_BASE = {
+  schema: 1, artifact: 'code', fresh: true, backend: 'codex', verdict: 'ship', grounded: true,
+  factsHash: null, wrapperVersion: '2.2.0', probe: false, posture: { model: 'gpt-5.2-codex' },
+};
+const sha256hex = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const receiptsFile = (root) => join(root, '.git', RECEIPTS_BASENAME);
+const lastRound = (root) => storeOf(root).records.findLast((r) => r.kind === CHAIN_KIND && r.purpose === 'round');
+const appendReceipt = (root, over = {}) => {
+  const receipt = { ...RECEIPT_BASE, fingerprint: computeTreeFingerprint(root), timestamp: now(), ...over };
+  appendFileSync(receiptsFile(root), `${JSON.stringify(receipt)}\n`);
+  return receipt;
+};
+const writeRoundManifest = (root, backend, nonce, over = {}) => {
+  const manifest = { schema: FLOW_SCHEMA_VERSION, backend, nonce, fingerprint: computeTreeFingerprint(root), findings: 'Verdict: ship\n', ...over };
+  const bytes = Buffer.from(JSON.stringify(manifest));
+  writeFileSync(join(root, '.git', `agent-workflow-finding-manifest-${backend}-${nonce}.json`), bytes);
+  return { manifest, bytes };
+};
+// Land the CURRENT round's codex dispatch (receipt + manifest at the round's own tree; the
+// receipt carries the dispatch nonce — the wrapper stamps AW_REVIEW_NONCE, the matcher requires
+// exact equality).
+const landCurrentRound = (root, { verdict = 'ship', planId = 'plan-a' } = {}) => {
+  const round = storeOf(root).records.findLast((r) => r.kind === CHAIN_KIND && r.purpose === 'round' && r.planId === planId);
+  const entry = round.dispatches[0];
+  appendReceipt(root, { fingerprint: round.fingerprint, verdict, nonce: entry.dispatchNonce });
+  writeRoundManifest(root, entry.backend, entry.dispatchNonce, { fingerprint: round.fingerprint });
+  const landed = run(root, ['round-land', planId]);
+  assert.equal(landed.code, 0, landed.stderr);
+  return lastRound(root);
+};
+// One full open→arrive→land cycle for backend codex; returns the landed round head. A --step
+// matching the open step is legal in-step too, so the helper always names it.
+const openAndLandRound = (root, { step = 'step-1', verdict = 'ship' } = {}) => {
+  const opened = run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', step]);
+  assert.equal(opened.code, 0, opened.stderr);
+  return landCurrentRound(root, { verdict });
+};
+
+describe('flow-writer — round-open (the pre-dispatch half, #41)', () => {
+  it('boundary opener mints round 1 with opensFrom = the prior terminal, one ledger entry per --backend, and the dispatch-line stdout contract', () => {
+    const root = makeRepo();
+    adopt(root);
+    const adoption = storeOf(root).records[0];
+    const r = run(root, ['round-open', 'plan-a', '--backend', 'codex', '--backend', 'agy', '--step', 'step-1']);
+    assert.equal(r.code, 0, r.stderr);
+    const round = lastRound(root);
+    assert.equal(round.round, 1);
+    assert.equal(round.stepId, 'step-1');
+    assert.equal(round.opensFrom, canonicalFlowDigest(adoption));
+    assert.deepEqual(round.dispositions, []);
+    assert.equal(round.dispatches.length, 2);
+    for (const [i, backend] of [['0', 'codex'], ['1', 'agy']].map(([i, b]) => [Number(i), b])) {
+      const d = round.dispatches[i];
+      assert.equal(d.backend, backend);
+      assert.equal(d.dispatchBase, round.base, 'dispatchBase equals the round base — the #42 coverage shape');
+      assert.equal(d.receiptWatermark, 0, 'an absent receipts store mints watermark 0');
+      assert.match(d.dispatchNonce, /^[0-9a-f]{32}$/);
+      assert.equal(d.receiptDigest, null);
+      assert.equal(d.findingManifestDigest, null);
+      assert.match(r.stdout, new RegExp(`dispatch backend=${backend} nonce=${d.dispatchNonce} watermark=0`), 'the stdout dispatch line is the bridge/receipt-deadline contract');
+    }
+    assert.match(r.stdout, /AW_REVIEW_NONCE=/);
+    assert.match(r.stdout, /receipt-deadline/);
+  });
+
+  it('the watermark is the live receipts-file byte length; an unterminated tail refuses the mint', () => {
+    const root = makeRepo();
+    adopt(root);
+    appendReceipt(root);
+    const length = readFileSync(receiptsFile(root)).byteLength;
+    const r = run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(lastRound(root).dispatches[0].receiptWatermark, length);
+    const root2 = makeRepo();
+    adopt(root2);
+    appendFileSync(receiptsFile(root2), '{"backend":"codex"');
+    const refused = run(root2, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']);
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /ends in an unterminated line/);
+  });
+
+  it('an in-step round-open (the fingerprint-move lane) opens the NEXT round with opensFrom null — never a revision', () => {
+    const root = makeRepo();
+    adopt(root);
+    const first = openAndLandRound(root);
+    const r = run(root, ['round-open', 'plan-a', '--backend', 'codex']);
+    assert.equal(r.code, 0, r.stderr);
+    const second = lastRound(root);
+    assert.equal(second.round, 2);
+    assert.equal(second.opensFrom, null);
+    const firstHead = storeOf(root).records.findLast((x) => x.purpose === 'round' && x.round === 1);
+    assert.equal(canonicalFlowDigest(firstHead), canonicalFlowDigest(first), 'the landed round-1 head stays byte-identical');
+  });
+
+  it('round-open refuses while the current round holds a pending unjustified dispatch — a new round would strand it unlandable', () => {
+    const root = makeRepo();
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const refused = run(root, ['round-open', 'plan-a', '--backend', 'codex']);
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /pending dispatch \{backend "codex"/);
+    assert.match(refused.stderr, /round-land|degrade/);
+    justifyDegrade(root, 'codex', lastRound(root).fingerprint);
+    const allowed = run(root, ['round-open', 'plan-a', '--backend', 'codex']);
+    assert.equal(allowed.code, 0, allowed.stderr);
+    assert.equal(lastRound(root).round, 2);
+  });
+
+  it('HARD_MAX 3 rounds per cycle: round 4 refuses blind naming Decision 8, mints with --justification, and an in-cap justification refuses as usage', () => {
+    const root = makeRepo();
+    adopt(root);
+    const inCap = run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1', '--justification', 'noise']);
+    assert.equal(inCap.code, 2);
+    assert.match(inCap.stderr, /rides only an over-cap mint/);
+    for (let i = 0; i < 3; i += 1) openAndLandRound(root);
+    const blind = run(root, ['round-open', 'plan-a', '--backend', 'codex']);
+    assert.equal(blind.code, 1);
+    assert.match(blind.stderr, /exceeds HARD_MAX 3 rounds per cycle/);
+    assert.match(blind.stderr, /--justification/);
+    assert.match(blind.stderr, /never a wait-for-maintainer/);
+    const justified = run(root, ['round-open', 'plan-a', '--backend', 'codex', '--justification', 'fresh-eyes consult verdict: continue — new direction recorded']);
+    assert.equal(justified.code, 0, justified.stderr);
+    assert.equal(lastRound(root).round, 4);
+    assert.match(justified.stdout, /justification \(Decision 8, over-cap mint/);
+    assert.match(justified.stdout, /fresh-eyes consult verdict: continue/);
+  });
+
+  it('a foreign worktree chain refuses round-open by name (#57); boundary without --step and in-step --step mismatch refuse as usage', () => {
+    const root = makeRepo();
+    adopt(root);
+    const wt = join(TMP, `wt-${seq += 1}`);
+    sh(['worktree', 'add', '-q', wt], root);
+    const foreign = run(wt, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']);
+    assert.equal(foreign.code, 1);
+    assert.match(foreign.stderr, /a foreign worktree/);
+    const noStep = run(root, ['round-open', 'plan-a', '--backend', 'codex']);
+    assert.equal(noStep.code, 2);
+    assert.match(noStep.stderr, /requires --step/);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const mismatch = run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-9']);
+    assert.equal(mismatch.code, 2);
+    assert.match(mismatch.stderr, /does not match the open step/);
+    const dup = run(root, ['round-open', 'plan-a', '--backend', 'codex', '--backend', 'codex', '--step', 'step-1']);
+    assert.equal(dup.code, 2);
+    assert.match(dup.stderr, /duplicate --backend/);
+  });
+});
+
+describe('flow-writer — round-land (the post-arrival half, #42: digests from real files)', () => {
+  it('lands an arrived dispatch IN PLACE: receiptDigest = the receipt line\'s canonical digest, findingManifestDigest = sha256 of the manifest bytes; ONE record per round, identity byte-equal', () => {
+    const root = makeRepo();
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const opened = lastRound(root);
+    const entry = opened.dispatches[0];
+    const receipt = appendReceipt(root, { fingerprint: opened.fingerprint, verdict: 'revise', nonce: entry.dispatchNonce });
+    const { bytes } = writeRoundManifest(root, 'codex', entry.dispatchNonce, { fingerprint: opened.fingerprint, findings: '[major] — a.txt:1 — x — y\nVerdict: revise\n' });
+    const r = run(root, ['round-land', 'plan-a']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /revised chain\/round/);
+    assert.match(r.stdout, new RegExp(`landed backend=codex nonce=${entry.dispatchNonce}`));
+    const head = lastRound(root);
+    assert.equal(head.dispatches[0].receiptDigest, canonicalFlowDigest(receipt), 'the receipt digest is computed FROM the receipts file');
+    assert.equal(head.dispatches[0].findingManifestDigest, sha256hex(bytes), 'the manifest digest is computed FROM the manifest bytes');
+    for (const field of ['opensFrom', 'base', 'fingerprint', 'commitEpoch', 'cycle', 'round', 'stepId']) {
+      assert.deepEqual(head[field], opened[field], `revision identity: ${field} stays byte-equal`);
+    }
+    const raw = storeOf(root).records.filter((x) => x.kind === CHAIN_KIND && x.purpose === 'round');
+    assert.equal(raw.length, 2, 'a landing is a REVISION of the one round record, never a second round');
+  });
+
+  it('an ambiguous newer receipt set refuses; a foreign-tree receipt refuses; a foreign backend line never binds (stays pending → nothing to land)', () => {
+    const root = makeRepo();
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const round = lastRound(root);
+    const nonce = round.dispatches[0].dispatchNonce;
+    appendReceipt(root, { backend: 'agy', fingerprint: round.fingerprint, nonce });
+    const foreignOnly = run(root, ['round-land', 'plan-a']);
+    assert.equal(foreignOnly.code, 1);
+    assert.match(foreignOnly.stderr, /nothing to land/);
+    appendReceipt(root, { fingerprint: 'ab'.repeat(32), nonce });
+    const foreignTree = run(root, ['round-land', 'plan-a']);
+    assert.equal(foreignTree.code, 1);
+    assert.match(foreignTree.stderr, /a foreign-tree receipt never binds this round/);
+    appendReceipt(root, { fingerprint: round.fingerprint, nonce });
+    const ambiguous = run(root, ['round-land', 'plan-a']);
+    assert.equal(ambiguous.code, 1);
+    assert.match(ambiguous.stderr, /an ambiguous newer set never binds a dispatch/);
+  });
+
+  it('an arrived receipt with a missing, symlinked, malformed, or foreign-identity manifest refuses the binding by class', () => {
+    const root = makeRepo();
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const round = lastRound(root);
+    const nonce = round.dispatches[0].dispatchNonce;
+    appendReceipt(root, { fingerprint: round.fingerprint, nonce });
+    const missing = run(root, ['round-land', 'plan-a']);
+    assert.equal(missing.code, 1);
+    assert.match(missing.stderr, /finding manifest is missing/);
+    const manifestPath = join(root, '.git', `agent-workflow-finding-manifest-codex-${nonce}.json`);
+    writeFileSync(manifestPath, 'not json');
+    assert.match(run(root, ['round-land', 'plan-a']).stderr, /is malformed/);
+    writeRoundManifest(root, 'codex', nonce, { backend: 'agy' });
+    assert.match(run(root, ['round-land', 'plan-a']).stderr, /foreign-identity manifest never binds/);
+    rmSync(manifestPath);
+    const real = join(root, '.git', 'real-round-manifest.json');
+    writeFileSync(real, JSON.stringify({ schema: FLOW_SCHEMA_VERSION, backend: 'codex', nonce, fingerprint: round.fingerprint, findings: 'x\n' }));
+    symlinkSync(real, manifestPath);
+    const linked = run(root, ['round-land', 'plan-a']);
+    assert.equal(linked.code, 1);
+    assert.match(linked.stderr, /not a regular file/);
+  });
+
+  it('dispositions bind delivered findings: the quote must be a SUBSTRING of a landed manifest payload; findingDigest = sha256(quote); a folded proof must resolve', () => {
+    const root = makeRepo();
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const round = lastRound(root);
+    const nonce = round.dispatches[0].dispatchNonce;
+    appendReceipt(root, { fingerprint: round.fingerprint, verdict: 'revise', nonce });
+    const finding = '[major] — a.txt:1 — the bug — the fix';
+    writeRoundManifest(root, 'codex', nonce, { fingerprint: round.fingerprint, findings: `${finding}\nVerdict: revise\n` });
+    assert.equal(run(root, ['round-land', 'plan-a']).code, 0);
+    const absent = run(root, ['round-land', 'plan-a', '--dispose', 'rejected', '--finding', 'a finding nobody delivered', '--reason', 'x']);
+    assert.equal(absent.code, 1);
+    assert.match(absent.stderr, /not a substring of any landed finding-manifest payload/);
+    const rejected = run(root, ['round-land', 'plan-a', '--dispose', 'rejected', '--finding', finding, '--reason', 'works as designed — see the header contract']);
+    assert.equal(rejected.code, 0, rejected.stderr);
+    const entry = lastRound(root).dispositions[0];
+    assert.deepEqual(entry, {
+      findingDigest: createHash('sha256').update(finding, 'utf8').digest('hex'),
+      action: 'rejected', reason: 'works as designed — see the header contract',
+    });
+    const badProof = run(root, ['round-land', 'plan-a', '--dispose', 'folded', '--finding', finding, '--proof-kind', 'red-proof', '--proof-digest', 'ab'.repeat(32)]);
+    assert.equal(badProof.code, 1);
+    assert.match(badProof.stderr, /does not resolve to a red-proof/);
+    const fix = 'd'.repeat(64);
+    assert.equal(run(root, ['consult-attestation', 'plan-a', '--backend', 'codex', '--nonce', nonce, '--proposed-fix-digest', fix]).code, 0);
+    const consult = storeOf(root).records.at(-1);
+    // The duplicate-findingDigest guard is the record validator's — this second disposition rides
+    // a DIFFERENT quote from the same payload.
+    const folded = run(root, ['round-land', 'plan-a', '--dispose', 'folded', '--finding', 'Verdict: revise', '--proof-kind', 'consult-attestation', '--proof-digest', canonicalFlowDigest(consult)]);
+    assert.equal(folded.code, 0, folded.stderr);
+    assert.equal(lastRound(root).dispositions.length, 2);
+    assert.equal(lastRound(root).dispositions[1].proofDigest, canonicalFlowDigest(consult));
+  });
+
+  it('round-land with no open step refuses; with nothing arrived and no --dispose it refuses as a no-op revision', () => {
+    const root = makeRepo();
+    adopt(root);
+    const noStep = run(root, ['round-land', 'plan-a']);
+    assert.equal(noStep.code, 1);
+    assert.match(noStep.stderr, /no open step/);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const noop = run(root, ['round-land', 'plan-a']);
+    assert.equal(noop.code, 1);
+    assert.match(noop.stderr, /nothing to land/);
+  });
+});
+
+describe('flow-writer — freeze · converged (no premature terminal) · unfreeze (cap 1)', () => {
+  it('freeze refuses over an unlanded unjustified dispatch, proceeds once the backend is JUSTIFIED-degraded at the dispatched tree', () => {
+    const root = makeRepo();
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const round = lastRound(root);
+    const refused = run(root, ['freeze', 'plan-a']);
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /no landed binding/);
+    justifyDegrade(root, 'codex', round.fingerprint);
+    const frozen = run(root, ['freeze', 'plan-a']);
+    assert.equal(frozen.code, 0, frozen.stderr);
+    assert.equal(storeOf(root).records.at(-1).purpose, 'freeze');
+  });
+
+  it('a landed non-ship receipt with an EMPTY disposition ledger refuses the terminal; a recorded disposition clears it; an all-ship round converges without dispositions', () => {
+    const root = makeRepo();
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const round = lastRound(root);
+    const nonce = round.dispatches[0].dispatchNonce;
+    appendReceipt(root, { fingerprint: round.fingerprint, verdict: 'revise', nonce });
+    const finding = '[minor] — b.txt:2 — nit — polish';
+    writeRoundManifest(root, 'codex', nonce, { fingerprint: round.fingerprint, findings: `${finding}\nVerdict: revise\n` });
+    assert.equal(run(root, ['round-land', 'plan-a']).code, 0);
+    const premature = run(root, ['converged', 'plan-a']);
+    assert.equal(premature.code, 1);
+    assert.match(premature.stderr, /disposition ledger is EMPTY/);
+    assert.equal(run(root, ['round-land', 'plan-a', '--dispose', 'rejected', '--finding', finding, '--reason', 'cosmetic — queued policy covers it']).code, 0);
+    const converged = run(root, ['converged', 'plan-a']);
+    assert.equal(converged.code, 0, converged.stderr);
+    const shipRoot = makeRepo();
+    adopt(shipRoot);
+    openAndLandRound(shipRoot);
+    const clean = run(shipRoot, ['converged', 'plan-a']);
+    assert.equal(clean.code, 0, clean.stderr);
+    assert.equal(storeOf(shipRoot).records.at(-1).purpose, 'converged');
+  });
+
+  it('unfreeze reopens the frozen step; the second unfreeze in a cycle refuses naming the checkpoint and mints with --justification (Decision 8)', () => {
+    const root = makeRepo();
+    adopt(root);
+    openAndLandRound(root);
+    assert.equal(run(root, ['freeze', 'plan-a']).code, 0);
+    const first = run(root, ['unfreeze', 'plan-a']);
+    assert.equal(first.code, 0, first.stderr);
+    assert.equal(storeOf(root).records.at(-1).purpose, 'unfreeze');
+    assert.equal(run(root, ['freeze', 'plan-a']).code, 0);
+    const blind = run(root, ['unfreeze', 'plan-a']);
+    assert.equal(blind.code, 1);
+    assert.match(blind.stderr, /design checkpoint \(post-freeze cap: 1 unfreeze per cycle/);
+    assert.match(blind.stderr, /--justification/);
+    const justified = run(root, ['unfreeze', 'plan-a', '--justification', 'post-freeze bug: the landed fix regressed the guard']);
+    assert.equal(justified.code, 0, justified.stderr);
+    assert.match(justified.stdout, /justification \(Decision 8, over-cap mint/);
+    const inCap = run(root, ['converged', 'plan-a']);
+    assert.equal(inCap.code, 0, inCap.stderr);
+    const boundary = run(root, ['unfreeze', 'plan-a', '--justification', 'reopening the converged terminal']);
+    assert.equal(boundary.code, 0, boundary.stderr, 'a boundary unfreeze reopens the just-converged step (with the cycle cap already spent, justified)');
+  });
+
+  it('freeze/converged with no open step refuse by name; the terminal surfaces store transition refusals verbatim', () => {
+    const root = makeRepo();
+    adopt(root);
+    for (const arm of ['freeze', 'converged']) {
+      const r = run(root, [arm, 'plan-a']);
+      assert.equal(r.code, 1);
+      assert.match(r.stderr, /no open step/);
+    }
+  });
+});
+
+describe('flow-writer — internal-attestation (#28) + the #68 arming predicate', () => {
+  it('a fully covered in-flight set mints, binding the open step context and the closed posture object', () => {
+    const root = makeRepo();
+    adopt(root);
+    openAndLandRound(root);
+    const r = run(root, ['internal-attestation', 'plan-a', '--lens', 'security', '--lens', 'correctness', '--degraded', 'agy', '--model', 'claude-fable-5', '--effort', 'max', '--authority', 'orchestrator internal sweep']);
+    assert.equal(r.code, 0, r.stderr);
+    const rec = storeOf(root).records.at(-1);
+    assert.equal(rec.kind, 'internal-attestation');
+    assert.equal(rec.planId, 'plan-a');
+    assert.equal(rec.stepId, 'step-1');
+    assert.equal(rec.round, 1);
+    assert.deepEqual(rec.lenses, ['security', 'correctness']);
+    assert.deepEqual(rec.degraded, ['agy']);
+    assert.deepEqual(rec.posture, { model: 'claude-fable-5', effort: 'max', tier: null });
+    assert.equal(rec.authority, 'orchestrator internal sweep');
+    assert.equal(rec.fingerprint, computeTreeFingerprint(root));
+  });
+
+  it('one uncovered in-flight plan refuses BY FILENAME — a refusal, never a relaxation (#68)', () => {
+    const root = makeRepo();
+    adopt(root);
+    openAndLandRound(root);
+    planFile(root, 'uncovered.md', '# a plan nobody adopted\n');
+    const r = run(root, ['internal-attestation', 'plan-a', '--lens', 'security', '--model', 'm', '--authority', 'a']);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /internal-attestation refuses \(#68\)/);
+    assert.match(r.stderr, /"uncovered\.md"/);
+    assert.match(r.stderr, /never a relaxation/);
+  });
+
+  it('without an open step it refuses; without --lens it refuses as usage', () => {
+    const root = makeRepo();
+    adopt(root);
+    const noStep = run(root, ['internal-attestation', 'plan-a', '--lens', 'x', '--model', 'm', '--authority', 'a']);
+    assert.equal(noStep.code, 1);
+    assert.match(noStep.stderr, /no open step/);
+    const noLens = run(root, ['internal-attestation', 'plan-a', '--model', 'm', '--authority', 'a']);
+    assert.equal(noLens.code, 2);
+    assert.match(noLens.stderr, /at least one --lens/);
+  });
+});
+
+describe('flow-writer — round machinery fail-closed lanes (coverage top-up)', () => {
+  it('an unsafe --backend token never composes a manifest name (the consult arm names it)', () => {
+    const root = makeRepo();
+    adopt(root);
+    openRound(root);
+    const r = run(root, ['consult-attestation', 'plan-a', '--backend', 'bad/backend', '--nonce', 'nx7', '--proposed-fix-digest', 'd'.repeat(64)]);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /no manifest name composes/);
+  });
+
+  it('a malformed receipts line refuses round-land — a binding never rides a partially readable store', () => {
+    const root = makeRepo();
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    appendFileSync(receiptsFile(root), 'not json\n');
+    const r = run(root, ['round-land', 'plan-a']);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /malformed line at byte/);
+  });
+
+  it('a malformed core evidence store fails the pending-dispatch degrade resolution closed (round-open guard)', () => {
+    const root = makeRepo();
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    appendFileSync(join(root, '.git', EVIDENCE_BASENAME), 'not json\n');
+    const r = run(root, ['round-open', 'plan-a', '--backend', 'codex']);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /cannot resolve degrade coverage/);
+  });
+
+  it('a shrunken receipts store and an off-boundary watermark each refuse round-land by name', () => {
+    const root = makeRepo();
+    adopt(root);
+    appendReceipt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const watermark = lastRound(root).dispatches[0].receiptWatermark;
+    assert.ok(watermark > 0);
+    writeFileSync(receiptsFile(root), '');
+    const shrunk = run(root, ['round-land', 'plan-a']);
+    assert.equal(shrunk.code, 1);
+    assert.match(shrunk.stderr, /shrank below watermark offset/);
+    writeFileSync(receiptsFile(root), `${JSON.stringify({ backend: 'agy', pad: 'x'.repeat(watermark) })}\n`);
+    const boundary = run(root, ['round-land', 'plan-a']);
+    assert.equal(boundary.code, 1);
+    assert.match(boundary.stderr, /does not sit on a line boundary/);
+  });
+
+  it('a manifest attesting a foreign tree fingerprint refuses the binding', () => {
+    const root = makeRepo();
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const round = lastRound(root);
+    appendReceipt(root, { fingerprint: round.fingerprint, nonce: round.dispatches[0].dispatchNonce });
+    writeRoundManifest(root, 'codex', round.dispatches[0].dispatchNonce, { fingerprint: 'ab'.repeat(32) });
+    const r = run(root, ['round-land', 'plan-a']);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /a foreign-tree manifest never binds this round/);
+  });
+
+  it('a queued disposition lands the closed {debtId, debtDigest} arm; a malformed core store fails the red-proof resolution closed', () => {
+    const root = makeRepo();
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const round = lastRound(root);
+    appendReceipt(root, { fingerprint: round.fingerprint, verdict: 'revise', nonce: round.dispatches[0].dispatchNonce });
+    const finding = '[minor] — c.txt:3 — debt — later';
+    writeRoundManifest(root, 'codex', round.dispatches[0].dispatchNonce, { fingerprint: round.fingerprint, findings: `${finding}\nVerdict: revise\n` });
+    assert.equal(run(root, ['round-land', 'plan-a']).code, 0);
+    appendFileSync(join(root, '.git', EVIDENCE_BASENAME), 'not json\n');
+    const broken = run(root, ['round-land', 'plan-a', '--dispose', 'folded', '--finding', finding, '--proof-kind', 'red-proof', '--proof-digest', 'ab'.repeat(32)]);
+    assert.equal(broken.code, 1);
+    assert.match(broken.stderr, /cannot resolve the red-proof/);
+    const queued = run(root, ['round-land', 'plan-a', '--dispose', 'queued', '--finding', finding, '--debt-id', 'DEBT-1', '--debt-digest', 'cd'.repeat(32)]);
+    assert.equal(queued.code, 0, queued.stderr);
+    assert.deepEqual(lastRound(root).dispositions[0], {
+      findingDigest: createHash('sha256').update(finding, 'utf8').digest('hex'),
+      action: 'queued', debtId: 'DEBT-1', debtDigest: 'cd'.repeat(32),
+    });
+  });
+
+  it('a terminal refuses when a landed receipt no longer resolves; an unrecognized verdict refuses at round-land AND at a terminal over a hand-crafted binding', () => {
+    const root = makeRepo();
+    adopt(root);
+    openAndLandRound(root);
+    writeFileSync(receiptsFile(root), '');
+    const gone = run(root, ['freeze', 'plan-a']);
+    assert.equal(gone.code, 1);
+    assert.match(gone.stderr, /no longer resolves in the receipts store/);
+    const root2 = makeRepo();
+    adopt(root2);
+    assert.equal(run(root2, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const round = lastRound(root2);
+    const receipt = appendReceipt(root2, { fingerprint: round.fingerprint, verdict: 'wat', nonce: round.dispatches[0].dispatchNonce });
+    const { bytes } = writeRoundManifest(root2, 'codex', round.dispatches[0].dispatchNonce, { fingerprint: round.fingerprint });
+    const landWat = run(root2, ['round-land', 'plan-a']);
+    assert.equal(landWat.code, 1, 'an unrecognized verdict is non-attesting and never binds at round-land');
+    assert.match(landWat.stderr, /non-attesting receipt \(class "unrecognized-verdict"\)/);
+    // The terminal-side floor stays defended against a HAND-CRAFTED binding the writer never minted.
+    const entry = round.dispatches[0];
+    appendFlowRecord({ cwd: root2, env: {}, record: {
+      ...round,
+      dispatches: [{ ...entry, receiptDigest: canonicalFlowDigest(receipt), findingManifestDigest: sha256hex(bytes) }],
+      timestamp: now(),
+    } });
+    const unknown = run(root2, ['freeze', 'plan-a']);
+    assert.equal(unknown.code, 1);
+    assert.match(unknown.stderr, /unrecognized verdict "wat"/);
+  });
+});
+
+// ── Round-1 council fold regressions (consult-settled dispositions P4.3-R1a…g) ──────────
+// Every red-first: observed red on the pre-fold tree, red-proof declared before its fix.
+
+const DOWN_MARK_EXPIRES = '2027-01-01T00:00:00.000Z';
+const justifyDegrade = (root, backend, fingerprint) => {
+  const degrade = { schema: EVIDENCE_SCHEMA_VERSION, kind: 'degrade', backend, reason: 'transport failure', fingerprint, timestamp: now() };
+  appendFileSync(join(root, '.git', EVIDENCE_BASENAME), `${JSON.stringify(degrade)}\n`);
+  if (storeOf(root).records.findLast((r) => r.kind === 'down-mark' && r.backend === backend) == null) {
+    assert.equal(run(root, ['down-mark', '--backend', backend, '--reason', 'transport failure', '--expires-at', DOWN_MARK_EXPIRES]).code, 0);
+  }
+  const j = run(root, ['degrade-justification', '--backend', backend]);
+  assert.equal(j.code, 0, j.stderr);
+};
+const writeFlowConfig = (root) => {
+  mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
+  writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), `${JSON.stringify({ flow: { schema: 1, debtQueue: 'docs/debt.md', convergenceSummary: 'docs/convergence.md', councilRounds: 3 } })}\n`);
+};
+
+describe('flow-writer — R1 folds: degrade exemption is justification-bound (F1/B3)', () => {
+  it('R1F1 — a bare core degrade no longer exempts a pending dispatch: the exemption demands a mint-time-valid degrade-justification at the round tree', () => {
+    const root = makeRepo();
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const round = lastRound(root);
+    const degrade = { schema: EVIDENCE_SCHEMA_VERSION, kind: 'degrade', backend: 'codex', reason: 'transport failure', fingerprint: round.fingerprint, timestamp: now() };
+    appendFileSync(join(root, '.git', EVIDENCE_BASENAME), `${JSON.stringify(degrade)}\n`);
+    const bare = run(root, ['round-open', 'plan-a', '--backend', 'codex']);
+    assert.equal(bare.code, 1, 'a bare core degrade is not base-bound and never exempts alone');
+    assert.match(bare.stderr, /degrade-justification/);
+    assert.equal(run(root, ['down-mark', '--backend', 'codex', '--reason', 'transport failure', '--expires-at', DOWN_MARK_EXPIRES]).code, 0);
+    assert.equal(run(root, ['degrade-justification', '--backend', 'codex']).code, 0);
+    const justified = run(root, ['round-open', 'plan-a', '--backend', 'codex']);
+    assert.equal(justified.code, 0, justified.stderr);
+    assert.equal(lastRound(root).round, 2);
+  });
+
+  it('R1B3 — a later justification on the same down-mark never evicts an earlier round\'s exemption (raw mint-time scan, not authoritative selection)', () => {
+    const root = makeRepo();
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const round1 = lastRound(root);
+    justifyDegrade(root, 'codex', round1.fingerprint);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex']).code, 0, 'round 2 opens at the same tree under the round-1 justification');
+    writeFileSync(join(root, 'base.txt'), 'moved for round 3\n');
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex']).code, 0, 'round 2 pending at the OLD tree is still covered by the same justification');
+    const round3 = lastRound(root);
+    assert.notEqual(round3.fingerprint, round1.fingerprint, 'the tree moved between rounds');
+    // The round-3 justification rides the SAME down-mark — its record SUPERSEDES the round-1
+    // justification under the {downMark} authoritative key; only a raw mint-time scan keeps
+    // rounds 1-2 exempt.
+    justifyDegrade(root, 'codex', round3.fingerprint);
+    const frozen = run(root, ['freeze', 'plan-a']);
+    assert.equal(frozen.code, 0, `the earlier rounds' justifications live in the raw prefix even though the down-mark key superseded them: ${frozen.stderr}`);
+  });
+});
+
+describe('flow-writer — R1 folds: round-open disposition floor + the redesign valve (F2/F3)', () => {
+  it('R1F2 — round-open refuses while the current round holds a landed non-ship receipt with an empty disposition ledger', () => {
+    const root = makeRepo();
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const round = lastRound(root);
+    appendReceipt(root, { fingerprint: round.fingerprint, verdict: 'revise', nonce: round.dispatches[0].dispatchNonce });
+    const finding = '[major] — d.txt:4 — gap — close it';
+    writeRoundManifest(root, 'codex', round.dispatches[0].dispatchNonce, { fingerprint: round.fingerprint, findings: `${finding}\nVerdict: revise\n` });
+    assert.equal(run(root, ['round-land', 'plan-a']).code, 0);
+    const blocked = run(root, ['round-open', 'plan-a', '--backend', 'codex']);
+    assert.equal(blocked.code, 1, 'an undispositioned non-ship round would become permanently unterminable');
+    assert.match(blocked.stderr, /disposition ledger is EMPTY/);
+    assert.equal(run(root, ['round-land', 'plan-a', '--dispose', 'rejected', '--finding', finding, '--reason', 'out of scope for this step']).code, 0);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex']).code, 0);
+  });
+
+  it('R1F3 — --new-cycle reopens a converged step in the NEXT cycle; the redesign valve caps at 2 cycles (Decision 8); in-step use refuses as usage', () => {
+    const root = makeRepo();
+    adopt(root);
+    openAndLandRound(root);
+    assert.equal(run(root, ['converged', 'plan-a']).code, 0);
+    const sameCycle = run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']);
+    assert.equal(sameCycle.code, 1);
+    assert.match(sameCycle.stderr, /already converged in cycle 1/);
+    const c2 = run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1', '--new-cycle']);
+    assert.equal(c2.code, 0, c2.stderr);
+    const reopened = lastRound(root);
+    assert.equal(reopened.cycle, 2);
+    assert.equal(reopened.round, 1);
+    const inStep = run(root, ['round-open', 'plan-a', '--backend', 'codex', '--new-cycle']);
+    assert.equal(inStep.code, 2);
+    assert.match(inStep.stderr, /--new-cycle opens at a step boundary only/);
+    landCurrentRound(root);
+    assert.equal(run(root, ['converged', 'plan-a']).code, 0);
+    const c3blind = run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1', '--new-cycle']);
+    assert.equal(c3blind.code, 1);
+    assert.match(c3blind.stderr, /redesign valve/);
+    assert.match(c3blind.stderr, /--justification/);
+    const c3 = run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1', '--new-cycle', '--justification', 'consult verdict: a third design cycle is warranted']);
+    assert.equal(c3.code, 0, c3.stderr);
+    assert.equal(lastRound(root).cycle, 3);
+  });
+});
+
+describe('flow-writer — R1 folds: only an ATTESTING receipt binds (F4/M4/m7)', () => {
+  it('R1F4A — a defective receipt of the dispatched backend refuses the binding naming its class and the justified-degrade recovery', () => {
+    const root = makeRepo();
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const round = lastRound(root);
+    const { posture, ...postureless } = { ...RECEIPT_BASE, fingerprint: round.fingerprint, timestamp: now(), nonce: round.dispatches[0].dispatchNonce };
+    appendFileSync(receiptsFile(root), `${JSON.stringify(postureless)}\n`);
+    const r = run(root, ['round-land', 'plan-a']);
+    assert.equal(r.code, 1, 'a posture-less receipt is non-attesting and never binds');
+    assert.match(r.stderr, /non-attesting/);
+    assert.match(r.stderr, /core-evidence degrade/);
+  });
+
+  it('R1F4B — plan-artifact and unfresh lines of the dispatched backend never bind (skipped, not refused): the dispatch stays pending', () => {
+    const root = makeRepo();
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const round = lastRound(root);
+    appendReceipt(root, { fingerprint: round.fingerprint, artifact: 'plan', nonce: round.dispatches[0].dispatchNonce });
+    appendReceipt(root, { fingerprint: round.fingerprint, fresh: false, nonce: round.dispatches[0].dispatchNonce });
+    const r = run(root, ['round-land', 'plan-a']);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /nothing to land/, 'non-code and unfresh lines are not this dispatch\'s answer');
+  });
+
+  it('R1M4 — the defective-receipt dead end closes through the justified-degrade lane and a NEW round retries end to end', () => {
+    const root = makeRepo();
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const round1 = lastRound(root);
+    appendFileSync(receiptsFile(root), `${JSON.stringify({ ...RECEIPT_BASE, fingerprint: round1.fingerprint, timestamp: now(), grounded: false, nonce: round1.dispatches[0].dispatchNonce })}\n`);
+    const refused = run(root, ['round-land', 'plan-a']);
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /non-attesting receipt \(class "ungrounded"\)/);
+    justifyDegrade(root, 'codex', round1.fingerprint);
+    const retry = run(root, ['round-open', 'plan-a', '--backend', 'codex']);
+    assert.equal(retry.code, 0, retry.stderr);
+    const round2 = lastRound(root);
+    assert.ok(round2.dispatches[0].receiptWatermark > round1.dispatches[0].receiptWatermark, 'the retry round watermarks PAST the defective line');
+    appendReceipt(root, { fingerprint: round2.fingerprint, nonce: round2.dispatches[0].dispatchNonce });
+    writeRoundManifest(root, 'codex', round2.dispatches[0].dispatchNonce, { fingerprint: round2.fingerprint });
+    assert.equal(run(root, ['round-land', 'plan-a']).code, 0);
+    const frozen = run(root, ['freeze', 'plan-a']);
+    assert.equal(frozen.code, 0, `the defective round-1 dispatch stays exempted through the justified degrade: ${frozen.stderr}`);
+  });
+});
+
+describe('flow-writer — R1 folds: manifest custody at dispose + terminal move validation (F5/F7/B1/B2/m8)', () => {
+  it('R1F5 — a manifest swapped after landing refuses the disposition: the byte digest is re-verified against the ledger', () => {
+    const root = makeRepo();
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const round = lastRound(root);
+    const nonce = round.dispatches[0].dispatchNonce;
+    appendReceipt(root, { fingerprint: round.fingerprint, verdict: 'revise', nonce });
+    const finding = '[major] — e.txt:5 — the original finding';
+    writeRoundManifest(root, 'codex', nonce, { fingerprint: round.fingerprint, findings: `${finding}\nVerdict: revise\n` });
+    assert.equal(run(root, ['round-land', 'plan-a']).code, 0);
+    writeRoundManifest(root, 'codex', nonce, { fingerprint: round.fingerprint, findings: `${finding}\nVerdict: revise\nFORGED TAIL\n` });
+    const r = run(root, ['round-land', 'plan-a', '--dispose', 'rejected', '--finding', finding, '--reason', 'x']);
+    assert.equal(r.code, 1, 'a swapped manifest never carries a disposition, even when the quote still matches');
+    assert.match(r.stderr, /findingManifestDigest/);
+    rmSync(join(root, '.git', `agent-workflow-finding-manifest-codex-${nonce}.json`));
+    const gone = run(root, ['round-land', 'plan-a', '--dispose', 'rejected', '--finding', finding, '--reason', 'x']);
+    assert.equal(gone.code, 1, 'a DELETED manifest is the same custody break');
+    assert.match(gone.stderr, /no longer cleanly readable/);
+  });
+
+  it('R1F7A — a terminal over an arbitrary tree move refuses naming the new-round recovery', () => {
+    const root = makeRepo();
+    adopt(root);
+    openAndLandRound(root);
+    writeFileSync(join(root, 'base.txt'), 'unreviewed drift\n');
+    const r = run(root, ['freeze', 'plan-a']);
+    assert.equal(r.code, 1, 'an unreviewed move never rides a terminal');
+    assert.match(r.stderr, /NEW round/);
+  });
+
+  it('R1F7B — a declared bookkeeping-delta chain plus refresh carries the terminal across the move (the design lane stays open)', () => {
+    const root = makeRepo();
+    writeFlowConfig(root);
+    adopt(root);
+    openAndLandRound(root);
+    const fpA = computeTreeFingerprint(root);
+    writeFileSync(join(root, 'docs', 'debt.md'), '- DEBT-1 — queued finding\n');
+    const minted = mintBookkeepingDelta({ cwd: root, env: {}, path: 'docs/debt.md', fingerprintBefore: fpA, preContent: null, timestamp: now() });
+    assert.equal(run(root, ['refresh', 'plan-a', '--cause', 'bookkeeping delta re-attestation', '--refreshed-record', minted.digest]).code, 0);
+    const r = run(root, ['freeze', 'plan-a']);
+    assert.equal(r.code, 0, `the declared-path delta chain classifies the move current: ${r.stderr}`);
+  });
+
+  it('R1B2 — a pre-round delta chain never re-certifies a later identical move: deltas and refreshes must sit AFTER the last round head', () => {
+    const root = makeRepo();
+    writeFlowConfig(root);
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const round = lastRound(root);
+    const fpA = round.fingerprint;
+    const debtBytes = '- DEBT-1 — queued finding\n';
+    writeFileSync(join(root, 'docs', 'debt.md'), debtBytes);
+    const minted = mintBookkeepingDelta({ cwd: root, env: {}, path: 'docs/debt.md', fingerprintBefore: fpA, preContent: null, timestamp: now() });
+    assert.equal(run(root, ['refresh', 'plan-a', '--cause', 'bookkeeping delta re-attestation', '--refreshed-record', minted.digest]).code, 0);
+    rmSync(join(root, 'docs', 'debt.md'));
+    assert.equal(computeTreeFingerprint(root), fpA, 'the tree returned to the round fingerprint');
+    appendReceipt(root, { fingerprint: fpA, nonce: round.dispatches[0].dispatchNonce });
+    writeRoundManifest(root, 'codex', round.dispatches[0].dispatchNonce, { fingerprint: fpA });
+    assert.equal(run(root, ['round-land', 'plan-a']).code, 0, 'the landing revision moves the round head PAST the old delta chain');
+    writeFileSync(join(root, 'docs', 'debt.md'), debtBytes);
+    const r = run(root, ['freeze', 'plan-a']);
+    assert.equal(r.code, 1, 'the pre-head delta chain never re-certifies the later identical move');
+    assert.match(r.stderr, /NEW round|after the last round/);
+  });
+
+  it('R1m8 — a malformed flow config fails the terminal\'s move classification closed, never silently equality-only', () => {
+    const root = makeRepo();
+    mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
+    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), '{"flow":{"schema":1,"unknownKey":true}}\n');
+    adopt(root);
+    openAndLandRound(root);
+    writeFileSync(join(root, 'base.txt'), 'moved\n');
+    const r = run(root, ['freeze', 'plan-a']);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /orchestration config|config/i);
+    assert.match(r.stderr, /fail(s)? closed/);
+  });
+});
+
+describe('flow-writer — R1 folds: completeness re-checked under the append lock (F6/M5/M6)', () => {
+  // The concurrent-append hook: lands a crafted round-land revision (binding a revise receipt
+  // with an EMPTY disposition ledger) directly into the store the moment the writer's append
+  // tries to create its lock — the lock-free pre-check has already passed by then.
+  const concurrentLandingDeps = (root) => {
+    const round = lastRound(root);
+    const entry = round.dispatches[0];
+    const receipt = appendReceipt(root, { fingerprint: round.fingerprint, verdict: 'revise' });
+    const { bytes } = writeRoundManifest(root, 'codex', entry.dispatchNonce, { fingerprint: round.fingerprint, findings: '[major] — f.txt:6 — landed mid-append\nVerdict: revise\n' });
+    const revision = {
+      ...round,
+      dispatches: [{ ...entry, receiptDigest: canonicalFlowDigest(receipt), findingManifestDigest: sha256hex(bytes) }],
+      timestamp: now(),
+    };
+    let landed = false;
+    return {
+      openLock: (p) => {
+        if (!landed) {
+          landed = true;
+          appendFileSync(resolveFlowStorePath(root, {}), `${JSON.stringify(revision)}\n`);
+        }
+        return openSync(p, 'wx');
+      },
+    };
+  };
+
+  it('R1F6 — a revision landing mid-append refuses the terminal: completeness re-runs on the locked snapshot', () => {
+    const root = makeRepo();
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    justifyDegrade(root, 'codex', lastRound(root).fingerprint);
+    const deps = concurrentLandingDeps(root);
+    const r = main(['freeze', 'plan-a'], { cwd: root, env: {}, now, storeDeps: deps });
+    assert.equal(r.code, 1, 'the lock-free completeness pass is not the last word — the locked snapshot decides');
+    assert.match(r.stderr, /disposition ledger is EMPTY/);
+    assert.ok(!storeOf(root).records.some((x) => x.purpose === 'freeze'), 'nothing was written');
+  });
+
+  it('R1M6 — the same mid-append landing refuses round-open under the lock (the F2 floor re-checked)', () => {
+    const root = makeRepo();
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    justifyDegrade(root, 'codex', lastRound(root).fingerprint);
+    const deps = concurrentLandingDeps(root);
+    const r = main(['round-open', 'plan-a', '--backend', 'codex'], { cwd: root, env: {}, now, storeDeps: deps });
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /disposition ledger is EMPTY/);
+    assert.equal(lastRound(root).round, 1, 'no second round landed');
+  });
+
+  it('R1M5 — the preflight hook receives a deep-frozen snapshot: a mutating preflight surfaces loudly and the store stays intact', async () => {
+    const { appendFlowRecordWithPreflight } = await import('./flow-store.mjs');
+    assert.equal(typeof appendFlowRecordWithPreflight, 'function', 'the checked-append seam exists');
+    const root = makeRepo();
+    adopt(root);
+    const before = readFileSync(resolveFlowStorePath(root, {}), 'utf8');
+    const record = {
+      schema: FLOW_SCHEMA_VERSION, kind: CHAIN_KIND, purpose: 'park', planId: 'plan-a', cycle: 1,
+      round: 0, commitEpoch: 0, owner: 'main', base: resolveBase(root), timestamp: now(),
+      stepId: null, fingerprint: computeTreeFingerprint(root),
+    };
+    assert.throws(
+      () => appendFlowRecordWithPreflight({ cwd: root, env: {}, record, preflight: (records) => { records.push({ forged: true }); } }),
+      /object is not extensible|read only|Cannot add property/,
+      'mutating the snapshot throws — the written bytes can never be skewed',
+    );
+    assert.equal(readFileSync(resolveFlowStorePath(root, {}), 'utf8'), before, 'the store is unchanged after the mutating preflight');
+    const ok = appendFlowRecordWithPreflight({ cwd: root, env: {}, record, preflight: (records) => { assert.ok(records.length >= 1); } });
+    assert.equal(ok.record.purpose, 'park');
+  });
+});
+
+// ── Round-2 council fold regressions (consult-settled: nonce-in-receipt · shared custody
+// predicate · strict dispose flag matrix) ───────────────────────────────────────────────
+
+describe('flow-writer — R2 folds: the nonce decides the binding (G1)', () => {
+  it('R2G1A — a delayed receipt of a degraded dispatch never binds a later round: the nonce decides, not the watermark', () => {
+    const root = makeRepo();
+    adopt(root);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const round1 = lastRound(root);
+    justifyDegrade(root, 'codex', round1.fingerprint);
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex']).code, 0);
+    const round2 = lastRound(root);
+    appendReceipt(root, { fingerprint: round1.fingerprint, nonce: round1.dispatches[0].dispatchNonce });
+    const stale = run(root, ['round-land', 'plan-a']);
+    assert.equal(stale.code, 1, 'the DELAYED answer of the degraded round-1 dispatch never binds round 2');
+    assert.match(stale.stderr, /nothing to land/);
+    appendReceipt(root, { fingerprint: round2.fingerprint, nonce: round2.dispatches[0].dispatchNonce });
+    writeRoundManifest(root, 'codex', round2.dispatches[0].dispatchNonce, { fingerprint: round2.fingerprint });
+    assert.equal(run(root, ['round-land', 'plan-a']).code, 0);
+    const head = lastRound(root);
+    assert.equal(head.round, 2);
+    assert.notEqual(head.dispatches[0].receiptDigest, null, 'round 2 bound exactly its own answer');
+  });
+
+  it('R2G1B — a cross-chain lost receipt never cross-binds: each plan\'s dispatch answers only to its own nonce', () => {
+    const root = makeRepo();
+    adopt(root);
+    adopt(root, 'plan-b');
+    assert.equal(run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const roundA = lastRound(root);
+    assert.equal(run(root, ['round-open', 'plan-b', '--backend', 'codex', '--step', 'step-1']).code, 0);
+    const roundB = storeOf(root).records.findLast((r) => r.kind === CHAIN_KIND && r.purpose === 'round' && r.planId === 'plan-b');
+    appendReceipt(root, { fingerprint: roundB.fingerprint, nonce: roundB.dispatches[0].dispatchNonce });
+    writeRoundManifest(root, 'codex', roundB.dispatches[0].dispatchNonce, { fingerprint: roundB.fingerprint });
+    const crossed = run(root, ['round-land', 'plan-a']);
+    assert.equal(crossed.code, 1, 'plan B\'s receipt never binds plan A\'s dispatch, however alone it sits past the watermark');
+    assert.match(crossed.stderr, /nothing to land/);
+    assert.equal(run(root, ['round-land', 'plan-b']).code, 0);
+    const headA = storeOf(root).records.findLast((r) => r.kind === CHAIN_KIND && r.purpose === 'round' && r.planId === 'plan-a');
+    assert.equal(headA.dispatches[0].receiptDigest, null, 'plan A stays pending');
+  });
+});
+
+describe('flow-writer — R2 folds: forged custody + the dispose flag matrix (G2/G3)', () => {
+  it('R2G2 — a forged custody proof never carries a terminal across a move, even with an attesting refresh', () => {
+    const root = makeRepo();
+    writeFlowConfig(root);
+    adopt(root);
+    openAndLandRound(root);
+    const fpA = computeTreeFingerprint(root);
+    writeFileSync(join(root, 'docs', 'debt.md'), '- DEBT-9 — forged custody\n');
+    const fpB = computeTreeFingerprint(root);
+    const delta = {
+      schema: FLOW_SCHEMA_VERSION, kind: 'bookkeeping-delta', fingerprintBefore: fpA, fingerprintAfter: fpB,
+      path: 'docs/debt.md', contentDigest: sha256hex(readFileSync(join(root, 'docs', 'debt.md'))),
+      custodyProof: { preClass: 'absent', tracked: false, headDigest: null, indexDigest: null, worktreeDigest: null, maskedFingerprint: 'ee'.repeat(32) },
+      base: resolveBase(root), timestamp: now(),
+    };
+    appendFlowRecord({ cwd: root, env: {}, record: delta });
+    assert.equal(run(root, ['refresh', 'plan-a', '--cause', 'forged delta re-attestation', '--refreshed-record', canonicalFlowDigest(delta)]).code, 0);
+    const r = run(root, ['freeze', 'plan-a']);
+    assert.equal(r.code, 1, 'a forged maskedFingerprint never carries a terminal');
+    assert.match(r.stderr, /unproven custody/);
+  });
+
+  it('R2G3 — every cross-branch --dispose flag refuses as usage naming the stray flag, before any required-value error', () => {
+    const root = makeRepo();
+    const cases = [
+      ['folded', '--debt-id', 'x'], ['folded', '--debt-digest', 'ab'.repeat(32)], ['folded', '--reason', 'x'],
+      ['queued', '--proof-kind', 'red-proof'], ['queued', '--proof-digest', 'ab'.repeat(32)], ['queued', '--reason', 'x'],
+      ['rejected', '--proof-kind', 'red-proof'], ['rejected', '--proof-digest', 'ab'.repeat(32)], ['rejected', '--debt-id', 'x'], ['rejected', '--debt-digest', 'ab'.repeat(32)],
+    ];
+    for (const [action, flag, value] of cases) {
+      const r = run(root, ['round-land', 'plan-a', '--dispose', action, flag, value]);
+      assert.equal(r.code, 2, `${action} + ${flag} must refuse as usage`);
+      assert.ok(r.stderr.includes(`${flag} does not ride --dispose ${action}`), `${action} + ${flag}: got ${r.stderr}`);
+    }
+  });
+});
+
+describe('flow-writer — the arm usage lines ARE the public contract (CLI usage test per arm)', () => {
+  it('--help pins every round-machinery usage line', () => {
+    const r = run(makeRepo(), ['--help']);
+    assert.equal(r.code, 0);
+    for (const line of [
+      'round-open <planId> --backend <name> [--backend <name> ...] [--step <stepId>] [--new-cycle] [--justification <text>]',
+      'round-land <planId> [--dispose folded --finding <quote> --proof-kind consult-attestation|red-proof --proof-digest <digest>]',
+      'round-land <planId> [--dispose queued --finding <quote> --debt-id <id> --debt-digest <digest>]',
+      'round-land <planId> [--dispose rejected --finding <quote> --reason <text>]',
+      'freeze <planId>',
+      'unfreeze <planId> [--justification <text>]',
+      'converged <planId>',
+      'internal-attestation <planId> --lens <name> [--lens <name> ...] [--degraded <backend> ...] --model <model> [--effort <effort>] [--tier <tier>] --authority <text>',
+    ]) {
+      assert.ok(r.stdout.includes(line), `--help must carry the usage line: ${line}`);
+    }
+    assert.match(r.stdout, /dispatch backend=<b> nonce=<n> watermark=<w>/, 'the round-open stdout grammar is stated in the contract');
+  });
+
+  it('round-land usage lanes: a bad --dispose, a dispose flag without --dispose, and an empty --finding refuse as usage', () => {
+    const root = makeRepo();
+    assert.equal(run(root, ['round-land', 'plan-a', '--dispose', 'shrugged', '--finding', 'x']).code, 2);
+    assert.equal(run(root, ['round-land', 'plan-a', '--finding', 'x']).code, 2);
+    assert.equal(run(root, ['round-land', 'plan-a', '--dispose', 'rejected', '--finding', '', '--reason', 'r']).code, 2);
   });
 });

@@ -104,6 +104,23 @@ const ownOpenChainPlanIds = (records, owner) =>
     return !state.completed && !state.parked && state.mode === 'in-step';
   });
 
+// The ONE per-record custody predicate (Plan 4 Phase 3, round-2 fold): the confinement equality
+// + the mint-only invariants the record-level shape validation cannot see — shared by the
+// gate-time walk below and the writer's terminal move validation, so a forged proof can neither
+// pass the gates nor carry a terminal. → issue string | null.
+export const deltaCustodyIssue = (r) => {
+  if (r.custodyProof.maskedFingerprint !== r.fingerprintBefore) {
+    return `the persisted custody proof does not prove confinement (maskedFingerprint ${short(r.custodyProof.maskedFingerprint)} ≠ fingerprintBefore ${short(r.fingerprintBefore)}) — a bare or tampered declaration never passes; re-mint through mintBookkeepingDelta`;
+  }
+  const proof = r.custodyProof;
+  const mintInvariant = !proof.tracked ? null
+    : proof.preClass !== 'present' ? 'a tracked path with an absent pre-state never mints'
+    : proof.indexDigest === null ? 'a staged deletion (a HEAD entry without an index entry) never mints'
+    : proof.worktreeDigest !== proof.indexDigest ? 'the clean-at-path rule (pre-change worktree bytes = the index entry) never minted this'
+    : null;
+  return mintInvariant === null ? null : `the persisted custody proof violates a mint invariant — ${mintInvariant}; an unmintable proof never passes (fail closed)`;
+};
+
 const deltaRefusals = (records, owner) => {
   const refusals = [];
   const openPlanIds = ownOpenChainPlanIds(records, owner);
@@ -114,20 +131,9 @@ const deltaRefusals = (records, owner) => {
   const authoritative = new Set(authoritativeFlowRecords(records));
   records.forEach((r, i) => {
     if (r.kind !== 'bookkeeping-delta') return;
-    if (r.custodyProof.maskedFingerprint !== r.fingerprintBefore) {
-      refusals.push(`bookkeeping-delta at ${r.path}: the persisted custody proof does not prove confinement (maskedFingerprint ${short(r.custodyProof.maskedFingerprint)} ≠ fingerprintBefore ${short(r.fingerprintBefore)}) — a bare or tampered declaration never passes; re-mint through mintBookkeepingDelta`);
-      return;
-    }
-    // The MINT-only invariants the record-level shape validation cannot see — an unmintable proof
-    // (hand-built around the shape rules) never passes the checker.
-    const proof = r.custodyProof;
-    const mintInvariant = !proof.tracked ? null
-      : proof.preClass !== 'present' ? 'a tracked path with an absent pre-state never mints'
-      : proof.indexDigest === null ? 'a staged deletion (a HEAD entry without an index entry) never mints'
-      : proof.worktreeDigest !== proof.indexDigest ? 'the clean-at-path rule (pre-change worktree bytes = the index entry) never minted this'
-      : null;
-    if (mintInvariant !== null) {
-      refusals.push(`bookkeeping-delta at ${r.path}: the persisted custody proof violates a mint invariant — ${mintInvariant}; an unmintable proof never passes (fail closed)`);
+    const custody = deltaCustodyIssue(r);
+    if (custody !== null) {
+      refusals.push(`bookkeeping-delta at ${r.path}: ${custody}`);
       return;
     }
     if (!authoritative.has(r)) return;
