@@ -31,6 +31,8 @@ import { writeContainedFileAtomic, lstatNoFollow } from './atomic-write.mjs';
 import { parsePositiveIntKnob } from './changed-surface.mjs';
 import { FLOW_SCHEMA_VERSION, CHAIN_KIND, validateFlowRecord, validateChainSequence, validateSupersessions, authoritativeFlowRecords, canonicalFlowDigest, flowRecordKey, subsetFoldBatchDigest, subsetGateIdsDigest, SUBSET_ATTEMPT_DIAGNOSIS_FROM } from './flow-record.mjs';
 import { isNeverCommittableStat, isBinaryFile, lexicalRepoRelative, resolveBase, computeTreeFingerprint } from './core-evidence.mjs';
+import { derivePregateSubsetIds, GATES_REL } from './gates-declaration.mjs';
+import { CONFIG_REL } from './orchestration-config.mjs';
 // The read half lives in flow-store-read.mjs (it OWNS no write API — read-only surfaces like the
 // procedures advisor import it directly) and is RE-EXPORTED here — every existing consumer keeps
 // its import site.
@@ -211,6 +213,9 @@ const acquireFlowLock = (resolvedStorePath, env, deps) => {
       holderRead = readRegularFileNoFollow(lockPath, { ...holderIo, keepFd: true });
     } catch (err) {
       throw stop(`cannot read the flow-store lock holder (${(err && err.code) || (err && err.message) || err}) — the read/close custody failed (fail closed)`);
+    }
+    if (holderRead.closeFailure !== undefined) {
+      throw stop(`cannot read the flow-store lock holder (${holderRead.closeFailure}) — the read/close custody failed (fail closed)`);
     }
     const holderFd = holderRead.outcome === 'ok' ? holderRead.fd : null;
     let verdict = null;
@@ -636,12 +641,11 @@ export const probeFlowAppendLock = ({ cwd = process.cwd(), env = process.env, de
 // under the append lock against the OPEN owning chain; attemptIndex, foldBatch/subsetDigest
 // derivation, and the hard-stop state are computed from the captured store snapshot INSIDE the
 // critical section — a concurrent appender never duplicates an index, and a round/park/complete
-// landing mid-run refuses the append (never a silent misfile). subsetGateIds is TRUSTED caller
-// input under the store's self-discipline model (round-10 disposition): the canonical deriving
-// caller is run-gates --pre-review (declaration minus canonical checkers minus validated
-// pregateExclude) — the derivation cannot live here without an import cycle; once the checker
-// predicate moves to a leaf module (the FLOW-READ-GRAPH-PURITY extraction), the factory can
-// re-derive the ids itself.
+// landing mid-run refuses the append (never a silent misfile). subsetGateIds states what the
+// caller RAN — only the caller knows that — but it never DECIDES the counting context: the
+// factory re-derives the subset from the declaration + config itself (the R10 rider, via the
+// gates-declaration leaf) and refuses a mismatch, so a caller-chosen id list can never forge a
+// fresh subsetDigest and bypass the hard-stop budget.
 export const appendSubsetAttempt = ({ cwd = process.cwd(), env = process.env, deps = {}, expected, subsetGateIds, status, diagnosis = null, base, fingerprint, timestamp = new Date().toISOString() } = {}) => {
   const owner = deriveFlowOwner(cwd);
   if (owner == null) throw stop('not inside a git work tree — the subset-attempt mint derives the owning worktree from git (fail closed)');
@@ -655,6 +659,19 @@ export const appendSubsetAttempt = ({ cwd = process.cwd(), env = process.env, de
   if (diagnosis !== null && (typeof diagnosis !== 'string' || diagnosis.length === 0)) {
     throw stop(`diagnosis must be null or a non-empty string (got ${JSON.stringify(diagnosis)}) — a mistyped input would otherwise record diagnosis-less silently (round-11 fold; fail closed)`);
   }
+  let derived;
+  try {
+    derived = derivePregateSubsetIds(cwd);
+  } catch (err) {
+    throw stop(`the pregate subset cannot be re-derived (${(err && err.message) || err}) — an attempt records only a subset the declaration derives (R10; fail closed)`);
+  }
+  if (derived.length !== subsetGateIds.length || derived.some((id, i) => id !== subsetGateIds[i])) {
+    throw stop(`subsetGateIds [${subsetGateIds.join(', ')}] does not match the subset derived from ${GATES_REL} + ${CONFIG_REL} flow.pregateExclude [${derived.join(', ')}] — the factory re-derives the subset itself (R10), so a caller-chosen id list never binds a counting context (fail closed)`);
+  }
+  // Everything downstream binds the factory-owned DERIVED ids — the caller array stays mutable in
+  // the caller's hands (a deps lock-hook could rewrite it after the check above) and must never
+  // reach the digest domain.
+  const subsetIds = Object.freeze([...derived]);
   let minted = null;
   const value = appendResolvedFlowRecord({ cwd, env, deps, makeRecord: (records) => {
     const chain = records.filter((r) => r.kind === CHAIN_KIND && r.planId === expected.planId);
@@ -685,7 +702,7 @@ export const appendSubsetAttempt = ({ cwd = process.cwd(), env = process.env, de
     if (openOwn.length !== 1 || openOwn[0] !== expected.planId) {
       throw stop(`this worktree ("${owner}") owns ${openOwn.length} open chains under the lock (${openOwn.join(', ') || 'none'}) — an attempt records only when exactly ONE open owning chain exists and it is the captured one ("${expected.planId}"); a chain landed mid-run — re-run the subset under the current context (fail closed)`);
     }
-    const probe = { planId: expected.planId, cycle: expected.cycle, stepId: expected.stepId, foldBatch: subsetFoldBatchDigest(expected), subsetDigest: subsetGateIdsDigest(subsetGateIds) };
+    const probe = { planId: expected.planId, cycle: expected.cycle, stepId: expected.stepId, foldBatch: subsetFoldBatchDigest(expected), subsetDigest: subsetGateIdsDigest(subsetIds) };
     const budget = subsetAttemptState(records, probe);
     const attemptIndex = budget.nextIndex;
     if (budget.reds >= SUBSET_ATTEMPT_DIAGNOSIS_REDS && (typeof diagnosis !== 'string' || diagnosis.length === 0)) {

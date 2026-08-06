@@ -17,7 +17,7 @@ import {
   runReceiptDeadline, main, DEFAULT_DEADLINE_TIMEOUT_S, RECEIPT_DEADLINE_CONTRACT,
 } from './receipt-deadline.mjs';
 import { FINDING_MANIFEST_PREFIX } from './flow-record.mjs';
-import { readFileBytesNoFollow } from './flow-store-read.mjs';
+import { readFileBytesNoFollow, readRegularFileNoFollow } from './flow-store-read.mjs';
 
 const receiptLine = (backend) =>
   `${JSON.stringify({ schema: 1, artifact: 'code', fresh: true, fingerprint: 'a'.repeat(64), backend, verdict: 'ship', grounded: true, factsHash: null, wrapperVersion: '3.2.0', timestamp: '2026-08-05T12:00:00Z', probe: false, posture: { model: 'm', effort: 'e', tier: null } })}\n`;
@@ -400,6 +400,20 @@ describe('readFileBytesNoFollow — open/close balance (the polling consumer nev
     rmSync(store.dir, { recursive: true, force: true });
     assert.equal(failed.outcome, 'error', 'a close failure is never swallowed');
     assert.match(failed.code, /close failed/);
+  });
+
+  it('the TEXT reader converts a close failure on an OK read to outcome:error — never a throw out of the reader (R1 fold)', () => {
+    const store = makeStore('line\n');
+    const failingClose = {
+      open: (...a) => openSync(...a),
+      close: (fd) => { closeSync(fd); throw Object.assign(new Error('EIO'), { code: 'EIO' }); },
+    };
+    const r = readRegularFileNoFollow(store.path, failingClose);
+    assert.equal(r.outcome, 'error', 'readReceipts and the four fail-closed consumers rely on readError, never an exception');
+    assert.match(r.code, /close failed/);
+    const foreign = readRegularFileNoFollow(store.dir, failingClose);
+    rmSync(store.dir, { recursive: true, force: true });
+    assert.equal(foreign.outcome, 'foreign', 'a non-ok outcome keeps its own class — only a successful read converts');
   });
 });
 

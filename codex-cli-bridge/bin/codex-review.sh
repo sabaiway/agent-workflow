@@ -635,7 +635,7 @@ try {
 } catch {
   code = 1;
 }
-if (tmp !== null) { try { fs.unlinkSync(tmp); } catch { if (code === 0) { code = 5; process.stdout.write(tmp); } } }
+if (tmp !== null) { try { fs.unlinkSync(tmp); } catch { if (code === 0) code = 5; process.stdout.write(tmp); } }
 process.exit(code);
 ' "$findings_file" "$AW_RECEIPT_BACKEND" "$nonce" "$fingerprint" "$manifest" 2>/dev/null )"
   mint_rc=$?
@@ -646,10 +646,16 @@ process.exit(code);
   fi
   if [[ $mint_rc -eq 3 ]]; then
     echo "error: the finding manifest $manifest already exists with DIFFERENT bytes or is not a regular file — no-clobber refuses loudly (one dispatch identity, one manifest)." >&2
+    if [[ -n "$mint_out" ]]; then
+      echo "       orphan left at: ${mint_out} — its temporary sibling could not be removed either; remove it by hand." >&2
+    fi
     return 1
   fi
   if [[ $mint_rc -ne 0 ]]; then
     echo "error: could not compose or write the finding manifest (unreadable or non-UTF-8 findings, or an fs failure) — NO manifest was written." >&2
+    if [[ -n "$mint_out" ]]; then
+      echo "       orphan left at: ${mint_out} — its temporary sibling could not be removed either; remove it by hand." >&2
+    fi
     return 1
   fi
   return 0

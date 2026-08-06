@@ -27,6 +27,12 @@ const sh = (args, cwd) => {
 };
 
 let seq = 0;
+// The subset-attempt factory re-derives the pregate subset from the repo's own declaration (the
+// R10 rider) — every fixture repo carries the ['unit', 'lint'] declaration the mints state.
+const GATES_DECLARATION = JSON.stringify({ gates: [
+  { id: 'unit', title: 'Unit', cmd: 'true' },
+  { id: 'lint', title: 'Lint', cmd: 'true' },
+] });
 const makeRepo = () => {
   const root = join(TMP, `repo-${seq += 1}`);
   mkdirSync(root, { recursive: true });
@@ -34,6 +40,8 @@ const makeRepo = () => {
   sh(['config', 'user.email', 'coder-tools@proton.me'], root);
   sh(['config', 'user.name', 'coder-tool'], root);
   writeFileSync(join(root, 'base.txt'), 'base\n');
+  mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
+  writeFileSync(join(root, 'docs', 'ai', 'gates.json'), GATES_DECLARATION);
   sh(['add', '-A'], root);
   sh(['commit', '-q', '-m', 'init'], root);
   return root;
@@ -754,10 +762,16 @@ describe('flow-store — the Decision-7/8 locked subset-attempt factory (compute
     appendFlowRecord({ cwd: root, record: openerRound(canonicalFlowDigest(first), { owner: 'main' }) });
     let tick = 0;
     const ts = () => `2026-07-29T00:${String(Math.floor(tick / 60)).padStart(2, '0')}:${String((tick += 1) % 60).padStart(2, '0')}.000Z`;
-    const mintAt = (round, subset, over = {}) => appendSubsetAttempt({
-      cwd: root, expected: { planId: 'plan-a', cycle: 1, stepId: 'step-1', round },
-      subsetGateIds: subset, status: 'red', base: BASE, fingerprint: FP, timestamp: ts(), ...over,
-    });
+    // A DIFFERENT subset at one round is legal only through a declared pregateExclude change (#47)
+    // — the factory re-derives from the declaration + config (R10), so the config states it.
+    const mintAt = (round, subset, over = {}) => {
+      const exclude = ['unit', 'lint'].filter((id) => !subset.includes(id));
+      writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ flow: { schema: FLOW_SCHEMA_VERSION, pregateExclude: exclude } }));
+      return appendSubsetAttempt({
+        cwd: root, expected: { planId: 'plan-a', cycle: 1, stepId: 'step-1', round },
+        subsetGateIds: subset, status: 'red', base: BASE, fingerprint: FP, timestamp: ts(), ...over,
+      });
+    };
     const consultAt = (round, nonce) => appendFlowRecord({ cwd: root, record: {
       schema: FLOW_SCHEMA_VERSION, kind: 'consult-attestation', fingerprint: FP, backend: 'codex',
       nonce, planId: 'plan-a', cycle: 1, stepId: 'step-1', round,
@@ -866,6 +880,44 @@ describe('flow-store — the Decision-7/8 locked subset-attempt factory (compute
     throwsStop(() => appendSubsetAttempt({ cwd: root, expected: ADOPTION_CTX, subsetGateIds: 'unit', status: 'green', base: BASE, fingerprint: FP }), /ordered gate-id array/);
     throwsStop(() => appendSubsetAttempt({ cwd: root, expected: ADOPTION_CTX, subsetGateIds: SUBSET, status: 'amber', base: BASE, fingerprint: FP }), /green \| red/);
     assert.deepEqual(attemptsIn(root), [], 'every refusal lands nothing');
+  });
+
+  it('a caller-chosen id list never binds a counting context — the factory re-derives the subset and refuses a mismatch (R10)', () => {
+    const root = armedRepo();
+    throwsStop(
+      () => mint(root, { subsetGateIds: ['unit'] }),
+      /does not match the subset derived from docs\/ai\/gates\.json/,
+    );
+    throwsStop(
+      () => mint(root, { subsetGateIds: ['lint', 'unit'] }),
+      /does not match the subset derived/,
+    );
+    assert.deepEqual(attemptsIn(root), [], 'a forged subsetDigest never opens a fresh counting context');
+  });
+
+  it('an underivable subset never mints — a repo whose declaration is missing refuses the append by name (R10)', () => {
+    const root = armedRepo();
+    rmSync(join(root, 'docs', 'ai', 'gates.json'));
+    throwsStop(() => mint(root), /pregate subset cannot be re-derived[\s\S]*no gate declaration/);
+    assert.deepEqual(attemptsIn(root), [], 'nothing landed');
+  });
+
+  it('an unknown pregateExclude id makes the subset underivable at the factory too — refused by name (R10)', () => {
+    const root = armedRepo();
+    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ flow: { schema: FLOW_SCHEMA_VERSION, pregateExclude: ['ghost'] } }));
+    throwsStop(() => mint(root), /pregate subset cannot be re-derived[\s\S]*ghost/);
+    assert.deepEqual(attemptsIn(root), [], 'nothing landed');
+  });
+
+  it('a caller-array mutation AFTER the prologue check never moves the recorded digest — everything downstream binds the DERIVED subset (R10, R1 fold)', () => {
+    const root = armedRepo();
+    const ids = ['unit', 'lint'];
+    const minted = appendSubsetAttempt({
+      cwd: root, expected: ADOPTION_CTX, subsetGateIds: ids, status: 'green', base: BASE, fingerprint: FP, timestamp: TS,
+      deps: { openLock: (p) => { ids.length = 0; ids.push('forged'); return openSync(p, 'wx'); } },
+    });
+    assert.equal(minted.record.subsetDigest, subsetGateIdsDigest(['unit', 'lint']), 'a lock-hook mutation of the caller array must never forge the counting context');
+    assert.equal(attemptsIn(root)[0].subsetDigest, subsetGateIdsDigest(['unit', 'lint']));
   });
 });
 

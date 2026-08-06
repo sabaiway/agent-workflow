@@ -2079,6 +2079,45 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
   });
 });
 
+// MANIFEST-TMP-ORPHAN-ON-FAILURE: on a FAILURE exit of the finding-manifest mint whose temp
+// unlink ALSO fails, the error names the orphan path — parameterized over BOTH failure codes
+// (rc 3 no-clobber, rc 1 fs failure); a failure whose temp IS removable stays orphan-silent.
+describe('agy-review.sh — finding-manifest failure branches name the orphan (MANIFEST-TMP-ORPHAN-ON-FAILURE)', () => {
+  const manifestPath = (repo, nonce) => join(repo, '.git', `agent-workflow-finding-manifest-agy-${nonce}.json`);
+  const UNLINK_FAIL = "const fs = require('node:fs');\nconst real = fs.unlinkSync;\nfs.unlinkSync = (p) => { if (String(p).includes('.tmp')) { const e = new Error('EPERM'); e.code = 'EPERM'; throw e; } return real(p); };\n";
+  const LINK_FAIL = "const fsLink = require('node:fs');\nfsLink.linkSync = () => { const e = new Error('EPERM'); e.code = 'EPERM'; throw e; };\n";
+  for (const failure of [
+    { rc: 3, name: 'no-clobber (rc 3)', preload: UNLINK_FAIL, plant: true, errRe: /DIFFERENT bytes or is not a regular file/ },
+    { rc: 1, name: 'fs failure (rc 1)', preload: UNLINK_FAIL + LINK_FAIL, plant: false, errRe: /could not compose or write the finding manifest/ },
+  ]) {
+    it(`a FAILURE exit (${failure.name}) whose temp unlink also fails names the ORPHAN PATH in the error`, () => {
+      const sb = makeSandbox();
+      if (failure.plant) writeFileSync(manifestPath(sb.repo, 'orphf1'), 'planted different bytes\n');
+      const preload = join(sb.home, 'orphan-fail-preload.cjs');
+      writeFileSync(preload, failure.preload);
+      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'orphf1', NODE_OPTIONS: `--require ${preload}` } });
+      const receipts = readReceipts(sb.repo);
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 0, 'the review itself still succeeds (the artifact lane failed loudly)');
+      assert.match(r.stderr, failure.errRe);
+      assert.match(r.stderr, /orphan left at: \S*\.tmp/, 'the failure branch names the exact orphan path — never a silent leftover');
+      assert.equal(receipts.length, 0, 'a failed mint still EXCLUDES the receipt');
+    });
+  }
+
+  it('a FAILURE exit whose temp IS removable stays orphan-silent (no leftover, no orphan line)', () => {
+    const sb = makeSandbox();
+    writeFileSync(manifestPath(sb.repo, 'orphf2'), 'planted different bytes\n');
+    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'orphf2' } });
+    const leftovers = readdirSync(join(sb.repo, '.git')).filter((n) => n.endsWith('.tmp'));
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, 'the review itself still succeeds (the artifact lane failed loudly)');
+    assert.match(r.stderr, /DIFFERENT bytes or is not a regular file/);
+    assert.doesNotMatch(r.stderr, /orphan left at:/, 'a removed temp is not an orphan — the line would train readers to ignore it');
+    assert.deepEqual(leftovers, [], 'the temp really was removed');
+  });
+});
+
 // ── bridge settings file (bridges 2.3.0) ─────────────────────────────────────────
 // ${XDG_CONFIG_HOME:-$HOME/.config}/agent-workflow/bridge-settings.conf holds KEY=VALUE
 // lines, PARSED (never sourced). Precedence: explicit env (even empty: KEY= disables the

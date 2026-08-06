@@ -28,7 +28,7 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { shellQuoteArg } from './review-state.mjs';
+import { shellQuoteArg } from './repo-lex.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 

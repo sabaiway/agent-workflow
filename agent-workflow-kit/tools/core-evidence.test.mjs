@@ -18,6 +18,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, readFileSync, existsSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { computeTreeFingerprint, computeFingerprintPayload } from './review-state.mjs';
@@ -586,6 +587,23 @@ describe('review-domain primitives — the defensive arms of the canonical paylo
     assert.deepEqual([r.receipts.length, r.malformed], [0, 2]);
     rmSync(dir, { recursive: true, force: true });
   });
+
+  it('readReceipts: a SYMLINKED receipts path surfaces readError, never content (RECEIPTS-READER-NOFOLLOW)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'core-evidence-reclink-'));
+    writeFileSync(join(dir, 'real.jsonl'), `${JSON.stringify({ backend: 'codex' })}\n`);
+    symlinkSync('real.jsonl', join(dir, 'receipts.jsonl'));
+    const r = readReceipts(join(dir, 'receipts.jsonl'));
+    assert.match(r.readError ?? '', /symlink/, 'the no-follow read names the foreign leaf class');
+    assert.equal(r.receipts.length, 0, 'a symlinked store never reads as receipts');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('readReceipts: a non-ENOENT open failure surfaces its code as readError (the error outcome, injected io)', () => {
+    const eacces = () => { const e = new Error('EACCES'); e.code = 'EACCES'; throw e; };
+    const r = readReceipts('/any/receipts.jsonl', { open: eacces });
+    assert.equal(r.readError, 'EACCES');
+    assert.equal(r.receipts.length, 0);
+  });
 });
 
 // ── the probe safeguards (moved verbatim from the retired fold runner) ────────────────────────────
@@ -1034,6 +1052,21 @@ describe('summary — stateless D6 render (verdicts, red-proofs, degrades; loud 
     rmSync(dir, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
   });
+  it('a SYMLINKED receipts store withholds the verdicts section — content is never read through (RECEIPTS-READER-NOFOLLOW)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    writeFileSync(
+      join(root, '.git', 'real-receipts.jsonl'),
+      `${JSON.stringify({ schema: 1, artifact: 'code', fresh: true, fingerprint: fp, backend: 'codex', verdict: 'SHIP', grounded: true, probe: false, posture: { model: 'm' }, timestamp: 't1' })}\n`,
+    );
+    symlinkSync('real-receipts.jsonl', join(root, '.git', 'agent-workflow-review-receipts.jsonl'));
+    const r = main(['summary'], { cwd: root, env: fixtureEnv() });
+    assert.equal(r.code, 1, 'a symlinked receipts store must never render as a healthy summary');
+    assert.match(r.stdout, /review verdicts WITHHELD/);
+    assert.match(r.stdout, /symlink/);
+    assert.doesNotMatch(r.stdout, /SHIP/, 'the linked content must never surface as attesting');
+    rmSync(root, { recursive: true, force: true });
+  });
   it('summary names an unrecognized verdict instead of stale or missing', () => {
     const { root } = makeRepo();
     const fp = computeTreeFingerprint(root);
@@ -1066,7 +1099,7 @@ describe('summary — stateless D6 render (verdicts, red-proofs, degrades; loud 
 // ── the process contract (representative E2E spawns — argv + exit code + stdio) ──────────────────
 
 describe('core-evidence CLI — real process spawns (argv/exit-code contract)', () => {
-  const TOOL = new URL('./core-evidence.mjs', import.meta.url).pathname;
+  const TOOL = fileURLToPath(new URL('./core-evidence.mjs', import.meta.url));
   it('summary runs as a real process (exit 0, report on stdout)', () => {
     const { root } = makeRepo();
     const r = spawnSync('node', [TOOL, 'summary', '--cwd', root], { encoding: 'utf8', env: fixtureEnv() });

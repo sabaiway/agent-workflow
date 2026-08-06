@@ -34,12 +34,14 @@
 // checker, not here. Dependency-free. No side effects on import.
 
 import { readFileSync, lstatSync, realpathSync, readlinkSync, openSync, readSync, closeSync } from 'node:fs';
-import { join, dirname, isAbsolute, normalize, sep, basename } from 'node:path';
+import { join, dirname, normalize, sep, basename } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { writeContainedFileAtomic } from './atomic-write.mjs';
 import { parsePositiveIntKnob, probeVerdict } from './changed-surface.mjs';
+import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
+import { lexicalRepoRelative } from './repo-lex.mjs';
 
 export const CORE_EVIDENCE_STOP = 'CORE_EVIDENCE_STOP';
 const stop = (message) => Object.assign(new Error(`[agent-workflow-kit] ${message}`), { name: 'CoreEvidenceStop', code: CORE_EVIDENCE_STOP });
@@ -399,17 +401,20 @@ export const resolveReceiptsPath = (cwd, env = process.env) => {
 };
 
 // Parse the receipt file → { receipts, malformed, readError? }. Absent file → empty (not an
-// error: no review ever ran). A NON-ENOENT read failure surfaces as readError — an unreadable
-// store must never silently read as "no receipts" (the summary withholds its verdicts section on
-// it). A malformed line is counted + reported, never silently dropped.
-export const readReceipts = (path, readFile = readFileSync) => {
-  let raw;
-  try {
-    raw = readFile(path, 'utf8');
-  } catch (err) {
-    if (err && err.code === 'ENOENT') return { receipts: [], malformed: 0 };
-    return { receipts: [], malformed: 0, readError: (err && err.code) || (err && err.message) || 'read failed' };
+// error: no review ever ran). The read rides the fs-read-nofollow leaf (RECEIPTS-READER-NOFOLLOW):
+// a symlinked/FIFO/directory receipts path surfaces as readError — never content, never an empty
+// success — and any NON-ENOENT failure surfaces as readError too; an unreadable store must never
+// silently read as "no receipts" (the summary withholds its verdicts section on it). A malformed
+// line is counted + reported, never silently dropped. `io` is the injectable-read test seam
+// (readRegularFileNoFollow's descriptor-level io).
+export const readReceipts = (path, io = {}) => {
+  const read = readRegularFileNoFollow(path, io);
+  if (read.outcome === 'absent') return { receipts: [], malformed: 0 };
+  if (read.outcome === 'foreign') {
+    return { receipts: [], malformed: 0, readError: `the receipts store is a ${read.className}, not a regular file — refusing to read it (fail closed)` };
   }
+  if (read.outcome === 'error') return { receipts: [], malformed: 0, readError: read.code };
+  const raw = read.content;
   const receipts = [];
   let malformed = 0;
   for (const line of raw.split('\n')) {
@@ -593,17 +598,10 @@ const isNonEmptyString = (v) => typeof v === 'string' && v.length > 0;
 const HEX64_RE = /^[0-9a-f]{64}$/;
 const HEX40_RE = /^[0-9a-f]{40}$/;
 
-// The LEXICAL half of the repo-relative rule — ONE home shared by the record validator (which has
-// no fs to resolve against) and the fs resolver below, so the two can never drift: a forged record
-// carrying an equal-but-absolute (or escaping) testId/file pair is refused at validation, not just
-// at observation time.
-export const lexicalRepoRelative = (rel) => {
-  if (typeof rel !== 'string' || rel.length === 0) return { ok: false, reason: 'empty file path' };
-  if (isAbsolute(rel)) return { ok: false, reason: `absolute path "${rel}" — the testId file half must be repo-relative` };
-  const norm = normalize(rel);
-  if (norm === '..' || norm.startsWith(`..${sep}`)) return { ok: false, reason: `path "${rel}" escapes the repo root` };
-  return { ok: true };
-};
+// The LEXICAL half of the repo-relative rule lives in the repo-lex.mjs LEAF (ONE home shared by
+// the record validators — flow-record has no fs to resolve against — and the fs resolver below,
+// so the two can never drift); re-exported here so every historical consumer keeps its import site.
+export { lexicalRepoRelative } from './repo-lex.mjs';
 
 export const validateEvidenceRecord = (record) => {
   if (!isPlainObject(record)) return { ok: false, reason: 'record is not an object' };

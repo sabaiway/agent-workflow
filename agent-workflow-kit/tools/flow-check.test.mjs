@@ -1,6 +1,6 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +14,7 @@ import {
 import { FALLBACK_LENS_ADDITIONAL_ONLY } from './cheap-agents.mjs';
 import { resolveFlowStorePath, parseFlowStoreText } from './flow-store.mjs';
 import { FLOW_SCHEMA_VERSION, canonicalFlowDigest, flowProjectionHash } from './flow-record.mjs';
-import { EVIDENCE_SCHEMA_VERSION, resolveEvidencePath, parseEvidenceText, computeTreeFingerprint } from './core-evidence.mjs';
+import { EVIDENCE_SCHEMA_VERSION, resolveEvidencePath, parseEvidenceText, computeTreeFingerprint, resolveReceiptsPath } from './core-evidence.mjs';
 
 const TOOL = fileURLToPath(new URL('./flow-check.mjs', import.meta.url));
 // The pasteable-recovery command anchor: the SAME absolute tool path + POSIX single-quoting the
@@ -502,6 +502,16 @@ describe('flow-check — delta-chain classification + cap attribution (#61, Step
     const c = classify(recordsOf([...chainB(), d1, forked, reattest(d1), reattest(forked, { timestamp: TS(5) })]), { toFingerprint: D('ab') });
     assert.equal(c.classification, 'refused');
     assert.match(c.reason, /fork/);
+  });
+
+  it('a MIXED declared+undeclared pair at one fingerprint names the UNDECLARED path, never the generic fork wording (both lanes refuse)', () => {
+    const d1 = delta();
+    const stray = delta({ fingerprintAfter: D('ac'), path: 'src/code.mjs' });
+    const c = classify(recordsOf([...chainB(), d1, stray, reattest(d1)]), { toFingerprint: D('ab') });
+    assert.equal(c.classification, 'refused');
+    assert.match(c.reason, /src\/code\.mjs/, 'the undeclared path is the actionable fact — the declaredPaths restriction outranks the fork wording');
+    assert.match(c.reason, /DECLARED bookkeeping path/);
+    assert.doesNotMatch(c.reason, /fork the chain/);
   });
 
   it('an undeclared-path delta never enters the chain — the refusal names the path (fail closed)', () => {
@@ -1270,6 +1280,18 @@ describe('flow-check — computeFlowDecision (the guard-facing two-tier answer)'
     assert.equal(foreign.armed, true);
     assert.deepEqual(foreign.refusals, []);
     assert.equal(foreign.advisories.length, 1);
+  });
+
+  it('armed + a SYMLINKED receipts store: the decision refuses fail-closed, never an empty success (RECEIPTS-READER-NOFOLLOW)', () => {
+    const root = makeRepo();
+    writeFileSync(resolveFlowStorePath(root, {}), `${JSON.stringify(adoption())}\n`);
+    const receiptsPath = resolveReceiptsPath(root, {});
+    writeFileSync(join(root, '.git', 'real-receipts.jsonl'), `${JSON.stringify({ backend: 'codex', verdict: 'SHIP' })}\n`);
+    symlinkSync('real-receipts.jsonl', receiptsPath);
+    const d = computeFlowDecision({ cwd: root });
+    assert.equal(d.armed, true);
+    assert.ok(d.refusals.some((r) => /review-receipts store is unreadable or malformed/.test(r) && /symlink/.test(r)),
+      `a symlinked receipts store must refuse the receipt-consuming decision, never read through: ${d.refusals}`);
   });
 });
 

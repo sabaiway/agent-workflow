@@ -188,6 +188,12 @@ export const classifyDeltaChain = ({ records, fromFingerprint, toFingerprint, de
       return { classification: 'refused', reason: `no bookkeeping-delta continues the chain at ${short(tip)} — a gap never classifies CURRENT (fail closed)` };
     }
     if (candidates.length > 1) {
+      // FLOW-DELTA-FORK-NAMES-UNDECLARED: the declaredPaths restriction outranks the fork wording
+      // — a mixed pair's actionable fact is the undeclared path, not the fork (both lanes refuse).
+      const undeclared = candidates.filter((d) => !declared.includes(d.path));
+      if (undeclared.length > 0) {
+        return { classification: 'refused', reason: `bookkeeping-delta at ${undeclared.map((d) => d.path).join(', ')}: not a DECLARED bookkeeping path (declared: ${declared.join(', ') || 'none'}) — an undeclared-path delta never enters a classification chain, however valid its custody proof (fail closed)` };
+      }
       return { classification: 'refused', reason: `${candidates.length} authoritative deltas fork the chain at ${short(tip)} — a fork never classifies CURRENT (fail closed)` };
     }
     const d = candidates[0];
@@ -656,14 +662,22 @@ export const computeFlowDecision = ({ cwd = process.cwd(), consumer = 'gate', pr
       // so receipt coverage binds all providers under solo; the degrade escape is never consulted
       // under solo, so a stray degrade must not demand coverage there.
       const receiptsPath = resolveReceiptsPath(cwd, {});
-      evidence = {
-        receipts: receiptsPath ? readReceipts(receiptsPath).receipts : [],
-        tree: { base: motion.currentBase, fingerprint: fingerprintProbe(cwd) },
-        receiptBackends: obligations.recipe === 'solo' ? Object.values(DISPLAY_ALIASES) : obligations.backends,
-        degradeBackends: obligations.backends,
-        declaredPaths: [config?.flow?.debtQueue, config?.flow?.convergenceSummary].filter((p) => typeof p === 'string'),
-        refreshCap: config?.flow?.councilRounds ?? null,
-      };
+      const receiptsRead = receiptsPath ? readReceipts(receiptsPath) : { receipts: [], malformed: 0 };
+      if (receiptsRead.readError != null || receiptsRead.malformed > 0) {
+        // RECEIPTS-READER-NOFOLLOW: the decision consults receipts, so a store that cannot be
+        // read clean (symlinked/foreign leaf, I/O failure, malformed lines) refuses — an empty
+        // success here would wave every receipt-consuming arm through.
+        evidenceRefusals.push(`the review-receipts store is unreadable or malformed (${receiptsRead.readError ?? `${receiptsRead.malformed} malformed line(s)`}) — the flow decision consults receipts, so it fails closed; inspect ${receiptsPath}`);
+      } else {
+        evidence = {
+          receipts: receiptsRead.receipts,
+          tree: { base: motion.currentBase, fingerprint: fingerprintProbe(cwd) },
+          receiptBackends: obligations.recipe === 'solo' ? Object.values(DISPLAY_ALIASES) : obligations.backends,
+          degradeBackends: obligations.backends,
+          declaredPaths: [config?.flow?.debtQueue, config?.flow?.convergenceSummary].filter((p) => typeof p === 'string'),
+          refreshCap: config?.flow?.councilRounds ?? null,
+        };
+      }
     }
   }
   // The D10 arm (Plan 4 Decision 2 + the round-2 sharpening) — commit-guard lane ONLY, and NOT

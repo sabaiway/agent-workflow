@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { main, mergeFlowBlock, evaluateArmingFloors, FLOW_BOOKKEEPING_FLOOR_RESIDUAL } from './set-flow.mjs';
 import { CONFIG_REL, FLOW_SCHEMA_VERSION, FLOW_SCHEMA_1_FIXTURE, loadConfig } from './orchestration-config.mjs';
@@ -52,6 +53,16 @@ describe('set-flow — usage refusals (exit 2)', () => {
   it('schema is pinned by the kit — never an op', () => {
     assert.match(usage(['--set', 'schema=2']), /"schema" is pinned by the kit/);
     assert.match(usage(['--unset', 'schema']), /"schema" is pinned by the kit/);
+  });
+
+  it('an empty or duplicate pregateExclude gate id is a USAGE refusal at parse time — exit 2, never the config-error exit 1 (SET-FLOW-PREGATE-USAGE-EXIT)', () => {
+    assert.match(usage(['--set', 'pregateExclude=a,,b']), /pregateExclude.*empty gate id/);
+    assert.match(usage(['--set', 'pregateExclude=a,a']), /pregateExclude.*duplicate gate id "a"/);
+  });
+
+  it('a valid multi-id pregateExclude parses into the ordered id list (the refusals above add no false refusal)', () => {
+    const merged = mergedOf(run(['--set', 'pregateExclude=unit,lint', '--json'], { cwd: makeRepo() }));
+    assert.deepEqual(merged.pregateExclude, ['unit', 'lint']);
   });
 
   it('unknown keys, bad values, duplicates, unknown presets, and a bare --write refuse', () => {
@@ -377,7 +388,7 @@ describe('set-flow — coverage characterizations (green pins)', () => {
   });
 
   it('the CLI entry runs as a child process (--help, exit 0)', () => {
-    const tool = new URL('./set-flow.mjs', import.meta.url).pathname;
+    const tool = fileURLToPath(new URL('./set-flow.mjs', import.meta.url));
     const r = spawnSync(process.execPath, [tool, '--help'], { encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /Deep arming floors run HERE only/);

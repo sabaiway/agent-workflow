@@ -1232,8 +1232,14 @@ const observedPhrase = (harness) =>
     ? `observed ${HARNESS_BIN} ${harness.version}`
     : `the installed ${HARNESS_BIN} version could not be determined — ${harness.reason}`;
 
-const supportsCredentialDenial = (harness) =>
-  harness.version !== null && compareSemver(harness.version, CREDENTIALS_DENY_SINCE) >= 0;
+// The null-guarded floor shape (FLOOR-NULL-COERCION / the FLOW-VERSION-FLOORS discipline): a bare
+// `>= 0` relational coerces compareSemver's null (unparseable EITHER side) to a PASS — an
+// unverifiable capability must fail closed, so the null is checked before the relational.
+const supportsCredentialDenial = (harness) => {
+  if (harness.version === null) return false;
+  const cmp = compareSemver(harness.version, CREDENTIALS_DENY_SINCE);
+  return cmp !== null && cmp >= 0;
+};
 
 // effectiveAutonomyLevel(resolved) → the ONE global level the (global, static) settings file renders.
 // The autonomy policy is per-activity (Decision 2), but .claude/settings.json is global and the

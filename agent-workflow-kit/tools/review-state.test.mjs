@@ -1001,6 +1001,20 @@ describe('review-state --check — the D3(b) degrade-record escape (core-evidenc
     assert.match(r.stdout, /receipts store unreadable/);
   });
 
+  it('a SYMLINKED receipts store never reads through — the check refuses naming the symlink (RECEIPTS-READER-NOFOLLOW)', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    const real = join(root, '.git', 'real-receipts.jsonl');
+    writeFileSync(real, `${JSON.stringify({ ...RECEIPT_FIXTURE, backend: 'codex', fingerprint: fp })}\n${JSON.stringify({ ...RECEIPT_FIXTURE, backend: 'agy', fingerprint: fp })}\n`);
+    const link = join(root, '.git', 'receipts-link.jsonl');
+    symlinkSync('real-receipts.jsonl', link);
+    const r = check(root, { env: { AW_REVIEW_RECEIPTS: link } });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'attesting content behind a symlink must never satisfy the gate');
+    assert.match(r.stdout, /receipts store unreadable/);
+    assert.match(r.stdout, /symlink/);
+  });
+
   it('a malformed degrade store denies the escape fail-closed (surfaced) while a backend NEEDS it → 1', () => {
     const { root } = makeRepo();
     const fp = computeTreeFingerprint(root);
