@@ -29,10 +29,10 @@
 // nothing). Both flow lanes resolve the CANONICAL git-derived store only — a SET AW_FLOW_STORE
 // refuses up front. Dependency-free. No side effects on import.
 
-import { readFileSync, lstatSync, unlinkSync, realpathSync } from 'node:fs';
-import { join, isAbsolute } from 'node:path';
+import { readFileSync, lstatSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { pathToFileURL, fileURLToPath } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
 import { computeTreeFingerprint } from './review-state.mjs';
 import { CONFIG_REL, loadConfig } from './orchestration-config.mjs';
@@ -58,10 +58,17 @@ import {
   ATTEST_FINGERPRINT_ENV,
   ATTEST_BASE_ENV,
 } from './coverage-check.mjs';
+// The declaration load/validation + the canonical checker predicate family live in the
+// gates-declaration.mjs LEAF (FLOW-READ-GRAPH-PURITY / the R10 rider: the locked subset-attempt
+// factory re-derives the pregate subset from the same home); re-exported here so every historical
+// consumer keeps its import site.
+import {
+  GATES_REL, loadDeclaration, validateDeclaration,
+  FINAL_CORE_CHECKS, matchesCanonicalCheck, canonicalCheckerGates, isFinalCapableDeclaration,
+  isReviewDependentGate, unknownPregateExcludeIds, derivePregateSubsetGates,
+} from './gates-declaration.mjs';
 
-// The per-project declaration (strict JSON, hand-editable). cwd-relative — errors show a path the
-// user can open (the orchestration-config CONFIG_REL idiom).
-export const GATES_REL = 'docs/ai/gates.json';
+export { GATES_REL, loadDeclaration, validateDeclaration, canonicalCheckerGates, isFinalCapableDeclaration, isReviewDependentGate };
 
 // The full exit-code table — one distinct code per honest outcome (never a silent green).
 // 7 is RETIRED (the deleted --record arm's outcome) — never reused for a new meaning.
@@ -81,8 +88,6 @@ export const EXIT = Object.freeze({
 // A tagged failure carrying its process exit code (the shared orchestration-config idiom).
 export const fail = (exitCode, message) => Object.assign(new Error(message), { exitCode });
 
-const GATE_ID_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-const GATE_KEYS = Object.freeze(['id', 'title', 'cmd']);
 const NO_FAILED_IDS = '-';
 const SPAWN_FAILED_CODE = -1;
 const MAX_GATE_OUTPUT_BYTES = 64 * 1024 * 1024;
@@ -131,79 +136,6 @@ const USAGE = [
   '5 malformed/invalid declaration · 6 bash unavailable ·',
   '8 --final asked but its receipt could not be written (green gates never read as success without it).',
 ].join('\n');
-
-// ── declaration validation (malformed → exit 5, loud `path: reason`) ─────────────────
-
-// Validate a parsed gates.json object. Strict: only `_README` (string) + `gates` (array of
-// { id, title, cmd }) are allowed; unknown keys anywhere are rejected loudly — the declaration
-// names WHAT to check, never lanes/models/routing. Returns the validated gates array.
-export const validateDeclaration = (parsed) => {
-  const reject = (reason) => {
-    throw fail(EXIT.malformed, `${GATES_REL}: ${reason}`);
-  };
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    reject('must be a JSON object { "_README"?: string, "gates": [{ id, title, cmd }, ...] }');
-  }
-  for (const key of Object.keys(parsed)) {
-    if (key !== '_README' && key !== 'gates') reject(`unknown top-level key "${key}" (allowed: _README, gates)`);
-  }
-  if (parsed._README !== undefined && typeof parsed._README !== 'string') reject('"_README" must be a string');
-  if (!Array.isArray(parsed.gates)) reject('"gates" must be an array of { id, title, cmd }');
-  const seenIds = new Set();
-  parsed.gates.forEach((gate, index) => {
-    const at = `gates[${index}]`;
-    if (gate === null || typeof gate !== 'object' || Array.isArray(gate)) {
-      reject(`${at}: must be an object { id, title, cmd }`);
-    }
-    for (const key of Object.keys(gate)) {
-      if (!GATE_KEYS.includes(key)) {
-        reject(`${at}: unknown key "${key}" (allowed: id, title, cmd — gates declare WHAT to check, never lane/model/routing)`);
-      }
-    }
-    for (const key of GATE_KEYS) {
-      if (typeof gate[key] !== 'string' || gate[key].trim() === '') {
-        reject(`${at}: "${key}" must be a non-empty string`);
-      }
-    }
-    if (/[\r\n]/.test(gate.cmd)) {
-      reject(`${at}: "cmd" must be ONE bash command line — embedded newlines (a multi-line script) are rejected; chain with && or move the script into a file`);
-    }
-    if (!GATE_ID_RE.test(gate.id)) reject(`${at}: id "${gate.id}" must be kebab-case (lowercase [a-z0-9] groups separated by "-")`);
-    if (seenIds.has(gate.id)) reject(`${at}: duplicate id "${gate.id}"`);
-    seenIds.add(gate.id);
-  });
-  return parsed.gates;
-};
-
-// ── declaration IO ────────────────────────────────────────────────────────────────────
-
-// Load the declaration from <cwd>/docs/ai/gates.json. A truly-absent file is the DISTINCT
-// `missing` outcome (exit 3 upstream, with the recovery named) — never an error throw; anything
-// present-but-unreadable / malformed / schema-invalid throws the loud exit-5 failure. lstat does
-// not follow links, so a dangling symlink reads as present and its read failure surfaces loudly
-// (no-silent-failures Hard Constraint — the loadConfig idiom).
-export const loadDeclaration = (cwd, { readFile = readFileSync, lstat = lstatSync } = {}) => {
-  const full = join(cwd, GATES_REL);
-  try {
-    lstat(full);
-  } catch (err) {
-    if (err && err.code === 'ENOENT') return { outcome: 'missing' };
-    throw fail(EXIT.malformed, `${GATES_REL}: unreadable (${(err && err.code) || (err && err.message) || err})`);
-  }
-  let raw;
-  try {
-    raw = readFile(full, 'utf8');
-  } catch (err) {
-    throw fail(EXIT.malformed, `${GATES_REL}: unreadable (${(err && err.code) || (err && err.message) || err})`);
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw fail(EXIT.malformed, `${GATES_REL}: malformed JSON (${err.message})`);
-  }
-  return { outcome: 'loaded', gates: validateDeclaration(parsed) };
-};
 
 // ── gate selection (--only) ───────────────────────────────────────────────────────────
 
@@ -368,62 +300,7 @@ const parseArgs = (argv) => {
   return opts;
 };
 
-// The canonical core checks a --final declaration must carry (D3(a)), matched as STRICT FULL
-// commands: `node` + ONE (quoted or bare) path token + the exact tool basename + ` --check` +
-// END — and the path token must REALPATH-RESOLVE to the kit's OWN tool (the canonical sibling of
-// this runner). Masked forms (`--check --help`, `--check || true`, prefix commands) never match
-// the shape; a lookalike file that merely carries the basename — whatever it prints — never
-// resolves to the canonical tool. Any form that DOES resolve (bare, relative, absolute, quoted)
-// is accepted, so the anchor adds no false refusals.
-const coreCheckRe = (basename) => new RegExp(`^node\\s+(?:"((?:[^"]*[/\\\\])?${basename})"|((?:[^\\s"]*[/\\\\])?${basename}))\\s+--check$`);
-const FINAL_CORE_CHECKS = [
-  { name: 'review-state', re: coreCheckRe('review-state\\.mjs'), canonical: fileURLToPath(new URL('./review-state.mjs', import.meta.url)) },
-  { name: 'coverage-check', re: coreCheckRe('coverage-check\\.mjs'), canonical: fileURLToPath(new URL('./coverage-check.mjs', import.meta.url)) },
-];
-const matchesCanonicalCheck = (check, cmd, projectDir) => {
-  const m = check.re.exec(cmd.trim());
-  if (!m) return false;
-  const token = m[1] ?? m[2];
-  const abs = isAbsolute(token) ? token : join(projectDir, token);
-  try {
-    return realpathSync(abs) === realpathSync(check.canonical);
-  } catch {
-    return false; // unresolvable → never canonical (fail closed)
-  }
-};
-
-// canonicalCheckerGates(gates, projectDir) → every gate that IS the canonical coverage-check. The
-// count is load-bearing twice over: --final refuses more than one (the attestation capability would
-// reach more than one process) and this predicate must refuse the same declaration, or a consumer
-// would advertise final-capability for a declaration --final then rejects.
-export const canonicalCheckerGates = (gates, projectDir) =>
-  gates.filter((g) => matchesCanonicalCheck(FINAL_CORE_CHECKS[1], g.cmd, projectDir));
-
-// isFinalCapableDeclaration(gates, projectDir) → whether --final would accept this declaration
-// (every canonical core check present + EXACTLY ONE canonical checker + that checker LAST) — the
-// ONE home consumers (the recommendations guard-install probe, the worktrees report) read instead
-// of re-deriving the rule.
-export const isFinalCapableDeclaration = (gates, projectDir) => {
-  if (!Array.isArray(gates) || gates.length === 0) return false;
-  const missing = FINAL_CORE_CHECKS.filter((c) => !gates.some((g) => matchesCanonicalCheck(c, g.cmd, projectDir)));
-  if (missing.length > 0) return false;
-  if (canonicalCheckerGates(gates, projectDir).length !== 1) return false;
-  return matchesCanonicalCheck(FINAL_CORE_CHECKS[1], gates[gates.length - 1].cmd, projectDir);
-};
 const sha256Hex = (data) => createHash('sha256').update(data).digest('hex');
-
-// The review-dependent predicate (#66/P14): a gate is review-dependent iff its cmd IS the plain
-// canonical `--check` invocation of one of the kit's OWN checkers, resolved by realpath — never a
-// project-authored id. A project abstracting the invocation behind its own script declares it in
-// flow.pregateExclude (the mode doc states this plainly).
-const REVIEW_DEPENDENT_CHECKS = ['review-state', 'commit-guard', 'coverage-check', 'flow-check'].map((name) => ({
-  name,
-  re: coreCheckRe(`${name}\\.mjs`),
-  canonical: fileURLToPath(new URL(`./${name}.mjs`, import.meta.url)),
-}));
-
-export const isReviewDependentGate = (gate, projectDir) =>
-  REVIEW_DEPENDENT_CHECKS.some((check) => matchesCanonicalCheck(check, gate.cmd, projectDir));
 
 // The full CLI, dependency-injected for hermetic tests. Returns the process exit code; the two
 // output sinks split human-facing report (log) from error channel (logError). The summary line is
@@ -493,12 +370,11 @@ export const runCli = (argv, deps = {}) => {
         return EXIT.fail;
       }
       const exclude = config?.flow?.pregateExclude ?? [];
-      const declaredIds = new Set(declaration.gates.map((gate) => gate.id));
-      const unknownExcludes = exclude.filter((id) => !declaredIds.has(id));
+      const unknownExcludes = unknownPregateExcludeIds(declaration.gates, exclude);
       if (unknownExcludes.length > 0) {
         throw fail(EXIT.malformed, `--pre-review: ${CONFIG_REL} flow.pregateExclude names gate id(s) not declared in ${GATES_REL}: ${unknownExcludes.join(', ')} (declared: ${declaration.gates.map((gate) => gate.id).join(', ')})`);
       }
-      selected = declaration.gates.filter((gate) => !isReviewDependentGate(gate, projectDir) && !exclude.includes(gate.id));
+      selected = derivePregateSubsetGates(declaration.gates, exclude, projectDir);
       // Decision 7/8 (Plan 4): under an ARMED flow the subset run is a RECORDED attempt with a
       // hard-stop budget; an unarmed repo stays byte-unchanged (the compatibility floor). The
       // pre-gate checks here are the cheap honest half — the locked append factory re-derives

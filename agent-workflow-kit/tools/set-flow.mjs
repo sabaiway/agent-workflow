@@ -95,7 +95,14 @@ const parseFlowValue = (key, raw) => {
     if (raw !== 'true' && raw !== 'false') throw fail(2, `${key} must be true or false (got "${raw}")`);
     return raw === 'true';
   }
-  if (key === 'pregateExclude') return raw === '' ? [] : raw.split(',');
+  if (key === 'pregateExclude') {
+    if (raw === '') return [];
+    const ids = raw.split(',');
+    if (ids.some((id) => id === '')) throw fail(2, `pregateExclude carries an empty gate id (got "${raw}") — comma-separated non-empty gate ids, e.g. pregateExclude=unit,lint`);
+    const dup = ids.find((id, i) => ids.indexOf(id) !== i);
+    if (dup !== undefined) throw fail(2, `pregateExclude carries a duplicate gate id "${dup}" (got "${raw}") — name each gate id at most once`);
+    return ids;
+  }
   if (key === 'candidates') return parseCandidates(raw);
   if (raw === '') throw fail(2, `${key} must be a non-empty value`);
   return raw; // debtQueue / convergenceSummary / kitMinVersion — strings

@@ -484,6 +484,18 @@ describe('flow-writer — maintainer-override (#38/#56: the bound set prints; th
     }
   });
 
+  it('a SYMLINKED receipts store never reads through — the override refuses fail-closed (RECEIPTS-READER-NOFOLLOW)', () => {
+    const root = makeRepo();
+    adopt(root);
+    const real = join(root, '.git', 'real-receipts.jsonl');
+    writeFileSync(real, `${JSON.stringify({ ...RECEIPT_FIXTURE, fingerprint: computeTreeFingerprint(root) })}\n`);
+    symlinkSync('real-receipts.jsonl', join(root, '.git', RECEIPTS_BASENAME));
+    const r = run(root, ['maintainer-override', 'plan-a', '--backend', 'codex', '--checkpoint-approved']);
+    assert.equal(r.code, 1, 'a symlinked store must never bind an override, however valid its target content');
+    assert.match(r.stderr, /receipts store is unreadable/);
+    assert.match(r.stderr, /symlink/);
+  });
+
   it("an explicit --veto-receipt must be the backend's authoritative CURRENT-tree receipt", () => {
     const root = makeRepo();
     adopt(root);

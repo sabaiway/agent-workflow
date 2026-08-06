@@ -88,7 +88,7 @@
 // (read-only queries) to compute the fingerprint — stated honestly in the catalog. Dependency-free,
 // Node >= 22. No side effects on import (the isDirectRun idiom).
 
-import { readdirSync, lstatSync, readFileSync } from 'node:fs';
+import { lstatSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -99,6 +99,13 @@ import { CONFIG_REL, fail, loadConfig } from './orchestration-config.mjs';
 import { resolveFlowStorePath, readFlowStore, deriveFlowOwner, readPlanFrontmatterId } from './flow-store.mjs';
 import { CHAIN_KIND, authoritativeFlowRecords } from './flow-record.mjs';
 import { selectReliedOnReceipt, evaluateVetoOverride, evaluateInternalAttestationLenses } from './flow-check.mjs';
+// Pure leaves (FLOW-READ-GRAPH-PURITY): the plan-file convention and the lexical shell quote live
+// in leaf modules so the procedures read surface reaches them without this module's write-API
+// graph; re-exported here so every historical consumer keeps its import site.
+import { PLANS_REL, isScratchPlanName, plansInFlight } from './plan-files.mjs';
+import { shellQuoteArg } from './repo-lex.mjs';
+
+export { PLANS_REL, isScratchPlanName, plansInFlight, shellQuoteArg };
 // The canonical review-domain primitives live in the core-evidence DAG bottom (ONE home for the
 // fingerprint, the receipt read path, and the attesting predicate); this module RE-EXPORTS its
 // historical public API from there and consumes the degrade records the same store owns.
@@ -128,7 +135,6 @@ export {
   readReceipts,
 };
 
-export const PLANS_REL = 'docs/plans';
 const ACTIVITY = 'plan-execution';
 const SLOT = 'review';
 const GIT_MAX_BUFFER = 256 * 1024 * 1024; // a full-tree diff can be large; never truncate silently
@@ -182,11 +188,6 @@ export const countNeverCommittableUntracked = (cwd, { lstat = lstatSync } = {}) 
     }).length;
 };
 
-// Shell-quote one argument for a COPY-PASTE advisory command: plain safe tokens stay bare; anything
-// else rides single quotes (a space/metacharacter path must never render a dead or unsafe paste —
-// Exported for the sandbox-masks probe, which renders the same apply one-liner.
-export const shellQuoteArg = (s) => (/^[A-Za-z0-9_/.\-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`);
-
 const maskAdvisoryLine = (state) =>
   state.maskedUntracked > 0
     ? `notice: ${state.maskedUntracked} never-committable untracked path(s) (device/FIFO/socket) are ignored by the review domain — hide them from git status: node ${shellQuoteArg(join(dirname(fileURLToPath(import.meta.url)), 'sandbox-masks.mjs'))} --cwd ${shellQuoteArg(state.root)} --apply`
@@ -213,30 +214,6 @@ export const quoteReportName = (name) =>
     (value) => `\\u${value.codePointAt(0).toString(16).padStart(4, '0')}`,
   );
 
-// Scratch by the naming convention: EXECUTE-/FEEDBACK- prefixes, or a name carrying PROMPT/prompt/
-// handoff. queue.md is the series index, never a plan.
-export const isScratchPlanName = (name) =>
-  name === 'queue.md' ||
-  name.startsWith('EXECUTE-') ||
-  name.startsWith('FEEDBACK-') ||
-  name.includes('PROMPT') ||
-  name.includes('prompt') ||
-  name.includes('handoff');
-
-// The in-flight plan files: top-level docs/plans/*.md minus queue.md minus scratch. [] when the
-// directory is absent (no plans → nothing in flight). STRING-typed for every consumer.
-export const plansInFlight = (cwd, readdir = readdirSync) => {
-  let entries;
-  try {
-    entries = readdir(join(cwd, PLANS_REL), { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  return entries
-    .filter((e) => e.isFile() && e.name.endsWith('.md') && !isScratchPlanName(e.name))
-    .map((e) => e.name)
-    .sort();
-};
 
 // The in-flight-plan → adopted-chain coverage map (P13/P19): ONE bounded read + ONE hash per plan
 // file; coverage requires the frontmatter planId, the FULL content digest, and the owner to match

@@ -578,6 +578,13 @@ describe('velocity --autonomy — the degrade text names only what was observed'
     assert.equal(r.sandbox.credentials, undefined, 'unsupported stays unrendered');
   });
 
+  it('an UNPARSEABLE observed version renders NO credentials block and degrades loudly (FLOOR-NULL-COERCION)', () => {
+    const unparseable = { version: 'nightly-build', source: 'installed-cli', reason: 'resolved from the installed CLI path' };
+    const r = render({ credentials: 'deny' }, unparseable);
+    assert.equal(r.sandbox.credentials, undefined, 'a bare `>= 0` relational coerces null to a pass — an unverifiable capability must fail CLOSED, never render pretend-protection');
+    assert.match(degradesText(r), /nightly-build/, 'the degrade names the observed (unparseable) version');
+  });
+
   it('network-degrade-text-names-only-the-observed-version', () => {
     const t = degradesText(render({ network: 'deny' }, HARNESS_SUPPORTS));
     assert.match(t, /network=deny/);

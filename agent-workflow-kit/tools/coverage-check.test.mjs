@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync, symlinkSync, readFileSync, mkdirSync, realpathSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { computeTreeFingerprint, resolveBase } from './core-evidence.mjs';
@@ -315,7 +316,7 @@ describe('coverage-check --check — the attestation handshake', () => {
     // "CALLED" proves the shim actually ran: without it a checker that never spawns git would make
     // this test pass vacuously — the exact defect that put it here.
     writeFileSync(shim, `#!/bin/sh\necho CALLED >> ${JSON.stringify(seenFile)}\nfor v in ${ATTEST_NONCE_ENV} ${ATTEST_FINGERPRINT_ENV} ${ATTEST_BASE_ENV}; do\n  eval "val=\\$$v"\n  [ -n "$val" ] && echo "LEAKED:$v" >> ${JSON.stringify(seenFile)}\ndone\nexit 1\n`, { mode: 0o755 });
-    const TOOL = new URL('./coverage-check.mjs', import.meta.url).pathname;
+    const TOOL = fileURLToPath(new URL('./coverage-check.mjs', import.meta.url));
     spawnSync(process.execPath, [TOOL, '--check', '--cwd', root], {
       cwd: root, encoding: 'utf8',
       env: {
@@ -446,7 +447,7 @@ describe('coverage-check CLI surface', () => {
     assert.equal(main(['--mystery'], { env: fixtureEnv() }).code, 2);
   });
   it('runs as a real process (argv/exit contract)', () => {
-    const TOOL = new URL('./coverage-check.mjs', import.meta.url).pathname;
+    const TOOL = fileURLToPath(new URL('./coverage-check.mjs', import.meta.url));
     const { root } = makeRepo();
     mkdirSync(join(root, 'sub'));
     const r = spawnSync('node', [TOOL, '--check', '--cwd', root], { encoding: 'utf8', env: fixtureEnv() });

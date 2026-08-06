@@ -52,7 +52,7 @@
 
 import { createHash } from 'node:crypto';
 import { FLOW_SCHEMA_VERSION } from './orchestration-config.mjs';
-import { lexicalRepoRelative } from './core-evidence.mjs';
+import { lexicalRepoRelative } from './repo-lex.mjs';
 
 export { FLOW_SCHEMA_VERSION };
 

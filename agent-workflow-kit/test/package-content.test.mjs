@@ -348,7 +348,14 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       nonce-manifest correlation) + its mode doc references/modes/receipt-deadline.md.
     //       The *.test.mjs sibling is stripped by files[]. (The Phase-4 wrapper manifest lane
     //       and the consult-attestation arm live in already-counted files.)
-    assert.equal(packed.length, 179, `tarball file count drifted (${packed.length} ≠ 179)`);
+    // 183 = 179 + the FLOW-READ-GRAPH-PURITY leaves (flow Plan 4 Phase 2), EXACTLY four files:
+    //       tools/fs-read-nofollow.mjs (the race-free no-follow read primitive — the receipts
+    //       reader rides it) + tools/repo-lex.mjs (lexicalRepoRelative + shellQuoteArg) +
+    //       tools/plan-files.mjs (the in-flight-plan convention) + tools/gates-declaration.mjs
+    //       (declaration load/validation + the canonical checker predicate + the pregate subset
+    //       derivation the locked subset-attempt factory re-derives — the R10 rider). The
+    //       read-graph purity test itself lives in the repo's test/, never in the tarball.
+    assert.equal(packed.length, 183, `tarball file count drifted (${packed.length} ≠ 183)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

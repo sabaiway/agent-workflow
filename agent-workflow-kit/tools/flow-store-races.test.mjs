@@ -22,6 +22,12 @@ const sh = (args, cwd) => {
 };
 
 let seq = 0;
+// The subset-attempt factory re-derives the pregate subset from the repo's own declaration (the
+// R10 rider) — every fixture repo carries the ['unit', 'lint'] declaration the mints state.
+const GATES_DECLARATION = JSON.stringify({ gates: [
+  { id: 'unit', title: 'Unit', cmd: 'true' },
+  { id: 'lint', title: 'Lint', cmd: 'true' },
+] });
 const makeRepo = () => {
   const root = join(TMP, `repo-${seq += 1}`);
   mkdirSync(root, { recursive: true });
@@ -29,6 +35,8 @@ const makeRepo = () => {
   sh(['config', 'user.email', 'coder-tools@proton.me'], root);
   sh(['config', 'user.name', 'coder-tool'], root);
   writeFileSync(join(root, 'base.txt'), 'base\n');
+  mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
+  writeFileSync(join(root, 'docs', 'ai', 'gates.json'), GATES_DECLARATION);
   sh(['add', '-A'], root);
   sh(['commit', '-q', '-m', 'init'], root);
   return root;

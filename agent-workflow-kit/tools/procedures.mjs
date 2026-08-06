@@ -26,10 +26,9 @@ import { detectBackends, wrapperCmdFor, wrapperContractFor } from './detect-back
 import { loadRegistry, allowedLabel } from './bridge-settings-read.mjs';
 import { ACTIVITIES, resolveActivityRecipe, planRecipe } from './recipes.mjs';
 import { resolveEngineDir, readEngineFragment, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
-// The plan-in-flight detector (AD-038) — imported from the READ-ONLY checker (review-state.mjs
-// performs no fs writes of its own; no transitive writer-free claim is made for its graph); the
-// WRITER-capable grounding.mjs is only NAMED in rendered text, never imported.
-import { plansInFlight, PLANS_REL } from './review-state.mjs';
+// The plan-in-flight detector (AD-038) — imported from the plan-files.mjs LEAF (read-only fs by
+// construction); the WRITER-capable grounding.mjs is only NAMED in rendered text, never imported.
+import { plansInFlight, PLANS_REL } from './plan-files.mjs';
 // The config schema/read core lives in orchestration-config.mjs (the single config contract). procedures
 // is READ-ONLY: it imports the reader + the SHARED slot/recipe validity, never the fs-writer
 // (orchestration-write.mjs) DIRECTLY — the import-split test pins the direct-import rule.
@@ -40,9 +39,9 @@ import { AUTONOMY_REL, loadAutonomy, resolveAutonomy, isSparseSeedConfig } from 
 // The flow armed-halves probe (P8): read-only store presence/adoption facts for the session-start
 // surface, imported from the read module that OWNS no write API — this advisor never imports the
 // mixed flow-store module (append API) DIRECTLY, like it never imports orchestration-write (the
-// import-split test pins both direct rules). Honest boundary: the transitive graph still reaches
-// mixed modules (via flow-record and review-state) — full graph purity is queued
-// (FLOW-READ-GRAPH-PURITY), never claimed here.
+// import-split test pins both direct rules). The TRANSITIVE claim is now structural, not
+// narrated: this advisor's import closure reaches NO write-API module and the tools graph is
+// acyclic — pinned by test/read-graph-purity.test.mjs (FLOW-READ-GRAPH-PURITY).
 import { resolveFlowStorePath, readFlowStore } from './flow-store-read.mjs';
 import { CHAIN_KIND } from './flow-record.mjs';
 export { CONFIG_REL };
