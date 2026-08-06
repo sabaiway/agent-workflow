@@ -4,6 +4,61 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 5.2.0 — the flow machinery ships whole: recorded subset budgets, flow-bound finals, the round arms, and the dogfooded pipeline (AD-086)
+
+**Everything the flow series built after 5.1.0 lands as one wave** — the record vocabulary, the
+fd-custody store, chain identity + `flow-check`, `set-flow` arming, receipt-deadline + wrapper
+finding manifests, and this release's closing moves. The flow schema (`schema: 1`) was never
+published before, so every schema move below arrives migration-free.
+
+- **`--pre-review` under an ARMED flow is a RECORDED lane** (new store-global `subset-attempt`
+  kind): every subset run appends an attempt with a lock-computed monotone `attemptIndex`; the
+  run producing the SECOND red at a key completes, records it, and exits red printing the
+  diagnosis rule; a third attempt requires a recorded, byte-distinct `--diagnosis`; past three
+  reds only a recorded fresh-eyes consult verdict reopens the key — every stop is self-servable,
+  never a wait-for-a-human. A `pregateExclude` change opens a fresh counting context (new
+  `subsetDigest`), and an unarmed repo's `--pre-review` stays byte-unchanged (characterized).
+- **`run-gates --final` binds the flow store to the release decision** (AD-086 D10): the minted
+  `final` carries an OPTIONAL `evidenceHashes.flow` — the owner-scoped projection hash — with
+  projection movement under the run an `integrityFailure`; `commit-guard` (its lane only, after
+  the dead-green selection) refuses a green final whose hash no longer matches the live
+  projection, and an armed flow whose latest green final LACKS the field fails closed naming the
+  fresh-`--final` remedy. No `EVIDENCE_SCHEMA_VERSION` bump: the released 5.1.0 validator accepts
+  a flow-bearing final (proven against `4b08ace` worktree bytes, both directions).
+- **The writer's round machinery arms**: `round-open` (pre-dispatch mint — per-backend watermark
+  + fresh nonce, printed as pasteable dispatch + `receipt-deadline` lines) · `round-land`
+  (arrival binding — receipt/manifest digests computed FROM the files; foreign, ambiguous,
+  malformed, or symlinked artifacts refuse) · per-finding `--dispose` ledgers ·
+  `freeze`/`unfreeze`/`converged` with completeness walks · `internal-attestation` refusing
+  while any in-flight plan lacks an adopted chain. Caps (3 rounds/cycle, 1 unfreeze, the
+  redesign valve) enforce at the arms; an over-cap mint requires a recorded `--justification`.
+- **SECURITY — the receipts reader no longer follows symlinks** (new `fs-read-nofollow` leaf): a
+  symlinked/FIFO/directory receipts path surfaces as a loud `readError` through all four
+  consumers (review-state, core-evidence summary, flow-writer, flow-check) instead of content or
+  an empty success. The 5.1.0 reader read straight through a symlink — this is the one behavior
+  change for a conceivable existing loop, and the documented `AW_REVIEW_RECEIPTS` regular-file
+  lane is untouched (suite-pinned), so it ships as a flagged security fix, not an API break.
+- **Bridge bumps ride the kit mirrors** — codex-cli-bridge **3.3.0** · antigravity-cli-bridge
+  **5.1.0**: an additive `--nonce <n>` flag on both review wrappers — the plain-argument lane
+  onto the existing `AW_REVIEW_NONCE` seam for hosts whose dispatch policy has no env-prefix
+  form (one seam: a disagreeing flag+env pair refuses pre-spend; a nonce-less run adds no nonce
+  field and mints no manifest — the `wrapperVersion` field every receipt carries moves with the
+  release), and a manifest-mint FAILURE whose temp unlink also fails now names the orphan
+  path on both failure codes.
+- **Smaller rungs**: the veteran-store arming fence (#65 — arming a store with pre-flow red
+  finals no longer bricks `flow-check`; reds scope to the earliest own adoption instant,
+  fail-closed edges) · mixed declared+undeclared delta forks name the undeclared path ·
+  `velocity-profile` credential floor null-guards an unparseable harness version (was
+  fail-open via `null >= 0`) · `set-flow` empty/duplicate `pregateExclude` ids exit 2 at parse
+  time · the read surface's import closure is pinned write-free and acyclic
+  (`read-graph-purity.test.mjs`) · suite file-URL paths go through `fileURLToPath` (Windows).
+- **The pipeline is dogfooded end to end**: a permanent hermetic tracked-`docs/ai` fixture
+  (`flow-dogfood.integration.test.mjs`) drives the REAL CLIs through set-flow → adoption →
+  subset-attempts → two nonce-bound rounds → bookkeeping-delta + refresh → freeze/converged →
+  `--final` with `evidenceHashes.flow` → guard PASS → the D10 post-final-append refusal — plus
+  the second-red stop pair and the foreign-worktree advisory lane. This repo itself released
+  under the armed flow.
+
 ## 5.1.0 — the config learns to carry the flow block before anything writes one (AD-085)
 
 **Upgrade this before any flow feature arrives — that ordering IS the release.** The shared

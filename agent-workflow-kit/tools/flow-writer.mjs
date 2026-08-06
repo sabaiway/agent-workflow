@@ -1013,7 +1013,8 @@ idempotent, different-id refuses, contained-atomic; #58).
 The round lifecycle (Plan 4 Phase 3): ONE record per round, revised in place — round-open mints
 the pre-dispatch half (a fresh nonce + the receipts-file byte-length watermark per --backend,
 BEFORE any backend runs; stdout prints one "dispatch backend=<b> nonce=<n> watermark=<w>" line
-per dispatch — export the nonce as AW_REVIEW_NONCE on the bridge dispatch and hand the pair to
+per dispatch — pass the nonce as --nonce <n> on the wrapper invocation (the plain-argument lane
+onto the AW_REVIEW_NONCE seam) and hand the pair to
 receipt-deadline); round-land binds arrivals (ONLY the canonical ATTESTING receipt class binds —
 a defective answer refuses naming its class and the justified-degrade recovery; receipt +
 manifest digests computed FROM the files; one revision per invocation, dispositions append via
@@ -1076,7 +1077,7 @@ export const main = (argv, ctx = {}) => {
         ...(built.justification != null ? [`  justification (Decision 8, over-cap mint — the record above is the durable trail): ${built.justification}`] : []),
         ...r.dispatches.flatMap((d) => [
           `  dispatch backend=${d.backend} nonce=${d.dispatchNonce} watermark=${d.receiptWatermark}`,
-          `    dispatch with AW_REVIEW_NONCE=${d.dispatchNonce} so the wrapper mints the {backend, nonce}-named finding manifest`,
+          `    dispatch with --nonce ${d.dispatchNonce} on the wrapper invocation (the plain-argument lane onto the AW_REVIEW_NONCE seam) so the wrapper mints the {backend, nonce}-named finding manifest`,
           `    await (pasteable): node ${shellQuote(RECEIPT_DEADLINE_TOOL)} --backend=${d.backend} --watermark=${d.receiptWatermark} --nonce=${d.dispatchNonce}`,
         ]),
       ];

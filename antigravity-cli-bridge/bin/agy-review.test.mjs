@@ -1903,7 +1903,7 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
       assert.equal(receipts[0].nonce, 'r1-d2', 'a nonce-supplied receipt carries the dispatch nonce — the flow round-land matcher requires exact equality (dispatch identity end-to-end)');
     });
 
-    it('a nonce-less invocation mints NO manifest and keeps the receipt contract byte-exact (Decision 2 both branches)', () => {
+    it('a nonce-less invocation mints NO manifest and adds NO nonce field — the receipt field set is unchanged (Decision 2 both branches)', () => {
       const sb = makeSandbox();
       const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
       const receipts = readReceipts(sb.repo);
@@ -1991,6 +1991,84 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
       assert.equal(receipts.length, 1);
       assert.equal(manifest.fingerprint, null, 'a continuation carries no tree identity — the manifest says so honestly');
       assert.equal(manifest.findings, `${VERDICT_OUTPUT}\n`);
+    });
+
+    // The --nonce flag (FLOW-NONCE-DISPATCH-LANE): the plain-argument lane onto the SAME seam —
+    // for hosts whose dispatch policy has no env-prefix form.
+    it('--nonce rides the AW_REVIEW_NONCE seam: manifest minted, receipt nonce-stamped (flag form ≡ env form)', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', 'f2-d2'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+      const receipts = readReceipts(sb.repo);
+      const manifest = JSON.parse(readFileSync(manifestPath(sb.repo, 'f2-d2'), 'utf8'));
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(manifest.nonce, 'f2-d2');
+      assert.equal(receipts[0].nonce, 'f2-d2', 'the flag stamps the receipt exactly like the env form');
+    });
+
+    it('an unsafe --nonce value refuses PRE-SPEND (exit 2, agy never runs) — same grammar as the env screen', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', 'a/b'] });
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 2);
+      assert.match(r.stderr, /safe nonce grammar/);
+      assert.equal(r.invoked, false, 'the containment refusal fires before any CLI spend');
+    });
+
+    it('a missing value, a duplicate flag, and a disagreeing env+flag pair each refuse (exit 2); an agreeing pair proceeds', () => {
+      const sb = makeSandbox();
+      const missing = run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce'] });
+      assert.equal(missing.status, 2);
+      assert.match(missing.stderr, /--nonce needs a value/);
+      const dup = run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', 'n1', '--nonce', 'n2'] });
+      assert.equal(dup.status, 2);
+      assert.match(dup.stderr, /duplicate --nonce/);
+      const clash = run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', 'n1'], env: { AW_REVIEW_NONCE: 'n2' } });
+      assert.equal(clash.status, 2);
+      assert.match(clash.stderr, /disagrees with the AW_REVIEW_NONCE environment value/);
+      const agree = run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', 'n3'], env: { AW_REVIEW_NONCE: 'n3', AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+      const exists = existsSync(manifestPath(sb.repo, 'n3'));
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(agree.status, 0, agree.stderr);
+      assert.equal(exists, true, 'an agreeing pair is ONE seam value — the dispatch proceeds');
+    });
+
+    it('--nonce is valid on a CONTINUATION too — the flag lane covers every seam-honoring form', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['--continue', '--nonce', 'r2-c2'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+      const manifest = JSON.parse(readFileSync(manifestPath(sb.repo, 'r2-c2'), 'utf8'));
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(manifest.fingerprint, null, 'a continuation manifest carries no tree identity');
+    });
+
+    it('a grammar-valid leading-dash --nonce value is ACCEPTED — the flag lane spans the whole declared grammar', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', '--n1'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+      const receipts = readReceipts(sb.repo);
+      const exists = existsSync(manifestPath(sb.repo, '--n1'));
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(exists, true, 'the {backend, nonce}-named manifest lands under the leading-dash nonce');
+      assert.equal(receipts[0].nonce, '--n1', 'the receipt carries the exact grammar-valid value — flag lane ≡ env lane');
+    });
+
+    it('an EMPTY --nonce value refuses pre-spend under the grammar screen (presence is tracked separately from the value)', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', ''] });
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 2);
+      assert.match(r.stderr, /safe nonce grammar/);
+      assert.equal(r.invoked, false, 'the refusal fires before any CLI spend');
+    });
+
+    it('a duplicate --nonce after an EMPTY first value still refuses as a duplicate — an empty value never erases presence', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', '', '--nonce', 'n2'] });
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 2);
+      assert.match(r.stderr, /duplicate --nonce/);
+      assert.equal(r.invoked, false, 'the refusal fires before any CLI spend');
     });
   });
 

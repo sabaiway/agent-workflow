@@ -7,6 +7,25 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-06 — AD-086 the N+1 flow wave ships whole, and this repo releases under its own armed flow (kit 5.2.0, codex-bridge 3.3.0, agy-bridge 5.1.0)
+
+Everything the flow-orchestration series built after the tolerance release publishes as one wave:
+the flow store and its chain identity, the review-round machinery (`round-open`/`round-land`/
+`freeze`/`converged` and their caps), the recorded subset-attempt budget under an armed
+`--pre-review`, and the final-record flow binding the commit guard now enforces. Two supporting
+moves ride the same wave: the receipts reader stops following symlinks (a flagged security fix —
+four consumers now refuse loudly instead of reading through), and both review wrappers gain an
+additive `--nonce` flag so a dispatch nonce can travel as a plain argument on hosts whose dispatch
+policy has no environment-prefix lane; a nonce-less invocation adds no nonce field and mints no
+manifest (the `wrapperVersion` field every receipt carries moves with the release).
+
+The release itself is the proof: a permanent hermetic fixture drives the whole pipeline through
+the real CLIs, and this repo was ARMED before publishing — the wave's own release cycle ran as the
+first live armed flow, its council rounds nonce-bound in the store and its release `--final`
+carrying the flow hash the guard checked at the commit. Cross-version safety was proven against
+released bytes, not assumptions: the 5.1.0 validator (from a `4b08ace` worktree) accepts a
+flow-bearing final, and the new validator accepts a field-less one.
+
 ## 2026-07-29 — AD-085 the flow rollout starts with tolerance, not features (kit 5.1.0)
 
 The converged orchestration-flow design will add a `flow` block to the shared

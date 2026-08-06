@@ -47,7 +47,9 @@
 #   AW_REVIEW_RECEIPTS       override the review-receipt file (default: <git dir>/
 #                            agent-workflow-review-receipts.jsonl — see the --help Receipt block)
 #   AW_REVIEW_NONCE          the dispatch nonce (safe grammar [A-Za-z0-9._-]{1,64}) — when supplied,
-#                            a successful review first mints the finding manifest beside the receipt
+#                            a successful review first mints the finding manifest beside the receipt;
+#                            the --nonce <n> flag is its plain-argument equivalent (one seam — a
+#                            disagreeing flag+env pair refuses pre-spend)
 set -euo pipefail
 
 # --- --help / -h (pre-preflight: no agy, no login, no git tree needed) ---------
@@ -59,15 +61,16 @@ case "${1:-}" in
 agy-review — grounded read-only ADVISORY review by Google's Antigravity CLI (agy; subscription-only).
 
 Usage:
-  agy-review code [--facts @f] [--ungrounded] [--decided @f] [--focus "…"] [extra focus…]
-  agy-review plan <plan-file> [--facts @f] [--decided @f] [--focus "…"]
-  agy-review diff <diff-file> [--facts @f] [--decided @f] [--focus "…"]
+  agy-review code [--facts @f] [--ungrounded] [--decided @f] [--focus "…"] [--nonce <n>] [extra focus…]
+  agy-review plan <plan-file> [--facts @f] [--decided @f] [--focus "…"] [--nonce <n>]
+  agy-review diff <diff-file> [--facts @f] [--decided @f] [--focus "…"] [--nonce <n>]
 
 Flags:
   --facts @f — verified facts the review runs AGAINST (code mode REQUIRES a non-empty payload; plan/diff warn loudly when omitted)
   --ungrounded — deliberately ungrounded CODE review, a throwaway opinion (code mode only, contradicts --facts; the receipt records grounded:false and never attests)
   --decided @f — already-decided / already-addressed list; do NOT re-raise (anti-circling; the round-2 payload)
   --focus "…" — extra focus (repeatable; code mode also takes trailing focus words)
+  --nonce <n> — the flow dispatch nonce, the plain-argument lane onto the AW_REVIEW_NONCE seam (one seam: flag and a non-empty env must agree; a disagreeing pair refuses pre-spend)
 
 Grounding:
   grounded review — agy reads NOTHING by default, an ungrounded review GUESSES:
@@ -88,8 +91,8 @@ Notes:
   posture; a prose re-type drifts
 
 Round-2 / resume:
-  agy-review --continue [--decided @f] [--focus "…"]
-  agy-review --conversation <id> [--decided @f] [--focus "…"]
+  agy-review --continue [--decided @f] [--focus "…"] [--nonce <n>]
+  agy-review --conversation <id> [--decided @f] [--focus "…"] [--nonce <n>]
   (a continuation sends a small delta — agy holds the artifact server-side; --facts is invalid on a continuation)
 
 Receipt:
@@ -119,14 +122,17 @@ Receipt:
   particular value; absent by construction on plan/diff/continuation receipts, which carry no change
   set; a run whose output carries NO recognized '### Verdict' section — empty
   output included — exits 4 with NO receipt (D4: a FAILED review to RE-RUN, never a fatal session
-  error); when the dispatch nonce seam AW_REVIEW_NONCE is supplied (safe grammar
-  [A-Za-z0-9._-]{1,64} — anything else refuses pre-spend), the wrapper first mints the finding
+  error); when the dispatch nonce seam is supplied — the AW_REVIEW_NONCE environment value or
+  its plain-argument equivalent --nonce <n> (one seam: the flag assigns the same value;
+  supplying both with different values refuses pre-spend) — under the safe grammar
+  [A-Za-z0-9._-]{1,64} (anything else refuses pre-spend), the wrapper first mints the finding
   MANIFEST {schema, backend, nonce, fingerprint, findings} beside the receipts file
   (agent-workflow-finding-manifest-<backend>-<nonce>.json; atomic, no-clobber — a byte-identical
   rewrite is an idempotent no-op, different bytes refuse loudly) ORDERED before the receipt
   append — a failed manifest write EXCLUDES the receipt append, so a nonce-supplied dispatch can
-  never land a receipt without its readable manifest; a nonce-less invocation keeps this receipt
-  contract byte-exact and mints nothing; a write failure warns, never fails the review
+  never land a receipt without its readable manifest; a nonce-less invocation adds NO nonce field
+  and mints NO finding manifest (the existing wrapperVersion field still changes with each bridge
+  release); a write failure warns, never fails the review
 
 Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):
   ${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf
@@ -320,7 +326,7 @@ DEFAULT_AGY_REVIEW_MODEL="Gemini 3.1 Pro (High)"
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by agy-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="agy"
-AW_BRIDGE_VERSION="5.0.0"
+AW_BRIDGE_VERSION="5.1.0"
 # `-` not `:-` so an EXPLICIT empty AGY_MODEL= survives (drop --model, use settings.json — agy.sh:52).
 AGY_MODEL="${AGY_MODEL-$DEFAULT_AGY_REVIEW_MODEL}"
 # D5 control-byte screen — IMMEDIATELY after resolution, BEFORE the off-frontier advisory (or any
@@ -738,7 +744,8 @@ posture_json() {
 # hard-link publish) and NO-CLOBBER: a byte-identical re-write is an idempotent no-op, different
 # bytes refuse loudly. Returns non-zero on ANY failure — the caller then EXCLUDES the receipt
 # append, so a nonce-supplied dispatch can never land a receipt without its readable manifest.
-# A nonce-less invocation returns 0 untouched (today's receipt contract stays byte-exact).
+# A nonce-less invocation returns 0 untouched (no nonce field, no manifest — the receipt
+# otherwise proceeds unchanged).
 write_finding_manifest() {
   local receipts="$1" fingerprint="$2" findings_file="$3" nonce="${AW_REVIEW_NONCE:-}"
   [[ -n "$nonce" ]] || return 0
@@ -1309,11 +1316,11 @@ case "${1:-}" in
 esac
 
 usage() {
-  echo "usage: $0 code   [--facts @f] [--ungrounded] [--decided @f] [--focus \"…\"] [extra focus…]" >&2
-  echo "       $0 plan   <plan-file> [--facts @f] [--decided @f] [--focus \"…\"]" >&2
-  echo "       $0 diff   <diff-file> [--facts @f] [--decided @f] [--focus \"…\"]" >&2
-  echo "       $0 --continue          [--decided @f] [--focus \"…\"]" >&2
-  echo "       $0 --conversation <id> [--decided @f] [--focus \"…\"]" >&2
+  echo "usage: $0 code   [--facts @f] [--ungrounded] [--decided @f] [--focus \"…\"] [--nonce <n>] [extra focus…]" >&2
+  echo "       $0 plan   <plan-file> [--facts @f] [--decided @f] [--focus \"…\"] [--nonce <n>]" >&2
+  echo "       $0 diff   <diff-file> [--facts @f] [--decided @f] [--focus \"…\"] [--nonce <n>]" >&2
+  echo "       $0 --continue          [--decided @f] [--focus \"…\"] [--nonce <n>]" >&2
+  echo "       $0 --conversation <id> [--decided @f] [--focus \"…\"] [--nonce <n>]" >&2
 }
 
 # --- Mode dispatch (non-resume) ----------------------------------------------
@@ -1354,6 +1361,8 @@ fi
 FACTS_RAW=""
 DECIDED_RAW=""
 UNGROUNDED=0
+NONCE_FLAG=""
+NONCE_FLAG_SET=0
 FOCUS_PARTS=()
 # A value-taking flag must be followed by a real value — never end-of-args and never another flag.
 # Otherwise `agy-review code --facts --focus x` would silently take "--focus" as the facts and spend a
@@ -1382,6 +1391,20 @@ while [[ $# -gt 0 ]]; do
       need_value "$1" "${2:-}"; DECIDED_RAW="$2"; shift 2 ;;
     --focus)
       need_value "$1" "${2:-}"; FOCUS_PARTS+=("$2"); shift 2 ;;
+    --nonce)
+      # Not need_value: the nonce's CLOSED grammar admits leading-dash values and validates
+      # deterministically below — the next argument is taken unconditionally (only end-of-args
+      # refuses here), and presence rides its own flag so an EMPTY value still hits the grammar
+      # screen and a duplicate after it still refuses.
+      if [[ $# -lt 2 ]]; then
+        echo "error: --nonce needs a value; got '<end of args>'." >&2
+        exit 2
+      fi
+      if [[ "$NONCE_FLAG_SET" == "1" ]]; then
+        echo "error: duplicate --nonce — one dispatch carries one nonce." >&2
+        exit 2
+      fi
+      NONCE_FLAG="$2"; NONCE_FLAG_SET=1; shift 2 ;;
     --)
       echo "error: this wrapper OWNS the review posture — no '--' passthrough. The only escapes are" >&2
       echo "       AGY_PROBE=1 (off-frontier model). An oversized code review is a chunked feed, not a flag." >&2
@@ -1402,6 +1425,23 @@ while [[ $# -gt 0 ]]; do
 done
 # Merge --focus values and trailing focus words, in parse order, into ONE focus block.
 FOCUS="${FOCUS_PARTS[*]:-}"
+
+# --nonce rides the EXISTING AW_REVIEW_NONCE seam (flow FLOW-NONCE-DISPATCH-LANE): the
+# plain-argument lane for hosts whose dispatch policy has no env-prefix form. The flag and a
+# non-empty env value must AGREE — two disagreeing sources would mint an ambiguous dispatch
+# identity (fail closed). Grammar screen identical to the env screen above (enumerated ASCII —
+# locale-independent), pre-spend.
+if [[ "$NONCE_FLAG_SET" == "1" ]]; then
+  if [[ ! "$NONCE_FLAG" =~ ^[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]{1,64}$ ]]; then
+    echo "error: --nonce fails the safe nonce grammar ([A-Za-z0-9._-]{1,64}) — the derived manifest name would be unsafe; fix the nonce and re-run." >&2
+    exit 2
+  fi
+  if [[ -n "${AW_REVIEW_NONCE:-}" && "${AW_REVIEW_NONCE}" != "$NONCE_FLAG" ]]; then
+    echo "error: --nonce disagrees with the AW_REVIEW_NONCE environment value — one dispatch carries one nonce; drop one source and re-run." >&2
+    exit 2
+  fi
+  AW_REVIEW_NONCE="$NONCE_FLAG"
+fi
 
 # --ungrounded closed grammar (D4): code-mode only, and an explicit contradiction with --facts refuses.
 if [[ "$UNGROUNDED" == "1" ]]; then

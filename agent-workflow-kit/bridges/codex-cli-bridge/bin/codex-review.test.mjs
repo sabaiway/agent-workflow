@@ -526,7 +526,7 @@ describe('codex-review.sh — mode dispatch & plan validation', () => {
     const r = run(sb, { args: ['bogus'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 2);
-    assert.match(r.stderr, /usage: .* plan <plan-file> \| code/);
+    assert.match(r.stderr, /usage: .* plan <plan-file> \[--nonce <n>\] \| code \[--nonce <n>\]/);
   });
 
   it('no mode prints usage and STOPs (exit 2)', () => {
@@ -1063,7 +1063,7 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
       assert.equal(receipts[0].nonce, 'r1-d1', 'a nonce-supplied receipt carries the dispatch nonce — the flow round-land matcher requires exact equality (dispatch identity end-to-end)');
     });
 
-    it('a nonce-less invocation mints NO manifest and keeps the receipt contract byte-exact (Decision 2 both branches)', () => {
+    it('a nonce-less invocation mints NO manifest and adds NO nonce field — the receipt field set is unchanged (Decision 2 both branches)', () => {
       const sb = makeSandbox();
       const r = run(sb, { env: { ...quiet } });
       const receipts = readReceipts(sb.repo);
@@ -1223,6 +1223,86 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
       assert.notEqual(r.status, 0);
       assert.equal(receipts.length, 0);
       assert.equal(exists, false, 'no success, no manifest');
+    });
+
+    // The --nonce flag (FLOW-NONCE-DISPATCH-LANE): the plain-argument lane onto the SAME seam —
+    // for hosts whose dispatch policy has no env-prefix form.
+    it('--nonce in code mode rides the AW_REVIEW_NONCE seam: manifest minted, receipt nonce-stamped, focus words intact', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['code', '--nonce', 'f1-d1', 'look', 'harder'], env: { CODEX_FAKE_FINAL: 'Verdict: ship' } });
+      const receipts = readReceipts(sb.repo);
+      const manifest = JSON.parse(readFileSync(manifestPath(sb.repo, 'f1-d1'), 'utf8'));
+      const stdin = r.capStdin;
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(manifest.nonce, 'f1-d1');
+      assert.equal(receipts[0].nonce, 'f1-d1', 'the flag stamps the receipt exactly like the env form');
+      assert.match(stdin, /Extra focus: look harder/, 'the flag pair is stripped — trailing focus words still ride');
+    });
+
+    it('--nonce in plan mode mints the manifest (the consult-dispatch lane) — the flag never trips the no-extra-args refusal', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['plan', 'plan.md', '--nonce', 'p2'], env: { CODEX_FAKE_FINAL: 'Verdict: ship' } });
+      const exists = existsSync(manifestPath(sb.repo, 'p2'));
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(exists, true);
+    });
+
+    it('an unsafe --nonce value refuses PRE-SPEND (exit 2, codex never runs) — same grammar as the env screen', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['code', '--nonce', 'a/b'] });
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(r.status, 2);
+      assert.match(r.stderr, /safe nonce grammar/);
+      assert.equal(r.capStdin, '', 'the refusal fires before any CLI spend');
+    });
+
+    it('a missing value, a duplicate flag, and a disagreeing env+flag pair each refuse (exit 2); an agreeing pair proceeds', () => {
+      const sb = makeSandbox();
+      const missing = run(sb, { args: ['code', '--nonce'] });
+      assert.equal(missing.status, 2);
+      assert.match(missing.stderr, /--nonce needs a value/);
+      const dup = run(sb, { args: ['code', '--nonce', 'n1', '--nonce', 'n2'] });
+      assert.equal(dup.status, 2);
+      assert.match(dup.stderr, /duplicate --nonce/);
+      const clash = run(sb, { args: ['code', '--nonce', 'n1'], env: { AW_REVIEW_NONCE: 'n2' } });
+      assert.equal(clash.status, 2);
+      assert.match(clash.stderr, /disagrees with the AW_REVIEW_NONCE environment value/);
+      const agree = run(sb, { args: ['code', '--nonce', 'n3'], env: { AW_REVIEW_NONCE: 'n3', CODEX_FAKE_FINAL: 'Verdict: ship' } });
+      const exists = existsSync(manifestPath(sb.repo, 'n3'));
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(agree.status, 0, agree.stderr);
+      assert.equal(exists, true, 'an agreeing pair is ONE seam value — the dispatch proceeds');
+    });
+
+    it('a grammar-valid leading-dash --nonce value is ACCEPTED — the flag lane spans the whole declared grammar', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['code', '--nonce', '--n1'], env: { CODEX_FAKE_FINAL: 'Verdict: ship' } });
+      const receipts = readReceipts(sb.repo);
+      const exists = existsSync(manifestPath(sb.repo, '--n1'));
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(exists, true, 'the {backend, nonce}-named manifest lands under the leading-dash nonce');
+      assert.equal(receipts[0].nonce, '--n1', 'the receipt carries the exact grammar-valid value — flag lane ≡ env lane');
+    });
+
+    it('an EMPTY --nonce value refuses pre-spend under the grammar screen (presence is tracked separately from the value)', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['code', '--nonce', ''] });
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(r.status, 2);
+      assert.match(r.stderr, /safe nonce grammar/);
+      assert.equal(r.capStdin, '', 'the refusal fires before any CLI spend');
+    });
+
+    it('a duplicate --nonce after an EMPTY first value still refuses as a duplicate — an empty value never erases presence', () => {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['code', '--nonce', '', '--nonce', 'n2'] });
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(r.status, 2);
+      assert.match(r.stderr, /duplicate --nonce/);
+      assert.equal(r.capStdin, '', 'the refusal fires before any CLI spend');
     });
   });
 

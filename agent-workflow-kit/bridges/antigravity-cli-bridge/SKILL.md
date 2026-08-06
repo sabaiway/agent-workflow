@@ -2,7 +2,7 @@
 name: antigravity-cli-bridge
 description: Delegate work to Google's Antigravity CLI (`agy`) — the successor to Gemini CLI — to reach Gemini, Claude, and GPT-OSS models under a Google AI Pro/Ultra subscription from the terminal. Use when the user wants to run a headless `agy` prompt, hand a focused task or second-opinion review to `agy`, install or authenticate Antigravity CLI, check or economise its quota/models, bridge project context into `agy`, set up a second delegated-execution backend beside Codex, or troubleshoot `agy` flags, models, auth, conversations, or its no-JSON headless behaviour.
 metadata:
-  version: '5.0.0'
+  version: '5.1.0'
 ---
 
 # antigravity-cli-bridge
@@ -148,8 +148,11 @@ dispatch.
 `[A-Za-z0-9._-]{1,64}` (anything else refuses pre-spend), a successful review first mints the
 finding MANIFEST `agent-workflow-finding-manifest-agy-<nonce>.json` beside the receipts file —
 atomic, no-clobber, ORDERED before the receipt append; a failed mint EXCLUDES the receipt, so a
-nonce-supplied dispatch never lands a receipt without its readable manifest. Nonce-less runs are
-byte-exact today and mint nothing.
+nonce-supplied dispatch never lands a receipt without its readable manifest. Nonce-less runs add
+no nonce field and mint nothing (the `wrapperVersion` field every receipt carries moves with each
+release). `agy-review … --nonce <n>` is the plain-argument equivalent
+(one seam; flag and a non-empty env must agree, a disagreeing pair refuses pre-spend) — the lane
+for hosts whose dispatch policy has no env-prefix form.
 
 Frontier default `Gemini 3.1 Pro (High)`; **any** model is allowed (a sub-frontier one earns a
 silenceable `AGY_PROBE=1` advisory). An oversized `code` review is **DELIVERED, not refused**: the

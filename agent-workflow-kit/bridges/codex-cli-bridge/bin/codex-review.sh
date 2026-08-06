@@ -42,8 +42,8 @@ case "${1:-}" in
 codex-review — read-only ADVISORY review by the OpenAI Codex CLI (subscription-only; frontier model at max effort).
 
 Usage:
-  codex-review plan <plan-file>
-  codex-review code [extra focus...]
+  codex-review plan <plan-file> [--nonce <n>]
+  codex-review code [--nonce <n>] [extra focus...]
 
 Grounding:
   automatic — the wrapper precomputes the full working-tree change set (repo map,
@@ -71,13 +71,16 @@ Receipt:
   posture value carrying control bytes refuses pre-spend in every mode; a run whose final message
   carries NO recognized 'Verdict: <ship|revise|rethink>' line — empty or missing output included —
   exits 4 with NO receipt (D4: a FAILED review to RE-RUN, never a fatal session error); when the
-  dispatch nonce seam AW_REVIEW_NONCE is supplied (safe grammar [A-Za-z0-9._-]{1,64} — anything
+  dispatch nonce seam is supplied — the AW_REVIEW_NONCE environment value or its plain-argument
+  equivalent --nonce <n> (one seam: the flag assigns the same value; supplying both with
+  different values refuses pre-spend) — under the safe grammar [A-Za-z0-9._-]{1,64} (anything
   else refuses pre-spend), the wrapper first mints the finding MANIFEST {schema, backend, nonce,
   fingerprint, findings} beside the receipts file (agent-workflow-finding-manifest-<backend>-<nonce>.json;
   atomic, no-clobber — a byte-identical rewrite is an idempotent no-op, different bytes refuse
   loudly) ORDERED before the receipt append — a failed manifest write EXCLUDES the receipt append,
   so a nonce-supplied dispatch can never land a receipt without its readable manifest; a nonce-less
-  invocation keeps this receipt contract byte-exact and mints nothing; a write
+  invocation adds NO nonce field and mints NO finding manifest (the existing wrapperVersion field
+  still changes with each bridge release); a write
   failure warns, never fails the review
 
 Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):
@@ -103,7 +106,7 @@ Honesty + posture (D4/D5):
   posture banner verbatim when labeling this dispatch. A posture value carrying control bytes
   refuses pre-spend in every mode.
 
-Environment: CODEX_REVIEW_SCHEMA=1 (structured JSON findings), CODEX_HARD_TIMEOUT (seconds, default 1800), CODEX_PROBE=1 (throwaway probe only), AW_REVIEW_RECEIPTS (receipt file override), AW_REVIEW_NONCE (dispatch nonce — mints the finding manifest beside the receipt).
+Environment: CODEX_REVIEW_SCHEMA=1 (structured JSON findings), CODEX_HARD_TIMEOUT (seconds, default 1800), CODEX_PROBE=1 (throwaway probe only), AW_REVIEW_RECEIPTS (receipt file override), AW_REVIEW_NONCE (dispatch nonce — mints the finding manifest beside the receipt; the --nonce <n> flag is its plain-argument equivalent).
 Requires at run time: the codex CLI on PATH, a ChatGPT-subscription login, a git work tree with a root AGENTS.md (--help needs none of these).
 HELP
     exit 0
@@ -275,7 +278,7 @@ DEFAULT_CODEX_EFFORT="xhigh"
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by codex-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="codex"
-AW_BRIDGE_VERSION="3.2.0"
+AW_BRIDGE_VERSION="3.3.0"
 CODEX_MODEL="${CODEX_MODEL:-$DEFAULT_CODEX_MODEL}"
 CODEX_EFFORT="${CODEX_EFFORT:-$DEFAULT_CODEX_EFFORT}"
 # Generous hard cap for a slow xhigh review (subscription latency varies).
@@ -572,7 +575,8 @@ posture_json() {
 # hard-link publish) and NO-CLOBBER: a byte-identical re-write is an idempotent no-op, different
 # bytes refuse loudly. Returns non-zero on ANY failure — the caller then EXCLUDES the receipt
 # append, so a nonce-supplied dispatch can never land a receipt without its readable manifest.
-# A nonce-less invocation returns 0 untouched (today's receipt contract stays byte-exact).
+# A nonce-less invocation returns 0 untouched (no nonce field, no manifest — the receipt
+# otherwise proceeds unchanged).
 write_finding_manifest() {
   local receipts="$1" fingerprint="$2" findings_file="$3" nonce="${AW_REVIEW_NONCE:-}"
   [[ -n "$nonce" ]] || return 0
@@ -789,6 +793,48 @@ assemble_code_diff() {
 mode="${1:-}"
 shift || true
 
+# --nonce <v> — the plain-argument lane onto the EXISTING AW_REVIEW_NONCE seam (flow
+# FLOW-NONCE-DISPATCH-LANE): a host whose dispatch policy has no env-prefix lane passes the
+# round-open nonce as an argument instead. Stripped for EVERY mode before mode handling
+# (plan-mode consult dispatches carry nonces too); the flag and a non-empty env value must
+# AGREE — two disagreeing sources would mint an ambiguous dispatch identity (fail closed).
+# Grammar screen identical to the env screen above (enumerated ASCII — locale-independent),
+# pre-spend. The NEXT argument is taken unconditionally (only end-of-args refuses here): the
+# closed grammar is the single validity door, so a grammar-valid leading-dash value is legal —
+# and presence rides its own flag, so an EMPTY value still hits the grammar screen and a
+# duplicate after it still refuses.
+nonce_flag=""
+nonce_flag_set=0
+scan_args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --nonce)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --nonce needs a value; got '<end of args>'." >&2
+        exit 2
+      fi
+      if [[ "$nonce_flag_set" == "1" ]]; then
+        echo "error: duplicate --nonce — one dispatch carries one nonce." >&2
+        exit 2
+      fi
+      nonce_flag="$2"; nonce_flag_set=1; shift 2 ;;
+    *)
+      scan_args+=("$1"); shift ;;
+  esac
+done
+if [[ "$nonce_flag_set" == "1" ]]; then
+  if [[ ! "$nonce_flag" =~ ^[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]{1,64}$ ]]; then
+    echo "error: --nonce fails the safe nonce grammar ([A-Za-z0-9._-]{1,64}) — the derived manifest name would be unsafe; fix the nonce and re-run." >&2
+    exit 2
+  fi
+  if [[ -n "${AW_REVIEW_NONCE:-}" && "${AW_REVIEW_NONCE}" != "$nonce_flag" ]]; then
+    echo "error: --nonce disagrees with the AW_REVIEW_NONCE environment value — one dispatch carries one nonce; drop one source and re-run." >&2
+    exit 2
+  fi
+  AW_REVIEW_NONCE="$nonce_flag"
+fi
+set -- "${scan_args[@]+"${scan_args[@]}"}"
+
 REVIEW_ARTIFACT=""
 REVIEW_FINGERPRINT=""
 
@@ -845,7 +891,7 @@ case "$mode" in
     fi
     ;;
   *)
-    echo "usage: $0 plan <plan-file> | code [extra focus...]" >&2
+    echo "usage: $0 plan <plan-file> [--nonce <n>] | code [--nonce <n>] [extra focus...]" >&2
     exit 2
     ;;
 esac
