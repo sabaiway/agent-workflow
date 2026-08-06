@@ -759,7 +759,8 @@ describe('flow-writer — round-open (the pre-dispatch half, #41)', () => {
       assert.equal(d.findingManifestDigest, null);
       assert.match(r.stdout, new RegExp(`dispatch backend=${backend} nonce=${d.dispatchNonce} watermark=0`), 'the stdout dispatch line is the bridge/receipt-deadline contract');
     }
-    assert.match(r.stdout, /AW_REVIEW_NONCE=/);
+    assert.match(r.stdout, /dispatch with --nonce [0-9a-f]{32} /, 'the hint names the plain-argument wrapper lane (FLOW-NONCE-DISPATCH-LANE)');
+    assert.match(r.stdout, /AW_REVIEW_NONCE/);
     assert.match(r.stdout, /receipt-deadline/);
   });
 
