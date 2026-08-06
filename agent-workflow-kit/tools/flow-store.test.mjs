@@ -11,6 +11,7 @@ import { spawnSync } from 'node:child_process';
 import {
   FLOW_STORE_BASENAME, FLOW_STORE_STOP, FLOW_LOCK_SUFFIX,
   resolveFlowStorePath, resolveFlowLockPath, parseFlowStoreText, readFlowStore, appendFlowRecord,
+  appendFlowRecordWithPreflight,
   mintBookkeepingDelta, computeMaskedFingerprintPayload, appendSubsetAttempt, SUBSET_ATTEMPT_MAX_REDS,
 } from './flow-store.mjs';
 import { FLOW_SCHEMA_VERSION, canonicalFlowDigest, subsetFoldBatchDigest, subsetGateIdsDigest } from './flow-record.mjs';
@@ -670,6 +671,7 @@ describe('flow-store — the Decision-7/8 locked subset-attempt factory (compute
       base: BASE, fingerprint: FP, timestamp: TS,
     };
     throwsStop(() => appendFlowRecord({ cwd: root, record: forged }), /minted ONLY by the locked append factory/);
+    throwsStop(() => appendFlowRecordWithPreflight({ cwd: root, record: forged }), /minted ONLY by the locked append factory/, 'the factory-only rule holds on the checked (preflight) lane too');
     assert.deepEqual(readFlowStore(resolveFlowStorePath(root, {})).records, [], 'a forged fresh context can never bypass the hard-stop budget');
   });
 

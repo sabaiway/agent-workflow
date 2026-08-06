@@ -1900,6 +1900,7 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
       assert.equal(manifest.nonce, 'r1-d2');
       assert.equal(manifest.fingerprint, receipts[0].fingerprint, 'the manifest binds the SAME reviewed-tree fingerprint as the receipt');
       assert.equal(manifest.findings, `${VERDICT_OUTPUT}\n`, 'findings = the captured review output VERBATIM');
+      assert.equal(receipts[0].nonce, 'r1-d2', 'a nonce-supplied receipt carries the dispatch nonce — the flow round-land matcher requires exact equality (dispatch identity end-to-end)');
     });
 
     it('a nonce-less invocation mints NO manifest and keeps the receipt contract byte-exact (Decision 2 both branches)', () => {

@@ -347,6 +347,36 @@ export const appendFlowRecord = ({ cwd = process.cwd(), record, env = process.en
   return appendResolvedFlowRecord({ cwd, env, deps, makeRecord: () => ({ line, snapshot }) });
 };
 
+// appendFlowRecordWithPreflight — the generic lane plus a caller `preflight(records)` hook that
+// runs INSIDE the critical section on the locked store snapshot (Plan 4 Phase 3 / round-1 fold
+// F6): a writer's lock-free cap/completeness walk is advisory — the locked snapshot decides, so
+// a concurrent append can never slip a stale terminal (or a stranding round) through. The hook
+// receives a DEEP-FROZEN CLONE (round-1 fold M5): a buggy preflight throws on any mutation
+// attempt and can never skew the bytes the semantic validation and the write see. A throwing
+// preflight refuses the append with nothing written. The subset-attempt factory-only rule holds
+// on this lane too.
+export const appendFlowRecordWithPreflight = ({ cwd = process.cwd(), record, env = process.env, deps = {}, preflight = null } = {}) => {
+  const { line, snapshot } = captureRecordSnapshot(record);
+  if (snapshot.kind === 'subset-attempt') {
+    throw stop('subset-attempt records are minted ONLY by the locked append factory (appendSubsetAttempt) — a hand-built record could forge a fresh counting context and bypass the hard-stop budget (fail closed)');
+  }
+  return appendResolvedFlowRecord({ cwd, env, deps, makeRecord: (records) => {
+    if (preflight != null) preflight(deepFreezeClone(records));
+    return { line, snapshot };
+  } });
+};
+
+const deepFreezeClone = (value) => {
+  const freeze = (v) => {
+    if (v !== null && typeof v === 'object') {
+      Object.values(v).forEach(freeze);
+      Object.freeze(v);
+    }
+    return v;
+  };
+  return freeze(structuredClone(value));
+};
+
 // ONE serialization captured up front; validation and every preflight walk run on its PARSED
 // snapshot — a toJSON or getter can never make the written line differ from what validated.
 const captureRecordSnapshot = (record) => {

@@ -690,13 +690,18 @@ write_review_receipt() {
     echo "         the review itself succeeded — re-run it to mint the pair." >&2
     return 0
   fi
-  local line probe_field=',"probe":false' delivery_field=""
+  # A nonce-SUPPLIED dispatch stamps its nonce into the receipt too (the flow round-land matcher
+  # requires exact {backend, nonce} equality — dispatch identity end-to-end); the nonce is
+  # grammar-safe by the pre-spend check, and a nonce-less receipt stays BYTE-EXACT (the frozen
+  # compatibility floor).
+  local line probe_field=',"probe":false' delivery_field="" nonce_field=""
   if [[ "$probe" == "true" ]]; then probe_field=',"probe":true'; fi
   if [[ -n "$delivery" ]]; then delivery_field=",\"delivery\":\"$delivery\""; fi
-  line="$(printf '{"schema":1,"artifact":%s,"fresh":%s,"fingerprint":%s,"backend":"%s","verdict":"%s","grounded":%s,"factsHash":%s,"wrapperVersion":"%s","timestamp":"%s"%s,"posture":%s%s}' \
+  if [[ -n "${AW_REVIEW_NONCE:-}" ]]; then nonce_field=",\"nonce\":\"${AW_REVIEW_NONCE}\""; fi
+  line="$(printf '{"schema":1,"artifact":%s,"fresh":%s,"fingerprint":%s,"backend":"%s","verdict":"%s","grounded":%s,"factsHash":%s,"wrapperVersion":"%s","timestamp":"%s"%s,"posture":%s%s%s}' \
     "$(receipt_json_scalar "$artifact")" "$fresh" "$(receipt_json_scalar "$fingerprint")" \
     "$AW_RECEIPT_BACKEND" "$verdict" "$grounded" "$(receipt_json_scalar "$facts_hash")" \
-    "$AW_BRIDGE_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$probe_field" "$(posture_json)" "$delivery_field")"
+    "$AW_BRIDGE_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$probe_field" "$(posture_json)" "$delivery_field" "$nonce_field")"
   if ! printf '%s\n' "$line" >>"$receipts" 2>/dev/null; then
     echo "warning: could not append the review receipt to $receipts — the review itself succeeded;" >&2
     echo "         the review-state gate will read the current tree as un-receipted." >&2
