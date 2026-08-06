@@ -269,8 +269,25 @@ export const evaluateVetoOverride = ({ records, vetoReceipt, tree }) => {
 
 // #65: a current-base red passes only through a rerun-cause naming ITS attempt, matched to a
 // later first-of-its-attempt completed retry; base correlation is flow-side and must be unambiguous.
+// Scope (the Phase-4 veteran-store dogfood catch): a red final minted strictly BEFORE this
+// worktree's EARLIEST adoption instant is OUTSIDE the rung — no flow record could carry its tree
+// BY CONSTRUCTION, so demanding the correlation retroactively would brick arming over any
+// pre-flow evidence history. Both instants are RECORDED record fields in the CANONICAL
+// UTC ISO form (#39 — check-time wall-clock never enters, and Date.parse's tolerance for
+// non-canonical spellings never widens the boundary): ANY own-adoption instant that is not
+// canonical disables the exemption ENTIRELY (a silently dropped broken instant would move the
+// boundary to a LATER adoption — fail open), and a red final exempts only on its own canonical
+// strictly-earlier instant. Stated residual: the two stores are deliberately not lock-coupled
+// and their records remain forgeable (each store's own header says so) — a backdated or
+// backwards-clock instant can move a red across this boundary; the cross-store arming-fence
+// hardening is queued (FLOW-ARMING-FENCE-CROSS-STORE), never pretended here.
 export const collectUnansweredRedRefusals = ({ flowRecords, coreRecords, currentBase, owner }) => {
   if (!hasOwnAdoption(flowRecords, owner)) return [];
+  const adoptionInstants = flowRecords
+    .filter((r) => r.kind === CHAIN_KIND && r.purpose === 'adoption' && r.owner === owner)
+    .map((r) => (isCanonicalInstant(r.timestamp) ? Date.parse(r.timestamp) : null));
+  const armingInstant = adoptionInstants.length > 0 && adoptionInstants.every((t) => t !== null)
+    ? Math.min(...adoptionInstants) : null;
   const refusals = [];
   const identities = flowRecords.map(flowTreeIdentity);
   const basesAt = (fp) => [...new Set(identities.filter((t) => t.fingerprint === fp).map((t) => t.base))];
@@ -287,6 +304,7 @@ export const collectUnansweredRedRefusals = ({ flowRecords, coreRecords, current
       && c.fingerprint === g.fingerprintBefore));
   for (const { r, i } of finals) {
     if (r.status !== 'red') continue;
+    if (armingInstant !== null && isCanonicalInstant(r.timestamp) && Date.parse(r.timestamp) < armingInstant) continue;
     const bases = basesAt(r.fingerprintBefore);
     if (bases.length === 0) {
       refusals.push(`a red final (attempt "${r.attempt}") cannot be base-correlated: no flow record carries its tree fingerprint ${short(r.fingerprintBefore)} — the zero-base lane is a fail-closed ambiguity (#65); the rung demands exactly ONE base through the flow store`);
