@@ -1363,15 +1363,18 @@ describe('commit-guard — flow arm (two-tier activation, #43/P3)', () => {
     seedFinal(root, fp);
     const base = baseOf(root);
     const redFp = 'ee'.repeat(32);
+    // Causal order modeled as claimed: the adoption lands FIRST, the red is minted AFTER it,
+    // with a CANONICAL instant after FLOW_TS — a pre-arming red is OUTSIDE the #65 rung by the
+    // veteran-store scoping; this fixture pins the post-arming unanswered red.
+    const { first } = chainRecords(root, 'main');
+    writeFlow(root, [{ ...first, fingerprint: redFp }]);
     const red = {
       schema: 1, kind: 'final', status: 'red', attempt: 'red-attempt-1', fingerprintBefore: redFp, fingerprintAfter: redFp,
       declared: GATES.gates.map(({ id, cmd }) => ({ id, cmd })), results: [{ id: 'noop', ok: false, code: 1 }],
       evidenceHashes: { redProof: 'a'.repeat(64), degrade: 'b'.repeat(64) }, lcovSha256: null, integrityFailure: null,
-      timestamp: '2026-07-17T00:00:02Z',
+      timestamp: '2026-07-30T00:00:02.000Z',
     };
     writeFileSync(storeOf(root), `${JSON.stringify(red)}\n`, { flag: 'a' });
-    const { first } = chainRecords(root, 'main');
-    writeFlow(root, [{ ...first, fingerprint: redFp }]);
     const r = main(['--check', '--cwd', root], { env: fixtureEnv() });
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.code, 1, r.stdout);

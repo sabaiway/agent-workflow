@@ -710,6 +710,49 @@ describe('flow-check — unanswered-red-on-base rung (#65, Step 1.3)', () => {
   it('a red resolved to a NON-current base never fires the rung — base motion is the other lane', () => {
     assert.deepEqual(rung(recordsOf(ownChain()), coreOf([coreRedFinal('a1', FP, 1)]), BASE2), []);
   });
+
+  it('a red final minted strictly BEFORE the first own adoption is OUTSIDE the rung — arming a veteran evidence store never bricks (#65 scope)', () => {
+    const flow = recordsOf([adoption({ timestamp: TS(10) })]);
+    assert.deepEqual(rung(flow, coreOf([coreRedFinal('ancient', F2, 1)])), [], 'a pre-arming red has no flow-side base correlation BY CONSTRUCTION');
+  });
+
+  it('the pre-arming exemption keys the EARLIEST own adoption instant, not raw record order', () => {
+    const later = adoption({ timestamp: TS(10) });
+    const earlier = adoption({ planId: 'plan-b', timestamp: TS(2) });
+    const refusals = rung(recordsOf([later, earlier]), coreOf([coreRedFinal('a1', F2, 5)]));
+    assert.equal(refusals.length, 1, 'a red between the two adoption instants is INSIDE the armed window');
+    assert.match(refusals[0], /no flow record carries its tree fingerprint/);
+  });
+
+  it('the pre-arming exemption is STRICT (fail closed): same-instant, unparseable-red, and unparseable-adoption lanes all stay refused', () => {
+    const flow = recordsOf([adoption({ timestamp: TS(5) })]);
+    const sameInstant = rung(flow, coreOf([coreRedFinal('a1', F2, 5)]));
+    assert.equal(sameInstant.length, 1, 'strictly-before only — a same-instant red stays refused');
+    const unparseableRed = rung(flow, coreOf([{ ...coreRedFinal('a2', F2, 1), timestamp: 'not-an-instant' }]));
+    assert.equal(unparseableRed.length, 1, 'an unparseable red-final instant is never exempted');
+    const unparseableAdoption = rung(recordsOf([adoption({ timestamp: 'not-an-instant' })]), coreOf([coreRedFinal('a3', F2, 1)]));
+    assert.equal(unparseableAdoption.length, 1, 'an unparseable adoption instant exempts nothing');
+  });
+
+  it('a MIXED adoption set (one broken instant + one valid) disables the exemption entirely — the boundary never widens on malformed data', () => {
+    const flow = recordsOf([adoption({ timestamp: 'not-an-instant' }), adoption({ planId: 'plan-b', timestamp: TS(10) })]);
+    const refusals = rung(flow, coreOf([coreRedFinal('a1', F2, 5)]));
+    assert.equal(refusals.length, 1, 'a silently dropped broken instant would move the boundary to the LATER adoption and exempt this red (fail open)');
+    assert.match(refusals[0], /no flow record carries its tree fingerprint/);
+  });
+
+  it('the instants are CANONICAL on BOTH sides (#39): a parseable-but-non-canonical adoption or red instant never exempts', () => {
+    const nonCanonicalAdoption = rung(
+      recordsOf([adoption({ timestamp: '2026-07-30T00:00:10Z' })]),
+      coreOf([coreRedFinal('a1', F2, 1)]),
+    );
+    assert.equal(nonCanonicalAdoption.length, 1, 'a non-canonical (seconds-form) adoption instant disables the exemption');
+    const nonCanonicalRed = rung(
+      recordsOf([adoption({ timestamp: TS(10) })]),
+      coreOf([{ ...coreRedFinal('a2', F2, 1), timestamp: '2026-07-30T00:00:01Z' }]),
+    );
+    assert.equal(nonCanonicalRed.length, 1, 'a non-canonical red instant is never exempted, however early it parses');
+  });
 });
 
 describe('flow-check — base-intersection classification + decide wiring (#62/#21, Step 1.4)', () => {
