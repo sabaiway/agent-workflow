@@ -7,6 +7,23 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-07 — AD-087 the ADR rotation stops orphaning inbound anchors (memory 4.1.0; kit 5.2.0 and engine 2.0.0 unchanged)
+
+The decisions rotator moved ADR blocks out of the HOT window while every `decisions.md#ad-NNN…`
+link elsewhere in a deployment's `docs/ai/` kept pointing at the vanished heading — and no mode,
+`--check` and `--dry-run` included, ever looked. A deployed project measured 114 inbound anchors
+exposed to that break and raised its HOT cap twice so the rotation would never run: the feature
+protected itself out of use.
+
+Memory 4.1.0 makes the crossing carry its links. Rotate and migrate rewrite the inbound anchors
+to the per-record `adr/` files (fragment preserved for HOT links, monolith-form targets computed
+relative to each linking file) under a conservation invariant that verifies the whole rewrite
+set before the first write, with the cross-file write order pinned so an interrupted run always
+re-runs to completion. `--dry-run` prints the rewrite set, `--check` now fails loudly with
+`file:line` on any anchor the store no longer resolves, and links inside the ADR corpus itself
+refuse pre-write instead of being rewritten. Kit and engine are untouched; the kit's script
+mirror rides its next release.
+
 ## 2026-08-06 — AD-086 the N+1 flow wave ships whole, and this repo releases under its own armed flow (kit 5.2.0, codex-bridge 3.3.0, agy-bridge 5.1.0)
 
 Everything the flow-orchestration series built after the tolerance release publishes as one wave:
