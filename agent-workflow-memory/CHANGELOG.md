@@ -4,6 +4,67 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 4.1.0 — the ADR rotation carries your inbound links with it (AD-087)
+
+Rotating `decisions.md` used to be a link-breaking event: `archive-decisions.mjs` moved ADR
+blocks out of the HOT window into per-record `adr/` files while every `decisions.md#ad-NNN…`
+link elsewhere in your `docs/ai/` kept pointing at a heading that was no longer there — and
+neither `--check` nor `--dry-run` would say a word about it. One deployed project measured 114
+such inbound anchors (23 aimed at the first tier a rotation would move) and had raised its HOT
+cap twice specifically so the rotation never runs. A safety valve nobody dares open is not
+shipped; this release makes the crossing carry its links:
+
+- **Rotate and `--migrate --apply` rewrite inbound links.** Every non-fenced
+  `decisions.md#ad-NNN…` link under `docs/ai/` whose id is in the moved set is rewritten to the
+  record file. The heading-slug fragment is preserved — each record holds the verbatim
+  `## AD-NNN — title` block, so the same anchor resolves — and the leading relative prefix
+  survives (`adr/` is a sibling of `decisions.md`). Migrate additionally rewrites links into
+  the retired monolith archives it deletes, each target computed relative to its linking file.
+- **A conservation invariant guards every rewrite.** The rewrite set is computed and verified
+  before the run's first write: every moved-id link rewritten, every other byte identical,
+  per-file and total matched-link counts equal before and after — any mismatch exits 1 with
+  nothing written.
+- **The write order is pinned crash-safe:** records → inbound rewrites → HOT rewrite / monolith
+  removal. Every interrupted intermediate state re-runs to completion; previously a crash after
+  the HOT write re-ran as «nothing to rotate» with the orphans permanent.
+- **`--check` now proves reference integrity.** A `decisions.md#ad-NNN…` anchor whose id has
+  left the HOT window (stale even when the id exists as an archived record) and an
+  `adr/AD-NNN-….md` link naming no existing record file both fail exit 1, every violation
+  listed with `file:line`. A tree with matches but no ADR substrate fails too; the early SKIP
+  remains only for trees with zero matches.
+- **`--dry-run` prints the rewrite set** (`file:line`, old target → new target) alongside the
+  move set and writes nothing; plain `--migrate` prints the same summary, and
+  `--migrate --apply --dry-run` refuses loudly instead of silently writing.
+- **Fail-closed edges, each red-tested:** a rewrite-form link targeting a moved id inside the
+  ADR corpus itself (HOT preamble or block, a record, a monolith tier) refuses pre-write with
+  `file:line` — convert the link (e.g. to `[[AD-NNN]]`) and re-run; a HOT block ABOUT to move
+  that itself links a retained id or carries a record-form link refuses pre-write (the verbatim
+  move would silently break the link from inside the record); symlinked `.md` files and
+  directories in the scan scope refuse loudly; an unparseable scanned file (unclosed fence)
+  aborts either write path before any write; a stale two-pass snapshot refuses instead of
+  rewriting from old bytes.
+
+**Stated limitations:** the scan is line-scoped (a link hand-wrapped across a line break is not
+matched — the same accepted residual as the preamble contract), inline code is not tracked (a
+backtick-wrapped link counts as live), and YAML frontmatter is opaque metadata — a link inside
+it is neither rewritten nor checked, and is preserved byte-exactly on every write. The boundary
+is `docs/ai/` — links in README or agent entry points outside it are neither rewritten nor
+checked.
+
+**Upgrading:** the tool itself has nothing to reconfigure — the rewrite is additive, and on a
+healthy tree whose links resolve the new assertions stay green. **Reaching your deployment:** a
+fresh Node-project bootstrap through the memory 4.1.0 skill — or a clean-layout upgrade where
+the pair is entirely absent — copies the fixed pair from this package (a No-Node project skips
+the scripts; a legacy-monolith layout goes through the consented migration ask); a normal
+upgrade of an already-deployed pair preserves it byte-for-byte (local edits are never
+clobbered — drift repair belongs to a lineage migration), so an existing deployment is NOT
+auto-refreshed by this release; a verified drift-safe refresh lane is queued family work. If
+`--check` then reports a `dead ADR anchor` or `dead ADR record link`, those are real orphans it
+found — each line names the file, line and dead target; fix or remove the link, or re-point it
+at an existing `adr/` record (or the `[[AD-NNN]]` form); with the links live, rotation is safe
+to run again, so a cap raised only to avoid it can come back down. Any other `--check` red
+carries its own printed diagnosis.
+
 ## 4.0.0 — the archivers stop reporting green on files they did not understand (AD-084)
 
 > ### ⚠ BREAKING — the rotation gates fail CLOSED now
