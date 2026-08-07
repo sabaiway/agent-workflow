@@ -17,24 +17,44 @@
 //                                         plateaus at O(governing), never O(cumulative). Not a ledger.
 //
 // Modes:
-//   (default)          rotate: explode the oldest HOT entries beyond the cap into adr/ records, then
-//                      regenerate the navigator + docs/ai/index.md (item (h)). Monoliths present → a
-//                      LOUD legacy-guard refusal ("run --migrate first"); it never half-explodes.
-//   --check            verify HOT cap + adr/ store integrity + the legacy guard + navigator freshness;
-//                      exit 1 on any breach. A STATED skip (exit 0) only when NO ADR substrate exists
-//                      (neither decisions.md NOR docs/ai/adr/).
+//   (default)          rotate: explode the oldest HOT entries beyond the cap into adr/ records,
+//                      REWRITE the inbound `decisions.md#ad-NNN…` links across docs/ai/** to the
+//                      record files (fragment preserved), then regenerate the navigator +
+//                      docs/ai/index.md (item (h)). Monoliths present → a LOUD legacy-guard refusal
+//                      ("run --migrate first"); it never half-explodes.
+//   --check            verify HOT cap + adr/ store integrity + the legacy guard + navigator freshness
+//                      + reference integrity (every inbound `decisions.md#ad-NNN…` anchor must
+//                      resolve to the CURRENT HOT window — an archived id is stale, not resolving —
+//                      and every `adr/AD-NNN-slug.md` link must name an existing record FILE); exit 1
+//                      listing every breach with file:line. A STATED skip (exit 0) only when NO ADR
+//                      substrate exists (neither decisions.md NOR docs/ai/adr/) AND the docs tree
+//                      carries no matching ADR reference.
 //   --migrate          one-time retirement of the 3-tier monoliths → per-file adr/ records. Dry-run by
-//                      default (prints the file set + id diff + conservation proof, writes nothing).
-//   --migrate --apply  writes a durable pre-delete snapshot, writes the records, rewrites the retained
-//                      HOT preamble, and only THEN removes the monoliths — gated on conservation AND
-//                      the snapshot. Re-run skips byte-identical records (crash-resumable).
+//                      default (prints the file set + id diff + conservation proof + the planned
+//                      inbound-rewrite set, writes nothing).
+//   --migrate --apply  writes a durable pre-delete snapshot, writes the records, rewrites the inbound
+//                      links (monolith-form anchors too, targets computed relative to the linking
+//                      file) and the retained HOT preamble, and only THEN removes the monoliths —
+//                      gated on conservation AND the snapshot. Re-run skips byte-identical records
+//                      (crash-resumable). Combining with --dry-run is a loud pre-spend refusal.
 //   --write-navigator  regenerate docs/ai/adr/log.md AND re-trigger the index regen (the authoring /
 //                      supersession write-side; the --write-index analog). With --dry-run it runs
 //                      EXACTLY the same validation (parse, half-migrated guard, store integrity) and
 //                      stops before every write — the read-only preflight a guarded caller needs to
 //                      earn a go-ahead without risking a partial write.
-//   --dry-run          print the planned rotation move-set, change nothing.
+//   --dry-run          print the planned rotation move-set + inbound-rewrite set (file:line, old
+//                      target → new target), change nothing.
 //   --today=YYYY-MM-DD pin the lastUpdated stamp (tests / reproducible runs).
+//
+// Reference-scan boundary + stated limitations: the inbound-link scan covers docs/ai/** ONLY (links
+// in README / agent entry points are out of scope); the ADR corpus surfaces themselves are NEVER
+// rewritten — a rewrite-form link to a moved id inside decisions.md, an adr/ record or a monolith
+// tier is a loud pre-write refusal (convert it, e.g. to the [[AD-NNN]] form, then re-run). Fenced
+// regions never count; inline code is NOT tracked (a backtick-wrapped link is treated as live);
+// matching is line-scoped — a link hand-wrapped across a line break is not matched (the same
+// accepted residual as the hand-wrapped preamble continuation line below); and frontmatter is
+// opaque metadata — an ADR link inside YAML frontmatter is neither rewritten nor checked (it is
+// preserved byte-exactly on every write).
 //
 // FAIL-LOUD invariants (the Issue-009 lesson — never silently glue an entry to the previous body):
 //   • every `## ` heading MUST parse canonically as `## AD-NNN — <title>` (AD-\d{3,}) — a malformed
@@ -43,6 +63,10 @@
 //   • migration is CONSERVATION-checked before any destructive write: the full multiset
 //     {id → sha256(verbatim block)} across the OLD monoliths equals {retained-HOT ∪ written records};
 //     a drop / renumber / edited-block / stray adr record fails exit 1 before any remove or overwrite;
+//   • inbound-link rewrites are CONSERVATION-checked before the run's first write: every moved-id
+//     link rewritten, every other byte of every scanned file identical — any mismatch is exit 1 with
+//     nothing written; the cross-file write order is pinned (records → inbound rewrites → HOT rewrite
+//     / monolith removal) so every interrupted state re-runs to completion;
 //   • a legacy monolith still on disk fails LOUD on default/--check (it is a half-migrated tree).
 //
 // docs/ai here is git-ignored, so the monoliths were NEVER committed (no VCS recovery) — every
@@ -51,8 +75,8 @@
 //
 // Dependency-free, Node >= 22. Deployed into a consumer's scripts/ like its siblings.
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
-import { dirname, resolve, join } from 'node:path';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { dirname, resolve, join, posix } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -273,6 +297,265 @@ export const verifyConservation = (oldItems, newItems) => {
   for (const id of after.keys()) {
     if (!before.has(id)) throw fail(1, `conservation violation: AD-${id} is present in the migrated store but NOT in the OLD tiers — a stray/invented record; refuse or quarantine it, then re-run`);
   }
+};
+
+// ── inbound reference integrity (the anchor-orphan fix) ─────────────────────────────────
+//
+// Match contract (line-scoped; fenced lines never count): a textual occurrence of the
+// source-file-plus-fragment form. The lookbehind rejects a longer filename
+// (`other-decisions.md#…` is a different file, never a match); a bare `#ad-NNN` has no file part.
+const DOCS_AI_REL = 'docs/ai';
+const HOT_LINK_RE = /(?<![\w.-])decisions\.md#(ad-(\d{3,})[\w-]*)/g;
+const MONOLITH_LINK_RE = /(?<![\w.-])(?:\.\.?\/)*(?:history\/)?decisions-archive(?:-early)?\.md#(ad-(\d{3,})[\w-]*)/g;
+// The right boundary mirrors the lookbehind: `…md.bak` / `…md/child` are DIFFERENT targets, never
+// a match for the base record (the exact-filename contract cuts both ways).
+const RECORD_LINK_RE = /(?<![\w.-])adr\/(AD-(\d{3,})-[A-Za-z0-9-]+\.md)(?![\w./-])/g;
+
+const walkDocsMarkdown = (root) => {
+  const base = resolve(root, DOCS_AI_REL);
+  if (!existsSync(base)) return [];
+  const out = [];
+  const walk = (dir, relDir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const rel = `${relDir}/${entry.name}`;
+      if (entry.isDirectory()) {
+        walk(join(dir, entry.name), rel);
+        continue;
+      }
+      // read/write both FOLLOW a symlink (out of the tree), and silently skipping one hides a
+      // scannable doc or a whole subtree from the reference scan — refuse loudly either way; only
+      // a symlink resolving to a plain non-markdown file stays an ignored stray.
+      if (entry.isSymbolicLink() && !entry.name.endsWith('.md')) {
+        let targetIsDirectory = false;
+        try {
+          targetIsDirectory = statSync(join(dir, entry.name)).isDirectory();
+        } catch {
+          throw fail(1, `${rel}: a dangling symlink in the scan tree — the reference scan cannot classify it; remove or materialize it, then re-run`);
+        }
+        if (targetIsDirectory) {
+          throw fail(1, `${rel}: a symlinked directory in the scan tree would hide its subtree from the reference scan — materialize or remove it, then re-run`);
+        }
+        continue;
+      }
+      if (entry.name.endsWith('.md')) {
+        if (!entry.isFile()) {
+          throw fail(1, `${rel}: a markdown name in the scan tree is not a regular file (a symlink or special file) — the reference scan never reads or writes THROUGH it; materialize or remove it, then re-run`);
+        }
+        out.push(rel);
+      }
+    }
+  };
+  walk(base, DOCS_AI_REL);
+  return out;
+};
+
+// REWRITE scope: docs/ai/** minus the ADR corpus surfaces (HOT, adr/ records + navigator) and the
+// retired monoliths — those are parsed, conservation-hashed and deleted in the same run; a same-run
+// disk rewrite would poison the crash-resume corpus-union guard and write into removed files.
+const isRewriteScope = (rel) =>
+  rel !== HOT_REL && rel !== WARM_REL && rel !== COLD_REL && rel !== NAV_REL && !rel.startsWith(`${ADR_DIR_REL}/`);
+
+// The corpus surfaces are never rewritten: a rewrite-form link to a MOVED id anywhere in them is a
+// loud pre-write refusal — the operator converts the link and re-runs; verbatim blocks stay absolute.
+const assertAdrCorpusFreeOfMovedLinks = (root, movedById, corpusRels, linkRes) => {
+  const violations = [];
+  for (const rel of corpusRels) {
+    const { frontLines, lines, fencedLines } = tokenizeMarkdown(readFileSync(resolve(root, rel), 'utf8'), rel);
+    for (let index = 0; index < lines.length; index += 1) {
+      if (fencedLines.has(index)) continue;
+      for (const re of linkRes) {
+        for (const m of lines[index].matchAll(re)) {
+          if (movedById.has(m[2])) violations.push(`${rel}:${frontLines + index + 1}: "${m[0]}"`);
+        }
+      }
+    }
+  }
+  if (violations.length > 0) {
+    throw fail(1, `refusing pre-write: the ADR corpus itself carries rewrite-form links to a moved id — a corpus surface is never rewritten; convert each link (e.g. to the [[AD-NNN]] form), then re-run:\n  ${violations.join('\n  ')}`);
+  }
+};
+
+// A block leaving decisions.md cannot keep a RELATIVE ADR link meaningful: the block moves
+// verbatim (the conservation invariant forbids editing it) while its base directory changes —
+// refuse pre-write when a TO-EXPLODE block links a RETAINED id (the moved-id complement is
+// refused corpus-wide by assertAdrCorpusFreeOfMovedLinks) or carries ANY record-form link
+// (valid from decisions.md, broken from inside adr/).
+const assertMovingBlocksFreeOfRelativeAdrLinks = (root, movedIds, retainedIds) => {
+  const { frontLines, lines, fencedLines, headings } = tokenizeMarkdown(readFileSync(resolve(root, HOT_REL), 'utf8'), HOT_REL);
+  const violations = [];
+  const h2 = headings.filter((h) => h.level === 2 && HEADING_RE.test(h.text));
+  for (let i = 0; i < h2.length; i += 1) {
+    if (!movedIds.has(HEADING_RE.exec(h2[i].text)[1])) continue;
+    const end = i + 1 < h2.length ? h2[i + 1].index : lines.length;
+    for (let index = h2[i].index; index < end; index += 1) {
+      if (fencedLines.has(index)) continue;
+      for (const m of lines[index].matchAll(HOT_LINK_RE)) {
+        if (retainedIds.has(m[2])) violations.push(`${HOT_REL}:${frontLines + index + 1}: "${m[0]}"`);
+      }
+      for (const m of lines[index].matchAll(RECORD_LINK_RE)) {
+        violations.push(`${HOT_REL}:${frontLines + index + 1}: "${m[0]}"`);
+      }
+    }
+  }
+  if (violations.length > 0) {
+    throw fail(1, `refusing pre-write: a block leaving ${HOT_REL} carries a relative ADR link (a RETAINED decisions.md#… anchor or an adr/… record link) — the block moves verbatim, so the link would change meaning inside the record; convert each link (e.g. to the [[AD-NNN]] form), then re-run:\n  ${violations.join('\n  ')}`);
+  }
+};
+
+// Migrate deletes the monolith files: a monolith-form link whose id is NOT in the moved set could
+// never point at a record after --apply (D5's "all point at records" outcome) — refuse pre-write
+// wherever it sits (rewrite scope, HOT, records, the monolith blocks about to become records).
+const assertNoOrphanedMonolithLinks = (root, movedById, rels) => {
+  const violations = [];
+  for (const rel of rels) {
+    const { frontLines, lines, fencedLines } = tokenizeMarkdown(readFileSync(resolve(root, rel), 'utf8'), rel);
+    for (let index = 0; index < lines.length; index += 1) {
+      if (fencedLines.has(index)) continue;
+      for (const m of lines[index].matchAll(MONOLITH_LINK_RE)) {
+        if (!movedById.has(m[2])) violations.push(`${rel}:${frontLines + index + 1}: "${m[0]}"`);
+      }
+    }
+  }
+  if (violations.length > 0) {
+    throw fail(1, `refusing pre-write: monolith-form links target an id OUTSIDE the moved set — after --apply removes the monoliths these links could never resolve to a record; fix each link, then re-run:\n  ${violations.join('\n  ')}`);
+  }
+};
+
+// The inbound-rewrite plan across the REWRITE scope. HOT-form links keep their leading relative
+// prefix (adr/ is a SIBLING of decisions.md, so the same prefix reaches the record and the fragment
+// resolves verbatim there); monolith-form targets are computed RELATIVE TO THE LINKING FILE with
+// URL-style forward-slash separators on every platform.
+const planInboundRewrites = (root, movedById, withMonolithForms) => {
+  const plans = [];
+  for (const rel of walkDocsMarkdown(root).filter(isRewriteScope)) {
+    const { frontmatter, frontLines, lines, fencedLines } = tokenizeMarkdown(readFileSync(resolve(root, rel), 'utf8'), rel);
+    const rewrites = [];
+    const afterLines = lines.map((line, index) => {
+      if (fencedLines.has(index)) return line;
+      // Every match of every form is collected POSITIONALLY on the ORIGINAL line (the forms are
+      // textually disjoint), then the line is rebuilt by range-splicing — a negative sharing
+      // bytes with a valid link elsewhere on the line can never contaminate the rewrite or its
+      // re-derivation.
+      const matches = [];
+      for (const m of line.matchAll(HOT_LINK_RE)) {
+        const moved = movedById.get(m[2]);
+        if (moved) matches.push({ start: m.index, old: m[0], new: `adr/${moved.fileName}#${m[1]}` });
+      }
+      if (withMonolithForms) {
+        for (const m of line.matchAll(MONOLITH_LINK_RE)) {
+          const moved = movedById.get(m[2]);
+          if (moved) matches.push({ start: m.index, old: m[0], new: `${posix.relative(posix.dirname(rel), `${ADR_DIR_REL}/${moved.fileName}`)}#${m[1]}` });
+        }
+      }
+      if (matches.length === 0) return line;
+      matches.sort((a, b) => a.start - b.start);
+      let cursor = 0;
+      let next = '';
+      for (const match of matches) {
+        if (match.start < cursor) throw fail(1, `${rel}:${frontLines + index + 1}: overlapping link matches — refusing to plan a rewrite`);
+        next += line.slice(cursor, match.start) + match.new;
+        cursor = match.start + match.old.length;
+        rewrites.push({ index, line: frontLines + index + 1, start: match.start, old: match.old, new: match.new });
+      }
+      next += line.slice(cursor);
+      return next;
+    });
+    if (rewrites.length > 0) plans.push({ rel, frontmatter, frontLines, beforeLines: lines, afterLines, rewrites });
+  }
+  return plans;
+};
+
+// Conservation (fail-loud): re-derive the rewritten file from { before + planned rewrites } and
+// require byte-equality — a dropped/altered link or any changed byte outside the plan is exit 1
+// with nothing written. Exported so its failure paths are unit-testable directly.
+export const verifyRewriteConservation = (plan) => {
+  const { rel, frontLines, beforeLines, afterLines, rewrites } = plan;
+  const refuse = (line, detail) => fail(1, `${rel}:${line}: inbound-rewrite conservation violation — ${detail}; refusing with nothing written`);
+  if (beforeLines.length !== afterLines.length) throw refuse(frontLines + 1, `the rewrite changed the line count (${beforeLines.length} → ${afterLines.length})`);
+  const byIndex = new Map();
+  for (const rw of rewrites) {
+    const list = byIndex.get(rw.index);
+    if (list) list.push(rw);
+    else byIndex.set(rw.index, [rw]);
+  }
+  for (let index = 0; index < beforeLines.length; index += 1) {
+    const fileLine = frontLines + index + 1;
+    const planned = byIndex.get(index);
+    if (!planned) {
+      if (beforeLines[index] !== afterLines[index]) throw refuse(fileLine, 'a line outside the planned rewrite set changed');
+      continue;
+    }
+    let expected;
+    if (planned.every((rw) => typeof rw.start === 'number')) {
+      // Range-splicing re-derivation (offsets recorded on the ORIGINAL line) — a same-bytes
+      // negative elsewhere on the line can never contaminate it.
+      const ordered = [...planned].sort((a, b) => a.start - b.start);
+      let cursor = 0;
+      expected = '';
+      for (const rw of ordered) {
+        if (rw.start < cursor) throw refuse(fileLine, 'overlapping planned rewrites');
+        if (beforeLines[index].slice(rw.start, rw.start + rw.old.length) !== rw.old) throw refuse(fileLine, `the planned link "${rw.old}" is not at its recorded offset in the source line`);
+        expected += beforeLines[index].slice(cursor, rw.start) + rw.new;
+        cursor = rw.start + rw.old.length;
+      }
+      expected += beforeLines[index].slice(cursor);
+    } else {
+      // Occurrence-based fallback for plans without offsets (the exported contract's original
+      // shape); longest-first so a link that is a textual prefix of another cannot corrupt it.
+      const unique = [...new Map(planned.map((rw) => [`${rw.old} ${rw.new}`, rw])).values()].sort((a, b) => b.old.length - a.old.length);
+      expected = beforeLines[index];
+      for (const rw of unique) {
+        if (!expected.includes(rw.old)) throw refuse(fileLine, `the planned link "${rw.old}" is absent from the source line`);
+        expected = expected.split(rw.old).join(rw.new);
+      }
+    }
+    if (afterLines[index] !== expected) throw refuse(fileLine, 'the rewritten line diverges from the planned substitution (a link would be dropped or altered)');
+    for (const rw of planned) {
+      if (!afterLines[index].includes(rw.new)) throw refuse(fileLine, `the rewritten link "${rw.new}" is missing from the output line (a link would be dropped)`);
+    }
+  }
+};
+
+const summarizeRewrites = (plans) =>
+  plans.flatMap((plan) => plan.rewrites.map((rw) => `${plan.rel}:${rw.line} ${rw.old} → ${rw.new}`));
+
+export const writeInboundRewrites = (root, plans) => {
+  // Two passes (the plan is computed pre-write, D4): verify the LIVE bytes of EVERY planned file
+  // first, then write — a drift anywhere refuses with NOTHING written in the rewrite phase.
+  for (const plan of plans) {
+    if (readFileSync(resolve(root, plan.rel), 'utf8') !== `${plan.frontmatter}${plan.beforeLines.join('\n')}`) {
+      throw fail(1, `${plan.rel}: changed between the rewrite plan and the write — refusing to overwrite from a stale snapshot; re-run`);
+    }
+  }
+  for (const plan of plans) {
+    writeFileSync(resolve(root, plan.rel), `${plan.frontmatter}${plan.afterLines.join('\n')}`, 'utf8');
+  }
+};
+
+// CHECK scope (read-only, wider): docs/ai/** including decisions.md (whole file) and the adr/
+// records, excluding only the generated navigator. (a) a `decisions.md#ad-NNN…` id outside the
+// CURRENT HOT window is dead (an archived id is stale, not resolving); (b) an `adr/AD-NNN-slug.md`
+// link must name an existing record FILE (exact filename, not id-presence).
+const collectReferenceViolations = (root, hotIds, archivedIds) => {
+  const violations = [];
+  for (const rel of walkDocsMarkdown(root).filter((r) => r !== NAV_REL)) {
+    const { frontLines, lines, fencedLines } = tokenizeMarkdown(readFileSync(resolve(root, rel), 'utf8'), rel);
+    for (let index = 0; index < lines.length; index += 1) {
+      if (fencedLines.has(index)) continue;
+      const fileLine = frontLines + index + 1;
+      for (const m of lines[index].matchAll(HOT_LINK_RE)) {
+        if (hotIds.has(m[2])) continue;
+        const why = archivedIds.has(m[2]) ? `AD-${m[2]} is archived — repoint the link at ${ADR_DIR_REL}/` : `AD-${m[2]} is not in the current HOT window`;
+        violations.push(`${rel}:${fileLine}: dead ADR anchor "${m[0]}" — ${why}`);
+      }
+      for (const m of lines[index].matchAll(RECORD_LINK_RE)) {
+        if (!existsSync(resolve(root, ADR_DIR_REL, m[1]))) {
+          violations.push(`${rel}:${fileLine}: dead ADR record link "${m[0]}" — no record file ${ADR_DIR_REL}/${m[1]}`);
+        }
+      }
+    }
+  }
+  return violations;
 };
 
 // ── tier / store IO ─────────────────────────────────────────────────────────────────────
@@ -581,6 +864,10 @@ const parseArgs = (argv) => {
     else if (arg.startsWith('--today=')) today = arg.slice('--today='.length);
     else throw fail(2, `Unknown argument: ${arg}\n${USAGE}`);
   }
+  // Pre-fix, --apply silently won over --dry-run and wrote — a fail-closed contract cannot keep that.
+  if (flags.migrate && flags.apply && flags.dryRun) {
+    throw fail(2, `--migrate --apply --dry-run is contradictory — plain --migrate IS the dry run; drop --apply to preview or --dry-run to apply\n${USAGE}`);
+  }
   return { flags, today };
 };
 
@@ -672,10 +959,23 @@ const runMigrate = (root, flags, today, deps, log, logError) => {
   for (const r of records) finalStoreById.set(r.id, { id: r.id, idNum: r.idNum, fileName: r.fileName });
   assertStoreIntegrity(retained, [...finalStoreById.values()]);
 
+  const movedById = new Map(records.map((r) => [r.id, r]));
+  assertAdrCorpusFreeOfMovedLinks(root, movedById, [HOT_REL, ...existingStore.map((e) => e.rel), ...present], [HOT_LINK_RE, MONOLITH_LINK_RE]);
+  assertMovingBlocksFreeOfRelativeAdrLinks(root, new Set(movedById.keys()), new Set(retained.map((e) => e.id)));
+  assertNoOrphanedMonolithLinks(root, movedById, [
+    ...walkDocsMarkdown(root).filter(isRewriteScope),
+    HOT_REL,
+    ...existingStore.map((e) => e.rel),
+    ...present,
+  ]);
+  const rewritePlans = planInboundRewrites(root, movedById, true);
+  for (const plan of rewritePlans) verifyRewriteConservation(plan);
+
   const summary = {
     records: records.map((r) => r.fileName),
     retainedHot: retained.map((e) => `AD-${e.id}`),
     monolithsRetired: present,
+    inboundRewrites: summarizeRewrites(rewritePlans),
     conservation: `${oldItems.length} corpus blocks → ${retained.length} retained-HOT + ${records.length} records (conserved)`,
   };
 
@@ -692,7 +992,9 @@ const runMigrate = (root, flags, today, deps, log, logError) => {
   ];
   const snapshot = writeSnapshot(root, snapshotFiles, deps);
 
+  // Pinned write order: records → inbound rewrites → HOT rewrite / monolith removal.
   writeRecords(root, records);
+  writeInboundRewrites(root, rewritePlans);
   const corpus = [...retained, ...loadAdrStore(root)];
   writeNavigatorFile(root, corpus, today);
   writeHot(root, hot, retained, today);
@@ -703,6 +1005,7 @@ const runMigrate = (root, flags, today, deps, log, logError) => {
   log('[archive-decisions] migrated the 3-tier cascade → one-file-per-ADR store:');
   log(`  snapshot: ${snapshot.dir} (${snapshot.viaGitDir ? 'git dir' : 'out-of-tree fallback'})`);
   log(`  records written: ${records.length} under ${ADR_DIR_REL}/`);
+  log(`  inbound links rewritten: ${summary.inboundRewrites.length} across ${rewritePlans.length} file(s)`);
   log(`  retained HOT: ${summary.retainedHot.join(', ') || '(none)'}`);
   log(`  retired monoliths: ${present.join(', ')}`);
   log(`  navigator: ${NAV_REL}`);
@@ -756,6 +1059,13 @@ const runCheck = (root, today, log, logError) => {
     return 1;
   }
   if (!hasHot && !hasStore) {
+    // The reference scan still runs: a matching reference over NO substrate is a dead link, never a
+    // clean skip — the SKIP remains only for a tree with zero matches.
+    const orphaned = collectReferenceViolations(root, new Set(), new Set());
+    if (orphaned.length > 0) {
+      for (const v of orphaned) logError(`[archive-decisions] FAIL: ${v}.`);
+      return 1;
+    }
     log(`[archive-decisions] SKIP — no ADR substrate (neither ${HOT_REL} nor ${ADR_DIR_REL}); nothing to check.`);
     return 0;
   }
@@ -783,11 +1093,13 @@ const runCheck = (root, today, log, logError) => {
     problems.push(`${NAV_REL} is stale (out of sync with the ADR corpus) — run \`node scripts/archive-decisions.mjs --write-navigator\` and commit it`);
   }
 
+  problems.push(...collectReferenceViolations(root, new Set(hotEntries.map((e) => e.id)), new Set(adrEntries.map((e) => e.id))));
+
   if (problems.length > 0) {
     for (const p of problems) logError(`[archive-decisions] FAIL: ${p}.`);
     return 1;
   }
-  log('[archive-decisions] OK — HOT within cap, store integrity intact, navigator fresh.');
+  log('[archive-decisions] OK — HOT within cap, store integrity intact, navigator fresh, inbound ADR references resolve.');
   return 0;
 };
 
@@ -825,20 +1137,33 @@ const runRotate = (root, flags, today, deps, log, logError) => {
   for (const rec of records) finalStoreById.set(rec.id, { id: rec.id, idNum: rec.idNum, fileName: rec.fileName });
   assertStoreIntegrity(retained, [...finalStoreById.values()]);
 
-  const summary = { explode: records.map((r) => r.fileName), retainedHot: retained.map((e) => `AD-${e.id}`) };
+  const movedById = new Map(records.map((r) => [r.id, r]));
+  assertAdrCorpusFreeOfMovedLinks(root, movedById, [HOT_REL, ...existingStore.map((e) => e.rel)], [HOT_LINK_RE]);
+  assertMovingBlocksFreeOfRelativeAdrLinks(root, new Set(movedById.keys()), new Set(retained.map((e) => e.id)));
+  const rewritePlans = planInboundRewrites(root, movedById, false);
+  for (const plan of rewritePlans) verifyRewriteConservation(plan);
+
+  const summary = {
+    explode: records.map((r) => r.fileName),
+    retainedHot: retained.map((e) => `AD-${e.id}`),
+    inboundRewrites: summarizeRewrites(rewritePlans),
+  };
   if (flags.dryRun) {
     log('[archive-decisions] DRY-RUN — no files will be changed.');
     log(JSON.stringify(summary, null, 2));
     return 0;
   }
 
+  // Pinned write order: records → inbound rewrites → HOT rewrite (crash-resume idempotency).
   writeRecords(root, records);
+  writeInboundRewrites(root, rewritePlans);
   const corpus = [...retained, ...loadAdrStore(root)];
   writeNavigatorFile(root, corpus, today);
   writeHot(root, hot, retained, today);
   const regen = (deps.regenerateIndex ?? defaultRegenerateIndex)(root, today);
   log('[archive-decisions] rotated:');
   log(`  exploded to adr/: ${summary.explode.join(', ') || '(none)'}`);
+  log(`  inbound links rewritten: ${summary.inboundRewrites.length} across ${rewritePlans.length} file(s)`);
   log(`  retained HOT: ${summary.retainedHot.join(', ')}`);
   if (regen.ok) log('  regenerated docs/ai/index.md');
   else logError(`[archive-decisions] docs/ai/index.md NOT regenerated — ${regen.detail}`);

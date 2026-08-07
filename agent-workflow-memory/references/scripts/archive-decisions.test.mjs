@@ -1,8 +1,8 @@
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import {
   HOT_REL,
   WARM_REL,
@@ -23,6 +23,8 @@ import {
   lineCountOf,
   runCli,
   defaultRegenerateIndex,
+  verifyRewriteConservation,
+  writeInboundRewrites,
 } from './archive-decisions.mjs';
 
 // Hermetic: this test ships as deploy payload and runs inside CONSUMER repos via the pre-commit
@@ -938,5 +940,523 @@ describe('usage', () => {
     const { code, text } = run(['--help'], makeRoot());
     assert.equal(code, 0);
     assert.match(text, /Usage: archive-decisions/);
+  });
+});
+
+// ── reference integrity — inbound anchor rewrite + check assertions (the anchor-orphan fix) ────
+//
+// Rotation/migration move ADR blocks out of HOT while inbound `decisions.md#ad-NNN…` links keep
+// pointing at the old home. The write passes rewrite those links (monolith forms too under
+// migrate) under a conservation invariant, `--check` asserts every inbound ADR reference
+// resolves, and the exported verifier refuses a dropped/altered rewrite with nothing written.
+// Fenced occurrences never count; inline code is treated as live (a stated limitation).
+
+const writeDoc = (root, rel, text) => {
+  mkdirSync(dirname(join(root, rel)), { recursive: true });
+  writeFileSync(join(root, rel), text);
+};
+
+// An over-cap migrated-shape HOT (no monolith): cap = rendered - 1 → exactly the oldest explodes.
+const seedOverCapHot = (root, ids) => {
+  mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
+  const blocks = ids.map((id) => adrBlock(id));
+  const preamble = '# ADRs\n\n> Newest at the bottom.';
+  const probe = tierText(9999, preamble, blocks);
+  writeFileSync(join(root, HOT_REL), tierText(lineCountOf(probe) - 1, preamble, blocks));
+};
+
+describe('reference integrity — rotate/migrate rewrite inbound links, --check asserts them', () => {
+  // Legacy tree whose migrate moves AD-001…AD-005 (HOT overflows by one) and retains AD-006…AD-008,
+  // with inbound links at two depths: pages (needs ../) and history (monolith sibling).
+  const seedMigrateFixture = (root) => {
+    seedLegacy(root, { hot: ['005', '006', '007', '008'], warm: ['003', '004'], cold: ['001', '002'], hotCapDelta: -1 });
+    writeDoc(root, 'docs/ai/pages/spec.md', [
+      'hot [AD-005](../decisions.md#ad-005--decision-005)',
+      'warm [AD-003](../history/decisions-archive.md#ad-003--decision-003)',
+      '',
+    ].join('\n'));
+    writeDoc(root, 'docs/ai/history/notes.md', 'cold sibling [AD-001](decisions-archive-early.md#ad-001--decision-001)\n');
+  };
+
+  it('rotate rewrites inbound decisions.md anchors to record links, fragment preserved', () => {
+    const root = makeRoot();
+    seedOverCapHot(root, ['001', '002', '003', '004']);
+    writeDoc(root, 'docs/ai/pages/spec.md', '# Spec\n\nsee [AD-001](../decisions.md#ad-001--decision-001) for the decision.\n');
+    const { code, errText } = run(['--today=2026-08-07'], root);
+    assert.equal(code, 0, errText);
+    const text = readFileSync(join(root, 'docs/ai/pages/spec.md'), 'utf8');
+    assert.match(text, /\[AD-001\]\(\.\.\/adr\/AD-001-decision-001\.md#ad-001--decision-001\)/);
+    assert.doesNotMatch(text, /decisions\.md#ad-001(?!-)|\(\.\.\/decisions\.md/);
+  });
+
+  it('rotate rewrite is count-preserving: every moved-id link rewritten, all other bytes identical', () => {
+    const root = makeRoot();
+    seedOverCapHot(root, ['001', '002', '003', '004']);
+    const spec = [
+      '# Spec',
+      '',
+      'moved [AD-001](../decisions.md#ad-001--decision-001) and inline `../decisions.md#ad-001--decision-001` on one line.',
+      'retained [AD-004](../decisions.md#ad-004--decision-004) stays.',
+      'negatives: [other](../other-decisions.md#ad-001--decision-001) and [bare](#ad-001--decision-001).',
+      '',
+    ].join('\n');
+    writeDoc(root, 'docs/ai/pages/spec.md', spec);
+    writeDoc(root, 'docs/ai/history/notes.md', 'notes: [AD-001](../decisions.md#ad-001--decision-001)\n');
+    const { code, errText } = run(['--today=2026-08-07'], root);
+    assert.equal(code, 0, errText);
+    assert.equal(readFileSync(join(root, 'docs/ai/pages/spec.md'), 'utf8'), [
+      '# Spec',
+      '',
+      'moved [AD-001](../adr/AD-001-decision-001.md#ad-001--decision-001) and inline `../adr/AD-001-decision-001.md#ad-001--decision-001` on one line.',
+      'retained [AD-004](../decisions.md#ad-004--decision-004) stays.',
+      'negatives: [other](../other-decisions.md#ad-001--decision-001) and [bare](#ad-001--decision-001).',
+      '',
+    ].join('\n'));
+    assert.equal(readFileSync(join(root, 'docs/ai/history/notes.md'), 'utf8'), 'notes: [AD-001](../adr/AD-001-decision-001.md#ad-001--decision-001)\n');
+  });
+
+  it('rotate dry-run prints the rewrite set and writes nothing', () => {
+    const root = makeRoot();
+    seedOverCapHot(root, ['001', '002', '003', '004']);
+    const spec = 'see [AD-001](../decisions.md#ad-001--decision-001).\n';
+    writeDoc(root, 'docs/ai/pages/spec.md', spec);
+    const hotBefore = readFileSync(join(root, HOT_REL), 'utf8');
+    const { code, text } = run(['--dry-run', '--today=2026-08-07'], root);
+    assert.equal(code, 0, text);
+    assert.match(text, /docs\/ai\/pages\/spec\.md:1 decisions\.md#ad-001--decision-001 → adr\/AD-001-decision-001\.md#ad-001--decision-001/);
+    assert.equal(readFileSync(join(root, 'docs/ai/pages/spec.md'), 'utf8'), spec, 'the doc is byte-unchanged');
+    assert.equal(readFileSync(join(root, HOT_REL), 'utf8'), hotBefore, 'HOT is byte-unchanged');
+    assert.deepEqual(adrFiles(root), [], 'no record written on a dry-run');
+  });
+
+  it('--check exits 1 listing every stale decisions.md anchor with file:line', () => {
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['005', '006'], storeIds: ['001'] });
+    writeDoc(root, 'docs/ai/pages/spec.md', [
+      'stale-but-archived [AD-001](../decisions.md#ad-001--decision-001)',
+      'nonexistent [AD-099](../decisions.md#ad-099--gone)',
+      '',
+    ].join('\n'));
+    const { code, errText } = run(['--check', '--today=2026-07-09'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /docs\/ai\/pages\/spec\.md:1: .*ad-001/);
+    assert.match(errText, /docs\/ai\/pages\/spec\.md:2: .*ad-099/);
+  });
+
+  it('--check exits 1 with file:line on a dead adr record link (exact filename)', () => {
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['005'], storeIds: ['001'] });
+    writeDoc(root, 'docs/ai/pages/spec.md', [
+      'good [AD-001](../adr/AD-001-decision-001.md)',
+      'dead [AD-001](../adr/AD-001-wrong-slug.md)',
+      '',
+    ].join('\n'));
+    const { code, errText } = run(['--check', '--today=2026-07-09'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /docs\/ai\/pages\/spec\.md:2: .*AD-001-wrong-slug\.md/);
+    assert.doesNotMatch(errText, /spec\.md:1:/, 'the resolving record link is not flagged');
+  });
+
+  it('--migrate --apply rewrites inbound links including monolith-form anchors, source-relative', () => {
+    const root = makeRoot();
+    seedMigrateFixture(root);
+    const { code, errText } = run(['--migrate', '--apply', '--today=2026-08-07'], root);
+    assert.equal(code, 0, errText);
+    assert.equal(readFileSync(join(root, 'docs/ai/pages/spec.md'), 'utf8'), [
+      'hot [AD-005](../adr/AD-005-decision-005.md#ad-005--decision-005)',
+      'warm [AD-003](../adr/AD-003-decision-003.md#ad-003--decision-003)',
+      '',
+    ].join('\n'));
+    assert.equal(readFileSync(join(root, 'docs/ai/history/notes.md'), 'utf8'), 'cold sibling [AD-001](../adr/AD-001-decision-001.md#ad-001--decision-001)\n');
+    assert.equal(run(['--check', '--today=2026-08-07'], root).code, 0, 'the rewritten tree is green end-to-end');
+  });
+
+  it('migrate dry-run prints the monolith and HOT rewrite set and writes nothing', () => {
+    const root = makeRoot();
+    seedMigrateFixture(root);
+    const specBefore = readFileSync(join(root, 'docs/ai/pages/spec.md'), 'utf8');
+    const notesBefore = readFileSync(join(root, 'docs/ai/history/notes.md'), 'utf8');
+    const { code, text } = run(['--migrate', '--today=2026-08-07'], root);
+    assert.equal(code, 0, text);
+    assert.match(text, /DRY-RUN/);
+    assert.match(text, /docs\/ai\/pages\/spec\.md:1 decisions\.md#ad-005--decision-005 → adr\/AD-005-decision-005\.md#ad-005--decision-005/);
+    assert.match(text, /docs\/ai\/pages\/spec\.md:2 \.\.\/history\/decisions-archive\.md#ad-003--decision-003 → \.\.\/adr\/AD-003-decision-003\.md#ad-003--decision-003/);
+    assert.match(text, /docs\/ai\/history\/notes\.md:1 decisions-archive-early\.md#ad-001--decision-001 → \.\.\/adr\/AD-001-decision-001\.md#ad-001--decision-001/);
+    assert.equal(readFileSync(join(root, 'docs/ai/pages/spec.md'), 'utf8'), specBefore);
+    assert.equal(readFileSync(join(root, 'docs/ai/history/notes.md'), 'utf8'), notesBefore);
+    assert.ok(existsSync(join(root, WARM_REL)) && existsSync(join(root, COLD_REL)), 'monoliths untouched');
+    assert.ok(!existsSync(join(root, ADR_DIR_REL)), 'no adr/ tree created on a dry-run');
+  });
+
+  it('rotate and migrate refuse pre-write when the ADR corpus links a moved id', () => {
+    // (a) the HOT preamble links the moved id
+    {
+      const root = makeRoot();
+      mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
+      const preamble = '# ADRs\n\n> see [old](decisions.md#ad-005--decision-005)';
+      const blocks = ['005', '006', '007', '008'].map((id) => adrBlock(id));
+      const probe = tierText(9999, preamble, blocks);
+      writeFileSync(join(root, HOT_REL), tierText(lineCountOf(probe) - 1, preamble, blocks));
+      const before = readFileSync(join(root, HOT_REL), 'utf8');
+      const { code, errText } = run(['--today=2026-08-07'], root);
+      assert.equal(code, 1);
+      assert.match(errText, /docs\/ai\/decisions\.md:\d+/);
+      assert.equal(readFileSync(join(root, HOT_REL), 'utf8'), before, 'HOT untouched');
+      assert.deepEqual(adrFiles(root), [], 'no record written');
+    }
+    // (b) a HOT block body links the moved id
+    {
+      const root = makeRoot();
+      mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
+      const linked = ['## AD-007 — Decision 007', '', '**Date:** 2026-01-01 · **Status:** Accepted', '', 'refers to [x](decisions.md#ad-005--decision-005)'].join('\n');
+      const blocks = [adrBlock('005'), adrBlock('006'), linked, adrBlock('008')];
+      const probe = tierText(9999, '# ADRs', blocks);
+      writeFileSync(join(root, HOT_REL), tierText(lineCountOf(probe) - 1, '# ADRs', blocks));
+      const before = readFileSync(join(root, HOT_REL), 'utf8');
+      const { code, errText } = run(['--today=2026-08-07'], root);
+      assert.equal(code, 1);
+      assert.match(errText, /docs\/ai\/decisions\.md:\d+/);
+      assert.equal(readFileSync(join(root, HOT_REL), 'utf8'), before, 'HOT untouched');
+      assert.deepEqual(adrFiles(root), [], 'no record written');
+    }
+    // (c) an existing adr/ record block links the moved id
+    {
+      const root = makeRoot();
+      seedOverCapHot(root, ['005', '006', '007', '008']);
+      writeFileSync(join(root, ADR_DIR_REL, 'AD-001-decision-001.md'), `${fm(RECORD_CAP)}\n## AD-001 — Decision 001\n\n**Date:** 2026-01-01\n\nsee [x](../decisions.md#ad-005--decision-005)\n`);
+      const before = readFileSync(join(root, HOT_REL), 'utf8');
+      const { code, errText } = run(['--today=2026-08-07'], root);
+      assert.equal(code, 1);
+      assert.match(errText, /adr\/AD-001-decision-001\.md:\d+/);
+      assert.equal(readFileSync(join(root, HOT_REL), 'utf8'), before, 'HOT untouched');
+      assert.deepEqual(adrFiles(root), ['AD-001-decision-001.md'], 'no new record written');
+    }
+    // (d) a WARM monolith block links a moved id (migrate)
+    {
+      const root = makeRoot();
+      mkdirSync(join(root, 'docs', 'ai', 'history'), { recursive: true });
+      writeFileSync(join(root, HOT_REL), tierText(500, '# ADRs', [adrBlock('005')]));
+      const warmBlock = ['## AD-003 — Decision 003', '', '**Date:** 2026-01-01', '', 'see [x](../decisions.md#ad-001--decision-001)'].join('\n');
+      writeFileSync(join(root, WARM_REL), tierText(500, WARM_PREAMBLE, [warmBlock]));
+      writeFileSync(join(root, COLD_REL), tierText(500, COLD_PREAMBLE, [adrBlock('001')]));
+      const { code, errText } = run(['--migrate', '--apply', '--today=2026-08-07'], root);
+      assert.equal(code, 1);
+      assert.match(errText, /docs\/ai\/history\/decisions-archive\.md:\d+/);
+      assert.ok(existsSync(join(root, WARM_REL)) && existsSync(join(root, COLD_REL)), 'monoliths untouched');
+      assert.ok(!existsSync(join(root, ADR_DIR_REL)), 'no record written');
+      assert.ok(!existsSync(join(root, '.git', 'agent-workflow-adr-migration-snapshot-STAMP')), 'no snapshot on the refusal');
+    }
+    // (e) a COLD monolith block carries a monolith-form link to a moved id (migrate)
+    {
+      const root = makeRoot();
+      mkdirSync(join(root, 'docs', 'ai', 'history'), { recursive: true });
+      writeFileSync(join(root, HOT_REL), tierText(500, '# ADRs', [adrBlock('005')]));
+      writeFileSync(join(root, WARM_REL), tierText(500, WARM_PREAMBLE, [adrBlock('003')]));
+      const coldBlock = ['## AD-001 — Decision 001', '', '**Date:** 2026-01-01', '', 'see [x](decisions-archive.md#ad-003--decision-003)'].join('\n');
+      writeFileSync(join(root, COLD_REL), tierText(500, COLD_PREAMBLE, [coldBlock]));
+      const { code, errText } = run(['--migrate', '--apply', '--today=2026-08-07'], root);
+      assert.equal(code, 1);
+      assert.match(errText, /docs\/ai\/history\/decisions-archive-early\.md:\d+/);
+      assert.ok(existsSync(join(root, WARM_REL)) && existsSync(join(root, COLD_REL)), 'monoliths untouched');
+      assert.ok(!existsSync(join(root, ADR_DIR_REL)), 'no record written');
+    }
+  });
+
+  it('--check exits 1 on a dead reference inside an ADR block body', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
+    const hotBlock = ['## AD-005 — Decision 005', '', '**Date:** 2026-01-01', '', 'cites [gone](decisions.md#ad-002--decision-002)'].join('\n');
+    writeFileSync(join(root, HOT_REL), tierText(500, '# ADRs', [hotBlock]));
+    writeFileSync(join(root, ADR_DIR_REL, 'AD-001-decision-001.md'), `${fm(RECORD_CAP)}\n## AD-001 — Decision 001\n\n**Date:** 2026-01-01\n\ncites [gone too](../decisions.md#ad-099--gone)\n`);
+    assert.equal(run(['--write-navigator', '--today=2026-07-09'], root).code, 0);
+    const { code, errText } = run(['--check', '--today=2026-07-09'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /docs\/ai\/decisions\.md:\d+: .*ad-002/);
+    assert.match(errText, /docs\/ai\/adr\/AD-001-decision-001\.md:\d+: .*ad-099/);
+  });
+
+  it('--check without an ADR substrate still fails on a matching reference', () => {
+    const root = makeRoot();
+    writeDoc(root, 'docs/ai/pages/spec.md', 'orphan [AD-001](../decisions.md#ad-001--decision-001)\n');
+    const { code, errText } = run(['--check'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /docs\/ai\/pages\/spec\.md:1/);
+
+    const clean = makeRoot();
+    writeDoc(clean, 'docs/ai/pages/spec.md', 'no adr links here\n');
+    const skip = run(['--check'], clean);
+    assert.equal(skip.code, 0);
+    assert.match(skip.text, /SKIP — no ADR substrate/);
+  });
+
+  it('the rewrite conservation verifier refuses a dropped or altered link with nothing written', () => {
+    const base = {
+      rel: 'docs/ai/pages/spec.md',
+      frontLines: 0,
+      rewrites: [{ index: 0, line: 1, old: 'decisions.md#ad-001--decision-001', new: 'adr/AD-001-decision-001.md#ad-001--decision-001' }],
+    };
+    // a dropped link: the output line never received the planned rewrite
+    assert.throws(() => verifyRewriteConservation({
+      ...base,
+      beforeLines: ['see [x](../decisions.md#ad-001--decision-001)', 'tail'],
+      afterLines: ['see [x](../decisions.md#ad-001--decision-001)', 'tail'],
+    }), (e) => e.exitCode === 1 && /conservation/.test(e.message));
+    // an altered byte outside the planned rewrite set
+    assert.throws(() => verifyRewriteConservation({
+      ...base,
+      beforeLines: ['see [x](../decisions.md#ad-001--decision-001)', 'tail'],
+      afterLines: ['see [x](../adr/AD-001-decision-001.md#ad-001--decision-001)', 'tail ALTERED'],
+    }), (e) => e.exitCode === 1 && /conservation/.test(e.message));
+    // the honest plan passes
+    assert.doesNotThrow(() => verifyRewriteConservation({
+      ...base,
+      beforeLines: ['see [x](../decisions.md#ad-001--decision-001)', 'tail'],
+      afterLines: ['see [x](../adr/AD-001-decision-001.md#ad-001--decision-001)', 'tail'],
+    }));
+  });
+
+  it('a fenced dead-link sample leaves --check green and survives rotate byte-identically', () => {
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['005', '006'], storeIds: ['001'] });
+    writeDoc(root, 'docs/ai/pages/spec.md', ['fenced sample:', '', '```md', 'dead [x](../decisions.md#ad-099--gone)', '```', ''].join('\n'));
+    assert.equal(run(['--check', '--today=2026-07-09'], root).code, 0, 'a fenced dead link never counts');
+
+    const root2 = makeRoot();
+    seedOverCapHot(root2, ['001', '002', '003', '004']);
+    const doc2 = ['```md', 'fenced moved link [x](../decisions.md#ad-001--decision-001)', '```', ''].join('\n');
+    writeDoc(root2, 'docs/ai/pages/spec.md', doc2);
+    assert.equal(run(['--today=2026-08-07'], root2).code, 0);
+    assert.equal(readFileSync(join(root2, 'docs/ai/pages/spec.md'), 'utf8'), doc2, 'the fenced occurrence survives rotate byte-identically');
+  });
+
+  it('an unclosed fence in a scanned doc aborts BOTH write paths exit 1 with the tree untouched', () => {
+    const root = makeRoot();
+    seedOverCapHot(root, ['001', '002', '003', '004']);
+    writeDoc(root, 'docs/ai/pages/broken.md', '```md\nnever closed\n');
+    const hotBefore = readFileSync(join(root, HOT_REL), 'utf8');
+    const r = run(['--today=2026-08-07'], root);
+    assert.equal(r.code, 1);
+    assert.match(r.errText, /never closed/);
+    assert.equal(readFileSync(join(root, HOT_REL), 'utf8'), hotBefore, 'HOT untouched');
+    assert.deepEqual(adrFiles(root), [], 'no record written');
+
+    const root2 = makeRoot();
+    seedLegacy(root2, { hot: ['005'], warm: ['003'], cold: ['001'] });
+    writeDoc(root2, 'docs/ai/pages/broken.md', '```md\nnever closed\n');
+    const m = run(['--migrate', '--apply', '--today=2026-08-07'], root2);
+    assert.equal(m.code, 1);
+    assert.match(m.errText, /never closed/);
+    assert.ok(existsSync(join(root2, WARM_REL)) && existsSync(join(root2, COLD_REL)), 'monoliths untouched');
+    assert.ok(!existsSync(join(root2, ADR_DIR_REL)), 'no record written');
+  });
+
+  it('the migrate rewrite set never targets a monolith file and written records preserve moved blocks verbatim', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'docs', 'ai', 'history'), { recursive: true });
+    writeFileSync(join(root, HOT_REL), tierText(500, '# ADRs', [adrBlock('005')]));
+    const warmBlock = ['## AD-003 — Decision 003', '', '**Date:** 2026-01-01', '', 'links retained [AD-005](../decisions.md#ad-005--decision-005)'].join('\n');
+    writeFileSync(join(root, WARM_REL), tierText(500, WARM_PREAMBLE, [warmBlock]));
+    const dry = run(['--migrate', '--today=2026-08-07'], root);
+    assert.equal(dry.code, 0, dry.errText);
+    assert.doesNotMatch(dry.text, /history\/decisions-archive\.md:\d+ /, 'no rewrite entry targets a monolith file');
+    const applied = run(['--migrate', '--apply', '--today=2026-08-07'], root);
+    assert.equal(applied.code, 0, applied.errText);
+    const rec = readFileSync(join(root, ADR_DIR_REL, 'AD-003-decision-003.md'), 'utf8');
+    assert.match(rec, /links retained \[AD-005\]\(\.\.\/decisions\.md#ad-005--decision-005\)/, 'the moved block is preserved verbatim');
+  });
+
+  it('D9 negative fixtures stay byte-identical: a different filename and a bare fragment never match', () => {
+    const root = makeRoot();
+    seedOverCapHot(root, ['001', '002', '003', '004']);
+    const doc = 'neg: [a](../my-decisions.md#ad-001--decision-001) [b](#ad-001--decision-001)\n';
+    writeDoc(root, 'docs/ai/pages/neg.md', doc);
+    const { code, errText } = run(['--today=2026-08-07'], root);
+    assert.equal(code, 0, errText);
+    assert.equal(readFileSync(join(root, 'docs/ai/pages/neg.md'), 'utf8'), doc);
+  });
+
+  it('an interrupted state (records + rewrites written, HOT untrimmed) re-runs to completion', () => {
+    const root = makeRoot();
+    seedOverCapHot(root, ['001', '002', '003', '004']);
+    const entry = parseDecisionsText(tierText(999, '# T', [adrBlock('001')]), 'x').entries[0];
+    const [rec] = explode([entry], '2026-08-07');
+    writeFileSync(join(root, ADR_DIR_REL, rec.fileName), `${rec.frontmatter}\n${rec.block}\n`);
+    writeDoc(root, 'docs/ai/pages/spec.md', 'see [AD-001](../adr/AD-001-decision-001.md#ad-001--decision-001)\n');
+    const { code, errText } = run(['--today=2026-08-07'], root);
+    assert.equal(code, 0, errText);
+    assert.deepEqual(idsIn(root, HOT_REL), ['002', '003', '004'], 'the re-run completed the trim');
+    assert.equal(run(['--check', '--today=2026-08-07'], root).code, 0);
+  });
+
+  it('--check stays green on a live tree with resolving anchors', () => {
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['005', '006'], storeIds: ['001'] });
+    writeDoc(root, 'docs/ai/pages/spec.md', [
+      'live [AD-005](../decisions.md#ad-005--decision-005)',
+      'archived [AD-001](../adr/AD-001-decision-001.md#ad-001--decision-001)',
+      '',
+    ].join('\n'));
+    assert.equal(run(['--check', '--today=2026-07-09'], root).code, 0);
+  });
+
+  it('--migrate --apply --dry-run refuses loudly pre-spend', () => {
+    const root = makeRoot();
+    seedLegacy(root, { hot: ['005'], warm: ['003'], cold: ['001'] });
+    const { code, errText } = run(['--migrate', '--apply', '--dry-run'], root);
+    assert.equal(code, 2);
+    assert.match(errText, /--migrate --apply --dry-run/);
+    assert.ok(existsSync(join(root, WARM_REL)), 'nothing written');
+  });
+
+  it('a symlinked markdown file in the scan tree refuses loudly (never read or written through)', () => {
+    const root = makeRoot();
+    seedOverCapHot(root, ['001', '002', '003', '004']);
+    writeFileSync(join(root, 'outside.md'), 'outside the docs tree\n');
+    mkdirSync(join(root, 'docs', 'ai', 'pages'), { recursive: true });
+    symlinkSync(join(root, 'outside.md'), join(root, 'docs/ai/pages/link.md'));
+    const hotBefore = readFileSync(join(root, HOT_REL), 'utf8');
+    const rotate = run(['--today=2026-08-07'], root);
+    assert.equal(rotate.code, 1);
+    assert.match(rotate.errText, /link\.md/);
+    assert.equal(readFileSync(join(root, HOT_REL), 'utf8'), hotBefore, 'HOT untouched');
+    assert.deepEqual(adrFiles(root), [], 'no record written');
+    assert.equal(readFileSync(join(root, 'outside.md'), 'utf8'), 'outside the docs tree\n', 'the symlink target is never touched');
+    const check = run(['--check', '--today=2026-08-07'], root);
+    assert.equal(check.code, 1);
+    assert.match(check.errText, /link\.md/);
+
+    const clean = makeRoot();
+    seedMigrated(clean, { hotIds: ['005'], storeIds: ['001'] });
+    writeFileSync(join(clean, 'notes.txt'), 'plain\n');
+    mkdirSync(join(clean, 'docs', 'ai', 'pages'), { recursive: true });
+    symlinkSync(join(clean, 'notes.txt'), join(clean, 'docs/ai/pages/notes.txt'));
+    assert.equal(run(['--check', '--today=2026-07-09'], clean).code, 0, 'a non-markdown symlink stays an ignored stray');
+  });
+
+  it('a rewrite-scope file that changed after planning refuses pre-write with the human edit intact', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'docs', 'ai', 'pages'), { recursive: true });
+    const rel = 'docs/ai/pages/spec.md';
+    const before = 'see [AD-001](../decisions.md#ad-001--decision-001)\n';
+    writeFileSync(join(root, rel), before);
+    const plan = {
+      rel,
+      frontmatter: '',
+      frontLines: 0,
+      beforeLines: before.split('\n'),
+      afterLines: before.replace('decisions.md#ad-001--decision-001', 'adr/AD-001-decision-001.md#ad-001--decision-001').split('\n'),
+      rewrites: [],
+    };
+    writeFileSync(join(root, rel), 'humanly edited meanwhile\n');
+    assert.throws(() => writeInboundRewrites(root, [plan]), (e) => e.exitCode === 1 && /stale snapshot/.test(e.message));
+    assert.equal(readFileSync(join(root, rel), 'utf8'), 'humanly edited meanwhile\n', 'the human edit survives');
+    writeFileSync(join(root, rel), before);
+    writeInboundRewrites(root, [plan]);
+    assert.match(readFileSync(join(root, rel), 'utf8'), /adr\/AD-001-decision-001\.md#ad-001--decision-001/, 'the unchanged file is rewritten');
+  });
+
+  it('a symlinked directory in the scan tree refuses loudly instead of hiding its subtree', () => {
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['005'], storeIds: ['001'] });
+    mkdirSync(join(root, 'elsewhere'), { recursive: true });
+    writeFileSync(join(root, 'elsewhere', 'notes.md'), 'dead [x](../decisions.md#ad-099--gone)\n');
+    symlinkSync(join(root, 'elsewhere'), join(root, 'docs/ai/pages'));
+    const { code, errText } = run(['--check', '--today=2026-07-09'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /docs\/ai\/pages/);
+
+    const root2 = makeRoot();
+    seedMigrated(root2, { hotIds: ['005'], storeIds: ['001'] });
+    symlinkSync(join(root2, 'gone-target'), join(root2, 'docs/ai/dangling'));
+    const r2 = run(['--check', '--today=2026-07-09'], root2);
+    assert.equal(r2.code, 1);
+    assert.match(r2.errText, /dangling symlink/);
+  });
+
+  it('migrate refuses pre-write when a monolith-form link targets an id outside the moved set', () => {
+    const root = makeRoot();
+    seedLegacy(root, { hot: ['005'], warm: ['003'], cold: ['001'] });
+    writeDoc(root, 'docs/ai/pages/spec.md', 'dead-after-apply [x](../history/decisions-archive.md#ad-777--nope)\n');
+    const { code, errText } = run(['--migrate', '--apply', '--today=2026-08-07'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /docs\/ai\/pages\/spec\.md:1/);
+    assert.ok(existsSync(join(root, WARM_REL)) && existsSync(join(root, COLD_REL)), 'monoliths untouched');
+    assert.ok(!existsSync(join(root, ADR_DIR_REL)), 'no record written');
+  });
+
+  it('rotate refuses pre-write when a MOVING block links a retained id', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
+    const moving = ['## AD-001 — Decision 001', '', '**Date:** 2026-01-01', '', 'see [x](decisions.md#ad-004--decision-004)'].join('\n');
+    const blocks = [moving, adrBlock('002'), adrBlock('003'), adrBlock('004')];
+    const probe = tierText(9999, '# ADRs', blocks);
+    writeFileSync(join(root, HOT_REL), tierText(lineCountOf(probe) - 1, '# ADRs', blocks));
+    const before = readFileSync(join(root, HOT_REL), 'utf8');
+    const { code, errText } = run(['--today=2026-08-07'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /docs\/ai\/decisions\.md:\d+/);
+    assert.match(errText, /RETAINED/);
+    assert.equal(readFileSync(join(root, HOT_REL), 'utf8'), before, 'HOT untouched');
+    assert.deepEqual(adrFiles(root), [], 'no record written');
+  });
+
+  it('rotate refuses pre-write when a MOVING block carries a record-form link', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, ADR_DIR_REL), { recursive: true });
+    const rec = explode(parseDecisionsText(tierText(999, '# T', [adrBlock('001')]), 'x').entries, '2026-08-07')[0];
+    writeFileSync(join(root, ADR_DIR_REL, rec.fileName), `${rec.frontmatter}\n${rec.block}\n`);
+    const moving = ['## AD-005 — Decision 005', '', '**Date:** 2026-01-01', '', 'see [x](adr/AD-001-decision-001.md)'].join('\n');
+    const blocks = [moving, adrBlock('006'), adrBlock('007'), adrBlock('008')];
+    const probe = tierText(9999, '# ADRs', blocks);
+    writeFileSync(join(root, HOT_REL), tierText(lineCountOf(probe) - 1, '# ADRs', blocks));
+    const before = readFileSync(join(root, HOT_REL), 'utf8');
+    const { code, errText } = run(['--today=2026-08-07'], root);
+    assert.equal(code, 1);
+    assert.match(errText, /docs\/ai\/decisions\.md:\d+/);
+    assert.match(errText, /record link|relative ADR link/);
+    assert.equal(readFileSync(join(root, HOT_REL), 'utf8'), before, 'HOT untouched');
+    assert.deepEqual(adrFiles(root), ['AD-001-decision-001.md'], 'no new record written');
+  });
+
+  it('a record-link match ends exactly at .md — a suffixed or child path is a different target', () => {
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['005'], storeIds: ['001'] });
+    writeDoc(root, 'docs/ai/pages/spec.md', [
+      'not-a-record-link [a](../adr/AD-777-zzz.md.bak)',
+      'not-a-record-link [b](../adr/AD-001-decision-001.md/child)',
+      '',
+    ].join('\n'));
+    assert.equal(run(['--check', '--today=2026-07-09'], root).code, 0, 'suffixed and child paths are different filenames, never record-form links');
+  });
+
+  it('a negative sharing bytes with a valid link on ONE line never poisons the rewrite', () => {
+    const root = makeRoot();
+    seedOverCapHot(root, ['001', '002', '003', '004']);
+    writeDoc(root, 'docs/ai/pages/spec.md', 'both [a](../decisions.md#ad-001--decision-001) and [n](../other-decisions.md#ad-001--decision-001)\n');
+    const { code, errText } = run(['--today=2026-08-07'], root);
+    assert.equal(code, 0, errText);
+    assert.equal(readFileSync(join(root, 'docs/ai/pages/spec.md'), 'utf8'),
+      'both [a](../adr/AD-001-decision-001.md#ad-001--decision-001) and [n](../other-decisions.md#ad-001--decision-001)\n');
+  });
+
+  it('a drift in ANY planned file refuses the whole rewrite phase with nothing written', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'docs', 'ai', 'pages'), { recursive: true });
+    const before1 = 'one [AD-001](../decisions.md#ad-001--decision-001)\n';
+    const before2 = 'two [AD-001](../decisions.md#ad-001--decision-001)\n';
+    writeFileSync(join(root, 'docs/ai/pages/a.md'), before1);
+    writeFileSync(join(root, 'docs/ai/pages/b.md'), before2);
+    const planOf = (rel, before) => ({
+      rel,
+      frontmatter: '',
+      frontLines: 0,
+      beforeLines: before.split('\n'),
+      afterLines: before.replace('decisions.md#ad-001--decision-001', 'adr/AD-001-decision-001.md#ad-001--decision-001').split('\n'),
+      rewrites: [],
+    });
+    const plans = [planOf('docs/ai/pages/a.md', before1), planOf('docs/ai/pages/b.md', before2)];
+    writeFileSync(join(root, 'docs/ai/pages/b.md'), 'moved meanwhile\n');
+    assert.throws(() => writeInboundRewrites(root, plans), /stale snapshot/);
+    assert.equal(readFileSync(join(root, 'docs/ai/pages/a.md'), 'utf8'), before1, 'the earlier planned file is byte-unchanged');
   });
 });
