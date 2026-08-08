@@ -7,6 +7,31 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-08 — AD-088 a check must speak where it is built to speak: the two silent checks (kit 5.3.0, codex-cli-bridge 3.4.0; memory 4.1.0 and engine 2.0.0 unchanged)
+
+Two shipped checks stayed quiet at exactly the point they exist to speak — one a GATE that refuses
+and blocks a commit, one a WARNING that never changes an exit status — and they were the same
+sentence, so they ship together.
+
+The `flow-check` gate demanded a receipt its own run had not written yet: a red final on the
+current base cleared only through a LATER completed retry, while `run-gates` appends the final
+receipt only after every gate has run. Each `--final` on an unchanged base therefore minted the
+next red, no number of rerun-causes converged, and the only way out was a hook bypass. The rung is
+now consumer-aware — the same lane split the flow→final comparison already used one arm away — so
+inside a real final run a red is answered by a provable in-progress retry, while a standalone check
+on a quiet tree still refuses and the commit boundary keeps its strict demand unchanged.
+
+`codex-exec` had a nested-sandbox detector but ran it only when the run FAILED. A delegated run
+that survives the failure — degrades to "I cannot check" and exits 0 — spent a paid run and handed
+back an ungrounded answer with nothing saying so. Fresh runs and resumes now share one capture
+posture, so the resume lane finally has a structured per-item evidence surface: its stderr was
+already captured, but the JSON event stream, where a tool call's own failure is visible, went
+nowhere. The scan then runs on every completed run under two honest policies — the failed arm keeps
+its loose rule, and the successful arm warns only when the scanner recognises the expected per-item
+shape, biased toward under-firing on ambiguous or schema-drifted input. The answer still prints
+first and the exit status still stays 0: a heuristic scan must never gain the power to refuse real
+work.
+
 ## 2026-08-07 — AD-087 the ADR rotation stops orphaning inbound anchors (memory 4.1.0; kit 5.2.0 and engine 2.0.0 unchanged)
 
 The decisions rotator moved ADR blocks out of the HOT window while every `decisions.md#ad-NNN…`

@@ -4,6 +4,46 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 5.3.0 — a check must speak where it is built to speak: the two silent checks (AD-088)
+
+**Two shipped checks stayed SILENT at exactly the point they exist to speak** — one a GATE that
+refuses and blocks a commit, one a WARNING that never changes an exit status. They were one
+sentence, so they ship together.
+
+- **The `flow-check` gate stops demanding the receipt its own run will write.** A red final on the
+  current base was cleared only through a LATER completed retry — but `run-gates` appends the final
+  receipt only after every gate has run, so the in-matrix `flow-check` could never see the receipt
+  its OWN run would write, and each `--final` on an unchanged base minted red N+1. No number of
+  rerun-causes converged; the only exit was a hook bypass. The `#65` rung is now consumer-aware, the
+  same lane split the flow→final comparison already applies one arm away: on the `gate` lane a
+  current-base red is
+  ALSO answered by a provable IN-PROGRESS retry — an authoritative `rerun-cause` naming its attempt
+  and binding the current fingerprint, a `final-start` at that fingerprint ordered strictly after
+  that red whose attempt has no completed final, and that fingerprint correlating to exactly ONE
+  base, the current one. Inside a real final run the conjunction holds by construction; a standalone
+  check on a quiet tree still refuses.
+- **`commit-guard` is unchanged.** It keeps the strict completed-retry demand, so the commit
+  boundary still sees a real receipt. The rung's own `consumer` defaults to that strict lane, the
+  relaxation is opt-in by EXACT match, and a tree whose fingerprint is unresolvable or ambiguously
+  base-correlated never relaxes.
+- **The interrupted-run residual is stated, not papered over.** An interrupted final run leaves the
+  same record shape with no live run behind it, so a standalone `flow-check --check` reads PASS in
+  that window. It authorizes nothing — the commit boundary refuses that shape twice over,
+  independently — and the rung's own source comment says so, pinned end to end by a fixture that
+  asserts all three conditions at once.
+- **The bundled `codex-cli-bridge` mirror moves to 3.4.0** — its nested-sandbox scan now runs on
+  every completed run, not only a failed one, so a delegated run that SURVIVES the failure and exits
+  0 is no longer silent about it. On a successful run, it warns when the scanner recognises the
+  expected per-item shape — both tokens inside the `aggregated_output` of ONE `command_execution`
+  with a proven failure. The heuristic is biased toward under-firing on ambiguous or schema-drifted
+  input: field reordering stops the match, and only the first matching item on a line is judged.
+  The exit status deliberately stays 0 there — a heuristic scan must never gain the power to refuse
+  real work.
+
+Evidence: an end-to-end fixture drives a caused red at the current tree through ONE real
+`run-gates --final` to a GREEN newest-authoritative final and a passing `commit-guard --check` — the
+test that would have failed before this release.
+
 ## 5.2.0 — the flow machinery ships whole: recorded subset budgets, flow-bound finals, the round arms, and the dogfooded pipeline (AD-086)
 
 **Everything the flow series built after 5.1.0 lands as one wave** — the record vocabulary, the
