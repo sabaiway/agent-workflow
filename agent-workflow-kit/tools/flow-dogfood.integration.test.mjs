@@ -20,12 +20,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { FLOW_SCHEMA_VERSION, CHAIN_KIND, canonicalFlowDigest } from './flow-record.mjs';
+import { EVIDENCE_SCHEMA_VERSION } from './core-evidence.mjs';
 
 const TOOLS = dirname(fileURLToPath(import.meta.url));
 const SET_FLOW = join(TOOLS, 'set-flow.mjs');
 const FLOW_WRITER = join(TOOLS, 'flow-writer.mjs');
 const RUN_GATES = join(TOOLS, 'run-gates.mjs');
 const COMMIT_GUARD = join(TOOLS, 'commit-guard.mjs');
+const FLOW_CHECK = join(TOOLS, 'flow-check.mjs');
 
 const FLOW_STORE = 'agent-workflow-flow.jsonl';
 const RECEIPTS = 'agent-workflow-review-receipts.jsonl';
@@ -226,6 +228,47 @@ const landCurrentRound = (fx) => {
   return { round, minted, landed };
 };
 
+// ── the gate-silence lane (defect 1): the #65 rung's END-TO-END shapes ───────────────────────────
+// An armed chain whose FIRST council round is already landed — every receipt-consuming gate is
+// satisfied, so the unanswered-red rung is the only moving part left in the final matrix.
+const armWithLandedRound = (tag, step) => {
+  const fx = makeFixture(tag);
+  expectOk(fx, SET_FLOW, ['--preset', 'council', '--write']);
+  expectOk(fx, FLOW_WRITER, ['write-plan-id', PLAN_REL, '--plan-id', PLAN_ID]);
+  git(fx, 'add', '-A');
+  git(fx, 'commit', '-qm', 'arm the flow');
+  expectOk(fx, FLOW_WRITER, ['adoption', PLAN_REL]);
+  expectOk(fx, FLOW_WRITER, ['round-open', PLAN_ID, '--backend', 'codex', '--backend', 'agy', '--step', step]);
+  landCurrentRound(fx);
+  return fx;
+};
+
+// The evidence store lives in the git dir — OUTSIDE the fingerprint domain — so seeding the shape a
+// real run leaves never moves the tree the assertions bind.
+const seedEvidence = (fx, record) => {
+  appendFileSync(join(fx.root, '.git', EVIDENCE), `${JSON.stringify(record)}\n`);
+  return record;
+};
+const seedRedFinal = (fx, { fingerprint, attempt }) => {
+  const declared = JSON.parse(gatesDeclaration()).gates.map(({ id, cmd }) => ({ id, cmd }));
+  return seedEvidence(fx, {
+    schema: EVIDENCE_SCHEMA_VERSION, kind: 'final', status: 'red', attempt,
+    fingerprintBefore: fingerprint, fingerprintAfter: fingerprint, declared,
+    results: declared.map(({ id }, i) => ({ id, ok: i !== 0, code: i === 0 ? 1 : 0 })),
+    integrityFailure: null, evidenceHashes: { redProof: '0'.repeat(64), degrade: '0'.repeat(64) },
+    lcovSha256: null, timestamp: new Date().toISOString(),
+  });
+};
+const seedDanglingStart = (fx, { fingerprint, attempt }) => seedEvidence(fx, {
+  schema: EVIDENCE_SCHEMA_VERSION, kind: 'final-start', fingerprint, attempt, timestamp: new Date().toISOString(),
+});
+
+// The decision-altitude answer for a chosen consumer, computed INSIDE the fixture environment.
+const flowDecisionRefusals = (fx, consumer) => JSON.parse(inFixtureModule(fx, 'flow-check.mjs',
+  'const m = await import(process.env.DOGFOOD_MODULE_URL);'
+  + ' process.stdout.write(JSON.stringify(m.computeFlowDecision({ cwd: process.cwd(), consumer: process.env.DOGFOOD_CONSUMER }).refusals));',
+  { DOGFOOD_CONSUMER: consumer }));
+
 describe('flow dogfood — the tracked-docs/ai pipeline end to end (real CLIs, hermetic git)', { skip: !gitOk }, () => {
   it('drives set-flow → adoption → attempts → rounds → delta+refresh → terminals → --final → commit-guard, then the D10 movement refusal', () => {
     assert.equal(WRAPPER_MANIFEST_SCHEMA, FLOW_SCHEMA_VERSION, 'the manifest reader accepts exactly the wrapper wire schema — a reader bump is a wrapper-compat decision, never an auto-adaptation');
@@ -417,5 +460,65 @@ describe('flow dogfood — the Decision-8 second-red stop pair (blind third refu
     assert.match(diagnosed.stdout, /attempt #3 recorded \(green\)/);
     assert.equal(gateRunCount(fx), 3, 'the diagnosed continuation actually ran the gates');
     assert.equal(subsetAttempts(fx).at(-1).diagnosis, 'the fixture gate grepped stale app bytes', 'the diagnosed continuation is a recorded, self-servable move — never a maintainer wait-state');
+  });
+});
+
+// FLOW-FINAL-RED-DEADLOCK, end to end: the in-matrix flow-check gate used to demand the completed
+// retry that only its OWN run could write, so every --final at an unchanged base minted red N+1.
+// This is the case that would have failed on 5a3f070.
+describe('flow dogfood — the #65 deadlock has a fixed point (defect 1)', { skip: !gitOk }, () => {
+  it('a caused red at the current tree reaches a GREEN final in ONE run, and commit-guard then PASSes', () => {
+    const fx = armWithLandedRound('aw-dogfood-deadlock', '1.1');
+    expectOk(fx, FLOW_WRITER, ['freeze', PLAN_ID]);
+    expectOk(fx, FLOW_WRITER, ['converged', PLAN_ID]);
+    const fp = fingerprintOf(fx);
+    const red = seedRedFinal(fx, { fingerprint: fp, attempt: 'deadlocked-red-1' });
+    expectOk(fx, FLOW_WRITER, ['rerun-cause', '--attempt', red.attempt, '--cause', 'the failing gate is fixed; this retry runs on the tree that fix produced']);
+
+    const finalRun = runTool(fx, RUN_GATES, ['--final']);
+    assert.equal(finalRun.code, 0, `the deadlock is exactly this failure: every product gate green and the run still red — ${finalRun.stdout}${finalRun.stderr}`);
+    const atTree = evidenceRecords(fx).filter((r) => r.kind === 'final' && r.fingerprintBefore === fp);
+    assert.equal(atTree.at(-1).status, 'green', 'the NEWEST authoritative final at this tree is GREEN — not merely some older green');
+    assert.notEqual(atTree.at(-1).attempt, red.attempt, 'the green closes the RETRY attempt, never the red it answers');
+    const guard = runTool(fx, COMMIT_GUARD, ['--check']);
+    assert.equal(guard.code, 0, `${guard.stdout}${guard.stderr}`);
+    assert.match(guard.stdout, /commit-guard: PASS/);
+  });
+});
+
+// The D4 residual, stated rather than papered over: an INTERRUPTED final run leaves a dangling
+// start, and in that window the gate lane's conjunction holds with no live run behind it. It
+// authorizes nothing — the commit boundary refuses twice over, independently.
+describe('flow dogfood — the D4 interrupted-run residual, pinned in full (defect 1)', { skip: !gitOk }, () => {
+  it('the gate lane PASSes while the commit-guard consumer AND the real guard both refuse', () => {
+    const fx = armWithLandedRound('aw-dogfood-d4', '4.1');
+    // Round 1 sat at the clean tree; the fold moves the fingerprint, so the red's tree stays
+    // base-correlated through round 1 while the guard reads the MOVED tree.
+    const redTree = lastRound(fx).fingerprint;
+    writeFileSync(join(fx.root, 'app.txt'), 'ok work\n');
+    git(fx, 'add', '-A');
+    expectOk(fx, FLOW_WRITER, ['round-open', PLAN_ID, '--backend', 'codex', '--backend', 'agy']);
+    landCurrentRound(fx);
+    expectOk(fx, FLOW_WRITER, ['freeze', PLAN_ID]);
+    expectOk(fx, FLOW_WRITER, ['converged', PLAN_ID]);
+    const fp = fingerprintOf(fx);
+    assert.notEqual(fp, redTree, 'the fold moved the tree — the red and the guard read different fingerprints');
+    // The cause is minted BEFORE the final run: a flow append after it would move the D10 projection
+    // and the guard would refuse on THAT instead of the residual this case pins.
+    expectOk(fx, FLOW_WRITER, ['rerun-cause', '--attempt', 'interrupted-red-1', '--cause', 'the fold landed; the retry runs on the moved tree']);
+    expectOk(fx, RUN_GATES, ['--final']);
+    // The D4 shape, in order: a caused red the green never answered (it precedes the red), then the
+    // start an interrupted run left behind at the current tree.
+    seedRedFinal(fx, { fingerprint: redTree, attempt: 'interrupted-red-1' });
+    seedDanglingStart(fx, { fingerprint: fp, attempt: 'interrupted-attempt-1' });
+
+    const gate = runTool(fx, FLOW_CHECK, ['--check']);
+    assert.equal(gate.code, 0, `the gate lane reads PASS in the residual window (diagnostic only): ${gate.stdout}${gate.stderr}`);
+    assert.ok(flowDecisionRefusals(fx, 'commit-guard').some((r) => /#65/.test(r)),
+      'the commit-guard consumer keeps the strict completed-retry demand');
+    const guard = runTool(fx, COMMIT_GUARD, ['--check']);
+    assert.equal(guard.code, 1, `${guard.stdout}${guard.stderr}`);
+    assert.match(guard.stdout, /a later final attempt started and never completed/,
+      'the guard refuses on the dangling attempt independently, before it ever consults the flow arm');
   });
 });

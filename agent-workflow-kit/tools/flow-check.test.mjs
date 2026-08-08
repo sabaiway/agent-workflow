@@ -753,6 +753,146 @@ describe('flow-check — unanswered-red-on-base rung (#65, Step 1.3)', () => {
     );
     assert.equal(nonCanonicalRed.length, 1, 'a non-canonical red instant is never exempted, however early it parses');
   });
+
+  // ── the consumer-aware lane split (D1/D2/D3) ──
+  // laneRung threads the rung's two lane inputs: the consumer and the CURRENT tree fingerprint the
+  // gate relaxation binds. FP is the red's tree; F2 is the retry tree the in-progress run sits on.
+  const laneRung = (consumer, flowRecords, coreRecords, over = {}) =>
+    collectUnansweredRedRefusals({
+      flowRecords, coreRecords, currentBase: BASE, owner: 'main', consumer, currentFingerprint: F2, ...over,
+    });
+  // The FULL D1 conjunction: a red at FP, its own authoritative rerun-cause bound to the CURRENT
+  // tree, and a final-start at that tree ordered strictly AFTER the red whose attempt never completed.
+  const conjunction = () => ({
+    flow: recordsOf([...ownChain(), rerunCause('a1', F2)]),
+    core: coreOf([coreRedFinal('a1', FP, 1), coreStart(F2, 'a2', 2)]),
+  });
+
+  it('the gate lane answers a red under the full conjunction — the in-matrix gate stops demanding the receipt its own run will write', () => {
+    const { flow, core } = conjunction();
+    assert.deepEqual(laneRung('gate', flow, core), [], 'inside a live final run the conjunction holds BY CONSTRUCTION');
+    const strict = laneRung('commit-guard', flow, core);
+    assert.equal(strict.length, 1, 'the commit boundary still demands a real completed retry');
+    assert.match(strict[0], /attempt "a1"/);
+  });
+
+  it('the gate relaxation answers ONLY the reds that carry their own cause', () => {
+    const flow = recordsOf([...ownChain(), rerunCause('a1', F2)]);
+    const core = coreOf([coreRedFinal('a1', FP, 1), coreRedFinal('a3', FP, 2), coreStart(F2, 'a4', 3)]);
+    const refusals = laneRung('gate', flow, core);
+    assert.equal(refusals.length, 1, `an uncaused red is never swept along by a neighbour's cause: ${refusals}`);
+    assert.match(refusals[0], /attempt "a3"/);
+  });
+
+  it('a rerun-cause bound to a DIFFERENT fingerprint never answers on either lane', () => {
+    const flow = recordsOf([...ownChain(), rerunCause('a1', F3)]);
+    const core = coreOf([coreRedFinal('a1', FP, 1), coreStart(F2, 'a2', 2)]);
+    for (const consumer of ['gate', 'commit-guard']) {
+      const refusals = laneRung(consumer, flow, core);
+      assert.equal(refusals.length, 1, `the cause must bind the CURRENT tree (${consumer}): ${refusals}`);
+      assert.match(refusals[0], /attempt "a1"/);
+    }
+  });
+
+  it('a rerun-cause naming a DIFFERENT attempt never answers on either lane', () => {
+    const flow = recordsOf([...ownChain(), rerunCause('a9', F2)]);
+    const core = coreOf([coreRedFinal('a1', FP, 1), coreStart(F2, 'a2', 2)]);
+    for (const consumer of ['gate', 'commit-guard']) {
+      assert.equal(laneRung(consumer, flow, core).length, 1, `each red needs its OWN cause (${consumer})`);
+    }
+  });
+
+  it('a SUPERSEDED rerun-cause never answers — only the authoritative head of its key clears a red', () => {
+    const superseded = rerunCause('a1', F2, { timestamp: TS(6) });
+    const head = rerunCause('a1', F3, { timestamp: TS(7) });
+    const flow = recordsOf([...ownChain(), superseded, head]);
+    const core = coreOf([coreRedFinal('a1', FP, 1), coreStart(F2, 'a2', 2)]);
+    for (const consumer of ['gate', 'commit-guard']) {
+      assert.equal(laneRung(consumer, flow, core).length, 1, `a superseded cause is no cause (${consumer})`);
+    }
+  });
+
+  it('no final-start at all never answers on the gate lane — the relaxation needs a STARTED retry', () => {
+    const flow = recordsOf([...ownChain(), rerunCause('a1', F2)]);
+    assert.equal(laneRung('gate', flow, coreOf([coreRedFinal('a1', FP, 1)])).length, 1);
+  });
+
+  it('a final-start ordered BEFORE the red never answers — the start must strictly postdate ITS red', () => {
+    const { flow } = conjunction();
+    const core = coreOf([coreStart(F2, 'a2', 1), coreRedFinal('a1', FP, 2)]);
+    assert.equal(laneRung('gate', flow, core).length, 1);
+  });
+
+  it('a final-start whose attempt already COMPLETED never answers — a finished attempt is not an in-progress retry', () => {
+    const { flow } = conjunction();
+    const core = coreOf([coreRedFinal('a1', FP, 1), coreStart(F2, 'a2', 2), coreFinal('a2', F3, 3)]);
+    assert.equal(laneRung('gate', flow, core).length, 1);
+  });
+
+  it('a matching cause plus a later final-start at a DIFFERENT fingerprint never answers — the start sits at the CURRENT tree', () => {
+    const { flow } = conjunction();
+    const core = coreOf([coreRedFinal('a1', FP, 1), coreStart(F3, 'a2', 2)]);
+    assert.equal(laneRung('gate', flow, core).length, 1);
+  });
+
+  it('a rerun-cause at the CURRENT fingerprint but a FOREIGN base never relaxes the gate lane', () => {
+    // A fingerprint is not unique to a base — a clean tree hashes identically under every HEAD — so
+    // without the correlation the gate would answer here and mint a green final the commit boundary
+    // is guaranteed to reject.
+    const flow = recordsOf([...ownChain(), rerunCause('a1', F2, { base: BASE2 })]);
+    const core = coreOf([coreRedFinal('a1', FP, 1), coreStart(F2, 'a2', 2)]);
+    for (const consumer of ['gate', 'commit-guard']) {
+      assert.equal(laneRung(consumer, flow, core).length, 1, `a foreign-base retry tree never relaxes (${consumer})`);
+    }
+    const completed = coreOf([coreRedFinal('a1', FP, 1), coreStart(F2, 'a2', 2), coreFinal('a2', F2, 3)]);
+    assert.equal(laneRung('commit-guard', flow, completed).length, 1,
+      'and the COMPLETED retry cannot clear it either — the gate must never answer what the boundary will reject');
+  });
+
+  it('a MULTI-BASE current fingerprint never relaxes the gate lane — the ambiguity is fail-closed on both lanes', () => {
+    const flow = recordsOf([...ownChain(), rerunCause('a1', F2), armedAt(F2, { base: BASE2, timestamp: TS(3) })]);
+    const core = coreOf([coreRedFinal('a1', FP, 1), coreStart(F2, 'a2', 2)]);
+    for (const consumer of ['gate', 'commit-guard']) {
+      assert.equal(laneRung(consumer, flow, core).length, 1, `one tree fingerprint must carry exactly ONE base (${consumer})`);
+    }
+  });
+
+  it('an absent or non-string current fingerprint evaluates the STRICT rule on the gate lane (D3)', () => {
+    const { flow, core } = conjunction();
+    for (const currentFingerprint of [null, undefined, '', 42]) {
+      assert.equal(laneRung('gate', flow, core, { currentFingerprint }).length, 1,
+        `a fingerprint-blind tree never relaxes (${JSON.stringify(currentFingerprint)})`);
+    }
+  });
+
+  it('the rung defaults to the strict lane when no consumer is threaded (D2)', () => {
+    const { flow, core } = conjunction();
+    const refusals = collectUnansweredRedRefusals({
+      flowRecords: flow, coreRecords: core, currentBase: BASE, owner: 'main', currentFingerprint: F2,
+    });
+    assert.equal(refusals.length, 1, 'a caller that forgets the lane inherits STRICTNESS');
+  });
+
+  it('any consumer value other than the exact string "gate" evaluates the strict rule (D2)', () => {
+    const { flow, core } = conjunction();
+    for (const consumer of ['Gate', 'gate ', ' gate', 'review-state', 'commit-guard', '']) {
+      assert.equal(laneRung(consumer, flow, core).length, 1,
+        `the relaxation is opt-in by EXACT match, never by not-being-commit-guard (${JSON.stringify(consumer)})`);
+    }
+  });
+
+  it('the commit-guard lane is unchanged — the existing rung fixtures answer identically through the explicit consumer', () => {
+    const cleared = recordsOf([...ownChain(), armedAt(F2), rerunCause('a1', F2)]);
+    assert.deepEqual(
+      laneRung('commit-guard', cleared, coreOf([coreRedFinal('a1', FP, 1), coreStart(F2, 'a2', 2), coreFinal('a2', F2, 3)])),
+      [], 'a confirmed completed retry still clears its red',
+    );
+    const second = laneRung('commit-guard', cleared, coreOf([coreRedFinal('a1', FP, 1), coreFinal('a2', F2, 2), coreRedFinal('a3', F2, 3)]));
+    assert.equal(second.length, 1);
+    assert.match(second[0], /attempt "a3"/);
+    assert.deepEqual(laneRung('commit-guard', recordsOf(ownChain()), coreOf([coreRedFinal('a1', F2, 1)])).filter((r) => !/no flow record carries/.test(r)), [],
+      'the zero-base ambiguity lane is lane-independent');
+  });
 });
 
 describe('flow-check — base-intersection classification + decide wiring (#62/#21, Step 1.4)', () => {
@@ -1323,6 +1463,23 @@ describe('flow-check — computeFlowDecision (the guard-facing two-tier answer)'
     assert.equal(foreign.armed, true);
     assert.deepEqual(foreign.refusals, []);
     assert.equal(foreign.advisories.length, 1);
+  });
+
+  it('the fixed point exists at decision altitude — the gate lane carries no unanswered-red refusal while the commit-guard consumer still does', () => {
+    const root = makeRepo();
+    mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
+    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'council' } }));
+    const fp = computeTreeFingerprint(root);
+    const base = sh(['rev-parse', 'HEAD'], root).trim();
+    // The deadlock's own shape: a red final at the CURRENT tree, base-correlated through the cause
+    // that names its attempt, and the final-start a live --final run appends before any gate runs.
+    writeFileSync(resolveFlowStorePath(root, {}), `${JSON.stringify(adoption())}\n${JSON.stringify(rerunCause('deadlocked-1', fp, { base }))}\n`);
+    writeFileSync(resolveEvidencePath(root, {}), `${JSON.stringify(coreRedFinal('deadlocked-1', fp, 1))}\n${JSON.stringify(coreStart(fp, 'live-retry', 2))}\n`);
+    const unansweredRed = (r) => /red final/.test(r) && /#65/.test(r);
+    const gate = computeFlowDecision({ cwd: root });
+    assert.equal(gate.refusals.some(unansweredRed), false, `the in-matrix gate lane reaches its fixed point: ${gate.refusals}`);
+    const guard = computeFlowDecision({ cwd: root, consumer: 'commit-guard' });
+    assert.ok(guard.refusals.some(unansweredRed), `the commit boundary still refuses on the strict rule: ${guard.refusals}`);
   });
 
   it('armed + a SYMLINKED receipts store: the decision refuses fail-closed, never an empty success (RECEIPTS-READER-NOFOLLOW)', () => {
