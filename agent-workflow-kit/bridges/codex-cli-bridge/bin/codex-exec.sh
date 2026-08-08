@@ -86,6 +86,18 @@ Notes:
   INFORMATIONAL only: it is never persisted in a receipt or session sidecar
   quote the posture banner verbatim when labeling this dispatch — the banner is the machine-stated
   posture; a prose re-type drifts
+  every-run nested-sandbox scan (DUAL policy, deliberately two different rules): the scan runs on
+  EVERY completed run, not only a failed one, because a run that SURVIVES the nested-sandbox failure
+  exits 0 with an ungrounded answer and nothing said so. Failed run (rc != 0): the existing loose
+  whole-trace combination rule prints the recovery hint. Successful run (rc == 0): a warning fires
+  ONLY on precise per-item evidence — both a sandbox-mechanism token AND a permission/read-only
+  failure token inside the aggregated_output of ONE command_execution item whose failure is PROVEN
+  (a nonzero exit_code, or the serialized status "failed"); a null exit_code is never failure by
+  itself, tokens split across two items never fire, and a successful command's output never fires.
+  The answer is printed FIRST on stdout, then the warning on stderr. HONEST RESIDUAL: the exit
+  status does NOT change on that lane (a distinct nonzero exit would give a heuristic scan DENY
+  polarity, refusing real work whenever the scan over-warns), so an orchestrator keying on exit
+  status alone can still bank an ungrounded answer — the stderr warning is the signal
 
 Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):
   ${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf
@@ -412,9 +424,9 @@ fi
 
 # --- Resume detection (must be the FIRST argument) ---------------------------
 # A dedicated entrypoint for iterating on a session without re-sending context.
-# `codex exec resume` RESETS posture and rejects the -s/--add-dir/-C posture flags
-# (it DOES accept -o/--json on 0.142.3, but we capture stdout directly), so we
-# restate the FULL policy via -c.
+# `codex exec resume` RESETS posture and rejects the -s/--add-dir/-C posture flags,
+# so we restate the FULL policy via -c. It DOES accept -o/--json/--color, and it now
+# carries the same capture posture as a fresh run (one evidence surface, both modes).
 resume_mode=""
 resume_id=""
 case "${1:-}" in
@@ -608,8 +620,10 @@ chmod 755 "$shim_dir/git"
 # --- Build the codex invocation + the prompt ---------------------------------
 if [[ -n "$resume_mode" ]]; then
   # Resume RESETS posture and rejects the -s/--add-dir/-C posture flags, so restate
-  # the entire policy via -c. We deliberately pass no -o/--json (resume DOES accept
-  # them) — codex prints the final message to stdout, which we capture into $out.
+  # the entire policy via -c. It DOES accept -o/--json/--color, and it now carries the
+  # SAME capture posture as a fresh run: the mode asymmetry was a convenience, and it
+  # left resume — the lane the survived-nested-sandbox incident fired on — with no
+  # evidence surface at all (its event stream went nowhere).
   codex_cmd=(codex exec resume "$resume_id"
     --ignore-user-config
     -m "$CODEX_MODEL"
@@ -620,6 +634,9 @@ if [[ -n "$resume_mode" ]]; then
     -c hide_agent_reasoning=true
     -c model_reasoning_summary=none
     "${tier_flags[@]+"${tier_flags[@]}"}"
+    --color never
+    -o "$out"
+    --json
     -)
   full_prompt="$RESUME_REMINDER"$'\n\n'"$task"
 else
@@ -672,25 +689,136 @@ aw_session_label="fresh"
 [[ -n "$resume_mode" ]] && aw_session_label="resume:$resume_id"
 echo "exec posture: model=$CODEX_MODEL effort=$CODEX_EFFORT tier=${CODEX_SERVICE_TIER:-standard} sandbox=workspace-write session=$aw_session_label timeout=$aw_timeout_banner" >&2
 
-# Normal mode: -o writes $out, the JSON stream + logs go to $trace. Resume mode: the
-# final message is codex's stdout → $out, logs → $trace. Either way the final lands
-# in $out and diagnostics in $trace, so the post-processing below is shared.
+# --- Nested-sandbox evidence scan: ONE entry point, TWO policies ---------------
+# The class: codex ships its OWN OS sandbox (bwrap); run nested inside a harness sandbox the FS is
+# read-only and codex's sandbox setup fails. The scan runs on EVERY completed run, not only a failed
+# one — when the backend SURVIVES the failure (degrades to "I cannot check" and exits 0) a paid run
+# is spent on an ungrounded answer, and nothing said so.
+#
+# The two arms have DIFFERENT rules, deliberately:
+#   FAILED run (rc != 0) — the loose whole-trace COMBINATION rule, unchanged: a sandbox MECHANISM
+#   token AND a permission/read-only FAILURE token anywhere in the trace. The run already failed and
+#   the operator is already reading the tail, so an extra hint costs nothing. grep is line-oriented,
+#   so a plain alternation stays within a line — hence two `-q` passes rather than one pattern.
+#   SUCCESSFUL run (rc == 0) — per-item evidence ONLY: both tokens inside the aggregated_output of
+#   ONE command_execution item whose FAILURE is proven. Here a false positive would libel a good
+#   answer, so nothing loose is allowed near it.
+# The successful-run scan is LINE-ORIENTED and TOLERANT: after the unified 2>&1 the trace
+# legitimately mixes plain log lines with JSONL, so every line is judged alone, a line that is not a
+# well-formed command_execution item is simply not evidence (never a parse error, never a stop), and
+# no line can mask a later one.
+AW_NS_MECHANISM='bwrap|landlock|user namespace|pivot_root|unshare|seccomp'
+AW_NS_FAILURE='read-only file system|erofs|operation not permitted|permission denied|eperm'
+
+# BOTH token classes present in one piece of text. Fed by here-string rather than `printf | grep`:
+# with `pipefail` on, a producer that takes EPIPE when `grep -q` exits early on a match would make
+# the pipeline non-zero and silently DROP a real signature — an under-fire invisible by
+# construction. Not reproduced on this host, folded as portability hardening: with no explicit
+# pipeline there is no producer left to fail.
+aw_ns_both_tokens() {
+  grep -qiE "$AW_NS_MECHANISM" <<<"$1" || return 1
+  grep -qiE "$AW_NS_FAILURE" <<<"$1" || return 1
+  return 0
+}
+
+# Valid JSON string CONTENT — no UNESCAPED quote. This is what proves a delimiter slice stayed
+# inside ONE string instead of crossing an object boundary: without it, a decoy object carrying the
+# anchor lets the walk leave its own string and land in another item's fields.
+# The predicate is the parity rule — a quote is escaped iff an ODD number of backslashes precedes
+# it — expressed as an ERE and evaluated by grep: `(^|[^\])` then an EVEN run `(\\)*` then the
+# quote. It is measured, not assumed: the obvious bash spelling (delete the `\\` and `\"` pairs,
+# then look for a survivor) is the SAME predicate but bash's `${var//…}` is quadratic, and it hung
+# the wrapper outright on a 200KB aggregated_output — a real tool call's output reaches that size.
+aw_ns_is_string_content() {
+  if grep -qE '(^|[^\\])(\\\\)*"' <<<"$1"; then return 1; fi
+  return 0
+}
+
+# One trace line → 0 only when THAT line is a command_execution item with a PROVEN failure whose
+# aggregated_output carries both token classes. The wrapper stays dependency-free, so this is not a
+# JSON parse — it is ONE anchored walk over the CLI's observed serialization in which every SKIPPED
+# gap is PROVEN to be a single JSON string's content (aw_ns_is_string_content). Both halves are
+# load-bearing: testing the fields as independent substrings lets a decoy object supply the anchor
+# while the failure fields belong to another item, and skipping a gap without validating it lets the
+# walk leave its own string and land in that other item anyway.
+# The observed shape (codex-cli 0.147.0, live-probed):
+#   {"id":…,"type":"command_execution","command":"…","aggregated_output":"…","exit_code":2,"status":"failed"}
+# Failure proofs: A = a nonzero exit_code, B = the status "failed" immediately after it. A null
+# exit_code is never failure by itself (an in-flight item carries "exit_code":null,"status":"in_progress").
+# Two stated consequences, both deliberate:
+#   - a future CLI that REORDERS these fields makes the scan stop firing rather than misfire.
+#     Under-firing is the right direction here: over-firing would libel a correct answer.
+#   - only the FIRST matching item on a line is judged; a second item's evidence is missed.
+# A hand-crafted trace line is outside the threat model (the same boundary the wrapper declares for
+# a hostile parent environment): the trace's only non-CLI content is plain stderr, which does not
+# start with `{`, and a tool call's own output is JSON-escaped into a string and cannot inject
+# structure. Anything not matching the walk is "not evidence" — never an error, never a stop.
+# Every slice is taken by a SHORT-pattern `#*` cut plus length arithmetic. That is not a style
+# choice: `${var%%<long>*}` and a prefix removal whose PATTERN is a huge variable are both
+# quadratic in bash, and either one hangs the wrapper outright on a 200KB aggregated_output
+# (measured, not assumed — a real tool call's output reaches that size).
+aw_ns_item_evidence() {
+  local line="$1" d1='","aggregated_output":"' d2='","exit_code":' rest tail cmd agg code after
+  case "$line" in '{'*) ;; *) return 1 ;; esac
+  rest="${line#*'"type":"command_execution","command":"'}"
+  if [[ "$rest" == "$line" ]]; then return 1; fi
+  tail="${rest#*"$d1"}"
+  if [[ "$tail" == "$rest" ]]; then return 1; fi
+  cmd="${rest:0:$(( ${#rest} - ${#tail} - ${#d1} ))}"
+  aw_ns_is_string_content "$cmd" || return 1
+  after="${tail#*"$d2"}"
+  if [[ "$after" == "$tail" ]]; then return 1; fi
+  agg="${tail:0:$(( ${#tail} - ${#after} - ${#d2} ))}"
+  aw_ns_is_string_content "$agg" || return 1
+  code="${after%%,*}"
+  if [[ "$code" =~ ^-?[0-9]+$ && "$code" != "0" ]]; then
+    :
+  elif [[ "${after#"$code",}" == '"status":"failed"'* ]]; then
+    :
+  else
+    return 1
+  fi
+  aw_ns_both_tokens "$agg"
+}
+
+aw_scan_nested_sandbox() {   # $1 = rc, $2 = trace path
+  [[ -r "$2" ]] || return 0
+  if [[ "$1" -ne 0 ]]; then
+    if grep -qiE "$AW_NS_MECHANISM" "$2" 2>/dev/null && grep -qiE "$AW_NS_FAILURE" "$2" 2>/dev/null; then
+      echo "hint: this looks like a NESTED-SANDBOX failure — codex-exec ships its own OS sandbox (bwrap)," >&2
+      echo "      which cannot run nested inside a harness sandbox (the FS is read-only). Route codex-exec" >&2
+      echo "      OUTSIDE the harness sandbox: add it to the harness sandbox excludedCommands, or dispatch" >&2
+      echo "      this one run via a per-run consented bypass. Do NOT blanket-disable the sandbox." >&2
+    fi
+    return 0
+  fi
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if aw_ns_item_evidence "$line"; then
+      echo "warning: NESTED-SANDBOX — this run COMPLETED, but a tool call inside it FAILED with a sandbox-setup" >&2
+      echo "         signature. codex-exec ships its own OS sandbox (bwrap), which cannot run nested inside a" >&2
+      echo "         harness sandbox (the FS turns read-only), so the backend most likely could not read what" >&2
+      echo "         it was asked to check: the answer above may be UNGROUNDED — treat it as such rather than" >&2
+      echo "         banking it. Re-dispatch OUTSIDE the harness sandbox: add codex-exec to the harness" >&2
+      echo "         sandbox excludedCommands, or use a per-run consented bypass. Do NOT blanket-disable the" >&2
+      echo "         sandbox. The exit status stays 0 on purpose — this is a warning, never a gate." >&2
+      return 0
+    fi
+  done <"$2"
+  return 0
+}
+
+# ONE capture posture for BOTH modes: -o writes the final message to $out, the JSON
+# event stream and every log line go to $trace (stderr merged in). The final always
+# lands in $out and the diagnostics always in $trace, so the post-processing below —
+# including the evidence scan — is genuinely shared instead of mode-dependent.
 set +e
-if [[ -n "$resume_mode" ]]; then
-  if [[ -n "$timeout_bin" ]]; then
-    printf '%s' "$full_prompt" | "${run_env[@]}" "$timeout_bin" --kill-after=15s "$CODEX_HARD_TIMEOUT" "${codex_cmd[@]}" >"$out" 2>"$trace"
-  else
-    printf '%s' "$full_prompt" | "${run_env[@]}" "${codex_cmd[@]}" >"$out" 2>"$trace"
-  fi
-  rc=$?
+if [[ -n "$timeout_bin" ]]; then
+  printf '%s' "$full_prompt" | "${run_env[@]}" "$timeout_bin" --kill-after=15s "$CODEX_HARD_TIMEOUT" "${codex_cmd[@]}" >"$trace" 2>&1
 else
-  if [[ -n "$timeout_bin" ]]; then
-    printf '%s' "$full_prompt" | "${run_env[@]}" "$timeout_bin" --kill-after=15s "$CODEX_HARD_TIMEOUT" "${codex_cmd[@]}" >"$trace" 2>&1
-  else
-    printf '%s' "$full_prompt" | "${run_env[@]}" "${codex_cmd[@]}" >"$trace" 2>&1
-  fi
-  rc=$?
+  printf '%s' "$full_prompt" | "${run_env[@]}" "${codex_cmd[@]}" >"$trace" 2>&1
 fi
+rc=$?
 set -e
 
 if [[ $rc -eq 124 || $rc -eq 137 ]]; then
@@ -701,20 +829,7 @@ fi
 if [[ $rc -ne 0 ]]; then
   echo "error: codex exec failed (exit $rc). Last lines of the run trace:" >&2
   tail -n 40 "$trace" >&2
-  # Nested-sandbox detection: codex ships its OWN OS sandbox (bwrap); run nested inside a harness
-  # sandbox the FS is read-only and codex's own sandbox setup fails. Fire the STATED recovery hint
-  # only on a COMBINATION — a sandbox MECHANISM token AND a permission/read-only FAILURE token in the
-  # trace — so a lone 'bwrap' banner, or a lone 'permission denied' from unrelated code, is NOT enough
-  # (never a preemptive blanket). grep is line-oriented, so a plain alternation stays within a line —
-  # the old `[^\n]*` between the two halves was wrong twice over (it excluded the letter 'n', and grep
-  # never spans lines anyway), so the split into two `-q` passes both fixes it and states the intent.
-  if grep -qiE 'bwrap|landlock|user namespace|pivot_root|unshare|seccomp' "$trace" 2>/dev/null \
-     && grep -qiE 'read-only file system|erofs|operation not permitted|permission denied|eperm' "$trace" 2>/dev/null; then
-    echo "hint: this looks like a NESTED-SANDBOX failure — codex-exec ships its own OS sandbox (bwrap)," >&2
-    echo "      which cannot run nested inside a harness sandbox (the FS is read-only). Route codex-exec" >&2
-    echo "      OUTSIDE the harness sandbox: add it to the harness sandbox excludedCommands, or dispatch" >&2
-    echo "      this one run via a per-run consented bypass. Do NOT blanket-disable the sandbox." >&2
-  fi
+  aw_scan_nested_sandbox "$rc" "$trace"
   exit $rc
 fi
 
@@ -739,3 +854,7 @@ else
   echo "warning: codex produced no final-message file — printing the run-trace tail instead." >&2
   tail -n 40 "$trace"
 fi
+
+# The answer is printed FIRST, then the evidence speaks: a run that COMPLETED can still have been
+# ungrounded, and saying so after the answer keeps stdout byte-identical for every caller.
+aw_scan_nested_sandbox "$rc" "$trace"

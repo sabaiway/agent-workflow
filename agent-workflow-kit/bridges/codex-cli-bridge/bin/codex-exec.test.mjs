@@ -46,6 +46,13 @@ const FAKE_CODEX = [
   '  cat <<EOF',
   '{"type":"turn.started"}',
   '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"FAKE_FINAL_MESSAGE"}}',
+  'EOF',
+  // The event seam: verbatim extra stream lines (JSONL items, plain noise, or both) between the
+  // opening events and turn.completed — a multi-line value emits multiple lines.
+  '  if [[ -n "${CODEX_FAKE_EVENT:-}" ]]; then echo "$CODEX_FAKE_EVENT"; fi',
+  // A file-borne twin: a payload too large for the environment (E2BIG) still has to be emittable.
+  '  if [[ -n "${CODEX_FAKE_EVENT_FILE:-}" ]]; then cat "$CODEX_FAKE_EVENT_FILE"; fi',
+  '  cat <<EOF',
   '{"type":"turn.completed","usage":{}}',
   'EOF',
   'else',
@@ -365,6 +372,203 @@ describe('codex-exec.sh — clean output + session capture (1.2)', () => {
     assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'a permission failure from unrelated code is not nested-sandbox proof');
   });
 
+  // ── the rc == 0 arm: the SURVIVED nested-sandbox failure ──
+  // The class the failed-run arm cannot see: the backend hits the nested sandbox, degrades to "I
+  // cannot check", and exits 0 — a paid run spent on an ungrounded answer with nothing saying so.
+  // Both serialized shapes below were observed on the INSTALLED codex-cli 0.147.0: a finished item
+  // carries {"exit_code":2,"status":"failed"}, an in-flight one {"exit_code":null,"status":"in_progress"}.
+  const cmdItem = ({ command = '/bin/bash -lc probe', output = '', exitCode = null, status = 'completed', id = 'item_1' }) =>
+    JSON.stringify({ type: 'item.completed', item: { id, type: 'command_execution', command, aggregated_output: output, exit_code: exitCode, status } });
+  const MECHANISM = 'bwrap: setting up sandbox';
+  const FAILURE = 'mkdir /newroot: Read-only file system';
+  const SIGNATURE = `${MECHANISM}: ${FAILURE}\n`;
+
+  it('an rc == 0 run whose trace carries a command_execution with a NONZERO exit_code and the signature warns loudly and still prints the answer', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_FAKE_EVENT: cmdItem({ output: SIGNATURE, exitCode: 1, status: 'completed' }) } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, 'the warning lane never changes the exit status');
+    assert.match(r.stdout, /FAKE_FINAL_MESSAGE/, 'the answer is printed FIRST, on stdout, unchanged');
+    assert.match(r.stderr, /NESTED-SANDBOX/, 'names the class');
+    assert.match(r.stderr, /UNGROUNDED/, 'names the consequence for the answer above');
+    assert.match(r.stderr, /excludedCommands|per-run consented bypass/, 'names the reroute');
+  });
+
+  it('an rc == 0 run whose trace carries a command_execution with a null exit_code and an explicitly FAILED status warns', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_FAKE_EVENT: cmdItem({ output: SIGNATURE, exitCode: null, status: 'failed' }) } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0);
+    assert.match(r.stderr, /NESTED-SANDBOX/, 'the serialized failed status is the second failure proof');
+  });
+
+  it('plain non-JSON stderr lines before and after a matching failed command_execution do not suppress the warning', () => {
+    const sb = makeSandbox();
+    const r = run(sb, {
+      env: {
+        CODEX_FAKE_STDERR: 'ERROR codex_core::session: failed to load skill /x/SKILL.md: missing field description',
+        CODEX_FAKE_EVENT: `not json at all\n${cmdItem({ output: SIGNATURE, exitCode: 2, status: 'failed' })}\nstill not json`,
+      },
+    });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0);
+    assert.match(r.stderr, /NESTED-SANDBOX/, 'the merged stream is judged line by line — noise is not evidence and never a stop');
+  });
+
+  it('the resume lane warns on an rc == 0 nested-sandbox signature — the lane the incident fired on', () => {
+    const sb = makeSandbox();
+    const r = run(sb, {
+      args: ['--resume', 'sess-nested', '-'], input: 'continue',
+      env: { CODEX_FAKE_EVENT: cmdItem({ output: SIGNATURE, exitCode: 1, status: 'failed' }) },
+    });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /FAKE_FINAL_MESSAGE/);
+    assert.match(r.stderr, /NESTED-SANDBOX/, 'the whole point of unifying the capture');
+  });
+
+  it('an rc == 0 run with a clean trace warns nothing', () => {
+    const sb = makeSandbox();
+    const r = run(sb);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'a clean run must stay silent');
+  });
+
+  it('a lone mechanism token and a lone failure token each warn nothing on the rc == 0 lane', () => {
+    for (const output of [`${MECHANISM} version 0.11.0\n`, `curl: (7) ${FAILURE}\n`]) {
+      const sb = makeSandbox();
+      const r = run(sb, { env: { CODEX_FAKE_EVENT: cmdItem({ output, exitCode: 1, status: 'failed' }) } });
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, `a lone token class is not proof: ${output}`);
+    }
+  });
+
+  it('nested-sandbox text appearing ONLY inside an agent_message item never warns', () => {
+    const sb = makeSandbox();
+    const event = JSON.stringify({ type: 'item.completed', item: { id: 'item_9', type: 'agent_message', text: `I hit ${SIGNATURE}` } });
+    const r = run(sb, { env: { CODEX_FAKE_EVENT: event } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'the model TALKING about a sandbox is not a failed tool call');
+  });
+
+  it('a SUCCESSFUL command_execution whose output merely QUOTES both tokens never warns', () => {
+    const sb = makeSandbox();
+    // The concrete false positive: codex-exec.sh itself carries both token classes, so any
+    // successful grep over it would trip a loose whole-trace rule.
+    const r = run(sb, {
+      env: { CODEX_FAKE_EVENT: cmdItem({ command: '/bin/bash -lc grep -n bwrap codex-exec.sh', output: SIGNATURE, exitCode: 0, status: 'completed' }) },
+    });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'a command that SUCCEEDED proves nothing failed');
+  });
+
+  it('a command_execution with a null exit_code and no proven failed status never warns', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { env: { CODEX_FAKE_EVENT: cmdItem({ output: SIGNATURE, exitCode: null, status: 'in_progress' }) } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'a null exit_code is never failure by itself');
+  });
+
+  it('tokens split across two different items never warn', () => {
+    const sb = makeSandbox();
+    const split = [
+      cmdItem({ id: 'item_1', output: `${MECHANISM} version 0.11.0\n`, exitCode: 1, status: 'failed' }),
+      cmdItem({ id: 'item_2', output: `curl: (7) ${FAILURE}\n`, exitCode: 1, status: 'failed' }),
+    ].join('\n');
+    const r = run(sb, { env: { CODEX_FAKE_EVENT: split } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'the combination must sit in ONE item — two failures are not one nested sandbox');
+  });
+
+  // ── object membership, not substring co-occurrence ──
+  // Testing the four fields independently is not enough: position in the line is not membership in
+  // the item. The scan walks ONE contiguous chain of raw delimiters instead, and every gap in that
+  // chain is inside a JSON string, where a quote is escaped and cannot forge the next delimiter.
+  it('a decoy object carrying the type, with the failure fields on a DIFFERENT item, never warns', () => {
+    const sb = makeSandbox();
+    const decoy = '{"type":"item.completed","decoy":{"type":"command_execution"},"item":{"type":"agent_message","aggregated_output":"bwrap: operation not permitted","exit_code":0,"status":"failed"}}';
+    const r = run(sb, { env: { CODEX_FAKE_EVENT: decoy } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'the type belongs to the decoy; the failure fields belong to an agent_message');
+  });
+
+  it('a decoy carrying BOTH the type and a command, with the failure fields on a DIFFERENT item, never warns', () => {
+    const sb = makeSandbox();
+    // Anchoring on a longer literal is not enough: the skip between fields must itself be PROVEN to
+    // be one JSON string's content, or the walk leaves the decoy's command and lands in the
+    // agent_message's fields.
+    const decoy = '{"type":"item.completed","decoy":{"type":"command_execution","command":"x"},"item":{"type":"agent_message","aggregated_output":"bwrap: setting up sandbox: operation not permitted","exit_code":1,"status":"failed"}}';
+    const r = run(sb, { env: { CODEX_FAKE_EVENT: decoy } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'an unvalidated gap lets the walk cross an object boundary');
+  });
+
+  it('a genuinely failed item with a ~200KB aggregated_output still warns — and the scan does not hang', () => {
+    const sb = makeSandbox();
+    // Two edges at once: the signature sits FIRST, so any early-exit consumer must not lose it, and
+    // the field is far larger than a pipe buffer. It also pins the cost: the quadratic bash string
+    // spellings of this walk hang the wrapper outright at this size.
+    const big = `${SIGNATURE}${'x'.repeat(200000)}`;
+    // The payload rides a FILE: 200KB in the environment is E2BIG on a normal host.
+    const payload = join(sb.repo, 'big-event.jsonl');
+    writeFileSync(payload, `${cmdItem({ output: big, exitCode: 1, status: 'failed' })}\n`);
+    const r = run(sb, { env: { CODEX_FAKE_EVENT_FILE: payload } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /NESTED-SANDBOX/, 'a large output must not silently drop a real signature');
+  });
+
+  it('a plain non-JSON log line carrying the same substrings never warns', () => {
+    const sb = makeSandbox();
+    const lookalike = `ERROR codex_core: replaying "type":"command_execution","command":"x","aggregated_output":"${SIGNATURE.trim()}","exit_code":1,"status":"failed"`;
+    const r = run(sb, { env: { CODEX_FAKE_EVENT: lookalike } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'prose ABOUT an event is not an event — an event line starts with {');
+  });
+
+  it('a FOREIGN "status":"failed" elsewhere on the line never proves a SUCCESSFUL item failed', () => {
+    const sb = makeSandbox();
+    const event = `${cmdItem({ output: SIGNATURE, exitCode: 0, status: 'completed' })}{"type":"turn.failed","status":"failed"}`;
+    const r = run(sb, { env: { CODEX_FAKE_EVENT: event } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'the failed status must sit immediately after THIS item exit_code');
+  });
+
+  it('an escaped delimiter inside aggregated_output never fools the slice', () => {
+    const sb = makeSandbox();
+    const r = run(sb, {
+      env: { CODEX_FAKE_EVENT: cmdItem({ output: `${SIGNATURE}","exit_code":1,"status":"failed"`, exitCode: 0, status: 'completed' }) },
+    });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'a quote inside a JSON string is escaped, so the raw delimiter cannot occur there');
+  });
+
+  it('only the FIRST command_execution item of a line is judged — a second item on the same line is missed (a STATED false negative)', () => {
+    const sb = makeSandbox();
+    const glued = `${cmdItem({ id: 'item_1', output: 'all good\n', exitCode: 0, status: 'completed' })}${cmdItem({ id: 'item_2', output: SIGNATURE, exitCode: 1, status: 'failed' })}`;
+    const r = run(sb, { env: { CODEX_FAKE_EVENT: glued } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'under-firing is the deliberate direction on a warning lane; this pins it so it cannot change silently');
+  });
+
+  it('a trace of plain non-JSON lines alone carrying both tokens never warns on the rc == 0 arm — while the FAILED arm warns on exactly those bytes', () => {
+    const bytes = `${MECHANISM}: ${FAILURE}`;
+    const clean = makeSandbox();
+    const ok = run(clean, { env: { CODEX_FAKE_STDERR: bytes } });
+    rmSync(clean.root, { recursive: true, force: true });
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.doesNotMatch(ok.stderr, /NESTED-SANDBOX/, 'on a COMPLETED run only per-item evidence speaks');
+    const failed = makeSandbox();
+    const bad = run(failed, { env: { CODEX_FAKE_STDERR: bytes, CODEX_FAKE_EXIT: '1' } });
+    rmSync(failed.root, { recursive: true, force: true });
+    assert.equal(bad.status, 1);
+    assert.match(bad.stderr, /NESTED-SANDBOX/, 'the failed-run arm keeps its loose whole-trace rule — that is what makes the dual policy visible');
+  });
+
   it('warns (never silently) when the session sidecar cannot be written', () => {
     const sb = makeSandbox();
     const blocker = join(sb.repo, 'blocker');
@@ -447,10 +651,30 @@ describe('codex-exec.sh — resume entrypoint restates every invariant (3.1)', (
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.argv, /(^|\n)sess-xyz(\n|$)/, 'the session id is passed positionally');
     for (const inv of RESUME_INVARIANTS) assert.match(r.argv, inv, `resume argv must include ${inv}`);
-    assert.doesNotMatch(r.argv, /(^|\n)-o(\n|$)/, 'resume rejects -o');
-    assert.doesNotMatch(r.argv, /(^|\n)--json(\n|$)/, 'resume rejects --json');
-    assert.doesNotMatch(r.argv, /(^|\n)--color(\n|$)/, 'resume rejects --color');
-    assert.match(r.stdout, /FAKE_FINAL_MESSAGE/, 'resume prints codex stdout');
+    assert.match(r.stdout, /FAKE_FINAL_MESSAGE/, 'resume prints the final message');
+  });
+
+  // The capture unification: resume used to be the odd mode out — no -o, no --json, its event
+  // stream nowhere — which is precisely why the lane the nested-sandbox incident fired on had no
+  // evidence surface. `codex exec resume` accepts both (live-probed, codex-cli 0.147.0).
+  it('resume composes the unified capture — the same -o/--json/--color posture as a fresh run', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['--resume', 'sess-unified', '-'], input: 'continue please' });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.argv, /(^|\n)-o(\n|$)/, 'resume writes the final message through -o');
+    assert.match(r.argv, /(^|\n)--json(\n|$)/, 'resume streams the structured events');
+    assert.match(r.argv, /(^|\n)--color(\n|$)/, 'resume disables colour like a fresh run');
+    assert.match(r.stdout, /FAKE_FINAL_MESSAGE/, 'resume stdout is still the final message');
+  });
+
+  it('resume falls back to the trace tail when the final-message file is missing', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['--resume', 'sess-noout', '-'], input: 'go', env: { CODEX_FAKE_NO_OUT: '1' } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /no final-message file/, 'the fallback is loud, never silent');
+    assert.match(r.stdout, /turn\.completed/, 'the trace tail carries the event stream resume now captures');
   });
 
   it('--resume-last reads the session id from the sidecar', () => {

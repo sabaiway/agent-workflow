@@ -75,9 +75,11 @@ codex-review code "focus on the reducer and its tests"
 `codex-exec` prepends an **orchestrator execution contract**: work in the current tree, never
 git-write, *obey* the already-merged `AGENTS.md` (Hard Constraints + declared gates), self-review the
 diff (incl. untracked files), run the project's declared gates (STOP if none are declared), don't
-commit, report blockers. It captures only codex's **final message** (`-o`; the JSON event stream +
-reasoning are discarded to a trace) and, on a **non-resume** run, records the session id to
-`${CODEX_SESSION_FILE:-./.codex-last-session}`.
+commit, report blockers. It captures only codex's **final message** (`-o`) and, on a **non-resume**
+run, records the session id to `${CODEX_SESSION_FILE:-./.codex-last-session}`. The JSON event stream
++ reasoning go to a run trace that is **read before it is discarded** — fresh runs and resumes share
+ONE capture posture, and the wrapper scans that trace on every completed run for a nested-sandbox
+failure the run SURVIVED (see [`sandbox-and-flags.md`](sandbox-and-flags.md#clean-output-capture)).
 
 ## Resume — iterate without re-sending context
 
