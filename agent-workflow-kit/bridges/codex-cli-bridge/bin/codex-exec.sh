@@ -619,11 +619,12 @@ chmod 755 "$shim_dir/git"
 
 # --- Build the codex invocation + the prompt ---------------------------------
 if [[ -n "$resume_mode" ]]; then
-  # Resume RESETS posture and rejects the -s/--add-dir/-C posture flags, so restate
-  # the entire policy via -c. It DOES accept -o/--json/--color, and it now carries the
-  # SAME capture posture as a fresh run: the mode asymmetry was a convenience, and it
-  # left resume — the lane the survived-nested-sandbox incident fired on — with no
-  # evidence surface at all (its event stream went nowhere).
+  # Resume RESETS posture and rejects the -s/--add-dir/-C posture flags, so restate the entire
+  # policy via -c. Its accepted flag set is NARROWER than `codex exec`'s and is probed, never
+  # assumed: `codex exec resume --help` (codex-cli 0.147.0) accepts -o and --json but NOT --color,
+  # so the capture posture is shared with a fresh run MINUS that flag. Shipping --color here once
+  # broke every resume invocation with a pre-spend exit 2 — the fake CLI in the suite accepts any
+  # argv, so only the real one can answer this question. See RESUME_ACCEPTED_FLAGS in the test.
   codex_cmd=(codex exec resume "$resume_id"
     --ignore-user-config
     -m "$CODEX_MODEL"
@@ -634,7 +635,6 @@ if [[ -n "$resume_mode" ]]; then
     -c hide_agent_reasoning=true
     -c model_reasoning_summary=none
     "${tier_flags[@]+"${tier_flags[@]}"}"
-    --color never
     -o "$out"
     --json
     -)

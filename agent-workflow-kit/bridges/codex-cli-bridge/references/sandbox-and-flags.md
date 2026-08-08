@@ -43,10 +43,10 @@ and passes no separate network flag — the `sandbox_workspace_write.*` config (
 codex's final message; `--json` streams the structured event stream (incl. `thread.started`, which
 carries the session id) into the run trace, with stderr merged into it; `--color never` +
 `-c hide_agent_reasoning=true` + `-c model_reasoning_summary=none` strip colour and chain-of-thought.
-`codex exec resume` accepts `-o` and `--json` too (live-probed on codex-cli 0.147.0), so the resume
-lane is no longer the odd one out — it used to print its final message straight to stdout with the
-event stream nowhere, which left the very mode a nested-sandbox incident fired on with no evidence
-surface at all. Net effect: the wrapper prints just the final answer. **Reasoning still runs at
+`codex exec resume` accepts `-o` and `--json` too (live-probed on codex-cli 0.147.0 — though NOT
+`--color`, which stays on the fresh lane), so the resume lane is no longer the odd one out: it used
+to print its final message straight to stdout with the event stream nowhere, which left the very
+mode a nested-sandbox incident fired on without a structured evidence surface. Net effect: the wrapper prints just the final answer. **Reasoning still runs at
 `xhigh`** — quality is unchanged; only the *noise* is dropped. On success `codex-exec` extracts the
 session id from the trace and records it to `${CODEX_SESSION_FILE:-./.codex-last-session}` (so
 `--resume-last` can find it) and echoes `session: <id>` to stderr. On a missing/empty final-message
@@ -145,14 +145,18 @@ the prompt fence ("do not read outside the working tree, except the precomputed-
 
 ## `resume` — resets posture, restated via `-c`
 
-`codex exec resume` re-dispatches an existing session without re-sending context. It **rejects the
-posture flags** `-s`/`--add-dir`/`-C` and **resets** the sandbox/approval/network posture (it DOES
-accept `-c`/`-m`/`--last`/`-o`/`--json`/`--color`, live-probed on codex-cli 0.147.0).
-The `codex-exec --resume`/`--resume-last` entrypoint handles the reset: it restates the entire policy
-via `-c` (`sandbox_mode=workspace-write`, `approval_policy=never`,
-`sandbox_workspace_write.network_access=false`) plus the pinned `-m`/effort and `--ignore-user-config`,
-reads the session id from the sidecar (or an argument), and applies the **same** capture posture as a
-fresh run — `-o` for the final message, `--json` + `--color never` into the trace. Only a *raw*
+`codex exec resume` re-dispatches an existing session without re-sending context. Its accepted flag
+set is **NARROWER than `codex exec`'s** and must be read off `codex exec resume --help`, never
+assumed from the parent command: it **rejects the posture flags** `-s`/`--add-dir`/`-C`, **resets**
+the sandbox/approval/network posture, and — probed on codex-cli 0.147.0 — accepts
+`-c`/`-m`/`--last`/`-o`/`--json` but **NOT `--color`**. Sending an unaccepted flag exits 2 before the
+run starts, so the failure is loud and costs no quota; the wrapper's own test pins the accepted set
+(`RESUME_ACCEPTED_FLAGS`) precisely because the hermetic fake CLI accepts any argv and cannot answer
+this question. The `codex-exec --resume`/`--resume-last` entrypoint handles the reset: it restates
+the entire policy via `-c` (`sandbox_mode=workspace-write`, `approval_policy=never`,
+`sandbox_workspace_write.network_access=false`) plus the pinned `-m`/effort and
+`--ignore-user-config`, reads the session id from the sidecar (or an argument), and applies the same
+EVIDENCE posture as a fresh run — `-o` for the final message, `--json` into the trace. Only a *raw*
 `codex exec resume` outside the wrapper loses the posture.
 
 ## Hard timeout

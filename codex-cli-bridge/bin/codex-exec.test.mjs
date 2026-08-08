@@ -644,6 +644,33 @@ describe('codex-exec.sh — resume entrypoint restates every invariant (3.1)', (
     /approval_policy=never/, /sandbox_workspace_write\.network_access=false/,
   ];
 
+  // `codex exec resume` accepts a NARROWER flag set than `codex exec`, and the difference is not
+  // guessable: the hermetic fake accepts any argv, so a flag the real CLI rejects passes every unit
+  // test and then fails pre-spend on the first live resume. That happened — `--color never` was
+  // added to this lane unprobed and broke it outright. This list is transcribed from
+  // `codex exec resume --help` on codex-cli 0.147.0 (probed 2026-08-08); anything the wrapper sends
+  // that is not on it fails HERE instead of in front of a user.
+  const RESUME_ACCEPTED_FLAGS = new Set([
+    '--last', '--all', '-c', '--config', '--enable', '-i', '--image', '--strict-config', '--disable',
+    '-m', '--model', '--dangerously-bypass-approvals-and-sandbox', '--dangerously-bypass-hook-trust',
+    '--skip-git-repo-check', '--ephemeral', '--ignore-user-config', '--ignore-rules',
+    '--output-schema', '--json', '-o', '--output-last-message', '-h', '--help',
+  ]);
+
+  it('every flag the resume lane sends is one the REAL `codex exec resume` accepts', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['--resume', 'sess-flags', '-'], input: 'go' });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    const sent = r.argv.split('\n').filter((a) => a.startsWith('-') && a !== '-');
+    assert.ok(sent.length > 0, 'the resume argv must carry flags at all');
+    for (const flag of sent) {
+      assert.ok(RESUME_ACCEPTED_FLAGS.has(flag),
+        `resume sends ${flag}, which \`codex exec resume --help\` does not list — it would exit 2 pre-spend`);
+    }
+    assert.equal(sent.includes('--color'), false, 'the regression this list exists to prevent');
+  });
+
   it('--resume <id>: composes `exec resume <id>` with the full restated policy', () => {
     const sb = makeSandbox();
     const r = run(sb, { args: ['--resume', 'sess-xyz', '-'], input: 'continue please' });
@@ -657,14 +684,16 @@ describe('codex-exec.sh — resume entrypoint restates every invariant (3.1)', (
   // The capture unification: resume used to be the odd mode out — no -o, no --json, its event
   // stream nowhere — which is precisely why the lane the nested-sandbox incident fired on had no
   // evidence surface. `codex exec resume` accepts both (live-probed, codex-cli 0.147.0).
-  it('resume composes the unified capture — the same -o/--json/--color posture as a fresh run', () => {
+  it('resume composes the unified capture — -o and --json, and NOT --color (which it rejects)', () => {
     const sb = makeSandbox();
     const r = run(sb, { args: ['--resume', 'sess-unified', '-'], input: 'continue please' });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.argv, /(^|\n)-o(\n|$)/, 'resume writes the final message through -o');
     assert.match(r.argv, /(^|\n)--json(\n|$)/, 'resume streams the structured events');
-    assert.match(r.argv, /(^|\n)--color(\n|$)/, 'resume disables colour like a fresh run');
+    // The evidence surface is shared with a fresh run; the COLOUR flag is not, because
+    // `codex exec resume` does not accept it. Sending it exits 2 before the run starts.
+    assert.equal(/(^|\n)--color(\n|$)/.test(r.argv), false, 'resume rejects --color — probed on codex-cli 0.147.0');
     assert.match(r.stdout, /FAKE_FINAL_MESSAGE/, 'resume stdout is still the final message');
   });
 

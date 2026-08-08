@@ -112,7 +112,8 @@ receipt field. **Quote the posture banner verbatim** when labeling a dispatch.
 escalation is refused and reported, never interactively approved. The wrappers capture only codex's
 **final message** (`-o`), so output is clean; the JSON event stream + reasoning go to a run trace
 that is **read before it is discarded**. Fresh and resumed runs share **ONE** capture posture
-(`-o` + `--json` + `--color never`, everything redirected into the trace), so both modes have the
+(`-o` + `--json`, everything redirected into the trace; `--color never` rides the fresh lane only —
+`codex exec resume` does not accept it), so both modes have the
 same evidence surface — and the wrapper scans that surface on **every completed run**: a run that
 SURVIVES a nested-sandbox failure exits 0 with an ungrounded answer, so on `rc == 0` it prints the
 answer first and then warns loudly on stderr when one `command_execution` item with a **proven**
