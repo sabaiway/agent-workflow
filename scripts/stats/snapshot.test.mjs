@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -10,7 +10,8 @@ import {
 } from './snapshot.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const WORKFLOW = readFileSync(join(HERE, '..', '..', '.github', 'workflows', 'stats.yml'), 'utf8');
+const WORKFLOWS_DIR = join(HERE, '..', '..', '.github', 'workflows');
+const WORKFLOW = readFileSync(join(WORKFLOWS_DIR, 'stats.yml'), 'utf8');
 const README = readFileSync(join(HERE, '..', '..', 'README.md'), 'utf8');
 
 const full = {
@@ -363,5 +364,19 @@ describe('stats workflow — the snapshot never writes to the default branch aga
 
   it('the run still declares the least privilege it needs', () => {
     assert.match(WORKFLOW, /permissions:\s*\n\s*contents: write/);
+  });
+
+  it('the runner setup matches the version every other workflow in this repo already uses', () => {
+    // Shipped as @v4 by mistake; the action itself then runs on a deprecated Node runtime and the
+    // run carries a warning. The four sibling workflows were already on @v5 — this pins the repo's
+    // own answer rather than a version guessed at authoring time.
+    // BOTH extensions: Actions accepts .yaml too, and a workflow added under that name is exactly
+    // the one that would drift unnoticed — a guard blind to its own subject is not a guard.
+    const files = readdirSync(WORKFLOWS_DIR).filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'));
+    const versions = new Set(
+      files.flatMap((f) => [...readFileSync(join(WORKFLOWS_DIR, f), 'utf8').matchAll(/actions\/setup-node@(v\d+)/g)].map((m) => m[1])),
+    );
+    assert.ok(versions.size > 0, 'no workflow uses setup-node any more — delete this guard rather than leaving it green on nothing');
+    assert.equal(versions.size, 1, `every workflow must agree on one setup-node version, got ${[...versions].join(', ')}`);
   });
 });
