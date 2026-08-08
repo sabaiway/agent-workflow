@@ -179,6 +179,11 @@ export const attestationState = ({ env, records, fingerprint, base }) => {
   return { attesting: true };
 };
 
+// The withheld-verdict reason for the one case a VALID context cannot rescue: the run owned the
+// artifact's lifetime and read NO bytes — an absent file and a refused path alike, which is why
+// this states the bytes rather than the skip.
+const NO_BYTES_NO_VERDICT = 'no lcov bytes were read at the checked path, so no verdict could be issued — a run that read nothing certifies nothing; if no gate produces the file, declare a coverage PRODUCER beside the checker (references/modes/gates.md names the exact form)';
+
 // ── the red-proof verification arm (D3(c)) ────────────────────────────────────────────────────────
 
 // verifyRedProofs({ rootTop, cwd, env }) → { failures: [...], verified: n } | { storeFailure }.
@@ -276,7 +281,13 @@ export const runCheck = ({ cwd = process.cwd(), env = process.env } = {}) => {
   const identityAfter = { fingerprint: computeTreeFingerprint(cwd), base: resolveBase(cwd) };
   const attestAfter = attestationState({ env, records: storeRecords, ...identityAfter });
   const attestation = attestBefore.refusal ? attestBefore : attestAfter;
-  const attesting = attestation.attesting === true && attestBefore.attesting === true;
+  const contextValid = attestation.attesting === true && attestBefore.attesting === true;
+  // `attested=` states whether a coverage VERDICT was ISSUED — pass OR fail — never that coverage
+  // passed: a valid handshake over uncovered lines still reads yes and still exits 1. What no
+  // context can rescue is an EMPTY read, and the honest predicate is the BYTES CONSUMED, not the
+  // skip flag: an absent lcov and a refused path (a symlink) both read nothing, and attesting over
+  // either is the same false green this whole arm exists to close, one layer up.
+  const attesting = contextValid && cov.lcovSha256 !== null;
   // EXACTLY ONE fully anchored machine line, the lcov-sha256 contract's sibling — the runner binds
   // it, so a missing/duplicated/injected one is an integrity failure rather than a silent green.
   lines.push(`coverage-check: attested=${attesting ? 'yes' : 'no'}`);
@@ -284,11 +295,11 @@ export const runCheck = ({ cwd = process.cwd(), env = process.env } = {}) => {
     failed = true;
     lines.push(`coverage-check: REFUSED — ${attestation.refusal}`);
   } else if (!attesting) {
-    lines.push(`coverage-check: NO VERDICT — ${attestation.reason}`);
+    lines.push(`coverage-check: NO VERDICT — ${contextValid ? NO_BYTES_NO_VERDICT : attestation.reason}`);
   }
   // The attestation gates ONLY the coverage claim. Every pre-existing fail-closed refusal above
   // (symlinked lcov, malformed evidence store, unmet red-proof obligation) keeps its own exit 1.
-  if (attesting && !failed && !cov.skipped && cov.failures.length === 0) {
+  if (attesting && !failed && cov.failures.length === 0) {
     lines.push('coverage-check: PASS — every changed Node line is covered');
   }
   return { code: failed ? 1 : 0, lines };
@@ -314,10 +325,15 @@ store fails (exit 1).
 A coverage VERDICT is issued ONLY inside the run that owns the artifact's lifetime: run-gates
 --final deletes the lcov before any gate spawns and hands this checker an attestation context
 (a nonce whose one-way commitment over {nonce, fingerprint, base} is the final-start attempt id).
-One anchored machine line rides every run: coverage-check: attested=<yes|no>.
-  attested=yes → the verdict, exactly as before.
-  attested=no  → NO VERDICT (exit 0): findings are still printed, uncovered lines still exit 1;
-                 only the PASS attestation is withheld.
+One anchored machine line rides every run: coverage-check: attested=<yes|no>. It states whether a
+coverage VERDICT was ISSUED — pass OR fail — never that coverage passed.
+  attested=yes → a verdict was issued over the lcov BYTES this run read (a failing one still
+                 exits 1); the predicate is the consumed digest, never the skip flag.
+  attested=no  → NO VERDICT: no handshake, or no lcov bytes were read at all (an absent file or a
+                 refused path — nothing read, nothing certified). Withholding a verdict never
+                 changes an exit code: an absent lcov stays exit 0, a refused non-regular path
+                 keeps its own fail-closed exit 1, and uncovered lines still exit 1. Findings are
+                 still printed; run-gates carries the withheld verdict as coverage=not-run.
   REFUSED (exit 1) → the context describes another tree, or matches no recorded attempt.
 Residual, stated: ownership of the fixed path is CONVENTION, not enforcement — a concurrent writer
 to it can still place foreign evidence (queued as LCOV-EXCLUSIVE-OWNERSHIP).

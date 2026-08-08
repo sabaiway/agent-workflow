@@ -1,6 +1,6 @@
 import { describe, it, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, cpSync, existsSync, readFileSync, linkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, cpSync, existsSync, readFileSync, linkSync, symlinkSync } from 'node:fs';
 import { tmpdir, hostname } from 'node:os';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -163,7 +163,7 @@ describe('runCli — all-green fixture', () => {
     assert.equal(code, EXIT.ok);
     assert.match(text, /one\s+PASS/);
     assert.match(text, /two\s+PASS/);
-    assert.equal(out[out.length - 1], '[run-gates] status=ok gates=2 passed=2 failed=0 failed_ids=-');
+    assert.equal(out[out.length - 1], '[run-gates] status=ok gates=2 passed=2 failed=0 failed_ids=- coverage=none');
     assert.equal(out.filter((line) => line.startsWith('[run-gates] status=')).length, 1);
   });
 
@@ -196,7 +196,7 @@ describe('runCli — a failing gate', () => {
 
   it('the summary line names the failed ids', () => {
     const { out } = runHermetic({ gates, byCmd });
-    assert.equal(out[out.length - 1], '[run-gates] status=fail gates=3 passed=2 failed=1 failed_ids=bad');
+    assert.equal(out[out.length - 1], '[run-gates] status=fail gates=3 passed=2 failed=1 failed_ids=bad coverage=none');
   });
 });
 
@@ -227,21 +227,21 @@ describe('runCli — the three honest declaration outcomes are DISTINCT (never a
     assert.equal(code, EXIT.missing);
     assert.match(errText, /no gate declaration found/);
     assert.match(errText, /references\/templates\/gates\.json/, 'the recovery names the template source');
-    assert.equal(out[out.length - 1], '[run-gates] status=missing gates=0 passed=0 failed=0 failed_ids=-');
+    assert.equal(out[out.length - 1], '[run-gates] status=missing gates=0 passed=0 failed=0 failed_ids=- coverage=unknown');
   });
 
   it('empty gates list → exit 4, distinct message, summary status=empty', () => {
     const { code, out, errText } = runHermetic({ gates: [] });
     assert.equal(code, EXIT.empty);
     assert.match(errText, /empty "gates" list/);
-    assert.equal(out[out.length - 1], '[run-gates] status=empty gates=0 passed=0 failed=0 failed_ids=-');
+    assert.equal(out[out.length - 1], '[run-gates] status=empty gates=0 passed=0 failed=0 failed_ids=- coverage=unknown');
   });
 
   it('malformed declaration → exit 5, loud reason, summary status=malformed', () => {
     const { code, out, errText } = runHermetic({ gates: [], files: memFs({ [GATES_REL]: '{ broken' }) });
     assert.equal(code, EXIT.malformed);
     assert.match(errText, /malformed JSON/);
-    assert.equal(out[out.length - 1], '[run-gates] status=malformed gates=0 passed=0 failed=0 failed_ids=-');
+    assert.equal(out[out.length - 1], '[run-gates] status=malformed gates=0 passed=0 failed=0 failed_ids=- coverage=unknown');
   });
 
   it('the three outcomes carry three different exit codes', () => {
@@ -256,7 +256,7 @@ describe('runCli — bash preflight', () => {
     const { code, out, errText, calls } = runHermetic({ gates, byCmd: { [BASH_PROBE_CMD]: enoent } });
     assert.equal(code, EXIT.noBash);
     assert.match(errText, /bash is not available/i);
-    assert.equal(out[out.length - 1], '[run-gates] status=no-bash gates=0 passed=0 failed=0 failed_ids=-');
+    assert.equal(out[out.length - 1], '[run-gates] status=no-bash gates=0 passed=0 failed=0 failed_ids=- coverage=unknown');
     const gateCalls = calls.filter((call) => call.cmd !== BASH_PROBE_CMD);
     assert.deepEqual(gateCalls, [], 'no gate runs after a failed preflight');
   });
@@ -278,7 +278,7 @@ describe('composeSummaryLine — schema', () => {
     const line = composeSummaryLine({ status: 'ok', results: [{ id: 'a', ok: true }] });
     assert.ok(!line.includes('\n'));
     const fields = line.replace('[run-gates] ', '').split(' ');
-    assert.deepEqual(fields.map((field) => field.split('=')[0]), ['status', 'gates', 'passed', 'failed', 'failed_ids']);
+    assert.deepEqual(fields.map((field) => field.split('=')[0]), ['status', 'gates', 'passed', 'failed', 'failed_ids', 'coverage']);
   });
 });
 
@@ -307,7 +307,7 @@ describe('real spawn — a gate needing bash brace+glob expansion runs correctly
     const out = [];
     const code = runCli(['--cwd', project], { log: (line) => out.push(line), logError: (line) => out.push(line) });
     assert.equal(code, EXIT.ok, `expected green, got:\n${out.join('\n')}`);
-    assert.equal(out[out.length - 1], '[run-gates] status=ok gates=1 passed=1 failed=0 failed_ids=-');
+    assert.equal(out[out.length - 1], '[run-gates] status=ok gates=1 passed=1 failed=0 failed_ids=- coverage=none');
   });
 });
 
@@ -635,6 +635,11 @@ describe('run-gates --final — the ONE receipt the commit guard consumes', () =
     assert.equal(code, EXIT.ok, out);
     assert.match(out, /skipped-no-lcov/, 'the green checker stdout is printed under --final');
     assert.match(out, /consumed NO lcov/i);
+    // The withheld verdict must reach every carried-forward surface of THIS run, not just the
+    // checker's own stdout: a run that read no lcov certifies nothing, however green its gates.
+    assert.match(out, /^coverage-check: attested=no$/m, 'a --final run that consumed no lcov never attests');
+    assert.match(out, /^coverage-check\s+PASS\s+coverage=not-run \(no lcov bytes were read/m, 'the table row names it');
+    assert.match(out, /^\[run-gates\] status=ok gates=2 passed=2 failed=0 failed_ids=- coverage=not-run$/m);
   });
 
   it('a green run with a produced lcov binds the receipt to the CHECKER-read bytes', () => {
@@ -647,6 +652,63 @@ describe('run-gates --final — the ONE receipt the commit guard consumes', () =
     assert.equal(code, EXIT.ok, out);
     assert.equal(done.lcovSha256, createHash('sha256').update(lcovBytes).digest('hex'));
     assert.equal(done.integrityFailure, null);
+  });
+
+  // The receipt RECORDS the run's own coverage token: lcovSha256 says what the receipt binds, never
+  // whether a verdict was issued, so the stateless render must not re-derive one from the other.
+  it('the --final receipt records the run\'s own coverage token', () => {
+    const produce = { id: 'produce-lcov', title: 'p', cmd: 'printf "SF:%s/pending.mjs\\nDA:1,1\\nend_of_record\\n" "$PWD" > "$AW_LCOV_FILE"' };
+    const withProducer = makeRepo([CANONICAL[0], produce, CANONICAL[1]]);
+    const certified = runFinal(withProducer);
+    const certifiedRecord = finalRecords(withProducer).filter((r) => r.kind === 'final').pop();
+    rmSync(withProducer, { recursive: true, force: true });
+    const deadPair = makeRepo(CANONICAL);
+    const withheld = runFinal(deadPair);
+    const withheldRecord = finalRecords(deadPair).filter((r) => r.kind === 'final').pop();
+    rmSync(deadPair, { recursive: true, force: true });
+    assert.equal(certified.code, EXIT.ok, certified.out);
+    assert.equal(certifiedRecord.coverage, 'certified');
+    assert.match(certifiedRecord.lcovSha256 ?? '', /^[0-9a-f]{64}$/, 'certified binds the digest it read');
+    assert.equal(withheld.code, EXIT.ok, withheld.out);
+    assert.equal(withheldRecord.coverage, 'not-run', 'a dead pair records the withheld verdict, not a green silence');
+    assert.equal(withheldRecord.lcovSha256, null);
+  });
+
+  // WHICH gate is the checker is a property of the DECLARATION, so it is resolved before the matrix
+  // spawns. Re-resolving it afterwards let a gate that deleted the tool path turn the selected
+  // checker into "no checker at all" — a state the receipt validator refuses, so the attempt's
+  // evidence would be LOST (exit 8, no completed record) instead of recorded honestly.
+  it('a checker path that VANISHES mid-run still records a coverage token, never "no checker"', () => {
+    // The canonical predicate is basename-anchored, so the link carries the tool's own name; it
+    // resolves through realpath to the kit's tool, which is what makes it canonical.
+    const link = 'coverage-check.mjs';
+    const root = makeRepo([
+      CANONICAL[0],
+      { id: 'cut-the-link', title: 'c', cmd: `rm -f ${link}` },
+      { id: 'coverage-check', title: 'cc', cmd: `node ${link} --check` },
+    ]);
+    symlinkSync(join(TOOLS, 'coverage-check.mjs'), join(root, link));
+    const { code, out } = runFinal(root);
+    const done = finalRecords(root).filter((r) => r.kind === 'final').pop();
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.fail, out);
+    assert.ok(done, 'the attempt is RECORDED — a vanished tool path never costs the receipt');
+    assert.equal(done.status, 'red');
+    assert.equal(done.coverage, 'unknown', 'a checker that left no readable signal is unknown, never none');
+  });
+
+  // The machine summary is the LAST line for every NON-usage outcome — a thrown refusal included.
+  it('a thrown non-usage refusal still ends with the machine summary line (coverage=unknown)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'run-gates-nogit-'));
+    mkdirSync(join(dir, 'docs', 'ai'), { recursive: true });
+    writeFileSync(join(dir, GATES_REL), JSON.stringify({ gates: CANONICAL }));
+    const out = [];
+    const err = [];
+    const code = runCli(['--final', '--cwd', dir], { env: fixtureEnv(), log: (l) => out.push(String(l)), logError: (l) => err.push(String(l)) });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(code, EXIT.fail);
+    assert.match(err.join('\n'), /git work tree/);
+    assert.equal(out[out.length - 1], '[run-gates] status=fail gates=0 passed=0 failed=0 failed_ids=- coverage=unknown');
   });
 
   it('an evidence-store append DURING the final run is integrity drift: a red receipt, exit finalFailed', () => {
@@ -1659,5 +1721,112 @@ describe('run-gates — --final binds the flow store (Plan 4 Decision 2 / D10)',
     assert.equal(code, EXIT.finalFailed);
     assert.equal(out[out.length - 1], composeSummaryLine({ status: 'fail' }), 'a thrown path resolution never bypasses the summary contract');
     assert.equal(existsSync(join(root, '.git', 'agent-workflow-core-evidence.jsonl')), false, 'zero evidence writes');
+  });
+});
+
+// ── kit-inert-gate Phase 2 / Decision 8: the coverage= field on the machine summary line ──
+// A CLOSED four-value vocabulary with one value defined for EVERY run outcome, derived from the
+// canonical checker's own anchored machine lines (the bytes the --final receipt binds). It carries
+// DETAIL, never a new state — the exit code and the status= token are untouched — so each outcome
+// is pinned by an EXACT LINE: a machine contract prose cannot check.
+describe('run-gates — the coverage= summary field (Decision 8)', () => {
+  const CHECKER_CMD = `node "${CC_TOOL}" --check`;
+  const SHA = 'a'.repeat(64);
+  const checkerStdout = (sha, attested) => `coverage-check: lcov-sha256=${sha}\ncoverage-check: attested=${attested}\n`;
+  const checkerRan = (stdout, status = 0) => ({ status, stdout, stderr: '' });
+  const GATES = [
+    { id: 'unit', title: 'U', cmd: 'node --test x' },
+    { id: 'coverage-check', title: 'C', cmd: CHECKER_CMD },
+  ];
+  const lastLine = (r) => r.out[r.out.length - 1];
+
+  it('a checker that ISSUED a verdict reports coverage=certified', () => {
+    const r = runHermetic({ gates: GATES, byCmd: { 'node --test x': GREEN, [CHECKER_CMD]: checkerRan(checkerStdout(SHA, 'yes')) } });
+    assert.equal(r.code, EXIT.ok, r.errText);
+    assert.equal(lastLine(r), '[run-gates] status=ok gates=2 passed=2 failed=0 failed_ids=- coverage=certified');
+  });
+
+  it('a FAILING verdict is still a verdict — coverage=certified rides a red run', () => {
+    const failing = `${checkerStdout(SHA, 'yes')}coverage-check: FAIL — uncovered/unattributed changed Node lines:\n  lib.mjs:2\n`;
+    const r = runHermetic({ gates: GATES, byCmd: { 'node --test x': GREEN, [CHECKER_CMD]: checkerRan(failing, 1) } });
+    assert.equal(r.code, EXIT.fail);
+    assert.equal(lastLine(r), '[run-gates] status=fail gates=2 passed=1 failed=1 failed_ids=coverage-check coverage=certified');
+  });
+
+  it('the summary line carries coverage=not-run when the checker issued no verdict', () => {
+    const r = runHermetic({ gates: GATES, byCmd: { 'node --test x': GREEN, [CHECKER_CMD]: checkerRan(checkerStdout('none', 'no')) } });
+    assert.equal(r.code, EXIT.ok, r.errText);
+    assert.equal(lastLine(r), '[run-gates] status=ok gates=2 passed=2 failed=0 failed_ids=- coverage=not-run');
+  });
+
+  it('the checker table row names the skipped coverage arm', () => {
+    const r = runHermetic({ gates: GATES, byCmd: { 'node --test x': GREEN, [CHECKER_CMD]: checkerRan(checkerStdout('none', 'no')) } });
+    assert.match(r.text, /^coverage-check\s+PASS\s+coverage=not-run \(no lcov bytes were read; no coverage verdict was issued\)$/m);
+    assert.match(r.text, /^unit\s+PASS$/m, 'every other row is byte-unchanged');
+  });
+
+  it('a checker that READ an lcov and still issued no verdict names THAT reason on its row', () => {
+    const r = runHermetic({ gates: GATES, byCmd: { 'node --test x': GREEN, [CHECKER_CMD]: checkerRan(checkerStdout(SHA, 'no')) } });
+    assert.equal(lastLine(r), '[run-gates] status=ok gates=2 passed=2 failed=0 failed_ids=- coverage=not-run');
+    assert.match(r.text, /coverage=not-run \(an lcov was read but no verdict was issued\)/);
+  });
+
+  it('an --only subset without the checker reports coverage=none', () => {
+    const r = runHermetic({ gates: GATES, argv: ['--only', 'unit'], byCmd: { 'node --test x': GREEN } });
+    assert.equal(r.code, EXIT.ok, r.errText);
+    assert.equal(lastLine(r), '[run-gates] status=ok gates=1 passed=1 failed=0 failed_ids=- coverage=none');
+  });
+
+  it('the --pre-review derived subset reports coverage=none — every canonical checker is derived out', () => {
+    const r = runHermetic({ gates: GATES, argv: ['--pre-review'], byCmd: { 'node --test x': GREEN } });
+    assert.equal(r.code, EXIT.ok, r.errText);
+    assert.equal(lastLine(r), '[run-gates] status=ok gates=1 passed=1 failed=0 failed_ids=- coverage=none');
+  });
+
+  it('a pre-spend refusal reports coverage=unknown — the gates never produced a signal', () => {
+    const r = runHermetic({
+      gates: [
+        { id: 'unit', title: 'U', cmd: 'node --test --test-reporter-destination="$AW_GIT_DIR/x.info"' },
+        { id: 'coverage-check', title: 'C', cmd: CHECKER_CMD },
+      ],
+      byCmd: {},
+    });
+    assert.equal(r.code, EXIT.fail);
+    assert.equal(lastLine(r), '[run-gates] status=fail gates=0 passed=0 failed=0 failed_ids=- coverage=unknown');
+  });
+
+  it('a checker that could not SPAWN reports coverage=unknown — a dead gate never carries a claim', () => {
+    const enoent = { error: Object.assign(new Error('spawn bash ENOENT'), { code: 'ENOENT' }) };
+    const r = runHermetic({ gates: GATES, byCmd: { 'node --test x': GREEN, [CHECKER_CMD]: enoent } });
+    assert.equal(r.code, EXIT.fail);
+    assert.equal(lastLine(r), '[run-gates] status=fail gates=2 passed=1 failed=1 failed_ids=coverage-check coverage=unknown');
+  });
+
+  it('no single anchored attested= line reports coverage=unknown (fail closed on the unknowable)', () => {
+    const missing = runHermetic({ gates: GATES, byCmd: { 'node --test x': GREEN, [CHECKER_CMD]: checkerRan(`coverage-check: lcov-sha256=${SHA}\n`) } });
+    const duplicated = runHermetic({ gates: GATES, byCmd: { 'node --test x': GREEN, [CHECKER_CMD]: checkerRan(`${checkerStdout(SHA, 'yes')}coverage-check: attested=yes\n`) } });
+    assert.equal(lastLine(missing), '[run-gates] status=ok gates=2 passed=2 failed=0 failed_ids=- coverage=unknown');
+    assert.equal(lastLine(duplicated), '[run-gates] status=ok gates=2 passed=2 failed=0 failed_ids=- coverage=unknown');
+  });
+
+  // NEITHER line is trusted alone: the attestation says whether a verdict was issued, the digest
+  // says whether anything was read, and a run whose pair cannot be read — or contradicts itself —
+  // is unknowable, exactly as the --final receipt arm treats the same two lines.
+  it('a missing or duplicated lcov-sha256 line reports coverage=unknown', () => {
+    const missing = runHermetic({ gates: GATES, byCmd: { 'node --test x': GREEN, [CHECKER_CMD]: checkerRan('coverage-check: attested=no\n') } });
+    const duplicated = runHermetic({ gates: GATES, byCmd: { 'node --test x': GREEN, [CHECKER_CMD]: checkerRan(`${checkerStdout(SHA, 'no')}coverage-check: lcov-sha256=none\n`) } });
+    assert.equal(lastLine(missing), '[run-gates] status=ok gates=2 passed=2 failed=0 failed_ids=- coverage=unknown');
+    assert.equal(lastLine(duplicated), '[run-gates] status=ok gates=2 passed=2 failed=0 failed_ids=- coverage=unknown');
+    assert.match(missing.text, /coverage=unknown \(the checker printed no single anchored attested= \/ lcov-sha256 pair/);
+  });
+
+  it('attested=yes over lcov-sha256=none is a CONTRADICTION — coverage=unknown, never certified', () => {
+    const r = runHermetic({ gates: GATES, byCmd: { 'node --test x': GREEN, [CHECKER_CMD]: checkerRan(checkerStdout('none', 'yes')) } });
+    assert.equal(lastLine(r), '[run-gates] status=ok gates=2 passed=2 failed=0 failed_ids=- coverage=unknown');
+    assert.match(r.text, /coverage=unknown \(the checker attested over an lcov it never read/);
+  });
+
+  it('the composed default is the honest unknown — a caller that states nothing claims nothing', () => {
+    assert.ok(composeSummaryLine({ status: 'ok', results: [] }).endsWith(' coverage=unknown'), composeSummaryLine({ status: 'ok', results: [] }));
   });
 });

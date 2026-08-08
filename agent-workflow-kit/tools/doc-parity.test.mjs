@@ -129,6 +129,24 @@ describe('the REAL registry is consistent with the shipped contract docs (dogfoo
     );
   });
 
+  // kit-inert-gate Phase 2 / Decision 8: the coverage= vocabulary is a CLOSED set the gates contract
+  // doc must enumerate. Binding every value makes the docs-first rule mechanical — a fifth value, or
+  // a renamed one, fails this gate instead of quietly leaving the contract doc describing a
+  // vocabulary the runner no longer speaks.
+  it('the registry binds every coverage= value to the gates mode doc', () => {
+    for (const value of ['certified', 'not-run', 'none', 'unknown']) {
+      const binding = BINDINGS.find((b) => b.constant === `coverage-state:${value}`);
+      assert.ok(binding, `registry must bind the coverage=${value} summary value`);
+      assert.equal(binding.token, `\`coverage=${value}\``);
+      assert.deepEqual([...binding.files].sort(), ['references/modes/gates.md']);
+    }
+    assert.equal(
+      BINDINGS.filter((b) => b.constant.startsWith('coverage-state:')).length,
+      4,
+      'the vocabulary is closed at four values — a new one is bound here or it is not shipped',
+    );
+  });
+
   it('doc-parity registry carries the worktrees cleanup-ownership binding', () => {
     const binding = BINDINGS.find((b) => b.constant === 'cleanup-ownership-rule');
     assert.ok(binding, 'registry must bind the cleanup-ownership contract (AD-069)');

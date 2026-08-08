@@ -165,6 +165,33 @@ describe('validateEvidenceRecord — versioned schema, closed kinds, per-kind fi
     const key2 = evidenceKey({ ...done, status: 'red', results: [] });
     assert.equal(key1, key2, 'completed attempts key on fingerprintBefore — the LATEST attempt is authoritative');
   });
+  // The run's own coverage token (kit-inert-gate Phase 2): ADDITIVE like evidenceHashes.flow, and
+  // CLOSED — `none` can never ride a final receipt (--final refuses a declaration without the
+  // canonical checker last), and `certified` is cross-checked against the bound digest.
+  it('the final coverage token is ADDITIVE and closed: none is refused, certified needs a bound digest', () => {
+    const done = {
+      schema: 1, kind: 'final', status: 'green', attempt: 'a1',
+      fingerprintBefore: 'c'.repeat(64), fingerprintAfter: 'c'.repeat(64),
+      declared: [{ id: 'unit-tests', cmd: 'node --test x' }],
+      results: [{ id: 'unit-tests', ok: true, code: 0 }],
+      evidenceHashes: { redProof: 'a'.repeat(64), degrade: 'b'.repeat(64) },
+      lcovSha256: null, integrityFailure: null, timestamp: 't',
+    };
+    assert.equal(validateEvidenceRecord(done).ok, true, 'a pre-token final stays valid to the new reader');
+    for (const token of ['not-run', 'unknown']) {
+      assert.equal(validateEvidenceRecord({ ...done, coverage: token }).ok, true, `${token} rides a digest-less receipt`);
+    }
+    const noneRecord = validateEvidenceRecord({ ...done, coverage: 'none' });
+    assert.equal(noneRecord.ok, false, 'a final run always selects the checker — "none" describes a run that cannot have happened');
+    assert.match(noneRecord.reason, /coverage/);
+    for (const bad of ['certified ', 42, null, '']) {
+      assert.equal(validateEvidenceRecord({ ...done, coverage: bad }).ok, false, `coverage=${JSON.stringify(bad)} must be malformed`);
+    }
+    const uncertified = validateEvidenceRecord({ ...done, coverage: 'certified' });
+    assert.equal(uncertified.ok, false, 'certified over a null digest is a contradiction');
+    assert.match(uncertified.reason, /certified/);
+    assert.equal(validateEvidenceRecord({ ...done, coverage: 'certified', lcovSha256: 'a'.repeat(64) }).ok, true);
+  });
   it('evidenceHashes.flow is ADDITIVE (Plan 4 D10): absent valid, 64-hex valid, anything else malformed', () => {
     const done = {
       schema: 1, kind: 'final', status: 'green', attempt: 'a1',
@@ -1009,6 +1036,58 @@ describe('summary — stateless D6 render (verdicts, red-proofs, degrades; loud 
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /final gate run: GREEN/);
     rmSync(root, { recursive: true, force: true });
+  });
+
+  // The withheld coverage verdict travels to the stateless render too (Decision 7): a final record
+  // whose lcovSha256 is null certified NOTHING, so an unqualified GREEN here is the same false
+  // reassurance the checker's own attested=no exists to close — DETAIL beside the status word,
+  // never a new state (the status token itself is untouched).
+  const finalRecordAt = (fp, over = {}) => ({
+    schema: 1, kind: 'final', status: 'green', attempt: 'a1',
+    fingerprintBefore: fp, fingerprintAfter: fp,
+    declared: [{ id: 'noop', cmd: 'true' }],
+    results: [{ id: 'noop', ok: true, code: 0 }],
+    evidenceHashes: { redProof: 'a'.repeat(64), degrade: 'b'.repeat(64) },
+    lcovSha256: null, integrityFailure: null, timestamp: 't-final', ...over,
+  });
+
+  it('a final record that consumed NO lcov renders a qualified green line', () => {
+    const { root } = makeRepo();
+    writeFileSync(storeOf(root), `${JSON.stringify(finalRecordAt(computeTreeFingerprint(root)))}\n`);
+    const r = main(['summary'], { cwd: root, env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /final gate run: GREEN — coverage=unknown: this legacy receipt carries no coverage token and binds no lcov digest \(1\/1 gates, t-final\)/);
+  });
+
+  it('a final record that DID consume an lcov renders the plain green line', () => {
+    const { root } = makeRepo();
+    writeFileSync(storeOf(root), `${JSON.stringify(finalRecordAt(computeTreeFingerprint(root), { lcovSha256: 'c'.repeat(64) }))}\n`);
+    const r = main(['summary'], { cwd: root, env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /final gate run: GREEN \(1\/1 gates, t-final\)/);
+    assert.doesNotMatch(r.stdout, /coverage=/, 'a legacy receipt binding a digest is never qualified');
+  });
+
+  // The RECORDED token decides, not the digest: a receipt can bind lcov bytes and still have
+  // issued no verdict (the checker's attestation context was refused), and re-deriving from
+  // lcovSha256 would render that run as if it had certified.
+  it('the recorded coverage token drives the qualifier, not the lcov digest', () => {
+    const { root } = makeRepo();
+    const fp = computeTreeFingerprint(root);
+    const withDigestNoVerdict = finalRecordAt(fp, { coverage: 'not-run', lcovSha256: 'c'.repeat(64) });
+    writeFileSync(storeOf(root), `${JSON.stringify(withDigestNoVerdict)}\n`);
+    const notRun = main(['summary'], { cwd: root, env: fixtureEnv() });
+    writeFileSync(storeOf(root), `${JSON.stringify(finalRecordAt(fp, { coverage: 'certified', lcovSha256: 'c'.repeat(64) }))}\n`);
+    const certified = main(['summary'], { cwd: root, env: fixtureEnv() });
+    writeFileSync(storeOf(root), `${JSON.stringify(finalRecordAt(fp, { coverage: 'unknown' }))}\n`);
+    const unknown = main(['summary'], { cwd: root, env: fixtureEnv() });
+    rmSync(root, { recursive: true, force: true });
+    assert.match(notRun.stdout, /final gate run: GREEN — coverage=not-run: the recorded run issued no coverage verdict \(1\/1 gates, t-final\)/);
+    assert.match(certified.stdout, /final gate run: GREEN \(1\/1 gates, t-final\)/);
+    assert.doesNotMatch(certified.stdout, /coverage=/, 'a certified run is never qualified');
+    assert.match(unknown.stdout, /final gate run: GREEN — coverage=unknown: the recorded run produced no readable coverage signal \(1\/1 gates, t-final\)/);
   });
 
   it('an empty world renders gracefully (no store, no receipts) and stays exit 0', () => {

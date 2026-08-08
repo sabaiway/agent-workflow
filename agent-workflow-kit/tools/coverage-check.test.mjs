@@ -235,6 +235,49 @@ describe('coverage-check --check — the attestation handshake', () => {
     assert.match(r.stdout, /PASS — every changed Node line is covered/);
   });
 
+  // `attested=` answers "was a coverage VERDICT issued", not "did coverage pass". A run whose
+  // coverage arm never executed read `yes` here — a valid handshake over an EMPTY read, which is
+  // the certified-nothing the whole mechanism exists to close, one layer up from the lcov.
+  it('a valid handshake over a SKIPPED coverage arm never attests', () => {
+    const { root } = makeRepo();
+    recordStart(root);
+    const r = main(['--check', '--cwd', root], { env: attestEnv(root) });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stdout);
+    assert.match(r.stdout, /^coverage-check: lcov-sha256=none$/m, 'nothing was read');
+    assert.match(r.stdout, /^coverage-check: attested=no$/m);
+    assert.match(r.stdout, /NO VERDICT — no lcov bytes were read at the checked path/);
+    assert.doesNotMatch(r.stdout, /PASS — every changed Node line is covered/);
+  });
+
+  // The predicate is the BYTES CONSUMED, not the skip flag: a refused path (symlink) reads nothing
+  // either, and attesting there is the same `lcov-sha256=none` beside `attested=yes` shape.
+  it('a valid handshake over a REFUSED lcov path never attests', () => {
+    const { root } = makeRepo();
+    const outside = mkdtempSync(join(tmpdir(), 'coverage-check-refused-'));
+    writeFileSync(join(outside, 'real.info'), lcovFor(root, [1, 2, 3]));
+    symlinkSync(join(outside, 'real.info'), join(root, '.git', 'agent-workflow-lcov.info'));
+    recordStart(root);
+    const r = main(['--check', '--cwd', root], { env: attestEnv(root) });
+    rmSync(outside, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'the fail-closed refusal keeps its own exit 1');
+    assert.match(r.stdout, /^coverage-check: lcov-sha256=none$/m);
+    assert.match(r.stdout, /^coverage-check: attested=no$/m, 'a refused read certifies nothing');
+    assert.match(r.stdout, /not a regular file/);
+  });
+
+  it('a valid handshake over UNCOVERED lines still attests — a verdict is issued pass or fail', () => {
+    const { root } = makeRepo();
+    writeLcov(root, lcovFor(root, [1, 3]));
+    recordStart(root);
+    const r = main(['--check', '--cwd', root], { env: attestEnv(root) });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'the findings contract is unchanged');
+    assert.match(r.stdout, /^coverage-check: attested=yes$/m, 'a FAILING verdict is still a verdict');
+    assert.match(r.stdout, /lib\.mjs:2/);
+  });
+
   it('no handshake withholds the verdict WITHOUT failing — exit 0, findings still printed', () => {
     const { root } = makeRepo();
     writeLcov(root, lcovFor(root, [1, 2, 3]));

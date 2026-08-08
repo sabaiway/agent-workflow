@@ -24,7 +24,8 @@
 // re-derived): safe repo-relative path resolution, no-follow real-path containment, shell-free
 // argv, per-run timeout, N/N reruns, the quarantine lane (reruns 3, timeout 120s).
 // Import posture: this module is the DAG BOTTOM — it imports only node built-ins + atomic-write +
-// changed-surface, and OWNS the canonical review-domain primitives (tree fingerprint, receipt read
+// changed-surface + the pure leaves (repo-lex, fs-read-nofollow, coverage-state), and OWNS the
+// canonical review-domain primitives (tree fingerprint, receipt read
 // path, attesting predicate, verdict vocabulary, testId format, base resolution). review-state
 // RE-EXPORTS its historical public API from here, so its consumers (and the bash-twin parity
 // tests) are unchanged while review-state can import the degrade reader without an import cycle.
@@ -42,6 +43,9 @@ import { writeContainedFileAtomic } from './atomic-write.mjs';
 import { parsePositiveIntKnob, probeVerdict } from './changed-surface.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 import { lexicalRepoRelative } from './repo-lex.mjs';
+// The coverage vocabulary leaf: run-gates RECORDS the token this validator checks, and run-gates
+// imports THIS module (the sole-writer boundary), so their shared home sits below both.
+import { COVERAGE, FINAL_COVERAGE_STATES } from './coverage-state.mjs';
 
 export const CORE_EVIDENCE_STOP = 'CORE_EVIDENCE_STOP';
 const stop = (message) => Object.assign(new Error(`[agent-workflow-kit] ${message}`), { name: 'CoreEvidenceStop', code: CORE_EVIDENCE_STOP });
@@ -670,6 +674,17 @@ export const validateEvidenceRecord = (record) => {
     if (record.lcovSha256 !== null && (typeof record.lcovSha256 !== 'string' || !HEX64_RE.test(record.lcovSha256))) {
       return { ok: false, reason: 'final: lcovSha256 must be a 64-hex sha256 of the consumed lcov file, or null when none was produced' };
     }
+    // The run's coverage token is ADDITIVE (absent = a pre-token receipt, still valid) and CLOSED.
+    // `certified` is cross-checked against the bound digest — a run that certified a verdict read
+    // bytes, so the two fields can never disagree in the store.
+    if ('coverage' in record) {
+      if (!FINAL_COVERAGE_STATES.includes(record.coverage)) {
+        return { ok: false, reason: `final: coverage, when present, must be one of ${FINAL_COVERAGE_STATES.join(' | ')} (got ${JSON.stringify(record.coverage)}; a final run always selects the canonical checker, so "none" never rides a final receipt)` };
+      }
+      if (record.coverage === COVERAGE.certified && record.lcovSha256 === null) {
+        return { ok: false, reason: 'final: coverage "certified" requires a bound lcovSha256 — a certified verdict was issued over lcov bytes that were read' };
+      }
+    }
     if (!isNonEmptyString(record.timestamp)) return { ok: false, reason: 'final: timestamp must be a non-empty string' };
     return { ok: true };
   }
@@ -1037,6 +1052,24 @@ const verdictLine = ({ backend, summary }) => {
   return `${backend}: no attesting receipt for the current tree (stale or missing)`;
 };
 
+// Why the run issued no verdict, keyed by the token IT recorded. `certified` maps to nothing —
+// there is no absence to name. A legacy receipt predates the token: the only honest thing to say
+// is what the RECORD carries, which is true by construction. Exported as a test seam (keyFor).
+const COVERAGE_QUALIFIER = Object.freeze({
+  [COVERAGE.notRun]: 'the recorded run issued no coverage verdict',
+  [COVERAGE.unknown]: 'the recorded run produced no readable coverage signal',
+});
+const LEGACY_COVERAGE_QUALIFIER = `coverage=${COVERAGE.unknown}: this legacy receipt carries no coverage token and binds no lcov digest`;
+
+export const coverageQualifierFor = (finalRun) => {
+  if (!finalRun) return '';
+  if (typeof finalRun.coverage === 'string') {
+    const why = COVERAGE_QUALIFIER[finalRun.coverage];
+    return why ? ` — coverage=${finalRun.coverage}: ${why}` : '';
+  }
+  return finalRun.lcovSha256 == null ? ` — ${LEGACY_COVERAGE_QUALIFIER}` : '';
+};
+
 export const renderSummary = (s) => {
   const short = (hex) => (typeof hex === 'string' ? `${hex.slice(0, 12)}…` : String(hex));
   const evidenceSections = s.evidenceUnavailable
@@ -1053,10 +1086,17 @@ export const renderSummary = (s) => {
         '  review verdicts (current tree):',
         ...(s.verdicts.length ? s.verdicts.map((v) => `    ${verdictLine(v)}`) : ['    (no receipts)']),
       ];
+  // The withheld coverage verdict travels here too: an unqualified GREEN repeats, one surface
+  // further on, the false reassurance the checker's own attested=no exists to close. It is read
+  // from the token the RUN recorded — `lcovSha256` says what the receipt binds, never whether a
+  // verdict was issued — and it rides RED as well: an absent verdict is a property of the run, not
+  // of its colour. A LEGACY receipt (no token) is named as exactly that, never as a claim about
+  // what it read. DETAIL beside an unchanged status word.
+  const coverageQualifier = coverageQualifierFor(s.finalRun);
   const finalLine = s.evidenceUnavailable
     ? null
     : s.finalRun
-      ? `  final gate run: ${s.finalRun.status === 'green' ? 'GREEN' : 'RED'} (${s.finalRun.results.filter((r) => r.ok).length}/${s.finalRun.results.length} gates, ${s.finalRun.timestamp})`
+      ? `  final gate run: ${s.finalRun.status === 'green' ? 'GREEN' : 'RED'}${coverageQualifier} (${s.finalRun.results.filter((r) => r.ok).length}/${s.finalRun.results.length} gates, ${s.finalRun.timestamp})`
       : '  final gate run: (none recorded for the current tree)';
   const lines = [
     'core-evidence summary — stateless render (review receipts + evidence store; no ledger, no rounds)',
