@@ -261,7 +261,12 @@ const BUDGET = {
   // Then 54272 → 55296 (54 KB): AD-044 Plan 3 — the same three-pointer contract also lands in
   // composition-handoff.md (a shared file in upgrade's read set), overflowing the pair by ~949 B;
   // the same documented KB-multiple bump.
-  daily: 23552, // the no-shared daily modes (help/backends/recipes/procedures/gates). 20480 →
+  daily: 24576, // the no-shared daily modes (help/backends/recipes/procedures/gates). 23552 →
+  // 24576 (24 KB): kit-inert-gate Phase 2 — gates.md gains the `coverage=` summary contract (the
+  // CLOSED four-value set with one value defined per run outcome, the DETAIL-not-a-new-state rule,
+  // and the derived-from-the-checker's-own-anchored-lines honesty, then the round-1 fold's
+  // cross-read + contradiction rule) against 872 B of headroom; measured 24139 B after a
+  // compression pass — a documented KB-multiple bump, never a silent re-pin. History: 20480 →
   // 23552 (23 KB): kit-inert-gate Phase 1 — gates.md gains the coverage producer/checker pairing
   // contract (the CLOSED producer form, its path-shaped-tail rule WITH the stated residual, the
   // AW_GIT_DIR destination rule, the withhold + the three write-time refusals on both declaration

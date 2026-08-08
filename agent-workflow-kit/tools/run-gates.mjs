@@ -68,7 +68,13 @@ import {
   isReviewDependentGate, unknownPregateExcludeIds, derivePregateSubsetGates,
 } from './gates-declaration.mjs';
 
+// The coverage vocabulary lives in a LEAF below this runner AND core-evidence (which validates the
+// token this runner records) — run-gates already imports core-evidence, so a shared home is the
+// only direction that has no cycle. Re-exported here: this module is the vocabulary's public face.
+import { COVERAGE } from './coverage-state.mjs';
+
 export { GATES_REL, loadDeclaration, validateDeclaration, canonicalCheckerGates, isFinalCapableDeclaration, isReviewDependentGate };
+export { COVERAGE };
 
 // The full exit-code table — one distinct code per honest outcome (never a silent green).
 // 7 is RETIRED (the deleted --record arm's outcome) — never reused for a new meaning.
@@ -117,12 +123,18 @@ const USAGE = [
   'deletes the stale git-dir lcov first, exports AW_GIT_DIR to every gate cmd, records EVERY',
   'attempt (start + completed green/red) in the core-evidence store, and binds the receipt to',
   '{ fingerprint before/after, the full declaration, per-gate results, the canonical red-proof +',
-  'degrade evidence hashes, the lcov sha, and — when a flow store exists — evidenceHashes.flow,',
-  'the owner-scoped flow projection hash (D10; projection movement under the run is a red',
-  'integrityFailure) }. --final refuses --only (a subset never attests).',
+  'degrade evidence hashes, the lcov sha, the run\'s own coverage token, and — when a flow store',
+  'exists — evidenceHashes.flow, the owner-scoped flow projection hash (D10; projection movement',
+  'under the run is a red integrityFailure) }. --final refuses --only (a subset never attests).',
   '',
   `Runs the gates declared in <cwd>/${GATES_REL} (one bash command line each, project root as cwd).`,
   'Prints a per-gate PASS/FAIL table + one machine-readable summary line; exit 0 iff all green.',
+  `The summary line carries coverage=<${COVERAGE.certified}|${COVERAGE.notRun}|${COVERAGE.none}|${COVERAGE.unknown}> — whether a coverage`,
+  'VERDICT rode this run: certified (one was issued, pass OR fail), not-run (the checker issued',
+  'none — no lcov, or this run does not own it), none (no canonical checker ran here), unknown (the',
+  'run ended before the gates produced a signal, or the signal is unreadable). The checker\'s own',
+  'table row names a withheld verdict in the same words. DETAIL only: the exit code and the status=',
+  'token are untouched by it.',
   '',
   'Producer env: AW_GIT_DIR (inside a git tree) and AW_LCOV_FILE (--final only) are computed and',
   'exported to every gate child, and STRIPPED from the inherited environment first — a host-set',
@@ -238,23 +250,82 @@ export const runGates = (gates, { cwd, spawn = spawnGateViaBash, now = Date.now,
 };
 
 // The per-gate PASS/FAIL table (printed after every gate ran — failures never stop the matrix).
-export const formatTable = (results) => {
+// `notes` annotates rows by gate id: the coverage signal names a WITHHELD verdict on the checker's
+// own row, so a PASS there can never read as a claim the checker did not make. A Map, not an
+// object — a gate id is any kebab word, `constructor` included, and a plain object would answer
+// that lookup from its prototype.
+export const formatTable = (results, notes = new Map()) => {
   const idWidth = Math.max(...results.map((result) => result.id.length), 'gate'.length);
   const pad = (text) => text + ' '.repeat(idWidth - text.length);
   const lines = ['', `${pad('gate')}  result`];
   for (const result of results) {
-    lines.push(`${pad(result.id)}  ${result.ok ? 'PASS' : `FAIL (exit ${result.code})`}`);
+    const note = notes.get(result.id);
+    lines.push(`${pad(result.id)}  ${result.ok ? 'PASS' : `FAIL (exit ${result.code})`}${note ? `  ${note}` : ''}`);
   }
   return lines;
 };
 
+// ── the coverage signal this run carries (Decision 8) ─────────────────────────────────
+// The checker's two fully anchored machine lines. Exactly ONE of each rides a run: the --final
+// receipt binds them (an injected or duplicated line must never shadow the real one), and the
+// summary field below is derived from the SAME bytes, so the two can never disagree.
+const LCOV_SHA_LINE_RE = /^coverage-check: lcov-sha256=([0-9a-f]{64}|none)$/;
+const ATTESTED_LINE_RE = /^coverage-check: attested=(yes|no)$/;
+const anchoredMachineLines = (stdout, re) => String(stdout ?? '').split(/\r?\n/).filter((line) => re.test(line));
+const exactlyOneMachineValue = (stdout, re) => {
+  const lines = anchoredMachineLines(stdout, re);
+  return lines.length === 1 ? re.exec(lines[0])[1] : null;
+};
+
+// Which SELECTED gate is the canonical checker — resolved BEFORE anything spawns, because the
+// answer is a property of the DECLARATION, not of the post-run filesystem. The predicate reads the
+// tool path through realpath, so a gate that deletes or redirects it mid-run would otherwise turn
+// the checker this run selected into "no checker at all" (`none`) — and a --final receipt refuses
+// that state, which would lose the whole attempt's evidence rather than record it honestly.
+export const resolveCheckerIndex = (selected, projectDir) =>
+  selected.findIndex((gate) => matchesCanonicalCheck(FINAL_CORE_CHECKS[1], gate.cmd, projectDir));
+
+// coverageSignal(checkerAt, results) → { state, note, checkerRow } — what THIS run can honestly say
+// about coverage, decided by the checker's own OUTPUT rather than by its exit status (it exits 0
+// both when it certifies and when it withholds). BOTH anchored lines are read and CROSS-CHECKED:
+// neither alone is trustworthy — a missing or duplicated line is unreadable, and an attestation
+// over bytes that were never consumed is a contradiction. `note` is the checker row's table
+// annotation, null when there is nothing to name.
+export const coverageSignal = (checkerAt, results) => {
+  if (checkerAt === -1) return { state: COVERAGE.none, note: null, checkerRow: null };
+  const checkerRow = results[checkerAt] ?? null;
+  if (checkerRow === null || checkerRow.code === SPAWN_FAILED_CODE) {
+    return { state: COVERAGE.unknown, note: null, checkerRow };
+  }
+  const unreadable = (why) => ({ state: COVERAGE.unknown, note: `coverage=${COVERAGE.unknown} (${why})`, checkerRow });
+  const attested = exactlyOneMachineValue(checkerRow.stdout, ATTESTED_LINE_RE);
+  const consumed = exactlyOneMachineValue(checkerRow.stdout, LCOV_SHA_LINE_RE);
+  if (attested === null || consumed === null) {
+    return unreadable('the checker printed no single anchored attested= / lcov-sha256 pair — whether coverage was certified is unknowable');
+  }
+  if (attested === 'yes') {
+    return consumed === 'none'
+      ? unreadable('the checker attested over an lcov it never read — a contradictory pair, fail closed')
+      : { state: COVERAGE.certified, note: null, checkerRow };
+  }
+  return {
+    state: COVERAGE.notRun,
+    note: consumed === 'none'
+      ? `coverage=${COVERAGE.notRun} (no lcov bytes were read; no coverage verdict was issued)`
+      : `coverage=${COVERAGE.notRun} (an lcov was read but no verdict was issued)`,
+    checkerRow,
+  };
+};
+
 // The ONE machine-readable summary line — always the LAST line printed for every non-usage
-// outcome. Schema (pinned by tests): status ∈ ok|fail|missing|empty|malformed|no-bash.
-export const composeSummaryLine = ({ status, results = [] }) => {
+// outcome. Schema (pinned by tests): status ∈ ok|fail|missing|empty|malformed|no-bash, plus
+// coverage ∈ the COVERAGE vocabulary. The coverage DEFAULT is `unknown`: a lane that ended before
+// the gates could produce a signal says exactly that, never a claim it cannot support.
+export const composeSummaryLine = ({ status, results = [], coverage = COVERAGE.unknown }) => {
   const passed = results.filter((result) => result.ok).length;
   const failed = results.filter((result) => !result.ok);
   const failedIds = failed.length > 0 ? failed.map((result) => result.id).join(',') : NO_FAILED_IDS;
-  return `[run-gates] status=${status} gates=${results.length} passed=${passed} failed=${failed.length} failed_ids=${failedIds}`;
+  return `[run-gates] status=${status} gates=${results.length} passed=${passed} failed=${failed.length} failed_ids=${failedIds} coverage=${coverage}`;
 };
 
 // ── CLI ───────────────────────────────────────────────────────────────────────────────
@@ -655,8 +726,15 @@ export const runCli = (argv, deps = {}) => {
         return EXIT.finalFailed;
       }
     }
+    // The checker's position is pinned BEFORE the matrix spawns; the tree it leaves behind never
+    // gets to re-decide which gate this run selected.
+    const checkerAt = resolveCheckerIndex(selected, projectDir);
     const results = runGates(selected, { cwd: projectDir, spawn: gateSpawn, log, now });
-    for (const line of formatTable(results)) log(line);
+    // Decided once, from the checker's own machine lines, and carried to BOTH surfaces of this run:
+    // the checker's table row and the machine summary field (Decision 7/8).
+    const coverage = coverageSignal(checkerAt, results);
+    const coverageNotes = coverage.note && coverage.checkerRow ? new Map([[coverage.checkerRow.id, coverage.note]]) : new Map();
+    for (const line of formatTable(results, coverageNotes)) log(line);
     const allGreen = results.every((result) => result.ok);
     if (opts.preReview) {
       // The named diagnosis (#66): review-dependence is derived, so an abstracted checker can only
@@ -675,7 +753,7 @@ export const runCli = (argv, deps = {}) => {
           && endRead.records.some((r) => r.kind === CHAIN_KIND && r.purpose === 'adoption');
         if (armedNow) {
           logError('[run-gates] --pre-review: the flow was ARMED while this run executed — the run started unarmed, so its result is NOT recorded (round-11 fold); re-run under the armed flow');
-          log(composeSummaryLine({ status: 'fail', results }));
+          log(composeSummaryLine({ status: 'fail', results, coverage: coverage.state }));
           return EXIT.fail;
         }
       }
@@ -686,7 +764,7 @@ export const runCli = (argv, deps = {}) => {
         if (results.some((result) => result.code === SPAWN_FAILED_CODE)) {
           logError('[run-gates] --pre-review: a gate could not SPAWN — an infrastructure failure is not a gate red, so NO subset-attempt was recorded; fix the spawn failure and re-run');
           releaseSubsetRunLock();
-          log(composeSummaryLine({ status: 'fail', results }));
+          log(composeSummaryLine({ status: 'fail', results, coverage: coverage.state }));
           return EXIT.fail;
         }
         const attemptStatus = allGreen ? 'green' : 'red';
@@ -711,23 +789,18 @@ export const runCli = (argv, deps = {}) => {
           logError(`[run-gates] --pre-review: the subset attempt could not be recorded — ${err.message}`);
           logError("[run-gates] an armed flow's subset run IS a recorded attempt; an unrecordable run refuses (fail closed)");
           releaseSubsetRunLock();
-          log(composeSummaryLine({ status: 'fail', results }));
+          log(composeSummaryLine({ status: 'fail', results, coverage: coverage.state }));
           return EXIT.fail;
         }
       }
     }
-    // A green gate's stdout is deliberately not echoed — the table IS the report. But the checker
-    // exits 0 both when it certifies and when it WITHHOLDS a verdict, so on a plain run the table
-    // would read PASS over a coverage claim that was never made: the same false reassurance one
-    // layer up from the defect this whole mechanism exists to close. Surface it, and only it.
-    if (!opts.final) {
-      const checkerAt = selected.findIndex((gate) => matchesCanonicalCheck(FINAL_CORE_CHECKS[1], gate.cmd, projectDir));
-      const checkerRow = checkerAt === -1 ? null : results[checkerAt];
-      if (checkerRow?.ok && /^coverage-check: attested=no$/m.test(String(checkerRow.stdout ?? ''))) {
-        log(`── ${checkerRow.id} — NO COVERAGE VERDICT (the gate passed; it did not certify)`);
-        for (const line of String(checkerRow.stdout).split(/\r?\n/).filter((l) => /^coverage-check: (NO VERDICT|skipped-no-lcov)/.test(l))) log(line);
-        log('   A coverage verdict is issued only by run-gates.mjs --final, which owns the lcov for the whole run.');
-      }
+    // A green gate's stdout is deliberately not echoed — the table IS the report. The row above
+    // now names the withheld verdict; this block adds the checker's OWN words and the remedy, so a
+    // plain run never leaves a PASS standing for a coverage claim that was never made. Only that.
+    if (!opts.final && coverage.state === COVERAGE.notRun && coverage.checkerRow?.ok) {
+      log(`── ${coverage.checkerRow.id} — NO COVERAGE VERDICT (the gate passed; it did not certify)`);
+      for (const line of String(coverage.checkerRow.stdout).split(/\r?\n/).filter((l) => /^coverage-check: (NO VERDICT|skipped-no-lcov)/.test(l))) log(line);
+      log('   A coverage verdict is issued only by run-gates.mjs --final, which owns the lcov for the whole run.');
     }
     if (opts.final) {
       // The checker's verbatim diagnostics surface even on green — skipped-no-lcov and the
@@ -770,17 +843,15 @@ export const runCli = (argv, deps = {}) => {
         }
         // Exactly ONE full machine line binds the receipt — an unanchored first-match would let
         // an injected/duplicated line shadow the real one and skip the end re-hash.
-        const shaLineRe = /^coverage-check: lcov-sha256=([0-9a-f]{64}|none)$/;
-        const shaLines = String(checkerRow?.stdout ?? '').split(/\r?\n/).filter((l) => shaLineRe.test(l));
-        const shaValue = shaLines.length === 1 ? shaLineRe.exec(shaLines[0])[1] : null;
+        const shaLines = anchoredMachineLines(checkerRow?.stdout, LCOV_SHA_LINE_RE);
+        const shaValue = shaLines.length === 1 ? LCOV_SHA_LINE_RE.exec(shaLines[0])[1] : null;
         const lcovSha256 = shaValue !== null && shaValue !== 'none' ? shaValue : null;
         // The attestation line, on the SAME exactly-one-anchored-line contract as the sha: a green
         // exit status alone never proves the checker certified anything — it exits 0 both when it
         // attests and when it withholds a verdict. Without this arm a gate that removed the start
         // record mid-run would yield a green receipt carrying no coverage claim at all.
-        const attestLineRe = /^coverage-check: attested=(yes|no)$/;
-        const attestLines = String(checkerRow?.stdout ?? '').split(/\r?\n/).filter((l) => attestLineRe.test(l));
-        const attested = attestLines.length === 1 ? attestLineRe.exec(attestLines[0])[1] : null;
+        const attestLines = anchoredMachineLines(checkerRow?.stdout, ATTESTED_LINE_RE);
+        const attested = attestLines.length === 1 ? ATTESTED_LINE_RE.exec(attestLines[0])[1] : null;
         if (allGreen && integrityFailure === null && lcovSha256 !== null) {
           if (attestLines.length !== 1) {
             integrityFailure = attestLines.length === 0
@@ -826,6 +897,11 @@ export const runCli = (argv, deps = {}) => {
               ...(finalFlow?.present ? { flow: finalFlow.hash } : {}),
             },
             lcovSha256,
+            // The run's OWN coverage token, recorded rather than re-derived: `lcovSha256` says what
+            // the receipt binds, never whether a verdict was issued (a red run can bind a digest
+            // over an uncertified read, and a null digest is also what an unreadable sha line
+            // leaves). The stateless render reads this field instead of guessing from the digest.
+            coverage: coverage.state,
             integrityFailure,
             timestamp: new Date().toISOString(),
           },
@@ -848,14 +924,17 @@ export const runCli = (argv, deps = {}) => {
     // would be a silent green in the one place a reader parses instead of reads. The run lock
     // releases BEFORE the line composes so a custody violation can never hide behind status=ok.
     const runLockIssue = releaseSubsetRunLock();
-    log(composeSummaryLine({ status: allGreen && finalError === null && runLockIssue == null ? 'ok' : 'fail', results }));
+    log(composeSummaryLine({ status: allGreen && finalError === null && runLockIssue == null ? 'ok' : 'fail', results, coverage: coverage.state }));
     if (finalError) return EXIT.finalFailed;
     if (runLockIssue != null) return EXIT.fail;
     return allGreen ? EXIT.ok : EXIT.fail;
   } catch (err) {
     releaseSubsetRunLock();
     logError(`[run-gates] ${err.message}`);
-    if (err.exitCode === EXIT.malformed) log(composeSummaryLine({ status: 'malformed' }));
+    // The machine line is the LAST line for every NON-USAGE outcome — a thrown refusal is one, and
+    // the gates never produced a signal there, so it carries coverage=unknown. Usage is the single
+    // documented exception: it prints the usage text and no summary at all.
+    if (err.exitCode !== EXIT.usage) log(composeSummaryLine({ status: err.exitCode === EXIT.malformed ? 'malformed' : 'fail' }));
     return err.exitCode ?? EXIT.fail;
   }
 };

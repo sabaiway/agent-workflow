@@ -367,7 +367,12 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       file: tools/coverage-producer.mjs (the reporter-flag constant + the CLOSED
     //       matchesCoverageProducer predicate, held byte-equal to the memory canon by a TEXT drift
     //       guard rather than an import). Its *.test.mjs sibling is stripped by files[].
-    assert.equal(packed.length, 185, `tarball file count drifted (${packed.length} ≠ 185)`);
+    // 186 = 185 + the coverage vocabulary leaf (kit-inert-gate Phase 2), EXACTLY one file:
+    //       tools/coverage-state.mjs (the CLOSED coverage= value set + the subset a final receipt
+    //       may record). It is a LEAF because its two consumers cannot import each other —
+    //       run-gates REPORTS the token and core-evidence VALIDATES it, and run-gates already
+    //       imports core-evidence. Its *.test.mjs sibling is stripped by files[].
+    assert.equal(packed.length, 186, `tarball file count drifted (${packed.length} ≠ 186)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
