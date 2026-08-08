@@ -281,7 +281,33 @@ export const evaluateVetoOverride = ({ records, vetoReceipt, tree }) => {
 // and their records remain forgeable (each store's own header says so) — a backdated or
 // backwards-clock instant can move a red across this boundary; the cross-store arming-fence
 // hardening is queued (FLOW-ARMING-FENCE-CROSS-STORE), never pretended here.
-export const collectUnansweredRedRefusals = ({ flowRecords, coreRecords, currentBase, owner }) => {
+//
+// The lane split (FLOW-FINAL-RED-DEADLOCK) — the same reasoning the D10 arm already applies one arm
+// away (see the `consumer` paragraph in computeFlowDecision's own header; a line reference there
+// would rot on the next insertion). The strict rule demands a receipt the gate's OWN run has not
+// written yet: run-gates appends the final receipt only AFTER every gate has run, so an in-matrix
+// flow-check can never see the completed retry that would answer the newest red, and each --final
+// mints red N+1 — no number of rerun-causes converges. On the 'gate' lane a current-base red is
+// therefore ALSO answered by a provable IN-PROGRESS retry: an authoritative rerun-cause naming its
+// attempt AND binding the CURRENT fingerprint, plus a final-start at that fingerprint ordered
+// STRICTLY AFTER that red whose attempt carries no completed final — the shape run-gates creates
+// before any gate runs (run-gates.mjs:636-658), so inside a real final run the conjunction holds by
+// construction while a standalone check on a quiet tree still refuses. The relaxation carries the
+// SAME base correlation the strict rule demands of the retry tree: a fingerprint is not unique to a
+// base (a clean tree hashes identically under every HEAD), so without it a cause minted at another
+// base would answer the gate and leave a green final the commit boundary is guaranteed to reject —
+// the relaxation must only ever admit a state a completed retry could actually clear. It is opt-in
+// by EXACT match: any other consumer — unknown, misspelled, absent — evaluates the strict rule, and
+// a tree whose fingerprint is unresolvable or ambiguously correlated never relaxes. The
+// 'commit-guard' lane is unchanged; the commit boundary still demands a real completed retry.
+// Stated residual: an INTERRUPTED final run leaves exactly that record shape with no live run
+// behind it, so a standalone check reads PASS in that window. It authorizes nothing — commit-guard
+// refuses the dangling start independently (commit-guard.mjs:213-223) and consults the STRICT lane
+// (commit-guard.mjs:253) — and the window closes on the next completed final run. The real fix is a
+// runner-attested capability (a one-time unpublished nonce over stdin or an inherited FD, verified
+// against a one-way commitment recorded in the final-start); it needs its own IPC contract and is
+// QUEUED, never pretended here.
+export const collectUnansweredRedRefusals = ({ flowRecords, coreRecords, currentBase, owner, consumer = 'commit-guard', currentFingerprint = null }) => {
   if (!hasOwnAdoption(flowRecords, owner)) return [];
   const adoptionInstants = flowRecords
     .filter((r) => r.kind === CHAIN_KIND && r.purpose === 'adoption' && r.owner === owner)
@@ -302,6 +328,13 @@ export const collectUnansweredRedRefusals = ({ flowRecords, coreRecords, current
       && basesAt(g.fingerprintBefore).length === 1 && basesAt(g.fingerprintBefore)[0] === currentBase
       && firstFinalByAttempt.get(g.attempt) === gi
       && c.fingerprint === g.fingerprintBefore));
+  const completedAttempts = new Set(finals.map(({ r }) => r.attempt));
+  const relaxes = consumer === 'gate' && typeof currentFingerprint === 'string' && currentFingerprint !== ''
+    && basesAt(currentFingerprint).length === 1 && basesAt(currentFingerprint)[0] === currentBase;
+  const inProgressRetryFor = (red, redAt) => rerunCauses.some((c) => c.attempt === red.attempt
+    && c.fingerprint === currentFingerprint
+    && coreRecords.some((s, si) => si > redAt && s.kind === 'final-start'
+      && s.fingerprint === currentFingerprint && !completedAttempts.has(s.attempt)));
   for (const { r, i } of finals) {
     if (r.status !== 'red') continue;
     if (armingInstant !== null && isCanonicalInstant(r.timestamp) && Date.parse(r.timestamp) < armingInstant) continue;
@@ -315,7 +348,7 @@ export const collectUnansweredRedRefusals = ({ flowRecords, coreRecords, current
       continue;
     }
     if (bases[0] !== currentBase) continue;
-    if (!answeredBy(r, i)) {
+    if (!answeredBy(r, i) && !(relaxes && inProgressRetryFor(r, i))) {
       refusals.push(`a red final (attempt "${r.attempt}") on the CURRENT base (${bases[0] == null ? 'null' : short(bases[0])}) has no later completed retry cleared by a rerun-cause — an unanswered red never passes an armed flow (#65). recovery (edit the quoted cause, then paste; mint on the RETRY tree): ${writerCommand(`rerun-cause --attempt=${shellQuote(r.attempt)} --cause='<the stated cause>'`)}`);
     }
   }
@@ -568,13 +601,14 @@ export const computeAllPathWorktreeSurface = (cwd) => {
   return { ok: true, paths: [...new Set([...tracked, ...untracked])] };
 };
 
-// decideFlowCheck({ flowRead, coreRead, owner, motion?, evidence? }) → { refusals, advisories }.
-// Pure — consumes the FULL read-results of both stores; store health fails closed BEFORE any
-// content judgment. `motion` ({ currentBase, resolveBaseDelta, resolveChangedSurface }) arms the
-// Step-1.4 base-motion refusals; `evidence` ({ receipts, tree, backends }) arms the three Phase-1
-// rungs (#65/#25/#42 — each self-gates on an OWN adoption). Absent inputs keep the decision
-// byte-identical to the Plan-2 checker.
-export const decideFlowCheck = ({ flowRead, coreRead, owner, flowPath = 'the flow store', corePath = 'the core evidence store', motion = null, evidence = null }) => {
+// decideFlowCheck({ flowRead, coreRead, owner, motion?, evidence?, consumer? }) → { refusals,
+// advisories }. Pure — consumes the FULL read-results of both stores; store health fails closed
+// BEFORE any content judgment. `motion` ({ currentBase, resolveBaseDelta, resolveChangedSurface })
+// arms the Step-1.4 base-motion refusals; `evidence` ({ receipts, tree, backends }) arms the three
+// Phase-1 rungs (#65/#25/#42 — each self-gates on an OWN adoption). Absent inputs keep the decision
+// byte-identical to the Plan-2 checker. `consumer` rides through to the #65 lane split and defaults
+// to the STRICT lane, so a caller that forgets to thread it inherits strictness.
+export const decideFlowCheck = ({ flowRead, coreRead, owner, flowPath = 'the flow store', corePath = 'the core evidence store', motion = null, evidence = null, consumer = 'commit-guard' }) => {
   const refusals = [];
   const advisories = [];
   if (flowRead.readError) refusals.push(`the flow store is unreadable (${flowRead.readError}) — the checker consumes the FULL read-result; inspect ${flowPath} (fail closed)`);
@@ -594,7 +628,7 @@ export const decideFlowCheck = ({ flowRead, coreRead, owner, flowPath = 'the flo
   refusals.push(...deltaRefusals(records, owner));
   refusals.push(...degradeOrderingRefusals(coreRead.records));
   if (evidence != null) {
-    refusals.push(...collectUnansweredRedRefusals({ flowRecords: records, coreRecords: coreRead.records, currentBase: evidence.tree.base, owner }));
+    refusals.push(...collectUnansweredRedRefusals({ flowRecords: records, coreRecords: coreRead.records, currentBase: evidence.tree.base, owner, consumer, currentFingerprint: evidence.tree.fingerprint }));
     refusals.push(...collectDegradeCoverageRefusals({ flowRecords: records, coreRecords: coreRead.records, tree: evidence.tree, owner, backends: evidence.degradeBackends }));
     refusals.push(...collectReceiptCoverageRefusals({ flowRecords: records, receipts: evidence.receipts, tree: evidence.tree, owner, backends: evidence.receiptBackends, declaredPaths: evidence.declaredPaths, refreshCap: evidence.refreshCap }));
   }
@@ -611,7 +645,9 @@ export const decideFlowCheck = ({ flowRead, coreRead, owner, flowPath = 'the flo
 // #42 never falls open). `consumer` (Plan 4 Decision 2): the D10 flow→final comparison runs ONLY
 // on the 'commit-guard' lane — the default 'gate' lane (the in-matrix flow-check --check gate)
 // stays inert on it, because during a final run the "latest final" is by construction the
-// PREVIOUS one and an in-matrix comparison would make a new green final unreachable.
+// PREVIOUS one and an in-matrix comparison would make a new green final unreachable. The SAME
+// distinction reaches the #65 unanswered-red rung (its own header states the split): the 'gate'
+// lane also answers a red under a provable in-progress retry, for the same reason.
 export const computeFlowDecision = ({ cwd = process.cwd(), consumer = 'gate', probes = {} } = {}) => {
   const fingerprintProbe = probes.fingerprint ?? computeTreeFingerprint;
   const owner = deriveFlowOwner(cwd);
@@ -745,7 +781,7 @@ export const computeFlowDecision = ({ cwd = process.cwd(), consumer = 'gate', pr
       }
     }
   }
-  const { refusals, advisories } = decideFlowCheck({ flowRead, coreRead, owner, flowPath, corePath, motion, evidence });
+  const { refusals, advisories } = decideFlowCheck({ flowRead, coreRead, owner, flowPath, corePath, motion, evidence, consumer });
   // Semantic refusals bind only an ARMED store; the D10 binding refusals ride the commit-guard
   // lane UNCONDITIONALLY — a deleted or truncated store must never un-arm the binding.
   const effectiveRefusals = healthBroken ? refusals : [...(armed ? [...refusals, ...evidenceRefusals] : []), ...bindingRefusals];
