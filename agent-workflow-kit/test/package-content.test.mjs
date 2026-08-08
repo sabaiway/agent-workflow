@@ -148,6 +148,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the flow-check refusal core (flow-orchestration Phase 3) — pure checker predicates + the
       // standalone --check CLI (deliberately unwired until Plan 3); pinned by NAME for the same reason
       'tools/flow-check.mjs',
+      // the closed delegation-record vocabulary (delegation Plan 1 Phase 1) — the record family, the
+      // exec-return schema, the sub-task contract header and the metric byte domains the delegation
+      // store and engine consume; pinned by NAME for the same reason
+      'tools/dispatch-record.mjs',
       // the D3(c)+(d) final-run checker (fixed git-dir lcov path + red-proof verification) and the
       // D10 read-only pre-commit guard that binds the run-gates --final receipt
       'tools/coverage-check.mjs',
@@ -355,7 +359,11 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       (declaration load/validation + the canonical checker predicate + the pregate subset
     //       derivation the locked subset-attempt factory re-derives — the R10 rider). The
     //       read-graph purity test itself lives in the repo's test/, never in the tarball.
-    assert.equal(packed.length, 183, `tarball file count drifted (${packed.length} ≠ 183)`);
+    // 184 = 183 + the delegation record vocabulary (delegation Plan 1 Phase 1), EXACTLY one file:
+    //       tools/dispatch-record.mjs (pure form — closed record family, D4 outcome enum + successor
+    //       table, exec-return schema, D8 contract header, D6 byte domains). Its colocated
+    //       *.test.mjs sibling is stripped by files[] and never enters the tarball.
+    assert.equal(packed.length, 184, `tarball file count drifted (${packed.length} ≠ 184)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
