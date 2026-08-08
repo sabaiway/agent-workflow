@@ -39,14 +39,27 @@ and passes no separate network flag — the `sandbox_workspace_write.*` config (
 
 ### Clean output capture
 
-`-o`/`--output-last-message` writes ONLY codex's final message; `--json` streams the structured event
-stream (incl. `thread.started`, which carries the session id) to a discarded trace; `--color never` +
+**ONE capture posture, fresh runs and resumes alike.** `-o`/`--output-last-message` writes ONLY
+codex's final message; `--json` streams the structured event stream (incl. `thread.started`, which
+carries the session id) into the run trace, with stderr merged into it; `--color never` +
 `-c hide_agent_reasoning=true` + `-c model_reasoning_summary=none` strip colour and chain-of-thought.
-Net effect: the wrapper prints just the final answer. **Reasoning still runs at `xhigh`** — quality is
-unchanged; only the *noise* is dropped. On success `codex-exec` extracts the session id from the trace
-and records it to `${CODEX_SESSION_FILE:-./.codex-last-session}` (so `--resume-last` can find it) and
-echoes `session: <id>` to stderr. On a missing/empty final-message file it falls back to the trace tail
-(loud, never silent).
+`codex exec resume` accepts `-o` and `--json` too (live-probed on codex-cli 0.147.0), so the resume
+lane is no longer the odd one out — it used to print its final message straight to stdout with the
+event stream nowhere, which left the very mode a nested-sandbox incident fired on with no evidence
+surface at all. Net effect: the wrapper prints just the final answer. **Reasoning still runs at
+`xhigh`** — quality is unchanged; only the *noise* is dropped. On success `codex-exec` extracts the
+session id from the trace and records it to `${CODEX_SESSION_FILE:-./.codex-last-session}` (so
+`--resume-last` can find it) and echoes `session: <id>` to stderr. On a missing/empty final-message
+file it falls back to the trace tail (loud, never silent).
+
+The trace is **read before it is discarded**, on every completed run. A `command_execution` item in
+the `--json` stream carries `{command, aggregated_output, exit_code, status}`, and `aggregated_output`
+is that tool call's combined stdout+stderr — exactly where an absorbed `bwrap` failure lands. The
+scan is line-oriented and tolerant of the mixed stream the merge produces: a line that is not a
+well-formed item is simply not evidence, never a parse error. See the dual policy in
+[`../capability.json`](../capability.json) `roles.execute.contract.notes` — the failed-run arm keeps
+its loose whole-trace rule, and the successful-run arm demands both tokens inside ONE item whose
+failure is proven.
 
 ## Quality-first guard (pinned model & effort)
 
@@ -134,12 +147,13 @@ the prompt fence ("do not read outside the working tree, except the precomputed-
 
 `codex exec resume` re-dispatches an existing session without re-sending context. It **rejects the
 posture flags** `-s`/`--add-dir`/`-C` and **resets** the sandbox/approval/network posture (it DOES
-accept `-c`/`-m`/`--last`/`-o`/`--json` on 0.142.3 — the wrapper just doesn't need `-o`/`--json` here).
+accept `-c`/`-m`/`--last`/`-o`/`--json`/`--color`, live-probed on codex-cli 0.147.0).
 The `codex-exec --resume`/`--resume-last` entrypoint handles the reset: it restates the entire policy
 via `-c` (`sandbox_mode=workspace-write`, `approval_policy=never`,
 `sandbox_workspace_write.network_access=false`) plus the pinned `-m`/effort and `--ignore-user-config`,
-reads the session id from the sidecar (or an argument), and captures codex's final message straight
-from stdout (no `-o` needed). Only a *raw* `codex exec resume` outside the wrapper loses the posture.
+reads the session id from the sidecar (or an argument), and applies the **same** capture posture as a
+fresh run — `-o` for the final message, `--json` + `--color never` into the trace. Only a *raw*
+`codex exec resume` outside the wrapper loses the posture.
 
 ## Hard timeout
 

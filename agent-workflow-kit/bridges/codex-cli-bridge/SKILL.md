@@ -110,8 +110,15 @@ receipt field. **Quote the posture banner verbatim** when labeling a dispatch.
 
 `codex exec` is headless: there is **no TTY**, so `approval_policy=never` — anything needing
 escalation is refused and reported, never interactively approved. The wrappers capture only codex's
-**final message** (`-o`; the JSON event stream + reasoning go to a discarded trace), so output is
-clean; a successful **non-resume** `codex-exec` also records the session id to a sidecar
+**final message** (`-o`), so output is clean; the JSON event stream + reasoning go to a run trace
+that is **read before it is discarded**. Fresh and resumed runs share **ONE** capture posture
+(`-o` + `--json` + `--color never`, everything redirected into the trace), so both modes have the
+same evidence surface — and the wrapper scans that surface on **every completed run**: a run that
+SURVIVES a nested-sandbox failure exits 0 with an ungrounded answer, so on `rc == 0` it prints the
+answer first and then warns loudly on stderr when one `command_execution` item with a **proven**
+failure carries both a sandbox-mechanism and a permission/read-only token in its `aggregated_output`.
+The exit status stays 0 there (warning, not gate) — read the stderr line. A successful **non-resume**
+`codex-exec` also records the session id to a sidecar
 (`${CODEX_SESSION_FILE:-./.codex-last-session}`) so `--resume-last` can find it. Extra `codex` flags
 go after a literal `--`; the wrapper rejects any that would defeat the policy or the pinned model (see
 [§ Environment knobs](#environment-knobs) and the flag tiers in
