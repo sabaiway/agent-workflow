@@ -10,6 +10,7 @@ import { readFileSync, lstatSync, realpathSync } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fail, loadConfig, CONFIG_REL } from './orchestration-config.mjs';
+import { matchesCoverageProducer } from './coverage-producer.mjs';
 
 // The per-project declaration (strict JSON, hand-editable). cwd-relative — errors show a path the
 // user can open (the orchestration-config CONFIG_REL idiom).
@@ -138,6 +139,46 @@ export const isFinalCapableDeclaration = (gates, projectDir) => {
   if (missing.length > 0) return false;
   if (canonicalCheckerGates(gates, projectDir).length !== 1) return false;
   return matchesCanonicalCheck(FINAL_CORE_CHECKS[1], gates[gates.length - 1].cmd, projectDir);
+};
+
+// coverageDeclarationDefects(gates, projectDir) → the WRITTEN-declaration coverage rule, as a list
+// of named defects (empty = satisfied): at most ONE canonical coverage checker; if one is present
+// it is LAST, and a producer precedes it. Consumers turn a defect into their own refusal — an
+// offer-level check alone is not enough, because the declaration that gets WRITTEN is a merge of an
+// existing file with a consented subset, and every one of these three shapes is reachable that way.
+// Order is deliberate: a duplicate must be resolved before order or production can even be read.
+export const coverageDeclarationDefects = (gates, projectDir) => {
+  const checkers = canonicalCheckerGates(gates, projectDir);
+  if (checkers.length > 1) {
+    return [{
+      kind: 'duplicate-checker',
+      message:
+        `${GATES_REL}: ${checkers.length} gates are the canonical coverage checker (${checkers.map((g) => g.id).join(', ')}) — ` +
+        '--final accepts exactly one; keep a single checker and remove the rest',
+    }];
+  }
+  if (checkers.length === 0) return []; // no checker declared — coverage is optional, nothing to enforce
+  const index = gates.indexOf(checkers[0]);
+  const after = gates.slice(index + 1);
+  if (after.length > 0) {
+    return [{
+      kind: 'checker-not-last',
+      message:
+        `${GATES_REL}: the canonical coverage checker (${checkers[0].id}) must be the LAST declared gate — ` +
+        `${after.map((g) => g.id).join(', ')} would run after it consumed the lcov. REORDER the declaration by hand ` +
+        '(the gate itself is fine — this is an ORDERING refusal, and the fill is append-only, so it cannot reorder for you)',
+    }];
+  }
+  if (!gates.slice(0, index).some((gate) => matchesCoverageProducer(gate.cmd))) {
+    return [{
+      kind: 'no-producer',
+      message:
+        `${GATES_REL}: the canonical coverage checker (${checkers[0].id}) is declared but NO gate would produce the lcov it reads — ` +
+        'the checker would pass while verifying nothing. Declare a suite gate carrying the coverage reporters ' +
+        '(references/modes/gates.md names the exact form), or drop the checker',
+    }];
+  }
+  return [];
 };
 
 // The review-dependent predicate (#66/P14): a gate is review-dependent iff its cmd IS the plain

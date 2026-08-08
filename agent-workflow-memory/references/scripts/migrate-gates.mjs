@@ -5,7 +5,9 @@
 // COMPLETELY in one consented step: it REMOVES the canonical legacy entries, EXTENDS the
 // canonical `unit-tests` cmd with the built-in lcov reporters (the D3(d) coverage source), and
 // ADDS the coverage-check gate LAST (removal alone is not a migration — the result must satisfy
-// `run-gates --final` and carry a working commit path).
+// `run-gates --final` and carry a working commit path). The checker is added ONLY over a
+// declaration that PRODUCES the lcov it reads; with no producer it is WITHHELD with a loud
+// warning, because a checker with no producer passes (`skipped-no-lcov`) while verifying nothing.
 //
 // Matching is by the DOCUMENTED cmd forms ONLY (hand-wired history included — never by seed
 // provenance): a legacy entry is `node <path>/review-ledger.mjs --check` or
@@ -45,11 +47,68 @@ export const LEGACY_FORMS = Object.freeze([
   { name: 'fold-completeness', re: legacyRe('fold-completeness\\.mjs') },
 ]);
 
-// The D3(d) reporter flags the canonical unit-tests cmd gains — lcov at the fixed git-dir path
-// run-gates --final exports, plus an explicit stdout reporter (without it the lcov reporter
-// swallows the human TAP/spec stream).
+// coverage-producer canon >>> BEGIN drift-guarded region
+// Authored TWICE, byte-identically: in the memory substrate's references/scripts/migrate-gates.mjs
+// and in the composition root's tools/coverage-producer.mjs. Neither side imports the other — the
+// substrate is standalone and must not depend on the root, and the root must not import mirrored
+// bytes — so a TEXT drift guard beside the root's copy holds them equal. Edit BOTH, then re-run the
+// mirror sync.
+//
+// The destination is written against AW_GIT_DIR, which run-gates exports to every gate child on a
+// plain run AND on --final (AW_LCOV_FILE is --final only), so one cmd survives the unmet
+// producer-variable preflight in both modes. The explicit stdout reporter is not decoration:
+// without it the lcov reporter swallows the human TAP/spec stream.
 export const UNIT_TESTS_COVERAGE_FLAGS =
   '--experimental-test-coverage --test-reporter=lcov --test-reporter-destination="$AW_GIT_DIR/agent-workflow-lcov.info" --test-reporter=spec --test-reporter-destination=stdout';
+
+// The ONE suite body that produces that lcov with no extra dependency.
+export const COVERAGE_PRODUCER_BODY = `node --test ${UNIT_TESTS_COVERAGE_FLAGS}`;
+
+// The per-PM exec wrappers a fill offer puts that body behind. Recognition must cover every form
+// the kit has EMITTED, so the prefixes are matched literally; gates-init's execCmdFor stays the one
+// EMITTER and is bound to this list by a named acceptance test, never by a second grammar.
+const PRODUCER_EXEC_PREFIXES = Object.freeze([
+  'COREPACK_ENABLE_NETWORK=0 npm exec --offline --script-shell /bin/sh -- ',
+  'COREPACK_ENABLE_NETWORK=0 pnpm exec -- ',
+  'COREPACK_ENABLE_NETWORK=0 yarn exec -- ',
+]);
+
+// A trailing suffix is the project's own test paths; a leading one would mean the body is not what
+// this cmd runs. The tail passes a POSITIVE closed grammar — every whitespace-separated token must
+// be path-shaped — never an operator blocklist: `node --test <flags> && rm -f <lcov>` runs the
+// suite and then DELETES the file, so an open-ended tail would certify a producer that leaves
+// nothing behind, and scanning for operator BYTES would put the incomplete-scan failure on the
+// unsafe side (a missed operator is a dead pair) instead of the mild one (an unrecognised
+// legitimate tail merely withholds the offer — add the gate by hand).
+// The token set is everything that appears in a PATH or a glob and can never sequence, redirect or
+// substitute a command — quoting and `~` included, `( ) $ ` ; & | < > # \` excluded. SCOPE, stated
+// exactly: the screen judges each token's SOURCE bytes. Quote removal adds none, but brace SEQUENCE
+// expansion does — `{Y..a}` yields ``[ \ ] ^ _ ` `` (probed) — so "no new bytes" would be a false
+// claim. What holds is the property that matters: bash does not re-scan an expansion result as
+// syntax, so a byte arriving that way is literal argument DATA, never an operator. The leading-`-`
+// exclusion is weaker still — a FIRST-ORDER screen only, defeated by `'--flag'` and
+// `{path,--flag}`. It is kept because the tail is the project's test PATHS and it costs only a loud
+// withhold. Deciding an argument's post-expansion identity needs a shell lexer, which this family
+// deliberately has NOWHERE (AD-079). So the claim is "configured with the reporters", never "the
+// lcov survives the command"; a run that produces none is caught honestly at runtime as
+// `skipped-no-lcov`.
+const PRODUCER_PATH_TOKEN = /^(?!-)[A-Za-z0-9_./*{},:@+=~?[\]!'"-]+$/;
+const pathShapedTail = (tail) => tail === '' || tail.split(/[ \t]+/).every((token) => PRODUCER_PATH_TOKEN.test(token));
+const carriesProducerBody = (text) =>
+  text === COVERAGE_PRODUCER_BODY ||
+  (text.startsWith(`${COVERAGE_PRODUCER_BODY} `) && pathShapedTail(text.slice(COVERAGE_PRODUCER_BODY.length).trim()));
+
+// matchesCoverageProducer(cmd) → CLOSED-WORLD over the full command forms the kit emits, never a
+// substring probe: `echo "$AW_GIT_DIR/agent-workflow-lcov.info"`, a half-written reporter flag set,
+// or the path as a bare substring must all read as NOT a producer — otherwise the checker is
+// declared over a gate that writes nothing and then PASSES while certifying nothing.
+export const matchesCoverageProducer = (cmd) => {
+  if (typeof cmd !== 'string') return false;
+  const trimmed = cmd.trim();
+  if (carriesProducerBody(trimmed)) return true;
+  return PRODUCER_EXEC_PREFIXES.some((prefix) => trimmed.startsWith(prefix) && carriesProducerBody(trimmed.slice(prefix.length)));
+};
+// coverage-producer canon <<< END drift-guarded region
 
 // The RETIRED kit-owned git-dir stores the deleted machinery wrote — dead data a consumer's
 // upgrade would otherwise strand forever. The migration cleans them (consented via the preview;
@@ -147,13 +206,20 @@ export const buildMigrationPlan = (gates, kitToolsDir) => {
     plan.push({ action: 'keep', entry: gate, reason: null });
   }
   const kept = plan.filter((r) => r.action === 'keep' || r.action === 'extend');
+  // The checker READS an lcov; something has to WRITE it. Adding the checker over a declaration
+  // with no producer creates the dead pair — the gate PASSES (`skipped-no-lcov`) and certifies
+  // nothing, so the migration withholds it and says why instead.
+  const hasProducer = kept.some((r) => matchesCoverageProducer(r.entry.cmd));
   let collision = null;
+  let checkerWithheld = false;
   if (checkerRow === null) {
     // A surviving NON-canonical entry already holding the checker's id blocks the add — two
     // `coverage-check` rows would be ambiguous; the customized entry must be resolved by hand
     // FIRST (the caller turns this into a loud STOP on preview and apply alike).
     if (kept.some((r) => r.entry.id === 'coverage-check')) {
       collision = 'coverage-check';
+    } else if (!hasProducer) {
+      checkerWithheld = true;
     } else {
       plan.push({
         action: 'add',
@@ -165,8 +231,23 @@ export const buildMigrationPlan = (gates, kitToolsDir) => {
     checkerRow.action = 'move';
     checkerRow.reason = 'the canonical checker must be the LAST declared gate (nothing may run after it consumed the lcov)';
   }
+  // An ALREADY-declared checker over no producer is the same dead pair the withhold prevents — an
+  // earlier deployment could have created it. The migration removes no declared gate, so it reports
+  // the inertness and refuses to call the result final-run-capable.
+  const checkerInert = checkerRow !== null && !hasProducer;
   const reviewStateCandidate = `{ "id": "review-state", "title": "Review receipts converged (D3(b))", "cmd": "node \\"${join(kitToolsDir, 'review-state.mjs')}\\" --check" }`;
-  return { plan, customized, unitTestsExtended, finalCapable: hasReviewState, reviewStateCandidate, collision };
+  return {
+    plan,
+    customized,
+    unitTestsExtended,
+    finalCapable: hasReviewState && !checkerWithheld && !checkerInert,
+    hasProducer,
+    hasReviewState,
+    checkerWithheld,
+    checkerInert,
+    reviewStateCandidate,
+    collision,
+  };
 };
 
 export const resultingGates = (plan) => {
@@ -184,7 +265,7 @@ const customizedRecovery = (gate) =>
     ? `declare the canonical suite gate by hand so the coverage contract is verifiable: node --test ${UNIT_TESTS_COVERAGE_FLAGS} <your test paths>`
     : 'remove the entry, or repoint it at a living check — the review-ledger / fold-completeness tools no longer exist.';
 
-const warningLines = ({ customized, finalCapable, reviewStateCandidate }) => {
+const warningLines = ({ customized, finalCapable, hasReviewState = finalCapable, checkerWithheld = false, checkerInert = false, reviewStateCandidate }) => {
   const lines = [];
   for (const gate of customized) {
     lines.push(`  CUSTOMIZED (untouched): ${gate.id}: ${gate.cmd}`);
@@ -193,7 +274,15 @@ const warningLines = ({ customized, finalCapable, reviewStateCandidate }) => {
   if (customized.length) {
     lines.push('  IMPORTANT: do NOT install the commit guard until every customized entry above is resolved — a declaration that cannot pass run-gates --final would block every commit.');
   }
-  if (!finalCapable) {
+  if (checkerWithheld) {
+    lines.push('  WARNING: the canonical coverage-check gate was NOT added — no declared gate would PRODUCE the lcov it reads, and a checker with no producer passes while verifying nothing. Declare the suite gate first, then re-run this migration:');
+    lines.push(`    node --test ${UNIT_TESTS_COVERAGE_FLAGS} <your test paths>`);
+  }
+  if (checkerInert) {
+    lines.push('  WARNING: the DECLARED coverage-check gate is INERT — no declared gate PRODUCES the lcov it reads, so it passes while verifying nothing. Nothing is removed for you; declare the suite gate:');
+    lines.push(`    node --test ${UNIT_TESTS_COVERAGE_FLAGS} <your test paths>`);
+  }
+  if (!hasReviewState) {
     lines.push('  WARNING: the result is NOT final-run-capable — no canonical review-state check is declared. Add it (paste-ready), then run-gates --final can mint the receipt:');
     lines.push(`    ${reviewStateCandidate}`);
   }
@@ -201,7 +290,7 @@ const warningLines = ({ customized, finalCapable, reviewStateCandidate }) => {
 };
 
 export const formatPreview = (analysis, applyHint) => {
-  const { plan, unitTestsExtended, finalCapable, retiredStores = [] } = analysis;
+  const { plan, unitTestsExtended, finalCapable, hasProducer = unitTestsExtended, retiredStores = [] } = analysis;
   const lines = ['[agent-workflow] legacy gates.json migration preview (dry-run — nothing was written):'];
   const acted = plan.filter((r) => r.action !== 'keep');
   for (const r of acted) {
@@ -217,7 +306,9 @@ export const formatPreview = (analysis, applyHint) => {
         : '  nothing to migrate mechanically — no canonical legacy entries and no retired stores; the warnings below still need a hand.',
     );
   }
-  if (!unitTestsExtended && !plan.some((r) => r.entry.id === 'unit-tests')) {
+  // Keyed on the ID, but a PRODUCER is recognized under any id — repeating this advice over a
+  // working producer sends the user to fix nothing.
+  if (!hasProducer && !unitTestsExtended && !plan.some((r) => r.entry.id === 'unit-tests')) {
     lines.push('  note: no canonical `unit-tests` entry found — declare your suite gate with the lcov reporters by hand (the coverage-check gate reads the file it produces).');
   }
   lines.push(...warningLines(analysis));
@@ -317,7 +408,8 @@ Usage:
 Default is a dry-run PREVIEW (writes nothing). --apply rewrites ${GATES_REL} atomically:
 canonical legacy entries (review-ledger / fold-completeness --check, matched by their documented
 single-invocation forms) are REMOVED; the canonical unit-tests cmd gains the built-in lcov
-reporters; the coverage-check gate is ADDED last (resolved, QUOTED path). Customized entries are
+reporters; the coverage-check gate is ADDED last (resolved, QUOTED path) — and WITHHELD, loudly,
+when no declared gate produces the lcov it reads. Customized entries are
 NEVER auto-touched — the preview names each with a paste-ready recovery, and the commit guard
 must not be installed until they are resolved.`;
 

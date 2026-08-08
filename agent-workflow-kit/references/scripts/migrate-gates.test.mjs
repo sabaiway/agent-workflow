@@ -12,6 +12,7 @@ import { spawnSync } from 'node:child_process';
 import {
   LEGACY_FORMS,
   UNIT_TESTS_COVERAGE_FLAGS,
+  COVERAGE_PRODUCER_BODY,
   RETIRED_STORE_BASENAMES,
   findRetiredStores,
   buildMigrationPlan,
@@ -69,6 +70,42 @@ describe('migrate-gates — the pure migration plan', () => {
     assert.equal(last.cmd, `node "${join(KIT_TOOLS, 'coverage-check.mjs')}" --check`);
     const again = buildMigrationPlan(result, KIT_TOOLS);
     assert.ok(!again.plan.some((r) => r.action === 'add'), 'a declaration already carrying the checker gains no duplicate');
+  });
+
+  it('a declaration with NO producer never GAINS the checker — the pair is declared together or not at all', () => {
+    const npmSuite = { id: 'suite', title: 'S', cmd: 'npm test' };
+    const analysis = buildMigrationPlan([LEGACY_LEDGER, npmSuite], KIT_TOOLS);
+    assert.ok(!analysis.plan.some((r) => r.action === 'add'), 'no checker is added over a declaration that produces no lcov');
+    assert.deepEqual(resultingGates(analysis.plan).map((g) => g.id), ['suite'], 'the legacy entry still goes, nothing dead arrives');
+    assert.equal(analysis.finalCapable, false, 'a declaration with no checker is not final-run-capable');
+    const preview = formatPreview(analysis, 'APPLY');
+    assert.match(preview, /coverage-check/, 'the withheld checker is named');
+    assert.match(preview, /produce/i, 'the preview says WHY — no gate produces the lcov it would read');
+  });
+
+  it('an ALREADY-declared checker over no producer is reported INERT, is never removed, and is not final-run-capable', () => {
+    const checker = { id: 'coverage-check', title: 'CC', cmd: `node "${join(KIT_TOOLS, 'coverage-check.mjs')}" --check` };
+    const reviewState = { id: 'review-state', title: 'RS', cmd: `node "${join(KIT_TOOLS, 'review-state.mjs')}" --check` };
+    const analysis = buildMigrationPlan([{ id: 'suite', title: 'S', cmd: 'npm test' }, reviewState, checker], KIT_TOOLS);
+    assert.equal(analysis.finalCapable, false, 'a review-state present must NOT make an inert pair read as final-run-capable');
+    assert.ok(resultingGates(analysis.plan).some((g) => g.id === 'coverage-check'), 'the declared checker is never removed');
+    const preview = formatPreview(analysis, 'APPLY');
+    assert.match(preview, /INERT/, 'the inert pair is named');
+    assert.match(preview, /--experimental-test-coverage/, 'the paste-ready suite cmd is carried');
+    assert.doesNotMatch(preview, /already final-run-capable/);
+  });
+
+  it('a gates-init-shaped producer (the exec-wrapped offer form) is recognized — the checker IS added over it', () => {
+    const offered = {
+      id: 'test',
+      title: 'T',
+      cmd: `COREPACK_ENABLE_NETWORK=0 npm exec --offline --script-shell /bin/sh -- ${COVERAGE_PRODUCER_BODY}`,
+    };
+    const analysis = buildMigrationPlan([offered], KIT_TOOLS);
+    assert.deepEqual(resultingGates(analysis.plan).map((g) => g.id), ['test', 'coverage-check']);
+    // The `no canonical unit-tests entry` advice is keyed on the ID, but a producer is recognized
+    // under ANY id — repeating the advice over a working producer sends the user to fix nothing.
+    assert.doesNotMatch(formatPreview(analysis, 'APPLY'), /declare your suite gate with the lcov reporters by hand/);
   });
 
   it('a CUSTOMIZED dead-tool reference (compound form) is kept untouched and reported', () => {
