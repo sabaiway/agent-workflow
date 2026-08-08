@@ -13,6 +13,14 @@ Claude Code, Codex, Cursor, and any agent that reads `AGENTS.md`.*
 [![license](https://img.shields.io/npm/l/@sabaiway/agent-workflow-kit)](./LICENSE)
 [![node](https://img.shields.io/node/v/@sabaiway/agent-workflow-kit)](https://nodejs.org)
 
+[![downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsabaiway%2Fagent-workflow%2Frefs%2Fheads%2Fstats%2Fbadge-downloads.json&logo=npm)](https://www.npmjs.com/package/@sabaiway/agent-workflow-kit)
+[![views](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsabaiway%2Fagent-workflow%2Frefs%2Fheads%2Fstats%2Fbadge-views.json&logo=github)](https://github.com/sabaiway/agent-workflow/blob/stats/history.csv)
+[![clones](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsabaiway%2Fagent-workflow%2Frefs%2Fheads%2Fstats%2Fbadge-clones.json&logo=github)](https://github.com/sabaiway/agent-workflow/blob/stats/history.csv)
+
+<sub>Usage signals refresh daily on the [`stats`](https://github.com/sabaiway/agent-workflow/blob/stats/history.csv) data branch —
+`downloads/week` is the family total across both packages. A badge reading `n/a` means the signal was
+**not measured**, never that it was zero.</sub>
+
 `Node ≥ 22`  ·  `dependency-free scripts`  ·  `no telemetry in family code`
 
 **One command to start:**
