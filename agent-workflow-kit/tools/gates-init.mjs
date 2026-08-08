@@ -30,6 +30,12 @@
 //   • the safety claim is scoped to the OFFER DERIVATION, not a runtime sandbox: a gate still
 //     executes project-controlled tooling (a node_modules/.bin PATH shim intercepts under every
 //     form) — the documented residual, disclosed in the preview, bounded by the two consents;
+//   • a `node --test` suite body — the ONE allowlist member that produces lcov unaided — is
+//     emitted WITH the canonical coverage reporters, so the offered checker has a producer; every
+//     other body is emitted verbatim. The coverage-check candidate is WITHHELD (loud note) when
+//     neither the offer nor the existing declaration carries a producer, and --apply refuses to
+//     WRITE a declaration whose checker has no producer, is not last, or has a canonical twin:
+//     the checker READS an lcov, and with nothing writing it the gate passes certifying nothing;
 //   • ids derive kebab-case from script names (build:prod → build-prod) and every offered entry
 //     passes the runner's validateDeclaration (this module imports the validator — NEVER the
 //     reverse: run-gates.mjs stays a runner that writes nothing);
@@ -54,6 +60,8 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { discoverGateCandidates, EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
 import { GATES_REL, validateDeclaration } from './run-gates.mjs';
+import { coverageDeclarationDefects, isReviewDependentGate } from './gates-declaration.mjs';
+import { COVERAGE_PRODUCER_BODY, matchesCoverageProducer } from './coverage-producer.mjs';
 import { loadConfig } from './orchestration-config.mjs';
 import { assertDocsAiDeployment, writeDocsAiFileAtomic, lstatNoFollow } from './atomic-write.mjs';
 
@@ -95,7 +103,10 @@ never watch/serve, never a write-mode variant) whose BODY is a member of the lit
 allowlist is offered, as the hook-free \`COREPACK_ENABLE_NETWORK=0 <pm> exec -- <body>\` form for
 the detected package manager. A gate-class script whose body is NOT in the allowlist is screened
 out with a note naming it (a command you trust can still be declared by hand); non-gate-class
-names are excluded silently, as always.
+names are excluded silently, as always. A \`node --test\` body carries the canonical coverage
+reporters; the coverage-check candidate is withheld when nothing would produce the lcov it reads,
+and --apply refuses to write a checker with no producer, a checker that is not last, or a second
+canonical checker.
 ${TRUST_CHAIN_DISCLOSURE}`;
 
 // ── candidate classification: the NAME screens (the LOCKED derivation invariants) ──────
@@ -195,6 +206,13 @@ export const execCmdFor = (pm, body) => {
   };
 };
 
+// The coverage PRODUCER wiring (Decision 1 — closed-world here too). `node --test` is the only
+// allowlist body that produces lcov with no extra dependency, so it is the only body the offer
+// extends with the reporter flags; every other body is emitted verbatim and produces none (an
+// optional-dependency coverage flag set would be speculation about the project's own tooling).
+const COVERAGE_PRODUCING_BODY = 'node --test';
+const emittedBodyOf = (body) => (body === COVERAGE_PRODUCING_BODY ? COVERAGE_PRODUCER_BODY : body);
+
 export const kebabIdOf = (name) =>
   String(name)
     .toLowerCase()
@@ -253,12 +271,14 @@ const deriveScripts = (cwd, deps = {}) => {
       screenedIds.push(id);
       continue;
     }
-    const { cmd, note } = execCmdFor(pm, body);
+    const emitted = emittedBodyOf(body);
+    const { cmd, note } = execCmdFor(pm, emitted);
     if (cmd === null) {
       withheld.push({ id, note });
       continue;
     }
-    entries.push({ id, title: `Project script ${c.scriptName}: ${body}`, cmd });
+    const coverage = emitted === body ? '' : ' (+ the lcov reporters the coverage checker reads)';
+    entries.push({ id, title: `Project script ${c.scriptName}: ${body}${coverage}`, cmd });
   }
   const notes = [];
   if (screenedIds.length) {
@@ -397,7 +417,10 @@ const assertOnlyIdsOffered = (offer, onlyIds = []) => {
   const offered = new Set(offer.entries.map((e) => e.id));
   const unknown = onlyIds.filter((id) => !offered.has(id));
   if (unknown.length) {
-    throw usageFail(`--only names ids not in the offer: ${unknown.join(', ')} (offered: ${[...offered].join(', ') || 'none'})`);
+    // The offer's notes carry WHY a candidate is absent (a withheld checker, a screened body); an
+    // id-not-offered error without them reads as a typo the user did not make.
+    const why = offer.notes.length ? ` — why: ${offer.notes.join(' | ')}` : '';
+    throw usageFail(`--only names ids not in the offer: ${unknown.join(', ')} (offered: ${[...offered].join(', ') || 'none'})${why}`);
   }
 };
 
@@ -411,10 +434,47 @@ export const buildOffer = (cwd, deps = {}) => {
   const rs = reviewStateCandidate(cwd, deps);
   const fc = flowCheckCandidate(cwd, deps);
   const cc = coverageCheckCandidate(cwd, deps);
-  const candidates = [rs.candidate, fc.candidate, cc.candidate].filter(Boolean);
+  // Decision 3 — the checker is never offered DEAD. The producer may come from this offer or from
+  // a declaration the user already wrote by hand, so the rule reads the merged picture; a
+  // declaration this preview cannot read degrades to a stated note, never to a silent withhold.
+  const existing = declaredGatesBestEffort(cwd, deps);
+  const producerPresent =
+    scripts.entries.some((entry) => matchesCoverageProducer(entry.cmd)) ||
+    existing.gates.some((gate) => matchesCoverageProducer(gate.cmd));
+  const withholdCoverage = cc.candidate !== null && !producerPresent;
+  const coverageNote = withholdCoverage
+    ? `the coverage-check candidate was withheld: nothing would PRODUCE the lcov it reads — no offered or ` +
+      `declared gate carries the canonical coverage reporters, and a checker with no producer passes while ` +
+      `verifying nothing (declare a suite gate per references/modes/gates.md, then re-run)`
+    : cc.note;
+  // ALWAYS stated, not only when it changed the withhold: the preview would otherwise promise an
+  // applicable offer over a declaration --apply is certain to refuse.
+  const unreadableNote =
+    existing.unreadable === null
+      ? null
+      : `the existing ${GATES_REL} could not be read (${existing.unreadable}) — this preview treated it as EMPTY, and --apply will refuse until it is fixed`;
+  // An offer that lists nothing but the kit's own checkers reads like a clean offer; say the
+  // consequence out loud (no command bodies are echoed — an unvetted body must never become one
+  // keystroke from a declared, hook-auto-approvable gate). The offer-level fact is ALWAYS true; the
+  // matrix claim and the advice are only true in ONE of three declaration states, and asserting
+  // them in the other two would be the same false report this seam exists to remove:
+  //   unreadable          → the empty gates array means UNPARSED, not undeclared: say nothing more;
+  //   readable, no gate   → the claim and the advice both hold;
+  //   readable, has gate  → a green matrix proves plenty and the user already declared their own.
+  const declarationState =
+    existing.unreadable !== null ? 'unreadable' : existing.gates.some((gate) => !isReviewDependentGate(gate, cwd)) ? 'has-gate' : 'no-gate';
+  const noVerificationNote =
+    scripts.entries.length > 0
+      ? null
+      : `this offer adds no project-verification gate — nothing here runs your suite, linter or build${
+          declarationState === 'no-gate'
+            ? `, and none is declared either, so a green matrix would prove only that the kit's own checkers ran; declare your own in ${GATES_REL}`
+            : ''
+        }`;
+  const candidates = [rs.candidate, fc.candidate, withholdCoverage ? null : cc.candidate].filter(Boolean);
   return {
     entries: [...scripts.entries, ...candidates],
-    notes: [...scripts.notes, rs.note, fc.note, cc.note].filter(Boolean),
+    notes: [...scripts.notes, noVerificationNote, unreadableNote, rs.note, fc.note, coverageNote].filter(Boolean),
   };
 };
 
@@ -479,6 +539,18 @@ const loadExistingDeclaration = (cwd, deps = {}) => {
   return { outcome: 'loaded', readme: typeof parsed._README === 'string' ? parsed._README : undefined, gates };
 };
 
+// The declaration as the OFFER sees it: read-only and non-fatal. The preview must survive a
+// declaration --apply would refuse (missing, malformed, symlinked) — it just reports what it could
+// not read, so the withhold is never blamed on the wrong cause.
+const declaredGatesBestEffort = (cwd, deps = {}) => {
+  try {
+    const existing = loadExistingDeclaration(cwd, deps);
+    return { gates: existing.outcome === 'loaded' ? existing.gates : [], unreadable: null };
+  } catch (err) {
+    return { gates: [], unreadable: err?.message ?? String(err) };
+  }
+};
+
 const templateReadme = (deps = {}) => {
   const read = deps.readTemplate ?? readFileSync;
   try {
@@ -531,6 +603,11 @@ export const applyFill = ({ cwd, onlyIds = [] }, deps = {}) => {
     gates: [...existingGates, ...selected],
   };
   validateDeclaration(merged); // every written declaration passes the runner's validator, always
+  // Decision 4 — the coverage invariant is enforced on the declaration that GETS WRITTEN, not on
+  // the offer: --only filters, the merge appends, and each of those still reaches a dead pair, a
+  // producer landing after an already-last checker, or a second checker under another id.
+  const defects = coverageDeclarationDefects(merged.gates, cwd);
+  if (defects.length) throw stop(`${defects[0].message} — nothing was written`);
   const body = `${JSON.stringify(merged, null, 2)}\n`;
   const { writtenPath } = writeDocsAiFileAtomic(cwd, GATES_REL, body, deps, { stop, noun: 'a gate declaration' });
   return { outcome: 'written', writtenPath, appended: selected.map((e) => e.id), notes: offer.notes };

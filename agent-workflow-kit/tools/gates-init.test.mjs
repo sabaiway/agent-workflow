@@ -23,9 +23,16 @@ import {
 } from './gates-init.mjs';
 import { loadDeclaration, validateDeclaration } from './run-gates.mjs';
 import { KIT_WRITER_PREVIEW_TOOLS, UNIVERSAL_READONLY_ALLOWLIST } from './velocity-profile.mjs';
+import { COVERAGE_PRODUCER_BODY, matchesCoverageProducer } from './coverage-producer.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GATES_REL = join('docs', 'ai', 'gates.json');
+
+// A `node --test` suite body is the ONE allowlist member the offer wires the lcov reporters onto
+// (Phase 1.2) — every other body is emitted verbatim and produces no coverage.
+const PRODUCER_BODY = COVERAGE_PRODUCER_BODY;
+// The canonical checker cmd, resolved against THIS kit — matchesCanonicalCheck realpath-anchors it.
+const CANONICAL_CHECKER_CMD = `node "${join(HERE, 'coverage-check.mjs')}" --check`;
 
 // The Decision-1 exec forms (test-pinned literals — the derivation must emit these EXACTLY). The
 // `COREPACK_ENABLE_NETWORK=0` prefix disables Corepack PM-provisioning fetch (council R3 fold).
@@ -94,6 +101,10 @@ const spawnSeeded = (cmd, dir = cwd, { isolatePrefix = true } = {}) =>
     timeout: 120_000,
     env: {
       ...process.env,
+      // The runner exports AW_GIT_DIR to every gate child (run-gates.mjs:502) and a wired coverage
+      // producer writes its lcov there; a by-hand spawn must supply it or the destination resolves
+      // to the filesystem root.
+      AW_GIT_DIR: dir,
       npm_config_cache: join(dir, '.isolated-npm-cache'),
       ...(isolatePrefix ? { npm_config_prefix: join(dir, '.isolated-npm-prefix') } : {}),
       // No network side-channels under a sandboxed suite run (the D4 sandbox-safe shape): a
@@ -149,7 +160,7 @@ describe('gates-init — derivation: only TERMINATING verification classes are o
     } });
     const entries = deriveScriptEntries(cwd);
     assert.deepEqual(entries.map((e) => e.id), ['test'], 'only the shell-safe script name survives');
-    assert.deepEqual(entries.map((e) => e.cmd), [NPM_EXEC('node --test')]);
+    assert.deepEqual(entries.map((e) => e.cmd), [NPM_EXEC(PRODUCER_BODY)]);
   });
 
   it('a WATCH/SERVE body never enters the offer — non-membership in the closed-world allowlist screens it', () => {
@@ -233,7 +244,7 @@ describe('gates-init — T1 lifecycle hooks die structurally: the offer is the h
     mkProject({ scripts: { pretest: 'npm publish', test: 'node --test' } });
     const entries = deriveScriptEntries(cwd);
     assert.deepEqual(entries.map((e) => e.id), ['test'], 'the pre-hook sibling itself is warn-excluded');
-    assert.equal(entries[0].cmd, NPM_EXEC('node --test'));
+    assert.equal(entries[0].cmd, NPM_EXEC(PRODUCER_BODY));
   });
 
   const mkHookedFixture = (lockfile) => {
@@ -305,7 +316,7 @@ describe('gates-init — T2 closed-world body (allowlist membership, not blockli
   it('ASCII space/tab runs collapse to the canonical member and the seeded cmd carries the NORMALIZED body', () => {
     mkProject({ scripts: { test: 'node  --test', lint: ' eslint .\t' } });
     const entries = deriveScriptEntries(cwd);
-    assert.deepEqual(entries.map((e) => e.cmd), [NPM_EXEC('node --test'), NPM_EXEC('eslint .')]);
+    assert.deepEqual(entries.map((e) => e.cmd), [NPM_EXEC(PRODUCER_BODY), NPM_EXEC('eslint .')]);
   });
 
   it('a forbidden char (NBSP/newline/CR/BOM/U+2028) disqualifies at LEADING, TRAILING and EMBEDDED positions — the reject runs BEFORE any trim', () => {
@@ -356,12 +367,12 @@ describe('gates-init — T3 allowlist self-safety (criterion ii: an unsafe futur
 describe('gates-init — T4 per-PM exec forms (uniform, hook-free, -- separated)', () => {
   it('npm / pnpm / yarn projects each get their exact Decision-1 exec form', () => {
     mkProject({ scripts: { test: 'node --test' } });
-    assert.equal(deriveScriptEntries(cwd)[0].cmd, NPM_EXEC('node --test'));
+    assert.equal(deriveScriptEntries(cwd)[0].cmd, NPM_EXEC(PRODUCER_BODY));
     writeFileSync(join(cwd, 'pnpm-lock.yaml'), '');
-    assert.equal(deriveScriptEntries(cwd)[0].cmd, PNPM_EXEC('node --test'));
+    assert.equal(deriveScriptEntries(cwd)[0].cmd, PNPM_EXEC(PRODUCER_BODY));
     rmSync(join(cwd, 'pnpm-lock.yaml'));
     writeFileSync(join(cwd, 'yarn.lock'), '');
-    assert.equal(deriveScriptEntries(cwd)[0].cmd, YARN_EXEC('node --test'));
+    assert.equal(deriveScriptEntries(cwd)[0].cmd, YARN_EXEC(PRODUCER_BODY));
   });
 
   it('every per-PM exec form carries the COREPACK_ENABLE_NETWORK=0 prefix (no Corepack PM-provision fetch under an auto-approved gate)', async () => {
@@ -856,22 +867,22 @@ import { flowCheckCandidate } from './gates-init.mjs';
 
 describe('gates-init — the checker TRIO under a flow block (P21)', () => {
   it('a flow block + a SOLO recipe offers the full TRIO — the internal-only arm runs INSIDE review-state, so flow-check alone would arm half the surface', () => {
-    mkProject({ config: { 'plan-execution': { review: 'solo' }, flow: { schema: 1 } } });
+    mkProject({ scripts: { test: 'node --test' }, config: { 'plan-execution': { review: 'solo' }, flow: { schema: 1 } } });
     const offer = buildOffer(cwd);
-    assert.deepEqual(offer.entries.map((e) => e.id), ['review-state', 'flow-check', 'coverage-check']);
+    assert.deepEqual(offer.entries.map((e) => e.id), ['test', 'review-state', 'flow-check', 'coverage-check']);
   });
 
   it('a flow block + council offers the TRIO with coverage-check declared LAST', () => {
-    mkProject({ config: { 'plan-execution': { review: 'council' }, flow: { schema: 1 } } });
+    mkProject({ scripts: { test: 'node --test' }, config: { 'plan-execution': { review: 'council' }, flow: { schema: 1 } } });
     const offer = buildOffer(cwd);
-    assert.deepEqual(offer.entries.map((e) => e.id), ['review-state', 'flow-check', 'coverage-check']);
+    assert.deepEqual(offer.entries.map((e) => e.id), ['test', 'review-state', 'flow-check', 'coverage-check']);
     assert.equal(offer.entries[offer.entries.length - 1].id, 'coverage-check');
   });
 
   it('no flow block: the candidate set stays the existing pair — flow-check never appears', () => {
-    mkProject({ config: { 'plan-execution': { review: 'council' } } });
+    mkProject({ scripts: { test: 'node --test' }, config: { 'plan-execution': { review: 'council' } } });
     const offer = buildOffer(cwd);
-    assert.deepEqual(offer.entries.map((e) => e.id), ['review-state', 'coverage-check']);
+    assert.deepEqual(offer.entries.map((e) => e.id), ['test', 'review-state', 'coverage-check']);
   });
 
   it('a DQ-unsafe flow-check tool path is WITHHELD with a loud note, never offered wrongly', () => {
@@ -879,5 +890,193 @@ describe('gates-init — the checker TRIO under a flow block (P21)', () => {
     const r = flowCheckCandidate(cwd, { flowCheckTool: '/tmp/has"quote/flow-check.mjs' });
     assert.equal(r.candidate, null);
     assert.match(r.note, /withheld/);
+  });
+});
+
+// ── Phase 1.2: the producer is wired for the ONE self-contained suite body ────────────
+import { findUnmetProducerRefs } from './run-gates.mjs';
+import { coverageDeclarationDefects } from './gates-declaration.mjs';
+
+const COUNCIL = { 'plan-execution': { review: 'council' } };
+
+describe('gates-init — the offered suite entry PRODUCES the lcov the checker reads', () => {
+  it('a node --test offer entry is a producer; every other allowlist suite body is emitted unchanged and is not', () => {
+    mkProject({ scripts: { test: 'node --test', 'test:vitest': 'vitest run', 'test:jest': 'jest', lint: 'eslint .' } });
+    const entries = deriveScriptEntries(cwd);
+    const cmdOf = (id) => entries.find((e) => e.id === id).cmd;
+    assert.equal(matchesCoverageProducer(cmdOf('test')), true, 'the node --test entry carries the reporters');
+    assert.equal(cmdOf('test-vitest'), NPM_EXEC('vitest run'), 'a vitest body is emitted verbatim (no speculative coverage flags)');
+    assert.equal(matchesCoverageProducer(cmdOf('test-vitest')), false);
+    assert.equal(matchesCoverageProducer(cmdOf('test-jest')), false);
+    assert.equal(matchesCoverageProducer(cmdOf('lint')), false);
+  });
+
+  it('the offered producer cmd survives the unmet-producer preflight on a PLAIN run and on --final', () => {
+    mkProject({ scripts: { test: 'node --test' } });
+    const gates = deriveScriptEntries(cwd);
+    assert.deepEqual(findUnmetProducerRefs(gates, ['AW_GIT_DIR']), [], 'a plain in-git-tree run injects everything the cmd references');
+    assert.deepEqual(findUnmetProducerRefs(gates, ['AW_GIT_DIR', 'AW_LCOV_FILE']), [], '--final injects it too');
+    assert.deepEqual(
+      findUnmetProducerRefs(gates, []).map((u) => u.name),
+      ['AW_GIT_DIR'],
+      'the preflight is live: outside a git tree the same cmd is refused up front, naming the variable',
+    );
+  });
+
+  it('the offered entry title names the added reporters — the offer never understates what it declares', () => {
+    mkProject({ scripts: { test: 'node --test' } });
+    assert.match(deriveScriptEntries(cwd)[0].title, /lcov/i);
+  });
+});
+
+// ── Phase 1.3: no checker without a producer — withheld in the offer, refused at write time ──
+
+describe('gates-init — the coverage-check candidate is WITHHELD when nothing produces the lcov', () => {
+  it('the vitest fixture (allowlisted body, no producer) is offered NO coverage-check and is told why by name', () => {
+    mkProject({ scripts: { test: 'vitest run' }, config: COUNCIL });
+    const offer = buildOffer(cwd);
+    assert.deepEqual(offer.entries.map((e) => e.id), ['test', 'review-state'], 'the checker is not offered dead');
+    const notes = offer.notes.join(' | ');
+    assert.match(notes, /coverage-check/, 'the withheld candidate is named');
+    assert.match(notes, /produce/i, 'the reason is the missing producer, not a generic skip');
+  });
+
+  it('a producer already DECLARED by hand unlocks the checker offer — the rule reads the merged picture, not just the offer', () => {
+    mkProject({
+      scripts: { lint: 'eslint .' },
+      config: COUNCIL,
+      gates: { gates: [{ id: 'suite', title: 'S', cmd: `${PRODUCER_BODY} test/*.test.mjs` }] },
+    });
+    assert.deepEqual(buildOffer(cwd).entries.map((e) => e.id), ['lint', 'review-state', 'coverage-check']);
+  });
+
+  it('an UNREADABLE existing declaration is stated even when the offer is otherwise complete — the preview never promises a set --apply will refuse', () => {
+    mkProject({ scripts: { test: 'node --test' }, config: COUNCIL, gates: '{ not json' });
+    const offer = buildOffer(cwd);
+    assert.ok(offer.entries.some((e) => e.id === 'coverage-check'), 'the offer itself is unaffected — the producer is present');
+    const notes = offer.notes.join(' | ');
+    assert.match(notes, /could not be read/, 'the unreadable declaration is named');
+    assert.match(notes, /--apply will refuse/, 'and the consequence is stated');
+    assert.equal(main(['--cwd', cwd, '--apply'], quiet()), 1, 'apply does refuse, exactly as the note said');
+  });
+
+  it('--apply --only coverage-check against a declaration with no producer is REFUSED and writes nothing', () => {
+    mkProject({ scripts: { test: 'vitest run' }, config: COUNCIL });
+    const io = quiet();
+    assert.notEqual(main(['--cwd', cwd, '--apply', '--only', 'coverage-check'], io), 0);
+    const text = io.out.join('\n');
+    assert.match(text, /coverage-check/, 'the refusal names the id');
+    assert.match(text, /produce/i, 'the refusal carries the producer reason, never a bare "unknown id"');
+    assert.equal(readdirSync(join(cwd, 'docs', 'ai')).includes('gates.json'), false, 'nothing written');
+  });
+
+  it('applying a producer to a declaration whose last gate is already the checker is refused for ORDERING, not rejected as a gate', () => {
+    mkProject({
+      scripts: { test: 'node --test' },
+      config: COUNCIL,
+      gates: { gates: [{ id: 'coverage-check', title: 'CC', cmd: CANONICAL_CHECKER_CMD }] },
+    });
+    const before = gatesRaw();
+    const io = quiet();
+    assert.equal(main(['--cwd', cwd, '--apply', '--only', 'test'], io), 1);
+    const text = io.out.join('\n');
+    assert.match(text, /LAST|order/i, 'the refusal names ORDERING as the cause');
+    assert.match(text, /reorder/i, 'the user is told to reorder, not that the producer was rejected');
+    assert.equal(gatesRaw(), before, 'the declaration is untouched');
+  });
+
+  it('a SECOND canonical checker under a different id is REFUSED', () => {
+    mkProject({
+      scripts: {},
+      config: COUNCIL,
+      gates: { gates: [{ id: 'suite', title: 'S', cmd: PRODUCER_BODY }, { id: 'cov', title: 'C', cmd: CANONICAL_CHECKER_CMD }] },
+    });
+    const before = gatesRaw();
+    const io = quiet();
+    assert.equal(main(['--cwd', cwd, '--apply', '--only', 'coverage-check'], io), 1);
+    assert.match(io.out.join('\n'), /canonical coverage checker/i, 'the refusal names the duplicate checker');
+    assert.equal(gatesRaw(), before, 'the declaration is untouched');
+  });
+
+  it('the node --test fixture still applies the pair: producer first, coverage-check LAST (characterization)', () => {
+    mkProject({ scripts: { test: 'node --test', lint: 'eslint .' }, config: COUNCIL });
+    const io = quiet();
+    assert.equal(main(['--cwd', cwd, '--apply'], io), 0, io.out.join('\n'));
+    const { gates } = loadDeclaration(cwd);
+    assert.deepEqual(gates.map((g) => g.id), ['test', 'lint', 'review-state', 'coverage-check']);
+    assert.equal(matchesCoverageProducer(gates[0].cmd), true, 'the applied suite gate really produces the lcov');
+    assert.deepEqual(coverageDeclarationDefects(gates, cwd), [], 'the written declaration satisfies the invariant');
+  });
+});
+
+describe('gates-declaration — the written-declaration coverage invariant (the pure rule)', () => {
+  const checker = (id) => ({ id, title: 'C', cmd: CANONICAL_CHECKER_CMD });
+  const producer = { id: 'suite', title: 'S', cmd: PRODUCER_BODY };
+  const plain = { id: 'lint', title: 'L', cmd: 'eslint .' };
+
+  it('no checker at all is not a defect — coverage is optional', () => {
+    assert.deepEqual(coverageDeclarationDefects([plain, producer], HERE), []);
+  });
+
+  it('a checker with no producer, a checker that is not last, and two checkers are each a named defect', () => {
+    assert.deepEqual(coverageDeclarationDefects([plain, checker('coverage-check')], HERE).map((d) => d.kind), ['no-producer']);
+    assert.deepEqual(coverageDeclarationDefects([producer, checker('coverage-check'), plain], HERE).map((d) => d.kind), ['checker-not-last']);
+    assert.deepEqual(
+      coverageDeclarationDefects([producer, checker('cov'), checker('coverage-check')], HERE).map((d) => d.kind),
+      ['duplicate-checker'],
+      'the duplicate is reported first — it is the defect the user must resolve before order or production matter',
+    );
+  });
+
+  it('a NEAR-MISS producer does not satisfy the rule (the closed predicate decides, not a substring)', () => {
+    const nearMiss = { id: 'suite', title: 'S', cmd: 'echo "$AW_GIT_DIR/agent-workflow-lcov.info" && node --test test/*.mjs' };
+    assert.deepEqual(coverageDeclarationDefects([nearMiss, checker('coverage-check')], HERE).map((d) => d.kind), ['no-producer']);
+  });
+});
+
+// ── Phase 1.5: the screen-out note states its consequence ─────────────────────────────
+
+describe('gates-init — an offer with zero project-verification gates says so', () => {
+  it('the monorepo-shaped fixture (every gate-class body screened out) states the consequence in plain words', () => {
+    mkProject({ scripts: { test: 'turbo run test', lint: 'turbo run lint', build: 'turbo run build' }, config: COUNCIL });
+    const io = quiet();
+    assert.equal(main(['--cwd', cwd], io), 0);
+    const text = io.out.join('\n');
+    assert.match(text, /screened out/, 'the screened bodies are still named');
+    assert.match(text, /no project-verification gate/i, 'the consequence is stated, not left to inference');
+    assert.doesNotMatch(text, /turbo run/, 'no screened-out command body is echoed back');
+  });
+
+  it('a normal fixture with a real suite gate carries no such statement', () => {
+    mkProject({ scripts: { test: 'node --test' }, config: COUNCIL });
+    const io = quiet();
+    assert.equal(main(['--cwd', cwd], io), 0);
+    assert.doesNotMatch(io.out.join('\n'), /no project-verification gate/i);
+  });
+
+  it('an UNREADABLE declaration is a THIRD state — never counted as "no project gate declared", and given no advice it cannot justify', () => {
+    // The gates array is empty because the file could not be PARSED, not because the project
+    // declared nothing; claiming the matrix proves only kit checkers would be a fresh false report.
+    mkProject({ scripts: { test: 'turbo run test' }, config: COUNCIL, gates: '{ not json' });
+    const io = quiet();
+    assert.equal(main(['--cwd', cwd], io), 0);
+    const text = io.out.join('\n');
+    assert.match(text, /offer adds no project-verification gate/i, 'the offer-level fact is still stated');
+    assert.match(text, /could not be read/, 'and the unreadable declaration is named separately');
+    assert.doesNotMatch(text, /would prove only/, 'the matrix claim needs a READ declaration to be true');
+    assert.doesNotMatch(text, /declare your own/, 'advice over a file we could not read is guesswork');
+  });
+
+  it('when the DECLARATION already carries a project gate the note narrows to the offer — it never claims the matrix proves nothing', () => {
+    mkProject({
+      scripts: { test: 'turbo run test' },
+      config: COUNCIL,
+      gates: { gates: [{ id: 'suite', title: 'S', cmd: `${PRODUCER_BODY} test/*.test.mjs` }] },
+    });
+    const io = quiet();
+    assert.equal(main(['--cwd', cwd], io), 0);
+    const text = io.out.join('\n');
+    assert.match(text, /offer adds no project-verification gate/i, 'the offer-level fact is still stated');
+    assert.doesNotMatch(text, /would prove only/, 'but the matrix claim is FALSE here — a declared suite gate runs');
   });
 });

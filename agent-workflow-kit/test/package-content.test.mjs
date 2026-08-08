@@ -363,7 +363,11 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       tools/dispatch-record.mjs (pure form — closed record family, D4 outcome enum + successor
     //       table, exec-return schema, D8 contract header, D6 byte domains). Its colocated
     //       *.test.mjs sibling is stripped by files[] and never enters the tarball.
-    assert.equal(packed.length, 184, `tarball file count drifted (${packed.length} ≠ 184)`);
+    // 185 = 184 + the shared coverage-producer vocabulary (kit-inert-gate Phase 1.1), EXACTLY one
+    //       file: tools/coverage-producer.mjs (the reporter-flag constant + the CLOSED
+    //       matchesCoverageProducer predicate, held byte-equal to the memory canon by a TEXT drift
+    //       guard rather than an import). Its *.test.mjs sibling is stripped by files[].
+    assert.equal(packed.length, 185, `tarball file count drifted (${packed.length} ≠ 185)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
