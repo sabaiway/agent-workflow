@@ -35,11 +35,44 @@ const ATTRIBUTION = [
   { re: /reviewed by (claude|codex|chatgpt|gpt|gemini|copilot|cursor|the (ai|model|agent))/i, label: 'AI review attribution' },
   { re: /authored[- ]by[: ][^\n]{0,40}\b(claude|chatgpt|gemini|copilot)\b/i, label: 'AI authorship attribution' },
 ];
+// A line whose FIRST non-space token opens a comment (or a markdown heading) — the surface where a
+// backend name beside a disposition is a credit rather than a data value.
+//
+// STATED RESIDUAL of the two anchored rules below, named rather than implied: they see only lines
+// that OPEN with a comment marker, so a credit inside a string literal, in ordinary markdown prose
+// outside a heading, or in a trailing inline comment is invisible to them. Closing that class needs
+// a code/comment/string lexer this scanner deliberately does not have (the version-pin rung below
+// records what hand-rolling one cost). The UNANCHORED pair narrows the gap for the one construction
+// that has actually shipped past this gate; nothing here proves no attribution exists — it is a
+// high-signal guard, not a proof.
+const COMMENT_LINE = String.raw`^\s*(?://|/\*|\*|#)`;
+const DISPOSITIONS = 'CONFIRM|REFUTE|REVISE|SHIP';
+// Spelled per letter rather than flagged: the four rules below must be case-insensitive on the NAME
+// and case-SENSITIVE on the disposition, and a regex flag cannot apply to half a pattern. All four
+// share this constant, so an ALL-CAPS credit cannot slip past one of them.
+const BACKEND_ANY_CASE = '[Aa][Gg][Yy]|[Cc][Oo][Dd][Ee][Xx]';
+
 const REVIEWER_IDENTITY = [
   // backend-then-round: a bridge name, a separator, then r<N> (with optional +/round suffixes).
   { re: /\b(?:agy|codex)(?:\s+|-)r\d+(?:(?:\+|\/)r?\d+)*(?:-[a-z0-9]+)*\b/i, label: 'reviewer-round identity' },
   // round-then-backend (reverse order): r<N>, a separator, then a bridge name — the release-review gap.
   { re: /\br\d+(?:\s+|-)(?:agy|codex)\b/i, label: 'reviewer-round identity' },
+  // backend beside a DISPOSITION, in a COMMENT: the form a fold note takes when it credits who
+  // decided instead of stating what was decided. Two narrowings make it usable. The line must be a
+  // comment, because a receipt FIXTURE legitimately pairs a backend field with a verdict value and
+  // that is data, not attribution. And the disposition half is case-SENSITIVE, because prose says
+  // "ship" and "revise" constantly while a recorded disposition is written in caps.
+  { re: new RegExp(`${COMMENT_LINE}[^\\n]*\\b(?:${BACKEND_ANY_CASE})\\b[^\\n]{0,24}\\b(?:${DISPOSITIONS})\\b`), label: 'reviewer-round identity' },
+  { re: new RegExp(`${COMMENT_LINE}[^\\n]*\\b(?:${DISPOSITIONS})\\b[^\\n]{0,24}\\b(?:${BACKEND_ANY_CASE})\\b`), label: 'reviewer-round identity' },
+  // The exact PARENTHESISED credit — an open paren, a bridge name, a comma, a disposition, and the
+  // reverse order — matched ANYWHERE on the line, so it also lands inside a string literal, a
+  // markdown sentence and a trailing inline comment, none of which the comment anchor above can
+  // see. It stays clear of data because a fixture QUOTES its values, and a quote sits exactly where
+  // this rule requires the bare disposition word. Both orders END on a word boundary, so a longer
+  // word sharing a disposition's prefix is not a credit — the boundary is what a commit gate needs,
+  // and requiring the CLOSING paren instead would drop the hyphenated form this rule exists for.
+  { re: new RegExp(`\\((?:${BACKEND_ANY_CASE}),\\s*(?:${DISPOSITIONS})\\b`), label: 'reviewer-round identity' },
+  { re: new RegExp(`\\((?:${DISPOSITIONS}),\\s*(?:${BACKEND_ANY_CASE})\\b`), label: 'reviewer-round identity' },
 ];
 
 const allowlistCovers = (matched, allowlist) =>

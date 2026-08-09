@@ -100,6 +100,56 @@ describe('scanText — attribution detection', () => {
     assert.ok(scanText(fixture).some((x) => x.kind === 'reviewer-identity' && /reviewer-round/.test(x.detail)));
   });
 
+  // The form a FOLD COMMENT takes when it credits who decided instead of stating what was decided:
+  // a bridge name beside its disposition, with no round number anywhere for the r<N> patterns to
+  // catch. It shipped past this scanner once, inside source comments, which is why it is pinned
+  // from both orders here.
+  it('flags a backend-beside-DISPOSITION identity in either order — the fold-comment form', () => {
+    const forward = ['// the fix (', LONG_REVIEWER, ', CONFIRM): the echo counts distinct objects'].join('');
+    assert.ok(scanText(forward).some((x) => x.kind === 'reviewer-identity' && /reviewer-round/.test(x.detail)));
+    const reverse = ['// SHIP from ', SHORT_REVIEWER, ' — folded as returned'].join('');
+    assert.ok(scanText(reverse).some((x) => x.kind === 'reviewer-identity'));
+    // The parenthesised credit is caught OFF a comment line too — inside a string literal, in
+    // markdown prose, and in a trailing inline comment — the gap the anchored rules cannot see.
+    const inString = ['it("boundary pin (', SHORT_REVIEWER, ', CONFIRM)", () => {})'].join('');
+    assert.ok(scanText(inString).some((x) => x.kind === 'reviewer-identity'), 'a credit inside a string literal');
+    const trailing = ['const x = 1; // folded (', LONG_REVIEWER, ', REFUTE)'].join('');
+    assert.ok(scanText(trailing).some((x) => x.kind === 'reviewer-identity'), 'a credit in a trailing inline comment');
+  });
+
+  // A longer word that merely SHARES a disposition's prefix is not a credit. In a commit gate a
+  // false refusal is the expensive direction, so both parenthesised orders end on a word boundary.
+  it('does NOT flag a word that shares a disposition prefix inside the parenthesised form, in EITHER order', () => {
+    for (const word of ['SHIPPING', 'CONFIRMED', 'REVISED', 'REFUTES']) {
+      const forward = ['(', LONG_REVIEWER.toLowerCase(), ', ', word, ') is not a credit'].join('');
+      assert.deepEqual(scanText(forward), [], `forward: ${word}`);
+      const reverse = ['(', word, ', ', LONG_REVIEWER.toLowerCase(), ') is not a credit'].join('');
+      assert.deepEqual(scanText(reverse), [], `reverse: ${word}`);
+    }
+    // …while the bare disposition still is, hyphenated continuation included.
+    const hyphenated = ['(', LONG_REVIEWER.toLowerCase(), ', CONFIRM-with-refinement → folded)'].join('');
+    assert.ok(scanText(hyphenated).some((x) => x.kind === 'reviewer-identity'));
+  });
+
+  // The reverse parenthesised branch, proven OFF a comment line so the comment-anchored rules cannot
+  // be what catches it, and in ALL CAPS so the backend half is proven case-insensitive in both orders.
+  it('flags the parenthesised credit in either order and in any name case', () => {
+    const reverseInCode = ['const note = "(CONFIRM, ', LONG_REVIEWER.toUpperCase(), ')";'].join('');
+    assert.ok(scanText(reverseInCode).some((x) => x.kind === 'reviewer-identity'), 'reverse branch, uppercase name');
+    const forwardInCode = ['const note = "(', SHORT_REVIEWER.toUpperCase(), ', CONFIRM)";'].join('');
+    assert.ok(scanText(forwardInCode).some((x) => x.kind === 'reviewer-identity'), 'forward branch, uppercase name');
+    const comment = ['// the fold note ', LONG_REVIEWER.toUpperCase(), ' decided CONFIRM here'].join('');
+    assert.ok(scanText(comment).some((x) => x.kind === 'reviewer-identity'), 'comment-anchored rule, uppercase name');
+  });
+
+  it('does NOT flag a lowercase disposition in prose, nor a receipt FIXTURE pairing a backend with a verdict', () => {
+    const prose = ['the ', LONG_REVIEWER.toLowerCase(), ' bridge is ready to ship, and a revise is ordinary prose\n'].join('');
+    assert.deepEqual(scanText(prose), []);
+    // Data, not attribution: the value belongs to the record and the line is code.
+    const fixture = ['  const receipt = { backend: \'', LONG_REVIEWER.toLowerCase(), '\', verdict: \'SHIP\' };\n'].join('');
+    assert.deepEqual(scanText(fixture), []);
+  });
+
   it('does NOT flag literal bridge product names OR a versioned product mention', () => {
     const fixture = 'codex-review agy-review codex-exec agy-run codex-cli-bridge antigravity-cli-bridge\ncodex-cli-bridge 3.1.0 and agy bridge 4.1.0\n';
     assert.deepEqual(scanText(fixture), []);

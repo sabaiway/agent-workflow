@@ -191,10 +191,15 @@ describe('router contract — D4 pointer audits over the whole split corpus (d)'
 
 // ── (e) the D6 byte budgets, read sets from the parsed Requires: lines ───────
 const BUDGET = {
-  router: 11264, // router alone. 10240 → 11264 (11 KB): AD-044 Plan 4 adds the sandbox-masks and
-  // recommendations modes to the router (~110 B each) against 27 B of headroom — a documented
-  // KB-multiple bump, never a silent re-pin.
-  routerPlusMode: 38912, // router + any single mode file. 37888 → 38912 (38 KB): AD-061 Phase 3 —
+  router: 12288, // router alone. 11264 → 12288 (12 KB): delegation Plan 1 Phase 3 — the dispatch
+  // mode header lands in the router (~120 B) against 35 B of headroom, so it overflows by 85 B — a
+  // documented KB-multiple bump, never a silent re-pin. History: 10240 → 11264 (11 KB): AD-044
+  // Plan 4 adds the sandbox-masks and recommendations modes to the router (~110 B each) against
+  // 27 B of headroom — the same documented bump.
+  routerPlusMode: 39936, // router + any single mode file. 38912 → 39936 (39 KB): delegation Plan 1
+  // Phase 3 — the dispatch mode header rides EVERY pair, and the heaviest (upgrade) measures
+  // 38964 B, 52 B over the 38 KB ceiling; the same documented KB-multiple bump.
+  // History: 37888 → 38912 (38 KB): AD-061 Phase 3 —
   // upgrade.md gains the Communication-section reconcile contract (the enumerated outcome set on
   // steps 3 and 4, the step-8 row) and the pair measures 37985 B, over the 37 KB ceiling — a
   // documented KB-multiple bump, never a silent re-pin.
@@ -220,7 +225,10 @@ const BUDGET = {
   // THREE pointers (the autonomy slot: step-3 wording, the (a)(iii) anchor-absent soft-skip lane,
   // the No-Node walk, the step-4/8 report row) — ~575 B of new contract content over 179 B of
   // headroom; a documented KB-multiple bump, never a silent re-pin.)
-  fullReadSet: 66560, // router + mode + its declared shared files. 65536 → 66560 (65 KB): flow
+  fullReadSet: 67584, // router + mode + its declared shared files. 66560 → 67584 (66 KB):
+  // delegation Plan 1 Phase 3 — the dispatch mode header rides EVERY read set, and the heaviest
+  // (upgrade + its shared files) overflows the 65 KB ceiling; the same documented KB-multiple bump,
+  // never a silent re-pin. History: 65536 → 66560 (65 KB): flow
   // Plan 3 Phase 3 — the set-flow + flow-writer mode headers land in the router (two lines riding
   // EVERY read set), overflowing upgrade's set (65745 B) by 209 B — the same documented KB-multiple
   // bump, never a silent re-pin. History: 63488 → 65536 (64 KB):
@@ -242,7 +250,7 @@ const BUDGET = {
   // read set (upgrade + its 3 shared files) measures 61367 B, over the 58 KB budget — a documented
   // KB-multiple bump, never a silent re-pin.
   // History: 58368 → 59392 (58 KB): AD-044
-  // Plan 4 Segment B closing (codex cycle-10 fold) — report-footer.md documents the autonomy
+  // Plan 4 Segment B closing fold — report-footer.md documents the autonomy
   // segment on the backend-status placeholder (the composer appends it; the contract must match
   // the pasted surface), ~340 B of new shared contract content vs 86 B over the 57 KB budget —
   // the same documented KB-multiple bump, never a silent re-pin.
@@ -261,7 +269,10 @@ const BUDGET = {
   // Then 54272 → 55296 (54 KB): AD-044 Plan 3 — the same three-pointer contract also lands in
   // composition-handoff.md (a shared file in upgrade's read set), overflowing the pair by ~949 B;
   // the same documented KB-multiple bump.
-  daily: 24576, // the no-shared daily modes (help/backends/recipes/procedures/gates). 23552 →
+  daily: 25600, // the no-shared daily modes (help/backends/recipes/procedures/gates). 24576 →
+  // 25600 (25 KB): delegation Plan 1 Phase 3 — the dispatch mode header rides EVERY daily read set,
+  // and the heaviest (gates) measures 24659 B, 83 B over the 24 KB ceiling; the same documented
+  // KB-multiple bump, never a silent re-pin. History: 23552 →
   // 24576 (24 KB): kit-inert-gate Phase 2 — gates.md gains the `coverage=` summary contract (the
   // CLOSED four-value set with one value defined per run outcome, the DETAIL-not-a-new-state rule,
   // and the derived-from-the-checker's-own-anchored-lines honesty, then the round-1 fold's

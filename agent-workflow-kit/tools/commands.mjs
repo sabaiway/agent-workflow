@@ -260,6 +260,13 @@ const CATALOG = [
     oneLine: 'Check that the documented contract tokens still match the live code constants they describe — a read-only lint that fails closed on drift; --check turns it into a gate exit code.',
   },
   {
+    key: 'dispatch',
+    invocation: invocationOf('dispatch'),
+    group: 'Orchestrate',
+    kind: WRITER,
+    oneLine: 'Measure delegation: check a sub-task brief’s contract block (form only — never whether the task is genuinely bounded), pre-register an acceptance wave with its thresholds, record one observation, and print the per-class report of how much a delegated sub-task actually bought, derived from what was dispatched, returned and folded. Writes only its own ledger file beside the repo; never commits.',
+  },
+  {
     // NEVER `guarded` — that kind promises dry-run-first, which these writers do not have; the
     // honest strongest caution is `writer` with the destructive arm named in the line itself.
     key: 'worktrees',

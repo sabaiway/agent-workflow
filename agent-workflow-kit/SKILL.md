@@ -203,6 +203,10 @@ read-only — read `${CLAUDE_SKILL_DIR}/references/modes/commit-guard.md` before
 
 read-only — read `${CLAUDE_SKILL_DIR}/references/modes/doc-parity.md` before acting.
 
+### Mode: dispatch
+
+writer — read `${CLAUDE_SKILL_DIR}/references/modes/dispatch.md` before acting.
+
 ### Mode: worktrees
 
 writer — read `${CLAUDE_SKILL_DIR}/references/modes/worktrees.md` before acting.
