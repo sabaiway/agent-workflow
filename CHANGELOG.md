@@ -7,6 +7,37 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-09 — AD-089 a check that certifies nothing now says so (kit 5.4.0, codex-cli-bridge 3.4.1; memory 4.1.0 and engine 2.0.0 unchanged)
+
+A field report against 5.3.0 turned out to describe something the kit was building itself. Neither
+declaration path ever wired a coverage PRODUCER, yet both declared the coverage CHECKER — so a
+project could come out of `init` or `upgrade` with a matrix that prints three `PASS`,
+`lcov-sha256=none`, `attested=yes`, `status=ok` and exits 0 while certifying nothing at all. The
+honest signal was there, on one inner line, and it reached no surface anyone keys on.
+
+Neither kit-owned path adds one any more. `gates-init` withholds the checker, and refuses at write
+time on the declaration that actually gets WRITTEN rather than on the offer — the offer-level check
+alone still let `--only coverage-check`, a late-arriving producer and a second checker under another
+id through. `migrate-gates` stops adding one, and reports an already-declared inert pair instead of
+quietly removing it. A pair declared by hand stays declared, and `--final` acceptance did not move.
+Recognising a producer is a closed set of the command forms the kit itself emits, with a positive
+path-shaped tail rule, because `… && rm -f <lcov>` runs the suite and then deletes the file.
+
+The withheld verdict now travels. `attested=` binds to the bytes actually consumed and states that a
+verdict was ISSUED — pass or fail — so a handshake over uncovered lines still reads `yes` and still
+exits 1. A new closed `coverage=` field rides the machine summary line with one value defined for
+every run outcome, the `--final` receipt records it, and `core-evidence summary` renders the
+qualifier from that record instead of guessing from a hash that only ever said what a receipt binds.
+Nothing gained a state: exit codes, `status=`, the receipt enum, `--final` acceptance and the commit
+guard are all untouched, so an optional-coverage project never goes red by surprise.
+
+The advisor reports the inert matrix under two causes with two remedies — the one that needs
+reordering stays hand-applied, since the fill is append-only. And every runtime claim the autonomy
+render makes about a settings key became conditional on the host honouring it. That was the second
+half of the report: three surfaces promised the bridge wrappers run outside the sandbox while this
+kit's own mode doc records, from live observation, that honouring is runtime-unknowable. Someone
+applied the advisor's own item and lost both review backends.
+
 ## 2026-08-08 — AD-088 a check must speak where it is built to speak: the two silent checks (kit 5.3.0, codex-cli-bridge 3.4.0; memory 4.1.0 and engine 2.0.0 unchanged)
 
 Two shipped checks stayed quiet at exactly the point they exist to speak — one a GATE that refuses
