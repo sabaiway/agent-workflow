@@ -4,6 +4,76 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 5.4.0 — a check that certifies nothing now says so, and the render stops promising what no host guarantees (AD-089)
+
+**A gate matrix could run green while verifying nothing, and the kit itself was what built it.**
+Neither declaration path ever wired a coverage PRODUCER, yet both declared the coverage CHECKER — so
+a fresh `gates-init` and an `upgrade` alike could leave a project whose `--final` prints three
+`PASS`, `lcov-sha256=none`, `attested=yes`, `status=ok`, exit 0. The honest signal existed on one
+inner line; it reached no surface a consumer keys on. This release stops both kit-owned declaration
+paths from ever ADDING a producer-less pair, makes the withheld verdict travel, and stops the
+autonomy render asserting host behaviour it cannot know. A pair you declare by hand stays yours —
+the kit reports it, it never removes it. Nothing gains a state: exit codes, the `status=` token, the
+receipt `status` enum, `--final` acceptance and the commit-guard disposition are untouched, so an
+optional-coverage project never goes red by surprise.
+
+- **Neither kit-owned declaration path ADDS a coverage checker without a producer.**
+  `gates-init` wires the lcov reporter flags onto the one allowlist suite body that produces
+  coverage unaided, WITHHOLDS the `coverage-check` candidate with a named reason when neither the
+  offer nor the existing declaration carries a producer, and — this path alone — refuses at WRITE
+  time on the MERGED declaration, because an offer-level check alone still let
+  `--apply --only coverage-check` write a dead checker, still let a producer land after an
+  already-last checker, and still let a SECOND canonical checker in under a different id. The
+  ordering refusal names ORDERING as the cause, so you reorder instead of concluding the producer
+  was rejected. `migrate-gates` stops adding the checker into a producer-less declaration and
+  reports an already-declared one as INERT — loudly, with the remedy, and removing nothing for you.
+- **One CLOSED producer predicate, shared by every consumer.** Recognition covers the full command
+  forms the kit itself emits — never a substring probe, because `echo "$AW_GIT_DIR/…"` or a
+  half-written flag set would pass one. The tail rule is a POSITIVE path-shaped grammar rather than
+  an operator blocklist: `node --test <flags> && rm -f <lcov>` runs the suite and then deletes the
+  file, so an open-ended tail would certify a producer that leaves nothing behind. The residual is
+  stated in the source rather than papered over — the screen judges source bytes, so the claim is
+  "configured with the reporters", never "the lcov survives the command"; a run that produces none
+  is still caught honestly at runtime as `skipped-no-lcov`.
+- **`attested=` binds to the BYTES consumed.** A run that read nothing never certifies, however
+  valid its final-run context. The field states that a VERDICT WAS ISSUED — not that coverage
+  passed — so a valid handshake over uncovered lines still reads `yes` and still exits 1.
+- **The summary line carries a new closed `coverage=` field** — `certified` / `not-run` / `none` /
+  `unknown`, one value defined for every run outcome — and the checker's table row names a withheld
+  verdict. Both are derived by CROSS-READING the checker's two anchored machine lines, so a missing,
+  duplicated or self-contradicting pair reads `unknown` rather than `certified`. The `--final`
+  receipt records the run's own token, and `core-evidence summary` renders the qualifier FROM it
+  instead of guessing from `lcovSha256` — which says what a receipt binds and never whether a
+  verdict was issued. A pre-5.4.0 receipt is named as a legacy receipt, never as a claim about what
+  it read.
+- **New advisor item `gates-inert`** for a declaration that runs green and certifies nothing, with
+  two causes and two remedies. Cause A — a canonical `coverage-check` with no producer BEFORE it
+  (none at all, or one declared after it, which writes the lcov too late and lets stale bytes be
+  certified) — is HAND-APPLY, since the append-only fill cannot reorder an existing declaration.
+  Cause B — every declared gate is one of the kit's own checkers — renders the consent-gated
+  `gates-init` preview. Cause A decides through the SAME producer-before-checker rule the
+  `gates-init` fill enforces at write time — one home, so the advisor and the fill cannot drift
+  apart; cause B is advisor-only, with no refusal path behind it. `--final` acceptance is unchanged
+  either way: it still requires exactly one canonical coverage checker declared last, and it never
+  inspects producers. `flow optimal` no longer renders over either cause.
+- **Every settings-derived RUNTIME claim in the autonomy render is now host-conditional.** Not only
+  the bridge-tier exclusion: `allowWrite`, `allowedDomains` and foreign exclusions are all claims
+  about what a HOST does with a settings key, and whether a host honours them is runtime-unknowable
+  — this kit's own mode doc has recorded that from live observation, while three separate surfaces
+  went on promising the bridge wrappers run outside the sandbox. The classification is unchanged;
+  only the unconditional promise is gone. The `allowWrite` degrade now resolves its entries
+  (tilde, relative and absolute, on segment-aware containment shared with the advisor's
+  worktrees-dir lane) and NAMES the external survivors instead of counting them — an entry pointing
+  inside the repo or `$TMPDIR` is no longer reported as an `fs_outside_repo` weakening at all, and
+  an unreadable value is its own UNVERIFIABLE class that asserts no weakening.
+- **The bundled `codex-cli-bridge` mirror moves to 3.4.1** — a bundled-only bump carrying the fixed
+  `codex exec resume` argv, so the changed bridge bytes in this tarball ship under a version of
+  their own instead of silently.
+
+Upgrading an existing project: nothing breaks and nothing is rewritten for you. If your declaration
+already carries the dead pair, `status`/`upgrade` now say so and hand you the remedy — the reorder
+case deliberately stays hand-applied.
+
 ## 5.3.0 — a check must speak where it is built to speak: the two silent checks (AD-088)
 
 **Two shipped checks stayed SILENT at exactly the point they exist to speak** — one a GATE that
