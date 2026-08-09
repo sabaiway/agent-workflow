@@ -7,7 +7,7 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
-## 2026-08-09 — AD-089 a check that certifies nothing now says so (kit 5.4.0, codex-cli-bridge 3.4.1; memory 4.1.0 and engine 2.0.0 unchanged)
+## 2026-08-09 — AD-089 a check that certifies nothing now says so (kit 5.4.0, memory 4.2.0, codex-cli-bridge 3.4.1; engine 2.0.0 unchanged)
 
 A field report against 5.3.0 turned out to describe something the kit was building itself. Neither
 declaration path ever wired a coverage PRODUCER, yet both declared the coverage CHECKER — so a
@@ -18,8 +18,9 @@ honest signal was there, on one inner line, and it reached no surface anyone key
 Neither kit-owned path adds one any more. `gates-init` withholds the checker, and refuses at write
 time on the declaration that actually gets WRITTEN rather than on the offer — the offer-level check
 alone still let `--only coverage-check`, a late-arriving producer and a second checker under another
-id through. `migrate-gates` stops adding one, and reports an already-declared inert pair instead of
-quietly removing it. A pair declared by hand stays declared, and `--final` acceptance did not move.
+id through. `migrate-gates` — the memory substrate's own upgrade path, which is why memory ships
+4.2.0 here — stops adding one, and reports an already-declared inert pair instead of quietly
+removing it. A pair declared by hand stays declared, and `--final` acceptance did not move.
 Recognising a producer is a closed set of the command forms the kit itself emits, with a positive
 path-shaped tail rule, because `… && rm -f <lcov>` runs the suite and then deletes the file.
 
