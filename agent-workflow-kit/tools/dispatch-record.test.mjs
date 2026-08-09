@@ -600,14 +600,16 @@ describe('dispatch-record — the closed delegation vocabulary (Plan 1 Phase 1)'
       metric: metricWith({ denominatorBytes: noOpBundle, eligible: false, ineligibleReason: 'empty-report' }),
     }));
     assert.equal(contradictoryReason.ok, false, 'a reason that CONTRADICTS the locally computed one refuses');
-    assert.deepEqual(
+    // The store-side override is admissible ONLY where the local evaluation is otherwise eligible
+    // (AC17): a name a reader can check always wins over one only the dispatch could substantiate.
+    assert.equal(
       validateDelegationRecord(returnWith({
         diffLength: 0,
         bundleLength: noOpBundle,
         metric: metricWith({ denominatorBytes: noOpBundle, eligible: false, ineligibleReason: 'dirty-baseline' }),
-      })),
-      { ok: true },
-      'dirty-baseline may stand in for a locally named reason — it is the stricter store verdict',
+      })).ok,
+      false,
+      'dirty-baseline never stands in for a locally provable reason',
     );
   });
 
@@ -1020,6 +1022,33 @@ describe('dispatch-record — the closed delegation vocabulary (Plan 1 Phase 1)'
       const res = evaluateMetricEligibility({ baselineClean: true, numeratorBytes: 100, diffLength: 30, reportLength: 20, bundleLength: FIXTURE_BUNDLE_LENGTH, ...over });
       assert.equal(res.eligible, false, `baselineClean:true implies NOTHING — ${Object.keys(over)[0]} still makes the metric ineligible`);
     }
+  });
+
+  it('AC17 dirty-baseline never REPLACES a locally provable ineligibility reason', () => {
+    // The store-side override is admissible ONLY where the return's own fields leave the metric
+    // eligible. A return whose own numbers prove a reason must record THAT reason — the provable
+    // name is the one a reader can check, and a ledger carrying a false name is worse than none.
+    const provable = {
+      ...RECORDS.return,
+      diffLength: 0,
+      reportLength: 0,
+      bundleLength: expectedBundleLength(0, 0),
+      metric: {
+        numeratorBytes: 0, denominatorBytes: expectedBundleLength(0, 0), components: [],
+        provenance: 'wrapper-git', eligible: false, ineligibleReason: 'no-op-diff',
+      },
+      outcome: 'acceptance-failure',
+      exitStatus: 1,
+    };
+    assert.equal(validateDelegationRecord(provable).ok, true, 'the locally provable reason validates');
+    const replaced = { ...provable, metric: { ...provable.metric, ineligibleReason: 'dirty-baseline' } };
+    const refusal = validateDelegationRecord(replaced);
+    assert.equal(refusal.ok, false, 'dirty-baseline may not stand in for a locally provable reason');
+    assert.match(refusal.reason, /dirty-baseline/);
+    // Where the local evaluation IS otherwise eligible, the override stays admissible — the store
+    // binds it to the dispatch's recorded baseline.
+    const overridden = { ...RECORDS.return, metric: { ...RETURN_METRIC, eligible: false, ineligibleReason: 'dirty-baseline' } };
+    assert.equal(validateDelegationRecord(overridden).ok, true, 'the ONE admissible override survives validation');
   });
 
   it('AC14 overlapping ranges count once and provenance is closed and lives only in metric', () => {
