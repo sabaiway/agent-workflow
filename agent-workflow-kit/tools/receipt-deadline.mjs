@@ -5,7 +5,9 @@
 // ARRIVAL: a newline-terminated parseable receipt line from the dispatched backend starting
 // at/after the watermark offset, or — PREFERRED whenever a dispatch nonce is supplied and its
 // finding manifest exists — the nonce-matched manifest (the manifest is minted atomically BEFORE
-// the receipt append, so its presence is the stronger dispatch-identity signal).
+// the receipt append, so its presence is the stronger dispatch-identity signal). "Receipt line" is
+// decided POSITIVELY, by the minimal core below: a delegation-ledger line carries a `backend` too,
+// and a review waiter waits for a REVIEW answer (D10).
 //
 // Watermark semantics (P6/P18, split by surface): the PERSISTED dispatch-ledger watermark stays
 // the plain byte-length integer; THIS RUNNER additionally binds the receipts-file PREFIX
@@ -32,9 +34,29 @@ export const DEADLINE_POLL_MS = 5000;
 
 // The one contract sentence, doc-parity-bound into references/modes/receipt-deadline.md — the
 // arrival-not-satisfaction split is the tool's identity and must not drift in the mode doc.
-export const RECEIPT_DEADLINE_CONTRACT = 'satisfaction is receipt ARRIVAL past the watermark — a strictly-newer parseable receipt line from the dispatched backend (or its nonce-matched finding manifest, preferred when present) — never obligation satisfaction';
+export const RECEIPT_DEADLINE_CONTRACT = 'satisfaction is receipt ARRIVAL past the watermark — a strictly-newer parseable REVIEW receipt line from the dispatched backend (or its nonce-matched finding manifest, preferred when present), never a delegation-ledger line that merely names the same backend — never obligation satisfaction';
 
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
+
+// The receipts store and the delegation ledger are different files with different schemas, but both
+// are JSONL beside the git dir and both carry a `backend` — so a ledger line reaching this store
+// would satisfy a waiter that matched on the backend alone (D10). The rule is therefore POSITIVE,
+// not a blacklist of foreign kinds: a blacklist goes stale the moment the other family grows a kind,
+// and the two errors are not symmetric — an unrecognised line costs a TIMEOUT that names its
+// watermark (loud), while a false ARRIVED answers a review dispatch with something that is not a
+// review. This is the MINIMAL core every review receipt carries and no delegation record can: the
+// kinds that carry `backend` (dispatch, return) have no `verdict`, and the kind that carries
+// `verdict` (fold) has no `backend`. `fingerprint` must be PRESENT but may be null — an empty
+// fingerprint is legal in some receipt modes, so requiring a value would refuse a real receipt.
+const REVIEW_RECEIPT_SCHEMA = 1;
+
+const isReviewReceiptLine = (parsed, backend) =>
+  parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+  && parsed.schema === REVIEW_RECEIPT_SCHEMA
+  && parsed.backend === backend
+  && typeof parsed.artifact === 'string' && parsed.artifact.length > 0
+  && typeof parsed.verdict === 'string' && parsed.verdict.length > 0
+  && Object.hasOwn(parsed, 'fingerprint');
 
 // Every read rides the kit's ONE race-free reader (flow-store-read's no-follow/non-block
 // discipline): store identity is never resolved through a link, a FIFO can never block the
@@ -97,7 +119,7 @@ export const pollArrival = ({ path, watermark, prefixHash, backend, nonce = null
     } catch {
       continue; // a malformed line never satisfies — and never masks a later valid one
     }
-    if (parsed && typeof parsed === 'object' && parsed.backend === backend) {
+    if (isReviewReceiptLine(parsed, backend)) {
       return { state: 'satisfied', reason: `a receipt line from backend "${backend}" arrived past watermark offset ${watermark} (${path})` };
     }
   }

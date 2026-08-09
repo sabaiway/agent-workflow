@@ -17,6 +17,7 @@ import {
   runReceiptDeadline, main, DEFAULT_DEADLINE_TIMEOUT_S, RECEIPT_DEADLINE_CONTRACT,
 } from './receipt-deadline.mjs';
 import { FINDING_MANIFEST_PREFIX } from './flow-record.mjs';
+import { DELEGATION_KINDS, DELEGATION_SCHEMA_VERSION } from './dispatch-record.mjs';
 import { readFileBytesNoFollow, readRegularFileNoFollow } from './flow-store-read.mjs';
 
 const receiptLine = (backend) =>
@@ -509,5 +510,96 @@ describe('receipt-deadline — CLI grammar', () => {
     const r = spawnSync(process.execPath, [script, '--help'], { encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /receipt-deadline — the per-dispatch receipt-ARRIVAL deadline runner/);
+  });
+});
+
+// The D10 negative parity (delegation Plan 1 Phase 2): the delegation ledger records EXEC dispatches
+// and the review receipts store records REVIEW answers. Both are JSONL beside the git dir and both
+// carry a `backend` field, so a delegation line reaching the receipts store would satisfy a review
+// waiter that matched on the backend alone. The rule is POSITIVE rather than a blacklist: only a
+// line carrying the review-receipt minimal core satisfies, so no ledger line — of any kind this
+// family has today or grows later — can ever answer a review dispatch.
+describe('receipt-deadline — a delegation-ledger line never satisfies a review waiter (D10)', () => {
+  const delegationLine = (kind, over = {}) => `${JSON.stringify({
+    schema: DELEGATION_SCHEMA_VERSION, kind, backend: 'codex', nonce: 'n1',
+    timestamp: '2026-08-09T00:00:00.000Z', ...over,
+  })}\n`;
+
+  describe('receipt-deadline — only a REVIEW receipt satisfies: the positive minimal-core rule', () => {
+
+  it('an exec-return line in the review receipts store never satisfies (pinned: TIMEOUT, never ARRIVED)', async () => {
+    const store = makeStore('');
+    appendFileSync(store.path, delegationLine('return'));
+    const r = await runAt(store, { watermark: 0, timeoutS: 10 });
+    rmSync(store.dir, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'an exec return is not an answer to a review dispatch');
+    assert.match(r.stderr, /TIMEOUT/);
+  });
+
+  it('EVERY delegation kind fails the minimal core — a ledger line is not a review answer', async () => {
+    for (const kind of DELEGATION_KINDS) {
+      const store = makeStore('');
+      appendFileSync(store.path, delegationLine(kind));
+      const r = await runAt(store, { watermark: 0, timeoutS: 10 });
+      rmSync(store.dir, { recursive: true, force: true });
+      assert.equal(r.code, 1, `a delegation ${kind} line must never satisfy a review waiter`);
+    }
+  });
+
+  it('a delegation record of an UNKNOWN FUTURE kind never satisfies — a positive rule cannot go stale', async () => {
+    const store = makeStore('');
+    appendFileSync(store.path, delegationLine('some-future-kind', { verdict: undefined }));
+    const r = await runAt(store, { watermark: 0, timeoutS: 10 });
+    rmSync(store.dir, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'a kind this family does not have yet must not answer a review dispatch either');
+    assert.match(r.stderr, /TIMEOUT/);
+  });
+
+  it('a bare {backend, verdict} object is not a receipt — the minimal core is the whole shape', async () => {
+    for (const line of [
+      { backend: 'codex', verdict: 'ship' },
+      { schema: 1, backend: 'codex', verdict: 'ship' },
+      { schema: 1, backend: 'codex', artifact: 'code', verdict: '' , fingerprint: null },
+      { schema: 2, backend: 'codex', artifact: 'code', verdict: 'ship', fingerprint: null },
+    ]) {
+      const store = makeStore('');
+      appendFileSync(store.path, `${JSON.stringify(line)}\n`);
+      const r = await runAt(store, { watermark: 0, timeoutS: 10 });
+      rmSync(store.dir, { recursive: true, force: true });
+      assert.equal(r.code, 1, `${JSON.stringify(line)} must not read as a review receipt`);
+    }
+  });
+
+  it('a receipt whose fingerprint is null still satisfies — an empty fingerprint is legal', async () => {
+    const store = makeStore('');
+    const receipt = { ...JSON.parse(receiptLine('codex')), fingerprint: null };
+    appendFileSync(store.path, `${JSON.stringify(receipt)}\n`);
+    const r = await runAt(store, { watermark: 0, timeoutS: 10 });
+    rmSync(store.dir, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stderr);
+  });
+
+  it('a delegation line never MASKS a later review receipt from the same backend', async () => {
+    const store = makeStore('');
+    appendFileSync(store.path, delegationLine('return'));
+    appendFileSync(store.path, receiptLine('codex'));
+    const r = await runAt(store, { watermark: 0, timeoutS: 10 });
+    rmSync(store.dir, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /ARRIVED/);
+  });
+
+  it('the ordinary REVIEW receipt satisfies the minimal core (schema, backend, artifact, verdict, fingerprint)', async () => {
+    const store = makeStore('');
+    appendFileSync(store.path, receiptLine('codex'));
+    const r = await runAt(store, { watermark: 0, timeoutS: 10 });
+    rmSync(store.dir, { recursive: true, force: true });
+    assert.equal(r.code, 0, r.stderr);
+  });
+
+  it('the contract sentence NAMES the exclusion — the mode doc is bound to it by doc-parity', () => {
+    assert.match(RECEIPT_DEADLINE_CONTRACT, /delegation/, 'the tool contract states what never satisfies');
+  });
+
   });
 });

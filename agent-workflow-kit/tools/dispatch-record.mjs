@@ -427,8 +427,11 @@ const validateReturnCrossFields = (r) => {
     if (r.metric.eligible) {
       return refuse(`return: this return's own fields make the metric INELIGIBLE (${local.ineligibleReason}) — an eligible metric is never claimed over them`);
     }
-    if (r.metric.ineligibleReason !== local.ineligibleReason && r.metric.ineligibleReason !== 'dirty-baseline') {
-      return refuse(`return: metric.ineligibleReason "${r.metric.ineligibleReason}" contradicts this return's own fields (locally "${local.ineligibleReason}") — only "dirty-baseline" may override`);
+    // The locally PROVABLE name wins outright: "dirty-baseline" is admissible only where the return's
+    // own fields leave the metric eligible, so it can never stand in for a reason a reader could
+    // have checked. (The store then binds that ONE override to the dispatch's recorded baseline.)
+    if (r.metric.ineligibleReason !== local.ineligibleReason) {
+      return refuse(`return: metric.ineligibleReason "${r.metric.ineligibleReason}" contradicts this return's own fields (locally "${local.ineligibleReason}") — the provable reason is the one recorded, and "dirty-baseline" never replaces it`);
     }
   } else if (!r.metric.eligible && r.metric.ineligibleReason !== 'dirty-baseline') {
     return refuse(`return: metric.ineligibleReason "${r.metric.ineligibleReason}" is not substantiated by this return's own fields — when the local evaluation finds the metric eligible, only "dirty-baseline" (the store-verified override) may be recorded`);

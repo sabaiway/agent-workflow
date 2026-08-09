@@ -10,6 +10,12 @@
 // validation, malformed-store refusal, replay refusal, chain-sequence and supersession legality) —
 // an illegal record never lands.
 //
+// That lock/CAS + serialized-append machinery now lives in the PARAMETERIZED store-append.mjs leaf
+// (delegation Plan 1 D12), extracted from here unchanged so a second store can ride the identical
+// discipline instead of a second copy of it. This module keeps everything flow-SPECIFIC: the seams
+// it injects (path resolution, nouns, knob names, validator, parser) and `flowSemanticPreflight` —
+// the per-kind legality the lane runs inside the critical section.
+//
 // Phase 3 adds the mint primitives that need the tree: the adoption mint (frontmatter planId +
 // plan content digest, #58), the canonical owning-worktree identity (#49), the generic reference
 // validator + prior-terminal resolution in the append preflight (#63), and the bookkeeping-delta
@@ -23,23 +29,25 @@
 // git dir, not a security boundary.
 
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, writeSync, readSync, rmSync, lstatSync, realpathSync, openSync, closeSync, fstatSync, renameSync, readlinkSync } from 'node:fs';
-import { join, dirname, basename, resolve } from 'node:path';
-import { hostname } from 'node:os';
+import { readFileSync, lstatSync, readlinkSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { writeContainedFileAtomic, lstatNoFollow } from './atomic-write.mjs';
-import { parsePositiveIntKnob } from './changed-surface.mjs';
+import { lstatNoFollow } from './atomic-write.mjs';
 import { FLOW_SCHEMA_VERSION, CHAIN_KIND, validateFlowRecord, validateChainSequence, validateSupersessions, authoritativeFlowRecords, canonicalFlowDigest, flowRecordKey, subsetFoldBatchDigest, subsetGateIdsDigest, SUBSET_ATTEMPT_DIAGNOSIS_FROM } from './flow-record.mjs';
 import { isNeverCommittableStat, isBinaryFile, lexicalRepoRelative, resolveBase, computeTreeFingerprint } from './core-evidence.mjs';
 import { derivePregateSubsetIds, GATES_REL } from './gates-declaration.mjs';
 import { CONFIG_REL } from './orchestration-config.mjs';
+// The lock/CAS discipline and the serialized append itself live in the PARAMETERIZED
+// store-append.mjs leaf (D12) — this module injects the flow store's own nouns, seams, validator
+// and semantic preflight.
+import { createStoreAppendLane } from './store-append.mjs';
 // The read half lives in flow-store-read.mjs (it OWNS no write API — read-only surfaces like the
 // procedures advisor import it directly) and is RE-EXPORTED here — every existing consumer keeps
 // its import site.
 import {
   FLOW_STORE_STOP, flowStoreStop, FLOW_STORE_BASENAME, FLOW_LOCK_SUFFIX, gitLine,
   resolveFlowStorePath, resolveFlowLockPath, parseFlowStoreText, readFlowStore,
-  readRegularFileNoFollow, deriveFlowOwner, describeNonRegular,
+  deriveFlowOwner, describeNonRegular,
 } from './flow-store-read.mjs';
 
 export {
@@ -61,277 +69,28 @@ const gitBuf = (args, cwd) => {
 };
 const sha256Hex = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
-// ── the lock/CAS ──────────────────────────────────────────────────────────────────────────────────
+// ── the shared append lane (D12) ──────────────────────────────────────────────────────────────────
 
-// Sync sleep (the append is a sync flow end-to-end); injectable so a hermetic test can intercept it.
-const sleepSyncMs = (ms) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
+// The lock/CAS discipline, the fd-custody rules and the serialized append are the EXTRACTION of
+// exactly this module's former code into store-append.mjs, so behavior is unchanged by
+// construction: this store injects its nouns (every refusal still names the flow store), its env
+// seam and knob names, its typed-STOP factory, its record validator, its store-text parser, and
+// the SEMANTIC preflight below. The flow suites are the characterization bar for that claim.
+const flowAppendLane = createStoreAppendLane({
+  nouns: { store: 'flow store', adj: 'flow-store', record: 'flow record' },
+  envNames: { store: 'AW_FLOW_STORE', waitKnob: 'AW_FLOW_LOCK_WAIT_MS', pollKnob: 'AW_FLOW_LOCK_POLL_MS' },
+  stop,
+  resolveStorePath: resolveFlowStorePath,
+  resolveLockPath: resolveFlowLockPath,
+  validateRecord: validateFlowRecord,
+  parseStoreText: parseFlowStoreText,
+  lockWaitMs: FLOW_LOCK_WAIT_MS,
+  lockPollMs: FLOW_LOCK_POLL_MS,
+});
 
-// Monotonic — a system clock stepped backwards must not stretch the wait bound.
-const monotonicNowMs = () => performance.now();
-
-// POSIX single-quoting for paths pasted into recovery commands — a raw interpolation would execute
-// path bytes on paste.
-const shellQuotePath = (p) => `'${p.replaceAll("'", "'\\''")}'`;
-
-const foreignObjectStop = (noun, path, className, isDirectory) =>
-  stop(`the ${noun} ${path} is a ${className}, not a regular file — refusing to touch it. To recover: inspect it, then remove it by hand: ${isDirectory ? 'rmdir' : 'rm'} -- ${shellQuotePath(path)} — it is never removed silently (fail closed)`);
-
-// A non-regular object at the store or lock path is never read (a FIFO read blocks forever) and
-// never removed silently — an immediate named refusal. Returns the lstat result (null = absent).
-const assertRegularOrAbsent = (path, noun, lstat) => {
-  const st = lstatNoFollow(path, lstat);
-  if (st && !st.isFile()) throw foreignObjectStop(noun, path, describeNonRegular(st), st.isDirectory());
-  return st;
-};
-
-// Bounded positional comparison of a HELD fd against the snapshot: at most snapshot-length bytes
-// plus ONE growth-probe byte (positional — the fd offset sits at EOF). Changed bytes, truncation,
-// or growth report false.
-const READ_CHUNK_BYTES = 65536;
-const fdContentEquals = (fd, expected) => {
-  const buf = Buffer.alloc(READ_CHUNK_BYTES);
-  let position = 0;
-  while (position < expected.length) {
-    const want = Math.min(buf.length, expected.length - position);
-    const n = readSync(fd, buf, 0, want, position);
-    if (n === 0) return false; // truncated below the snapshot length
-    if (!buf.subarray(0, n).equals(expected.subarray(position, position + n))) return false;
-    position += n;
-  }
-  return readSync(fd, buf, 0, 1, position) === 0; // any byte here means the store GREW
-};
-
-// Trusted only with parsed, valid metadata; anything else is the crash/corruption lane — never
-// probed, never stolen.
-const isValidHolder = (holder) =>
-  holder !== null && typeof holder === 'object' && !Array.isArray(holder)
-  && Number.isInteger(holder.pid) && holder.pid > 0
-  && typeof holder.host === 'string' && holder.host.length > 0;
-
-const describeHolder = (holder) => `pid ${holder.pid} (host ${holder.host}, started ${holder.startedAt ?? 'unknown'})`;
-
-// ESRCH on a same-host signal-0 probe only; a foreign host is unprobeable — never treated as dead.
-const isProvablyDead = (holder) => {
-  if (holder.host !== hostname()) return false;
-  try {
-    process.kill(holder.pid, 0);
-    return false;
-  } catch (err) {
-    return err && err.code === 'ESRCH';
-  }
-};
-
-// The shared parser accepts any digit string — hundreds of digits parse to Infinity and would
-// erase the wait bound; gated locally because the shared helper feeds the frozen core-evidence.
-const parseLockKnob = (env, name, fallback) => {
-  const value = parsePositiveIntKnob(env, name, fallback, stop);
-  if (!Number.isSafeInteger(value)) {
-    throw stop(`${name} must be a positive safe integer — the provided value overflows (fail closed)`);
-  }
-  return value;
-};
-
-// Containment + canonical pinning, once per append: a symlinked IMMEDIATE parent refuses by name;
-// the ancestor chain is then realpath-rebased so every spelling funnels to ONE physical store+lock
-// pair (refusing ancestor links would break legitimately symlinked prefixes like a distro /home).
-// realpath ENOENT keeps the lexical path — a missing parent still refuses at lock creation.
-const canonicalFlowWritePaths = (resolvedStorePath, lstat) => {
-  const parent = dirname(resolvedStorePath);
-  if (lstatNoFollow(parent, lstat)?.isSymbolicLink()) {
-    throw stop(`${parent} is a symlink — refusing to write the flow store through a symlinked parent (pre-mutation containment)`);
-  }
-  let canonicalParent;
-  try {
-    canonicalParent = realpathSync(parent);
-  } catch (err) {
-    if (err && err.code === 'ENOENT') canonicalParent = parent;
-    else throw stop(`cannot canonicalize the flow-store parent dir ${parent} (${(err && err.code) || (err && err.message) || err}) — refusing to write through an unresolvable path (fail closed)`);
-  }
-  const storePath = join(canonicalParent, basename(resolvedStorePath));
-  const lockPath = resolveFlowLockPath(storePath);
-  assertRegularOrAbsent(storePath, 'flow store', lstat);
-  assertRegularOrAbsent(lockPath, 'flow-store lock', lstat);
-  return { storePath, lockPath };
-};
-
-// Returns the OWNED canonical { storePath, lockPath, lockFd, lockIdentity }; throws BEFORE
-// ownership on every refusal lane. The caller must reuse exactly these values end-to-end.
-const acquireFlowLock = (resolvedStorePath, env, deps) => {
-  const lstat = deps.lstat ?? lstatSync;
-  const openLock = deps.openLock ?? ((p) => openSync(p, 'wx'));
-  const sleep = deps.sleep ?? sleepSyncMs;
-  const now = deps.now ?? monotonicNowMs;
-  const waitBoundMs = parseLockKnob(env, 'AW_FLOW_LOCK_WAIT_MS', FLOW_LOCK_WAIT_MS);
-  const pollMs = parseLockKnob(env, 'AW_FLOW_LOCK_POLL_MS', FLOW_LOCK_POLL_MS);
-  const { storePath, lockPath } = canonicalFlowWritePaths(resolvedStorePath, lstat);
-  const holderBody = JSON.stringify({ pid: process.pid, host: hostname(), startedAt: new Date().toISOString() });
-  const deadline = now() + waitBoundMs;
-  // Every retry lane passes this gate — else lock churn extends the wait past the bound forever.
-  const refuseIfPastDeadline = (why) => {
-    if (now() >= deadline) {
-      throw stop(`the flow-store lock ${lockPath} could not be acquired within the ${waitBoundMs}ms wait (${why}) — retry, or raise AW_FLOW_LOCK_WAIT_MS`);
-    }
-  };
-  for (;;) {
-    // CAS: exclusive-create ('wx' also refuses a symlink leaf); the winning fd stamps the holder
-    // and yields the lock's {dev, ino} — a pathname stat could already see a replacement.
-    let fd = null;
-    try {
-      fd = openLock(lockPath);
-    } catch (err) {
-      if (!err || err.code !== 'EEXIST') {
-        throw stop(`cannot create the flow-store lock ${lockPath} (${(err && err.code) || (err && err.message) || err}) — the store's parent dir must exist and be writable`);
-      }
-    }
-    if (fd !== null) {
-      let won = false;
-      try {
-        writeSync(fd, holderBody);
-        const st = fstatSync(fd);
-        won = true;
-        // The fd stays open through the whole append — its inode cannot be recycled under us.
-        return { storePath, lockPath, lockFd: fd, lockIdentity: { dev: st.dev, ino: st.ino } };
-      } catch (err) {
-        // Without the fd-proven identity, removing the pathname would be an unproven-ownership rm.
-        throw stop(`cannot stamp or verify the just-created flow-store lock ${lockPath} (${(err && err.code) || (err && err.message) || err}) — the lock file is left in place; inspect it, then remove it by hand: rm -- ${shellQuotePath(lockPath)} (fail closed)`);
-      } finally {
-        if (!won) { try { closeSync(fd); } catch { /* the stamp failure above already decided the lane */ } }
-      }
-    }
-    // The holder read HOLDS its fd (keepFd) until the lane decides: while the fd is open the
-    // inode cannot be recycled, so the DEAD re-verify below can trust an identity match only
-    // together with the held inode still being linked (FLOW-LOCK-HOLDER-FD-RECHECK). The lane
-    // verdict is computed FIRST (its error captured), the held fd then closes unconditionally,
-    // and a close failure is a typed STOP — thrown alone, or preserved on the primary error as
-    // holderCloseFailure (the releaseFlowLock never-mask discipline; P28).
-    const holderIo = deps.holderIo ?? {};
-    // The read itself is wrapped: on the early error/foreign lanes the reader closes its own fd
-    // in a finally, and a close throw there would otherwise escape as a RAW error outside the
-    // typed-STOP guarantee.
-    let holderRead;
-    try {
-      holderRead = readRegularFileNoFollow(lockPath, { ...holderIo, keepFd: true });
-    } catch (err) {
-      throw stop(`cannot read the flow-store lock holder (${(err && err.code) || (err && err.message) || err}) — the read/close custody failed (fail closed)`);
-    }
-    if (holderRead.closeFailure !== undefined) {
-      throw stop(`cannot read the flow-store lock holder (${holderRead.closeFailure}) — the read/close custody failed (fail closed)`);
-    }
-    const holderFd = holderRead.outcome === 'ok' ? holderRead.fd : null;
-    let verdict = null;
-    let primary = null;
-    try {
-      verdict = (() => {
-        if (holderRead.outcome === 'absent') {
-          refuseIfPastDeadline('the lock kept appearing and vanishing (churn)');
-          return { retry: true }; // released between attempts — retry the CAS at once
-        }
-        if (holderRead.outcome === 'foreign') throw foreignObjectStop('flow-store lock', lockPath, holderRead.className, holderRead.isDirectory);
-        let holder = null;
-        if (holderRead.outcome === 'ok') {
-          try {
-            holder = JSON.parse(holderRead.content);
-          } catch { holder = null; }
-        }
-        const validHolder = isValidHolder(holder);
-        if (validHolder && isProvablyDead(holder)) {
-          // The DEAD verdict binds to the inode the holder was read from — a lock released or
-          // replaced since then means the observed holder is gone: retry, never refuse a
-          // vanished lock.
-          let lockNow = null;
-          try {
-            lockNow = lstatNoFollow(lockPath, lstat); // null ONLY on a true ENOENT
-          } catch (err) {
-            throw stop(`cannot re-verify the flow-store lock identity before the DEAD refusal (${(err && err.code) || (err && err.message) || err}) — refusing to guess (fail closed)`);
-          }
-          if (lockNow == null || lockNow.dev !== holderRead.dev || lockNow.ino !== holderRead.ino) {
-            refuseIfPastDeadline('the observed dead holder was released (churn)');
-            return { retry: true };
-          }
-          // A pathname identity match alone can be a recycled lie (release + re-create landing
-          // the same {dev, ino}); the held fd settles it — an unlinked held inode (nlink 0)
-          // proves the observed holder's lock is GONE, whatever the pathname claims.
-          let heldNow;
-          try {
-            heldNow = (holderIo.fstat ?? fstatSync)(holderFd);
-          } catch (err) {
-            throw stop(`cannot re-verify the flow-store lock through its held descriptor (${(err && err.code) || (err && err.message) || err}) — refusing to guess (fail closed)`);
-          }
-          if (heldNow.nlink === 0) {
-            refuseIfPastDeadline('the observed dead holder was released (churn)');
-            return { retry: true };
-          }
-          throw stop(`the flow-store lock ${lockPath} is held by a DEAD process (${describeHolder(holder)}) — a crashed appender left it behind. To recover: inspect it, then remove it by hand: rm -- ${shellQuotePath(lockPath)} — it is never stolen silently (a steal could tear a live append; fail closed)`);
-        }
-        // ONE observation drives the deadline check AND the sleep cap — no overshoot by a full poll.
-        const observedAt = now();
-        if (observedAt >= deadline) {
-          if (!validHolder) {
-            throw stop(`the flow-store lock ${lockPath} carries an UNREADABLE or malformed holder after the full ${waitBoundMs}ms wait — a crashed appender may have died before writing its holder line, or the file is corrupted. To recover: inspect it, then remove it by hand: rm -- ${shellQuotePath(lockPath)} — it is never stolen silently (fail closed)`);
-          }
-          if (holder.host !== hostname()) {
-            throw stop(`the flow-store lock ${lockPath} is still held by pid ${holder.pid} on host ${holder.host} (liveness unprobeable from ${hostname()}) after the full ${waitBoundMs}ms wait — retry after that holder finishes, or raise AW_FLOW_LOCK_WAIT_MS`);
-          }
-          throw stop(`the flow-store lock ${lockPath} is still held by ${describeHolder(holder)} after the full ${waitBoundMs}ms wait — retry after the holder finishes, or raise AW_FLOW_LOCK_WAIT_MS`);
-        }
-        return { sleepMs: Math.min(pollMs, deadline - observedAt) };
-      })();
-    } catch (err) {
-      primary = err;
-    }
-    if (holderFd !== null) {
-      try {
-        (holderIo.close ?? closeSync)(holderFd);
-      } catch (err) {
-        const closeStop = stop(`cannot close the held flow-store holder descriptor (${(err && err.code) || (err && err.message) || err}) — the fd-custody guarantee is violated (fail closed)`);
-        if (primary == null) primary = closeStop;
-        else primary.holderCloseFailure = closeStop.message;
-      }
-    }
-    if (primary != null) throw primary;
-    if (verdict.retry) continue;
-    sleep(verdict.sleepMs);
-  }
-};
+const captureRecordSnapshot = flowAppendLane.captureRecordSnapshot;
 
 // ── the ONE append (validated, semantic-preflighted, lock-serialized, atomic) ─────────────────────
-
-// ONE custody-checked release: only the inode the winning fd proved is ever removed (the fd is
-// still open, so a pathname {dev, ino} match is proof of the same file); absent or replaced =
-// a mutual-exclusion violation, the foreign lock stays. Closes the fd on EVERY outcome without
-// losing a close failure. Returns a typed STOP or null, never throws — the caller sequences it
-// after the body's own error so neither masks the other.
-const releaseFlowLock = (lockPath, lockFd, lockIdentity, deps) => {
-  const lstat = deps.lstat ?? lstatSync;
-  const rm = deps.rm ?? ((p) => rmSync(p, { force: true }));
-  const close = deps.close ?? closeSync;
-  let issue = null;
-  let st = null;
-  try {
-    st = lstatNoFollow(lockPath, lstat); // null ONLY on a true ENOENT
-  } catch (err) {
-    issue = stop(`cannot verify the flow-store lock before release (${(err && err.code) || (err && err.message) || err}) — the lock is left in place; inspect ${lockPath} (fail closed)`);
-  }
-  if (issue == null) {
-    if (st == null || st.dev !== lockIdentity.dev || st.ino !== lockIdentity.ino) {
-      issue = stop(`the flow-store lock ${lockPath} was removed or replaced under this append — mutual exclusion was violated and another appender may have run concurrently; the current lock (if any) is left untouched; inspect the store and the lock (fail closed)`);
-    } else {
-      try {
-        rm(lockPath);
-      } catch (err) {
-        issue = stop(`cannot remove the flow-store lock at release (${(err && err.code) || (err && err.message) || err}) — inspect ${lockPath} (fail closed)`);
-      }
-    }
-  }
-  try {
-    close(lockFd);
-  } catch (err) {
-    const closeStop = stop(`cannot close the flow-store lock descriptor at release (${(err && err.code) || (err && err.message) || err})`);
-    if (issue == null) issue = closeStop;
-    else issue.closeFailure = closeStop.message;
-  }
-  return issue;
-};
 
 // The store path is always RESOLVED (cwd/env), never caller-supplied — a raw path param would
 // bypass the absolute-normalization door the AW_FLOW_STORE seam enforces. Read, write, and unlock
@@ -344,7 +103,7 @@ export const appendFlowRecord = ({ cwd = process.cwd(), record, env = process.en
   if (snapshot.kind === 'subset-attempt') {
     throw stop('subset-attempt records are minted ONLY by the locked append factory (appendSubsetAttempt) — a hand-built record could forge a fresh counting context and bypass the hard-stop budget (fail closed)');
   }
-  return appendResolvedFlowRecord({ cwd, env, deps, makeRecord: () => ({ line, snapshot }) });
+  return flowAppendLane.appendResolvedRecord({ cwd, env, deps, preflight: flowSemanticPreflight, makeRecord: () => ({ line, snapshot }) });
 };
 
 // appendFlowRecordWithPreflight — the generic lane plus a caller `preflight(records)` hook that
@@ -360,7 +119,7 @@ export const appendFlowRecordWithPreflight = ({ cwd = process.cwd(), record, env
   if (snapshot.kind === 'subset-attempt') {
     throw stop('subset-attempt records are minted ONLY by the locked append factory (appendSubsetAttempt) — a hand-built record could forge a fresh counting context and bypass the hard-stop budget (fail closed)');
   }
-  return appendResolvedFlowRecord({ cwd, env, deps, makeRecord: (records) => {
+  return flowAppendLane.appendResolvedRecord({ cwd, env, deps, preflight: flowSemanticPreflight, makeRecord: (records) => {
     if (preflight != null) preflight(deepFreezeClone(records));
     return { line, snapshot };
   } });
@@ -377,184 +136,80 @@ const deepFreezeClone = (value) => {
   return freeze(structuredClone(value));
 };
 
-// ONE serialization captured up front; validation and every preflight walk run on its PARSED
-// snapshot — a toJSON or getter can never make the written line differ from what validated.
-const captureRecordSnapshot = (record) => {
-  let line;
-  let snapshot;
-  try {
-    line = JSON.stringify(record);
-    snapshot = JSON.parse(line);
-  } catch (err) {
-    throw stop(`cannot capture a canonical serialization of the record (${(err && err.message) || err}) — refusing to write (fail closed)`);
+// The SEMANTIC half of the append, handed to the shared lane and run by it INSIDE the critical
+// section on the LOCKED store snapshot (a writer's lock-free walk is advisory — only the locked
+// snapshot decides): per-kind chain legality, reference resolution, the closure rules, the
+// counting-context gate, and supersession legality. An illegal record never lands. Throws a typed
+// STOP; the lane releases the lock and re-throws.
+const flowSemanticPreflight = ({ records, snapshot, storePath }) => {
+  if (snapshot.kind === CHAIN_KIND) {
+    const chain = records.filter((r) => r.kind === CHAIN_KIND && r.planId === snapshot.planId);
+    const existingSeq = validateChainSequence(chain);
+    if (!existingSeq.ok) {
+      throw stop(`refusing to append to a flow store whose existing chain for plan "${snapshot.planId}" is already illegal (${existingSeq.reason}) — inspect ${storePath}; nothing was written (fail closed)`);
+    }
+    const candidateSeq = validateChainSequence([...chain, snapshot]);
+    if (!candidateSeq.ok) {
+      throw stop(`refusing an illegal chain record: ${candidateSeq.reason} — the append-only store never absorbs a record that permanently reddens the checker; nothing was written`);
+    }
+    // Reference RESOLUTION (#63) on top of the structural half above: a step-OPENING round must
+    // digest-reference the chain's prior terminal; a round REVISION re-states its reference
+    // byte-bound (validateRoundRevision), so it is never re-classified against a moved terminal.
+    if (snapshot.purpose === 'round' && snapshot.opensFrom !== null && walkChainState(chain).mode === 'boundary') {
+      const ref = validateOpenerReference(records, snapshot);
+      if (!ref.ok) throw stop(`refusing a step-opening round: ${ref.reason} — nothing was written`);
+    }
+    if (snapshot.purpose === 'refresh') {
+      if (resolveRecordReference(records, snapshot.refreshedRecord) === undefined) {
+        throw stop(`refusing a refresh whose refreshedRecord does not match the store (no record digests to ${snapshot.refreshedRecord.slice(0, 12)}…) — a re-attestation binds an existing record; nothing was written`);
+      }
+      if (!isAuthoritativeReferenceTarget(records, snapshot.refreshedRecord)) {
+        throw stop('refusing a refresh whose refreshedRecord targets a superseded record — a re-attestation binds the authoritative latest record of its key; nothing was written');
+      }
+    }
   }
-  const v = validateFlowRecord(snapshot);
-  if (!v.ok) throw stop(`refusing to write a malformed flow record: ${v.reason}`);
-  return { line, snapshot };
-};
-
-// The lock-serialized core both append lanes share: resolve → acquire → makeRecord (UNDER the
-// lock, over the captured store snapshot) → semantic preflights → atomic write → custody release.
-// The Decision-7 factory lane COMPUTES its record inside the critical section — attemptIndex and
-// the hard-stop state cannot be derived lock-free — so makeRecord runs under the lock by contract.
-const appendResolvedFlowRecord = ({ cwd, env, deps, makeRecord }) => {
-  const resolved = resolveFlowStorePath(cwd, env);
-  if (resolved == null) {
-    throw stop('not inside a git work tree (and no AW_FLOW_STORE override) — there is no flow store to append to');
+  // The closure rule runs UNDER the lock on the captured snapshot — a writer's lock-free
+  // usability pre-check can race a concurrent up/clear, and a justification minted after its
+  // mark closed can never satisfy the decide layer (#25), so the store refuses to strand it.
+  if (snapshot.kind === 'degrade-justification') {
+    const closed = records.some((r) => (r.kind === 'down-mark-up' || r.kind === 'down-mark-clear') && r.target === snapshot.downMark);
+    if (closed) {
+      throw stop('refusing a degrade-justification whose down-mark is already closed by up/clear — minted-after-close can never satisfy (#25); nothing was written');
+    }
   }
-  const { storePath, lockPath, lockFd, lockIdentity } = acquireFlowLock(resolved, env, deps);
-  const body = appendUnderLock({ storePath, makeRecord, deps });
-  const releaseIssue = releaseFlowLock(lockPath, lockFd, lockIdentity, deps);
-  if (body.err) {
-    if (releaseIssue) {
-      body.err.releaseViolation = releaseIssue.message;
-      if (releaseIssue.closeFailure) body.err.releaseCloseFailure = releaseIssue.closeFailure;
+  // The same P3-26 discipline for the consult-attestation (Phase-4): the writer derives
+  // {cycle, stepId, round} lock-free, so a concurrent converged/park/complete can close or move
+  // the step first — under the lock the named plan's chain must be LEGAL and hold an OPEN step
+  // (in-step, not parked, not completed) whose {cycle, stepId, round} EQUALS the record's; a
+  // stale consult context can never satisfy the decide layer, so the store refuses to strand it.
+  if (snapshot.kind === 'consult-attestation') {
+    const chain = records.filter((r) => r.kind === CHAIN_KIND && r.planId === snapshot.planId);
+    const seq = chain.length === 0 ? { ok: false, reason: 'no chain exists for that plan' } : validateChainSequence(chain);
+    if (!seq.ok) {
+      throw stop(`refusing a consult-attestation: the plan "${snapshot.planId}" chain is not a legal open carrier under the lock (${seq.reason}); nothing was written`);
     }
-    throw body.err;
+    const state = walkChainState(chain);
+    const open = state.mode === 'in-step' && !state.parked && !state.completed;
+    if (!open || state.stepId !== snapshot.stepId || state.cycle !== snapshot.cycle || state.round !== snapshot.round) {
+      const shown = !open
+        ? (state.completed ? 'the plan is completed' : state.parked ? 'the plan is parked' : 'no step is open')
+        : `the open step is "${state.stepId}" (cycle ${state.cycle}, round ${state.round})`;
+      throw stop(`refusing a consult-attestation whose {cycle, stepId, round} does not match the OPEN step under the lock — ${shown}; a consult binds the open step's round, and a stale context can never satisfy; nothing was written`);
+    }
   }
-  if (releaseIssue) throw releaseIssue;
-  return body.value;
-};
-
-// Captured-result shape ({ value } | { err }) — never throws past the caller, so release always
-// runs. The snapshot fd is held until after the final rename and closed on every exit lane.
-const appendUnderLock = ({ storePath, makeRecord, deps }) => {
-  let snapshotFd = null;
-  try {
-    const storeRead = readRegularFileNoFollow(storePath, { keepFd: true });
-    if (storeRead.outcome === 'ok') snapshotFd = storeRead.fd;
-    if (storeRead.outcome === 'foreign') throw foreignObjectStop('flow store', storePath, storeRead.className, storeRead.isDirectory);
-    if (storeRead.outcome === 'error') throw stop(`cannot read the flow store before appending (${storeRead.code}) — refusing to overwrite it (fail closed)`);
-    // A second hard-link path would derive its OWN lock and the two appends would race one inode.
-    if (storeRead.outcome === 'ok' && storeRead.nlink !== 1) {
-      throw stop(`the flow store ${storePath} has ${storeRead.nlink} hard links — two path-derived locks would race one inode; remove the extra links and retry (fail closed)`);
-    }
-    const existing = storeRead.outcome === 'absent' ? '' : storeRead.content;
-    const parsed = parseFlowStoreText(existing);
-    if (parsed.malformed > 0) {
-      throw stop(`refusing to append to a flow store carrying ${parsed.malformed} malformed line(s) (${parsed.malformedReasons[0]}) — inspect ${storePath}; nothing was written (fail closed)`);
-    }
-    const { line, snapshot } = makeRecord(parsed.records);
-    if (existing.split('\n').some((l) => l === line)) {
-      throw stop('refusing a byte-identical replayed line (duplicate) — a genuine new record carries new content or timestamp; nothing was written');
-    }
-    if (snapshot.kind === CHAIN_KIND) {
-      const chain = parsed.records.filter((r) => r.kind === CHAIN_KIND && r.planId === snapshot.planId);
-      const existingSeq = validateChainSequence(chain);
-      if (!existingSeq.ok) {
-        throw stop(`refusing to append to a flow store whose existing chain for plan "${snapshot.planId}" is already illegal (${existingSeq.reason}) — inspect ${storePath}; nothing was written (fail closed)`);
-      }
-      const candidateSeq = validateChainSequence([...chain, snapshot]);
-      if (!candidateSeq.ok) {
-        throw stop(`refusing an illegal chain record: ${candidateSeq.reason} — the append-only store never absorbs a record that permanently reddens the checker; nothing was written`);
-      }
-      // Reference RESOLUTION (#63) on top of the structural half above: a step-OPENING round must
-      // digest-reference the chain's prior terminal; a round REVISION re-states its reference
-      // byte-bound (validateRoundRevision), so it is never re-classified against a moved terminal.
-      if (snapshot.purpose === 'round' && snapshot.opensFrom !== null && walkChainState(chain).mode === 'boundary') {
-        const ref = validateOpenerReference(parsed.records, snapshot);
-        if (!ref.ok) throw stop(`refusing a step-opening round: ${ref.reason} — nothing was written`);
-      }
-      if (snapshot.purpose === 'refresh') {
-        if (resolveRecordReference(parsed.records, snapshot.refreshedRecord) === undefined) {
-          throw stop(`refusing a refresh whose refreshedRecord does not match the store (no record digests to ${snapshot.refreshedRecord.slice(0, 12)}…) — a re-attestation binds an existing record; nothing was written`);
-        }
-        if (!isAuthoritativeReferenceTarget(parsed.records, snapshot.refreshedRecord)) {
-          throw stop('refusing a refresh whose refreshedRecord targets a superseded record — a re-attestation binds the authoritative latest record of its key; nothing was written');
-        }
-      }
-    }
-    // The closure rule runs UNDER the lock on the captured snapshot — a writer's lock-free
-    // usability pre-check can race a concurrent up/clear, and a justification minted after its
-    // mark closed can never satisfy the decide layer (#25), so the store refuses to strand it.
-    if (snapshot.kind === 'degrade-justification') {
-      const closed = parsed.records.some((r) => (r.kind === 'down-mark-up' || r.kind === 'down-mark-clear') && r.target === snapshot.downMark);
-      if (closed) {
-        throw stop('refusing a degrade-justification whose down-mark is already closed by up/clear — minted-after-close can never satisfy (#25); nothing was written');
-      }
-    }
-    // The same P3-26 discipline for the consult-attestation (Phase-4): the writer derives
-    // {cycle, stepId, round} lock-free, so a concurrent converged/park/complete can close or move
-    // the step first — under the lock the named plan's chain must be LEGAL and hold an OPEN step
-    // (in-step, not parked, not completed) whose {cycle, stepId, round} EQUALS the record's; a
-    // stale consult context can never satisfy the decide layer, so the store refuses to strand it.
-    if (snapshot.kind === 'consult-attestation') {
-      const chain = parsed.records.filter((r) => r.kind === CHAIN_KIND && r.planId === snapshot.planId);
-      const seq = chain.length === 0 ? { ok: false, reason: 'no chain exists for that plan' } : validateChainSequence(chain);
-      if (!seq.ok) {
-        throw stop(`refusing a consult-attestation: the plan "${snapshot.planId}" chain is not a legal open carrier under the lock (${seq.reason}); nothing was written`);
-      }
-      const state = walkChainState(chain);
-      const open = state.mode === 'in-step' && !state.parked && !state.completed;
-      if (!open || state.stepId !== snapshot.stepId || state.cycle !== snapshot.cycle || state.round !== snapshot.round) {
-        const shown = !open
-          ? (state.completed ? 'the plan is completed' : state.parked ? 'the plan is parked' : 'no step is open')
-          : `the open step is "${state.stepId}" (cycle ${state.cycle}, round ${state.round})`;
-        throw stop(`refusing a consult-attestation whose {cycle, stepId, round} does not match the OPEN step under the lock — ${shown}; a consult binds the open step's round, and a stale context can never satisfy; nothing was written`);
-      }
-    }
-    // The Decision-7/8 counting-context gate runs UNDER the lock for BOTH append lanes (the
-    // factory computes a passing record; a hand-built one must satisfy the same rules).
-    if (snapshot.kind === 'subset-attempt') {
-      const gate = subsetAttemptGate(parsed.records, snapshot);
-      if (!gate.ok) throw stop(`refusing a subset-attempt: ${gate.reason} — nothing was written`);
-    }
-    const existingSup = validateSupersessions(parsed.records);
-    if (!existingSup.ok) {
-      throw stop(`refusing to append to a flow store whose existing records already violate supersession legality (${existingSup.reason}) — inspect ${storePath}; nothing was written (fail closed)`);
-    }
-    const candidateSup = validateSupersessions([...parsed.records, snapshot]);
-    if (!candidateSup.ok) {
-      throw stop(`refusing an illegal supersession: ${candidateSup.reason} — the append-only store never absorbs a record that permanently reddens the checker; nothing was written`);
-    }
-    const prefix = existing === '' ? '' : existing.endsWith('\n') ? existing : `${existing}\n`;
-    // The final rename is bound to the SNAPSHOT: (a) the held fd is re-read and byte-compared
-    // (a same-inode in-place mutation refuses instead of being clobbered with stale bytes), then
-    // (b) the leaf must still show the snapshot inode — or still-absent for a fresh store —
-    // immediately before the rename. Rides the frozen writer's deps.rename seam.
-    const renameBase = deps.rename ?? renameSync;
-    const guardedRename = (from, to) => {
-      if (to === storePath) {
-        if (storeRead.outcome === 'ok') {
-          let same;
-          try {
-            same = fdContentEquals(snapshotFd, storeRead.bytes);
-          } catch (err) {
-            throw stop(`cannot re-read the flow store snapshot before the final rename (${(err && err.code) || (err && err.message) || err}) — nothing was written (fail closed)`);
-          }
-          if (!same) {
-            throw stop(`the flow store ${storePath} content changed under the lock (same-inode in-place mutation) — refusing the final rename; nothing was written (fail closed)`);
-          }
-        }
-        let leaf = null;
-        try {
-          leaf = lstatNoFollow(to, deps.lstat ?? lstatSync);
-        } catch (err) {
-          throw stop(`cannot verify the flow store leaf before the final rename (${(err && err.code) || (err && err.message) || err}) — nothing was written (fail closed)`);
-        }
-        const identityHeld = storeRead.outcome === 'absent'
-          ? leaf == null
-          : leaf != null && leaf.isFile() && leaf.dev === storeRead.dev && leaf.ino === storeRead.ino;
-        if (!identityHeld) {
-          throw stop(`the flow store ${storePath} changed identity under the lock (concurrent or foreign mutation) — refusing the final rename; nothing was written (fail closed)`);
-        }
-        if (leaf != null && leaf.nlink !== 1) {
-          throw stop(`the flow store ${storePath} has ${leaf.nlink} hard links — two path-derived locks would race one inode; remove the extra links and retry (fail closed)`);
-        }
-      }
-      return renameBase(from, to);
-    };
-    writeContainedFileAtomic(dirname(storePath), storePath, `${prefix}${line}\n`, { ...deps, rename: guardedRename }, { stop, label: storePath });
-    if (snapshotFd !== null) {
-      const fd = snapshotFd;
-      snapshotFd = null;
-      closeSync(fd); // a success-lane close failure surfaces as the append's own error
-    }
-    return { value: { writtenPath: storePath, record: snapshot } };
-  } catch (err) {
-    return { err };
-  } finally {
-    if (snapshotFd !== null) { try { closeSync(snapshotFd); } catch { /* the failure above stays primary */ } }
+  // The Decision-7/8 counting-context gate runs UNDER the lock for BOTH append lanes (the
+  // factory computes a passing record; a hand-built one must satisfy the same rules).
+  if (snapshot.kind === 'subset-attempt') {
+    const gate = subsetAttemptGate(records, snapshot);
+    if (!gate.ok) throw stop(`refusing a subset-attempt: ${gate.reason} — nothing was written`);
+  }
+  const existingSup = validateSupersessions(records);
+  if (!existingSup.ok) {
+    throw stop(`refusing to append to a flow store whose existing records already violate supersession legality (${existingSup.reason}) — inspect ${storePath}; nothing was written (fail closed)`);
+  }
+  const candidateSup = validateSupersessions([...records, snapshot]);
+  if (!candidateSup.ok) {
+    throw stop(`refusing an illegal supersession: ${candidateSup.reason} — the append-only store never absorbs a record that permanently reddens the checker; nothing was written`);
   }
 };
 
@@ -643,12 +298,9 @@ const subsetAttemptGate = (records, snapshot) => {
 export const SUBSET_RUN_LOCK_INFIX = '.subset-run';
 
 export const acquireSubsetRunLock = ({ cwd = process.cwd(), env = process.env, deps = {} } = {}) => {
-  const resolved = resolveFlowStorePath(cwd, env);
-  if (resolved == null) {
-    throw stop('not inside a git work tree (and no AW_FLOW_STORE override) — there is no flow store to serialize a subset run against');
-  }
-  const { lockPath, lockFd, lockIdentity } = acquireFlowLock(`${resolved}${SUBSET_RUN_LOCK_INFIX}`, env, deps);
-  return { lockPath, release: () => releaseFlowLock(lockPath, lockFd, lockIdentity, deps) };
+  const resolved = flowAppendLane.resolveOrStop(cwd, env, 'serialize a subset run against');
+  const { lockPath, lockFd, lockIdentity } = flowAppendLane.acquireLock(`${resolved}${SUBSET_RUN_LOCK_INFIX}`, env, deps);
+  return { lockPath, release: () => flowAppendLane.releaseLock(lockPath, lockFd, lockIdentity, deps) };
 };
 
 // The pre-gate append-lock readiness probe (round-8 fold): acquire and immediately release the
@@ -657,12 +309,9 @@ export const acquireSubsetRunLock = ({ cwd = process.cwd(), env = process.env, d
 // Stated residual: a lock landing between this probe and the post-run append still refuses at
 // append time — closing that would mean holding the append lock across the whole gate run.
 export const probeFlowAppendLock = ({ cwd = process.cwd(), env = process.env, deps = {} } = {}) => {
-  const resolved = resolveFlowStorePath(cwd, env);
-  if (resolved == null) {
-    throw stop('not inside a git work tree (and no AW_FLOW_STORE override) — there is no flow store to probe');
-  }
-  const { lockPath, lockFd, lockIdentity } = acquireFlowLock(resolved, env, deps);
-  const issue = releaseFlowLock(lockPath, lockFd, lockIdentity, deps);
+  const resolved = flowAppendLane.resolveOrStop(cwd, env, 'probe');
+  const { lockPath, lockFd, lockIdentity } = flowAppendLane.acquireLock(resolved, env, deps);
+  const issue = flowAppendLane.releaseLock(lockPath, lockFd, lockIdentity, deps);
   if (issue != null) throw issue;
 };
 
@@ -703,7 +352,7 @@ export const appendSubsetAttempt = ({ cwd = process.cwd(), env = process.env, de
   // reach the digest domain.
   const subsetIds = Object.freeze([...derived]);
   let minted = null;
-  const value = appendResolvedFlowRecord({ cwd, env, deps, makeRecord: (records) => {
+  const value = flowAppendLane.appendResolvedRecord({ cwd, env, deps, preflight: flowSemanticPreflight, makeRecord: (records) => {
     const chain = records.filter((r) => r.kind === CHAIN_KIND && r.planId === expected.planId);
     if (chain.length === 0) throw stop(`no chain exists for plan "${expected.planId}" under the lock — the captured identity is stale; re-run the subset under the current context (fail closed)`);
     const seq = validateChainSequence(chain);

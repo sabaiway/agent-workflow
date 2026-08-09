@@ -145,6 +145,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the flow-store IO (flow-orchestration Phase 2) — common-dir resolution, fail-closed reader,
       // lock/CAS serialized append; pinned by NAME for the same reason
       'tools/flow-store.mjs',
+      // the parameterized lock/CAS serialized-append leaf (delegation Plan 1 D12) — the discipline
+      // both stores ride; falling out of the payload would break every append, so it is pinned by NAME
+      'tools/store-append.mjs',
       // the flow-check refusal core (flow-orchestration Phase 3) — pure checker predicates + the
       // standalone --check CLI (deliberately unwired until Plan 3); pinned by NAME for the same reason
       'tools/flow-check.mjs',
@@ -152,6 +155,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // exec-return schema, the sub-task contract header and the metric byte domains the delegation
       // store and engine consume; pinned by NAME for the same reason
       'tools/dispatch-record.mjs',
+      // the delegation-ledger IO (delegation Plan 1 Phase 2) — its own store beside the review
+      // receipts, the fail-closed reader, and the thread/correlation/retry/wave preflight
+      'tools/dispatch-store.mjs',
       // the D3(c)+(d) final-run checker (fixed git-dir lcov path + red-proof verification) and the
       // D10 read-only pre-commit guard that binds the run-gates --final receipt
       'tools/coverage-check.mjs',
@@ -378,7 +384,16 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       same rule from opposite ends — the advisor asks whether an entry COVERS a probe dir,
     //       the autonomy render whether one resolves OUTSIDE the repo — and the advisor already
     //       imports the render, so neither could own it. Its coverage rides both consumers' suites.
-    assert.equal(packed.length, 187, `tarball file count drifted (${packed.length} ≠ 187)`);
+    // 188 = 187 + the shared append leaf (delegation Plan 1 Phase 2, D12), EXACTLY one file:
+    //       tools/store-append.mjs (the parameterized lock/CAS serialized append — nouns, seams,
+    //       validator, parser and the semantic preflight injected). It is a LEAF because two stores
+    //       now ride the identical discipline and neither may import the other's module. Its
+    //       coverage rides both callers' suites; there is no colocated *.test.mjs.
+    // 189 = 188 + the delegation store (delegation Plan 1 Phase 2), EXACTLY one file:
+    //       tools/dispatch-store.mjs (path resolution + fail-closed reader + the semantic preflight
+    //       the shared leaf runs under the lock, and the D5 uncommitted-state fingerprint helper).
+    //       Its colocated *.test.mjs sibling is stripped by files[] and never enters the tarball.
+    assert.equal(packed.length, 189, `tarball file count drifted (${packed.length} ≠ 189)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
