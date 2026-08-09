@@ -33,6 +33,8 @@ import {
   ACKS_FILE,
 } from './recommendations.mjs';
 import { SKIPPED_READONLY } from './setup-backends.mjs';
+// The host-conditional qualifier every settings-derived runtime claim carries (Decision 11).
+import { HOST_HONORS_QUALIFIER } from './velocity-profile.mjs';
 import { LATENT_ARM_NOTICE } from './review-state.mjs';
 import { QUEUE_SHARED_RULE, LANDING_FROM_MAIN, NO_DEPENDENCIES_POSTURE, CLEANUP_OWNERSHIP_RULE, INCLUDE_IDENTITY_RULE, RESUME_VERIFY_RULE } from './worktrees.mjs';
 // The flow contract constants: the accepted schema version + the honest lagging-kit sentence
@@ -102,6 +104,11 @@ export const BINDINGS = Object.freeze([
   // (the incident's "mode-doc apply text stays in lockstep" acceptance as a mechanism, not prose).
   // Bound in BOTH docs that name the path (recommendations.md + velocity.md).
   valueBinding('acks-file', ACKS_FILE, ACKS_FILE, [RECOMMENDATIONS_DOC, VELOCITY_DOC]),
+  // The host-conditional qualifier (Decision 11): the tier notice, the USAGE text and the autonomy
+  // render all state a settings key's RUNTIME effect through this one phrase, so the mode doc that
+  // documents those surfaces must carry it too — a reworded doc that quietly re-promises the effect
+  // fails here instead of shipping.
+  valueBinding('host-honors-qualifier', HOST_HONORS_QUALIFIER, HOST_HONORS_QUALIFIER, [VELOCITY_DOC]),
   // The refresh read-only degrade outcome (REFRESH-EROFS-HONESTY / AD-056): the new skipped-readonly
   // token must render in BOTH mode contracts that enumerate the placed-bridge refresh outcomes
   // (setup.md owns --refresh-placed; upgrade.md pastes its lines) — a reworded doc dropping the
@@ -194,8 +201,8 @@ Usage:
 
 A CLOSED, exported registry binds each live code constant — the autonomy-doctor contract (the EXIT
 table, the status tokens, the trusted-dir allowlist), the recommendations/upgrade presentation
-contract (section header, empty line, verdict templates), the acks-store path, the setup refresh
-degrade token, the review-state clean-tree latent-arm notice, the worktrees provision-record
+contract (section header, empty line, verdict templates), the acks-store path, the host-conditional
+qualifier every settings-derived runtime claim carries, the setup refresh degrade token, the review-state clean-tree latent-arm notice, the worktrees provision-record
 orientation contract (shared-queue rule, landing-from-main, no-dependencies install posture), the
 worktrees cleanup-ownership rule, the worktrees include-identity rule, the worktrees
 resume-verify rule, the flow tolerate contract (the accepted flow schema version + the

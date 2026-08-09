@@ -372,7 +372,13 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       may record). It is a LEAF because its two consumers cannot import each other —
     //       run-gates REPORTS the token and core-evidence VALIDATES it, and run-gates already
     //       imports core-evidence. Its *.test.mjs sibling is stripped by files[].
-    assert.equal(packed.length, 186, `tarball file count drifted (${packed.length} ≠ 186)`);
+    // 187 = 186 + the declared-path leaf (kit-inert-gate Phase 3.3), EXACTLY one file:
+    //       tools/declared-paths.mjs (resolution + segment containment for a declared
+    //       sandbox.filesystem.allowWrite entry). It is a LEAF because its two consumers read the
+    //       same rule from opposite ends — the advisor asks whether an entry COVERS a probe dir,
+    //       the autonomy render whether one resolves OUTSIDE the repo — and the advisor already
+    //       imports the render, so neither could own it. Its coverage rides both consumers' suites.
+    assert.equal(packed.length, 187, `tarball file count drifted (${packed.length} ≠ 187)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

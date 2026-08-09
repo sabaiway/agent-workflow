@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 // The --autonomy render reads the per-project autonomy policy through the read-only autonomy core
 // (AD-044). This file is the family's one .claude/settings.json writer, so the policy render lives here;
@@ -10,6 +11,9 @@ import { AUTONOMY_REL, loadAutonomy, resolveAutonomy, COMMAND_REDLINES } from '.
 // for a PLACED bridge wrapper — findOnPath is the same read-only PATH scan the backend detector uses.
 import { findOnPath } from './detect-backends.mjs';
 import { compareSemver } from './semver-lite.mjs';
+// The declared-path resolution + segment containment the allowWrite degrade shares with the
+// advisor's worktrees-dir convergence lane — ONE leaf, so the two readings cannot drift.
+import { resolveDeclaredDir, dirCovers, isResolvableDeclaredEntry } from './declared-paths.mjs';
 
 // Velocity-profile core + writer: a fixed, audited read-only allowlist that an onboarding step seeds
 // into `.claude/settings.json` so routine read-only commands stop idling on approval prompts.
@@ -337,6 +341,17 @@ const MUTATING_SCRIPT_HOOK_PATTERN = /^(pre|post)/iu;
 // invariant (kept deliberately even though the read-only screen already rejects these, so the
 // refusal is named, tested, and produces a clear message).
 const MUTATING_ALLOW_COMMAND_PATTERN = /^(?:git\s+(?:commit|push)|npm\s+publish)(?:\s|$)/iu;
+// Whether a host APPLIES a `sandbox.*` settings key is not knowable from here: a settings-native
+// host honors it, while an IDE/session-imposed sandbox was observed ignoring the hand-applied
+// security keys in BOTH scopes (the advisor records the same limit in
+// references/modes/recommendations.md). So every claim about the RUNTIME EFFECT of a settings key —
+// the tier's exclusion routing and every weakening detail alike — carries this qualifier. The
+// CLASSIFICATION is untouched: which red-line a key would weaken, and that a proven tier exclusion
+// is a note rather than a weakening, are properties of the DECLARATION, not of a host.
+export const HOST_HONORS_QUALIFIER = 'where the host honors the settings sandbox keys';
+export const HOST_HONORS_NOTICE =
+  `host-conditional: whether a host applies the sandbox.* settings keys is not knowable from here — a settings-native host honors them, a harness-managed session sandbox may ignore them in BOTH scopes, so each runtime effect above is stated "${HOST_HONORS_QUALIFIER}" rather than promised; what a key would weaken is a property of the declaration and is stated flat.`;
+
 const RESIDUAL_NOTICE =
   'residual: seeded read-only allow entries are a trust-posture convenience, NOT a sandbox; settings-level rules cannot inspect runtime redirection/command-substitution/--output writes; commit/push/publish are never allowlisted (a DIRECT invocation still ASKs, but the runtime residual is not closed here); the residual guard ships as the opt-in PreToolUse hook — Mode: hook (/agent-workflow-kit hook). floor (never auto-approved, with or without the tier): every writer --apply/--write/--yes still prompts; clobber-protection STOPs still stop; the three release asks (commit/push/publish) stay maintainer-owned.';
 
@@ -353,9 +368,9 @@ preview byte-strings. Never touches settings.local.json.
 --bridge-tier (own consent) seeds the bridge REVIEW wrappers' CODE mode for PLACED bridges
 (codex-review code, agy-review code - never the execution/probe wrappers, never plan/diff modes)
 + the quoted grounding pre-step rule, and the wrapper names into sandbox.excludedCommands (they
-need network - the harness runs them outside the sandbox). Consented posture: an auto-allowed
-review wrapper runs UNATTENDED and sends the assembled repo payload to its subscription backend
-(see the printed tier notice).
+need network - ${HOST_HONORS_QUALIFIER} the harness runs them outside the sandbox). Consented
+posture: an auto-allowed review wrapper runs UNATTENDED and sends the assembled repo payload to its
+subscription backend (see the printed tier notice).
 
 --autonomy renders docs/ai/autonomy.json into the settings blocks it OWNS — the sandbox block +
 permissions.ask/deny red-lines + permissions.defaultMode. POLICY-ONLY: never seeds the allowlist and
@@ -663,7 +678,10 @@ const formatKitTier = (result) =>
 // The bridge tier's honest posture, printed on EVERY --bridge-tier run: the informed-consent
 // resolution states the exfiltration surface, never pretends it away.
 export const KIT_BRIDGE_TIER_NOTICE =
-  'bridge-wrappers tier: seeds the REVIEW wrappers only, and only their CODE mode (`codex-review code`, `agy-review code` — never codex-exec/agy-run: delegated execution keeps its human prompt; never the plan/diff modes: their file arguments can point outside the repo, so they keep their prompt), each derived ONLY when its bridge is PLACED on PATH, plus the grounding pre-step rule in its rendered quoted byte-form. POSTURE (what this consent covers): an auto-allowed review wrapper runs UNATTENDED — it reads any repo file it is pointed at and sends the assembled payload to its subscription backend, and prefix rules cannot inspect arguments, so a code-mode argument that names a readable file (agy\'s --facts/--decided) rides the same consent — the same documented residual class as the autonomy red-line rules; that is the tier\'s PURPOSE (unattended council review runs) and its residual — tier entries get NO PreToolUse-hook coverage. The grounding entry\'s writer surface is bounded by grounding.mjs\'s OWN scratch-destination guard (a tracked or in-repo-not-ignored --out is refused by the tool). The wrapper names are ALSO seeded into sandbox.excludedCommands IN THE PROJECT settings.json (an exclusion only in settings.local.json was live-observed NOT to route — the wrapper then runs sandboxed and dies on a read-only HOME): the harness runs an excluded command OUTSIDE the sandbox (the wrappers need network), so a plain allowlisted invocation triggers no sandbox-bypass approval. INVOCATION SHAPE: a prefix rule matches only a PLAIN invocation starting with the wrapper name — an env-var prefix or a compound chain never matches (redirects are fine).';
+  'bridge-wrappers tier: seeds the REVIEW wrappers only, and only their CODE mode (`codex-review code`, `agy-review code` — never codex-exec/agy-run: delegated execution keeps its human prompt; never the plan/diff modes: their file arguments can point outside the repo, so they keep their prompt), each derived ONLY when its bridge is PLACED on PATH, plus the grounding pre-step rule in its rendered quoted byte-form. POSTURE (what this consent covers): an auto-allowed review wrapper runs UNATTENDED — it reads any repo file it is pointed at and sends the assembled payload to its subscription backend, and prefix rules cannot inspect arguments, so a code-mode argument that names a readable file (agy\'s --facts/--decided) rides the same consent — the same documented residual class as the autonomy red-line rules; that is the tier\'s PURPOSE (unattended council review runs) and its residual — tier entries get NO PreToolUse-hook coverage. The grounding entry\'s writer surface is bounded by grounding.mjs\'s OWN scratch-destination guard (a tracked or in-repo-not-ignored --out is refused by the tool). The wrapper names are ALSO seeded into sandbox.excludedCommands IN THE PROJECT settings.json (an exclusion only in settings.local.json was live-observed NOT to route — the wrapper then runs sandboxed and dies on a read-only HOME): ' +
+  // The one interpolated seam in this notice: the shared host-conditional qualifier, so the tier's
+  // routing promise and the render's degrade lines can never drift apart.
+  `${HOST_HONORS_QUALIFIER} the harness runs an excluded command OUTSIDE the sandbox (the wrappers need network), so a plain allowlisted invocation triggers no sandbox-bypass approval — whether a host honors them is not knowable from here, and where it does not the wrapper simply starts sandboxed (fail-safe, never a silent widening). INVOCATION SHAPE: a prefix rule matches only a PLAIN invocation starting with the wrapper name — an env-var prefix or a compound chain never matches (redirects are fine).`;
 
 const formatBridgeTier = (result) =>
   result.bridgeTier
@@ -1280,9 +1298,9 @@ export const renderAutonomySettings = (resolved, probe, harness = HARNESS_UNPROB
   // degrade states what THIS RENDER does not express; it never claims a platform limit it did not
   // observe, and it names the version it did observe (or states the unknown).
   if (resolved.redlines.network === 'deny') {
-    degrades.push(`network=deny requested, but this render expresses no HARD egress block (${observedPhrase(harness)}) — rendered as prompt-on-egress (the sandbox default: no domains pre-allowed, a new domain still prompts). A silent hard block needs managed settings (allowManagedDomainsOnly).`);
+    degrades.push(`network=deny requested, but this render expresses no HARD egress block (${observedPhrase(harness)}) — rendered as prompt-on-egress (the sandbox default: no domains pre-allowed, a new domain still prompts ${HOST_HONORS_QUALIFIER}). A silent hard block needs managed settings (allowManagedDomainsOnly).`);
   } else {
-    notes.push('network=ask → prompt on each new domain (the sandbox default; no domains pre-allowed).');
+    notes.push(`network=ask → prompt on each new domain ${HOST_HONORS_QUALIFIER} (the sandbox default; no domains pre-allowed).`);
   }
   // credentials — rendered when the OBSERVED version reaches the threshold, degraded loudly when it
   // does not or when the version is unknown. Reporting a platform limit that does not exist is the
@@ -1294,23 +1312,23 @@ export const renderAutonomySettings = (resolved, probe, harness = HARNESS_UNPROB
     // installed build. Partial protection reported as success is the same defect as the false claim
     // this render replaced — so it degrades too, never a note.
     if (resolved.redlines.credentials === 'ask') {
-      degrades.push(`credentials=ask requested, but sandbox.${CREDENTIALS_KEY} offers no ask mode (${observedPhrase(harness)}) — rendered as the deny form: ${PROTECTED_ENV_VARS.join('/')} are unset for sandboxed commands with no prompt.`);
+      degrades.push(`credentials=ask requested, but sandbox.${CREDENTIALS_KEY} offers no ask mode (${observedPhrase(harness)}) — rendered as the deny form: ${PROTECTED_ENV_VARS.join('/')} are unset for sandboxed commands with no prompt, ${HOST_HONORS_QUALIFIER}.`);
     }
-    degrades.push(`credentials=${resolved.redlines.credentials} coverage is PARTIAL (${observedPhrase(harness)}) — sandbox.${CREDENTIALS_KEY} denies ${PROTECTED_ENV_VARS.join('/')} only. File-based credentials (~/.ssh and any other secret FILE) stay readable by sandboxed commands: this profile does not render ${CREDENTIALS_KEY}.files, whose entry shape it has not verified against an installed build. Declare them yourself if you need them.`);
+    degrades.push(`credentials=${resolved.redlines.credentials} coverage is PARTIAL (${observedPhrase(harness)}) — ${HOST_HONORS_QUALIFIER}, sandbox.${CREDENTIALS_KEY} denies ${PROTECTED_ENV_VARS.join('/')} only. File-based credentials (~/.ssh and any other secret FILE) stay readable by sandboxed commands: this profile does not render ${CREDENTIALS_KEY}.files, whose entry shape it has not verified against an installed build. Declare them yourself if you need them.`);
   } else {
-    degrades.push(`credentials=${resolved.redlines.credentials} requested, but ${observedPhrase(harness)}; sandbox credential denial arrived in ${CREDENTIALS_DENY_SINCE}, so ${PROTECTED_ENV_VARS.join('/')} and ~/.ssh are NOT hidden from sandboxed commands here. Upgrade to ${CREDENTIALS_DENY_SINCE}+ (or fix the install so the version can be read) for sandbox.${CREDENTIALS_KEY}.`);
+    degrades.push(`credentials=${resolved.redlines.credentials} requested, but ${observedPhrase(harness)}; sandbox credential denial arrived in ${CREDENTIALS_DENY_SINCE}, so THIS RENDER hides nothing: ${PROTECTED_ENV_VARS.join('/')} and ~/.ssh are not hidden by any key it writes (a host sandbox of its own may still hide them — that is not knowable from here, the mirror image of ${HOST_HONORS_QUALIFIER}). Upgrade to ${CREDENTIALS_DENY_SINCE}+ (or fix the install so the version can be read) for sandbox.${CREDENTIALS_KEY}.`);
   }
   // fs_outside_repo — the sandbox default is a HARD confine to cwd+$TMPDIR; this render expresses no
   // prompt-on-outside-write mode, so `ask` DEGRADES LOUDLY to the deny form (hard confine).
   if (resolved.redlines.fs_outside_repo === 'ask') {
-    degrades.push(`fs_outside_repo=ask requested, but this render expresses no prompt-on-outside-write mode (${observedPhrase(harness)}) — rendered as the deny form (writes hard-confined to cwd+$TMPDIR; an outside write is blocked, then auto-retried through the normal permission flow).`);
+    degrades.push(`fs_outside_repo=ask requested, but this render expresses no prompt-on-outside-write mode (${observedPhrase(harness)}) — rendered as the deny form (${HOST_HONORS_QUALIFIER}, writes hard-confined to cwd+$TMPDIR; an outside write is blocked, then auto-retried through the normal permission flow).`);
   } else {
-    notes.push('fs_outside_repo=deny → writes confined to cwd+$TMPDIR (the sandbox default).');
+    notes.push(`fs_outside_repo=deny → ${HOST_HONORS_QUALIFIER}, writes confined to cwd+$TMPDIR (the sandbox default).`);
   }
   // sandbox availability (Step 3.3 probe) — a LOUD degrade where the OS can't sandbox; the red-lines +
   // defaultMode still land (they are permission rules, sandbox-independent).
   if (!probe.available) {
-    degrades.push(`sandbox UNAVAILABLE on this host (${probe.reason}) — claude renders the sandbox block but WARNS and runs UNSANDBOXED: ad-hoc scripts will still PROMPT and network/fs confinement is NOT enforced until it is available (run /agent-workflow-kit autonomy-doctor to diagnose and, with your consent, install the missing dependency). The red-lines + defaultMode still apply. failIfUnavailable is left UNSET so the session is never bricked.`);
+    degrades.push(`sandbox UNAVAILABLE on this host (${probe.reason}) — ${HOST_HONORS_QUALIFIER}, claude renders the sandbox block but WARNS and runs UNSANDBOXED: ad-hoc scripts will still PROMPT and the confinement THIS RENDER asks for is not enforced until it is available (run /agent-workflow-kit autonomy-doctor to diagnose and, with your consent, install the missing dependency). The red-lines + defaultMode still apply. failIfUnavailable is left UNSET so the session is never bricked.`);
   }
   return { level, activities: resolved.activities, sandbox, defaultMode, ask, deny, notes, degrades };
 };
@@ -1389,7 +1407,28 @@ const collectRedlineBypass = (sources) =>
 // escape the sandbox entirely. The render owns only enabled/autoAllow and preserves other sandbox
 // sub-keys (merge-don't-clobber, never a silent clobber of the user's sandbox tuning), so a pre-existing
 // weakening sub-key is REPORTED loudly (remove it by hand) — never silently carried as security.
-const collectSandboxWeakenings = (sources) => {
+// The allowWrite degrade's own half: an entry is only an `fs_outside_repo` weakening once it
+// RESOLVES outside the boundaries a red-line already allows (the repo itself and $TMPDIR — the
+// autonomy policy's own scratch surface). Resolution comes FIRST, then the surviving entries are
+// NAMED by their resolved path: reporting a bare count declared every entry external and told the
+// maintainer nothing about which one to remove. A path is rendered JSON-quoted, so one carrying
+// spaces, shell metacharacters or a newline still renders on ONE line.
+// An entry that is not a resolvable string cannot be judged — and must never be DROPPED into
+// silence: it is counted as unresolvable, so a malformed declaration stays loud instead of quietly
+// emptying the degrade. A blank entry belongs to that class rather than resolving to the repo root
+// and disappearing as "contained".
+const externalWriteEntries = (entries, { root, home, tmp }) => {
+  const boundaries = [resolve(root), ...(tmp ? [resolve(tmp)] : [])];
+  const resolvable = entries.filter(isResolvableDeclaredEntry);
+  return {
+    external: resolvable
+      .map((entry) => resolveDeclaredDir(entry, { home, root }))
+      .filter((resolved) => !boundaries.some((boundary) => dirCovers(boundary, resolved))),
+    unresolvable: entries.length - resolvable.length,
+  };
+};
+
+const collectSandboxWeakenings = (sources, { root, home, tmp }) => {
   // Tier-known PROOF: an excludedCommands entry is downgraded to a note ONLY when it is
   // demonstrably the consented tier's own output — it lives in the PROJECT settings.json (the file
   // the tier writes; a local-file exclusion is never tier output) AND the matching derived
@@ -1405,14 +1444,34 @@ const collectSandboxWeakenings = (sources) => {
     const out = [];
     const net = isJsonObject(sb.network) ? sb.network : {};
     if (Array.isArray(net.allowedDomains) && net.allowedDomains.length) {
-      out.push({ source, key: `${SANDBOX_KEY}.network.allowedDomains`, weakens: 'network', detail: `${net.allowedDomains.length} pre-allowed domain(s) — egress to them is not gated` });
+      out.push({ source, key: `${SANDBOX_KEY}.network.allowedDomains`, weakens: 'network', detail: `${net.allowedDomains.length} pre-allowed domain(s) — ${HOST_HONORS_QUALIFIER}, egress to them is not gated` });
     }
     const fsb = isJsonObject(sb.filesystem) ? sb.filesystem : {};
-    if (Array.isArray(fsb.allowWrite) && fsb.allowWrite.length) {
-      out.push({ source, key: `${SANDBOX_KEY}.filesystem.allowWrite`, weakens: 'fs_outside_repo', detail: `${fsb.allowWrite.length} path(s) writable outside cwd+$TMPDIR` });
+    // A PRESENT but unreadable declaration is reported, never assumed empty: what it would make
+    // writable is unknown, and silence there is the same defect as an over-report.
+    if (fsb.allowWrite !== undefined && !Array.isArray(fsb.allowWrite)) {
+      // UNVERIFIABLE, not "weakening": an unreadable value cannot be claimed to widen anything (a
+      // host may reject the whole key). Its own class, so the render states what it cannot verify
+      // instead of asserting an effect it does not know.
+      out.push({ source, key: `${SANDBOX_KEY}.filesystem.allowWrite`, weakens: 'fs_outside_repo', unverifiable: true, detail: `the declared value is not an array (${typeof fsb.allowWrite}) — it cannot be read, so what it would make writable is UNKNOWN` });
+    } else if (Array.isArray(fsb.allowWrite) && fsb.allowWrite.length) {
+      // Only the entries that RESOLVE outside the repo and $TMPDIR are a weakening at all — an entry
+      // pointing INSIDE the repo grants nothing the red-line withholds, so reporting it would be an
+      // over-report. All-contained ⇒ no line at all.
+      // TWO records, never one: a resolved external path IS a weakening, an unresolvable entry is
+      // UNVERIFIABLE, and a single line carrying both would assert an effect for entries it could
+      // not read — the contradiction this phase exists to remove. An array of only-unresolvable
+      // entries therefore yields no weakening claim at all.
+      const { external, unresolvable } = externalWriteEntries(fsb.allowWrite, { root, home, tmp });
+      if (external.length) {
+        out.push({ source, key: `${SANDBOX_KEY}.filesystem.allowWrite`, weakens: 'fs_outside_repo', detail: `${HOST_HONORS_QUALIFIER}, ${external.length} declared path(s) resolve OUTSIDE the repo and $TMPDIR and are writable: ${external.map((p) => JSON.stringify(p)).join(', ')}` });
+      }
+      if (unresolvable) {
+        out.push({ source, key: `${SANDBOX_KEY}.filesystem.allowWrite`, weakens: 'fs_outside_repo', unverifiable: true, detail: `${unresolvable} declared entr(ies) could not be resolved (not a non-empty string) — what they would make writable is UNKNOWN` });
+      }
     }
     if (sb.allowUnsandboxedCommands === true) {
-      out.push({ source, key: `${SANDBOX_KEY}.allowUnsandboxedCommands`, weakens: 'every sandbox red-line', detail: 'commands may run unsandboxed' });
+      out.push({ source, key: `${SANDBOX_KEY}.allowUnsandboxedCommands`, weakens: 'every sandbox red-line', detail: `${HOST_HONORS_QUALIFIER}, commands may run unsandboxed` });
     }
     if (Array.isArray(sb.excludedCommands) && sb.excludedCommands.length) {
       // The bridge tier's OWN wrapper names are tier-known ONLY with the proof above (the
@@ -1423,9 +1482,9 @@ const collectSandboxWeakenings = (sources) => {
       const tierKnown = sb.excludedCommands.filter((c) => isTierKnownExclusion(source, c));
       const foreign = sb.excludedCommands.filter((c) => !tierKnown.includes(c));
       if (foreign.length) {
-        out.push({ source, key: `${SANDBOX_KEY}.excludedCommands`, weakens: 'every sandbox red-line', detail: `${foreign.length} command(s) run UNSANDBOXED (network/fs confinement not applied to them)${tierKnown.length ? `; ${tierKnown.length} bridge-review wrapper exclusion(s) are tier-known and not flagged` : ''}` });
+        out.push({ source, key: `${SANDBOX_KEY}.excludedCommands`, weakens: 'every sandbox red-line', detail: `${foreign.length} command(s) run UNSANDBOXED ${HOST_HONORS_QUALIFIER} (network/fs confinement not applied to them)${tierKnown.length ? `; ${tierKnown.length} bridge-review wrapper exclusion(s) are tier-known and not flagged` : ''}` });
       } else if (tierKnown.length) {
-        out.push({ source, key: `${SANDBOX_KEY}.excludedCommands`, weakens: null, tierKnown: true, detail: `${tierKnown.length} bridge-review wrapper exclusion(s) (${tierKnown.join(', ')}) — tier-known: the consented bridge-wrappers tier runs them outside the sandbox (network), and its allow rules are present in the project settings` });
+        out.push({ source, key: `${SANDBOX_KEY}.excludedCommands`, weakens: null, tierKnown: true, detail: `${tierKnown.length} bridge-review wrapper exclusion(s) (${tierKnown.join(', ')}) — tier-known: ${HOST_HONORS_QUALIFIER}, the consented bridge-wrappers tier runs them outside the sandbox (network), and its allow rules are present in the project settings` });
       }
     }
     return out;
@@ -1472,10 +1531,10 @@ export const formatAutonomyResult = (r) => {
     `policy: ${r.source}  ·  per-activity: ${formatActivityLevels(r.activities)}  ·  effective global autonomy: ${r.level}`,
   ];
   if (r.level === AUTONOMY_PROMPT && !Object.values(r.activities).every((v) => v.autonomy === AUTONOMY_PROMPT)) {
-    lines.push('  note: global autonomy is `prompt` because not every activity is `sandbox` — set every activity to sandbox (set-autonomy) to enable global auto-allow (conservative unanimity; the sandbox still confines).');
+    lines.push(`  note: global autonomy is \`prompt\` because not every activity is \`sandbox\` — set every activity to sandbox (set-autonomy) to enable global auto-allow (conservative unanimity; the sandbox still confines ${HOST_HONORS_QUALIFIER}).`);
   }
   lines.push(
-    `sandbox: ${SANDBOX_ENABLED_KEY}=true, ${SANDBOX_AUTOALLOW_KEY}=${r.sandbox[SANDBOX_AUTOALLOW_KEY]} (${r.level === AUTONOMY_SANDBOX ? 'auto-allow confined commands' : 'auto-allow OFF — confine only'})`,
+    `sandbox: ${SANDBOX_ENABLED_KEY}=true, ${SANDBOX_AUTOALLOW_KEY}=${r.sandbox[SANDBOX_AUTOALLOW_KEY]} (${r.level === AUTONOMY_SANDBOX ? 'auto-allow confined commands' : 'auto-allow OFF — confine only'}, ${HOST_HONORS_QUALIFIER})`,
     `permissions.${DEFAULT_MODE_KEY}: ${r.wrote ? 'set to' : 'would set to'} ${r.defaultMode}`,
     `permissions.ask (render-owned red-lines): ${r.ask.length ? r.ask.join(', ') : '(none)'}`,
     `permissions.deny (render-owned red-lines): ${r.deny.length ? r.deny.join(', ') : '(none)'}`,
@@ -1484,15 +1543,26 @@ export const formatAutonomyResult = (r) => {
   for (const n of r.notes) lines.push(`  note: ${n}`);
   for (const d of r.degrades) lines.push(`  ⚠ DEGRADE: ${d}`);
   for (const m of r.localMasks ?? []) {
-    lines.push(`  ⚠ ${SETTINGS_LOCAL_FILE} sets ${m.key}=${JSON.stringify(m.local)}, which MASKS this render's ${m.key}=${JSON.stringify(m.rendered)} (local > project) — the local value wins, so the render is not effective for that key; the local file is the maintainer's and is never written by the kit.`);
+    // "the local value wins" is a claim about a settings key's runtime effect wherever the masked key
+    // is a sandbox one — on a host that ignores sandbox.* NEITHER value takes effect. The scope
+    // boundary is deliberate: permissions.* precedence is the harness's own documented permission
+    // model (the layer this whole mode rests on), so those masks stay flat statements.
+    const scoped = m.key.startsWith(`${SANDBOX_KEY}.`) ? ` ${HOST_HONORS_QUALIFIER}` : '';
+    lines.push(`  ⚠ ${SETTINGS_LOCAL_FILE} sets ${m.key}=${JSON.stringify(m.local)}, which MASKS this render's ${m.key}=${JSON.stringify(m.rendered)} (local > project) — the local value wins${scoped}, so the render is not effective for that key; the local file is the maintainer's and is never written by the kit.`);
   }
   for (const b of r.redlineBypass ?? []) {
     lines.push(`  ⚠ DEGRADE: ${b.source} has a pre-existing allow entry ${b.entry} that would BYPASS the rendered red-line(s) ${b.redlines.join('/')} (a matching allow rule AUTO-APPROVES the command, defeating ask/deny) — remove it by hand; this render never touches permissions.allow.`);
   }
   for (const w of r.sandboxWeakenings ?? []) {
     if (w.tierKnown) lines.push(`  note: ${w.source} has ${w.key} (${w.detail}).`);
+    else if (w.unverifiable) lines.push(`  ⚠ DEGRADE: ${w.source} has ${w.key} (${w.detail}) — the rendered ${w.weakens} red-line CANNOT BE VERIFIED against it (no claim either way); fix the declared value by hand, then re-run this preview.`);
     else lines.push(`  ⚠ DEGRADE: ${w.source} has ${w.key} (${w.detail}), which WEAKENS the rendered ${w.weakens} red-line — the render preserves your sandbox tuning (never clobbers it), so remove it by hand if you want the red-line fully enforced.`);
   }
+  // The notice is UNCONDITIONAL: every autonomy render asserts a settings-key runtime effect (the
+  // sandbox line and its notes at minimum), so a clean deployment would otherwise read those as
+  // promises. It names the unknown once for the whole render; the per-line qualifiers above carry it
+  // for a line quoted in isolation.
+  lines.push(`  ${HOST_HONORS_NOTICE}`);
   lines.push(AUTONOMY_RESIDUAL_NOTICE);
   if (!r.wrote) lines.push(`re-run with ${FLAG_APPLY} to write .claude/settings.json (only the render-owned blocks change).`);
   return lines.join(LF);
@@ -1530,7 +1600,13 @@ export const writeAutonomyProfile = ({ cwd, apply = false } = {}, deps = {}) => 
     { source: SETTINGS_LOCAL_FILE, data: preflight.localSettings?.data },
   ];
   const redlineBypass = collectRedlineBypass(settingsSources);
-  const sandboxWeakenings = collectSandboxWeakenings(settingsSources);
+  // The allowWrite degrade resolves its entries before judging them, so it needs the same anchors a
+  // host resolving the key would use: the project root, the resolved home, and $TMPDIR.
+  const sandboxWeakenings = collectSandboxWeakenings(settingsSources, {
+    root: projectDir,
+    home: deps.home ?? homedir(),
+    tmp: (deps.env ?? process.env).TMPDIR ?? tmpdir(),
+  });
   const resultBase = {
     autonomy: true,
     source,
@@ -1631,6 +1707,9 @@ export const formatAutonomyCheck = (c) =>
     ? [
         `autonomy --check: IN SYNC — ${SETTINGS_FILE} matches the ${c.source} render (level ${c.level}).`,
         ...(c.degrades ?? []).map((d) => `  ⚠ DEGRADE: ${d}`),
+        // The gate surface carries the same unknown as the preview whenever it states one of these
+        // effects; a --check read in isolation must not be the one place the promise reads flat.
+        ...((c.degrades ?? []).length ? [`  ${HOST_HONORS_NOTICE}`] : []),
       ].join('\n')
     : [
         `autonomy --check: DRIFT — ${SETTINGS_FILE} diverges from the ${c.source} render (level ${c.level}):`,

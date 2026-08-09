@@ -45,6 +45,9 @@ import {
   RISK_NOTED_KEYS,
   probeAdrStore,
 } from './recommendations.mjs';
+// The producer body is READ from the shared vocabulary leaf, never re-typed: the inert-declaration
+// item decides through that predicate, so a fixture spelling its own body would drift off it.
+import { COVERAGE_PRODUCER_BODY } from './coverage-producer.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -1308,6 +1311,114 @@ describe('recommendations — every probe degrades honestly (per-branch skip cov
     const { skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
     rmSync(root, { recursive: true, force: true });
     assert.ok(skips.some((s) => s.key === 'gate-hook'), 'an unreadable declaration is a stated skip, never a guess');
+  });
+});
+
+// ── the inert-declaration item ─────────────────────────────────────────────────────
+//
+// The field-report class: a declaration that RUNS GREEN and verifies nothing. The gates-declaration
+// offer converges the moment any gate exists, so it can never observe this state — the advisor was
+// silent while the runner reported every gate PASS. Both causes are read off the declaration through
+// the SAME predicates --final and the fill decide with, so the advisor can never disagree with them.
+
+describe('recommendations — the inert gate declaration item', () => {
+  const kitCheck = (tool) => `node "${join(HERE, tool)}" --check`;
+  const CHECKER = kitCheck('coverage-check.mjs');
+  const gate = (id, cmd) => ({ id, title: id, cmd });
+  const inertFor = (gates) => {
+    const root = makeProject();
+    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates }));
+    const built = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    return { ...built, item: built.items.find((i) => i.key === 'gates-inert'), skip: built.skips.find((s) => s.key === 'gates-inert') };
+  };
+
+  it('cause A — a lint-only declaration carrying the checker with NO producer fires, names the checker, and hands the reorder to the maintainer', () => {
+    const { item } = inertFor([gate('lint', 'npm exec -- eslint .'), gate('coverage-check', CHECKER)]);
+    assert.ok(item, 'a declared checker with nothing writing its lcov is a real sub-optimality');
+    assert.equal(item.severity, SEVERITY_ATTENTION, 'a declaration that verifies nothing needs attention, it is not an offer');
+    assert.match(item.what, /coverage-check/, 'the WHAT names the checker gate');
+    // Both outcomes, because both are real: no lcov at all, or a verdict over bytes an earlier run
+    // left in the git dir — the second reads as `coverage=certified`, so it cannot be called a pass
+    // over nothing.
+    assert.match(item.what, /certifies nothing this run, or reads a stale lcov/);
+    // HAND-APPLY because the producer must PRECEDE the checker and the fill is append-only: the
+    // rendered line must never look like something the consent flow can run.
+    assert.ok(item.apply.startsWith('HAND-APPLY:'), `cause A is maintainer territory: ${item.apply}`);
+    assert.match(item.apply, /BEFORE coverage-check/);
+    assert.match(item.apply, /append-only/);
+  });
+
+  it('cause B — a declaration of nothing but kit checkers fires its OWN what and the consent-gated seeder preview', () => {
+    const { item } = inertFor([
+      gate('review-state', kitCheck('review-state.mjs')),
+      gate('commit-guard', kitCheck('commit-guard.mjs')),
+      gate('flow-check', kitCheck('flow-check.mjs')),
+    ]);
+    assert.ok(item, 'a matrix that only checks the kit verifies nothing of the project');
+    assert.match(item.what, /no project-verification command/);
+    assert.doesNotMatch(item.what, /certifying nothing/, 'cause B carries its own WHAT, never cause A’s');
+    assert.match(item.apply, /^node \/[^\s]*gates-init\.mjs --cwd \//, `cause B renders the seeder preview: ${item.apply}`);
+  });
+
+  it('a producer declared AFTER the checker still fires cause A — ORDER is the question, not presence', () => {
+    // The checker runs first and reads nothing (or stale bytes an earlier run left behind), then the
+    // producer writes the lcov too late. Only --final refuses this shape; a plain run reports PASS.
+    const { item } = inertFor([gate('coverage-check', CHECKER), gate('unit-tests', COVERAGE_PRODUCER_BODY)]);
+    assert.ok(item, 'a producer that runs too late leaves the checker just as inert');
+    assert.match(item.what, /has no producer before it/);
+    assert.match(item.what, /reads a stale lcov/, 'the late-producer shape is exactly where stale bytes get certified');
+    assert.match(item.apply, /declare or MOVE a suite gate/, 'the remedy names the reorder, since the fill cannot do it');
+  });
+
+  it('neither cause renders the flow-optimal line — the advisor never attests over an inert matrix', () => {
+    const root = makeProject();
+    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates: [gate('lint', 'npm exec -- eslint .'), gate('coverage-check', CHECKER)] }));
+    const built = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    const rendered = formatRecommendations(built);
+    assert.ok(!rendered.includes(RECOMMENDATIONS_EMPTY_LINE), 'flow optimal must not render over a declaration that verifies nothing');
+    assert.match(rendered, /item\(s\) need attention/, 'it opens on the attention verdict instead');
+  });
+
+  it('an EXACT producer ahead of the checker fires neither cause — and never a skip', () => {
+    const { item, skip } = inertFor([gate('unit-tests', COVERAGE_PRODUCER_BODY), gate('coverage-check', CHECKER)]);
+    assert.equal(item, undefined, 'a live producer/checker pair is exactly what the item wants to see');
+    assert.equal(skip, undefined, 'a readable declaration is decided, never skipped');
+  });
+
+  it('a NEAR-MISS producer still fires cause A — the closed predicate decides, never a substring', () => {
+    for (const [label, cmd] of [
+      ['the destination inside an echo', 'echo "$AW_GIT_DIR/agent-workflow-lcov.info"'],
+      ['a partial reporter flag set', 'node --test --experimental-test-coverage --test-reporter=lcov'],
+      ['the destination as a bare substring', 'cat "$AW_GIT_DIR/agent-workflow-lcov.info" | wc -l'],
+    ]) {
+      const { item } = inertFor([gate('unit-tests', cmd), gate('coverage-check', CHECKER)]);
+      assert.ok(item, `${label} must not read as a producer`);
+      assert.match(item.what, /has no producer before it/);
+    }
+  });
+
+  it('a MALFORMED declaration is a stated skip, never a crash and never a fabricated item', () => {
+    const root = makeProject();
+    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), '{ not json');
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(skips.some((s) => s.key === 'gates-inert' && /malformed JSON/.test(s.reason)));
+    assert.ok(!items.some((i) => i.key === 'gates-inert'), 'an unreadable declaration is never reported as inert');
+  });
+
+  it('an ABSENT or EMPTY declaration belongs to the gates-declaration item — never this one', () => {
+    const root = makeProject();
+    const absent = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates: [] }));
+    const empty = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    for (const [label, built] of [['absent', absent], ['empty', empty]]) {
+      assert.ok(!built.items.some((i) => i.key === 'gates-inert'), `an ${label} declaration is undeclared, not inert`);
+      assert.ok(!built.skips.some((s) => s.key === 'gates-inert'), `an ${label} declaration is not a probe failure either`);
+      assert.ok(built.items.some((i) => i.key === 'gates-declaration'), `the ${label} declaration fires the item that owns it`);
+    }
   });
 });
 
