@@ -141,6 +141,14 @@ export const isFinalCapableDeclaration = (gates, projectDir) => {
   return matchesCanonicalCheck(FINAL_CORE_CHECKS[1], gates[gates.length - 1].cmd, projectDir);
 };
 
+// coverageProducerPrecedes(gates, checkerIndex) → whether a producer runs BEFORE the checker at that
+// index. ORDER is the whole question: a producer declared AFTER the checker writes the lcov too late,
+// so the checker reads nothing — or, worse, stale bytes an earlier run left behind — and still
+// passes. ONE home for the rule: the written-declaration defects below and the advisor's
+// inert-declaration item both decide through it, so they cannot drift apart.
+export const coverageProducerPrecedes = (gates, checkerIndex) =>
+  gates.slice(0, checkerIndex).some((gate) => matchesCoverageProducer(gate.cmd));
+
 // coverageDeclarationDefects(gates, projectDir) → the WRITTEN-declaration coverage rule, as a list
 // of named defects (empty = satisfied): at most ONE canonical coverage checker; if one is present
 // it is LAST, and a producer precedes it. Consumers turn a defect into their own refusal — an
@@ -169,7 +177,7 @@ export const coverageDeclarationDefects = (gates, projectDir) => {
         '(the gate itself is fine — this is an ORDERING refusal, and the fill is append-only, so it cannot reorder for you)',
     }];
   }
-  if (!gates.slice(0, index).some((gate) => matchesCoverageProducer(gate.cmd))) {
+  if (!coverageProducerPrecedes(gates, index)) {
     return [{
       kind: 'no-producer',
       message:

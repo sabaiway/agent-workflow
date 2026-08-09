@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1076,9 +1076,287 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     const tiered = runBridgeMain(['--autonomy'], cwd, allPlaced);
     assert.doesNotMatch(tiered.stdout, /⚠ DEGRADE: .*excludedCommands/, 'the proven tier output is never flagged');
     assert.match(tiered.stdout, /note: .*tier-known/, 'it is surfaced as a note instead');
+    // The CLASSIFICATION (a proven tier exclusion is a note, not a weakening) is a property of the
+    // declaration and stays flat — but the EFFECT it states ("runs them outside the sandbox") is a
+    // claim about what a host does with a settings key, so the note carries the qualifier.
+    assert.ok(tiered.stdout.includes(`tier-known: ${HOST_HONORS_QUALIFIER}`), `the tier-known note conditions its runtime claim: ${tiered.stdout}`);
     // (c) the same exclusion in settings.LOCAL.json → a loud weakening (never tier output).
     writeJson(localSettingsPath(cwd), { sandbox: { excludedCommands: ['agy-review'] } });
     const local = runBridgeMain(['--autonomy'], cwd, allPlaced);
     assert.match(local.stdout, /⚠ DEGRADE: settings\.local.*excludedCommands|⚠ DEGRADE: \.claude\/settings\.local\.json.*excludedCommands/, 'a local-file exclusion is never tier-known');
+  });
+});
+
+// ── every settings-derived RUNTIME claim is host-conditional (Decision 11) ─────────────────────
+//
+// The advisor's own mode doc records, from live observation, that whether a host honors the
+// `sandbox.*` settings keys is unknowable from here — while these surfaces asserted the runtime
+// EFFECT of those keys flat. A user who applied the advisor's autonomy item on a harness-managed
+// host lost both review backends to a promise the kit could not keep. The CLASSIFICATION is
+// unchanged; only the promise becomes conditional.
+
+// The qualifier and the notice are pinned as LITERAL test data, deliberately not imported: the
+// wording IS the contract here, and a test that imported the constant would stay green while the
+// promise was reworded back into a flat one.
+const HOST_HONORS_QUALIFIER = 'where the host honors the settings sandbox keys';
+const HOST_HONORS_NOTICE_OPENING = 'host-conditional: whether a host applies the sandbox.* settings keys is not knowable from here';
+
+describe('velocity — settings-derived runtime claims are host-conditional', () => {
+  const allPlaced = () => true;
+  const autonomyProject = (t, settings, local) => {
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    writeJson(join(cwd, 'docs', 'ai', 'autonomy.json'), { 'plan-execution': { autonomy: 'sandbox' } });
+    ensureClaudeDir(cwd);
+    if (settings) writeJson(settingsPath(cwd), settings);
+    if (local) writeJson(localSettingsPath(cwd), local);
+    return cwd;
+  };
+  const runAutonomy = (argv, cwd, extra = {}) => {
+    const stdout = [];
+    const stderr = [];
+    const code = main([...argv, '--cwd', cwd], { log: (l) => stdout.push(l), errlog: (l) => stderr.push(l), ...extra });
+    return { code, stdout: stdout.join('\n'), stderr: stderr.join('\n') };
+  };
+
+  it('ONE qualifier constant serves all three claim surfaces — the tier notice, the USAGE text and the render', (t) => {
+    assert.ok(KIT_BRIDGE_TIER_NOTICE.includes(HOST_HONORS_QUALIFIER), 'the always-printed tier notice conditions its routing claim');
+    assert.ok(runMainWithoutCwd(['--help']).stdout.includes(HOST_HONORS_QUALIFIER), 'the USAGE bridge-tier line conditions it too');
+    const cwd = autonomyProject(t, { sandbox: { network: { allowedDomains: ['example.com'] } } });
+    assert.ok(runAutonomy(['--autonomy'], cwd).stdout.includes(HOST_HONORS_QUALIFIER), 'and so does the render that reports the key');
+  });
+
+  it('a PREVIEW and an APPLY run state the qualifier on the degrade line and name the unknown ONCE', (t) => {
+    const cwd = autonomyProject(t, { sandbox: { network: { allowedDomains: ['example.com'] }, allowUnsandboxedCommands: true } });
+    for (const argv of [['--autonomy'], ['--autonomy', '--apply']]) {
+      const r = runAutonomy(argv, cwd, { findWrapper: allPlaced });
+      assert.equal(r.code, EXIT_OK, r.stderr);
+      // The weakening lines only — `<source> has <key>`; the render's OWN policy degrades (an
+      // unexpressible red-line) are a different class and make no settings-key runtime claim.
+      const degrades = r.stdout.split('\n').filter((l) => l.includes('⚠ DEGRADE') && l.includes('has sandbox.'));
+      assert.ok(degrades.length >= 2, `${argv.join(' ')}: both settings-derived degrades render`);
+      for (const line of degrades) {
+        assert.ok(line.includes(HOST_HONORS_QUALIFIER), `${argv.join(' ')}: a runtime effect is never promised flat: ${line}`);
+      }
+      assert.equal(r.stdout.split(HOST_HONORS_NOTICE_OPENING).length - 1, 1, `${argv.join(' ')}: the unknown is named once, not per line`);
+      // The apply preview IS the point-of-apply warning: the render is what the user reads before
+      // consenting, so the conditional wording has to be there and not only in a doc.
+      assert.match(r.stdout, /WEAKENS the rendered/, 'the classification itself stays a flat statement');
+    }
+  });
+
+  it('the qualifier rides BOTH settings scopes — a local-file key is as host-conditional as a project one', (t) => {
+    const cwd = autonomyProject(
+      t,
+      { sandbox: { network: { allowedDomains: ['example.com'] } } },
+      { sandbox: { filesystem: { allowWrite: ['/etc/elsewhere'] } } },
+    );
+    const r = runAutonomy(['--autonomy'], cwd, { home: '/nonexistent-home' });
+    const scoped = (rel) => r.stdout.split('\n').filter((l) => l.includes('⚠ DEGRADE') && l.includes(`${rel} has sandbox.`));
+    for (const rel of [SETTINGS_FILE, SETTINGS_LOCAL_FILE]) {
+      const lines = scoped(rel);
+      assert.equal(lines.length, 1, `${rel} contributes its own degrade line`);
+      assert.ok(lines[0].includes(HOST_HONORS_QUALIFIER), `${rel}: the runtime claim is conditional in this scope too`);
+    }
+  });
+
+  it('a settings.local MASK of a sandbox key is conditioned; a permissions mask stays flat (the stated boundary)', (t) => {
+    // "the local value wins" is a runtime claim wherever the masked key is a sandbox one — on a host
+    // that ignores sandbox.* neither value takes effect. permissions.* precedence is the harness's
+    // own permission model, so that mask is deliberately NOT hedged.
+    const cwd = autonomyProject(
+      t,
+      { permissions: { allow: [] } },
+      { sandbox: { autoAllowBashIfSandboxed: true }, permissions: { defaultMode: 'plan' } },
+    );
+    const masks = runAutonomy(['--autonomy'], cwd).stdout.split('\n').filter((l) => l.includes('which MASKS'));
+    const sandboxMask = masks.find((l) => l.includes('sandbox.'));
+    const permissionsMask = masks.find((l) => l.includes('permissions.'));
+    assert.ok(sandboxMask, `a sandbox-key mask renders: ${masks.join(' | ')}`);
+    assert.ok(sandboxMask.includes(HOST_HONORS_QUALIFIER), `a sandbox mask states a host-conditional effect: ${sandboxMask}`);
+    assert.ok(permissionsMask, `a permissions mask renders: ${masks.join(' | ')}`);
+    assert.ok(!permissionsMask.includes(HOST_HONORS_QUALIFIER), `the permission model is stated flat, on purpose: ${permissionsMask}`);
+  });
+
+  it('the --check gate surface carries the notice whenever it states one of these effects', (t) => {
+    const cwd = autonomyProject(t, { permissions: { allow: [] } });
+    runAutonomy(['--autonomy', '--apply'], cwd);
+    const r = runAutonomy(['--autonomy', '--check'], cwd);
+    assert.match(r.stdout, /IN SYNC/, r.stdout);
+    assert.ok(r.stdout.includes(HOST_HONORS_QUALIFIER), 'the degrades it prints are conditional');
+    assert.ok(r.stdout.includes(HOST_HONORS_NOTICE_OPENING), 'and the gate read in isolation names the unknown too');
+  });
+
+  it('a CLEAN settings file is conditioned too — the render owns sandbox claims of its own', (t) => {
+    // The render always asserts what the keys it writes DO at run time (the sandbox line, the
+    // fs_outside_repo note, the network/credentials degrades). With no foreign weakening present
+    // those were the last flat promises left, which is exactly where a clean deployment reads them.
+    const cwd = autonomyProject(t, { permissions: { allow: [] } });
+    const r = runAutonomy(['--autonomy'], cwd);
+    assert.equal(r.code, EXIT_OK, r.stderr);
+    assert.doesNotMatch(r.stdout, /⚠ DEGRADE: .*has sandbox\./, 'no foreign key is declared here');
+    assert.ok(r.stdout.includes(HOST_HONORS_NOTICE_OPENING), 'the notice rides EVERY autonomy render');
+    const sandboxLine = r.stdout.split('\n').find((l) => l.startsWith('sandbox: '));
+    assert.ok(sandboxLine.includes(HOST_HONORS_QUALIFIER), `the render-owned sandbox claim is conditional: ${sandboxLine}`);
+    const fsNote = r.stdout.split('\n').find((l) => l.includes('fs_outside_repo=deny'));
+    assert.ok(fsNote.includes(HOST_HONORS_QUALIFIER), `the confinement claim is conditional: ${fsNote}`);
+    // Every OTHER sandbox-effect claim the render can emit is conditional too — the unanimity note
+    // ("the sandbox still confines") and the sandbox-unavailable degrade included.
+    for (const claim of r.stdout.split('\n').filter((l) => l.includes('the sandbox still confines') || l.includes('sandbox UNAVAILABLE on this host'))) {
+      assert.ok(claim.includes(HOST_HONORS_QUALIFIER), `no sandbox-effect claim is left flat: ${claim}`);
+    }
+    for (const claim of r.stdout.split('\n').filter((l) => l.includes('prompt-on-egress') || l.includes('coverage is PARTIAL'))) {
+      assert.ok(claim.includes(HOST_HONORS_QUALIFIER), `every render-owned runtime claim is conditional: ${claim}`);
+    }
+  });
+});
+
+// ── the allowWrite degrade resolves its entries and NAMES them (Decision 12) ────────────────────
+//
+// It used to hold the declared array, print a bare count, and call every entry external without
+// resolving it — so an entry pointing INSIDE the repo was over-reported as an fs_outside_repo
+// weakening, and the maintainer was never told WHICH path to remove. Resolution comes first, on the
+// same leaf the advisor's convergence lane reads; the survivors are named.
+
+describe('velocity — the allowWrite degrade resolves before it judges, and names what survives', () => {
+  // The $TMPDIR boundary this suite resolves against. Registered for removal at suite end — a
+  // describe-level mkdtemp with no cleanup leaks one directory into the system tmp per run.
+  const boundaryTmp = mkdtempSync(join(tmpdir(), 'velocity-tmpdir-'));
+  after(() => rmSync(boundaryTmp, { recursive: true, force: true }));
+  const OUTSIDE_HOME = '/nonexistent-home';
+  const writeProject = (t, allowWrite, scope = SETTINGS_FILE) => {
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    writeJson(join(cwd, 'docs', 'ai', 'autonomy.json'), { 'plan-execution': { autonomy: 'sandbox' } });
+    ensureClaudeDir(cwd);
+    writeJson(pathOf(cwd, scope), { sandbox: { filesystem: { allowWrite } } });
+    return cwd;
+  };
+  const runRender = (cwd) => {
+    const stdout = [];
+    const code = main(['--autonomy', '--cwd', cwd], {
+      log: (l) => stdout.push(l),
+      errlog: () => {},
+      home: OUTSIDE_HOME,
+      env: { ...process.env, TMPDIR: boundaryTmp },
+    });
+    return { code, stdout: stdout.join('\n') };
+  };
+  const allowWriteLines = (out) => out.split('\n').filter((l) => l.includes('allowWrite'));
+  const allowWriteLine = (out) => allowWriteLines(out)[0] ?? null;
+
+  it('an entry resolving OUTSIDE the repo is reported by its RESOLVED path, never by a bare count', (t) => {
+    const cwd = writeProject(t, ['/etc/elsewhere']);
+    const line = allowWriteLine(runRender(cwd).stdout);
+    assert.ok(line, 'an external write allowance is still a loud degrade');
+    assert.ok(line.includes('"/etc/elsewhere"'), `the surviving entry is NAMED: ${line}`);
+    assert.match(line, /WEAKENS the rendered fs_outside_repo red-line/, 'its classification is unchanged');
+  });
+
+  it('entries resolving to the repo root, INSIDE the repo, or inside $TMPDIR are not external weakenings at all', (t) => {
+    const cwd = writeProject(t, ['.', 'build/artifacts', join(boundaryTmp, 'scratch')]);
+    const out = runRender(cwd).stdout;
+    assert.equal(allowWriteLine(out), null, `nothing outside the red-line's own surface is declared: ${out}`);
+  });
+
+  it('a tilde, a relative and an absolute entry all resolve the way a host resolving the key would', (t) => {
+    const cwd = writeProject(t, ['~', '~/creds', '../sibling-of-the-repo', '/etc/elsewhere']);
+    const line = allowWriteLine(runRender(cwd).stdout);
+    assert.ok(line.includes(`"${OUTSIDE_HOME}"`), `a bare ~ resolves against home: ${line}`);
+    assert.ok(line.includes(`"${OUTSIDE_HOME}/creds"`), `a ~/… entry resolves against home: ${line}`);
+    assert.ok(line.includes(`"${resolve(cwd, '..', 'sibling-of-the-repo')}"`), `a relative entry resolves against the project root: ${line}`);
+    assert.ok(line.includes('"/etc/elsewhere"'), `an absolute entry rides as given: ${line}`);
+    assert.ok(line.includes('4 declared path(s)'), `the count agrees with what is named: ${line}`);
+  });
+
+  it('a NON-STRING entry is never dropped into silence — it is counted as unresolvable', (t) => {
+    const cwd = writeProject(t, [42, '.']);
+    const lines = allowWriteLines(runRender(cwd).stdout);
+    assert.equal(lines.length, 1, `only the unverifiable record — no external path resolved: ${lines.join(' | ')}`);
+    assert.match(lines[0], /1 declared entr\(ies\) could not be resolved/, lines[0]);
+    // The entry could not be read, so nothing may be asserted about what it widens.
+    assert.match(lines[0], /CANNOT BE VERIFIED/, lines[0]);
+    assert.doesNotMatch(lines[0], /which WEAKENS/, 'an unreadable entry never carries a weakening claim');
+  });
+
+  it('a BLANK entry is unresolvable too — it never resolves to the repo root and vanishes as "contained"', (t) => {
+    // The quieter of the two malformed shapes, and the one the advisor's own reader already refuses:
+    // '' and '   ' mean nothing to a host, but they resolve to the project root and would be filtered
+    // out as inside-the-repo — silence produced by the containment rule itself.
+    const cwd = writeProject(t, ['   ', '.']);
+    const lines = allowWriteLines(runRender(cwd).stdout);
+    assert.equal(lines.length, 1, lines.join(' | '));
+    assert.match(lines[0], /1 declared entr\(ies\) could not be resolved/, lines[0]);
+    assert.doesNotMatch(lines[0], /which WEAKENS/, 'an unreadable entry never carries a weakening claim');
+  });
+
+  it('a MIXED array reports the two classes SEPARATELY — a resolved external path weakens, an unreadable entry does not', (t) => {
+    const cwd = writeProject(t, ['/etc/elsewhere', 42]);
+    const lines = allowWriteLines(runRender(cwd).stdout);
+    assert.equal(lines.length, 2, `each class gets its own record: ${lines.join(' | ')}`);
+    const weakening = lines.find((l) => l.includes('which WEAKENS'));
+    const unverifiable = lines.find((l) => l.includes('CANNOT BE VERIFIED'));
+    assert.ok(weakening && weakening.includes('"/etc/elsewhere"'), `the resolved path is named on the weakening record: ${lines.join(' | ')}`);
+    assert.ok(unverifiable && /1 declared entr\(ies\)/.test(unverifiable), `the unreadable entry is its own record: ${lines.join(' | ')}`);
+    assert.doesNotMatch(unverifiable, /which WEAKENS/);
+  });
+
+  it('an UNSUPPORTED credentials build states what THIS RENDER hides, never what the host does', (t) => {
+    // The mirror image of the qualifier: claiming the vars are "NOT hidden" asserts a host-wide fact
+    // just as much as claiming they are hidden — a harness-managed sandbox may hide them itself.
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    writeJson(join(cwd, 'docs', 'ai', 'autonomy.json'), { 'plan-execution': { autonomy: 'sandbox' } });
+    ensureClaudeDir(cwd);
+    const stdout = [];
+    // An unresolvable harness binary is the "version unknown" arm — the probe's own honest branch.
+    main(['--autonomy', '--cwd', cwd], {
+      log: (l) => stdout.push(l),
+      errlog: () => {},
+      findOnPath: () => ({ path: null, state: 'absent' }),
+    });
+    const line = stdout.join('\n').split('\n').find((l) => l.includes('sandbox credential denial arrived in'));
+    assert.ok(line, 'an unresolvable/older harness still degrades loudly');
+    assert.match(line, /THIS RENDER hides nothing/, line);
+    assert.match(line, /a host sandbox of its own may still hide them/, 'the absence claim is scoped to the render, not the host');
+  });
+
+  it('a NON-ARRAY allowWrite is reported loudly, never assumed empty', (t) => {
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    writeJson(join(cwd, 'docs', 'ai', 'autonomy.json'), { 'plan-execution': { autonomy: 'sandbox' } });
+    ensureClaudeDir(cwd);
+    writeJson(settingsPath(cwd), { sandbox: { filesystem: { allowWrite: '/etc/elsewhere' } } });
+    const line = allowWriteLine(runRender(cwd).stdout);
+    assert.ok(line, 'a present-but-unreadable declaration is never silence');
+    assert.match(line, /not an array \(string\)/, line);
+    assert.match(line, /UNKNOWN/, 'what it would make writable is stated as unknown, never guessed');
+    // An unreadable value cannot be claimed to widen anything either — "unknown" and "WEAKENS" in
+    // the same line would be the contradiction this whole phase exists to remove.
+    assert.match(line, /CANNOT BE VERIFIED against it \(no claim either way\)/, line);
+    assert.doesNotMatch(line, /which WEAKENS/, 'no effect is asserted over a value that cannot be read');
+  });
+
+  it('a SIBLING-PREFIX entry is not containment — a string prefix never reads as "inside the repo"', (t) => {
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    writeJson(join(cwd, 'docs', 'ai', 'autonomy.json'), { 'plan-execution': { autonomy: 'sandbox' } });
+    ensureClaudeDir(cwd);
+    // `<root>-sibling` shares every byte of the root as a PREFIX and is a different directory.
+    const sibling = `${resolve(cwd)}-sibling`;
+    writeJson(settingsPath(cwd), { sandbox: { filesystem: { allowWrite: [sibling] } } });
+    const line = allowWriteLine(runRender(cwd).stdout);
+    assert.ok(line, 'a sibling of the repo is outside it — the degrade stands');
+    assert.ok(line.includes(`"${sibling}"`), `the sibling is named: ${line}`);
+  });
+
+  it('a path carrying shell metacharacters or a newline renders SAFELY on one line', (t) => {
+    const cwd = writeProject(t, ['/etc/we$(id)ird; rm -rf /', '/etc/two\nlines']);
+    const out = runRender(cwd).stdout;
+    const line = allowWriteLine(out);
+    assert.ok(line, 'the entries still surface');
+    assert.ok(line.includes(String.raw`"/etc/two\nlines"`), `a newline is escaped, never a second rendered line: ${line}`);
+    assert.ok(line.includes(`"${resolve('/etc/we$(id)ird; rm -rf /')}"`), `the metacharacters are shown as data, quoted: ${line}`);
+    assert.equal(out.split('\n').filter((l) => l.includes('allowWrite')).length, 1, 'ONE line, whatever the entry carries');
   });
 });

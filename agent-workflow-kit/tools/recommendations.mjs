@@ -33,7 +33,7 @@
 import { readFileSync, readdirSync, lstatSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   preflightVelocityProfile,
@@ -55,6 +55,10 @@ import { surveyFamily, surveyGateHook, surveyAdrLayoutStrict } from './family-re
 import { probeSandboxMasks, needsMasksApply } from './sandbox-masks.mjs';
 import { shellQuoteArg } from './review-state.mjs';
 import { isFinalCapableDeclaration } from './run-gates.mjs';
+import { loadDeclaration, canonicalCheckerGates, coverageProducerPrecedes, isReviewDependentGate, GATES_REL } from './gates-declaration.mjs';
+// The declared-path resolution + segment containment this item's convergence lane shares with the
+// autonomy render's allowWrite degrade — ONE leaf, so the two answers cannot drift.
+import { resolveDeclaredDir, dirCovers, isResolvableDeclaredEntry } from './declared-paths.mjs';
 import { resolveGitHooksPath } from './commit-guard.mjs';
 import { loadConfig } from './orchestration-config.mjs';
 import { DEFAULT_BUNDLE_ROOT } from './bridge-settings-read.mjs';
@@ -100,6 +104,8 @@ export const SEVERITIES = Object.freeze({
   'sandbox-provision': SEVERITY_OPTIONAL,
   'review-recipe': SEVERITY_ATTENTION,
   'gates-declaration': SEVERITY_OPTIONAL,
+  'gates-inert': SEVERITY_ATTENTION,
+  'gates-inert.no-verification': SEVERITY_ATTENTION,
   'gate-hook': SEVERITY_OPTIONAL,
   'commit-guard': SEVERITY_OPTIONAL,
   'read-lane': SEVERITY_OPTIONAL,
@@ -158,6 +164,8 @@ export const WHATS = Object.freeze({
   'sandbox-provision.installable': 'the OS sandbox is unavailable: {reason} — installable via the doctor (consent tuple {tuple})',
   'review-recipe': '{degraded}',
   'gates-declaration': 'no declared gate matrix (docs/ai/gates.json absent or empty) — gates prompt one by one; the apply PREVIEWS its --apply line, writes nothing',
+  'gates-inert': 'the declared coverage checker ({id}) has no producer before it — it certifies nothing this run, or reads a stale lcov',
+  'gates-inert.no-verification': "all {n} declared gate(s) are the kit's own checkers — the matrix runs no project-verification command",
   'gate-hook': '{n} declared gate(s) prompt per run — the gate-approval hook is not wired',
   'commit-guard': 'the gate matrix is final-run-capable but no commit-guard arms the pre-commit hook — a commit needs no green receipt yet',
   'read-lane': 'the gate hook is wired but the read-only compound lane is off — pipes/chains of seeded reads still prompt one by one',
@@ -214,6 +222,7 @@ export const BENEFITS = Object.freeze({
   'sandbox-provision': `velocity — confined ad-hoc commands stop prompting; ${DUAL_SECURITY_BENEFIT}`,
   'review-recipe': 'recipe coverage — the review AND execution recipes you configured actually run instead of silently degrading',
   'gates-declaration': 'velocity — your project’s gates run as ONE declared batch with a PASS/FAIL table',
+  'gates-inert': 'honest gates — the declared matrix verifies your project instead of reporting green over a check that ran nothing',
   'gate-hook': 'velocity — your own declared gate commands auto-approve byte-exactly (opt-in PreToolUse hook)',
   'commit-guard': 'integrity — commits require the ONE green --final receipt at the exact staged fingerprint (consented pre-commit arm)',
   'read-lane': 'velocity — pipes/chains of your seeded read-only commands auto-approve instead of prompting (opt-in, conservatively classified)',
@@ -250,6 +259,10 @@ export const OPT_IN_CAPABILITIES = Object.freeze([
   { id: 'autonomy-policy', mode: 'set-autonomy', advisorKey: 'autonomy-policy' },
   { id: 'sandbox-provision', mode: 'autonomy-doctor', advisorKey: 'sandbox-provision' },
   { id: 'gates-declaration', mode: 'gates', advisorKey: 'gates-declaration' },
+  // A DECLARED matrix that verifies nothing is its own capability: the gates-declaration offer
+  // converges the moment any gate exists, so it can never observe this state. The advisor key names
+  // the state it reports (an inert declaration), the capability names what the user gains.
+  { id: 'gates-verification', mode: 'gates', advisorKey: 'gates-inert' },
   { id: 'gate-hook', mode: 'hook', advisorKey: 'gate-hook' },
   { id: 'read-lane', mode: 'hook', advisorKey: 'read-lane' },
   { id: 'commit-guard', mode: 'commit-guard', advisorKey: 'commit-guard' },
@@ -409,6 +422,52 @@ const probeGates = ({ root, deps, add, skip }) => {
     }
   } catch (err) {
     skip('gate-hook', err);
+  }
+};
+
+// The INERT-DECLARATION item: a gate matrix that is declared, runs green, and verifies nothing.
+// Both causes are read off the DECLARATION through the same predicates the runner and the fill
+// decide with — the checker side through canonicalCheckerGates, the producer side through the
+// closed matchesCoverageProducer — so the advisor can never disagree with what --final accepts.
+//
+// Cause A (a canonical coverage checker with no producer anywhere in the declaration) is checked
+// FIRST and reported alone: its remedy — declaring the producer — also resolves cause B, because a
+// producer gate is not a kit checker. Its apply is HAND-APPLY: the producer must precede the
+// checker, and the fill is append-only (it refuses by name rather than reordering), so the edit is
+// the maintainer's.
+//
+// An ABSENT or EMPTY declaration belongs to the gates-declaration item; a malformed one throws out
+// of the validated reader and becomes this probe's stated skip, never a guess.
+export const probeGatesInert = ({ root, deps, add, skip }) => {
+  try {
+    const declaration = loadDeclaration(root, deps);
+    if (declaration.outcome === 'missing') return;
+    const gates = declaration.gates;
+    if (gates.length === 0) return;
+    const checkers = canonicalCheckerGates(gates, root);
+    if (checkers.length > 0) {
+      // ORDER decides, through the declaration's own shared predicate: a producer declared AFTER the
+      // checker leaves it just as inert as no producer at all (it reads nothing, or stale bytes), and
+      // only --final refuses that shape — a plain run reports every gate PASS.
+      if (coverageProducerPrecedes(gates, gates.indexOf(checkers[0]))) return; // the pair is live
+      const id = truncatedTo(oneLineOf(checkers[0].id), templateBudget(WHATS['gates-inert']));
+      add(
+        'gates-inert',
+        fillTemplate(WHATS['gates-inert'], { id }),
+        `HAND-APPLY: declare or MOVE a suite gate carrying the coverage reporters BEFORE ${id} in ${GATES_REL} (references/modes/gates.md names the exact form), or drop ${id} — the fill is append-only and cannot reorder for you`,
+      );
+      return;
+    }
+    if (gates.every((gate) => isReviewDependentGate(gate, root))) {
+      add(
+        'gates-inert',
+        fillTemplate(WHATS['gates-inert.no-verification'], { n: gates.length }),
+        `node ${q(toolPath('gates-init.mjs'))} --cwd ${q(root)}`,
+        'gates-inert.no-verification',
+      );
+    }
+  } catch (err) {
+    skip('gates-inert', err);
   }
 };
 
@@ -792,7 +851,7 @@ const readReadLaneToggle = (root, deps) => {
 // D3: the risk-marked keys — every key here has a per-item posture note in the mode doc, surfaced
 // at the consent moment; the static contract test asserts EXACT bidirectional coverage
 // (risk-marked keys == mode-doc note keys — a dropped note goes red, not silent).
-export const RISK_NOTED_KEYS = Object.freeze(['sandbox-lane', 'read-lane', 'worktrees-dir', 'adr-store-migration']);
+export const RISK_NOTED_KEYS = Object.freeze(['sandbox-lane', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert']);
 
 const probeSandboxLane = ({ root, deps, add, skip }) => {
   try {
@@ -849,22 +908,6 @@ const probeSandboxLane = ({ root, deps, add, skip }) => {
   }
 };
 
-// A declared `sandbox.filesystem.allowWrite` entry, resolved the way a host that honors the key
-// resolves it: `~` and `~/…` against the resolved home, every other form against the project root.
-const resolveDeclaredDir = (entry, { home, root }) => {
-  if (entry === '~') return resolve(home);
-  if (entry.startsWith('~/')) return resolve(home, entry.slice(2));
-  return resolve(root, entry);
-};
-
-// Ancestor-or-equal containment on PATH SEGMENTS, never a raw string prefix — a grant on
-// `<p>/farm` must never read as a grant on the sibling `<p>/farmhouse`. A grant on a DESCENDANT
-// never covers its parent: the parent dir is the one provision writes into.
-const dirCovers = (declaredDir, probeDir) => {
-  const base = declaredDir.endsWith(sep) ? declaredDir.slice(0, -sep.length) : declaredDir;
-  return probeDir === base || probeDir.startsWith(`${base}${sep}`);
-};
-
 // D7 lane 1 — the DECLARATION confirmation. A settings entry is not proof of writable CAPABILITY
 // (runtime truth stays with the provision preflight's real create+delete probe); it is proof the
 // maintainer applied this item's own advice, which is what the item may converge on. Both scopes
@@ -899,7 +942,7 @@ const declaredWritableDirs = (scope, rel) => {
   if (filesystem === null || typeof filesystem !== 'object' || Array.isArray(filesystem)) return [];
   const { allowWrite } = filesystem;
   if (allowWrite === undefined) return [];
-  if (!Array.isArray(allowWrite) || !allowWrite.every((entry) => typeof entry === 'string' && entry.trim() !== '')) {
+  if (!Array.isArray(allowWrite) || !allowWrite.every(isResolvableDeclaredEntry)) {
     throw new Error(`${rel}: sandbox.filesystem.allowWrite must be an array of non-empty strings`);
   }
   return allowWrite;
@@ -1010,6 +1053,7 @@ const PROBES = Object.freeze([
   probeSandboxProvision,
   probeReviewRecipe,
   probeGates,
+  probeGatesInert,
   probeCommitGuard,
   probeReadLane,
   probeStateBlockHook,
