@@ -86,6 +86,7 @@ export const resolveDelegationLockPath = (storePath) => `${storePath}${DELEGATIO
 // review receipt included — is MALFORMED, never silently skipped.
 export const parseDelegationStoreText = (raw) => {
   const records = [];
+  const recordLines = [];
   const malformedReasons = [];
   const lines = String(raw).split('\n');
   for (let i = 0; i < lines.length; i += 1) {
@@ -98,17 +99,21 @@ export const parseDelegationStoreText = (raw) => {
       continue;
     }
     const v = validateDelegationRecord(parsed);
-    if (v.ok) records.push(parsed);
-    else malformedReasons.push(`line ${i + 1}: ${v.reason}`);
+    if (v.ok) {
+      records.push(parsed);
+      // The PHYSICAL line, carried beside the record: a reader that refuses has to say WHERE, and
+      // the record's index in a filtered array is not a place anyone can open.
+      recordLines.push(i + 1);
+    } else malformedReasons.push(`line ${i + 1}: ${v.reason}`);
   }
-  return { records, malformed: malformedReasons.length, malformedReasons };
+  return { records, recordLines, malformed: malformedReasons.length, malformedReasons };
 };
 
 // readDelegationStore(path, io?) → { records, malformed, malformedReasons, readError? }. Absent →
 // empty (no records yet is not an error); any other failure → readError, and consumers fail closed
 // on malformed > 0 or readError. A dangling symlink must NOT read as an empty ledger.
 export const readDelegationStore = (path, io = {}) => {
-  const empty = () => ({ records: [], malformed: 0, malformedReasons: [] });
+  const empty = () => ({ records: [], recordLines: [], malformed: 0, malformedReasons: [] });
   const read = readRegularFileNoFollow(path, io);
   if (read.outcome === 'absent') return empty();
   if (read.outcome === 'foreign') return { ...empty(), readError: `the store is a ${read.className}, not a regular file — refusing to read it (fail closed)` };
@@ -333,6 +338,35 @@ const delegationSemanticPreflight = ({ records, snapshot, storePath }) => {
       throw stop(`refusing a fold: treeDigestAtFold ${snapshot.treeDigestAtFold.slice(0, 12)}… does not equal the folded return's postTreeDigest ${target.postTreeDigest.slice(0, 12)}… — the tree moved between the return and the fold, so what was folded is not what was returned; nothing was written`);
     }
   }
+};
+
+// ── the read-side audit (the append path's rules, replayed) ───────────────────────────────────────
+
+// auditDelegationStoreSemantics({ records, recordLines, storePath }) → { ok: true } | { ok: false,
+// line, reason }. The reader validates ONE record at a time; every cross-record rule — duplicate
+// nonce, transition legality, correlation, the wave and retry rules, canonical duplicates — lives in
+// the append preflight and was never re-run on read, so a ledger the append path would have REFUSED
+// still parsed as a pile of valid records. A consumer computing over it (the Phase-3 aggregator's
+// per-thread walk) would count a duplicated nonce twice and inflate its own statistic.
+//
+// The replay closes that by running the SAME preflight per record against the prefix before it, in
+// file order — so legality has ONE authority (this store) rather than a second, drifting copy in
+// each reader. It stops at the FIRST illegal record and names its physical line; a consumer never
+// computes over a "legal prefix", because a ledger that lost a record mid-file is not a smaller
+// ledger, it is an unexplained one.
+//
+// Honest limit, unchanged: this is not a security boundary. A forger can write a fully consistent
+// ledger just as easily. What the replay defends against is a BUGGY producer — the exec-side
+// wrapper Plan 2 introduces — and a hand-edit that got the rules wrong.
+export const auditDelegationStoreSemantics = ({ records, recordLines = [], storePath = '(store)' } = {}) => {
+  for (let i = 0; i < records.length; i += 1) {
+    try {
+      delegationSemanticPreflight({ records: records.slice(0, i), snapshot: records[i], storePath });
+    } catch (err) {
+      return { ok: false, line: recordLines[i] ?? i + 1, reason: err.message };
+    }
+  }
+  return { ok: true };
 };
 
 // ── the append ────────────────────────────────────────────────────────────────────────────────────

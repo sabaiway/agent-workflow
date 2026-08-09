@@ -158,6 +158,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the delegation-ledger IO (delegation Plan 1 Phase 2) — its own store beside the review
       // receipts, the fail-closed reader, and the thread/correlation/retry/wave preflight
       'tools/dispatch-store.mjs',
+      // the delegation ENGINE + its mode contract (delegation Plan 1 Phase 3) — the FORM-only
+      // contract check, the two hand-written ledger records, and the L0 aggregate report
+      'tools/dispatch.mjs',
+      'references/modes/dispatch.md',
       // the D3(c)+(d) final-run checker (fixed git-dir lcov path + red-proof verification) and the
       // D10 read-only pre-commit guard that binds the run-gates --final receipt
       'tools/coverage-check.mjs',
@@ -393,7 +397,13 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       tools/dispatch-store.mjs (path resolution + fail-closed reader + the semantic preflight
     //       the shared leaf runs under the lock, and the D5 uncommitted-state fingerprint helper).
     //       Its colocated *.test.mjs sibling is stripped by files[] and never enters the tarball.
-    assert.equal(packed.length, 189, `tarball file count drifted (${packed.length} ≠ 189)`);
+    // 191 = 189 + the delegation engine (delegation Plan 1 Phase 3), EXACTLY two files:
+    //       tools/dispatch.mjs (check | register | observe | aggregate — the FORM-only contract
+    //       check, the pre-registration and observation records, and the D7 acceptance report) +
+    //       references/modes/dispatch.md (its mode contract, doc-parity-bound on the ONE sentence
+    //       carrying the form-only limit and the aggregator's refusals). The colocated
+    //       *.test.mjs sibling is stripped by files[] and never enters the tarball.
+    assert.equal(packed.length, 191, `tarball file count drifted (${packed.length} ≠ 191)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

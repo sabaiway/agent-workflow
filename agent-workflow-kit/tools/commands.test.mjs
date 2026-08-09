@@ -22,6 +22,7 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SKILL_MD = join(HERE, '..', 'SKILL.md');
+const README_MD = join(HERE, '..', 'README.md');
 const MODES_DIR = join(HERE, '..', 'references', 'modes');
 
 // ── (a) drift-guard: COMMANDS keys ⟷ the `### Mode:` headers in SKILL.md (the ONE authoritative
@@ -247,6 +248,46 @@ describe('formatHelp — the Tune tail (opt-in accelerators)', () => {
     // AD-048: --record mints a gate-run record, so the honest claim is writes-nothing-BY-DEFAULT.
     assert.match(one, /[Ww]rites nothing by default/, 'the one-liner keeps the writes-nothing-by-default honesty');
     assert.equal(kindOf('gates'), PROJECT_EXEC, 'the kind stays PROJECT_EXEC — no re-kind');
+  });
+});
+
+// ── the dispatch entry — the delegation engine's command surface (delegation Plan 1 Phase 3) ────────
+// The three set-equality guards above already prove catalog ⟷ SKILL.md ⟷ references/modes/*.md; this
+// block pins that the dispatch mode is PRESENT in all three at once (so the equality is green WITH
+// it, never green because it is missing everywhere), plus the three facts a set equality cannot see:
+// the kind, the runnable dispatch line in the mode file, and the README Use row a user reads first.
+
+describe('commands surface: catalog ⟷ SKILL.md set-equality with the dispatch mode present', () => {
+  it('the catalog carries dispatch as an Orchestrate WRITER whose one-liner names the form-only limit', () => {
+    const c = commandFor('dispatch');
+    assert.ok(c, 'the dispatch entry exists');
+    assert.equal(c.kind, WRITER, 'register/observe append to the ledger — the honest kind is writer');
+    assert.equal(c.group, 'Orchestrate');
+    assert.match(c.oneLine, /form only/i, 'the one-liner states the FORM-only limit of the contract check');
+    assert.match(c.oneLine, /never commits/i);
+    assert.equal(routeInvocation('dispatch aggregate --wave w'), 'dispatch', 'the token routes with its args');
+  });
+
+  it('SKILL.md documents the mode and its mode file carries the runnable dispatch line', () => {
+    const skill = readFileSync(SKILL_MD, 'utf8');
+    assert.match(skill, /^### Mode: dispatch$/m, 'the SKILL.md header is what the set-equality reads');
+    assert.match(skill, /### Mode: dispatch\n\nwriter — read `\$\{CLAUDE_SKILL_DIR\}\/references\/modes\/dispatch\.md` before acting\./);
+    const mode = readFileSync(join(MODES_DIR, 'dispatch.md'), 'utf8');
+    assert.match(mode, /node \$\{CLAUDE_SKILL_DIR\}\/tools\/dispatch\.mjs/, 'the mode file must carry the runnable dispatch line');
+    for (const verb of ['check', 'register', 'observe', 'aggregate']) {
+      assert.ok(mode.includes(`**\`${verb}`), `the mode file documents the ${verb} verb`);
+    }
+    assert.match(mode, /never commits/i, 'the mode file states the writer never commits');
+    assert.match(mode, /FORM-only/, 'the mode file states the form-only limit');
+  });
+
+  it('the README Use table carries the dispatch row', () => {
+    const readme = readFileSync(README_MD, 'utf8');
+    const row = readme.split('\n').find((l) => l.startsWith('| `/agent-workflow-kit dispatch`'));
+    assert.ok(row, 'the README Use table must carry a /agent-workflow-kit dispatch row');
+    assert.match(row, /form only/i, 'the row keeps the form-only honesty');
+    assert.match(row, /REFUSES/, 'the row states that the aggregator refuses rather than guessing');
+    assert.match(row, /never commits/i);
   });
 });
 

@@ -44,6 +44,7 @@ import { FLOW_SCHEMA_VERSION, FLOW_LAGGING_KIT_CONTRACT } from './orchestration-
 import { FLOW_BOOKKEEPING_FLOOR_RESIDUAL } from './set-flow.mjs';
 import { FLOW_ARMED_HALVES_HEADER } from './procedures.mjs';
 import { RECEIPT_DEADLINE_CONTRACT } from './receipt-deadline.mjs';
+import { DISPATCH_CONTRACT } from './dispatch.mjs';
 // The coverage vocabulary leaf: a CLOSED value set the gates contract doc must enumerate.
 import { COVERAGE } from './coverage-state.mjs';
 
@@ -60,6 +61,7 @@ const PROCEDURES_DOC = 'references/modes/procedures.md';
 const SET_FLOW_DOC = 'references/modes/set-flow.md';
 const RECEIPT_DEADLINE_DOC = 'references/modes/receipt-deadline.md';
 const GATES_DOC = 'references/modes/gates.md';
+const DISPATCH_DOC = 'references/modes/dispatch.md';
 
 // A typed usage failure (exit 2) for the CLI parser — the codebase's typed-error idiom (no classes).
 const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 });
@@ -152,6 +154,11 @@ export const BINDINGS = Object.freeze([
   // satisfaction — is the tool's identity; a mode doc silently drifting off it would re-open the
   // #50 misclassification this runner exists to close.
   valueBinding('receipt-deadline-contract', RECEIPT_DEADLINE_CONTRACT, RECEIPT_DEADLINE_CONTRACT, [RECEIPT_DEADLINE_DOC]),
+  // The delegation engine's contract sentence (delegation Plan 1 Phase 3): the FORM-only limit and
+  // the aggregator's refusals are exactly what a reader must not be able to mis-learn from the mode
+  // doc — a doc that softened either would promise a judgment the checker never makes, or a number
+  // the aggregator refuses to compute.
+  valueBinding('dispatch-contract', DISPATCH_CONTRACT, DISPATCH_CONTRACT, [DISPATCH_DOC]),
   // The runner's `coverage=` summary vocabulary (Decision 8): the gates contract doc enumerates the
   // CLOSED value set, so a renamed or added value fails here instead of leaving the doc describing
   // a vocabulary the runner no longer speaks. One binding per value — the set is small and closed.
@@ -206,8 +213,9 @@ qualifier every settings-derived runtime claim carries, the setup refresh degrad
 orientation contract (shared-queue rule, landing-from-main, no-dependencies install posture), the
 worktrees cleanup-ownership rule, the worktrees include-identity rule, the worktrees
 resume-verify rule, the flow tolerate contract (the accepted flow schema version + the
-lagging-kit sentence, procedures.md), and the runner's closed coverage= summary vocabulary
-(gates.md) — to
+lagging-kit sentence, procedures.md), the receipt-deadline arrival contract, the dispatch engine's
+FORM-only + aggregate-refusal contract (dispatch.md), and the runner's closed coverage= summary
+vocabulary (gates.md) — to
 the exact token its references/modes/*.md contract must carry, and
 asserts the CURRENT value renders into every bound file. A drifted doc, an unreadable bound file,
 or an absent token FAILS CLOSED.

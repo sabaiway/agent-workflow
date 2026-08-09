@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { checkBinding, checkParity, BINDINGS, main } from './doc-parity.mjs';
 import { INCLUDE_IDENTITY_RULE, RESUME_VERIFY_RULE } from './worktrees.mjs';
+import { DISPATCH_CONTRACT } from './dispatch.mjs';
 import { FLOW_SCHEMA_VERSION, FLOW_LAGGING_KIT_CONTRACT } from './orchestration-config.mjs';
 
 // A synthetic file surface: rel → text. A rel absent from the map THROWS (fails closed like a real
@@ -238,6 +239,37 @@ describe('the REAL registry is consistent with the shipped contract docs (dogfoo
     // +/usr/local/bin) makes the doc token drift and this pin plus the gate go red.
     const trusted = BINDINGS.find((b) => b.constant === 'doctor-trusted-dirs');
     assert.equal(trusted.token, '/usr/bin:/bin:/usr/sbin:/sbin');
+  });
+});
+
+// The delegation engine's contract sentence (delegation Plan 1 Phase 3). A binding that merely
+// EXISTS proves nothing — the pin below drives the real checker over a doc with the sentence removed
+// and requires it to go red, so the guard cannot be satisfied by a doc that never carried it.
+describe('doc-parity: the dispatch mode-doc contract sentence binds through the doc-parity registry (non-vacuous)', () => {
+  const DOC = 'references/modes/dispatch.md';
+  const binding = () => BINDINGS.find((b) => b.constant === 'dispatch-contract');
+
+  it('the registry binds the LIVE DISPATCH_CONTRACT constant to the dispatch mode doc', () => {
+    const b = binding();
+    assert.ok(b, 'registry must bind the dispatch engine contract sentence');
+    assert.equal(b.token, DISPATCH_CONTRACT, 'the token is the live exported constant, never a re-typed copy');
+    assert.deepEqual([...b.files], [DOC]);
+    assert.match(b.token, /FORM-only/, 'the sentence states the form-only limit of the checker');
+    assert.match(b.token, /REFUSES/, 'the sentence states that the aggregator refuses');
+    for (const refusal of ['no pre-registration record', 'OPEN thread in scope', 'several waves']) {
+      assert.ok(b.token.includes(refusal), `the sentence names the refusal: ${refusal}`);
+    }
+    assert.match(main(['--help']).stdout, /dispatch engine/, 'the HELP inventory must name the binding');
+  });
+
+  it('the shipped mode doc carries the sentence, and a doc that drops it goes RED (non-vacuous)', () => {
+    const b = binding();
+    assert.equal(checkBinding(b, surface({ [DOC]: `head\n${DISPATCH_CONTRACT}\ntail` })).ok, true);
+    const softened = DISPATCH_CONTRACT.replace('FORM-only', 'thorough');
+    assert.equal(checkBinding(b, surface({ [DOC]: `head\n${softened}\ntail` })).ok, false, 'a softened sentence must not pass');
+    assert.equal(checkBinding(b, surface({ [DOC]: 'a mode doc with no contract sentence' })).ok, false);
+    // …and the REAL file passes the same checker (the dogfood half of the pin).
+    assert.equal(checkParity([b]).every((r) => r.ok), true, 'references/modes/dispatch.md must carry the live sentence');
   });
 });
 
