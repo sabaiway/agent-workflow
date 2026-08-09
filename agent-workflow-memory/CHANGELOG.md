@@ -4,6 +4,37 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 4.2.0 — the gates migration stops handing you a coverage checker with nothing to read (AD-089)
+
+`migrate-gates.mjs` added the canonical `coverage-check` gate to any legacy declaration that lacked
+one — whether or not anything in that declaration would ever WRITE the lcov the checker reads. The
+result passes: the gate reports `skipped-no-lcov` and exits 0, so a migrated project came out with a
+green matrix that certified nothing. This release stops the migration creating that pair, and makes
+it say so when it finds one already there.
+
+- **The checker is added only over a declaration that produces the lcov.** With no producer it is
+  WITHHELD, loudly, with the exact suite-gate line to declare first and an invitation to re-run the
+  migration afterwards.
+- **An already-declared checker over no producer is reported as INERT** — same dead pair, made by an
+  earlier deployment rather than by this migration. Nothing is removed for you; the warning names
+  the remedy, and the result is no longer called final-run-capable.
+- **`finalCapable` now means what it says.** It was computed from the review-state check alone, so a
+  withheld or inert checker still reported a final-run-capable result. The review-state warning is
+  now keyed on its own condition instead of riding that flag.
+- **The "no canonical `unit-tests` entry" note stops firing over a working producer.** It was keyed
+  on the entry ID, but a producer is recognised under any id — the note was sending people to fix
+  something that was already correct.
+- **The producer vocabulary is exported** (`COVERAGE_PRODUCER_BODY`, `matchesCoverageProducer`) as a
+  CLOSED set of the full command forms this family emits, never a substring probe. Its tail rule is
+  a positive path-shaped grammar rather than an operator blocklist, because
+  `node --test <flags> && rm -f <lcov>` runs the suite and then deletes the file. The scope is
+  stated in the source: recognising a producer means "configured with the reporters", never "the
+  lcov survives the command".
+
+This package stays standalone — it imports nothing from the kit, and the kit imports nothing from
+here. The kit carries its own byte-identical copy of the block above, held equal by a text drift
+guard rather than by an import.
+
 ## 4.1.0 — the ADR rotation carries your inbound links with it (AD-087)
 
 Rotating `decisions.md` used to be a link-breaking event: `archive-decisions.mjs` moved ADR
