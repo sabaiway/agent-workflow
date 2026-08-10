@@ -1020,6 +1020,61 @@ describe('summary — stateless D6 render (verdicts, red-proofs, degrades; loud 
     assert.match(r.stdout, /declared degrade for this tree/);
     rmSync(root, { recursive: true, force: true });
   });
+  // A red-proof binds the BYTES of its test file, and coverage-check refuses at --final when those
+  // bytes have moved. Until this render marked it, a stale record printed byte-identically to a live
+  // one, so the discovery point was the commit gate — after both council dispatches, the most
+  // expensive moment in the loop. Third occurrence of the class before it was closed.
+  it('marks a red-proof CURRENT while its bound test file still has the hashed bytes', () => {
+    const { root } = makeRepo();
+    const env = fixtureEnv({ AW_CORE_EVIDENCE_RERUNS: '1' });
+    writeFileSync(
+      join(root, 'lib.test.mjs'),
+      "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('red case', () => { assert.equal(1, 2); });\n",
+    );
+    runRedProof({ cwd: root, env, testId: 'lib.test.mjs#red case' });
+    const r = main(['summary'], { cwd: root, env });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /lib\.test\.mjs#red case — CURRENT/);
+    assert.doesNotMatch(r.stdout, /STALE/);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('marks a red-proof STALE once its bound test file changed, and names the recovery', () => {
+    const { root } = makeRepo();
+    const env = fixtureEnv({ AW_CORE_EVIDENCE_RERUNS: '1' });
+    writeFileSync(
+      join(root, 'lib.test.mjs'),
+      "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('red case', () => { assert.equal(1, 2); });\n",
+    );
+    runRedProof({ cwd: root, env, testId: 'lib.test.mjs#red case' });
+    // The edit that stales it — exactly what a fold does to every proof bound to the file it touches.
+    writeFileSync(
+      join(root, 'lib.test.mjs'),
+      "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('red case', () => { assert.equal(1, 1); });\n",
+    );
+    const r = main(['summary'], { cwd: root, env });
+    assert.equal(r.code, 0, 'the summary REPORTS staleness; refusing is coverage-check\'s job, not this render\'s');
+    assert.match(r.stdout, /lib\.test\.mjs#red case — STALE/);
+    assert.match(r.stdout, /changed after the mint/);
+    assert.match(r.stdout, /re-observe/, 'a marked record must name its recovery, which was written down nowhere');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('marks a red-proof STALE when its bound test file is GONE', () => {
+    const { root } = makeRepo();
+    const env = fixtureEnv({ AW_CORE_EVIDENCE_RERUNS: '1' });
+    writeFileSync(
+      join(root, 'lib.test.mjs'),
+      "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('red case', () => { assert.equal(1, 2); });\n",
+    );
+    runRedProof({ cwd: root, env, testId: 'lib.test.mjs#red case' });
+    rmSync(join(root, 'lib.test.mjs'));
+    const r = main(['summary'], { cwd: root, env });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /lib\.test\.mjs#red case — STALE/);
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it('summary renders the final gate line from the latest completed attempt at the current tree', () => {
     const { root } = makeRepo();
     const fp = computeTreeFingerprint(root);
