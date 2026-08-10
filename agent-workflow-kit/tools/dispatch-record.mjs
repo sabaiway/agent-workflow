@@ -324,7 +324,11 @@ const FIELD_CHECKS = {
   firstPassNum: { ok: isByteCount, want: 'a non-negative integer first-pass numerator' },
   firstPassDen: { ok: (v) => Number.isSafeInteger(v) && v >= 1, want: 'a positive integer first-pass denominator' },
   vehicle: { ok: isPlainObject, want: 'the closed vehicle pair {requested, selected}' },
-  backend: { ok: isNonEmptyString, want: 'a non-empty backend name' },
+  // The safe token grammar, not merely non-empty: the backend NAMES an artifact beside the store
+  // (the exec receipt and its report), so a name outside this grammar records a dispatch whose own
+  // receipt could never be written. One grammar on both sides, or the ledger accepts what the
+  // wrapper cannot mint.
+  backend: { ok: isSafeName, want: 'a backend name in the safe token grammar ([A-Za-z0-9._-]{1,64})' },
   contractDigest: { ok: isHex64, want: 'the 64-hex digest of the canonical contract header' },
   preTreeDigest: { ok: isHex64, want: 'the 64-hex uncommitted-state fingerprint at dispatch' },
   postTreeDigest: { ok: isHex64, want: 'the 64-hex uncommitted-state fingerprint after the run' },
