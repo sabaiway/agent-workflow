@@ -1,6 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+
+import { checkDispatchContractForm, contractDigest } from './dispatch-record.mjs';
+import { resolveDelegationStorePath } from './dispatch-store.mjs';
 
 import {
   EXEC_RECEIPT_SCHEMA_VERSION,
@@ -288,5 +296,127 @@ describe('exec-receipt — parsing', () => {
     assert.match(parseExecReceipt(Buffer.from('{}')).reason, /must be text/);
     assert.match(parseExecReceipt('{not json').reason, /not valid JSON/);
     assert.match(parseExecReceipt('{"schema":1}').reason, /missing field "kind"/);
+  });
+});
+
+// ── cross-package parity: the bytes the WRAPPER really mints ──────────────────────────────────────
+// Everything above pins the contract against fixtures this file wrote. That proves the reader, not
+// the agreement: the producer lives in another package, in another language, and the two could hold
+// consistent-but-different beliefs indefinitely. So this suite drives the real
+// codex-cli-bridge/bin/codex-exec.sh against a fake CLI and asserts the artifact it leaves behind
+// parses HERE without refusal — the settings-valid-parity / posture-parity precedent. Two
+// independently computed values are compared, never copied: the wrapper's contractDigest against
+// dispatch-record's, and the wrapper's artifact directory against the delegation store's own
+// resolution.
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const WRAPPER = join(REPO_ROOT, 'codex-cli-bridge', 'bin', 'codex-exec.sh');
+
+const FAKE_CODEX = [
+  '#!/usr/bin/env bash',
+  'set -u',
+  'if [[ "${1:-}" == "login" ]]; then echo "Logged in using ChatGPT"; exit 0; fi',
+  'out=""',
+  'prev=""',
+  'for a in "$@"; do',
+  '  if [[ "$prev" == "-o" ]]; then out="$a"; fi',
+  '  prev="$a"',
+  'done',
+  'cat >/dev/null',
+  'if [[ -n "$out" ]]; then echo "the delegate reports back" >"$out"; fi',
+  // A heredoc, never `echo` — an unquoted JSON literal hits brace expansion and the thread id is lost.
+  'cat <<EOF',
+  '{"type":"thread.started","thread_id":"sess-parity"}',
+  'EOF',
+  'exit 0',
+  '',
+].join('\n');
+
+const CONTRACT = {
+  schema: 1,
+  nonce: 'parity.1',
+  stepClass: 'code',
+  vehicle: { requested: 'codex-exec', selected: 'codex-exec' },
+  scope: 'the bounded sub-task',
+  inputs: 'the files it may touch',
+  acceptance: 'the named tests',
+  returnShape: 'a diff plus a report',
+  producerContract: 'wrapper-git',
+  deadlineS: 3700,
+  retry: { cap: 1, index: 0 },
+};
+
+// One wrapper run, shared by every assertion below: the run costs ~200ms and nothing in it varies.
+const minted = (() => {
+  const root = mkdtempSync(join(tmpdir(), 'exec-receipt-parity-'));
+  const bin = join(root, 'bin');
+  const repo = join(root, 'repo');
+  mkdirSync(bin, { recursive: true });
+  mkdirSync(repo, { recursive: true });
+  writeFileSync(join(bin, 'codex'), FAKE_CODEX, { mode: 0o755 });
+  const git = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+  git('init', '-q');
+  git('config', 'user.email', 'probe@example.com');
+  git('config', 'user.name', 'probe');
+  writeFileSync(join(repo, 'AGENTS.md'), '# AGENTS\n\nHard Constraints: none (test fixture).\n');
+  git('add', '-A');
+  git('commit', '-qm', 'base');
+  const fence = '```';
+  const contractFile = 'sub-task.md';
+  writeFileSync(join(repo, contractFile), `# sub-task\n\n${fence}aw-dispatch-contract\n${JSON.stringify(CONTRACT, null, 2)}\n${fence}\n`);
+  const run = spawnSync('bash', [WRAPPER, '--nonce', CONTRACT.nonce, contractFile], {
+    cwd: repo,
+    encoding: 'utf8',
+    timeout: 30000,
+    env: { PATH: `${bin}:${process.env.PATH}`, HOME: repo, TMPDIR: process.env.TMPDIR ?? '/tmp' },
+  });
+  const dir = resolveDelegationStorePath(repo) === null ? null : dirname(resolveDelegationStorePath(repo));
+  const read = (name) => {
+    try { return readFileSync(join(dir, name)); } catch { return null; }
+  };
+  const receiptBytes = read(execReceiptBasename('codex', CONTRACT.nonce));
+  const reportBytes = read(execReportBasename('codex', CONTRACT.nonce));
+  rmSync(root, { recursive: true, force: true });
+  return { run, dir, receiptBytes, reportBytes };
+})();
+
+describe('exec-receipt — the WRAPPER and this reader agree (cross-package parity)', () => {
+  it('the wrapper run lands where the delegation store resolves — one directory, two packages', () => {
+    assert.equal(minted.run.status, 0, minted.run.stderr);
+    assert.notEqual(minted.dir, null, 'the fixture repo must resolve a delegation store path');
+    assert.notEqual(minted.receiptBytes, null, `no receipt under ${minted.dir}: ${minted.run.stderr}`);
+    assert.notEqual(minted.reportBytes, null, 'the report rides beside the receipt');
+  });
+
+  it('the bytes the wrapper minted parse under THIS reader without refusal', () => {
+    const parsed = parseExecReceipt(minted.receiptBytes.toString('utf8'));
+    assert.equal(parsed.ok, true, `the wrapper minted bytes this reader refuses: ${parsed.reason}`);
+    const receipt = parsed.receipt;
+    assert.equal(receipt.state, 'terminal');
+    assert.equal(receipt.backend, 'codex');
+    assert.equal(receipt.nonce, CONTRACT.nonce);
+    assert.equal(receipt.sessionId, 'sess-parity');
+    assert.equal(receipt.exitStatus, 0);
+    assert.equal(receipt.outcome, wrapperOutcomeFor(receipt.exitStatus, receipt.sessionId), 'the D3 mapping is ONE rule, not two implementations that agree today');
+  });
+
+  it('the report the wrapper published is exactly what its receipt describes', () => {
+    const receipt = parseExecReceipt(minted.receiptBytes.toString('utf8')).receipt;
+    assert.equal(receipt.reportLength, minted.reportBytes.length);
+    assert.equal(receipt.reportDigest, createHash('sha256').update(minted.reportBytes).digest('hex'));
+  });
+
+  it('the wrapper computed the SAME contractDigest this kit computes — independently, from the same header', () => {
+    const receipt = parseExecReceipt(minted.receiptBytes.toString('utf8')).receipt;
+    const fence = '```';
+    const form = checkDispatchContractForm(`# sub-task\n\n${fence}aw-dispatch-contract\n${JSON.stringify(CONTRACT, null, 2)}\n${fence}\n`);
+    assert.equal(form.ok, true, form.reason);
+    assert.equal(receipt.contractDigest, contractDigest(form.contract),
+      'the two canonicalizations must agree, or `dispatch return` would refuse every honest run');
+  });
+
+  it('the wrapperVersion it stamps is the bridge version the release lane bumps', () => {
+    const receipt = parseExecReceipt(minted.receiptBytes.toString('utf8')).receipt;
+    const manifest = JSON.parse(readFileSync(join(REPO_ROOT, 'codex-cli-bridge', 'capability.json'), 'utf8'));
+    assert.equal(receipt.wrapperVersion, manifest.version);
   });
 });
