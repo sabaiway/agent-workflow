@@ -1014,6 +1014,26 @@ export const runDegrade = ({ cwd = process.cwd(), env = process.env, backend, re
 
 // ── the summary verb (D6): ONE stateless render — receipts + evidence store, no ledger ────────────
 
+// A red-proof binds the BYTES of the test file it was observed on, and the final-run checker refuses
+// when those bytes have moved (coverage-check.mjs, the hash-mismatch arm). This render used to print a
+// stale record byte-identically to a live one, so the only place staleness surfaced was that gate —
+// after both council dispatches, at the commit boundary, which is the most expensive discovery point
+// in the loop. The currency is therefore computed HERE, from the SAME two helpers the checker uses, so
+// the render and the gate can never disagree about what stale means.
+//
+// An unresolvable or unreadable file is STALE, not unknown: a proof nobody can re-check is not a proof
+// anyone should read as current.
+export const redProofCurrency = (rootTop, record) => {
+  if (rootTop == null) return { state: 'stale', detail: 'the work-tree root is not resolvable' };
+  const resolved = resolveTestFile(rootTop, record.file);
+  if (!resolved.ok) return { state: 'stale', detail: resolved.reason };
+  const current = hashFileBytes(resolved.abs);
+  if (current == null) return { state: 'stale', detail: `cannot read "${record.file}"` };
+  return current === record.fileHash
+    ? { state: 'current' }
+    : { state: 'stale', detail: 'the bound test file changed after the mint' };
+};
+
 export const buildSummaryState = ({ cwd = process.cwd(), env = process.env } = {}) => {
   const fingerprint = computeTreeFingerprint(cwd);
   const base = resolveBase(cwd);
@@ -1028,7 +1048,10 @@ export const buildSummaryState = ({ cwd = process.cwd(), env = process.env } = {
     backend: b,
     summary: summarizeReviewReceiptsForTree(receipts.filter((r) => r.backend === b), fingerprint),
   }));
-  const redProofs = authoritativeOfKind(store.records, 'red-proof').filter((r) => r.base === base);
+  const rootTop = gitLine(['rev-parse', '--show-toplevel'], cwd);
+  const redProofs = authoritativeOfKind(store.records, 'red-proof')
+    .filter((r) => r.base === base)
+    .map((r) => ({ ...r, currency: redProofCurrency(rootTop, r) }));
   const degrades = authoritativeOfKind(store.records, 'degrade').filter((r) => r.fingerprint === fingerprint);
   const finalRun = authoritativeOfKind(store.records, 'final').find((r) => r.fingerprintBefore === fingerprint) ?? null;
   // A malformed/unreadable store makes the AUTHORITATIVE selection untrustworthy (a dropped later
@@ -1078,7 +1101,16 @@ export const renderSummary = (s) => {
     ? [`  evidence sections WITHHELD — the store is unavailable (${s.storeMalformed} malformed line(s)${s.storeReadError ? `, read error: ${s.storeReadError}` : ''}); a dropped line could resurrect a superseded record — inspect ${s.storePath}`]
     : [
         `  red-proof records (current base): ${s.redProofs.length ? '' : '(none)'}`,
-        ...s.redProofs.map((r) => `    ${r.testId} — ${r.reds}/${r.runs} red, hash ${short(r.fileHash)}, pre-fix fingerprint ${short(r.fingerprint)}`),
+        ...s.redProofs.map((r) => {
+          const stale = r.currency?.state === 'stale';
+          const mark = stale ? `STALE (${r.currency.detail})` : 'CURRENT';
+          return `    ${r.testId} — ${mark} · ${r.reds}/${r.runs} red, hash ${short(r.fileHash)}, pre-fix fingerprint ${short(r.fingerprint)}`;
+        }),
+        // The recovery, printed once and only when it is needed — it was written down nowhere, and
+        // the loop paid for that three times.
+        ...(s.redProofs.some((r) => r.currency?.state === 'stale')
+          ? ['    ↳ a STALE proof is refused by run-gates --final: park the fix so the bound test fails again, re-observe it with `core-evidence red-proof "<testId>"`, then restore the fix. Edit test files FIRST and re-observe ONCE per park — every proof bound to an edited file goes stale together.']
+          : []),
         `  degrade records (current tree): ${s.degrades.length ? '' : '(none)'}`,
         ...s.degrades.map((d) => `    ${d.backend} — ${d.reason} (${d.timestamp})`),
       ];
