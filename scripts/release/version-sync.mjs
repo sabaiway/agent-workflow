@@ -3,8 +3,8 @@
 //
 // Each family package carries its version in up to FOUR places: package.json, capability.json,
 // SKILL.md frontmatter `metadata.version`, and the newest `## X.Y.Z` heading of its CHANGELOG.md.
-// A bridge ALSO carries a FIFTH constant the four miss — `AW_BRIDGE_VERSION` in its `bin/*.sh`
-// review wrapper (and the kit mirror) — verified and bumped by the dedicated lane below.
+// A bridge ALSO carries a FIFTH constant the four miss — `AW_BRIDGE_VERSION` in every `bin/*.sh`
+// wrapper that MINTS a receipt (and the kit mirror) — verified and bumped by the dedicated lane below.
 // A release bump used to be ~12-20 hand-edits, and the old failure mode is one source silently
 // left behind. This script IS the deterministic check the release cycle runs instead of a
 // frontier re-read: for every package dir it collects each source THE PACKAGE ACTUALLY CARRIES
@@ -23,7 +23,7 @@
 // an npm package (memory / engine / kit) carries all four sources — an ABSENT one is a loud
 // refusal (absence is invisible to the verify pass, so the writer must catch it); a bridge
 // carries capability.json + SKILL.md PLUS the `AW_BRIDGE_VERSION` wrapper constant in `bin/*.sh`
-// (rewritten under a closed one-anchor rule), and a bridge bump re-syncs that bridge's kit mirror
+// (every anchor rewritten, under the closed one-anchor-PER-FILE rule), and a bridge bump re-syncs that bridge's kit mirror
 // via scripts/sync-mirrors.mjs. Discipline: preflight-then-mutate (every target source parses
 // BEFORE any write), per-source idempotent apply (a source already at the target is skipped
 // with a stated note — a killed half-write is repaired by re-running), never a downgrade (an
@@ -120,12 +120,16 @@ export const readChangelogHeadingVersion = (text) => {
 
 // ── the AW_BRIDGE_VERSION wrapper constant (the AD-053 defect: a FIFTH source, invisible above) ──
 
-// A bridge review wrapper carries `AW_BRIDGE_VERSION="X.Y.Z"` (the receipt identity, AD-038) — a
-// version constant the four-source verify pass never collected, so a bump silently left it behind
-// (2 real release blockers on AD-053, hand-fixed). The kit mirror carries a byte-identical copy, so
-// the drift class spans FOUR constants (each bridge's canonical wrapper + its kit mirror). The
-// closed rule: across a bridge's bin/*.sh there is EXACTLY ONE such anchored assignment (today the
-// review wrapper). Match ANY assignment line (canonical or not) and count EVERY occurrence — a valid
+// A bridge receipt-minting wrapper carries `AW_BRIDGE_VERSION="X.Y.Z"` (the receipt identity,
+// AD-038) — a version constant the four-source verify pass never collected, so a bump silently left
+// it behind (2 real release blockers on AD-053, hand-fixed). The kit mirror carries a byte-identical
+// copy, so the drift class spans every such constant on BOTH surfaces (each bridge's canonical
+// wrappers + its kit mirror). The closed rule is per FILE, not per bridge: **at most ONE anchored
+// assignment in any one bin/*.sh, and at least one across them**. Two anchors in ONE file is the
+// SHADOW the rule exists to catch (bash resolves the LAST assignment, so the receipt drifts);
+// two anchors in TWO files is ordinary — codex-cli-bridge mints a receipt from BOTH its review
+// wrapper (AD-038) and its exec wrapper (the delegation exec receipt), and each needs the version it
+// stamps. Match ANY assignment line (canonical or not) and count EVERY occurrence — a valid
 // line plus a later malformed/unquoted one would pass a canonical-only match while bash actually uses
 // the LAST assignment (receipt drift); its canonical form is validated separately. The detection
 // spans every shell assignment FORM that sets the scalar, not only a bare statement-start one, so a
@@ -138,8 +142,37 @@ export const readChangelogHeadingVersion = (text) => {
 // enumeration — R3 fold). Only the bare canonical spelling is accepted as VALID (below), so every
 // recognized non-bare form is DETECTED (counted) then rejected as non-canonical. Residual out-of-scope
 // forms (an array element, an eval-constructed name) are not scalar shadows here.
-const AW_BRIDGE_VERSION_ASSIGN = /^[ \t]*(?:(?:export|declare|readonly|typeset|local)(?:[ \t]+(?:--|[+-][A-Za-z]+))*[ \t]+)?AW_BRIDGE_VERSION\+?=.*$/gm;
-const AW_BRIDGE_VERSION_CANONICAL = /^[ \t]*AW_BRIDGE_VERSION="(\d+\.\d+\.\d+)"[ \t]*$/;
+// POSITION-INDEPENDENT on purpose. A line-anchored match missed `OTHER=x AW_BRIDGE_VERSION="9.9.9"`
+// and its `export`-prefixed twin — both valid shell, both applied LAST by bash, both invisible to
+// verify and to the bump. Rather than enumerate the prefixes that may precede an assignment (which is
+// modelling shell again, the thing this lane has spent four rounds removing), ANY occurrence anywhere
+// in a line counts. The policy that makes that safe is textual and fail-closed: an occurrence that is
+// not the DECLARED anchor is refused, wherever it sits — comment, --help text or heredoc body
+// included. A false alarm is a one-line fix an operator can see; a missed shadow ships a version
+// nobody chose.
+const AW_BRIDGE_VERSION_ASSIGN = /AW_BRIDGE_VERSION\+?=/;
+// The anchor is DECLARED, not inferred. It carries a marker no decoy picks up by accident:
+//
+//     AW_BRIDGE_VERSION="3.4.1"  # aw-version-anchor
+//
+// Everything before this was a scanner that had to model shell structure, and each one had a blind
+// spot: an apostrophe scanner that ended early, an anchor scan that took heredoc decoys as real, a
+// heredoc tracker that MASKED real anchors, and then the same tracker admitting decoys because it
+// does not know `<<\JS`, `$'JS'`, or the second tag in `cmd <<A <<B`. Four edges in one subarea is
+// the signal to remove the surface rather than narrow it: with a declared marker there is NO heredoc
+// knowledge left in this script, and the rule is checkable by eye — one marked line, and no other
+// assignment-shaped line anywhere in the file.
+//
+// Honest bound, stated because it is not what "structurally unambiguous" would mean literally: the
+// marker defeats an ACCIDENTAL decoy (a JS core that happens to contain the text), not a deliberate
+// one. That is the threat model here — the failure this class actually produced was accident.
+//
+// What a missing anchor really costs, corrected: it is NOT simply an empty version. Under
+// `set -euo pipefail` a path that reaches the expansion dies loudly with "unbound variable" — but a
+// nonce-LESS codex-exec never reaches it, and an INHERITED environment value would be recorded
+// instead, so a wrapper stripped of its anchor can stamp a version nobody in this repo chose.
+const AW_BRIDGE_VERSION_MARKER = '# aw-version-anchor';
+const AW_BRIDGE_VERSION_CANONICAL = /^[ \t]*AW_BRIDGE_VERSION="(\d+\.\d+\.\d+)"[ \t]+# aw-version-anchor[ \t]*$/;
 
 export const findBridgeVersionAnchors = (pkgDir) => {
   const binDir = join(pkgDir, 'bin');
@@ -150,11 +183,37 @@ export const findBridgeVersionAnchors = (pkgDir) => {
     .flatMap((name) => {
       const path = join(binDir, name);
       const text = readFileSync(path, 'utf8');
-      return (text.match(AW_BRIDGE_VERSION_ASSIGN) ?? []).map((raw) => {
-        const m = raw.match(AW_BRIDGE_VERSION_CANONICAL);
-        return { path, text, raw, current: m ? m[1] : null, valid: m !== null };
-      });
+      return text.split('\n')
+        .map((raw, index) => ({ raw, index }))
+        .filter(({ raw }) => AW_BRIDGE_VERSION_ASSIGN.test(raw))
+        .map(({ index, raw }) => {
+          const m = raw.match(AW_BRIDGE_VERSION_CANONICAL);
+          return { path, text, raw, index, current: m ? m[1] : null, valid: m !== null };
+        });
     });
+};
+
+// A wrapper that USES the constant must anchor it. Without this, "at least one anchor per surface"
+// hides a deletion: drop `AW_BRIDGE_VERSION=` from the exec wrapper while the review wrapper keeps
+// its own, and verify calls the package in sync while the exec receipts stamp an empty version and
+// the bump has nothing to restore. The predicate is the USE — a shell expansion of the name — so it
+// maintains itself: a wrapper that stops minting receipts stops referencing it and drops out, and a
+// new one that starts is caught the moment it reads the variable. (An explicit list would have to be
+// edited by hand in exactly the case nobody remembers to.)
+const AW_BRIDGE_VERSION_USE = /\$\{?AW_BRIDGE_VERSION\b/;
+
+export const findBridgeVersionUsers = (pkgDir) => {
+  const binDir = join(pkgDir, 'bin');
+  if (!existsSync(binDir)) return [];
+  return readdirSync(binDir)
+    .filter((name) => name.endsWith('.sh'))
+    .sort()
+    .map((name) => ({ path: join(binDir, name), text: readFileSync(join(binDir, name), 'utf8') }))
+    // FAIL-CLOSED on purpose: ANY occurrence counts, heredoc bodies and comments included. Demanding
+    // an anchor from a wrapper that merely MENTIONS the constant is a loud one-line fix; missing a
+    // real use ships an empty version into every receipt that wrapper mints. The earlier
+    // heredoc-aware version was the fail-OPEN half of the same mistake as the anchor filter.
+    .filter((file) => AW_BRIDGE_VERSION_USE.test(file.text));
 };
 
 // The two surfaces a bridge's AW_BRIDGE_VERSION lives on — the canonical wrapper and its kit mirror.
@@ -163,29 +222,58 @@ const bridgeWrapperSurfaces = (root, dir) => [
   { where: `agent-workflow-kit/bridges/${dir}/bin`, pkgDir: join(root, 'agent-workflow-kit', 'bridges', dir) },
 ];
 
-// Verify AW_BRIDGE_VERSION ⟷ capability.json (plan 4.2) on BOTH surfaces (mirror included): exactly
-// one anchor each, its value == the bridge's capability.json version. The comparison source is
-// capability.json DIRECTLY (not the authoritative base, which is SKILL.md-derived for a bridge) so
-// the diagnostic names the true source; an unparseable capability.json is the
-// source pass's problem, not this one. Any drift, a missing anchor, or a duplicate is a named
-// problem (a mirror-only drift reds too).
+// Group the anchors by the FILE they live in — the shadow rule is per file, the presence rule is
+// per surface. Insertion order follows findBridgeVersionAnchors' sorted walk, so diagnostics are
+// stable.
+const anchorsByFile = (anchors) => {
+  const byFile = new Map();
+  for (const anchor of anchors) {
+    if (!byFile.has(anchor.path)) byFile.set(anchor.path, []);
+    byFile.get(anchor.path).push(anchor);
+  }
+  return byFile;
+};
+
+// Verify AW_BRIDGE_VERSION ⟷ capability.json (plan 4.2) on BOTH surfaces (mirror included): at most
+// one anchor per bin/*.sh, at least one across them, each value == the bridge's capability.json
+// version. The comparison source is capability.json DIRECTLY (not the authoritative base, which is
+// SKILL.md-derived for a bridge) so the diagnostic names the true source; an unparseable
+// capability.json is the source pass's problem, not this one. Any drift, a missing anchor, or a
+// same-file shadow is a named problem (a mirror-only drift reds too), and EVERY anchor is checked —
+// stopping at the first would let a second wrapper's stale constant ship.
 export const checkBridgeWrapperVersion = (root, dir) => {
   const problems = [];
   const capVersion = readJsonVersion(join(root, dir, 'capability.json'));
   if (capVersion === null) return problems;
   for (const { where, pkgDir } of bridgeWrapperSurfaces(root, dir)) {
     const anchors = findBridgeVersionAnchors(pkgDir);
-    if (anchors.length !== 1) {
-      problems.push(`${where}/*.sh: expected EXACTLY ONE AW_BRIDGE_VERSION anchor, found ${anchors.length}`);
+    if (anchors.length === 0) {
+      problems.push(`${where}/*.sh: expected AT LEAST ONE AW_BRIDGE_VERSION anchor, found 0`);
       continue;
     }
-    const anchor = anchors[0];
-    if (!anchor.valid) {
-      problems.push(`${where}/${basename(anchor.path)}: AW_BRIDGE_VERSION is not a canonical "X.Y.Z" assignment (${anchor.raw.trim()})`);
-      continue;
+    const anchored = new Set(anchors.filter((a) => a.valid).map((a) => a.path));
+    for (const user of findBridgeVersionUsers(pkgDir)) {
+      if (!anchored.has(user.path)) {
+        problems.push(`${where}/${basename(user.path)}: USES $AW_BRIDGE_VERSION but carries no anchor — it would stamp an empty version into every receipt it mints, and the bump has nothing to rewrite`);
+      }
     }
-    if (anchor.current !== capVersion) {
-      problems.push(`${where}/${basename(anchor.path)}: AW_BRIDGE_VERSION ${anchor.current} ≠ ${capVersion} (capability.json)`);
+    for (const [path, fileAnchors] of anchorsByFile(anchors)) {
+      const marked = fileAnchors.filter((a) => a.valid);
+      const unmarked = fileAnchors.filter((a) => !a.valid);
+      // Any assignment-shaped line that is NOT the declared anchor: a genuine shadow bash would
+      // resolve last, or a decoy that could stand in for a deleted anchor. Both are refused by line,
+      // and neither needs anyone to know whether it sits inside a heredoc.
+      for (const stray of unmarked) {
+        problems.push(`${where}/${basename(path)} line ${stray.index + 1}: an AW_BRIDGE_VERSION assignment that is not the declared anchor (${stray.raw.trim()}) — the anchor is the ONE line spelled \`AW_BRIDGE_VERSION="X.Y.Z"  ${AW_BRIDGE_VERSION_MARKER}\`; every other assignment-shaped line is refused, whether it is a shadow bash would resolve last or text that could stand in for a deleted anchor`);
+      }
+      if (marked.length > 1) {
+        problems.push(`${where}/${basename(path)}: expected AT MOST ONE declared AW_BRIDGE_VERSION anchor in one file, found ${marked.length} — bash resolves the LAST assignment, so a shadow drifts the receipt`);
+        continue;
+      }
+      if (marked.length === 0) continue; // reported by the USE rule above when the wrapper needs one
+      if (marked[0].current !== capVersion) {
+        problems.push(`${where}/${basename(path)}: AW_BRIDGE_VERSION ${marked[0].current} ≠ ${capVersion} (capability.json)`);
+      }
     }
   }
   return problems;
@@ -345,37 +433,68 @@ const prepareChangelogWrite = (path, label, target, today) => {
   };
 };
 
-// The bridge wrapper's AW_BRIDGE_VERSION bump (4.1): rewrite the ONE anchored assignment across the
-// bridge's bin/*.sh under the closed rule — zero or >1 anchors is a loud preflight refusal, zero
-// writes. Only the CANONICAL wrapper is rewritten here; the kit mirror is re-synced from it by
-// syncBridgeMirror after the applies (buildBumpPlan's caller), so the mirror moves byte-identical.
-const prepareBridgeVersionWrite = (pkgDir, dir, target) => {
+// The bridge wrappers' AW_BRIDGE_VERSION bump (4.1): rewrite EVERY anchored assignment across the
+// bridge's bin/*.sh under the closed rule — zero anchors across them, or a SAME-FILE shadow, is a
+// loud preflight refusal with zero writes. One write per anchored FILE, so a bridge whose review and
+// exec wrappers both mint receipts moves both constants in one bump; a sibling carrying no anchor is
+// never touched. Only the CANONICAL wrappers are rewritten here; the kit mirror is re-synced from
+// them by syncBridgeMirror after the applies (buildBumpPlan's caller), so the mirror moves
+// byte-identical.
+// The anchor rules over ONE surface, throwing on the first violation. Run over BOTH surfaces before
+// any write is prepared: the mirror is regenerated from the canonical copy AFTER the applies, so a
+// mirror-only missing, doubled or unmarked anchor used to be silently overwritten — the bump never
+// looked, and syncBridgeMirror erased the evidence the verify pass had reported. Refuse rather than
+// repair: the mirror is where AD-053 actually bit, a hand-edited mirror is itself a defect worth
+// seeing, and preflight-before-mutate is the property that makes every other refusal here credible.
+const assertBridgeAnchorRules = (pkgDir, where) => {
   const anchors = findBridgeVersionAnchors(pkgDir);
-  const label = `${dir}/bin/*.sh (AW_BRIDGE_VERSION)`;
-  if (anchors.length !== 1) {
-    throw fail(1, `${label}: expected EXACTLY ONE anchored AW_BRIDGE_VERSION="X.Y.Z" across bin/*.sh, found ${anchors.length} — refusing the bump (zero writes)`);
+  if (anchors.filter((a) => a.valid).length === 0) {
+    throw fail(1, `${where}/*.sh: expected AT LEAST ONE declared AW_BRIDGE_VERSION="X.Y.Z"  ${AW_BRIDGE_VERSION_MARKER} across bin/*.sh, found 0 — refusing the bump (zero writes)`);
   }
-  const { path, text, current, valid, raw } = anchors[0];
-  const relLabel = `${dir}/bin/${basename(path)}`;
-  // Never REWRITE a non-canonical anchor: an unquoted `AW_BRIDGE_VERSION=9.9.9` is shell-valid, so
-  // canonicalizing it down to a lower target would be a silent downgrade the valid-only guard misses.
-  // Refuse it — the operator fixes a malformed anchor by hand (the verify pass already flags it).
-  if (!valid) {
-    throw fail(1, `${relLabel}: AW_BRIDGE_VERSION is not a canonical "X.Y.Z" assignment (${raw.trim()}) — fix it by hand first; the bump never rewrites a non-canonical anchor (it could hide a downgrade)`);
+  const anchored = new Set(anchors.filter((a) => a.valid).map((a) => a.path));
+  const orphan = findBridgeVersionUsers(pkgDir).find((user) => !anchored.has(user.path));
+  if (orphan !== undefined) {
+    throw fail(1, `${where}/${basename(orphan.path)}: USES $AW_BRIDGE_VERSION but carries no anchor to rewrite — refusing the bump (zero writes); restore the anchor or stop using the constant`);
   }
-  // A canonical anchor can still drift AHEAD of the authoritative source (which is all the outer
-  // downgrade check guards), so guard the anchor itself against a downgrade too.
-  if (compareSemver(current, target) > 0) {
-    throw fail(1, `${relLabel}: AW_BRIDGE_VERSION ${current} is ABOVE --bump ${target} — wrapper downgrade refused (repair an uncommitted wrong bump with git, never a downgrade flag)`);
+  for (const [path, fileAnchors] of anchorsByFile(anchors)) {
+    const stray = fileAnchors.find((a) => !a.valid);
+    if (stray !== undefined) {
+      throw fail(1, `${where}/${basename(path)} line ${stray.index + 1}: an AW_BRIDGE_VERSION assignment that is not the declared anchor (${stray.raw.trim()}) — the bump rewrites only the ONE line spelled AW_BRIDGE_VERSION="X.Y.Z"  ${AW_BRIDGE_VERSION_MARKER}; fix this line by hand (zero writes)`);
+    }
+    if (fileAnchors.length > 1) {
+      throw fail(1, `${where}/${basename(path)}: expected AT MOST ONE declared AW_BRIDGE_VERSION anchor in one file, found ${fileAnchors.length} — bash resolves the LAST assignment, so a shadow drifts the receipt; refusing the bump (zero writes)`);
+    }
   }
-  if (current === target) return { label: relLabel, path, action: 'skip', note: `AW_BRIDGE_VERSION already at ${target}` };
-  return {
-    label: relLabel,
-    path,
-    action: 'write',
-    note: `AW_BRIDGE_VERSION ${current} → ${target}`,
-    nextText: text.replace(/^[ \t]*AW_BRIDGE_VERSION=.*$/m, `AW_BRIDGE_VERSION="${target}"`),
-  };
+  return anchors;
+};
+
+const prepareBridgeVersionWrites = (root, dir, target) => {
+  const surfaces = bridgeWrapperSurfaces(root, dir);
+  // BOTH surfaces are validated before ANY write is prepared; only the canonical one is rewritten.
+  for (const { where, pkgDir } of surfaces) assertBridgeAnchorRules(pkgDir, where);
+  const anchors = findBridgeVersionAnchors(surfaces[0].pkgDir);
+  return [...anchorsByFile(anchors)].map(([path, fileAnchors]) => {
+    const relLabel = `${dir}/bin/${basename(path)}`;
+    const { text, current, index } = fileAnchors[0];
+    // A canonical anchor can still drift AHEAD of the authoritative source (which is all the outer
+    // downgrade check guards), so guard the anchor itself against a downgrade too.
+    if (compareSemver(current, target) > 0) {
+      throw fail(1, `${relLabel}: AW_BRIDGE_VERSION ${current} is ABOVE --bump ${target} — wrapper downgrade refused (repair an uncommitted wrong bump with git, never a downgrade flag)`);
+    }
+    if (current === target) return { label: relLabel, path, action: 'skip', note: `AW_BRIDGE_VERSION already at ${target}` };
+    // The rewrite targets the LINE the scan matched, by index — never the first textual hit. A decoy
+    // inside a heredoc sits earlier in some files, and a positional `.replace(/…/m)` would edit that
+    // one and leave the real constant behind.
+    const rewritten = text.split('\n');
+    rewritten[index] = `AW_BRIDGE_VERSION="${target}"  ${AW_BRIDGE_VERSION_MARKER}`;
+    return {
+      label: relLabel,
+      path,
+      action: 'write',
+      note: `AW_BRIDGE_VERSION ${current} → ${target}`,
+      nextText: rewritten.join('\n'),
+    };
+  });
 };
 
 // Preflight ONE bump target: existence of every required source, downgrade refusal, and a
@@ -404,9 +523,10 @@ export const buildBumpPlan = (root, dir, targetVersion, today) => {
     if (file === 'CHANGELOG.md') return prepareChangelogWrite(path, label, targetVersion, today);
     return prepareJsonVersionWrite(path, label, targetVersion);
   });
-  // A bridge carries the AW_BRIDGE_VERSION wrapper constant too — bump it under the closed one-anchor
-  // rule (part of THIS preflight, so a bad anchor refuses before any write across every target).
-  if (BRIDGE_DIRS.includes(dir)) writes.push(prepareBridgeVersionWrite(pkgDir, dir, targetVersion));
+  // A bridge carries the AW_BRIDGE_VERSION wrapper constant too, once per receipt-minting wrapper —
+  // bump each under the closed one-anchor-PER-FILE rule (part of THIS preflight, so a bad anchor
+  // refuses before any write across every target).
+  if (BRIDGE_DIRS.includes(dir)) writes.push(...prepareBridgeVersionWrites(root, dir, targetVersion));
   return { dir, targetVersion, writes };
 };
 

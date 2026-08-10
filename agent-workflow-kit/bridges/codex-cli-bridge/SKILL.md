@@ -90,6 +90,9 @@ codex-exec <file|-> -- <extra codex flags...>     # GUARDED passthrough after `-
 codex-exec --resume-last docs/plans/<slug>.md    # continue the last session (id from the sidecar)
 echo "now do step 2 ..." | codex-exec --resume <session-id> -
 
+# ACCOUNTED EXECUTION (the delegation ledger's exec lane — see "Dispatch identity" below):
+codex-exec --nonce <n> docs/plans/<slug>-dispatch.md   # mints a fail-closed exec receipt
+
 # REVIEW (read-only sandbox — codex cannot edit anything, only emits findings):
 codex-review plan docs/plans/<slug>.md           # critique a plan
 codex-review code                                # review the current working-tree diff (precomputed)
@@ -135,16 +138,52 @@ defeat a policy is guarded — see [§ Models](#models-quality-first-pinned).
 |---|---|---|
 | `CODEX_MODEL` | `gpt-5.6-sol` (pinned) | model; non-default REFUSED unless `CODEX_PROBE=1` |
 | `CODEX_EFFORT` | `xhigh` (pinned) | reasoning effort; non-default REFUSED unless `CODEX_PROBE=1` |
-| `CODEX_HARD_TIMEOUT` | `3600` (exec) / `1800` (review) | hard wall-clock cap (seconds) via `timeout`/`gtimeout`; exit 124/137 ⇒ "exceeded hard cap". No `timeout` binary ⇒ exec warns loudly + runs uncapped; `codex-review` REFUSES pre-spend (fail-closed preflight). |
+| `CODEX_HARD_TIMEOUT` | `3600` (exec) / `1800` (review) | hard wall-clock cap (seconds) via `timeout`/`gtimeout`; exit 124/137 ⇒ "exceeded hard cap". No `timeout` binary ⇒ a nonce-less exec warns loudly + runs uncapped, a **nonced** exec REFUSES pre-spend (an accounted dispatch that cannot be capped can never honour the terminal-exit rule), and `codex-review` REFUSES pre-spend (fail-closed preflight). |
 | `CODEX_SERVICE_TIER` | unset (standard tier) | **SPEND knob**: `priority` (catalog name "Fast") = ~1.5× token speed at a **2.5× credit rate** on gpt-5.6-sol — quality-neutral (same model). codex accepts any `-c service_tier` string silently (probe-pinned 2026-07-05), so the wrapper validates: an unsupported value warns and runs standard. Env or settings file. |
 | `CODEX_SESSION_FILE` | `./.codex-last-session` | where `codex-exec` records the session id and where `--resume-last` reads it |
 | `CODEX_REVIEW_MAX_TOTAL_BYTES` | `1500000` | `codex-review code`: above this the assembled diff goes via a git-dir temp file instead of inline — never truncated |
 | `AW_REVIEW_NONCE` | unset | the flow dispatch nonce (safe grammar `[A-Za-z0-9._-]{1,64}` — anything else refuses pre-spend). `codex-review … --nonce <n>` is the plain-argument equivalent (one seam; flag and a non-empty env must agree, a disagreeing pair refuses pre-spend) — the lane for hosts whose dispatch policy has no env-prefix form. When supplied, a successful review first mints the finding MANIFEST `agent-workflow-finding-manifest-codex-<nonce>.json` beside the receipts file (atomic, no-clobber, ORDERED before the receipt append) — a failed mint EXCLUDES the receipt, so a nonce-supplied dispatch never lands a receipt without its readable manifest; nonce-less runs add no nonce field and mint nothing (the `wrapperVersion` field every receipt carries moves with each release) |
+| `AW_DISPATCH_NONCE` | unset | the **delegation** dispatch nonce (same safe grammar; anything else refuses pre-spend). `codex-exec [--nonce <n>] <plan-file>` is the plain-argument equivalent — ONE seam, recognised only BEFORE the prompt operand (after it, or after a literal `--`, it is passthrough payload). When supplied, the run is ACCOUNTED: see [§ Dispatch identity](#dispatch-identity-the-accounted-exec-lane). |
+| `AW_DELEGATION_STORE` | unset (the git common dir) | absolute path of the delegation ledger; its **dirname** is where a nonced run's receipt and report land. Relative, or ending in a path separator, refuses pre-spend — the same rule the kit's store applies. |
 | `CODEX_REVIEW_SCHEMA` | unset | `codex-review`: `=1` returns findings as a validated JSON object (`--output-schema`), with a raw-text fallback. Default off. |
 | `CODEX_PROBE` | unset | `=1` ⇒ throwaway-probe mode: relaxes the model/effort guard AND the tier-2 passthrough guard (echoed loudly). Never for real work. |
 
 The git-write shim, `--ignore-user-config`, and the `*_API_KEY` scrub are NOT env-tunable — they are
 fixed invariants.
+
+### Dispatch identity — the accounted exec lane
+
+A **nonced** `codex-exec` run has an identity the delegation ledger can absorb. Everything here is
+skipped entirely without a nonce: the wrapper is byte-unchanged, writes no artifact and needs no
+`node`.
+
+- **Pre-spend, it RESERVES the nonce.** Immediately before the CLI runs — after every preflight and
+  after the posture banner — it publishes `agent-workflow-exec-receipt-<len>-<backend>-<nonce>.json`
+  in state `reserved`, atomically and **no-clobber**, beside the delegation store. A second dispatch
+  on the same nonce (or a leftover report under that name) refuses **before any spend**. So does a
+  run with no capping binary, without `node`, with the prompt on stdin instead of a contract file, or
+  with a file carrying no ` ```aw-dispatch-contract ` block.
+- **`contractDigest` is computed HERE**, by the wrapper, from the dispatch file it was handed — an
+  independent value, never a copy of what the ledger holds, so `dispatch return` can refuse a run
+  that executed a *different* contract than the one it opened.
+- **At exit it publishes, in this ORDER**: verify the reservation is still ours → write the
+  delegate's final message to `agent-workflow-exec-report-<len>-<backend>-<nonce>.txt` → verify
+  again → replace the reservation with the `terminal` receipt. An artifact that has arrived therefore
+  always has a complete report behind it, and a **foreign owner publishes nothing at all**.
+- **The outcome is a SUBSET** the run can prove about itself: exit 0 with a session id → `success`,
+  exit 0 without one → `missing-identity`, any nonzero exit (124/137 included) →
+  `transport-failure`. Every orchestrator judgment is recorded later, at absorb time.
+- **FAIL-CLOSED, unlike the review receipt.** A review receipt that cannot be written only warns; an
+  exec receipt that cannot be written leaves an EDITED tree with no accounting, so the wrapper exits
+  nonzero and calls the tree partial/dirtied — never untouched. The two statuses carry **different**
+  recoveries:
+  - **71** — a publication stopped. The reservation is the run's own, so absorb the thread with
+    `dispatch return --nonce <n> --no-receipt --exit-status <n> --outcome <o>`. The message says
+    whether the report reached disk: if it did the absorb reads it, if it did not the absorb records
+    `reportLength 0` and the metric is ineligible by the name `empty-report`.
+  - **70** — the reservation could not be verified *before* anything was published, so nothing was.
+    `--no-receipt` is **not** the recovery here: it would source `wrapperVersion` and `posture` from
+    an artifact that belongs to another run. Establish what replaced the reservation first.
 
 ### Settings file (host-level, survives kit upgrades)
 
@@ -233,8 +272,16 @@ The wrappers work in any git repo where `codex` is installed and authenticated. 
   restates it via `-c`; only a *raw* `codex exec resume` (bypassing the wrapper) loses the posture.
 - **Hard timeout** — a hung run is killed at `CODEX_HARD_TIMEOUT` (exec 3600s / review 1800s) and
   reported (exit 124/137); raise it for a known-healthy slow run. If neither `timeout` nor `gtimeout`
-  is on `PATH`, `codex-exec` warns loudly and runs uncapped; `codex-review` refuses pre-spend
-  (the fail-closed preflight — an uncapped review run no longer exists).
+  is on `PATH`, a nonce-less `codex-exec` warns loudly and runs uncapped, a **nonced** one refuses
+  pre-spend, and `codex-review` refuses pre-spend (the fail-closed preflight — an uncapped review run
+  no longer exists).
+- **The wrapper cannot enforce an ABSOLUTE deadline** — it applies its own cap from ITS start and
+  never reads the ledger, so a dispatch started long after `dispatch open` is caught at absorb time
+  (the return refuses a late receipt), not pre-spend. Keeping that window small is the
+  orchestrator's rule: `open` is the last act before the dispatch.
+- **The gate output is not accounted** — the run trace is a temp file the EXIT trap removes, so a
+  nonced run's report carries the delegate's final message only; the metric counts the returned
+  change set, never what the gates printed.
 - **Native `codex review` is out of scope** — it rejects `--ignore-user-config` (would load a personal
   `config.toml` and break the subscription/config-isolation invariant) and can't be cleanly captured;
   `codex-review` runs `codex exec` over a precomputed diff instead.

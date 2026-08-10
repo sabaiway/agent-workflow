@@ -380,6 +380,28 @@ describe('wrapperContractFor — per-role driving contract (drift-guarded vs the
     }
   });
 
+  it('the EXECUTE contract declares its receipt, and the registry mirror carries the same bytes', () => {
+    // The exec lane's receipt is the delegation ledger's arrival identity: `dispatch return` reads
+    // the artifact this contract describes, so a registry copy that lost the field would let the kit
+    // advertise an execute backend whose accounting it cannot absorb. Pinned per FIELD (deepEqual
+    // above already compares the whole object, but a contract that never carried the key would pass
+    // it vacuously).
+    const contract = wrapperContractFor('codex-cli-bridge', 'execute');
+    assert.equal(typeof contract.receipt, 'string');
+    assert.match(contract.receipt, /agent-workflow-exec-receipt-<backendLength>-<backend>-<nonce>\.json/, 'the artifact name lives in the contract, not in a comment');
+    assert.match(contract.receipt, /NO-CLOBBER/, 'the pre-spend reservation is part of the declared contract');
+    assert.equal(contract.receipt, readManifest(join(REPO, 'codex-cli-bridge')).roles.execute.contract.receipt);
+  });
+
+  it('the nonce seam is declared on EVERY execute invocation the contract offers', () => {
+    // A dispatch identity that only some invocation forms accept is a trap: the orchestrator picks a
+    // form from this list, and a form silently without the seam would spend a run with no receipt.
+    const contract = wrapperContractFor('codex-cli-bridge', 'execute');
+    for (const form of [...contract.invocations, ...contract.continue]) {
+      assert.match(form, /\[--nonce <n>\]/, `${form} must offer the dispatch nonce seam`);
+    }
+  });
+
   it('probe resolves to null and the probe manifest role stays contract-free', () => {
     assert.equal(wrapperContractFor('antigravity-cli-bridge', 'probe'), null);
     const agy = readManifest(join(REPO, 'antigravity-cli-bridge'));

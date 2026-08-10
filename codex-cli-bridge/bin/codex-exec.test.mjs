@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync, execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WRAPPER = join(HERE, 'codex-exec.sh');
@@ -29,6 +30,21 @@ const FAKE_CODEX = [
   '{ echo "HOME=${HOME:-}"; echo "CODEX_HOME=${CODEX_HOME:-}"; echo "XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-}"; echo "OPENAI_API_KEY=${OPENAI_API_KEY:-<unset>}"; echo "OPENAI_BASE_URL=${OPENAI_BASE_URL:-<unset>}"; echo "FOO_API_KEY=${FOO_API_KEY:-<unset>}"; echo "CODEX_REAL_GIT=${CODEX_REAL_GIT:-<unset>}"; } >"$CODEX_FAKE_ENV"',
   'cat >"$CODEX_FAKE_STDIN"',
   'if [[ "${CODEX_FAKE_GIT_PROBE:-}" == "1" ]]; then { echo "realgit_env=${CODEX_REAL_GIT:-unset}"; echo "status=$(git status --short >/dev/null 2>&1; echo $?)"; echo "diff=$(git --no-pager diff >/dev/null 2>&1; echo $?)"; echo "dashC_read=$(git -C . status --short >/dev/null 2>&1; echo $?)"; echo "dashc_read=$(git -c core.pager=cat status --short >/dev/null 2>&1; echo $?)"; echo "bare=$(git >/dev/null 2>&1; echo $?)"; echo "commit=$(git commit -m x >/dev/null 2>&1; echo $?)"; echo "add=$(git add -A >/dev/null 2>&1; echo $?)"; echo "checkout=$(git checkout -- . >/dev/null 2>&1; echo $?)"; echo "unknown=$(git frobnicate >/dev/null 2>&1; echo $?)"; echo "config_read=$(git config user.name >/dev/null 2>&1; echo $?)"; echo "config_list=$(git config --list >/dev/null 2>&1; echo $?)"; echo "config_bare=$(git config >/dev/null 2>&1; echo $?)"; echo "config_write=$(git config user.name HACKED >/dev/null 2>&1; echo $?)"; echo "config_bypass=$(git config --get --add a.b v >/dev/null 2>&1; echo $?)"; echo "symref_write=$(git symbolic-ref HEAD refs/heads/x >/dev/null 2>&1; echo $?)"; echo "reflog_write=$(git reflog expire --all >/dev/null 2>&1; echo $?)"; echo "cdaway=$(cd / && git --version >/dev/null 2>&1; echo $?)"; } > "${CODEX_FAKE_GIT_RESULT:-/dev/null}" 2>&1; fi',
+  // Delegation seams: the fake runs BETWEEN the pre-spend reservation and the terminal publication,
+  // which is the only moment a fixture can disturb either. TAMPER forges a foreign owner into the
+  // reservation; MKDIR plants a directory where an artifact must land; RO_DIR turns the store
+  // directory read-only. Each is inert when its variable is unset.
+  'if [[ -n "${CODEX_FAKE_TAMPER:-}" ]]; then',
+  '  cat >"$CODEX_FAKE_TAMPER" <<EOF',
+  '{"schema":1,"kind":"exec-receipt","state":"reserved","backend":"codex","nonce":"${CODEX_FAKE_TAMPER_NONCE:-n1}","owner":"a-foreign-run","contractDigest":"${CODEX_FAKE_TAMPER_DIGEST:-0000000000000000000000000000000000000000000000000000000000000000}","wrapperVersion":"0.0.0","posture":{"model":"m","effort":"e","tier":null},"capS":1,"killGraceS":0,"sessionId":null,"exitStatus":null,"outcome":null,"reportDigest":null,"reportLength":null,"timestamp":"2026-01-01T00:00:00.000Z"}',
+  'EOF',
+  'fi',
+  'if [[ -n "${CODEX_FAKE_MKDIR:-}" ]]; then mkdir -p "$CODEX_FAKE_MKDIR"; fi',
+  'if [[ -n "${CODEX_FAKE_RO_DIR:-}" ]]; then chmod 500 "$CODEX_FAKE_RO_DIR"; fi',
+  // SNAPSHOT copies a file WHILE the CLI runs — the only way to observe what existed mid-flight.
+  // ABSENT is written rather than nothing, so "the file was not there" and "the seam never fired"
+  // stay distinguishable.
+  'if [[ -n "${CODEX_FAKE_SNAPSHOT_SRC:-}" ]]; then cp "$CODEX_FAKE_SNAPSHOT_SRC" "$CODEX_FAKE_SNAPSHOT_DST" || echo ABSENT >"$CODEX_FAKE_SNAPSHOT_DST"; fi',
   'if [[ -n "${CODEX_FAKE_SLEEP:-}" ]]; then sleep "${CODEX_FAKE_SLEEP}"; fi',
   'out=""',
   'prev=""',
@@ -37,7 +53,9 @@ const FAKE_CODEX = [
   '  prev="$a"',
   'done',
   'if [[ -n "$out" ]]; then',
-  '  if [[ "${CODEX_FAKE_NO_OUT:-}" != "1" ]]; then echo "${CODEX_FAKE_FINAL:-FAKE_FINAL_MESSAGE}" >"$out"; fi',
+  // EMPTY_OUT creates the capture file and writes NOTHING into it — the case that must stay
+  // distinguishable from NO_OUT, where the file is never created at all.
+  '  if [[ "${CODEX_FAKE_EMPTY_OUT:-}" == "1" ]]; then : >"$out"; elif [[ "${CODEX_FAKE_NO_OUT:-}" != "1" ]]; then echo "${CODEX_FAKE_FINAL:-FAKE_FINAL_MESSAGE}" >"$out"; fi',
   '  if [[ "${CODEX_FAKE_NO_THREAD:-}" != "1" ]]; then',
   '  cat <<EOF',
   '{"type":"thread.started","thread_id":"${CODEX_FAKE_THREAD_ID:-fake-thread-123}"}',
@@ -1731,5 +1749,686 @@ describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', () => {
       assert.match(r.stderr, new RegExp(`invalid value '${bad}' for CODEX_HARD_TIMEOUT`), 'the fallback is loud');
       assert.match(r.stderr, /^exec posture: .* timeout=3600s$/m, 'the banner prints the built-in default, never the bad value');
     }
+  });
+});
+
+// ── the delegation dispatch identity: nonce seam, reservation, fail-closed receipt ────────────────
+// The exec lane's arrival identity (delegation Plan 2, Phase 3). Two halves are load-bearing and
+// tested apart: the PRE-SPEND reservation, which is what makes one nonce mean one dispatch, and the
+// TERMINAL publication, which is fail-closed where the review lane's receipt only warns.
+// A nonce-LESS run is the no-regression pin — every suite above drives one, and none of them may
+// see an artifact.
+
+const STORE_BASENAME = 'agent-workflow-delegation.jsonl';
+const receiptName = (nonce, backend = 'codex') => `agent-workflow-exec-receipt-${backend.length}-${backend}-${nonce}.json`;
+const reportName = (nonce, backend = 'codex') => `agent-workflow-exec-report-${backend.length}-${backend}-${nonce}.txt`;
+// The store directory a nonce-less-by-default sandbox resolves to: the git common dir of the repo.
+const storeDirOf = (sb) => join(sb.repo, '.git');
+const execArtifacts = (dir) => {
+  let names;
+  try { names = readdirSync(dir); } catch { return []; }
+  return names.filter((n) => n.startsWith('agent-workflow-exec-')).sort();
+};
+const readReceipt = (dir, nonce) => JSON.parse(readFileSync(join(dir, receiptName(nonce)), 'utf8'));
+
+// A dispatch file carrying exactly ONE top-level contract block — the same shape `dispatch open
+// --contract` parses, so the digest the wrapper computes here is the digest the ledger recorded.
+const CONTRACT_FENCE = '```';
+const writeContract = (sb, nonce, over = {}) => {
+  const contract = {
+    schema: 1,
+    nonce,
+    stepClass: 'code',
+    vehicle: { requested: 'codex-exec', selected: 'codex-exec' },
+    scope: 'the bounded sub-task', inputs: 'the files it may touch', acceptance: 'the named tests',
+    returnShape: 'a diff plus a report', producerContract: 'wrapper-git',
+    deadlineS: 3700,
+    retry: { cap: 1, index: 0 },
+    ...over,
+  };
+  const rel = `${nonce}-dispatch.md`;
+  writeFileSync(join(sb.repo, rel),
+    `# sub-task\n\n${CONTRACT_FENCE}aw-dispatch-contract\n${JSON.stringify(contract, null, 2)}\n${CONTRACT_FENCE}\n`);
+  return rel;
+};
+
+// run() reads the capture files the PREVIOUS run left behind, so a test proving "the CLI was never
+// invoked" has to clear them first — otherwise a stale argv reads as a fresh invocation.
+const clearCaptures = (sb) => {
+  for (const name of ['.cap-argv', '.cap-env', '.cap-stdin']) rmSync(join(sb.repo, name), { force: true });
+};
+
+describe('codex-exec.sh — the nonce seam (D11)', () => {
+  it('a nonce-LESS run writes NO artifact into the store directory', () => {
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'unused');
+    const r = run(sb, { args: [file] });
+    const artifacts = execArtifacts(storeDirOf(sb));
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(artifacts, [], 'a nonce-less invocation is byte-unchanged — no reservation, no receipt');
+    assert.doesNotMatch(r.stderr, /exec receipt:/, 'and it says nothing about a receipt either');
+  });
+
+  it('each of the three D11 argv forms is accepted and reaches the right mode', () => {
+    const cases = [
+      { label: 'fresh', args: (f) => ['--nonce', 'nf', f], nonce: 'nf', wantSession: 'fake-thread-123', resume: false },
+      { label: 'resume-last', args: (f) => ['--resume-last', '--nonce', 'nl', f], nonce: 'nl', wantSession: 'sess-from-sidecar', resume: true },
+      { label: 'resume', args: (f) => ['--resume', 'sess-xyz', '--nonce', 'nr', f], nonce: 'nr', wantSession: 'sess-xyz', resume: true },
+    ];
+    for (const c of cases) {
+      const sb = makeSandbox();
+      writeFileSync(join(sb.repo, '.codex-last-session'), 'sess-from-sidecar\n');
+      const file = writeContract(sb, c.nonce);
+      const r = run(sb, { args: c.args(file) });
+      const receipt = r.status === 0 ? readReceipt(storeDirOf(sb), c.nonce) : null;
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(r.status, 0, `${c.label}: ${r.stderr}`);
+      assert.match(r.argv, /(^|\n)exec(\n|$)/, `${c.label}: codex exec was really reached`);
+      assert.equal(/(^|\n)resume(\n|$)/.test(r.argv), c.resume, `${c.label}: the mode selector survived the nonce strip`);
+      assert.equal(receipt.state, 'terminal', `${c.label}: the run published its terminal receipt`);
+      assert.equal(receipt.nonce, c.nonce);
+      assert.equal(receipt.sessionId, c.wantSession, `${c.label}: the session id is the run's own`);
+    }
+  });
+
+  it('a --nonce AFTER the prompt operand or after -- is payload, never a flag', () => {
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'late');
+    const passthrough = run(sb, { args: [file, '--', '--nonce', 'late'] });
+    const afterOperand = run(sb, { args: [file, '--nonce', 'late'] });
+    const artifacts = execArtifacts(storeDirOf(sb));
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(passthrough.status, 0, passthrough.stderr);
+    assert.match(passthrough.argv, /(^|\n)--nonce(\n|$)/, 'after -- it reaches codex argv as payload');
+    assert.deepEqual(artifacts, [], 'and it never minted a dispatch identity');
+    assert.equal(afterOperand.status, 2, 'without -- an extra argument is the existing loud refusal');
+    assert.match(afterOperand.stderr, /unexpected argument '--nonce'/);
+  });
+
+  it('the flag and the environment value are ONE seam: agreeing runs, disagreeing refuses pre-spend', () => {
+    const agree = makeSandbox();
+    const agreeFile = writeContract(agree, 'same');
+    const ok = run(agree, { args: ['--nonce', 'same', agreeFile], env: { AW_DISPATCH_NONCE: 'same' } });
+    const okState = ok.status === 0 ? readReceipt(storeDirOf(agree), 'same').state : null;
+    rmSync(agree.root, { recursive: true, force: true });
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.equal(okState, 'terminal');
+
+    const clash = makeSandbox();
+    const clashFile = writeContract(clash, 'flagnonce');
+    const bad = run(clash, { args: ['--nonce', 'flagnonce', clashFile], env: { AW_DISPATCH_NONCE: 'envnonce' } });
+    const artifacts = execArtifacts(storeDirOf(clash));
+    rmSync(clash.root, { recursive: true, force: true });
+    assert.equal(bad.status, 2);
+    assert.match(bad.stderr, /--nonce disagrees with the AW_DISPATCH_NONCE environment value/);
+    assert.equal(bad.argv, '', 'the refusal precedes any spend');
+    assert.deepEqual(artifacts, [], 'and it reserves nothing');
+  });
+
+  it('a nonce outside the safe grammar refuses pre-spend, from either source', () => {
+    for (const bad of ['a/b', '../x', 'a b', 'x'.repeat(65), '']) {
+      const viaFlag = makeSandbox();
+      const file = writeContract(viaFlag, 'grammar');
+      const f = run(viaFlag, { args: ['--nonce', bad, file] });
+      const flagArtifacts = execArtifacts(storeDirOf(viaFlag));
+      rmSync(viaFlag.root, { recursive: true, force: true });
+      assert.equal(f.status, 2, `--nonce "${bad}" must refuse`);
+      assert.match(f.stderr, /fails the safe nonce grammar/);
+      assert.equal(f.argv, '', 'nothing was spent');
+      assert.deepEqual(flagArtifacts, [], 'nothing was reserved');
+
+      if (bad === '') continue; // an EMPTY env value is "unset" to the seam, not a bad nonce
+      const viaEnv = makeSandbox();
+      const e = run(viaEnv, { args: [writeContract(viaEnv, 'grammar')], env: { AW_DISPATCH_NONCE: bad } });
+      rmSync(viaEnv.root, { recursive: true, force: true });
+      assert.equal(e.status, 2, `AW_DISPATCH_NONCE "${bad}" must refuse`);
+      assert.match(e.stderr, /AW_DISPATCH_NONCE fails the safe nonce grammar/);
+    }
+  });
+
+  it('a duplicate --nonce refuses, and a --nonce with no value refuses', () => {
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'dup');
+    const dup = run(sb, { args: ['--nonce', 'dup', '--nonce', 'other', file] });
+    const bare = run(sb, { args: ['--nonce'] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(dup.status, 2);
+    assert.match(dup.stderr, /duplicate --nonce — one dispatch carries one nonce/);
+    assert.equal(bare.status, 2);
+    assert.match(bare.stderr, /--nonce needs a value/);
+  });
+
+  it('an accounted dispatch needs a contract FILE: stdin and a header-less file both refuse pre-spend', () => {
+    const sb = makeSandbox();
+    const stdin = run(sb, { args: ['--nonce', 'n1', '-'], input: 'do the thing' });
+    writeFileSync(join(sb.repo, 'plain.md'), '# just a plan\n\nno contract block here\n');
+    clearCaptures(sb);
+    const headerless = run(sb, { args: ['--nonce', 'n1', 'plain.md'] });
+    const artifacts = execArtifacts(storeDirOf(sb));
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(stdin.status, 2);
+    assert.match(stdin.stderr, /a nonced dispatch runs a contract FILE, not stdin/);
+    assert.equal(headerless.status, 2);
+    assert.match(headerless.stderr, /no top-level ```aw-dispatch-contract block found/);
+    assert.equal(headerless.argv, '', 'neither refusal spent a run');
+    assert.deepEqual(artifacts, [], 'neither refusal reserved a nonce');
+  });
+});
+
+describe('codex-exec.sh — the pre-spend reservation (D1/D8)', () => {
+  it('the reservation EXISTS, in state reserved, while the CLI is still running', () => {
+    // The ordering claim needs a mid-flight observation. Asserting it from a SECOND run would prove
+    // nothing: by then the first run has finished and left a TERMINAL artifact, so moving the
+    // reservation to after the CLI would keep such a test green. The fake copies the receipt while
+    // it runs; only a genuinely pre-spend reservation can be `reserved` at that moment.
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'midflight');
+    const snapshot = join(sb.root, 'receipt-during-the-run.json');
+    const r = run(sb, {
+      args: ['--nonce', 'midflight', file],
+      env: { CODEX_FAKE_SNAPSHOT_SRC: join(storeDirOf(sb), receiptName('midflight')), CODEX_FAKE_SNAPSHOT_DST: snapshot },
+    });
+    const seen = readFileSync(snapshot, 'utf8');
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.notEqual(seen.trim(), 'ABSENT', 'the receipt must already exist when the CLI starts');
+    assert.equal(JSON.parse(seen).state, 'reserved', 'and it is the RESERVATION — the terminal receipt comes later');
+  });
+
+  it('a second dispatch on the same nonce refuses unspent, leaving the first run\'s evidence untouched', () => {
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'once');
+    const first = run(sb, { args: ['--nonce', 'once', file] });
+    const receiptPath = join(storeDirOf(sb), receiptName('once'));
+    const afterFirst = readFileSync(receiptPath, 'utf8');
+    clearCaptures(sb);
+    const second = run(sb, { args: ['--nonce', 'once', file] });
+    const afterSecond = readFileSync(receiptPath, 'utf8');
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(first.status, 0, first.stderr);
+    assert.equal(second.status, 2, 'one nonce, one dispatch');
+    assert.match(second.stderr, /already exists at .* one nonce, one dispatch: refusing PRE-SPEND/);
+    assert.equal(second.argv, '', 'the CLI was never invoked — the refusal is PRE-spend, proven by the fake recording nothing');
+    assert.equal(afterSecond, afterFirst, 'the first dispatch\'s evidence is byte-untouched');
+  });
+
+  it('the dispatch nonce must equal the contract header\'s nonce — a disagreement refuses unspent', () => {
+    // `dispatch open` COPIES the nonce from the header, so a disagreeing --nonce could only reserve
+    // an identity no return would ever absorb — after paying for the run.
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'header');
+    const r = run(sb, { args: ['--nonce', 'other', file] });
+    const artifacts = execArtifacts(storeDirOf(sb));
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /the dispatch nonce 'other' does not match the contract header's nonce 'header'/);
+    assert.equal(r.argv, '', 'the refusal precedes the spend');
+    assert.deepEqual(artifacts, [], 'and precedes the reservation');
+  });
+
+  it('a nonce-LESS run of a contract-bearing file never compares nonces — the accounted lane owns that rule', () => {
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'header');
+    const r = run(sb, { args: [file] });
+    const artifacts = execArtifacts(storeDirOf(sb));
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(artifacts, [], 'an ordinary plan file that happens to carry a contract block still runs unaccounted');
+  });
+
+  it('a store directory whose parent name ends in a NEWLINE resolves as the kit resolves it', () => {
+    // `$( )` strips every trailing newline; the kit's own reader strips exactly ONE (git's
+    // terminator). Without a sentinel the two sides would resolve different directories here, and the
+    // wrapper would write beside a ledger the kit never reads.
+    const sb = makeSandbox();
+    const weird = join(sb.root, 'ledger\n');
+    mkdirSync(weird, { recursive: true });
+    const file = writeContract(sb, 'nlstore');
+    const r = run(sb, { args: ['--nonce', 'nlstore', file], env: { AW_DELEGATION_STORE: join(weird, STORE_BASENAME) } });
+    const landed = execArtifacts(weird);
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(landed, [receiptName('nlstore'), reportName('nlstore')].sort(),
+      'the artifacts land in the directory the kit would compute, newline and all');
+  });
+
+  it('an already-taken REPORT name refuses the reservation too — the kit refuses on either name', () => {
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'leftover');
+    writeFileSync(join(storeDirOf(sb), reportName('leftover')), 'a report from something else\n');
+    const r = run(sb, { args: ['--nonce', 'leftover', file] });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /already exists at .*agent-workflow-exec-report-5-codex-leftover\.txt/);
+    assert.equal(r.argv, '', 'nothing was spent');
+  });
+
+  it('a NONCED run with no capping binary refuses pre-spend, while a nonce-less one still warns and runs', () => {
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'uncapped');
+    const path = `${sb.bin}:${farmFor(['timeout', 'gtimeout'])}`;
+    const nonced = run(sb, { args: ['--nonce', 'uncapped', file], path });
+    const artifacts = execArtifacts(storeDirOf(sb));
+    clearCaptures(sb);
+    const plain = run(sb, { args: [file], path });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(nonced.status, 2, nonced.stderr);
+    assert.match(nonced.stderr, /a nonced dispatch refuses to run uncapped/);
+    assert.equal(nonced.argv, '', 'the refusal precedes the spend');
+    assert.deepEqual(artifacts, [], 'and precedes the reservation');
+    assert.equal(plain.status, 0, plain.stderr);
+    assert.match(plain.stderr, /running codex WITHOUT a hard wall-clock cap/, 'the nonce-less lane is unchanged');
+  });
+
+  it('a PREFLIGHT refusal leaves NO reservation (login guard, missing AGENTS.md, off-pin model)', () => {
+    const cases = [
+      { label: 'login', env: { CODEX_FAKE_LOGIN: 'Not logged in' } },
+      { label: 'model', env: { CODEX_MODEL: 'gpt-5.4-mini' } },
+      { label: 'agents', env: {}, drop: true },
+    ];
+    for (const c of cases) {
+      const sb = makeSandbox();
+      const file = writeContract(sb, 'preflight');
+      if (c.drop) rmSync(join(sb.repo, 'AGENTS.md'), { force: true });
+      const r = run(sb, { args: ['--nonce', 'preflight', file], env: c.env });
+      const artifacts = execArtifacts(storeDirOf(sb));
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.notEqual(r.status, 0, `${c.label}: the preflight must refuse`);
+      assert.deepEqual(artifacts, [], `${c.label}: a refused run leaves no reservation`);
+    }
+  });
+
+  it('the reservation carries everything knowable PRE-SPEND and nulls every terminal-only field', () => {
+    // Proven on the artifact the CLI-blocking refusal leaves behind: a second dispatch is refused
+    // pre-spend, so the FIRST run's reservation is the only shape a fixture can observe mid-flight —
+    // instead, block the terminal publication and read the surviving reservation.
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'resv');
+    const r = run(sb, {
+      args: ['--nonce', 'resv', file],
+      env: { CODEX_FAKE_MKDIR: join(storeDirOf(sb), reportName('resv')) },
+    });
+    const held = readReceipt(storeDirOf(sb), 'resv');
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 71, r.stderr);
+    assert.equal(held.state, 'reserved');
+    assert.equal(held.wrapperVersion, MANIFEST.version, 'the receipt stamps the bridge version version-sync bumps');
+    assert.deepEqual(held.posture, { model: 'gpt-5.6-sol', effort: 'xhigh', tier: null });
+    assert.equal(held.capS, 3600);
+    assert.equal(held.killGraceS, 15);
+    assert.match(held.contractDigest, /^[0-9a-f]{64}$/);
+    for (const field of ['sessionId', 'exitStatus', 'outcome', 'reportDigest', 'reportLength']) {
+      assert.equal(held[field], null, `a reservation proves nothing about ${field}`);
+    }
+  });
+
+  it('the store directory resolves as the kit resolves it: absolute override wins, relative and trailing-separator refuse', () => {
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'store');
+    const elsewhere = join(sb.root, 'ledger');
+    mkdirSync(elsewhere, { recursive: true });
+    const ok = run(sb, { args: ['--nonce', 'store', file], env: { AW_DELEGATION_STORE: join(elsewhere, STORE_BASENAME) } });
+    const landed = execArtifacts(elsewhere);
+    clearCaptures(sb);
+    const rel = run(sb, { args: ['--nonce', 'store2', writeContract(sb, 'store2')], env: { AW_DELEGATION_STORE: `ledger/${STORE_BASENAME}` } });
+    clearCaptures(sb);
+    const trailing = run(sb, { args: ['--nonce', 'store3', writeContract(sb, 'store3')], env: { AW_DELEGATION_STORE: `${elsewhere}/` } });
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.deepEqual(landed, [receiptName('store'), reportName('store')].sort(), 'both artifacts land in the override\'s dirname');
+    assert.equal(rel.status, 2);
+    assert.match(rel.stderr, /AW_DELEGATION_STORE must be an ABSOLUTE path/);
+    assert.equal(trailing.status, 2);
+    assert.match(trailing.stderr, /must not end with a path separator/);
+  });
+});
+
+describe('codex-exec.sh — the fail-closed terminal receipt (D1/D3/3.1.d)', () => {
+  it('a SUCCESSFUL run publishes a complete report and a terminal receipt that describes it', () => {
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'ok');
+    const r = run(sb, { args: ['--nonce', 'ok', file] });
+    const dir = storeDirOf(sb);
+    const receipt = readReceipt(dir, 'ok');
+    const report = readFileSync(join(dir, reportName('ok')));
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipt.state, 'terminal');
+    assert.equal(receipt.outcome, 'success');
+    assert.equal(receipt.exitStatus, 0);
+    assert.equal(receipt.reportLength, report.length, 'the receipt describes the bytes on disk');
+    assert.equal(receipt.reportDigest, createHash('sha256').update(report).digest('hex'));
+    assert.equal(report.toString(), 'FAKE_FINAL_MESSAGE\n', 'the report IS the delegate\'s final message');
+    assert.match(r.stderr, /exec receipt: nonce=ok outcome=success exit=0 session=fake-thread-123/);
+  });
+
+  it('a FAILED run still publishes a terminal receipt — with its exit status, outcome and session id', () => {
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'boom');
+    const r = run(sb, { args: ['--nonce', 'boom', file], env: { CODEX_FAKE_EXIT: '5' } });
+    const receipt = readReceipt(storeDirOf(sb), 'boom');
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 5, 'the wrapper still exits with the run\'s own status');
+    assert.equal(receipt.state, 'terminal');
+    assert.equal(receipt.exitStatus, 5);
+    assert.equal(receipt.outcome, 'transport-failure');
+    assert.equal(receipt.sessionId, 'fake-thread-123', 'the session id is captured BEFORE outcome branching — a failed run has one too');
+    assert.match(r.stderr, /error: codex exec failed \(exit 5\)/, 'the failure diagnostics still print, and BEFORE the receipt line');
+    assert.ok(r.stderr.indexOf('codex exec failed') < r.stderr.indexOf('exec receipt:'), 'a publication never swallows the trace tail');
+  });
+
+  it('an ABSENT capture and an EXISTING EMPTY one both record zero bytes — and neither is a failed probe', () => {
+    // `mktemp` used to pre-create the capture file, so ENOENT could never occur and "absent" was not
+    // a case the publisher could even see. It matters because of what it collides with: once an
+    // absent capture is possible, the fail-closed read-error branch has to tell it apart from a
+    // genuinely UNREADABLE one (the test below) instead of treating every errno alike.
+    // What the two cases here do NOT get is a difference in the RECEIPT: the D2 key set is frozen and
+    // has no field for "the delegate wrote nothing at all", so both record the sha256 of no bytes —
+    // stated rather than papered over, and the outcome stays D3's (rc 0 + a session id is success).
+    const absent = makeSandbox();
+    const absentFile = writeContract(absent, 'noout');
+    const a = run(absent, { args: ['--nonce', 'noout', absentFile], env: { CODEX_FAKE_NO_OUT: '1' } });
+    const absentReceipt = readReceipt(storeDirOf(absent), 'noout');
+    const absentReport = readFileSync(join(storeDirOf(absent), reportName('noout')));
+    rmSync(absent.root, { recursive: true, force: true });
+    assert.equal(a.status, 0, a.stderr);
+    assert.match(a.stderr, /codex produced no final-message file/, 'the run says it has no answer rather than printing an empty one');
+    assert.equal(absentReport.length, 0);
+    assert.equal(absentReceipt.reportLength, 0);
+    assert.equal(absentReceipt.reportDigest, createHash('sha256').update(Buffer.alloc(0)).digest('hex'),
+      'an absent final message is recorded as the sha256 of NO bytes, never as a failed probe');
+
+    const empty = makeSandbox();
+    const emptyFile = writeContract(empty, 'emptyout');
+    const e = run(empty, { args: ['--nonce', 'emptyout', emptyFile], env: { CODEX_FAKE_EMPTY_OUT: '1' } });
+    const emptyReceipt = readReceipt(storeDirOf(empty), 'emptyout');
+    rmSync(empty.root, { recursive: true, force: true });
+    assert.equal(e.status, 0, e.stderr);
+    assert.equal(emptyReceipt.reportLength, 0, 'an EXISTING empty capture records zero bytes too');
+    assert.equal(emptyReceipt.reportDigest, absentReceipt.reportDigest,
+      'DELIBERATE: the frozen D2 key set has no field that separates them, so the receipt does not pretend to');
+    assert.match(e.stderr, /codex produced no final-message file/,
+      'the existing-but-EMPTY capture takes the same -s fallback — it too has no answer to print');
+  });
+
+  it('an UNREADABLE final message is a failed probe — exit 71, never a silent empty report', () => {
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'unread');
+    // A DIRECTORY at the capture path: readable-as-a-path, unreadable as a file (EISDIR), and
+    // distinct from ENOENT — which is exactly the errno split the fold turns on.
+    nodeShimWith(sb, 'eisdir.cjs', `
+const fs = require('node:fs');
+const real = fs.readFileSync;
+fs.readFileSync = (target, ...rest) => {
+  if (typeof target === 'string' && target.endsWith('final-message.txt')) {
+    const err = new Error('EISDIR: injected unreadable capture');
+    err.code = 'EISDIR';
+    throw err;
+  }
+  return real(target, ...rest);
+};
+`);
+    const r = run(sb, { args: ['--nonce', 'unread', file] });
+    const receipt = readReceipt(storeDirOf(sb), 'unread');
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 71, r.stderr);
+    assert.match(r.stderr, /is a FAILED probe, not an absent one/);
+    assert.equal(receipt.state, 'reserved', 'nothing terminal was published over a probe that failed');
+  });
+
+  it('a DANGLING SYMLINK at the capture path is a failed probe, never a clean empty report', () => {
+    // The trap the ENOENT split set for itself: readFileSync FOLLOWS the link, so a dangling one
+    // reports ENOENT — indistinguishable from "the delegate wrote nothing" — and a corrupt capture
+    // would be published as an empty report on a `success` receipt. lstat decides first.
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'dangle');
+    nodeShimWith(sb, 'dangling.cjs', `
+const fs = require('node:fs');
+const realLstat = fs.lstatSync;
+fs.lstatSync = (target, ...rest) => {
+  if (typeof target === 'string' && target.endsWith('final-message.txt')) {
+    return { isFile: () => false, isSymbolicLink: () => true, isDirectory: () => false };
+  }
+  return realLstat(target, ...rest);
+};
+`);
+    const r = run(sb, { args: ['--nonce', 'dangle', file] });
+    const receipt = readReceipt(storeDirOf(sb), 'dangle');
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 71, r.stderr);
+    assert.match(r.stderr, /is a symlink, not a regular file — a CORRUPT capture is a FAILED probe/);
+    assert.equal(receipt.state, 'reserved', 'nothing terminal was published over a corrupt capture');
+  });
+
+  it('a run that identified no session records sessionId null with outcome missing-identity', () => {
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'anon');
+    const r = run(sb, { args: ['--nonce', 'anon', file], env: { CODEX_FAKE_NO_THREAD: '1' } });
+    const receipt = readReceipt(storeDirOf(sb), 'anon');
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipt.sessionId, null);
+    assert.equal(receipt.outcome, 'missing-identity', 'exit 0 without an identity is never "success"');
+  });
+
+  it('a TIMEOUT publishes exitStatus 124 with outcome transport-failure', async () => {
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'slow');
+    const r = await runAsync(sb, {
+      args: ['--nonce', 'slow', file],
+      env: { CODEX_FAKE_SLEEP: '3', CODEX_HARD_TIMEOUT: '1' },
+    });
+    const receipt = readReceipt(storeDirOf(sb), 'slow');
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 124, r.stderr);
+    assert.equal(receipt.exitStatus, 124);
+    assert.equal(receipt.outcome, 'transport-failure', 'the timeout codes are transport-failure like any other nonzero exit');
+    assert.match(r.stderr, /exceeded the hard cap/);
+  });
+
+  it('a FOREIGN owner refuses with NOTHING published — both artifacts stay byte-unchanged', () => {
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'tamper');
+    const dir = storeDirOf(sb);
+    const r = run(sb, {
+      args: ['--nonce', 'tamper', file],
+      env: { CODEX_FAKE_TAMPER: join(dir, receiptName('tamper')), CODEX_FAKE_TAMPER_NONCE: 'tamper' },
+    });
+    const receipt = readFileSync(join(dir, receiptName('tamper')), 'utf8');
+    const reportExists = existsSync(join(dir, reportName('tamper')));
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 70, r.stderr);
+    assert.match(r.stderr, /is not this run’s reservation before any publication/);
+    assert.match(JSON.parse(receipt).owner, /^a-foreign-run$/, 'the foreign reservation is left exactly as it was found');
+    assert.equal(reportExists, false, 'a foreign owner publishes NOTHING — not even the report');
+    assert.match(r.stderr, /PARTIALLY EDITED/, 'and the tree is named dirtied, never silently accepted');
+  });
+
+  it('a failed REPORT write exits 71 naming the report, and the reservation survives for --no-receipt', () => {
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'noreport');
+    const dir = storeDirOf(sb);
+    const r = run(sb, {
+      args: ['--nonce', 'noreport', file],
+      env: { CODEX_FAKE_MKDIR: join(dir, reportName('noreport')) },
+    });
+    const receipt = readReceipt(dir, 'noreport');
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 71, r.stderr);
+    assert.match(r.stderr, /the delegate’s report could not be published/);
+    assert.equal(receipt.state, 'reserved', 'no terminal receipt EVER appears without a complete report behind it');
+    assert.match(r.stderr, /dispatch return --nonce noreport --no-receipt --exit-status 0 --outcome <o>/);
+  });
+
+  it('an UNWRITABLE store directory stops the REPORT lane nonzero and says the tree is dirtied — NOT the review lane\'s warn-only receipt', () => {
+    // Named for the branch it really reaches. Both artifacts live in one directory, so a directory
+    // turned read-only stops the FIRST write — the report. The two POST-report branches need a
+    // failure injected between the writes, which the two tests below do.
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'rodir');
+    const store = join(sb.root, 'ledger');
+    mkdirSync(store, { recursive: true });
+    const r = run(sb, {
+      args: ['--nonce', 'rodir', file],
+      env: { AW_DELEGATION_STORE: join(store, STORE_BASENAME), CODEX_FAKE_RO_DIR: store },
+    });
+    chmodSync(store, 0o700);
+    const surviving = readReceipt(store, 'rodir');
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.notEqual(r.status, 0, 'codex-review.sh warns and returns 0 here; the exec lane must not');
+    assert.equal(r.status, 71, r.stderr);
+    assert.match(r.stderr, /the delegate’s report could not be published/);
+    assert.match(r.stderr, /Nothing beyond the reservation was published/);
+    assert.match(r.stderr, /the working tree may be PARTIALLY EDITED/);
+    assert.equal(surviving.state, 'reserved', 'the reservation survives, so --no-receipt can still absorb the thread');
+  });
+});
+
+// ── the two POST-report branches ─────────────────────────────────────────────────────────────────
+// Reaching them needs a failure BETWEEN the report write and the terminal replace, and no filesystem
+// state a fixture can set up does that: both artifacts share one directory, so every such condition
+// stops the report first. The failure is injected instead — through a `node` shim on the sandbox
+// PATH, the SAME mechanism this suite already uses to exercise missing binaries. It is deliberately
+// NOT NODE_OPTIONS: the wrapper CLEARS that for every mint core precisely so an inherited
+// `--require` cannot rewrite `fs` under the owner checks and the publication, and a test that leaned
+// on it would be testing a hole rather than the behaviour.
+const nodeShimWith = (sb, name, body) => {
+  const hook = join(sb.root, name);
+  writeFileSync(hook, body);
+  writeFileSync(join(sb.bin, 'node'), [
+    '#!/usr/bin/env bash',
+    'set -u',
+    `exec ${process.execPath} --require ${hook} "$@"`,
+    '',
+  ].join('\n'), { mode: 0o755 });
+};
+
+// Let the report rename through, then break the NEXT one — the terminal receipt is the only other
+// `.json` rename the publisher performs.
+const BREAK_RECEIPT_RENAME = `
+const fs = require('node:fs');
+const real = fs.renameSync;
+fs.renameSync = (from, to) => {
+  if (String(to).endsWith('.json')) {
+    const err = new Error('EACCES: injected terminal-receipt failure');
+    err.code = 'EACCES';
+    throw err;
+  }
+  return real(from, to);
+};
+`;
+
+// Let the report rename through, then hand the SECOND owner check a foreign reservation.
+const FORGE_SECOND_CLAIM = `
+const fs = require('node:fs');
+const realRead = fs.readFileSync;
+const realRename = fs.renameSync;
+let reportPublished = false;
+fs.renameSync = (from, to) => {
+  const out = realRename(from, to);
+  if (String(to).endsWith('.txt')) reportPublished = true;
+  return out;
+};
+fs.readFileSync = (target, ...rest) => {
+  const bytes = realRead(target, ...rest);
+  if (reportPublished && typeof target === 'string' && target.endsWith('.json')) {
+    const held = JSON.parse(String(bytes));
+    held.owner = 'a-foreign-run';
+    return JSON.stringify(held);
+  }
+  return bytes;
+};
+`;
+
+describe('codex-exec.sh — the POST-report failure lanes never claim an untouched tree', () => {
+  it('a terminal-receipt write that fails AFTER the report exits 71 and says the report IS published', () => {
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'postr');
+    nodeShimWith(sb, 'break-receipt.cjs', BREAK_RECEIPT_RENAME);
+    const dir = storeDirOf(sb);
+    const r = run(sb, { args: ['--nonce', 'postr', file] });
+    const receipt = readReceipt(dir, 'postr');
+    const report = readFileSync(join(dir, reportName('postr')), 'utf8');
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 71, r.stderr);
+    assert.match(r.stderr, /the terminal exec receipt could not be published/);
+    assert.match(r.stderr, /The REPORT is published; the terminal receipt was NOT completed/);
+    assert.doesNotMatch(r.stderr, /NOTHING was published/, 'the message must not deny bytes that are on disk');
+    assert.equal(report, 'FAKE_FINAL_MESSAGE\n', 'the published report is complete and readable');
+    assert.equal(receipt.state, 'reserved', 'the replace never happened, so the reservation is what survives here');
+  });
+
+  it('a SECOND owner check that fails after the report exits 71 without claiming nothing was published', () => {
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'forge');
+    nodeShimWith(sb, 'forge-owner.cjs', FORGE_SECOND_CLAIM);
+    const dir = storeDirOf(sb);
+    const r = run(sb, { args: ['--nonce', 'forge', file] });
+    const reportExists = existsSync(join(dir, reportName('forge')));
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 71, r.stderr);
+    assert.match(r.stderr, /is not this run’s reservation immediately before the terminal replace: its owner token belongs to ANOTHER run/);
+    assert.match(r.stderr, /The REPORT is published; the terminal receipt was NOT completed/);
+    assert.doesNotMatch(r.stderr, /NOTHING was published/, 'after the report is on disk that claim is false');
+    assert.equal(reportExists, true, 'and the report really is there — which is what the message says');
+  });
+
+  it('an inherited NODE_OPTIONS cannot reach the mint cores — the wrapper clears it', () => {
+    // The regression guard for the hole the two tests above used to lean on: a --require inherited
+    // from the caller's environment could rewrite `fs` inside the owner checks and the publication.
+    // Here the SAME preload that breaks the receipt rename is handed to the wrapper as NODE_OPTIONS
+    // rather than through the PATH shim; the run must be entirely unaffected.
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'envopt');
+    const hook = join(sb.root, 'break-receipt.cjs');
+    writeFileSync(hook, BREAK_RECEIPT_RENAME);
+    const r = run(sb, { args: ['--nonce', 'envopt', file], env: { NODE_OPTIONS: `--require=${hook}` } });
+    const receipt = readReceipt(storeDirOf(sb), 'envopt');
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipt.state, 'terminal', 'the publication completed — the injected failure never reached it');
+    assert.equal(receipt.outcome, 'success');
+  });
+
+  it('a FIRST owner check that fails is the only lane that may claim NOTHING was published', () => {
+    const sb = makeSandbox();
+    const file = writeContract(sb, 'first');
+    const dir = storeDirOf(sb);
+    const r = run(sb, {
+      args: ['--nonce', 'first', file],
+      env: { CODEX_FAKE_TAMPER: join(dir, receiptName('first')), CODEX_FAKE_TAMPER_NONCE: 'first' },
+    });
+    const reportExists = existsSync(join(dir, reportName('first')));
+    rmSync(sb.root, { recursive: true, force: true });
+    assert.equal(r.status, 70, r.stderr);
+    assert.match(r.stderr, /NOTHING was published — not the report, not the receipt/);
+    assert.doesNotMatch(r.stderr, /--no-receipt --exit-status/, 'a foreign reservation is never a --no-receipt source: its posture belongs to another run');
+    assert.equal(reportExists, false);
+  });
+});
+
+describe('codex-exec.sh — the inline node mint cores stay intact', () => {
+  it('the wrapper parses', () => {
+    // The apostrophe SCANNER this replaced is gone with the class it policed: every mint core now
+    // rides a QUOTED heredoc, where an apostrophe is ordinary text. A scanner that had to model
+    // shell quoting was a second parser for a problem the quoting choice created — and it had its own
+    // blind spot (a JS line beginning `' ` read as a closing quote and ended the scan early).
+    const syntax = spawnSync('bash', ['-n', WRAPPER], { encoding: 'utf8' });
+    assert.equal(syntax.status, 0, syntax.stderr);
+  });
+
+  it('every mint core is read by a BUILTIN, run with NODE_OPTIONS cleared, and asserted non-empty', () => {
+    const source = readFileSync(WRAPPER, 'utf8');
+    assert.equal((source.match(/^ *IFS= read -r -d '' aw_js <<'AW_JS' \|\| true$/gm) ?? []).length, 4,
+      'the four cores: the store-dir resolver, the contract header, the reservation, the terminal publication');
+    assert.equal((source.match(/^AW_JS$/gm) ?? []).length, 4, 'each heredoc is terminated');
+    assert.equal((source.match(/NODE_OPTIONS= node -e "\$aw_js"/g) ?? []).length, 4, 'every core runs with NODE_OPTIONS cleared');
+    assert.equal((source.match(/aw_require_core "\$aw_js"/g) ?? []).length, 4, 'and none runs before it is proven non-empty');
+    // The regressions this replaces, both live: a single-quoted -e string truncates on an apostrophe,
+    // and a `$(cat …)` substitution turns a missing `cat` into `node -e ""` exiting 0 — a run that
+    // publishes nothing and reports success.
+    assert.equal((source.match(/node -e '/g) ?? []).length, 0, 'no core may go back to a single-quoted -e string');
+    assert.equal((source.match(/node -e "\$\(cat/g) ?? []).length, 0, 'no core may go back to a cat substitution');
   });
 });

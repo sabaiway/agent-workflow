@@ -50,8 +50,8 @@ case "${1:-}" in
 codex-exec — delegate plan/instruction EXECUTION to the OpenAI Codex CLI (subscription-only; workspace-write sandbox, network OFF, git writes blocked — the orchestrator commits).
 
 Usage:
-  codex-exec <plan-file|->
-  codex-exec <plan-file|-> -- <extra codex flags...>
+  codex-exec [--nonce <n>] <plan-file|->
+  codex-exec [--nonce <n>] <plan-file|-> -- <extra codex flags...>
 
 Grounding:
   automatic — the root AGENTS.md (Hard Constraints) is auto-merged into codex's
@@ -59,13 +59,61 @@ Grounding:
   grounding flags
 
 Round-2 / resume:
-  codex-exec --resume-last <plan-file|->
-  codex-exec --resume <session-id> <plan-file|->
+  codex-exec --resume-last [--nonce <n>] <plan-file|->
+  codex-exec --resume <session-id> [--nonce <n>] <plan-file|->
   (resume continues the recorded session without re-sending context; takes no '--' passthrough)
 
 Guarded passthrough after '--':
   blocked always: -c* --config* -s* --sandbox* --dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust --full-auto --oss --local-provider* -p* --profile* -m* --model* -o* --output-last-message* --json* --color* --output-schema* --ephemeral*
   relaxed only under CODEX_PROBE=1: --add-dir* -C* --cd* --skip-git-repo-check --ignore-rules --enable* --disable*
+
+Receipt:
+  side effect — a NONCED run mints ONE exec receipt beside the delegation store: the dispatch nonce
+  seam is the AW_DISPATCH_NONCE environment value or its plain-argument equivalent --nonce <n>,
+  recognised ONLY before the prompt operand (after the operand or a literal '--' it is passthrough
+  payload, never a flag), under the safe grammar [A-Za-z0-9._-]{1,64} — anything else, a duplicate,
+  or a flag disagreeing with a non-empty env value refuses PRE-SPEND. The store directory resolves
+  exactly as the kit's delegation store does: the dirname of an ABSOLUTE AW_DELEGATION_STORE
+  (a relative one, or one ending in a path separator, refuses), else the git common dir. The
+  artifact is agent-workflow-exec-receipt-<backendLength>-<backend>-<nonce>.json in two states:
+  'reserved' is written atomically and NO-CLOBBER immediately before the CLI runs — that write IS
+  the nonce reservation, so a second dispatch on the same nonce, or an already-taken report name,
+  refuses BEFORE any spend — and 'terminal' replaces it in place at exit. A nonced run also refuses
+  pre-spend when no timeout/gtimeout binary can cap it (an accounted dispatch that cannot be capped
+  can never honour the terminal-exit rule; a nonce-LESS run still warns and runs uncapped), when
+  node is missing (the mint core), and when the prompt rides on stdin instead of a contract FILE —
+  contractDigest is computed BY THIS WRAPPER from the dispatch file it was actually handed, so the
+  kit can refuse a run that executed a different contract than the one it opened. That digest is
+  taken from the SAME bytes already read as the prompt, never a second open of the path: two reads
+  leave a window in which the file can be swapped, and the run would then execute one contract while
+  its receipt claimed the digest of another. The header's own nonce must EQUAL the dispatch nonce —
+  'dispatch open' copies the nonce FROM the header, so a disagreeing --nonce could only reserve an
+  identity no return would ever absorb, and it refuses pre-spend. A contract file edited BETWEEN
+  'dispatch open' and the run is caught at ABSORB by the contractDigest comparison, not pre-spend:
+  the wrapper never reads the ledger, and that boundary is what the whole lane rests on. At exit the
+  wrapper FIRST re-reads its reservation and verifies its own opaque owner token — a foreign owner
+  refuses having published NOTHING, neither report nor receipt — THEN writes the delegate's final
+  message atomically to agent-workflow-exec-report-<backendLength>-<backend>-<nonce>.txt, THEN
+  re-verifies the owner and REPLACES the reservation with the terminal receipt {schema, kind, state,
+  backend, nonce, owner, contractDigest, wrapperVersion, posture {model, effort, tier}, capS,
+  killGraceS, sessionId, exitStatus, outcome, reportDigest, reportLength, timestamp}: the report is
+  complete on disk before any artifact says the run arrived. capS and killGraceS are the cap the run
+  ACTUALLY applied. outcome is the wrapper's own SUBSET of the ledger's vocabulary — exit 0 with a
+  session id -> success, exit 0 without one -> missing-identity, ANY nonzero exit including the
+  timeout codes 124 and 137 -> transport-failure; every orchestrator judgment is recorded at absorb
+  time, never claimed here. The session id is captured BEFORE outcome branching, so a FAILED run
+  records one too; in resume mode it is the validated resume id. FAIL-CLOSED, deliberately NOT the
+  review lane's warn-only receipt: a publication that cannot complete exits nonzero with a DISTINCT
+  status, and the message states only what the run can still prove. 70: the reservation could not be
+  verified BEFORE any publication — NOTHING was published, not the report and not the receipt, and
+  because the artifact found there belongs to another run it is never a '--no-receipt' source. 71: a
+  publication stopped after that point — either the report write failed (nothing beyond the
+  reservation was published; the '--no-receipt' absorb then records reportLength 0, ineligible by the
+  name empty-report) or the report IS on disk and the terminal receipt was not completed (the absorb
+  reads it, report-if-present). The post-report lane never claims the reservation still stands,
+  because after that point its fate is no longer something this run observed. Every lane names the
+  tree as partial/dirtied rather than untouched. A nonce-LESS invocation is byte-unchanged: no
+  reservation, no receipt, no artifact, no node.
 
 Notes:
   nested-sandbox limit: codex-exec ships its OWN OS sandbox (bwrap workspace-write) and cannot run
@@ -104,7 +152,7 @@ Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins ov
   CODEX_SERVICE_TIER — service tier: 'priority' (Fast — ~1.5x speed at a 2.5x credit rate on gpt-5.6-sol); a consented SPEND knob, default off (standard tier)
   CODEX_HARD_TIMEOUT — hard wall-clock cap, integer seconds 1..86400 (built-in default 3600)
 
-Environment: CODEX_HARD_TIMEOUT (seconds, default 3600), CODEX_PROBE=1 (throwaway probe only).
+Environment: CODEX_HARD_TIMEOUT (seconds, default 3600), CODEX_PROBE=1 (throwaway probe only), AW_DISPATCH_NONCE (delegation dispatch nonce — mints the exec receipt; the --nonce <n> flag is its plain-argument equivalent), AW_DELEGATION_STORE (absolute delegation-store path; its dirname is where the receipt lands).
 Requires at run time: the codex CLI on PATH, a ChatGPT-subscription login, a git work tree with a root AGENTS.md (--help needs none of these).
 HELP
     exit 0
@@ -295,6 +343,17 @@ for _posture_pair in "CODEX_MODEL=$CODEX_MODEL" "CODEX_EFFORT=$CODEX_EFFORT" "CO
     exit 2
   fi
 done
+# The delegation dispatch nonce seam (delegation Plan 2 / D11): ONE seam, the AW_DISPATCH_NONCE
+# environment value and its plain-argument twin --nonce <n> (parsed below, after the mode selector).
+# Validated pre-spend under the SAFE grammar — a nonce that would escape the derived artifact name
+# refuses before any CLI run. The bracket expression ENUMERATES the ASCII set (no ranges): a range
+# like A-Z is locale-collation-dependent and could admit a non-ASCII nonce the kit's JS reader then
+# refuses. Byte-identical rule to codex-review.sh's AW_REVIEW_NONCE screen — one grammar, two lanes.
+AW_NONCE_RE='^[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]{1,64}$'
+if [[ -n "${AW_DISPATCH_NONCE:-}" && ! "${AW_DISPATCH_NONCE}" =~ $AW_NONCE_RE ]]; then
+  echo "error: AW_DISPATCH_NONCE fails the safe nonce grammar ([A-Za-z0-9._-]{1,64}) — the derived receipt name would be unsafe; fix the nonce and re-run." >&2
+  exit 2
+fi
 CODEX_HARD_TIMEOUT="$(aw_effective_timeout CODEX_HARD_TIMEOUT 3600)"
 if [[ -n "$CODEX_SERVICE_TIER" ]] && ! aw_settings_valid CODEX_SERVICE_TIER "$CODEX_SERVICE_TIER"; then
   echo "warning: CODEX_SERVICE_TIER='$CODEX_SERVICE_TIER' is not a supported service tier ('priority') — running on the standard tier." >&2
@@ -305,6 +364,19 @@ if [[ -n "$CODEX_SERVICE_TIER" ]]; then
   tier_flags=(-c "service_tier=$CODEX_SERVICE_TIER")
 fi
 CHATGPT_LOGIN_GUARD="Logged in using ChatGPT"
+
+# --- Exec-receipt identity (delegation Plan 2) --------------------------------
+# AW_RECEIPT_BACKEND is the ledger's backend id (the value `dispatch open --backend` records), not
+# the wrapper name — the artifact name is a function of {backend, nonce} alone on both sides.
+# AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json version and is stamped into every
+# receipt this wrapper mints; scripts/release/version-sync.mjs bumps it under the one-anchor-per-file
+# rule, so a release can never leave it behind (the AD-053 drift class).
+AW_RECEIPT_BACKEND="codex"
+AW_BRIDGE_VERSION="3.4.1"  # aw-version-anchor
+# The kill grace handed to timeout(1) as --kill-after, and recorded in the receipt as killGraceS:
+# ONE constant, so the number the ledger checks against the dispatch deadline is the number the run
+# actually applied.
+CODEX_KILL_GRACE_S=15
 
 # --- Quality-first guard: refuse a silent model/effort downgrade ---------------
 # Real delegated runs must use the frontier model at max effort. A throwaway probe
@@ -443,6 +515,45 @@ case "${1:-}" in
     ;;
 esac
 
+# --- --nonce <n> — the plain-argument lane onto the AW_DISPATCH_NONCE seam (D11) ---------------
+# Recognised at exactly ONE position: AFTER the mode selector and BEFORE the prompt operand, so the
+# three accepted forms are `codex-exec [--nonce <n>] <plan-file|->`,
+# `codex-exec --resume-last [--nonce <n>] <plan-file|->` and
+# `codex-exec --resume <session-id> [--nonce <n>] <plan-file|->`. A GLOBAL strip (the codex-review.sh
+# shape) is wrong here: this wrapper's remaining args are the prompt operand and the `--` passthrough
+# payload, and consuming a `--nonce` out of them would move that boundary — after the operand or a
+# literal `--`, `--nonce` is payload, never a flag.
+# Semantics are codex-review.sh's, exactly: the flag and a non-empty env value must AGREE (two
+# disagreeing sources would mint an ambiguous dispatch identity — fail closed), a duplicate refuses
+# (one dispatch carries one nonce), and the NEXT argument is taken unconditionally (only end-of-args
+# refuses here) — the closed grammar is the single validity door, so a grammar-valid leading-dash
+# value is legal, and an EMPTY value still hits the grammar screen.
+nonce_flag=""
+nonce_flag_set=0
+while [[ "${1:-}" == "--nonce" ]]; do
+  if [[ "$nonce_flag_set" == "1" ]]; then
+    echo "error: duplicate --nonce — one dispatch carries one nonce." >&2
+    exit 2
+  fi
+  if [[ $# -lt 2 ]]; then
+    echo "error: --nonce needs a value; got '<end of args>'." >&2
+    exit 2
+  fi
+  nonce_flag="$2"; nonce_flag_set=1; shift 2
+done
+if [[ "$nonce_flag_set" == "1" ]]; then
+  if [[ ! "$nonce_flag" =~ $AW_NONCE_RE ]]; then
+    echo "error: --nonce fails the safe nonce grammar ([A-Za-z0-9._-]{1,64}) — the derived receipt name would be unsafe; fix the nonce and re-run." >&2
+    exit 2
+  fi
+  if [[ -n "${AW_DISPATCH_NONCE:-}" && "${AW_DISPATCH_NONCE}" != "$nonce_flag" ]]; then
+    echo "error: --nonce disagrees with the AW_DISPATCH_NONCE environment value — one dispatch carries one nonce; drop one source and re-run." >&2
+    exit 2
+  fi
+  AW_DISPATCH_NONCE="$nonce_flag"
+fi
+aw_nonce="${AW_DISPATCH_NONCE:-}"
+
 if [[ $# -lt 1 ]]; then
   echo "error: missing <plan-file|-> (the instruction to send)." >&2
   exit 2
@@ -553,6 +664,176 @@ if [[ -z "${task//[[:space:]]/}" ]]; then
   exit 2
 fi
 
+# --- The ACCOUNTED lane: everything below fires only for a NONCED run ---------
+# A nonce-LESS invocation is byte-unchanged — no reservation, no receipt, no artifact, no node —
+# which is what keeps every existing caller working. The whole mint core rides ONE node script per
+# step (the family floor, codex-review.sh's finding-manifest precedent): a bash re-implementation of
+# atomic no-clobber publication, JSON composition and canonical digesting would be a second, drifting
+# implementation of contracts the kit owns.
+aw_owner=""
+aw_contract_digest=""
+aw_artifact_dir=""
+
+# Each mint core rides a BUILTIN heredoc read — `IFS= read -r -d '' … <<'AW_JS'`, the idiom this
+# wrapper already uses for its two prompt directives — rather than a `$(cat <<'AW_JS' …)` command
+# substitution. That is not style: a failed `cat` (gone from PATH, shadowed, or replaced) makes the
+# substitution EMPTY, `node -e ""` exits 0, and the wrapper would report a successful accounted run
+# having published no report and no terminal receipt at all — silent, on the success path. The
+# builtin cannot fail that way because there is no external binary left to fail. The assertion below
+# is the belt: an empty core never runs, it refuses by name.
+aw_require_core() {
+  [[ -n "$1" ]] && return 0
+  echo "error: $2 is EMPTY — refusing to run an empty program rather than reporting a run that published nothing." >&2
+  return 1
+}
+
+# The delegation store's directory, resolved EXACTLY as the kit resolves it
+# (agent-workflow-kit/tools/dispatch-store.mjs): an ABSOLUTE AW_DELEGATION_STORE wins (its dirname),
+# a relative one or one ending in a path separator refuses, otherwise the git common dir. Mirrored
+# through node's own path primitives rather than re-derived in bash, so the two answers cannot drift
+# on `..` segments, duplicate separators or a trailing dot — the cross-package parity test pins it.
+aw_resolve_artifact_dir() {
+  local common=""
+  if [[ -z "${AW_DELEGATION_STORE:-}" ]]; then
+    if [[ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" != "true" ]]; then
+      echo "error: a nonced dispatch resolves its receipt beside the delegation store, and there is no store outside a git work tree (set AW_DELEGATION_STORE to an absolute path, or run from the repository)." >&2
+      return 1
+    fi
+    common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    if [[ -z "$common" ]]; then
+      echo "error: could not resolve the git common dir — the receipt has nowhere to land; refusing before any spend." >&2
+      return 1
+    fi
+  fi
+  local aw_js=""
+  IFS= read -r -d '' aw_js <<'AW_JS' || true
+const { isAbsolute, normalize, sep, join, dirname } = require("node:path");
+const common = process.argv[1] || "";
+const override = process.env.AW_DELEGATION_STORE || "";
+let storePath;
+if (override) {
+  if (!isAbsolute(override)) {
+    process.stderr.write("error: AW_DELEGATION_STORE must be an ABSOLUTE path (got \"" + override + "\") — a relative override resolves a different ledger from each worktree/cwd; refusing before any spend.\n");
+    process.exit(2);
+  }
+  const normalized = normalize(override);
+  if (normalized.endsWith(sep) || normalized.endsWith("/")) {
+    process.stderr.write("error: AW_DELEGATION_STORE must not end with a path separator (got \"" + override + "\") — a store is a file, not a directory; refusing before any spend.\n");
+    process.exit(2);
+  }
+  storePath = normalized;
+} else {
+  storePath = join(common, "agent-workflow-delegation.jsonl");
+}
+process.stdout.write(dirname(storePath));
+AW_JS
+  aw_require_core "$aw_js" "the store-directory resolver" || return 1
+  NODE_OPTIONS= node -e "$aw_js" "$common"
+}
+
+# The contract header this run is accountable for: its `nonce` and its `contractDigest`, both read
+# from the bytes ALREADY loaded as the prompt (fed on stdin) rather than from a second open of the
+# path. That single read is load-bearing: two reads leave a window in which the file can be swapped,
+# and the run would then execute contract A while its receipt claimed the digest of B — a return the
+# ledger would accept. Dropping the trailing newlines (`$( )` does) cannot move the digest: the digest
+# is taken over the PARSED object and the fence walk is line-based, so anything after the closing
+# fence is outside the block either way.
+#
+# contractDigest is sha256 over the CANONICAL serialization (recursively key-sorted JSON, no trailing
+# newline) of the ONE top-level ```aw-dispatch-contract block. Independently produced HERE: without
+# it the ledger would compare a dispatch record against values derived from itself, and a run that
+# executed a DIFFERENT contract would correlate cleanly. The fence walk mirrors the kit's
+# extractContractBlock — nesting-aware, so a contract marker inside another fenced block is example
+# text; both line endings accepted. FORM validation is deliberately NOT duplicated here: the kit's
+# `open` is the single form door, and a second one would drift. The ONE field validated is `nonce`,
+# because this wrapper COMPARES it — a value outside the safe grammar could not be compared or named.
+aw_compute_contract_header() {
+  local aw_js=""
+  IFS= read -r -d '' aw_js <<'AW_JS' || true
+const fs = require("node:fs");
+const { createHash } = require("node:crypto");
+const INFO = "aw-dispatch-contract";
+const FENCE = /^(`{3,})(.*)$/;
+const SAFE = /^[A-Za-z0-9._-]{1,64}$/;
+const die = (m) => { process.stderr.write("error: dispatch contract — " + m + ".\n"); process.exit(2); };
+let text;
+try { text = fs.readFileSync(0, "utf8"); } catch (err) { die("cannot read the dispatch contract bytes (" + (err && err.code) + ")"); }
+const lines = text.split(/\r?\n/);
+const blocks = [];
+let openTicks = 0, openInfo = "", openAt = -1;
+for (let i = 0; i < lines.length; i += 1) {
+  const fence = FENCE.exec(lines[i]);
+  if (fence === null) continue;
+  const ticks = fence[1].length;
+  const info = fence[2].trim();
+  if (openTicks === 0) { openTicks = ticks; openInfo = info; openAt = i; continue; }
+  if (info === "" && ticks >= openTicks) {
+    if (openInfo === INFO) blocks.push(lines.slice(openAt + 1, i).join("\n"));
+    openTicks = 0; openInfo = ""; openAt = -1;
+  }
+}
+if (openTicks !== 0 && openInfo === INFO) die("the ```" + INFO + " block is never closed");
+if (blocks.length === 0) die("no top-level ```" + INFO + " block found — an accounted dispatch runs a contract");
+if (blocks.length > 1) die(blocks.length + " ```" + INFO + " blocks found — a dispatch file carries exactly one");
+let contract;
+try { contract = JSON.parse(blocks[0]); } catch { die("the ```" + INFO + " block body is not valid JSON"); }
+if (contract === null || typeof contract !== "object" || Array.isArray(contract)) die("the ```" + INFO + " block body must be ONE JSON object");
+if (typeof contract.nonce !== "string" || !SAFE.test(contract.nonce)) die("the header carries no nonce in the safe grammar ([A-Za-z0-9._-]{1,64}) — an accounted dispatch is identified by the nonce the ledger copied from this header");
+const ser = (v) => (Array.isArray(v)
+  ? "[" + v.map(ser).join(",") + "]"
+  : (v !== null && typeof v === "object")
+    ? "{" + Object.keys(v).sort().map((k) => JSON.stringify(k) + ":" + ser(v[k])).join(",") + "}"
+    : JSON.stringify(v));
+process.stdout.write(contract.nonce + "\n" + createHash("sha256").update(ser(contract), "utf8").digest("hex"));
+AW_JS
+  aw_require_core "$aw_js" "the contract-header reader" || return 1
+  printf '%s' "$1" | NODE_OPTIONS= node -e "$aw_js"
+}
+
+if [[ -n "$aw_nonce" ]]; then
+  if ! command -v node >/dev/null 2>&1; then
+    echo "error: a nonced dispatch mints an exec receipt, and its mint core needs 'node' on PATH — refusing before any spend." >&2
+    echo "       (a nonce-less run needs no node at all)" >&2
+    exit 2
+  fi
+  # The digest binds the FILE the kit's `dispatch open --contract` read. A prompt arriving on stdin
+  # is not that file — there would be nothing to bind — so the accounted lane refuses it by name
+  # rather than digesting a stream nobody can re-read.
+  if [[ "$prompt_src" == "-" ]]; then
+    echo "error: a nonced dispatch runs a contract FILE, not stdin — contractDigest binds the dispatch file this run was handed, and '-' leaves nothing for the ledger to bind; pass the same file 'dispatch open --contract' read." >&2
+    exit 2
+  fi
+  # The resolved directory crosses back through a SENTINEL, not a bare command substitution: `$( )`
+  # strips every trailing newline, while the kit's own reader strips exactly ONE (git's terminator,
+  # flow-store-read.mjs:32-35). For a directory whose name ends in a newline the two sides would then
+  # resolve different paths, and the wrapper would write beside a ledger the kit never reads. Appending
+  # `x` inside the substitution makes the last byte a non-newline; only that final sentinel is
+  # stripped, so a directory whose own name ends in `x` still round-trips. A refusing resolver prints
+  # nothing on stdout, so the missing sentinel IS the failure signal.
+  aw_dir_raw=""
+  aw_dir_raw="$(aw_resolve_artifact_dir && printf x)" || true
+  if [[ "$aw_dir_raw" != *x ]]; then
+    echo "       (the receipt has nowhere to land — refusing before any spend)" >&2
+    exit 2
+  fi
+  aw_artifact_dir="${aw_dir_raw%x}"
+  aw_header=""
+  if ! aw_header="$(aw_compute_contract_header "$task")"; then
+    echo "error: the prompt '$prompt_src' carries no readable dispatch contract (see above) — an accounted dispatch is refused before any spend." >&2
+    exit 2
+  fi
+  aw_contract_nonce="${aw_header%%$'\n'*}"
+  aw_contract_digest="${aw_header#*$'\n'}"
+  # The ledger's nonce IS the header's — `dispatch open` COPIES it — so a --nonce disagreeing with the
+  # header can only mint an artifact no return will ever absorb, after paying for the run. Refuse it
+  # here, where it is still free. Only the accounted lane compares: a nonce-LESS run of an ordinary
+  # plan file that happens to carry a contract block is none of this seam's business.
+  if [[ "$aw_contract_nonce" != "$aw_nonce" ]]; then
+    echo "error: the dispatch nonce '$aw_nonce' does not match the contract header's nonce '$aw_contract_nonce' — 'dispatch open' copies the nonce FROM the header, so this run would reserve an identity no return could absorb; nothing was reserved and nothing was spent." >&2
+    exit 2
+  fi
+fi
+
 # --- Enforced git-write boundary (physical shim file) ------------------------
 # codex spawns `git` via execve, which BYPASSES exported shell functions — so the
 # boundary MUST be a physical executable on PATH. We write a `git` shim into a temp
@@ -563,11 +844,20 @@ fi
 # (codex could still call git by an absolute path — the contract + review are the
 # real guard); it removes the trivial PATH-level write vector.
 shim_dir=""
+out_dir=""
 out=""
 trace=""
-trap 'rm -rf "$shim_dir" 2>/dev/null; rm -f "$out" "$trace" 2>/dev/null; true' EXIT
+trap 'rm -rf "$shim_dir" "$out_dir" 2>/dev/null; rm -f "$trace" 2>/dev/null; true' EXIT
 shim_dir="$(mktemp -d)"
-out="$(mktemp)"
+# `-o` gets a path that does NOT exist yet, inside a private directory. A pre-created file (the old
+# `mktemp`) made "the delegate produced no final message" indistinguishable from "the delegate
+# produced an EMPTY one" — both read back as zero bytes — so an accounted run could publish a
+# `success` receipt describing a report the run never wrote, while its own stderr said there was no
+# final message. The real CLI CREATES this path when it has something to write (probed against
+# codex-cli directly: exit 0, the file appeared with the answer in it) — the fake accepts any argv, so
+# only the real one could answer that.
+out_dir="$(mktemp -d)"
+out="$out_dir/final-message.txt"
 trace="$(mktemp)"
 {
   printf '#!/usr/bin/env bash\n'
@@ -676,6 +966,16 @@ run_env=(env "PATH=$shim_dir:$PATH")
 # absolute path the banner rendered from (banner and run never make independent conclusions).
 timeout_bin="$(aw_resolve_timeout_bin)"
 if [[ -z "$timeout_bin" ]]; then
+  # D8 — an ACCOUNTED dispatch that cannot be capped can never honour the terminal-exit rule: the
+  # ledger records capS + killGraceS and refuses a dispatch whose deadline is below their sum, so a
+  # run with no cap at all would put an unbounded run under a bounded deadline, and the waiter would
+  # report an expiry while the run was still legitimately alive. A nonce-LESS run keeps the existing
+  # behaviour exactly — warn loudly and run uncapped.
+  if [[ -n "$aw_nonce" ]]; then
+    echo "error: no 'timeout'/'gtimeout' on PATH — a nonced dispatch refuses to run uncapped (an accounted run that cannot be capped can never honour the terminal-exit rule)." >&2
+    echo "       Install coreutils, or dispatch without a nonce; nothing was reserved and nothing was spent." >&2
+    exit 2
+  fi
   echo "warning: no 'timeout'/'gtimeout' on PATH — running codex WITHOUT a hard wall-clock cap" >&2
   echo "         (install coreutils to enable CODEX_HARD_TIMEOUT=$CODEX_HARD_TIMEOUT)." >&2
 fi
@@ -688,6 +988,99 @@ aw_timeout_banner="$(aw_timeout_label "$timeout_bin" "$CODEX_HARD_TIMEOUT")"
 aw_session_label="fresh"
 [[ -n "$resume_mode" ]] && aw_session_label="resume:$resume_id"
 echo "exec posture: model=$CODEX_MODEL effort=$CODEX_EFFORT tier=${CODEX_SERVICE_TIER:-standard} sandbox=workspace-write session=$aw_session_label timeout=$aw_timeout_banner" >&2
+
+# --- The PRE-SPEND reservation (delegation Plan 2 / D1) ------------------------
+# Written immediately before the CLI runs — after EVERY preflight and after the posture banner, so a
+# refused run leaves no reservation behind — and it is the reservation itself, not a separate lock,
+# that makes one nonce mean one dispatch: the publish is atomic and NO-CLOBBER, so a second dispatch
+# on the same nonce refuses BEFORE any spend. Both derived names are checked, because the kit's
+# `dispatch open` refuses on either too: a leftover report would otherwise be absorbed later as this
+# run's own evidence.
+#
+# The mint core is codex-review.sh's finding-manifest shape: an UNPREDICTABLE sibling temp opened
+# "wx" (O_CREAT|O_EXCL — a planted node at the name refuses, and ONLY a temp we provably created is
+# ever unlinked), then a hard-link publish (atomic, no-clobber). The owner token is minted here and
+# returned on stdout: it is what the terminal publication verifies it still holds.
+aw_write_reservation() {
+  local aw_js=""
+  IFS= read -r -d '' aw_js <<'AW_JS' || true
+const fs = require("node:fs");
+const { join, dirname, basename } = require("node:path");
+const { randomBytes } = require("node:crypto");
+const [dir, backend, nonce, contractDigest, wrapperVersion, model, effort, tier, capS, killGraceS] = process.argv.slice(1);
+const name = (prefix, suffix) => join(dir, prefix + backend.length + "-" + backend + "-" + nonce + suffix);
+const receipt = name("agent-workflow-exec-receipt-", ".json");
+const report = name("agent-workflow-exec-report-", ".txt");
+for (const path of [receipt, report]) {
+  try {
+    fs.lstatSync(path);
+    process.stderr.write("error: an exec artifact for this {backend, nonce} already exists at " + path + " — one nonce, one dispatch: refusing PRE-SPEND (remove it, or dispatch under a fresh nonce).\n");
+    process.exit(3);
+  } catch (err) {
+    if (!err || err.code !== "ENOENT") {
+      process.stderr.write("error: could not probe " + path + " (" + (err && err.code) + ") — refusing PRE-SPEND.\n");
+      process.exit(3);
+    }
+  }
+}
+const owner = randomBytes(16).toString("hex");
+const bytes = Buffer.from(JSON.stringify({
+  schema: 1,
+  kind: "exec-receipt",
+  state: "reserved",
+  backend,
+  nonce,
+  owner,
+  contractDigest,
+  wrapperVersion,
+  posture: { model, effort, tier: tier || null },
+  capS: Number(capS),
+  killGraceS: Number(killGraceS),
+  sessionId: null,
+  exitStatus: null,
+  outcome: null,
+  reportDigest: null,
+  reportLength: null,
+  timestamp: new Date().toISOString(),
+}) + "\n");
+let tmp = null;
+let code = 1;
+try {
+  const candidate = join(dirname(receipt), "." + basename(receipt) + "." + process.pid + "." + randomBytes(8).toString("hex") + ".tmp");
+  const fd = fs.openSync(candidate, "wx", 0o600);
+  tmp = candidate;
+  try { fs.writeFileSync(fd, bytes); } finally { fs.closeSync(fd); }
+  fs.linkSync(tmp, receipt);
+  code = 0;
+} catch (err) {
+  process.stderr.write("error: could not publish the nonce reservation at " + receipt + " (" + (err && err.code) + ") — refusing PRE-SPEND.\n");
+  code = err && err.code === "EEXIST" ? 3 : 1;
+}
+// An orphan temp never blocks the run — but it is never silent either: it sits in the store
+// directory looking like family state, and only the run that made it knows it is debris.
+if (tmp !== null) {
+  try { fs.unlinkSync(tmp); } catch {
+    process.stderr.write("warning: the reservation was published, but its temporary sibling could not be removed — orphan left at: " + tmp + " — remove it by hand.\n");
+  }
+}
+if (code === 0) process.stdout.write(owner);
+process.exit(code);
+AW_JS
+  aw_require_core "$aw_js" "the reservation mint core" || return 1
+  NODE_OPTIONS= node -e "$aw_js" "$aw_artifact_dir" "$AW_RECEIPT_BACKEND" "$aw_nonce" "$aw_contract_digest" "$AW_BRIDGE_VERSION" \
+    "$CODEX_MODEL" "$CODEX_EFFORT" "${CODEX_SERVICE_TIER:-}" "$CODEX_HARD_TIMEOUT" "$CODEX_KILL_GRACE_S"
+}
+
+if [[ -n "$aw_nonce" ]]; then
+  if ! aw_owner="$(aw_write_reservation)"; then
+    echo "       (the reservation is the pre-spend half of the dispatch identity — nothing was spent)" >&2
+    exit 2
+  fi
+  if [[ -z "$aw_owner" ]]; then
+    echo "error: the nonce reservation published no owner token — refusing PRE-SPEND rather than running a dispatch nothing can claim." >&2
+    exit 2
+  fi
+fi
 
 # --- Nested-sandbox evidence scan: ONE entry point, TWO policies ---------------
 # The class: codex ships its OWN OS sandbox (bwrap); run nested inside a harness sandbox the FS is
@@ -814,38 +1207,237 @@ aw_scan_nested_sandbox() {   # $1 = rc, $2 = trace path
 # including the evidence scan — is genuinely shared instead of mode-dependent.
 set +e
 if [[ -n "$timeout_bin" ]]; then
-  printf '%s' "$full_prompt" | "${run_env[@]}" "$timeout_bin" --kill-after=15s "$CODEX_HARD_TIMEOUT" "${codex_cmd[@]}" >"$trace" 2>&1
+  printf '%s' "$full_prompt" | "${run_env[@]}" "$timeout_bin" --kill-after="${CODEX_KILL_GRACE_S}s" "$CODEX_HARD_TIMEOUT" "${codex_cmd[@]}" >"$trace" 2>&1
 else
   printf '%s' "$full_prompt" | "${run_env[@]}" "${codex_cmd[@]}" >"$trace" 2>&1
 fi
 rc=$?
 set -e
 
+# --- The session id, captured BEFORE any outcome branching (D3) ----------------
+# It used to be extracted only on the SUCCESS path, after the timeout and failure exits, so a run
+# that failed or timed out recorded no identity at all — and the session id is exactly the handle an
+# operator needs to find such a run in the backend's own history. In resume mode it is the resume id,
+# validated pre-spend. A fresh run that emitted no thread.started leaves it empty, which is the
+# receipt's `missing-identity` outcome, never a guess.
+session_id=""
+if [[ -n "$resume_mode" ]]; then
+  session_id="$resume_id"
+else
+  session_id="$(grep -m1 '"type":"thread.started"' "$trace" 2>/dev/null \
+    | grep -o '"thread_id":"[^"]*"' | cut -d'"' -f4 || true)"
+fi
+
+# --- The TERMINAL exec receipt, fail-closed (D1 / 3.1.d) -----------------------
+# Publication ORDER, and it is the whole point: verify the reservation is still OURS (so a tampered
+# reservation costs no overwritten artifact — nothing at all is published), write the REPORT
+# atomically, re-verify the owner, then REPLACE the reservation with the terminal receipt. An
+# artifact that has arrived therefore always has a complete report behind it.
+#
+# FAIL-CLOSED, deliberately unlike codex-review.sh's warn-only receipt (a missing review receipt only
+# fails a checker; a missing exec receipt leaves an EDITED tree with no accounting). Two statuses:
+# 70 the reservation could not be verified as this run's — NOTHING was published; 71 a publication
+# could not complete, and the message names WHICH artifact stopped. In both the RESERVATION survives,
+# so the recovery is the same door — `dispatch return --no-receipt` — while what the kit then reads
+# differs and stays two separate lanes: a failed REPORT write leaves the reservation alone (the
+# absorb records reportLength 0 and the metric is ineligible by the name `empty-report`), a failed
+# TERMINAL write leaves the published report beside it (the absorb reads it, report-if-present).
+aw_publish_terminal_receipt() {
+  local aw_js=""
+  IFS= read -r -d '' aw_js <<'AW_JS' || true
+const fs = require("node:fs");
+const { join, dirname, basename } = require("node:path");
+const { createHash, randomBytes } = require("node:crypto");
+const [dir, backend, nonce, owner, exitStatusRaw, sessionIdRaw, reportSrc] = process.argv.slice(1);
+const name = (prefix, suffix) => join(dir, prefix + backend.length + "-" + backend + "-" + nonce + suffix);
+const receipt = name("agent-workflow-exec-receipt-", ".json");
+const report = name("agent-workflow-exec-report-", ".txt");
+const exitStatus = Number(exitStatusRaw);
+const sessionId = sessionIdRaw === "" ? null : sessionIdRaw;
+// D3, the wrapper OUTCOME SUBSET — the only three a run can prove about itself.
+const outcome = exitStatus !== 0 ? "transport-failure" : (sessionId === null ? "missing-identity" : "success");
+const die = (code, message) => { process.stderr.write("error: " + message + "\n"); process.exit(code); };
+// The reservation is re-read and re-verified BEFORE anything at all is published: a foreign owner,
+// a missing artifact or a terminal one means this run does not hold the nonce, and the honest answer
+// is to publish NOTHING — neither the report nor the receipt.
+// `code` differs by WHEN the check runs: before any publication a refusal is total (4), after the
+// report is on disk it is not (6) — and the message must not claim otherwise.
+// The publication consequence is identical for every cause, but the DIAGNOSIS is not: "another run
+// owns this" is a specific claim, and asserting it over a malformed file, a vanished one or an I/O
+// error sends the operator hunting for a second dispatch that never existed. Each cause is named.
+const claim = (when, code) => {
+  let raw;
+  try {
+    raw = fs.readFileSync(receipt, "utf8");
+  } catch (err) {
+    const why = err && err.code === "ENOENT"
+      ? "it is GONE — something removed it after this run published it"
+      : "it could not be read (" + (err && err.code ? err.code : "unknown error") + ")";
+    die(code, "the nonce reservation at " + receipt + " cannot be verified " + when + ": " + why);
+  }
+  let held;
+  try {
+    held = JSON.parse(raw);
+  } catch {
+    die(code, "the nonce reservation at " + receipt + " cannot be verified " + when + ": it is MALFORMED — the bytes there are not valid JSON, so nothing about its ownership is readable");
+  }
+  if (held === null || typeof held !== "object" || Array.isArray(held)) {
+    die(code, "the nonce reservation at " + receipt + " cannot be verified " + when + ": its body is not a JSON object");
+  }
+  if (held.state !== "reserved") {
+    die(code, "the artifact at " + receipt + " is not a RESERVATION " + when + ": its state is " + JSON.stringify(held.state) + " — this run holds no claim on a receipt something else has already finished");
+  }
+  if (held.owner !== owner) {
+    die(code, "the artifact at " + receipt + " is not this run’s reservation " + when + ": its owner token belongs to ANOTHER run");
+  }
+  return held;
+};
+const held = claim("before any publication", 4);
+// THREE cases, decided by lstat BEFORE any read — because `readFileSync` FOLLOWS a symlink, so a
+// DANGLING one at the capture path reports ENOENT and would be recorded as a clean empty report on a
+// `success` receipt. ABSENT (no entry at all) is the legitimate "the delegate wrote no final message"
+// case: the sha256 of no bytes, exactly what the receipt contract expresses. A REGULAR file is read.
+// Anything else PRESENT — a symlink, a directory, a device — is a FAILED probe, never an absence.
+// Type only: the capture lives in a directory this run created with `mktemp -d`, so a mode or
+// ownership check would be theatre against a threat model this wrapper already declares out of scope,
+// while the type check catches the real accident. Same discipline as the kit's readRegularFileNoFollow.
+let bytes;
+if (reportSrc === "") {
+  bytes = Buffer.alloc(0);
+} else {
+  let stat = null;
+  try {
+    stat = fs.lstatSync(reportSrc);
+  } catch (err) {
+    if (!err || err.code !== "ENOENT") {
+      die(5, "the delegate’s final message at " + reportSrc + " could not be probed (" + (err && err.code) + ") — a failed probe is not an absence, and recording it as an empty report would put bytes in the receipt that the run never produced");
+    }
+  }
+  if (stat === null) {
+    bytes = Buffer.alloc(0);
+  } else if (!stat.isFile()) {
+    const kind = stat.isSymbolicLink() ? "symlink" : stat.isDirectory() ? "directory" : "non-regular entry";
+    die(5, "the delegate’s final message at " + reportSrc + " is a " + kind + ", not a regular file — a CORRUPT capture is a FAILED probe, not an absent one (a dangling symlink reads as ENOENT and would otherwise be recorded as a clean empty report)");
+  } else {
+    try {
+      bytes = fs.readFileSync(reportSrc);
+    } catch (err) {
+      die(5, "the delegate’s final message at " + reportSrc + " could not be read (" + (err && err.code) + ") — an unreadable capture is a FAILED probe, not an absent one");
+    }
+  }
+}
+// Both publications are atomic: an unpredictable sibling temp, then a rename that either replaces
+// the target whole or leaves it untouched. A reader never sees half a report or half a receipt.
+const publishAtomically = (path, payload, code, what) => {
+  let tmp = null;
+  try {
+    const candidate = join(dirname(path), "." + basename(path) + "." + process.pid + "." + randomBytes(8).toString("hex") + ".tmp");
+    const fd = fs.openSync(candidate, "wx", 0o600);
+    tmp = candidate;
+    try { fs.writeFileSync(fd, payload); } finally { fs.closeSync(fd); }
+    fs.renameSync(tmp, path);
+    tmp = null;
+  } catch (err) {
+    if (tmp !== null) { try { fs.unlinkSync(tmp); } catch { /* an orphan temp never masks the real failure */ } }
+    die(code, what + " could not be published at " + path + " (" + (err && err.code) + ")");
+  }
+};
+publishAtomically(report, bytes, 5, "the delegate’s report");
+claim("immediately before the terminal replace", 6);
+publishAtomically(receipt, Buffer.from(JSON.stringify({
+  schema: held.schema,
+  kind: held.kind,
+  state: "terminal",
+  backend: held.backend,
+  nonce: held.nonce,
+  owner: held.owner,
+  contractDigest: held.contractDigest,
+  wrapperVersion: held.wrapperVersion,
+  posture: held.posture,
+  capS: held.capS,
+  killGraceS: held.killGraceS,
+  sessionId,
+  exitStatus,
+  outcome,
+  reportDigest: createHash("sha256").update(bytes).digest("hex"),
+  reportLength: bytes.length,
+  timestamp: new Date().toISOString(),
+}) + "\n"), 6, "the terminal exec receipt");
+
+process.stdout.write(outcome);
+AW_JS
+  aw_require_core "$aw_js" "the terminal publication core" || return 7
+  NODE_OPTIONS= node -e "$aw_js" "$aw_artifact_dir" "$AW_RECEIPT_BACKEND" "$aw_nonce" "$aw_owner" "$1" "$session_id" "$out"
+}
+
+# The failure diagnostics print BEFORE the receipt is published, and the exits happen AFTER: a
+# publication that fails must not swallow the trace tail that explains WHY the run failed. Both are
+# explicitly NON-FATAL: under `set -e` a diagnostic that cannot run (no `tail` on PATH, an unreadable
+# trace) would kill the wrapper BEFORE the terminal publication, stranding the reservation with no
+# recovery status at all — the diagnostics are the least important thing here and must never be the
+# thing that decides whether the run gets accounted.
 if [[ $rc -eq 124 || $rc -eq 137 ]]; then
   echo "error: codex exec exceeded the hard cap CODEX_HARD_TIMEOUT=${CODEX_HARD_TIMEOUT}s and was terminated." >&2
   echo "       Raise CODEX_HARD_TIMEOUT for a known-healthy slow run, or narrow the task, then re-dispatch." >&2
-  exit $rc
-fi
-if [[ $rc -ne 0 ]]; then
+elif [[ $rc -ne 0 ]]; then
   echo "error: codex exec failed (exit $rc). Last lines of the run trace:" >&2
-  tail -n 40 "$trace" >&2
-  aw_scan_nested_sandbox "$rc" "$trace"
+  tail -n 40 "$trace" >&2 || true
+  aw_scan_nested_sandbox "$rc" "$trace" || true
+fi
+
+if [[ -n "$aw_nonce" ]]; then
+  aw_outcome=""
+  aw_publish_rc=0
+  aw_outcome="$(aw_publish_terminal_receipt "$rc")" || aw_publish_rc=$?
+  if [[ $aw_publish_rc -ne 0 ]]; then
+    echo "       The delegate ran and the working tree may be PARTIALLY EDITED — treat it as dirtied, not as" >&2
+    echo "       untouched." >&2
+    # What SURVIVES differs per lane, and the message says only what this run can still prove. After
+    # the report is on disk the reservation's fate is no longer known to us (it was already not ours,
+    # or the replace failed for a reason that may also have removed it) — so that lane never claims
+    # "the reservation stands".
+    case "$aw_publish_rc" in
+      7)
+        echo "       The publisher never RAN — nothing was published. The reservation is untouched; absorb with:" >&2
+        echo "         dispatch return --nonce $aw_nonce --no-receipt --exit-status $rc --outcome <o>" >&2
+        exit 71
+        ;;
+      4)
+        echo "       NOTHING was published — not the report, not the receipt. The artifact at the receipt path" >&2
+        echo "       is not this run's reservation, so establish what replaced it BEFORE absorbing anything:" >&2
+        echo "       a --no-receipt absorb would source its posture from another run's artifact." >&2
+        exit 70
+        ;;
+      5)
+        echo "       Nothing beyond the reservation was published. Absorb the thread with:" >&2
+        echo "         dispatch return --nonce $aw_nonce --no-receipt --exit-status $rc --outcome <o>" >&2
+        echo "       (with no report on disk it records reportLength 0 — ineligible by the name empty-report)" >&2
+        exit 71
+        ;;
+      *)
+        echo "       The REPORT is published; the terminal receipt was NOT completed. Absorb the thread with:" >&2
+        echo "         dispatch return --nonce $aw_nonce --no-receipt --exit-status $rc --outcome <o>" >&2
+        echo "       (it reads the published report, report-if-present), and check the receipt path by hand." >&2
+        exit 71
+        ;;
+    esac
+  fi
+  echo "exec receipt: nonce=$aw_nonce outcome=$aw_outcome exit=$rc session=${session_id:-none} → $aw_artifact_dir" >&2
+fi
+
+if [[ $rc -ne 0 ]]; then
   exit $rc
 fi
 
-# Success: capture the session id (NORMAL mode only — it carries thread.started in
-# the JSON trace; a resume continues the same session) BEFORE the trap removes the
-# trace, so an iterative resume (codex-exec --resume-last) can find it.
-if [[ -z "$resume_mode" ]]; then
-  session_id="$(grep -m1 '"type":"thread.started"' "$trace" 2>/dev/null \
-    | grep -o '"thread_id":"[^"]*"' | cut -d'"' -f4 || true)"
-  if [[ -n "$session_id" ]]; then
-    sidecar="${CODEX_SESSION_FILE:-$PWD/.codex-last-session}"
-    if ! printf '%s\n' "$session_id" >"$sidecar" 2>/dev/null; then
-      echo "warning: could not write the session sidecar '$sidecar' — 'codex-exec --resume-last' won't find this id." >&2
-    fi
-    echo "session: $session_id" >&2
+# Success: record the session id in the sidecar (NORMAL mode only — a resume continues the same
+# session) BEFORE the trap removes the trace, so an iterative resume (codex-exec --resume-last) can
+# find it. The id itself was captured above, for every outcome; only the sidecar is success-scoped.
+if [[ -z "$resume_mode" && -n "$session_id" ]]; then
+  sidecar="${CODEX_SESSION_FILE:-$PWD/.codex-last-session}"
+  if ! printf '%s\n' "$session_id" >"$sidecar" 2>/dev/null; then
+    echo "warning: could not write the session sidecar '$sidecar' — 'codex-exec --resume-last' won't find this id." >&2
   fi
+  echo "session: $session_id" >&2
 fi
 
 if [[ -f "$out" && -s "$out" ]]; then
