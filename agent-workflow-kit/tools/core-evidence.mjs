@@ -56,7 +56,9 @@ const GIT_MAX_BUFFER = 256 * 1024 * 1024; // a full-tree diff / TAP stream can b
 
 const gitRaw = (args, cwd) => spawnSync('git', args, { cwd, maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
 
-const gitBuf = (args, cwd) => {
+// Exported so a consumer computing over the SAME domain (the exec metric producer) reads git through
+// this one runner instead of growing a second spawnSync wrapper with its own buffer bound.
+export const gitBuf = (args, cwd) => {
   const r = gitRaw(args, cwd);
   if (r.error || r.status !== 0) return null;
   return r.stdout;

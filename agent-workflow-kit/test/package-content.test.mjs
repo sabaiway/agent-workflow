@@ -403,7 +403,13 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       references/modes/dispatch.md (its mode contract, doc-parity-bound on the ONE sentence
     //       carrying the form-only limit and the aggregator's refusals). The colocated
     //       *.test.mjs sibling is stripped by files[] and never enters the tarball.
-    assert.equal(packed.length, 191, `tarball file count drifted (${packed.length} ≠ 191)`);
+    // 193 = 191 + the exec-return producers (delegation Plan 2 Phase 1), EXACTLY two files:
+    //       tools/exec-receipt.mjs (the wrapper-minted receipt's closed form — the two states, the
+    //       terminal-only rule, the D3 outcome mapping and the artifact naming grammar) +
+    //       tools/exec-producer.mjs (the git-side metric producer: the returned change set
+    //       enumerated over the fingerprint domain, the diff bytes and the bundle assembly). Both
+    //       colocated *.test.mjs siblings are stripped by files[] and never enter the tarball.
+    assert.equal(packed.length, 193, `tarball file count drifted (${packed.length} ≠ 193)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
