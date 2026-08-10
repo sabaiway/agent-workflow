@@ -1,10 +1,11 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync, chmodSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import {
   main, runCli, DISPATCH_CONTRACT,
   REGISTER_FLAG_FIELDS, REGISTER_DERIVED_FIELDS, OBSERVE_FLAG_FIELDS, OBSERVE_DERIVED_FIELDS,
@@ -15,9 +16,15 @@ import {
 // the red-first discipline needs every proof to fail for its OWN reason.
 import * as engine from './dispatch.mjs';
 import {
-  DELEGATION_SCHEMA_VERSION, DELEGATION_KEY_SETS, canonicalDelegationDigest, expectedBundleLength,
+  DELEGATION_SCHEMA_VERSION, DELEGATION_KEY_SETS, RETURN_OUTCOMES, SESSION_ID_NULLABLE_OUTCOMES,
+  canonicalDelegationDigest, contractDigest, expectedBundleLength,
 } from './dispatch-record.mjs';
 import { DELEGATION_STORE_BASENAME, readDelegationStore } from './dispatch-store.mjs';
+import { computeTreeFingerprint, computeWorkingState, isTreeClean } from './core-evidence.mjs';
+import { enumerateReturnedObjects } from './exec-producer.mjs';
+import {
+  EXEC_RECEIPT_SCHEMA_VERSION, EXEC_RECEIPT_KIND, execReceiptBasename, execReportBasename,
+} from './exec-receipt.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-dispatch-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
@@ -785,6 +792,1036 @@ describe('aggregate excludes self-reported observations from acceptance and prin
   });
 });
 
+// ── (6) the writer verbs: open · return · fold · degrade ──────────────────────────────────────────
+
+// A real repository with ONE commit (the producer refuses an unborn branch — there is no pre-image
+// to attribute delegated bytes against) and its ledger in the git dir, exactly where production puts
+// it. That placement is load-bearing for these tests: the exec receipt and its report are minted
+// BESIDE the ledger, so a store at the work-tree root would make every artifact an untracked file the
+// producer then counts into the numerator it is supposed to be measuring.
+const gitIn = (cwd, ...args) => {
+  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
+  return r.stdout;
+};
+
+const repo = () => {
+  const cwd = join(TMP, `repo-${seq += 1}`);
+  mkdirSync(cwd, { recursive: true });
+  gitIn(cwd, 'init', '-q', '-b', 'main');
+  gitIn(cwd, 'config', 'user.email', 'coder-tools@proton.me');
+  gitIn(cwd, 'config', 'user.name', 'coder-tool');
+  writeFileSync(join(cwd, 'base.txt'), 'base\n');
+  gitIn(cwd, 'add', '-A');
+  gitIn(cwd, 'commit', '-q', '-m', 'init');
+  const dir = join(cwd, '.git');
+  const store = join(dir, DELEGATION_STORE_BASENAME);
+  return { cwd, dir, store, env: { AW_DELEGATION_STORE: store } };
+};
+
+// The contract file lives OUTSIDE the repository on purpose: written inside it, it would be an
+// untracked path and every `open` would record a DIRTY baseline, so the eligible lane could never be
+// exercised at all.
+const externalContract = (contract) => {
+  const path = join(TMP, `contract-${seq += 1}.md`);
+  writeFileSync(path, `# a sub-task\n\n\`\`\`aw-dispatch-contract\n${JSON.stringify(contract, null, 2)}\n\`\`\`\n`);
+  return path;
+};
+
+const REGISTER_WAVE = ['register', '--wave', 'wave-a', '--step-classes', 'code,extraction',
+  '--pairing-key', 'stepClass', '--min-per-class', '1', '--mean-l-threshold', '1',
+  '--first-pass-num', '0', '--first-pass-den', '1'];
+
+const CAP_S = 600;
+const GRACE_S = 15;
+
+const openArgv = (contractPath, over = []) => ['open', '--contract', contractPath, '--wave', 'wave-a',
+  '--backend', 'codex', '--rationale', 'a bounded sub-task', '--wrapper-cap-s', String(CAP_S),
+  '--kill-grace-s', String(GRACE_S), ...over];
+
+const recordsOf = (ws) => {
+  const store = readDelegationStore(ws.store);
+  assert.equal(store.malformed, 0, store.malformedReasons.join('; '));
+  return store.records;
+};
+const lastRecord = (ws) => recordsOf(ws).at(-1);
+const kindOf = (ws, kind) => recordsOf(ws).find((r) => r.kind === kind);
+
+const plus = (instant, seconds) => new Date(Date.parse(instant) + seconds * 1000).toISOString();
+const digestOf = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+// The wrapper's own artifacts, minted the way Phase 3's bash will: the report FIRST, the receipt
+// LAST, both named from {backend, nonce} beside the ledger.
+const REPORT_TEXT = 'the delegate wrote delegated.txt and says so here\n';
+
+const mintArtifacts = (ws, { dispatch, contract, report = REPORT_TEXT, state = 'terminal', receipt = {}, backend = 'codex' }) => {
+  const bytes = report === null ? null : Buffer.from(report, 'utf8');
+  if (bytes !== null) writeFileSync(join(ws.dir, execReportBasename(backend, dispatch.nonce)), bytes);
+  const terminal = state === 'terminal';
+  const artifact = {
+    schema: EXEC_RECEIPT_SCHEMA_VERSION,
+    kind: EXEC_RECEIPT_KIND,
+    state,
+    backend,
+    nonce: dispatch.nonce,
+    owner: 'owner-token-1',
+    contractDigest: contractDigest(contract),
+    wrapperVersion: '3.4.1',
+    posture: { model: 'gpt-5-codex', effort: 'high', tier: 'priority' },
+    capS: CAP_S,
+    killGraceS: GRACE_S,
+    sessionId: terminal ? 'sess-1' : null,
+    exitStatus: terminal ? 0 : null,
+    outcome: terminal ? 'success' : null,
+    reportDigest: terminal && bytes !== null ? digestOf(bytes) : null,
+    reportLength: terminal && bytes !== null ? bytes.length : null,
+    timestamp: plus(dispatch.timestamp, 60),
+    ...receipt,
+  };
+  writeFileSync(join(ws.dir, execReceiptBasename(backend, dispatch.nonce)), JSON.stringify(artifact));
+  return artifact;
+};
+
+// The whole lane up to the return: register → open → the delegate writes a file → the wrapper mints.
+const DELEGATED_BYTES = 'the delegate\'s work\n';
+const laneToReturn = (over = {}) => {
+  const ws = repo();
+  const contract = { ...CONTRACT, ...over.contract };
+  assert.equal(run(REGISTER_WAVE, ws).code, 0);
+  const path = externalContract(contract);
+  const opened = run(openArgv(path, over.openFlags ?? []), ws);
+  assert.equal(opened.code, 0, opened.stderr);
+  const dispatch = kindOf(ws, 'dispatch');
+  writeFileSync(join(ws.cwd, 'delegated.txt'), DELEGATED_BYTES);
+  const artifact = mintArtifacts(ws, { dispatch, contract, ...over.artifacts });
+  return { ws, contract, contractPath: path, dispatch, artifact };
+};
+
+describe('open mints the dispatch record from the contract header and enforces the D8 floor', () => {
+  it('open copies every mint-time field from the header and refuses a hand-supplied disagreement', () => {
+    const ws = repo();
+    run(REGISTER_WAVE, ws);
+    const path = externalContract(CONTRACT);
+    const r = run(openArgv(path), ws);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /thread "p3-a1" opened in wave "wave-a"/);
+    assert.match(r.stdout, /baseline CLEAN/);
+    const record = kindOf(ws, 'dispatch');
+    assert.equal(record.nonce, CONTRACT.nonce);
+    assert.equal(record.stepClass, CONTRACT.stepClass);
+    assert.equal(record.deadlineS, CONTRACT.deadlineS);
+    assert.equal(record.retryIndex, CONTRACT.retry.index);
+    assert.equal(record.retryCap, CONTRACT.retry.cap);
+    assert.deepEqual(record.vehicle, CONTRACT.vehicle);
+    assert.equal(record.contractDigest, contractDigest(CONTRACT), 'contractDigest binds the copy');
+    assert.equal(record.backend, 'codex');
+    assert.equal(record.retryOf, null);
+    assert.equal(record.baselineClean, true);
+
+    // The ONE mint-time field a caller CAN contradict: retryOf rides a flag while retryIndex is
+    // copied, so the two disagree in both directions and the record vocabulary names it.
+    const stray = run(openArgv(externalContract({ ...CONTRACT, nonce: 'p3-a2' }), ['--retry-of', 'p3-a1']), ws);
+    assert.equal(stray.code, 1);
+    assert.match(stray.stderr, /retryIndex 0 is the FIRST attempt and carries retryOf null/);
+    const orphan = run(openArgv(externalContract({ ...CONTRACT, nonce: 'p3-a3', retry: { cap: 2, index: 1 } })), ws);
+    assert.equal(orphan.code, 1);
+    assert.match(orphan.stderr, /retryIndex 1 requires retryOf/);
+    assert.equal(recordsOf(ws).filter((r2) => r2.kind === 'dispatch').length, 1, 'neither disagreement was written');
+  });
+
+  it('open refuses a contract whose deadlineS is below the wrapper cap plus the kill grace, and accepts it exactly AT the floor', () => {
+    const ws = repo();
+    run(REGISTER_WAVE, ws);
+    const below = run(openArgv(externalContract({ ...CONTRACT, deadlineS: CAP_S + GRACE_S - 1 })), ws);
+    assert.equal(below.code, 1);
+    assert.match(below.stderr, /deadlineS 614 is below the wrapper cap 600 plus the kill grace 15 \(615\)/);
+    assert.match(below.stderr, /nothing was written/);
+    assert.equal(recordsOf(ws).length, 1, 'only the registration is in the ledger');
+
+    const atFloor = run(openArgv(externalContract({ ...CONTRACT, nonce: 'floor-1', deadlineS: CAP_S + GRACE_S })), ws);
+    assert.equal(atFloor.code, 0, atFloor.stderr);
+    assert.equal(kindOf(ws, 'dispatch').deadlineS, CAP_S + GRACE_S);
+  });
+
+  it('open refuses a wrapper cap below 1 and a non-integer floor operand as USAGE, never a record', () => {
+    const ws = repo();
+    run(REGISTER_WAVE, ws);
+    const path = externalContract(CONTRACT);
+    assert.match(run(['open', '--contract', path, '--wave', 'wave-a', '--backend', 'codex',
+      '--rationale', 'x', '--wrapper-cap-s', '0', '--kill-grace-s', '15'], ws).stderr, /--wrapper-cap-s must be at least 1/);
+    assert.match(run(['open', '--contract', path, '--wave', 'wave-a', '--backend', 'codex',
+      '--rationale', 'x', '--wrapper-cap-s', 'ten', '--kill-grace-s', '15'], ws).stderr, /--wrapper-cap-s must be a non-negative decimal integer/);
+    assert.match(run(openArgv(path, ['--frobnicate', 'x']), ws).stderr, /unknown argument: --frobnicate/);
+    assert.equal(recordsOf(ws).length, 1);
+  });
+
+  it('open refuses an unreadable contract file and a FORM-violating header, naming the field', () => {
+    const ws = repo();
+    run(REGISTER_WAVE, ws);
+    const missing = run(openArgv(join(TMP, 'nowhere.md')), ws);
+    assert.equal(missing.code, 1);
+    assert.match(missing.stderr, /cannot read /);
+    const bad = run(openArgv(externalContract({ ...CONTRACT, stepClass: 'freestyle' })), ws);
+    assert.equal(bad.code, 1);
+    assert.match(bad.stderr, /FORM VIOLATION[\s\S]*stepClass/);
+    assert.equal(recordsOf(ws).length, 1);
+  });
+
+  // The baseline is probed before the fingerprint precisely so this answer is a named refusal from
+  // the verb rather than a STOP thrown by the tree-digest contract one module down.
+  it('open outside a git work tree refuses by name, even with a store override naming a ledger', () => {
+    const plain = plainDir();
+    const r = main(openArgv(externalContract(CONTRACT)), { cwd: plain.cwd, env: plain.env, now: clock });
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /the baseline is undecidable/);
+    assert.match(r.stderr, /nothing was written/);
+  });
+
+  it('open records baselineClean false on a dirty tree, and the resulting return may not claim eligible', () => {
+    const ws = repo();
+    run(REGISTER_WAVE, ws);
+    writeFileSync(join(ws.cwd, 'stray.txt'), 'the orchestrator left this behind\n');
+    const opened = run(openArgv(externalContract(CONTRACT)), ws);
+    assert.equal(opened.code, 0, opened.stderr);
+    assert.match(opened.stdout, /baseline DIRTY — the return will be metric-INELIGIBLE \(dirty-baseline\)/);
+    const dispatch = kindOf(ws, 'dispatch');
+    assert.equal(dispatch.baselineClean, false);
+
+    writeFileSync(join(ws.cwd, 'delegated.txt'), DELEGATED_BYTES);
+    mintArtifacts(ws, { dispatch, contract: CONTRACT });
+    const returned = run(['return', '--nonce', CONTRACT.nonce], ws);
+    assert.equal(returned.code, 0, returned.stderr);
+    assert.match(returned.stdout, /INELIGIBLE \(dirty-baseline\)/);
+    const record = kindOf(ws, 'return');
+    assert.equal(record.metric.eligible, false);
+    assert.equal(record.metric.ineligibleReason, 'dirty-baseline');
+    assert.ok(record.metric.numeratorBytes > 0, 'the bytes are still counted and recorded');
+  });
+
+  it('open surfaces the store\'s retry refusals verbatim — one case per rule', () => {
+    const priorContract = { ...CONTRACT, nonce: 'origin-1' };
+    const retryContract = { ...CONTRACT, nonce: 'retry-1', retry: { cap: 2, index: 1 } };
+    // The origin thread is hand-written: reaching a CLOSED failure thread through the CLI would cost
+    // a full dispatch cycle per rule, and every rule under test belongs to the store, not to that cycle.
+    const closedOrigin = (over = {}) => [
+      registration({ waveId: 'wave-a', stepClasses: ['code', 'extraction'], minPerClass: 1, meanLThreshold: 1, firstPassNum: 0, firstPassDen: 1 }),
+      dispatchRecord('origin-1', { retryCap: 2, contractDigest: contractDigest(priorContract), ...over }),
+      failureReturn('origin-1', { contractDigest: contractDigest(priorContract) }),
+    ];
+    const openRetry = (records, contract = retryContract, flags = []) => {
+      const ws = writeStore(repo(), records);
+      return run(openArgv(externalContract(contract), ['--retry-of', 'origin-1', ...flags]), ws);
+    };
+
+    const second = openRetry([...closedOrigin(), dispatchRecord('taken-1', { retryOf: 'origin-1', retryIndex: 1, timestamp: TS(6) })]);
+    assert.match(second.stderr, /already has the retry successor "taken-1"/);
+
+    const capped = openRetry(closedOrigin({ retryCap: 0 }));
+    assert.match(capped.stderr, /exceeds the retryCap 0 recorded on the thread's ORIGIN dispatch/);
+
+    const crossWave = writeStore(repo(), [
+      ...closedOrigin(),
+      registration({ waveId: 'wave-b', stepClasses: ['code'], minPerClass: 1, meanLThreshold: 1, firstPassNum: 0, firstPassDen: 1, timestamp: TS(7) }),
+    ]);
+    const wave = run(['open', '--contract', externalContract(retryContract), '--wave', 'wave-b',
+      '--backend', 'codex', '--rationale', 'a retry', '--wrapper-cap-s', String(CAP_S),
+      '--kill-grace-s', String(GRACE_S), '--retry-of', 'origin-1'], crossWave);
+    assert.match(wave.stderr, /a retry stays in its origin's wave/);
+
+    const crossClass = openRetry(closedOrigin(), { ...retryContract, stepClass: 'extraction' });
+    assert.match(crossClass.stderr, /the pairing key is the step class/);
+
+    // The rule under test compares the retry's contractDigest with its origin's. A header carries its
+    // own nonce, so two real contracts never share a digest — the origin's recorded digest is set to
+    // the retry's here so the STORE's rule is the thing being exercised, not the arithmetic that
+    // makes it unreachable through this door today.
+    const unchanged = writeStore(repo(), [
+      registration({ waveId: 'wave-a', stepClasses: ['code', 'extraction'], minPerClass: 1, meanLThreshold: 1, firstPassNum: 0, firstPassDen: 1 }),
+      dispatchRecord('origin-1', { retryCap: 2, contractDigest: contractDigest(retryContract) }),
+      returnRecord('origin-1', { outcome: 'contract-refusal', exitStatus: 3, sessionId: null, contractDigest: contractDigest(retryContract) }),
+    ]);
+    const same = run(openArgv(externalContract(retryContract), ['--retry-of', 'origin-1']), unchanged);
+    assert.match(same.stderr, /must carry a DIFFERENT contractDigest/);
+
+    // The same retry against a clean origin LANDS — so every refusal above is the rule it names,
+    // never the shape of the fixture they share.
+    const ok = openRetry(closedOrigin());
+    assert.equal(ok.code, 0, ok.stderr);
+    assert.match(ok.stdout, /thread "retry-1" opened in wave "wave-a"/);
+  });
+});
+
+describe('return absorbs ONLY a terminal receipt bound to the dispatch it answers', () => {
+  it('the happy lane: the return records the produced bytes, the framed bundle and an eligible metric', () => {
+    const { ws, dispatch } = laneToReturn();
+    const r = run(['return', '--nonce', CONTRACT.nonce], ws);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /thread "p3-a1" answered — outcome success/);
+    assert.match(r.stdout, /session sess-1/);
+    const record = kindOf(ws, 'return');
+    assert.equal(record.role, 'execute');
+    assert.equal(record.backend, dispatch.backend);
+    assert.equal(record.contractDigest, dispatch.contractDigest);
+    assert.equal(record.preTreeDigest, dispatch.preTreeDigest);
+    assert.equal(record.diffDigest, record.postTreeDigest, 'the payload IS the diff, so its digest IS the fingerprint');
+    assert.equal(record.reportLength, REPORT_TEXT.length);
+    assert.equal(record.reportDigest, digestOf(Buffer.from(REPORT_TEXT, 'utf8')));
+    assert.equal(record.bundleLength, expectedBundleLength(record.diffLength, record.reportLength));
+    assert.equal(record.metric.denominatorBytes, record.bundleLength);
+    assert.equal(record.metric.provenance, 'wrapper-git');
+    assert.equal(record.metric.eligible, true);
+    assert.equal(record.wrapperVersion, '3.4.1');
+    assert.deepEqual(record.posture, { model: 'gpt-5-codex', effort: 'high', tier: 'priority' });
+    const delegated = record.metric.components.find((c) => c.path === 'delegated.txt');
+    assert.deepEqual(delegated, { kind: 'new', path: 'delegated.txt', objectId: 'new:delegated.txt', bytes: DELEGATED_BYTES.length });
+    assert.equal(record.metric.numeratorBytes, record.metric.components.reduce((s, c) => s + c.bytes, 0));
+  });
+
+  it('return refuses a RESERVED receipt as a SUPERVISION question, not a timeout', () => {
+    const { ws } = laneToReturn({ artifacts: { state: 'reserved', report: null } });
+    const r = run(['return', '--nonce', CONTRACT.nonce], ws);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /still RESERVED/);
+    assert.match(r.stderr, /SUPERVISION question, not a timeout/);
+    assert.match(r.stderr, /--no-receipt --exit-status <n> --outcome <o>/);
+    assert.equal(kindOf(ws, 'return'), undefined, 'nothing was written');
+  });
+
+  it('return refuses a receipt whose {backend, nonce} body disagrees with the dispatch it was found under', () => {
+    const { ws } = laneToReturn({ artifacts: { receipt: { nonce: 'someone-else' } } });
+    const r = run(['return', '--nonce', CONTRACT.nonce], ws);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /names \{backend "codex", nonce "someone-else"\}/);
+    assert.match(r.stderr, /not by the filename it was found under/);
+  });
+
+  it('return refuses a receipt whose independently computed contractDigest is not the dispatch\'s', () => {
+    const { ws } = laneToReturn({ artifacts: { receipt: { contractDigest: contractDigest({ ...CONTRACT, scope: 'a different job entirely' }) } } });
+    const r = run(['return', '--nonce', CONTRACT.nonce], ws);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /executed a DIFFERENT contract than the one this thread opened/);
+  });
+
+  it('return refuses a receipt whose capS plus killGraceS exceeds the dispatch\'s deadlineS', () => {
+    const { ws } = laneToReturn({ artifacts: { receipt: { capS: CONTRACT.deadlineS, killGraceS: GRACE_S } } });
+    const r = run(['return', '--nonce', CONTRACT.nonce], ws);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /could outlive the deadline this thread was opened under/);
+  });
+
+  // The window is closed at BOTH ends. Only the upper bound existed at first, so a receipt minted
+  // BEFORE the dispatch was absorbed as its answer — and artifact names are a function of
+  // {backend, nonce} alone, so an older artifact for the same pair belongs to another thread.
+  it('return refuses a receipt stamped BEFORE the dispatch was opened, and accepts both boundaries', () => {
+    const early = laneToReturn({ artifacts: { receipt: { timestamp: TS(0) } } });
+    const r = run(['return', '--nonce', CONTRACT.nonce], early.ws);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /BEFORE this dispatch was opened/);
+    assert.match(r.stderr, /cannot answer a dispatch that did not exist yet/);
+    assert.equal(kindOf(early.ws, 'return'), undefined);
+
+    const atOpen = laneToReturn();
+    const opened = kindOf(atOpen.ws, 'dispatch').timestamp;
+    mintArtifacts(atOpen.ws, { dispatch: kindOf(atOpen.ws, 'dispatch'), contract: CONTRACT, receipt: { timestamp: opened } });
+    assert.equal(run(['return', '--nonce', CONTRACT.nonce], atOpen.ws).code, 0, 'the lower boundary is INCLUSIVE');
+
+    const atDeadline = laneToReturn();
+    const d = kindOf(atDeadline.ws, 'dispatch');
+    mintArtifacts(atDeadline.ws, { dispatch: d, contract: CONTRACT, receipt: { timestamp: plus(d.timestamp, d.deadlineS) } });
+    assert.equal(run(['return', '--nonce', CONTRACT.nonce], atDeadline.ws).code, 0, 'the upper boundary is INCLUSIVE');
+  });
+
+  it('return refuses a receipt stamped past the dispatch\'s ABSOLUTE deadline', () => {
+    const ws = repo();
+    run(REGISTER_WAVE, ws);
+    assert.equal(run(openArgv(externalContract(CONTRACT)), ws).code, 0);
+    const dispatch = kindOf(ws, 'dispatch');
+    writeFileSync(join(ws.cwd, 'delegated.txt'), DELEGATED_BYTES);
+    mintArtifacts(ws, { dispatch, contract: CONTRACT, receipt: { timestamp: plus(dispatch.timestamp, CONTRACT.deadlineS + 1) } });
+    const r = run(['return', '--nonce', CONTRACT.nonce], ws);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /a LATE return/);
+    assert.match(r.stderr, /measured from the dispatch record, not from whenever the wrapper happened to start/);
+  });
+
+  it('return refuses a report whose digest or length contradicts the receipt, and a missing one by name', () => {
+    const drifted = laneToReturn();
+    writeFileSync(join(drifted.ws.dir, execReportBasename('codex', CONTRACT.nonce)), 'the report was rewritten after the run\n');
+    const contradicted = run(['return', '--nonce', CONTRACT.nonce], drifted.ws);
+    assert.equal(contradicted.code, 1);
+    assert.match(contradicted.stderr, /contradicts the terminal receipt/);
+
+    const absent = laneToReturn({ artifacts: { report: null, receipt: { reportDigest: digestOf(Buffer.alloc(0)), reportLength: 0 } } });
+    const r = run(['return', '--nonce', CONTRACT.nonce], absent.ws);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /no report artifact is at /);
+    assert.match(r.stderr, /published BEFORE the receipt replaces the reservation/);
+  });
+
+  it('return refuses an unreadable or foreign artifact by class, and an absent receipt names both recoveries', () => {
+    const foreign = laneToReturn();
+    rmSync(join(foreign.ws.dir, execReceiptBasename('codex', CONTRACT.nonce)));
+    mkdirSync(join(foreign.ws.dir, execReceiptBasename('codex', CONTRACT.nonce)));
+    assert.match(run(['return', '--nonce', CONTRACT.nonce], foreign.ws).stderr, /is a directory, not a regular file/);
+
+    const junk = laneToReturn();
+    writeFileSync(join(junk.ws.dir, execReceiptBasename('codex', CONTRACT.nonce)), '{ not json');
+    assert.match(run(['return', '--nonce', CONTRACT.nonce], junk.ws).stderr, /is REFUSED — exec receipt: the artifact is not valid JSON/);
+
+    // The family's reader decodes FATALLY, so a report that is not valid UTF-8 is a failed probe,
+    // never a repaired string and never an absent report.
+    const raw = laneToReturn();
+    writeFileSync(join(raw.ws.dir, execReportBasename('codex', CONTRACT.nonce)), Buffer.from([0xff, 0xfe, 0x00]));
+    assert.match(run(['return', '--nonce', CONTRACT.nonce], raw.ws).stderr, /a FAILED probe, not an absent one/);
+
+    // An ABSENT artifact names ONE recovery, and it is not --no-receipt: that lane reads the SAME
+    // path, so suggesting it would send the operator to a refusal that is guaranteed to repeat.
+    const none = laneToReturn({ artifacts: { report: null } });
+    rmSync(join(none.ws.dir, execReceiptBasename('codex', CONTRACT.nonce)));
+    const r = run(['return', '--nonce', CONTRACT.nonce], none.ws);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /no exec receipt at /);
+    assert.match(r.stderr, /--no-receipt reads the same path and would refuse the same way/);
+    assert.match(r.stderr, /close the thread with degrade/);
+    assert.equal(run(['return', '--nonce', CONTRACT.nonce, '--no-receipt', '--exit-status', '1', '--outcome', 'store-failure'], none.ws).stderr,
+      r.stderr, 'the --no-receipt lane refuses the absent artifact identically — which is why the message never sends anyone there');
+  });
+
+  it('return refuses a tree whose change set is concealed behind an index bit', () => {
+    const { ws } = laneToReturn();
+    gitIn(ws.cwd, 'update-index', '--skip-worktree', 'base.txt');
+    writeFileSync(join(ws.cwd, 'base.txt'), 'the delegate changed this behind the index bit\n');
+    const r = run(['return', '--nonce', CONTRACT.nonce], ws);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /carry a tag other than "H" \(S base\.txt\)/);
+    assert.equal(kindOf(ws, 'return'), undefined, 'nothing was written');
+  });
+
+  // The shapes a UNION of the staged and unstaged name lists let through — each a path whose visible
+  // state on ONE side masked its hidden state on the other, so the producer would have counted a
+  // stale image without a word. Both were found independently by the review backends.
+  it('a path VISIBLE on one side never masks its hidden state on the other (the comparison is per SIDE)', () => {
+    // A config-hidden gitlink STANDING BESIDE an ordinary staged file: the boolean arm this replaced
+    // ("the index is dirty and the plain staged list is empty") could never see this one.
+    const beside = laneToReturn();
+    const head = gitIn(beside.ws.cwd, 'rev-parse', 'HEAD').trim();
+    mkdirSync(join(beside.ws.cwd, 'sub'));
+    gitIn(beside.ws.cwd, 'add', 'delegated.txt');
+    gitIn(beside.ws.cwd, 'update-index', '--add', '--cacheinfo', `160000,${head},sub`);
+    gitIn(beside.ws.cwd, 'config', 'diff.ignoreSubmodules', 'all');
+    const g = run(['return', '--nonce', CONTRACT.nonce], beside.ws);
+    assert.equal(g.code, 1);
+    assert.match(g.stderr, /staged: sub/);
+    assert.equal(kindOf(beside.ws, 'return'), undefined);
+
+    // …and the UNSTAGED side of the same axis: a COMMITTED gitlink whose worktree directory is gone,
+    // with the plain diff configured blind to it. The staged side is clean here, so this shape is the
+    // one a staged-only probe would miss.
+    const unstaged = repo();
+    const base = gitIn(unstaged.cwd, 'rev-parse', 'HEAD').trim();
+    gitIn(unstaged.cwd, 'update-index', '--add', '--cacheinfo', `160000,${base},sub`);
+    gitIn(unstaged.cwd, 'commit', '-qm', 'a submodule pointer');
+    gitIn(unstaged.cwd, 'config', 'diff.ignoreSubmodules', 'all');
+    const guard = engine.hiddenFromPlainDiff(unstaged.cwd, unstaged.cwd);
+    assert.equal(guard.ok, false);
+    assert.match(guard.reason, /unstaged: sub/);
+  });
+
+  it('return refuses over a thread that was never opened, and over a semantically illegal ledger prefix', () => {
+    const ws = repo();
+    run(REGISTER_WAVE, ws);
+    assert.match(run(['return', '--nonce', 'never-opened'], ws).stderr, /no dispatch for nonce "never-opened" is in the store/);
+
+    const corrupt = writeStore(repo(), [registration(), dispatchRecord('n1'), dispatchRecord('n1', { timestamp: TS(6) })]);
+    const r = run(['return', '--nonce', 'n1'], corrupt);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /line 3 carries a record the append path would have REFUSED/);
+    assert.match(r.stderr, /refusing a duplicate dispatch/);
+  });
+
+  it('the outcome override form is CLOSED — a wrapper outcome stays itself or becomes an orchestrator judgment', () => {
+    assert.deepEqual(
+      [...engine.ORCHESTRATOR_OUTCOMES].sort(),
+      RETURN_OUTCOMES.filter((o) => !['success', 'transport-failure', 'missing-identity'].includes(o)).sort(),
+      'the orchestrator-only set is exactly the outcomes no wrapper can prove',
+    );
+    assert.deepEqual(
+      [...engine.allowedRecordedOutcomes('transport-failure')].sort(),
+      ['transport-failure', ...engine.ORCHESTRATOR_OUTCOMES].sort(),
+    );
+
+    const kept = laneToReturn();
+    assert.equal(run(['return', '--nonce', CONTRACT.nonce, '--outcome', 'success'], kept.ws).code, 0);
+    assert.equal(kindOf(kept.ws, 'return').outcome, 'success');
+
+    const judged = laneToReturn();
+    const graded = run(['return', '--nonce', CONTRACT.nonce, '--outcome', 'acceptance-failure'], judged.ws);
+    assert.equal(graded.code, 0, graded.stderr);
+    assert.equal(kindOf(judged.ws, 'return').outcome, 'acceptance-failure');
+
+    const failed = laneToReturn({ artifacts: { receipt: { outcome: 'transport-failure', exitStatus: 137, sessionId: null } } });
+    const refused = run(['return', '--nonce', CONTRACT.nonce, '--outcome', 'contract-refusal'], failed.ws);
+    assert.equal(refused.code, 0, refused.stderr);
+    assert.equal(kindOf(failed.ws, 'return').outcome, 'contract-refusal');
+
+    const lied = laneToReturn({ artifacts: { receipt: { outcome: 'transport-failure', exitStatus: 1, sessionId: null } } });
+    const claim = run(['return', '--nonce', CONTRACT.nonce, '--outcome', 'success'], lied.ws);
+    assert.equal(claim.code, 2);
+    assert.match(claim.stderr, /"success" is recordable only from a receipt that already says success/);
+
+    const sideways = laneToReturn();
+    assert.match(run(['return', '--nonce', CONTRACT.nonce, '--outcome', 'transport-failure'], sideways.ws).stderr,
+      /may not be recorded over a receipt that says "success"/);
+    assert.match(run(['return', '--nonce', CONTRACT.nonce, '--outcome', 'frobnicated'], sideways.ws).stderr,
+      /--outcome must be one of success \| transport-failure/);
+    assert.equal(kindOf(sideways.ws, 'return'), undefined);
+  });
+
+  it('return --no-receipt sources wrapperVersion and posture from the RESERVATION and records an honest zero report', () => {
+    const { ws } = laneToReturn({ artifacts: { state: 'reserved', report: null } });
+    const r = run(['return', '--nonce', CONTRACT.nonce, '--no-receipt', '--exit-status', '137', '--outcome', 'transport-failure'], ws);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /absorbed from the RESERVATION, --no-receipt/);
+    assert.match(r.stdout, /INELIGIBLE \(empty-report\)/);
+    const record = kindOf(ws, 'return');
+    assert.equal(record.outcome, 'transport-failure');
+    assert.equal(record.exitStatus, 137);
+    assert.equal(record.sessionId, null);
+    assert.equal(record.wrapperVersion, '3.4.1', 'never hand-typed — the reservation knew it pre-spend');
+    assert.deepEqual(record.posture, { model: 'gpt-5-codex', effort: 'high', tier: 'priority' });
+    assert.equal(record.reportLength, 0);
+    assert.equal(record.metric.ineligibleReason, 'empty-report');
+    assert.ok(record.metric.numeratorBytes > 0, 'the bytes the delegate did write are still counted');
+  });
+
+  // The recovery lane is decided by the ARTIFACT, not by the caller: over a terminal receipt it would
+  // let a hand-stated outcome overwrite an exit status, a session id and a report digest the run
+  // actually proved, and skip the report check that guards them — a recorded lie built out of a
+  // recovery lane.
+  it('return --no-receipt absorbs a RESERVATION only — over a TERMINAL receipt it refuses', () => {
+    const { ws } = laneToReturn();
+    const r = run(['return', '--nonce', CONTRACT.nonce, '--no-receipt', '--exit-status', '137', '--outcome', 'transport-failure'], ws);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /--no-receipt absorbs a RESERVATION, and the artifact at .* is TERMINAL/);
+    assert.match(r.stderr, /discard proven facts and skip the report check/);
+    assert.equal(kindOf(ws, 'return'), undefined, 'nothing was written');
+    // …and the ordinary lane still absorbs the very same artifact.
+    assert.equal(run(['return', '--nonce', CONTRACT.nonce], ws).code, 0);
+    assert.equal(kindOf(ws, 'return').outcome, 'success');
+  });
+
+  // The eligibility rule names the DIFF first, so an absent report over an unchanged tree is
+  // `no-op-diff`, not `empty-report`. Both names are honest; only one is correct per tree.
+  it('a --no-receipt return over an UNCHANGED tree is ineligible by no-op-diff, not empty-report', () => {
+    const ws = repo();
+    assert.equal(run(REGISTER_WAVE, ws).code, 0);
+    assert.equal(run(openArgv(externalContract(CONTRACT)), ws).code, 0);
+    const dispatch = kindOf(ws, 'dispatch');
+    // No delegated file and no report: the wrapper reserved the nonce and then died.
+    mintArtifacts(ws, { dispatch, contract: CONTRACT, state: 'reserved', report: null });
+    const r = run(['return', '--nonce', CONTRACT.nonce, '--no-receipt', '--exit-status', '137', '--outcome', 'transport-failure'], ws);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /INELIGIBLE \(no-op-diff\)/);
+    const record = kindOf(ws, 'return');
+    assert.equal(record.diffLength, 0);
+    assert.equal(record.reportLength, 0);
+    assert.equal(record.metric.ineligibleReason, 'no-op-diff');
+    assert.equal(record.metric.numeratorBytes, 0);
+  });
+
+  it('return --no-receipt requires --exit-status and an outcome inside the nullable set; --exit-status alone is refused', () => {
+    const { ws } = laneToReturn({ artifacts: { state: 'reserved', report: null } });
+    const argv = ['return', '--nonce', CONTRACT.nonce, '--no-receipt'];
+    assert.match(run([...argv, '--outcome', 'transport-failure'], ws).stderr, /--exit-status is required/);
+    assert.match(run([...argv, '--exit-status', '1'], ws).stderr, /--outcome is required with --no-receipt/);
+    assert.match(run([...argv, '--exit-status', '1', '--outcome', 'partial-edit'], ws).stderr,
+      new RegExp(`outside the --no-receipt set ${SESSION_ID_NULLABLE_OUTCOMES.join(' \\| ')}`));
+    assert.match(run(['return', '--nonce', CONTRACT.nonce, '--exit-status', '1'], ws).stderr,
+      /--exit-status belongs to the --no-receipt lane/);
+    assert.equal(kindOf(ws, 'return'), undefined);
+  });
+
+  it('with no reservation at all there is no return: the thread closes by degrade', () => {
+    const { ws } = laneToReturn({ artifacts: { state: 'reserved', report: null } });
+    rmSync(join(ws.dir, execReceiptBasename('codex', CONTRACT.nonce)));
+    assert.match(run(['return', '--nonce', CONTRACT.nonce, '--no-receipt', '--exit-status', '1', '--outcome', 'store-failure'], ws).stderr,
+      /no exec receipt at /);
+    const closed = run(['degrade', '--wave', 'wave-a', '--step-class', 'code', '--nonce', CONTRACT.nonce,
+      '--rationale', 'the wrapper published no reservation; nothing about the run is knowable'], ws);
+    assert.equal(closed.code, 0, closed.stderr);
+    assert.match(closed.stdout, /and CLOSED the thread/);
+    const report = run(['aggregate', '--wave', 'wave-a'], ws);
+    assert.equal(report.code, 0, report.stderr);
+    assert.match(report.stdout, /p3-a1 · retry 0 · degrade-closed · L = 0\.000/);
+  });
+
+  it('the drift bracket names both digests when the tree moves between the two walks', () => {
+    assert.equal(engine.treeDriftRefusal('a'.repeat(64), 'a'.repeat(64)), null);
+    const drifted = engine.treeDriftRefusal('a'.repeat(64), 'b'.repeat(64));
+    assert.match(drifted, /the tree moved WHILE the return was being computed \(aaaaaaaaaaaa… → bbbbbbbbbbbb…\)/);
+    assert.match(drifted, /nothing was written/);
+  });
+
+  it('the hidden-path guard fails CLOSED when git cannot answer at all', () => {
+    const plain = plainDir();
+    assert.match(engine.hiddenFromPlainDiff(plain.cwd, plain.cwd).reason, /a git probe of the change set could not be read/);
+    assert.match(engine.hiddenFromPlainDiff(repo().cwd, join(TMP, 'not-a-repo-at-all')).reason, /a git probe of the change set could not be read/);
+  });
+
+  // The INDEX-BIT arm refuses the BIT, never its effect — because the effect can be invisible to
+  // every probe this kit owns. Deleting a materialized skip-worktree file changes no diff, no
+  // fingerprint and no enumeration, so no comparison of views could ever have reached it.
+  it('a tree carrying ANY index bit is refused by name, and the deletion behind one proves why', () => {
+    const ws = repo();
+    gitIn(ws.cwd, 'update-index', '--skip-worktree', 'base.txt');
+    const guard = engine.hiddenFromPlainDiff(ws.cwd, ws.cwd);
+    assert.equal(guard.ok, false);
+    assert.match(guard.reason, /index entr\(ies\) carry a tag other than "H" \(S base\.txt\)/);
+    assert.match(guard.reason, /invisible to EVERY probe this kit owns/);
+
+    // The effect the bit hides: after deleting the file, nothing else in the kit can see it. The
+    // digest is captured BEFORE the deletion — comparing two post-deletion computations would pass
+    // whatever the deletion did, which is no assertion at all.
+    const beforeDeletion = computeTreeFingerprint(ws.cwd);
+    rmSync(join(ws.cwd, 'base.txt'));
+    assert.equal(computeTreeFingerprint(ws.cwd), beforeDeletion, 'the deletion moved no fingerprint');
+    const workingState = computeWorkingState(ws.cwd);
+    assert.deepEqual(workingState.unstagedPaths, [], 'the deletion is invisible to the working state');
+    assert.deepEqual(enumerateReturnedObjects(ws.cwd).entries, [], 'and to the producer');
+
+    gitIn(ws.cwd, 'update-index', '--no-skip-worktree', 'base.txt');
+    assert.deepEqual(engine.hiddenFromPlainDiff(ws.cwd, ws.cwd), { ok: true }, 'clearing the bit clears the refusal');
+  });
+
+  // codex's proof case for running the guard at OPEN: the bit is set and the file deleted BEFORE the
+  // dispatch, so isTreeClean reports a CLEAN baseline; clearing the bit afterwards hands the delegate
+  // a deletion it never made.
+  it('open refuses a concealing tree, so a FALSE clean baseline can never be recorded', () => {
+    const ws = repo();
+    run(REGISTER_WAVE, ws);
+    gitIn(ws.cwd, 'update-index', '--skip-worktree', 'base.txt');
+    rmSync(join(ws.cwd, 'base.txt'));
+    assert.equal(isTreeClean(ws.cwd), true, 'the tree LIES to the baseline probe — this is the case being closed');
+    const r = run(openArgv(externalContract(CONTRACT)), ws);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /carry a tag other than "H"/);
+    assert.match(r.stderr, /nothing was written/);
+    assert.equal(kindOf(ws, 'dispatch'), undefined);
+  });
+
+  // The payload holds an untracked binary by NAME alone, so its content never reaches the digest a
+  // fold binds — the capability is subtracted rather than documented as a false promise.
+  it('return refuses a change set carrying a BINARY object, naming why the lane is fail-closed', () => {
+    const ws = repo();
+    run(REGISTER_WAVE, ws);
+    assert.equal(run(openArgv(externalContract(CONTRACT)), ws).code, 0);
+    const dispatch = kindOf(ws, 'dispatch');
+    writeFileSync(join(ws.cwd, 'blob.bin'), Buffer.from([0, 1, 2, 0, 3, 4]));
+    mintArtifacts(ws, { dispatch, contract: CONTRACT });
+    const r = run(['return', '--nonce', CONTRACT.nonce], ws);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /whose CONTENT never enters the uncommitted-state payload \(binary blob\.bin/);
+    assert.match(r.stderr, /fail-closed for them until the shared payload can carry their content/);
+    assert.equal(kindOf(ws, 'return'), undefined);
+
+    // The digest's blindness is the reason: mutating the binary — content AND size — moves no
+    // fingerprint at all, because the payload carries only the marker line for it.
+    const before = computeTreeFingerprint(ws.cwd);
+    writeFileSync(join(ws.cwd, 'blob.bin'), Buffer.from([0, 9, 9, 0, 9, 9, 9, 9, 9]));
+    assert.equal(computeTreeFingerprint(ws.cwd), before, 'neither the content nor the SIZE reaches the digest');
+
+    // Remove it and the same thread returns normally — the refusal is about the object, not the run.
+    rmSync(join(ws.cwd, 'blob.bin'));
+    writeFileSync(join(ws.cwd, 'delegated.txt'), DELEGATED_BYTES);
+    assert.equal(run(['return', '--nonce', CONTRACT.nonce], ws).code, 0);
+  });
+
+  // The refusal list is the CONTENT-BLIND classes and nothing else. The line matters: regular
+  // content and symlink targets ARE in the payload — only ambiguously framed — and subtracting them
+  // would refuse `new` and `symlink`, which is every delegated change set there is.
+  // The ledger may only live inside the git dir for the three verbs that BIND a tree. A store in the
+  // work tree is measured as part of the change set — probed: it is enumerated as an object, and the
+  // append that follows postTreeDigest moves the tree every later fold binds.
+  it('open, return and fold use the CANONICAL ledger and refuse every other store', () => {
+    const ws = repo();
+    const inTree = { ...ws, store: join(ws.cwd, 'ledger.jsonl'), env: { AW_DELEGATION_STORE: join(ws.cwd, 'ledger.jsonl') } };
+    assert.equal(run(REGISTER_WAVE, inTree).code, 0, 'register keeps the unrestricted override — it binds no tree');
+    const r = run(openArgv(externalContract(CONTRACT)), inTree);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /is not this repository's CANONICAL ledger/);
+    assert.match(r.stderr, /measured as part of the change set it is supposed to be measuring/);
+    assert.equal(kindOf(inTree, 'dispatch'), undefined);
+
+    // A SECOND ledger INSIDE the git dir is refused too — the collision equality closes and mere
+    // containment did not: both ledgers' threads would name the same artifact pair.
+    const second = { ...ws, store: join(ws.dir, 'other.jsonl'), env: { AW_DELEGATION_STORE: join(ws.dir, 'other.jsonl') } };
+    assert.equal(run(REGISTER_WAVE, second).code, 0);
+    assert.match(run(openArgv(externalContract(CONTRACT)), second).stderr,
+      /a SECOND ledger in this git dir would share artifact names/);
+
+    // The same store, reached from ANOTHER repository, is refused for the same reason — which is the
+    // cross-repository half: a ledger opened against one repo can never measure a different one.
+    const other = repo();
+    assert.match(main(['return', '--nonce', CONTRACT.nonce], { cwd: other.cwd, env: inTree.env, now: clock }).stderr,
+      /is not this repository's CANONICAL ledger/);
+    assert.match(main(['fold', '--nonce', CONTRACT.nonce, '--verdict', 'x'], { cwd: other.cwd, env: inTree.env, now: clock }).stderr,
+      /is not this repository's CANONICAL ledger/);
+
+    // An override whose directory does not exist at all still gets an answer: the containment check
+    // falls back to the LEXICAL resolve rather than throwing, so an unresolvable path is judged
+    // instead of crashing the verb.
+    const absent = join(TMP, `no-such-dir-${seq += 1}`, DELEGATION_STORE_BASENAME);
+    assert.match(main(openArgv(externalContract(CONTRACT)), { cwd: ws.cwd, env: { AW_DELEGATION_STORE: absent }, now: clock }).stderr,
+      /is not this repository's CANONICAL ledger/);
+  });
+
+  // ENOENT is the only errno that means "nothing to check". EINVAL emphatically is not: the producer
+  // labels an object `symlink` when ANY layer carries mode 120000, so a committed symlink replaced by
+  // a BINARY regular file is a symlink entry whose readlink refuses — and the content-blind guard
+  // never sees it either, because no `binary` kind was emitted. The type change falls between two
+  // guards unless this one fails closed.
+  it('a symlink REPLACED by a binary regular file refuses — the type change falls between two guards', () => {
+    const ws = repo();
+    symlinkSync('base.txt', join(ws.cwd, 'link'));
+    gitIn(ws.cwd, 'add', '-A');
+    gitIn(ws.cwd, 'commit', '-qm', 'a tracked symlink');
+    run(REGISTER_WAVE, ws);
+    assert.equal(run(openArgv(externalContract(CONTRACT)), ws).code, 0);
+    const dispatch = kindOf(ws, 'dispatch');
+    rmSync(join(ws.cwd, 'link'));
+    writeFileSync(join(ws.cwd, 'link'), Buffer.from([0, 1, 0]));
+    mintArtifacts(ws, { dispatch, contract: CONTRACT });
+    const entry = enumerateReturnedObjects(ws.cwd).entries.find((e) => e.path === 'link');
+    assert.equal(entry.kind, 'symlink', 'the producer still calls it a symlink — which is why the content-blind guard misses it');
+    const r = run(['return', '--nonce', CONTRACT.nonce], ws);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /could not be read \(EINVAL\)/);
+    assert.match(r.stderr, /a TYPE CHANGE whose new bytes no guard here can see/);
+    assert.equal(kindOf(ws, 'return'), undefined);
+  });
+
+  // A DELETED symlink has no target left to lose — its bytes ride the diff, which is exact — so the
+  // target guard steps over it rather than refusing a thread it has no reason to stop.
+  it('a deleted symlink does not trip the target guard', () => {
+    const ws = repo();
+    symlinkSync('base.txt', join(ws.cwd, 'link'));
+    gitIn(ws.cwd, 'add', '-A');
+    gitIn(ws.cwd, 'commit', '-qm', 'a tracked symlink');
+    run(REGISTER_WAVE, ws);
+    assert.equal(run(openArgv(externalContract(CONTRACT)), ws).code, 0);
+    const dispatch = kindOf(ws, 'dispatch');
+    rmSync(join(ws.cwd, 'link'));
+    mintArtifacts(ws, { dispatch, contract: CONTRACT });
+    const r = run(['return', '--nonce', CONTRACT.nonce], ws);
+    assert.equal(r.code, 0, r.stderr);
+    const component = kindOf(ws, 'return').metric.components.find((c) => c.path === 'link');
+    assert.equal(component.kind, 'symlink', 'it IS a symlink component — the guard simply had nothing to read');
+  });
+
+  // ONE nonce, ONE artifact pair, refused PRE-SPEND. The names are a function of {backend, nonce}
+  // alone, so a leftover pair would later be absorbed as this dispatch's own evidence.
+  it('open refuses when an exec artifact for this {backend, nonce} already exists', () => {
+    const ws = repo();
+    run(REGISTER_WAVE, ws);
+    writeFileSync(join(ws.dir, execReceiptBasename('codex', CONTRACT.nonce)), '{"left":"over"}');
+    const r = run(openArgv(externalContract(CONTRACT)), ws);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /1 exec artifact\(s\) for \{backend "codex", nonce "p3-a1"\} already exist beside the ledger/);
+    assert.match(r.stderr, /absorbed as this dispatch's own evidence/);
+    assert.equal(kindOf(ws, 'dispatch'), undefined);
+
+    rmSync(join(ws.dir, execReceiptBasename('codex', CONTRACT.nonce)));
+    assert.equal(run(openArgv(externalContract(CONTRACT)), ws).code, 0, 'with the name free, the same dispatch opens');
+  });
+
+  it('return refuses a symlink whose target is not valid UTF-8 — the payload loses those bytes before framing', () => {
+    const ws = repo();
+    run(REGISTER_WAVE, ws);
+    assert.equal(run(openArgv(externalContract(CONTRACT)), ws).code, 0);
+    const dispatch = kindOf(ws, 'dispatch');
+    symlinkSync(Buffer.from([0xff]), join(ws.cwd, 'link'));
+    mintArtifacts(ws, { dispatch, contract: CONTRACT });
+    const r = run(['return', '--nonce', CONTRACT.nonce], ws);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /symlink target\(s\) are not valid UTF-8 \(link -> 0xff\)/);
+    assert.equal(kindOf(ws, 'return'), undefined);
+
+    // Why it is refused: the two distinct targets are ONE payload and ONE enumeration.
+    const before = computeTreeFingerprint(ws.cwd);
+    const enumeratedBefore = JSON.stringify(enumerateReturnedObjects(ws.cwd).entries);
+    rmSync(join(ws.cwd, 'link'));
+    symlinkSync(Buffer.from([0xfe]), join(ws.cwd, 'link'));
+    assert.equal(computeTreeFingerprint(ws.cwd), before, '0xff and 0xfe are one payload');
+    assert.equal(JSON.stringify(enumerateReturnedObjects(ws.cwd).entries), enumeratedBefore);
+
+    // A target that IS valid UTF-8 stays measurable.
+    rmSync(join(ws.cwd, 'link'));
+    symlinkSync('base.txt', join(ws.cwd, 'link'));
+    assert.equal(run(['return', '--nonce', CONTRACT.nonce], ws).code, 0);
+  });
+
+  it('the content-blind refusal covers exactly the three classes the payload carries no content for', () => {
+    assert.deepEqual([...engine.CONTENT_BLIND_KINDS], ['binary', 'non-regular', 'submodule']);
+    assert.equal(engine.contentBlindRefusal([{ kind: 'new', path: 'a.txt' }, { kind: 'symlink', path: 'l' },
+      { kind: 'modified', path: 'm' }, { kind: 'deleted', path: 'd' }, { kind: 'renamed', path: 'r' }]), null,
+      'the classes whose bytes DO reach the payload stay measurable, ambiguous framing and all');
+    assert.match(engine.contentBlindRefusal([{ kind: 'non-regular', path: 'weird' }]), /non-regular weird/);
+    // The submodule arm is CONSERVATIVE and says so: a clean pointer change does carry its OIDs.
+    assert.match(engine.contentBlindRefusal([{ kind: 'submodule', path: 'vendor' }]),
+      /submodule vendor \(refused conservatively: a clean pointer change does carry its OIDs/);
+  });
+
+  // The residual limits are pinned as FACTS, not left as prose: what the mode doc says the binding
+  // cannot see, the suite demonstrates it cannot see — so a payload upgrade that fixes them will
+  // redden these assertions and force the documentation to move with the code.
+  it('the STATED residuals hold: the unframed payload aliases two trees, and it is blind to the exec bit', () => {
+    // (a) One file whose content imitates the marker that opens the next untracked entry.
+    const one = repo();
+    writeFileSync(join(one.cwd, 'one.txt'), 'hello\nuntracked:two.txt\nworld\n');
+    const two = repo();
+    writeFileSync(join(two.cwd, 'one.txt'), 'hello\n');
+    writeFileSync(join(two.cwd, 'two.txt'), 'world\n');
+    assert.equal(computeTreeFingerprint(one.cwd), computeTreeFingerprint(two.cwd),
+      'TWO DIFFERENT TREES, one fingerprint — the payload is unframed (queued: FINGERPRINT-PAYLOAD-IS-UNFRAMED-AND-MODE-BLIND)');
+
+    // (b) A symlink target doing the same thing.
+    const linkA = repo();
+    symlinkSync('b\nuntracked:x', join(linkA.cwd, 'link'));
+    const linkB = repo();
+    symlinkSync('b', join(linkB.cwd, 'link'));
+    writeFileSync(join(linkB.cwd, 'x'), '');
+    assert.equal(computeTreeFingerprint(linkA.cwd), computeTreeFingerprint(linkB.cwd));
+
+    // (c) The executable bit is a blind ATTRIBUTE — not a content class, so it is not subtracted.
+    const exec = repo();
+    const script = join(exec.cwd, 'script.sh');
+    writeFileSync(script, '#!/bin/sh\necho hi\n');
+    chmodSync(script, 0o644);
+    const plain = computeTreeFingerprint(exec.cwd);
+    const enumerated = JSON.stringify(enumerateReturnedObjects(exec.cwd).entries);
+    chmodSync(script, 0o755);
+    assert.equal(computeTreeFingerprint(exec.cwd), plain, 'the mode never enters the payload');
+    assert.equal(JSON.stringify(enumerateReturnedObjects(exec.cwd).entries), enumerated, 'nor the enumeration');
+  });
+
+  // The STAGED half of the same blindness: a gitlink in the index under diff.ignoreSubmodules=all,
+  // which the plain probe cannot list at all. The forced enumeration names the PATH rather than
+  // reporting a boolean, which is what lets it be seen beside other staged files.
+  it('the hidden-path guard names a STAGED change the plain git diff cannot list, and stays quiet on an ordinary tree', () => {
+    const ws = repo();
+    const head = gitIn(ws.cwd, 'rev-parse', 'HEAD').trim();
+    mkdirSync(join(ws.cwd, 'sub'));
+    gitIn(ws.cwd, 'update-index', '--add', '--cacheinfo', `160000,${head},sub`);
+    gitIn(ws.cwd, 'config', 'diff.ignoreSubmodules', 'all');
+    const guard = engine.hiddenFromPlainDiff(ws.cwd, ws.cwd);
+    assert.equal(guard.ok, false);
+    assert.match(guard.reason, /staged: sub/);
+
+    // No false positive on an ordinary mixed change set — visible staged, visible unstaged, untracked.
+    const plain = repo();
+    writeFileSync(join(plain.cwd, 'base.txt'), 'an ordinary visible edit\n');
+    writeFileSync(join(plain.cwd, 'fresh.txt'), 'an ordinary untracked file\n');
+    gitIn(plain.cwd, 'add', 'base.txt');
+    writeFileSync(join(plain.cwd, 'base.txt'), 'edited again after staging\n');
+    assert.deepEqual(engine.hiddenFromPlainDiff(plain.cwd, plain.cwd), { ok: true });
+  });
+
+  it('return refuses outside a git work tree, even when the override names a readable ledger', () => {
+    // A plain directory with a hand-written thread and both artifacts beside it: everything the
+    // absorb door reads succeeds, and the REPOSITORY is the thing that is missing.
+    const plain = plainDir();
+    plain.dir = plain.cwd;
+    const dispatch = dispatchRecord(CONTRACT.nonce, { contractDigest: contractDigest(CONTRACT), deadlineS: CONTRACT.deadlineS });
+    writeFileSync(plain.store, `${JSON.stringify(registration())}\n${JSON.stringify(dispatch)}\n`);
+    mintArtifacts(plain, { dispatch, contract: CONTRACT });
+    const r = main(['return', '--nonce', CONTRACT.nonce], { cwd: plain.cwd, env: plain.env, now: clock });
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /not inside a git work tree — a return is enumerated against a repository/);
+  });
+});
+
+describe('fold binds the CURRENT tree to what was returned; degrade closes without one', () => {
+  const returned = () => {
+    const lane = laneToReturn();
+    const r = run(['return', '--nonce', CONTRACT.nonce], lane.ws);
+    assert.equal(r.code, 0, r.stderr);
+    return lane;
+  };
+
+  it('fold on the unmoved tree lands and CLOSES the thread, and aggregate reports its computed L', () => {
+    const { ws } = returned();
+    const r = run(['fold', '--nonce', CONTRACT.nonce, '--verdict', 'reviewed by both backends and by hand'], ws);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /thread "p3-a1" folded and CLOSED/);
+    const fold = kindOf(ws, 'fold');
+    const ret = kindOf(ws, 'return');
+    assert.equal(fold.returnDigest, canonicalDelegationDigest(ret));
+    assert.equal(fold.treeDigestAtFold, ret.postTreeDigest);
+    const report = run(['aggregate', '--wave', 'wave-a'], ws);
+    assert.equal(report.code, 0, report.stderr);
+    assert.match(report.stdout, /p3-a1 · retry 0 · folded success · L = /);
+    assert.match(report.stdout, /COMPUTED — PILOT evidence \(n = 1\)/);
+  });
+
+  it('fold refuses when the tree moved since the return, and staging an untracked change set moves it', () => {
+    const moved = returned();
+    writeFileSync(join(moved.ws.cwd, 'delegated.txt'), `${DELEGATED_BYTES}one more line\n`);
+    const r = run(['fold', '--nonce', CONTRACT.nonce, '--verdict', 'folding a tree that moved'], moved.ws);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /the tree moved between the return and the fold/);
+    assert.equal(kindOf(moved.ws, 'fold'), undefined);
+
+    // Staging an UNTRACKED creation moves the payload (an `untracked:<path>` section plus its bytes
+    // becomes a staged diff), so the fold refuses — the ordinary delegated change set.
+    const staged = returned();
+    gitIn(staged.ws.cwd, 'add', '-A');
+    assert.match(run(['fold', '--nonce', CONTRACT.nonce, '--verdict', 'folding after git add'], staged.ws).stderr,
+      /the tree moved between the return and the fold/);
+  });
+
+  // The honest limit, pinned rather than claimed away: a TRACKED-only change passing into a CLEAN
+  // index leaves the payload byte-identical (it concatenates the staged and unstaged diffs), so the
+  // digest cannot see the move and the fold LANDS. It is still honest — same bytes, same content —
+  // which is why the rule is "the fold precedes staging", not "staging refuses the fold".
+  it('staging a TRACKED-only change into a clean index does NOT move the fingerprint, and the fold still lands', () => {
+    const ws = repo();
+    assert.equal(run(REGISTER_WAVE, ws).code, 0);
+    assert.equal(run(openArgv(externalContract(CONTRACT)), ws).code, 0);
+    const dispatch = kindOf(ws, 'dispatch');
+    writeFileSync(join(ws.cwd, 'base.txt'), 'the delegate edited this TRACKED file and created nothing\n');
+    mintArtifacts(ws, { dispatch, contract: CONTRACT });
+    assert.equal(run(['return', '--nonce', CONTRACT.nonce], ws).code, 0);
+    const postTreeDigest = kindOf(ws, 'return').postTreeDigest;
+
+    gitIn(ws.cwd, 'add', '-A');
+    const r = run(['fold', '--nonce', CONTRACT.nonce, '--verdict', 'folded after staging a tracked-only change'], ws);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(kindOf(ws, 'fold').treeDigestAtFold, postTreeDigest,
+      'the payload is blind to the index↔worktree split, so staging left the digest equal');
+  });
+
+  // What the digest cannot catch, the guard does. A change made behind an index bit between the
+  // return and the fold leaves the fingerprint EQUAL, so without this guard the fold would accept
+  // bytes nobody returned.
+  it('fold refuses a change made behind an index bit since the return — the digest alone cannot see it', () => {
+    const { ws } = returned();
+    const postTreeDigest = kindOf(ws, 'return').postTreeDigest;
+    gitIn(ws.cwd, 'update-index', '--skip-worktree', 'base.txt');
+    writeFileSync(join(ws.cwd, 'base.txt'), 'changed behind the index bit AFTER the return\n');
+    assert.equal(computeTreeFingerprint(ws.cwd), postTreeDigest, 'the fingerprint did NOT move — this is why the guard exists');
+    const r = run(['fold', '--nonce', CONTRACT.nonce, '--verdict', 'folding over a hidden change'], ws);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /carry a tag other than "H" \(S base\.txt\)/);
+    assert.match(r.stderr, /nothing was written/);
+    assert.equal(kindOf(ws, 'fold'), undefined);
+    // The digest is the reason this needed its own guard: it did NOT move.
+    gitIn(ws.cwd, 'update-index', '--no-skip-worktree', 'base.txt');
+    writeFileSync(join(ws.cwd, 'base.txt'), 'base\n');
+    assert.equal(run(['fold', '--nonce', CONTRACT.nonce, '--verdict', 'folded once the bit was cleared'], ws).code, 0);
+    assert.equal(kindOf(ws, 'fold').treeDigestAtFold, postTreeDigest);
+  });
+
+  // The fold-side content-blind guard, pinned so that DELETING it reddens a test. The instrument is
+  // the payload's own aliasing: the returned tree is one text file `a` holding the marker line that
+  // opens a binary entry; the folded tree is an EMPTY `a` plus a real binary `b`. The payloads are
+  // byte-identical, so the digest binding cannot notice — only the fold's own refusal can.
+  it('fold refuses a binary that arrived under an IDENTICAL payload, which the digest binding cannot see', () => {
+    const ws = repo();
+    run(REGISTER_WAVE, ws);
+    assert.equal(run(openArgv(externalContract(CONTRACT)), ws).code, 0);
+    const dispatch = kindOf(ws, 'dispatch');
+    writeFileSync(join(ws.cwd, 'a'), 'untracked-binary:b\n');
+    mintArtifacts(ws, { dispatch, contract: CONTRACT });
+    assert.equal(run(['return', '--nonce', CONTRACT.nonce], ws).code, 0);
+    const postTreeDigest = kindOf(ws, 'return').postTreeDigest;
+
+    writeFileSync(join(ws.cwd, 'a'), '');
+    writeFileSync(join(ws.cwd, 'b'), Buffer.from([0, 1, 0, 2]));
+    assert.equal(computeTreeFingerprint(ws.cwd), postTreeDigest,
+      'the two trees share one payload — the store\'s fold binding would accept this one');
+    const r = run(['fold', '--nonce', CONTRACT.nonce, '--verdict', 'folding a tree that grew a binary'], ws);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /whose CONTENT never enters the uncommitted-state payload \(binary b/);
+    assert.equal(kindOf(ws, 'fold'), undefined, 'only the fold-side guard stopped this');
+  });
+
+  it('fold refuses outside a git work tree, even when the override names a readable ledger', () => {
+    const plain = plainDir();
+    const dispatch = dispatchRecord(CONTRACT.nonce, { contractDigest: contractDigest(CONTRACT) });
+    const ret = returnRecord(CONTRACT.nonce, { contractDigest: contractDigest(CONTRACT) });
+    writeFileSync(plain.store, [registration(), dispatch, ret].map((r) => `${JSON.stringify(r)}\n`).join(''));
+    const r = main(['fold', '--nonce', CONTRACT.nonce, '--verdict', 'x'], { cwd: plain.cwd, env: plain.env, now: clock });
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /not inside a git work tree — a fold re-confirms the tree it is folding/);
+  });
+
+  it('fold refuses a thread with no return and a nonce that was never dispatched', () => {
+    const ws = repo();
+    run(REGISTER_WAVE, ws);
+    assert.match(run(['fold', '--nonce', 'never-opened', '--verdict', 'x'], ws).stderr,
+      /no dispatch for nonce "never-opened" is in the store/);
+    assert.equal(run(openArgv(externalContract(CONTRACT)), ws).code, 0);
+    const r = run(['fold', '--nonce', CONTRACT.nonce, '--verdict', 'nothing came back yet'], ws);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /carries no return to fold/);
+  });
+
+  it('degrade without --nonce records the PRE-DISPATCH refusal, and aggregate then REFUSES by name', () => {
+    const ws = repo();
+    run(REGISTER_WAVE, ws);
+    const r = run(['degrade', '--wave', 'wave-a', '--step-class', 'code',
+      '--rationale', 'no backend was available at all, so nothing was dispatched'], ws);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /a PRE-DISPATCH refusal: it opens NO nonce thread/);
+    assert.match(r.stdout, /`aggregate` will REFUSE this wave by name/);
+    assert.equal(kindOf(ws, 'degrade').nonce, null);
+    const report = run(['aggregate', '--wave', 'wave-a'], ws);
+    assert.equal(report.code, 1);
+    assert.match(report.stderr, /carries a PRE-DISPATCH degrade/);
+  });
+
+  it('fold and degrade each refuse over a semantically illegal ledger prefix (D14)', () => {
+    const corrupt = () => writeStore(repo(), [registration(), dispatchRecord('n1'), dispatchRecord('n1', { timestamp: TS(6) })]);
+    assert.match(run(['fold', '--nonce', 'n1', '--verdict', 'x'], corrupt()).stderr,
+      /line 3 carries a record the append path would have REFUSED/);
+    assert.match(run(['degrade', '--wave', 'wave-a', '--step-class', 'code', '--rationale', 'x'], corrupt()).stderr,
+      /line 3 carries a record the append path would have REFUSED/);
+  });
+});
+
+describe('the writer verbs\' flag surface mirrors the D3 key sets', () => {
+  const topLevel = (fields) => [...new Set(Object.values(fields).map((f) => f.split('.')[0]))];
+
+  it('open: the flag-decided, header-COPIED and derived fields together ARE the dispatch key set', () => {
+    assert.deepEqual(
+      [...topLevel(engine.OPEN_FLAG_FIELDS), ...engine.OPEN_CONTRACT_FIELDS, ...engine.OPEN_DERIVED_FIELDS].sort(),
+      [...DELEGATION_KEY_SETS.dispatch].sort(),
+    );
+    // The INPUT flags decide no field of their own and are therefore listed separately rather than
+    // hidden inside the scanner: a reader can see the whole accepted surface in one place.
+    assert.deepEqual(Object.keys(engine.OPEN_INPUT_FLAGS), ['--contract', '--wrapper-cap-s', '--kill-grace-s']);
+  });
+
+  it('return: the flag-decided plus derived fields ARE the return key set, and --no-receipt decides none', () => {
+    assert.deepEqual(
+      [...topLevel(engine.RETURN_FLAG_FIELDS), ...engine.RETURN_DERIVED_FIELDS].sort(),
+      [...DELEGATION_KEY_SETS.return].sort(),
+    );
+    assert.deepEqual(Object.keys(engine.RETURN_INPUT_FLAGS), ['--no-receipt']);
+  });
+
+  it('fold and degrade mirror their key sets', () => {
+    assert.deepEqual(
+      [...topLevel(engine.FOLD_FLAG_FIELDS), ...engine.FOLD_DERIVED_FIELDS].sort(),
+      [...DELEGATION_KEY_SETS.fold].sort(),
+    );
+    assert.deepEqual(
+      [...topLevel(engine.DEGRADE_FLAG_FIELDS), ...engine.DEGRADE_DERIVED_FIELDS].sort(),
+      [...DELEGATION_KEY_SETS.degrade].sort(),
+    );
+  });
+});
+
 // ── the CLI shell: help, routing, the --cwd seam, the process-facing writer ───────────────────────
 
 describe('dispatch CLI shell', () => {
@@ -795,6 +1832,13 @@ describe('dispatch CLI shell', () => {
     for (const phrase of ['no pre-registration record', 'OPEN thread in scope', 'several waves present with no --wave']) {
       assert.ok(r.stdout.includes(phrase), `--help must name the refusal: ${phrase}`);
     }
+    for (const verb of ['check', 'register', 'observe', 'open', 'return', 'fold', 'degrade', 'aggregate']) {
+      assert.ok(r.stdout.includes(`node dispatch.mjs ${verb}`), `--help must show the usage of ${verb}`);
+    }
+    // The v1 limits ride the help, not only the mode doc: a reader who never opens the doc still
+    // learns what this metric does NOT account for.
+    assert.match(r.stdout, /gate output is\nnever accounted/);
+    assert.match(r.stdout, /D10 stands as a BAR, not a mechanism/);
   });
 
   it('an unknown or absent verb is usage (exit 2)', () => {
