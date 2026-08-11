@@ -264,7 +264,7 @@ const CATALOG = [
     invocation: invocationOf('dispatch'),
     group: 'Orchestrate',
     kind: WRITER,
-    oneLine: 'Measure delegation: check a sub-task brief’s contract block (form only — never whether the task is genuinely bounded), pre-register an acceptance wave with its thresholds, record one observation, open a delegated thread from that brief, absorb the wrapper’s receipt back into the ledger, fold the returned work or close the thread with a recorded degrade, and print the per-class report of how much a delegated sub-task actually bought, derived from what was dispatched, returned and folded. Writes only its own ledger file beside the repo; never commits.',
+    oneLine: 'Measure delegation: check a sub-task brief’s contract block (form only — never whether the task is genuinely bounded), pre-register an acceptance wave with its thresholds, record one observation, open a delegated thread from that brief, wait for that one dispatch to answer — a wait that ends without an answer says so and authorizes nothing — absorb the wrapper’s receipt back into the ledger, fold the returned work or close the thread with a recorded degrade, and print the per-class report of how much a delegated sub-task actually bought, derived from what was dispatched, returned and folded. Writes only its own ledger file beside the repo; never commits.',
   },
   {
     // NEVER `guarded` — that kind promises dry-run-first, which these writers do not have; the

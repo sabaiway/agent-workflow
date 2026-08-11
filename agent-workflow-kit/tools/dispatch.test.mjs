@@ -1222,7 +1222,7 @@ describe('return absorbs ONLY a terminal receipt bound to the dispatch it answer
     gitIn(unstaged.cwd, 'update-index', '--add', '--cacheinfo', `160000,${base},sub`);
     gitIn(unstaged.cwd, 'commit', '-qm', 'a submodule pointer');
     gitIn(unstaged.cwd, 'config', 'diff.ignoreSubmodules', 'all');
-    const guard = engine.hiddenFromPlainDiff(unstaged.cwd, unstaged.cwd);
+    const guard = engine.hiddenFromPlainDiff(unstaged.cwd);
     assert.equal(guard.ok, false);
     assert.match(guard.reason, /unstaged: sub/);
   });
@@ -1364,8 +1364,8 @@ describe('return absorbs ONLY a terminal receipt bound to the dispatch it answer
 
   it('the hidden-path guard fails CLOSED when git cannot answer at all', () => {
     const plain = plainDir();
-    assert.match(engine.hiddenFromPlainDiff(plain.cwd, plain.cwd).reason, /a git probe of the change set could not be read/);
-    assert.match(engine.hiddenFromPlainDiff(repo().cwd, join(TMP, 'not-a-repo-at-all')).reason, /a git probe of the change set could not be read/);
+    assert.match(engine.hiddenFromPlainDiff(plain.cwd).reason, /a git probe of the change set could not be read/);
+    assert.match(engine.hiddenFromPlainDiff(join(TMP, 'not-a-repo-at-all')).reason, /a git probe of the change set could not be read/);
   });
 
   // The INDEX-BIT arm refuses the BIT, never its effect — because the effect can be invisible to
@@ -1789,6 +1789,263 @@ describe('fold binds the CURRENT tree to what was returned; degrade closes witho
   });
 });
 
+// ── (7) await — the arrival waiter (Phase 4) ──────────────────────────────────────────────────────
+
+// The waiter's clock IS the module's own `now` — one clock per run — so the fixture moves the same
+// wall clock the ABSOLUTE deadline is measured against. `offsetS` places the wait relative to the
+// DISPATCH record's timestamp; `sleep` advances the clock and can fire the arrival mid-wait, so the
+// suite spends no wall-clock at all.
+const awaitAt = (ws, { nonce = CONTRACT.nonce, timeoutS = null, offsetS = 0, onSleep, pollMs = 5000 } = {}) => {
+  const state = { t: Date.parse(kindOf(ws, 'dispatch').timestamp) + offsetS * 1000, slept: 0 };
+  const argv = ['await', '--nonce', nonce, ...(timeoutS === null ? [] : ['--timeout', String(timeoutS)])];
+  return engine.mainAwait(argv, {
+    cwd: ws.cwd,
+    env: ws.env,
+    now: () => new Date(state.t).toISOString(),
+    sleep: async (ms) => { state.t += ms; state.slept += 1; if (onSleep) onSleep(state.slept); },
+    pollMs,
+  }).then((r) => ({ ...r, slept: state.slept }));
+};
+
+const RESERVED_ONLY = { artifacts: { state: 'reserved', report: null } };
+const receiptPathOf = (ws) => join(ws.dir, execReceiptBasename('codex', CONTRACT.nonce));
+
+describe('await observes ARRIVAL, writes nothing, and never releases a writer slot', () => {
+  it('await is satisfied by the TERMINAL exec receipt and never by a RESERVED one', async () => {
+    const landed = laneToReturn();
+    const arrived = await awaitAt(landed.ws);
+    assert.equal(arrived.code, 0, arrived.stderr);
+    assert.match(arrived.stdout, /ARRIVED — the TERMINAL exec receipt landed/);
+    assert.match(arrived.stdout, /outcome success · exit 0 · session sess-1/);
+    assert.equal(arrived.slept, 0, 'an artifact already on disk is answered without a single sleep');
+    assert.equal(recordsOf(landed.ws).length, 2, 'await writes NOTHING — the registration and the dispatch are all there is');
+
+    const holding = laneToReturn(RESERVED_ONLY);
+    const waited = await awaitAt(holding.ws, { timeoutS: 60 });
+    assert.equal(waited.code, engine.AWAIT_UNANSWERED_STATUS);
+    assert.match(waited.stderr, /a RESERVED receipt at /);
+    assert.ok(waited.slept > 0, 'a reservation is "keep waiting", never an answer');
+    assert.equal(recordsOf(holding.ws).length, 2);
+  });
+
+  it('a reservation REPLACED mid-wait by the terminal receipt arrives on the very next poll', async () => {
+    const { ws, dispatch, contract } = laneToReturn(RESERVED_ONLY);
+    const r = await awaitAt(ws, { timeoutS: 60, onSleep: (n) => { if (n === 2) mintArtifacts(ws, { dispatch, contract }); } });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.slept, 2, 'the poll after the replacement answers');
+  });
+
+  it('await refuses a --timeout above the REMAINING time — the bound moves as the window closes', async () => {
+    const { ws } = laneToReturn(RESERVED_ONLY);
+    const over = await awaitAt(ws, { timeoutS: CONTRACT.deadlineS + 1 });
+    assert.equal(over.code, 1);
+    assert.match(over.stderr, /reaches past this dispatch's ABSOLUTE deadline/);
+    assert.match(over.stderr, /of which 900s remain/);
+    assert.match(over.stderr, /nothing was waited on/);
+    assert.equal(over.slept, 0);
+
+    // The SAME flag value becomes inadmissible later in the window: the bound is the remaining time,
+    // never the deadline the contract carried.
+    const late = await awaitAt(ws, { timeoutS: 301, offsetS: 600 });
+    assert.equal(late.code, 1);
+    assert.match(late.stderr, /of which 300s remain/);
+
+    const exact = await awaitAt(ws, { timeoutS: 300, offsetS: 600 });
+    assert.equal(exact.code, engine.AWAIT_UNANSWERED_STATUS, 'exactly the remaining time is admissible');
+    assert.match(exact.stderr, /EXPIRED/, 'when the two bounds coincide the DEADLINE is the one that answers');
+  });
+
+  // The council's round-1 major, and codex's own ruling on the direction: a VISIBLE terminal
+  // receipt answers ARRIVED whatever either bound says, because lateness has exactly ONE decision
+  // site and it is the absorb door. The --timeout admissibility check bounds a WAIT, so it has
+  // nothing to say about an artifact that is already on disk.
+  it('an arrival on disk outranks an INADMISSIBLE --timeout — the bound is checked only once there is a wait', async () => {
+    const landed = laneToReturn();
+    const r = await awaitAt(landed.ws, { timeoutS: CONTRACT.deadlineS + 1 });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /ARRIVED/);
+    assert.equal(r.slept, 0);
+
+    // …and with nothing on disk the SAME flag value refuses, so the check did not simply vanish.
+    const holding = laneToReturn(RESERVED_ONLY);
+    assert.equal((await awaitAt(holding.ws, { timeoutS: CONTRACT.deadlineS + 1 })).code, 1);
+  });
+
+  // Characterization, not a red-proof: this arm is green on both sides of the fold, and it is here
+  // to keep it that way — each pass polls BEFORE it consults the clock, so a receipt landing during
+  // the last sleep is reported rather than lost to a cutoff that fires a moment later.
+  it('a receipt landing exactly AT the wait bound is ARRIVED, never TIMEOUT', async () => {
+    const { ws, dispatch, contract } = laneToReturn(RESERVED_ONLY);
+    const r = await awaitAt(ws, { timeoutS: 60, onSleep: (n) => { if (n === 12) mintArtifacts(ws, { dispatch, contract }); } });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.slept, 12, 'the poll after the twelfth sleep sits exactly on the bound');
+  });
+
+  it('an already-expired dispatch answers immediately — but an arrival on disk still outranks the clock', async () => {
+    const { ws } = laneToReturn(RESERVED_ONLY);
+    const expired = await awaitAt(ws, { offsetS: CONTRACT.deadlineS + 1, timeoutS: 60 });
+    assert.equal(expired.code, engine.AWAIT_UNANSWERED_STATUS);
+    assert.equal(expired.slept, 0, 'an expired dispatch is answered, never waited on');
+    assert.match(expired.stderr, /EXPIRED/);
+
+    // Arrival is a FACT this verb reports; whether a LATE receipt may be absorbed is the absorb
+    // door's question, and it refuses one by name.
+    const landed = laneToReturn();
+    const late = await awaitAt(landed.ws, { offsetS: CONTRACT.deadlineS + 1 });
+    assert.equal(late.code, 0, late.stderr);
+    assert.match(late.stdout, /ARRIVED/);
+  });
+
+  it('the expiry names the supervision question and states that no writer slot was released', async () => {
+    const { ws } = laneToReturn(RESERVED_ONLY);
+    const r = await awaitAt(ws, { offsetS: CONTRACT.deadlineS });
+    assert.equal(r.code, engine.AWAIT_UNANSWERED_STATUS, 'an expiry is neither a refusal (1) nor usage (2)');
+    assert.match(r.stderr, /SUPERVISION question, not an outcome/);
+    assert.match(r.stderr, /join or reap it/);
+    assert.match(r.stderr, /return --no-receipt or degrade/);
+    assert.match(r.stderr, /NO writer slot was released/);
+    assert.equal(r.stdout, '', 'an unanswered wait prints no result line');
+  });
+
+  it('a --timeout that ends INSIDE the deadline says so, and still releases no slot', async () => {
+    const { ws } = laneToReturn(RESERVED_ONLY);
+    const r = await awaitAt(ws, { timeoutS: 60 });
+    assert.equal(r.code, engine.AWAIT_UNANSWERED_STATUS);
+    assert.match(r.stderr, /TIMEOUT after 60s/);
+    assert.match(r.stderr, /still INSIDE its absolute deadline \(840s remain/);
+    assert.match(r.stderr, /NO writer slot was released/);
+  });
+
+  it('await refuses a symlinked, FIFO, invalid-UTF-8 or malformed artifact BY CLASS', async () => {
+    const symlinked = laneToReturn(RESERVED_ONLY);
+    rmSync(receiptPathOf(symlinked.ws));
+    symlinkSync(join(symlinked.ws.dir, 'somewhere-else.json'), receiptPathOf(symlinked.ws));
+    const followed = await awaitAt(symlinked.ws);
+    assert.equal(followed.code, 1);
+    assert.match(followed.stderr, /is a symlink, not a regular file — never followed, never read/);
+
+    const piped = laneToReturn(RESERVED_ONLY);
+    rmSync(receiptPathOf(piped.ws));
+    assert.equal(spawnSync('mkfifo', [receiptPathOf(piped.ws)], { encoding: 'utf8' }).status, 0, 'mkfifo fixture');
+    const fifo = await awaitAt(piped.ws);
+    assert.equal(fifo.code, 1);
+    assert.match(fifo.stderr, /is a FIFO, not a regular file/);
+
+    const raw = laneToReturn(RESERVED_ONLY);
+    writeFileSync(receiptPathOf(raw.ws), Buffer.from([0xff, 0xfe, 0x00]));
+    const undecodable = await awaitAt(raw.ws);
+    assert.equal(undecodable.code, 1);
+    assert.match(undecodable.stderr, /invalid UTF-8 in the file/);
+    assert.match(undecodable.stderr, /a FAILED probe, not an absent one/);
+
+    const junk = laneToReturn(RESERVED_ONLY);
+    writeFileSync(receiptPathOf(junk.ws), '{ not json');
+    const broken = await awaitAt(junk.ws);
+    assert.equal(broken.code, 1);
+    assert.match(broken.stderr, /is REFUSED — exec receipt: the artifact is not valid JSON/);
+    assert.match(broken.stderr, /only an exec receipt answers an exec dispatch/);
+  });
+
+  // D10, the exec side: satisfaction is decided POSITIVELY by the exec-receipt reader, so no
+  // artifact of a NEIGHBOURING family — a review receipt, a delegation ledger record, a finding
+  // manifest — can answer an exec dispatch, however plausible its bytes look at that path.
+  it('a review receipt, a delegation ledger line and a finding manifest never satisfy await (D10 →)', async () => {
+    const foreign = [
+      ['a review receipt', { schema: 1, artifact: 'code', backend: 'codex', verdict: 'ship', fingerprint: null }],
+      ['a delegation ledger line', dispatchRecord(CONTRACT.nonce)],
+      ['a finding manifest', { schema: 1, backend: 'codex', nonce: CONTRACT.nonce, fingerprint: D('a1'), findings: [] }],
+    ];
+    for (const [label, body] of foreign) {
+      const { ws } = laneToReturn(RESERVED_ONLY);
+      writeFileSync(receiptPathOf(ws), JSON.stringify(body));
+      const r = await awaitAt(ws);
+      assert.equal(r.code, 1, `${label} must never satisfy an exec waiter`);
+      assert.match(r.stderr, /only an exec receipt answers an exec dispatch/);
+      assert.equal(r.stdout, '', `${label} never prints ARRIVED`);
+    }
+  });
+
+  it('await refuses a receipt whose {backend, nonce} BODY answers another dispatch', async () => {
+    const { ws } = laneToReturn({ artifacts: { receipt: { nonce: 'someone-else' } } });
+    const r = await awaitAt(ws);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /names \{backend "codex", nonce "someone-else"\}/);
+    assert.match(r.stderr, /not by the filename it was found under/);
+  });
+
+  // A CLOSED thread is not awaited: nothing can answer it any more, and the expiry message would
+  // otherwise send the operator to close what is already closed. Checked in the WAITING branch of
+  // the first poll ONLY — the third arm pins that a terminal receipt still on disk keeps answering.
+  it('await refuses a CLOSED thread by name instead of waiting out its bound', async () => {
+    const absorbed = laneToReturn(RESERVED_ONLY);
+    assert.equal(run(['return', '--nonce', CONTRACT.nonce, '--no-receipt', '--exit-status', '137', '--outcome', 'transport-failure'], absorbed.ws).code, 0);
+    const closed = await awaitAt(absorbed.ws, { timeoutS: 60 });
+    assert.equal(closed.code, 1);
+    assert.match(closed.stderr, /is already CLOSED by its transport-failure return/);
+    assert.equal(closed.slept, 0, 'a closed thread is answered, never waited on — the reservation is still on disk');
+
+    const gone = laneToReturn(RESERVED_ONLY);
+    rmSync(receiptPathOf(gone.ws));
+    assert.equal(run(['degrade', '--wave', 'wave-a', '--nonce', CONTRACT.nonce, '--step-class', 'code', '--rationale', 'the backend never answered'], gone.ws).code, 0);
+    const degraded = await awaitAt(gone.ws, { timeoutS: 60 });
+    assert.equal(degraded.code, 1);
+    assert.match(degraded.stderr, /is already CLOSED by its degrade/);
+
+    const folded = laneToReturn();
+    assert.equal(run(['return', '--nonce', CONTRACT.nonce], folded.ws).code, 0);
+    assert.equal(run(['fold', '--nonce', CONTRACT.nonce, '--verdict', 'as returned'], folded.ws).code, 0);
+    const still = await awaitAt(folded.ws);
+    assert.equal(still.code, 0, 'a TERMINAL receipt on disk is a fact this verb reports, closed thread or not');
+    assert.match(still.stdout, /ARRIVED/);
+  });
+
+  // The frozen record vocabulary admits ANY positive safe-integer deadlineS, so the bound arithmetic
+  // leaves the exactly-representable range: two bounds 1000 ms apart round to the SAME double, and
+  // the deadline instant leaves the range a Date can hold. Both are decisions, not cosmetics — the
+  // pair below is the one codex named, and it reproduces.
+  it('a legal but unrepresentable deadline keeps the refusal exact and the unanswered status intact', async () => {
+    const huge = 9007199254740885;
+    const { ws } = laneToReturn({ contract: { deadlineS: huge }, artifacts: { state: 'reserved', report: null } });
+    // The sleep guard is what makes this arm FAIL rather than HANG when the refusal is skipped: an
+    // admitted wait against a bound 9e18 ms away polls forever, so without it the proof would be a
+    // timeout — a quarantine, not a red. That unbounded wait is itself part of what the refusal
+    // prevents.
+    const over = await awaitAt(ws, { timeoutS: huge + 1, onSleep: (n) => { if (n > 2) throw new Error('the wait was ADMITTED past the deadline'); } });
+    assert.equal(over.code, 1, 'a --timeout one second past the deadline must refuse, whatever the magnitude');
+    assert.match(over.stderr, /reaches past this dispatch's ABSOLUTE deadline/);
+
+    const waited = await awaitAt(ws, { timeoutS: 60 });
+    assert.equal(waited.code, engine.AWAIT_UNANSWERED_STATUS, 'an unrenderable deadline never turns the promised status into a thrown RangeError');
+    assert.match(waited.stderr, /beyond the range a date can represent/);
+  });
+
+  it('await refuses an unopened thread, and re-establishes ledger legality first (D14)', async () => {
+    const ws = repo();
+    run(REGISTER_WAVE, ws);
+    const none = await engine.mainAwait(['await', '--nonce', 'never-opened'], { cwd: ws.cwd, env: ws.env, now: clock });
+    assert.equal(none.code, 1);
+    assert.match(none.stderr, /no dispatch for nonce "never-opened" is in the store/);
+
+    const corrupt = writeStore(repo(), [registration(), dispatchRecord('n1'), dispatchRecord('n1', { timestamp: TS(6) })]);
+    const illegal = await engine.mainAwait(['await', '--nonce', 'n1'], { cwd: corrupt.cwd, env: corrupt.env, now: clock });
+    assert.equal(illegal.code, 1);
+    assert.match(illegal.stderr, /line 3 carries a record the append path would have REFUSED/);
+  });
+
+  it('await takes flags only, requires --nonce, and refuses an unusable --timeout or clock', async () => {
+    const { ws } = laneToReturn();
+    const ctx = { cwd: ws.cwd, env: ws.env, now: clock };
+    const stray = await engine.mainAwait(['await', CONTRACT.nonce], ctx);
+    assert.equal(stray.code, 2);
+    assert.match(stray.stderr, /unknown argument: p3-a1 — await takes flags only/);
+    assert.match((await engine.mainAwait(['await'], ctx)).stderr, /--nonce is required/);
+    assert.match((await engine.mainAwait(['await', '--nonce', CONTRACT.nonce, '--timeout', '0'], ctx)).stderr, /--timeout must be at least 1/);
+    const stopped = await engine.mainAwait(['await', '--nonce', CONTRACT.nonce], { ...ctx, now: () => 'not an instant' });
+    assert.equal(stopped.code, 2);
+    assert.match(stopped.stderr, /did not produce an instant/);
+  });
+});
+
 describe('the writer verbs\' flag surface mirrors the D3 key sets', () => {
   const topLevel = (fields) => [...new Set(Object.values(fields).map((f) => f.split('.')[0]))];
 
@@ -1808,6 +2065,12 @@ describe('the writer verbs\' flag surface mirrors the D3 key sets', () => {
       [...DELEGATION_KEY_SETS.return].sort(),
     );
     assert.deepEqual(Object.keys(engine.RETURN_INPUT_FLAGS), ['--no-receipt']);
+  });
+
+  // The ninth verb writes NO record, so it has no key set to mirror: its flags are INPUTS, listed
+  // beside `open`'s floor operands rather than hidden inside the scanner.
+  it('await decides no record field — its whole surface is {--nonce, --timeout}', () => {
+    assert.deepEqual(Object.keys(engine.AWAIT_INPUT_FLAGS), ['--nonce', '--timeout']);
   });
 
   it('fold and degrade mirror their key sets', () => {
@@ -1832,7 +2095,7 @@ describe('dispatch CLI shell', () => {
     for (const phrase of ['no pre-registration record', 'OPEN thread in scope', 'several waves present with no --wave']) {
       assert.ok(r.stdout.includes(phrase), `--help must name the refusal: ${phrase}`);
     }
-    for (const verb of ['check', 'register', 'observe', 'open', 'return', 'fold', 'degrade', 'aggregate']) {
+    for (const verb of ['check', 'register', 'observe', 'open', 'await', 'return', 'fold', 'degrade', 'aggregate']) {
       assert.ok(r.stdout.includes(`node dispatch.mjs ${verb}`), `--help must show the usage of ${verb}`);
     }
     // The v1 limits ride the help, not only the mode doc: a reader who never opens the doc still
@@ -1841,9 +2104,47 @@ describe('dispatch CLI shell', () => {
     assert.match(r.stdout, /D10 stands as a BAR, not a mechanism/);
   });
 
-  it('an unknown or absent verb is usage (exit 2)', () => {
-    assert.match(main(['frobnicate'], {}).stderr, /unknown verb: frobnicate/);
+  it('an unknown or absent verb is usage (exit 2), and the expected set names all nine', () => {
+    const unknown = main(['frobnicate'], {});
+    assert.match(unknown.stderr, /unknown verb: frobnicate/);
+    assert.match(unknown.stderr, /check \| register \| observe \| open \| await \| return \| fold \| degrade \| aggregate/);
     assert.match(main([], {}).stderr, /unknown verb: \(none\)/);
+  });
+
+  // The waiting verb has its OWN entry rather than making every immediate verb's answer a promise
+  // (the review lane's mainAwait idiom). main() therefore refuses it BY NAME — a bare "unknown verb"
+  // there would send a caller looking for a typo instead of at the entry point.
+  it('main refuses the WAITING verb by name; mainAwait answers it and delegates every other one', async () => {
+    const refused = main(['await', '--nonce', 'p3-a1'], {});
+    assert.equal(refused.code, 2);
+    assert.match(refused.stderr, /await is the one verb that WAITS, so it answers through mainAwait/);
+
+    const helped = await engine.mainAwait(['--help'], {});
+    assert.equal(helped.code, 0);
+    assert.ok(helped.stdout.startsWith('dispatch — the delegation engine'));
+    assert.match((await engine.mainAwait(['frobnicate'], {})).stderr, /unknown verb: frobnicate/);
+  });
+
+  it('runCliAwait writes the waiting lane\'s streams, and runEntryPoint routes both lanes', async () => {
+    const out = [];
+    const err = [];
+    const stream = (sink) => ({ write: (s) => sink.push(s) });
+    const io = { stdout: stream(out), stderr: stream(err) };
+    assert.equal(await engine.runCliAwait(['--help'], io), 0);
+    assert.match(out[0], /^dispatch — the delegation engine/);
+    assert.ok(out[0].endsWith('\n'), 'the writer terminates the line');
+
+    const { ws } = laneToReturn();
+    const ctx = { cwd: ws.cwd, env: ws.env, now: clock };
+    assert.equal(await engine.runCliAwait(['await', '--nonce', CONTRACT.nonce], { ...io, ctx }), 0);
+    assert.match(out[1], /ARRIVED/);
+
+    // The routing rule itself, in-process: the waiting verb comes back through a promise, every
+    // other one lands synchronously.
+    const codes = [];
+    await engine.runEntryPoint(['await', '--nonce', CONTRACT.nonce], (code) => codes.push(code), { ...io, ctx });
+    engine.runEntryPoint(['--help'], (code) => codes.push(code), io);
+    assert.deepEqual(codes, [0, 0]);
   });
 
   it('--cwd relocates the run and needs a value', () => {

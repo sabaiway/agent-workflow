@@ -274,9 +274,9 @@ describe('commands surface: catalog ⟷ SKILL.md set-equality with the dispatch 
     assert.match(skill, /### Mode: dispatch\n\nwriter — read `\$\{CLAUDE_SKILL_DIR\}\/references\/modes\/dispatch\.md` before acting\./);
     const mode = readFileSync(join(MODES_DIR, 'dispatch.md'), 'utf8');
     assert.match(mode, /node \$\{CLAUDE_SKILL_DIR\}\/tools\/dispatch\.mjs/, 'the mode file must carry the runnable dispatch line');
-    // All EIGHT verbs, so a vanished section reddens this test instead of passing on the four the
+    // All NINE verbs, so a vanished section reddens this test instead of passing on the four the
     // mode doc happened to be born with.
-    for (const verb of ['check', 'register', 'observe', 'open', 'return', 'fold', 'degrade', 'aggregate']) {
+    for (const verb of ['check', 'register', 'observe', 'open', 'await', 'return', 'fold', 'degrade', 'aggregate']) {
       assert.ok(mode.includes(`**\`${verb}`), `the mode file documents the ${verb} verb`);
     }
     assert.match(mode, /never commits/i, 'the mode file states the writer never commits');

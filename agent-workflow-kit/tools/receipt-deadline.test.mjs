@@ -18,6 +18,7 @@ import {
 } from './receipt-deadline.mjs';
 import { FINDING_MANIFEST_PREFIX } from './flow-record.mjs';
 import { DELEGATION_KINDS, DELEGATION_SCHEMA_VERSION } from './dispatch-record.mjs';
+import { EXEC_RECEIPT_SCHEMA_VERSION, EXEC_RECEIPT_KIND } from './exec-receipt.mjs';
 import { readFileBytesNoFollow, readRegularFileNoFollow } from './flow-store-read.mjs';
 
 const receiptLine = (backend) =>
@@ -599,6 +600,51 @@ describe('receipt-deadline — a delegation-ledger line never satisfies a review
 
   it('the contract sentence NAMES the exclusion — the mode doc is bound to it by doc-parity', () => {
     assert.match(RECEIPT_DEADLINE_CONTRACT, /delegation/, 'the tool contract states what never satisfies');
+  });
+
+  // The SECOND direction of the same parity (delegation Plan 2 Phase 4): the exec lane now mints an
+  // artifact of its own, and the two families must be mutually inert. An exec receipt carries a
+  // `backend` and a `nonce` — the two tokens this waiter matches on — so it is exactly the shape
+  // that could answer a review dispatch if the rule were anything less than the positive core. The
+  // exec waiter states the mirror rule from its own side (dispatch.mjs: only an exec receipt answers
+  // an exec dispatch).
+  const execReceipt = (backend) => ({
+    schema: EXEC_RECEIPT_SCHEMA_VERSION,
+    kind: EXEC_RECEIPT_KIND,
+    state: 'terminal',
+    backend,
+    nonce: 'nx7',
+    owner: 'owner-token-1',
+    contractDigest: 'c'.repeat(64),
+    wrapperVersion: '3.4.1',
+    posture: { model: 'gpt-5-codex', effort: 'high', tier: 'priority' },
+    capS: 600,
+    killGraceS: 15,
+    sessionId: 'sess-1',
+    exitStatus: 0,
+    outcome: 'success',
+    reportDigest: 'd'.repeat(64),
+    reportLength: 12,
+    timestamp: '2026-08-11T00:00:00.000Z',
+  });
+
+  it('an EXEC receipt in the review receipts store never satisfies a review waiter (D10 ←)', async () => {
+    const store = makeStore('');
+    appendFileSync(store.path, `${JSON.stringify(execReceipt('codex'))}\n`);
+    const r = await runAt(store, { watermark: 0, timeoutS: 10 });
+    rmSync(store.dir, { recursive: true, force: true });
+    assert.equal(r.code, 1, 'an exec receipt is not an answer to a review dispatch');
+    assert.match(r.stderr, /TIMEOUT/);
+  });
+
+  it('an EXEC receipt standing where the finding manifest belongs is REFUSED, never arrival (D10 ←)', async () => {
+    const store = makeStore('');
+    writeFileSync(join(store.dir, `${FINDING_MANIFEST_PREFIX}codex-nx7.json`), JSON.stringify(execReceipt('codex')));
+    const r = await runAt(store, { watermark: 0, nonce: 'nx7', timeoutS: 10 });
+    rmSync(store.dir, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /REFUSED/);
+    assert.match(r.stderr, /manifest .* is malformed/);
   });
 
   });
