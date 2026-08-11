@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 // dispatch.mjs — the delegation ENGINE (delegation Plan 1, Phase 3; the writer verbs are Plan 2,
-// Phase 2): the ONE human-facing surface over the record vocabulary (dispatch-record.mjs) and the
-// ledger (dispatch-store.mjs). Eight verbs:
+// Phase 2 and the waiter Plan 2, Phase 4): the ONE human-facing surface over the record vocabulary
+// (dispatch-record.mjs) and the ledger (dispatch-store.mjs). Nine verbs:
 //
 //   check <dispatch-file>  the D8 sub-task contract header, FORM-only, exit 0/1
 //   register               the wave's PRE-REGISTRATION record (classes, pairing key, thresholds)
 //   observe                one OBSERVATION record (the solo baseline / a self-reported datum)
 //   open                   the DISPATCH record — every mint-time field COPIED from the header
+//   await                  the ARRIVAL waiter — the ONLY verb that waits, and it writes nothing
 //   return                 the RETURN record — the wrapper's exec receipt ABSORBED through this door
 //   fold                   the FOLD record — the integration re-confirmation
 //   degrade                the DEGRADE record — the recorded no-fold closure
@@ -51,7 +52,9 @@
 //   • a receipt is FORGEABLE, exactly like every record in this family. What the absorb door defends
 //     against is a buggy or interrupted producer, not a hostile one.
 //   • D10 stands as a bar, not a mechanism: at most ONE in-tree exec dispatch runs at a time, and
-//     nothing here refuses a second one. A parallel-write story is not this plan's.
+//     nothing here refuses a second one.
+//   • `await` observes ARRIVAL and nothing else: an expiry never authorizes the next writer, and the
+//     verb releases no slot it never held. Whether the run may be ABSORBED stays `return`'s question. A parallel-write story is not this plan's.
 //
 // Writer: appends to the delegation ledger through the store's lock-serialized append (the store's
 // preflight is the single legality door — this module adds NO second validator). Never commits,
@@ -85,7 +88,7 @@ const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 }
 
 // The ONE contract sentence, doc-parity-bound into references/modes/dispatch.md: the FORM-only limit
 // and the aggregator's refusals are what a reader must not be able to mis-learn from the mode doc.
-export const DISPATCH_CONTRACT = 'the contract check is FORM-only — fields present, grammars respected, never boundedness, design-decidedness or acceptance adequacy — and `aggregate` REFUSES instead of computing acceptance for a wave with no pre-registration record, over an OPEN thread in scope, over a PRE-DISPATCH degrade that opens no thread, or across several waves with no `--wave`; the writer verbs add NO second legality door — the store\'s preflight is the only one, and its refusals travel verbatim — while `open` copies every mint-time field from the contract header and refuses a deadline below the wrapper cap plus the kill grace, `return` absorbs only a TERMINAL exec receipt whose backend, nonce and independently computed contractDigest match the dispatch it answers, and `fold` binds the CURRENT tree to the folded return\'s postTreeDigest, so a tree that moved between the two never folds';
+export const DISPATCH_CONTRACT = 'the contract check is FORM-only — fields present, grammars respected, never boundedness, design-decidedness or acceptance adequacy — and `aggregate` REFUSES instead of computing acceptance for a wave with no pre-registration record, over an OPEN thread in scope, over a PRE-DISPATCH degrade that opens no thread, or across several waves with no `--wave`; the writer verbs add NO second legality door — the store\'s preflight is the only one, and its refusals travel verbatim — while `open` copies every mint-time field from the contract header and refuses a deadline below the wrapper cap plus the kill grace, `return` absorbs only a TERMINAL exec receipt whose backend, nonce and independently computed contractDigest match the dispatch it answers, and `fold` binds the CURRENT tree to the folded return\'s postTreeDigest, so a tree that moved between the two never folds, and `await` is satisfied ONLY by the TERMINAL exec receipt of its own dispatch\'s {backend, nonce} — never by a review receipt, a ledger line or a finding manifest — while an expiry names a supervision question and releases NO writer slot';
 
 // ── the flag surface (the CLI tests pin it against the D3 key sets) ────────────────────────────────
 // flag → the record field it decides. The fields NOT on a flag are DERIVED and listed beside them,
@@ -550,7 +553,7 @@ const runOpen = ({ baseCwd, env, argv, now }) => {
   // The baseline is a RECORDED CLAIM about this tree, so it is refused before it is made: a tree that
   // conceals a change reports CLEAN to `isTreeClean` and then hands the concealed change to the
   // delegate's account at return time. `open` is where that lie is cheapest to catch.
-  const honest = hiddenFromPlainDiff(cwd, top);
+  const honest = hiddenFromPlainDiff(top);
   if (!honest.ok) return refusal('open', `${honest.reason}; nothing was written`);
   const preTreeDigest = uncommittedStateFingerprint(cwd);
   const record = {
@@ -587,6 +590,164 @@ const runOpen = ({ baseCwd, env, argv, now }) => {
     stdout: `dispatch open: thread "${record.nonce}" opened in wave "${record.waveId}" — class ${record.stepClass} · backend ${record.backend} · vehicle ${record.vehicle.requested} → ${record.vehicle.selected} · deadline ${record.deadlineS}s (floor ${floorS}s) · retry ${record.retryIndex}/${record.retryCap} · baseline ${baselineClean ? 'CLEAN' : 'DIRTY — the return will be metric-INELIGIBLE (dirty-baseline)'} → ${writtenPath}`,
     stderr: '',
   };
+};
+
+// ── await: the exec ARRIVAL waiter ────────────────────────────────────────────────────────────────
+
+// The ONLY verb that waits, and the only one that writes nothing at all. Its flags therefore decide
+// no record field and are listed as INPUTS, exactly like `open`'s floor operands.
+export const AWAIT_INPUT_FLAGS = Object.freeze({
+  '--nonce': 'the thread whose TERMINAL exec receipt is awaited',
+  '--timeout': 'the wait bound in seconds — never above the dispatch\'s REMAINING absolute time',
+});
+
+export const EXEC_AWAIT_POLL_MS = 5000;
+
+// The wait ended with no terminal receipt. Its OWN status, distinct from a refusal (1) and from
+// usage (2): an expiry is not a malformed input and not a decided outcome — it is the supervision
+// question, and a caller that BRANCHES on the exit code can tell the two apart. It is not a defence
+// against a caller that discards failure wholesale: a blanket `|| true` swallows this exactly as it
+// swallows every other nonzero status.
+export const AWAIT_UNANSWERED_STATUS = 3;
+
+// pollExecArrival → { state: 'waiting' | 'satisfied' | 'refused', reason }. Satisfaction is decided
+// POSITIVELY by the receipt reader itself (exec-receipt.mjs): schema, kind and the closed key set
+// must all hold, so nothing that is not an exec receipt can answer an exec dispatch — a review
+// receipt line, a delegation ledger record and a finding manifest each REFUSE here rather than
+// satisfy, which is the D10 rule the review waiter states from its own side. A `reserved` artifact
+// means the run holds the nonce and has published nothing about its end: keep waiting. The read
+// rides the store's own no-follow reader, so the artifact's identity is never resolved through a
+// link and a FIFO can never block the bounded wait.
+export const pollExecArrival = ({ dir, backend, nonce, io = {} }) => {
+  const path = join(dir, execReceiptBasename(backend, nonce));
+  const read = readRegularFileNoFollow(path, io);
+  if (read.outcome === 'absent') {
+    return { state: 'waiting', reason: `no exec receipt for {backend "${backend}", nonce "${nonce}"} has been published yet (${path} does not exist)` };
+  }
+  if (read.outcome === 'foreign') {
+    return { state: 'refused', reason: `the exec receipt at ${path} is a ${read.className}, not a regular file — never followed, never read (fail closed)` };
+  }
+  if (read.outcome === 'error') {
+    return { state: 'refused', reason: `the exec receipt at ${path} could not be read (${read.code}) — an unreadable artifact is a FAILED probe, not an absent one (fail closed)` };
+  }
+  const parsed = parseExecReceipt(read.content);
+  if (!parsed.ok) {
+    return { state: 'refused', reason: `the artifact at ${path} is REFUSED — ${parsed.reason}; only an exec receipt answers an exec dispatch` };
+  }
+  const receipt = parsed.receipt;
+  if (receipt.backend !== backend || receipt.nonce !== nonce) {
+    return { state: 'refused', reason: `the artifact at ${path} names {backend "${receipt.backend}", nonce "${receipt.nonce}"}, not the awaited {backend "${backend}", nonce "${nonce}"} — a receipt is bound to its dispatch by identity, not by the filename it was found under (fail closed)` };
+  }
+  if (receipt.state === 'reserved') {
+    return { state: 'waiting', reason: `the run holds the nonce — a RESERVED receipt at ${path} — but has published no terminal receipt yet` };
+  }
+  return { state: 'satisfied', reason: `the TERMINAL exec receipt landed (${path}) — outcome ${receipt.outcome} · exit ${receipt.exitStatus} · session ${receipt.sessionId ?? 'none'}` };
+};
+
+const NO_SLOT_RELEASED = 'NO writer slot was released: a wait that ended without an answer never authorizes the next dispatch (D10 — one in-tree exec dispatch at a time)';
+
+// The bound arithmetic is BigInt, and it HAS to be. The frozen record vocabulary admits any positive
+// SAFE INTEGER `deadlineS` (dispatch-record.mjs), so `deadlineS * 1000` leaves the exactly
+// representable range: probed on the pair {deadlineS 9007199254740885, --timeout 9007199254740886},
+// the two products are 1000 ms apart and round to the SAME double, so the one refusal this
+// arithmetic exists to make — a timeout reaching past the deadline — was skipped and the wait then
+// polled against a bound 9e18 ms away, which is not a bound at all. Only the sleep interval, already
+// clamped to `pollMs`, ever becomes a Number.
+const MAX_REPRESENTABLE_MS = 8640000000000000n;
+
+// An instant a Date cannot hold is STATED, never thrown: the promised unanswered status is the
+// message's whole point, and a RangeError inside it would return a refusal instead.
+const instantAt = (ms) => (ms >= -MAX_REPRESENTABLE_MS && ms <= MAX_REPRESENTABLE_MS
+  ? new Date(Number(ms)).toISOString()
+  : `${ms} ms after the epoch — beyond the range a date can represent`);
+
+const ceilSeconds = (ms) => (ms + 999n) / 1000n;
+
+// How the thread was closed, in the words the ledger's own kinds give: a return names its outcome,
+// a fold and a degrade name themselves.
+const closureLabel = (last) => (last.kind === 'return' ? `its ${last.outcome} return` : `its ${last.kind}`);
+
+const runAwait = async ({ baseCwd, env, argv, now, sleep, pollMs }) => {
+  const { values, operands, cwd } = scan(argv, AWAIT_INPUT_FLAGS, baseCwd);
+  refuseOperands('await', operands);
+  const nonce = need(values, '--nonce');
+  const timeoutS = values['--timeout'] === undefined ? null : asPositiveInteger('--timeout', values['--timeout']);
+  // ONE clock per run: the same `now` every record in this module is stamped from, read as an
+  // instant. The deadline is ABSOLUTE — it is measured from the DISPATCH record's timestamp, never
+  // from whenever this wait happened to start — so the waiter needs a wall clock, not an elapsed one.
+  const nowMs = () => {
+    const ms = Date.parse(now());
+    if (!Number.isFinite(ms)) throw usageFail('the injected clock did not produce an instant — a wait bounded by an unreadable clock is not bounded at all (fail closed)');
+    return BigInt(ms);
+  };
+  const ledger = readLegalLedger(cwd, env);
+  if (!ledger.ok) return refusal('await', ledger.reason);
+  const state = delegationThreadState(ledger.records, nonce);
+  if (state.dispatch === null) {
+    return refusal('await', `no dispatch for nonce "${nonce}" is in the store — a wait watches for the answer to a thread that was opened, and there is nothing here to answer`);
+  }
+  const dispatch = state.dispatch;
+  const deadlineAt = BigInt(Date.parse(dispatch.timestamp)) + BigInt(dispatch.deadlineS) * 1000n;
+  const started = nowMs();
+  const probe = { dir: ledger.dir, backend: dispatch.backend, nonce };
+  const answerFor = (p) => {
+    if (p.state === 'satisfied') return { code: 0, stdout: `dispatch await: ARRIVED — ${p.reason}`, stderr: '' };
+    return p.state === 'refused' ? refusal('await', p.reason) : null;
+  };
+  // ARRIVAL is read FIRST, before EVERY bound — the two wait bounds below AND the `--timeout`
+  // admissibility check. The exec receipt carries its own timestamp and the absorb door refuses a
+  // LATE one by name, so lateness has exactly ONE decision site and it is `return`; a receipt already
+  // on disk is a fact this verb reports, never a clock question it re-decides. (The review waiter
+  // checks its deadline first for the opposite reason: a receipt LINE carries no dispatch-bound
+  // timestamp at all, so there the clock is the only evidence there is.)
+  let poll = pollExecArrival(probe);
+  const opening = answerFor(poll);
+  if (opening !== null) return opening;
+  // A CLOSED thread is never awaited: nothing can answer it any more, and the expiry message would
+  // send the operator to close what is already closed. It is checked HERE — in the waiting branch of
+  // the first poll, after arrival — because a terminal receipt still on disk is a fact this verb
+  // reports whatever the ledger says, while a `--no-receipt` absorb leaves its RESERVATION behind and
+  // a degrade may leave no artifact at all: both would otherwise wait out the whole bound.
+  if (state.terminal) {
+    return refusal('await', `thread "${nonce}" is already CLOSED by ${closureLabel(state.last)} — nothing can answer it any more, and ${poll.reason}; a closed thread is never awaited`);
+  }
+  // The `--timeout` bound may never reach PAST the absolute deadline — a longer wait would report a
+  // still-running dispatch where the ledger already says the thread is over. It is CLAMPED by nothing
+  // and refused instead: a silently shortened wait would let a caller believe they waited longer than
+  // they did. It bounds a WAIT, so it is checked only once there IS one — nothing on disk, and the
+  // dispatch not already expired (an expired one has no wait to bound and is answered below).
+  if (timeoutS !== null && started < deadlineAt && BigInt(timeoutS) * 1000n > deadlineAt - started) {
+    return refusal('await', `--timeout ${timeoutS}s reaches past this dispatch's ABSOLUTE deadline (${dispatch.timestamp} + ${dispatch.deadlineS}s = ${instantAt(deadlineAt)}), of which ${ceilSeconds(deadlineAt - started)}s remain — the deadline is measured from the dispatch record, so waiting beyond it would watch a thread the ledger already calls over; nothing was waited on`);
+  }
+  const waitEndsAt = timeoutS === null ? deadlineAt : started + BigInt(timeoutS) * 1000n;
+  for (;;) {
+    // Each pass consults the clock over the poll that has ALREADY happened, then sleeps and polls
+    // again — so a receipt landing during the last sleep is still reported rather than lost to a
+    // cutoff that fires a moment later.
+    const at = nowMs();
+    if (at >= deadlineAt) {
+      return {
+        code: AWAIT_UNANSWERED_STATUS,
+        stdout: '',
+        stderr: `dispatch await: EXPIRED — this dispatch's ABSOLUTE deadline (${dispatch.timestamp} + ${dispatch.deadlineS}s = ${instantAt(deadlineAt)}) passed and ${poll.reason}. This is a SUPERVISION question, not an outcome: establish whether the run is still alive, was killed, or died without publishing — join or reap it — then close the thread with return --no-receipt or degrade. ${NO_SLOT_RELEASED}`,
+      };
+    }
+    if (at >= waitEndsAt) {
+      return {
+        code: AWAIT_UNANSWERED_STATUS,
+        stdout: '',
+        stderr: `dispatch await: TIMEOUT after ${timeoutS}s — ${poll.reason}, and this dispatch is still INSIDE its absolute deadline (${ceilSeconds(deadlineAt - at)}s remain until ${instantAt(deadlineAt)}). The wait ended, the dispatch did not: wait again, or supervise it. ${NO_SLOT_RELEASED}`,
+      };
+    }
+    // The ONLY conversion back to Number, and it happens after the interval is already clamped:
+    // whichever bound is nearer, a remaining span wider than one poll interval sleeps exactly one.
+    const nearer = waitEndsAt < deadlineAt ? waitEndsAt : deadlineAt;
+    const remaining = nearer - at;
+    await sleep(remaining > BigInt(pollMs) ? pollMs : Number(remaining));
+    poll = pollExecArrival(probe);
+    const answered = answerFor(poll);
+    if (answered !== null) return answered;
+  }
 };
 
 // ── return: the wrapper's exec receipt, ABSORBED ──────────────────────────────────────────────────
@@ -751,7 +912,7 @@ const showPath = (bytes) => {
 
 const LS_FILES_CACHED_TAG = 'H';
 
-export const hiddenFromPlainDiff = (cwd, top) => {
+export const hiddenFromPlainDiff = (top) => {
   const probe = (args) => {
     const buf = gitBuf(args, top);
     return buf == null ? null : zSegments(buf);
@@ -970,7 +1131,7 @@ const runReturn = ({ baseCwd, env, argv, now }) => {
   const exitStatus = noReceipt
     ? asInteger('--exit-status', need(values, '--exit-status'))
     : receipt.exitStatus;
-  const hidden = hiddenFromPlainDiff(cwd, top);
+  const hidden = hiddenFromPlainDiff(top);
   if (!hidden.ok) return refusal('return', hidden.reason);
   // The enumeration and the payload are two walks of one tree, so the pair is BRACKETED: the
   // fingerprint is taken before the walks and the payload's own digest is compared against it after.
@@ -1104,7 +1265,7 @@ const runFold = ({ baseCwd, env, argv, now }) => {
   // computed from the very payload that is blind to these paths, so a change made behind an index bit
   // between the return and the fold leaves the digest EQUAL and the fold would accept bytes nobody
   // returned. The digest cannot catch what the payload cannot see; this guard is what does.
-  const hidden = hiddenFromPlainDiff(cwd, top);
+  const hidden = hiddenFromPlainDiff(top);
   if (!hidden.ok) return refusal('fold', `${hidden.reason}; nothing was written`);
   // …and the same subtraction: an object the payload holds by name alone can be mutated between the
   // return and the fold without moving the digest this fold is about to bind. The enumeration runs
@@ -1377,7 +1538,7 @@ const runAggregate = ({ baseCwd, env, argv }) => {
 
 const HELP = `dispatch — the delegation engine (agent-workflow family): the sub-task contract check, the
 delegation ledger's hand-recorded records, the four writer verbs that put a delegated thread on the
-record, and the L0 acceptance report.
+record, the arrival waiter, and the L0 acceptance report.
 
 Usage:
   node dispatch.mjs check <dispatch-file> [--cwd <dir>]
@@ -1391,6 +1552,7 @@ Usage:
   node dispatch.mjs open --contract <dispatch-file> --wave <id> --backend <name>
                          --rationale <text> --wrapper-cap-s <n> --kill-grace-s <n>
                          [--retry-of <nonce>] [--cwd <dir>]
+  node dispatch.mjs await --nonce <n> [--timeout <s>] [--cwd <dir>]
   node dispatch.mjs return --nonce <n> [--outcome <o>]
                            [--no-receipt --exit-status <n>] [--cwd <dir>]
   node dispatch.mjs fold --nonce <n> --verdict <text> [--cwd <dir>]
@@ -1428,9 +1590,22 @@ THE LEDGER a tree-binding verb uses is the CANONICAL one, exactly: <git common d
 agent-workflow-delegation.jsonl. A store inside the work tree is measured as part of the change set
 it is supposed to be measuring; a store in another repository would measure this tree against a
 foreign thread; a SECOND ledger in this git dir would share artifact names with the first, since
-those are a function of {backend, nonce} alone. register, observe and aggregate keep the
+those are a function of {backend, nonce} alone. register, observe, await and aggregate keep the
 unrestricted AW_DELEGATION_STORE override — they bind no tree. open additionally refuses pre-spend
 when either artifact name for its {backend, nonce} is already taken.
+
+await watches for ONE dispatch to ANSWER and writes nothing at all. Satisfaction is the arrival of
+the TERMINAL exec receipt for the dispatch's own {backend, nonce}: a RESERVED artifact means the run
+holds the nonce and has published nothing about its end, so the wait continues, while an artifact
+that is not an exec receipt — a review receipt, a delegation ledger line, a finding manifest —
+REFUSES rather than satisfies, because only an exec receipt answers an exec dispatch. The bound is
+the ABSOLUTE deadline: it is measured from the DISPATCH record's timestamp, so --timeout defaults to
+the time REMAINING and a --timeout reaching past the deadline is REFUSED rather than clamped. An
+already-expired dispatch answers immediately — arrival is read first before EVERY bound, the
+--timeout admissibility check included, since a receipt on disk is a fact this verb reports and
+lateness is refused by name at the absorb door. An unanswered wait exits ${AWAIT_UNANSWERED_STATUS}, names whether the
+DEADLINE or the --timeout ended it, and states that no writer slot was released: a wait that ended
+without an answer never authorizes the next dispatch.
 
 A CONCEALING TREE is refused at every door that measures or binds one (open, return, fold), because
 the recorded baseline, the counted bytes and the folded identity are all claims about a tree that is
@@ -1497,7 +1672,7 @@ Step classes (D9): ${STEP_CLASSES.join(' | ')}.
 Store: <git common dir>/agent-workflow-delegation.jsonl (AW_DELEGATION_STORE overrides, absolute
 only) — separate from the review receipts and the flow store, appended under its own lock.
 
-Exec artifacts (open/return): the wrapper's receipt and report are read from the STORE's own
+Exec artifacts (open/await/return): the wrapper's receipt and report are read from the STORE's own
 directory, named agent-workflow-exec-receipt-<backendLength>-<backend>-<nonce>.json and
 agent-workflow-exec-report-<backendLength>-<backend>-<nonce>.txt. Honest v1 limits: gate output is
 never accounted (the wrapper's exit trap removes its trace, so no gate-output component is emitted);
@@ -1514,7 +1689,9 @@ refuses a second.
 
 Never commits, never runs a subscription CLI, spawns nothing but git READS. Exit codes: 0 success;
 1 a refusal (store STOP verbatim, a form violation, an unreadable file, a supervision question); 2
-usage.`;
+usage; ${AWAIT_UNANSWERED_STATUS} an await that ended with no terminal receipt (the absolute deadline or the --timeout
+bound) — its own status so a caller that BRANCHES on the code can tell it from a refusal; a caller
+that discards failure wholesale discards this one too.`;
 
 export const main = (argv, ctx = {}) => {
   const env = ctx.env ?? process.env;
@@ -1534,7 +1711,30 @@ export const main = (argv, ctx = {}) => {
     if (verb === 'fold') return runFold({ baseCwd, env, argv: rest, now });
     if (verb === 'degrade') return runDegrade({ baseCwd, env, argv: rest, now });
     if (verb === 'aggregate') return runAggregate({ baseCwd, env, argv: rest });
-    throw usageFail(`unknown verb: ${verb ?? '(none)'} — expected check | register | observe | open | return | fold | degrade | aggregate (see --help)`);
+    if (verb === 'await') {
+      throw usageFail('await is the one verb that WAITS, so it answers through mainAwait (the CLI routes it there) — main() returns the answer a verb has already computed, and a promise handed back here would read as a result object with no code at all');
+    }
+    throw usageFail(`unknown verb: ${verb ?? '(none)'} — expected check | register | observe | open | await | return | fold | degrade | aggregate (see --help)`);
+  } catch (err) {
+    return { code: err.exitCode ?? 1, stdout: '', stderr: `dispatch: ${err.message}` };
+  }
+};
+
+// The ASYNC superset: it answers the ONE waiting verb and delegates every other one to main(), so
+// the two entries can never carry different verb sets. The review lane's mainAwait (review-state.mjs)
+// is the idiom — a waiting entry beside a synchronous one, rather than making every immediate verb's
+// answer a promise.
+export const mainAwait = async (argv, ctx = {}) => {
+  if (argv[0] !== 'await') return main(argv, ctx);
+  try {
+    return await runAwait({
+      baseCwd: ctx.cwd ?? process.cwd(),
+      env: ctx.env ?? process.env,
+      argv: argv.slice(1),
+      now: ctx.now ?? (() => new Date().toISOString()),
+      sleep: ctx.sleep ?? ((ms) => new Promise((done) => { setTimeout(done, ms); })),
+      pollMs: ctx.pollMs ?? EXEC_AWAIT_POLL_MS,
+    });
   } catch (err) {
     return { code: err.exitCode ?? 1, stdout: '', stderr: `dispatch: ${err.message}` };
   }
@@ -1542,13 +1742,25 @@ export const main = (argv, ctx = {}) => {
 
 // runCli(argv, io) → the exit code, after writing main()'s streams. EXPORTED so the process-facing
 // lane is exercised IN-PROCESS: a spawned child's executed lines never reach the coverage map, so a
-// CLI whose only entry is a spawn ships an unmeasured tail.
-export const runCli = (argv, io = {}) => {
-  const r = main(argv, io.ctx);
+// CLI whose only entry is a spawn ships an unmeasured tail. runCliAwait is its waiting twin — the
+// SAME writer over mainAwait's answer, so the two lanes cannot drift in how they emit.
+const emitResult = (r, io) => {
   if (r.stdout) (io.stdout ?? process.stdout).write(r.stdout.endsWith('\n') ? r.stdout : `${r.stdout}\n`);
   if (r.stderr) (io.stderr ?? process.stderr).write(r.stderr.endsWith('\n') ? r.stderr : `${r.stderr}\n`);
   return r.code;
 };
+
+export const runCli = (argv, io = {}) => emitResult(main(argv, io.ctx), io);
+
+export const runCliAwait = async (argv, io = {}) => emitResult(await mainAwait(argv, io.ctx), io);
+
+// runEntryPoint(argv, setExitCode, io) — the ONE routing rule the process entry uses: the waiting
+// verb rides the async writer, every other one the synchronous lane it has always had. Exported and
+// driven IN-PROCESS, because a spawned child's executed lines never reach the coverage map and a
+// routing rule that only runs inside `if (isEntryPoint(…))` would otherwise ship unmeasured.
+export const runEntryPoint = (argv, setExitCode, io = {}) => (argv[0] === 'await'
+  ? runCliAwait(argv, io).then(setExitCode)
+  : setExitCode(runCli(argv, io)));
 
 // isEntryPoint(entry, moduleFile, realpath) — "did the process start THIS module?", decided by REAL
 // PATH rather than by comparing URL strings. The kit is reached through managed symlinks (the
@@ -1562,4 +1774,6 @@ export const isEntryPoint = (entry, moduleFile, realpath = realpathSync) => {
   return real(entry) === real(moduleFile);
 };
 
-if (isEntryPoint(process.argv[1], fileURLToPath(import.meta.url))) process.exitCode = runCli(process.argv.slice(2));
+// `process.exitCode`, never process.exit: an exact write plus a natural exit, so a piped stdout is
+// never truncated by the waiting lane's extra tick.
+if (isEntryPoint(process.argv[1], fileURLToPath(import.meta.url))) runEntryPoint(process.argv.slice(2), (code) => { process.exitCode = code; });
