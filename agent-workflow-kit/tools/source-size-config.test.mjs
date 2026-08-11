@@ -84,6 +84,10 @@ describe('source-size — the config validator refuses what it cannot judge', ()
     refuses({ roots: ['src', 'src/inner'], aggregate: undefined }, /"roots" entries overlap/);
   });
 
+  it('config-duplicate-roots-refused: the overlap rule compares DISTINCT values, so a repeat needs its own refusal', () => {
+    refuses({ roots: ['src', 'src'] }, /"roots" declares "src" twice/);
+  });
+
   it('config-aggregate-rejects-line-bytes: the root budget has one dimension and says so', () => {
     refuses(
       { aggregate: { src: { lines: 10, maxLineBytes: 80, reason: 'r' } } },
@@ -96,6 +100,25 @@ describe('source-size — the config validator refuses what it cannot judge', ()
       { baseline: { 'src/a.mjs': { lines: 401, reason: 'first line\nsecond line' } } },
       /must be ONE line with no control bytes/,
     );
+  });
+
+  it('config-value-ranges-validated: a cap that is not a positive integer would silently exempt or refuse everything', () => {
+    for (const bad of [0, -1, 1.5, '400', null]) {
+      refuses({ defaults: { maxLines: bad, maxLineBytes: 1000 } }, /"defaults"\.maxLines must be a positive integer/);
+      refuses({ defaults: { maxLines: 400, maxLineBytes: bad } }, /"defaults"\.maxLineBytes must be a positive integer/);
+    }
+    refuses({ defaults: { maxLines: 400, maxLineBytes: 1000, maxWhatever: 1 } }, /"defaults" carries unknown key\(s\): maxWhatever/);
+    // A RECORDED size may be zero (an empty file), but never negative and never fractional.
+    refuses({ baseline: { 'src/a.mjs': { lines: -1, reason: 'r' } } }, /"baseline"\."src\/a\.mjs"\.lines must be a non-negative integer/);
+    assert.doesNotThrow(() => validateSourceSizeConfig(CONFIG({ baseline: { 'src/a.mjs': { lines: 0, reason: 'r' } } })));
+  });
+
+  it('config-root-containment: a declared path escapes nothing — no absolute root, no traversal, no bare dot', () => {
+    for (const bad of ['/etc', '../sibling', 'src/../../out', './src', 'src//nested']) {
+      refuses({ roots: [bad], aggregate: undefined }, /a "roots" entry/);
+      refuses({ exclude: [bad] }, /an "exclude" entry/);
+    }
+    refuses({ baseline: { '../outside.mjs': { lines: 401, reason: 'r' } } }, /a "baseline" key/);
   });
 
   it('config-malformed-stops-exit-2: a config that cannot be parsed is a STOP, never a guess', () => {

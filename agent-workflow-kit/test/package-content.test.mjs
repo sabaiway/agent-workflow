@@ -166,12 +166,19 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // D10 read-only pre-commit guard that binds the run-gates --final receipt
       'tools/coverage-check.mjs',
       'tools/commit-guard.mjs',
-      // the source-size practice: the pure read core (config/scope/counting/matcher — the read
-      // surfaces import THIS one) and the CLI + writer half. Pinned by NAME, not only by the count:
-      // a core that fell out of the payload would leave every read surface unable to ask about the
-      // practice, and the count alone would hide it behind any other simultaneous drift.
+      // the source-size practice: the pure read core (the ONE import point for the read surfaces)
+      // and the CLI + writer half, plus the four leaves the core re-exports and the checker's own
+      // judge/report halves. Pinned by NAME, not only by the count: a leaf that fell out of the
+      // payload would leave the core importing a file that is not there — the practice would fail to
+      // load at all — and the count alone would hide it behind any other simultaneous drift.
       'tools/source-size-core.mjs',
       'tools/source-size-check.mjs',
+      'tools/source-size-refusal.mjs',
+      'tools/source-size-config.mjs',
+      'tools/source-size-scope.mjs',
+      'tools/source-size-gate-cmd.mjs',
+      'tools/source-size-judge.mjs',
+      'tools/source-size-report.mjs',
       // the opt-in one-file-per-ADR store migration writer + its mode + the seeded templates (AD-051)
       'tools/migrate-adr-store.mjs',
       'references/modes/migrate-adr-store.md',
@@ -421,7 +428,17 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       tools/source-size-check.mjs (the CLI + writer half, imported by NOTHING in the read
     //       graph). The split is what keeps the read-graph purity suite true. The colocated
     //       *.test.mjs sibling is stripped by files[] and never enters the tarball.
-    assert.equal(packed.length, 195, `tarball file count drifted (${packed.length} ≠ 195)`);
+    // 201 = 195 + the source-size decomposition (baseline-practices Plan 1 Phase 2), EXACTLY six
+    //       files. The read core became the ONE import point over four leaves — tools/
+    //       source-size-refusal.mjs (the two exit classes + the absolute path every refusal names) +
+    //       source-size-config.mjs (the config grammar, its three states, its reader) +
+    //       source-size-scope.mjs (which files are judged, and how big each one is) +
+    //       source-size-gate-cmd.mjs (the canonical gate-cmd matcher) — and the checker gained its
+    //       own read halves: source-size-judge.mjs (the verdict as facts, shared with the writer so
+    //       the two can never disagree about the tree) + source-size-report.mjs (the wording,
+    //       including the tighten/growth render contracts). The colocated *.test.mjs siblings are
+    //       stripped by files[] and never enter the tarball.
+    assert.equal(packed.length, 201, `tarball file count drifted (${packed.length} ≠ 201)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

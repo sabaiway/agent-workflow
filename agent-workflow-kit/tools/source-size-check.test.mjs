@@ -10,7 +10,8 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { main, authoringTemplate } from './source-size-check.mjs';
+import { main } from './source-size-check.mjs';
+import { authoringTemplate } from './source-size-report.mjs';
 import {
   countBytes, measureFile, validateSourceSizeConfig, matchesSourceSizeGate, SOURCE_SIZE_DEFAULTS,
 } from './source-size-core.mjs';
@@ -39,6 +40,11 @@ const putBadName = (cwd, dir, ext, body = lines(3)) =>
 
 const lines = (n) => 'x\n'.repeat(n);
 
+// The recorded root budget a fixture carries. It is stated per fixture rather than derived, because
+// a helper that re-implemented the scope rule to compute it would agree with a scope bug instead of
+// catching one: every green fixture below names the line total its own in-scope files add up to.
+const agg = (lines) => ({ src: { lines, reason: 'initial adoption' } });
+
 const CONFIG = (over = {}) => ({
   _README: 'fixture',
   schema: 1,
@@ -47,7 +53,7 @@ const CONFIG = (over = {}) => ({
   exclude: [],
   extensions: ['.mjs'],
   baseline: {},
-  aggregate: { src: { lines: 0, reason: 'initial adoption' } },
+  aggregate: agg(0),
   ...over,
 });
 
@@ -84,25 +90,25 @@ describe('source-size — declared scope (D-6)', () => {
   });
 
   it('scope-outside-roots-ignored: a file outside every declared root is never judged', () => {
-    const cwd = project({ files: { 'other/big.mjs': lines(401), 'src/ok.mjs': lines(10) } });
+    const cwd = project({ files: { 'other/big.mjs': lines(401), 'src/ok.mjs': lines(10) }, config: CONFIG({ aggregate: agg(10) }) });
     assert.equal(check(cwd).code, 0);
   });
 
   it('scope-excluded-prefix-ignored: a file under an excluded prefix is never judged', () => {
     const cwd = project({
       files: { 'src/vendor/big.mjs': lines(401), 'src/ok.mjs': lines(10) },
-      config: CONFIG({ exclude: ['src/vendor'] }),
+      config: CONFIG({ exclude: ['src/vendor'], aggregate: agg(10) }),
     });
     assert.equal(check(cwd).code, 0);
   });
 
   it('scope-extension-filter: an undeclared extension is never judged', () => {
-    const cwd = project({ files: { 'src/big.txt': lines(401), 'src/ok.mjs': lines(10) } });
+    const cwd = project({ files: { 'src/big.txt': lines(401), 'src/ok.mjs': lines(10) }, config: CONFIG({ aggregate: agg(10) }) });
     assert.equal(check(cwd).code, 0);
   });
 
   it('scope-symlink-skipped: a tracked symlink carrying a declared extension is skipped BY KIND', () => {
-    const cwd = project({ files: { 'src/ok.mjs': lines(10), 'target.txt': lines(401) }, stage: false });
+    const cwd = project({ files: { 'src/ok.mjs': lines(10), 'target.txt': lines(401) }, config: CONFIG({ aggregate: agg(10) }), stage: false });
     symlinkSync('../target.txt', join(cwd, 'src', 'link.mjs'));
     git(cwd, ['add', '-A']);
     assert.equal(git(cwd, ['ls-files', '-s', 'src/link.mjs']).slice(0, 6), '120000');
@@ -110,7 +116,7 @@ describe('source-size — declared scope (D-6)', () => {
   });
 
   it('scope-submodule-gitlink-skipped: a gitlink index entry is skipped BY KIND', () => {
-    const cwd = project({ files: { 'src/ok.mjs': lines(10) } });
+    const cwd = project({ files: { 'src/ok.mjs': lines(10) }, config: CONFIG({ aggregate: agg(10) }) });
     const sha = git(cwd, ['hash-object', '-w', '--stdin'], { input: 'commitish' });
     git(cwd, ['update-index', '--add', '--cacheinfo', `160000,${sha},src/sub.mjs`]);
     assert.equal(git(cwd, ['ls-files', '-s', 'src/sub.mjs']).slice(0, 6), '160000');
@@ -188,7 +194,7 @@ describe('source-size — declared scope (D-6)', () => {
   it('scope-exclusions-precede-decoding: a non-UTF-8 name excluded BY RULE or BY KIND is ignored, never decoded', () => {
     const cwd = project({
       files: { 'src/ok.mjs': lines(10), 'other/keep.txt': 'x\n', 'src/vendor/keep.txt': 'x\n' },
-      config: CONFIG({ exclude: ['src/vendor'] }),
+      config: CONFIG({ exclude: ['src/vendor'], aggregate: agg(10) }),
       stage: false,
     });
     putBadName(cwd, 'other', '.mjs'); // outside every declared root
@@ -299,16 +305,16 @@ describe('source-size — thresholds (D-1)', () => {
     assert.match(result.stdout, /src\/big\.mjs: lines 401 exceeds the declared default 400/);
   });
 
-  it('refusal-names-only-servable-lane: the remedy is the hand-authored entry with THIS file\'s numbers, never an unimplemented verb', () => {
+  it('refusal-names-only-servable-lane: the remedy is the regenerator this build implements plus the hand-authored entry — never a verb it does not have', () => {
     const cwd = project({ files: { 'src/big.mjs': lines(401) } });
     const result = check(cwd);
     assert.equal(result.code, 1);
     // Only the VIOLATING dimension is recorded: an entry pinning a 1-byte longest line would make
-    // the Phase-2 ratchet refuse every later line-length change for no reason anyone chose.
+    // the ratchet refuse every later line-length change for no reason anyone chose.
     assert.match(result.stdout, /"src\/big\.mjs": \{ "lines": 401, "reason": "<why this size is accepted>" \}/);
     assert.doesNotMatch(result.stdout, /"maxLineBytes"/);
-    assert.doesNotMatch(result.stdout, /--write-baseline/);
-    assert.doesNotMatch(result.stdout, /--adopt/);
+    assert.match(result.stdout, /--write-baseline/);
+    assert.doesNotMatch(result.stdout, /--adopt/, 'the adopt verb arrives with its own phase — a refusal never names it early');
   });
 
   it('the suggested entry carries maxLineBytes exactly when THAT dimension is the violation', () => {
@@ -318,12 +324,12 @@ describe('source-size — thresholds (D-1)', () => {
     assert.match(result.stdout, /"src\/wide\.mjs": \{ "maxLineBytes": 1001, "reason": "<why this size is accepted>" \}/);
   });
 
-  it('authored-config-refusal-names-the-hand-lane: the AUTHORED state names a step this build can serve', () => {
+  it('authored-config-refusal-names-the-mint-command: the AUTHORED state names the step this build performs', () => {
     const cwd = project({ files: { 'src/ok.mjs': lines(10) }, config: CONFIG({ baseline: undefined, aggregate: undefined }) });
     const result = check(cwd);
     assert.equal(result.code, 1);
     assert.match(result.stdout, /AUTHORED but not yet MINTED/);
-    assert.match(result.stdout, /"baseline": \{\}/);
+    assert.match(result.stdout, /--write-baseline --cwd .+ --reason "initial adoption"/);
     assert.doesNotMatch(result.stdout, /--adopt/);
   });
 
@@ -348,8 +354,8 @@ describe('source-size — thresholds (D-1)', () => {
 
   it('threshold-defaults-overridable: a project may declare its own defaults', () => {
     const files = { 'src/a.mjs': lines(6) };
-    assert.equal(check(project({ files })).code, 0);
-    const tightened = project({ files, config: CONFIG({ defaults: { maxLines: 5, maxLineBytes: 1000 } }) });
+    assert.equal(check(project({ files, config: CONFIG({ aggregate: agg(6) }) })).code, 0);
+    const tightened = project({ files, config: CONFIG({ defaults: { maxLines: 5, maxLineBytes: 1000 }, aggregate: agg(6) }) });
     const result = check(tightened);
     assert.equal(result.code, 1);
     assert.match(result.stdout, /src\/a\.mjs: lines 6 exceeds the declared default 5/);
@@ -358,7 +364,7 @@ describe('source-size — thresholds (D-1)', () => {
   it('a file carrying a recorded baseline entry is recorded debt, not a defaults violation', () => {
     const cwd = project({
       files: { 'src/big.mjs': lines(401) },
-      config: CONFIG({ baseline: { 'src/big.mjs': { lines: 401, reason: 'initial adoption' } } }),
+      config: CONFIG({ baseline: { 'src/big.mjs': { lines: 401, reason: 'initial adoption' } }, aggregate: agg(401) }),
     });
     assert.equal(check(cwd).code, 0);
   });
