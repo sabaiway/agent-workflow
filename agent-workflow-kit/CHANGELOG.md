@@ -4,6 +4,74 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 5.5.0 — delegating a sub-task stops being a feeling and becomes a record (AD-090; codex-cli-bridge 3.5.0, antigravity-cli-bridge 5.1.1)
+
+**"How much does handing this off actually buy?" had no answer, because nothing wrote the answer
+down.** A delegated task went out, something came back, and whether it was worth it was a judgement
+made from memory. This release gives the handoff an **identity**, a **deadline** and an
+**accounting**: the wrapper that runs your delegate now claims its work before spending anything and
+publishes what it can prove afterwards, and the kit absorbs that into an append-only ledger you can
+read back per task class. The number it reports is deliberately hard to fake and easy to refuse — it
+would rather print INELIGIBLE with a reason than a figure it cannot stand behind.
+
+- **A delegated run now has a name, and the name is claimed BEFORE the money is spent.** Pass
+  `codex-exec --nonce <n>` and the wrapper writes a reservation beside the ledger, atomically and
+  no-clobber, before it starts the CLI: a second dispatch on the same nonce refuses while it is still
+  free to refuse. At exit the reservation is replaced by the finished receipt, and the ORDER is the
+  guarantee — the delegate's report is published first, the receipt last, so anything that has
+  arrived always has a complete report behind it. A run that cannot publish exits nonzero and says
+  the tree is dirtied rather than leaving you to discover it. **An invocation without `--nonce` is
+  byte-for-byte what it always was**: no reservation, no receipt, no extra process.
+- **Five new verbs on `dispatch` — four that write, one that only reads — and none of them invents a
+  second rulebook.** `open` puts a thread on the record with every mint-time field copied from the
+  task brief's own header; `await` waits for that one dispatch to answer; `return` absorbs the
+  wrapper's receipt; `fold` is the acceptance; and `degrade` closes a thread that never earned one,
+  on the record and with its reason. The ledger's
+  existing preflight stays the single legality door — the four WRITER verbs assemble a record and
+  pass its refusals through in the store's own words, while `await` writes nothing at all.
+- **`dispatch await` waits, and a wait that ends without an answer authorizes nothing.** Only the
+  FINISHED receipt satisfies it; a run still holding the nonce means keep waiting; an artifact from a
+  neighbouring feature refuses rather than pretending to answer. The bound is the deadline recorded
+  when the thread opened — not a fresh timer per wait — so `--timeout` defaults to the time actually
+  remaining, and while nothing has arrived and the dispatch is still inside its deadline one reaching
+  past it is refused rather than quietly shortened; a terminal receipt already on disk returns
+  ARRIVED before any bound is evaluated at all. An unanswered wait exits **3**, names which bound
+  ended it, and says in as many words that **no writer slot was released**: it is a question for you,
+  never permission to dispatch again.
+- **The metric refuses rather than flatters.** The two sides of the ratio are different byte
+  quantities — the numerator sums the image bytes of the returned objects, the denominator is the
+  framed bundle of the change set's payload and its report — bound not by one buffer but by one
+  observable change set: the same HEAD→index→worktree domain, bracketed by digests that refuse when
+  drift is detectable. Start from a dirty tree and the result is recorded INELIGIBLE by name instead
+  of counted. A change set carrying a binary, a non-regular path or a submodule is REFUSED outright
+  at `return` and `fold`, because the shared fingerprint carries no content for those and their bytes
+  could move underneath it. Gate output is not accounted at all in this version, and the mode doc
+  says so rather than leaving you to find out.
+- **`aggregate` reports one wave and refuses to guess.** Per task class it prints the finished
+  threads with the inclusion rules applied — a folded success with provable bytes contributes its
+  ratio, one whose bytes are unprovable is excluded from the mean but still counts in the first-pass
+  rate, and a failed, degrade-closed or acceptance-failed thread counts as a real zero. Below the
+  registered minimum nothing is computed. No pre-registration, an unfinished thread, a recorded
+  refusal-to-delegate, an ambiguous wave: each stops the computation by name.
+- **Both bridges ship a version anchor.** Every wrapper that stamps a version into a receipt now
+  declares it on one marked line — at least one per bridge, at most one per file, and the requirement
+  follows the USE, so a wrapper that never reads the constant is not asked for one. Every scalar
+  `AW_BRIDGE_VERSION=` or `+=` occurrence anywhere else in a shipped `bin/*.sh` — comment, help text
+  and heredoc body included — is refused by the version-sync verifier. What it deliberately does not
+  model is stated rather than implied: a form that sets the name WITHOUT that literal token — an
+  array-element setter, a spaced arithmetic assignment, an eval-constructed name — is out of scope,
+  so this closes the drift that actually happened, not every drift imaginable.
+  agy's wrapper gains only that marker — hence the PATCH — while codex's gains the whole dispatch
+  identity.
+
+Honest limits, all stated where they bite rather than in a footnote: a receipt is forgeable exactly
+like every record in this family, so what these doors defend against is a buggy or interrupted
+producer and never a hostile one; the fold's binding is equality of the visible canonical payload,
+which is a change detector rather than a cryptographic identity of the tree; and at most ONE in-tree
+delegated dispatch at a time remains a bar you keep, not a mechanism that enforces it.
+
+
+
 ## 5.4.0 — a check that certifies nothing now says so, and the render stops promising what no host guarantees (AD-089)
 
 **A gate matrix could run green while verifying nothing, and the kit itself was what built it.**

@@ -140,8 +140,11 @@ export const readChangelogHeadingVersion = (text) => {
 // (`export -- AW_BRIDGE_VERSION=…`); and the append form `AW_BRIDGE_VERSION+=…` (a `+=` shadow bash
 // resolves LAST). The `[+-][A-Za-z]+` flag class closes the flag dimension entirely (no per-flag
 // enumeration — R3 fold). Only the bare canonical spelling is accepted as VALID (below), so every
-// recognized non-bare form is DETECTED (counted) then rejected as non-canonical. Residual out-of-scope
-// forms (an array element, an eval-constructed name) are not scalar shadows here.
+// recognized non-bare form is DETECTED (counted) then rejected as non-canonical. What is out of scope
+// is every form that sets the name WITHOUT the literal `AW_BRIDGE_VERSION=`/`+=` token — an array
+// element (`AW_BRIDGE_VERSION[0]=…`, which bash resolves as the scalar), a SPACED arithmetic
+// assignment (`(( AW_BRIDGE_VERSION = 9 ))`; the unspaced form carries the token and is detected), an
+// eval-constructed name. Probed live, the first two change the value and are MISSED here.
 // POSITION-INDEPENDENT on purpose. A line-anchored match missed `OTHER=x AW_BRIDGE_VERSION="9.9.9"`
 // and its `export`-prefixed twin — both valid shell, both applied LAST by bash, both invisible to
 // verify and to the bump. Rather than enumerate the prefixes that may precede an assignment (which is
