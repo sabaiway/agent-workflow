@@ -166,6 +166,12 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // D10 read-only pre-commit guard that binds the run-gates --final receipt
       'tools/coverage-check.mjs',
       'tools/commit-guard.mjs',
+      // the source-size practice: the pure read core (config/scope/counting/matcher — the read
+      // surfaces import THIS one) and the CLI + writer half. Pinned by NAME, not only by the count:
+      // a core that fell out of the payload would leave every read surface unable to ask about the
+      // practice, and the count alone would hide it behind any other simultaneous drift.
+      'tools/source-size-core.mjs',
+      'tools/source-size-check.mjs',
       // the opt-in one-file-per-ADR store migration writer + its mode + the seeded templates (AD-051)
       'tools/migrate-adr-store.mjs',
       'references/modes/migrate-adr-store.md',
@@ -409,7 +415,13 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       tools/exec-producer.mjs (the git-side metric producer: the returned change set
     //       enumerated over the fingerprint domain, the diff bytes and the bundle assembly). Both
     //       colocated *.test.mjs siblings are stripped by files[] and never enter the tarball.
-    assert.equal(packed.length, 193, `tarball file count drifted (${packed.length} ≠ 193)`);
+    // 195 = 193 + the source-size practice (baseline-practices Plan 1 Phase 1), EXACTLY two files:
+    //       tools/source-size-core.mjs (the PURE READ core — config states, the declared-scope and
+    //       counting rules, the canonical gate-cmd matcher; imported by the read surfaces) +
+    //       tools/source-size-check.mjs (the CLI + writer half, imported by NOTHING in the read
+    //       graph). The split is what keeps the read-graph purity suite true. The colocated
+    //       *.test.mjs sibling is stripped by files[] and never enters the tarball.
+    assert.equal(packed.length, 195, `tarball file count drifted (${packed.length} ≠ 195)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
