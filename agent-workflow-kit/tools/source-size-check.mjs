@@ -49,7 +49,7 @@ export const runCheck = ({ cwd, deps = {} }) => {
   if (state === 'absent') return { code: 1, lines: absentRefusalLines(cwd) };
   if (state !== 'minted') return { code: 1, lines: unmintedRefusalLines(cwd, { state, missing: missingMachineKeys }) };
   const verdict = judgeTree(cwd, config, deps);
-  return { code: verdict.findings.length === 0 ? 0 : 1, lines: checkReportLines({ cwd, verdict }) };
+  return { code: verdict.findings.length === 0 ? 0 : 1, lines: checkReportLines({ cwd, config, verdict }) };
 };
 
 // ── the writer ────────────────────────────────────────────────────────────────────────────────────

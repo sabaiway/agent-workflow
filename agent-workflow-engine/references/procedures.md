@@ -50,9 +50,16 @@ Produce a self-contained, cold-readable plan, reviewed to the configured depth b
 
 1. **Research** — gather the exact files, contracts, and constraints the plan will touch.
 2. **Draft** — write the plan to the document structure defined in [`planning.md`](planning.md) §7,
-   with exact paths and commands per Step. Bind to that structure; do not restate it here.
+   with exact paths and commands per Step. Bind to that structure; do not restate it here. Name the
+   LAYOUT as you draft: every Step that CREATES a file names that file and the single responsibility
+   it carries, and — **when the project declares a source-size cap** (the composition root's
+   `procedures` advisor prints the declared practice; a project that declares none carries no limit
+   to invent) — the planned layout fits that cap. Scope fixed before any code exists is what keeps a
+   module small; a size gate is only the backstop.
 3. **Self-review** — run the [`planning.md`](planning.md) §8 checklist (exact paths/commands, strict
-   vocabulary, every out-of-plan recommendation folded into a Step, `queue.md` updated for a series).
+   vocabulary, every created file named with its single responsibility (fitting the declared cap
+   where there is one), every out-of-plan recommendation folded into a Step, `queue.md` updated for a
+   series).
    Apply the [`planning.md`](planning.md) §9 lens — fold by code (read and cite the `file:line`), and
    hold the right altitude.
 4. **review {recipe}** — review the draft at the depth the resolved `review` recipe selects: Solo

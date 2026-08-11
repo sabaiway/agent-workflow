@@ -8,7 +8,7 @@
 
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -119,6 +119,20 @@ describe('source-size — the config validator refuses what it cannot judge', ()
       refuses({ exclude: [bad] }, /an "exclude" entry/);
     }
     refuses({ baseline: { '../outside.mjs': { lines: 401, reason: 'r' } } }, /a "baseline" key/);
+  });
+
+  it('config-dangling-symlink-is-unreadable-not-absent: a BROKEN config link is loud, never a silent absence', () => {
+    // Reading through a dangling link fails with the SAME code as a missing file, so mapping that
+    // code to ABSENT tells the reader to author a file the path already holds — and the authoring
+    // template it prints would be written straight through the link, to wherever it points. The
+    // sibling loaders answer this with an lstat first (orchestration-config.mjs:262-273).
+    const cwd = project({ 'src/a.mjs': 'x\n' }, JSON.stringify(CONFIG(), null, 2));
+    rmSync(join(cwd, 'docs', 'ai', 'source-size.json'));
+    symlinkSync(join(cwd, 'nowhere.json'), join(cwd, 'docs', 'ai', 'source-size.json'));
+    const result = main(['--check', '--cwd', cwd]);
+    assert.equal(result.code, 2, `a present-but-unreadable config is an input error:\n${result.stdout}${result.stderr}`);
+    assert.match(result.stderr, /could not be read/);
+    assert.doesNotMatch(`${result.stdout}${result.stderr}`, /is absent/, 'a broken link is never reported as an undeclared practice');
   });
 
   it('config-malformed-stops-exit-2: a config that cannot be parsed is a STOP, never a guess', () => {

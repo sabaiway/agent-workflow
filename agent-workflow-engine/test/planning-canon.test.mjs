@@ -39,6 +39,15 @@ describe('planning.md — right-altitude/code-grounded canon', () => {
     assert.match(section8, /altitude/i);
   });
 
+  // D-17 U2 — the §8 twin of the procedures.md Draft rung (the checklist the Self-review step runs).
+  it('checklist-carries-file-responsibility-line: §8 requires a named file + single responsibility, conditional on a DECLARED cap', () => {
+    const flat = sectionOf(planning, /^## 8\..*$/im).replace(/\s+/g, ' ');
+    assert.match(flat, /Every Step that CREATES a file names that file and its single responsibility/);
+    assert.match(flat, /declares a source-size cap, the planned layout fits it/, 'the cap clause is conditional on the project declaring one');
+    assert.match(flat, /no declared cap → no invented limit/, 'a project without the practice gets no hallucinated limit');
+    assert.match(flat, /cheap lever/, 'states WHY plan time is where the layout is decided');
+  });
+
   // AD-038: the optional Decisions-(locked) home for review-settled, executor-binding decisions —
   // one §7 structure row + one §8 checklist mention (grounding.mjs extracts the section by this
   // exact heading, so the heading string is load-bearing).

@@ -134,6 +134,21 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.ok(!auth.includes('review-ledger'), 'the retired ledger is never named');
   });
 
+  // D-17 U2 — the upfront-knowledge rung: the layout is decided while the plan is drafted, not
+  // discovered when a gate refuses a written file. Pinned WITH its conditional form: a project that
+  // declares no cap must not be handed an invented one.
+  it('canon-authoring-carries-decomposition-rung: file + single responsibility per created file, conditional on a DECLARED cap', () => {
+    const section = sectionOf(procedures, 'plan-authoring');
+    const draft = stepOf(section, 2).replace(/\s+/g, ' ');
+    assert.match(draft, /every Step that CREATES a file names that file and the single responsibility it carries/, 'the Draft step names the file and its responsibility');
+    assert.match(draft, /when the project declares a source-size cap/, 'the rung is CONDITIONAL on a declared cap');
+    assert.match(draft, /declares none carries no limit to invent/, 'no declared practice → no hallucinated limit');
+    assert.match(draft, /a size gate is only the backstop/, 'the cap is the backstop, never the teacher');
+    assert.match(stepOf(section, 3).replace(/\s+/g, ' '), /every created file named with its single responsibility/, 'the Self-review step re-checks the layout');
+    // The layout is a PLAN-time decision: plan-execution must not grow a rival copy of the rung.
+    assert.ok(!/single responsibility/.test(sectionOf(procedures, 'plan-execution')), 'the rung lives in plan-authoring only');
+  });
+
   it('BOTH review steps (5) carry the triage classification vocabulary', () => {
     for (const activity of ['plan-authoring', 'plan-execution']) {
       const step5 = stepOf(sectionOf(procedures, activity), 5);

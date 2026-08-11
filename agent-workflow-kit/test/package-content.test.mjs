@@ -431,7 +431,7 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 201 = 195 + the source-size decomposition (baseline-practices Plan 1 Phase 2), EXACTLY six
     //       files. The read core became the ONE import point over four leaves — tools/
     //       source-size-refusal.mjs (the two exit classes + the absolute path every refusal names) +
-    //       source-size-config.mjs (the config grammar, its three states, its reader) +
+    //       source-size-config.mjs (the config grammar, its four states, its reader) +
     //       source-size-scope.mjs (which files are judged, and how big each one is) +
     //       source-size-gate-cmd.mjs (the canonical gate-cmd matcher) — and the checker gained its
     //       own read halves: source-size-judge.mjs (the verdict as facts, shared with the writer so
