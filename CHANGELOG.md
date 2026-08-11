@@ -7,6 +7,44 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-11 — AD-090 delegating a sub-task becomes a record (kit 5.5.0, codex-cli-bridge 3.5.0, antigravity-cli-bridge 5.1.1; memory 4.2.0 and engine 2.0.0 unchanged)
+
+The family could delegate work and could not account for it. A task went out, something came back,
+and whether the handoff paid for itself was decided from memory — because nothing wrote it down.
+This release closes that: a delegated run now claims an identity BEFORE it spends anything, carries a
+deadline the ledger owns rather than the process, and comes back through a door that would rather
+refuse than record a number it cannot stand behind.
+
+The split follows what each side can prove. The bridge wrapper is dependency-free bash with no path
+to the kit, so it mints the one thing it can prove — a receipt beside the ledger, reserved before the
+spend and finished at exit, with the delegate's report published first so anything that arrives has a
+complete report behind it. The kit absorbs that through its single existing append door and adds no
+second rulebook: four new writer verbs assemble records and pass the store's refusals through
+verbatim, and a fifth only waits and reads.
+
+`dispatch await` is the piece that changes how a session behaves. It waits for ONE dispatch to
+answer, and when the wait ends without one it exits with its own status, names whether the deadline
+or your own bound ended it, and states that no writer slot was released. A timed-out wait had always
+been the moment a session quietly decided it could move on; now it is a question with a name.
+
+The numbers are deliberately hard to inflate. The two sides of the ratio are different byte
+quantities — the numerator sums the image bytes of the returned objects, the denominator is the
+framed bundle of the change set's payload and its report — and what binds them is not one buffer but
+one observable change set: the same HEAD→index→worktree domain, bracketed by digests that refuse
+when drift is detectable. A dirty starting tree makes the result INELIGIBLE by name rather than
+counted; a change set the shared fingerprint cannot follow — a binary, a non-regular path, a
+submodule — is refused outright at both doors. `aggregate` refuses to compute over an unfinished
+thread, an unregistered wave or a recorded refusal-to-delegate. The instrument ships here; measuring
+with it is the next plan's job, and the acceptance wave is deliberately still empty.
+
+Each wrapper that stamps a version into a receipt now declares it on one marked line, and every other
+`AW_BRIDGE_VERSION=` or `+=` token in a shipped wrapper is refused by the version-sync verifier —
+with the forms it deliberately does not model (an array-element setter, a spaced arithmetic
+assignment, an eval-constructed name among them) stated rather than implied. agy's wrapper gains only that marker, hence its
+PATCH; codex's gains the dispatch identity. Proven live twice against the real CLI before shipping,
+including one run that proved the seam and NOT the work and was closed by a recorded degrade rather
+than counted.
+
 ## 2026-08-09 — AD-089 a check that certifies nothing now says so (kit 5.4.0, memory 4.2.0, codex-cli-bridge 3.4.1; engine 2.0.0 unchanged)
 
 A field report against 5.3.0 turned out to describe something the kit was building itself. Neither
