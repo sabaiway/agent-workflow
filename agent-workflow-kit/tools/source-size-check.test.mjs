@@ -162,14 +162,22 @@ describe('source-size — declared scope (D-6)', () => {
     assert.doesNotMatch(result.stdout, /src\/vendor\/skipped\.mjs/);
   });
 
-  it('scope-filename-special-bytes: a tracked path carrying a tab and one carrying a newline are enumerated byte-exactly', () => {
+  it('scope-filename-special-bytes: a tab- and a newline-carrying tracked path are enumerated byte-exactly and rendered LOSSLESSLY', () => {
+    // Enumeration stays byte-exact (D-6): both files are found, judged and named. What changed is the
+    // RENDER — a path is project-controlled, so printing its control bytes raw would let its author
+    // write lines into the checker's own report. The escape is reversible, so the reader still has
+    // the exact name.
     const tabbed = 'src/a\tb.mjs';
     const newlined = 'src/c\nd.mjs';
     const cwd = project({ files: { [tabbed]: lines(401), [newlined]: lines(401) } });
     const result = check(cwd);
     assert.equal(result.code, 1);
-    assert.ok(result.stdout.includes(tabbed), `the tab-carrying path must be named verbatim:\n${result.stdout}`);
-    assert.ok(result.stdout.includes(newlined), `the newline-carrying path must be named verbatim:\n${result.stdout}`);
+    assert.match(result.stdout, /src\/a\\u0009b\.mjs: lines 401/, 'the tab survives as its escape');
+    assert.match(result.stdout, /src\/c\\u000ad\.mjs: lines 401/, 'the newline survives as its escape');
+    assert.ok(!result.stdout.includes(newlined), 'no raw newline reaches the report');
+    // The PASTEABLE suggestion keeps JSON's own (equally lossless) escaping: it is bytes a human
+    // copies into the config, where \\u000a would be a literally different key.
+    assert.ok(result.stdout.includes(JSON.stringify(newlined)), 'the suggested entry stays valid JSON');
   });
 
   it('scope-unmerged-index-refuses: an ambiguous index is a loud refusal, never a judgement', () => {

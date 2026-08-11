@@ -1,19 +1,20 @@
 // source-size-config.mjs — the practice's declaration: what docs/ai/source-size.json may say, which
-// of its three states it is in, and how it is read back. Nothing here touches the tree.
+// of its four states it is in, and how it is read back. Nothing here touches the tree.
 //
-//   • CONFIG STATES — ABSENT (no file) / AUTHORED (authored keys, machine keys absent) / MINTED
-//     (machine keys present). A malformed or unknown-keyed config is a loud STOP (exit 2), never a
-//     guess, and the template placeholders are REFUSED until replaced, so a printed authoring
-//     template can never be pasted into an empty-green scope.
+//   • CONFIG STATES — ABSENT (no entry at the path) / AUTHORED (authored keys, machine keys absent) /
+//     INCOMPLETE (one machine key without the other — a hand-edited half, which routes to the mint
+//     lane) / MINTED (both machine keys). A malformed or unknown-keyed config is a loud STOP
+//     (exit 2), never a guess, and the template placeholders are REFUSED until replaced, so a
+//     printed authoring template can never be pasted into an empty-green scope.
 //   • A RECORDED size is debt, not permission: every entry carries a reason, and the reason lands
 //     verbatim in the JSON, the commit message and the release CHANGELOG — so it is validated as the
 //     single line those three surfaces can carry.
 //
 // Dependency-free, Node >= 22. No side effects on import.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, lstatSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
-import { SOURCE_SIZE_CONFIG_REL, configFail, configPathFor } from './source-size-refusal.mjs';
+import { SOURCE_SIZE_CONFIG_REL, configFail, configPathFor, isLineUnsafe } from './source-size-refusal.mjs';
 
 export const SOURCE_SIZE_SCHEMA = 1;
 export const SOURCE_SIZE_DEFAULTS = Object.freeze({ maxLines: 400, maxLineBytes: 1000 });
@@ -31,14 +32,6 @@ const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArr
 // printed file is INERT until a human replaces them; the validator is what makes that promise true.
 const PLACEHOLDER_RE = /^<.*>$/;
 const BAD_SEGMENTS = new Set(['', '.', '..']);
-
-// Written by code point rather than as a regex class: a source file that carries literal control
-// bytes reads as BINARY to every scanner in the family, which is the very class the tarball guard
-// exists to catch.
-const hasControlByte = (text) => [...text].some((ch) => {
-  const code = ch.codePointAt(0);
-  return code < 0x20 || code === 0x7f;
-});
 
 const declaredPathDefect = (value, what) => {
   if (typeof value !== 'string' || value.length === 0) return `${what} must be a non-empty string`;
@@ -68,10 +61,12 @@ const nonNegativeIntDefect = (value, what) =>
   Number.isSafeInteger(value) && value >= 0 ? null : `${what} must be a non-negative integer, got ${JSON.stringify(value)}`;
 
 // A reason lands VERBATIM in the JSON entry, the commit message and the release CHANGELOG, so it is
-// a single line under a byte cap — an empty, multiline or control-byte reason is refused (D-3a).
+// a single line under a byte cap — an empty, multiline or control-byte reason is refused (D-3a). It
+// is the ONE value no escaper may rescue: the three destinations would each need different bytes, so
+// the line-safety boundary refuses it at the door instead of rendering it safely.
 export const reasonDefect = (reason) => {
   if (typeof reason !== 'string' || reason.length === 0) return 'a reason must be a non-empty string';
-  if (hasControlByte(reason)) {
+  if (isLineUnsafe(reason)) {
     return 'a reason must be ONE line with no control bytes (it is copied verbatim into JSON, the commit message and the CHANGELOG)';
   }
   const bytes = Buffer.byteLength(reason, 'utf8');
@@ -81,6 +76,21 @@ export const reasonDefect = (reason) => {
 
 // Whole-segment prefix containment: "a/b" contains "a/b" and "a/b/c", never "a/bc".
 export const segmentPrefixOf = (prefix, path) => path === prefix || path.startsWith(`${prefix}/`);
+
+// practiceFacts(config) → the numbers every surface that SPEAKS for the practice states: the caps,
+// how much is declared, and how much is recorded. Derived in ONE place so the plan-time render and
+// the checker's own green line can never state two different counts of the same tree.
+// `recordedFiles` / `aggregateLines` are null while that machine half is absent — "not recorded at
+// all" is a different fact from "recorded as zero", and the two states read differently to a human.
+export const practiceFacts = (config) => ({
+  maxLines: config.defaults.maxLines,
+  maxLineBytes: config.defaults.maxLineBytes,
+  roots: config.roots.length,
+  recordedFiles: config.baseline === null ? null : Object.keys(config.baseline).length,
+  aggregateLines: config.aggregate === null
+    ? null
+    : Object.values(config.aggregate).reduce((sum, entry) => sum + entry.lines, 0),
+});
 
 // `requiredDimensions: 'any'` — a per-file record may pin EITHER dimension or both, because only the
 // dimension that actually violated should be recorded: an entry pinning a dimension that was never
@@ -192,12 +202,22 @@ export const validateSourceSizeConfig = (parsed) => {
 // actually changed anything.
 export const loadSourceSizeConfig = (cwd, deps = {}) => {
   const read = deps.readFile ?? readFileSync;
+  const lstat = deps.lstat ?? lstatSync;
   const path = configPathFor(cwd);
+  // ABSENT means no ENTRY at the path, which only an lstat can answer: reading through a DANGLING
+  // SYMLINK fails with the same code as a missing file, and calling that "absent" would tell the
+  // reader to author a file the path already holds — through the very link that is broken. The
+  // sibling loaders draw the line here for the same reason (orchestration-config.mjs:262-273).
+  try {
+    lstat(path);
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return { state: 'absent', path, config: null };
+    throw configFail(`${path} could not be read (${err.message})`);
+  }
   let raw;
   try {
     raw = read(path, 'utf8');
   } catch (err) {
-    if (err && err.code === 'ENOENT') return { state: 'absent', path, config: null };
     throw configFail(`${path} could not be read (${err.message})`);
   }
   let parsed;

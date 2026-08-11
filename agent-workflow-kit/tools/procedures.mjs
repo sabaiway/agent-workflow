@@ -5,7 +5,8 @@
 // steps LIVE from the installed agent-workflow-engine (references/procedures.md — AD-016 live read, no
 // bundled mirror), reads the per-project, hand-edited config (docs/ai/orchestration.json), runs the
 // read-only backend detector, and prints the activity's steps VERBATIM + the resolved effective recipe
-// per slot (default = Reviewed-when-a-backend-is-ready, Council on request, slot-aware incl. Delegated).
+// per slot (default = Reviewed-when-a-backend-is-ready, Council on request, slot-aware incl. Delegated),
+// plus the project's DECLARED source-size practice when it declares one (D-17 U1).
 //
 // Invariants (mirror recipes.mjs): pure-where-possible, READ-ONLY (never writes, never commits, never
 // runs a subscription CLI). The deterministic resolution lives in the kit (resolveActivityRecipe), not
@@ -44,6 +45,10 @@ import { AUTONOMY_REL, loadAutonomy, resolveAutonomy, isSparseSeedConfig } from 
 // acyclic — pinned by test/read-graph-purity.test.mjs (FLOW-READ-GRAPH-PURITY).
 import { resolveFlowStorePath, readFlowStore } from './flow-store-read.mjs';
 import { CHAIN_KIND } from './flow-record.mjs';
+// The declared source-size practice (D-17 U1), read through the practice's PURE READ core — never
+// source-size-check.mjs, which owns the writer half: this advisor is a read root of
+// test/read-graph-purity.test.mjs, and the core exists so a surface can ask without reaching a writer.
+import { SOURCE_SIZE_CONFIG_REL, SOURCE_SIZE_WHY, loadSourceSizeConfig, practiceFacts } from './source-size-core.mjs';
 export { CONFIG_REL };
 
 // ── argument + override parsing (usage errors → exit 2) ─────────────────────────────
@@ -361,6 +366,49 @@ const flowHalvesAdvice = (flow, probe) => {
   ];
 };
 
+// ── the declared source-size practice (D-17 U1) ────────────────────────────────────
+// A practice the agent meets only when a gate refuses is a practice learned too late: the caps, their
+// reason and the plan-time rung ride EVERY named-activity render, so the layout is cut to them while
+// the plan is being written. Composed from the project's live declaration, never from constants here.
+// Each config state speaks as itself: ABSENT renders NOTHING (a project that declares no practice must
+// not be handed invented limits); AUTHORED and INCOMPLETE render the declared caps plus the honest
+// "nothing is recorded yet" line — both are pre-mint states, and treating INCOMPLETE as MINTED would
+// report a half record as the whole tree's debt; MINTED renders the recorded counts too.
+// A config that cannot be read renders ONE loud line carrying the reader's own message and the render
+// still completes: the exit code for a broken source-size config belongs to the practice's own
+// checker (exit 2 there, and its declared gate reds the matrix on it), while THIS tool's exit
+// contract is about its own config and the engine.
+
+export const DECLARED_PRACTICE_HEADER = `Declared source-size practice (${SOURCE_SIZE_CONFIG_REL}) — known BEFORE the code is written:`;
+
+const declaredPracticeAdvice = (cwd, readFile, lstat) => {
+  let declaration;
+  try {
+    declaration = loadSourceSizeConfig(cwd, { readFile, lstat });
+  } catch (err) {
+    return [`Declared source-size practice: UNREADABLE — ${(err && err.message) || err} — fix ${SOURCE_SIZE_CONFIG_REL} by hand; a declared practice is never guessed around.`];
+  }
+  if (declaration.state === 'absent') return [];
+  const facts = practiceFacts(declaration.config);
+  // The two pre-mint states share a LANE (the ratchet holds nothing, the mint step is next) but not a
+  // FACT: an incomplete file carries half the machine record, so "no size is recorded" would be a
+  // plain untruth about it — it names the missing half instead. Neither ever prints minted counts.
+  // The mint step is named, not rendered: on a project path that does not survive double-quoting the
+  // checker deliberately withholds a paste-ready command, and this advisor never re-decides that.
+  const unmintedRecord = declaration.state === 'incomplete'
+    ? `  recorded: PARTIAL — the machine record is half-written (missing ${declaration.missingMachineKeys.map((key) => `"${key}"`).join(', ')}), so the ratchet holds nothing yet; run \`source-size-check.mjs --check\` for the mint step.`
+    : '  recorded: NOTHING YET — the caps are declared but no size is recorded, so the ratchet holds nothing; run `source-size-check.mjs --check` for the mint step.';
+  return [
+    DECLARED_PRACTICE_HEADER,
+    `  caps: ${facts.maxLines} lines · ${facts.maxLineBytes} bytes per line, over ${facts.roots} declared root(s).`,
+    declaration.state === 'minted'
+      ? `  recorded: ${facts.recordedFiles} file(s) carry a recorded size (debt, not permission) · aggregate ${facts.aggregateLines} line(s), EXACT — growth takes a reasoned bump, never free headroom.`
+      : unmintedRecord,
+    `  why: ${SOURCE_SIZE_WHY}`,
+    '  at plan time: every Step that CREATES a file names the file and its single responsibility, and the planned layout fits these caps — the gate is the backstop, never the teacher.',
+  ];
+};
+
 // The verbatim per-backend DRIVING CONTRACT block (M-contract): the exact invocation descriptor(s),
 // the closed flag set, the grounding note, the round-2/continue delta, and the guarded passthrough
 // tiers — every descriptor printed VERBATIM from the registry mirror of the bridge manifest
@@ -397,7 +445,7 @@ const contractLines = ({ cmd, contract, settings }) => {
   return lines;
 };
 
-const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flowHalves }) => {
+const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flowHalves, declaredPractice }) => {
   const lines = [
     section,
     '',
@@ -417,6 +465,7 @@ const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flow
   const advice = reviewLoopAdvice(slots, activity);
   if (advice.length) lines.push('', ...advice);
   lines.push('', ...costLanesAdvice());
+  if (declaredPractice.length) lines.push('', ...declaredPractice);
   if (warnings.length) {
     lines.push('', 'warnings:');
     for (const w of warnings) lines.push(`  ⚠ ${w}`);
@@ -424,7 +473,7 @@ const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flow
   return lines.join('\n');
 };
 
-const buildJson = ({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves }) => ({
+const buildJson = ({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, declaredPractice }) => ({
   activity,
   section,
   slots: Object.fromEntries(
@@ -439,6 +488,9 @@ const buildJson = ({ activity, section, slots, configSource, warnings, plans, au
   costLanes: costLanesAdvice(),
   // ADDITIVE (AD-044 Plan 4): the per-activity autonomy block, structured (empty when unresolvable).
   autonomy: autonomyAdvice(activity, autonomy),
+  // ADDITIVE (D-17 U1): the SAME composed lines the human render prints — one array, two renders, so
+  // a scripted reader and a human can never be told different things about the declared practice.
+  declaredPractice,
   // CONDITIONAL (flow P8): the armed-halves block rides ONLY a flow-carrying config — the unarmed
   // JSON key set stays byte-exact (unarmed neutrality outranks the additive-key precedent).
   ...(flowHalves == null ? {} : { flowHalves }),
@@ -460,6 +512,12 @@ Reads the activity's procedure steps LIVE from the installed agent-workflow-engi
 ${CONFIG_REL} + the read-only backend detector, and prints both. A per-run
 --override <slot>=<recipe> (repeatable) overrides the configured/default recipe for that slot.
 Read-only: never writes, never commits, never runs a subscription CLI.
+
+Also prints the project's DECLARED source-size practice (${SOURCE_SIZE_CONFIG_REL}) when it declares
+one — the caps, what is recorded, why the practice exists, and the plan-time rung — as the
+declaredPractice block (--json: the same lines under "declaredPractice"). A project with no such
+file renders nothing; a file that cannot be read renders ONE loud UNREADABLE line and still exits 0
+(the practice's own checker owns the exit code for its config).
 
 Exit codes: 0 success (an unsatisfiable override degrades loudly, still 0);
             2 usage (unknown activity / bad --override); 1 config or engine error
@@ -515,9 +573,10 @@ export const main = (argv, ctx = {}) => {
     // unarmed project keeps byte-identical output (human AND JSON) and never pays the store probe.
     const flowProbe = ctx.flowProbe ?? defaultFlowProbe;
     const flowHalves = config?.flow == null ? null : flowHalvesAdvice(config.flow, flowProbe(cwd));
+    const declaredPractice = declaredPracticeAdvice(cwd, readFile, lstat);
     const stdout = json
-      ? JSON.stringify(buildJson({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves }), null, 2)
-      : formatHuman({ activity, section, slots, warnings, plans, autonomy, flowHalves });
+      ? JSON.stringify(buildJson({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, declaredPractice }), null, 2)
+      : formatHuman({ activity, section, slots, warnings, plans, autonomy, flowHalves, declaredPractice });
     if (autonomy?.error) {
       return { code: 1, stdout, stderr: `procedures: malformed ${AUTONOMY_REL} — ${autonomy.error}` };
     }

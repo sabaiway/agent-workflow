@@ -5,9 +5,10 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { main, extractSection, CONFIG_REL, FLOW_ARMED_HALVES_HEADER, defaultFlowProbe } from './procedures.mjs';
+import { main, extractSection, CONFIG_REL, FLOW_ARMED_HALVES_HEADER, DECLARED_PRACTICE_HEADER, defaultFlowProbe } from './procedures.mjs';
 import { READY, NEEDS_SKILL } from './detect-backends.mjs';
 import { allowedLabel } from './bridge-settings-read.mjs';
+import { SOURCE_SIZE_CONFIG_REL, SOURCE_SIZE_WHY } from './source-size-core.mjs';
 
 // Host-independent fixtures: a temp cwd for the config + the REPO's OWN engine via
 // AGENT_WORKFLOW_ENGINE_DIR (it ships references/procedures.md, so the live read is deterministic and
@@ -288,7 +289,7 @@ describe('procedures CLI — --json schema (§2.0)', () => {
     const j = JSON.parse(r.stdout);
     // The unarmed JSON key set stays byte-exact to the pre-flow shape — the flowHalves key is
     // CONDITIONAL on a flow block (unarmed neutrality), unlike the unconditional additive keys.
-    assert.deepEqual(Object.keys(j).sort(), ['activity', 'autonomy', 'configSource', 'costLanes', 'groundingPreStep', 'reviewLoop', 'section', 'slots', 'warnings'].sort());
+    assert.deepEqual(Object.keys(j).sort(), ['activity', 'autonomy', 'configSource', 'costLanes', 'declaredPractice', 'groundingPreStep', 'reviewLoop', 'section', 'slots', 'warnings'].sort());
     assert.equal(j.activity, 'plan-execution');
     assert.match(j.section, /## plan-execution/);
     for (const slot of ['execute', 'review']) {
@@ -782,5 +783,131 @@ describe('procedures CLI — the flow armed-halves block (P8)', () => {
     const halves = JSON.parse(armed.stdout).flowHalves;
     assert.equal(halves[0], FLOW_ARMED_HALVES_HEADER);
     assert.equal(halves.length, 5, 'header + config + chain + two bookkeeping lines');
+  });
+});
+
+describe('procedures CLI — the declared source-size practice (D-17 U1)', () => {
+  const AUTHORED = {
+    _README: 'fixture',
+    schema: 1,
+    defaults: { maxLines: 400, maxLineBytes: 1000 },
+    roots: ['src', 'scripts'],
+    exclude: [],
+    extensions: ['.mjs'],
+  };
+  const BASELINE = { 'src/big.mjs': { lines: 900, reason: 'initial adoption' } };
+  const AGGREGATE = { src: { lines: 1200, reason: 'initial adoption' }, scripts: { lines: 40, reason: 'initial adoption' } };
+  const MINTED = { ...AUTHORED, baseline: BASELINE, aggregate: AGGREGATE };
+  const writePractice = (value) => writeFileSync(join(cwd, SOURCE_SIZE_CONFIG_REL), typeof value === 'string' ? value : JSON.stringify(value));
+
+  it('render-declared-practice-with-config: a MINTED declaration renders caps, record and rung on BOTH activities', () => {
+    writePractice(MINTED);
+    for (const activity of ['plan-authoring', 'plan-execution']) {
+      const r = run([activity], { codex: READY, agy: READY });
+      assert.equal(r.code, 0, r.stderr);
+      assert.ok(r.stdout.includes(DECLARED_PRACTICE_HEADER), `${activity} renders the declared practice`);
+      assert.match(r.stdout, /caps: 400 lines · 1000 bytes per line, over 2 declared root\(s\)\./);
+      assert.match(r.stdout, /recorded: 1 file\(s\) carry a recorded size \(debt, not permission\) · aggregate 1240 line\(s\), EXACT — growth takes a reasoned bump, never free headroom\./);
+      assert.match(r.stdout, /at plan time: every Step that CREATES a file names the file and its single responsibility/);
+    }
+  });
+
+  it('render-authored-not-minted-line: the pre-mint state says nothing is recorded, never a zero record', () => {
+    writePractice(AUTHORED);
+    const r = run(['plan-authoring'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /caps: 400 lines · 1000 bytes per line, over 2 declared root\(s\)\./, 'the declared caps still bind before the mint');
+    assert.match(r.stdout, /recorded: NOTHING YET — the caps are declared but no size is recorded/);
+    assert.doesNotMatch(r.stdout, /0 file\(s\) carry a recorded size/, '"nothing recorded" must never read as "recorded as zero"');
+  });
+
+  it('render-incomplete-states-the-partial-record: a half-written record is neither "nothing" nor a minted one', () => {
+    // The machine half is baseline + aggregate together; a file carrying one without the other was
+    // hand-edited into that state. It is a PRE-mint state — reporting its half as the tree's recorded
+    // debt would state a number the ratchet does not hold — but saying "no size is recorded" states a
+    // fact that is simply untrue, so the render names the half that IS missing.
+    writePractice({ ...AUTHORED, baseline: BASELINE });
+    const r = run(['plan-execution'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /recorded: PARTIAL — the machine record is half-written \(missing "aggregate"\), so the ratchet holds nothing yet/);
+    assert.doesNotMatch(r.stdout, /1 file\(s\) carry a recorded size/, 'a half record is never rendered as the whole tree’s debt');
+    assert.doesNotMatch(r.stdout, /no size is recorded/, 'a half-written record is not "nothing recorded"');
+  });
+
+  it('render-silent-without-config: a project declaring no practice is handed no invented limits', () => {
+    const r = run(['plan-authoring'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!r.stdout.includes(DECLARED_PRACTICE_HEADER), 'no declaration → no block');
+    // Scoped BELOW the verbatim canon section: the canon's own rung names the practice conditionally
+    // ("when the project declares a source-size cap"), and that text is printed for every project.
+    assert.doesNotMatch(r.stdout.slice(r.stdout.indexOf('resolved recipes for')), /source-size/i, 'the advisor states nothing about a practice this project never declared');
+    assert.deepEqual(JSON.parse(run(['plan-authoring', '--json'], { codex: READY, agy: READY }).stdout).declaredPractice, []);
+  });
+
+  it('render-malformed-config-loud-line: an unreadable declaration is LOUD in-band and the render still completes', () => {
+    for (const [label, value] of [
+      ['malformed JSON', '{ not json'],
+      ['unknown key', JSON.stringify({ ...MINTED, surprise: 1 })],
+      ['a refused placeholder', JSON.stringify({ ...AUTHORED, roots: ['<a directory this practice covers>'] })],
+    ]) {
+      writePractice(value);
+      const r = run(['plan-execution'], { codex: READY, agy: READY });
+      assert.equal(r.code, 0, `${label}: the practice's own checker owns the exit code for its config, not this advisor`);
+      assert.match(r.stdout, /Declared source-size practice: UNREADABLE — .*a declared practice is never guessed around\./, label);
+      assert.match(r.stdout, /resolved recipes for "plan-execution"/, `${label}: the render still completes`);
+      assert.ok(!r.stdout.includes(DECLARED_PRACTICE_HEADER), `${label}: an unreadable declaration renders no facts`);
+    }
+  });
+
+  it('render-dangling-symlink-loud: a BROKEN declaration link takes the loud lane, never the silent one', () => {
+    // The path HOLDS an entry, so the practice is declared — the declaration is merely unreadable.
+    // Silence here would be the advisor stating "this project declares no practice" about a project
+    // that does.
+    symlinkSync(join(cwd, 'nowhere.json'), join(cwd, SOURCE_SIZE_CONFIG_REL));
+    const r = run(['plan-execution'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /Declared source-size practice: UNREADABLE — /);
+    assert.ok(!r.stdout.includes(DECLARED_PRACTICE_HEADER), 'an unreadable declaration renders no facts');
+  });
+
+  it('render-json-parity: the structured field IS the human block — never a second rendering of it', () => {
+    for (const value of [MINTED, AUTHORED, '{ not json']) {
+      writePractice(value);
+      const human = run(['plan-execution'], { codex: READY, agy: READY });
+      const structured = JSON.parse(run(['plan-execution', '--json'], { codex: READY, agy: READY }).stdout).declaredPractice;
+      assert.ok(structured.length > 0, 'the state renders something');
+      assert.ok(human.stdout.includes(structured.join('\n')), `the human render carries the same lines, contiguously:\n${human.stdout}`);
+    }
+  });
+
+  it('render-unreadable-line-stays-one-line: a project-controlled string can never forge a second render line', () => {
+    // The refusal interpolates values the PROJECT controls — a JSON key may carry any character at
+    // all, a newline included — and the block promises exactly ONE loud line. A raw message would let
+    // a config author write lines of their own into the advisor's output.
+    writePractice(JSON.stringify({ ...MINTED, 'evil\nDeclared source-size practice: caps 9999 lines': 1 }));
+    const r = run(['plan-execution'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    const structured = JSON.parse(run(['plan-execution', '--json'], { codex: READY, agy: READY }).stdout).declaredPractice;
+    assert.equal(structured.length, 1, `the unreadable state renders exactly one line, got:\n${structured.join('\n')}`);
+    assert.doesNotMatch(r.stdout, /^Declared source-size practice: caps 9999 lines/m, 'no forged line reaches the render');
+  });
+
+  it('help-and-mode-doc-document-the-declared-practice: both public contracts name the new output', () => {
+    const help = run(['--help']).stdout;
+    assert.match(help, /source-size/, '--help names the declared practice it now reads');
+    assert.match(help, /declaredPractice/, '--help names the JSON field');
+    const modeDoc = readFileSync(join(HERE, '..', 'references', 'modes', 'procedures.md'), 'utf8');
+    assert.match(modeDoc, /declaredPractice/, 'the mode doc names the JSON field');
+    assert.match(modeDoc, /UNREADABLE/, 'the mode doc states the in-band unreadable lane');
+    assert.match(modeDoc, /INCOMPLETE/, 'the mode doc states the four config states');
+  });
+
+  it('render-why-sentence-verbatim: the ONE canonical sentence, byte-exact on every surface', () => {
+    // Pinned as a LITERAL here: a test that only compared the render against the constant would follow
+    // any rewording of it, and the sentence is canon (D-17) precisely because it never varies.
+    const CANONICAL = 'A module you can hold whole is the unit of review, test pairing and safe edit; the caps turn size drift into recorded, reasoned debt instead of invisible growth.';
+    assert.equal(SOURCE_SIZE_WHY, CANONICAL, 'the practice exports the canonical sentence');
+    writePractice(MINTED);
+    assert.ok(run(['plan-authoring'], { codex: READY, agy: READY }).stdout.includes(`  why: ${CANONICAL}`));
   });
 });

@@ -5,7 +5,7 @@
 //
 // The halves, each holding ONE rule set and each within the cap this practice declares:
 //   • source-size-refusal.mjs  — the two exit classes, and the absolute config path every refusal names
-//   • source-size-config.mjs   — the config file: its grammar, its three states, its reader
+//   • source-size-config.mjs   — the config file: its grammar, its four states, its reader
 //   • source-size-scope.mjs    — which files are judged (D-6) and how big each one is (D-7)
 //   • source-size-gate-cmd.mjs — whether a declared gate cmd IS this checker (the canonical matcher)
 //
@@ -15,8 +15,12 @@
 export {
   SOURCE_SIZE_CONFIG_REL,
   SOURCE_SIZE_STOP,
+  SOURCE_SIZE_WHY,
   configFail,
   configPathFor,
+  escapeForLine,
+  isLineUnsafe,
+  jsonForLine,
   scopeFail,
 } from './source-size-refusal.mjs';
 
@@ -28,6 +32,7 @@ export {
   SOURCE_SIZE_DEFAULTS,
   SOURCE_SIZE_SCHEMA,
   loadSourceSizeConfig,
+  practiceFacts,
   reasonDefect,
   segmentPrefixOf,
   validateSourceSizeConfig,

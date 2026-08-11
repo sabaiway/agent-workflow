@@ -104,6 +104,7 @@ A harness "approved — you can now start coding" prompt (e.g. Claude Code's **E
 ## 8. Self-review checklist (before finalizing a Plan)
 
 - Every Step has exact file paths and exact commands.
+- Every Step that CREATES a file names that file and its single responsibility; where the project declares a source-size cap, the planned layout fits it (no declared cap → no invented limit). Deciding the layout here is the cheap lever — a gate that refuses an oversized file after it is written only pays for a rewrite.
 - Every recommendation that used to live outside the Plan is now a Step (§5).
 - Vocabulary is strict (§1); the Plan ends with **Phase N: Cleanup** (§4).
 - If part of a series: `queue.md` is initialised / updated (§3).

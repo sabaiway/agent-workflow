@@ -12,12 +12,21 @@
 // rendered (a rendered one could run somewhere else) — the parameters, the reason requirement and
 // the manual lane are stated instead.
 //
+// The standing echo (D-17 U4) rides the same two renders: a PASS states the practice in one line, so
+// the enforced path itself keeps the caps in front of the reader, and every refusal CLOSES with the
+// canonical WHY sentence — a cap whose reason has to be looked up is a cap that reads as arbitrary.
+//
 // Dependency-free, Node >= 22. No writes, no side effects on import.
 
-import { configPathFor } from './source-size-refusal.mjs';
-import { INITIAL_ADOPTION_REASON, SOURCE_SIZE_DEFAULTS, SOURCE_SIZE_SCHEMA } from './source-size-config.mjs';
+import { SOURCE_SIZE_WHY, configPathFor, escapeForLine, isLineUnsafe, jsonForLine } from './source-size-refusal.mjs';
+import { INITIAL_ADOPTION_REASON, SOURCE_SIZE_DEFAULTS, SOURCE_SIZE_SCHEMA, practiceFacts } from './source-size-config.mjs';
 import { SOURCE_SIZE_TOOL_PATH, dqUnsafePath } from './source-size-gate-cmd.mjs';
 import { hasGrowth, hasLoweredRecord, isRaise } from './source-size-judge.mjs';
+
+// The project directory is project-controlled too, so the path every refusal names enters its line
+// escaped like any other such value. configPathFor itself stays literal — it also builds the real
+// filesystem path the writer opens.
+const namedConfig = (cwd) => escapeForLine(configPathFor(cwd));
 
 export const GROWTH_REASON_PLACEHOLDER = '<why this size is accepted>';
 
@@ -33,38 +42,74 @@ export const authoringTemplate = () => JSON.stringify({
 }, null, 2);
 
 // A rendered command carries the RESOLVED tool path and an explicit quoted --cwd, so it means the
-// same thing from any directory. `null` = withheld: a path that does not survive double-quoting must
-// never be rendered into a command, because the command the shell would run is not the one printed.
-const regenerator = (cwd, reason) => {
-  if (dqUnsafePath(SOURCE_SIZE_TOOL_PATH) || dqUnsafePath(cwd)) return null;
-  return `node "${SOURCE_SIZE_TOOL_PATH}" --write-baseline --cwd "${cwd}"${reason === undefined ? '' : ` --reason "${reason}"`}`;
-};
-
-const WITHHELD = 'source-size: no paste-ready command is printed — this project\'s path does not survive double-quoting, so a rendered command could run somewhere other than the project it names.';
+// same thing from any directory. It is WITHHELD on either of two grounds, and the render says WHICH
+// one fired: a reader told their path "does not survive double-quoting" when it quotes perfectly
+// goes off to fix the wrong thing. The grounds are made DISJOINT by testing line-safety FIRST — a
+// newline satisfies both, and a path that cannot be printed at all is not a quoting question. The
+// recovery lane is identical either way; only the diagnosis differs.
+const WITHHELD_SHELL = 'source-size: no paste-ready command is printed — this project\'s path does not survive double-quoting, so a rendered command could run somewhere other than the project it names.';
+const WITHHELD_LINE = 'source-size: no paste-ready command is printed — this project\'s path carries a character that cannot appear in a rendered line, and escaping it would change the path the shell receives.';
 const WITHHELD_LANE = 'Run the regenerator yourself with the working directory set to this project (source-size-check.mjs --write-baseline, plus --reason "<text>" for any raise), or record each size by hand below.';
+
+// → { command, withheld }: exactly one of the two is non-null.
+const regenerator = (cwd, reason) => {
+  const paths = [SOURCE_SIZE_TOOL_PATH, cwd];
+  if (paths.some(isLineUnsafe)) return { command: null, withheld: WITHHELD_LINE };
+  if (paths.some(dqUnsafePath)) return { command: null, withheld: WITHHELD_SHELL };
+  return { command: `node "${SOURCE_SIZE_TOOL_PATH}" --write-baseline --cwd "${cwd}"${reason === undefined ? '' : ` --reason "${reason}"`}`, withheld: null };
+};
 
 const SPLIT_QUALITY_FOCUS = 'source-size: REVIEW FOCUS — a recorded size went DOWN or disappeared: check that this is real decomposition and not the same coupling spread across more files (paste this line into the review dispatch focus).';
 
-export const absentRefusalLines = (cwd) => [
-  `source-size: REFUSED — ${configPathFor(cwd)} is absent, so the scope of this practice is undeclared.`,
+// Every refusal THIS module renders closes with the canonical WHY. The two thrown classes do not
+// carry it — the exit-1 scope refusals (an unverifiable in-scope source file, a non-UTF-8 path, an
+// unmerged index, an empty declared scope) and the exit-2 config, usage and enumeration errors: both
+// are about a tree the practice could not judge at all, where a sentence about module size explains
+// nothing.
+const WHY_LINE = `source-size: WHY — ${SOURCE_SIZE_WHY}`;
+const refusal = (lines) => [...lines, WHY_LINE];
+
+// The standing summary (D-17 U4) — one line, from the CONFIG alone. There is no headroom to report:
+// the ratchet refuses actual > recorded and actual < recorded alike, so a recorded aggregate is EXACT
+// by construction, and saying that is the honest form of "how much room is left". Reached only on a
+// MINTED config (a check refuses every other state before it renders anything).
+const practiceLine = (config) => {
+  const facts = practiceFacts(config);
+  return `source-size: practice — caps ${facts.maxLines} lines · ${facts.maxLineBytes} bytes per line over ${facts.roots} declared root(s) · ${facts.recordedFiles} file(s) carry a recorded size (debt, not permission) · aggregate ${facts.aggregateLines} line(s), EXACT: growth takes a reasoned bump, never free headroom.`;
+};
+
+export const absentRefusalLines = (cwd) => refusal([
+  `source-size: REFUSED — ${namedConfig(cwd)} is absent, so the scope of this practice is undeclared.`,
   'Scope is DECLARED, never guessed: the kit ships no default root list and no default file-type list, because a fixed one would silently exempt every unlisted language. Authoring this file is the ONE manual step of the practice.',
   'Create it with this content, replacing every placeholder value:',
   authoringTemplate(),
-];
+]);
 
 // Both not-yet-MINTED states route to the same lane — the regenerator writes the machine half — so
 // they differ only in what they say happened: AUTHORED is the state a human creates, INCOMPLETE is a
 // machine half no regenerator produces, which means the file was hand-edited into it.
 export const unmintedRefusalLines = (cwd, { state, missing }) => {
-  const command = regenerator(cwd, INITIAL_ADOPTION_REASON);
-  return [
+  const { command, withheld } = regenerator(cwd, INITIAL_ADOPTION_REASON);
+  return refusal([
     state === 'incomplete'
-      ? `source-size: REFUSED — ${configPathFor(cwd)} is INCOMPLETE: it carries a machine half no regenerator produces (missing ${missing.map((key) => `"${key}"`).join(', ')}), so the ratchet holds only part of this tree.`
-      : `source-size: REFUSED — ${configPathFor(cwd)} is AUTHORED but not yet MINTED (it records no size yet), so there is nothing for the ratchet to hold.`,
+      ? `source-size: REFUSED — ${namedConfig(cwd)} is INCOMPLETE: it carries a machine half no regenerator produces (missing ${missing.map((key) => `"${key}"`).join(', ')}), so the ratchet holds only part of this tree.`
+      : `source-size: REFUSED — ${namedConfig(cwd)} is AUTHORED but not yet MINTED (it records no size yet), so there is nothing for the ratchet to hold.`,
     'Mint it — the regenerator records what this tree already carries; recording a value for the first time is a raise, so it takes a reason:',
-    command === null ? `${WITHHELD} Run source-size-check.mjs --write-baseline --reason "${INITIAL_ADOPTION_REASON}" with the working directory set to this project.` : `  ${command}`,
-  ];
+    command === null ? `${withheld} Run source-size-check.mjs --write-baseline --reason "${INITIAL_ADOPTION_REASON}" with the working directory set to this project.` : `  ${command}`,
+  ]);
 };
+
+// Every finding names a path or a root the PROJECT chose, and each one crosses the line-safety
+// boundary ONCE — in lineSafeFinding, before any branch sees it. Nine branches each remembering to
+// escape would be nine chances to forget, and the tenth branch nobody has written yet would start
+// out forgetting; here a branch cannot render an unsafe value even if it tries. The PASTEABLE
+// suggestion goes through the boundary's JSON consumer instead — same set, different serialization,
+// because those are bytes a human copies back into the config.
+const lineSafeFinding = (finding) => ({
+  ...finding,
+  ...(finding.rel === undefined ? {} : { rel: escapeForLine(finding.rel) }),
+  ...(finding.root === undefined ? {} : { root: escapeForLine(finding.root) }),
+});
 
 const FINDING_LINE = Object.freeze({
   'over-default': (f) => `${f.rel}: ${f.dimension} ${f.actual} exceeds the declared default ${f.allowed}`,
@@ -86,16 +131,16 @@ const suggestedEntryLines = (verdict) => {
   const rels = [...new Set(verdict.findings.filter((f) => f.kind === 'over-default' || f.kind === 'grew').map((f) => f.rel))];
   return rels.map((rel) => {
     const parts = Object.entries(verdict.projected.get(rel)).map(([dimension, value]) => `"${dimension}": ${value}`);
-    return `  ${JSON.stringify(rel)}: { ${[...parts, `"reason": "${GROWTH_REASON_PLACEHOLDER}"`].join(', ')} }`;
+    return `  ${jsonForLine(rel)}: { ${[...parts, `"reason": "${GROWTH_REASON_PLACEHOLDER}"`].join(', ')} }`;
   });
 };
 
 const servableStep = (cwd, verdict) => {
   const growth = hasGrowth(verdict.findings);
   const entries = suggestedEntryLines(verdict);
-  const command = regenerator(cwd, growth ? GROWTH_REASON_PLACEHOLDER : undefined);
+  const { command, withheld } = regenerator(cwd, growth ? GROWTH_REASON_PLACEHOLDER : undefined);
   const byHand = entries.length === 0 ? [] : ['Or record each size by hand under "baseline" — the validator accepts exactly these bytes:', ...entries];
-  if (command === null) return [WITHHELD, WITHHELD_LANE, ...entries];
+  if (command === null) return [withheld, WITHHELD_LANE, ...entries];
   return [
     growth
       ? 'This regeneration RAISES a recorded value, so the reason is REQUIRED — it is recorded in the entry it raises, and it is what the commit message and the CHANGELOG restate:'
@@ -105,18 +150,18 @@ const servableStep = (cwd, verdict) => {
   ];
 };
 
-export const checkReportLines = ({ cwd, verdict }) => {
+export const checkReportLines = ({ cwd, config, verdict }) => {
   const lines = verdict.scope.emptyRoots.map(
-    (rel) => `source-size: NOTE — the declared root "${rel}" matches no tracked file with a declared extension`);
+    (rel) => `source-size: NOTE — the declared root "${escapeForLine(rel)}" matches no tracked file with a declared extension`);
   if (verdict.findings.length === 0) {
-    lines.push(`source-size: PASS — ${verdict.scope.files.length} in-scope file(s) within the declared caps`);
+    lines.push(`source-size: PASS — ${verdict.scope.files.length} in-scope file(s) within the declared caps`, practiceLine(config));
     return lines;
   }
-  lines.push(`source-size: FAIL — ${verdict.findings.length} finding(s) against ${configPathFor(cwd)}:`);
-  for (const finding of verdict.findings) lines.push(`  ${FINDING_LINE[finding.kind](finding)}`);
+  lines.push(`source-size: FAIL — ${verdict.findings.length} finding(s) against ${namedConfig(cwd)}:`);
+  for (const finding of verdict.findings) lines.push(`  ${FINDING_LINE[finding.kind](lineSafeFinding(finding))}`);
   lines.push(...servableStep(cwd, verdict));
   if (hasLoweredRecord(verdict.findings)) lines.push(SPLIT_QUALITY_FOCUS);
-  return lines;
+  return refusal(lines);
 };
 
 // The delta is the DURABLE RECORD on a deployment whose docs/ai is git-hidden: it is what the commit
@@ -125,26 +170,26 @@ export const checkReportLines = ({ cwd, verdict }) => {
 // record it promises, so the raises are MARKED instead of filtered.
 export const deltaLines = (deltas) => deltas.map(
   ({ target, dimension, from, to }) =>
-    `  ${target}: ${dimension} ${from ?? 'none'} → ${to ?? 'none'}${isRaise({ from, to }) ? ' (raise)' : ''}`);
+    `  ${escapeForLine(target)}: ${dimension} ${from ?? 'none'} → ${to ?? 'none'}${isRaise({ from, to }) ? ' (raise)' : ''}`);
 
 export const reasonRequiredLines = (cwd, deltas) => {
-  const command = regenerator(cwd, GROWTH_REASON_PLACEHOLDER);
+  const { command, withheld } = regenerator(cwd, GROWTH_REASON_PLACEHOLDER);
   const raises = deltas.filter(isRaise).length;
-  return [
+  return refusal([
     `source-size: REFUSED — this regeneration RAISES ${raises} recorded value(s), and a raise takes a reason (it lands verbatim in the entry it raises, in the commit message and in the CHANGELOG). The whole old→new it would write:`,
     ...deltaLines(deltas),
-    command === null ? `${WITHHELD} ${WITHHELD_LANE}` : `  ${command}`,
-  ];
+    command === null ? `${withheld} ${WITHHELD_LANE}` : `  ${command}`,
+  ]);
 };
 
 // `changed` is decided by comparing the serialized bytes with the file's own — never by the delta
 // count alone: completing a half-written machine record changes the file while raising nothing, and
 // reporting that as "unchanged" would hide a write that happened.
 export const writtenLines = ({ cwd, deltas, reason, changed }) => {
-  if (!changed) return [`source-size: baseline unchanged — ${configPathFor(cwd)} already records this tree`];
-  if (deltas.length === 0) return [`source-size: baseline rewritten — no recorded value changed; ${configPathFor(cwd)} was completed or re-serialized`];
+  if (!changed) return [`source-size: baseline unchanged — ${namedConfig(cwd)} already records this tree`];
+  if (deltas.length === 0) return [`source-size: baseline rewritten — no recorded value changed; ${namedConfig(cwd)} was completed or re-serialized`];
   return [
-    `source-size: baseline regenerated — ${deltas.length} change(s) in ${configPathFor(cwd)}:`,
+    `source-size: baseline regenerated — ${deltas.length} change(s) in ${namedConfig(cwd)}:`,
     ...deltaLines(deltas),
     ...(reason === undefined ? [] : [`reason: ${reason}`]),
   ];
