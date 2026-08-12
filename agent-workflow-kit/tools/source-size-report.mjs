@@ -49,15 +49,21 @@ export const authoringTemplate = () => JSON.stringify({
 // recovery lane is identical either way; only the diagnosis differs.
 const WITHHELD_SHELL = 'source-size: no paste-ready command is printed — this project\'s path does not survive double-quoting, so a rendered command could run somewhere other than the project it names.';
 const WITHHELD_LINE = 'source-size: no paste-ready command is printed — this project\'s path carries a character that cannot appear in a rendered line, and escaping it would change the path the shell receives.';
+// The withheld fallback is the reader's ONLY remaining instruction, so it has to be the instruction
+// for what they were actually doing. Sending an adoption to the regenerator would leave them with a
+// record and no gate — half an adoption, handed over as the way out — so the lane is per MODE.
 const WITHHELD_LANE = 'Run the regenerator yourself with the working directory set to this project (source-size-check.mjs --write-baseline, plus --reason "<text>" for any raise), or record each size by hand below.';
+const WITHHELD_ADOPT_LANE = `Run source-size-check.mjs --adopt --reason "${INITIAL_ADOPTION_REASON}" yourself, with the working directory set to this project — it mints the record and declares the gate in one step.`;
 
-// → { command, withheld }: exactly one of the two is non-null.
-const regenerator = (cwd, reason) => {
+// → { command, withheld }: exactly one of the two is non-null. ONE renderer for every mode this tool
+// prints, so a withhold can never apply to some of its own commands and not others.
+const rendered = (cwd, mode, reason) => {
   const paths = [SOURCE_SIZE_TOOL_PATH, cwd];
   if (paths.some(isLineUnsafe)) return { command: null, withheld: WITHHELD_LINE };
   if (paths.some(dqUnsafePath)) return { command: null, withheld: WITHHELD_SHELL };
-  return { command: `node "${SOURCE_SIZE_TOOL_PATH}" --write-baseline --cwd "${cwd}"${reason === undefined ? '' : ` --reason "${reason}"`}`, withheld: null };
+  return { command: `node "${SOURCE_SIZE_TOOL_PATH}" ${mode} --cwd "${cwd}"${reason === undefined ? '' : ` --reason "${reason}"`}`, withheld: null };
 };
+const regenerator = (cwd, reason) => rendered(cwd, '--write-baseline', reason);
 
 const SPLIT_QUALITY_FOCUS = 'source-size: REVIEW FOCUS — a recorded size went DOWN or disappeared: check that this is real decomposition and not the same coupling spread across more files (paste this line into the review dispatch focus).';
 
@@ -181,6 +187,58 @@ export const reasonRequiredLines = (cwd, deltas) => {
     command === null ? `${withheld} ${WITHHELD_LANE}` : `  ${command}`,
   ]);
 };
+
+// ── --adopt (D-16) ────────────────────────────────────────────────────────────────────────────────
+// The verb touches TWO files, so it reports the two halves separately, ALWAYS. A failure in the
+// second must never read as a failure of the first: a reader told only "adopt failed" would re-run a
+// mint that already succeeded, or hand-write a record that is already on disk. Every line below
+// therefore names what WAS done before what was not.
+
+// ABSENT config. This says the one thing the check refusal need not: authoring the scope is the
+// EXPECTED first step of adoption, not a failure — the template and the WHY are the same ones the
+// check prints, because a second wording of the same refusal would be a second practice.
+export const adoptAbsentRefusalLines = (cwd) => {
+  const { command, withheld } = rendered(cwd, '--adopt', INITIAL_ADOPTION_REASON);
+  return refusal([
+    `source-size: --adopt REFUSED — ${namedConfig(cwd)} is absent, so this practice has no declared scope yet.`,
+    'Authoring that file is the ONE manual step of the practice, and reaching it here is EXPECTED, not a failure: the kit ships no default root list and no default file-type list, because a fixed one would silently exempt every unlisted language.',
+    'Create it with this content, replacing every placeholder value:',
+    authoringTemplate(),
+    'Then re-run this same verb — it mints the record and declares the gate in one step:',
+    command === null ? `${withheld} ${WITHHELD_ADOPT_LANE}` : `  ${command}`,
+  ]);
+};
+
+// Byte-identity cannot tell a recognition from a regeneration that rewrote the same bytes, and the
+// two differ exactly when the tree has moved — so the run SAYS which one it did.
+export const recordRecognizedLines = (cwd) => [
+  `source-size: the record in ${namedConfig(cwd)} already holds for this tree — recognized, not regenerated (adoption never rewrites a minted record).`,
+];
+
+// The record the tree outgrew. The checker's own refusal has already printed the numbers and the
+// reasoned lane; this line adds the ONE thing that refusal cannot know — that a gate was on its way
+// in and did not land, so nothing was half-armed.
+export const recordNoLongerHoldsLines = (rel) => [
+  `source-size: --adopt STOPPED before declaring — the ${escapeForLine(rel)} gate was NOT declared, because the recorded sizes above no longer hold and the gate would refuse on every run.`,
+  'Settle the record with its own reason first (the command above), then re-run --adopt: the settled record is recognized and only the gate is declared.',
+];
+
+export const gateAlreadyDeclaredLines = (rel) => [
+  `source-size: the ${escapeForLine(rel)} gate is already declared — nothing to declare; --adopt converged.`,
+];
+
+export const gateDeclaredLines = (rel, id) => [
+  `source-size: gate "${escapeForLine(id)}" declared in ${escapeForLine(rel)} — the practice now runs with the matrix.`,
+];
+
+// The PARTIAL outcome, and the reason it is not simply an error: the record IS minted and the tree
+// IS judgeable — only the declaration step was refused, and a re-run converges from here without
+// re-doing the mint.
+export const gateRefusedLines = (rel, message) => refusal([
+  `source-size: --adopt INCOMPLETE — the record was minted, the gate was NOT declared in ${escapeForLine(rel)}.`,
+  `  ${escapeForLine(message)}`,
+  'Fix what the line above names and re-run the same verb: the minted record is recognized, so the re-run only declares the gate.',
+]);
 
 // `changed` is decided by comparing the serialized bytes with the file's own — never by the delta
 // count alone: completing a half-written machine record changes the file while raising nothing, and

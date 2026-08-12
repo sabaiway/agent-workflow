@@ -16,12 +16,14 @@ import {
   deriveScriptEntries,
   reviewStateCandidate,
   coverageCheckCandidate,
+  sourceSizeCandidate,
   buildOffer,
   formatPreview,
   applyFill,
   main,
 } from './gates-init.mjs';
-import { loadDeclaration, validateDeclaration } from './run-gates.mjs';
+import { loadDeclaration, validateDeclaration, isFinalCapableDeclaration } from './run-gates.mjs';
+import { coverageProducerPrecedes } from './gates-declaration.mjs';
 import { KIT_WRITER_PREVIEW_TOOLS, UNIVERSAL_READONLY_ALLOWLIST } from './velocity-profile.mjs';
 import { COVERAGE_PRODUCER_BODY, matchesCoverageProducer } from './coverage-producer.mjs';
 
@@ -498,7 +500,7 @@ describe('gates-init — T6 offer honesty (nothing screened out silently)', () =
     const io = quiet();
     assert.equal(main(['--cwd', cwd, '--apply'], io), 0);
     const text = io.out.join('\n');
-    assert.match(text, /appended 1 consented gate\(s\).*lint/, 'the allowlisted entry was applied');
+    assert.match(text, /declared 1 consented gate\(s\).*lint/, 'the allowlisted entry was applied');
     assert.match(text, /screened out/, 'the note survives onto the apply-success path');
     assert.match(text, /\btest\b/, 'the screened-out id is named');
     assert.deepEqual(loadDeclaration(cwd).gates.map((g) => g.id), ['lint']);
@@ -931,6 +933,78 @@ describe('gates-init — the offered suite entry PRODUCES the lcov the checker r
 
 // ── Phase 1.3: no checker without a producer — withheld in the offer, refused at write time ──
 
+describe('gates-init — the source-size candidate renders under one safety rule', () => {
+  const SS_AUTHORED = {
+    _README: 'fixture', schema: 1, defaults: { maxLines: 400, maxLineBytes: 1000 },
+    roots: ['src'], exclude: [], extensions: ['.mjs'],
+  };
+  const withPractice = (config) => {
+    mkProject({ scripts: {}, config: COUNCIL });
+    writeFileSync(join(cwd, 'docs', 'ai', 'source-size.json'), JSON.stringify(config, null, 2));
+  };
+
+  it('the unminted recovery is a RUNNABLE command — resolved absolute path, the verb, its reason and an explicit --cwd', () => {
+    // The note is the reader's next keystroke. A bare tool name with no node, no path and no --cwd
+    // is not a command they can run; naming a step they cannot take is the same as naming none.
+    withPractice(SS_AUTHORED);
+    const { note } = sourceSizeCandidate(cwd);
+    assert.match(note, /node "\/[^"]*source-size-check\.mjs" --adopt --reason "initial adoption" --cwd "/, `runnable as printed: ${note}`);
+  });
+
+  it('a path that is DQ-safe but LINE-unsafe still withholds — one predicate, not two half-guards', () => {
+    // U+2028 survives double-quoting and still breaks a line, so a guard that only screens shell
+    // metacharacters lets it through into a declared gate cmd. Both halves are the same question.
+    withPractice({ ...SS_AUTHORED, baseline: {}, aggregate: {} });
+    const { candidate, note } = sourceSizeCandidate(cwd, { sourceSizeTool: '/kit/we ird/tools/source-size-check.mjs' });
+    assert.equal(candidate, null, 'a cmd carrying a line separator must never reach a declaration');
+    assert.equal(note.includes(' '), false, `and the note itself stays one line: ${JSON.stringify(note)}`);
+  });
+
+  it('an unrenderable path still tells the truth about the STATE — hand-declaring is advice only a MINTED record can take', () => {
+    // The two withholds answer different questions and the reader can only act on one of them. Over
+    // an unminted record a hand-declared gate is red on every run, so "declare it by hand" is not a
+    // recovery there — it is the next failure, offered as the way out.
+    withPractice(SS_AUTHORED);
+    const unminted = sourceSizeCandidate(cwd, { sourceSizeTool: '/kit/we"ird/tools/source-size-check.mjs' });
+    assert.equal(unminted.candidate, null);
+    // ORDER is the assertion, not presence: hand-declaring is a legitimate SECOND step here, and a
+    // FIRST one only over a minted record. What must never happen is the reader being sent to it
+    // with nothing recorded yet.
+    assert.match(unminted.note, /--adopt/, `an unminted record has to be minted first: ${unminted.note}`);
+    assert.ok(
+      unminted.note.indexOf('--adopt') < unminted.note.indexOf('declare the gate by hand'),
+      `minting has to come first: ${unminted.note}`,
+    );
+
+    withPractice({ ...SS_AUTHORED, baseline: {}, aggregate: {} });
+    const minted = sourceSizeCandidate(cwd, { sourceSizeTool: '/kit/we"ird/tools/source-size-check.mjs' });
+    assert.equal(minted.candidate, null);
+    assert.match(minted.note, /declare the gate by hand/, `over a minted record it is exactly the right advice: ${minted.note}`);
+  });
+
+  it('a MALFORMED practice config is a stated note, never a silent absence — and the offer carries it', () => {
+    // The D-5 loud contract, from this consumer's side: a config the reader cannot parse must not
+    // read as "no practice declared". Silence there would let a broken file look like a project that
+    // simply never adopted, and the preview would move on without ever naming what it could not read.
+    mkProject({ scripts: {}, config: COUNCIL });
+    writeFileSync(join(cwd, 'docs', 'ai', 'source-size.json'), '{ not json');
+    const { candidate, note } = sourceSizeCandidate(cwd);
+    assert.equal(candidate, null, 'nothing is offered over a config that could not be read');
+    assert.match(note, /unreadable/, note);
+    assert.match(note, /not evaluated/, `it says what it did NOT do: ${note}`);
+    assert.ok(buildOffer(cwd).notes.some((n) => n.includes('unreadable')), 'and the offer carries the note');
+  });
+
+  it('a declaration of nothing but the source-size gate is NOT a declared project gate', () => {
+    // The source-size checker is the kit's own. Counting it as the user's project verification makes
+    // the preview withhold the one sentence a bare deployment needs to read.
+    mkProject({ scripts: {}, gates: { gates: [{ id: 'source-size', title: 'SS', cmd: `node "${join(HERE, 'source-size-check.mjs')}" --check` }] } });
+    const notes = buildOffer(cwd).notes.join(' | ');
+    assert.match(notes, /no project-verification gate/, notes);
+    assert.match(notes, /none is declared either/, `the advice holds — nothing here verifies the project: ${notes}`);
+  });
+});
+
 describe('gates-init — the coverage-check candidate is WITHHELD when nothing produces the lcov', () => {
   it('the vitest fixture (allowlisted body, no producer) is offered NO coverage-check and is told why by name', () => {
     mkProject({ scripts: { test: 'vitest run' }, config: COUNCIL });
@@ -970,18 +1044,70 @@ describe('gates-init — the coverage-check candidate is WITHHELD when nothing p
     assert.equal(readdirSync(join(cwd, 'docs', 'ai')).includes('gates.json'), false, 'nothing written');
   });
 
-  it('applying a producer to a declaration whose last gate is already the checker is refused for ORDERING, not rejected as a gate', () => {
+  // D-8 REPLACES the former ordering-refusal characterization here. That test pinned the very defect
+  // the placement rule removes: consenting to a producer on a declaration ending in the checker used
+  // to be refused, so the only lane left was a hand edit. It now succeeds, in the one arrangement
+  // that is correct.
+  it('fill-places-entry-before-trailing-checker: a consented producer lands BEFORE the checker, and the result is still final-capable', () => {
     mkProject({
       scripts: { test: 'node --test' },
       config: COUNCIL,
-      gates: { gates: [{ id: 'coverage-check', title: 'CC', cmd: CANONICAL_CHECKER_CMD }] },
+      gates: {
+        gates: [
+          { id: 'review-state', title: 'RS', cmd: `node "${join(HERE, 'review-state.mjs')}" --check` },
+          { id: 'coverage-check', title: 'CC', cmd: CANONICAL_CHECKER_CMD },
+        ],
+      },
+    });
+    const io = quiet();
+    assert.equal(main(['--cwd', cwd, '--apply', '--only', 'test'], io), 0, io.out.join('\n'));
+    const { gates } = loadDeclaration(cwd);
+    assert.deepEqual(gates.map((g) => g.id), ['review-state', 'test', 'coverage-check'], 'the producer landed before the trailing checker');
+    assert.deepEqual(coverageDeclarationDefects(gates, cwd), [], 'the written declaration satisfies the coverage invariant');
+    assert.equal(isFinalCapableDeclaration(gates, cwd), true, 'and --final would still accept it');
+  });
+
+  it('producer-still-precedes-checker: the placement is a MOVE of the insertion point, never of an existing entry', () => {
+    const own = { id: 'own', title: 'Own', cmd: 'true' };
+    mkProject({
+      scripts: { test: 'node --test', lint: 'eslint .' },
+      config: COUNCIL,
+      gates: { gates: [own, { id: 'coverage-check', title: 'CC', cmd: CANONICAL_CHECKER_CMD }] },
+    });
+    const io = quiet();
+    assert.equal(main(['--cwd', cwd, '--apply', '--only', 'test', '--only', 'lint'], io), 0, io.out.join('\n'));
+    const { gates } = loadDeclaration(cwd);
+    assert.deepEqual(gates.map((g) => g.id), ['own', 'test', 'lint', 'coverage-check']);
+    assert.deepEqual(gates[0], own, 'the pre-existing entry is byte-identical and still first');
+    assert.equal(coverageProducerPrecedes(gates, gates.length - 1), true, 'a producer really does run before the checker now');
+  });
+
+  it('old-declarations-final-capability-unchanged: with no trailing checker the fill still appends, in offer order', () => {
+    const own = { id: 'own', title: 'Own', cmd: 'true' };
+    mkProject({ scripts: { test: 'node --test', lint: 'eslint .' }, gates: { gates: [own] } });
+    const io = quiet();
+    assert.equal(main(['--cwd', cwd, '--apply', '--only', 'test', '--only', 'lint'], io), 0, io.out.join('\n'));
+    assert.deepEqual(loadDeclaration(cwd).gates.map((g) => g.id), ['own', 'test', 'lint'], 'unchanged behaviour where no checker trails');
+  });
+
+  it('fill-result-appended-alias-preserved: the result carries `placed` AND the deprecated `appended` alias, same array', () => {
+    mkProject({ scripts: { test: 'node --test' } });
+    const result = applyFill({ cwd, onlyIds: ['test'] });
+    assert.deepEqual(result.placed, ['test']);
+    assert.deepEqual(result.appended, result.placed, 'the alias carries the same ids — removing the field would be a BREAKING change');
+  });
+
+  it('a consented CHECKER is not smuggled in front of an existing one — the duplicate is refused by name', () => {
+    mkProject({
+      scripts: { test: 'node --test' },
+      config: COUNCIL,
+      gates: { gates: [{ id: 'suite', title: 'S', cmd: PRODUCER_BODY }, { id: 'coverage-check', title: 'CC', cmd: CANONICAL_CHECKER_CMD }] },
     });
     const before = gatesRaw();
     const io = quiet();
-    assert.equal(main(['--cwd', cwd, '--apply', '--only', 'test'], io), 1);
-    const text = io.out.join('\n');
-    assert.match(text, /LAST|order/i, 'the refusal names ORDERING as the cause');
-    assert.match(text, /reorder/i, 'the user is told to reorder, not that the producer was rejected');
+    // The offer's own checker candidate collides on the id first; either refusal is loud and writes
+    // nothing — what must never happen is a second checker landing anywhere in the file.
+    assert.notEqual(main(['--cwd', cwd, '--apply'], io), 0);
     assert.equal(gatesRaw(), before, 'the declaration is untouched');
   });
 

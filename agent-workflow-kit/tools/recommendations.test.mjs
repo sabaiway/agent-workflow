@@ -48,6 +48,10 @@ import {
 // The producer body is READ from the shared vocabulary leaf, never re-typed: the inert-declaration
 // item decides through that predicate, so a fixture spelling its own body would drift off it.
 import { COVERAGE_PRODUCER_BODY } from './coverage-producer.mjs';
+// The inert item's cause-A apply is a PREVIEW of this fill, so its non-vacuity is the fill's own
+// consented apply run against the rendered selection — the real writer, never a re-implementation.
+import { applyFill } from './gates-init.mjs';
+import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -1342,11 +1346,60 @@ describe('recommendations — the inert gate declaration item', () => {
     // left in the git dir — the second reads as `coverage=certified`, so it cannot be called a pass
     // over nothing.
     assert.match(item.what, /certifies nothing this run, or reads a stale lcov/);
-    // HAND-APPLY because the producer must PRECEDE the checker and the fill is append-only: the
+    // HAND-APPLY because this fixture offers NO producer — the project declares no scripts at all,
+    // so there is nothing for the fill to place and the edit really is the maintainer's. The
     // rendered line must never look like something the consent flow can run.
-    assert.ok(item.apply.startsWith('HAND-APPLY:'), `cause A is maintainer territory: ${item.apply}`);
+    assert.ok(item.apply.startsWith('HAND-APPLY:'), `cause A is maintainer territory here: ${item.apply}`);
     assert.match(item.apply, /BEFORE coverage-check/);
-    assert.match(item.apply, /append-only/);
+    assert.match(item.apply, /no offerable producer exists here/);
+  });
+
+  // The D-8 consequence for this item: once the fill can PLACE a producer before a trailing checker,
+  // cause A stops being maintainer-only wherever that placement would actually land the fix.
+  it('cause A: an offered producer whose id is ALREADY declared is not placeable — the fill would refuse it', () => {
+    // The offer derives ids from script names, so a declaration already carrying that id makes the
+    // fill refuse the very entry this item would be pointing at. Counting it as placeable renders a
+    // preview that cannot fix what the item just reported.
+    const root = makeProject();
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { test: 'node --test' } }));
+    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({
+      gates: [gate('test', 'true'), gate('coverage-check', CHECKER)],
+    }));
+    const built = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    const item = built.items.find((i) => i.key === 'gates-inert');
+    assert.ok(item, 'the inert pair still fires');
+    assert.ok(item.apply.startsWith('HAND-APPLY:'), `the only offerable producer collides on its id: ${item.apply}`);
+  });
+
+  it('cause A: a checker that is NOT last states THAT cause — never "no offerable producer" over a producer that exists', () => {
+    // Two different situations reach the same HAND-APPLY branch, and they need different sentences:
+    // here a producer is offerable AND already declared — what blocks the fill is the checker's
+    // POSITION, which the fill may not change. Saying no producer exists would be plainly false.
+    const root = makeProject();
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { test: 'node --test' } }));
+    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({
+      gates: [gate('coverage-check', CHECKER), gate('lint', 'npm exec -- eslint .')],
+    }));
+    const built = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    const item = built.items.find((i) => i.key === 'gates-inert');
+    assert.ok(item, 'a checker with nothing before it is inert whatever follows it');
+    assert.ok(item.apply.startsWith('HAND-APPLY:'), item.apply);
+    assert.doesNotMatch(item.apply, /no offerable producer/, `a producer IS offerable here: ${item.apply}`);
+    assert.match(item.apply, /not the LAST/, `the real cause is the checker's position: ${item.apply}`);
+  });
+
+  it('cause A with an OFFERABLE producer and the checker LAST renders the fill preview, not HAND-APPLY', () => {
+    const root = makeProject();
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { test: 'node --test' } }));
+    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates: [gate('lint', 'npm exec -- eslint .'), gate('coverage-check', CHECKER)] }));
+    const built = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    const item = built.items.find((i) => i.key === 'gates-inert');
+    assert.ok(item, 'the inert pair still fires — the offer does not fix anything by existing');
+    assert.doesNotMatch(item.apply, /^HAND-APPLY/, `the fill can place the producer here: ${item.apply}`);
+    assert.match(item.apply, /^node \/[^\s]*gates-init\.mjs --cwd \//, `it renders the seeder preview: ${item.apply}`);
   });
 
   it('cause B — a declaration of nothing but kit checkers fires its OWN what and the consent-gated seeder preview', () => {
@@ -1369,6 +1422,84 @@ describe('recommendations — the inert gate declaration item', () => {
     assert.match(item.what, /has no producer before it/);
     assert.match(item.what, /reads a stale lcov/, 'the late-producer shape is exactly where stale bytes get certified');
     assert.match(item.apply, /declare or MOVE a suite gate/, 'the remedy names the reorder, since the fill cannot do it');
+  });
+
+  // The apply is a PREVIEW, so what it must earn is a runnable next step. In cause A the declaration
+  // already carries the checker, and the checker is in the offer too — a whole-offer apply therefore
+  // collides on that id by construction. Naming the producer keeps the one entry that fixes the
+  // reported state, and the follow-up apply converges instead of refusing.
+  it('cause A: the previewed apply names the PRODUCER, and running it converges the item', () => {
+    const root = makeProject();
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { test: 'node --test' } }));
+    writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), `${EXPECTED_WORKFLOW_VERSION}\n`);
+    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'council' } }));
+    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({
+      gates: [gate('review-state', kitCheck('review-state.mjs')), gate('coverage-check', CHECKER)],
+    }));
+    const item = buildRecommendations({ cwd: root, deps: hermeticDeps(root) }).items.find((i) => i.key === 'gates-inert');
+    assert.ok(item, 'a declared checker with no producer before it is inert');
+    assert.match(item.apply, / --only test$/, `the apply names the producer entry: ${item.apply}`);
+    // Non-vacuous: the consented follow-up of exactly that preview really does resolve the item.
+    applyFill({ cwd: root, onlyIds: ['test'] });
+    const after = buildRecommendations({ cwd: root, deps: hermeticDeps(root) }).items.find((i) => i.key === 'gates-inert');
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(after, undefined, 'following the rendered lane converges the item it was rendered for');
+  });
+
+  // The source-size checker is one of the kit's OWN checkers. A classifier that does not know it
+  // reads a matrix of nothing but that gate as carrying project verification — so a project that has
+  // just adopted the practice and declared nothing else is told its deployment is optimal, which is
+  // the exact invisibility this item exists to remove.
+  it('cause B: a matrix of nothing but kit checkers INCLUDING source-size fires the no-verification arm', () => {
+    const root = makeProject();
+    const { item } = (() => {
+      writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({
+        gates: [gate('source-size', `node "${join(HERE, 'source-size-check.mjs')}" --check`)],
+      }));
+      const built = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+      return { item: built.items.find((i) => i.key === 'gates-inert') };
+    })();
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(item, 'a matrix that only runs the kit checks no project command at all');
+    assert.match(item.what, /no project-verification command/);
+  });
+
+  // The SAME class as cause A, reached from the other arm: a kit checker the offer also carries is
+  // already declared, so an unrestricted preview leads to an id collision here too. The rule is one
+  // rule — a rendered preview names only entries the fill would accept — so both arms obey it.
+  it('cause B: the previewed apply names only entries the fill would accept, and running it converges', () => {
+    const root = makeProject();
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { test: 'node --test' } }));
+    writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), `${EXPECTED_WORKFLOW_VERSION}\n`);
+    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'council' } }));
+    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates: [gate('review-state', kitCheck('review-state.mjs'))] }));
+    const item = buildRecommendations({ cwd: root, deps: hermeticDeps(root) }).items.find((i) => i.key === 'gates-inert');
+    assert.ok(item, 'a matrix of nothing but kit checkers runs no project command');
+    assert.match(item.apply, /--only test/, `the already-declared review-state must not ride the selection: ${item.apply}`);
+    assert.doesNotMatch(item.apply, /--only review-state/, `it would collide: ${item.apply}`);
+    const ids = [...item.apply.matchAll(/--only (\S+)/g)].map((m) => m[1]);
+    applyFill({ cwd: root, onlyIds: ids });
+    const after = buildRecommendations({ cwd: root, deps: hermeticDeps(root) }).items.find((i) => i.key === 'gates-inert');
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(after, undefined, 'following the rendered lane converges the item it was rendered for');
+  });
+
+  // Selecting a non-colliding entry is not enough — it has to be an entry that RESOLVES the item.
+  // Cause B says the matrix runs no project command, so offering another kit checker converges
+  // nothing: the item simply fires again on the next run.
+  it('cause B: the selection names only PROJECT-verification entries — another kit checker cannot resolve it', () => {
+    const root = makeProject();
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture', scripts: {} }));
+    writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), `${EXPECTED_WORKFLOW_VERSION}\n`);
+    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'council' } }));
+    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({
+      gates: [gate('source-size', `node "${join(HERE, 'source-size-check.mjs')}" --check`)],
+    }));
+    const built = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    const item = built.items.find((i) => i.key === 'gates-inert');
+    assert.ok(item, 'a matrix of nothing but kit checkers runs no project command');
+    assert.doesNotMatch(item.apply, /--only review-state/, `declaring one more kit checker resolves nothing: ${item.apply}`);
   });
 
   it('neither cause renders the flow-optimal line — the advisor never attests over an inert matrix', () => {

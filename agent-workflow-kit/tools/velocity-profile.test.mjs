@@ -12,6 +12,7 @@ import {
   KIT_BRIDGE_TIER_NOTICE,
   KIT_READONLY_TOOLS,
   KIT_RUN_GATES_TOOL,
+  KIT_SOURCE_SIZE_TOOL,
   KIT_WRITER_PREVIEW_TOOLS,
   SETTINGS_FILE,
   SETTINGS_LOCAL_FILE,
@@ -30,6 +31,7 @@ import {
   validateProfile,
 } from './velocity-profile.mjs';
 import { GROUNDING_TOOL } from './procedures.mjs';
+import { SCANNED_TOOL_LANES } from '../references/hooks/gate-approve.mjs';
 
 const UTF8 = 'utf8';
 const TEMP_PREFIX = 'velocity-profile-';
@@ -250,6 +252,7 @@ const tierEntries = () => deriveKitToolsAllowlist({ projectDir: TIER_PROJECT });
 const wildcardEntryOf = (rel) => `Bash(node ${join(KIT_ROOT, rel)}:*)`;
 const previewEntryOf = (rel) => `Bash(node ${join(KIT_ROOT, rel)})`;
 const RUN_GATES_EXACT = `Bash(node ${join(KIT_ROOT, 'tools/run-gates.mjs')} --cwd ${TIER_PROJECT})`;
+const SOURCE_SIZE_EXACT = `Bash(node ${join(KIT_ROOT, 'tools/source-size-check.mjs')} --check)`;
 const PREVIEW_FORBIDDEN_FLAGS = ['--apply', '--write', '--yes', '--refresh-placed'];
 
 describe('KIT_READONLY_TOOLS tier — frozen membership + derivation', () => {
@@ -288,13 +291,14 @@ describe('KIT_READONLY_TOOLS tier — frozen membership + derivation', () => {
     for (const rel of KIT_WRITER_PREVIEW_TOOLS) assert.equal(KIT_READONLY_TOOLS.includes(rel), false, rel);
   });
 
-  it('derives 11 wildcard entries + the exact run-gates entry + 3 exact previews (count sentinel 15)', () => {
+  it('derives 11 wildcard entries + the exact run-gates and source-size entries + 3 exact previews (count sentinel 16)', () => {
     const derived = tierEntries();
     assert.equal(Object.isFrozen(derived), true);
     // 12 → 13: AD-044 Plan 4 Phase 3 — the recommendations advisor joins KIT_READONLY_TOOLS.
     // 13 → 14: the literal search lane joins as a wildcard entry.
     // 14 → 15: the inventory lane joins as a wildcard entry.
-    assert.equal(derived.length, 15, 'derived tier count sentinel - edit deliberately');
+    // 15 → 16: the source-size checker joins as a SECOND exact entry — its --check mode only.
+    assert.equal(derived.length, 16, 'derived tier count sentinel - edit deliberately');
     const wildcards = derived.filter((e) => e.endsWith(':*)'));
     assert.equal(wildcards.length, 11);
     for (const rel of KIT_READONLY_TOOLS) {
@@ -302,7 +306,63 @@ describe('KIT_READONLY_TOOLS tier — frozen membership + derivation', () => {
       assert.equal(derived.includes(wildcardEntryOf(rel)), true, rel);
     }
     assert.equal(derived.includes(RUN_GATES_EXACT), true, 'the exact root-pinned run-gates entry');
+    assert.equal(derived.includes(SOURCE_SIZE_EXACT), true, 'the exact source-size --check entry');
     for (const rel of KIT_WRITER_PREVIEW_TOOLS) assert.equal(derived.includes(previewEntryOf(rel)), true, rel);
+  });
+
+  // 4.1.d — the check-only rule. The tool is a WRITER; exactly ONE of its modes is seeded.
+  it('check-invocation-promptless-rule-seeded: the exact --check form is derived and screens read-only', () => {
+    assert.equal(KIT_SOURCE_SIZE_TOOL, 'tools/source-size-check.mjs');
+    assert.equal(SOURCE_SIZE_EXACT, `Bash(node ${join(KIT_ROOT, 'tools/source-size-check.mjs')} --check)`);
+    assert.equal(tierEntries().includes(SOURCE_SIZE_EXACT), true);
+    assert.equal(screenAllowlistEntry(SOURCE_SIZE_EXACT), true, 'the seeded entry must pass its own screen');
+    // It joins NEITHER list — a wildcard would cover the writers, and its arg-free form is a usage
+    // error rather than a dry-run, so the writer-preview class does not describe it either.
+    assert.equal(KIT_READONLY_TOOLS.includes(KIT_SOURCE_SIZE_TOOL), false);
+    assert.equal(KIT_WRITER_PREVIEW_TOOLS.includes(KIT_SOURCE_SIZE_TOOL), false);
+  });
+
+  // The seeded rule and the DECLARED gate cmd are deliberately DIFFERENT strings, and the near-miss
+  // is easy to assume — this pins both halves: that they cannot be made equal, and that no surface
+  // says they are. The retired phrase is assembled from parts so this file cannot match itself.
+  it('the seeded rule is NOT the declared gate cmd, and no surface claims it is', () => {
+    const gateRule = `Bash(node "${join(KIT_ROOT, 'tools/source-size-check.mjs')}" --check)`;
+    assert.notEqual(gateRule, SOURCE_SIZE_EXACT, 'the fill quotes the path so a space survives; a seedable rule may not');
+    assert.equal(screenAllowlistEntry(gateRule), false, 'the quoted form is not even seedable — the equality is unreachable, not merely absent');
+    const retired = ['the declared gate', 'carries'].join(' ');
+    for (const file of ['velocity-profile.mjs', 'velocity-profile.test.mjs']) {
+      const text = readFileSync(join(KIT_ROOT, 'tools', file), 'utf8');
+      assert.equal(text.includes(retired), false, `${file} must not claim the seeded rule IS the declared gate cmd`);
+    }
+  });
+
+  // The hook's scanned-tool lanes are DELIBERATELY untouched: each entry promises an out-of-band
+  // recovery flag for caller-supplied argument bytes, and the source-size checker has none — a wrong
+  // entry would make the hook advise the impossible. The settings allow rule alone is the mechanism.
+  it('hook-lanes-unchanged: the source-size checker is NOT in the hook\'s scanned-tool lanes', () => {
+    assert.deepEqual(
+      Object.keys(SCANNED_TOOL_LANES),
+      ['agent-workflow-kit/tools/repo-search.mjs', 'agent-workflow-kit/tools/path-inventory.mjs'],
+      'scanned-tool lane membership sentinel — the two tools that take caller-supplied argument bytes',
+    );
+    for (const lane of Object.keys(SCANNED_TOOL_LANES)) {
+      assert.equal(lane.includes('source-size'), false, lane);
+    }
+  });
+
+  it('writer-invocation-not-matched-by-any-seeded-rule: --write-baseline, --adopt, a wildcard and a --cwd form all stay uncovered', () => {
+    const derived = tierEntries();
+    const abs = join(KIT_ROOT, 'tools/source-size-check.mjs');
+    for (const uncovered of [
+      `Bash(node ${abs}:*)`,
+      `Bash(node ${abs})`,
+      `Bash(node ${abs} --write-baseline)`,
+      `Bash(node ${abs} --adopt)`,
+      `Bash(node ${abs} --check --cwd ${TIER_PROJECT})`,
+    ]) {
+      assert.equal(derived.includes(uncovered), false, `not seeded: ${uncovered}`);
+      assert.equal(screenAllowlistEntry(uncovered), false, `not screenable: ${uncovered}`);
+    }
   });
 
   it('the run-gates negatives (Decision 3): no wildcard form anywhere; bare / other --cwd / --only forms stay uncovered', () => {
@@ -795,7 +855,7 @@ describe('velocity profile CLI — the opt-in --kit-tools tier', () => {
     const dry = runMain(['--kit-tools'], cwd);
 
     assert.equal(dry.code, EXIT_OK);
-    assert.match(dry.stdout, /would add kit-tools tier entries: 15/);
+    assert.match(dry.stdout, /would add kit-tools tier entries: 16/);
     assert.equal(existsSync(settingsPath(cwd)), false);
     assert.equal(existsSync(pathOf(cwd, CLAUDE_DIR)), false);
   });
