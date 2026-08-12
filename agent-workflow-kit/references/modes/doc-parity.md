@@ -13,7 +13,7 @@ The DOC-PARITY lint (BUGFREE-3 / AD-049, session-economics item (b)) — the det
 - `references/modes/autonomy-doctor.md` carries the doctor's frozen D7 contract (AD-044 Plan 2): every live EXIT-table phrase (`` `0` ready `` … `` `6` unsupported / untrusted ``), every status token (sourced from the exported `STATUS`), and the trusted-dir allowlist (`TRUSTED_DIRS`);
 - `references/modes/recommendations.md` + `references/modes/upgrade.md` carry the frozen upgrade-Recommendations presentation contract (the section header, the exact empty-state line, the verdict templates);
 - `references/modes/recommendations.md` + `references/modes/velocity.md` carry the family-owned ack-store path (`docs/ai/acks.json`);
-- `references/modes/setup.md` + `references/modes/upgrade.md` carry the `skipped-readonly` refresh degrade token.
+- `references/modes/setup.md` + `references/modes/upgrade.md` carry the `skipped-readonly` refresh degrade token **and all three parity verdicts that outcome reports** — `clean-parity`, `drifted`, `unverifiable` (one binding per value, backticked so a bare word in prose cannot pass for the token).
 
 **Why the modes/*.md docs and NOT the tool HELP strings.** Every tool's HELP INTERPOLATES the same constant, so it can never drift from the code — there is nothing to check there. The hand-authored contract prose in `references/modes/*.md` is the surface that DOES drift, so that is exactly what this lint pins. Change a constant and the current-value token stops appearing in the lagging doc → the gate fails, forcing the doc update **in the same edit as the code** (the §2.6 "contract docs change in the same edit as code" rule, mechanized).
 
