@@ -151,6 +151,12 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the flow-check refusal core (flow-orchestration Phase 3) — pure checker predicates + the
       // standalone --check CLI (deliberately unwired until Plan 3); pinned by NAME for the same reason
       'tools/flow-check.mjs',
+      // and the three halves that core became (baseline-practices tranche 1): the facade imports all
+      // three, so a leaf falling out of the payload would leave the DECLARED flow-check gate unable
+      // to load at all — pinned by NAME, not only by the count, exactly like the source-size leaves
+      'tools/flow-check-cores.mjs',
+      'tools/flow-check-rungs.mjs',
+      'tools/flow-check-git-lane.mjs',
       // the closed delegation-record vocabulary (delegation Plan 1 Phase 1) — the record family, the
       // exec-return schema, the sub-task contract header and the metric byte domains the delegation
       // store and engine consume; pinned by NAME for the same reason
@@ -438,7 +444,15 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       the two can never disagree about the tree) + source-size-report.mjs (the wording,
     //       including the tighten/growth render contracts). The colocated *.test.mjs siblings are
     //       stripped by files[] and never enter the tarball.
-    assert.equal(packed.length, 201, `tarball file count drifted (${packed.length} ≠ 201)`);
+    // 204 = 201 + the flow-check decomposition (baseline-practices Plan 1 Phase 5, campaign tranche
+    //       1), EXACTLY three files: tools/flow-check-cores.mjs (the decision cores over both
+    //       stores' read-results + decideFlowCheck) + tools/flow-check-rungs.mjs (the evidence rungs
+    //       #61/#56/#65/#25/#42/#15 and the refusal vocabulary both pure halves share) +
+    //       tools/flow-check-git-lane.mjs (the all-path git lane for base-motion inputs, a leaf).
+    //       tools/flow-check.mjs stays the CLI + computeFlowDecision + the public surface, so no
+    //       consumer's import path moved. Its *.test.mjs sibling is stripped by files[] and stays
+    //       byte-identical — the split is characterized by the suite it already had.
+    assert.equal(packed.length, 204, `tarball file count drifted (${packed.length} ≠ 204)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
