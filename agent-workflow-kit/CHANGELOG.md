@@ -4,6 +4,68 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 5.6.0 — a source-size practice your project declares, and a record that is debt rather than permission (AD-091; engine 2.1.0)
+
+**A big module is expensive long before anyone calls it a problem, and nothing in the kit ever said
+so.** This release adds the practice: a checker your project declares scope for, a cap it can hold
+you to, and — for the files already over it — a recorded baseline that can shrink for free but can
+only GROW with a written reason. Nothing is guessed and nothing is imposed: a project that declares
+no scope gets no cap, and the one manual step is a scope file you author from the starter template
+the tool prints — its `roots`/`extensions` placeholders are deliberately invalid until you replace
+them. With a valid, judgeable scope, `--adopt` then mints the record and attempts the gate
+declaration, reporting the second half if it is refused.
+
+- **`source-size-check.mjs` — the checker, and it refuses rather than assumes.** In scope is what
+  you DECLARE: git-tracked files under your roots, with your extensions, minus your excluded
+  prefixes. New files stay within 400 lines and 1000 bytes per line by default (both overridable,
+  because a multi-KB single line hides from a line count). There is no default root list, no default
+  file-type list and no content sniffing — a fixed extension list would silently exempt every
+  language it forgot. Run it with no config and it tells you the exact path to author and prints a
+  template; the placeholders in that template are rejected by the validator until you replace them,
+  so the printed starting point can never be pasted into a scope that matches nothing and passes.
+- **A recorded size is DEBT, not permission — that is the whole design.** Adopting on a real
+  codebase records today's oversized files instead of demanding a refactor you did not plan. From
+  then on the record only moves under rules: it may not grow without `--reason "<text>"` (recorded
+  verbatim in the entry it raised), it may not sit ABOVE what the tree now measures (a stale record
+  is headroom nobody earned, so the checker tells you to tighten it), and it disappears when the
+  file finally comes back under the cap. A record whose file is GONE is an error — that is what
+  makes a split or a rename visible rather than silent. **Every declared root also carries a line
+  budget**, so splitting 3000 lines across six modules buys exactly zero headroom.
+- **Every ratchet refusal hands you the next step, and it is a step this build can actually
+  perform.** Shrunk below the record? You get the regenerator command exactly as it should be pasted
+  — no reason asked, because shrinking is progress. Growing something? You get the same command as a
+  template with the reason placeholder and a plain statement that it is required: the tool cannot
+  invent your reason. On a project path that would not survive quoting, no command is printed at all
+  — the file, the actual, the allowed and the manual lane are stated instead, because a rendered
+  command that runs somewhere else is worse than none. Inputs the checker cannot judge at all — a
+  malformed config, a failed git enumeration — exit 2 stating what is unusable, with no rendered
+  recovery command.
+- **Adoption is one consented line.** `--adopt --reason "<text>"` records the baseline AND declares
+  the gate in `docs/ai/gates.json` in a single step, is idempotent once adopted, and reports exactly
+  what it did and did not do if the declaration is refused. Existing projects meet it as a
+  Recommendations item at upgrade; new ones meet it the same way on their first upgrade.
+- **The practice arrives BEFORE the code, not after it.** The plan-authoring and plan-execution
+  procedure renders now print your declared caps, your recorded debt and the reason the caps exist;
+  the checker's green line says the same thing on the enforced path. The point is a layout decided
+  while a plan is written, with the gate as the backstop rather than the teacher. A project that
+  declares no practice gets no invented
+  limits: the render's declared-practice block stays empty and `gates-init` offers no candidate. The
+  canon rule it does still print is conditional by construction — no declared cap, no limit to
+  state.
+- **The gate declaration learned where to place things.** A consented non-checker gate is now written
+  BEFORE a trailing canonical coverage checker instead of after it, which is what makes adopting on a
+  final-capable declaration work at all; entries you already declared are never reordered. The fill's
+  result gained `placed`, and `appended` remains as an alias of it.
+- **Scope, counting and the gate matcher live in a pure read core**, so the surfaces that ask about
+  the practice — the advisor, the gate declaration, the procedure render — never reach the writer.
+  Counting is pinned by literal fixtures: LF, and the CR of a CRLF, never count; a file with no final
+  newline still counts its last line.
+- **Housekeeping shipped alongside:** `flow-check.mjs` became a 254-line facade over two pure
+  decision modules and a git-I/O leaf (the decision cores and the evidence rungs, plus the git lane
+  that is deliberately the only one allowed to spawn `git`) with its behaviour and its declared gate
+  command unchanged — the first tranche of the cleanup this practice arms, and the first proof that
+  the record notices a split.
+
 ## 5.5.0 — delegating a sub-task stops being a feeling and becomes a record (AD-090; codex-cli-bridge 3.5.0, antigravity-cli-bridge 5.1.1)
 
 **"How much does handing this off actually buy?" had no answer, because nothing wrote the answer

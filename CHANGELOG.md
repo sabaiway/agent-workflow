@@ -7,6 +7,53 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-12 — AD-091 the source-size practice: a declared cap, and a record that is debt rather than permission (kit 5.6.0, engine 2.1.0; memory 4.2.0, codex-cli-bridge 3.5.0 and antigravity-cli-bridge 5.1.1 unchanged)
+
+The kit taught module granularity nowhere and enforced it nowhere, and its own tree was the evidence:
+of the 194 `.mjs` files under `agent-workflow-kit/tools` and `agent-workflow-memory` measured on
+2026-08-10, 112 sat above 300 lines, 70 above 500 and 39 above 800. This release ships the practice
+that answers it — and it ships honestly. The goal is MAINTAINABILITY, not context economy: a split
+does not by itself demonstrate a lower session-context cost, and that claim stays unavailable until
+somebody measures it.
+
+The checker refuses rather than assumes. Scope is DECLARED — your roots, your extensions, your
+exclusions — because a default file-type list would silently exempt every language it forgot. With
+no config it prints the exact file to author and a template whose placeholders the validator itself
+rejects until replaced, so the starting point can never be pasted into a scope that matches nothing
+and passes green. An unmerged index, a filename that is not valid UTF-8, an unreadable file, an empty
+declared scope: refusals, every one, because a check that cannot judge the tree must not report that
+the tree is fine.
+
+What makes it adoptable on a real codebase is that a recorded size is DEBT, not permission. Adopting
+records today's oversized files instead of demanding a refactor nobody planned; from then on the
+record may not grow without a written reason, may not sit above what the tree measures, and may not
+outlive the violation it records. Each declared root carries the same ratchet over its summed lines,
+so splitting one big file into six buys no headroom at all. Every ratchet refusal is one you can
+serve yourself: a tighten prints the command exactly as it should be pasted, a growth prints it as a
+template with the reason placeholder and states the requirement, and on a path that would not survive
+quoting nothing is rendered — the parameters and the manual lane are stated instead.
+
+The cap is the backstop; the knowledge is upstream. The plan-authoring and plan-execution renders now
+print the declared caps and the reason they exist, and engine canon asks every Step that creates a
+file to name that file and its single responsibility — fitting the declared cap **where one is
+declared**, and inventing none where it is not. That is where the canon now asks for the layout, on
+its own stated rationale: a gate that refuses an oversized file after it is written only pays for a
+rewrite.
+
+**Campaign tranche 1, recorded here because the record is the point.** `flow-check.mjs` became a
+254-line facade over two pure decision modules and a git-I/O leaf, behaviour and declared gate
+command unchanged. The regeneration that followed carries the verbatim reason
+**`tranche 1: flow-check split`**, and the exact old → new delta it recorded:
+
+- `agent-workflow-kit/test/package-content.test.mjs`: lines **453 → 467** (raise)
+- `agent-workflow-kit/tools/flow-check.mjs`: lines **842 → none**
+- `agent-workflow-kit` aggregate: lines **111102 → 111234** (raise)
+
+A split COSTS lines — four module headers where there was one — and the aggregate is what says so out
+loud instead of letting the cost hide. That is the whole argument for budgeting the sum as well as
+the file. The remaining violators are a declared campaign, one module per tranche, riding regular
+release trains.
+
 ## 2026-08-11 — AD-090 delegating a sub-task becomes a record (kit 5.5.0, codex-cli-bridge 3.5.0, antigravity-cli-bridge 5.1.1; memory 4.2.0 and engine 2.0.0 unchanged)
 
 The family could delegate work and could not account for it. A task went out, something came back,
