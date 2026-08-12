@@ -13,13 +13,29 @@
 //
 // The destination is written against AW_GIT_DIR, which run-gates exports to every gate child on a
 // plain run AND on --final (AW_LCOV_FILE is --final only), so one cmd survives the unmet
-// producer-variable preflight in both modes. The explicit stdout reporter is not decoration:
-// without it the lcov reporter swallows the human TAP/spec stream.
+// producer-variable preflight in both modes. The `:?` is not decoration either: this cmd is also
+// PASTE-READY, and the required-parameter form makes bash refuse BY NAME when AW_GIT_DIR is unset
+// or EMPTY, where a bare `$AW_GIT_DIR` expanded to empty and wrote the lcov to the filesystem ROOT.
+// Residual, stated: `:?` says nothing about the value's ORIGIN — a STALE exported AW_GIT_DIR
+// expands fine and the lcov lands under it; only the runner's own injection makes it the right dir.
+// The explicit stdout reporter keeps the human stream: without it the lcov reporter swallows the
+// TAP/spec output.
 export const UNIT_TESTS_COVERAGE_FLAGS =
-  '--experimental-test-coverage --test-reporter=lcov --test-reporter-destination="$AW_GIT_DIR/agent-workflow-lcov.info" --test-reporter=spec --test-reporter-destination=stdout';
+  '--experimental-test-coverage --test-reporter=lcov --test-reporter-destination="${AW_GIT_DIR:?exported by run-gates}/agent-workflow-lcov.info" --test-reporter=spec --test-reporter-destination=stdout';
 
-// The ONE suite body that produces that lcov with no extra dependency.
+// Every flag set the kit has EVER emitted — APPEND-ONLY, newest first. Emission uses the head; the
+// tail exists so a declaration written by an EARLIER kit and living on disk in a deployed project
+// keeps reading as the producer it is. De-recognizing a prior form would silently reclassify a
+// working suite gate as customized and withhold the checker over it.
+export const KNOWN_COVERAGE_FLAG_SETS = Object.freeze([
+  UNIT_TESTS_COVERAGE_FLAGS,
+  '--experimental-test-coverage --test-reporter=lcov --test-reporter-destination="$AW_GIT_DIR/agent-workflow-lcov.info" --test-reporter=spec --test-reporter-destination=stdout',
+]);
+
+// The ONE suite body that produces that lcov with no extra dependency (the EMITTED form), beside
+// the closed set of bodies recognition accepts.
 export const COVERAGE_PRODUCER_BODY = `node --test ${UNIT_TESTS_COVERAGE_FLAGS}`;
+const KNOWN_PRODUCER_BODIES = Object.freeze(KNOWN_COVERAGE_FLAG_SETS.map((flags) => `node --test ${flags}`));
 
 // The per-PM exec wrappers a fill offer puts that body behind. Recognition must cover every form
 // the kit has EMITTED, so the prefixes are matched literally; gates-init's execCmdFor stays the one
@@ -52,8 +68,9 @@ const PRODUCER_EXEC_PREFIXES = Object.freeze([
 const PRODUCER_PATH_TOKEN = /^(?!-)[A-Za-z0-9_./*{},:@+=~?[\]!'"-]+$/;
 const pathShapedTail = (tail) => tail === '' || tail.split(/[ \t]+/).every((token) => PRODUCER_PATH_TOKEN.test(token));
 const carriesProducerBody = (text) =>
-  text === COVERAGE_PRODUCER_BODY ||
-  (text.startsWith(`${COVERAGE_PRODUCER_BODY} `) && pathShapedTail(text.slice(COVERAGE_PRODUCER_BODY.length).trim()));
+  KNOWN_PRODUCER_BODIES.some(
+    (body) => text === body || (text.startsWith(`${body} `) && pathShapedTail(text.slice(body.length).trim())),
+  );
 
 // matchesCoverageProducer(cmd) → CLOSED-WORLD over the full command forms the kit emits, never a
 // substring probe: `echo "$AW_GIT_DIR/agent-workflow-lcov.info"`, a half-written reporter flag set,

@@ -952,6 +952,33 @@ describe('runCli — producer-env precondition (a reference the run will not sat
     assert.equal(calls.length, 0, 'nothing spawned — the refusal is pre-spend');
   });
 
+  // The canonical producer destination is written `${AW_GIT_DIR:?…}` so bash refuses BY NAME when
+  // the variable is unset instead of writing the lcov to the filesystem root. That form is still a
+  // reference this runner is responsible for injecting: an uninjected run must refuse here, or the
+  // only signal left is bash's own failure inside a gate child — exactly the far-from-the-cause
+  // death this preflight exists to prevent.
+  it('refuses the REQUIRED-PARAMETER form — a ${VAR:?…} expansion is a reference, not a fallback', () => {
+    const { code, errText, calls } = runHermetic({
+      gates: [{
+        id: 'unit-tests',
+        title: 'ut',
+        cmd: 'node --test --test-reporter-destination="${AW_GIT_DIR:?exported by run-gates}/agent-workflow-lcov.info"',
+      }],
+      byCmd: { [BASH_PROBE_CMD]: GREEN },
+    });
+    assert.equal(code, EXIT.fail);
+    assert.match(errText, /references \$AW_GIT_DIR/, 'the refusal names the variable');
+    assert.match(errText, /unit-tests/, 'the refusal names the gate');
+    assert.equal(calls.length, 0, 'nothing spawned — the refusal is pre-spend');
+    // ONE explanation serves two shell behaviours, so it may claim neither: `$VAR` expands to empty
+    // (and a cmd like `echo "$VAR"` still exits 0), while `${VAR:?…}` aborts that expansion by name.
+    // What both share is the only thing the runner actually detected. Both retired claims stay
+    // pinned — the negative keeps "expand to empty" out, the positive keeps the neutral text in.
+    assert.match(errText, /the child would run without the runner-produced value/, 'the explanation states only what was detected');
+    assert.doesNotMatch(errText, /expand to empty/, 'never the mode the :? form does not have');
+    assert.doesNotMatch(errText, /would fail/, 'nor a failure the runner cannot promise');
+  });
+
   it('does NOT refuse a reference that carries its own shell fallback', () => {
     const cmd = 'ls "${AW_GIT_DIR:-.}"';
     const { code } = runHermetic({

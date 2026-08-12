@@ -8,14 +8,28 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { UNIT_TESTS_COVERAGE_FLAGS, COVERAGE_PRODUCER_BODY, matchesCoverageProducer } from './coverage-producer.mjs';
+import { spawnSync } from 'node:child_process';
+import {
+  UNIT_TESTS_COVERAGE_FLAGS,
+  KNOWN_COVERAGE_FLAG_SETS,
+  COVERAGE_PRODUCER_BODY,
+  matchesCoverageProducer,
+} from './coverage-producer.mjs';
 import { execCmdFor } from './gates-init.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OWN_SOURCE = join(HERE, 'coverage-producer.mjs');
+
+// The FIRST flag set the kit ever emitted, frozen here as literal bytes — never read back out of
+// the set under test. Deployed declarations on disk carry exactly these bytes, so the append-only
+// promise needs a checker that goes red if they are edited or dropped; deriving the "prior" from
+// KNOWN_COVERAGE_FLAG_SETS would keep every such test green while real deployments broke.
+const PRIOR_FLAG_SET_V1 =
+  '--experimental-test-coverage --test-reporter=lcov --test-reporter-destination="$AW_GIT_DIR/agent-workflow-lcov.info" --test-reporter=spec --test-reporter-destination=stdout';
 // The kit's in-package MIRROR of the memory canon. scripts/sync-mirrors.mjs copies the canon tree
 // verbatim and test/scripts-mirror.test.mjs guards that half, so mirror-equality here IS
 // canon-equality — reached without importing either side.
@@ -113,10 +127,120 @@ describe('coverage-producer — the closed producer predicate', () => {
     }
   });
 
+  it('recognition covers EVERY flag set the kit has emitted, and emission uses only the newest', () => {
+    assert.equal(KNOWN_COVERAGE_FLAG_SETS[0], UNIT_TESTS_COVERAGE_FLAGS, 'the head is what the emitters write today');
+    assert.ok(KNOWN_COVERAGE_FLAG_SETS.length >= 2, 'the set is append-only — a prior emitted form is never dropped');
+    for (const flags of KNOWN_COVERAGE_FLAG_SETS) {
+      const body = `node --test ${flags}`;
+      assert.equal(matchesCoverageProducer(body), true, `an emitted form stays recognized forever: ${flags}`);
+      assert.equal(matchesCoverageProducer(`${body} test/*.test.mjs`), true, 'with the project\'s own test paths too');
+      for (const { cmd } of ['npm', 'pnpm', 'yarn'].map((pm) => execCmdFor(pm, body))) {
+        assert.equal(matchesCoverageProducer(cmd), true, `and behind every verified exec wrapper: ${cmd}`);
+      }
+    }
+  });
+
+  it('the destination the kit EMITS refuses by name when AW_GIT_DIR is unset or EMPTY — never a bare expansion', () => {
+    // Scope, exactly: `${VAR:?…}` refuses on unset OR empty. A STALE but exported AW_GIT_DIR is a
+    // perfectly good expansion and is NOT caught — the lcov lands under the stale dir. What the
+    // form removes is the hand-run case where nothing is set at all, which under a bare
+    // `$AW_GIT_DIR` expanded to empty and wrote the lcov to the filesystem ROOT. The bare form
+    // survives ONLY as a recognized prior (a deployed declaration), never as something this kit writes.
+    assert.match(UNIT_TESTS_COVERAGE_FLAGS, /\$\{AW_GIT_DIR:\?[^}]+\}/, 'the emitted destination is `${AW_GIT_DIR:?…}`');
+    assert.ok(!UNIT_TESTS_COVERAGE_FLAGS.includes('"$AW_GIT_DIR/'), 'the emitted form carries no bare expansion');
+    assert.ok(KNOWN_COVERAGE_FLAG_SETS.includes(PRIOR_FLAG_SET_V1), 'the v1 bytes deployments carry are still recognized');
+    assert.equal(matchesCoverageProducer(`node --test ${PRIOR_FLAG_SET_V1}`), true);
+  });
+
+  it('the closed tail grammar binds every known body — an option-shaped or operator tail passes under NONE', () => {
+    for (const flags of KNOWN_COVERAGE_FLAG_SETS) {
+      for (const tail of [
+        '--test-concurrency=4',
+        'test/*.mjs --test-reporter=dot',
+        '&& rm -f "$AW_GIT_DIR/agent-workflow-lcov.info"',
+        '> /dev/null',
+        '$(echo x)',
+      ]) {
+        assert.equal(matchesCoverageProducer(`node --test ${flags} ${tail}`), false, `tail must not pass: ${tail}`);
+      }
+    }
+  });
+
   it('a non-string cmd is never a producer (fail closed on type)', () => {
     for (const value of [null, undefined, 42, ['node', '--test'], { cmd: COVERAGE_PRODUCER_BODY }]) {
       assert.equal(matchesCoverageProducer(value), false);
     }
+  });
+});
+
+// The emitted cmd is a FIXTURE TO EXECUTE, never a string to admire: every earlier check read the
+// constant's bytes, so a destination that expanded to the filesystem root whenever AW_GIT_DIR was
+// unset or empty stayed invisible to the whole suite. This is the standing pattern for every
+// canonical paste-ready cmd. What the executed guard covers is exactly that condition — a stale
+// but exported AW_GIT_DIR expands fine and no check here (or in bash) catches it.
+describe('coverage-producer — the emitted cmd is EXECUTED', () => {
+  const SUITE_FIXTURE = "import { test } from 'node:test';\ntest('ok', () => {});\n";
+  const mkSuiteDir = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'coverage-producer-exec-'));
+    writeFileSync(join(dir, 'ok.test.mjs'), SUITE_FIXTURE);
+    return dir;
+  };
+  // NODE_TEST_CONTEXT is stripped for the same reason run-gates strips it: a `node --test` spawned
+  // under a parent test context hits Node's recursive-run guard, skips every file and exits 0.
+  // AW_GIT_DIR rides the spawn env OPTION, never a same-line prefix assignment — a prefix
+  // assignment is applied by the very expansion under test, which would mask what this asserts.
+  const runEmittedBody = (cwd, extraEnv) => {
+    const env = { ...process.env };
+    delete env.NODE_TEST_CONTEXT;
+    delete env.AW_GIT_DIR;
+    return spawnSync('bash', ['-c', COVERAGE_PRODUCER_BODY], { cwd, env: { ...env, ...extraEnv }, encoding: 'utf8' });
+  };
+
+  it('with AW_GIT_DIR unset it refuses BY NAME before the suite runs, and writes nothing', () => {
+    const dir = mkSuiteDir();
+    const res = runEmittedBody(dir, {});
+    const left = readdirSync(dir).sort();
+    rmSync(dir, { recursive: true, force: true });
+    assert.notEqual(res.status, 0, 'an unset producer variable fails the cmd, never runs it silently');
+    assert.match(res.stderr, /AW_GIT_DIR/, 'the failure names the variable the reader must set');
+    assert.deepEqual(left, ['ok.test.mjs'], 'nothing was produced anywhere the cmd could reach');
+  });
+
+  it('an EMPTY AW_GIT_DIR refuses exactly like an unset one — the colon in `:?` is load-bearing', () => {
+    // Without this case the suite would stay green after `:?` was weakened to `?`, which refuses
+    // only on UNSET: an exported-but-empty value would expand away and put the lcov back at the
+    // filesystem root — the very defect the required-parameter form exists to remove.
+    const dir = mkSuiteDir();
+    const res = runEmittedBody(dir, { AW_GIT_DIR: '' });
+    const left = readdirSync(dir).sort();
+    rmSync(dir, { recursive: true, force: true });
+    assert.notEqual(res.status, 0, 'an empty producer variable is a failure, never a run against the filesystem root');
+    assert.match(res.stderr, /AW_GIT_DIR/, 'the failure names the variable');
+    assert.deepEqual(left, ['ok.test.mjs'], 'nothing was produced anywhere the cmd could reach');
+  });
+
+  it('with AW_GIT_DIR injected the destination resolves UNDER it', () => {
+    const dir = mkSuiteDir();
+    const res = runEmittedBody(dir, { AW_GIT_DIR: dir });
+    const produced = existsSync(join(dir, 'agent-workflow-lcov.info'));
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(res.status, 0, `the suite runs green under the injected git dir: ${res.stderr}`);
+    assert.equal(produced, true, 'the lcov lands at the injected git dir — the checker reads the file the suite wrote');
+  });
+});
+
+describe('coverage-producer — the shipped gates template carries no producer bytes', () => {
+  it('the template declares nothing, so it has no canonical cmd to age when the constant moves', () => {
+    // Scope, stated: this pins the TEMPLATE only. The other hand-copy of the canonical body lives
+    // in references/modes/gates.md and is held to the constant by the doc-parity binding
+    // `coverage-producer-body`, not by anything here — a title claiming "no canonical bytes live
+    // outside the constant" would promise coverage this block does not have.
+    const template = readFileSync(join(HERE, '..', 'references', 'templates', 'gates.json'), 'utf8');
+    assert.deepEqual(JSON.parse(template).gates, [], 'the shipped declaration is empty');
+    for (const flags of KNOWN_COVERAGE_FLAG_SETS) {
+      assert.ok(!template.includes(flags), 'no emitted flag set is copied into the template');
+    }
+    assert.ok(!template.includes('agent-workflow-lcov.info'), 'nor the destination in any form');
   });
 });
 
