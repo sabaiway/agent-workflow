@@ -18,6 +18,11 @@
 // in the entry it raises. A pure tighten needs none: shrinking is progress. The printed old→new
 // delta is the durable record where docs/ai is git-hidden; it is what the commit message carries.
 //
+// What --adopt does: mints the record and declares the gate — the whole adoption as ONE consented
+// line, because the alternative is a two-step ceremony whose halves can be left half-done. It
+// composes the two writers it already has (this module's mint, the fill's consented apply restricted
+// to this one id) and owns no write of its own.
+//
 // Exit codes: 0 green / 1 violation or refusal / 2 usage, config or enumeration error.
 // Dependency-free, Node >= 22. No side effects on import.
 
@@ -28,15 +33,25 @@ import { assertDocsAiDeployment, writeDocsAiFileAtomic } from './atomic-write.mj
 import {
   AUTHORED_KEYS,
   SOURCE_SIZE_CONFIG_REL,
+  SOURCE_SIZE_GATE_ID,
   loadSourceSizeConfig,
+  matchesSourceSizeGate,
   reasonDefect,
   scopeFail,
 } from './source-size-core.mjs';
 import { changesFor, isRaise, judgeTree, ownEntry } from './source-size-judge.mjs';
+import { GATES_REL, loadDeclaration } from './gates-declaration.mjs';
+import { applyFill } from './gates-init.mjs';
 import {
   absentRefusalLines,
+  adoptAbsentRefusalLines,
   checkReportLines,
+  gateAlreadyDeclaredLines,
+  gateDeclaredLines,
+  gateRefusedLines,
   reasonRequiredLines,
+  recordNoLongerHoldsLines,
+  recordRecognizedLines,
   unmintedRefusalLines,
   writtenLines,
 } from './source-size-report.mjs';
@@ -133,15 +148,93 @@ export const runWriteBaseline = ({ cwd, reason, deps = {} }) => {
   return { code: 0, lines: writtenLines({ cwd, deltas: plan.deltas, reason: plan.raises.length > 0 ? reason : undefined, changed }) };
 };
 
+// ── the adoption verb (D-16) ──────────────────────────────────────────────────────────────────────
+
+// Declaring the gate is delegated to the FILL's own consented apply, restricted to this one id: the
+// fill owns every rule about what a written declaration may look like (placement, id collisions, the
+// coverage invariant, the atomic write), and a second writer here would be a second set of those
+// rules — the one that drifts. `--adopt` is therefore a composition, never a re-implementation.
+//
+// The already-declared arm is checked FIRST and through the practice's own matcher: an earlier
+// partial run leaves a minted record and a declared gate, and re-running must converge rather than
+// collide. A gate that merely CARRIES the id without being this checker does not count — it reaches
+// the fill and collides there, loudly, which is the honest answer to a squatter.
+// The READ is inside the try with the write, deliberately: by the time this runs the record is
+// already minted, so ANY failure here — a malformed declaration the reader throws on, just as much
+// as a collision the fill refuses — must still report both halves. Letting the read escape would
+// surface a bare error carrying neither the mint that succeeded nor the exit contract this tool
+// documents.
+const declareGate = (cwd, deps) => {
+  try {
+    applyFill({ cwd, onlyIds: [SOURCE_SIZE_GATE_ID] }, deps);
+    return { code: 0, lines: gateDeclaredLines(GATES_REL, SOURCE_SIZE_GATE_ID) };
+  } catch (err) {
+    return { code: 1, lines: gateRefusedLines(GATES_REL, err?.message ?? String(err)) };
+  }
+};
+
+// Is the canonical gate ALREADY there? Asked through the practice's own matcher, so a gate that
+// merely carries the id — running something else entirely — never reads as adopted; it reaches the
+// fill and collides there, loudly, which is the honest answer to a squatter.
+//
+// An unreadable declaration is NOT a verdict here. This read is a shortcut, and aborting on it would
+// report an outcome before the record was settled; the fill re-reads the same file and refuses
+// authoritatively AFTER, so the partial report names both halves truthfully.
+const gateIsDeclared = (cwd, deps) => {
+  try {
+    const declaration = loadDeclaration(cwd, deps);
+    return (declaration.outcome === 'loaded' ? declaration.gates : []).some((gate) => matchesSourceSizeGate(gate.cmd, cwd));
+  } catch {
+    return false;
+  }
+};
+
+// A MINTED record is RECOGNIZED, never regenerated. Adoption carries a PINNED reason — the advisor
+// renders it as a fixed string, and its item keeps firing while the gate is undeclared — so a
+// re-run after a partial adoption would let that one sentence raise whatever the tree grew in the
+// meantime. That is exactly the laundering the reason requirement exists to prevent, so the verb
+// asks the checker instead: a record that no longer holds is a ratchet question with its own
+// reasoned lane, and it must be answered BEFORE a gate is declared over it — declaring one that is
+// certain to red the matrix is what the offer rules refuse everywhere else.
+const recognizeRecord = ({ cwd, deps }) => {
+  const verdict = runCheck({ cwd, deps });
+  if (verdict.code !== 0) return { code: verdict.code, lines: [...verdict.lines, ...recordNoLongerHoldsLines(GATES_REL)] };
+  return { code: 0, lines: recordRecognizedLines(cwd) };
+};
+
+// --adopt = settle the record, then declare the gate. The order is not a preference: the fill offers
+// the gate ONLY over a minted config (declaring it earlier would declare a gate that refuses), so
+// the record is what makes the declaration offerable at all.
+export const runAdopt = ({ cwd, reason, deps = {} }) => {
+  const { state } = loadSourceSizeConfig(cwd, deps);
+  if (state === 'absent') return { code: 1, lines: adoptAbsentRefusalLines(cwd) };
+  // ADOPTED is asked FIRST, and it is a question about the GATE alone. Idempotence cannot be made
+  // conditional on the record still holding: a declared gate reports its own staleness on every run,
+  // with the reasoned lane, and stopping here would tell a reader the gate was not declared while it
+  // plainly is — which is exactly what re-running the advisor's one-liner on a drifted tree does.
+  // Once the gate is there and the record is minted, nothing is left to adopt.
+  const declared = gateIsDeclared(cwd, deps);
+  if (declared && state === 'minted') return { code: 0, lines: gateAlreadyDeclaredLines(GATES_REL) };
+  // Either half carries its OWN self-servable refusals (a raise with no reason, a project with no
+  // docs/ai, a record the tree outgrew). They are returned unchanged: re-wording them here would be
+  // the second practice this module exists to avoid, and each already names the step that clears it.
+  const record = state === 'minted' ? recognizeRecord({ cwd, deps }) : runWriteBaseline({ cwd, reason, deps });
+  if (record.code !== 0) return record;
+  if (declared) return { code: 0, lines: [...record.lines, ...gateAlreadyDeclaredLines(GATES_REL)] };
+  const gate = declareGate(cwd, deps);
+  return { code: gate.code, lines: [...record.lines, ...gate.lines] };
+};
+
 // ── CLI ───────────────────────────────────────────────────────────────────────────────────────────
 
-const MODES = Object.freeze(['--check', '--write-baseline']);
+const MODES = Object.freeze(['--check', '--write-baseline', '--adopt']);
 
 const HELP = `source-size-check — the declared source-size practice (agent-workflow family).
 
 Usage:
   node source-size-check.mjs --check [--cwd <project-root>]
   node source-size-check.mjs --write-baseline [--reason "<text>"] [--cwd <project-root>]
+  node source-size-check.mjs --adopt [--reason "<text>"] [--cwd <project-root>]
 
 Judges every in-scope file against ${SOURCE_SIZE_CONFIG_REL}: git-tracked files under a declared
 root carrying a declared extension, minus the excluded path-segment prefixes. Scope is DECLARED,
@@ -161,6 +254,12 @@ keep their values and their order; the file is canonically serialized, so its fo
 writer's. A regeneration that RAISES any recorded value needs --reason; the string is recorded in
 the entry it raised. A pure tighten needs none.
 
+--adopt is the ONE-line adoption: it mints the record and declares the source-size gate (and NOTHING
+else) in docs/ai/gates.json. It is idempotent on an already-adopted project. With the config absent
+it refuses with the exact file to author — that authoring is the practice's single manual step, and
+the refusal says so. A refused declaration exits nonzero and reports both halves: what was minted and
+what was not declared.
+
 Exit codes: 0 green; 1 violation or refusal; 2 usage, config or enumeration error.`;
 
 const takeOption = (argv, flag) => {
@@ -178,20 +277,22 @@ export const main = (argv, ctx = {}) => {
     // Resolved BEFORE the run and before anything is rendered: every path this run names is then
     // meaningful from any directory, not only from the one that invoked it.
     const cwd = resolve(ctx.cwd ?? process.cwd(), cwdOption.value ?? '.');
-    const modes = MODES.filter((mode) => reasonOption.rest.includes(mode));
-    if (modes.length === 0) throw usageFail('nothing to do — pass --check or --write-baseline (see --help)');
-    if (modes.length > 1) throw usageFail(`pass exactly ONE mode, got: ${modes.join(' and ')}`);
+    // Counted over the ARGUMENTS, not over the mode list: filtering the list collapses repeats, so
+    // `--adopt --adopt` read as exactly one mode and a WRITE ran under an argument list this very
+    // guard had just called invalid.
+    const modes = reasonOption.rest.filter((arg) => MODES.includes(arg));
+    if (modes.length === 0) throw usageFail(`nothing to do — pass one of ${MODES.join(', ')} (see --help)`);
+    if (modes.length > 1) throw usageFail(`pass exactly ONE mode, got: ${modes.join(', ')}`);
     const unknown = reasonOption.rest.filter((arg) => !MODES.includes(arg));
     if (unknown.length > 0) throw usageFail(`unknown argument: ${unknown[0]}`);
     if (reasonOption.value !== undefined) {
-      if (modes[0] === '--check') throw usageFail('--reason belongs to --write-baseline — a check records nothing');
+      if (modes[0] === '--check') throw usageFail('--reason belongs to --write-baseline and --adopt — a check records nothing');
       const defect = reasonDefect(reasonOption.value);
       if (defect) throw usageFail(defect);
     }
     const deps = ctx.deps ?? {};
-    const { code, lines } = modes[0] === '--check'
-      ? runCheck({ cwd, deps })
-      : runWriteBaseline({ cwd, reason: reasonOption.value, deps });
+    const run = { '--check': runCheck, '--write-baseline': runWriteBaseline, '--adopt': runAdopt }[modes[0]];
+    const { code, lines } = run({ cwd, reason: reasonOption.value, deps });
     return { code, stdout: lines.join('\n'), stderr: '' };
   } catch (err) {
     return { code: err.exitCode ?? 1, stdout: '', stderr: `source-size-check: ${err.message}` };

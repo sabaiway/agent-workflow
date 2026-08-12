@@ -11,6 +11,7 @@ import { join, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fail, loadConfig, CONFIG_REL } from './orchestration-config.mjs';
 import { matchesCoverageProducer } from './coverage-producer.mjs';
+import { matchesSourceSizeGate } from './source-size-core.mjs';
 
 // The per-project declaration (strict JSON, hand-editable). cwd-relative — errors show a path the
 // user can open (the orchestration-config CONFIG_REL idiom).
@@ -174,7 +175,8 @@ export const coverageDeclarationDefects = (gates, projectDir) => {
       message:
         `${GATES_REL}: the canonical coverage checker (${checkers[0].id}) must be the LAST declared gate — ` +
         `${after.map((g) => g.id).join(', ')} would run after it consumed the lcov. REORDER the declaration by hand ` +
-        '(the gate itself is fine — this is an ORDERING refusal, and the fill is append-only, so it cannot reorder for you)',
+        '(the gate itself is fine — this is an ORDERING refusal about entries that are ALREADY declared: the fill ' +
+        'places a new entry before a trailing checker, but it never reorders what it did not write)',
     }];
   }
   if (!coverageProducerPrecedes(gates, index)) {
@@ -201,6 +203,16 @@ const REVIEW_DEPENDENT_CHECKS = ['review-state', 'commit-guard', 'coverage-check
 
 export const isReviewDependentGate = (gate, projectDir) =>
   REVIEW_DEPENDENT_CHECKS.some((check) => matchesCanonicalCheck(check, gate.cmd, projectDir));
+
+// isKitOwnedCheckerGate — is this gate one of the KIT's own checkers, rather than something the
+// project declared to verify itself? A separate question from review-dependence, and the two stopped
+// coinciding the moment a kit checker arrived that needs no receipt: the source-size gate is
+// deliberately in neither FINAL_CORE_CHECKS nor REVIEW_DEPENDENT_CHECKS, so every surface asking
+// "does this declaration verify the PROJECT?" through the review-dependent predicate alone read a
+// matrix of nothing but that gate as project verification. Three surfaces asked it, each knowing a
+// different half; this is the one home, so a future kit checker is added once.
+export const isKitOwnedCheckerGate = (gate, projectDir) =>
+  isReviewDependentGate(gate, projectDir) || matchesSourceSizeGate(gate.cmd, projectDir);
 
 // ── the pregate subset derivation (#66 / Decision 7 — ONE home for producer and factory) ─────
 

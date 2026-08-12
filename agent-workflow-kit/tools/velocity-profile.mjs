@@ -168,6 +168,19 @@ export const KIT_WRITER_PREVIEW_TOOLS = Object.freeze([
   'tools/cheap-agents.mjs',
   'tools/gate-hook.mjs',
 ]);
+// The source-size checker: a WRITER tool (--write-baseline, --adopt) whose ONE read-only mode is
+// seeded, and only in that exact byte-form. It joins neither list above on purpose — a wildcard
+// would cover its writers, and its arg-free invocation is a usage error rather than a dry-run, so
+// the writer-preview class does not describe it either.
+//
+// What this rule covers, stated exactly because the near-miss is easy to assume: the AGENT's own
+// direct `node <abs> --check`. It is NOT the byte-string a declared gate carries — gates-init emits
+// the path DOUBLE-QUOTED (a kit path with a space must survive), while a seedable allow rule may
+// carry no quotes at all, so the two spellings cannot be one string. The DECLARED gate's
+// promptlessness is the gate-approval hook's job, byte-exact against gates.json; this rule exists
+// for the invocation an agent types itself, which no declaration covers.
+export const KIT_SOURCE_SIZE_TOOL = 'tools/source-size-check.mjs';
+const SOURCE_SIZE_CHECK_FLAG = '--check';
 const KIT_WILDCARD_TOOLS = Object.freeze(KIT_READONLY_TOOLS.filter((rel) => rel !== KIT_RUN_GATES_TOOL));
 // The kit root this tool runs from (tools/..) — the tier's seed-time path anchor.
 const KIT_ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -363,8 +376,9 @@ Allowlist mode (default): seeds the fixed read-only Claude Code allowlist into .
 Default is --dry-run. --apply writes; --accept-edits only sets defaultMode when applying.
 --kit-tools additionally seeds the audited kit-tool tier: ${KIT_WILDCARD_TOOLS.length} read-only kit tools by resolved
 absolute path (args wildcard), run-gates.mjs as ONE exact project-root-pinned byte-string
-(project-exec - it runs YOUR declared gates.json), and the writers' exact arg-free dry-run
-preview byte-strings. Never touches settings.local.json.
+(project-exec - it runs YOUR declared gates.json), source-size-check.mjs as ONE exact --check
+byte-string (its read-only mode only - its writers keep prompting), and the writers' exact arg-free
+dry-run preview byte-strings. Never touches settings.local.json.
 --bridge-tier (own consent) seeds the bridge REVIEW wrappers' CODE mode for PLACED bridges
 (codex-review code, agy-review code - never the execution/probe wrappers, never plan/diff modes)
 + the quoted grounding pre-step rule, and the wrapper names into sandbox.excludedCommands (they
@@ -663,7 +677,7 @@ const formatAllowlist = (result) => [
 // The tier's honest posture, printed on every --kit-tools run: run-gates is project-exec (never
 // "read-only"), previews stay dry-run-only, and the tier gets none of the hook's residual ask-net.
 const KIT_TIER_NOTICE =
-  'kit-tools tier: paths are resolved absolute at seed time (fail-safe - a moved skill or stale path simply prompts again); run-gates.mjs is seeded as ONE exact byte-string pinned to this project root and is project-exec - it runs YOUR declared gates.json commands, never "read-only"; writer previews are exact dry-run byte-strings - every --apply/--write/--yes still prompts; tier entries get NO PreToolUse-hook residual coverage EXCEPT repo-search.mjs and path-inventory.mjs, whose invocations the hook scans because they take caller-supplied argument bytes (settings-level posture only for the rest - see the velocity mode notes).';
+  'kit-tools tier: paths are resolved absolute at seed time (fail-safe - a moved skill or stale path simply prompts again); run-gates.mjs is seeded as ONE exact byte-string pinned to this project root and is project-exec - it runs YOUR declared gates.json commands, never "read-only"; source-size-check.mjs is seeded as ONE exact --check byte-string - its --write-baseline/--adopt writers are NOT covered and still prompt; writer previews are exact dry-run byte-strings - every --apply/--write/--yes still prompts; tier entries get NO PreToolUse-hook residual coverage EXCEPT repo-search.mjs and path-inventory.mjs, whose invocations the hook scans because they take caller-supplied argument bytes (settings-level posture only for the rest - see the velocity mode notes).';
 
 const formatKitTier = (result) =>
   result.kitTools
@@ -763,6 +777,12 @@ export const screenAllowlistEntry = (pattern) => {
   if (tokens[0] !== KIT_TOOL_INVOKER) return false;
   // Writer preview: the arg-free dry-run byte-string of a preview-class writer.
   if (tokens.length === 2) return isKitToolPathToken(tokens[1], KIT_WRITER_PREVIEW_TOOLS);
+  // source-size: EXACTLY `node <abs source-size-check> --check` — its read-only mode and nothing
+  // else, and no --cwd, because this rule covers the invocation an AGENT types directly. It is not
+  // the declared gate's byte-string (the fill quotes that path); see the tier constant above.
+  if (tokens.length === 3) {
+    return isKitToolPathToken(tokens[1], [KIT_SOURCE_SIZE_TOOL]) && tokens[2] === SOURCE_SIZE_CHECK_FLAG;
+  }
   // run-gates: EXACTLY `node <abs run-gates> --cwd <abs root>` — any other form keeps prompting.
   return (
     tokens.length === 4 &&
@@ -803,6 +823,7 @@ export const deriveKitToolsAllowlist = ({ projectDir } = {}) => {
   return Object.freeze([
     ...KIT_WILDCARD_TOOLS.map((rel) => `Bash(${KIT_TOOL_INVOKER} ${join(KIT_ROOT, rel)}:*)`),
     `Bash(${KIT_TOOL_INVOKER} ${join(KIT_ROOT, KIT_RUN_GATES_TOOL)} ${RUN_GATES_CWD_FLAG} ${projectRoot})`,
+    `Bash(${KIT_TOOL_INVOKER} ${join(KIT_ROOT, KIT_SOURCE_SIZE_TOOL)} ${SOURCE_SIZE_CHECK_FLAG})`,
     ...KIT_WRITER_PREVIEW_TOOLS.map((rel) => `Bash(${KIT_TOOL_INVOKER} ${join(KIT_ROOT, rel)})`),
   ]);
 };

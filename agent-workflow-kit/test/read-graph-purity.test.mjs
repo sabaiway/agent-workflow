@@ -19,7 +19,11 @@ import { fileURLToPath } from 'node:url';
 const TOOLS_DIR = fileURLToPath(new URL('../tools', import.meta.url));
 const IMPORT_RE = /(?:^|\n)\s*(?:import\s[^'"]*?|export\s[^'"]*?from\s*)['"](\.{1,2}\/[^'"]+)['"]/g;
 
-const READ_ROOTS = ['flow-store-read.mjs', 'procedures.mjs'];
+// source-size-core.mjs joins the roots for the reason D-18 split it out at all: the practice has to
+// be ASKABLE from surfaces that must not reach a writer (the procedures render, the fill's candidate,
+// the advisor's probe), and "the core is pure" is a claim only this walk can keep true as the halves
+// behind it move.
+const READ_ROOTS = ['flow-store-read.mjs', 'procedures.mjs', 'source-size-core.mjs'];
 const WRITE_MODULES = ['atomic-write.mjs', 'flow-store.mjs', 'orchestration-write.mjs'];
 
 const moduleFiles = (() => {
@@ -69,6 +73,35 @@ describe('read-graph purity — the advisor surface is structurally read-only (F
     const closure = closureOf(READ_ROOTS.map((r) => resolve(TOOLS_DIR, r)));
     const reachedWriters = [...closure].map(rel).filter((r) => WRITE_MODULES.includes(r));
     assert.deepEqual(reachedWriters, [], `the read surface must not import the write half — reached: ${reachedWriters.join(', ')}; full closure: ${[...closure].map(rel).sort().join(', ')}`);
+  });
+
+  // ── the source-size practice's own two edges (D-18) ──────────────────────────────────
+  // The split exists so that the practice can be asked about from the read surfaces while its WRITER
+  // stays out of their reach. Both halves of that claim are pinned here, by name, because the whole
+  // arrangement is invisible from either file alone.
+  it('core-import-is-write-free: the source-size read core reaches no write-API module, and its writer is not in the read graph', () => {
+    const core = resolve(TOOLS_DIR, 'source-size-core.mjs');
+    const checker = resolve(TOOLS_DIR, 'source-size-check.mjs');
+    assert.ok(edges.has(core), 'the core is a tools module');
+    assert.ok((edges.get(core) ?? []).length > 0, 'and the walk really sees its re-export edges');
+    const closure = [...closureOf([core])].map(rel);
+    assert.deepEqual(closure.filter((r) => WRITE_MODULES.includes(r)), [], `the core reached: ${closure.sort().join(', ')}`);
+    assert.equal(closure.includes('source-size-check.mjs'), false, 'the core must never reach its own writer');
+    // Non-vacuity from the other side: the CHECKER does reach a writer, so "reaches no write-API
+    // module" is a property of the core, not of the walk failing to see anything at all.
+    assert.ok([...closureOf([checker])].map(rel).includes('atomic-write.mjs'), 'the checker half really does write');
+    // And no read root reaches the checker either — the whole point of splitting it out.
+    const readClosure = [...closureOf(READ_ROOTS.map((r) => resolve(TOOLS_DIR, r)))].map(rel);
+    assert.equal(readClosure.includes('source-size-check.mjs'), false, `a read root reached the writer: ${readClosure.sort().join(', ')}`);
+  });
+
+  it('no-cycle-checker-gatesinit: the checker imports the fill, the fill imports only the core, and neither closure re-enters the other', () => {
+    const checker = resolve(TOOLS_DIR, 'source-size-check.mjs');
+    const gatesInit = resolve(TOOLS_DIR, 'gates-init.mjs');
+    assert.ok(edges.get(checker).map(rel).includes('gates-init.mjs'), 'the adopt verb composes the fill rather than re-implementing it');
+    assert.ok(edges.get(gatesInit).map(rel).includes('source-size-core.mjs'), 'the fill asks the practice through its core');
+    const fillClosure = [...closureOf([gatesInit])].map(rel);
+    assert.equal(fillClosure.includes('source-size-check.mjs'), false, `the fill must not reach the checker: ${fillClosure.sort().join(', ')}`);
   });
 
   it('the tools module graph is acyclic — no import cycle anywhere (the flow/core graph rides inside)', () => {

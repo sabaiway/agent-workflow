@@ -45,11 +45,12 @@
 //     tool path (spaces survive; executes from the project root).
 //
 // Write discipline: preview (dry-run) is the DEFAULT and writes NOTHING — a declined offer leaves
-// the file byte-identical. `--apply` appends EXACTLY the consented entries (`--only <id>`
+// the file byte-identical. `--apply` writes EXACTLY the consented entries (`--only <id>`
 // repeatable) through the shared atomic-write core (tools/atomic-write.mjs — exclusive-create
-// tmp+rename, TOCTOU re-check, symlink STOPs): append-only, never modifies or removes an existing
-// entry, refuses id collisions, refuses a malformed declaration (never writes over what it cannot
-// parse). Deployment-gated: docs/ai presence (lstat, no-follow) on EVERY run; the
+// tmp+rename, TOCTOU re-check, symlink STOPs): ADD-ONLY (it never modifies, removes or reorders an
+// existing entry), refuses id collisions, refuses a malformed declaration (never writes over what it
+// cannot parse). WHERE a consented entry lands is a PLACEMENT rule, not a blind append — see
+// placeEntries below. Deployment-gated: docs/ai presence (lstat, no-follow) on EVERY run; the
 // .workflow-version == lineage-head stamp gate on --apply only (the velocity/gate-hook precedent).
 //
 // Exit codes: 0 done / dry-run; 1 precondition STOP (no deployment, stamp, symlink, malformed
@@ -60,10 +61,20 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { discoverGateCandidates, EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
 import { GATES_REL, validateDeclaration } from './run-gates.mjs';
-import { coverageDeclarationDefects, isReviewDependentGate } from './gates-declaration.mjs';
+import { canonicalCheckerGates, coverageDeclarationDefects, isKitOwnedCheckerGate } from './gates-declaration.mjs';
 import { COVERAGE_PRODUCER_BODY, matchesCoverageProducer } from './coverage-producer.mjs';
 import { loadConfig } from './orchestration-config.mjs';
 import { assertDocsAiDeployment, writeDocsAiFileAtomic, lstatNoFollow } from './atomic-write.mjs';
+// The source-size practice, through its PURE READ core only (D-18): this module asks whether the
+// practice is minted, never how to mint it — the checker's writer half stays outside the read graph.
+import {
+  INITIAL_ADOPTION_REASON,
+  SOURCE_SIZE_GATE_ID,
+  SOURCE_SIZE_TOOL_PATH,
+  escapeForLine,
+  isLineUnsafe,
+  loadSourceSizeConfig,
+} from './source-size-core.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const KIT_ROOT = resolve(HERE, '..');
@@ -95,9 +106,11 @@ export const TRUST_CHAIN_DISCLOSURE =
 const USAGE = `usage: gates-init [--dry-run | --apply] [--only <id>]... [--cwd <dir>] [--help]
 
 The consented FILL preview for the project's own docs/ai/gates.json (D9). Default is --dry-run:
-prints the derived { id, title, cmd } entries and writes NOTHING. --apply APPENDS exactly the
-consented entries (--only <id> selects a subset; append-only — existing entries are never
-modified or removed, an id collision is refused). The offer is CLOSED-WORLD: only a
+prints the derived { id, title, cmd } entries and writes NOTHING. --apply WRITES exactly the
+consented entries (--only <id> selects a subset; add-only — existing entries are never modified,
+removed or reordered, an id collision is refused). A consented entry lands at the END, except that
+a non-checker entry goes BEFORE a declaration's trailing canonical coverage checker, which must
+stay last. The offer is CLOSED-WORLD: only a
 terminating-class script name (test / lint / type-check / build — never release/publish/deploy,
 never watch/serve, never a write-mode variant) whose BODY is a member of the literal runner
 allowlist is offered, as the hook-free \`COREPACK_ENABLE_NETWORK=0 <pm> exec -- <body>\` form for
@@ -410,6 +423,77 @@ export const flowCheckCandidate = (cwd, deps = {}) => {
   }
 };
 
+// The conditional SOURCE-SIZE candidate — keyed on the practice's own declaration rather than on a
+// recipe: the gate is offered ONLY over a MINTED docs/ai/source-size.json, because on any other
+// state the checker REFUSES by design (an absent config has no declared scope; an authored or
+// half-written one records nothing yet), and a declared gate that refuses is a matrix this preview
+// would have reddened on the user's behalf. The two states are told apart out loud: a project that
+// never declared the practice hears nothing (there is no offer to make), while one that authored it
+// and stopped short hears WHY the gate is not offered yet — the mint is the step it is missing.
+// A path is unrenderable when EITHER guard fires, and both are asked ONCE, before anything about
+// this candidate is printed. They are the same question wearing two coats: double-quoting cannot
+// survive a shell-active byte, and a line-unsafe byte cannot be printed at all — U+2028 quotes
+// perfectly and still breaks the line, so a surface screening only shell metacharacters lets it walk
+// into a declared gate cmd while reading as fully guarded.
+const unrenderableToolPath = (text) => isLineUnsafe(text) || DQ_UNSAFE_PATH_PATTERN.test(text);
+
+export const sourceSizeCandidate = (cwd, deps = {}) => {
+  const toolPath = deps.sourceSizeTool ?? SOURCE_SIZE_TOOL_PATH;
+  try {
+    const { state } = loadSourceSizeConfig(resolve(cwd), deps);
+    if (state === 'absent') return { candidate: null, note: null };
+    // Asked BEFORE the state branches: every branch below prints this path, so a check that only one
+    // of them performs is a guard the other silently lacks.
+    if (unrenderableToolPath(toolPath)) {
+      // The withheld path is NAMED, so it crosses the line-safety boundary before it is rendered —
+      // escaped rather than dropped, because two different paths must never print as the same one.
+      // The advice still follows the STATE: over an unminted record a hand-declared gate is red on
+      // every run, so pointing there would hand the reader their next failure as the way out.
+      const lane = state === 'minted'
+        ? 'declare the gate by hand'
+        : `mint the record first — run source-size-check.mjs --adopt --reason "${INITIAL_ADOPTION_REASON}" with the working directory set to this project, then declare the gate by hand`;
+      return {
+        candidate: null,
+        note:
+          `the source-size candidate was withheld: the resolved kit path cannot be rendered into a ` +
+          `command — it carries bytes that do not survive double-quoting, or a byte that cannot appear ` +
+          `in a printed line at all (${escapeForLine(toolPath)}) — ${lane}`,
+      };
+    }
+    if (state !== 'minted') {
+      // The named recovery is the reader's next keystroke, so it is a command they can actually run:
+      // the resolved absolute path and an explicit --cwd, carrying the reason a FIRST mint requires
+      // (recording a value for the first time is a raise, and the bare verb would refuse). The
+      // PROJECT path is screened by the same predicate — a rendered command naming a path the shell
+      // would read differently could run somewhere other than the project it names.
+      const project = resolve(cwd);
+      const recovery = unrenderableToolPath(project)
+        ? `run source-size-check.mjs --adopt --reason "${INITIAL_ADOPTION_REASON}" yourself, with the working directory set to this project (no command is printed: this project's path cannot be rendered into one)`
+        : `run node "${toolPath}" --adopt --reason "${INITIAL_ADOPTION_REASON}" --cwd "${project}"`;
+      return {
+        candidate: null,
+        note:
+          `the source-size candidate was withheld: the declared practice is not yet MINTED (${state}) — ` +
+          `the checker refuses until it records this tree, so declaring the gate now would red the matrix; ` +
+          `${recovery}, then re-run this preview`,
+      };
+    }
+    return {
+      candidate: {
+        id: SOURCE_SIZE_GATE_ID,
+        title: 'Source files within the declared size caps (the recorded ratchet)',
+        cmd: `node "${toolPath}" --check`,
+      },
+      note: null,
+    };
+  } catch (err) {
+    return {
+      candidate: null,
+      note: `the source-size practice config is unreadable (${err.message}) — the source-size candidate was not evaluated`,
+    };
+  }
+};
+
 // Every --only id must name an OFFERED entry — enforced in BOTH paths (dry-run and apply), before
 // any empty-offer shortcut, so a typo is a loud usage error, never a silent filter or a silent
 // "nothing to offer" success.
@@ -424,15 +508,16 @@ const assertOnlyIdsOffered = (offer, onlyIds = []) => {
   }
 };
 
-// The full offer: script entries + the conditional review-state / flow-check / coverage-check
-// candidates (coverage-check LAST — the `run-gates --final` declaration-shape rule requires the
-// checker as the last declared gate, so a whole-offer apply is final-ready by construction). The
-// pair keys on plan-execution.review reviewed/council OR a flow block (the P21 trio); flow-check
-// itself appears only under a flow block.
+// The full offer: script entries + the conditional review-state / flow-check / source-size /
+// coverage-check candidates (coverage-check LAST — the `run-gates --final` declaration-shape rule
+// requires the checker as the last declared gate, so a whole-offer apply is final-ready by
+// construction). The pair keys on plan-execution.review reviewed/council OR a flow block (the P21
+// trio); flow-check itself appears only under a flow block; source-size only over a minted practice.
 export const buildOffer = (cwd, deps = {}) => {
   const scripts = deriveScripts(cwd, deps);
   const rs = reviewStateCandidate(cwd, deps);
   const fc = flowCheckCandidate(cwd, deps);
+  const ss = sourceSizeCandidate(cwd, deps);
   const cc = coverageCheckCandidate(cwd, deps);
   // Decision 3 — the checker is never offered DEAD. The producer may come from this offer or from
   // a declaration the user already wrote by hand, so the rule reads the merged picture; a
@@ -462,7 +547,7 @@ export const buildOffer = (cwd, deps = {}) => {
   //   readable, no gate   → the claim and the advice both hold;
   //   readable, has gate  → a green matrix proves plenty and the user already declared their own.
   const declarationState =
-    existing.unreadable !== null ? 'unreadable' : existing.gates.some((gate) => !isReviewDependentGate(gate, cwd)) ? 'has-gate' : 'no-gate';
+    existing.unreadable !== null ? 'unreadable' : existing.gates.some((gate) => !isKitOwnedCheckerGate(gate, cwd)) ? 'has-gate' : 'no-gate';
   const noVerificationNote =
     scripts.entries.length > 0
       ? null
@@ -471,10 +556,10 @@ export const buildOffer = (cwd, deps = {}) => {
             ? `, and none is declared either, so a green matrix would prove only that the kit's own checkers ran; declare your own in ${GATES_REL}`
             : ''
         }`;
-  const candidates = [rs.candidate, fc.candidate, withholdCoverage ? null : cc.candidate].filter(Boolean);
+  const candidates = [rs.candidate, fc.candidate, ss.candidate, withholdCoverage ? null : cc.candidate].filter(Boolean);
   return {
     entries: [...scripts.entries, ...candidates],
-    notes: [...scripts.notes, noVerificationNote, unreadableNote, rs.note, fc.note, coverageNote].filter(Boolean),
+    notes: [...scripts.notes, noVerificationNote, unreadableNote, rs.note, fc.note, ss.note, coverageNote].filter(Boolean),
   };
 };
 
@@ -510,7 +595,7 @@ export const formatPreview = (offer, applyInvocation = null, { explicitOnly = fa
   return lines.join('\n');
 };
 
-// ── the existing declaration (append-only source) ──────────────────────────────────────
+// ── the existing declaration (the base every placement is computed against) ────────────
 const loadExistingDeclaration = (cwd, deps = {}) => {
   const read = deps.readFile ?? readFileSync;
   const lstat = deps.lstat ?? lstatSync;
@@ -572,7 +657,30 @@ const readStampValue = (cwd, deps = {}) => {
   }
 };
 
-// ── apply (append exactly the consented entries) ───────────────────────────────────────
+// ── the PLACEMENT rule (D-8) ───────────────────────────────────────────────────────────
+// WHERE a consented entry lands. A blind append made the fill unusable on exactly the declarations
+// it should serve best: the canonical coverage checker must be the LAST gate, so appending any
+// other entry after it produced a declaration the written-declaration validator correctly reds —
+// and the only way to consent to a new gate on a final-capable declaration was to hand-edit.
+//
+// The rule is one sentence: a non-checker entry goes BEFORE a trailing canonical checker, everything
+// else goes at the end. It is ADD-ONLY still — existing entries keep their relative order, none is
+// modified or removed; only the insertion point moves. A consented CHECKER stays after the trailing
+// one on purpose: two canonical checkers is a duplicate the validator must refuse by name, and
+// hiding that shape behind a clever placement would refuse it for the wrong reason.
+export const placeEntries = (existingGates, selected, projectDir) => {
+  const last = existingGates[existingGates.length - 1];
+  const isChecker = (gate) => canonicalCheckerGates([gate], projectDir).length === 1;
+  if (last === undefined || !isChecker(last)) return [...existingGates, ...selected];
+  return [
+    ...existingGates.slice(0, -1),
+    ...selected.filter((entry) => !isChecker(entry)),
+    last,
+    ...selected.filter(isChecker),
+  ];
+};
+
+// ── apply (write exactly the consented entries, each at its placement) ─────────────────
 export const applyFill = ({ cwd, onlyIds = [] }, deps = {}) => {
   assertDocsAiDeployment(cwd, deps, { stop, noun: 'a gate declaration', rel: GATES_REL });
   const stampValue = readStampValue(cwd, deps);
@@ -593,14 +701,14 @@ export const applyFill = ({ cwd, onlyIds = [] }, deps = {}) => {
   const collisions = selected.filter((e) => existingIds.has(e.id)).map((e) => e.id);
   if (collisions.length) {
     throw stop(
-      `id collision — already declared in ${GATES_REL}: ${collisions.join(', ')} (append-only: the ` +
+      `id collision — already declared in ${GATES_REL}: ${collisions.join(', ')} (add-only: the ` +
         `fill never modifies or removes an existing entry; pick the others with --only, or edit by hand)`,
     );
   }
 
   const merged = {
     _README: existing.outcome === 'loaded' && existing.readme !== undefined ? existing.readme : templateReadme(deps),
-    gates: [...existingGates, ...selected],
+    gates: placeEntries(existingGates, selected, cwd),
   };
   validateDeclaration(merged); // every written declaration passes the runner's validator, always
   // Decision 4 — the coverage invariant is enforced on the declaration that GETS WRITTEN, not on
@@ -610,7 +718,11 @@ export const applyFill = ({ cwd, onlyIds = [] }, deps = {}) => {
   if (defects.length) throw stop(`${defects[0].message} — nothing was written`);
   const body = `${JSON.stringify(merged, null, 2)}\n`;
   const { writtenPath } = writeDocsAiFileAtomic(cwd, GATES_REL, body, deps, { stop, noun: 'a gate declaration' });
-  return { outcome: 'written', writtenPath, appended: selected.map((e) => e.id), notes: offer.notes };
+  const placed = selected.map((e) => e.id);
+  // `appended` is the DEPRECATED alias of `placed`, carrying the same array: this result is a public
+  // tools/ payload, and dropping a field an external consumer reads would make a placement rule a
+  // BREAKING change. The name is the only thing that was ever wrong — the value never was.
+  return { outcome: 'written', writtenPath, placed, appended: placed, notes: offer.notes };
 };
 
 // ── CLI ────────────────────────────────────────────────────────────────────────────────
@@ -670,7 +782,7 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
       for (const note of result.notes) log(`  note: ${note}`); // the user learns WHY (same note as the preview)
       return EXIT_OK;
     }
-    log(`[agent-workflow-kit] appended ${result.appended.length} consented gate(s) to ${GATES_REL}: ${result.appended.join(', ')}`);
+    log(`[agent-workflow-kit] declared ${result.placed.length} consented gate(s) in ${GATES_REL}: ${result.placed.join(', ')}`);
     for (const note of result.notes) log(`  note: ${note}`); // a mixed offer never silently omits what was screened
     log(`[agent-workflow-kit] ${TRUST_CHAIN_DISCLOSURE}`);
     return EXIT_OK;

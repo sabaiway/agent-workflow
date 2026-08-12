@@ -269,7 +269,13 @@ const BUDGET = {
   // Then 54272 → 55296 (54 KB): AD-044 Plan 3 — the same three-pointer contract also lands in
   // composition-handoff.md (a shared file in upgrade's read set), overflowing the pair by ~949 B;
   // the same documented KB-multiple bump.
-  daily: 25600, // the no-shared daily modes (help/backends/recipes/procedures/gates). 24576 →
+  daily: 26624, // the no-shared daily modes (help/backends/recipes/procedures/gates). 25600 →
+  // 26624 (26 KB): baseline-practices Plan 1 Phase 4 — gates.md gains the source-size candidate line
+  // (the MINTED-only offer condition + the one-line --adopt verb and its idempotence/refusal
+  // contract) and the fill's PLACEMENT rule (a non-checker entry lands before a trailing canonical
+  // checker; existing entries are never reordered), 1460 B of new contract content against 941 B of
+  // headroom — measured 26119 B after a compression pass; the same documented KB-multiple bump,
+  // never a silent re-pin. History: 24576 →
   // 25600 (25 KB): delegation Plan 1 Phase 3 — the dispatch mode header rides EVERY daily read set,
   // and the heaviest (gates) measures 24659 B, 83 B over the 24 KB ceiling; the same documented
   // KB-multiple bump, never a silent re-pin. History: 23552 →

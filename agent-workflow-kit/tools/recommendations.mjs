@@ -55,7 +55,13 @@ import { surveyFamily, surveyGateHook, surveyAdrLayoutStrict } from './family-re
 import { probeSandboxMasks, needsMasksApply } from './sandbox-masks.mjs';
 import { shellQuoteArg } from './review-state.mjs';
 import { isFinalCapableDeclaration } from './run-gates.mjs';
-import { loadDeclaration, canonicalCheckerGates, coverageProducerPrecedes, isReviewDependentGate, GATES_REL } from './gates-declaration.mjs';
+import { loadDeclaration, canonicalCheckerGates, coverageProducerPrecedes, isKitOwnedCheckerGate, GATES_REL } from './gates-declaration.mjs';
+import { matchesCoverageProducer } from './coverage-producer.mjs';
+// Read-only surfaces of the fill (buildOffer) and of the source-size practice (its pure core). The
+// fill's own WRITER is never called from here — the advisor renders its consent-gated command, it
+// does not run it.
+import { buildOffer } from './gates-init.mjs';
+import { INITIAL_ADOPTION_REASON, loadSourceSizeConfig, matchesSourceSizeGate } from './source-size-core.mjs';
 // The declared-path resolution + segment containment this item's convergence lane shares with the
 // autonomy render's allowWrite degrade — ONE leaf, so the two answers cannot drift.
 import { resolveDeclaredDir, dirCovers, isResolvableDeclaredEntry } from './declared-paths.mjs';
@@ -106,6 +112,10 @@ export const SEVERITIES = Object.freeze({
   'gates-declaration': SEVERITY_OPTIONAL,
   'gates-inert': SEVERITY_ATTENTION,
   'gates-inert.no-verification': SEVERITY_ATTENTION,
+  'source-size': SEVERITY_OPTIONAL,
+  // The declared-but-unminted arm reports a CONFIGURED declaration that is broken — a gate certain
+  // to refuse on every run — while the base arm stays an offer to enable something unconfigured.
+  'source-size.unminted': SEVERITY_ATTENTION,
   'gate-hook': SEVERITY_OPTIONAL,
   'commit-guard': SEVERITY_OPTIONAL,
   'read-lane': SEVERITY_OPTIONAL,
@@ -166,6 +176,8 @@ export const WHATS = Object.freeze({
   'gates-declaration': 'no declared gate matrix (docs/ai/gates.json absent or empty) — gates prompt one by one; the apply PREVIEWS its --apply line, writes nothing',
   'gates-inert': 'the declared coverage checker ({id}) has no producer before it — it certifies nothing this run, or reads a stale lcov',
   'gates-inert.no-verification': "all {n} declared gate(s) are the kit's own checkers — the matrix runs no project-verification command",
+  'source-size': 'no source-size gate — module size drifts unmeasured, and an over-cap file is invisible instead of recorded debt',
+  'source-size.unminted': 'the source-size gate is declared but its record ({state}) is not minted — the checker refuses, so this gate reds every run',
   'gate-hook': '{n} declared gate(s) prompt per run — the gate-approval hook is not wired',
   'commit-guard': 'the gate matrix is final-run-capable but no commit-guard arms the pre-commit hook — a commit needs no green receipt yet',
   'read-lane': 'the gate hook is wired but the read-only compound lane is off — pipes/chains of seeded reads still prompt one by one',
@@ -223,6 +235,7 @@ export const BENEFITS = Object.freeze({
   'review-recipe': 'recipe coverage — the review AND execution recipes you configured actually run instead of silently degrading',
   'gates-declaration': 'velocity — your project’s gates run as ONE declared batch with a PASS/FAIL table',
   'gates-inert': 'honest gates — the declared matrix verifies your project instead of reporting green over a check that ran nothing',
+  'source-size': 'maintainability — a module you can hold whole stays reviewable, and size drift becomes recorded, reasoned debt',
   'gate-hook': 'velocity — your own declared gate commands auto-approve byte-exactly (opt-in PreToolUse hook)',
   'commit-guard': 'integrity — commits require the ONE green --final receipt at the exact staged fingerprint (consented pre-commit arm)',
   'read-lane': 'velocity — pipes/chains of your seeded read-only commands auto-approve instead of prompting (opt-in, conservatively classified)',
@@ -263,6 +276,10 @@ export const OPT_IN_CAPABILITIES = Object.freeze([
   // converges the moment any gate exists, so it can never observe this state. The advisor key names
   // the state it reports (an inert declaration), the capability names what the user gains.
   { id: 'gates-verification', mode: 'gates', advisorKey: 'gates-inert' },
+  // The source-size practice is accepted AS a gate — it needs no mode of its own, and its capability
+  // is therefore declared where its declaration lives. It is the DISCOVERY lane for the practice on
+  // every deployment, new and existing alike: nothing else tells a project the practice exists.
+  { id: 'source-size', mode: 'gates', advisorKey: 'source-size' },
   { id: 'gate-hook', mode: 'hook', advisorKey: 'gate-hook' },
   { id: 'read-lane', mode: 'hook', advisorKey: 'read-lane' },
   { id: 'commit-guard', mode: 'commit-guard', advisorKey: 'commit-guard' },
@@ -432,12 +449,23 @@ const probeGates = ({ root, deps, add, skip }) => {
 //
 // Cause A (a canonical coverage checker with no producer anywhere in the declaration) is checked
 // FIRST and reported alone: its remedy — declaring the producer — also resolves cause B, because a
-// producer gate is not a kit checker. Its apply is HAND-APPLY: the producer must precede the
-// checker, and the fill is append-only (it refuses by name rather than reordering), so the edit is
-// the maintainer's.
+// producer gate is not a kit checker. Its apply follows what the FILL can actually do, which the
+// D-8 placement rule changed: when the checker is the declaration's LAST gate and the project's own
+// scripts yield an offerable producer, the fill now PLACES that producer before the checker, so the
+// remedy is the ordinary consent-gated preview. HAND-APPLY remains exactly where no offerable
+// producer exists, or where the checker is not last — there the edit really is the maintainer's,
+// because the fill never reorders entries it did not write.
 //
 // An ABSENT or EMPTY declaration belongs to the gates-declaration item; a malformed one throws out
 // of the validated reader and becomes this probe's stated skip, never a guess.
+// ONE rule for every fill preview this item renders: name only the entries the fill would ACCEPT.
+// An id the declaration already carries is refused as a collision, so an unrestricted preview hands
+// the reader a lane that cannot converge — and both arms of this item render over a declaration that
+// already carries at least one gate the offer also proposes, so both need the rule. With nothing
+// selectable the bare preview is still the honest render: its own notes say why.
+const fillPreviewFor = (root, ids) =>
+  `node ${q(toolPath('gates-init.mjs'))} --cwd ${q(root)}${ids.map((id) => ` --only ${id}`).join('')}`;
+
 export const probeGatesInert = ({ root, deps, add, skip }) => {
   try {
     const declaration = loadDeclaration(root, deps);
@@ -451,23 +479,95 @@ export const probeGatesInert = ({ root, deps, add, skip }) => {
       // only --final refuses that shape — a plain run reports every gate PASS.
       if (coverageProducerPrecedes(gates, gates.indexOf(checkers[0]))) return; // the pair is live
       const id = truncatedTo(oneLineOf(checkers[0].id), templateBudget(WHATS['gates-inert']));
+      // The fill can only help when it would land the producer in the right place: the checker must
+      // be LAST (that is the one position the placement rule inserts before) and the offer must
+      // actually carry a producer the fill would ACCEPT. An offered id that is already declared is
+      // refused as a collision, so counting it here would render a preview that cannot fix what the
+      // item just reported.
+      const declaredIds = new Set(gates.map((gate) => gate.id));
+      const checkerIsLast = checkers[0] === gates[gates.length - 1];
+      // The PRODUCER entry is kept, not just its existence: the rendered preview must name it with
+      // --only. A whole-offer apply here collides by construction — the declaration already carries
+      // the checker, and the offer carries it too — so an unrestricted preview would hand the reader
+      // a lane that refuses instead of the one entry that resolves what the item just reported.
+      const producer = buildOffer(root, deps).entries
+        .find((entry) => !declaredIds.has(entry.id) && matchesCoverageProducer(entry.cmd));
+      // The two ways the fill cannot help are DIFFERENT situations and need different sentences: a
+      // checker that is not last blocks a placement even when a producer is offerable, and saying no
+      // producer exists there would be plainly false to a reader looking at their own scripts.
+      const blocked = checkerIsLast
+        ? `no offerable producer exists here, and the fill never reorders entries it did not write`
+        : `${id} is not the LAST declared gate, so there is no trailing position to place a producer before, and the fill never reorders entries it did not write`;
       add(
         'gates-inert',
         fillTemplate(WHATS['gates-inert'], { id }),
-        `HAND-APPLY: declare or MOVE a suite gate carrying the coverage reporters BEFORE ${id} in ${GATES_REL} (references/modes/gates.md names the exact form), or drop ${id} — the fill is append-only and cannot reorder for you`,
+        checkerIsLast && producer
+          ? fillPreviewFor(root, [producer.id])
+          : `HAND-APPLY: declare or MOVE a suite gate carrying the coverage reporters BEFORE ${id} in ${GATES_REL} (references/modes/gates.md names the exact form), or drop ${id} — ${blocked}`,
       );
       return;
     }
-    if (gates.every((gate) => isReviewDependentGate(gate, root))) {
+    // The source-size checker is one of the kit's OWN checkers, and it is deliberately NOT
+    // review-dependent (it needs no receipt), so the review-dependent predicate alone cannot see it.
+    // Left out, a matrix of nothing but that gate reads as carrying project verification — and a
+    // project that just adopted the practice and declared nothing else would be told it is optimal.
+    // The source-size checker is one of the kit's OWN checkers, and it is deliberately NOT
+    // review-dependent (it needs no receipt), so the review-dependent predicate alone cannot see it.
+    // Left out, a matrix of nothing but that gate reads as carrying project verification — and a
+    // project that just adopted the practice and declared nothing else would be told it is optimal.
+    if (gates.every((gate) => isKitOwnedCheckerGate(gate, root))) {
+      const declaredIds = new Set(gates.map((gate) => gate.id));
+      // Only PROJECT-verification entries: a non-colliding entry is not enough, it has to be one
+      // that RESOLVES the item, and declaring one more kit checker converges nothing — the item
+      // would simply fire again on the next run.
+      const selectable = buildOffer(root, deps).entries
+        .filter((entry) => !declaredIds.has(entry.id) && !isKitOwnedCheckerGate(entry, root))
+        .map((entry) => entry.id);
       add(
         'gates-inert',
         fillTemplate(WHATS['gates-inert.no-verification'], { n: gates.length }),
-        `node ${q(toolPath('gates-init.mjs'))} --cwd ${q(root)}`,
+        fillPreviewFor(root, selectable),
         'gates-inert.no-verification',
       );
     }
   } catch (err) {
     skip('gates-inert', err);
+  }
+};
+
+// The SOURCE-SIZE offer (baseline-practices Plan 1). This is the practice's ONE discovery lane: the
+// checker ships with the kit and refuses until a project declares its own scope, so without this
+// item a deployment would never learn the practice exists — the same OPT-IN-SHIPS-INVISIBLE failure
+// the capability registry was built for. New and existing deployments meet it identically, because
+// the advisor section is mandatory at every upgrade.
+//
+// The probe asks ONE question — does the declaration carry the canonical source-size gate? — through
+// the practice's own matcher, so an id squatter (a gate called `source-size` running something else)
+// never reads as adopted. It deliberately does NOT key on the config's state: a project with no
+// config is exactly the project that needs to hear about the practice, and the apply's own refusal
+// is what teaches the one manual step (authoring the scope). A missing declaration is not a skip —
+// there is no source-size gate in it either.
+const probeSourceSize = ({ root, deps, add, skip }) => {
+  try {
+    const declaration = loadDeclaration(root, deps);
+    const gates = declaration.outcome === 'loaded' ? declaration.gates : [];
+    const applyLine = `node ${q(toolPath('source-size-check.mjs'))} --adopt --reason "${INITIAL_ADOPTION_REASON}" --cwd ${q(root)}`;
+    if (gates.some((gate) => matchesSourceSizeGate(gate.cmd, root))) {
+      // A DECLARED gate is not the same fact as a working one: the checker refuses on every config
+      // state but MINTED, so a gate declared over an absent or half-written record reds the matrix
+      // on every run. Reading the declaration alone would report that deployment as adopted and say
+      // nothing about the one thing that is wrong with it.
+      const { state } = loadSourceSizeConfig(root, deps);
+      if (state === 'minted') return; // adopted and armed — converged
+      add('source-size', fillTemplate(WHATS['source-size.unminted'], { state }), applyLine, 'source-size.unminted');
+      return;
+    }
+    // The reason string is PINNED, not composed: it is copied unchanged into every entry the first
+    // mint records, and a first mint records the whole tree — so "this is what the tree already
+    // carried when the practice arrived" is the one sentence that is true of all of them.
+    add('source-size', fillTemplate(WHATS['source-size'], {}), applyLine);
+  } catch (err) {
+    skip('source-size', err);
   }
 };
 
@@ -1054,6 +1154,7 @@ const PROBES = Object.freeze([
   probeReviewRecipe,
   probeGates,
   probeGatesInert,
+  probeSourceSize,
   probeCommitGuard,
   probeReadLane,
   probeStateBlockHook,
