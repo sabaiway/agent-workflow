@@ -4,6 +4,22 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 2.1.0 — the plan names the layout it is about to create (AD-091)
+
+The authoring canon now asks for the layout while the plan is still text: every Step that creates a
+file names that file and the single responsibility it carries — and where the project declares a
+source-size cap, the planned layout fits it.
+
+- **`procedures.md` plan-authoring, Draft (step 2)** — every Step that CREATES a file names that file
+  and the single responsibility it carries, and **where the project declares a source-size cap**, the
+  planned layout fits it. The conditional is canon, not decoration: a project that declares no
+  practice must never be handed an invented limit.
+- **`planning.md` §8 self-review checklist** — the matching line, so the draft is re-checked against
+  it before the plan is finalized. The line carries the canon's own rationale for asking at plan
+  time: "a gate that refuses an oversized file after it is written only pays for a rewrite".
+- The rung lives in **plan-authoring only** — plan-execution grows no rival copy of it. Both canon
+  pins are enforced by the existing canon suites, including the conditional form.
+
 ## 2.0.0 — strip-the-kit: the planning canon teaches the computed loop (AD-059)
 
 > ### ⚠ BREAKING — the §9 "Computed instrument" canon is rewritten
