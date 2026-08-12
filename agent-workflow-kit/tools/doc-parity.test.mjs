@@ -10,6 +10,7 @@ import { checkBinding, checkParity, BINDINGS, main } from './doc-parity.mjs';
 import { INCLUDE_IDENTITY_RULE, RESUME_VERIFY_RULE } from './worktrees.mjs';
 import { DISPATCH_CONTRACT } from './dispatch.mjs';
 import { FLOW_SCHEMA_VERSION, FLOW_LAGGING_KIT_CONTRACT } from './orchestration-config.mjs';
+import { COVERAGE_PRODUCER_BODY } from './coverage-producer.mjs';
 
 // A synthetic file surface: rel → text. A rel absent from the map THROWS (fails closed like a real
 // unreadable file).
@@ -146,6 +147,18 @@ describe('the REAL registry is consistent with the shipped contract docs (dogfoo
       4,
       'the vocabulary is closed at four values — a new one is bound here or it is not shipped',
     );
+  });
+
+  // The gates contract doc prints the canonical suite command byte for byte, so it is a HAND COPY
+  // of a constant that has already moved once. Without this pin, deleting the binding would shrink
+  // BINDINGS and leave every dogfood check green — the guard disarmed in silence.
+  it('doc-parity registry carries the coverage producer body binding', () => {
+    const binding = BINDINGS.find((b) => b.constant === 'coverage-producer-body');
+    assert.ok(binding, 'registry must bind the canonical producer body to the gates contract doc');
+    assert.equal(binding.value, COVERAGE_PRODUCER_BODY, 'the binding tracks the LIVE constant, never re-typed bytes');
+    assert.equal(binding.token, COVERAGE_PRODUCER_BODY, 'the doc must carry the whole command, not a fragment');
+    assert.deepEqual([...binding.files].sort(), ['references/modes/gates.md']);
+    assert.match(main(['--help']).stdout, /coverage-producer-body/, 'the HELP inventory must name the binding');
   });
 
   it('doc-parity registry carries the worktrees cleanup-ownership binding', () => {

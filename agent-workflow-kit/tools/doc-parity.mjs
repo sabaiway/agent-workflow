@@ -47,6 +47,9 @@ import { RECEIPT_DEADLINE_CONTRACT } from './receipt-deadline.mjs';
 import { DISPATCH_CONTRACT } from './dispatch.mjs';
 // The coverage vocabulary leaf: a CLOSED value set the gates contract doc must enumerate.
 import { COVERAGE } from './coverage-state.mjs';
+// The canonical producer body: gates.md prints the whole command byte for byte, so the doc is a
+// hand copy of a moving constant unless it is bound here.
+import { COVERAGE_PRODUCER_BODY } from './coverage-producer.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -163,6 +166,13 @@ export const BINDINGS = Object.freeze([
   // CLOSED value set, so a renamed or added value fails here instead of leaving the doc describing
   // a vocabulary the runner no longer speaks. One binding per value — the set is small and closed.
   ...Object.values(COVERAGE).map((value) => valueBinding(`coverage-state:${value}`, value, `\`coverage=${value}\``, [GATES_DOC])),
+  // The canonical producer body: gates.md prints the whole command byte for byte, so the doc is a
+  // HAND COPY of a constant that moves (it moved once already, when the destination became a
+  // required-parameter expansion). Nothing else pinned it — the drift guard holds the two authored
+  // copies of the code region equal, and the producer test pins the shipped template, but neither
+  // sees the doc. Bound here, a future move fails a declared gate instead of leaving the contract
+  // doc quietly describing a command the kit no longer emits.
+  valueBinding('coverage-producer-body', COVERAGE_PRODUCER_BODY, COVERAGE_PRODUCER_BODY, [GATES_DOC]),
 ].map((b) => Object.freeze(b)));
 
 // ── the pure checker (readText is injectable for hermetic tests) ────────────────────────
@@ -214,8 +224,9 @@ orientation contract (shared-queue rule, landing-from-main, no-dependencies inst
 worktrees cleanup-ownership rule, the worktrees include-identity rule, the worktrees
 resume-verify rule, the flow tolerate contract (the accepted flow schema version + the
 lagging-kit sentence, procedures.md), the receipt-deadline arrival contract, the dispatch engine's
-FORM-only + aggregate-refusal contract (dispatch.md), and the runner's closed coverage= summary
-vocabulary (gates.md) — to
+FORM-only + aggregate-refusal contract (dispatch.md), the runner's closed coverage= summary
+vocabulary (gates.md), and the canonical coverage-producer-body command the same doc prints in full
+(gates.md) — to
 the exact token its references/modes/*.md contract must carry, and
 asserts the CURRENT value renders into every bound file. A drifted doc, an unreadable bound file,
 or an absent token FAILS CLOSED.

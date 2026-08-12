@@ -12,6 +12,7 @@ import { spawnSync } from 'node:child_process';
 import {
   LEGACY_FORMS,
   UNIT_TESTS_COVERAGE_FLAGS,
+  KNOWN_COVERAGE_FLAG_SETS,
   COVERAGE_PRODUCER_BODY,
   RETIRED_STORE_BASENAMES,
   findRetiredStores,
@@ -37,6 +38,13 @@ const quiet = () => {
   return { log: (l) => out.push(String(l)), error: (l) => err.push(String(l)), out, err };
 };
 
+// The FIRST flag set the kit ever emitted, frozen here as literal bytes — never read back out of
+// KNOWN_COVERAGE_FLAG_SETS. Deployed declarations on disk carry exactly these bytes, so the
+// append-only promise needs a checker that goes red if they are edited or dropped; deriving the
+// "prior" from the set under test would keep this green while real deployments broke.
+const PRIOR_FLAG_SET_V1 =
+  '--experimental-test-coverage --test-reporter=lcov --test-reporter-destination="$AW_GIT_DIR/agent-workflow-lcov.info" --test-reporter=spec --test-reporter-destination=stdout';
+
 const LEGACY_LEDGER = { id: 'review-ledger', title: 'L', cmd: 'node "/kit/tools/review-ledger.mjs" --check' };
 const LEGACY_FOLD = { id: 'fold-completeness', title: 'F', cmd: 'node /kit/tools/fold-completeness.mjs --check' };
 const UNIT = { id: 'unit-tests', title: 'U', cmd: 'node --test tools/*.test.mjs' };
@@ -60,6 +68,43 @@ describe('migrate-gates — the pure migration plan', () => {
     const done = { id: 'unit-tests', title: 'U', cmd: `node --test ${UNIT_TESTS_COVERAGE_FLAGS} tools/*.test.mjs` };
     const { plan } = buildMigrationPlan([done], KIT_TOOLS);
     assert.equal(plan.find((r) => r.entry.id === 'unit-tests').action, 'keep');
+  });
+
+  it('a declaration carrying a PRIOR emitted flag set reads as already-configured — keep, zero diff, no warning', () => {
+    // The canonical flag set moved (the destination became a required-parameter expansion). A
+    // deployment written by the earlier kit must not suddenly read as customized: that would send
+    // the maintainer to hand-fix a gate which already produces the lcov the checker reads.
+    assert.notEqual(PRIOR_FLAG_SET_V1, UNIT_TESTS_COVERAGE_FLAGS, 'the v1 bytes are a form the kit no longer emits');
+    assert.ok(KNOWN_COVERAGE_FLAG_SETS.includes(PRIOR_FLAG_SET_V1), 'and the append-only set still carries them');
+    const deployed = [
+      { id: 'unit-tests', title: 'U', cmd: `node --test ${PRIOR_FLAG_SET_V1} tools/*.test.mjs` },
+      { id: 'review-state', title: 'RS', cmd: `node "${join(KIT_TOOLS, 'review-state.mjs')}" --check` },
+      { id: 'coverage-check', title: 'CC', cmd: `node "${join(KIT_TOOLS, 'coverage-check.mjs')}" --check` },
+    ];
+    const analysis = buildMigrationPlan(deployed, KIT_TOOLS);
+    assert.equal(analysis.plan.find((r) => r.entry.id === 'unit-tests').action, 'keep');
+    assert.deepEqual(analysis.customized, [], 'a prior emitted form is never reported customized');
+    assert.equal(analysis.hasProducer, true, 'it still counts as the producer the checker reads');
+    assert.equal(analysis.checkerInert, false);
+    assert.equal(analysis.finalCapable, true);
+    assert.deepEqual(resultingGates(analysis.plan), deployed, 'zero diff — nothing is rewritten');
+    const preview = formatPreview(analysis, 'APPLY');
+    assert.match(preview, /nothing to migrate/, 'the preview says there is nothing to do');
+    assert.doesNotMatch(preview, /CUSTOMIZED|INERT|WARNING/, 'and warns about nothing');
+  });
+
+  it('a unit-tests entry that merely CONTAINS the prior bytes is CUSTOMIZED, never a silent keep', () => {
+    // The already-configured decision runs through the closed producer predicate. A substring probe
+    // would call `echo <prior flags>` already configured and say nothing, leaving the maintainer
+    // with an entry the tool cannot verify and no recovery line.
+    const nearMiss = { id: 'unit-tests', title: 'U', cmd: `echo ${PRIOR_FLAG_SET_V1}` };
+    const analysis = buildMigrationPlan([nearMiss], KIT_TOOLS);
+    assert.equal(analysis.plan.find((r) => r.entry.id === 'unit-tests').action, 'keep', 'nothing is rewritten');
+    assert.deepEqual(analysis.customized.map((g) => g.id), ['unit-tests'], 'but it IS reported customized');
+    assert.equal(analysis.hasProducer, false, 'and it never counts as the producer the checker would read');
+    const preview = formatPreview(analysis, 'APPLY');
+    assert.match(preview, /CUSTOMIZED \(untouched\): unit-tests/);
+    assert.match(preview, /declare the canonical suite gate by hand/, 'the paste-ready recovery rides along');
   });
 
   it('adds the coverage-check gate LAST with the RESOLVED quoted path; never a second one', () => {

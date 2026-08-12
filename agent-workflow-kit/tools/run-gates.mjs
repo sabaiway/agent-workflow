@@ -140,7 +140,7 @@ const USAGE = [
   'exported to every gate child, and STRIPPED from the inherited environment first — a host-set',
   'value never stands in for a computed one. A selected gate referencing a producer variable this',
   'run will not set is refused BEFORE anything spawns (exit 1), naming the gate, the variable, and',
-  'the remedy — never left to expand to empty and fail far from its cause.',
+  'the remedy — never left to run without the runner-produced value.',
   'Sandbox-safe: the runner itself needs no network and writes only repo-local state — the D4 sandbox',
   'lane; each DECLARED gate command is the project\'s own, so ITS sandbox-safety is command-shape',
   'dependent (first try the sandbox-safe shape — cache under $TMPDIR, offline/notifier off).',
@@ -197,9 +197,12 @@ export const spawnGateViaBash = (cmd, cwd, extraEnv = {}) => {
   return spawnSync('bash', ['-c', cmd], { cwd, env: { ...env, ...extraEnv }, encoding: 'utf8', maxBuffer: MAX_GATE_OUTPUT_BYTES });
 };
 
-// A `$VAR` / `${VAR}` reference to a producer variable. A `${VAR:-default}` form is deliberately NOT
-// matched — a cmd carrying its own fallback does not depend on the injection.
-const referencesProducer = (cmd, name) => new RegExp(`\\$\\{${name}\\}|\\$${name}(?![A-Za-z0-9_])`).test(cmd);
+// A `$VAR` / `${VAR}` / `${VAR:?word}` reference to a producer variable. The required-parameter form
+// is the canonical producer destination: it makes an uninjected expansion fail BY NAME instead of
+// writing under an empty prefix, and it still depends on the injection — so it must refuse here,
+// pre-spawn, rather than dying inside a gate child far from its cause. A `${VAR:-default}` form
+// stays deliberately unmatched — a cmd carrying its own fallback does not depend on the injection.
+const referencesProducer = (cmd, name) => new RegExp(`\\$\\{${name}(?:\\}|:\\?)|\\$${name}(?![A-Za-z0-9_])`).test(cmd);
 
 const PRODUCER_RECOVERY = Object.freeze({
   AW_GIT_DIR: 'run from inside a git work tree — the runner resolves the git dir there and exports it to every gate.',
@@ -609,7 +612,7 @@ export const runCli = (argv, deps = {}) => {
     const unmet = findUnmetProducerRefs(selected, injectedEnv);
     if (unmet.length > 0) {
       for (const { id, name } of unmet) {
-        logError(`[run-gates] gate "${id}" references $${name}, which this run will not set — it would expand to empty and fail far from its cause.`);
+        logError(`[run-gates] gate "${id}" references $${name}, which this run will not set — the child would run without the runner-produced value.`);
         logError(`   Recovery: ${PRODUCER_RECOVERY[name]}`);
       }
       releaseSubsetRunLock();
