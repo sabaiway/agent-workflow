@@ -15,7 +15,9 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { SOURCE_SIZE_DEFAULTS, measureFile } from '../tools/source-size-core.mjs';
 
+const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const TOOLS_DIR = fileURLToPath(new URL('../tools', import.meta.url));
 const IMPORT_RE = /(?:^|\n)\s*(?:import\s[^'"]*?|export\s[^'"]*?from\s*)['"](\.{1,2}\/[^'"]+)['"]/g;
 
@@ -104,6 +106,32 @@ describe('read-graph purity — the advisor surface is structurally read-only (F
     assert.equal(fillClosure.includes('source-size-check.mjs'), false, `the fill must not reach the checker: ${fillClosure.sort().join(', ')}`);
   });
 
+  // ── the flow-check tranche's own boundaries (baseline-practices tranche 1) ────────────
+  // The split traded ONE 842-line module for a facade over three pure halves. What makes that a
+  // decomposition rather than the same coupling spread wider is the DIRECTION of the edges, and no
+  // single file can show it — only this walk can.
+  it('flow-check-import-boundaries: the facade is the only module that reaches all three halves, and the pure halves never reach the git lane', () => {
+    const facade = resolve(TOOLS_DIR, 'flow-check.mjs');
+    const cores = resolve(TOOLS_DIR, 'flow-check-cores.mjs');
+    const rungs = resolve(TOOLS_DIR, 'flow-check-rungs.mjs');
+    const gitLane = resolve(TOOLS_DIR, 'flow-check-git-lane.mjs');
+    for (const f of [facade, cores, rungs, gitLane]) assert.ok(edges.has(f), `${rel(f)} must be a tools module`);
+    for (const half of [cores, rungs, gitLane]) {
+      assert.ok(edges.get(facade).includes(half), `the facade must import ${rel(half)} — it owns the whole public surface`);
+    }
+    assert.ok(edges.get(cores).includes(rungs), 'the decision cores compose the evidence rungs');
+    // One way only: the rungs own the vocabulary both share, so the reverse edge would be a cycle.
+    assert.equal([...closureOf([rungs])].includes(cores), false, `the rungs must not re-enter the cores: ${[...closureOf([rungs])].map(rel).sort().join(', ')}`);
+    // Purity of the "pure over read-results" claim: base-motion inputs arrive as INJECTED
+    // resolvers, so neither pure half may reach the module that spawns git for them.
+    for (const half of [cores, rungs]) {
+      assert.equal([...closureOf([half])].includes(gitLane), false, `${rel(half)} must not reach the git lane — its inputs are injected, never resolved`);
+    }
+    // And the git lane stays a leaf, so it can never pull a decision core back into a git spawn.
+    const laneClosure = [...closureOf([gitLane])].map(rel).filter((r) => r !== 'flow-check-git-lane.mjs');
+    assert.deepEqual(laneClosure.filter((r) => r.startsWith('flow-check')), [], `the git lane must import no flow-check sibling: ${laneClosure.sort().join(', ')}`);
+  });
+
   it('the tools module graph is acyclic — no import cycle anywhere (the flow/core graph rides inside)', () => {
     const WHITE = 0;
     const GREY = 1;
@@ -124,5 +152,44 @@ describe('read-graph purity — the advisor surface is structurally read-only (F
     };
     for (const file of moduleFiles) if ((color.get(file) ?? WHITE) === WHITE) dfs(file);
     assert.deepEqual(cycles, [], `import cycles found:\n${cycles.join('\n')}`);
+  });
+});
+
+// This phase creates no test file of its own — flow-check.test.mjs stays byte-identical, which is
+// what keeps its red-proof standing — so the plan's own-rule check lands beside the boundaries test
+// that already binds the same three modules.
+describe('source-size — the plan keeps its own rule', () => {
+  it('phase5-plan-files-within-defaults: every file this plan has created through Phase 5 is within the declared defaults', () => {
+    // Cumulative and EXPLICIT (never derived from git state), so an earlier phase's file growing
+    // under a later phase's edits is caught here.
+    const created = [
+      'agent-workflow-kit/tools/source-size-core.mjs',
+      'agent-workflow-kit/tools/source-size-check.mjs',
+      'agent-workflow-kit/tools/source-size-check.test.mjs',
+      'agent-workflow-kit/tools/source-size-core.test.mjs',
+      'agent-workflow-kit/tools/source-size-config.test.mjs',
+      'agent-workflow-kit/tools/source-size-ratchet.test.mjs',
+      'agent-workflow-kit/tools/source-size-refusal.mjs',
+      'agent-workflow-kit/tools/source-size-config.mjs',
+      'agent-workflow-kit/tools/source-size-scope.mjs',
+      'agent-workflow-kit/tools/source-size-gate-cmd.mjs',
+      'agent-workflow-kit/tools/source-size-judge.mjs',
+      'agent-workflow-kit/tools/source-size-report.mjs',
+      'agent-workflow-kit/tools/source-size-aggregate.test.mjs',
+      'agent-workflow-kit/tools/source-size-writer.test.mjs',
+      'agent-workflow-kit/tools/source-size-practice.test.mjs',
+      'agent-workflow-kit/tools/source-size-stop-rendering.test.mjs',
+      'agent-workflow-kit/tools/source-size-adopt.test.mjs',
+      'agent-workflow-kit/tools/recommendations-source-size.test.mjs',
+      // Phase 5 (campaign tranche 1) — the three halves the flow-check facade now composes.
+      'agent-workflow-kit/tools/flow-check-cores.mjs',
+      'agent-workflow-kit/tools/flow-check-rungs.mjs',
+      'agent-workflow-kit/tools/flow-check-git-lane.mjs',
+    ];
+    for (const path of created) {
+      const { lines: count, maxLineBytes } = measureFile(REPO_ROOT, path);
+      assert.ok(count <= SOURCE_SIZE_DEFAULTS.maxLines, `${path}: ${count} lines exceeds ${SOURCE_SIZE_DEFAULTS.maxLines}`);
+      assert.ok(maxLineBytes <= SOURCE_SIZE_DEFAULTS.maxLineBytes, `${path}: longest line ${maxLineBytes} bytes exceeds ${SOURCE_SIZE_DEFAULTS.maxLineBytes}`);
+    }
   });
 });
