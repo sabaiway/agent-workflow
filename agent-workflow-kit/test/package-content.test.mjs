@@ -126,6 +126,11 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // contract doc — the mode ships no writer, so the doc IS the wiring surface
       'references/hooks/state-block-guard.mjs',
       'references/modes/state-block-guard.md',
+      // the ONE bundle↔placed comparison walk + the post-failure parity reading the read-only
+      // refresh degrade composes its line from. Pinned by NAME: setup-backends imports it, so a
+      // leaf dropped from the payload would break every placed-bridge refresh, and the count alone
+      // would hide it behind any other simultaneous drift.
+      'tools/refresh-parity.mjs',
       // the AD-038 review-enforcement pair: the read-only receipt checker + the facts assembler
       'tools/review-state.mjs',
       'tools/grounding.mjs',
@@ -452,7 +457,12 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       tools/flow-check.mjs stays the CLI + computeFlowDecision + the public surface, so no
     //       consumer's import path moved. Its *.test.mjs sibling is stripped by files[] and stays
     //       byte-identical — the split is characterized by the suite it already had.
-    assert.equal(packed.length, 204, `tarball file count drifted (${packed.length} ≠ 204)`);
+    // 205 = 204 + tools/refresh-parity.mjs (feedback-hardening Plan 1 F3): the bundle↔placed
+    //       comparison walk moved out of setup-backends.mjs, joined by the POST-FAILURE parity
+    //       verdict and the read-only skip line it composes. A LEAF — fs injected, nothing imported
+    //       back from the writer — which is what lets the read-only degrade prove its own claim
+    //       without the scanner being written twice. Its *.test.mjs sibling is stripped by files[].
+    assert.equal(packed.length, 205, `tarball file count drifted (${packed.length} ≠ 205)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

@@ -16,8 +16,24 @@ Run `node ${CLAUDE_SKILL_DIR}/tools/setup-backends.mjs [<backend>] [--bindir <pa
   downgraded), and every outcome line is composed by the tool — paste verbatim. When the skills dir
   is **read-only this session** and the placed bridge is already at the bundled version, the
   equal-version re-sync it would run cannot write: that outcome is `skipped-readonly` — a **stated
-  skip** (exit 0, not a failure) naming the current version, the skipped/incomplete re-sync, and the
-  read-only cause; it never claims a re-sync ran, and any local drift persists until a writable rerun.
+  skip** (exit 0, not a failure) naming the current version and the read-only cause; it never claims
+  a re-sync ran. What it says about the tree is **never assumed** — it runs a read-only **re-scan** of
+  the bundle-owned files **and** the wrapper links (the degrade returns before the re-link step, so
+  that axis is genuinely unreconciled) and reports exactly one **proven** verdict: `clean-parity` —
+  nothing the refresh manages differs — every file it would overwrite already matches, every node it
+  would add is present, every wrapper link and source mode is in place; `drifted` — something is
+  provably wrong, and it **names every item** with the recovery that actually applies to it. A
+  writable rerun **repairs** what it can bring to the required state (a differing file, an absent
+  bundled node, a wrapper it can re-link or chmod). It **REFUSES** anything else, by one rule: *a node
+  in the reconcile set that the rerun cannot be guaranteed to converge under the refresh's no-follow
+  and ownership policy* — for instance (a **non-exhaustive** illustration, never the contract) a
+  symlink standing where the refresh must write, a node of an incompatible kind, or a wrapper target
+  that is foreign or not a symlink at all. Refusals are named apart as resolve-by-hand-then-rerun; one
+  blanket "re-run to repair" would promise a repair that never happens. The **outcome line is the
+  authority on the exact cause** — each item carries its own; `unverifiable` — it **names every item
+  it could not compare** (a read or stat error, or a re-scan that could not run at all) and says the
+  remaining need for repair is unknown. Could-not-verify is never rendered as clean, and every verdict
+  keeps the exit code at 0.
   (A version-**behind** refresh blocked by the same read-only dir stays a loud `could not refresh`,
   its recovery pointing at a writable rerun.) Does not combine with `--dry-run`.
 - `--help`, `-h` — usage.

@@ -106,6 +106,21 @@ describe('the REAL registry is consistent with the shipped contract docs (dogfoo
     assert.deepEqual([...binding.files].sort(), ['references/modes/setup.md', 'references/modes/upgrade.md']);
   });
 
+  // The parity verdict that outcome carries (feedback-hardening Plan 1 F3). A DELETION pin, not a
+  // value pin: the bindings ride a spread over PARITY, so deleting the spread would leave the
+  // dogfood --check green (nothing missing to find) while the docs went free to re-promise a claim
+  // the tool no longer makes. Exactly three, their backticked tokens, and both bound docs.
+  it('the registry binds ALL THREE refresh-parity verdicts to the setup AND upgrade mode docs', () => {
+    const bound = BINDINGS.filter((b) => b.constant.startsWith('refresh-parity:'));
+    assert.equal(bound.length, 3, 'the verdict set is CLOSED at three — a dropped spread fails here');
+    assert.deepEqual(bound.map((b) => b.token).sort(), ['`clean-parity`', '`drifted`', '`unverifiable`'],
+      'backticked, so a bare word in prose cannot pass for the pinned token');
+    for (const b of bound) {
+      assert.deepEqual([...b.files].sort(), ['references/modes/setup.md', 'references/modes/upgrade.md'],
+        `${b.constant} must be bound in BOTH docs that enumerate the refresh outcomes`);
+    }
+  });
+
   // The "the tool knows and does not say" contract: a clean-tree PASS must still name a latent arm.
   // It was a prose-only bar before, so a deleted binding would leave the suite green and silently
   // re-open the drift it closes.

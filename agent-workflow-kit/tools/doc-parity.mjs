@@ -33,6 +33,8 @@ import {
   ACKS_FILE,
 } from './recommendations.mjs';
 import { SKIPPED_READONLY } from './setup-backends.mjs';
+// The parity verdicts that read-only skip may report — a CLOSED set the same two mode docs enumerate.
+import { PARITY } from './refresh-parity.mjs';
 // The host-conditional qualifier every settings-derived runtime claim carries (Decision 11).
 import { HOST_HONORS_QUALIFIER } from './velocity-profile.mjs';
 import { LATENT_ARM_NOTICE } from './review-state.mjs';
@@ -119,6 +121,13 @@ export const BINDINGS = Object.freeze([
   // (setup.md owns --refresh-placed; upgrade.md pastes its lines) — a reworded doc dropping the
   // outcome fails this pin plus the gate. The token tracks the exported SETUP constant.
   valueBinding('refresh-skipped-readonly', SKIPPED_READONLY, SKIPPED_READONLY, [SETUP_DOC, UPGRADE_DOC]),
+  // And the parity verdict that outcome now carries (feedback-hardening Plan 1 F3 / D3): the skip
+  // line used to assert "PARTIALLY updated" and "drift persists" unconditionally, so the docs
+  // described a post-state nothing had checked. The verdict set is CLOSED — one binding per value,
+  // backticked so a bare word in prose cannot pass for the pinned token — and both docs that
+  // enumerate the refresh outcomes must carry all three, or a reworded doc goes back to promising a
+  // claim the tool no longer makes.
+  ...Object.values(PARITY).map((token) => valueBinding(`refresh-parity:${token}`, token, `\`${token}\``, [SETUP_DOC, UPGRADE_DOC])),
   // The "the tool knows and does not say" contract: a clean-tree PASS must still name a latent arm.
   // It was a prose-only bar a doc could silently drop, so it is pinned to the live string the tool
   // actually emits — a reworded doc dropping the notice fails this pin plus the gate.
@@ -219,7 +228,8 @@ Usage:
 A CLOSED, exported registry binds each live code constant — the autonomy-doctor contract (the EXIT
 table, the status tokens, the trusted-dir allowlist), the recommendations/upgrade presentation
 contract (section header, empty line, verdict templates), the acks-store path, the host-conditional
-qualifier every settings-derived runtime claim carries, the setup refresh degrade token, the review-state clean-tree latent-arm notice, the worktrees provision-record
+qualifier every settings-derived runtime claim carries, the setup refresh degrade token and the three
+parity verdicts it reports, the review-state clean-tree latent-arm notice, the worktrees provision-record
 orientation contract (shared-queue rule, landing-from-main, no-dependencies install posture), the
 worktrees cleanup-ownership rule, the worktrees include-identity rule, the worktrees
 resume-verify rule, the flow tolerate contract (the accepted flow schema version + the

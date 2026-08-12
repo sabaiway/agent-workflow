@@ -1,10 +1,10 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, readlinkSync, readFileSync, existsSync, lstatSync, readdirSync, copyFileSync,
+  mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, readlinkSync, readFileSync, existsSync, lstatSync, readdirSync, copyFileSync, chmodSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import {
   bindirOnPath,
   deriveLinks,
@@ -193,6 +193,42 @@ describe('planFor — action selection', () => {
     assert.equal(plan.outcome, 'ok');
     assert.deepEqual(plan.links.map((l) => l.dstState), ['ours', 'ours']);
     assert.ok(plan.guides.some((g) => g.need === 'cli'));
+  });
+
+  // linkWrappers canonicalises the bindir through realpath BEFORE linking, so a RELATIVE target must
+  // resolve against the link's PHYSICAL parent. Under a symlinked bindir at a different nesting depth
+  // a lexical base lands somewhere else entirely and would call our own link foreign.
+  it('a RELATIVE link under a SYMLINKED bindir is still ours (resolved against the physical parent)', () => {
+    writeBundle(join(tmp, 'bundles'));
+    const skillDir = join(tmp, 'skill');
+    mkdirSync(join(skillDir, 'bin'), { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), '# installed\n');
+    const realBin = join(tmp, 'nested', 'realbin');
+    mkdirSync(realBin, { recursive: true });
+    const bindir = join(tmp, 'bin');
+    symlinkSync(realBin, bindir);
+    for (const r of Object.values(CODEX_ROLES)) {
+      symlinkSync(relative(realBin, join(skillDir, r.source)), join(realBin, r.cmd));
+    }
+    const plan = planFor('codex', baseDeps({ skillDir, bindir, validate: okValidate() }));
+    assert.equal(plan.outcome, 'ok');
+    assert.deepEqual(plan.links.map((l) => l.dstState), ['ours', 'ours']);
+  });
+
+  it('a realpath failure on the link directory → conflict, never a lexical guess', () => {
+    writeBundle(join(tmp, 'bundles'));
+    const skillDir = join(tmp, 'skill');
+    mkdirSync(join(skillDir, 'bin'), { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), '# installed\n');
+    const bindir = join(tmp, 'bin');
+    mkdirSync(bindir, { recursive: true });
+    for (const r of Object.values(CODEX_ROLES)) {
+      symlinkSync(relative(bindir, join(skillDir, r.source)), join(bindir, r.cmd));
+    }
+    const realpath = () => { throw eacces(); };
+    const plan = planFor('codex', baseDeps({ skillDir, bindir, validate: okValidate(), rest: { realpath } }));
+    assert.equal(plan.outcome, 'stop', 'an unresolvable link directory is fail-closed');
+    assert.match(plan.reason, /cannot resolve the link's directory \(EACCES\)/);
   });
 
   for (const state of ['stub', 'foreign', 'invalid-manifest', 'unsupported-schema']) {
@@ -870,7 +906,9 @@ describe('refreshPlacedBridges — overwrite honesty (D5)', () => {
       readFile: (p, enc) => { reads.push(p); return readFileSync(p, enc); },
     };
     const drift = scanBundleOwnedDrift(bundleDir, skillDir, fs);
-    assert.deepEqual(drift.unreadable, ['SKILL.md'], 'the symlinked placed file is "could not compare"');
+    assert.deepEqual(drift.conflicts, ['SKILL.md (a symlink is in the way)'],
+      'the containment guard refuses a symlinked dest, so this is a refusal — not merely "could not compare"');
+    assert.deepEqual(drift.unreadable, [], 'unreadable is for genuine read/stat errors only');
     assert.deepEqual(drift.drifted, [], 'the identical regular files show no drift');
     assert.ok(!reads.includes(join(skillDir, 'SKILL.md')), 'the symlinked placed path was NEVER read through');
     assert.ok(!reads.includes(secret), 'and its target was never touched');
@@ -907,7 +945,7 @@ describe('refreshPlacedBridges — read-only refresh degrades to skipped-readonl
     const [res] = refreshPlacedBridges(baseDeps({ skillDir, rest: { copyFile: roErr('EROFS') } }), ['codex-cli-bridge']);
     assert.equal(res.outcome, 'skipped-readonly');
     assert.match(res.line, /v1\.0\.0/, 'names the current version');
-    assert.match(res.line, /skipped|incomplete/i, 'states the re-sync was skipped/incomplete');
+    assert.match(res.line, /could not write/i, 'states the write that could not land — never an unproven post-state claim');
     assert.match(res.line, /read-only/i, 'names the read-only cause');
     assert.ok(!/re-synced from the bundled copy/.test(res.line), 'never claims a re-sync ran (that is already-current’s line)');
     assert.ok(!/no mutation|nothing was written|left unchanged/i.test(res.line), 'never claims file integrity (a partial copy may have happened)');
@@ -1002,6 +1040,116 @@ describe('refreshPlacedBridges — read-only refresh degrades to skipped-readonl
     const { code, text } = capturedMain(['codex'], baseDeps({ skillDir, rest: { copyFile: roErr('EROFS') } }));
     assert.notEqual(code, 0, 'setup keeps its loud failure — placement is a user-invoked write');
     assert.ok(!/skipped-readonly/.test(text), 'the read-only degrade is refresh-only, never the opt-in setup lane');
+  });
+});
+
+// ── §2.2 F3 — the read-only skip line is composed from a PROVEN parity verdict (D3/D4) ──
+// Frozen lines: each clause of each outcome maps to a scan outcome the fixture CONSTRUCTS. The old
+// line asserted "PARTIALLY updated" and "any remaining drift persists" on every read-only skip —
+// unproven claims about post-state. These pin the replacement: the calm claim only when a re-scan
+// proves parity (files AND wrappers), names on drift, and could-not-verify whenever a node could not
+// be compared. The outcome token and the exit code are unchanged — this splits the LINE, not the lane.
+describe('refreshPlacedBridges — the read-only skip line binds every clause to a re-scan (F3)', () => {
+  const roErr = (code) => () => { throw Object.assign(new Error(`${code}: read-only file system`), { code }); };
+
+  // A bridge in TRUE parity: placed bytes equal the bundle AND both wrappers are our managed symlinks
+  // onto executable sources — the state a calm "nothing to repair" is allowed to claim.
+  const seedLinkedParity = () => {
+    writeBundle(join(tmp, 'bundles')); // version 1.0.0, wrappers `echo hi`
+    const skillDir = join(tmp, 'skill');
+    mkdirSync(join(skillDir, 'bin'), { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), skillMd('codex-cli-bridge', '1.0.0'));
+    writeFileSync(join(skillDir, 'capability.json'), JSON.stringify(manifestOf('codex-cli-bridge', CODEX_ROLES, '1.0.0'), null, 2));
+    const bindir = join(tmp, 'bin');
+    mkdirSync(bindir, { recursive: true });
+    for (const r of Object.values(CODEX_ROLES)) {
+      writeFileSync(join(skillDir, r.source), '#!/bin/sh\necho hi\n');
+      chmodSync(join(skillDir, r.source), 0o755);
+      symlinkSync(join(skillDir, r.source), join(bindir, r.cmd));
+    }
+    return { skillDir, bindir };
+  };
+
+  it('parity proven (files + wrappers) → the CALM line: no drift claim, no alarm word, exit 0', () => {
+    const { skillDir, bindir } = seedLinkedParity();
+    const deps = () => baseDeps({ skillDir, bindir, rest: { copyFile: roErr('EROFS') } });
+    const [res] = refreshPlacedBridges(deps(), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'skipped-readonly', 'the outcome token is unchanged — only the line splits');
+    assert.match(res.line, /already current \(v1\.0\.0\)/, 'the version clause: both versions read this run and equal');
+    assert.match(res.line, /read-only/i, 'the cause clause: the failure was tagged at a write boundary');
+    assert.match(res.line, /no refresh-managed difference to repair/i, 'the parity clause: a re-scan actually compared the tree');
+    assert.match(res.line, /wrapper link and source mode/i, 'and the claim covers the wrapper axis the degrade never reconciled');
+    assert.ok(!/nothing would change/i.test(res.line), 'a rerun DOES rewrite byte-equal files — the claim is scoped to managed difference');
+    for (const alarm of [/incomplete/i, /PARTIALLY/, /failed/i, /persists/i]) {
+      assert.ok(!alarm.test(res.line), `a proven-clean outcome carries no ${alarm} clause`);
+    }
+    assert.equal(capturedMain(['--refresh-placed', 'codex'], deps()).code, 0, 'the stated skip stays exit 0');
+  });
+
+  it('a placed file whose bytes drifted → NAMES it + the writable-rerun recovery, still exit 0', () => {
+    const { skillDir, bindir } = seedLinkedParity();
+    writeFileSync(join(skillDir, 'bin', 'codex-exec.sh'), '#!/bin/sh\necho locally edited\n');
+    const deps = () => baseDeps({ skillDir, bindir, rest: { copyFile: roErr('EROFS') } });
+    const [res] = refreshPlacedBridges(deps(), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'skipped-readonly');
+    assert.match(res.line, /1 item\(s\) still differing/, 'the count is the re-scan\'s, not a guess');
+    assert.match(res.line, /bin\/codex-exec\.sh/, 'and the differing file is NAMED');
+    assert.match(res.line, /writable session/, 'the recovery is the writable rerun (in-session setup hits the same dir)');
+    assert.ok(!/no drift|nothing to repair/i.test(res.line), 'proven drift never renders the calm claim');
+    assert.equal(capturedMain(['--refresh-placed', 'codex'], deps()).code, 0, 'a stated skip stays 0 even when it names drift');
+  });
+
+  it('a bundled file ABSENT from the placed tree → drift (the parity reading of the scan\'s add)', () => {
+    const { skillDir, bindir } = seedLinkedParity();
+    writeFileSync(join(tmp, 'bundles', 'codex-cli-bridge', 'NEW-DOC.md'), 'bundled-only\n');
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir, bindir, rest: { copyFile: roErr('EROFS') } }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'skipped-readonly');
+    assert.match(res.line, /NEW-DOC\.md/, 'an absent placed file is exactly what a writable rerun would deliver');
+    assert.ok(!/nothing to repair/i.test(res.line), 'and it withholds the calm claim');
+  });
+
+  it('an UNLINKED wrapper → drift by name, even with every file byte-equal', () => {
+    const { skillDir, bindir } = seedLinkedParity();
+    rmSync(join(bindir, 'codex-review'));
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir, bindir, rest: { copyFile: roErr('EROFS') } }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'skipped-readonly');
+    assert.match(res.line, /wrapper codex-review/, 'the wrapper axis is checked, not assumed — the degrade returns before linkWrappers');
+    assert.ok(!/nothing to repair/i.test(res.line));
+  });
+
+  it('a placed file that cannot be READ → could-not-verify by name, never claimed clean', () => {
+    const { skillDir, bindir } = seedLinkedParity();
+    const placedSkillMd = join(skillDir, 'SKILL.md');
+    const readFile = (p, enc) => {
+      if (p === placedSkillMd) throw eacces();
+      return readFileSync(p, enc);
+    };
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir, bindir, rest: { readFile, copyFile: roErr('EROFS') } }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'skipped-readonly', 'an unverifiable node is not a failure — it is an honest unknown');
+    assert.match(res.line, /could NOT verify/, 'the withheld claim is stated as such');
+    assert.match(res.line, /SKILL\.md/, 'and the item it could not compare is NAMED');
+    assert.ok(!/no drift|nothing to repair/i.test(res.line), 'could-not-verify is NEVER rendered as clean');
+  });
+
+  it('a re-scan that throws (unreadable BUNDLE) → could-not-verify, never a reported failure', () => {
+    const { skillDir, bindir } = seedLinkedParity();
+    const bundleDir = join(tmp, 'bundles', 'codex-cli-bridge');
+    let copied = false;
+    // The pre-copy scan reads the bundle fine; the copy then fails read-only, and only AFTER that does
+    // the bundle become unreadable — so the post-failure re-scan raises out of the walk itself.
+    const lstat = (p) => {
+      if (copied && p.startsWith(bundleDir)) throw eacces();
+      return lstatSync(p);
+    };
+    const copyFile = () => { copied = true; return roErr('EROFS')(); };
+    const [res] = refreshPlacedBridges(baseDeps({ skillDir, bindir, rest: { lstat, copyFile } }), ['codex-cli-bridge']);
+    assert.equal(res.outcome, 'skipped-readonly', 'a re-scan problem never turns the stated skip into a failure');
+    assert.match(res.line, /could NOT verify/);
+    assert.match(res.line, /EACCES/, 'and it names why the verdict could not be reached');
+    // RED-FOLD: the subject must not claim WHICH side failed — this fixture breaks the BUNDLE read,
+    // so naming "the placed tree" would be the same unproven-attribution defect one layer down.
+    assert.match(res.line, /the bundle\/placed comparison \(EACCES\)/);
+    assert.ok(!/the placed tree/.test(res.line), 'the catch cannot know which side raised');
   });
 });
 

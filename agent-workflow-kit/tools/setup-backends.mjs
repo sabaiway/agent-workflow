@@ -32,6 +32,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import os from 'node:os';
 import { KNOWN_BACKENDS, detectBackend, detectBackends, resolveDir, guideFor, READY } from './detect-backends.mjs';
 import { copyTreeRefresh, linkManaged, isReadonlyWriteBoundary } from './fs-safe.mjs';
+import {
+  READONLY_RERUN_HINT, WRAPPER_MODE, scanBundleOwnedDrift, scanWrapperParity, parityVerdict,
+  unverifiableParity, readonlySkipLine,
+} from './refresh-parity.mjs';
 import { validateManifest, readAuthoritativeVersion, UNSUPPORTED, INVALID } from './manifest/validate.mjs';
 import { compareSemver } from './semver-lite.mjs';
 
@@ -113,58 +117,12 @@ const probeMarker = (file, fs) => {
 const SETTINGS_FILE_HINT = '${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf';
 const SETTINGS_CMD_HINT = '/agent-workflow-kit bridge-settings';
 
-// Bundle-owned regular files whose PLACED copy differs from the bundle (a local edit an equal-version
-// refresh would overwrite) or cannot be read (indeterminate — an honest degrade). Mirrors
-// copyTreeRefresh's src dispatch so it flags EXACTLY the files the overwrite touches: a symlink src is
-// additive (copyTreeRefresh skips an existing dest — never overwritten) and a dir recurses; a
-// bundled-only file (no placed copy) is a pure add, no loss. The BUNDLE read is our own shipped
-// artifact — a failure there is a loud corrupt-kit error upstream (never swallowed here); only the
-// PLACED read is caught (EACCES/EIO → 'unreadable', and the refresh still proceeds). Sorted output is
-// deterministic for the stated line. Exported for a direct unit test (the full driver cannot observe a
-// symlinked placed file — copyTreeRefresh refuses to overwrite one, so the refresh fails before any line).
-export const scanBundleOwnedDrift = (bundleDir, skillDir, fs) => {
-  const drifted = [];
-  const unreadable = [];
-  const walk = (rel) => {
-    const src = join(bundleDir, rel);
-    const dest = join(skillDir, rel);
-    const st = fs.lstat(src);
-    if (st.isSymbolicLink()) return;
-    if (st.isDirectory()) {
-      for (const entry of fs.readdir(src)) walk(rel ? join(rel, entry) : entry);
-      return;
-    }
-    // lstat the PLACED path NO-FOLLOW first — never read THROUGH a symlink (copyTreeRefresh's
-    // assertContainedRealPath would refuse to overwrite a symlinked dest, so reading its target here
-    // would be both unsafe and moot). Absent → a bundled-only addition (no local loss); a symlink /
-    // non-regular / unreadable placed node → "could not compare" without a read-through.
-    const destStat = (() => {
-      try {
-        return fs.lstat(dest);
-      } catch (err) {
-        return err && err.code === 'ENOENT' ? 'absent' : 'error';
-      }
-    })();
-    if (destStat === 'absent') return;
-    if (destStat === 'error' || destStat.isSymbolicLink() || !destStat.isFile()) {
-      unreadable.push(rel);
-      return;
-    }
-    const srcBytes = fs.readFile(src);
-    const destBytes = (() => {
-      try {
-        return fs.readFile(dest);
-      } catch {
-        unreadable.push(rel);
-        return null;
-      }
-    })();
-    if (destBytes === null) return;
-    if (!Buffer.from(srcBytes).equals(Buffer.from(destBytes))) drifted.push(rel);
-  };
-  walk('');
-  return { drifted: drifted.sort(), unreadable: unreadable.sort() };
-};
+// The bundle↔placed comparison walk lives in refresh-parity.mjs — ONE scanner, two readings (this
+// module's refresh-time drift report below, and the read-only degrade's post-failure parity verdict).
+// Re-exported so the scan's own unit tests and any consumer keep importing it from the writer they
+// already know. In THIS reading a bundled-only file (the scan's `absent` bucket) is a pure add — no
+// local loss — so `driftSummary` ignores it; the parity reading is the one that calls it drift.
+export { scanBundleOwnedDrift };
 
 // One user-facing sentence naming what an equal-version re-sync overwrote — or null when nothing local
 // was lost. Callers apply their own indent; the pointer names the settings file that survives a refresh.
@@ -284,6 +242,10 @@ export const deriveLinks = (manifest, skillDir) => {
 };
 
 // Classify a wrapper dst per-bindir (NOT PATH-wide): absent | ours (symlink → our source) | conflict.
+// A RELATIVE target resolves against the dst's PHYSICAL parent, because linkWrappers canonicalises the
+// bindir through realpath before it links: under a symlinked bindir (a common dotfiles setup) a
+// lexical base would answer a different question than the one the writer asks. A realpath failure is
+// a conflict, never a lexical fallback — the fallback could call a foreign link ours.
 const inspectDst = (dst, source, fs) => {
   const st = lstatNoFollow(dst, fs.lstat);
   if (st === null) return { state: 'absent' };
@@ -294,7 +256,15 @@ const inspectDst = (dst, source, fs) => {
   } catch (err) {
     return { state: 'conflict', reason: `unreadable symlink (${err.code ?? 'fs error'})` };
   }
-  const resolved = isAbsolute(target) ? target : resolve(dirname(dst), target);
+  let resolved;
+  if (isAbsolute(target)) resolved = target;
+  else {
+    try {
+      resolved = resolve(fs.realpath(dirname(dst)), target);
+    } catch (err) {
+      return { state: 'conflict', reason: `cannot resolve the link's directory (${err.code ?? 'fs error'})` };
+    }
+  }
   return resolved === resolve(source) ? { state: 'ours' } : { state: 'conflict', reason: `foreign symlink → ${target}` };
 };
 
@@ -378,7 +348,7 @@ export const linkWrappers = (skillDir, manifest, opts = {}) => {
   const realBindir = fs.realpath(bindir);
   const links = [];
   for (const { cmd, source } of derived) {
-    fs.chmod(source, 0o755);
+    fs.chmod(source, WRAPPER_MODE);
     const action = linkManaged(source, join(realBindir, cmd), realBindir, fs); // 'linked' | 'noop'
     links.push({ cmd, source, dst: join(bindir, cmd), action });
   }
@@ -586,18 +556,38 @@ const refreshSkillOnly = (entry, deps = {}) => {
 const NOT_PLACED_LINE = 'skipped — not placed (placement is opt-in: /agent-workflow-kit setup)';
 const stripPrefix = (message) => message.replace('[agent-workflow-kit] ', '');
 
-// The read-only degrade wording (D1). The STATED-skip line: version current + the re-sync
-// skipped/incomplete + the read-only cause + the residual — it never claims a re-sync RAN (that is
-// already-current's line) nor file integrity (a partial copy may have happened before the throw). The
-// FAILED line (a version-behind upgrade blocked by the same read-only dir) stays loud, but its
-// recovery points at a writable rerun — the in-session `setup` would hit the same read-only dir.
-const READONLY_RERUN_HINT = 're-run the refresh from a writable session (e.g. outside the read-only sandbox)';
-const skippedReadonlyLine = (name, version) =>
-  `  ${name}: already current${version ? ` (v${version})` : ''} — the re-sync was skipped/incomplete: ` +
-  `the skills directory is read-only this session (the tree may be PARTIALLY updated). Repair-on-rerun cannot ` +
-  `run here; any remaining drift persists until you ${READONLY_RERUN_HINT}.`;
+// The read-only degrade wording (D1, honesty-split per D4). The STATED-skip line is composed in
+// refresh-parity.mjs from a POST-FAILURE re-scan: the old line asserted "PARTIALLY updated" and "any
+// remaining drift persists" unconditionally — two claims about post-state that nothing had checked.
+// It still never claims a re-sync RAN (that is already-current's line). The FAILED line (a
+// version-behind upgrade blocked by the same read-only dir) stays loud, but its recovery points at a
+// writable rerun — the in-session `setup` would hit the same read-only dir.
 const readonlyRefreshFailedLine = (name, message) =>
   `  ${name}: could not refresh — ${stripPrefix(message)}; the skills directory is read-only this session — ${READONLY_RERUN_HINT}`;
+
+// The post-failure parity verdict behind that line (D3): a read-only re-scan of the bundle-owned
+// files AND the wrapper links, run AFTER the write refusal, so every clause binds to state proven
+// THIS run. The degrade returns before linkWrappers, so the wrapper axis is genuinely unreconciled —
+// a calm claim that skipped it would be unproven. Any failure raised out of the walk itself (the
+// bundle read is deliberately uncaught in there) collapses to could-not-verify: the calm claim is
+// withheld, never inverted into a false clean, and a re-scan problem never turns the stated skip
+// into a reported failure.
+const readonlyParity = (plan, deps) => {
+  const fs = fsDeps(deps);
+  try {
+    // ONE walk feeds both halves: the wrapper axis judges a source's mode from what the walk already
+    // reached, never from a second stat that could traverse an ancestor the walk refused.
+    const scan = scanBundleOwnedDrift(plan.place.bundleDir, plan.skillDir, fs);
+    return parityVerdict({
+      scan,
+      wrappers: scanWrapperParity(plan.links, fs, { skillDir: plan.skillDir, modes: scan.modes }),
+    });
+  } catch (err) {
+    // The catch cannot know WHICH side raised (the walk reads the bundle and the placed tree), so it
+    // names the comparison, never a side — attributing it would be the same unproven claim one layer down.
+    return unverifiableParity(`the bundle/placed comparison (${err.code ?? 'fs error'})`);
+  }
+};
 
 // Refresh every ALREADY-PLACED bridge from the kit's bundled copies and re-link its wrappers (a newer
 // bridge can add one). One reported outcome per backend — never a crash; a per-backend STOP/error
@@ -630,7 +620,11 @@ export const refreshPlacedBridges = (deps = {}, names = KNOWN_BACKENDS.map((b) =
       // A read-only skills dir at an EQUAL version is a STATED skip (repair-on-rerun cannot run here) —
       // never a false "could not refresh" and never a failure exit (D1/AD-056).
       if (refresh.skippedReadonly) {
-        return { name: plan.name, outcome: SKIPPED_READONLY, line: skippedReadonlyLine(plan.name, refresh.version) };
+        return {
+          name: plan.name,
+          outcome: SKIPPED_READONLY,
+          line: readonlySkipLine(plan.name, refresh.version, readonlyParity(plan, deps)),
+        };
       }
       if (!refresh.refreshed) {
         return { name: plan.name, outcome: 'not-placed', line: `  ${plan.name}: ${NOT_PLACED_LINE}` };
