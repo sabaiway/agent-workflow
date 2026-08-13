@@ -25,3 +25,10 @@ const stop = (message) => Object.assign(new Error(`[agent-workflow-kit] ${messag
 // creation. config is serialized canonically (serializeConfig: 2-space, _README-first, trailing NL).
 export const writeConfig = (cwd, config, deps = {}) =>
   writeDocsAiFileAtomic(cwd, CONFIG_REL, serializeConfig(config), deps, { stop, noun: 'a config' });
+
+// seedConfig(cwd, config, deps) → { writtenPath, created }. Same writer, CREATE-ONLY: it is the
+// seed-if-missing arm the ensure CLI runs, where a config that appeared between the probe and the
+// write must survive untouched (`created: false` says it did). writeConfig stays the arm for a
+// content update of a file the caller has just read.
+export const seedConfig = (cwd, config, deps = {}) =>
+  writeDocsAiFileAtomic(cwd, CONFIG_REL, serializeConfig(config), deps, { stop, noun: 'a config', createOnly: true });
