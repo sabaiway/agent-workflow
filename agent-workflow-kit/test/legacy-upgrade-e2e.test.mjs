@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { buildForeignFixture } from '../../scripts/testing/foreign-fixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOOLS = join(HERE, '..', 'tools');
@@ -101,6 +102,36 @@ describe('legacy upgrade E2E — migrate → stage → real --final → commit u
     assert.equal(commit.status, 0, `the guard permits the attested commit: ${commit.stdout}\n${commit.stderr}`);
     assert.notEqual(run('git', ['rev-parse', 'HEAD'], fx.root).stdout.trim(), head, 'the commit landed');
     rmSync(fx.root, { recursive: true, force: true });
+  });
+
+  it('a FOREIGN deployment whose checker is a VENDORED copy previews at exit 0 and is never written to', () => {
+    // The upgrade path D6 unblocks, driven through the real child: a project the closed producer
+    // world cannot express (TS sources, a vitest `test` script, the marker carrying the claim)
+    // declaring the checker through its OWN copy of the tool. Before the third outcome that
+    // declaration was an id collision, so the preview exited 1 and the deployment could not upgrade.
+    const vendorRel = join('vendor', 'coverage-check.mjs');
+    const fixture = buildForeignFixture({
+      gates: [
+        { id: 'suite', title: 'Suite', cmd: 'vitest run --coverage', lcovProducer: true },
+        { id: 'review-state', title: 'Reviews', cmd: `node "${join(TOOLS, 'review-state.mjs')}" --check` },
+        { id: 'coverage-check', title: 'Coverage', cmd: `node "${vendorRel}" --check` },
+      ],
+      extraFiles: { [vendorRel]: '// a vendored copy of the checker\n' },
+    });
+    try {
+      const declaration = join(fixture.root, 'docs', 'ai', 'gates.json');
+      const before = readFileSync(declaration, 'utf8');
+      const preview = run('node', [MIGRATE, '--cwd', fixture.root, '--kit-tools', TOOLS], fixture.root);
+      assert.equal(preview.status, 0, `the vendored deployment previews cleanly: ${preview.stdout}\n${preview.stderr}`);
+      assert.match(preview.stdout, /VERIFY \(preserved exactly as declared\): coverage-check/, 'the third outcome is NAMED');
+      assert.doesNotMatch(preview.stdout, /ADD coverage-check/, 'nothing is added over a checker already declared');
+      assert.doesNotMatch(preview.stdout, /already final-run-capable/, 'and the capability --final would refuse is never claimed');
+      const applied = run('node', [MIGRATE, '--cwd', fixture.root, '--kit-tools', TOOLS, '--apply'], fixture.root);
+      assert.equal(applied.status, 0, `${applied.stdout}\n${applied.stderr}`);
+      assert.equal(readFileSync(declaration, 'utf8'), before, 'the apply over a vendored deployment is a ZERO-DIFF write');
+    } finally {
+      fixture.teardown();
+    }
   });
 
   it('NEGATIVE: one unstaged edit after the final run and the guarded commit is REFUSED on fingerprint drift', () => {

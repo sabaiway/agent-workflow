@@ -61,6 +61,7 @@ import { readFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { readSmokeReceipt, candidateSmokeViolation } from './smoke-candidate.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(HERE, '..', '..');
@@ -417,6 +418,36 @@ export const newestChangelogEntry = (text) => {
   return lines.slice(start, end).join('\n');
 };
 
+// ── the candidate-smoke preflight (kit-carrying dispatches only) ───────────────────────
+
+// The kit is the package whose ADVISOR a consumer runs, so it is the one package whose behaviour a
+// unit suite cannot fully certify: in this repo's own tree every source file is inside the coverage
+// domain, and the false "flow optimal" cannot reproduce. `smoke-candidate.mjs` packs the candidate,
+// installs it into a foreign project and asserts the outcome; this refuses to dispatch the kit
+// without a receipt that covers the exact bytes being published.
+//
+// ORDERED before the FIRST dry-run dispatch, not just before the live one: a dry-run that concludes
+// green is what the release lane reads as "the candidate is publishable", so a smoke checked only in
+// live mode would arrive after the decision it exists to inform. `--verify-only` (zero dispatches)
+// and a dispatch not carrying the kit skip it — there is nothing to smoke either way.
+export const kitIsDispatched = (verifyTargets) => verifyTargets.includes('kit');
+
+// What the receipt covers is the LOCAL candidate; what a dispatch RUNS is the remote ref. On the
+// live path those are the same commit — the live preflight above refuses otherwise — but a dry-run
+// may legitimately be exploratory, and there the two are free to differ. Saying so is the whole
+// remedy: the receipt is never allowed to read as having smoked the bytes that were dispatched.
+export const assertCandidateSmoke = ({ gitDir, kitVersion, headSha, expectedSha, readFile, log }) => {
+  const violation = candidateSmokeViolation({ receipt: readSmokeReceipt(gitDir, readFile), kitVersion, headSha });
+  if (violation !== null) throw fail(EXIT.preflight, `candidate smoke preflight: ${violation}`);
+  log(`✓ candidate smoke receipt covers kit ${kitVersion} at local HEAD ${headSha}`);
+  if (expectedSha !== headSha) {
+    log(
+      `  NOTE: this dispatch runs the REMOTE ref at ${expectedSha}, which is not the commit the smoke covered (${headSha}) — ` +
+        'the smoke says nothing about the dispatched bytes here; a live dispatch requires the two to be equal.',
+    );
+  }
+};
+
 // ── the run machinery ─────────────────────────────────────────────────────────────────
 
 const listRuns = (ghApi, repo) =>
@@ -652,6 +683,21 @@ export const runDispatch = async (argv, deps = {}) => {
           );
         }
       }
+    }
+
+    // The candidate smoke — LAST of the local preflights and still before EVERY dispatch, including
+    // the dry-run one. It runs after the tree/version/stub refusals on purpose: a dirty tree must be
+    // reported as a dirty tree, not as a stale smoke receipt, and the smoke's own dirty rule is only
+    // meaningful once the more fundamental state has been named.
+    if (kitIsDispatched(verifyTargets)) {
+      assertCandidateSmoke({
+        gitDir: runGit(['rev-parse', '--absolute-git-dir']).trim(),
+        kitVersion: JSON.parse(readFile(join(root, PKG_DIRS.kit, 'package.json'), 'utf8')).version,
+        headSha: runGit(['rev-parse', 'HEAD']).trim(),
+        expectedSha,
+        readFile,
+        log,
+      });
     }
 
     // GitHub auth is required for BOTH dry-run and live (every phase drives `gh api`) — prove it

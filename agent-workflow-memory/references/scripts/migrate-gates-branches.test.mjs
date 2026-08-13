@@ -12,8 +12,11 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { CHECKER_CLAIM, UNIT_TESTS_COVERAGE_FLAGS, RETIRED_STORE_BASENAMES, checkerClaimTool, classifyCheckerClaim, main } from './migrate-gates.mjs';
 
+// Both core checks exist as real files — canonicity is a realpath anchor, so a check whose file is
+// absent resolves to nothing and is no claim at all (the fail-closed answer run-gates gives too).
 const KIT_TOOLS = mkdtempSync(join(tmpdir(), 'migrate-branches-kit-'));
 writeFileSync(join(KIT_TOOLS, 'coverage-check.mjs'), '// the installed checker the migration points at\n');
+writeFileSync(join(KIT_TOOLS, 'review-state.mjs'), '// the installed review-state check\n');
 
 const mkProject = (gates) => {
   const root = mkdtempSync(join(tmpdir(), 'migrate-branches-'));
@@ -246,6 +249,41 @@ describe('migrate-gates — refusal and no-op branches', () => {
     } finally {
       rmSync(root, { recursive: true, force: true }); // every other case here cleans up; this one held its root only for a path
     }
+  });
+
+  it('a VENDORED deployment previews at exit 0 and its --apply writes ZERO bytes', () => {
+    // The upgrade path this fixes: every preview AND every apply over a deployment that declared the
+    // checker through its own vendored copy used to exit 1 on an id collision, so such a deployment
+    // could not be upgraded at all.
+    const vendoredTools = mkdtempSync(join(tmpdir(), 'migrate-branches-vendored-'));
+    writeFileSync(join(vendoredTools, 'coverage-check.mjs'), '// a vendored copy of the checker\n');
+    const vendored = { id: 'coverage-check', title: 'CC', cmd: `node "${join(vendoredTools, 'coverage-check.mjs')}" --check` };
+    const root = mkProject([UNIT_DONE, REVIEW_STATE, vendored]);
+    const before = readFileSync(join(root, 'docs', 'ai', 'gates.json'), 'utf8');
+
+    const io = quiet();
+    assert.equal(main(['--cwd', root, '--kit-tools', KIT_TOOLS], io), 0, io.err.join('\n'));
+    const preview = io.out.join('\n');
+    assert.match(preview, /VERIFY \(preserved exactly as declared\): coverage-check/);
+    assert.doesNotMatch(preview, /ADD coverage-check/, 'nothing is added over a checker that is already declared');
+    assert.doesNotMatch(io.err.join('\n'), /id collision/, 'a vendored copy is not a squatter');
+
+    const io2 = quiet();
+    assert.equal(main(['--cwd', root, '--kit-tools', KIT_TOOLS, '--apply'], io2), 0, io2.err.join('\n'));
+    assert.equal(readFileSync(join(root, 'docs', 'ai', 'gates.json'), 'utf8'), before, 'the apply is a ZERO-DIFF write');
+    assert.match(io2.out.join('\n'), /NOT final-run-capable/, 'and the withheld claim survives the no-op apply');
+    rmSync(vendoredTools, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('a vendored copy named by a RELATIVE path resolves against the PROJECT root, as the runner resolves it', () => {
+    const root = mkProject([UNIT_DONE, REVIEW_STATE, { id: 'coverage-check', title: 'CC', cmd: 'node "vendor/coverage-check.mjs" --check' }]);
+    mkdirSync(join(root, 'vendor'), { recursive: true });
+    writeFileSync(join(root, 'vendor', 'coverage-check.mjs'), '// a vendored copy inside the project\n');
+    const io = quiet();
+    assert.equal(main(['--cwd', root, '--kit-tools', KIT_TOOLS], io), 0, io.err.join('\n'));
+    assert.match(io.out.join('\n'), /VERIFY \(preserved exactly as declared\): coverage-check/, 'a relative token is resolved, not dismissed');
+    rmSync(root, { recursive: true, force: true });
   });
 
   it('an un-unlinkable retired store is reported LOUDLY and never fails the migration', () => {

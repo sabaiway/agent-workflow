@@ -18,9 +18,11 @@ import {
   renderVerifyOnlyCommand,
   VERIFY_TRANSPORT_DEADLINE_MS,
 } from './dispatch-publish.mjs';
+import { buildReceipt, SMOKE_RECEIPT_BASENAME, SMOKE_RECEIPT_SCHEMA } from './smoke-candidate.mjs';
 
 const SHA = 'a'.repeat(40);
 const OTHER_SHA = 'b'.repeat(40);
+const REAL_KIT_VERSION = JSON.parse(readFileSync(join(REPO_ROOT, 'agent-workflow-kit', 'package.json'), 'utf8')).version;
 
 // ── a scripted world: gh REST + git + npm registry, fully hermetic ─────────────────────
 // Runs appear after a dispatch POST; each run completes on the next poll with the scripted
@@ -43,6 +45,9 @@ const makeWorld = ({
   npmTransport = false, // the npm /latest lookup fails at the TRANSPORT layer (typed transportError)
   npmParseError = false, // the npm /latest lookup returns a reachable-but-unparseable body
   releaseTransport = false, // the GitHub Release lookup fails at the TRANSPORT layer (typed .transport)
+  // The candidate-smoke receipt this world's git dir holds. Default = one that COVERS the candidate
+  // (so every pre-existing row keeps testing what it was written to test); `null` = none on disk.
+  smokeReceipt = undefined,
 } = {}) => {
   const calls = { dispatches: [], gitArgs: [], fetches: [], fetchOpts: [], ghReqs: [] };
   const runs = [];
@@ -98,8 +103,20 @@ const makeWorld = ({
     if (head.startsWith('ls-remote')) return `${remoteSha}\trefs/heads/main\n`;
     if (head === 'status --porcelain') return dirtyTree;
     if (head === 'rev-parse HEAD') return `${localHead}\n`;
+    if (head === 'rev-parse --absolute-git-dir') return `${join(REPO_ROOT, '.git')}\n`;
     throw new Error(`unscripted git: ${head}`);
   };
+
+  const receipt =
+    smokeReceipt === undefined
+      ? buildReceipt({
+          kitVersion: localVersions['agent-workflow-kit'] ?? REAL_KIT_VERSION,
+          headSha: localHead,
+          dirty: false,
+          packedFrom: 'repo',
+          at: '2026-08-13T00:00:00.000Z',
+        })
+      : smokeReceipt;
 
   const fetchJson = async (url, opts) => {
     calls.fetches.push(url);
@@ -116,6 +133,10 @@ const makeWorld = ({
 
   const readFile = (path, enc) => {
     const str = String(path);
+    if (str.endsWith(SMOKE_RECEIPT_BASENAME)) {
+      if (receipt === null) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      return JSON.stringify(receipt);
+    }
     if (str.endsWith('_publish-one.yml')) return readFileSync(join(REPO_ROOT, '.github/workflows/_publish-one.yml'), enc);
     const dirMatch = Object.keys(localVersions).find((dir) => str.endsWith(`${dir}/package.json`));
     if (dirMatch) return JSON.stringify({ name: `@sabaiway/${dirMatch}`, version: localVersions[dirMatch] });
@@ -299,6 +320,108 @@ describe('runDispatch — dry-run phase gates the live phase', () => {
     const code = await runDispatch(['memory'], deps);
     assert.equal(code, EXIT.ok);
     assert.deepEqual(calls.dispatches, [{ pkg: 'memory', dry: true, ref: 'main' }]);
+  });
+});
+
+// ── the candidate-smoke preflight (Plan 2 Step 3.3) ───────────────────────────────────
+
+describe('runDispatch — a kit-carrying dispatch needs a candidate smoke for THESE bytes', () => {
+  const kitWorld = (overrides = {}) =>
+    makeWorld({ localVersions: { 'agent-workflow-kit': '9.9.8', 'agent-workflow-engine': '9.9.9' }, ...overrides });
+
+  it('no receipt at all → preflight refusal BEFORE any dispatch, dry-run included', async () => {
+    const { deps, calls } = kitWorld({ smokeReceipt: null });
+    const code = await runDispatch(['kit'], deps);
+    assert.equal(code, EXIT.preflight);
+    assert.deepEqual(calls.dispatches, [], 'the dry-run is what the release lane reads as publishable — it must not run either');
+    assert.match(calls.lastError, /candidate smoke preflight: no candidate smoke receipt/);
+    assert.match(calls.lastError, /smoke-candidate\.mjs/, 'the refusal carries the command that clears it');
+  });
+
+  it('a receipt for ANOTHER version or ANOTHER commit refuses, naming which', async () => {
+    for (const [override, expected] of [
+      [{ kitVersion: '1.0.0' }, /passed for kit 1\.0\.0/],
+      [{ headSha: OTHER_SHA }, new RegExp(`passed at ${OTHER_SHA}`)],
+    ]) {
+      const receipt = buildReceipt({ kitVersion: '9.9.8', headSha: SHA, dirty: false, packedFrom: 'repo', at: 'x', ...override });
+      const { deps, calls } = kitWorld({ smokeReceipt: receipt });
+      assert.equal(await runDispatch(['kit'], deps), EXIT.preflight);
+      assert.match(calls.lastError, expected);
+      assert.deepEqual(calls.dispatches, []);
+    }
+  });
+
+  it('a DIRTY-tree or hand-supplied receipt clears NO dispatch, dry-run included', async () => {
+    // The dry-run's green is what the release lane reads as "the candidate is publishable", so both
+    // rules about whether the smoked bytes ARE the candidate hold in both modes.
+    for (const [override, expected] of [[{ dirty: true }, /DIRTY tree/], [{ packedFrom: 'supplied' }, /hand-supplied/]]) {
+      const { deps, calls } = kitWorld({
+        smokeReceipt: buildReceipt({ kitVersion: '9.9.8', headSha: SHA, dirty: false, packedFrom: 'repo', at: 'x', ...override }),
+      });
+      assert.equal(await runDispatch(['kit'], deps), EXIT.preflight);
+      assert.match(calls.lastError, expected);
+      assert.deepEqual(calls.dispatches, []);
+    }
+  });
+
+  it('a dry-run whose LOCAL candidate is not the dispatched ref says so, and never claims it smoked those bytes', async () => {
+    const { deps, calls } = kitWorld({
+      localHead: OTHER_SHA,
+      remoteSha: SHA,
+      smokeReceipt: buildReceipt({ kitVersion: '9.9.8', headSha: OTHER_SHA, dirty: false, packedFrom: 'repo', at: 'x' }),
+    });
+    const lines = [];
+    deps.log = (line) => lines.push(String(line));
+    assert.equal(await runDispatch(['kit'], deps), EXIT.ok);
+    const text = lines.join('\n');
+    assert.match(text, new RegExp(`covers kit 9\\.9\\.8 at local HEAD ${OTHER_SHA}`));
+    assert.match(text, new RegExp(`runs the REMOTE ref at ${SHA}`));
+    assert.match(text, /says nothing about the dispatched bytes/);
+    assert.deepEqual(calls.dispatches, [{ pkg: 'kit', dry: true, ref: 'main' }], 'the dry-run still runs — it is the CLAIM that is scoped, not the lane');
+  });
+
+  it('when the local candidate IS the dispatched ref the scope note is absent', async () => {
+    const { deps } = kitWorld({});
+    const lines = [];
+    deps.log = (line) => lines.push(String(line));
+    assert.equal(await runDispatch(['kit'], deps), EXIT.ok);
+    assert.doesNotMatch(lines.join('\n'), /REMOTE ref/, 'there is nothing to scope when the two are the same commit');
+  });
+
+  it('a schema the dispatcher cannot read is a refusal, never a silent accept', async () => {
+    const { deps, calls } = kitWorld({
+      smokeReceipt: { ...buildReceipt({ kitVersion: '9.9.8', headSha: SHA, dirty: false, packedFrom: 'repo', at: 'x' }), schema: SMOKE_RECEIPT_SCHEMA + 1 },
+    });
+    assert.equal(await runDispatch(['kit'], deps), EXIT.preflight);
+    assert.match(calls.lastError, /schema/);
+  });
+
+  it('`all` carries the kit, so it is gated the same way', async () => {
+    const { deps, calls } = makeWorld({ smokeReceipt: null });
+    assert.equal(await runDispatch(['all'], deps), EXIT.preflight);
+    assert.deepEqual(calls.dispatches, []);
+  });
+
+  it('a dispatch that does NOT carry the kit is never gated — there is nothing to smoke', async () => {
+    const { deps, calls } = makeWorld({ smokeReceipt: null });
+    assert.equal(await runDispatch(['memory', 'engine'], deps), EXIT.ok);
+    assert.deepEqual(calls.dispatches.map((d) => d.pkg), ['memory', 'engine']);
+    assert.ok(!calls.gitArgs.includes('rev-parse --absolute-git-dir'), 'the receipt is not even looked for');
+  });
+
+  it('--verify-only performs zero dispatches, so it is never gated either', async () => {
+    const { deps } = makeWorld({
+      smokeReceipt: null,
+      npmVersions: { '@sabaiway/agent-workflow-kit': '5.0.0' },
+      releases: { 'agent-workflow-kit-v5.0.0': { assets: 1 } },
+    });
+    assert.equal(await runDispatch(['kit', '--verify-only', '--expect', 'kit=5.0.0'], deps), EXIT.ok);
+  });
+
+  it('a covering receipt is stated, and the flow proceeds', async () => {
+    const { deps, calls } = kitWorld({});
+    assert.equal(await runDispatch(['kit'], deps), EXIT.ok);
+    assert.deepEqual(calls.dispatches, [{ pkg: 'kit', dry: true, ref: 'main' }]);
   });
 });
 

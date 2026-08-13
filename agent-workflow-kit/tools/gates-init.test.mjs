@@ -26,6 +26,7 @@ import { loadDeclaration, validateDeclaration, isFinalCapableDeclaration } from 
 import { coverageProducerPrecedes } from './gates-declaration.mjs';
 import { KIT_WRITER_PREVIEW_TOOLS, UNIVERSAL_READONLY_ALLOWLIST } from './velocity-profile.mjs';
 import { COVERAGE_PRODUCER_BODY, matchesCoverageProducer } from './coverage-producer.mjs';
+import { buildForeignFixture, FOREIGN_TEST_SCRIPT } from '../../scripts/testing/foreign-fixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GATES_REL = join('docs', 'ai', 'gates.json');
@@ -1237,5 +1238,68 @@ describe('gates-init — an offer with zero project-verification gates says so',
     const text = io.out.join('\n');
     assert.match(text, /offer adds no project-verification gate/i, 'the offer-level fact is still stated');
     assert.doesNotMatch(text, /would prove only/, 'but the matrix claim is FALSE here — a declared suite gate runs');
+  });
+});
+
+// ── the fill on a FOREIGN project (the suite the closed producer world cannot express) ──
+
+describe('gates-init — the fill over a project whose primary suite is not a `node --test` form', () => {
+  // The builder's temp root is used as a project ROOT here, and the deployment preflight refuses a
+  // symlinked one — on a host whose tmp dir is a link (macOS /tmp) the raw path is exactly that.
+  const foreign = (options) => {
+    const fixture = buildForeignFixture(options);
+    return { ...fixture, root: realpathSync(fixture.root) };
+  };
+  const councilAt = (rel = join('docs', 'ai', 'orchestration.json')) => ({ [rel]: `${JSON.stringify(COUNCIL, null, 2)}\n` });
+
+  it('a screened-out suite body leaves the checker candidate WITHHELD, by name', () => {
+    const fx = foreign({ extraFiles: councilAt() });
+    try {
+      const offer = buildOffer(fx.root);
+      assert.ok(!offer.entries.some((e) => e.id === 'coverage-check'), 'no checker is offered over a project with no producer');
+      assert.ok(offer.notes.some((n) => /screened out/.test(n)), `the vitest body is named as screened: ${offer.notes.join(' | ')}`);
+      assert.ok(offer.notes.some((n) => /withheld/.test(n) && /PRODUCE/.test(n)), 'and the withhold states WHY');
+      assert.doesNotMatch(offer.notes.join('\n'), new RegExp(FOREIGN_TEST_SCRIPT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'no screened body is echoed back');
+    } finally {
+      fx.teardown();
+    }
+  });
+
+  it('an ALLOWLISTED foreign suite IS offered — and still never counts as the producer', () => {
+    // The sharp edge: `vitest run` passes the body allowlist, so a suite gate really is offered. Only
+    // the ONE self-contained `node --test` body is rewritten into the producer form, so the offer
+    // cannot make this project's suite write the lcov — and the checker stays withheld over it.
+    const fx = foreign({ testScript: 'vitest run', extraFiles: councilAt() });
+    try {
+      const offer = buildOffer(fx.root);
+      const suite = offer.entries.find((e) => e.id === 'test');
+      assert.ok(suite, `the allowlisted suite body is offered: ${offer.entries.map((e) => e.id).join(', ')}`);
+      assert.equal(matchesCoverageProducer(suite.cmd), false, 'the offered suite claims nothing about the lcov');
+      assert.ok(!offer.entries.some((e) => e.id === 'coverage-check'), 'so the checker is still not offered');
+      assert.ok(offer.notes.some((n) => /withheld/.test(n) && /PRODUCE/.test(n)));
+    } finally {
+      fx.teardown();
+    }
+  });
+
+  it('a merge over a MARKER-carrying declaration validates, places the checker LAST and preserves the marker byte-for-byte', () => {
+    const marked = { id: 'suite', title: 'Suite', cmd: FOREIGN_TEST_SCRIPT, lcovProducer: true };
+    const fx = foreign({ gates: [marked], extraFiles: councilAt() });
+    try {
+      const offer = buildOffer(fx.root);
+      assert.ok(offer.entries.some((e) => e.id === 'coverage-check'), 'the DECLARED claim is what unlocks the checker candidate');
+      const result = applyFill({ cwd: fx.root }, {});
+      assert.equal(result.outcome, 'written');
+      const raw = readFileSync(join(fx.root, GATES_REL), 'utf8');
+      assert.match(raw, /"lcovProducer": true/, 'the marker survives in the written bytes');
+      const written = JSON.parse(raw).gates;
+      assert.deepEqual(written[0], marked, 'the marked entry round-trips key for key — the fill is add-only');
+      assert.deepEqual(written.map((g) => g.id), ['suite', 'review-state', 'coverage-check']);
+      validateDeclaration({ gates: written });
+      assert.equal(isFinalCapableDeclaration(written, fx.root), true, 'the written declaration is one --final accepts');
+      assert.equal(coverageProducerPrecedes(written, written.length - 1), true, 'and the claimed producer precedes the checker');
+    } finally {
+      fx.teardown();
+    }
   });
 });
