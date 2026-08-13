@@ -263,37 +263,34 @@ export const findRetiredStores = (cwd) => {
 
 const UNIT_TESTS_PREFIX = 'node --test ';
 
-// The core-check forms the stripped core anchors on (same strict single-invocation shape as the
-// legacy matcher). Canonicity is PURE path equality against the caller-named kit tools dir —
-// an ABSOLUTE token resolving to the installed tool; run-gates --final does the live realpath
-// check. A cmd that MATCHES the shape but resolves elsewhere (or relatively) is a LOOKALIKE —
-// reported customized, never counted as the core check.
-const CORE_CHECK_RE = { 'coverage-check': legacyRe('coverage-check\\.mjs'), 'review-state': legacyRe('review-state\\.mjs') };
-const coreCheckToken = (cmd) => /^node\s+(?:"([^"]+)"|([^\s"]+))\s+--check$/.exec(cmd.trim())?.slice(1).find(Boolean) ?? null;
-const samePath = (a, b) => {
-  try {
-    return realpathSync(a) === realpathSync(b);
-  } catch {
-    return resolve(a) === resolve(b); // an unresolvable side falls back to the lexical compare
-  }
-};
-const isCanonicalCoreCheck = (name, cmd, kitToolsDir) => {
-  if (!CORE_CHECK_RE[name].test(cmd.trim())) return false;
-  const token = coreCheckToken(cmd);
-  return token !== null && isAbsolute(token) && samePath(token, join(kitToolsDir, `${name}.mjs`));
-};
+// The core checks the stripped core anchors on, asked through the checker-claim canon above — the
+// SAME three outcomes, so a declared cmd is read as what it is: this copy of the tool, a DIFFERENT
+// copy of it, or not the tool at all. Resolution is anchored on the PROJECT root, exactly as
+// run-gates resolves a declared token (gates-declaration.mjs matchesCanonicalCheck), so the
+// migration and the runner never disagree about which copy a cmd names.
+const CORE_CHECK_NAMES = Object.freeze(['coverage-check', 'review-state']);
+const coreCheckTools = (kitToolsDir) =>
+  Object.fromEntries(CORE_CHECK_NAMES.map((name) => [name, checkerClaimTool(`${name}.mjs`, join(kitToolsDir, `${name}.mjs`))]));
 
-// buildMigrationPlan(gates, kitToolsDir) → the PURE migration plan.
+// buildMigrationPlan(gates, kitToolsDir, projectDir) → the PURE migration plan.
 // plan rows: { action: 'keep' | 'remove' | 'extend' | 'move' | 'add', entry, reason }.
 // finalCapable mirrors the run-gates --final acceptance shape: the canonical review-state check
 // must be PRESENT (the checker itself is guaranteed last by the plan) — missing means the result
-// is NOT final-run-capable and the preview says so loudly with the paste-ready candidate.
-export const buildMigrationPlan = (gates, kitToolsDir) => {
+// is NOT final-run-capable and the preview says so loudly with the paste-ready candidate. An
+// EXTERNAL-COPY core check withholds that claim too: the runner anchors on the installed copy.
+export const buildMigrationPlan = (gates, kitToolsDir, projectDir) => {
+  if (typeof projectDir !== 'string') {
+    throw stop('buildMigrationPlan needs the project root — a declared cmd may name a core check by a RELATIVE path, and only the project root resolves it the way the runner does');
+  }
+  const tools = coreCheckTools(kitToolsDir);
+  const claimOf = (name, cmd) => classifyCheckerClaim(tools[name], cmd, projectDir);
   const plan = [];
   const customized = [];
   // EVERY canonical checker row, not just the last one seen: a duplicate is a real declaration
   // state, and both the producer question and the final-capability claim have to see all of them.
   const checkerRows = [];
+  // A core check declared through a DIFFERENT copy of the tool — the vendored deployment.
+  const externalCoreChecks = [];
   let unitTestsExtended = false;
   let hasReviewState = false;
   const coverageCmd = `node "${join(kitToolsDir, 'coverage-check.mjs')}" --check`;
@@ -303,15 +300,32 @@ export const buildMigrationPlan = (gates, kitToolsDir) => {
       plan.push({ action: 'remove', entry: gate, reason: `the ${legacy.name} check died with its tool (strip-the-kit)` });
       continue;
     }
-    if (isCanonicalCoreCheck('coverage-check', gate.cmd, kitToolsDir)) {
+    const coverageClaim = claimOf('coverage-check', gate.cmd);
+    if (coverageClaim === CHECKER_CLAIM.CANONICAL) {
       const row = { action: 'keep', entry: gate, reason: null };
       checkerRows.push(row);
       plan.push(row);
       continue;
     }
-    if (isCanonicalCoreCheck('review-state', gate.cmd, kitToolsDir)) {
+    const reviewClaim = claimOf('review-state', gate.cmd);
+    if (reviewClaim === CHECKER_CLAIM.CANONICAL) {
       hasReviewState = true;
       plan.push({ action: 'keep', entry: gate, reason: null });
+      continue;
+    }
+    // The third outcome: this IS the tool, from a copy the caller did not name. A vendored
+    // deployment declared it deliberately, so it is PRESERVED as written — a plain keep row, never
+    // a new action kind (resultingGates carries only keep|extend|move|add and would silently drop
+    // one) — and it counts as DECLARED, which is what stops the checker being added on top of it
+    // and stops its id reading as a squatter. What it does not buy is the final-capability claim:
+    // run-gates --final anchors on the installed copy by realpath and would refuse this cmd.
+    const elsewhereName = coverageClaim === CHECKER_CLAIM.ELSEWHERE
+      ? 'coverage-check'
+      : reviewClaim === CHECKER_CLAIM.ELSEWHERE ? 'review-state' : null;
+    if (elsewhereName !== null) {
+      const row = { action: 'keep', entry: gate, reason: null };
+      externalCoreChecks.push({ name: elsewhereName, entry: gate, installed: join(kitToolsDir, `${elsewhereName}.mjs`), row });
+      plan.push(row);
       continue;
     }
     if (gate.id === 'unit-tests') {
@@ -346,6 +360,7 @@ export const buildMigrationPlan = (gates, kitToolsDir) => {
   }
   const kept = plan.filter((r) => r.action === 'keep' || r.action === 'extend');
   const checkerRow = checkerRows[checkerRows.length - 1] ?? null;
+  const externalCoverageChecks = externalCoreChecks.filter((c) => c.name === 'coverage-check');
   // The checker READS an lcov; something has to WRITE it FIRST. Adding the checker over a
   // declaration with no producer creates the dead pair — the gate PASSES (`skipped-no-lcov`) and
   // certifies nothing, so the migration withholds it and says why instead.
@@ -353,33 +368,57 @@ export const buildMigrationPlan = (gates, kitToolsDir) => {
   // here (added last, or moved last), so the producers are exactly the rows that are not a checker.
   // EVERY checker row is excluded, not merely the one that ends up last — a checker cannot produce
   // the lcov it reads, so a marker on a DUPLICATE checker must not read as the producer for the
-  // other one; that pair would claim final-capability while nothing wrote the file.
-  const hasProducer = kept.some((r) => !checkerRows.includes(r) && isCoverageProducerGate(r.entry));
+  // other one; that pair would claim final-capability while nothing wrote the file. A VENDORED
+  // checker is excluded for the identical reason: which copy runs changes nothing about the fact
+  // that a checker consumes the lcov rather than writing it.
+  const consumerRows = new Set([...checkerRows, ...externalCoverageChecks.map((c) => c.row)]);
+  const isProducerRow = (row) => !consumerRows.has(row) && isCoverageProducerGate(row.entry);
+  const hasProducer = kept.some(isProducerRow);
   let collision = null;
   let checkerWithheld = false;
-  if (checkerRow === null) {
+  if (checkerRow !== null) {
+    if (kept[kept.length - 1] !== checkerRow) {
+      checkerRow.action = 'move';
+      checkerRow.reason = 'the canonical checker must be the LAST declared gate (nothing may run after it consumed the lcov)';
+    }
+  } else if (externalCoverageChecks.length > 0) {
+    // The checker IS declared, from another copy. Adding the canonical one beside it would create
+    // the very duplicate the collision STOP exists to prevent — and rewriting the row the
+    // deployment chose is not this tool's call. Nothing is added, nothing is moved, nothing
+    // collides; the verify warning below carries what the maintainer has to decide.
+  } else if (kept.some((r) => r.entry.id === 'coverage-check')) {
     // A surviving NON-canonical entry already holding the checker's id blocks the add — two
     // `coverage-check` rows would be ambiguous; the customized entry must be resolved by hand
     // FIRST (the caller turns this into a loud STOP on preview and apply alike).
-    if (kept.some((r) => r.entry.id === 'coverage-check')) {
-      collision = 'coverage-check';
-    } else if (!hasProducer) {
-      checkerWithheld = true;
-    } else {
-      plan.push({
-        action: 'add',
-        entry: { id: 'coverage-check', title: 'Changed-line coverage + red-proof verification (the final-run checker)', cmd: coverageCmd },
-        reason: 'run-gates --final requires the canonical checker as the LAST declared gate',
-      });
-    }
-  } else if (kept[kept.length - 1] !== checkerRow) {
-    checkerRow.action = 'move';
-    checkerRow.reason = 'the canonical checker must be the LAST declared gate (nothing may run after it consumed the lcov)';
+    collision = 'coverage-check';
+  } else if (!hasProducer) {
+    checkerWithheld = true;
+  } else {
+    plan.push({
+      action: 'add',
+      entry: { id: 'coverage-check', title: 'Changed-line coverage + red-proof verification (the final-run checker)', cmd: coverageCmd },
+      reason: 'run-gates --final requires the canonical checker as the LAST declared gate',
+    });
   }
   // An ALREADY-declared checker over no producer is the same dead pair the withhold prevents — an
   // earlier deployment could have created it. The migration removes no declared gate, so it reports
   // the inertness and refuses to call the result final-run-capable.
-  const checkerInert = checkerRow !== null && !hasProducer;
+  //
+  // The two checker kinds need DIFFERENT questions, and asking one question would be wrong for one
+  // of them. A canonical checker always ENDS UP LAST here — added last, or moved last — so "a
+  // producer exists at all" and "a producer runs before it" are the same fact. A VENDORED checker is
+  // deliberately left where the deployment put it, so for that row the question is POSITIONAL: a
+  // producer declared AFTER it writes the lcov the checker has already read past, and counting it
+  // would report a live pair over one that certifies nothing.
+  // Tracked PER ROW, not as one flag: the renderer has to name the edit for the row it is talking
+  // about, and a single boolean is what let one preview demand a removal and a reorder at once.
+  const inertExternalRows = new Set(
+    externalCoverageChecks.filter(({ row }) => !kept.slice(0, kept.indexOf(row)).some(isProducerRow)).map(({ row }) => row),
+  );
+  // The canonical checker's ONLY inert cause is that nothing produces at all — it always ends up
+  // last — so its sentence never has to speak about order.
+  const canonicalCheckerInert = checkerRow !== null && !hasProducer;
+  const checkerInert = canonicalCheckerInert || inertExternalRows.size > 0;
   // `--final` accepts EXACTLY ONE canonical checker, so a declaration carrying two is not
   // final-run-capable however healthy the rest of it looks. The migration removes no declared gate,
   // so it names the duplication and withholds the claim instead of over-promising a green.
@@ -389,12 +428,25 @@ export const buildMigrationPlan = (gates, kitToolsDir) => {
     plan,
     customized,
     unitTestsExtended,
-    finalCapable: hasReviewState && !checkerWithheld && !checkerInert && duplicateCheckers <= 1,
+    finalCapable:
+      hasReviewState && !checkerWithheld && !checkerInert && duplicateCheckers <= 1 && externalCoreChecks.length === 0,
     hasProducer,
     hasReviewState,
     checkerWithheld,
     checkerInert,
     duplicateCheckers,
+    // The plan ROW is an internal handle (the move arm mutates it) — consumers get the facts only.
+    // `canonicalTwin` decides the RECOVERY: with the installed copy already declared, "repoint this
+    // cmd" would leave two canonical checkers, which --final refuses — a recovery that cannot
+    // converge is worse than none.
+    externalCoreChecks: externalCoreChecks.map(({ name, entry, installed, row }) => ({
+      name,
+      entry,
+      installed,
+      canonicalTwin: name === 'coverage-check' ? checkerRows.length > 0 : hasReviewState,
+      inert: inertExternalRows.has(row),
+    })),
+    canonicalCheckerInert,
     reviewStateCandidate,
     collision,
   };
@@ -415,7 +467,7 @@ const customizedRecovery = (gate) =>
     ? `declare the canonical suite gate by hand so the coverage contract is verifiable: node --test ${UNIT_TESTS_COVERAGE_FLAGS} <your test paths>`
     : 'remove the entry, or repoint it at a living check — the review-ledger / fold-completeness tools no longer exist.';
 
-const warningLines = ({ customized, finalCapable, hasReviewState = finalCapable, checkerWithheld = false, checkerInert = false, duplicateCheckers = 0, reviewStateCandidate }) => {
+const warningLines = ({ customized, finalCapable, hasReviewState = finalCapable, hasProducer = false, checkerWithheld = false, canonicalCheckerInert = false, duplicateCheckers = 0, externalCoreChecks = [], reviewStateCandidate }) => {
   const lines = [];
   for (const gate of customized) {
     lines.push(`  CUSTOMIZED (untouched): ${gate.id}: ${gate.cmd}`);
@@ -424,18 +476,48 @@ const warningLines = ({ customized, finalCapable, hasReviewState = finalCapable,
   if (customized.length) {
     lines.push('  IMPORTANT: do NOT install the commit guard until every customized entry above is resolved — a declaration that cannot pass run-gates --final would block every commit.');
   }
+  for (const { name, entry, installed, canonicalTwin = false, inert = false } of externalCoreChecks) {
+    lines.push(`  VERIFY (preserved exactly as declared): ${entry.id}: ${entry.cmd}`);
+    lines.push(
+      `    this IS the ${name} check by invocation shape, but it resolves to a DIFFERENT copy of the tool than --kit-tools names (${installed}) — a vendored deployment. Nothing was added over it and nothing was rewritten.`,
+    );
+    lines.push(
+      canonicalTwin
+        ? `    the INSTALLED ${name} check is declared here too, so repointing this cmd would leave TWO — run-gates --final accepts exactly ONE canonical check. Remove THIS entry by hand and keep the canonical one.`
+        : `    run-gates --final anchors on the installed copy by realpath, so the result is NOT final-run-capable while this entry stands: either repoint the cmd at ${installed}, or upgrade through the kit that owns the copy it names.`,
+    );
+    // The inertness of THIS row, said on THIS row, with exactly one edit attached — and when the
+    // entry is already destined for removal, no second edit at all.
+    if (inert && canonicalTwin) {
+      lines.push('    it is also INERT as declared — nothing produces the lcov before it — and removing it, as above, is the ONE edit that resolves both.');
+    } else if (inert && hasProducer) {
+      lines.push('    it is also INERT as declared: a gate DOES produce the lcov, but it runs AFTER this entry, so this checker reads nothing (or stale bytes) and passes while verifying nothing — a checker belongs LAST, after its producer.');
+    } else if (inert) {
+      lines.push(`    it is also INERT as declared: no declared gate PRODUCES the lcov it reads, so it passes while verifying nothing — declare the suite gate: node --test ${UNIT_TESTS_COVERAGE_FLAGS} <your test paths>`);
+    }
+  }
+  if (externalCoreChecks.length) {
+    // The same consequence the customized block carries, for the same reason: a declaration --final
+    // refuses mints no receipt, and the commit guard then refuses every commit.
+    lines.push('  IMPORTANT: do NOT install the commit guard while the entr(ies) above stand — a declaration that cannot pass run-gates --final would block every commit.');
+  }
   if (checkerWithheld) {
     lines.push('  WARNING: the canonical coverage-check gate was NOT added — no declared gate would PRODUCE the lcov it reads, and a checker with no producer passes while verifying nothing. Declare the suite gate first, then re-run this migration:');
     lines.push(`    node --test ${UNIT_TESTS_COVERAGE_FLAGS} <your test paths>`);
   }
-  if (checkerInert) {
+  // The CANONICAL checker's inertness only. An external row's is said on the row itself above, with
+  // the edit that fits that row — this block would otherwise add a second, contradictory one.
+  if (canonicalCheckerInert) {
     lines.push('  WARNING: the DECLARED coverage-check gate is INERT — no declared gate PRODUCES the lcov it reads, so it passes while verifying nothing. Nothing is removed for you; declare the suite gate:');
     lines.push(`    node --test ${UNIT_TESTS_COVERAGE_FLAGS} <your test paths>`);
   }
   if (duplicateCheckers > 1) {
     lines.push(`  WARNING: ${duplicateCheckers} declared gates are the canonical coverage checker — run-gates --final accepts EXACTLY ONE, so the result is NOT final-run-capable. Nothing is removed for you; keep a single checker and delete the rest by hand.`);
   }
-  if (!hasReviewState) {
+  // A review-state declared through an external copy already has its VERIFY row above, naming the
+  // same missing capability with the RIGHT remedy — telling the maintainer to "add it" on top of an
+  // entry that is already there would advise a duplicate.
+  if (!hasReviewState && !externalCoreChecks.some((c) => c.name === 'review-state')) {
     lines.push('  WARNING: the result is NOT final-run-capable — no canonical review-state check is declared. Add it (paste-ready), then run-gates --final can mint the receipt:');
     lines.push(`    ${reviewStateCandidate}`);
   }
@@ -594,7 +676,7 @@ export const main = (argv = process.argv.slice(2), io = {}) => {
       return 0;
     }
     const parsed = declaration.outcome === 'loaded' ? declaration.parsed : { gates: [] };
-    const analysis = { ...buildMigrationPlan(parsed.gates, kitTools), retiredStores };
+    const analysis = { ...buildMigrationPlan(parsed.gates, kitTools, resolve(args.cwd)), retiredStores };
     if (analysis.collision) {
       throw stop(
         `id collision — a NON-canonical entry already uses id "${analysis.collision}"; resolve it by hand first ` +

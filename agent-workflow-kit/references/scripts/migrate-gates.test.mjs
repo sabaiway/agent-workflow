@@ -22,8 +22,17 @@ import {
   main,
 } from './migrate-gates.mjs';
 
+// An INSTALLED kit tools dir carries both core checks as real files. That is a fixture
+// requirement, not decoration: canonicity is a realpath anchor, so a core check whose file is not
+// there resolves to nothing and is no claim at all — the same fail-closed answer run-gates gives.
 const KIT_TOOLS = mkdtempSync(join(tmpdir(), 'migrate-gates-kit-'));
 writeFileSync(join(KIT_TOOLS, 'coverage-check.mjs'), '// the installed checker the migration points at\n');
+writeFileSync(join(KIT_TOOLS, 'review-state.mjs'), '// the installed review-state check\n');
+// The project root the plan builder resolves declared RELATIVE tokens against — the same anchor
+// run-gates uses. Empty on purpose for the pure-plan cases: a relative lookalike resolves to
+// nothing there, which is exactly the "no claim can be made" outcome those rows assert. The
+// vendored rows below build their own project and pass it explicitly.
+const PROJECT = mkdtempSync(join(tmpdir(), 'migrate-gates-project-'));
 
 const mkProject = (gates) => {
   const root = mkdtempSync(join(tmpdir(), 'migrate-gates-'));
@@ -45,6 +54,14 @@ const quiet = () => {
 const PRIOR_FLAG_SET_V1 =
   '--experimental-test-coverage --test-reporter=lcov --test-reporter-destination="$AW_GIT_DIR/agent-workflow-lcov.info" --test-reporter=spec --test-reporter-destination=stdout';
 
+// A VENDORED deployment: the SAME tools, from a copy `--kit-tools` does not name. Recognition is a
+// realpath anchor, so these are real files — a fake path would be the unresolvable case instead.
+const VENDORED_TOOLS = mkdtempSync(join(tmpdir(), 'migrate-gates-vendored-'));
+writeFileSync(join(VENDORED_TOOLS, 'coverage-check.mjs'), '// a vendored copy of the checker\n');
+writeFileSync(join(VENDORED_TOOLS, 'review-state.mjs'), '// a vendored copy of the review-state check\n');
+const vendoredCmd = (name) => `node "${join(VENDORED_TOOLS, `${name}.mjs`)}" --check`;
+const installedCmd = (name) => `node "${join(KIT_TOOLS, `${name}.mjs`)}" --check`;
+
 const LEGACY_LEDGER = { id: 'review-ledger', title: 'L', cmd: 'node "/kit/tools/review-ledger.mjs" --check' };
 const LEGACY_FOLD = { id: 'fold-completeness', title: 'F', cmd: 'node /kit/tools/fold-completeness.mjs --check' };
 const UNIT = { id: 'unit-tests', title: 'U', cmd: 'node --test tools/*.test.mjs' };
@@ -53,12 +70,12 @@ const CUSTOM = { id: 'my-ledger-wrap', title: 'C', cmd: 'node scripts/wrap.mjs &
 describe('migrate-gates — the pure migration plan', () => {
   it('matches BOTH documented legacy forms (quoted and bare paths) and removes them', () => {
     for (const form of LEGACY_FORMS) assert.ok(form.re instanceof RegExp);
-    const { plan } = buildMigrationPlan([LEGACY_LEDGER, LEGACY_FOLD], KIT_TOOLS);
+    const { plan } = buildMigrationPlan([LEGACY_LEDGER, LEGACY_FOLD], KIT_TOOLS, PROJECT);
     assert.deepEqual(plan.filter((r) => r.action === 'remove').map((r) => r.entry.id), ['review-ledger', 'fold-completeness']);
   });
 
   it('extends the canonical unit-tests cmd with the lcov reporters (flags inserted after `node --test`)', () => {
-    const { plan, unitTestsExtended } = buildMigrationPlan([UNIT], KIT_TOOLS);
+    const { plan, unitTestsExtended } = buildMigrationPlan([UNIT], KIT_TOOLS, PROJECT);
     assert.ok(unitTestsExtended);
     const extended = plan.find((r) => r.action === 'extend').entry;
     assert.equal(extended.cmd, `node --test ${UNIT_TESTS_COVERAGE_FLAGS} tools/*.test.mjs`);
@@ -66,7 +83,7 @@ describe('migrate-gates — the pure migration plan', () => {
 
   it('an already-extended unit-tests cmd is left alone (idempotent)', () => {
     const done = { id: 'unit-tests', title: 'U', cmd: `node --test ${UNIT_TESTS_COVERAGE_FLAGS} tools/*.test.mjs` };
-    const { plan } = buildMigrationPlan([done], KIT_TOOLS);
+    const { plan } = buildMigrationPlan([done], KIT_TOOLS, PROJECT);
     assert.equal(plan.find((r) => r.entry.id === 'unit-tests').action, 'keep');
   });
 
@@ -81,7 +98,7 @@ describe('migrate-gates — the pure migration plan', () => {
       { id: 'review-state', title: 'RS', cmd: `node "${join(KIT_TOOLS, 'review-state.mjs')}" --check` },
       { id: 'coverage-check', title: 'CC', cmd: `node "${join(KIT_TOOLS, 'coverage-check.mjs')}" --check` },
     ];
-    const analysis = buildMigrationPlan(deployed, KIT_TOOLS);
+    const analysis = buildMigrationPlan(deployed, KIT_TOOLS, PROJECT);
     assert.equal(analysis.plan.find((r) => r.entry.id === 'unit-tests').action, 'keep');
     assert.deepEqual(analysis.customized, [], 'a prior emitted form is never reported customized');
     assert.equal(analysis.hasProducer, true, 'it still counts as the producer the checker reads');
@@ -98,7 +115,7 @@ describe('migrate-gates — the pure migration plan', () => {
     // would call `echo <prior flags>` already configured and say nothing, leaving the maintainer
     // with an entry the tool cannot verify and no recovery line.
     const nearMiss = { id: 'unit-tests', title: 'U', cmd: `echo ${PRIOR_FLAG_SET_V1}` };
-    const analysis = buildMigrationPlan([nearMiss], KIT_TOOLS);
+    const analysis = buildMigrationPlan([nearMiss], KIT_TOOLS, PROJECT);
     assert.equal(analysis.plan.find((r) => r.entry.id === 'unit-tests').action, 'keep', 'nothing is rewritten');
     assert.deepEqual(analysis.customized.map((g) => g.id), ['unit-tests'], 'but it IS reported customized');
     assert.equal(analysis.hasProducer, false, 'and it never counts as the producer the checker would read');
@@ -108,18 +125,18 @@ describe('migrate-gates — the pure migration plan', () => {
   });
 
   it('adds the coverage-check gate LAST with the RESOLVED quoted path; never a second one', () => {
-    const { plan } = buildMigrationPlan([UNIT], KIT_TOOLS);
+    const { plan } = buildMigrationPlan([UNIT], KIT_TOOLS, PROJECT);
     const result = resultingGates(plan);
     const last = result[result.length - 1];
     assert.equal(last.id, 'coverage-check');
     assert.equal(last.cmd, `node "${join(KIT_TOOLS, 'coverage-check.mjs')}" --check`);
-    const again = buildMigrationPlan(result, KIT_TOOLS);
+    const again = buildMigrationPlan(result, KIT_TOOLS, PROJECT);
     assert.ok(!again.plan.some((r) => r.action === 'add'), 'a declaration already carrying the checker gains no duplicate');
   });
 
   it('a declaration with NO producer never GAINS the checker — the pair is declared together or not at all', () => {
     const npmSuite = { id: 'suite', title: 'S', cmd: 'npm test' };
-    const analysis = buildMigrationPlan([LEGACY_LEDGER, npmSuite], KIT_TOOLS);
+    const analysis = buildMigrationPlan([LEGACY_LEDGER, npmSuite], KIT_TOOLS, PROJECT);
     assert.ok(!analysis.plan.some((r) => r.action === 'add'), 'no checker is added over a declaration that produces no lcov');
     assert.deepEqual(resultingGates(analysis.plan).map((g) => g.id), ['suite'], 'the legacy entry still goes, nothing dead arrives');
     assert.equal(analysis.finalCapable, false, 'a declaration with no checker is not final-run-capable');
@@ -131,7 +148,7 @@ describe('migrate-gates — the pure migration plan', () => {
   it('an ALREADY-declared checker over no producer is reported INERT, is never removed, and is not final-run-capable', () => {
     const checker = { id: 'coverage-check', title: 'CC', cmd: `node "${join(KIT_TOOLS, 'coverage-check.mjs')}" --check` };
     const reviewState = { id: 'review-state', title: 'RS', cmd: `node "${join(KIT_TOOLS, 'review-state.mjs')}" --check` };
-    const analysis = buildMigrationPlan([{ id: 'suite', title: 'S', cmd: 'npm test' }, reviewState, checker], KIT_TOOLS);
+    const analysis = buildMigrationPlan([{ id: 'suite', title: 'S', cmd: 'npm test' }, reviewState, checker], KIT_TOOLS, PROJECT);
     assert.equal(analysis.finalCapable, false, 'a review-state present must NOT make an inert pair read as final-run-capable');
     assert.ok(resultingGates(analysis.plan).some((g) => g.id === 'coverage-check'), 'the declared checker is never removed');
     const preview = formatPreview(analysis, 'APPLY');
@@ -146,7 +163,7 @@ describe('migrate-gates — the pure migration plan', () => {
       title: 'T',
       cmd: `COREPACK_ENABLE_NETWORK=0 npm exec --offline --script-shell /bin/sh -- ${COVERAGE_PRODUCER_BODY}`,
     };
-    const analysis = buildMigrationPlan([offered], KIT_TOOLS);
+    const analysis = buildMigrationPlan([offered], KIT_TOOLS, PROJECT);
     assert.deepEqual(resultingGates(analysis.plan).map((g) => g.id), ['test', 'coverage-check']);
     // The `no canonical unit-tests entry` advice is keyed on the ID, but a producer is recognized
     // under ANY id — repeating the advice over a working producer sends the user to fix nothing.
@@ -154,7 +171,7 @@ describe('migrate-gates — the pure migration plan', () => {
   });
 
   it('a CUSTOMIZED dead-tool reference (compound form) is kept untouched and reported', () => {
-    const analysis = buildMigrationPlan([CUSTOM], KIT_TOOLS);
+    const analysis = buildMigrationPlan([CUSTOM], KIT_TOOLS, PROJECT);
     assert.equal(analysis.plan.find((r) => r.entry.id === 'my-ledger-wrap').action, 'keep');
     assert.deepEqual(analysis.customized.map((g) => g.id), ['my-ledger-wrap']);
     const preview = formatPreview(analysis, 'APPLY');
@@ -166,7 +183,7 @@ describe('migrate-gates — the pure migration plan', () => {
 describe('migrate-gates — the canonical anchor + final-capability validation (round-1 folds)', () => {
   it('a canonical checker NOT in the last position is MOVED last (never left mid-list)', () => {
     const canonical = { id: 'coverage-check', title: 'CC', cmd: `node "${join(KIT_TOOLS, 'coverage-check.mjs')}" --check` };
-    const { plan } = buildMigrationPlan([canonical, UNIT], KIT_TOOLS);
+    const { plan } = buildMigrationPlan([canonical, UNIT], KIT_TOOLS, PROJECT);
     const result = resultingGates(plan);
     assert.equal(result[result.length - 1].id, 'coverage-check', 'the canonical checker ends up LAST');
     assert.ok(plan.some((r) => r.action === 'move' && r.entry.id === 'coverage-check'), 'the reorder is an explicit move action');
@@ -175,14 +192,14 @@ describe('migrate-gates — the canonical anchor + final-capability validation (
 
   it('a LOOKALIKE checker cmd is CUSTOMIZED (never counted canonical) and the canonical one is still added', () => {
     const lookalike = { id: 'cov', title: 'C', cmd: 'node scripts/coverage-check.mjs --check' };
-    const analysis = buildMigrationPlan([lookalike, UNIT], KIT_TOOLS);
+    const analysis = buildMigrationPlan([lookalike, UNIT], KIT_TOOLS, PROJECT);
     assert.ok(analysis.customized.some((g) => g.id === 'cov'), 'the lookalike is reported customized');
     const result = resultingGates(analysis.plan);
     assert.equal(result[result.length - 1].id, 'coverage-check', 'the REAL canonical checker is added last');
   });
 
   it('the result is judged final-capable ONLY with a canonical review-state present; missing → a LOUD warning with the candidate line, never "final-run-capable"', () => {
-    const analysis = buildMigrationPlan([UNIT], KIT_TOOLS);
+    const analysis = buildMigrationPlan([UNIT], KIT_TOOLS, PROJECT);
     assert.equal(analysis.finalCapable, false, 'no review-state → not final-capable');
     const preview = formatPreview(analysis, 'APPLY');
     assert.match(preview, /review-state/, 'the warning names the missing core check');
@@ -191,13 +208,14 @@ describe('migrate-gates — the canonical anchor + final-capability validation (
     const withRs = buildMigrationPlan(
       [UNIT, { id: 'review-state', title: 'RS', cmd: `node "${join(KIT_TOOLS, 'review-state.mjs')}" --check` }],
       KIT_TOOLS,
+      PROJECT,
     );
     assert.equal(withRs.finalCapable, true);
   });
 
   it('a NON-canonical unit-tests cmd (npm test / wrapper) is CUSTOMIZED with the full flag set as the recovery', () => {
     const npmTest = { id: 'unit-tests', title: 'U', cmd: 'npm test' };
-    const analysis = buildMigrationPlan([npmTest], KIT_TOOLS);
+    const analysis = buildMigrationPlan([npmTest], KIT_TOOLS, PROJECT);
     assert.equal(analysis.plan.find((r) => r.entry.id === 'unit-tests').action, 'keep');
     assert.ok(analysis.customized.some((g) => g.id === 'unit-tests'), 'a non-canonical suite cmd is customized');
     const preview = formatPreview(analysis, 'APPLY');
@@ -206,7 +224,7 @@ describe('migrate-gates — the canonical anchor + final-capability validation (
 
   it('a PARTIALLY-flagged unit-tests cmd is CUSTOMIZED (a lone coverage flag never reads as configured)', () => {
     const partial = { id: 'unit-tests', title: 'U', cmd: 'node --test --experimental-test-coverage tools/*.test.mjs' };
-    const analysis = buildMigrationPlan([partial], KIT_TOOLS);
+    const analysis = buildMigrationPlan([partial], KIT_TOOLS, PROJECT);
     assert.equal(analysis.plan.find((r) => r.entry.id === 'unit-tests').action, 'keep');
     assert.ok(analysis.customized.some((g) => g.id === 'unit-tests'), 'the half-wired cmd is customized, never silently left');
   });
@@ -245,6 +263,135 @@ describe('migrate-gates — the canonical anchor + final-capability validation (
     }
     rmSync(root, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
+  });
+});
+
+describe('migrate-gates — a VENDORED core check is the tool, from a copy --kit-tools does not name (D6)', () => {
+  const UNIT_DONE = { id: 'unit-tests', title: 'U', cmd: `${COVERAGE_PRODUCER_BODY} tools/*.test.mjs` };
+  const INSTALLED_REVIEW_STATE = { id: 'review-state', title: 'RS', cmd: installedCmd('review-state') };
+
+  it('a vendored coverage-check is PRESERVED exactly as declared — declared, never added over, never a collision', () => {
+    // Before the split this entry was a LOOKALIKE holding the checker's id, which made the whole
+    // upgrade a hard STOP: every preview and every apply over a vendored deployment failed.
+    const vendored = { id: 'coverage-check', title: 'CC', cmd: vendoredCmd('coverage-check') };
+    const declaration = [UNIT_DONE, INSTALLED_REVIEW_STATE, vendored];
+    const analysis = buildMigrationPlan(declaration, KIT_TOOLS, PROJECT);
+    assert.equal(analysis.collision, null, 'a vendored copy carries the tool\'s own id legitimately — it is no squatter');
+    assert.ok(!analysis.plan.some((r) => r.action === 'add'), 'the checker IS declared, so a second one is never added');
+    assert.deepEqual(analysis.plan.map((r) => r.action), ['keep', 'keep', 'keep'], 'nothing is rewritten or reordered');
+    assert.deepEqual(resultingGates(analysis.plan), declaration, 'the declaration comes out byte-for-byte as it went in');
+    assert.deepEqual(analysis.externalCoreChecks.map((c) => c.name), ['coverage-check']);
+    assert.deepEqual(analysis.customized, [], 'a real copy of the tool is not an entry the tool cannot verify');
+    assert.equal(analysis.finalCapable, false, '--final anchors on the INSTALLED copy, so the capability claim is withheld');
+    const preview = formatPreview(analysis, 'APPLY');
+    assert.match(preview, /VERIFY \(preserved exactly as declared\): coverage-check/, 'the outcome is NAMED');
+    assert.match(preview, /DIFFERENT copy of the tool/, 'and says what it actually found');
+    assert.match(preview, /NOT final-run-capable/);
+    assert.doesNotMatch(preview, /already final-run-capable/);
+  });
+
+  it('a vendored review-state is preserved too — and is never advised to "add it" on top of itself', () => {
+    const vendored = { id: 'review-state', title: 'RS', cmd: vendoredCmd('review-state') };
+    const analysis = buildMigrationPlan([UNIT_DONE, vendored], KIT_TOOLS, PROJECT);
+    assert.deepEqual(analysis.externalCoreChecks.map((c) => c.name), ['review-state']);
+    assert.equal(analysis.hasReviewState, false, 'the INSTALLED review-state is still not declared');
+    assert.equal(analysis.finalCapable, false);
+    const preview = formatPreview(analysis, 'APPLY');
+    assert.match(preview, /VERIFY \(preserved exactly as declared\): review-state/);
+    assert.doesNotMatch(preview, /Add it \(paste-ready\)/, 'a second review-state entry is the ambiguity, not the remedy');
+  });
+
+  it('a core check naming a path nothing resolves is NO claim — fail-closed exactly where --final is', () => {
+    // A lexical path compare called this canonical: the file need not exist to compare equal after
+    // resolve(). The migration then promised final-run-capability over a cmd --final cannot run.
+    const ghost = { id: 'review-state', title: 'RS', cmd: `node "${join(KIT_TOOLS, 'nowhere', 'review-state.mjs')}" --check` };
+    const analysis = buildMigrationPlan([UNIT_DONE, ghost], KIT_TOOLS, PROJECT);
+    assert.equal(analysis.hasReviewState, false, 'an unresolvable path is never the installed tool');
+    assert.deepEqual(analysis.externalCoreChecks, [], 'nor evidence that the tool lives somewhere else');
+    assert.ok(analysis.customized.some((g) => g.id === 'review-state'), 'it is reported as an entry the tool cannot verify');
+    assert.equal(analysis.finalCapable, false);
+  });
+
+  it('a vendored checker never produces the lcov it reads — the declared pair stays INERT', () => {
+    const vendored = { id: 'coverage-check', title: 'CC', cmd: vendoredCmd('coverage-check'), lcovProducer: true };
+    const analysis = buildMigrationPlan(
+      [{ id: 'lint', title: 'L', cmd: 'eslint .' }, INSTALLED_REVIEW_STATE, vendored],
+      KIT_TOOLS,
+      PROJECT,
+    );
+    assert.equal(analysis.hasProducer, false, 'a marker on the checker itself never self-pairs, whichever copy it is');
+    assert.equal(analysis.checkerInert, true, 'a checker over nothing that writes the lcov passes verifying nothing');
+    assert.match(formatPreview(analysis, 'APPLY'), /INERT/);
+  });
+
+  it('producer-after-vendored-checker: a producer declared AFTER a vendored checker never covers it', () => {
+    // A canonical checker is always MOVED last, so "a producer exists" answers "a producer runs
+    // first" for it. A vendored checker is left where the deployment put it, so the position-blind
+    // answer reported a live pair over a checker that reads the lcov before anything writes one.
+    const vendored = { id: 'coverage-check', title: 'CC', cmd: vendoredCmd('coverage-check') };
+    const after = buildMigrationPlan([INSTALLED_REVIEW_STATE, vendored, UNIT_DONE], KIT_TOOLS, PROJECT);
+    assert.equal(after.hasProducer, true, 'a producer IS declared somewhere');
+    assert.equal(after.checkerInert, true, 'but not before the checker that reads what it writes');
+    assert.equal(after.finalCapable, false);
+    assert.match(formatPreview(after, 'APPLY'), /INERT/);
+
+    const before = buildMigrationPlan([UNIT_DONE, INSTALLED_REVIEW_STATE, vendored], KIT_TOOLS, PROJECT);
+    assert.equal(before.checkerInert, false, 'the same entries in producer-first order are a live pair');
+    assert.doesNotMatch(formatPreview(before, 'APPLY'), /INERT/);
+  });
+
+  it('the INERT warning names the edit the reader must actually make — order, not a missing gate', () => {
+    // The two ways to be inert need two sentences. Telling someone whose suite gate is already
+    // declared to declare it again sends them to fix nothing while the real defect stays.
+    const vendored = { id: 'coverage-check', title: 'CC', cmd: vendoredCmd('coverage-check') };
+    const misordered = formatPreview(buildMigrationPlan([INSTALLED_REVIEW_STATE, vendored, UNIT_DONE], KIT_TOOLS, PROJECT), 'APPLY');
+    assert.match(misordered, /runs AFTER this entry/, 'the ORDER is named as the defect, on the row it belongs to');
+    assert.match(misordered, /a checker belongs LAST, after its producer/, 'and the remedy is the reorder');
+    assert.doesNotMatch(misordered, /declare the suite gate/, 'never advise declaring a gate that is already there');
+
+    const absent = formatPreview(buildMigrationPlan([INSTALLED_REVIEW_STATE, vendored], KIT_TOOLS, PROJECT), 'APPLY');
+    assert.match(absent, /no declared gate PRODUCES the lcov/, 'with nothing producing, the old sentence still holds');
+    assert.match(absent, /declare the suite gate/);
+  });
+
+  it('a mixed declaration renders ONE edit, never a removal and a reorder at once', () => {
+    // The two folds met here: canonicalTwin asks for a removal, the inert arm asked for a reorder,
+    // and a preview carrying both leaves the reader with no unambiguous next step.
+    const canonical = { id: 'coverage-check', title: 'CC', cmd: installedCmd('coverage-check') };
+    const vendored = { id: 'coverage-check-vendor', title: 'CCV', cmd: vendoredCmd('coverage-check') };
+    const analysis = buildMigrationPlan([INSTALLED_REVIEW_STATE, vendored, UNIT_DONE, canonical], KIT_TOOLS, PROJECT);
+    assert.deepEqual(analysis.externalCoreChecks.map((c) => [c.canonicalTwin, c.inert]), [[true, true]]);
+    assert.equal(analysis.canonicalCheckerInert, false, 'the canonical checker ends up last, after the producer');
+    const preview = formatPreview(analysis, 'APPLY');
+    assert.match(preview, /Remove THIS entry by hand/);
+    assert.match(preview, /the ONE edit that resolves both/);
+    assert.doesNotMatch(preview, /belongs LAST, after its producer/, 'no second, contradictory edit');
+    assert.doesNotMatch(preview, /declare the suite gate/);
+  });
+
+  it('a canonical checker declared BESIDE the vendored one changes the recovery — remove, never repoint', () => {
+    // Repointing the vendored cmd at the installed copy would leave TWO canonical checkers, and
+    // --final accepts exactly one; a recovery that cannot converge is worse than none.
+    const canonical = { id: 'coverage-check', title: 'CC', cmd: installedCmd('coverage-check') };
+    const vendored = { id: 'coverage-check-vendor', title: 'CCV', cmd: vendoredCmd('coverage-check') };
+    const analysis = buildMigrationPlan([UNIT_DONE, INSTALLED_REVIEW_STATE, vendored, canonical], KIT_TOOLS, PROJECT);
+    assert.deepEqual(analysis.externalCoreChecks.map((c) => c.canonicalTwin), [true]);
+    const preview = formatPreview(analysis, 'APPLY');
+    assert.match(preview, /accepts exactly ONE canonical check/);
+    assert.match(preview, /Remove THIS entry by hand/);
+    assert.doesNotMatch(preview, /either repoint the cmd/, 'the non-convergent recovery is not offered here');
+  });
+
+  it('a vendored deployment carries the SAME commit-guard consequence a customized one does', () => {
+    // Both end in a declaration --final refuses, which mints no receipt, which makes the guard
+    // refuse every commit. Naming the consequence for one and not the other is a false asymmetry.
+    const vendored = { id: 'coverage-check', title: 'CC', cmd: vendoredCmd('coverage-check') };
+    const preview = formatPreview(buildMigrationPlan([UNIT_DONE, INSTALLED_REVIEW_STATE, vendored], KIT_TOOLS, PROJECT), 'APPLY');
+    assert.match(preview, /do NOT install the commit guard/);
+  });
+
+  it('the plan builder REFUSES without the project root — a relative cmd cannot be resolved without it', () => {
+    assert.throws(() => buildMigrationPlan([UNIT_DONE], KIT_TOOLS), /project root/);
   });
 });
 
