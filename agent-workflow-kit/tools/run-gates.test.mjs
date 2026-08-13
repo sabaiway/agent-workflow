@@ -674,6 +674,42 @@ describe('run-gates --final — the ONE receipt the commit guard consumes', () =
     assert.equal(withheldRecord.lcovSha256, null);
   });
 
+  // The lcovProducer marker widens what a DECLARATION may CLAIM; it may never widen what a RUN
+  // certifies. Two characterizations hold that line: the runner does not read the key at all, and
+  // a claim the run does not honor is still caught by the checker, not by the declaration.
+  it('a marker-claimed producer that writes NO lcov still ends skipped-no-lcov / attested=no', () => {
+    const claimsButWritesNothing = { id: 'suite', title: 's', cmd: 'true', lcovProducer: true };
+    const root = makeRepo([CANONICAL[0], claimsButWritesNothing, CANONICAL[1]]);
+    const { code, out } = runFinal(root);
+    const record = finalRecords(root).filter((r) => r.kind === 'final').pop();
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(code, EXIT.ok, out);
+    assert.match(out, /skipped-no-lcov/, 'the claim buys the declaration nothing at run time');
+    assert.match(out, /^coverage-check: attested=no$/m);
+    assert.equal(record.coverage, 'not-run', 'the receipt records the withheld verdict');
+    assert.equal(record.lcovSha256, null);
+  });
+
+  it('--final never READS the marker — a marked and an unmarked declaration run identically', () => {
+    const produceCmd = 'printf "SF:%s/pending.mjs\\nDA:1,1\\nend_of_record\\n" "$PWD" > "$AW_LCOV_FILE"';
+    const runOf = (producer) => {
+      const root = makeRepo([CANONICAL[0], producer, CANONICAL[1]]);
+      const { code, out } = runFinal(root);
+      const record = finalRecords(root).filter((r) => r.kind === 'final').pop();
+      rmSync(root, { recursive: true, force: true });
+      return {
+        code,
+        summary: /^\[run-gates\] status=.*$/m.exec(out)?.[0],
+        attested: /^coverage-check: attested=(\w+)$/m.exec(out)?.[1],
+        coverage: record.coverage,
+        boundDigest: typeof record.lcovSha256,
+      };
+    };
+    const bare = runOf({ id: 'produce-lcov', title: 'p', cmd: produceCmd });
+    assert.equal(bare.coverage, 'certified', 'the control arm really certifies (the comparison is not vacuous)');
+    assert.deepEqual(runOf({ id: 'produce-lcov', title: 'p', cmd: produceCmd, lcovProducer: true }), bare);
+  });
+
   // WHICH gate is the checker is a property of the DECLARATION, so it is resolved before the matrix
   // spawns. Re-resolving it afterwards let a gate that deleted the tool path turn the selected
   // checker into "no checker at all" — a state the receipt validator refuses, so the attempt's

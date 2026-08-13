@@ -225,6 +225,50 @@ describe('declaration validation parity with run-gates.mjs', () => {
     });
   }
 
+  // The OPTIONAL lcovProducer marker: the two validators must land on the SAME verdict per row, or
+  // a marker-carrying declaration the runner runs happily would silently lose auto-approval here
+  // (hook stricter) — or a malformed marker the runner refuses would still approve commands (hook
+  // looser). Both directions are the point, so every row asserts both sides.
+  const MARKED_CMD = 'pnpm vitest run --coverage';
+  const marked = (marker) => ({ gates: [{ id: 'suite', title: 'Suite', cmd: MARKED_CMD, lcovProducer: marker }] });
+  const markerMatrix = [
+    ['the literal true', marked(true), true],
+    ['the literal false', marked(false), true],
+    ['a string "true"', marked('true'), false],
+    ['a null marker', marked(null), false],
+    ['a numeric marker', marked(1), false],
+    ['the marker beside an unknown key', { gates: [{ id: 'suite', title: 'Suite', cmd: MARKED_CMD, lcovProducer: true, model: 'haiku' }] }, false],
+  ];
+  for (const [name, parsed, accepted] of markerMatrix) {
+    it(`lcovProducer — ${name}: runner and hook agree (${accepted ? 'accepted' : 'rejected'})`, () => {
+      assert.equal(runnerAccepts(parsed), accepted, 'the runner side of the row');
+      assert.equal(validateDeclarationShape(parsed).ok, accepted, 'the hook side of the row');
+    });
+  }
+
+  it('a marker-carrying declaration still AUTO-APPROVES its byte-exact declared cmd', () => {
+    // Parity as a boolean is not the whole claim: the accepted declaration must still reach ladder
+    // (a) and approve, or the marker would cost the project its velocity tier in practice.
+    assert.equal(decisionOf(runHook(bashPayload(MARKED_CMD), hookDeps(marked(true)))), DECISION_ALLOW);
+    assert.notEqual(decisionOf(runHook(bashPayload(MARKED_CMD), hookDeps(marked('true')))), DECISION_ALLOW);
+  });
+
+  // D8 — the cost of the marker being FORWARD-ONLY, characterized rather than assumed. A placed hook
+  // that predates a gate key treats it as unknown and goes DARK: auto-approval off, every gate
+  // prompting again, no error anywhere. That silence is exactly why the advisor carries a
+  // marker-scoped reseed arm — this pins the mechanism the arm exists for.
+  it('a key this hook does not know darkens ladder (a) SILENTLY — auto-approval off, exit 0, no crash', () => {
+    const fromTheFuture = { gates: [{ id: 'suite', title: 'Suite', cmd: MARKED_CMD, lcovProducerV2: true }] };
+    assert.equal(validateDeclarationShape(fromTheFuture).ok, false, 'an unknown gate key is not a shape this hook can honor');
+    assert.equal(readDeclarationGates('/anywhere', { readFile: () => JSON.stringify(fromTheFuture) }), null, 'so the declaration reads as none at all');
+    // NULL, not a block: the hook emits no decision at all, so the host falls back to its ordinary
+    // prompt. A darkened declaration must never become an exit-2 refusal of the user's own command.
+    assert.equal(runHook(bashPayload(MARKED_CMD), hookDeps(fromTheFuture)), null, 'the cmd the runner runs happily stops auto-approving');
+    // The decoupling still holds: ladder (b) keeps running over a darkened declaration, so the
+    // failure mode really is "quietly less velocity", never "quietly less safety".
+    assert.equal(decisionOf(runHook(bashPayload('cat x > y'), hookDeps(fromTheFuture))), DECISION_ASK);
+  });
+
   it('accepts/rejects EXACTLY where the runner does (shared-fixture cross-check)', () => {
     const fixtures = [
       shippedTemplate,
@@ -232,6 +276,7 @@ describe('declaration validation parity with run-gates.mjs', () => {
       { gates: [{ id: 'a', title: 'A', cmd: 'x' }] },
       { _README: 'doc', gates: [] },
       ...invalidMatrix.map(([, parsed]) => parsed),
+      ...markerMatrix.map(([, parsed]) => parsed),
     ];
     for (const fixture of fixtures) {
       assert.equal(validateDeclarationShape(fixture).ok, runnerAccepts(fixture));

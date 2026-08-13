@@ -82,6 +82,21 @@ const finalCapableGatesJson = () => JSON.stringify({
   ],
 });
 
+// An AVAILABLE census over an ordinary JS project — the tree every declaration row in this file is
+// about. It is injected because makeProject() is deliberately NOT a git tree (git-initing it would
+// change what the sandbox-masks probe sees in every unrelated suite here), and because a census this
+// file did not choose would make its gates-inert rows assertions about two things at once. The
+// census's OWN dispositions — narrow, tie, minority, unavailable — are pinned against REAL git trees
+// in test/advisor-third-outcomes.test.mjs and test/tracked-tree-census.test.mjs, never faked.
+import * as FOREIGN from '../../scripts/testing/foreign-fixture.mjs';
+
+const WITHIN_DOMAIN_CENSUS = Object.freeze({
+  counts: { assessable: 3, unsupported: 0, 'out-of-domain': 1, 'excluded-test': 0 },
+  unsupportedExtensions: [],
+  verdict: 'within-domain',
+  total: 4,
+});
+
 // Deps that keep the host machine out of the probes: no placed wrappers, empty env/PATH, and a
 // fixture HOME (no bridge-settings.conf).
 const hermeticDeps = (root, extra = {}) => ({
@@ -89,6 +104,7 @@ const hermeticDeps = (root, extra = {}) => ({
   env: { PATH: '/nonexistent-path-for-tests' },
   getenv: { PATH: '/nonexistent-path-for-tests' },
   home: root,
+  takeCensus: () => WITHIN_DOMAIN_CENSUS,
   ...extra,
 });
 
@@ -392,8 +408,19 @@ describe('recommendations — the add() runtime backstop (D2)', () => {
   it('a valid one-line item passes through unchanged (the backstop green arm)', () => {
     const { items, skips } = run(({ add }) => add('velocity-core', 'a one-line WHAT', 'node /x.mjs'));
     assert.equal(skips.length, 0);
-    // `detail` is null for an item without a recipe line (only sandbox-lane carries one).
-    assert.deepEqual(items, [{ key: 'velocity-core', severity: SEVERITIES['velocity-core'], what: 'a one-line WHAT', benefit: BENEFITS['velocity-core'], apply: 'node /x.mjs', detail: null }]);
+    // `detail` is null for an item without a recipe line (only sandbox-lane carries one); `variant`
+    // defaults to the item key, which is what a base arm reports as its machine-readable outcome.
+    assert.deepEqual(items, [{ key: 'velocity-core', variant: 'velocity-core', severity: SEVERITIES['velocity-core'], what: 'a one-line WHAT', benefit: BENEFITS['velocity-core'], apply: 'node /x.mjs', detail: null }]);
+  });
+
+  it('the VARIANT identifier is the machine-readable outcome — a per-site arm reports its own, not the base key', () => {
+    // The human render says which ITEM fired; only this field says which ARM of it did. A consumer
+    // asserting an exact outcome (the pre-publish smoke) would otherwise have to pattern-match prose
+    // the registry is free to reword.
+    const { items } = run(({ add }) => add('read-lane', 'w', 'HAND-APPLY: x', 'read-lane.stale'));
+    assert.equal(items[0].key, 'read-lane', 'the base key still names the item');
+    assert.equal(items[0].variant, 'read-lane.stale', 'and the variant names the arm');
+    assert.equal(items[0].severity, SEVERITIES['read-lane.stale'], 'severity still resolves through the variant');
   });
 
   it('a multi-line recipe detail is a stated shape violation (the backstop covers the recipe line too)', () => {
@@ -1160,6 +1187,25 @@ describe('recommendations — the read-lane offer (AD-055 Part II, Help-through-
     assert.match(item.apply, /gate-hook\.mjs --apply/);
   });
 
+  it('a hook that VANISHES between the survey and the currency read renders the place recovery, never a reseed of nothing', () => {
+    // The survey saw it placed; by the time the currency read runs it is gone. The stale arm's
+    // recovery starts with `rm <that file>`, which would hand the reader a command whose first half
+    // is a no-op and whose diagnosis is wrong — the file is not stale, it is absent.
+    const root = wiredHookProject({ lanes: JSON.stringify({ readLane: true }), hookCurrent: false });
+    const { items, skips } = buildRecommendations({
+      cwd: root,
+      deps: hermeticDeps(root, { readRegularFileNoFollow: () => ({ outcome: 'absent' }) }),
+    });
+    rmSync(root, { recursive: true, force: true });
+    const item = items.find((i) => i.key === 'read-lane');
+    assert.ok(item, 'a dark lane is still reported');
+    assert.equal(item.severity, SEVERITY_ATTENTION);
+    assert.match(item.what, /placed file is missing/, item.what);
+    assert.match(item.apply, /gate-hook\.mjs --apply --cwd /, 'the recovery PLACES one');
+    assert.doesNotMatch(item.apply, /^HAND-APPLY: rm /, 'never the reseed line, whose rm targets nothing');
+    assert.ok(!skips.some((s) => s.key === 'read-lane'), 'and a race is answered, not degraded to a probe failure');
+  });
+
   it('readLane:false / a non-boolean value → the lane is off → the item fires (the writer will flip it), never a skip', () => {
     for (const lanes of [JSON.stringify({ readLane: false }), JSON.stringify({ readLane: 'yes', _README: 'x' })]) {
       const root = wiredHookProject({ lanes });
@@ -1328,6 +1374,10 @@ describe('recommendations — every probe degrades honestly (per-branch skip cov
 describe('recommendations — the inert gate declaration item', () => {
   const kitCheck = (tool) => `node "${join(HERE, tool)}" --check`;
   const CHECKER = kitCheck('coverage-check.mjs');
+  // The ONE row here that needs a real git tree (the census reads the index) borrows the builder the
+  // third-outcomes suite uses; every other row in this block runs on the non-git makeProject fixture
+  // with its injected within-domain census.
+  const { buildForeignFixture, hermeticAdvisorDeps } = FOREIGN;
   const gate = (id, cmd) => ({ id, title: id, cmd });
   const inertFor = (gates) => {
     const root = makeProject();
@@ -1510,6 +1560,29 @@ describe('recommendations — the inert gate declaration item', () => {
     const rendered = formatRecommendations(built);
     assert.ok(!rendered.includes(RECOMMENDATIONS_EMPTY_LINE), 'flow optimal must not render over a declaration that verifies nothing');
     assert.match(rendered, /item\(s\) need attention/, 'it opens on the attention verdict instead');
+  });
+
+  // The residual the producer-unrecognized arm must never overstate. The fill screens by terminating
+  // -class script NAME before it looks at a body, so a recognizable `node --test` under `ci` is a
+  // producer the offer can never carry. The arm still fires — nothing declares one and nothing
+  // offers one — but its text must not tell that project its suite is inexpressible, because the
+  // reader would go looking for a script they are already running. (This row lives here rather than
+  // beside its siblings so the third-outcomes suite's frozen bytes keep their red-proofs.)
+  it('cause A over a recognizable producer under a NON-OFFERED script name says what it knows, never that the suite is inexpressible', () => {
+    const built = buildForeignFixture({
+      tsFiles: 3,
+      testScript: 'vitest run',
+      extraFiles: { 'package.json': `${JSON.stringify({ name: 'f', private: true, scripts: { ci: 'node --test' } }, null, 2)}\n` },
+      gates: [{ id: 'lint', title: 'lint', cmd: 'true' }, { id: 'coverage-check', title: 'c', cmd: CHECKER }],
+    });
+    const item = buildRecommendations({ cwd: built.root, deps: hermeticAdvisorDeps(built.root) })
+      .items.find((i) => i.key === 'gates-inert');
+    built.teardown();
+    assert.ok(item, 'nothing declares or offers a producer, so the pair is still dead');
+    assert.equal(item.variant, 'gates-inert.producer-unrecognized');
+    assert.doesNotMatch(item.what, /cannot be expressed/, `the false claim is gone: ${item.what}`);
+    assert.match(item.what, /NO producer declared and none offerable/, item.what);
+    assert.match(item.apply, /a recognized body under another name/, `and the apply names the gap: ${item.apply}`);
   });
 
   it('an EXACT producer ahead of the checker fires neither cause — and never a skip', () => {
@@ -2155,9 +2228,10 @@ describe('recommendations — worktrees-dir convergence lanes (D7)', () => {
     assert.ok(item, 'the item is present in the JSON render');
     assert.deepEqual(
       Object.keys(item).sort(),
-      ['apply', 'benefit', 'detail', 'key', 'severity', 'what'],
-      'no item key renamed, none added — the public contract stays additive',
+      ['apply', 'benefit', 'detail', 'key', 'severity', 'variant', 'what'],
+      'no item key renamed — the public contract stays additive (`variant` joined it, nothing moved)',
     );
+    assert.equal(item.variant, 'worktrees-dir', 'a base arm reports the item key as its variant');
   });
 });
 

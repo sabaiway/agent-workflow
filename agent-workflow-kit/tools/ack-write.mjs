@@ -1,9 +1,15 @@
 #!/usr/bin/env node
 // ack-write.mjs — the consent-gated writer for the family-owned neutral ack store
-// (docs/ai/acks.json, AD-055 Part I). The upgrade Recommendations `sandbox-lane` item renders THIS
-// tool's PREVIEW one-liner; the preview prints the exact `--apply` command; the agent runs `--apply`
-// only after the mode doc's §3 informed-consent confirmation. It records a NEUTRAL recipe fingerprint
-// acknowledgement — never a security key; the kit never writes sandbox network/filesystem allowances.
+// (docs/ai/acks.json, AD-055 Part I). An upgrade Recommendations item whose state can only be
+// ANSWERED renders THIS tool's PREVIEW one-liner; the preview prints the exact `--apply` command;
+// the agent runs `--apply` only after the mode doc's §3 informed-consent confirmation. It records a
+// NEUTRAL fingerprint acknowledgement — never a security key; the kit never writes sandbox
+// network/filesystem allowances.
+//
+// The wording is per-LANE or genuinely neutral, never "recipe": the sandbox lane acknowledges a
+// session-sandbox recipe, but the coverage-domain lane acknowledges a census FACT and the
+// source-size-copy lane a set of declared tool claims. One lane's noun stated over all of them was
+// simply false about the others.
 //
 // Family writer discipline (velocity / orchestration-write / gate-hook), verbatim:
 //   • preview-then-mutate — `--dry-run` is the DEFAULT and writes nothing; `--apply` writes;
@@ -34,8 +40,9 @@ const EXIT_OK = 0;
 const EXIT_PRECONDITION = 1;
 const EXIT_USAGE = 2;
 const JSON_INDENT = 2;
-// The recipeFingerprint shape (recommendations.mjs: sha256 hex sliced to 16) — a fail-closed guard so
-// the store never records a malformed or injected value.
+// The shape every advisor fingerprint carries (recommendations.mjs: sha256 hex sliced to 16, whether
+// minted over a recipe or over a canonical fact string) — a fail-closed guard so the store never
+// records a malformed or injected value.
 export const FINGERPRINT_PATTERN = /^[0-9a-f]{16}$/u;
 // The lane this writer records when none is named — the original single-lane contract, so every
 // pre-existing sandbox-lane invocation and its rendered one-liner stay byte-identical.
@@ -126,13 +133,13 @@ export const formatResult = (result) => {
   if (result.dryRun) {
     if (result.alreadyAcked) {
       return [
-        `agent-workflow ack — DRY RUN: ${ACKS_FILE} already records this recipe fingerprint (${result.fingerprint}) — nothing to do.`,
+        `agent-workflow ack — DRY RUN: ${ACKS_FILE} already records this ${result.lane} fingerprint (${result.fingerprint}) — nothing to do.`,
       ].join('\n');
     }
     return [
       `agent-workflow ack — DRY RUN (no changes; re-run with --apply)`,
       `  - would ${result.existed ? 'set' : 'create'} ${ACKS_FILE} "${result.ackKey}" = "${result.fingerprint}"${merge}`,
-      `  - this is a NEUTRAL recipe acknowledgement, never a security key.`,
+      `  - this is a NEUTRAL ${result.lane} acknowledgement, never a security key.`,
       `  to apply: ${applyCommand(result.root, result.fingerprint, result.lane)}`,
     ].join('\n');
   }
@@ -145,9 +152,11 @@ export const formatResult = (result) => {
 // ── CLI ─────────────────────────────────────────────────────────────────────────────────
 const USAGE = `usage: ack-write --fingerprint <16-hex> [--lane <${Object.keys(ACK_LANES).join('|')}>] [--dry-run | --apply] [--cwd <dir>] [--help]
 
-Records a NEUTRAL recipe acknowledgement into ${ACKS_FILE} (the family-owned ack store — no host
-settings validator guards it). --lane names which advisor item is being acknowledged (default
-"${DEFAULT_ACK_LANE}"); each lane owns one top-level key. Default is --dry-run (a preview; writes
+Records a NEUTRAL acknowledgement into ${ACKS_FILE} (the family-owned ack store — no host settings
+validator guards it). --lane names which advisor item is being acknowledged (default
+"${DEFAULT_ACK_LANE}") and what the fingerprint stands for — a session-sandbox recipe, a worktrees
+probe dir, a tracked-tree census fact, a set of declared tool claims; each lane owns one top-level
+key. Default is --dry-run (a preview; writes
 nothing) and prints the exact --apply command. --apply merges that ONE key into ${ACKS_FILE},
 preserving every existing key. Refuses an absent docs/ai deployment; never a security key; never
 commits.`;

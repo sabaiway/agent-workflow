@@ -82,4 +82,24 @@ export const matchesCoverageProducer = (cmd) => {
   if (carriesProducerBody(trimmed)) return true;
   return PRODUCER_EXEC_PREFIXES.some((prefix) => trimmed.startsWith(prefix) && carriesProducerBody(trimmed.slice(prefix.length)));
 };
+
+// isCoverageProducerGate(gate) → the GATE-level producer question, and the ONE predicate every
+// consumer asks it through: does THIS declared entry write the lcov the canonical checker reads?
+// Exactly two ways to be one — the cmd passes the closed world above, or the declaration CLAIMS
+// production through the optional `lcovProducer` marker. The marker exists because the closed world
+// is a `node --test` world: a project whose primary suite is another runner has NO cmd form
+// recognition can accept, so without it the checker over such a suite reads as a dead pair forever.
+// Recognition itself never widens (anti-squatter) — the marker is a declared claim, not a new
+// grammar. Only the literal `true` claims: any truthy value would let the string "false" certify.
+// And the claim is about the DECLARATION, never the run — a marked gate that produces no lcov still
+// ends `skipped-no-lcov` / `attested=no` at run time.
+// An entry with no RUNNABLE cmd claims nothing (fail closed): no string cmd, an empty or
+// whitespace-only one, or one carrying an embedded newline. The strict validator already refuses all
+// three, but this predicate has a SECOND host — the standalone migration's loader is deliberately
+// lenient — and a marker must never make a checker pair with an entry that runs nothing there.
+export const isCoverageProducerGate = (gate) => {
+  if (gate === null || typeof gate !== 'object' || Array.isArray(gate) || typeof gate.cmd !== 'string') return false;
+  if (gate.cmd.trim() === '' || /[\r\n]/.test(gate.cmd)) return false;
+  return matchesCoverageProducer(gate.cmd) || gate.lcovProducer === true;
+};
 // coverage-producer canon <<< END drift-guarded region

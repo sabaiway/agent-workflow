@@ -17,9 +17,11 @@ import {
   UNIT_TESTS_COVERAGE_FLAGS,
   KNOWN_COVERAGE_FLAG_SETS,
   COVERAGE_PRODUCER_BODY,
+  isCoverageProducerGate,
   matchesCoverageProducer,
 } from './coverage-producer.mjs';
 import { execCmdFor } from './gates-init.mjs';
+import { validateDeclaration, LCOV_PRODUCER_KEY } from './gates-declaration.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OWN_SOURCE = join(HERE, 'coverage-producer.mjs');
@@ -173,6 +175,60 @@ describe('coverage-producer — the closed producer predicate', () => {
   });
 });
 
+describe('coverage-producer — the GATE-level predicate (the lcovProducer marker)', () => {
+  const gate = (cmd, extra = {}) => ({ id: 'suite', title: 'Suite', cmd, ...extra });
+  const FOREIGN_SUITE = 'pnpm vitest run --coverage';
+
+  it('a marker-true gate IS a producer even though its cmd is outside the closed world', () => {
+    assert.equal(matchesCoverageProducer(FOREIGN_SUITE), false, 'recognition itself never widened');
+    assert.equal(isCoverageProducerGate(gate(FOREIGN_SUITE, { lcovProducer: true })), true);
+  });
+
+  it('only the LITERAL true claims — false, absent, and every truthy near-miss do not', () => {
+    assert.equal(isCoverageProducerGate(gate(FOREIGN_SUITE)), false, 'marker absent');
+    assert.equal(isCoverageProducerGate(gate(FOREIGN_SUITE, { lcovProducer: false })), false);
+    for (const value of ['true', 'false', 1, {}, [], 'yes']) {
+      assert.equal(isCoverageProducerGate(gate(FOREIGN_SUITE, { lcovProducer: value })), false, `truthy near-miss must not claim: ${JSON.stringify(value)}`);
+    }
+  });
+
+  it('a marker over a cmd that cannot RUN claims nothing — the second host has no strict validator', () => {
+    // The kit's validateDeclaration refuses an empty/whitespace/multi-line cmd, so through it this
+    // is unreachable. The standalone migration's loader is deliberately LENIENT and asks this same
+    // predicate — without the screen a marker there pairs the canonical checker with an entry that
+    // runs nothing, which is the exact dead pair the whole producer rule exists to prevent.
+    for (const cmd of ['', '   ', '\t\n ', 'echo a\nrm -rf b', 'echo a\r\nrm -rf b']) {
+      assert.equal(isCoverageProducerGate(gate(cmd, { lcovProducer: true })), false, `must not claim: ${JSON.stringify(cmd)}`);
+    }
+    assert.equal(isCoverageProducerGate(gate(' pnpm vitest run ', { lcovProducer: true })), true, 'ordinary surrounding whitespace still claims');
+  });
+
+  it('a marker on a NON-gate shape claims nothing (fail closed)', () => {
+    for (const value of [null, undefined, 42, 'lcovProducer', [{ lcovProducer: true }], { lcovProducer: true }, { cmd: 42, lcovProducer: true }]) {
+      assert.equal(isCoverageProducerGate(value), false, `must not claim: ${JSON.stringify(value)}`);
+    }
+  });
+
+  it('cmd recognition through the gate predicate is byte-for-byte the cmd predicate', () => {
+    // The marker ADDS a way to be a producer; it may never change the verdict on a cmd. Every cmd
+    // the closed-world matrix above pins is re-asked here at the gate level, unmarked.
+    for (const cmd of [
+      COVERAGE_PRODUCER_BODY,
+      `${COVERAGE_PRODUCER_BODY} test/*.test.mjs`,
+      `node --test ${KNOWN_COVERAGE_FLAG_SETS[1]}`,
+      `${COVERAGE_PRODUCER_BODY} && rm -f "$AW_GIT_DIR/agent-workflow-lcov.info"`,
+      `echo ${COVERAGE_PRODUCER_BODY}`,
+      'node --test tools/*.test.mjs',
+      'npm test',
+      FOREIGN_SUITE,
+      ...['npm', 'pnpm', 'yarn'].map((pm) => execCmdFor(pm, COVERAGE_PRODUCER_BODY).cmd),
+    ]) {
+      assert.equal(isCoverageProducerGate(gate(cmd)), matchesCoverageProducer(cmd), `gate-level verdict must equal cmd-level: ${cmd}`);
+      assert.equal(isCoverageProducerGate(gate(cmd, { lcovProducer: false })), matchesCoverageProducer(cmd), `an explicit false never REVOKES a recognized cmd: ${cmd}`);
+    }
+  });
+});
+
 // The emitted cmd is a FIXTURE TO EXECUTE, never a string to admire: every earlier check read the
 // constant's bytes, so a destination that expanded to the filesystem root whenever AW_GIT_DIR was
 // unset or empty stayed invisible to the whole suite. This is the standing pattern for every
@@ -241,6 +297,35 @@ describe('coverage-producer — the shipped gates template carries no producer b
       assert.ok(!template.includes(flags), 'no emitted flag set is copied into the template');
     }
     assert.ok(!template.includes('agent-workflow-lcov.info'), 'nor the destination in any form');
+  });
+});
+
+// The mode doc SHOWS the marker as a declaration fragment, which is the form a reader copies. A
+// fragment the strict validator would reject is worse than no fragment: it teaches a shape that
+// fails at exit 5, and prose alone cannot notice when the schema moves under it.
+describe('coverage-producer — the mode doc\'s marker fragment is a VALID declaration', () => {
+  const GATES_DOC = join(HERE, '..', 'references', 'modes', 'gates.md');
+  const fencedJson = (text) => [...text.matchAll(/```json\n([\s\S]*?)```/g)].map((m) => m[1]);
+
+  it('the fenced fragment parses, validates, and really carries the marker', () => {
+    const blocks = fencedJson(readFileSync(GATES_DOC, 'utf8'));
+    const marker = blocks.filter((b) => b.includes(`"${LCOV_PRODUCER_KEY}"`));
+    assert.equal(marker.length, 1, 'exactly one fenced fragment demonstrates the marker');
+    const gates = validateDeclaration(JSON.parse(marker[0]));
+    assert.ok(gates.some((g) => g[LCOV_PRODUCER_KEY] === true), 'and it demonstrates the LITERAL true, the only value that claims');
+    assert.ok(gates.some((g) => isCoverageProducerGate(g)), 'so the predicate reads the documented entry as a producer');
+  });
+
+  it('EVERY fenced fragment in the doc validates — a shown declaration is a copyable one', () => {
+    for (const block of fencedJson(readFileSync(GATES_DOC, 'utf8'))) {
+      assert.doesNotThrow(() => validateDeclaration(JSON.parse(block)), `a documented fragment the validator rejects: ${block}`);
+    }
+  });
+
+  it('the guard is NOT vacuous — a fragment carrying a non-boolean marker is REJECTED', () => {
+    const blocks = fencedJson(readFileSync(GATES_DOC, 'utf8'));
+    const mutated = blocks.find((b) => b.includes(`"${LCOV_PRODUCER_KEY}"`)).replace(`"${LCOV_PRODUCER_KEY}": true`, `"${LCOV_PRODUCER_KEY}": "true"`);
+    assert.throws(() => validateDeclaration(JSON.parse(mutated)), /must be a boolean/);
   });
 });
 

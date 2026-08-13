@@ -10,7 +10,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, lstat
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { UNIT_TESTS_COVERAGE_FLAGS, RETIRED_STORE_BASENAMES, main } from './migrate-gates.mjs';
+import { CHECKER_CLAIM, UNIT_TESTS_COVERAGE_FLAGS, RETIRED_STORE_BASENAMES, checkerClaimTool, classifyCheckerClaim, main } from './migrate-gates.mjs';
 
 const KIT_TOOLS = mkdtempSync(join(tmpdir(), 'migrate-branches-kit-'));
 writeFileSync(join(KIT_TOOLS, 'coverage-check.mjs'), '// the installed checker the migration points at\n');
@@ -34,6 +34,8 @@ const CHECKER = { id: 'coverage-check', title: 'CC', cmd: `node "${join(KIT_TOOL
 const REVIEW_STATE = { id: 'review-state', title: 'RS', cmd: `node "${join(KIT_TOOLS, 'review-state.mjs')}" --check` };
 const LEGACY = { id: 'review-ledger', title: 'L', cmd: 'node "/kit/tools/review-ledger.mjs" --check' };
 const UNIT = { id: 'unit-tests', title: 'U', cmd: 'node --test tools/*.test.mjs' };
+// A suite the closed producer world cannot express, declaring itself with the optional marker.
+const MARKED_SUITE = { id: 'suite', title: 'S', cmd: 'pnpm vitest run --coverage', lcovProducer: true };
 
 describe('migrate-gates — refusal and no-op branches', () => {
   it('--help prints the contract and exits 0', () => {
@@ -139,6 +141,111 @@ describe('migrate-gates — refusal and no-op branches', () => {
     assert.match(io.err.join('\n'), /EACCES/);
     assert.ok(lstatSync(join(root, '.git', RETIRED_STORE_BASENAMES[0])).isFile(), 'the retired store is untouched on the STOP');
     rmSync(root, { recursive: true, force: true });
+  });
+
+  it('a marker-carrying entry survives an apply UNCHANGED — the loader is lenient, the writer opaque', () => {
+    // The declaration this tool rewrites may carry keys it knows nothing about. The loader accepts
+    // any `{ gates: [...] }` shape and the writer re-serializes the ENTRY, not a reconstruction of
+    // it, so an upgrade over a marker-carrying deployment never silently drops the claim.
+    const root = mkProject([LEGACY, MARKED_SUITE, REVIEW_STATE]);
+    const io = quiet();
+    assert.equal(main(['--cwd', root, '--kit-tools', KIT_TOOLS, '--apply'], io), 0, io.err.join('\n'));
+    const raw = readFileSync(join(root, 'docs', 'ai', 'gates.json'), 'utf8');
+    const written = JSON.parse(raw).gates;
+    assert.deepEqual(written.map((g) => g.id), ['suite', 'review-state', 'coverage-check'], 'the checker is ADDED over a marker-claimed producer');
+    assert.deepEqual(written[0], MARKED_SUITE, 'the marked entry round-trips key for key');
+    assert.match(raw, /"lcovProducer": true/, 'and the marker is really in the written bytes');
+    assert.doesNotMatch(io.out.join('\n'), /WARNING/, 'nothing is withheld over a declared producer');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('a marker on the CHECKER ITSELF never self-pairs — the declared pair stays INERT', () => {
+    // The producer question is POSITIONAL: the checker always ends up last, so it can never be its
+    // own producer. Asking it over the whole kept set would let this declaration certify itself
+    // into final-run-capability with nothing writing the lcov.
+    const root = mkProject([{ id: 'lint', title: 'L', cmd: 'eslint .' }, REVIEW_STATE, { ...CHECKER, lcovProducer: true }]);
+    const io = quiet();
+    assert.equal(main(['--cwd', root, '--kit-tools', KIT_TOOLS], io), 0, io.err.join('\n'));
+    const text = io.out.join('\n');
+    assert.match(text, /INERT/, 'the dead pair is named');
+    assert.doesNotMatch(text, /already final-run-capable/, 'and never claimed capable');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('a MARKED unit-tests entry is a zero-diff keep — never extended, never reported customized', () => {
+    // Both arms the marker settles at once: `npm test` is a cmd this tool cannot verify (customized
+    // without the marker), and rewriting a cmd whose owner declared it the producer would change
+    // bytes the byte-exact hook approval binds.
+    const marked = { id: 'unit-tests', title: 'U', cmd: 'npm test', lcovProducer: true };
+    const root = mkProject([marked, REVIEW_STATE]);
+    const io = quiet();
+    assert.equal(main(['--cwd', root, '--kit-tools', KIT_TOOLS], io), 0, io.err.join('\n'));
+    const text = io.out.join('\n');
+    assert.match(text, /ADD coverage-check/, 'the claimed producer unlocks the checker');
+    assert.doesNotMatch(text, /EXTEND unit-tests/, 'a claimed producer cmd is never rewritten');
+    assert.doesNotMatch(text, /CUSTOMIZED/, 'nor reported as a cmd the tool cannot verify');
+    rmSync(root, { recursive: true, force: true });
+
+    // The SAME entry unmarked is the customized/withheld path — the marker is what settles it.
+    const bare = mkProject([{ id: 'unit-tests', title: 'U', cmd: 'npm test' }, REVIEW_STATE]);
+    const io2 = quiet();
+    assert.equal(main(['--cwd', bare, '--kit-tools', KIT_TOOLS], io2), 0, io2.err.join('\n'));
+    const text2 = io2.out.join('\n');
+    assert.match(text2, /CUSTOMIZED/);
+    assert.doesNotMatch(text2, /ADD coverage-check/, 'the checker stays withheld with no producer');
+    rmSync(bare, { recursive: true, force: true });
+  });
+
+  it('a marker over an UNRUNNABLE cmd never unlocks the checker — the lenient loader has no validator', () => {
+    // This tool accepts any `{ gates: [...] }` shape, so an entry the strict validator would refuse
+    // reaches the plan builder intact. A marker on such an entry must not make the migration ADD the
+    // canonical checker: the result would be the dead pair the withhold exists to prevent, and the
+    // written declaration would then fail run-gates outright.
+    for (const cmd of ['   ', 'echo a\nrm -rf b']) {
+      const root = mkProject([{ id: 'suite', title: 'S', cmd, lcovProducer: true }, REVIEW_STATE]);
+      const io = quiet();
+      assert.equal(main(['--cwd', root, '--kit-tools', KIT_TOOLS], io), 0, io.err.join('\n'));
+      const text = io.out.join('\n');
+      assert.doesNotMatch(text, /ADD coverage-check/, `an unrunnable cmd must not unlock the checker: ${JSON.stringify(cmd)}`);
+      assert.match(text, /WARNING: the canonical coverage-check gate was NOT added/, 'and the withhold is stated');
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('a marker on a DUPLICATE canonical checker never produces for the other — nor claims capability', () => {
+    // `--final` accepts exactly ONE canonical checker, and a checker cannot write the lcov it reads.
+    // Excluding only the LAST checker row from the producer search let a marker on the first one pair
+    // with the second, and the preview then called the result final-run-capable over a declaration
+    // --final rejects outright, with nothing writing the file.
+    const root = mkProject([{ ...CHECKER, id: 'coverage-check', lcovProducer: true }, REVIEW_STATE, { ...CHECKER, id: 'coverage-check-2' }]);
+    const io = quiet();
+    assert.equal(main(['--cwd', root, '--kit-tools', KIT_TOOLS], io), 0, io.err.join('\n'));
+    const text = io.out.join('\n');
+    assert.doesNotMatch(text, /already final-run-capable/, 'two checkers are never a final-run-capable result');
+    assert.match(text, /2 declared gates are the canonical coverage checker/, 'the duplication is NAMED');
+    assert.match(text, /INERT/, 'and the pair is still reported inert — nothing writes the lcov');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('the tool-claim twin RUNS in this module — three outcomes, fail-closed on the unresolvable', () => {
+    // The text drift guard (beside the kit's own copy) proves the two owners are byte-equal; it
+    // cannot prove this copy WORKS, because the region is byte-equal inside a DIFFERENT host with
+    // different imports. Executing it here is what proves the twin resolves everything it uses.
+    const canonical = join(KIT_TOOLS, 'coverage-check.mjs');
+    const root = mkProject([]);
+    try {
+      const elsewhere = join(root, 'vendor-coverage-check.mjs');
+      writeFileSync(elsewhere, '// a vendored copy\n');
+      const tool = checkerClaimTool('coverage-check.mjs', canonical);
+      assert.equal(classifyCheckerClaim(tool, `node "${canonical}" --check`, KIT_TOOLS), CHECKER_CLAIM.CANONICAL);
+      const vendored = checkerClaimTool('vendor-coverage-check.mjs', canonical);
+      assert.equal(classifyCheckerClaim(vendored, `node "${elsewhere}" --check`, KIT_TOOLS), CHECKER_CLAIM.ELSEWHERE);
+      assert.equal(classifyCheckerClaim(tool, `node "${canonical}" --check || true`, KIT_TOOLS), CHECKER_CLAIM.NOT_THE_TOOL, 'a masked form is no claim');
+      assert.equal(classifyCheckerClaim(tool, `node "${join(KIT_TOOLS, 'nowhere', 'coverage-check.mjs')}" --check`, KIT_TOOLS), CHECKER_CLAIM.NOT_THE_TOOL, 'unresolvable fails closed');
+      assert.equal(classifyCheckerClaim(tool, 'node $(pwd)/coverage-check.mjs --check', KIT_TOOLS), CHECKER_CLAIM.NOT_THE_TOOL, 'a shell-active bare token is no claim');
+    } finally {
+      rmSync(root, { recursive: true, force: true }); // every other case here cleans up; this one held its root only for a path
+    }
   });
 
   it('an un-unlinkable retired store is reported LOUDLY and never fails the migration', () => {

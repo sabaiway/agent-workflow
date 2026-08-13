@@ -10,7 +10,7 @@ import { readFileSync, lstatSync, realpathSync } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fail, loadConfig, CONFIG_REL } from './orchestration-config.mjs';
-import { matchesCoverageProducer } from './coverage-producer.mjs';
+import { isCoverageProducerGate } from './coverage-producer.mjs';
 import { matchesSourceSizeGate } from './source-size-core.mjs';
 
 // The per-project declaration (strict JSON, hand-editable). cwd-relative — errors show a path the
@@ -23,39 +23,49 @@ const EXIT_MALFORMED = 5;
 
 const GATE_ID_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const GATE_KEYS = Object.freeze(['id', 'title', 'cmd']);
+// The ONE optional gate key: the coverage-producer marker — a declared CLAIM that this gate writes
+// the lcov the canonical checker reads (coverage-producer.mjs owns what the claim means and why
+// recognition itself stays closed). Boolean only, and FORWARD-ONLY by design: an older kit has no
+// such key and rejects a marker-carrying declaration loudly here, which is the honest failure — it
+// could not honor the claim anyway.
+export const LCOV_PRODUCER_KEY = 'lcovProducer';
+const ALLOWED_GATE_KEYS = Object.freeze([...GATE_KEYS, LCOV_PRODUCER_KEY]);
 
 // ── declaration validation (malformed → exit 5, loud `path: reason`) ─────────────────
 
 // Validate a parsed gates.json object. Strict: only `_README` (string) + `gates` (array of
-// { id, title, cmd }) are allowed; unknown keys anywhere are rejected loudly — the declaration
-// names WHAT to check, never lanes/models/routing. Returns the validated gates array.
+// { id, title, cmd, lcovProducer? }) are allowed; unknown keys anywhere are rejected loudly — the
+// declaration names WHAT to check, never lanes/models/routing. Returns the validated gates array.
 export const validateDeclaration = (parsed) => {
   const reject = (reason) => {
     throw fail(EXIT_MALFORMED, `${GATES_REL}: ${reason}`);
   };
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    reject('must be a JSON object { "_README"?: string, "gates": [{ id, title, cmd }, ...] }');
+    reject('must be a JSON object { "_README"?: string, "gates": [{ id, title, cmd, lcovProducer? }, ...] }');
   }
   for (const key of Object.keys(parsed)) {
     if (key !== '_README' && key !== 'gates') reject(`unknown top-level key "${key}" (allowed: _README, gates)`);
   }
   if (parsed._README !== undefined && typeof parsed._README !== 'string') reject('"_README" must be a string');
-  if (!Array.isArray(parsed.gates)) reject('"gates" must be an array of { id, title, cmd }');
+  if (!Array.isArray(parsed.gates)) reject('"gates" must be an array of { id, title, cmd, lcovProducer? }');
   const seenIds = new Set();
   parsed.gates.forEach((gate, index) => {
     const at = `gates[${index}]`;
     if (gate === null || typeof gate !== 'object' || Array.isArray(gate)) {
-      reject(`${at}: must be an object { id, title, cmd }`);
+      reject(`${at}: must be an object { id, title, cmd, lcovProducer? }`);
     }
     for (const key of Object.keys(gate)) {
-      if (!GATE_KEYS.includes(key)) {
-        reject(`${at}: unknown key "${key}" (allowed: id, title, cmd — gates declare WHAT to check, never lane/model/routing)`);
+      if (!ALLOWED_GATE_KEYS.includes(key)) {
+        reject(`${at}: unknown key "${key}" (allowed: ${ALLOWED_GATE_KEYS.join(', ')} — gates declare WHAT to check, never lane/model/routing)`);
       }
     }
     for (const key of GATE_KEYS) {
       if (typeof gate[key] !== 'string' || gate[key].trim() === '') {
         reject(`${at}: "${key}" must be a non-empty string`);
       }
+    }
+    if (gate[LCOV_PRODUCER_KEY] !== undefined && typeof gate[LCOV_PRODUCER_KEY] !== 'boolean') {
+      reject(`${at}: "${LCOV_PRODUCER_KEY}" must be a boolean (only the literal true claims this gate writes the lcov the checker reads)`);
     }
     if (/[\r\n]/.test(gate.cmd)) {
       reject(`${at}: "cmd" must be ONE bash command line — embedded newlines (a multi-line script) are rejected; chain with && or move the script into a file`);
@@ -146,9 +156,12 @@ export const isFinalCapableDeclaration = (gates, projectDir) => {
 // index. ORDER is the whole question: a producer declared AFTER the checker writes the lcov too late,
 // so the checker reads nothing — or, worse, stale bytes an earlier run left behind — and still
 // passes. ONE home for the rule: the written-declaration defects below and the advisor's
-// inert-declaration item both decide through it, so they cannot drift apart.
+// inert-declaration item both decide through it, so they cannot drift apart. Producer-ness itself is
+// the canon's gate-level predicate (cmd closed-world OR the declared marker), so the slice is the
+// only thing this function owns — and the slice is what keeps a marker on the CHECKER from
+// self-pairing.
 export const coverageProducerPrecedes = (gates, checkerIndex) =>
-  gates.slice(0, checkerIndex).some((gate) => matchesCoverageProducer(gate.cmd));
+  gates.slice(0, checkerIndex).some((gate) => isCoverageProducerGate(gate));
 
 // coverageDeclarationDefects(gates, projectDir) → the WRITTEN-declaration coverage rule, as a list
 // of named defects (empty = satisfied): at most ONE canonical coverage checker; if one is present
