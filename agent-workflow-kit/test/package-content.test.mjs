@@ -131,6 +131,17 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // leaf dropped from the payload would break every placed-bridge refresh, and the count alone
       // would hide it behind any other simultaneous drift.
       'tools/refresh-parity.mjs',
+      // the ONE ensure command upgrade.md invokes (its four ops + the CLI). Pinned by NAME: the mode
+      // doc names ONE invocation, so a payload drop would leave that step with nothing to run at all,
+      // and the count alone would hide it behind any other simultaneous drift.
+      'tools/ensure-configs.mjs',
+      'tools/ensure-ops.mjs',
+      // and the PURE vocabulary leaf both they and the read-only doc-parity lint import — pinned by
+      // NAME because dropping it would break the ops AND the lint at once
+      'tools/ensure-vocabulary.mjs',
+      // the shared realpath direct-run predicate + the library-only registry. Every guarded module
+      // imports it, so a leaf missing from the payload breaks them all — by NAME for the same reason.
+      'tools/direct-run.mjs',
       // the AD-038 review-enforcement pair: the read-only receipt checker + the facts assembler
       'tools/review-state.mjs',
       'tools/grounding.mjs',
@@ -462,7 +473,16 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       verdict and the read-only skip line it composes. A LEAF — fs injected, nothing imported
     //       back from the writer — which is what lets the read-only degrade prove its own claim
     //       without the scanner being written twice. Its *.test.mjs sibling is stripped by files[].
-    assert.equal(packed.length, 205, `tarball file count drifted (${packed.length} ≠ 205)`);
+    // 208 = 205 + the feedback-hardening Plan 1 F4 trio: tools/ensure-configs.mjs (the ONE upgrade
+    //       ensure command) + tools/ensure-ops.mjs (its four operations) + tools/direct-run.mjs (the
+    //       realpath direct-run predicate extracted from the source-size writer, plus the explicit
+    //       library-only registry a mode-doc-named module without a CLI now has to join). The three
+    //       *.test.mjs siblings are stripped by files[].
+    // 209 = 208 + tools/ensure-vocabulary.mjs — the closed token/cause vocabulary as a PURE leaf, so
+    //       the read-only doc-parity lint can bind the relayed token set into upgrade.md without
+    //       importing the ensure implementation and, through it, the orchestration writer (a round-1
+    //       council finding).
+    assert.equal(packed.length, 209, `tarball file count drifted (${packed.length} ≠ 209)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

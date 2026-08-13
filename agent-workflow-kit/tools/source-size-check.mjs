@@ -26,10 +26,9 @@
 // Exit codes: 0 green / 1 violation or refusal / 2 usage, config or enumeration error.
 // Dependency-free, Node >= 22. No side effects on import.
 
-import { fileURLToPath } from 'node:url';
-import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { assertDocsAiDeployment, writeDocsAiFileAtomic } from './atomic-write.mjs';
+import { isDirectRun, sameFile } from './direct-run.mjs';
 import {
   AUTHORED_KEYS,
   SOURCE_SIZE_CONFIG_REL,
@@ -299,20 +298,11 @@ export const main = (argv, ctx = {}) => {
   }
 };
 
-// Compared by REAL path, not lexically: ESM resolves a symlinked entry point to its target, so a
-// lexical comparison is false whenever the tool is invoked through a link — and a gate whose cmd
-// names a link would then exit 0 having run nothing, which reads as PASS.
-// Exported as a test seam (the coverage-check keyFor idiom): the unresolvable arm cannot be reached
-// through the CLI, where an existing entry point is a precondition of getting this far.
-export const sameFile = (a, b) => {
-  try {
-    return realpathSync(a) === realpathSync(b);
-  } catch {
-    return false;
-  }
-};
-const isDirectRun = Boolean(process.argv[1]) && sameFile(fileURLToPath(import.meta.url), process.argv[1]);
-if (isDirectRun) {
+// The realpath-compare direct-run predicate now lives in tools/direct-run.mjs (the fix this file
+// carried first, extracted so every module shares one implementation); `sameFile` stays exported here
+// because this module's tests bind it as a seam.
+export { sameFile };
+if (isDirectRun(import.meta.url)) {
   const result = main(process.argv.slice(2));
   if (result.stdout) process.stdout.write(result.stdout.endsWith('\n') ? result.stdout : `${result.stdout}\n`);
   if (result.stderr) process.stderr.write(result.stderr.endsWith('\n') ? result.stderr : `${result.stderr}\n`);

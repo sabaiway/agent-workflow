@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // orchestration-config.mjs — the schema / read / pure-transform core for the per-project
 // orchestration config (docs/ai/orchestration.json). It is the SINGLE source of the config contract:
 //
@@ -16,12 +15,13 @@
 //
 // This module performs NO filesystem WRITES — only reads (loadConfig). The single fs-writer lives in
 // orchestration-write.mjs, which procedures.mjs never imports DIRECTLY (the pinned import-split
-// rule). Pure-where-possible (fs injectable), dependency-free, Node >= 22. No side
-// effects on import.
+// rule). It has NO CLI while upgrade.md names it — hence the registered refusal at the foot of the
+// file (direct-run.mjs), and no shebang. Fs-injectable, dependency-free, Node >= 22; nothing on import.
 
 import { readFileSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { ACTIVITIES, SLOT_RECIPES } from './recipes.mjs';
+import { refuseDirectRun } from './direct-run.mjs';
 
 // The hand-editable / agent-writable, per-project config (strict JSON). cwd-relative — the error prefix
 // uses this rel path so a user sees a path they can open, never an absolute temp/host path.
@@ -396,3 +396,5 @@ export const refreshReadme = (config) => {
 
 // The canonical seed file body (what `init` deploys + what serializeConfig round-trips byte-identically).
 export const SEED_CONFIG = { _README: CANON_README, 'plan-authoring': { review: 'solo' }, 'plan-execution': { execute: 'solo', review: 'solo' } };
+
+refuseDirectRun(import.meta.url);

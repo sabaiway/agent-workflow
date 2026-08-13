@@ -52,6 +52,11 @@ import { COVERAGE } from './coverage-state.mjs';
 // The canonical producer body: gates.md prints the whole command byte for byte, so the doc is a
 // hand copy of a moving constant unless it is bound here.
 import { COVERAGE_PRODUCER_BODY } from './coverage-producer.mjs';
+// The ensure outcomes upgrade.md relays: the doc enumerates them for the agent, so an outcome the
+// tool renames or drops must fail here rather than leave the doc teaching a vocabulary nobody emits.
+// Imported from the VOCABULARY leaf, never from the ops: a read-only lint must not pull the ensure
+// implementation — and through it the orchestration writer — into its import graph.
+import { RELAYED_ENSURE_TOKENS } from './ensure-vocabulary.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -128,6 +133,11 @@ export const BINDINGS = Object.freeze([
   // enumerate the refresh outcomes must carry all three, or a reworded doc goes back to promising a
   // claim the tool no longer makes.
   ...Object.values(PARITY).map((token) => valueBinding(`refresh-parity:${token}`, token, `\`${token}\``, [SETUP_DOC, UPGRADE_DOC])),
+  // The project-configuration ensures (feedback-hardening Plan 1 F4): upgrade.md used to PRESCRIBE
+  // each of the four as prose, so the doc was the only place the outcome set existed and drifted for
+  // free. Now one command performs them and the doc enumerates its tokens — backticked, so a bare
+  // word in a sentence cannot pass for the pinned outcome.
+  ...RELAYED_ENSURE_TOKENS.map((token) => valueBinding(`ensure-outcome:${token}`, token, `\`${token}\``, [UPGRADE_DOC])),
   // The "the tool knows and does not say" contract: a clean-tree PASS must still name a latent arm.
   // It was a prose-only bar a doc could silently drop, so it is pinned to the live string the tool
   // actually emits — a reworded doc dropping the notice fails this pin plus the gate.
