@@ -7,7 +7,8 @@
 //   • source-size-refusal.mjs  — the two exit classes, and the absolute config path every refusal names
 //   • source-size-config.mjs   — the config file: its grammar, its four states, its reader
 //   • source-size-scope.mjs    — which files are judged (D-6) and how big each one is (D-7)
-//   • source-size-gate-cmd.mjs — whether a declared gate cmd IS this checker (the canonical matcher)
+//   • source-size-gate-cmd.mjs — whether a declared gate cmd IS this checker (the canonical matcher),
+//                                and which of the three tool claims it makes when it is not
 //
 // Re-export only: a consumer imports the practice, never a particular half, so a later split moves
 // code without touching a single call site.
@@ -48,6 +49,11 @@ export {
 export {
   SOURCE_SIZE_GATE_ID,
   SOURCE_SIZE_TOOL_PATH,
+  classifySourceSizeGate,
   dqUnsafePath,
   matchesSourceSizeGate,
 } from './source-size-gate-cmd.mjs';
+
+// The claim vocabulary itself — a consumer naming an outcome imports the name, never a string
+// literal it could misspell into a silently-never-true comparison.
+export { CHECKER_CLAIM } from './checker-claim.mjs';

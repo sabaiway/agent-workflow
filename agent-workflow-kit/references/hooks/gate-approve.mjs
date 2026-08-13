@@ -175,6 +175,11 @@ const WHITESPACE_PATTERN = /\s+/u;
 const GATE_ID_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const GATE_CMD_NEWLINE_PATTERN = /[\r\n]/u;
 const GATE_KEYS = Object.freeze(['id', 'title', 'cmd']);
+// The ONE optional gate key (the coverage-producer marker), accepted here for the same reason every
+// other shape rule is restated: a declaration the RUNNER accepts must never be rejected here, or a
+// marker-carrying project would silently lose auto-approval on gates the runner runs happily.
+const LCOV_PRODUCER_KEY = 'lcovProducer';
+const ALLOWED_GATE_KEYS = Object.freeze([...GATE_KEYS, LCOV_PRODUCER_KEY]);
 const README_KEY = '_README';
 const GATES_KEY = 'gates';
 
@@ -196,11 +201,12 @@ export const validateDeclarationShape = (parsed) => {
   for (const gate of parsed[GATES_KEY]) {
     if (gate === null || typeof gate !== 'object' || Array.isArray(gate)) return invalid;
     for (const key of Object.keys(gate)) {
-      if (!GATE_KEYS.includes(key)) return invalid;
+      if (!ALLOWED_GATE_KEYS.includes(key)) return invalid;
     }
     for (const key of GATE_KEYS) {
       if (typeof gate[key] !== 'string' || gate[key].trim() === '') return invalid;
     }
+    if (gate[LCOV_PRODUCER_KEY] !== undefined && typeof gate[LCOV_PRODUCER_KEY] !== 'boolean') return invalid;
     if (GATE_CMD_NEWLINE_PATTERN.test(gate.cmd)) return invalid;
     if (!GATE_ID_PATTERN.test(gate.id)) return invalid;
     if (seenIds.has(gate.id)) return invalid;

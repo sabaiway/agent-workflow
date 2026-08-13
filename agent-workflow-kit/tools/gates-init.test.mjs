@@ -1015,6 +1015,20 @@ describe('gates-init — the coverage-check candidate is WITHHELD when nothing p
     assert.match(notes, /produce/i, 'the reason is the missing producer, not a generic skip');
   });
 
+  it('a MARKER-carrying declared gate unlocks the checker offer too — the offer asks the ONE predicate', () => {
+    // The foreign-suite case the marker exists for: nothing in the offer or the declaration matches
+    // the closed cmd world, and the declaration says so itself. Without the marker this same
+    // fixture is the withhold above.
+    mkProject({
+      scripts: { lint: 'eslint .' },
+      config: COUNCIL,
+      gates: { gates: [{ id: 'suite', title: 'S', cmd: 'pnpm vitest run --coverage', lcovProducer: true }] },
+    });
+    const offer = buildOffer(cwd);
+    assert.deepEqual(offer.entries.map((e) => e.id), ['lint', 'review-state', 'coverage-check']);
+    assert.ok(!offer.notes.some((n) => /withheld/.test(n)), `nothing is withheld over a declared producer: ${offer.notes.join(' | ')}`);
+  });
+
   it('a producer already DECLARED by hand unlocks the checker offer — the rule reads the merged picture, not just the offer', () => {
     mkProject({
       scripts: { lint: 'eslint .' },
@@ -1157,6 +1171,25 @@ describe('gates-declaration — the written-declaration coverage invariant (the 
   it('a NEAR-MISS producer does not satisfy the rule (the closed predicate decides, not a substring)', () => {
     const nearMiss = { id: 'suite', title: 'S', cmd: 'echo "$AW_GIT_DIR/agent-workflow-lcov.info" && node --test test/*.mjs' };
     assert.deepEqual(coverageDeclarationDefects([nearMiss, checker('coverage-check')], HERE).map((d) => d.kind), ['no-producer']);
+  });
+
+  // The lcovProducer marker reaches this rule through the ONE gate-level predicate, so the whole
+  // rule — production, ORDER, the checker's inability to pair with itself — holds over it unchanged.
+  it('a MARKER-paired declaration satisfies the rule, and only the literal true does', () => {
+    const marked = (marker) => ({ id: 'suite', title: 'S', cmd: 'pnpm vitest run --coverage', lcovProducer: marker });
+    assert.deepEqual(coverageDeclarationDefects([marked(true), checker('coverage-check')], HERE), []);
+    assert.deepEqual(coverageDeclarationDefects([marked(false), checker('coverage-check')], HERE).map((d) => d.kind), ['no-producer']);
+    assert.deepEqual(coverageDeclarationDefects([marked('true'), checker('coverage-check')], HERE).map((d) => d.kind), ['no-producer']);
+  });
+
+  it('a marker on the CHECKER ITSELF never self-pairs — a gate cannot produce the lcov it reads', () => {
+    const selfMarked = { ...checker('coverage-check'), lcovProducer: true };
+    assert.deepEqual(coverageDeclarationDefects([plain, selfMarked], HERE).map((d) => d.kind), ['no-producer']);
+  });
+
+  it('a MARKED producer declared AFTER the checker refuses exactly like a recognized one — ORDER is the rule', () => {
+    const marked = { id: 'suite', title: 'S', cmd: 'pnpm vitest run --coverage', lcovProducer: true };
+    assert.deepEqual(coverageDeclarationDefects([checker('coverage-check'), marked], HERE).map((d) => d.kind), ['checker-not-last']);
   });
 });
 

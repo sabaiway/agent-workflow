@@ -14,12 +14,12 @@
 
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildRecommendations, SEVERITY_ATTENTION, SEVERITY_OPTIONAL } from './recommendations.mjs';
+import { buildRecommendations, ACKS_FILE, SEVERITY_ATTENTION, SEVERITY_OPTIONAL } from './recommendations.mjs';
 import { main } from './source-size-check.mjs';
 import { SOURCE_SIZE_DEFAULTS, SOURCE_SIZE_GATE_ID } from './source-size-core.mjs';
 import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
@@ -157,5 +157,131 @@ describe('recommendations — the source-size discovery item', () => {
     assert.match(run.stdout, /"<a directory this practice covers>"/, 'the printed template is inert until a human fills it');
     assert.match(run.stdout, /source-size: WHY —/, 'and the refusal still carries the practice\'s reason');
     assert.equal(readFileSync(join(cwd, 'docs', 'ai', '.workflow-version'), 'utf8').trim(), EXPECTED_WORKFLOW_VERSION, 'nothing else was touched');
+  });
+});
+
+// The three-outcome split (feedback-hardening Plan 2, D5). The boolean this probe used to ask made a
+// DELIBERATELY VENDORED copy of the checker read as "no source-size gate at all" — a false absence
+// whose rendered remedy (`--adopt`) then exits 1 on the very id already in the declaration. The
+// realpath anchor is right and does not move; what was missing is the vocabulary to say which of the
+// three things a declared cmd actually claims.
+describe('recommendations — the source-size item over a VENDORED copy of the checker (D5)', () => {
+  const ACK_WRITE = join(HERE, 'ack-write.mjs');
+  // A real second copy of the checker inside the project: same invocation shape, a different realpath.
+  const vendored = (cwd, rel = join('vendor', 'source-size-check.mjs')) => {
+    const abs = join(cwd, rel);
+    mkdirSync(dirname(abs), { recursive: true });
+    copyFileSync(TOOL, abs);
+    git(cwd, ['add', '-A']);
+    return { abs, cmd: `node "${abs}" --check` };
+  };
+  const gateFor = (cmd, id = SOURCE_SIZE_GATE_ID) => ({ gates: [{ id, title: 'Source size', cmd }] });
+  const mint = (cwd) => {
+    const r = spawnSync('node', [TOOL, '--write-baseline', '--reason', 'initial adoption', '--cwd', cwd], { encoding: 'utf8' });
+    assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+    git(cwd, ['add', '-A']);
+  };
+
+  it('rec-vendored-copy-is-ADOPTED-ELSEWHERE, never a false "no source-size gate"', () => {
+    const cwd = project();
+    const copy = vendored(cwd);
+    writeFileSync(join(cwd, 'docs', 'ai', 'gates.json'), JSON.stringify(gateFor(copy.cmd), null, 2));
+    mint(cwd);
+    const { item, skip } = report(cwd);
+    assert.equal(skip, undefined, 'a readable declaration is decided');
+    assert.ok(item, 'the advisor still has something to say — but not that the practice is missing');
+    assert.equal(item.variant, 'source-size.adopted-elsewhere');
+    assert.equal(item.severity, SEVERITY_OPTIONAL, 'a vendored copy is a deployment choice, not a broken declaration');
+    assert.match(item.what, /DIFFERENT copy of this checker/, item.what);
+    assert.doesNotMatch(item.what, /no source-size gate/, 'the retired false absence never renders over a vendored copy');
+    // The remedy that used to render here EXITS 1 on the id collision — correct against a squatter,
+    // wrong against a second copy of the same tool.
+    assert.doesNotMatch(item.apply, /--adopt/, `--adopt would collide on the declared id: ${item.apply}`);
+    assert.ok(item.apply.startsWith(`node ${ACK_WRITE} --lane source-size-copy --fingerprint `), item.apply);
+  });
+
+  it('rec-vendored-copy-converges-on-its-own-ack, and re-fires when the declared claim SET changes', () => {
+    const cwd = project();
+    const copy = vendored(cwd);
+    writeFileSync(join(cwd, 'docs', 'ai', 'gates.json'), JSON.stringify(gateFor(copy.cmd), null, 2));
+    mint(cwd);
+    const fingerprint = report(cwd).item.apply.match(/--fingerprint ([0-9a-f]{16})/)[1];
+    // Non-vacuity: the RENDERED lane is what converges the item it was rendered for.
+    const applied = spawnSync('node', [ACK_WRITE, '--lane', 'source-size-copy', '--fingerprint', fingerprint, '--cwd', cwd, '--apply'], { encoding: 'utf8' });
+    assert.equal(applied.status, 0, `${applied.stdout}${applied.stderr}`);
+    assert.equal(JSON.parse(readFileSync(join(cwd, ACKS_FILE), 'utf8')).sourceSizeCopyAck, fingerprint);
+    assert.equal(report(cwd).item, undefined, 'the acknowledged claim converges');
+    // A SECOND external copy is a different fact: the maintainer acknowledged one, not any number.
+    const second = vendored(cwd, join('vendor2', 'source-size-check.mjs'));
+    writeFileSync(join(cwd, 'docs', 'ai', 'gates.json'), JSON.stringify({
+      gates: [{ id: SOURCE_SIZE_GATE_ID, title: 'Source size', cmd: copy.cmd }, { id: 'source-size-b', title: 'B', cmd: second.cmd }],
+    }, null, 2));
+    git(cwd, ['add', '-A']);
+    const after = report(cwd);
+    assert.ok(after.item, 'a changed claim set re-fires');
+    assert.match(after.item.what, /\(2 declared\)/, after.item.what);
+    assert.notEqual(after.item.apply.match(/--fingerprint ([0-9a-f]{16})/)[1], fingerprint);
+  });
+
+  it('rec-vendored-copy-over-an-unminted-record is the SAME attention outcome — and no ack silences it', () => {
+    // The config-state guard survives the split: a gate certain to refuse on every run is broken
+    // whichever copy runs it. Only the way OUT differs — `--adopt` would mint and then collide, so
+    // the rendered verb is the mint alone; the declaration is not the half that is missing.
+    for (const [label, config] of [['no config at all', null], ['authored but never minted', AUTHORED]]) {
+      const cwd = project({ config });
+      const copy = vendored(cwd);
+      writeFileSync(join(cwd, 'docs', 'ai', 'gates.json'), JSON.stringify(gateFor(copy.cmd), null, 2));
+      // An ack recorded for this very claim must not convert a broken declaration into silence.
+      writeFileSync(join(cwd, 'docs', 'ai', 'acks.json'), JSON.stringify({ sourceSizeCopyAck: 'abcdef0123456789' }));
+      git(cwd, ['add', '-A']);
+      const { item } = report(cwd);
+      assert.ok(item, `${label}: a gate certain to refuse is never silenced by an acknowledgment`);
+      assert.equal(item.variant, 'source-size.unminted', label);
+      assert.equal(item.severity, SEVERITY_ATTENTION, label);
+      assert.match(item.apply, /--write-baseline --reason "initial adoption"/, `${label}: the mint alone`);
+      assert.doesNotMatch(item.apply, /--adopt/, `${label}: --adopt would mint and then collide on the declared id`);
+    }
+  });
+
+  it('rec-id-squatter-gets-its-own-attention-arm with a HAND-APPLY recovery, never --adopt', () => {
+    const cwd = project({ gates: gateFor('true') });
+    const { item } = report(cwd);
+    assert.ok(item, 'the id is not the identity — the canonical invocation is');
+    assert.equal(item.variant, 'source-size.id-squatter');
+    assert.equal(item.severity, SEVERITY_ATTENTION, 'the id claims the practice while nothing measures size');
+    assert.ok(item.apply.startsWith('HAND-APPLY:'), item.apply);
+    assert.match(item.apply, /rename the "source-size" gate/, item.apply);
+    assert.match(item.apply, /repoint its cmd at node .*source-size-check\.mjs --check/, item.apply);
+    assert.doesNotMatch(item.apply, /--adopt/, 'the rendered remedy is never the one that exits 1 here');
+  });
+
+  it('rec-precedence-is-deterministic-over-a-MIXED declaration: canonical > tool-elsewhere > id-squatter', () => {
+    // A boolean matcher had to pick arbitrarily here. The order is pinned because each answer is a
+    // different sentence to the maintainer, and only one of them can be the right one.
+    const canonicalCmd = `node "${TOOL}" --check`;
+    const cases = [
+      ['canonical beside a vendored copy', (copy) => [{ id: 'size-b', title: 'B', cmd: copy.cmd }, { id: SOURCE_SIZE_GATE_ID, title: 'A', cmd: canonicalCmd }], undefined],
+      ['canonical beside an id squatter', () => [{ id: SOURCE_SIZE_GATE_ID, title: 'A', cmd: 'true' }, { id: 'size-real', title: 'B', cmd: canonicalCmd }], undefined],
+      ['a vendored copy beside an id squatter', (copy) => [{ id: SOURCE_SIZE_GATE_ID, title: 'A', cmd: 'true' }, { id: 'size-b', title: 'B', cmd: copy.cmd }], 'source-size.adopted-elsewhere'],
+    ];
+    for (const [label, build, expected] of cases) {
+      const cwd = project();
+      const copy = vendored(cwd);
+      writeFileSync(join(cwd, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates: build(copy) }, null, 2));
+      mint(cwd);
+      const { item } = report(cwd);
+      assert.equal(item?.variant, expected, `${label}: ${item ? item.variant : 'silent'}`);
+    }
+  });
+
+  it('rec-unchanged-arms: a canonical minted gate stays silent and an undeclared project keeps the base offer', () => {
+    const adopted = project();
+    assert.equal(main(['--adopt', '--reason', 'initial adoption', '--cwd', adopted]).code, 0);
+    git(adopted, ['add', '-A']);
+    assert.equal(report(adopted).item, undefined, 'the canonical arm is byte-unchanged');
+    const bare = project();
+    const { item } = report(bare);
+    assert.equal(item.variant, 'source-size', 'and a project with no claim at all still gets the discovery offer');
+    assert.match(item.apply, /--adopt/, 'whose remedy is still the one consented verb');
   });
 });

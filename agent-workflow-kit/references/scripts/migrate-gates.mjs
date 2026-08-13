@@ -125,7 +125,119 @@ export const matchesCoverageProducer = (cmd) => {
   if (carriesProducerBody(trimmed)) return true;
   return PRODUCER_EXEC_PREFIXES.some((prefix) => trimmed.startsWith(prefix) && carriesProducerBody(trimmed.slice(prefix.length)));
 };
+
+// isCoverageProducerGate(gate) → the GATE-level producer question, and the ONE predicate every
+// consumer asks it through: does THIS declared entry write the lcov the canonical checker reads?
+// Exactly two ways to be one — the cmd passes the closed world above, or the declaration CLAIMS
+// production through the optional `lcovProducer` marker. The marker exists because the closed world
+// is a `node --test` world: a project whose primary suite is another runner has NO cmd form
+// recognition can accept, so without it the checker over such a suite reads as a dead pair forever.
+// Recognition itself never widens (anti-squatter) — the marker is a declared claim, not a new
+// grammar. Only the literal `true` claims: any truthy value would let the string "false" certify.
+// And the claim is about the DECLARATION, never the run — a marked gate that produces no lcov still
+// ends `skipped-no-lcov` / `attested=no` at run time.
+// An entry with no RUNNABLE cmd claims nothing (fail closed): no string cmd, an empty or
+// whitespace-only one, or one carrying an embedded newline. The strict validator already refuses all
+// three, but this predicate has a SECOND host — the standalone migration's loader is deliberately
+// lenient — and a marker must never make a checker pair with an entry that runs nothing there.
+export const isCoverageProducerGate = (gate) => {
+  if (gate === null || typeof gate !== 'object' || Array.isArray(gate) || typeof gate.cmd !== 'string') return false;
+  if (gate.cmd.trim() === '' || /[\r\n]/.test(gate.cmd)) return false;
+  return matchesCoverageProducer(gate.cmd) || gate.lcovProducer === true;
+};
 // coverage-producer canon <<< END drift-guarded region
+
+// checker-claim canon >>> BEGIN drift-guarded region
+// Authored TWICE, byte-identically: in the composition root's tools/checker-claim.mjs and in the
+// memory substrate's references/scripts/migrate-gates.mjs. Neither side imports the other — the
+// substrate is standalone and must not depend on the root, and the root must not import mirrored
+// bytes — so a TEXT drift guard beside the root's copy holds them equal. Edit BOTH, then re-run the
+// mirror sync.
+//
+// A cmd makes exactly ONE of three claims about a given tool, and collapsing them into a boolean is
+// what makes a VENDORED copy of the tool read as "the tool is not declared at all" — a false
+// absence, with a remedy (adopt it) that then collides with the entry already there:
+//   • canonical      — this tool's `--check` invocation, resolving to THIS copy of it
+//   • tool-elsewhere — the same invocation shape, resolving to a DIFFERENT real copy
+//   • not-the-tool   — anything else: another command, a masked form, an inadmissible token, or a
+//                      path nothing can resolve
+// The realpath anchor never widens: a lookalike file that merely carries the basename is not this
+// tool, whatever it prints. What widens is the VOCABULARY. Stated residual, unchanged by the split:
+// nothing here reads the file's CONTENT, so a byte-swapped file at the canonical path is invisible.
+export const CHECKER_CLAIM = Object.freeze({
+  CANONICAL: 'canonical',
+  ELSEWHERE: 'tool-elsewhere',
+  NOT_THE_TOOL: 'not-the-tool',
+});
+
+// The token is screened by the rules of the quoting it actually carries, because the two halves are
+// interpreted differently and a single screen would be wrong for one of them:
+//   • QUOTED — double quotes survive most bytes, so only what breaks OUT of them is refused.
+//   • BARE   — anything the shell may split, expand or glob makes the executed command different
+//              from the string, so a bare token is admitted only from a known-safe alphabet.
+// Either way the point is the same: a path that resolves literally here while the shell would read
+// it differently must never be called a claim about this tool, or the screen certifies a command
+// that never runs.
+export const dqUnsafePath = (text) => [...text].some((ch) => {
+  const code = ch.codePointAt(0);
+  return ch === '"' || ch === '$' || code === 96 || code === 92 || code === 13 || code === 10;
+});
+
+// Stated as the bytes the shell ACTS on, not as an alphabet of blessed ones: an allow-list refuses
+// perfectly ordinary paths (`@`, `+`, `,`, `%`, `=`, anything non-ASCII) that the shell passes
+// through verbatim, and refusing a command that really is canonical is its own defect. Whitespace
+// and ASCII control bytes are refused too — a bare token cannot contain them and still be one token.
+const SHELL_ACTIVE_BARE = new Set([...'"\'\\$|&;<>(){}[]*?!#~^`']);
+const bareTokenSafe = (text) => text.length > 0 && ![...text].some((ch) => {
+  const code = ch.codePointAt(0);
+  return code <= 0x20 || code === 0x7f || SHELL_ACTIVE_BARE.has(ch);
+});
+
+const RE_META = /[.*+?^${}()|[\]\\]/g;
+
+// checkerClaimTool(basename, canonicalPath) → the screen for ONE tool. The shape is the STRICT full
+// command — `node` + ONE (quoted or bare) path token + the exact basename + ` --check` + END — so a
+// masked form (`--check --help`, `--check || true`, a prefix command) is never any claim at all.
+// Separators are PLAIN SPACES, not \s: a newline between the tokens is not a command a runner would
+// execute as written. The basename is regex-escaped here, never by the caller — a caller-escaped
+// literal is one forgotten backslash away from a dot matching any byte.
+export const checkerClaimTool = (basename, canonicalPath) => {
+  const safe = basename.replace(RE_META, '\\$&');
+  return Object.freeze({
+    re: new RegExp(`^node +(?:"((?:[^"]*[/\\\\])?${safe})"|((?:[^\\s"]*[/\\\\])?${safe})) +--check$`),
+    canonical: canonicalPath,
+  });
+};
+
+// classifyCheckerClaim(tool, cmd, projectDir) → one CHECKER_CLAIM value. Every unresolvable side
+// fails CLOSED to `not-the-tool`: an unresolvable path is not evidence the tool lives elsewhere, it
+// is evidence nothing can be told about it — and `tool-elsewhere` is a claim a consumer ACTS on.
+//
+// Two screens beyond the shape, for the same reason the quoting screens exist — a claim must never
+// be minted for a command that cannot run the tool as written:
+//   • a token starting with `-` is an OPTION to node, whatever it resolves to on disk. (First-order,
+//     like the producer canon's own leading-`-` rule: `{x,-y}` still defeats it, and the cost of a
+//     miss is only a withheld claim.)
+//   • the RESOLVED target must be a REGULAR FILE. A directory or a FIFO carrying the basename
+//     resolves perfectly well and is not a copy of anything; `realpathSync` succeeding proves a path
+//     exists, never that it is a tool. lstat runs AFTER realpath, so there is no link left to follow.
+export const classifyCheckerClaim = (tool, cmd, projectDir) => {
+  if (typeof cmd !== 'string' || typeof projectDir !== 'string') return CHECKER_CLAIM.NOT_THE_TOOL;
+  const match = tool.re.exec(cmd.trim());
+  if (!match) return CHECKER_CLAIM.NOT_THE_TOOL;
+  const token = match[1] ?? match[2];
+  const admissible = match[1] !== undefined ? !dqUnsafePath(token) : bareTokenSafe(token);
+  if (!admissible || token.startsWith('-')) return CHECKER_CLAIM.NOT_THE_TOOL;
+  const declared = isAbsolute(token) ? token : join(projectDir, token);
+  try {
+    const resolved = realpathSync(declared);
+    if (!lstatSync(resolved).isFile()) return CHECKER_CLAIM.NOT_THE_TOOL;
+    return resolved === realpathSync(tool.canonical) ? CHECKER_CLAIM.CANONICAL : CHECKER_CLAIM.ELSEWHERE;
+  } catch {
+    return CHECKER_CLAIM.NOT_THE_TOOL;
+  }
+};
+// checker-claim canon <<< END drift-guarded region
 
 // The RETIRED kit-owned git-dir stores the deleted machinery wrote — dead data a consumer's
 // upgrade would otherwise strand forever. The migration cleans them (consented via the preview;
@@ -179,8 +291,10 @@ const isCanonicalCoreCheck = (name, cmd, kitToolsDir) => {
 export const buildMigrationPlan = (gates, kitToolsDir) => {
   const plan = [];
   const customized = [];
+  // EVERY canonical checker row, not just the last one seen: a duplicate is a real declaration
+  // state, and both the producer question and the final-capability claim have to see all of them.
+  const checkerRows = [];
   let unitTestsExtended = false;
-  let checkerRow = null;
   let hasReviewState = false;
   const coverageCmd = `node "${join(kitToolsDir, 'coverage-check.mjs')}" --check`;
   for (const gate of gates) {
@@ -190,8 +304,9 @@ export const buildMigrationPlan = (gates, kitToolsDir) => {
       continue;
     }
     if (isCanonicalCoreCheck('coverage-check', gate.cmd, kitToolsDir)) {
-      checkerRow = { action: 'keep', entry: gate, reason: null };
-      plan.push(checkerRow);
+      const row = { action: 'keep', entry: gate, reason: null };
+      checkerRows.push(row);
+      plan.push(row);
       continue;
     }
     if (isCanonicalCoreCheck('review-state', gate.cmd, kitToolsDir)) {
@@ -205,7 +320,9 @@ export const buildMigrationPlan = (gates, kitToolsDir) => {
       // zero-diff keep (the constant moving must not re-read a working gate as customized), while a
       // cmd that merely CONTAINS the bytes — `echo <flags>`, a `&& rm -f <lcov>` tail — is not a
       // producer and must reach the CUSTOMIZED report with its recovery instead of a silent keep.
-      if (matchesCoverageProducer(gate.cmd)) {
+      // A declared `lcovProducer` marker settles it the same way: the entry claims production, so
+      // there is nothing to extend and nothing to report as unverifiable.
+      if (isCoverageProducerGate(gate)) {
         plan.push({ action: 'keep', entry: gate, reason: null });
         continue;
       }
@@ -228,10 +345,16 @@ export const buildMigrationPlan = (gates, kitToolsDir) => {
     plan.push({ action: 'keep', entry: gate, reason: null });
   }
   const kept = plan.filter((r) => r.action === 'keep' || r.action === 'extend');
-  // The checker READS an lcov; something has to WRITE it. Adding the checker over a declaration
-  // with no producer creates the dead pair — the gate PASSES (`skipped-no-lcov`) and certifies
-  // nothing, so the migration withholds it and says why instead.
-  const hasProducer = kept.some((r) => matchesCoverageProducer(r.entry.cmd));
+  const checkerRow = checkerRows[checkerRows.length - 1] ?? null;
+  // The checker READS an lcov; something has to WRITE it FIRST. Adding the checker over a
+  // declaration with no producer creates the dead pair — the gate PASSES (`skipped-no-lcov`) and
+  // certifies nothing, so the migration withholds it and says why instead.
+  // POSITIONAL, like every other producer question in the family: the checker always ends up LAST
+  // here (added last, or moved last), so the producers are exactly the rows that are not a checker.
+  // EVERY checker row is excluded, not merely the one that ends up last — a checker cannot produce
+  // the lcov it reads, so a marker on a DUPLICATE checker must not read as the producer for the
+  // other one; that pair would claim final-capability while nothing wrote the file.
+  const hasProducer = kept.some((r) => !checkerRows.includes(r) && isCoverageProducerGate(r.entry));
   let collision = null;
   let checkerWithheld = false;
   if (checkerRow === null) {
@@ -257,16 +380,21 @@ export const buildMigrationPlan = (gates, kitToolsDir) => {
   // earlier deployment could have created it. The migration removes no declared gate, so it reports
   // the inertness and refuses to call the result final-run-capable.
   const checkerInert = checkerRow !== null && !hasProducer;
+  // `--final` accepts EXACTLY ONE canonical checker, so a declaration carrying two is not
+  // final-run-capable however healthy the rest of it looks. The migration removes no declared gate,
+  // so it names the duplication and withholds the claim instead of over-promising a green.
+  const duplicateCheckers = checkerRows.length;
   const reviewStateCandidate = `{ "id": "review-state", "title": "Review receipts converged (D3(b))", "cmd": "node \\"${join(kitToolsDir, 'review-state.mjs')}\\" --check" }`;
   return {
     plan,
     customized,
     unitTestsExtended,
-    finalCapable: hasReviewState && !checkerWithheld && !checkerInert,
+    finalCapable: hasReviewState && !checkerWithheld && !checkerInert && duplicateCheckers <= 1,
     hasProducer,
     hasReviewState,
     checkerWithheld,
     checkerInert,
+    duplicateCheckers,
     reviewStateCandidate,
     collision,
   };
@@ -287,7 +415,7 @@ const customizedRecovery = (gate) =>
     ? `declare the canonical suite gate by hand so the coverage contract is verifiable: node --test ${UNIT_TESTS_COVERAGE_FLAGS} <your test paths>`
     : 'remove the entry, or repoint it at a living check — the review-ledger / fold-completeness tools no longer exist.';
 
-const warningLines = ({ customized, finalCapable, hasReviewState = finalCapable, checkerWithheld = false, checkerInert = false, reviewStateCandidate }) => {
+const warningLines = ({ customized, finalCapable, hasReviewState = finalCapable, checkerWithheld = false, checkerInert = false, duplicateCheckers = 0, reviewStateCandidate }) => {
   const lines = [];
   for (const gate of customized) {
     lines.push(`  CUSTOMIZED (untouched): ${gate.id}: ${gate.cmd}`);
@@ -303,6 +431,9 @@ const warningLines = ({ customized, finalCapable, hasReviewState = finalCapable,
   if (checkerInert) {
     lines.push('  WARNING: the DECLARED coverage-check gate is INERT — no declared gate PRODUCES the lcov it reads, so it passes while verifying nothing. Nothing is removed for you; declare the suite gate:');
     lines.push(`    node --test ${UNIT_TESTS_COVERAGE_FLAGS} <your test paths>`);
+  }
+  if (duplicateCheckers > 1) {
+    lines.push(`  WARNING: ${duplicateCheckers} declared gates are the canonical coverage checker — run-gates --final accepts EXACTLY ONE, so the result is NOT final-run-capable. Nothing is removed for you; keep a single checker and delete the rest by hand.`);
   }
   if (!hasReviewState) {
     lines.push('  WARNING: the result is NOT final-run-capable — no canonical review-state check is declared. Add it (paste-ready), then run-gates --final can mint the receipt:');

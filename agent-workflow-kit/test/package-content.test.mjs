@@ -142,6 +142,13 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the shared realpath direct-run predicate + the library-only registry. Every guarded module
       // imports it, so a leaf missing from the payload breaks them all — by NAME for the same reason.
       'tools/direct-run.mjs',
+      // the three-outcome tool-claim classifier (the ONE shape/admissibility/realpath screen the
+      // source-size matcher and the advisor's probes decide through) and the tracked-tree census the
+      // coverage-domain verdict reads. Pinned by NAME: the first is imported by a shipped leaf, so
+      // dropping it would break the practice at load time, and the count alone would hide either
+      // behind any other simultaneous drift.
+      'tools/checker-claim.mjs',
+      'tools/tracked-tree-census.mjs',
       // the AD-038 review-enforcement pair: the read-only receipt checker + the facts assembler
       'tools/review-state.mjs',
       'tools/grounding.mjs',
@@ -482,7 +489,13 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       the read-only doc-parity lint can bind the relayed token set into upgrade.md without
     //       importing the ensure implementation and, through it, the orchestration writer (a round-1
     //       council finding).
-    assert.equal(packed.length, 209, `tarball file count drifted (${packed.length} ≠ 209)`);
+    // 211 = 209 + the feedback-hardening Plan 2 P1 pair of PURE leaves: tools/checker-claim.mjs (the
+    //       three-outcome tool-claim classifier — the shape + admissibility + realpath screens the
+    //       source-size matcher now decides through, twinned byte-identically into the standalone
+    //       migration) + tools/tracked-tree-census.mjs (the strict-dominance census over `git
+    //       ls-files -z`, classified by the existing closed changed-path vocabulary). Their
+    //       *.test.mjs siblings live in test/ and never enter the tarball.
+    assert.equal(packed.length, 211, `tarball file count drifted (${packed.length} ≠ 211)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

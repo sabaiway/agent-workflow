@@ -269,7 +269,26 @@ const BUDGET = {
   // Then 54272 → 55296 (54 KB): AD-044 Plan 3 — the same three-pointer contract also lands in
   // composition-handoff.md (a shared file in upgrade's read set), overflowing the pair by ~949 B;
   // the same documented KB-multiple bump.
-  daily: 26624, // the no-shared daily modes (help/backends/recipes/procedures/gates). 25600 →
+  daily: 30720, // the no-shared daily modes (help/backends/recipes/procedures/gates). 27648 →
+  // 30720 (30 KB): feedback-hardening Plan 2 Phase 2 — gates.md gains the marker's copyable
+  // declaration FRAGMENT (a fenced entry carrying `"lcovProducer": true`, validated through
+  // validateDeclaration by a named test, so the shown shape can never drift from the schema), the
+  // THREE-outcome vocabulary for a declared checker (producer-unrecognized · coverage-domain-narrow ·
+  // the ordering arm they are not, plus the tracked-tree census rule and its strict-dominance and
+  // no-census-no-claim edges), the three-CLAIM vocabulary for the source-size candidate line
+  // (canonical · tool-elsewhere · not-the-tool, in precedence), and the marker's hook-currency
+  // consequence with the remove-then-reseed recovery. ~2.5 KB of new contract content against 481 B
+  // of headroom. Each outcome's convergence, posture note and risk profile were deliberately routed
+  // to recommendations.md — the consent moment owns them, and duplicating them here would have cost
+  // a further KB for prose the daily read set never needs. Measured 29702 B after two compression
+  // passes: a 29 KB ceiling would leave SIX bytes of headroom, which is a re-pin waiting to happen
+  // rather than a budget, so this takes the next multiple and keeps ~1 KB. History: 26624 →
+  // 27648 (27 KB): feedback-hardening Plan 2 Phase 1 — the gate schema gains its ONE optional key
+  // (`lcovProducer`), so gates.md carries the schema sentence plus the marker's contract inside the
+  // producer paragraph (only the literal true claims · the claim binds the DECLARATION, not the run
+  // · forward-only, an older kit refuses by name): the pair sat 12 B under the 26 KB ceiling, so
+  // every added byte overflows. Measured 27167 B after a compression pass; the same documented
+  // KB-multiple bump, never a silent re-pin. History: 25600 →
   // 26624 (26 KB): baseline-practices Plan 1 Phase 4 — gates.md gains the source-size candidate line
   // (the MINTED-only offer condition + the one-line --adopt verb and its idempotence/refusal
   // contract) and the fill's PLACEMENT rule (a non-checker entry lands before a trailing canonical

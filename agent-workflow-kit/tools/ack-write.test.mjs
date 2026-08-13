@@ -88,6 +88,32 @@ describe('ack-write — the consent-gated ack store writer', () => {
     assert.ok(applyCommand(root, FP).includes('--lane') === false, 'the default lane renders no --lane flag');
   });
 
+  // D1 — the rendered lines used to call EVERY acknowledgement a "recipe". That was one lane's noun
+  // stated over all of them: the coverage-domain lane acknowledges a tracked-tree census fact and the
+  // source-size-copy lane a set of declared tool claims, neither of which is a recipe of anything.
+  it('the rendered wording is per-LANE, never one lane\'s noun over all of them', () => {
+    for (const lane of ['coverage-domain', 'source-size-copy']) {
+      const root = makeDeployed();
+      const cap = capture();
+      const code = main(['--lane', lane, '--fingerprint', FP, '--cwd', root], cap);
+      rmSync(root, { recursive: true, force: true });
+      assert.equal(code, 0, cap.out());
+      assert.ok(!/recipe/i.test(cap.out()), `${lane}: nothing here is a recipe — ${cap.out()}`);
+      assert.match(cap.out(), new RegExp(`NEUTRAL ${lane} acknowledgement`), `${lane}: the noun is the lane's own`);
+      assert.match(cap.out(), /never a security key/, `${lane}: and the neutrality claim survives the rewording`);
+    }
+  });
+
+  it('the already-recorded preview also names the LANE rather than a recipe', () => {
+    const root = makeDeployed();
+    writeFileSync(acksPath(root), JSON.stringify({ coverageDomainAck: FP }));
+    const cap = capture();
+    main(['--lane', 'coverage-domain', '--fingerprint', FP, '--cwd', root], cap);
+    rmSync(root, { recursive: true, force: true });
+    assert.match(cap.out(), /already records this coverage-domain fingerprint/);
+    assert.ok(!/recipe/i.test(cap.out()), cap.out());
+  });
+
   it('an UNKNOWN lane is a usage error (exit 2) — nothing written', () => {
     const root = makeDeployed();
     const cap = capture();

@@ -228,6 +228,42 @@ describe('recommendations contract — risk lives at the consent moment (D3, clo
   });
 });
 
+// The third outcomes (feedback-hardening Plan 2). An arm nobody can name is an arm nobody can act
+// on: the section renders one composed line per item, and everything about WHY it fired and what the
+// convergence costs lives in the notes at the consent moment. A new arm whose identifier never
+// reaches the doc is exactly the OPT-IN-SHIPS-INVISIBLE shape one layer down.
+describe('recommendations contract — the third-outcome vocabulary reaches the consent moment', () => {
+  const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
+
+  it('every third-outcome arm is named in the posture notes by its own identifier', () => {
+    for (const arm of ['producer-unrecognized', 'coverage-domain-narrow', 'adopted-elsewhere', 'id-squatter', 'marker-stale']) {
+      assert.ok(notes.includes(`\`${arm}\``), `the ${arm} arm is named where its consent moment is`);
+    }
+  });
+
+  it('both new ack lanes name their lane AND their store key — the two halves a reader needs', () => {
+    for (const [lane, storeKey] of [['coverage-domain', 'coverageDomainAck'], ['source-size-copy', 'sourceSizeCopyAck']]) {
+      assert.ok(notes.includes(lane), `the ${lane} lane is named`);
+      assert.ok(notes.includes(storeKey), `and the ${storeKey} it writes`);
+    }
+  });
+
+  it('the notes state what the acks may NOT silence — the one thing a convergence lane can get wrong', () => {
+    // A lane that silenced a broken declaration would re-open the false green through the
+    // convergence itself, so the boundary is documented, not merely coded.
+    assert.match(notes, /a dead pair is broken, not narrow/i, 'the coverage-domain boundary is stated');
+    assert.match(notes, /NO acknowledgement silences it/i, 'and the unminted boundary too');
+  });
+
+  it('the destructive arms stay HAND-APPLY in the doc, never a command the consent flow runs', () => {
+    for (const phrase of ['`producer-unrecognized`', '`id-squatter`', '`marker-stale`']) {
+      const at = notes.indexOf(phrase);
+      assert.notEqual(at, -1, `${phrase} is documented`);
+      assert.match(notes.slice(at, at + 1400), /HAND-APPLY/, `${phrase} names its hand-apply territory`);
+    }
+  });
+});
+
 describe('recommendations contract — the retired item key is gone from LIVE surfaces (2.3 rename)', () => {
   it('no live contract surface still names network-allowlist', () => {
     for (const [label, text] of [

@@ -27,8 +27,9 @@
 //
 // Read-only: never writes, never commits, never runs a subscription CLI. The reused probes are all
 // exported read-only surfaces of their owning tools (velocity/autonomy/doctor/backends/recipes/
-// registry/sandbox-masks); the sandbox-masks and settings probes may run read-only git queries.
-// Dependency-free, Node >= 22. No side effects on import (the isDirectRun idiom).
+// registry/sandbox-masks); the sandbox-masks, settings and tracked-tree-census probes may run
+// read-only git queries. Dependency-free, Node >= 22. No side effects on import (the isDirectRun
+// idiom).
 
 import { readFileSync, readdirSync, lstatSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -55,13 +56,17 @@ import { surveyFamily, surveyGateHook, surveyAdrLayoutStrict } from './family-re
 import { probeSandboxMasks, needsMasksApply } from './sandbox-masks.mjs';
 import { shellQuoteArg } from './review-state.mjs';
 import { isFinalCapableDeclaration } from './run-gates.mjs';
-import { loadDeclaration, canonicalCheckerGates, coverageProducerPrecedes, isKitOwnedCheckerGate, GATES_REL } from './gates-declaration.mjs';
-import { matchesCoverageProducer } from './coverage-producer.mjs';
+import { loadDeclaration, canonicalCheckerGates, coverageProducerPrecedes, isKitOwnedCheckerGate, GATES_REL, LCOV_PRODUCER_KEY } from './gates-declaration.mjs';
+import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
+import { matchesCoverageProducer, isCoverageProducerGate } from './coverage-producer.mjs';
+// How much of the TRACKED tree the changed-line coverage domain can assess at all — the fact that
+// turns "the checker certifies" into "the checker certifies the assessable minority".
+import { takeCensus, censusFact, CENSUS_VERDICT } from './tracked-tree-census.mjs';
 // Read-only surfaces of the fill (buildOffer) and of the source-size practice (its pure core). The
 // fill's own WRITER is never called from here — the advisor renders its consent-gated command, it
 // does not run it.
 import { buildOffer } from './gates-init.mjs';
-import { INITIAL_ADOPTION_REASON, loadSourceSizeConfig, matchesSourceSizeGate } from './source-size-core.mjs';
+import { CHECKER_CLAIM, INITIAL_ADOPTION_REASON, SOURCE_SIZE_GATE_ID, classifySourceSizeGate, loadSourceSizeConfig } from './source-size-core.mjs';
 // The declared-path resolution + segment containment this item's convergence lane shares with the
 // autonomy render's allowWrite degrade — ONE leaf, so the two answers cannot drift.
 import { resolveDeclaredDir, dirCovers, isResolvableDeclaredEntry } from './declared-paths.mjs';
@@ -112,11 +117,26 @@ export const SEVERITIES = Object.freeze({
   'gates-declaration': SEVERITY_OPTIONAL,
   'gates-inert': SEVERITY_ATTENTION,
   'gates-inert.no-verification': SEVERITY_ATTENTION,
+  // Both third outcomes are attention, and both therefore block the flow-optimal line MECHANICALLY:
+  // an added item makes the verdict non-null. One reports a pair that is dead on a tree the closed
+  // producer world cannot speak for; the other reports a LIVE pair whose certification reaches only
+  // the assessable minority of that tree. Neither changes what a run may certify.
+  'gates-inert.producer-unrecognized': SEVERITY_ATTENTION,
+  'gates-inert.coverage-domain-narrow': SEVERITY_ATTENTION,
   'source-size': SEVERITY_OPTIONAL,
   // The declared-but-unminted arm reports a CONFIGURED declaration that is broken — a gate certain
   // to refuse on every run — while the base arm stays an offer to enable something unconfigured.
   'source-size.unminted': SEVERITY_ATTENTION,
+  // A vendored copy of this checker is a DELIBERATE deployment choice, not a broken declaration —
+  // the practice runs, the advisor simply cannot read it through its own tool; the offer is the
+  // acknowledgment. An id SQUATTER is the opposite: the id says adopted while nothing measures size.
+  'source-size.adopted-elsewhere': SEVERITY_OPTIONAL,
+  'source-size.id-squatter': SEVERITY_ATTENTION,
   'gate-hook': SEVERITY_OPTIONAL,
+  // A placed hook that predates the marker key goes DARK on a marker-carrying declaration (unknown
+  // key → auto-approval off), so a CONFIGURED capability silently stops working: attention, not an
+  // offer to enable something.
+  'gate-hook.marker-stale': SEVERITY_ATTENTION,
   'commit-guard': SEVERITY_OPTIONAL,
   'read-lane': SEVERITY_OPTIONAL,
   'read-lane.stale': SEVERITY_ATTENTION,
@@ -176,9 +196,14 @@ export const WHATS = Object.freeze({
   'gates-declaration': 'no declared gate matrix (docs/ai/gates.json absent or empty) — gates prompt one by one; the apply PREVIEWS its --apply line, writes nothing',
   'gates-inert': 'the declared coverage checker ({id}) has no producer before it — it certifies nothing this run, or reads a stale lcov',
   'gates-inert.no-verification': "all {n} declared gate(s) are the kit's own checkers — the matrix runs no project-verification command",
+  'gates-inert.producer-unrecognized': 'the coverage checker ({id}) has NO producer declared and none offerable, on a tree the changed-line domain barely reaches',
+  'gates-inert.coverage-domain-narrow': 'certification covers the assessable minority only — {ext} dominate(s) the tracked tree, and the changed-line domain excludes them',
   'source-size': 'no source-size gate — module size drifts unmeasured, and an over-cap file is invisible instead of recorded debt',
   'source-size.unminted': 'the source-size gate is declared but its record ({state}) is not minted — the checker refuses, so this gate reds every run',
+  'source-size.adopted-elsewhere': "the source-size gate runs a DIFFERENT copy of this checker ({n} declared) — adopted here, just not through this kit's own tool",
+  'source-size.id-squatter': 'a gate carries the source-size id but is not this checker — the practice reads as declared while nothing measures module size',
   'gate-hook': '{n} declared gate(s) prompt per run — the gate-approval hook is not wired',
+  'gate-hook.marker-stale': 'the declaration carries the lcovProducer key but the placed hook predates it — the hook goes dark and every gate prompts',
   'commit-guard': 'the gate matrix is final-run-capable but no commit-guard arms the pre-commit hook — a commit needs no green receipt yet',
   'read-lane': 'the gate hook is wired but the read-only compound lane is off — pipes/chains of seeded reads still prompt one by one',
   'read-lane.stale': 'the read-lane is ON but the placed gate hook is stale — an old hook never reads lanes.json, so the lane is silently dark; reseed it',
@@ -419,7 +444,7 @@ const probeReviewRecipe = ({ root, deps, add, skip }) => {
   }
 };
 
-const probeGates = ({ root, deps, add, skip }) => {
+const probeGates = ({ root, deps, add, skip, shared }) => {
   try {
     const sg = surveyGateHook(root, deps);
     if (sg.error) throw new Error(sg.error);
@@ -434,9 +459,32 @@ const probeGates = ({ root, deps, add, skip }) => {
       add('gates-declaration', fillTemplate(WHATS['gates-declaration'], {}), `node ${q(toolPath('gates-init.mjs'))} --cwd ${q(root)}`);
       return;
     }
-    if (sg.declaredGates > 0 && !sg.wired) {
+    if (!sg.wired) {
       add('gate-hook', fillTemplate(WHATS['gate-hook'], { n: sg.declaredGates }), `node ${q(toolPath('gate-hook.mjs'))} --apply --cwd ${q(root)}`);
+      return;
     }
+    // D8 — the marker REFRESH path. The placed hook validates the declaration through its OWN baked
+    // copy and goes dark on any key it does not know (auto-approval off, every gate prompts again),
+    // so a declaration carrying the marker key under a hook that predates it silently switches a
+    // CONFIGURED capability off with no error anywhere. Deliberately marker-SCOPED: a stale hook is
+    // otherwise harmless, and nagging every deployment about hook bytes is not this item's job.
+    if (!declarationCarriesMarker(root, deps)) return;
+    // Throws on a symlink / directory / unreadable target → the stated skip, never a wrong verdict.
+    // ABSENT is not this arm either: a hook that is not placed belongs to the place offers above and
+    // in the read-lane item, whose recovery actually places one.
+    if (readPlacedHookCurrency(root, deps) !== HOOK_CURRENCY.STALE) return;
+    // The writer's OWN stale recovery, in its exact shape: `gate-hook --apply` never overwrites a
+    // placed diverged hook (it places only an ABSENT target), so remove-then-reseed is the only lane
+    // that converges — and it is maintainer territory, hence HAND-APPLY.
+    // The RESULT is what the read-lane item defers to — not these conditions re-derived there. Both
+    // probes read the placed hook independently, so a hook that changes between the two reads would
+    // otherwise let each conclude the other owns it and leave a dark lane reported by nobody.
+    shared.markerStaleRendered = add(
+      'gate-hook',
+      fillTemplate(WHATS['gate-hook.marker-stale'], {}),
+      `HAND-APPLY: rm ${q(join(root, GATE_HOOK_REL))}, then node ${q(toolPath('gate-hook.mjs'))} --apply --cwd ${q(root)}`,
+      'gate-hook.marker-stale',
+    );
   } catch (err) {
     skip('gate-hook', err);
   }
@@ -447,9 +495,10 @@ const probeGates = ({ root, deps, add, skip }) => {
 // decide with — the checker side through canonicalCheckerGates, the producer side through the
 // closed matchesCoverageProducer — so the advisor can never disagree with what --final accepts.
 //
-// Cause A (a canonical coverage checker with no producer anywhere in the declaration) is checked
-// FIRST and reported alone: its remedy — declaring the producer — also resolves cause B, because a
-// producer gate is not a kit checker. Its apply follows what the FILL can actually do, which the
+// A declared CHECKER is answered first and alone, in the arms below: the DOMAIN arm when the pair is
+// live, the marker arm when no producer exists anywhere on a tree the domain cannot reach, and cause
+// A — the dead or mis-ordered pair — otherwise. Its remedy also resolves cause B, because a producer
+// gate is not a kit checker. Cause A's apply follows what the FILL can actually do, which the
 // D-8 placement rule changed: when the checker is the declaration's LAST gate and the project's own
 // scripts yield an offerable producer, the fill now PLACES that producer before the checker, so the
 // remedy is the ordinary consent-gated preview. HAND-APPLY remains exactly where no offerable
@@ -466,6 +515,14 @@ const probeGates = ({ root, deps, add, skip }) => {
 const fillPreviewFor = (root, ids) =>
   `node ${q(toolPath('gates-init.mjs'))} --cwd ${q(root)}${ids.map((id) => ` --only ${id}`).join('')}`;
 
+// The census, injectable WHOLE and only whole. Forwarding this probe's `deps` into the leaf would
+// hand it whatever `spawn` another probe's fixture happens to inject, so a masks-probe stub would
+// silently become this probe's git — the census takes its own default and a test replaces the
+// function, never its seams. It THROWS on an unavailable tree; each call site below decides what
+// that means there, because the two arms have different honest answers and one global fallback
+// would be wrong for one of them.
+const readCensus = (root, deps) => (deps.takeCensus ?? takeCensus)(root);
+
 export const probeGatesInert = ({ root, deps, add, skip }) => {
   try {
     const declaration = loadDeclaration(root, deps);
@@ -477,27 +534,110 @@ export const probeGatesInert = ({ root, deps, add, skip }) => {
       // ORDER decides, through the declaration's own shared predicate: a producer declared AFTER the
       // checker leaves it just as inert as no producer at all (it reads nothing, or stale bytes), and
       // only --final refuses that shape — a plain run reports every gate PASS.
-      if (coverageProducerPrecedes(gates, gates.indexOf(checkers[0]))) return; // the pair is live
+      if (coverageProducerPrecedes(gates, gates.indexOf(checkers[0]))) {
+        // The pair is LIVE, and that is exactly where the DOMAIN question becomes the honest one: the
+        // checker's changed-line domain is `.mjs/.cjs/.js` by design, so on a tree dominated by what
+        // that domain excludes, "certified" means "certified over the assessable minority". An
+        // UNAVAILABLE census throws out of here into the stated-skip lane — no census, no optimality
+        // claim; this is the ONE arm where nothing else would render, so a silent return would be the
+        // false green one layer down.
+        const census = readCensus(root, deps);
+        if (census.verdict !== CENSUS_VERDICT.NARROW) return; // the domain reaches this tree — converged
+        // The ack binds the FACT (verdict + the sorted unsupported extensions), never the counts: a
+        // count-bound ack would re-fire on every added file and turn the acknowledgment into a nag.
+        const fingerprint = factFingerprint(censusFact(census));
+        if (readAckValue(root, deps, ACKS_COVERAGE_DOMAIN_KEY) === fingerprint) return; // acknowledged
+        const ext = capList(census.unsupportedExtensions, templateBudget(WHATS['gates-inert.coverage-domain-narrow']), ', ');
+        add(
+          'gates-inert',
+          fillTemplate(WHATS['gates-inert.coverage-domain-narrow'], { ext }),
+          `node ${q(toolPath('ack-write.mjs'))} --lane coverage-domain --fingerprint ${fingerprint} --cwd ${q(root)}`,
+          'gates-inert.coverage-domain-narrow',
+        );
+        return;
+      }
+      // The fill's own answer is needed BEFORE the arms split, because one of them makes a claim
+      // about it. The PRODUCER entry is kept, not just its existence: a rendered preview must name it
+      // with --only. A whole-offer apply collides by construction — the declaration already carries
+      // the checker, and the offer carries it too — so an unrestricted preview would hand the reader
+      // a lane that refuses instead of the one entry that resolves what the item just reported.
+      // Read once and asked TWO different questions, because the two arms need different ones. The
+      // fill's selectable entry is collision-filtered: an id the declaration already carries is
+      // refused, so counting it would render a preview that cannot fix what the item just reported.
+      // The EXPRESSIBILITY question is not filtered at all — a `node --test` script whose offered id
+      // happens to be taken is still a suite the recognized producer set can express, and the narrow
+      // arm's sentence would be false over it. An offer computation that throws reaches the probe's
+      // stated-skip lane, which is the honest answer to "can the fill help here" when nobody knows.
+      const declaredIds = new Set(gates.map((gate) => gate.id));
+      const offered = buildOffer(root, deps).entries.filter((entry) => matchesCoverageProducer(entry.cmd));
+      const producer = offered.find((entry) => !declaredIds.has(entry.id));
+      // The dead pair on a tree the recognized producer set cannot speak for. It is deliberately NOT
+      // the ordering arm: a producer that EXISTS but sits after the checker is one MOVE away from
+      // working, and prescribing the marker there would teach the wrong fix — so this arm requires
+      // no producer ANYWHERE in the declaration. The ack lane is closed to it on purpose: a dead pair
+      // is broken, not narrow, and removing a producer after an acknowledgment lands right back here.
+      //
+      // The canonical checker ROWS are excluded from that search, and the exclusion is load-bearing:
+      // producer-ness is POSITIONAL everywhere else in this family precisely so a marker on the
+      // checker cannot self-pair, and an "anywhere" test without the exclusion re-opens exactly that
+      // hole — a checker carrying its own marker would read as its own producer and route a dead pair
+      // into the ordering arm.
+      //
+      // An OFFERED producer also disqualifies this arm, and that is the sharper condition of the
+      // two. The census answers how much of the tree the coverage DOMAIN reaches; it says nothing
+      // about producers at all. A TS-dominated project whose package.json still carries a
+      // `node --test` script has both facts at once, and the arm must not fire over it. The test is
+      // the UNFILTERED offer, not the fill's selectable entry: a collision on the offered id blocks
+      // the preview without making the producer one bit less real.
+      //
+      // STATED RESIDUAL, and the reason this arm no longer claims INEXPRESSIBILITY: the fill screens
+      // by terminating-class script NAME before it ever looks at a body, so `"ci": "node --test"` is
+      // a recognizable producer the offer never carries. The arm therefore says only what it knows —
+      // nothing declares one and nothing offers one — and its apply names that gap, because the
+      // remedy there is a hand-declared gate rather than the marker.
+      if (offered.length === 0 && !gates.some((gate) => !checkers.includes(gate) && isCoverageProducerGate(gate))) {
+        // An UNAVAILABLE census is NOT a skip here. The dead pair is a defect on any tree, and the
+        // arm below states it truthfully — falling through keeps a non-git deployment byte-identical
+        // to what it saw before this outcome existed, and still renders an item, so the flow-optimal
+        // line stays blocked either way. Only THAT failure is absorbed: the census leaf tags its own
+        // unavailability, and a bug reaching here would otherwise be laundered into an ordinary
+        // diagnosis instead of surfacing.
+        const narrow = (() => {
+          try {
+            return readCensus(root, deps).verdict === CENSUS_VERDICT.NARROW;
+          } catch (err) {
+            if (err?.code === 'CENSUS_UNAVAILABLE') return false;
+            throw err;
+          }
+        })();
+        if (narrow) {
+          const id = truncatedTo(oneLineOf(checkers[0].id), templateBudget(WHATS['gates-inert.producer-unrecognized']));
+          add(
+            'gates-inert',
+            fillTemplate(WHATS['gates-inert.producer-unrecognized'], { id }),
+            `HAND-APPLY: mark the gate that actually writes the lcov with "lcovProducer": true in ${GATES_REL} (references/modes/gates.md names the key), or drop ${id} — and note the fill offers only terminating-class script NAMES, so a recognized body under another name (a "ci" script running node --test) is declared by hand, not marked`,
+            'gates-inert.producer-unrecognized',
+          );
+          return;
+        }
+      }
       const id = truncatedTo(oneLineOf(checkers[0].id), templateBudget(WHATS['gates-inert']));
       // The fill can only help when it would land the producer in the right place: the checker must
       // be LAST (that is the one position the placement rule inserts before) and the offer must
-      // actually carry a producer the fill would ACCEPT. An offered id that is already declared is
-      // refused as a collision, so counting it here would render a preview that cannot fix what the
-      // item just reported.
-      const declaredIds = new Set(gates.map((gate) => gate.id));
+      // actually carry a producer the fill would ACCEPT (computed above).
       const checkerIsLast = checkers[0] === gates[gates.length - 1];
-      // The PRODUCER entry is kept, not just its existence: the rendered preview must name it with
-      // --only. A whole-offer apply here collides by construction — the declaration already carries
-      // the checker, and the offer carries it too — so an unrestricted preview would hand the reader
-      // a lane that refuses instead of the one entry that resolves what the item just reported.
-      const producer = buildOffer(root, deps).entries
-        .find((entry) => !declaredIds.has(entry.id) && matchesCoverageProducer(entry.cmd));
-      // The two ways the fill cannot help are DIFFERENT situations and need different sentences: a
-      // checker that is not last blocks a placement even when a producer is offerable, and saying no
-      // producer exists there would be plainly false to a reader looking at their own scripts.
-      const blocked = checkerIsLast
-        ? `no offerable producer exists here, and the fill never reorders entries it did not write`
-        : `${id} is not the LAST declared gate, so there is no trailing position to place a producer before, and the fill never reorders entries it did not write`;
+      // THREE ways the fill cannot help, and each needs its own sentence, because each names a
+      // different edit for the reader to make. A checker that is not last blocks a placement even
+      // when a producer is offerable — that is about POSITION, so it leads. An offered producer whose
+      // id is already taken is not an absent one: the suite is expressible and the fill is merely
+      // refused on the collision, so naming the conflicting id turns a dead end into a rename. Only
+      // with neither of those is "no offerable producer exists here" a true sentence.
+      const colliding = producer === undefined ? offered.find((entry) => declaredIds.has(entry.id)) : undefined;
+      const blocked = !checkerIsLast
+        ? `${id} is not the LAST declared gate, so there is no trailing position to place a producer before, and the fill never reorders entries it did not write`
+        : colliding !== undefined
+          ? `a producer IS offerable here, but its id "${colliding.id}" is already declared, so the fill refuses it as a collision — rename that gate, or repoint it at the producer form`
+          : `no offerable producer exists here, and the fill never reorders entries it did not write`;
       add(
         'gates-inert',
         fillTemplate(WHATS['gates-inert'], { id }),
@@ -507,10 +647,6 @@ export const probeGatesInert = ({ root, deps, add, skip }) => {
       );
       return;
     }
-    // The source-size checker is one of the kit's OWN checkers, and it is deliberately NOT
-    // review-dependent (it needs no receipt), so the review-dependent predicate alone cannot see it.
-    // Left out, a matrix of nothing but that gate reads as carrying project verification — and a
-    // project that just adopted the practice and declared nothing else would be told it is optimal.
     // The source-size checker is one of the kit's OWN checkers, and it is deliberately NOT
     // review-dependent (it needs no receipt), so the review-dependent predicate alone cannot see it.
     // Left out, a matrix of nothing but that gate reads as carrying project verification — and a
@@ -541,31 +677,78 @@ export const probeGatesInert = ({ root, deps, add, skip }) => {
 // the capability registry was built for. New and existing deployments meet it identically, because
 // the advisor section is mandatory at every upgrade.
 //
-// The probe asks ONE question — does the declaration carry the canonical source-size gate? — through
-// the practice's own matcher, so an id squatter (a gate called `source-size` running something else)
-// never reads as adopted. It deliberately does NOT key on the config's state: a project with no
-// config is exactly the project that needs to hear about the practice, and the apply's own refusal
-// is what teaches the one manual step (authoring the scope). A missing declaration is not a skip —
-// there is no source-size gate in it either.
+// The probe asks what each declared cmd CLAIMS about this checker, in the three named outcomes —
+// because the boolean it used to ask made a DELIBERATELY VENDORED copy read as "no source-size gate
+// at all", and the remedy that false absence rendered (`--adopt`) then collides on the very id
+// already in the declaration. It deliberately does NOT key on the config's state to decide WHETHER
+// to speak: a project with no config is exactly the project that needs to hear about the practice,
+// and the apply's own refusal is what teaches the one manual step (authoring the scope). A missing
+// declaration is not a skip — there is no source-size gate in it either.
+//
+// Precedence over a MIXED declaration is pinned and deterministic: any canonical match answers the
+// practice question outright; else any tool-elsewhere claim; else the id collision; else the offer.
 const probeSourceSize = ({ root, deps, add, skip }) => {
   try {
     const declaration = loadDeclaration(root, deps);
     const gates = declaration.outcome === 'loaded' ? declaration.gates : [];
-    const applyLine = `node ${q(toolPath('source-size-check.mjs'))} --adopt --reason "${INITIAL_ADOPTION_REASON}" --cwd ${q(root)}`;
-    if (gates.some((gate) => matchesSourceSizeGate(gate.cmd, root))) {
-      // A DECLARED gate is not the same fact as a working one: the checker refuses on every config
-      // state but MINTED, so a gate declared over an absent or half-written record reds the matrix
-      // on every run. Reading the declaration alone would report that deployment as adopted and say
-      // nothing about the one thing that is wrong with it.
-      const { state } = loadSourceSizeConfig(root, deps);
-      if (state === 'minted') return; // adopted and armed — converged
-      add('source-size', fillTemplate(WHATS['source-size.unminted'], { state }), applyLine, 'source-size.unminted');
-      return;
-    }
+    const tool = toolPath('source-size-check.mjs');
     // The reason string is PINNED, not composed: it is copied unchanged into every entry the first
     // mint records, and a first mint records the whole tree — so "this is what the tree already
     // carried when the practice arrived" is the one sentence that is true of all of them.
-    add('source-size', fillTemplate(WHATS['source-size'], {}), applyLine);
+    const adoptLine = `node ${q(tool)} --adopt --reason "${INITIAL_ADOPTION_REASON}" --cwd ${q(root)}`;
+    const claims = gates.map((gate) => ({ gate, claim: classifySourceSizeGate(gate.cmd, root) }));
+    const canonical = claims.filter((c) => c.claim === CHECKER_CLAIM.CANONICAL);
+    const elsewhere = claims.filter((c) => c.claim === CHECKER_CLAIM.ELSEWHERE);
+    if (canonical.length > 0 || elsewhere.length > 0) {
+      // A DECLARED gate is not the same fact as a working one: the checker refuses on every config
+      // state but MINTED, so a gate declared over an absent or half-written record reds the matrix
+      // on every run. Reading the declaration alone would report that deployment as adopted and say
+      // nothing about the one thing that is wrong with it. The split changes NOTHING here — the
+      // outcome, its attention class and its immunity to every ack are the same whichever copy runs.
+      const { state } = loadSourceSizeConfig(root, deps);
+      if (state !== 'minted') {
+        // Only the way OUT differs. With the gate declared through another copy, `--adopt` would
+        // mint the record and then be refused by the fill on the id it is already looking at, so the
+        // rendered verb is the mint alone: the declaration is not the half that is missing.
+        const mintLine = `node ${q(tool)} --write-baseline --reason "${INITIAL_ADOPTION_REASON}" --cwd ${q(root)}`;
+        add(
+          'source-size',
+          fillTemplate(WHATS['source-size.unminted'], { state }),
+          canonical.length > 0 ? adoptLine : mintLine,
+          'source-size.unminted',
+        );
+        return;
+      }
+      if (canonical.length > 0) return; // adopted through THIS copy and armed — converged
+      // A vendored copy is a deployment CHOICE, not a defect: the practice runs, the realpath anchor
+      // simply cannot see it as this advisor's own sibling (and never widens — that anchor is what
+      // keeps a lookalike from certifying). So the convergence is an acknowledgment, never `--adopt`.
+      // The fingerprint binds the claims as AUTHORED, sorted and de-duplicated — not the resolved
+      // realpaths, which are machine-specific and would churn a committed ack between machines.
+      const fingerprint = factFingerprint(JSON.stringify([...new Set(elsewhere.map((c) => c.gate.cmd))].sort()));
+      if (readAckValue(root, deps, ACKS_SOURCE_SIZE_COPY_KEY) === fingerprint) return; // acknowledged
+      add(
+        'source-size',
+        fillTemplate(WHATS['source-size.adopted-elsewhere'], { n: elsewhere.length }),
+        `node ${q(toolPath('ack-write.mjs'))} --lane source-size-copy --fingerprint ${fingerprint} --cwd ${q(root)}`,
+        'source-size.adopted-elsewhere',
+      );
+      return;
+    }
+    // The id SQUATTER — the id says the practice is declared, the cmd is not this checker under any
+    // reading. `--adopt` here mints the record and is then refused by the fill on the id collision:
+    // correct against a squatter, and useless as a RENDERED remedy, so this arm names the two hand
+    // edits that actually resolve it instead.
+    if (gates.some((gate) => gate.id === SOURCE_SIZE_GATE_ID)) {
+      add(
+        'source-size',
+        fillTemplate(WHATS['source-size.id-squatter'], {}),
+        `HAND-APPLY: in ${GATES_REL}, either rename the "${SOURCE_SIZE_GATE_ID}" gate to an id of its own, or repoint its cmd at node ${q(tool)} --check — then re-run recommendations`,
+        'source-size.id-squatter',
+      );
+      return;
+    }
+    add('source-size', fillTemplate(WHATS['source-size'], {}), adoptLine);
   } catch (err) {
     skip('source-size', err);
   }
@@ -627,15 +810,17 @@ const probeCommitGuard = ({ root, deps, add, skip }) => {
 // or un-wired hook is covered there, never double-offered here. The apply is the gate-hook
 // --read-lane PREVIEW one-liner (its own currency check + posture note fire at the writer; it may
 // prompt once — it IS a consent flow). Converges once lanes.json enables the lane.
-const probeReadLane = ({ root, deps, add, skip }) => {
+const probeReadLane = ({ root, deps, add, skip, shared }) => {
   try {
     const sg = surveyGateHook(root, deps);
     if (sg.error) throw new Error(sg.error);
     if (!sg.wired) return; // not wired → the gate-hook item covers (no double-fire)
-    if (!sg.filePlaced) {
-      // Wired but the placed hook FILE is missing — the hook errors on every Bash call and the lane
-      // is silently dark; surface it as attention with a place-first recovery (council R2-M2).
+    // Wired but the placed hook FILE is missing — the hook errors on every Bash call and the lane
+    // is silently dark; surface it as attention with a place-first recovery (council R2-M2).
+    const placeRecovery = () =>
       add('read-lane', fillTemplate(WHATS['read-lane.missing'], {}), `node ${q(toolPath('gate-hook.mjs'))} --apply --cwd ${q(root)}`, 'read-lane.missing');
+    if (!sg.filePlaced) {
+      placeRecovery();
       return;
     }
     if (readReadLaneToggle(root, deps)) {
@@ -643,7 +828,23 @@ const probeReadLane = ({ root, deps, add, skip }) => {
       // reads lanes.json, so the enabled lane is a silent no-op the user must reseed (council B7). The
       // rm target is ABSOLUTE (council R2-M3) so running the recovery from any cwd can only delete this
       // repo's hook.
-      if (isPlacedHookCurrent(root, deps)) return; // converged
+      const currency = readPlacedHookCurrency(root, deps);
+      if (currency === HOOK_CURRENCY.CURRENT) return; // converged
+      if (currency === HOOK_CURRENCY.ABSENT) {
+        // The survey saw it placed and it is gone by the time we read it. The missing arm is the
+        // honest report of that; a reseed recovery whose `rm` targets nothing is not.
+        placeRecovery();
+        return;
+      }
+      // ONE render per condition — and the item that renders is the one whose CAUSE is true. A hook
+      // that postdates the read-lane but predates the marker key reads lanes.json perfectly well, so
+      // this arm's "an old hook never reads lanes.json" would be a false diagnosis over it, while the
+      // marker arm's is exact. Both carry the same remove-then-reseed recovery, so deferring costs
+      // the reader nothing and buys a true sentence. The condition is that the marker arm REALLY
+      // rendered — never the conditions it would have used, re-derived here: each probe reads the
+      // placed hook itself, so a hook changing between the two reads could otherwise have both defer
+      // to the other and leave the dark lane reported by nobody.
+      if (shared.markerStaleRendered === true) return;
       add(
         'read-lane',
         fillTemplate(WHATS['read-lane.stale'], {}),
@@ -825,6 +1026,13 @@ export const recipeFingerprint = ({ hosts, dirs, home }) => {
   return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
 };
 
+// The fingerprint for an acknowledgment whose subject is already a canonical STRING — the census
+// fact, the sorted set of declared tool-elsewhere claims — rather than a hosts ∪ dirs recipe. Same
+// 16-hex shape the ack writer validates, so every lane records one comparable token; the canonical
+// form is the caller's, because only the caller knows which part of its fact is durable and which
+// is churn (the census binds the verdict + extension set, never per-file counts).
+export const factFingerprint = (fact) => createHash('sha256').update(fact).digest('hex').slice(0, 16);
+
 // The kit-owned neutral ack store (D4; AD-055 Part I): a FAMILY-OWNED strict-JSON file no host
 // validator guards — top-level key `sandboxLaneAck` (+ optional `_README`), unknown keys tolerated
 // on read (future acks are siblings). This is the PRIMARY ack channel; the legacy settings-scope
@@ -833,12 +1041,21 @@ export const recipeFingerprint = ({ hosts, dirs, home }) => {
 export const ACKS_FILE = 'docs/ai/acks.json';
 export const ACKS_LANE_KEY = 'sandboxLaneAck';
 export const ACKS_WORKTREES_DIR_KEY = 'worktreesDirAck';
+export const ACKS_COVERAGE_DOMAIN_KEY = 'coverageDomainAck';
+export const ACKS_SOURCE_SIZE_COPY_KEY = 'sourceSizeCopyAck';
 // The CLOSED-WORLD ack-lane registry: the lane name an advisor item renders on the writer's
 // command line → the store key that writer sets. A lane the registry does not name is a usage
 // refusal at the writer, never a newly-invented key in the shared store.
+//
+// An ack lane exists for a state the maintainer can only ANSWER, never converge: a tracked tree the
+// coverage domain cannot reach, a checker deliberately vendored elsewhere. It is deliberately NOT
+// available to a state that is simply BROKEN — a dead checker/producer pair is fixed, not
+// acknowledged, so no lane names it.
 export const ACK_LANES = Object.freeze({
   'sandbox-lane': ACKS_LANE_KEY,
   'worktrees-dir': ACKS_WORKTREES_DIR_KEY,
+  'coverage-domain': ACKS_COVERAGE_DOMAIN_KEY,
+  'source-size-copy': ACKS_SOURCE_SIZE_COPY_KEY,
 });
 
 // The opt-in read-lane toggle file (AD-055 Part II) — the SAME kit-owned docs/ai/lanes.json the
@@ -875,13 +1092,33 @@ const isStateBlockGuardWired = (data) => {
     : runsStateBlockGuard(entry)));
 };
 
-// Byte-compare the placed gate hook against the bundled runtime. A read error (an unreadable placed
-// hook, a broken kit bundle) propagates → the probe states a skip, never a wrong currency verdict.
-const isPlacedHookCurrent = (root, deps) => {
-  const readFile = deps.readFile ?? readFileSync;
-  const placed = readFile(join(root, GATE_HOOK_REL), 'utf8');
-  const bundle = readFile(deps.bundledHookPath ?? BUNDLED_HOOK_ABS, 'utf8');
-  return placed === bundle;
+// The placed gate hook's currency, as the states a caller must tell APART (D8). Read through the
+// writer-class fail-closed no-follow primitive, never a bare readFile: a byte-compare that FOLLOWS a
+// symlink can call a placed hook current because something ELSE is — a wrong verdict, which is worse
+// than a missing one. `current` and `stale` are answers; `absent` is one the caller disposes of
+// itself (a hook that is not there belongs to the place offers, never to a refresh arm); a symlink,
+// a directory and an unreadable target all THROW into the probe's stated-skip lane.
+const HOOK_CURRENCY = Object.freeze({ CURRENT: 'current', STALE: 'stale', ABSENT: 'absent' });
+const readPlacedHookCurrency = (root, deps) => {
+  const read = deps.readRegularFileNoFollow ?? readRegularFileNoFollow;
+  const placed = read(join(root, GATE_HOOK_REL));
+  if (placed.outcome === 'absent') return HOOK_CURRENCY.ABSENT;
+  if (placed.outcome === 'foreign') {
+    throw new Error(`${GATE_HOOK_REL} is a ${placed.className}, not a regular file — refusing to judge its currency`);
+  }
+  if (placed.outcome !== 'ok') throw new Error(`${GATE_HOOK_REL} is unreadable (${placed.code})`);
+  const bundle = (deps.readFile ?? readFileSync)(deps.bundledHookPath ?? BUNDLED_HOOK_ABS, 'utf8');
+  return placed.content === bundle ? HOOK_CURRENCY.CURRENT : HOOK_CURRENCY.STALE;
+};
+
+// Does the declaration carry the marker KEY at all? The question is PRESENCE, never the value: an
+// older hook rejects a key it does not know whatever that key says, so `lcovProducer: false` — a
+// perfectly valid declaration the runner accepts — darkens such a hook exactly as `true` does. Asking
+// through the producer predicate would be wrong twice over: it answers yes for a cmd-recognized
+// producer that needs nothing from the hook, and no for the false marker that does.
+const declarationCarriesMarker = (root, deps) => {
+  const declaration = loadDeclaration(root, deps);
+  return declaration.outcome === 'loaded' && declaration.gates.some((gate) => Object.hasOwn(gate, LCOV_PRODUCER_KEY));
 };
 
 // The LEGACY neutral ack namespace (pre-AD-055): read from BOTH settings scopes until the next kit
@@ -951,7 +1188,7 @@ const readReadLaneToggle = (root, deps) => {
 // D3: the risk-marked keys — every key here has a per-item posture note in the mode doc, surfaced
 // at the consent moment; the static contract test asserts EXACT bidirectional coverage
 // (risk-marked keys == mode-doc note keys — a dropped note goes red, not silent).
-export const RISK_NOTED_KEYS = Object.freeze(['sandbox-lane', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert']);
+export const RISK_NOTED_KEYS = Object.freeze(['sandbox-lane', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert', 'source-size', 'gate-hook']);
 
 const probeSandboxLane = ({ root, deps, add, skip }) => {
   try {
@@ -1175,27 +1412,39 @@ export const buildRecommendations = ({ cwd, deps = {} } = {}) => {
   const skip = (key, err) => skips.push({ key, reason: truncatedTo(oneLineOf(err?.message ?? String(err)), SKIP_REASON_CAP) });
   // The runtime shape backstop (D2): every COMPOSED item is validated at construction — a
   // violation surfaces through the stated-skip lane, never a crash, never a rendered violation.
-  // severityKey defaults to the item key; a per-site arm passes its `<key>.<variant>` entry when
-  // its class differs from the base (the invalid-env attention arm).
+  // `variant` defaults to the item key; a per-site arm passes its `<key>.<variant>` entry. It is
+  // BOTH the severity lookup and the machine-readable outcome identifier: the human render says
+  // which item fired, and only this field says which ARM of it did — so a consumer (the pre-publish
+  // smoke asserting a specific false-green never returns) can assert the exact outcome instead of
+  // pattern-matching prose that is free to be reworded.
   // `detail` (optional) is an extra rendered `recipe:` line — factual context that is TOO LONG for
   // the capped WHAT and does NOT belong in the pure-command apply (the sandbox-lane live recipe:
   // egress hosts + resolved writable dirs; the worktrees-dir hand-apply-first grant advice; the
   // agents hidden-mode reconcile follow-up). Single-line like apply; absent for every other item.
-  const add = (key, what, apply, severityKey = key, detail = null) => {
+  // Returns whether the item really RENDERED. One probe's disposition depends on another's having
+  // spoken (the marker-stale ⟷ read-lane.stale precedence), and "the conditions still look right"
+  // is not the same fact as "an item exists" — the shape backstop can refuse, and a condition read
+  // twice can answer twice.
+  const add = (key, what, apply, variant = key, detail = null) => {
     const problems = [];
     if (!(key in BENEFITS)) problems.push(`unregistered item key ${JSON.stringify(key)}`);
-    if (!(severityKey in SEVERITIES)) problems.push(`unregistered severity key ${JSON.stringify(severityKey)}`);
+    if (!(variant in SEVERITIES)) problems.push(`unregistered severity key ${JSON.stringify(variant)}`);
     if (/[\r\n]/.test(what)) problems.push('WHAT is not a single line');
     else if (what.length > ITEM_LINE_CAP) problems.push(`WHAT exceeds the ${ITEM_LINE_CAP}-char cap (${what.length})`);
     if (/[\r\n]/.test(apply)) problems.push('apply is not a single line');
     if (detail != null && /[\r\n]/.test(detail)) problems.push('recipe detail is not a single line');
     if (problems.length > 0) {
       skip(key, new Error(`item shape violation — ${problems.join('; ')}`));
-      return;
+      return false;
     }
-    items.push({ key, severity: SEVERITIES[severityKey], what, benefit: BENEFITS[key], apply, detail });
+    items.push({ key, variant, severity: SEVERITIES[variant], what, benefit: BENEFITS[key], apply, detail });
+    return true;
   };
-  for (const probe of deps.probes ?? PROBES) probe({ root, deps, add, skip });
+  // The per-run scratch a probe uses to tell a LATER probe what it actually did. Written by exactly
+  // one pair today (the marker-stale ⟷ read-lane.stale precedence) and read in the frozen PROBES
+  // order, so the reader can never run first.
+  const shared = {};
+  for (const probe of deps.probes ?? PROBES) probe({ root, deps, add, skip, shared });
   return { root, items, skips };
 };
 

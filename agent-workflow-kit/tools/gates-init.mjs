@@ -62,7 +62,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { discoverGateCandidates, EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
 import { GATES_REL, validateDeclaration } from './run-gates.mjs';
 import { canonicalCheckerGates, coverageDeclarationDefects, isKitOwnedCheckerGate } from './gates-declaration.mjs';
-import { COVERAGE_PRODUCER_BODY, matchesCoverageProducer } from './coverage-producer.mjs';
+import { COVERAGE_PRODUCER_BODY, isCoverageProducerGate } from './coverage-producer.mjs';
 import { loadConfig } from './orchestration-config.mjs';
 import { assertDocsAiDeployment, writeDocsAiFileAtomic, lstatNoFollow } from './atomic-write.mjs';
 // The source-size practice, through its PURE READ core only (D-18): this module asks whether the
@@ -523,9 +523,12 @@ export const buildOffer = (cwd, deps = {}) => {
   // a declaration the user already wrote by hand, so the rule reads the merged picture; a
   // declaration this preview cannot read degrades to a stated note, never to a silent withhold.
   const existing = declaredGatesBestEffort(cwd, deps);
+  // Both sides ask the ONE gate-level predicate. The offer side can only ever be a recognized cmd
+  // (this preview never EMITS the marker — it offers nothing it cannot verify), but a declaration
+  // the user wrote by hand may carry it, and the two sides must not answer through two predicates.
   const producerPresent =
-    scripts.entries.some((entry) => matchesCoverageProducer(entry.cmd)) ||
-    existing.gates.some((gate) => matchesCoverageProducer(gate.cmd));
+    scripts.entries.some((entry) => isCoverageProducerGate(entry)) ||
+    existing.gates.some((gate) => isCoverageProducerGate(gate));
   const withholdCoverage = cc.candidate !== null && !producerPresent;
   const coverageNote = withholdCoverage
     ? `the coverage-check candidate was withheld: nothing would PRODUCE the lcov it reads — no offered or ` +

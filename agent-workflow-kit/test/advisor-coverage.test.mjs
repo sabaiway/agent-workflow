@@ -194,6 +194,21 @@ describe('advisor coverage — every capability is offered or exempt with a reas
     assert.ok(!probeNames.has(prefix), 'but exact membership rejects it — the guard cannot false-green');
   });
 
+  // A per-site ARM is not a capability. Requiring one would be actively wrong: `coverage-domain-narrow`
+  // and `producer-unrecognized` are two readings of the SAME thing a user gains (a matrix that
+  // verifies their project), and registering them separately would ask each mode doc to declare an
+  // opt-in nobody can enable. What the guard must hold instead is that a variant is anchored — its
+  // BASE key is a registered capability, so no arm can drift out of the coverage triangle.
+  it('a `<key>.<variant>` arm adds NO capability row — and its BASE key is always a registered one', () => {
+    const advisorKeys = new Set(OPT_IN_CAPABILITIES.filter((c) => c.advisorKey).map((c) => c.advisorKey));
+    const variants = Object.keys(SEVERITIES).filter((key) => key.includes('.'));
+    assert.ok(variants.length > 0, 'the registry really carries per-site arms');
+    for (const variant of variants) {
+      assert.ok(!advisorKeys.has(variant), `${variant} must not be registered as a capability of its own`);
+      assert.ok(advisorKeys.has(variant.slice(0, variant.indexOf('.'))), `${variant} has no registered base capability`);
+    }
+  });
+
   it('no orphan advisor offer: every add() key in the tool belongs to a registered capability', () => {
     const emitted = [...TOOL_SOURCE.matchAll(/\badd\(\s*'([a-z0-9-]+)'/g)].map((m) => m[1]);
     const registered = new Set(OPT_IN_CAPABILITIES.filter((c) => c.advisorKey).map((c) => c.advisorKey));
