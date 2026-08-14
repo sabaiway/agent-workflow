@@ -7,6 +7,34 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-14 — AD-092 + AD-093 + AD-094 the feedback-hardening series: emitted things are executed, claims are proven, and a shipping kit is gated against the published one (kit 5.7.0, memory 4.3.0; engine 2.1.0, codex-cli-bridge 3.5.0 and antigravity-cli-bridge 5.1.1 unchanged)
+
+Seven items of feedback from one live upgrade session on a deployed TypeScript project, and every
+one was the same defect at a different surface: the kit EMITTED something — a shell command, a
+status line, a prescribed operation, an optimality verdict — and nothing downstream ever ran it,
+proved it, or performed it. The emitted coverage command wrote its lcov to the filesystem root when
+its variable was unset, because every test asserted on the string and none executed it. The
+read-only refresh told users the tree "may be PARTIALLY updated" without having checked. Upgrade
+step 3 prescribed four state-changing writes as prose done slightly differently every session. And
+the advisor attested "flow optimal" over a tree whose primary sources its coverage domain could not
+even see.
+
+The series answer, shipped as one release: the emitted command refuses by name
+(`"${AW_GIT_DIR:?…}"`) and is a fixture the tests EXECUTE; recognition of previously emitted forms
+is append-only, so no deployed gate is reclassified by an upgrade; degrade lines bind clause by
+clause to what a re-scan proved; the four ensures are one runnable command with a closed outcome
+vocabulary; upgrade step 3 is a registry-owned run-list a structure test holds against the doc; the
+optimality verdict gained named third outcomes gated on a tracked-tree census, an `lcovProducer`
+marker for runners the closed cmd-world cannot name, and a preserved — not upgrade-stopping — path
+for a vendored copy of a core check.
+
+And the release lane itself learned the lesson: a kit-carrying dispatch — dry-run included — now
+refuses without TWO HEAD-bound receipts. The candidate smoke proves the packed candidate against a
+foreign fixture this repo's own suite cannot represent; the new cross-version gate installs the
+PUBLISHED kit and asserts the three Issue-016 axes by name (`schema-accept` / `execution` /
+`producer-recognition`), with the marker arm decided against `MARKER_AWARE_SINCE = 5.7.0` — from
+this release on, the first marker-aware kit version is a constant, not a memory.
+
 ## 2026-08-12 — AD-091 the source-size practice: a declared cap, and a record that is debt rather than permission (kit 5.6.0, engine 2.1.0; memory 4.2.0, codex-cli-bridge 3.5.0 and antigravity-cli-bridge 5.1.1 unchanged)
 
 The kit taught module granularity nowhere and enforced it nowhere, and its own tree was the evidence:

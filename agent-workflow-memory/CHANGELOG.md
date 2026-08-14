@@ -4,6 +4,32 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 4.3.0 — the migration emits a destination that refuses by name, accepts the producer marker, and preserves a vendored core check (AD-092 + AD-093 + AD-094; ships with kit 5.7.0)
+
+The `migrate-gates.mjs` canon moves in lockstep with the kit it is byte-twinned to. Three changes,
+all in the drift-guarded shared block or the branches around it:
+
+- **The emitted coverage destination becomes `"${AW_GIT_DIR:?exported by run-gates}/…lcov.info"`.**
+  Where the runner injects the variable, behaviour is byte-identical; where a human pastes the cmd
+  into a bare shell, bash refuses loudly by name — the old form expanded to empty and wrote the
+  lcov to the filesystem root. Recognition stays APPEND-ONLY: every previously emitted form is
+  still recognised, so an old-form declaration migrates as `keep` with zero diff.
+- **The migration recognises the `lcovProducer` marker.** An optional gate-level boolean; only the
+  literal `true` is a producer claim, and producer-ness stays POSITIONAL — a marker on the coverage
+  checker itself never self-pairs. Strict schema validation of the key lives in the kit
+  (`gates-declaration.mjs`), which accepts it in lockstep with this release; the published 5.6.0
+  kit rejects a marker-carrying `gates.json` at exit 5 by design (forward-only; the kit's
+  Issue-016 note owns the cross-version statement).
+- **A vendored copy of a core check is PRESERVED instead of stopping the upgrade.** The
+  three-outcome claim classifier (`canonical` / `tool-elsewhere` / `not-the-tool`) routes a
+  shape-matching copy at a non-canonical realpath into a `keep` row plus separately rendered
+  verify metadata — exit 0, nothing auto-added, a zero-diff apply, with the preview stating the
+  verification instead of
+  claiming final-run-capability the runner would refuse. A genuine id-squatter still hard-stops.
+
+This package stays standalone — it imports nothing from the kit; the shared block is held equal by
+the text drift guard, never by an import.
+
 ## 4.2.0 — the gates migration stops handing you a coverage checker with nothing to read (AD-089)
 
 `migrate-gates.mjs` added the canonical `coverage-check` gate to any legacy declaration that lacked
