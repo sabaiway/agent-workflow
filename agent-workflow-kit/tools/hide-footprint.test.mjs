@@ -6,6 +6,7 @@ import {
   inferVisibility,
   migrateFromGlobal,
   buildBlock,
+  formatReport,
   START_MARKER,
   END_MARKER,
 } from './hide-footprint.mjs';
@@ -459,5 +460,157 @@ describe('inferVisibility + --reconcile', () => {
     // AGENTS.md tracked but absent from the worktree; docs/ai/ present, untracked, not ignored.
     const { deps } = mk({ tracked: ['AGENTS.md'] }, { world: (w) => w.dir('docs/ai') });
     assert.equal(inferVisibility(deps, DIR).visibility, 'visible');
+  });
+});
+
+// ── formatReport (characterization — the exact verdict lines, pinned green first) ─
+// These pins freeze the CURRENT report wording so the composed-lines guard and any later
+// render change indict a KNOWN surface; a rewording here is deliberate, never incidental.
+
+describe('formatReport characterization', () => {
+  const result = (over = {}) => ({
+    excludeFile: EXCLUDE,
+    action: 'created',
+    visibility: 'hidden',
+    wrote: [],
+    asks: [],
+    needsUntrack: [],
+    dropped: [],
+    verify: [],
+    global: { action: 'none' },
+    ...over,
+  });
+
+  it('VISIBLE verdict — the exact two lines', () => {
+    const out = formatReport(result({ visibility: 'visible', anchor: '/AGENTS.md', action: 'noop' }), false);
+    assert.equal(out, [
+      'hide-footprint',
+      '  • deployment is VISIBLE (/AGENTS.md is tracked) — nothing to hide; wrote zero bytes',
+    ].join('\n'));
+  });
+
+  it('AMBIGUOUS verdict — the exact two lines, dry-run header form', () => {
+    const out = formatReport(result({ ambiguous: true, anchor: '/AGENTS.md', action: 'noop' }), true);
+    assert.equal(out, [
+      'hide-footprint — DRY RUN (no changes)',
+      '  • AMBIGUOUS visibility (/AGENTS.md is untracked AND not ignored) — cannot tell fresh-uncommitted from broken-hidden; ASK the user before writing',
+    ].join('\n'));
+  });
+
+  it('a full hidden-run report — every line kind at once, byte-exact', () => {
+    const out = formatReport(result({
+      wrote: ['/.claude/settings.json', '/AGENTS.md', '/docs/ai/'],
+      asks: [{ path: '/GEMINI.md', reason: 'present but its name is generic (Gemini CLI) — confirm before hiding', owner: 'Gemini CLI' }],
+      needsUntrack: [{ path: '/.claude/settings.json', command: 'git rm --cached -- .claude/settings.json' }],
+      dropped: ['/docs/plans/'],
+      global: { action: 'kept', source: '/home/u/.gitignore_global', removedLines: ['# header', '/AGENTS.md'] },
+    }), false);
+    assert.equal(out, [
+      'hide-footprint',
+      `  • created ${EXCLUDE}`,
+      '  • hidden (2): /AGENTS.md, /docs/ai/',
+      '  • ASK /GEMINI.md — present but its name is generic (Gemini CLI) — confirm before hiding',
+      '  • tracked, NOT hidden: /.claude/settings.json — run `git rm --cached -- .claude/settings.json` to un-track (kept on disk)',
+      '  • skipped 1 already-ignored (tracked .gitignore)',
+      '  • residual legacy machine-global block in /home/u/.gitignore_global (1 path line(s)) — KEPT + reported; pass --remove-global to remove (with a printed backup)',
+    ].join('\n'));
+  });
+
+  it('a removed legacy global block prints the restorable backup lines', () => {
+    const out = formatReport(result({
+      action: 'updated',
+      wrote: ['/AGENTS.md'],
+      global: { action: 'removed', source: '/home/u/.gitignore_global', removedLines: ['/AGENTS.md'] },
+    }), false);
+    assert.equal(out, [
+      'hide-footprint',
+      `  • updated ${EXCLUDE}`,
+      '  • hidden (1): /AGENTS.md',
+      '  • removed the legacy machine-global block from /home/u/.gitignore_global (backup of 1 line(s) printed below)',
+      '      | /AGENTS.md',
+    ].join('\n'));
+  });
+
+  it('a REAL hide run renders through the same composer (the constructed shapes above are not a parallel world)', () => {
+    const { deps } = mk();
+    const r = hideFootprint({ dir: DIR }, deps);
+    const out = formatReport(r, false);
+    assert.ok(out.startsWith(`hide-footprint\n  • created ${EXCLUDE}\n  • hidden (`), out);
+    assert.match(out, /\/AGENTS\.md/);
+  });
+});
+
+// ── the +N/−N delta against the CURRENT managed block (L3 — dry-run and apply alike) ─
+// Sets are LISTED, never counted alone; an unchanged block states +0/−0 explicitly; --unhide
+// stays delta-free (its report is characterized unchanged).
+
+describe('managed-block delta (+N added / −N removed)', () => {
+  const staleInFence = (world) => {
+    const content = world.read('.git/info/exclude');
+    world.file('.git/info/exclude', content.replace(END_MARKER, `/STALE-THING.md\n${END_MARKER}`));
+  };
+
+  it('a first run is added-only: every written pattern is listed as added, nothing removed', () => {
+    const { deps } = mk();
+    const r = hideFootprint({ dir: DIR }, deps);
+    assert.deepEqual(r.added, r.wrote, 'an empty prior block means the whole written set is new');
+    assert.deepEqual(r.removed, []);
+    const out = formatReport(r, false);
+    assert.match(out, new RegExp(`  • \\+${r.added.length} added: `), out);
+    assert.ok(out.includes('/AGENTS.md'), out);
+    assert.ok(!out.includes('removed:'), 'no removed line when nothing was removed');
+    assert.ok(!out.includes('+0/−0'), 'a changed block never claims +0/−0');
+  });
+
+  it('an unchanged re-run states +0/−0 explicitly', () => {
+    const { deps } = mk();
+    hideFootprint({ dir: DIR }, deps);
+    const r = hideFootprint({ dir: DIR }, deps);
+    assert.deepEqual(r.added, []);
+    assert.deepEqual(r.removed, []);
+    assert.ok(formatReport(r, false).includes('  • +0/−0 — the hidden set is unchanged'));
+  });
+
+  it('a pattern the rewrite drops from the block is removed-only — named, not just counted', () => {
+    const { world, deps } = mk();
+    hideFootprint({ dir: DIR }, deps);
+    staleInFence(world);
+    const r = hideFootprint({ dir: DIR }, deps);
+    assert.deepEqual(r.added, []);
+    assert.deepEqual(r.removed, ['/STALE-THING.md']);
+    const out = formatReport(r, false);
+    assert.ok(out.includes('  • −1 removed: /STALE-THING.md'), out);
+    assert.ok(!out.includes('added:'), 'no added line when nothing was added');
+  });
+
+  it('the MIXED delta: additions AND removals render together in one run', () => {
+    const { world, deps } = mk();
+    hideFootprint({ dir: DIR }, deps);
+    staleInFence(world);
+    world.dir('.continue'); // a low-risk external dir appears → auto-HIDE joins the block
+    const r = hideFootprint({ dir: DIR }, deps);
+    assert.deepEqual(r.added, ['/.continue/']);
+    assert.deepEqual(r.removed, ['/STALE-THING.md']);
+    const out = formatReport(r, false);
+    assert.ok(out.includes('  • +1 added: /.continue/'), out);
+    assert.ok(out.includes('  • −1 removed: /STALE-THING.md'), out);
+  });
+
+  it('a DRY RUN carries the same delta (nothing written, the plan still says what would change)', () => {
+    const { world, deps } = mk();
+    const r = hideFootprint({ dir: DIR, dryRun: true }, deps);
+    assert.deepEqual(r.added, r.wrote);
+    assert.ok(formatReport(r, true).includes(` added: `), 'the dry-run report lists the additions');
+    assert.equal(world.read('.git/info/exclude'), undefined, 'and wrote nothing');
+  });
+
+  it('--unhide reports NO delta — its output is characterized unchanged', () => {
+    const exclude = `# boiler\n${START_MARKER}\n/AGENTS.md\n${END_MARKER}\n`;
+    const { deps } = mk({}, { exclude });
+    const r = hideFootprint({ dir: DIR, unhide: true }, deps);
+    assert.equal(r.added, undefined);
+    assert.equal(r.removed, undefined);
+    const out = formatReport(r, false);
+    assert.ok(!out.includes('added:') && !out.includes('removed:') && !out.includes('+0/−0'), out);
   });
 });

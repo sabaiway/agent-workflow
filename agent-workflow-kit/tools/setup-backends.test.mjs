@@ -1172,6 +1172,15 @@ describe('main --refresh-placed — CLI contract', () => {
     assert.ok(!/set-recipe/.test(text), 'a refresh never flips readiness, so no recipe offer');
   });
 
+  it('win32 → every backend is a stated unsupported skip with the WSL guidance line', () => {
+    const results = refreshPlacedBridges({ platform: 'win32', home: '/home/u' });
+    assert.equal(results.length, 2);
+    for (const r of results) {
+      assert.equal(r.outcome, 'unsupported');
+      assert.match(r.line, /^  [a-z-]+-cli-bridge: skipped — POSIX \.sh wrappers/);
+    }
+  });
+
   it('a failed backend → exit 1 (the line still carries the reason + recovery)', () => {
     bothBundles();
     const skillDir = join(tmp, 'skill');

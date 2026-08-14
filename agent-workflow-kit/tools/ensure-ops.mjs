@@ -114,9 +114,9 @@ const applyNoteRefresh = (cwd, config, dryRun, deps) => {
         : `${CONFIG_REL}: the onboarding note carries your own wording — preserved verbatim, nothing written`,
     );
   }
-  if (dryRun) return ok('orchestration', 'would-refresh-note', `${CONFIG_REL}: the onboarding note matches a previous canonical and would be refreshed (every activity/slot kept)`);
+  if (dryRun) return ok('orchestration', 'would-refresh-note', `${CONFIG_REL}: the onboarding note matches a previous canonical and would be refreshed (every recipe you set is kept)`);
   writeConfig(cwd, next, deps);
-  return ok('orchestration', 'note-refreshed', `${CONFIG_REL}: the onboarding note was refreshed to the current canonical (every activity/slot kept)`);
+  return ok('orchestration', 'note-refreshed', `${CONFIG_REL}: the onboarding note was refreshed to the current canonical (every recipe you set is kept)`);
 };
 
 // A load failure is not automatically "malformed": a file that VANISHED between the reader's own
@@ -211,7 +211,7 @@ const OLD_ADR_LAYOUTS = new Set(['old', 'old-unrotated']);
 // — the CLI's summary therefore claims nothing about writes, and this line states the truth per op.
 const partialNote = (lines) => {
   const copied = lines.filter((line) => line.includes(': copied from the bundled scripts')).length;
-  return copied > 0 ? [`this ensure stopped PARTWAY — the ${copied} file(s) named above were already copied and are NOT rolled back`] : [];
+  return copied > 0 ? [`the copying stopped PARTWAY — the ${copied} file(s) named above were already copied and are NOT rolled back`] : [];
 };
 
 export const ensureScripts = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
@@ -239,7 +239,7 @@ export const ensureScripts = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
     const rel = `${SCRIPTS_DIR}/${name}`;
     const probe = probeSeedTarget(join(cwd, SCRIPTS_DIR, name), lstat);
     if (probe.wrongKind) {
-      return loud('scripts', 'wrong-node-kind', `${rel}: exists but is ${probe.wrongKind} — that is not the enforcement script this ensure places`, ...lines, ...partialNote(lines));
+      return loud('scripts', 'wrong-node-kind', `${rel}: exists but is ${probe.wrongKind} — that is not the enforcement script this run places`, ...lines, ...partialNote(lines));
     }
     if (probe.present) {
       lines.push(`${rel}: already present — preserved, never overwritten`);

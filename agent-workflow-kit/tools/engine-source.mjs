@@ -111,7 +111,7 @@ export const detectEngine = (engineDir, { source, rel } = {}, deps = {}) => {
           ? `engine manifest name "${report.name}" is not "${EXPECTED_ENGINE_NAME}"`
           : report.available === false
             ? 'engine manifest is a declared stub (available:false)'
-            : `engine fragment missing (${fragmentRel})`;
+            : `a required engine file is missing (${fragmentRel})`;
   return { ok, reason, dir: engineDir };
 };
 
@@ -124,15 +124,19 @@ export const detectEngine = (engineDir, { source, rel } = {}, deps = {}) => {
 export const readEngineFragment = (engineDir, deps = {}) => {
   const detection = detectEngine(engineDir, { source: deps.source, rel: deps.rel }, deps);
   const installHint = `npx @sabaiway/agent-workflow-engine@latest init  (or set ${ENGINE_ENV})`;
-  if (!detection.ok) {
-    throw new Error(`methodology engine not found/invalid at ${engineDir} (${detection.reason}) — install it: ${installHint}`);
-  }
+  // The typed {stable, reason} pair lets a consumer split the classified human line from the raw
+  // diagnostic (its machine-line channel) without parsing the message; .message stays whole for
+  // consumers that print one line.
+  const installMe = (reason) => Object.assign(
+    new Error(`methodology engine not found/invalid at ${engineDir} (${reason}) — install it: ${installHint}`),
+    { stable: `methodology engine not found/invalid at ${engineDir} — install it: ${installHint}`, reason },
+  );
+  if (!detection.ok) throw installMe(detection.reason);
   const read = deps.readFileSync ?? readFileSync;
+  const fragmentRel = deps.rel ?? ENGINE_FRAGMENT_REL;
   try {
-    return read(join(engineDir, deps.rel ?? ENGINE_FRAGMENT_REL), 'utf8');
+    return read(join(engineDir, fragmentRel), 'utf8');
   } catch (err) {
-    throw new Error(
-      `methodology engine not found/invalid at ${engineDir} (fragment unreadable: ${err.message}) — install it: ${installHint}`,
-    );
+    throw installMe(`a required engine file is unreadable (${fragmentRel}): ${err.message}`);
   }
 };

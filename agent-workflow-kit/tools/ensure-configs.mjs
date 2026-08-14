@@ -98,7 +98,9 @@ export const runEnsures = ({ cwd, kitRoot, dryRun, deps }) =>
   });
 
 const render = (outcomes, dryRun) => {
-  const lines = [dryRun ? 'ensure-configs — reconcile (dry run; nothing written)' : 'ensure-configs — reconcile'];
+  // The banner names the tool + the flag it ran under (both machine tokens the L2 rule exempts);
+  // the failure footer is a user-grade sentence — the composed-lines guard scans both.
+  const lines = [dryRun ? 'ensure-configs (--reconcile, dry run — nothing written)' : 'ensure-configs (--reconcile)'];
   for (const o of outcomes) {
     lines.push(`  ${o.op}: ${o.token}`);
     for (const detail of o.lines) lines.push(`      ${detail}`);
@@ -106,7 +108,7 @@ const render = (outcomes, dryRun) => {
   if (outcomes.some((o) => o.failed)) {
     // No blanket claim about what was written: an op that copies file by file can stop PARTWAY, and
     // its own lines are the only accurate account of what landed.
-    lines.push('', '  one or more ensures did NOT complete — read their lines above for the cause, and for what each one did and did not write.');
+    lines.push('', '  part of this configuration run did NOT complete — the lines above name the cause, and what was and was not written.');
   }
   return lines.join('\n');
 };

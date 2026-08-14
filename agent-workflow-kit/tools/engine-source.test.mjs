@@ -98,7 +98,7 @@ describe('detectEngine — happy path + each distinct failure reason', () => {
   it('missing fragment → reason names the fragment path', () => {
     const out = detectEngine(ENGINE_DIR, { source: 'default' }, deps({ statType: (p) => (p === ENGINE_DIR ? 'dir' : null) }));
     assert.equal(out.ok, false);
-    assert.match(out.reason, /fragment/);
+    assert.match(out.reason, /a required engine file is missing \(references\/methodology-slot\.md\)/);
   });
 
   it('a validator that THROWS (corrupt engine, e.g. EISDIR) → ok:false, no raw error escapes', () => {
@@ -175,8 +175,11 @@ describe('readEngineFragment — live read or loud throw', () => {
           }),
         ),
       (err) => {
-        assert.match(err.message, /fragment unreadable: EISDIR/);
+        assert.match(err.message, /a required engine file is unreadable \(references\/methodology-slot\.md\): EISDIR/);
         assert.match(err.message, /npx @sabaiway\/agent-workflow-engine@latest init/);
+        assert.match(err.stable, /methodology engine not found\/invalid/, 'the typed stable half keeps the classified prefix');
+        assert.ok(!err.stable.includes('EISDIR'), 'and carries no raw diagnostic');
+        assert.match(err.reason, /EISDIR/, 'the typed reason half carries the raw diagnostic');
         return true;
       },
     );

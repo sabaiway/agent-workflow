@@ -18,7 +18,16 @@ import {
   renderComms,
   reconcileCommsText,
   COMMS_PRIORS,
+  OUTCOME_LINES,
 } from './lens-region.mjs';
+
+// Bytes the line-safety contract must neutralize — the FULL collapsed/escaped range (C0 with
+// NUL/CR/VT/FF, DEL, the C1 boundaries with NEL, the U+2028/U+2029 separators), built by code
+// point so this file stays ASCII; the STOP contract promises none survives into a printed line.
+const CP = (cp) => String.fromCharCode(cp);
+const NL = CP(10);
+const UNSAFE = [0x00, 0x0b, 0x0c, 0x0d, 0x1f, 0x7f, 0x80, 0x85, 0x9f, 0x2028, 0x2029].map(CP);
+const singleLine = (line) => !line.includes(NL) && UNSAFE.every((c) => !line.includes(c));
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ENGINE_DIR = join(HERE, '..', '..', 'agent-workflow-engine');
@@ -260,8 +269,12 @@ describe('comms-region — CLI reconcile (the legacy-deployment upgrade acceptan
     writeFileSync(target(), commsDoc({ body: `${commsAt(COMMS_PRIORS[0], 5)}\n` }));
     const code = await runCli(['reconcile', target()], { ...deps(ENGINE_DIR), fs: fsBrokenTemplate });
     assert.equal(code, 1);
-    assert.ok(errors.some((l) => l.includes('template canon is unreadable')), errors.join('\n'));
-    assert.ok(errors.some((l) => l.includes('npx @sabaiway/agent-workflow-kit@latest init')), 'the STOP names the reinstall');
+    // The split STOP: exactly one human line — with the reinstall command and NO raw diagnostic —
+    // plus one machine-formatted detail line carrying the encoded raw error.
+    assert.deepEqual(errors, [
+      "[lens-region] STOP — the kit's bundled agent_rules.md template canon is unreadable; reinstall the kit: npx @sabaiway/agent-workflow-kit@latest init",
+      '[lens-region] error="EACCES: permission denied"',
+    ]);
   });
 
   it('a write failure mid Communication refresh cleans the temp file and surfaces the error', async () => {
@@ -368,6 +381,24 @@ describe('lens-region — CLI reconcile (live engine read, outcomes, atomic writ
     assert.ok(logs.some((l) => l.includes('too old (or incomplete)')), logs.join('\n'));
   });
 
+  it('a pair present at detect but unreadable at read → exit 1, the raw diagnostic on the machine line only', async () => {
+    // Deterministic path-selective read failure (a chmod fixture is root- and platform-dependent):
+    // detect sees both files, the priors READ throws.
+    const engineRead = (p, enc) => {
+      if (String(p).includes('agent-rules-lens-priors.md')) {
+        throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+      }
+      return readFileSync(p, enc);
+    };
+    writeFileSync(target(), doc({ body: `${atNumber(PRE_E4, 6)}\n` }));
+    assert.equal(await runCli(['reconcile', target()], { ...deps(ENGINE_DIR), engineRead }), 1);
+    assert.ok(errors.some((l) => l.includes('methodology engine not found/invalid')), errors.join('\n'));
+    const machine = errors.find((l) => l.startsWith('[lens-region] error='));
+    assert.ok(machine, 'the raw diagnostic rides the machine line');
+    assert.match(JSON.parse(machine.slice('[lens-region] error='.length)), /EACCES: permission denied/, 'the decoded machine value carries the raw cause');
+    assert.ok(!errors.some((l) => l.includes('EACCES') && !l.startsWith('[lens-region] error=')), 'and never the human line');
+  });
+
   it('cap overflow → loud refusal, exit 0, nothing written', async () => {
     const before = doc({ body: `${atNumber(PRE_E4, 6)}\n`, maxLines: 10 });
     writeFileSync(target(), before);
@@ -417,5 +448,27 @@ describe('lens-region — replaceLensRegion trailing-blank preservation', () => 
   });
   it('a mid-document file stat sanity: fixture engine copies stay directories (guard the cp filter)', () => {
     assert.ok(statSync(join(ENGINE_DIR, 'references')).isDirectory());
+  });
+});
+
+describe('outcome lines — dynamic diagnostics stay line-safe (the machine channel)', () => {
+  const NASTY = `EACCES: permission denied${NL}line2${UNSAFE.join('')}end`;
+
+  it('errorDetail is ONE physical line and reversible under the FULL unsafe-byte range', () => {
+    const line = OUTCOME_LINES.errorDetail(NASTY);
+    assert.ok(singleLine(line), line);
+    assert.equal(JSON.parse(line.slice('[lens-region] error='.length)), NASTY, 'reversible encoding');
+  });
+
+  it('engineStop renders exactly {human, machine}, the human line collapsed to the exact bytes', () => {
+    const lines = OUTCOME_LINES.engineStop({
+      stable: `methodology engine not found/invalid at /x${NL}${UNSAFE.join('')}y — install it: npx z`,
+      reason: NASTY,
+      message: 'unused when the typed halves are present',
+    });
+    assert.equal(lines.length, 2);
+    for (const line of lines) assert.ok(singleLine(line), line);
+    assert.equal(lines[0], '[lens-region] STOP — methodology engine not found/invalid at /x y — install it: npx z', 'the whole unsafe run collapses to ONE space');
+    assert.equal(JSON.parse(lines[1].slice('[lens-region] error='.length)), NASTY);
   });
 });

@@ -225,7 +225,12 @@ const BUDGET = {
   // THREE pointers (the autonomy slot: step-3 wording, the (a)(iii) anchor-absent soft-skip lane,
   // the No-Node walk, the step-4/8 report row) — ~575 B of new contract content over 179 B of
   // headroom; a documented KB-multiple bump, never a silent re-pin.)
-  fullReadSet: 67584, // router + mode + its declared shared files. 66560 → 67584 (66 KB):
+  fullReadSet: 68608, // router + mode + its declared shared files. 67584 → 68608 (67 KB):
+  // feedback-hardening Plan 3 Phase 1 — deploy-tail.md's internals Gotcha gains the L2
+  // composed-lines rule (user-grade lines, the machine-line channel, the detected-abnormal alarm
+  // gate, the ensure token-slot exception; ~0.8 KB) against ~3 B of headroom; upgrade's set
+  // measures 68341 B — the same documented KB-multiple bump, never a silent re-pin.
+  // History: 66560 → 67584 (66 KB):
   // delegation Plan 1 Phase 3 — the dispatch mode header rides EVERY read set, and the heaviest
   // (upgrade + its shared files) overflows the 65 KB ceiling; the same documented KB-multiple bump,
   // never a silent re-pin. History: 65536 → 66560 (65 KB): flow

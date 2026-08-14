@@ -126,7 +126,7 @@ export { scanBundleOwnedDrift };
 
 // One user-facing sentence naming what an equal-version re-sync overwrote — or null when nothing local
 // was lost. Callers apply their own indent; the pointer names the settings file that survives a refresh.
-const driftSummary = (drift) => {
+export const driftSummary = (drift) => {
   if (!drift) return null;
   const parts = [];
   if (drift.drifted.length) parts.push(`overwrote ${drift.drifted.length} locally-changed file(s): ${drift.drifted.join(', ')}`);
@@ -565,6 +565,23 @@ const stripPrefix = (message) => message.replace('[agent-workflow-kit] ', '');
 const readonlyRefreshFailedLine = (name, message) =>
   `  ${name}: could not refresh — ${stripPrefix(message)}; the skills directory is read-only this session — ${READONLY_RERUN_HINT}`;
 
+// The per-bridge refresh outcome lines, one pure composer per outcome — the composed-lines guard
+// (test/composed-lines-ux.test.mjs) renders every key against the L2 user-grade invariants. `label`
+// is the pre-rendered version suffix (versionLabel); reasons arrive already prefix-stripped.
+export const REFRESH_LINES = Object.freeze({
+  unsupported: (name, reason) => `  ${name}: skipped — ${reason}`,
+  'kept-newer': (name, reason) => `  ${name}: skipped — ${reason}`,
+  'not-placed': (name) => `  ${name}: ${NOT_PLACED_LINE}`,
+  failed: (name, reason) => `  ${name}: could not refresh — ${reason}; recover with /agent-workflow-kit setup`,
+  'failed-readonly': readonlyRefreshFailedLine,
+  [SKIPPED_READONLY]: readonlySkipLine,
+  'already-current': (name, label, summary) => {
+    const base = `  ${name}: already current${label} — files re-synced from the bundled copy`;
+    return summary ? `${base}\n     ↳ ${summary}` : base;
+  },
+  refreshed: (name, label) => `  ${name}: refreshed${label}`,
+});
+
 // The post-failure parity verdict behind that line (D3): a read-only re-scan of the bundle-owned
 // files AND the wrapper links, run AFTER the write refusal, so every clause binds to state proven
 // THIS run. The degrade returns before linkWrappers, so the wrapper axis is genuinely unreconciled —
@@ -602,19 +619,19 @@ export const refreshPlacedBridges = (deps = {}, names = KNOWN_BACKENDS.map((b) =
     try {
       const plan = planFor(name, deps);
       if (plan.outcome === 'unsupported') {
-        return { name: plan.name, outcome: 'unsupported', line: `  ${plan.name}: skipped — ${plan.reason}` };
+        return { name: plan.name, outcome: 'unsupported', line: REFRESH_LINES.unsupported(plan.name, plan.reason) };
       }
       if (plan.wouldDowngrade) {
-        return { name: plan.name, outcome: 'kept-newer', line: `  ${plan.name}: skipped — ${stripPrefix(plan.reason)}` };
+        return { name: plan.name, outcome: 'kept-newer', line: REFRESH_LINES['kept-newer'](plan.name, stripPrefix(plan.reason)) };
       }
       // An absent/empty skill dir is `not placed` REGARDLESS of any later plan trouble (a foreign
       // wrapper conflict, a bundle-source problem): the refresh-only driver skips an unplaced bridge
       // before those axes matter, so it must never claim "could not refresh" what it would not touch.
       if (plan.place && plan.place.action !== 'refresh') {
-        return { name: plan.name, outcome: 'not-placed', line: `  ${plan.name}: ${NOT_PLACED_LINE}` };
+        return { name: plan.name, outcome: 'not-placed', line: REFRESH_LINES['not-placed'](plan.name) };
       }
       if (plan.outcome === 'stop' || plan.outcome === 'error') {
-        return { name: plan.name, outcome: 'failed', line: `  ${plan.name}: could not refresh — ${stripPrefix(plan.reason)}; recover with /agent-workflow-kit setup` };
+        return { name: plan.name, outcome: 'failed', line: REFRESH_LINES.failed(plan.name, stripPrefix(plan.reason)) };
       }
       const refresh = refreshSkillOnly(registryEntry(plan.name), deps);
       // A read-only skills dir at an EQUAL version is a STATED skip (repair-on-rerun cannot run here) —
@@ -623,38 +640,38 @@ export const refreshPlacedBridges = (deps = {}, names = KNOWN_BACKENDS.map((b) =
         return {
           name: plan.name,
           outcome: SKIPPED_READONLY,
-          line: readonlySkipLine(plan.name, refresh.version, readonlyParity(plan, deps)),
+          line: REFRESH_LINES[SKIPPED_READONLY](plan.name, refresh.version, readonlyParity(plan, deps)),
         };
       }
       if (!refresh.refreshed) {
-        return { name: plan.name, outcome: 'not-placed', line: `  ${plan.name}: ${NOT_PLACED_LINE}` };
+        return { name: plan.name, outcome: 'not-placed', line: REFRESH_LINES['not-placed'](plan.name) };
       }
       const manifest = readBundledManifest(plan.place.bundleDir, deps);
       linkWrappers(plan.skillDir, manifest, { ...deps, bindir: plan.bindir, platform: plan.platform });
       const current = plan.version !== null && plan.priorVersion === plan.version;
       // The equal-version line still states the copy that ran (repair-on-rerun) — the tool never
       // reports a mutation-free "already current" while it re-synced files underneath.
-      const base = `  ${plan.name}: ${current ? `already current${versionLabel(plan)} — files re-synced from the bundled copy` : `refreshed${versionLabel(plan)}`}`;
       // Overwrite honesty (D5): only an EQUAL-version re-sync can prove a byte diff is a LOCAL edit —
       // a version upgrade's diffs are the version delta, which the (vOld → vNew) arrow already states.
-      const summary = current ? driftSummary(refresh.drift) : null;
       return {
         name: plan.name,
         outcome: current ? 'already-current' : 'refreshed',
-        line: summary ? `${base}\n     ↳ ${summary}` : base,
+        line: current
+          ? REFRESH_LINES['already-current'](plan.name, versionLabel(plan), driftSummary(refresh.drift))
+          : REFRESH_LINES.refreshed(plan.name, versionLabel(plan)),
       };
     } catch (err) {
       // A downgrade STOP raised at the write boundary (a newer bridge landed between plan and apply)
       // is the same stated skip as the planned one — classified structurally via the typed field.
       if (err.wouldDowngrade) {
-        return { name: canonical, outcome: 'kept-newer', line: `  ${canonical}: skipped — ${stripPrefix(err.message)}` };
+        return { name: canonical, outcome: 'kept-newer', line: REFRESH_LINES['kept-newer'](canonical, stripPrefix(err.message)) };
       }
       // A read-only WRITE failure on a version-BEHIND (upgrade) refresh stays a loud failure — but the
       // in-session "recover with setup" would hit the same read-only dir, so point at a writable rerun.
       if (isReadonlyWriteBoundary(err)) {
-        return { name: canonical, outcome: 'failed', line: readonlyRefreshFailedLine(canonical, err.message) };
+        return { name: canonical, outcome: 'failed', line: REFRESH_LINES['failed-readonly'](canonical, err.message) };
       }
-      return { name: canonical, outcome: 'failed', line: `  ${canonical}: could not refresh — ${stripPrefix(err.message)}; recover with /agent-workflow-kit setup` };
+      return { name: canonical, outcome: 'failed', line: REFRESH_LINES.failed(canonical, stripPrefix(err.message)) };
     }
   });
 

@@ -444,6 +444,15 @@ export const hideFootprint = (opts = {}, deps = {}) => {
   const writtenPatterns = buildBlock(writtenList.map((c) => c.pattern));
   const needsUntrack = includedAsks.filter((a) => a.verdict === 'ask-tracked');
 
+  // The +N/−N delta against the CURRENT managed block (L3). The current set is the RAW fence body
+  // (canonicalized where recognized): a stale pattern the wholesale re-derive would silently drop
+  // is exactly what the removed list must surface.
+  const currentBlockPatterns = [...new Set(fenceBodyLines.map((l) => lineToPattern(l)).filter(Boolean).map((p) => recognizeHideRule(p) ?? p))];
+  const writtenSet = new Set(writtenPatterns);
+  const currentSet = new Set(currentBlockPatterns);
+  const added = writtenPatterns.filter((p) => !currentSet.has(p));
+  const removed = currentBlockPatterns.filter((p) => !writtenSet.has(p)).sort();
+
   // ── build the new file (splice the fence; preserve outside lines) ──────────────
   const fenceLines = writtenPatterns.length ? [START_MARKER, ...writtenPatterns, END_MARKER] : [];
   const newLines = writtenPatterns.length
@@ -471,6 +480,8 @@ export const hideFootprint = (opts = {}, deps = {}) => {
     action,
     visibility: 'hidden',
     wrote: writtenPatterns,
+    added,
+    removed,
     asks: asks.filter((a) => !includedAsks.some((i) => i.pattern === a.pattern)).map((a) => ({ path: a.pattern, reason: a.reason, owner: a.owner })),
     needsUntrack: needsUntrack.map((a) => {
       const target = patternToProbe(a.pattern).replace(/\/$/, '');
@@ -530,16 +541,23 @@ const fmtGlobal = (g) => {
   return [];
 };
 
-const formatReport = (r, dryRun) => {
+export const formatReport = (r, dryRun) => {
   const lines = [dryRun ? 'hide-footprint — DRY RUN (no changes)' : 'hide-footprint'];
-  if (r.visibility === 'visible') return [...lines, `  • deployment is VISIBLE (anchor ${r.anchor} is tracked) — nothing to hide; wrote zero bytes`].join('\n');
-  if (r.ambiguous) return [...lines, `  • AMBIGUOUS visibility (anchor ${r.anchor} is untracked AND not ignored) — cannot tell fresh-uncommitted from broken-hidden; ASK the user before writing`].join('\n');
+  if (r.visibility === 'visible') return [...lines, `  • deployment is VISIBLE (${r.anchor} is tracked) — nothing to hide; wrote zero bytes`].join('\n');
+  if (r.ambiguous) return [...lines, `  • AMBIGUOUS visibility (${r.anchor} is untracked AND not ignored) — cannot tell fresh-uncommitted from broken-hidden; ASK the user before writing`].join('\n');
   lines.push(`  • ${r.action} ${r.excludeFile}`);
   // The block contains every written pattern, but a TRACKED --include path is NOT hidden by it (it is
   // reported separately, below) — so the "hidden" line lists only the genuinely-hidden untracked paths.
   const untrackedOnly = new Set(r.needsUntrack.map((n) => n.path));
   const hiddenNow = r.wrote.filter((p) => !untrackedOnly.has(p));
   if (hiddenNow.length) lines.push(`  • hidden (${hiddenNow.length}): ${hiddenNow.join(', ')}`);
+  // The block delta (L3) — rendered in dry-run and apply alike; sets listed, never counted alone.
+  // --unhide and the reconcile no-op paths carry no delta fields: their reports stay unchanged.
+  if (Array.isArray(r.added) && Array.isArray(r.removed)) {
+    if (r.added.length) lines.push(`  • +${r.added.length} added: ${r.added.join(', ')}`);
+    if (r.removed.length) lines.push(`  • −${r.removed.length} removed: ${r.removed.join(', ')}`);
+    if (!r.added.length && !r.removed.length) lines.push('  • +0/−0 — the hidden set is unchanged');
+  }
   for (const a of r.asks) lines.push(`  • ASK ${a.path} — ${a.reason}`);
   for (const n of r.needsUntrack) lines.push(`  • tracked, NOT hidden: ${n.path} — run \`${n.command}\` to un-track (kept on disk)`);
   if (r.dropped.length) lines.push(`  • skipped ${r.dropped.length} already-ignored (tracked .gitignore)`);
