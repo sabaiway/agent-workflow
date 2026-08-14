@@ -102,6 +102,10 @@ export const evaluateExecution = ({ exitCode, lcovExists }) => {
 // BOTH arms (early return; review F2): absence of an inert item would otherwise read as
 // recognition (the marker-aware false PASS) or as "direction changed" (the marker-unaware
 // misdiagnosis). A non-object entry in `items` carries no variant and never throws (review F5).
+// "Inert" is read GENERATION-AWARE (review F6, observed live against published 5.6.0): the
+// variant field decides when present, and a variant-less older-generation item decides by its
+// KEY — the one field every payload generation carries. A variant-only read called the live
+// misread absent and red-flagged the wrong direction.
 export const evaluateProducerRecognition = ({ markerAware, oldForms, advisorJsonText }) => {
   const violations = [];
   for (const { flags, recognized } of oldForms) {
@@ -127,7 +131,10 @@ export const evaluateProducerRecognition = ({ markerAware, oldForms, advisorJson
     violations.push(`producer-recognition: the published advisor SKIPPED its gates probe (${gatesSkip.reason ?? 'no reason recorded'}) — no inert judgment was made, so this run proves neither recognition nor the misread`);
     return violations;
   }
-  const inert = parsed.items.some((item) => typeof item?.variant === 'string' && (item.variant === 'gates-inert' || item.variant.startsWith('gates-inert.')));
+  const inert = parsed.items.some((item) => {
+    const marker = typeof item?.variant === 'string' ? item.variant : item?.key;
+    return typeof marker === 'string' && (marker === 'gates-inert' || marker.startsWith('gates-inert.'));
+  });
   if (markerAware && inert) violations.push('producer-recognition: the marker-aware published advisor still reads the NEW-form pair as inert — a recognition regression');
   if (!markerAware && !inert) {
     violations.push("producer-recognition: the marker-unaware published advisor did NOT misread the NEW-form pair as inert — Issue-016's stated direction no longer holds; re-decide MARKER_AWARE_SINCE before shipping");

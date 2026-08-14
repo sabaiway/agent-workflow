@@ -126,6 +126,16 @@ describe('cross-version-axes — evaluateProducerRecognition, BOTH decided arms'
     assert.match(evaluateProducerRecognition({ markerAware: false, oldForms: allKnown, advisorJsonText: '{"root":"/x"}' })[0], /no items array/);
   });
 
+  it('a variant-less OLD-generation payload reads inert off the item KEY — the published advisor may predate the variant field (review F6)', () => {
+    // The live 5.6.0 probe: items carry { key, severity, what, benefit, apply, detail } and NO
+    // variant — a variant-only read calls the misread absent and red-flags the wrong direction.
+    const oldGen = JSON.stringify({ root: '/x', items: [{ key: 'gates-inert', severity: 'attention', what: 'w', benefit: 'b', apply: 'a', detail: null }], skips: [] });
+    assert.deepEqual(evaluateProducerRecognition({ markerAware: false, oldForms: allKnown, advisorJsonText: oldGen }), [], 'the misread IS present — the key alone says so');
+    assert.match(evaluateProducerRecognition({ markerAware: true, oldForms: allKnown, advisorJsonText: oldGen })[0], /inert/);
+    const oldGenClean = JSON.stringify({ root: '/x', items: [{ key: 'bridge-missing', severity: 'optional' }], skips: [] });
+    assert.match(evaluateProducerRecognition({ markerAware: false, oldForms: allKnown, advisorJsonText: oldGenClean })[0], /direction/, 'a variant-less non-gates item is NOT inert');
+  });
+
   it('a null entry in a well-formed items array never throws — it simply carries no variant (review F5)', () => {
     const withNull = JSON.stringify({ root: '/x', items: [null, { key: 'k', variant: 'gates-inert' }], skips: [] });
     assert.deepEqual(evaluateProducerRecognition({ markerAware: false, oldForms: allKnown, advisorJsonText: withNull }), [], 'the real item beside the null still decides the arm');
