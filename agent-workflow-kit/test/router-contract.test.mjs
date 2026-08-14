@@ -196,7 +196,20 @@ const BUDGET = {
   // documented KB-multiple bump, never a silent re-pin. History: 10240 → 11264 (11 KB): AD-044
   // Plan 4 adds the sandbox-masks and recommendations modes to the router (~110 B each) against
   // 27 B of headroom — the same documented bump.
-  routerPlusMode: 39936, // router + any single mode file. 38912 → 39936 (39 KB): delegation Plan 1
+  routerPlusMode: 43008, // router + any single mode file. 41984 → 43008 (42 KB): the Phase-2 round-2
+  // council fold — steps 4 and 8 enumerate every run-list operation (the seven backticked ids +
+  // the gates-migration outcome row on both exits), overflowing the fresh 41 KB ceiling by 130 B;
+  // measured 41975 B after the as-step-4-words-it dedup, which would leave 9 B of headroom — a
+  // re-pin waiting to happen rather than a budget (the daily precedent), so this takes the next
+  // multiple. History: 39936 → 41984 (41 KB): feedback-hardening
+  // Plan 3 Phase 2 — upgrade.md step 3 becomes a normative run-list: the leading seven-row
+  // checklist (each row quoting its registry command + outcome vocabulary) plus the per-operation
+  // rationale anchors land against a pair sitting at 39929 B — 7 B under the 39 KB ceiling — so
+  // nearly every added byte overflows. Measured 41186 B after a compression pass (the rationale
+  // bodies' duplicated command sentences deduped into the checklist rows); the 40 KB multiple is
+  // already below that measurement, so the next fitting multiple is 41 KB (798 B of headroom).
+  // A documented KB-multiple bump, never a silent re-pin.
+  // History: 38912 → 39936 (39 KB): delegation Plan 1
   // Phase 3 — the dispatch mode header rides EVERY pair, and the heaviest (upgrade) measures
   // 38964 B, 52 B over the 38 KB ceiling; the same documented KB-multiple bump.
   // History: 37888 → 38912 (38 KB): AD-061 Phase 3 —
@@ -225,7 +238,12 @@ const BUDGET = {
   // THREE pointers (the autonomy slot: step-3 wording, the (a)(iii) anchor-absent soft-skip lane,
   // the No-Node walk, the step-4/8 report row) — ~575 B of new contract content over 179 B of
   // headroom; a documented KB-multiple bump, never a silent re-pin.)
-  fullReadSet: 68608, // router + mode + its declared shared files. 67584 → 68608 (67 KB):
+  fullReadSet: 70656, // router + mode + its declared shared files. 68608 → 70656 (69 KB):
+  // feedback-hardening Plan 3 Phase 2 — the step-3 run-list checklist grows upgrade.md (see
+  // routerPlusMode above) against 267 B of set headroom; upgrade's set measures 69598 B, and the
+  // 68 KB multiple would leave 34 B of headroom — a re-pin waiting to happen rather than a budget
+  // (the daily-budget precedent), so this takes the following multiple and keeps ~1 KB.
+  // History: 67584 → 68608 (67 KB):
   // feedback-hardening Plan 3 Phase 1 — deploy-tail.md's internals Gotcha gains the L2
   // composed-lines rule (user-grade lines, the machine-line channel, the detected-abnormal alarm
   // gate, the ensure token-slot exception; ~0.8 KB) against ~3 B of headroom; upgrade's set

@@ -142,6 +142,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the shared realpath direct-run predicate + the library-only registry. Every guarded module
       // imports it, so a leaf missing from the payload breaks them all — by NAME for the same reason.
       'tools/direct-run.mjs',
+      // the ordered upgrade step-3 run-list registry (feedback item 5): upgrade.md renders its
+      // checklist from these entries and the structure test binds the two — a payload drop would
+      // strand the doc's checklist with no owning registry, and the count alone would hide it.
+      'tools/upgrade-runlist.mjs',
       // the three-outcome tool-claim classifier (the ONE shape/admissibility/realpath screen the
       // source-size matcher and the advisor's probes decide through) and the tracked-tree census the
       // coverage-domain verdict reads. Pinned by NAME: the first is imported by a shipped leaf, so
@@ -495,7 +499,11 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       migration) + tools/tracked-tree-census.mjs (the strict-dominance census over `git
     //       ls-files -z`, classified by the existing closed changed-path vocabulary). Their
     //       *.test.mjs siblings live in test/ and never enter the tarball.
-    assert.equal(packed.length, 211, `tarball file count drifted (${packed.length} ≠ 211)`);
+    // 212 = 211 + tools/upgrade-runlist.mjs (feedback-hardening Plan 3 item 5): the ordered upgrade
+    //       step-3 run-list registry — a PURE zero-import leaf (the ensure-vocabulary pattern) the
+    //       upgrade.md step-3 checklist renders from. Its structure test lives in test/ and never
+    //       enters the tarball.
+    assert.equal(packed.length, 212, `tarball file count drifted (${packed.length} ≠ 212)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
