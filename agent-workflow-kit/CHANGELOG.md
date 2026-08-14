@@ -4,6 +4,66 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 5.7.0 — what the kit emits is now something a test executed, a claim it proved, or a command you can run (AD-092 + AD-093 + AD-094; memory 4.3.0)
+
+**Three feedback plans, one release.** A live upgrade session on a deployed TypeScript project
+returned seven items of feedback, and every one reduced to the same shape: the kit EMITTED something
+— a shell command, a status line, a prescribed operation, an optimality verdict — and nothing
+downstream ever ran it, proved it, or performed it. This release closes that shape end to end, and
+closes it for future releases too: a kit candidate can no longer be dispatched without proving
+itself against the kit that is ALREADY published.
+
+- **The canonical coverage destination refuses by name instead of writing to the filesystem root.**
+  The emitted cmd becomes `"${AW_GIT_DIR:?exported by run-gates}/agent-workflow-lcov.info"`:
+  byte-identical where the runner injects the variable, a loud named bash refusal where a human
+  pastes it into a bare shell — the old form expanded an unset variable to empty and sent the lcov
+  to `/`. Recognition is APPEND-ONLY (`KNOWN_COVERAGE_FLAG_SETS`): every form the kit ever emitted
+  stays recognized, so a deployed old-form gate is never reclassified as customized. `run-gates` now
+  reads `${VAR:?…}` as a producer reference and refuses before spawning uninjected. And the emitted
+  command is a FIXTURE the tests execute — asserted by running it, unset and injected both, never by
+  admiring the string.
+- **"Flow optimal" became a claim the advisor must be able to SEE.** Binary probes gained NAMED third
+  outcomes: `gates-inert.producer-unrecognized` (a checker no recognized producer feeds, where the
+  tracked-tree census says most of the tree is outside the assessable domain — the remedy is "mark
+  the real producer or drop the checker", never a `node --test` prescription) and
+  `gates-inert.coverage-domain-narrow` (a live producer certifying an assessable minority — converges
+  only on an explicit acknowledgment, fingerprint-bound to the fact, re-firing when the fact
+  changes). The census is the predicate: no census, no optimality claim. A vendored copy of a core
+  check no longer stops the upgrade: the migration preserves it as a zero-diff `keep` row plus
+  separately rendered verify metadata, and only a genuine id collision on the canonical checker id
+  still hard-stops. On the advisor side, the source-size tool copy gets its own named outcomes —
+  `source-size.adopted-elsewhere` (optional) and `source-size.id-squatter` (attention, a
+  hand-apply recovery, never a stop).
+- **The `lcovProducer` marker lets a declaration CLAIM a producer the closed cmd-world cannot name**
+  — vitest, pnpm wrappers, any runner that writes the lcov. Only the literal `true` counts, the
+  marker never widens what a RUN may certify (a marker-claimed producer that writes no lcov still
+  ends `skipped-no-lcov`), and it is FORWARD-ONLY by decision: the published 5.6.0 kit rejects a
+  marker-carrying `gates.json` loudly at validation (exit 5, naming the key) rather than degrading
+  to a false advisory — upgrade the kit before marking (Issue-016 states all three cross-version
+  axes).
+- **Upgrade step 3 is a registry-owned run-list, not prose.** `tools/upgrade-runlist.mjs` owns the
+  seven operation identities (`pointers` · `footprint` · `configs` · `gates-migration` · `bridges` ·
+  `lens` · `bridge-settings`); the checklist in `references/modes/upgrade.md` renders from it, a
+  structure test holds doc ↔ registry in both directions, and the four config "ensures" the doc used
+  to prescribe as prose are ONE runnable command — `ensure-configs.mjs --reconcile [--dry-run]`,
+  fixed order, create-only seeds, a CLOSED outcome vocabulary that throws on any token outside it.
+  A library module invoked as a command now says so and exits 2 instead of silently exiting 0.
+- **A tool-composed line a user reads is user-grade language.** Machine tokens and tool self-labels
+  ride machine lines (`[tool] key=value`); alarm words render only under a DETECTED abnormal
+  condition; the read-only refresh degrade states only what its re-scan PROVED (one scanner, closed
+  `clean-parity`/`drifted`/`unverifiable` vocabulary) instead of an unconditional "may be PARTIALLY
+  updated". The guard test enumerates every composer's outcome variants from its own closed branch
+  set — a new line joins the contract by construction. The hide-footprint report now states its
+  delta against the current managed block: `+N added` / `−N removed`, sets listed, `+0/−0` explicit.
+- **A kit-carrying dispatch needs TWO receipts, dry-run included.** Beside the candidate smoke
+  (packs the candidate, installs it into a foreign fixture, asserts the advisor sees what this
+  repo's own suite cannot show), `scripts/release/cross-version-gate.mjs` installs the PUBLISHED kit
+  `@latest` and asserts the three Issue-016 axes BY NAME — `schema-accept` / `execution` /
+  `producer-recognition` — with the conditional arms decided by comparing the probed published
+  version against `MARKER_AWARE_SINCE` (fixed forever at `5.7.0`, the first marker-aware kit), never
+  inferred from the accept itself. Both receipts are HEAD-bound and field-validated; an unreachable
+  registry refuses loudly with no receipt.
+
 ## 5.6.0 — a source-size practice your project declares, and a record that is debt rather than permission (AD-091; engine 2.1.0)
 
 **A big module is expensive long before anyone calls it a problem, and nothing in the kit ever said
