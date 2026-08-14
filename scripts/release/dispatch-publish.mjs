@@ -62,6 +62,7 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { readSmokeReceipt, candidateSmokeViolation } from './smoke-candidate.mjs';
+import { readGateReceipt, crossVersionGateViolation } from './cross-version-gate.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(HERE, '..', '..');
@@ -448,6 +449,19 @@ export const assertCandidateSmoke = ({ gitDir, kitVersion, headSha, expectedSha,
   }
 };
 
+// The SECOND receipt a kit-carrying dispatch needs (Issue-016): the cross-version gate proves the
+// three named axes (schema-accept / execution / producer-recognition) against the PUBLISHED kit.
+// Same ordering rationale and same skips as the candidate smoke — before the FIRST dry-run
+// dispatch, `--verify-only` and non-kit dispatches exempt. crossVersionGateViolation validates
+// EVERY receipt field; the covering log line states the probed published version, because that is
+// the fact the conditional arms were decided against.
+export const assertCrossVersionGate = ({ gitDir, kitVersion, headSha, readFile, log }) => {
+  const receipt = readGateReceipt(gitDir, readFile);
+  const violation = crossVersionGateViolation({ receipt, kitVersion, headSha });
+  if (violation !== null) throw fail(EXIT.preflight, `cross-version gate preflight: ${violation}`);
+  log(`✓ cross-version gate receipt covers kit ${kitVersion} at local HEAD ${headSha} (all three axes PASS against published ${receipt.publishedVersion})`);
+};
+
 // ── the run machinery ─────────────────────────────────────────────────────────────────
 
 const listRuns = (ghApi, repo) =>
@@ -685,19 +699,17 @@ export const runDispatch = async (argv, deps = {}) => {
       }
     }
 
-    // The candidate smoke — LAST of the local preflights and still before EVERY dispatch, including
-    // the dry-run one. It runs after the tree/version/stub refusals on purpose: a dirty tree must be
-    // reported as a dirty tree, not as a stale smoke receipt, and the smoke's own dirty rule is only
-    // meaningful once the more fundamental state has been named.
+    // The two RECEIPT preflights — candidate smoke, then the cross-version gate — close the local
+    // preflights, still before EVERY dispatch including the dry-run one. They run after the
+    // tree/version/stub refusals on purpose: a dirty tree must be reported as a dirty tree, not as
+    // a stale receipt, and each receipt's own dirty rule is only meaningful once the more
+    // fundamental state has been named.
     if (kitIsDispatched(verifyTargets)) {
-      assertCandidateSmoke({
-        gitDir: runGit(['rev-parse', '--absolute-git-dir']).trim(),
-        kitVersion: JSON.parse(readFile(join(root, PKG_DIRS.kit, 'package.json'), 'utf8')).version,
-        headSha: runGit(['rev-parse', 'HEAD']).trim(),
-        expectedSha,
-        readFile,
-        log,
-      });
+      const gitDir = runGit(['rev-parse', '--absolute-git-dir']).trim();
+      const kitVersion = JSON.parse(readFile(join(root, PKG_DIRS.kit, 'package.json'), 'utf8')).version;
+      const headSha = runGit(['rev-parse', 'HEAD']).trim();
+      assertCandidateSmoke({ gitDir, kitVersion, headSha, expectedSha, readFile, log });
+      assertCrossVersionGate({ gitDir, kitVersion, headSha, readFile, log });
     }
 
     // GitHub auth is required for BOTH dry-run and live (every phase drives `gh api`) — prove it
