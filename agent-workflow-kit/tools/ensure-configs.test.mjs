@@ -239,7 +239,7 @@ describe('one op failing never skips the rest', () => {
         { op: 'autonomy', token: 'seeded' },
         { op: 'scripts', token: 'seeded' },
       ]);
-      assert.match(r.stdout, /one or more ensures did NOT complete/);
+      assert.match(r.stdout, /part of this configuration run did NOT complete/);
       assert.doesNotMatch(r.stdout, /nothing was written for those/, 'the summary claims nothing about what landed — an op can stop partway');
       assert.equal(readFileSync(join(dir, CONFIG_REL), 'utf8'), '{ not json');
     });

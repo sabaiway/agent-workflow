@@ -172,6 +172,58 @@ export const frontmatterMaxLines = (text) => {
   return null;
 };
 
+// ── the outcome lines (pure composers — the CLI's one voice) ──────────────────────
+// Every user-facing outcome line the CLI prints, one pure composer per outcome, so the
+// composed-lines guard (test/composed-lines-ux.test.mjs) can render each against the L2
+// user-grade invariants. runCli only ever prints through this table. Raw diagnostics never ride
+// the human sentence: they land on the ONE machine-formatted detail line (`[lens-region]
+// error=<JSON-encoded>` — one line, reversible, control bytes escaped), the `[tool] key=value`
+// channel the L2 rule exempts by grammar. JSON.stringify leaves DEL/C1 and the U+2028/U+2029
+// separators raw, and a dynamic path can carry any byte — both dynamic parts are therefore made
+// line-safe explicitly: the machine value gains extra JSON escapes (still reversible), and the
+// human line collapses every control/separator byte to one space.
+const LINE_UNSAFE = new RegExp('[\\u007f-\\u009f\\u2028\\u2029]', 'g');
+const HUMAN_UNSAFE = new RegExp('[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]+', 'g');
+const escUnsafe = (c) => `\\u${c.codePointAt(0).toString(16).padStart(4, '0')}`;
+const ERROR_DETAIL = (raw) => `[lens-region] error=${JSON.stringify(String(raw)).replace(LINE_UNSAFE, escUnsafe)}`;
+const oneLine = (s) => String(s).replace(HUMAN_UNSAFE, ' ');
+
+export const OUTCOME_LINES = Object.freeze({
+  errorDetail: ERROR_DETAIL,
+  targetAbsent: (target) => `[lens-region] ${target} is absent — skipped (nothing to update; the file is seeded at bootstrap).`,
+  commsNoRegion: (target) => [
+    `[lens-region] no "${COMMS_LABEL}" section in ${target} — left untouched.`,
+    '[lens-region] note: the Communication section is absent or renamed — deployments seeded before it existed simply lack it; add it from the current template to enable refresh. Your file is never rewritten.',
+  ],
+  commsCurrent: () => '[lens-region] Communication section already current — nothing to do (zero-diff).',
+  commsCustom: () => [
+    '[lens-region] Communication section carries a custom edit — preserved verbatim.',
+    '[lens-region] note: the canonical Communication section has changed since this section was edited — compare it with the current template when convenient; your wording is never overwritten.',
+  ],
+  capSkipNote: () => '[lens-region] note: no `maxLines` frontmatter on the target — the line-cap guard is skipped.',
+  commsCapRefused: (target, count, cap) => `[lens-region] refused — refreshing the Communication section would push ${target} to ${count} lines (cap ${cap}); trim the file and re-run. The Communication section was not changed.`,
+  commsRefreshed: () => '[lens-region] refreshed the Communication section to the current canon.',
+  templateCanonStop: () => `[lens-region] STOP — the kit's bundled agent_rules.md template canon is unreadable; reinstall the kit: npx @sabaiway/agent-workflow-kit@latest init`,
+  lensNoRegion: (target) => [
+    `[lens-region] no "${HEADING_LABEL}" section in ${target} — left untouched.`,
+    '[lens-region] note: the planning/review lens section is missing or renamed — it cannot be auto-refreshed; restore the canonical heading to re-enable refresh.',
+  ],
+  engineTooOld: () => '[lens-region] skipped — the installed engine is too old (or incomplete) to supply the lens canon; refresh it with `npx @sabaiway/agent-workflow-engine@latest init`, then re-run.',
+  // The human line keeps the classified "methodology engine not found/invalid" contract; a typed
+  // error (engine-source attaches {stable, reason}) splits its raw reason onto the machine line.
+  engineStop: (err) => {
+    const human = `[lens-region] STOP — ${oneLine(err?.stable ?? err?.message ?? String(err))}`;
+    return err?.reason ? [human, ERROR_DETAIL(err.reason)] : [human];
+  },
+  lensCurrent: () => '[lens-region] lens section already current — nothing to do (zero-diff).',
+  lensCustom: () => [
+    '[lens-region] lens section carries a custom edit — preserved verbatim.',
+    '[lens-region] note: the canonical planning/review lens has changed since this section was edited — compare it with the project methodology canon when convenient; your wording is never overwritten.',
+  ],
+  lensCapRefused: (target, count, cap) => `[lens-region] refused — refreshing would push ${target} to ${count} lines (cap ${cap}); trim the file and re-run. The planning/review lens section was not changed.`,
+  lensRefreshed: () => '[lens-region] refreshed the planning/review lens section to the current canon.',
+});
+
 // ── CLI: `lens-region.mjs reconcile <path/to/agent_rules.md>` ─────────────────────
 // Outcome lines are the contract the upgrade/bootstrap prose relays in plain language; exit 0 on
 // every classified outcome (including the soft skips and the cap refusals), exit 1 ONLY on a
@@ -203,7 +255,7 @@ export const runCli = async (argv, deps = {}) => {
     }
   })();
   if (text === null) {
-    log(`[lens-region] ${argv[1]} is absent — skipped (nothing to reconcile; the substrate seeds it at bootstrap).`);
+    log(OUTCOME_LINES.targetAbsent(argv[1]));
     return 0;
   }
 
@@ -229,43 +281,41 @@ export const runCli = async (argv, deps = {}) => {
     }
   })();
   if (!templateRegion.found) {
-    logError(`[lens-region] reconcile STOP — the kit's bundled agent_rules.md template canon is unreadable${templateRegion.error ? ` (${templateRegion.error})` : ''}; reinstall the kit: npx @sabaiway/agent-workflow-kit@latest init`);
+    logError(OUTCOME_LINES.templateCanonStop());
+    if (templateRegion.error) logError(OUTCOME_LINES.errorDetail(templateRegion.error));
     return 1;
   }
   const commsResult = reconcileCommsText(text, normalizeCommsBody(templateRegion.body), COMMS_PRIORS);
   const currentText = await (async () => {
     if (commsResult.status === 'no-region') {
-      log(`[lens-region] no "${COMMS_LABEL}" section in ${argv[1]} — left untouched.`);
-      log('[lens-region] note: the Communication section is absent or renamed — deployments seeded before it existed simply lack it; add it from the current template to enable refresh. Your file is never rewritten.');
+      for (const line of OUTCOME_LINES.commsNoRegion(argv[1])) log(line);
       return text;
     }
     if (commsResult.status === 'current') {
-      log('[lens-region] Communication section already current — nothing to do (zero-diff).');
+      log(OUTCOME_LINES.commsCurrent());
       return text;
     }
     if (commsResult.status === 'custom') {
-      log('[lens-region] Communication section carries a custom edit — preserved verbatim.');
-      log('[lens-region] note: the canonical Communication section has changed since this section was edited — compare it with the current template when convenient; your wording is never overwritten.');
+      for (const line of OUTCOME_LINES.commsCustom()) log(line);
       return text;
     }
     const commsMax = frontmatterMaxLines(text);
     if (commsMax === null) {
-      log('[lens-region] note: no `maxLines` frontmatter on the target — the line-cap guard is skipped.');
+      log(OUTCOME_LINES.capSkipNote());
     }
     if (commsMax !== null && lineCount(commsResult.text) > commsMax) {
-      log(`[lens-region] refused — refreshing the Communication section would push ${argv[1]} to ${lineCount(commsResult.text)} lines (cap ${commsMax}); trim the file and re-run. The Communication section was not changed.`);
+      log(OUTCOME_LINES.commsCapRefused(argv[1], lineCount(commsResult.text), commsMax));
       return text;
     }
     await atomicWrite(commsResult.text);
-    log('[lens-region] refreshed the Communication section to the current canon.');
+    log(OUTCOME_LINES.commsRefreshed());
     return commsResult.text;
   })();
 
   // 3. No matching lens heading → preserve + advise, engine never consulted (the outcome is
   //    preserve regardless, so the lazy contract holds).
   if (!extractLensRegion(currentText).found) {
-    log(`[lens-region] no "${HEADING_LABEL}" section in ${argv[1]} — left untouched.`);
-    log('[lens-region] note: the planning/review lens section is missing or renamed — it cannot be auto-refreshed; restore the canonical heading to re-enable refresh.');
+    for (const line of OUTCOME_LINES.lensNoRegion(argv[1])) log(line);
     return 0;
   }
 
@@ -276,14 +326,14 @@ export const runCli = async (argv, deps = {}) => {
     detectEngine(dir, { source, rel: LENS_FRAGMENT_REL }).ok && detectEngine(dir, { source, rel: LENS_PRIORS_REL }).ok;
   if (!lensPairPresent) {
     if (detectEngine(dir, { source }).ok) {
-      log('[lens-region] skipped — the installed engine is too old (or incomplete) to supply the lens canon; refresh it with `npx @sabaiway/agent-workflow-engine@latest init`, then re-run.');
+      log(OUTCOME_LINES.engineTooOld());
       return 0;
     }
     try {
       readEngineFragment(dir, { source, rel: LENS_FRAGMENT_REL }); // throws the canonical install-me error
       return 1; // defensive: the pair is unusable — never proceed to a read
     } catch (err) {
-      logError(`[lens-region] reconcile STOP — ${err.message}`);
+      for (const line of OUTCOME_LINES.engineStop(err)) logError(line);
       return 1;
     }
   }
@@ -292,34 +342,35 @@ export const runCli = async (argv, deps = {}) => {
   let fragment;
   let priors;
   try {
-    fragment = readEngineFragment(dir, { source, rel: LENS_FRAGMENT_REL });
-    priors = parseLensPriors(readEngineFragment(dir, { source, rel: LENS_PRIORS_REL }));
+    // deps.engineRead is the injectable read primitive (tests drive the vanished/unreadable arm
+    // deterministically — a chmod-based fixture is root- and platform-dependent).
+    fragment = readEngineFragment(dir, { source, rel: LENS_FRAGMENT_REL, readFileSync: deps.engineRead });
+    priors = parseLensPriors(readEngineFragment(dir, { source, rel: LENS_PRIORS_REL, readFileSync: deps.engineRead }));
   } catch (err) {
-    logError(`[lens-region] reconcile STOP — ${err.message}`);
+    for (const line of OUTCOME_LINES.engineStop(err)) logError(line);
     return 1;
   }
 
   // 5. The pure decision + the cap-guard + one atomic write.
   const result = reconcileLensText(currentText, fragment, priors);
   if (result.status === 'current') {
-    log('[lens-region] lens section already current — nothing to do (zero-diff).');
+    log(OUTCOME_LINES.lensCurrent());
     return 0;
   }
   if (result.status === 'custom') {
-    log('[lens-region] lens section carries a custom edit — preserved verbatim.');
-    log('[lens-region] note: the canonical planning/review lens has changed since this section was edited — compare it with the project methodology canon when convenient; your wording is never overwritten.');
+    for (const line of OUTCOME_LINES.lensCustom()) log(line);
     return 0;
   }
   // refreshed → cap-guard from the TARGET's own frontmatter, then atomic write.
   const maxLines = frontmatterMaxLines(currentText);
   if (maxLines === null) {
-    log('[lens-region] note: no `maxLines` frontmatter on the target — the line-cap guard is skipped.');
+    log(OUTCOME_LINES.capSkipNote());
   } else if (lineCount(result.text) > maxLines) {
-    log(`[lens-region] refused — refreshing would push ${argv[1]} to ${lineCount(result.text)} lines (cap ${maxLines}); trim the file and re-run. The planning/review lens section was not changed.`);
+    log(OUTCOME_LINES.lensCapRefused(argv[1], lineCount(result.text), maxLines));
     return 0;
   }
   await atomicWrite(result.text);
-  log('[lens-region] refreshed the planning/review lens section to the current canon.');
+  log(OUTCOME_LINES.lensRefreshed());
   return 0;
 };
 
