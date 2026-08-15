@@ -142,6 +142,7 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
       'references/scripts/archive-decisions.test.mjs',
       'references/scripts/archive-issues.test.mjs',
       'references/scripts/archiver-structure.test.mjs',
+      'references/scripts/check-docs-size-ensure.test.mjs',
       'references/scripts/check-docs-size.test.mjs',
       'references/scripts/markdown-blocks.test.mjs',
     ];
@@ -208,6 +209,9 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
     //      test + references/scripts/archive-conservation.test.mjs (the conservation/round-trip
     //      harness) + references/scripts/archiver-structure.test.mjs (the no-raw-scan structural
     //      pin). All four kit-mirrored via sync-mirrors.
-    assert.equal(packed.length, 54, `tarball file count drifted (${packed.length} ≠ 54)`);
+    // 55 = 54 + references/scripts/check-docs-size-ensure.test.mjs (the navigator write contract +
+    //      the --ensure-index finalizer mode — a deploy-payload spec beside the parity-frozen main
+    //      pair; kit-mirrored via sync-mirrors).
+    assert.equal(packed.length, 55, `tarball file count drifted (${packed.length} ≠ 55)`);
   });
 });

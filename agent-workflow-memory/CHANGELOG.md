@@ -4,6 +4,42 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 4.4.0 — the deploy finishes by writing the navigator its entry point declares (AD-096; ships with kit 5.9.0)
+
+**The substrate deployed an `AGENTS.md` that calls `docs/ai/index.md` always-loaded, and no step
+ever wrote it.** The navigator is generated — `check-docs-size.mjs` is its only writer — and neither
+bootstrap nor upgrade ran the generator, so a fresh Node deployment started life with a pre-commit
+hook failing its own index check, and a project without Node stayed silently broken. Fixed at the
+source: the generator gains an idempotent finalizer, and every documented path now runs it.
+
+- **`check-docs-size.mjs --ensure-index [--root=<dir>]`** — probe first, write only when the
+  navigator is missing or stale, and close with exactly ONE outcome line: `ensure-index:
+  regenerated` / `already-current` on stdout, or `write-refused` / `probe-failed` on stderr with
+  exit 2. It reuses the existing generator and freshness check — there is no second index
+  implementation, and no seed template that could drift from it.
+- **The bootstrap and upgrade prose run it at the LAST `docs/ai` mutation of each path:** after the
+  template fill (which covers a No-Node target — the generator runs from the skill home, so the
+  step-8 script copy is not a precondition), stamp-independently BEFORE the equal-head short-circuit
+  on upgrade, and again after the migrations before the re-stamp. Either refusal is a STOP.
+- **The write is contained and atomic.** Every component of `<root>/docs/ai/index.md` is lstat'ed
+  no-follow — a symlinked root, `docs`, `docs/ai` or leaf refuses by name — the body is published
+  through an exclusive-create temp renamed into place with the chain re-checked immediately before
+  the rename, and a failure ATTEMPTS the temp discard — never a name this run did not create, and a
+  cleanup that itself fails names the temp it could not remove instead of swallowing it. The
+  containment guard runs BEFORE the freshness read, so a symlink whose target happens to hold
+  current bytes is refused rather than reported "already current".
+- **"Could not read" never passes for "nothing there".** Under the finalizer, only a genuine
+  `ENOENT` counts as an absence; any other read failure refuses instead of publishing an index
+  missing whatever the run could not see. A malformed `package.json` stays the documented
+  project-name fallback.
+- **A closure guard** asserts every `docs/ai` reference in the entry-point template's Memory Map
+  resolves to a shipped template, a generated artifact whose finalizer the prose documents, or an
+  exact exception list — and the deploy fixture EXTRACTS the documented command from `SKILL.md` and
+  runs it, so a step that loses its finalizer line fails as a broken deployment.
+
+Known residual: a project that already carries `scripts/check-docs-size.mjs` keeps its un-hardened
+copy (the scripts ensure is create-only by contract) — repair rides the next lineage migration.
+
 ## 4.3.0 — the migration emits a destination that refuses by name, accepts the producer marker, and preserves a vendored core check (AD-092 + AD-093 + AD-094; ships with kit 5.7.0)
 
 The `migrate-gates.mjs` canon moves in lockstep with the kit it is byte-twinned to. Three changes,

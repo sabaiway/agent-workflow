@@ -8,12 +8,12 @@
 // read-only tool's import graph. Vocabulary here, behaviour in ensure-ops.mjs.
 
 // The FIXED order the CLI runs them in — the order references/modes/upgrade.md already prescribed.
-export const ENSURE_OPS = Object.freeze(['orchestration', 'gates', 'autonomy', 'scripts']);
+export const ENSURE_OPS = Object.freeze(['orchestration', 'gates', 'autonomy', 'scripts', 'index']);
 
 // Tokens that assert a WRITE happened. --dry-run may never emit one of these (the CLI's contract test
 // walks this set), and each has exactly one `would-` counterpart below.
-export const WRITE_TOKENS = Object.freeze(['seeded', 'note-refreshed']);
-export const DRY_RUN_TOKENS = Object.freeze(['would-seed', 'would-refresh-note']);
+export const WRITE_TOKENS = Object.freeze(['seeded', 'note-refreshed', 'regenerated']);
+export const DRY_RUN_TOKENS = Object.freeze(['would-seed', 'would-refresh-note', 'would-regenerate']);
 
 // The CLOSED outcome vocabulary. Closed at RUNTIME, not by convention: composing an outcome with a
 // token outside this list throws, so an op cannot quietly invent a word the mode doc has never heard
@@ -43,7 +43,20 @@ export const FAILURE_CAUSES = Object.freeze([
   'wrong-node-kind',
   'write-refused',
   'unexpected-error',
+  // The navigator ensure drives a SEPARATE PROCESS (the bundled generator), so its failures split by
+  // how far that process got: it never launched · it launched and did not succeed · the freshness
+  // probe itself could not answer · it claimed a regeneration the re-probe still finds stale. Only
+  // the first and third are provably pre-mutation; the other two DISCLOSE a possible partial write.
+  'generator-unlaunchable',
+  'generator-failed',
+  'index-probe-failed',
+  'index-stale-after-write',
 ]);
+
+// The causes the mode doc must TEACH, so an agent relaying a `failed` line knows every word that can
+// open one. Bound into references/modes/upgrade.md by doc-parity — the executable half of "a failed
+// line names its cause": a cause the tool can print but the doc never named fails the lint.
+export const RELAYED_FAILURE_CAUSES = FAILURE_CAUSES;
 
 // The subset references/modes/upgrade.md enumerates, so the agent relaying an upgrade knows every
 // outcome by name. doc-parity binds each of these into that doc: a reworded doc that drops one fails
@@ -52,6 +65,7 @@ export const FAILURE_CAUSES = Object.freeze([
 export const RELAYED_ENSURE_TOKENS = Object.freeze([
   'seeded',
   'note-refreshed',
+  'regenerated',
   'already-current',
   'customized-preserved',
   'malformed-preserved',

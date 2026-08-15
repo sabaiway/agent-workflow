@@ -2,8 +2,8 @@
 //
 // The ops themselves are covered in ensure-ops.test.mjs. What is pinned HERE is everything the mode
 // doc now relies on when it invokes this tool exactly once: --reconcile is required, --dry-run writes
-// nothing at all, the four ops run in a FIXED order, one op's failure never skips the rest, and the
-// exit code says whether anything failed.
+// nothing at all, the five ops run in a FIXED order, `--only <op>` narrows the run to exactly one of
+// them, one op's failure never skips the rest, and the exit code says whether anything failed.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -125,7 +125,7 @@ describe('the reconcile run', () => {
     withProject((dir) => {
       const first = main(['--reconcile'], { cwd: dir });
       assert.equal(first.code, 0);
-      assert.deepEqual(tokensOf(first.stdout).map((t) => t.token), ['seeded', 'seeded', 'seeded', 'seeded']);
+      assert.deepEqual(tokensOf(first.stdout).map((t) => t.token), ['seeded', 'seeded', 'seeded', 'seeded', 'regenerated']);
       const afterFirst = snapshot(dir);
 
       const second = main(['--reconcile'], { cwd: dir });
@@ -158,6 +158,57 @@ describe('the reconcile run', () => {
   }
 });
 
+// `--only <op>` exists so a mode doc can re-run ONE operation at the point where it is authoritative
+// (the late navigator finalizer) without re-running the whole reconcile. Its refusals are usage
+// errors: a run that cannot be narrowed as asked must write nothing at all.
+describe('--only <op> narrows the run to exactly one operation', () => {
+  it('runs the selected op and no other, with reconcile semantics unchanged', () => {
+    withProject((dir) => {
+      const r = main(['--reconcile', '--only', 'index'], { cwd: dir });
+      assert.equal(r.code, 0, r.stderr);
+      assert.deepEqual(tokensOf(r.stdout).map((t) => t.op), ['index']);
+      assert.equal(existsSync(join(dir, 'docs', 'ai', 'index.md')), true);
+      assert.equal(existsSync(join(dir, CONFIG_REL)), false, 'the ops that were not selected never ran');
+    });
+  });
+
+  it('honours --dry-run for the selected op', () => {
+    withProject((dir) => {
+      const before = snapshot(dir);
+      const r = main(['--reconcile', '--only', 'index', '--dry-run'], { cwd: dir });
+      assert.equal(r.code, 0);
+      assert.deepEqual(tokensOf(r.stdout).map((t) => t.token), ['would-regenerate']);
+      assert.deepEqual(snapshot(dir), before);
+    });
+  });
+
+  it('an unknown op is a usage error and writes nothing', () => {
+    withProject((dir) => {
+      const before = snapshot(dir);
+      const r = main(['--reconcile', '--only', 'navigator'], { cwd: dir });
+      assert.equal(r.code, 2);
+      assert.match(r.stderr, /navigator/);
+      assert.deepEqual(snapshot(dir), before);
+    });
+  });
+
+  for (const [label, argv] of [
+    ['a missing value', ['--reconcile', '--only']],
+    ['a value that reads as another flag', ['--reconcile', '--only', '--dry-run']],
+    ['a repeated flag', ['--reconcile', '--only', 'index', '--only', 'gates']],
+  ]) {
+    it(`${label} is a usage error and writes nothing`, () => {
+      withProject((dir) => {
+        const before = snapshot(dir);
+        const r = main(argv, { cwd: dir });
+        assert.equal(r.code, 2);
+        assert.notEqual(r.stderr, '');
+        assert.deepEqual(snapshot(dir), before);
+      });
+    });
+  }
+});
+
 // The CLI entry itself: everything above calls main() in-process, so the guarded entry block — the
 // half that actually decides an exit code for a real invocation — would otherwise ship unexercised.
 describe('the CLI entry (a spawned process)', () => {
@@ -182,6 +233,23 @@ describe('the CLI entry (a spawned process)', () => {
       assert.equal(r.status, 0, r.stderr);
       assert.match(r.stdout, /orchestration: seeded/);
       assert.equal(existsSync(join(dir, CONFIG_REL)), true);
+    });
+  });
+
+  it('--only index runs the one op through the process', () => {
+    withProject((dir) => {
+      const r = run(['--reconcile', '--only', 'index', '--cwd', dir], tmpdir());
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stdout, /index: regenerated/);
+      assert.equal(/orchestration:/.test(r.stdout), false, 'no other op ran');
+    });
+  });
+
+  it('--only with an unknown op exits 2 through the process', () => {
+    withProject((dir) => {
+      const r = run(['--reconcile', '--only', 'navigator', '--cwd', dir], tmpdir());
+      assert.equal(r.status, 2);
+      assert.match(r.stderr, /navigator/);
     });
   });
 });
@@ -227,7 +295,7 @@ describe('the CLI can only print tokens the mode doc teaches', () => {
 });
 
 describe('one op failing never skips the rest', () => {
-  it('a malformed config fails its own op, the other three still run, and the exit is non-zero', () => {
+  it('a malformed config fails its own op, the other four still run, and the exit is non-zero', () => {
     withProject((dir) => {
       writeFileSync(join(dir, CONFIG_REL), '{ not json');
       const r = main(['--reconcile'], { cwd: dir });
@@ -238,6 +306,7 @@ describe('one op failing never skips the rest', () => {
         { op: 'gates', token: 'seeded' },
         { op: 'autonomy', token: 'seeded' },
         { op: 'scripts', token: 'seeded' },
+        { op: 'index', token: 'regenerated' },
       ]);
       assert.match(r.stdout, /part of this configuration run did NOT complete/);
       assert.doesNotMatch(r.stdout, /nothing was written for those/, 'the summary claims nothing about what landed — an op can stop partway');
@@ -258,7 +327,7 @@ describe('one op failing never skips the rest', () => {
       const r = main(['--reconcile'], { cwd: dir, deps });
       assert.equal(r.code, 1);
       const tokens = tokensOf(r.stdout);
-      assert.deepEqual(tokens.map((t) => t.token), ['seeded', 'failed', 'seeded', 'seeded']);
+      assert.deepEqual(tokens.map((t) => t.token), ['seeded', 'failed', 'seeded', 'seeded', 'regenerated']);
       assert.match(r.stdout, /unexpected-error — gates: /);
     });
   });
@@ -273,7 +342,7 @@ describe('one op failing never skips the rest', () => {
       assert.equal(r.code, 1);
       const tokens = tokensOf(r.stdout);
       assert.deepEqual(tokens.slice(0, 3).map((t) => t.token), ['seeded', 'seeded', 'seeded']);
-      assert.deepEqual(tokens.at(-1), { op: 'scripts', token: 'failed' });
+      assert.deepEqual(tokens.find((t) => t.op === 'scripts'), { op: 'scripts', token: 'failed' });
       assert.match(r.stdout, /symlink/);
       assert.deepEqual(readdirSync(join(dir, 'elsewhere')), [], 'nothing was written through the link');
     });

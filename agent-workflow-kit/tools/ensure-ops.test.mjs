@@ -11,8 +11,17 @@ import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sta
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// The navigator ensure is reached through the module NAMESPACE, not a named import: a red-first
+// contract has to LOAD against the pre-fix module and fail on the behaviour, not on the import.
+import * as ensureOps from './ensure-ops.mjs';
 import { composeFailure, composeOutcome, ensureOrchestration } from './ensure-ops.mjs';
 import { CANON_README, CONFIG_REL, KNOWN_PRIOR_README } from './orchestration-config.mjs';
+
+const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const INDEX_REL = 'docs/ai/index.md';
 
 // A deployed project: docs/ai present (the ensures' precondition) and a package.json.
 const withProject = (fn) => {
@@ -27,6 +36,22 @@ const withProject = (fn) => {
 };
 
 const configOf = (dir) => JSON.parse(readFileSync(join(dir, CONFIG_REL), 'utf8'));
+
+// A deployed project with a real doc under docs/ai — the navigator ensure drives the bundled
+// generator over it, so the tree has to be one the generator can actually render.
+const DOC_BODY = '---\ntype: state\nlastUpdated: 2026-08-15\nscope: session\nstaleAfter: never\nowner: none\nmaxLines: 10\n---\n\n# a\n';
+const withDocs = (fn, { packageJson = true } = {}) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ensure-index-'));
+  try {
+    mkdirSync(join(dir, 'docs', 'ai'), { recursive: true });
+    writeFileSync(join(dir, 'docs', 'ai', 'a.md'), DOC_BODY);
+    if (packageJson) writeFileSync(join(dir, 'package.json'), '{"name":"fixture"}\n');
+    return fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+};
+const runIndex = (dir, extra = {}) => ensureOps.ensureIndex({ cwd: dir, kitRoot: KIT_ROOT, ...extra });
 
 // The vocabulary is closed at RUNTIME, not by convention. If that door ever stopped refusing, an op
 // could print a word the mode doc never taught — the exact defect both review backends raised.
@@ -44,6 +69,195 @@ describe('the closed vocabulary refuses an unlisted word', () => {
     const failure = composeFailure('gates', 'template-unreadable', 'x');
     assert.equal(failure.token, 'failed');
     assert.equal(failure.lines[0], 'template-unreadable — x');
+  });
+});
+
+// The navigator is the one ensure whose target is a GENERATED artifact: it is regenerated whenever
+// it is missing or stale, never preserved as authored content — and every failure has to say
+// whether a write may already have landed.
+describe('index ensure — the navigator is materialized, never preserved', () => {
+  it('regenerates an absent navigator, and the generator agrees it is in sync', () => {
+    withDocs((dir) => {
+      const r = runIndex(dir);
+      assert.equal(r.token, 'regenerated');
+      assert.equal(r.failed, false);
+      assert.ok(existsSync(join(dir, INDEX_REL)));
+      const verify = runIndex(dir);
+      assert.equal(verify.token, 'already-current');
+    });
+  });
+
+  it('reports already-current on a second run, byte-identical', () => {
+    withDocs((dir) => {
+      runIndex(dir);
+      const before = readFileSync(join(dir, INDEX_REL), 'utf8');
+      const r = runIndex(dir);
+      assert.equal(r.token, 'already-current');
+      assert.equal(readFileSync(join(dir, INDEX_REL), 'utf8'), before);
+    });
+  });
+
+  it('regenerates a STALE navigator (a doc was added under it)', () => {
+    withDocs((dir) => {
+      runIndex(dir);
+      writeFileSync(join(dir, 'docs', 'ai', 'b.md'), DOC_BODY);
+      const r = runIndex(dir);
+      assert.equal(r.token, 'regenerated');
+      assert.match(readFileSync(join(dir, INDEX_REL), 'utf8'), /b\.md/);
+    });
+  });
+
+  it('a SYMLINK where the navigator belongs fails loudly, writing nothing', () => {
+    withDocs((dir) => {
+      writeFileSync(join(dir, 'elsewhere.md'), '# elsewhere\n');
+      symlinkSync(join(dir, 'elsewhere.md'), join(dir, INDEX_REL));
+      const r = runIndex(dir);
+      assert.equal(r.token, 'failed');
+      assert.match(r.lines[0], /^wrong-node-kind — .*a symlink/);
+      assert.equal(readFileSync(join(dir, 'elsewhere.md'), 'utf8'), '# elsewhere\n');
+    });
+  });
+
+  it('a project with no package.json is still given its navigator (the generator runs from the kit)', () => {
+    withDocs((dir) => {
+      const r = runIndex(dir);
+      assert.equal(r.token, 'regenerated');
+      assert.ok(existsSync(join(dir, INDEX_REL)));
+    }, { packageJson: false });
+  });
+
+  it('--dry-run reports would-regenerate and writes nothing', () => {
+    withDocs((dir) => {
+      const r = runIndex(dir, { dryRun: true });
+      assert.equal(r.token, 'would-regenerate');
+      assert.equal(existsSync(join(dir, INDEX_REL)), false);
+    });
+  });
+
+  it('a generator that never LAUNCHES fails with zero writes', () => {
+    withDocs((dir) => {
+      const deps = { spawnSync: () => ({ error: new Error('spawn ENOENT'), status: null, stdout: '', stderr: '' }) };
+      const r = runIndex(dir, { deps });
+      assert.equal(r.token, 'failed');
+      assert.match(r.lines[0], /^generator-unlaunchable — /);
+      assert.equal(existsSync(join(dir, INDEX_REL)), false, 'a launch failure happens BEFORE any write');
+    });
+  });
+
+  it('a generator that launched and exited non-zero fails, DISCLOSING a possible partial write', () => {
+    withDocs((dir) => {
+      const deps = { spawnSync: () => ({ status: 3, stdout: '', stderr: 'boom\n' }) };
+      const r = runIndex(dir, { deps });
+      assert.equal(r.token, 'failed');
+      assert.match(r.lines[0], /^generator-failed — /);
+      assert.match(r.lines.join('\n'), /may already have been written|may already have landed/);
+    });
+  });
+
+  it('the generator\'s OWN refusal is relayed as write-refused, not as a generic failure', () => {
+    withDocs((dir) => {
+      const deps = {
+        spawnSync: () => ({ status: 2, stdout: '', stderr: 'ensure-index: write-refused — docs/ai is a symlink\n' }),
+      };
+      const r = runIndex(dir, { deps });
+      assert.equal(r.token, 'failed');
+      assert.match(r.lines[0], /^write-refused — /);
+      assert.match(r.lines[0], /symlink/, 'the generator\'s own reason rides through');
+    });
+  });
+
+  it('a verifying probe that cannot answer fails as index-probe-failed, DISCLOSING the write', () => {
+    withDocs((dir) => {
+      const deps = {
+        spawnSync: (_cmd, args) =>
+          args.some((a) => a === '--ensure-index')
+            ? { status: 0, stdout: 'ensure-index: regenerated — docs/ai/index.md\n', stderr: '' }
+            : { error: new Error('spawn EAGAIN'), status: null, stdout: '', stderr: '' },
+      };
+      const r = runIndex(dir, { deps });
+      assert.equal(r.token, 'failed');
+      assert.match(r.lines[0], /^index-probe-failed — /);
+      assert.match(r.lines.join('\n'), /may already have been written/);
+    });
+  });
+
+  // An exit code alone is not an ANSWER: `--check-index` exits 1 both when the navigator is stale
+  // and when the probe itself could not read the tree. Reading only the code would report the
+  // second as "still stale after the write" — a claim this run never observed.
+  it('a probe that exits 1 without ANSWERING stale is index-probe-failed, never a false stale', () => {
+    withDocs((dir) => {
+      const deps = {
+        spawnSync: (_cmd, args) =>
+          args.some((a) => a === '--ensure-index')
+            ? { status: 0, stdout: 'ensure-index: regenerated — docs/ai/index.md\n', stderr: '' }
+            : { status: 1, stdout: '', stderr: 'EACCES: permission denied, scandir docs/ai\n' },
+      };
+      const r = runIndex(dir, { deps });
+      assert.equal(r.token, 'failed');
+      assert.match(r.lines[0], /^index-probe-failed — /);
+      assert.equal(/index-stale-after-write/.test(r.lines.join('\n')), false, 'an unanswered probe is never reported as stale');
+    });
+  });
+
+  it('a probe that exits 0 without ANSWERING fresh is index-probe-failed too', () => {
+    withDocs((dir) => {
+      const deps = {
+        spawnSync: (_cmd, args) =>
+          args.some((a) => a === '--ensure-index')
+            ? { status: 0, stdout: 'ensure-index: regenerated — docs/ai/index.md\n', stderr: '' }
+            : { status: 0, stdout: '', stderr: '' },
+      };
+      const r = runIndex(dir, { deps });
+      assert.equal(r.token, 'failed');
+      assert.match(r.lines[0], /^index-probe-failed — /);
+    });
+  });
+
+  // The probe answers in prose, so the match must be the canonical SENTENCE. A failure that merely
+  // mentions the words would otherwise pass for a verdict — a fail-OPEN in the one place that
+  // decides whether a write is still owed.
+  it('a failure that merely CONTAINS the stale words is not a stale ANSWER', () => {
+    withDocs((dir) => {
+      const deps = {
+        spawnSync: (_cmd, args) =>
+          args.some((a) => a === '--check-index')
+            ? { status: 1, stdout: '', stderr: 'EACCES: cannot read /x/is stale/docs/ai — run --write-index if it is stale\n' }
+            : { status: 0, stdout: 'ensure-index: regenerated — docs/ai/index.md\n', stderr: '' },
+      };
+      const written = runIndex(dir, { deps });
+      assert.equal(written.token, 'failed');
+      assert.match(written.lines[0], /^index-probe-failed — /, 'a message that quotes the words is not the verdict');
+
+      const previewed = runIndex(dir, { dryRun: true, deps });
+      assert.equal(previewed.token, 'failed');
+      assert.match(previewed.lines[0], /^index-probe-failed — /, 'and the dry-run arm reads it the same way');
+    });
+  });
+
+  it('the generator\'s own probe-failed refusal keeps its identity', () => {
+    withDocs((dir) => {
+      const deps = {
+        spawnSync: () => ({ status: 2, stdout: '', stderr: 'ensure-index: probe-failed — /x/docs/ai/index.md: EACCES\n' }),
+      };
+      const r = runIndex(dir, { deps });
+      assert.equal(r.token, 'failed');
+      assert.match(r.lines[0], /^index-probe-failed — /);
+    });
+  });
+
+  it('a regeneration the re-probe still finds stale fails, DISCLOSING the write that landed', () => {
+    withDocs((dir) => {
+      const deps = {
+        spawnSync: (_cmd, args) =>
+          args.some((a) => a === '--ensure-index')
+            ? { status: 0, stdout: 'ensure-index: regenerated — docs/ai/index.md\n', stderr: '' }
+            : { status: 1, stdout: '', stderr: '[check-docs-size] FAIL: docs/ai/index.md is stale (out of sync with source frontmatter).\n' },
+      };
+      const r = runIndex(dir, { deps });
+      assert.equal(r.token, 'failed');
+      assert.match(r.lines[0], /^index-stale-after-write — /);
+      assert.match(r.lines.join('\n'), /may already have been written|may already have landed/);
+    });
   });
 });
 

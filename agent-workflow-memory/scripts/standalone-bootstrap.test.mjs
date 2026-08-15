@@ -280,3 +280,70 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
     assert.ok(lineCount(filled) < AGENTS_MD_CAP, `triple-filled AGENTS.md is ${lineCount(filled)} lines — must stay STRICTLY under the cap ${AGENTS_MD_CAP}`);
   });
 });
+
+// The navigator is the one always-loaded file no template ships. These drive the finalizer the
+// PROSE documents — extracted from SKILL.md, never re-typed here — so a deploy step that loses its
+// finalizer line fails as a broken deployment rather than as an out-of-date test.
+const SKILL_MD = readFileSync(join(SKILL_ROOT, 'SKILL.md'), 'utf8');
+const FINALIZER_RE = /node \$\{CLAUDE_SKILL_DIR\}\/(references\/scripts\/[A-Za-z0-9_.-]+) --ensure-index --root=<[a-z-]+>/;
+const UPGRADE_HEADING = '### Mode: upgrade';
+const EQUAL_HEAD_ANCHOR = '**Then**, if the stamp **equals** the head';
+const RESTAMP_ANCHOR = '7. **Re-stamp**';
+
+const documentedFinalizer = (prose) => {
+  const match = prose.match(FINALIZER_RE);
+  assert.ok(match, 'the bootstrap prose must document the navigator finalizer command — a deploy with no finalizer line leaves the entry point pointing at a file nothing writes');
+  return join(SKILL_ROOT, match[1]);
+};
+
+const runFinalizer = (project) =>
+  execFileSync(process.execPath, [documentedFinalizer(SKILL_MD), '--ensure-index', `--root=${project}`], { encoding: 'utf8' });
+
+describe('standalone bootstrap — the navigator the entry point declares always-loaded', () => {
+  it('the documented finalizer materializes docs/ai/index.md, and the generator agrees it is fresh', () => {
+    const project = makeProject();
+    const docsAi = bootstrap(project);
+    assert.equal(existsSync(join(docsAi, 'index.md')), false, 'no template ships the navigator — it is generated');
+
+    const out = runFinalizer(project);
+    assert.match(out, /ensure-index: (regenerated|already-current)/);
+    assert.ok(existsSync(join(docsAi, 'index.md')), 'the finalizer wrote the navigator');
+    execFileSync(process.execPath, [documentedFinalizer(SKILL_MD), '--check-index', `--root=${project}`], { stdio: 'pipe' });
+  });
+
+  // The No-Node lane is a REAL branch, not a comment: no project scripts, no hook, no package.json —
+  // the generator runs from the SKILL HOME, which is exactly why the fill step covers such a target.
+  it('a No-Node target gets its navigator from the skill-home generator alone', () => {
+    const project = makeProject();
+    cpSync(join(TEMPLATES, 'AGENTS.md'), join(project, 'AGENTS.md'));
+    const docsAi = join(project, 'docs', 'ai');
+    mkdirSync(docsAi, { recursive: true });
+    for (const entry of readdirSync(TEMPLATES)) {
+      if (entry === 'AGENTS.md' || entry === 'adr-record.md') continue;
+      cpSync(join(TEMPLATES, entry), join(docsAi, entry), { recursive: true });
+    }
+    assert.equal(existsSync(join(project, 'scripts')), false, 'the No-Node lane copies no enforcement scripts');
+    assert.equal(existsSync(join(project, 'package.json')), false, 'and has no Node project at all');
+
+    runFinalizer(project);
+    assert.ok(existsSync(join(docsAi, 'index.md')), 'the navigator landed without a single project-side script');
+    execFileSync(process.execPath, [documentedFinalizer(SKILL_MD), '--check-index', `--root=${project}`], { stdio: 'pipe' });
+  });
+
+  it('the upgrade flow documents the finalizer at BOTH positions the deploy needs it', () => {
+    const upgrade = SKILL_MD.slice(SKILL_MD.indexOf(UPGRADE_HEADING));
+    const equalHead = upgrade.indexOf(EQUAL_HEAD_ANCHOR);
+    const restamp = upgrade.indexOf(RESTAMP_ANCHOR);
+    assert.ok(equalHead > 0 && restamp > equalHead, 'the upgrade flow must still carry both anchors, in order');
+
+    const positions = [...upgrade.matchAll(/--ensure-index/g)].map((m) => m.index);
+    assert.ok(
+      positions.some((at) => at < equalHead),
+      'a deployment already at the head must gain the navigator too — the finalizer runs BEFORE the equal-head short-circuit',
+    );
+    assert.ok(
+      positions.some((at) => at > equalHead && at < restamp),
+      'the migrations may change docs/ai — the finalizer runs again AFTER them and BEFORE the re-stamp',
+    );
+  });
+});

@@ -196,7 +196,17 @@ const BUDGET = {
   // documented KB-multiple bump, never a silent re-pin. History: 10240 → 11264 (11 KB): AD-044
   // Plan 4 adds the sandbox-masks and recommendations modes to the router (~110 B each) against
   // 27 B of headroom — the same documented bump.
-  routerPlusMode: 43008, // router + any single mode file. 41984 → 43008 (42 KB): the Phase-2 round-2
+  routerPlusMode: 46080, // router + any single mode file. 43008 → 46080 (45 KB): the index-navigator
+  // hotfix — upgrade.md gains the fifth `configs` ensure (the run-list token row, the
+  // "what the navigator ensure does" rationale, the two-refresh-class correction), the LATE
+  // `--only index` rung documented at BOTH exits with its step-4/8 report rows, the closed
+  // failure-cause enumeration, and the round-3 both-outcomes correction. FINAL measurement, taken
+  // after the last council fold: 44973 B (router 11349 + upgrade 33624). Both intermediate
+  // multiples are rejected on this file's own precedent — 43008 sits below the measurement and
+  // 45056 would leave 83 B, which this very comment calls a re-pin waiting to happen rather than a
+  // budget — so it takes 45 KB (1107 B of headroom). A documented KB-multiple bump, never a silent
+  // re-pin.
+  // History: 41984 → 43008 (42 KB): the Phase-2 round-2
   // council fold — steps 4 and 8 enumerate every run-list operation (the seven backticked ids +
   // the gates-migration outcome row on both exits), overflowing the fresh 41 KB ceiling by 130 B;
   // measured 41975 B after the as-step-4-words-it dedup, which would leave 9 B of headroom — a
@@ -238,7 +248,13 @@ const BUDGET = {
   // THREE pointers (the autonomy slot: step-3 wording, the (a)(iii) anchor-absent soft-skip lane,
   // the No-Node walk, the step-4/8 report row) — ~575 B of new contract content over 179 B of
   // headroom; a documented KB-multiple bump, never a silent re-pin.)
-  fullReadSet: 70656, // router + mode + its declared shared files. 68608 → 70656 (69 KB):
+  fullReadSet: 75776, // router + mode + its declared shared files. 70656 → 75776 (74 KB): the
+  // index-navigator hotfix — upgrade's set carries BOTH its own growth (see routerPlusMode above)
+  // and composition-handoff.md's navigator-finalizer block. FINAL measurement after the last
+  // council fold: 74159 B (the 44973 pair + report-footer 11299 + composition-handoff 6253 +
+  // deploy-tail 9185 + command-shapes 2449). 74752 would leave 593 B — the same re-pin-waiting
+  // shape the pair budget rejects — so this takes the following multiple (1617 B of headroom).
+  // History: 68608 → 70656 (69 KB):
   // feedback-hardening Plan 3 Phase 2 — the step-3 run-list checklist grows upgrade.md (see
   // routerPlusMode above) against 267 B of set headroom; upgrade's set measures 69598 B, and the
   // 68 KB multiple would leave 34 B of headroom — a re-pin waiting to happen rather than a budget

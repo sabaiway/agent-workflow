@@ -11,6 +11,9 @@ import { INCLUDE_IDENTITY_RULE, RESUME_VERIFY_RULE } from './worktrees.mjs';
 import { DISPATCH_CONTRACT } from './dispatch.mjs';
 import { FLOW_SCHEMA_VERSION, FLOW_LAGGING_KIT_CONTRACT } from './orchestration-config.mjs';
 import { COVERAGE_PRODUCER_BODY } from './coverage-producer.mjs';
+// Through the NAMESPACE, not named imports: the relayed-cause export is what this contract
+// introduces, and a red-first test has to LOAD against the pre-fix module.
+import * as ensureVocabulary from './ensure-vocabulary.mjs';
 
 // A synthetic file surface: rel → text. A rel absent from the map THROWS (fails closed like a real
 // unreadable file).
@@ -119,6 +122,41 @@ describe('the REAL registry is consistent with the shipped contract docs (dogfoo
       assert.deepEqual([...b.files].sort(), ['references/modes/setup.md', 'references/modes/upgrade.md'],
         `${b.constant} must be bound in BOTH docs that enumerate the refresh outcomes`);
     }
+  });
+
+  // The D9 promise "every failure cause lands in the relay" (index-navigator hotfix): the ensures'
+  // cause vocabulary is closed, and the mode doc that relays a `failed` line has to teach every word
+  // that can open one. A DELETION pin like the parity verdicts above — the bindings ride a spread
+  // over RELAYED_FAILURE_CAUSES, so dropping the spread would leave --check green while the doc went
+  // free to relay a cause it never named.
+  it('the registry binds EVERY relayed failure cause to the upgrade mode doc', () => {
+    const relayed = ensureVocabulary.RELAYED_FAILURE_CAUSES ?? [];
+    const bound = BINDINGS.filter((b) => b.constant.startsWith('ensure-cause:'));
+    assert.ok(relayed.length > 0, 'the relayed-cause export must exist and be non-empty');
+    assert.equal(bound.length, relayed.length, 'the cause set is CLOSED — a dropped spread fails here');
+    assert.deepEqual(
+      bound.map((b) => b.token).sort(),
+      [...relayed].map((cause) => `\`${cause}\``).sort(),
+      'backticked, so a bare word in prose cannot pass for the pinned cause',
+    );
+    for (const b of bound) {
+      assert.deepEqual([...b.files], ['references/modes/upgrade.md'], `${b.constant} must be bound in the doc that relays it`);
+    }
+  });
+
+  it('every D9 index cause is IN the relayed set (the promise, not just the spread)', () => {
+    for (const cause of ['generator-unlaunchable', 'generator-failed', 'index-probe-failed', 'index-stale-after-write']) {
+      assert.ok(ensureVocabulary.FAILURE_CAUSES.includes(cause), `${cause} must be a closed cause`);
+      assert.ok((ensureVocabulary.RELAYED_FAILURE_CAUSES ?? []).includes(cause), `${cause} must be relayed to the mode doc`);
+    }
+  });
+
+  it('a doc that drops one relayed cause goes RED (non-vacuous)', () => {
+    const binding = BINDINGS.find((b) => b.constant === 'ensure-cause:index-stale-after-write');
+    assert.ok(binding, 'registry must bind the index write-verification cause');
+    const doc = 'references/modes/upgrade.md';
+    assert.equal(checkBinding(binding, surface({ [doc]: 'the line opens with `index-stale-after-write` — relay it' })).ok, true);
+    assert.equal(checkBinding(binding, surface({ [doc]: 'the line opens with its cause — relay it' })).ok, false);
   });
 
   // The "the tool knows and does not say" contract: a clean-tree PASS must still name a latent arm.
