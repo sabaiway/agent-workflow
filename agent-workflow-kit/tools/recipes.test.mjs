@@ -803,7 +803,7 @@ describe('recipes.mjs CLI — --status-line + strict args (no silent fallthrough
     assert.match(line, /autonomy: plan-authoring=prompt, plan-execution=prompt \(computed defaults — no policy file; declare with \/agent-workflow-kit set-autonomy\)/);
     // The D5 posture tail: composed from the bundled manifests' pins; cleanEnv strips the tier
     // knob, so the codex tier renders the pinned standard default.
-    assert.match(line, /· posture: codex model=gpt-5\.6-sol effort=xhigh tier=standard · agy model=Gemini 3\.1 Pro \(High\)$/);
+    assert.match(line, /· posture: codex model=gpt-5\.6-sol effort=xhigh tier=standard · agy model=Gemini 3\.7 Flash \(High\)$/);
   });
 
   it('rejects an unknown/mistyped argument loudly — never the silent multi-line human render', () => {

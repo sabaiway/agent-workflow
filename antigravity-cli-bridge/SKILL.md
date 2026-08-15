@@ -1,8 +1,8 @@
 ---
 name: antigravity-cli-bridge
-description: Delegate work to Google's Antigravity CLI (`agy`) — the successor to Gemini CLI — to reach Gemini, Claude, and GPT-OSS models under a Google AI Pro/Ultra subscription from the terminal. Use when the user wants to run a headless `agy` prompt, hand a focused task or second-opinion review to `agy`, install or authenticate Antigravity CLI, check or economise its quota/models, bridge project context into `agy`, set up a second delegated-execution backend beside Codex, or troubleshoot `agy` flags, models, auth, conversations, or its no-JSON headless behaviour.
+description: Delegate work to Google's Antigravity CLI (`agy`) — the successor to Gemini CLI — to reach Gemini, Claude, and GPT-OSS models under a Google AI Pro/Ultra subscription from the terminal. Use when the user wants to run a headless `agy` prompt, hand a focused task or second-opinion review to `agy`, install or authenticate Antigravity CLI, check or economise its quota/models, bridge project context into `agy`, set up a second delegated-execution backend beside Codex, or troubleshoot `agy` flags, models, auth, conversations, or its headless behaviour.
 metadata:
-  version: '5.1.1'
+  version: '5.2.0'
 ---
 
 # antigravity-cli-bridge
@@ -53,16 +53,22 @@ keep probes short (see *How the main agent drives agy*).
 ## Models
 
 Pass the **exact display string** to `--model` (or set `AGY_MODEL`). The wrapper defaults to
-`Gemini 3.1 Pro (High)`. Run `agy models` for the live list — if it differs from this table, the live
-list wins.
+`Gemini 3.7 Flash (High)`. Run `agy models` for the live list — if it differs from this table, the
+live list wins.
 
 | Model string | Use it for |
 |---|---|
-| `Gemini 3.5 Flash (Low)` | cheapest; reachability checks, smoke tests, simple transforms |
-| `Gemini 3.5 Flash (Medium)` | cheap probes, context-reachability checks, quick summaries |
-| `Gemini 3.5 Flash (High)` | fast drafting / review when a little more effort helps |
+| `Gemini 3.7 Flash (Low)` | cheapest; reachability checks, smoke tests, simple transforms |
+| `Gemini 3.7 Flash (Medium)` | cheap probes, context-reachability checks, quick summaries |
+| `Gemini 3.7 Flash (High)` | wrapper + review default; asserted frontier-grade (fork (a)) |
+| `Gemini 3.6 Flash (Low)` | previous Flash generation, still served — prefer 3.7 |
+| `Gemini 3.6 Flash (Medium)` | previous Flash generation, still served — prefer 3.7 |
+| `Gemini 3.6 Flash (High)` | previous Flash generation, still served — prefer 3.7 |
+| `Gemini 3.5 Flash (Low)` | older Flash generation, still served — prefer 3.7 |
+| `Gemini 3.5 Flash (Medium)` | older Flash generation, still served — prefer 3.7 |
+| `Gemini 3.5 Flash (High)` | older Flash generation, still served — prefer 3.7 |
 | `Gemini 3.1 Pro (Low)` | cheaper Pro pass for medium reasoning |
-| `Gemini 3.1 Pro (High)` | wrapper default; hard reasoning, plan critique, architecture review |
+| `Gemini 3.1 Pro (High)` | hard reasoning, plan critique, architecture review (slower, deeper) |
 | `Claude Sonnet 4.6 (Thinking)` | a Claude second opinion through the same subscription |
 | `Claude Opus 4.6 (Thinking)` | strongest Claude reasoning available via `agy` |
 | `GPT-OSS 120B (Medium)` | an open-weights cross-check / diversity pass |
@@ -89,10 +95,12 @@ AGY_HARD_TIMEOUT=8m agy-run "..."             # hard wall-clock cap via timeout(
 agy-run "..." -- --add-dir .                  # passthrough agy flags (never a permission widener)
 ```
 
-`agy` is **headless-only** here (`-p`/`--print`) and there is **no JSON output mode** in v1.0.13 — you
-get plain text. If you need structure, ask for Markdown with explicit headings and validate it
+`agy` is **headless-only** here (`-p`/`--print`); v1.1.13 adds `--output-format json|stream-json`,
+and text stays the wrapper default — JSON can ride passthrough (`-- --output-format json`) but with
+no first-class parsing/validation (adoption is a backlog item). If you need structure, ask
+for Markdown with explicit headings and validate it
 yourself. Wrapper inputs: first argument is the prompt (`text`, `-` for stdin, or `@file`);
-`AGY_MODEL` (default `Gemini 3.1 Pro (High)`); `AGY_TIMEOUT` → `--print-timeout` (default `5m`);
+`AGY_MODEL` (default `Gemini 3.7 Flash (High)`); `AGY_TIMEOUT` → `--print-timeout` (default `5m`);
 `AGY_HARD_TIMEOUT` → hard `timeout(1)` wall-clock cap (default = `AGY_TIMEOUT`); extra `agy` flags
 after `--`. Full detail: [`references/models-and-flags.md`](references/models-and-flags.md).
 
@@ -154,7 +162,7 @@ release). `agy-review … --nonce <n>` is the plain-argument equivalent
 (one seam; flag and a non-empty env must agree, a disagreeing pair refuses pre-spend) — the lane
 for hosts whose dispatch policy has no env-prefix form.
 
-Frontier default `Gemini 3.1 Pro (High)`; **any** model is allowed (a sub-frontier one earns a
+Frontier default `Gemini 3.7 Flash (High)`; **any** model is allowed (a sub-frontier one earns a
 silenceable `AGY_PROBE=1` advisory). An oversized `code` review is **DELIVERED, not refused**: the
 change set is cut into under-cap parts, fed over continuation turns and reviewed in a final turn, and
 the answer must reproduce a line the wrapper picked from each part — a missing or wrong echo is a
@@ -190,9 +198,9 @@ without an explicit `--add-dir`, so ground a review **self-contained** via `agy-
 rather than relying on `agy` to read the change set. Re-runnable from a project root (use a cheap model):
 
 ```bash
-AGY_MODEL="Gemini 3.5 Flash (Low)" agy-run \
+AGY_MODEL="Gemini 3.7 Flash (Low)" agy-run \
   "Read the cwd context file and state the dialogue language plus one Hard Constraint, in two lines."
-AGY_MODEL="Gemini 3.5 Flash (Low)" agy-run \
+AGY_MODEL="Gemini 3.7 Flash (Low)" agy-run \
   "Without me pointing you at any file, name a project-specific skill under .agents/skills/ here and cite its path."
 ```
 
@@ -241,15 +249,16 @@ checklist, prompt templates, output handling). Essentials:
 - Subdirectory `CLAUDE.md` files are **not** auto-loaded by `agy` (only the cwd context file +
   `.agents/skills/`). Put cross-cutting rules in the root context file, or include local rules in the
   prompt when they matter.
-- **No JSON output** and **no `agy inspect`** in v1.0.13 — parse text; there is no machine-readable
-  introspection.
+- **Text is the wrapper default** — the CLI's 1.1.x `--output-format json|stream-json` can ride
+  passthrough but with no first-class parsing/validation (adoption is backlog) — and there is
+  **no `agy inspect`**: no machine-readable introspection.
 - Model names must match the `agy models` display strings **exactly**.
 - **Quota is finite.** Heavy use of Pro/Claude models can exhaust the subscription; prefer Flash for
   cheap work.
 - **A run can't hang forever.** The wrapper caps `agy` with `timeout(1)` (`AGY_HARD_TIMEOUT`,
   default = `AGY_TIMEOUT`) because `agy`'s own `--print-timeout` is **not** a reliable wall-clock
   kill (a run was seen surviving 32 min past a 10m `--print-timeout`). A heavy `--add-dir` agentic
-  prompt on the slowest model (`Gemini 3.1 Pro (High)`) can run unbounded — prefer a faster model or
+  prompt on a slow model (e.g. `Gemini 3.1 Pro (High)`) can run unbounded — prefer a faster model or
   a **self-contained prompt** (no `--add-dir`); an "exceeded the hard cap" error is the guard firing.
 - `agy` output is plain text and may be incomplete or out of date — treat it as advisory until the
   main agent verifies it.

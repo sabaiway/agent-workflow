@@ -3,9 +3,9 @@
   "schema": 1,
   "name": "antigravity-cli-bridge",
   "kind": "execution-backend",
-  "version": "5.1.1",
+  "version": "5.2.0",
   "provides": ["review", "probe"],
-  "posture": { "model": "Gemini 3.1 Pro (High)" },
+  "posture": { "model": "Gemini 3.7 Flash (High)" },
   "roles": {
     "review": {
       "cmd": "agy-review",
@@ -180,7 +180,7 @@
       ],
       "guardrails": [
         { "value": "subscription-only — every *_API_KEY env var is unset before the run", "enforcement": "enforced", "source": "bin/agy.sh" },
-        { "value": "any model is selectable via AGY_MODEL; the default is Gemini 3.1 Pro (High)", "enforcement": "advisory", "source": "bin/agy.sh" },
+        { "value": "any model is selectable via AGY_MODEL; the default is Gemini 3.7 Flash (High)", "enforcement": "advisory", "source": "bin/agy.sh" },
         { "value": "hard wall-clock cap AGY_HARD_TIMEOUT (built-in default 5m)", "enforcement": "enforced", "condition": "only while timeout(1)/gtimeout is on PATH — otherwise the wrapper warns and runs uncapped", "source": "capability.json settings.AGY_HARD_TIMEOUT" },
         { "value": "the prompt rides a single argv — over AGY_MAX_PROMPT_BYTES (120000) the run refuses", "enforcement": "enforced", "source": "bin/agy.sh" },
         { "value": "no review posture, no grounding, no receipt — the reply is raw model output", "enforcement": "advisory", "source": "bin/agy.sh" }

@@ -1,14 +1,18 @@
 # `agy` models & flags (reference)
 
 The source of truth is the live binary: `agy --version`, `agy --help`, `agy models`. The tables below
-were captured from **v1.0.13**; if the binary disagrees, the binary wins. The wrapper command is
+were captured from **v1.1.13**; if the binary disagrees, the binary wins. The wrapper command is
 `agy-run`, backed by `bin/agy.sh`.
 
 ## Headless behaviour
 
 Use `-p`, `--print`, or `--prompt` to run one non-interactive prompt and print the text response. The
-wrapper always uses headless `-p`. **There is no JSON output mode in v1.0.13** — ask for Markdown,
-bullets, tables, or fenced blocks when the caller needs structure, then validate the text yourself.
+wrapper always uses headless `-p`. v1.1.13 adds `--output-format text|json|stream-json` and
+`--json-schema` (structured output); **text stays the wrapper default** — raw passthrough
+(`agy-run "…" -- --output-format json`) is possible but rides with NO first-class parsing or schema
+validation (first-class adoption is a separate backlog item). When the caller needs structure
+through the wrapper, ask for Markdown, bullets, tables, or fenced blocks, then validate the text
+yourself.
 
 ## Wrapper contract
 
@@ -30,7 +34,7 @@ Environment:
 
 | Var | Default | Effect |
 |---|---|---|
-| `AGY_MODEL` | `Gemini 3.1 Pro (High)` | model display string; set empty (`AGY_MODEL=`) to drop `--model` and let `agy` use `settings.json` |
+| `AGY_MODEL` | `Gemini 3.7 Flash (High)` | model display string; set empty (`AGY_MODEL=`) to drop `--model` and let `agy` use `settings.json` |
 | `AGY_TIMEOUT` | `5m` | value passed to `--print-timeout` |
 | `AGY_HARD_TIMEOUT` | `= AGY_TIMEOUT` | hard `timeout(1)` wall-clock cap (a duration string) |
 | `AGY_MAX_PROMPT_BYTES` | `120000` | single-argv byte ceiling. `agy` takes the prompt as ONE `-p` argv; past `MAX_ARG_STRLEN` (~131072) `execve` fails with a cryptic `Argument list too long`. The wrapper measures the resolved `-`/`@file` prompt and fails loud over the ceiling. A huge **literal** `agy-run "<huge>"` fails at the wrapper's own `exec`, so route large prompts via `-`/`@file`. |
@@ -55,7 +59,7 @@ agy-review --continue | --conversation <id>   [--decided @f] [--focus "…"]   #
 
 | Var | Default | Effect |
 |---|---|---|
-| `AGY_MODEL` | `Gemini 3.1 Pro (High)` | frontier default; **any** model is allowed — a sub-frontier one earns a silenceable advisory (quality-first, not a gate) |
+| `AGY_MODEL` | `Gemini 3.7 Flash (High)` | frontier default (fork (a), 2026-08-14); **any** model is allowed — a sub-frontier one earns a silenceable advisory (quality-first, not a gate) |
 | `AGY_PROBE` | `0` | `1` silences the off-frontier model advisory AND lets `code` run without `--facts` (an ungrounded probe never attests — its receipt is probe-marked) |
 | `AGY_REVIEW_MAX_TOTAL_BYTES` | `240000` | the ceiling on the SUM of all outgoing prompt bytes an oversized `code` review's chunked feed may send; checked BEFORE the first turn is spent |
 | `AGY_REVIEW_ALLOW_ADDDIR` | `0` | **RETIRED** — recognized so an existing settings line never warns as unknown, but it arms nothing. An oversized `code` review is a chunked feed with a per-part delivery proof; the `--add-dir` offload it armed could not be verified (headless `agy` auto-denies `read_file`) |
@@ -72,11 +76,17 @@ Pass the **exact display string** from `agy models`, or set `AGY_MODEL`.
 
 | Model string | Practical use |
 |---|---|
-| `Gemini 3.5 Flash (Low)` | lowest-cost smoke tests and simple rewrites |
-| `Gemini 3.5 Flash (Medium)` | cheap probes, fast summaries, context-reachability checks |
-| `Gemini 3.5 Flash (High)` | fast review when a little more reasoning effort is useful |
+| `Gemini 3.7 Flash (Low)` | lowest-cost smoke tests, cheap probes, simple rewrites (newest Flash) |
+| `Gemini 3.7 Flash (Medium)` | fast summaries, context-reachability checks |
+| `Gemini 3.7 Flash (High)` | wrapper + review default — asserted frontier-grade (fork (a)) |
+| `Gemini 3.6 Flash (Low)` | previous Flash generation, still served — prefer 3.7 |
+| `Gemini 3.6 Flash (Medium)` | previous Flash generation, still served — prefer 3.7 |
+| `Gemini 3.6 Flash (High)` | previous Flash generation, still served — prefer 3.7 |
+| `Gemini 3.5 Flash (Low)` | older Flash generation, still served — prefer 3.7 |
+| `Gemini 3.5 Flash (Medium)` | older Flash generation, still served — prefer 3.7 |
+| `Gemini 3.5 Flash (High)` | older Flash generation, still served — prefer 3.7 |
 | `Gemini 3.1 Pro (Low)` | cheaper Pro pass for medium reasoning |
-| `Gemini 3.1 Pro (High)` | wrapper default; hard reasoning, plan critique, architecture review |
+| `Gemini 3.1 Pro (High)` | hard reasoning, plan critique, architecture review (slower, deeper) |
 | `Claude Sonnet 4.6 (Thinking)` | cross-vendor reasoning comparison |
 | `Claude Opus 4.6 (Thinking)` | expensive deep critique when the user wants another high-end pass |
 | `GPT-OSS 120B (Medium)` | open-weights-style comparison / diversity pass |
@@ -84,11 +94,11 @@ Pass the **exact display string** from `agy models`, or set `AGY_MODEL`.
 Examples:
 
 ```bash
-AGY_MODEL="Gemini 3.5 Flash (Medium)" agy-run "Read AGENTS.md and report one Hard Constraint."
+AGY_MODEL="Gemini 3.7 Flash (Low)" agy-run "Read AGENTS.md and report one Hard Constraint."
 AGY_MODEL="Claude Sonnet 4.6 (Thinking)" AGY_TIMEOUT=10m agy-run @review-prompt.md
 ```
 
-## Flags (from `agy --help`, v1.0.13)
+## Flags (from `agy --help`, v1.1.13)
 
 | Flag | Meaning | Notes |
 |---|---|---|
@@ -102,12 +112,19 @@ AGY_MODEL="Claude Sonnet 4.6 (Thinking)" AGY_TIMEOUT=10m agy-run @review-prompt.
 | `--dangerously-skip-permissions` | auto-approve all tool permissions | avoid by default; use only with explicit user approval |
 | `--sandbox` | run with terminal restrictions enabled | prefer when delegating a prompt that might trigger tool/terminal work |
 | `--log-file <path>` | override the CLI log-file path | keep logs secret-free and out of committed artifacts |
+| `--output-format <fmt>` | print-mode output: `text` (default), `json`, `stream-json` | NEW in 1.1.x; not wrapper-adopted (backlog) |
+| `--json-schema <s\|path>` | enforce structured output (stream-json final result) | NEW in 1.1.x; not wrapper-adopted (backlog) |
+| `--effort <low\|medium\|high>` | reasoning effort for the session | NEW in 1.1.x; the display strings already carry an effort tier — the wrapper keeps model selection in ONE place (`AGY_MODEL`) |
+| `--mode <m>` | agent execution mode (`accept-edits`, `plan`) | NEW in 1.1.x; not used by the wrapper |
+| `--agent` / `--project <id>` / `--new-project` | agent + project selection for the session | NEW in 1.1.x; not used by the wrapper |
+| `--disable-slash-commands` | disable slash command/skill expansion in print mode | NEW in 1.1.x; not used by the wrapper |
 
-## Subcommands (v1.0.13)
+## Subcommands (v1.1.13)
 
-`changelog`, `help`, `install`, `models`, `plugin` / `plugins`, `update`.
+`agent` / `agents`, `changelog`, `help`, `install`, `models`, `plugin` / `plugins`, `update`.
 
-**Not available in v1.0.13:** any JSON output mode, and any `agy inspect`. Output is plain text.
+**Still not available in v1.1.13:** any `agy inspect`. Wrapper output stays plain text (the
+`--output-format` lane is not adopted here — see the backlog row).
 
 ## Project-context flags
 

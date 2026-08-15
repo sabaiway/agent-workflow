@@ -11,6 +11,9 @@
 //                        it is not a heading in canon) and `## Verification` (REQUIRED — STOP if
 //                        missing), plus `## Decisions (locked)` (optional-if-absent, the engine §7
 //                        heading this release adds); a DUPLICATE heading is always a STOP.
+//   --extra <text|@file> append orchestrator-supplied facts verbatim AFTER the mechanical halves
+//                        (repeatable; @file reads are confined to the work tree + the system temp
+//                        surface — the merge happens INSIDE the tool, corpus #88/#95).
 //
 // Byte budget: the output honors the same AGY_MAX_PROMPT_BYTES contract the agy wrapper enforces
 // (default 120000; the override may only TIGHTEN — above the OS single-argv ceiling ~131000 is
@@ -31,6 +34,7 @@ import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { fail } from './orchestration-config.mjs';
+import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 // (f) --autonomy (AD-044 Plan 3): the effective per-project autonomy policy for the facts payload.
 // READ core only — never autonomy-write.mjs (the import-split invariant).
 import { AUTONOMY_REL, loadAutonomy, resolveAutonomy, isSparseSeedConfig } from './autonomy-config.mjs';
@@ -81,7 +85,7 @@ export const sliceSection = (text, heading, { optional = false, label = 'documen
 
 // ── assembly ───────────────────────────────────────────────────────────────────────
 
-export const assembleGrounding = ({ constraintsText = null, autonomyText = null, planText = null, planLabel = 'plan' } = {}) => {
+export const assembleGrounding = ({ constraintsText = null, autonomyText = null, planText = null, planLabel = 'plan', extraTexts = [] } = {}) => {
   const parts = [];
   if (constraintsText != null) {
     parts.push(sliceSection(constraintsText, CONSTRAINTS_HEADING, { label: 'AGENTS.md' }));
@@ -96,6 +100,10 @@ export const assembleGrounding = ({ constraintsText = null, autonomyText = null,
       if (section != null) parts.push(section);
     }
   }
+  // Orchestrator extras ride LAST, verbatim in argv order — live judgment facts read after the
+  // mechanical slices, and the merge happens INSIDE the tool (corpus #88/#95: a shell append onto
+  // the emitted facts file was the recurring un-covered lane).
+  for (const t of extraTexts) parts.push(t);
   return parts.join('\n');
 };
 
@@ -151,10 +159,23 @@ const resolveAutonomyFacts = ({ cwd }) => {
   return renderAutonomyFacts(config, source);
 };
 
+// The realpath'd system temp surface ($TMPDIR / os.tmpdir() / /tmp) — the shared scratch boundary
+// for the --out write guard and the --extra read guard.
+const systemTempRoots = () => [...new Set([tmpdir(), process.env.TMPDIR, '/tmp'].filter(Boolean).map((p) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return null;
+  }
+}).filter(Boolean))];
+
 // ── the --out destination guard (gitignored / out-of-repo scratch ONLY) ────────────────
 
 const gitLine = (args, cwd) => {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true });
+  // Ambient GIT_* location vars (GIT_DIR / GIT_WORK_TREE / …) would let rev-parse prove a FOREIGN
+  // tree — every location answer must come from cwd alone, for every gitLine consumer.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/i.test(k)));
+  const r = spawnSync('git', args, { cwd, env, encoding: 'utf8', windowsHide: true });
   return r.error || r.status == null ? null : { status: r.status, stdout: r.stdout ?? '' };
 };
 
@@ -199,13 +220,7 @@ export const assertScratchDestination = (outPath, cwd) => {
   // the repo is scratch" would let an unattended run overwrite e.g. ~/.bashrc promptless.
   // $TMPDIR / os.tmpdir() / /tmp are the scratch surface; everything else refuses loudly.
   const assertTempScratch = () => {
-    const tempRoots = [...new Set([tmpdir(), process.env.TMPDIR, '/tmp'].filter(Boolean).map((p) => {
-      try {
-        return realpathSync(p);
-      } catch {
-        return null;
-      }
-    }).filter(Boolean))];
+    const tempRoots = systemTempRoots();
     if (!tempRoots.some((t) => full === t || full.startsWith(`${t}${sep}`))) {
       throw fail(1, `--out refuses an outside-repo destination that is not under a system temp root (${full}) — grounding output is scratch: use $TMPDIR//tmp, or a fresh gitignored in-repo path (temp roots checked: ${tempRoots.join(', ')})`);
     }
@@ -243,7 +258,8 @@ export const assertScratchDestination = (outPath, cwd) => {
 const HELP = `grounding — grounded-review facts assembler for the agent-workflow family (AD-038).
 
 Usage:
-  node grounding.mjs [--constraints] [--autonomy] [--plan <path>] [--reserve-bytes <n>] [--out <path>]
+  node grounding.mjs [--constraints] [--autonomy] [--plan <path>] [--extra <text|@file>]...
+                     [--reserve-bytes <n>] [--out <path>]
 
   --constraints        slice the root AGENTS.md "Hard Constraints" section verbatim
                        (exactly one matching heading, else a loud STOP)
@@ -255,6 +271,14 @@ Usage:
   --plan <path>        extract the plan's decision-bearing sections verbatim + whole:
                        "## Approach" + "## Verification" (REQUIRED — STOP if missing),
                        "## Decisions (locked)" when present; a duplicate heading is a STOP
+  --extra <text|@file> append orchestrator-supplied extra facts byte-verbatim AFTER the
+                       mechanical sections (repeatable, argv order; the agy-review --facts
+                       convention: literal text, or @path read whole through a race-free
+                       descriptor). An @file must resolve inside the PROVEN git work tree
+                       (rev-parse success; the git dir itself refused) or the system temp
+                       surface — anything else refuses loudly, as does a missing, empty, or
+                       non-regular file. The merge happens INSIDE the tool: no shell append
+                       onto the emitted facts file
   --reserve-bytes <n>  the artifact share agy-review will add around these facts — the output
                        budget becomes AGY_MAX_PROMPT_BYTES − n (loud tail-trim on overflow)
   --out <path>         write instead of stdout — system-temp scratch (rewritable), or a FRESH
@@ -274,11 +298,19 @@ const parseArgs = (argv) => {
   let plan = null;
   let out = null;
   let reserve = 0;
+  const extra = [];
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--constraints') constraints = true;
     else if (a === '--autonomy') autonomy = true;
-    else if (a === '--plan') {
+    else if (a === '--extra') {
+      const val = argv[i + 1];
+      if (val == null || val === '' || val === '@' || val.startsWith('--')) {
+        throw fail(2, '--extra requires <text|@file> (repeatable)');
+      }
+      extra.push(val);
+      i += 1;
+    } else if (a === '--plan') {
       plan = argv[i + 1];
       if (!plan || plan.startsWith('--')) throw fail(2, '--plan requires a <path>');
       i += 1;
@@ -293,10 +325,10 @@ const parseArgs = (argv) => {
       i += 1;
     } else throw fail(2, `unknown argument: ${a}`);
   }
-  if (!constraints && !autonomy && plan == null) {
-    throw fail(2, 'nothing to assemble — pass --constraints, --autonomy, and/or --plan <path>');
+  if (!constraints && !autonomy && plan == null && extra.length === 0) {
+    throw fail(2, 'nothing to assemble — pass --constraints, --autonomy, --plan <path>, and/or --extra <text|@file>');
   }
-  return { constraints, autonomy, plan, out, reserve };
+  return { constraints, autonomy, plan, out, reserve, extra };
 };
 
 const resolveBudget = (env, reserve) => {
@@ -316,7 +348,7 @@ export const main = (argv, ctx = {}) => {
   const env = ctx.env ?? process.env;
   try {
     if (argv.includes('--help') || argv.includes('-h')) return { code: 0, stdout: HELP, stderr: '' };
-    const { constraints, autonomy, plan, out, reserve } = parseArgs(argv);
+    const { constraints, autonomy, plan, out, reserve, extra } = parseArgs(argv);
     const budget = resolveBudget(env, reserve);
 
     const readOrStop = (path, label) => {
@@ -348,8 +380,65 @@ export const main = (argv, ctx = {}) => {
     }
     const planText = plan != null ? readOrStop(plan, 'plan file') : null;
 
+    // --extra @file reads are CONFINED: the bridge tier auto-allows this tool with an args
+    // wildcard, so an unconfined @file would let an unattended run ship ANY readable file
+    // (~/.ssh, ~/.bashrc) into a prompt payload bound for a subscription CLI. The admitted read
+    // surface — computed ONCE per invocation — is the PROVEN git work tree (rev-parse success
+    // required; a cwd fallback would collapse the guard when cwd=$HOME) plus the system temp
+    // surface, MINUS the git dir(s) — repository internals never enter a facts payload. A non-@
+    // value is literal fact text (the agy-review --facts convention).
+    const extraReadSurface = () => {
+      const tempRoots = systemTempRoots();
+      const top = gitLine(['rev-parse', '--show-toplevel'], cwd);
+      if (top == null || top.status !== 0) return { tempRoots, topReal: null, gitDirsReal: [] };
+      const topReal = realpathSync(top.stdout.replace(/\r?\n$/, ''));
+      const gitDirsReal = ['--absolute-git-dir', '--git-common-dir'].map((flag) => {
+        const r = gitLine(['rev-parse', flag], cwd);
+        if (r == null || r.status !== 0) {
+          throw fail(1, `--extra cannot resolve the git dir (git rev-parse ${flag} failed) — refusing @file reads in an unmappable repo`);
+        }
+        return realpathSync(resolve(cwd, r.stdout.replace(/\r?\n$/, '')));
+      });
+      // The linked-worktree `.git` is a FILE inside the tree yet outside both answers above —
+      // repository metadata all the same.
+      gitDirsReal.push(join(topReal, '.git'));
+      return { tempRoots, topReal, gitDirsReal };
+    };
+    const surface = extra.some((v) => v.startsWith('@')) ? extraReadSurface() : null;
+    const resolveExtra = (value) => {
+      if (!value.startsWith('@')) return value;
+      const ref = value.slice(1);
+      const real = (() => {
+        try {
+          // Canonicalize the PARENT only — the leaf stays un-dereferenced so the no-follow open
+          // refuses a symlink leaf instead of silently reading its target.
+          const lexical = resolve(cwd, ref);
+          return join(realpathSync(dirname(lexical)), basename(lexical));
+        } catch (err) {
+          throw fail(1, `--extra file '${ref}' is unreadable (${(err && err.code) || err}) — STOP`);
+        }
+      })();
+      const within = (root) => real === root || real.startsWith(`${root}${sep}`);
+      const inTree = surface.topReal != null && within(surface.topReal);
+      if (!inTree && !surface.tempRoots.some(within)) {
+        throw fail(1, `--extra '@${ref}' resolves outside the work tree and the system temp surface (${real}) — refusing to read it into the facts payload`);
+      }
+      if (surface.gitDirsReal.some(within)) {
+        throw fail(1, `--extra '@${ref}' resolves inside the git dir (${real}) — repository internals never enter a facts payload`);
+      }
+      // Descriptor-bound read (the kit's ONE no-follow door): a FIFO cannot block the open, and a
+      // leaf swapped after the containment checks cannot change what the fd reads.
+      const r = readRegularFileNoFollow(real);
+      if (r.outcome === 'absent') throw fail(1, `--extra file '${ref}' is unreadable (ENOENT) — STOP`);
+      if (r.outcome === 'foreign') throw fail(1, `--extra file '${ref}' is not a regular file (${r.className}) — refusing; STOP`);
+      if (r.outcome !== 'ok') throw fail(1, `--extra file '${ref}' is unreadable (${r.code}) — STOP`);
+      if (r.content.trim() === '') throw fail(1, `--extra file '${ref}' is empty — nothing to append; STOP`);
+      return r.content; // byte-verbatim — no trailing-newline normalization
+    };
+    const extraTexts = extra.map(resolveExtra);
+
     const parts = [];
-    const assembled = assembleGrounding({ constraintsText, autonomyText, planText, planLabel: plan ?? 'plan' });
+    const assembled = assembleGrounding({ constraintsText, autonomyText, planText, planLabel: plan ?? 'plan', extraTexts });
     if (assembled) parts.push(assembled);
     const payload = parts.join('\n');
     const { text, trimmedBytes } = trimToBudget(payload, budget);
