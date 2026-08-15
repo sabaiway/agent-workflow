@@ -563,3 +563,104 @@ describe('grounding — pure helpers', () => {
     }
   });
 });
+
+describe('grounding --extra — orchestrator facts merge INSIDE the tool (corpus #88/#95: the pre-dispatch append lane)', () => {
+  it('literal and @file extras append verbatim AFTER the mechanical sections, in argv order; --extra alone assembles', () => {
+    const root = makeDir();
+    const extraDir = mkdtempSync(join(tmpdir(), 'grounding-extra-'));
+    writeFileSync(join(extraDir, 'live.md'), '## Live probe\n\nagy models: catalog captured\n');
+    const r = run(root, ['--constraints', '--extra', 'inline orchestrator fact', '--extra', `@${join(extraDir, 'live.md')}`]);
+    assert.equal(r.code, 0, r.stderr);
+    const iSection = r.stdout.indexOf('## 🚫 Hard Constraints');
+    const iInline = r.stdout.indexOf('inline orchestrator fact');
+    const iFile = r.stdout.indexOf('agy models: catalog captured');
+    assert.ok(iSection >= 0 && iSection < iInline && iInline < iFile, `mechanical → literal → file, in argv order (${iSection}/${iInline}/${iFile})`);
+    const alone = run(root, ['--extra', 'only fact']);
+    rmSync(extraDir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(alone.code, 0, alone.stderr);
+    assert.match(alone.stdout, /only fact/, '--extra is a sufficient source on its own');
+  });
+
+  it('an @file outside BOTH the work tree and the system temp surface refuses loudly before any read', () => {
+    const root = makeDir();
+    // homedir() exists everywhere, is outside both surfaces, and the refusal must fire BEFORE any
+    // read — the exfil class this guard closes (the tool is bridge-tier auto-allowable).
+    const r = run(root, ['--constraints', '--extra', `@${homedir()}`]);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /--extra .*outside the work tree and the system temp surface/);
+    assert.equal(r.stdout, '', 'nothing is emitted on a refused extra');
+  });
+
+  it('a MISSING @file and an EMPTY @file are loud STOPs, never silent skips', () => {
+    const root = makeDir();
+    const extraDir = mkdtempSync(join(tmpdir(), 'grounding-extra-empty-'));
+    writeFileSync(join(extraDir, 'empty.md'), '');
+    const missing = run(root, ['--constraints', '--extra', `@${join(extraDir, 'no-such.md')}`]);
+    assert.equal(missing.code, 1);
+    assert.match(missing.stderr, /--extra file .*unreadable/);
+    const empty = run(root, ['--constraints', '--extra', `@${join(extraDir, 'empty.md')}`]);
+    rmSync(extraDir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(empty.code, 1);
+    assert.match(empty.stderr, /--extra file .*empty/);
+  });
+
+  it('usage: --extra without a value, an empty literal, and a bare @ are usage errors (exit 2)', () => {
+    const root = makeDir();
+    for (const argv of [['--constraints', '--extra'], ['--constraints', '--extra', ''], ['--constraints', '--extra', '@']]) {
+      const r = run(root, argv);
+      assert.equal(r.code, 2, argv.join(' '));
+      assert.match(r.stderr, /--extra requires/, argv.join(' '));
+    }
+    rmSync(root, { recursive: true, force: true });
+  });
+});
+
+describe('grounding --extra — round-1 council folds (F1 git-dir carve-out, F2 race-free read, F6 verbatim bytes)', () => {
+  it('a FIFO @file refuses FAST as non-regular — the read can never block (F2)', () => {
+    const root = makeDir();
+    const dir = mkdtempSync(join(tmpdir(), 'grounding-extra-fifo-'));
+    const fifo = join(dir, 'facts.md');
+    const mk = spawnSync('mkfifo', [fifo], { encoding: 'utf8' });
+    assert.equal(mk.status, 0, mk.stderr);
+    const started = Date.now();
+    const r = run(root, ['--constraints', '--extra', `@${fifo}`]);
+    const elapsed = Date.now() - started;
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /--extra file .*not a regular file \(FIFO\)/);
+    assert.ok(elapsed < 2000, `returned fast (${elapsed}ms) — the FIFO read never blocked`);
+  });
+
+  it('an @file inside the git dir refuses even though it sits under the work tree AND the temp surface (F1)', () => {
+    const root = makeDir();
+    const g = (...a) => spawnSync('git', a, { cwd: root, encoding: 'utf8' });
+    g('init', '-q');
+    g('config', 'user.email', 'p@e');
+    g('config', 'user.name', 'p');
+    writeFileSync(join(root, '.git', 'sneak.md'), 'repository internals\n');
+    const r = run(root, ['--constraints', '--extra', `@${join(root, '.git', 'sneak.md')}`]);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /--extra .*inside the git dir/);
+    assert.doesNotMatch(r.stdout, /repository internals/, 'the refused content never reaches stdout');
+  });
+
+  it('extras are byte-VERBATIM: a missing trailing newline stays missing, a run of them stays a run (F6)', () => {
+    const root = makeDir();
+    const dir = mkdtempSync(join(tmpdir(), 'grounding-extra-bytes-'));
+    writeFileSync(join(dir, 'bare.md'), 'bare tail no newline');
+    writeFileSync(join(dir, 'runs.md'), 'kept tail\n\n\n');
+    const bare = run(root, ['--constraints', '--extra', `@${join(dir, 'bare.md')}`]);
+    const runs = run(root, ['--constraints', '--extra', `@${join(dir, 'runs.md')}`]);
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(bare.code, 0, bare.stderr);
+    assert.equal(bare.stdout, `${CONSTRAINTS_SECTION}\nbare tail no newline`, 'exact bytes, no appended newline');
+    assert.equal(runs.code, 0, runs.stderr);
+    assert.equal(runs.stdout, `${CONSTRAINTS_SECTION}\nkept tail\n\n\n`, 'exact bytes, the newline run survives');
+  });
+});

@@ -4,6 +4,38 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 5.8.0 — the bundled agy bridge speaks the catalog the installed CLI actually serves, and grounding stops needing a shell (AD-095; antigravity-cli-bridge 5.2.0)
+
+**A model display string is matched exactly, so a stale one is not a documentation bug — it is a
+dispatch that refuses before it spends anything.** The bundled agy bridge had been describing a
+catalog captured from CLI v1.0.13 while the installed binary moved to 1.1.13. The user-facing
+catalog tables and every default pin now carry bytes read off `agy models` on the live binary,
+which also turned up a `Gemini 3.6 Flash` family no announcement mentioned and confirmed 3.5 Flash
+is still served. (The wrapper's own header comment stays a compact family inventory and now says
+so, pointing at `agy models` for the exact strings.)
+
+- **`Gemini 3.7 Flash (High)` is the bridge default for both roles** — `agy-run` and `agy-review` —
+  and joins the review wrapper's frontier set, so a council review on it stays advisory-silent.
+  Asserting frontier grade for the review lane was the maintainer's explicit call, not a default
+  that drifted. Any model remains selectable through `AGY_MODEL`; the sub-frontier advisory is
+  still a silenceable warning, never a gate.
+- **The catalog lists every served row individually.** The 3.6 and 3.5 families are enumerated
+  Low/Medium/High rather than collapsed into `(Low|Medium|High)` — a collapsed row reads as a
+  display string that does not exist, and pasting it fails.
+- **The reference stops overclaiming the wrapper's output.** v1.1.13 adds `--output-format
+  json|stream-json`, `--json-schema`, `--effort` and `--mode`; the wrapper adopts none of them, so
+  the docs now say text-DEFAULT and state plainly that raw passthrough JSON rides without
+  first-class parsing or validation. The old "no JSON output mode" sentence had become false.
+- **`grounding.mjs --extra <text|@file>` merges orchestrator facts inside the tool.** Appending
+  live judgment facts to an emitted facts payload had been a shell append four times running; it is
+  now an input. Extras append byte-verbatim after the mechanical sections. The read surface is
+  deliberately narrow and fail-closed: an `@file` must sit inside a PROVEN work tree (a successful
+  `git rev-parse --show-toplevel` — never a `cwd` fallback) or the system temp surface, never
+  inside the git dir including a linked worktree's `.git` gitfile, and it is read through the kit's
+  no-follow descriptor door so a FIFO cannot block the assembler and a symlink leaf cannot
+  substitute its target. Git location variables (`GIT_DIR`, `GIT_WORK_TREE`, …) are scrubbed before
+  every git query, so an ambient override cannot prove a foreign tree.
+
 ## 5.7.0 — what the kit emits is now something a test executed, a claim it proved, or a command you can run (AD-092 + AD-093 + AD-094; memory 4.3.0)
 
 **Three feedback plans, one release.** A live upgrade session on a deployed TypeScript project

@@ -18,13 +18,14 @@ edits, verification, and final judgment.
 
 | Task | Model |
 |---|---|
-| Reachability / smoke / "is it wired?" | `Gemini 3.5 Flash (Low)` |
-| Cheap probes, summaries | `Gemini 3.5 Flash (Medium)` |
-| Quick review with a little more effort | `Gemini 3.5 Flash (High)` |
-| Reasoning, plan critique, careful drafting | `Gemini 3.1 Pro (High)` (wrapper default) |
-| Same reasoning, lower quota cost | `Gemini 3.1 Pro (Low)` |
+| Reachability / smoke / "is it wired?" | `Gemini 3.7 Flash (Low)` |
+| Cheap probes, summaries | `Gemini 3.7 Flash (Medium)` |
+| Review, reasoning, careful drafting | `Gemini 3.7 Flash (High)` (wrapper default; asserted frontier-grade) |
+| Slower, deeper reasoning pass | `Gemini 3.1 Pro (High)` |
+| Same Pro reasoning, lower quota cost | `Gemini 3.1 Pro (Low)` |
 | A different engine's opinion | `Claude Sonnet 4.6 (Thinking)`, `Claude Opus 4.6 (Thinking)`, or `GPT-OSS 120B (Medium)` |
 
+The 3.6 / 3.5 Flash families remain served — prefer 3.7 (newest generation at the same tiers).
 Don't reach for Pro by reflex — Flash answers most reachability/probe questions for a fraction of the
 quota.
 
@@ -94,7 +95,7 @@ What it does for you, and what YOU must supply:
   `AGY_REVIEW_ALLOW_ADDDIR` is **RETIRED** (recognized, arms nothing): headless `agy` auto-denies its
   own `read_file`, so the offload it armed could return a confident fabrication with no way to tell.
   The kit never grants that permission — the feed exists so none is needed.
-- **Model:** frontier default `Gemini 3.1 Pro (High)`; any model is allowed (a sub-frontier one earns a
+- **Model:** frontier default `Gemini 3.7 Flash (High)`; any model is allowed (a sub-frontier one earns a
   silenceable `AGY_PROBE=1` advisory). The service can still **stall on large/substantive prompts**
   (Issue-001) — keep reviews **focused**; the hard timeout is the guard.
 - **Posture banner — quote it verbatim.** Every review states its ACTUAL posture on ONE stderr line
@@ -127,9 +128,9 @@ Probe **reachability** from a project root (cheap model) — this is the one pla
 context file is the point of the prompt:
 
 ```bash
-AGY_MODEL="Gemini 3.5 Flash (Low)" agy-run \
+AGY_MODEL="Gemini 3.7 Flash (Low)" agy-run \
   "Read the cwd context file and report the dialogue language plus one Hard Constraint."
-AGY_MODEL="Gemini 3.5 Flash (Low)" agy-run \
+AGY_MODEL="Gemini 3.7 Flash (Low)" agy-run \
   "Without using a file pointer, is there a project-specific planning skill in this repo? Name it and cite its path."
 ```
 

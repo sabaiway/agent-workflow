@@ -17,7 +17,9 @@
 # policy (no plan contract, no auto-approve, no workspace edits) — that is left
 # to whatever flow we design later, which can opt in via passthrough flags.
 #
-# Models (pass the exact display string from `agy models`, or set AGY_MODEL):
+# Model families (compact inventory only; run `agy models` for exact display strings, then pass
+# one via AGY_MODEL):
+#   Gemini 3.7 Flash (Low|Medium|High), Gemini 3.6 Flash (Low|Medium|High),
 #   Gemini 3.5 Flash (Low|Medium|High), Gemini 3.1 Pro (Low|High),
 #   Claude Sonnet 4.6 (Thinking), Claude Opus 4.6 (Thinking), GPT-OSS 120B (Medium)
 #
@@ -237,8 +239,9 @@ if ! command -v agy >/dev/null 2>&1; then
   exit 127
 fi
 
-# `-` (empty) => skip --model and let agy use settings.json; default to Pro.
-AGY_MODEL="${AGY_MODEL-Gemini 3.1 Pro (High)}"
+# `-` (empty) => skip --model and let agy use settings.json; default to Flash (High) — asserted
+# frontier-grade (fork (a), maintainer 2026-08-14).
+AGY_MODEL="${AGY_MODEL-Gemini 3.7 Flash (High)}"
 AGY_TIMEOUT="${AGY_TIMEOUT:-5m}"
 AGY_TIMEOUT="$(aw_effective_timeout AGY_TIMEOUT 5m)"
 # Hard wall-clock cap (defaults to AGY_TIMEOUT). agy's own --print-timeout is NOT a reliable
@@ -355,7 +358,7 @@ set -e
 if [[ $rc -eq 124 || $rc -eq 137 ]]; then
   echo "error: agy exceeded the hard cap AGY_HARD_TIMEOUT=$AGY_HARD_TIMEOUT and was terminated." >&2
   echo "       This usually means a heavy '--add-dir' agentic run, or the slowest model looping." >&2
-  echo "       Retry with a faster model (e.g. AGY_MODEL='Gemini 3.5 Flash (High)') or a" >&2
+  echo "       Retry with a faster model (e.g. AGY_MODEL='Gemini 3.7 Flash (Low)') or a" >&2
   echo "       self-contained prompt without --add-dir. Raise AGY_HARD_TIMEOUT only if the run is healthy." >&2
 fi
 exit $rc

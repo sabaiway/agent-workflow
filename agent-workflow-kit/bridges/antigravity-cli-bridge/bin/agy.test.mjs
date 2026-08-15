@@ -447,6 +447,30 @@ describe('agy.sh — bridge settings file (bridges 2.3.0)', { concurrency: true 
   });
 });
 
+// ── the wrapper's OWN default model (fork (a), round-1 council F3) ────────────────
+describe('agy.sh — default model pin', () => {
+  it('absent AGY_MODEL → the stub argv carries --model Gemini 3.7 Flash (High)', () => {
+    const home = makeSandbox(ARGV_STUB);
+    const argvFile = join(home, 'argv.txt');
+    const r = runWrapper(home, { AGY_STUB_ARGV: argvFile });
+    const argv = readFileSync(argvFile, 'utf8');
+    rmSync(home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(argv, /^--model$/m, 'the default run passes --model');
+    assert.match(argv, /^Gemini 3\.7 Flash \(High\)$/m, 'the wrapper default is the probed display string');
+  });
+
+  it("explicit AGY_MODEL='' drops --model entirely (settings.json takes over)", () => {
+    const home = makeSandbox(ARGV_STUB);
+    const argvFile = join(home, 'argv.txt');
+    const r = runWrapper(home, { AGY_MODEL: '', AGY_STUB_ARGV: argvFile });
+    const argv = readFileSync(argvFile, 'utf8');
+    rmSync(home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(argv, /^--model$/m, 'an explicit empty model never emits --model');
+  });
+});
+
 // ── settings surface ⟷ manifest (drift guard, D6) ────────────────────────────────
 // agy-run's --help stays candidate-C (not contract-pinned), but its SETTINGS surface
 // is manifest-pinned like the other three wrappers: the Settings help section and the

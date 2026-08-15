@@ -9,7 +9,7 @@ works in any project.
 ```bash
 curl -fsSL https://antigravity.google/cli/install.sh | bash
 export PATH="$HOME/.local/bin:$PATH"   # add to ~/.bashrc / ~/.zshrc to persist
-agy --version                          # expect 1.0.13 or newer
+agy --version                          # expect 1.1.13 or newer
 ```
 
 - The binary is **`agy`** (not `antigravity`); it installs to `~/.local/bin/agy`.
@@ -59,12 +59,13 @@ agy --version
 echo "say OK" | agy-run -
 ```
 
-Expected: the version prints (`1.0.13` or newer), then a short reply containing `OK`. If `agy-run`
+Expected: the version prints (`1.1.13` or newer), then a short reply containing `OK`. If `agy-run`
 reports `'agy' not found`, fix your `PATH` (step 1). If it asks you to sign in, complete step 2.
 
 ## Notes
 
-- `agy-run` is headless and plain-text only; there is no JSON output mode.
+- `agy-run` is headless and text by default; the CLI's 1.1.x `--output-format json` can ride
+  passthrough (`-- --output-format json`) but the wrapper adds no parsing/validation.
 - `AGY_MODEL` selects the exact model display string; `AGY_TIMEOUT` controls `--print-timeout`.
 - Extra `agy` flags go after `--`, e.g. `agy-run @prompt.md -- --add-dir .`.
 - Re-run interactive `agy` only when the OAuth token expires or the account changes.

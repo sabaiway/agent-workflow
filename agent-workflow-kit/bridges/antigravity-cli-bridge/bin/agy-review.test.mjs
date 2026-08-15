@@ -285,7 +285,16 @@ describe('agy-review.sh — model policy advisory (1)', () => {
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /non-frontier model/);
-    assert.match(r.argv, /Gemini 3\.1 Pro \(High\)/, 'the frontier default reaches agy');
+    assert.match(r.argv, /Gemini 3\.7 Flash \(High\)/, 'the frontier default reaches agy');
+  });
+
+  it('an explicit Gemini 3.7 Flash (High) is FRONTIER — no advisory (fork (a), maintainer 2026-08-14)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: 'Gemini 3.7 Flash (High)' } });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stderr, /non-frontier model/, 'a FRONTIER_SET member never warns');
+    assert.match(r.argv, /Gemini 3\.7 Flash \(High\)/);
   });
 });
 
@@ -2444,8 +2453,8 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', () => {
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /review posture: model=Gemini 3\.1 Pro \(High\)/, 'the banner states the actual run posture');
-    assert.deepEqual(receipts[0].posture, { model: 'Gemini 3.1 Pro (High)' }, 'banner ↔ receipt parity');
+    assert.match(r.stderr, /review posture: model=Gemini 3\.7 Flash \(High\)/, 'the banner states the actual run posture');
+    assert.deepEqual(receipts[0].posture, { model: 'Gemini 3.7 Flash (High)' }, 'banner ↔ receipt parity');
     assert.deepEqual(Object.keys(receipts[0]), Object.keys(RECEIPT_FIXTURE), 'fixture key set + order');
   });
 
@@ -2498,7 +2507,7 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', () => {
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /^review posture: model=Gemini 3\.1 Pro \(High\) timeout=30m$/m);
+    assert.match(r.stderr, /^review posture: model=Gemini 3\.7 Flash \(High\) timeout=30m$/m);
     assert.deepEqual(Object.keys(receipts[0].posture), ['model'], 'timeout never enters the receipt posture');
   });
 

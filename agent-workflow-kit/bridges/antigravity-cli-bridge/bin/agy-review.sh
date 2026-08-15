@@ -35,7 +35,7 @@
 #   agy-review --conversation <id> [--decided @f] [--focus "…"]   # resume a specific conversation
 #
 # Environment (every optional var has an explicit default so a no-env run is safe under set -u):
-#   AGY_MODEL                default "Gemini 3.1 Pro (High)"; ANY model allowed (advisory warn off-frontier).
+#   AGY_MODEL                default "Gemini 3.7 Flash (High)"; ANY model allowed (advisory warn off-frontier).
 #                            Set empty (AGY_MODEL=) to drop --model and use agy's settings.json.
 #   AGY_HARD_TIMEOUT         default 30m  (duration string; the timeout(1) hard cap via agy-run)
 #   AGY_TIMEOUT              default = AGY_HARD_TIMEOUT (agy's soft --print-timeout)
@@ -322,11 +322,11 @@ aw_resolve_timeout_bin() {
   printf '%s' "$bin"
 }
 
-DEFAULT_AGY_REVIEW_MODEL="Gemini 3.1 Pro (High)"
+DEFAULT_AGY_REVIEW_MODEL="Gemini 3.7 Flash (High)"
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by agy-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="agy"
-AW_BRIDGE_VERSION="5.1.1"  # aw-version-anchor
+AW_BRIDGE_VERSION="5.2.0"  # aw-version-anchor
 # `-` not `:-` so an EXPLICIT empty AGY_MODEL= survives (drop --model, use settings.json — agy.sh:52).
 AGY_MODEL="${AGY_MODEL-$DEFAULT_AGY_REVIEW_MODEL}"
 # D5 control-byte screen — IMMEDIATELY after resolution, BEFORE the off-frontier advisory (or any
@@ -335,8 +335,9 @@ if [[ "$AGY_MODEL" == *[$'\x01'-$'\x1f'$'\x7f']* ]]; then
   echo "error: AGY_MODEL contains control bytes — fix the setting (env or bridge-settings.conf) and re-run." >&2
   exit 2
 fi
-# Frontier review models. ANY model is allowed; a sub-frontier one only earns a soft, silenceable warning.
-FRONTIER_SET=("Gemini 3.1 Pro (High)" "Claude Opus 4.6 (Thinking)" "Claude Sonnet 4.6 (Thinking)")
+# Frontier review models. ANY model is allowed; a sub-frontier one only earns a soft, silenceable
+# warning. Gemini 3.7 Flash (High) is asserted frontier-grade (fork (a), maintainer 2026-08-14).
+FRONTIER_SET=("Gemini 3.7 Flash (High)" "Gemini 3.1 Pro (High)" "Claude Opus 4.6 (Thinking)" "Claude Sonnet 4.6 (Thinking)")
 
 # Duration-string timeouts (NOT codex's bare seconds): agy-run forwards a duration to --print-timeout,
 # and the timeout(1) hard cap is a duration too — never numerically compared, so 30m vs 2h is fine.

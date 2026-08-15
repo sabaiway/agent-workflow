@@ -45,7 +45,7 @@ for (const base of [ROOT, join(ROOT, 'agent-workflow-kit', 'bridges')]) {
     it('the kit RENDER composes exactly the manifest pins (+ the bridge-settings tier overlay)', () => {
       const bundleRoot = base === ROOT ? join(ROOT, 'agent-workflow-kit', 'bridges') : base;
       const rendered = composeConfiguredPosture({ bundleRoot, settings: { active: [] } });
-      assert.equal(rendered, 'codex model=gpt-5.6-sol effort=xhigh tier=standard · agy model=Gemini 3.1 Pro (High)');
+      assert.equal(rendered, 'codex model=gpt-5.6-sol effort=xhigh tier=standard · agy model=Gemini 3.7 Flash (High)');
       const fast = composeConfiguredPosture({
         bundleRoot,
         settings: { active: [{ key: 'CODEX_SERVICE_TIER', value: 'priority', source: 'file', bridge: 'codex-cli-bridge' }] },

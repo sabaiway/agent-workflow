@@ -7,6 +7,29 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-15 — AD-095 the catalog is whatever the installed binary says, and the facts assembler stops needing a shell (kit 5.8.0, antigravity-cli-bridge 5.2.0; memory 4.3.0, engine 2.1.0 and codex-cli-bridge 3.5.0 unchanged)
+
+Gemini 3.7 Flash shipped, and every model surface of the agy bridge was still describing a catalog
+captured from CLI v1.0.13 — while the installed binary had moved to 1.1.13. That is not a stale
+paragraph: a display string is matched exactly, so the wrong one refuses a dispatch before it
+spends anything. The fix is the discipline rather than the edit — every catalog row and default
+pin a user can copy was read off `agy models` on the live binary, which is also how a `Gemini 3.6
+Flash` family nobody had announced turned up, and how 3.5 Flash was confirmed still served rather
+than assumed retired.
+
+`Gemini 3.7 Flash (High)` becomes the default for both bridge roles and joins the review wrapper's
+frontier set — the maintainer's explicit call, because council-review models are a line that only
+moves deliberately. The catalog lists each served tier as its own copy-pasteable row. And the
+reference stops overclaiming: 1.1.13 adds structured output and an effort flag, the wrapper adopts
+neither, so the docs say text-default and name the passthrough that rides without validation.
+
+Riding with it, a queued kit fix that had been overdue four times: `grounding.mjs --extra
+<text|@file>`. Appending orchestrator facts to an assembled review payload had been a shell append
+on the same pipeline step in four consecutive sessions, which is a missing tool input rather than a
+lapse of discipline. Extras now merge inside the tool, byte-verbatim, through a fail-closed read
+surface — a proven work tree or the system temp surface, never the git dir, read through a
+descriptor that a FIFO cannot block and a symlink cannot redirect.
+
 ## 2026-08-14 — AD-092 + AD-093 + AD-094 the feedback-hardening series: emitted things are executed, claims are proven, and a shipping kit is gated against the published one (kit 5.7.0, memory 4.3.0; engine 2.1.0, codex-cli-bridge 3.5.0 and antigravity-cli-bridge 5.1.1 unchanged)
 
 Seven items of feedback from one live upgrade session on a deployed TypeScript project, and every
