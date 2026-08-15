@@ -1,6 +1,6 @@
 // check-docs-size-cli.test.mjs — runCli branch pins the subprocess smokes cannot reach
 // in-process (Phase-5 coverage fill; the main spec file is parity-frozen, so these ride a
-// colocated file): the unknown-argument refusal and the written-empty-index guard.
+// colocated file): the unknown-argument refusal and the pre-write symlink refusal on the index path.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from 'node:fs';
@@ -20,7 +20,7 @@ describe('check-docs-size runCli — refusal branches', () => {
     assert.match(stderr, /Unknown argument: --bogus/);
   });
 
-  it('--write-index landing on a sink path (index stat size 0) is the loud written-empty refusal', async () => {
+  it('--write-index refuses a symlinked index path BEFORE writing, naming the path', async () => {
     const root = mkdtempSync(join(tmpdir(), 'cds-cli-'));
     try {
       mkdirSync(join(root, 'docs', 'ai'), { recursive: true });

@@ -8,8 +8,8 @@
 //   index          docs/ai/index.md            regenerate-if-missing-or-stale (a GENERATED artifact)
 //
 // Each was prose in references/modes/upgrade.md that an agent performed by hand. One command instead
-// of four is deliberate: four independent runs would be four chances to skip one, and the mode doc now
-// has a single invocation point whose four outcome lines it relays.
+// of five is deliberate: five independent runs would be five chances to skip one, and the mode doc now
+// has a single invocation point whose five outcome lines it relays.
 //
 // The contract (pinned by this module's tests):
 //   • --reconcile is REQUIRED. A bare run is a usage error, so nothing writes by accident.
@@ -17,7 +17,7 @@
 //   • The ops run in a FIXED order and one op's failure NEVER skips the rest: every op reports its own
 //     token, and the exit is non-zero when any of them failed.
 //   • The deployment gate runs ONCE, before any op: an absent/symlinked docs/ai stops the whole run
-//     with the gate's own message rather than four copies of it.
+//     with the gate's own message rather than five copies of it.
 //
 // Output is ENGLISH/structured (repo-artifact Hard Constraint); the agent localizes when narrating.
 // Exit codes: 0 every op fine · 1 an op failed, or the deployment gate stopped the run · 2 usage.
@@ -138,7 +138,7 @@ export const main = (argv = [], ctx = {}) => {
     const cwd = resolve(args.cwd ?? ctx.cwd ?? process.cwd());
     const deps = ctx.deps ?? {};
     // ONE deployment gate for the whole run (see the header): with no docs/ai there is nothing to
-    // reconcile, and four identical STOPs would read as four separate problems.
+    // reconcile, and five identical STOPs would read as five separate problems.
     assertDocsAiDeployment(cwd, deps, { noun: 'the project configuration', rel: 'under docs/ai' });
     const outcomes = runEnsures({ cwd, kitRoot: ctx.kitRoot ?? KIT_ROOT, dryRun: args.dryRun, deps, only: args.only });
     return {
