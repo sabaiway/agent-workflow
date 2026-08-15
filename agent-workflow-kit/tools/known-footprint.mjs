@@ -36,6 +36,9 @@ export const stop = (message, fields = {}) =>
 // never a silent un-track. `/docs/plans/` + both `.claude/settings*.json` are listed because a pure
 // hidden deploy has no tracked `.gitignore`; the classifier drops any candidate a tracked `.gitignore`
 // already covers, so in a repo that DOES track those ignores they are never re-written.
+// The enumeration must cover EVERY file the deploy copies into `scripts/` (bootstrap step 8 copies
+// `references/scripts/*.mjs` + `*.test.mjs` wholesale): a name missing here is a file a hidden
+// deployment leaves visible in `git status` — the exact leak this registry exists to prevent.
 export const KIT_OWN_PATHS = [
   '/AGENTS.md',
   '/CLAUDE.md',
@@ -49,11 +52,18 @@ export const KIT_OWN_PATHS = [
   '/scripts/archive-issues.mjs',
   '/scripts/archive-issues.test.mjs',
   '/scripts/archiver-structure.test.mjs',
+  '/scripts/check-docs-size-cli.test.mjs',
+  '/scripts/check-docs-size-ensure.test.mjs',
   '/scripts/check-docs-size.mjs',
   '/scripts/check-docs-size.test.mjs',
+  '/scripts/install-git-hooks-repo-exec.test.mjs',
   '/scripts/install-git-hooks.mjs',
+  '/scripts/install-git-hooks.test.mjs',
   '/scripts/markdown-blocks.mjs',
   '/scripts/markdown-blocks.test.mjs',
+  '/scripts/migrate-gates-branches.test.mjs',
+  '/scripts/migrate-gates.mjs',
+  '/scripts/migrate-gates.test.mjs',
   '/docs/plans/',
   '/.claude/settings.local.json',
   '/.claude/settings.json',

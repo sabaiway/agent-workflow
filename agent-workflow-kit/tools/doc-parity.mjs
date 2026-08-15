@@ -56,7 +56,7 @@ import { COVERAGE_PRODUCER_BODY } from './coverage-producer.mjs';
 // tool renames or drops must fail here rather than leave the doc teaching a vocabulary nobody emits.
 // Imported from the VOCABULARY leaf, never from the ops: a read-only lint must not pull the ensure
 // implementation — and through it the orchestration writer — into its import graph.
-import { RELAYED_ENSURE_TOKENS } from './ensure-vocabulary.mjs';
+import { RELAYED_ENSURE_TOKENS, RELAYED_FAILURE_CAUSES } from './ensure-vocabulary.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -138,6 +138,10 @@ export const BINDINGS = Object.freeze([
   // free. Now one command performs them and the doc enumerates its tokens — backticked, so a bare
   // word in a sentence cannot pass for the pinned outcome.
   ...RELAYED_ENSURE_TOKENS.map((token) => valueBinding(`ensure-outcome:${token}`, token, `\`${token}\``, [UPGRADE_DOC])),
+  // And the CAUSE half of the same promise (index-navigator hotfix / D9): the doc says a `failed`
+  // line OPENS with its cause, so every word that can open one is pinned into the doc that relays it
+  // — otherwise a new cause ships with no doc anyone could have read. Backticked, same reason.
+  ...RELAYED_FAILURE_CAUSES.map((cause) => valueBinding(`ensure-cause:${cause}`, cause, `\`${cause}\``, [UPGRADE_DOC])),
   // The "the tool knows and does not say" contract: a clean-tree PASS must still name a latent arm.
   // It was a prose-only bar a doc could silently drop, so it is pinned to the live string the tool
   // actually emits — a reworded doc dropping the notice fails this pin plus the gate.

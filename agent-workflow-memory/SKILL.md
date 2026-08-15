@@ -3,7 +3,7 @@ name: agent-workflow-memory
 description: Deploy or upgrade a portable AI-agent memory substrate in any project — an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) and a structured `docs/ai/` context store with cap/archive/index enforcement. Use when the user wants to bootstrap `docs/ai/`, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-memory` / `/agent-workflow-memory upgrade`. Triggers on "set up the memory system", "deploy the AI memory here", "bootstrap docs/ai", "upgrade the memory substrate". This is the substrate only — the workflow methodology (plan→execute→review, queue, Cleanup) is owned elsewhere and injected into AGENTS.md by the family composition root.
 disable-model-invocation: true
 metadata:
-  version: '4.3.0'
+  version: '4.4.0'
 ---
 
 # agent-workflow-memory
@@ -113,7 +113,15 @@ bootstrapping over a live system, but the user makes the final call.
    `docs/ai/autonomy.json` — the per-project autonomy policy, seeded SPARSE (the onboarding note
    only, defaults-equivalent — behavior changes only when the user declares levels). Keep each
    `.md` file's frontmatter.
-7. **Fill templates** per the table below.
+7. **Fill templates** per the table below. **Then materialize the navigator, as the last `docs/ai`
+   step:** the entry point declares `docs/ai/index.md` always-loaded and it is a GENERATED artifact
+   with no template, so run
+   `node ${CLAUDE_SKILL_DIR}/references/scripts/check-docs-size.mjs --ensure-index --root=<target>`
+   and relay its one outcome line (`ensure-index: regenerated` / `already-current`, or a
+   `write-refused` / `probe-failed` line naming the offending path — either is a STOP: resolve it
+   before reporting the deploy, since the navigator the entry point declares does not exist yet). The
+   generator runs from the **skill home**, so a **No-Node target** is covered too: the operator's own
+   host runs it, and step 8's copy is not a precondition.
 8. **Install enforcement (Node projects).** Copy `${CLAUDE_SKILL_DIR}/references/scripts/*.mjs`
    (+ `*.test.mjs`) into the project's `scripts/`. **No Node runtime** → skip this + the hook;
    follow the cap/archive/index policy manually.
@@ -214,7 +222,14 @@ Fill strategy:
    the tree untouched and report the pending migration. The deployed pre-commit
    hook gains its `archive-decisions.mjs --check` line only when the hook is next refreshed via
    `node scripts/install-git-hooks.mjs`; an old hook without the line stays consistent-safe (the
-   decisions gate is simply not enforced yet — never a broken hook). **Then**, if the stamp **equals** the head → the substrate is
+   decisions gate is simply not enforced yet — never a broken hook). **Same gate, also
+   stamp-independent — ensure the NAVIGATOR:** `docs/ai/index.md` is a GENERATED artifact the entry
+   point declares always-loaded, so a deployment that never had one must gain it even at head — run
+   `node ${CLAUDE_SKILL_DIR}/references/scripts/check-docs-size.mjs --ensure-index --root=<target>`
+   and relay its outcome line. It writes only when the navigator is missing or stale
+   (`already-current` otherwise), so a re-run changes nothing; a `write-refused` (the write) or
+   `probe-failed` (the tree could not be read) line names the offending path and STOPs this
+   reconcile like any other failed ensure. **Then**, if the stamp **equals** the head → the substrate is
    current (no structure migration is due), and stop after reporting. Report **in the user's
    conversational language**: if step 2's reconcile just **changed something** (a footprint move /
    config seed), say **what changed** in plain terms and ask before committing; if **nothing changed at
@@ -242,7 +257,10 @@ Fill strategy:
    absent (a legacy `AGENTS.md`), gracefully **no-op** on that slot (adding a slot to
    already-deployed files is the composition root's reconcile, not this substrate's job). On any
    malformed marker state (single, reversed, nested, or duplicate pair), **no-op with an error** —
-   never edit.
+   never edit. **Then, before the stamp, re-run the navigator finalizer:** steps 4–6 may have added
+   or changed `docs/ai` files, so run
+   `node ${CLAUDE_SKILL_DIR}/references/scripts/check-docs-size.mjs --ensure-index --root=<target>`
+   once more (idempotent — an untouched tree reports `already-current`) and relay its outcome line.
 7. **Re-stamp** `docs/ai/.memory-version` to the lineage head (atomic write — mechanics unchanged).
    Report changes **in plain human terms** (which parts of the deployment are now different);
    **omit the raw structure number**, and do not recite the two-axes note here (it belongs to

@@ -12,6 +12,11 @@
 //   --check-index     verify docs/ai/index.md is in sync with source frontmatter;
 //                     exit 1 (and print how to fix) if stale. Catches the silent
 //                     drift `--write-index` is supposed to prevent.
+//   --ensure-index    the idempotent finalizer every deploy/upgrade path runs after its last
+//                     docs/ai mutation: probe, write only when the navigator is missing or stale,
+//                     print ONE outcome line (`ensure-index: regenerated|already-current` on
+//                     stdout; `ensure-index: write-refused|probe-failed — <path>: …` on stderr).
+//                     Exit 0 on either written state, 2 on a named refusal — never a stack trace.
 //
 // CLI overrides:
 //   --today=YYYY-MM-DD (default today UTC) — useful for tests / reproducible runs
@@ -19,10 +24,11 @@
 //                      hook passes it so a rotation regenerates the right project's index
 //   --quiet            print only failures (and final summary)
 
-import { readFile, writeFile, readdir, stat } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { dirname, resolve, relative, join, basename } from 'node:path';
+import { readFile, writeFile, readdir, stat, rename, rm } from 'node:fs/promises';
+import { existsSync, lstatSync } from 'node:fs';
+import { dirname, resolve, relative, join, basename, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { randomBytes } from 'node:crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -34,9 +40,16 @@ const INDEX_PATH = resolve(DOCS_DIR, 'index.md');
 // (this deployment's own root); `--root=<dir>` and the exported `regenerateIndex(root, today)`
 // override them so the ADR-rotation hook (archive-decisions.mjs) and hermetic tests can regenerate
 // an arbitrary root's index without ever touching the real repo tree.
-const pathsFor = (root) => ({ root, docsDir: resolve(root, 'docs/ai'), indexPath: resolve(root, 'docs/ai/index.md') });
+const pathsFor = (root) => {
+  const base = resolve(root);
+  return { root: base, docsDir: resolve(base, 'docs/ai'), indexPath: resolve(base, 'docs/ai/index.md') };
+};
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+// The one token every `--ensure-index` outcome line opens with — deploy/upgrade prose relays it
+// verbatim and the kit's ensure op reads it, so it is a contract, not a message.
+const ENSURE_INDEX_PREFIX = 'ensure-index:';
 
 // Project-name + footer links for the index are auto-discovered (no hardcoding):
 //   project name  ← package.json "name" (fallback: repo dir basename)
@@ -45,18 +58,30 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const DEFAULT_PROJECT_NAME = 'this project';
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'dist-ssr', 'coverage', 'build', '.next']);
 
-const walkForName = async (dir, name, acc = [], depth = 0) => {
+// `strict` is the finalizer's lens on the SAME walk: for a report, an unreadable subtree is fairly
+// skipped, but a run that WRITES the navigator may not silently treat "could not read" as "nothing
+// there" — it would publish an index missing whatever it could not see and call that success. Only
+// a genuine ENOENT stays an absence; every other fs error propagates.
+// Only a genuine ENOENT is an absence. A code-LESS throw (an injected reader, a wrapped client) is
+// not evidence of absence either, so it propagates too — "unknown" must never read as "empty".
+const rethrowUnlessAbsent = (err, strict) => {
+  if (strict && err?.code !== 'ENOENT') throw err;
+};
+
+const walkForName = async (dir, name, acc = [], depth = 0, strict = false, deps = {}) => {
   if (depth > 6) return acc;
+  const readDir = deps.readdir ?? readdir;
   let entries;
   try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch {
+    entries = await readDir(dir, { withFileTypes: true });
+  } catch (err) {
+    rethrowUnlessAbsent(err, strict);
     return acc;
   }
   for (const entry of entries) {
     if (entry.isDirectory()) {
       if (SKIP_DIRS.has(entry.name)) continue;
-      await walkForName(join(dir, entry.name), name, acc, depth + 1);
+      await walkForName(join(dir, entry.name), name, acc, depth + 1, strict, deps);
     } else if (entry.isFile() && entry.name === name) {
       acc.push(join(dir, entry.name));
     }
@@ -64,16 +89,29 @@ const walkForName = async (dir, name, acc = [], depth = 0) => {
   return acc;
 };
 
-export const discoverMeta = async (root = ROOT) => {
+export const discoverMeta = async (root = ROOT, { strict = false, deps = {} } = {}) => {
+  const read = deps.readFile ?? readFile;
+  const readDir = deps.readdir ?? readdir;
   let projectName = basename(root);
+  // The READ and the PARSE are separate on purpose: an unreadable package.json is a tree this run
+  // could not see (strict propagates it), while a MALFORMED one is authored content — the basename
+  // fallback, under strict too.
+  let manifest = null;
   try {
-    const pkg = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
-    if (pkg.name) projectName = pkg.name;
-  } catch {
-    /* no package.json — keep dir basename */
+    manifest = await read(resolve(root, 'package.json'), 'utf8');
+  } catch (err) {
+    rethrowUnlessAbsent(err, strict);
   }
-  const agentsFiles = await walkForName(root, 'AGENTS.md');
-  const claudeFiles = await walkForName(root, 'CLAUDE.md');
+  if (manifest !== null) {
+    try {
+      const pkg = JSON.parse(manifest);
+      if (pkg.name) projectName = pkg.name;
+    } catch {
+      /* malformed package.json — keep the dir basename */
+    }
+  }
+  const agentsFiles = await walkForName(root, 'AGENTS.md', [], 0, strict, deps);
+  const claudeFiles = await walkForName(root, 'CLAUDE.md', [], 0, strict, deps);
   const rootAgents = resolve(root, 'AGENTS.md');
   const rootClaude = resolve(root, 'CLAUDE.md');
   // A subdir typically holds AGENTS.md plus a CLAUDE.md symlink to it — list each
@@ -91,26 +129,28 @@ export const discoverMeta = async (root = ROOT) => {
     .map((rel) => `[\`${rel}\`](../../${rel})`);
   let onDemandLinks = [];
   try {
-    const skillDirs = await readdir(resolve(root, '.agents/skills'), { withFileTypes: true });
+    const skillDirs = await readDir(resolve(root, '.agents/skills'), { withFileTypes: true });
     onDemandLinks = skillDirs
       .filter((dirent) => dirent.isDirectory() && /-(patterns|commands)$/.test(dirent.name))
       .map((dirent) => dirent.name)
       .sort()
       .map((name) => `[\`${name}\`](../../.agents/skills/${name}/SKILL.md)`);
-  } catch {
-    /* no .agents/skills — omit the section */
+  } catch (err) {
+    // No .agents/skills — omit the section (under strict, only a real absence may omit it).
+    rethrowUnlessAbsent(err, strict);
   }
   return { projectName, hierarchicalLinks, onDemandLinks };
 };
 
 // Pure argv parser (no I/O, no exit): `help` / `error` ride out as data for runCli to render.
 const parseArgs = (argv) => {
-  const flags = { report: false, writeIndex: false, checkIndex: false, quiet: false };
+  const flags = { report: false, writeIndex: false, checkIndex: false, ensureIndex: false, quiet: false };
   const opts = { today: null, root: null };
   for (const arg of argv) {
     if (arg === '--report') flags.report = true;
     else if (arg === '--write-index') flags.writeIndex = true;
     else if (arg === '--check-index') flags.checkIndex = true;
+    else if (arg === '--ensure-index') flags.ensureIndex = true;
     else if (arg === '--quiet') flags.quiet = true;
     else if (arg.startsWith('--today=')) opts.today = arg.slice('--today='.length);
     else if (arg.startsWith('--root=')) opts.root = arg.slice('--root='.length);
@@ -334,9 +374,74 @@ export const checkIndexFreshness = (rows, onDiskText, meta = {}) => {
   return { fresh: expected === onDiskText, expected };
 };
 
-const writeIndex = async (rows, today, meta, indexPath = INDEX_PATH) => {
+// The navigator is a GENERATED artifact, so its write must land on the deployment's own file and
+// nowhere else: every component of <root>/docs/ai/index.md is lstat'ed no-follow (a symlinked root,
+// `docs`, `docs/ai` or leaf REFUSES — publishing through one would clobber whatever it points at),
+// the body goes out through a unique exclusive-create temp renamed into place with the chain
+// re-checked immediately before the rename, and the temp never survives a failure. The kit runs the
+// same discipline in atomic-write.mjs; this deployment script ships dependency-free, so the
+// semantics are REIMPLEMENTED here rather than imported.
+export const INDEX_WRITE_REFUSED = 'INDEX_WRITE_REFUSED';
+const refuse = (message) => Object.assign(new Error(message), { code: INDEX_WRITE_REFUSED });
+
+const lstatNoFollow = (target, lstat) => {
+  try {
+    return lstat(target);
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return null;
+    throw err;
+  }
+};
+
+// The target is always DERIVED from `root` here (the navigator and its temp sibling), never handed
+// in by a caller, so there is no escape arm to guard: what remains is the no-follow walk.
+const assertContainedNoSymlink = (root, target, lstat) => {
+  const rel = relative(root, target);
+  if (lstatNoFollow(root, lstat)?.isSymbolicLink()) {
+    throw refuse(`${root} is a symlink — refusing to write the navigator through it`);
+  }
+  rel.split(sep).filter(Boolean).reduce((walked, part) => {
+    const current = join(walked, part);
+    if (lstatNoFollow(current, lstat)?.isSymbolicLink()) {
+      throw refuse(`${current} is a symlink — refusing to write the navigator through it`);
+    }
+    return current;
+  }, root);
+};
+
+const writeIndex = async (rows, today, meta, { root = ROOT, indexPath = INDEX_PATH, deps = {} } = {}) => {
+  const lstat = deps.lstat ?? lstatSync;
+  const write = deps.writeFile ?? writeFile;
+  const publish = deps.rename ?? rename;
+  const remove = deps.rm ?? rm;
+  const uniqueSuffix = deps.rand ?? (() => randomBytes(6).toString('hex'));
   const body = buildIndex(rows, today.toISOString().slice(0, 10), meta);
-  await writeFile(indexPath, body, 'utf8');
+  assertContainedNoSymlink(root, indexPath, lstat);
+  const tmp = `${indexPath}.${uniqueSuffix()}.tmp`;
+  assertContainedNoSymlink(root, tmp, lstat);
+  const discardTemp = async (err) => {
+    try {
+      await remove(tmp, { force: true });
+    } catch (cleanupErr) {
+      throw refuse(`${err.message} — and its temp file could not be removed, delete it by hand: ${tmp} (${cleanupErr.message})`);
+    }
+    throw err;
+  };
+  try {
+    await write(tmp, body, { encoding: 'utf8', flag: 'wx' });
+  } catch (err) {
+    // EEXIST means the name is SOMEONE ELSE's file: exclusive-create refused, this run wrote
+    // nothing, and removing it would delete a file we never made. Every other failure can leave a
+    // partial temp behind, and that one is ours to discard.
+    if (err && err.code === 'EEXIST') throw err;
+    await discardTemp(err);
+  }
+  try {
+    assertContainedNoSymlink(root, indexPath, lstat);
+    await publish(tmp, indexPath);
+  } catch (err) {
+    await discardTemp(err);
+  }
 };
 
 // regenerateIndex(root, todayStr) — the ONE reused generator, root-parameterized (item (h)). It runs
@@ -344,15 +449,46 @@ const writeIndex = async (rows, today, meta, indexPath = INDEX_PATH) => {
 // (default this deployment). The ADR-rotation hook reaches it via the CLI (`--write-index --root=…`);
 // hermetic tests call it directly. `todayStr` is 'YYYY-MM-DD' (null → today). Returns the written
 // index path + row count. No second index implementation exists.
-export const regenerateIndex = async (root, todayStr = null) => {
-  const { docsDir, indexPath } = pathsFor(root);
+export const regenerateIndex = async (root, todayStr = null, deps = {}) => {
+  const paths = pathsFor(root);
   const today = computeToday(todayStr);
-  const files = (await walkMarkdownFiles(docsDir)).sort();
-  const inspected = await Promise.all(files.map((f) => inspectFile(f, today, root)));
+  const files = (await walkMarkdownFiles(paths.docsDir)).sort();
+  const inspected = await Promise.all(files.map((f) => inspectFile(f, today, paths.root)));
   const rows = inspected.map(formatRow);
-  const meta = await discoverMeta(root);
-  await writeIndex(rows, today, meta, indexPath);
-  return { indexPath, files: rows.length };
+  const meta = await discoverMeta(paths.root);
+  await writeIndex(rows, today, meta, { root: paths.root, indexPath: paths.indexPath, deps });
+  return { indexPath: paths.indexPath, files: rows.length };
+};
+
+// The finalizer promises its caller EXACTLY ONE outcome line, so every step it owns — the walk, the
+// metadata discovery, the freshness read and the write — runs inside one classified error path: an
+// unreadable docs/ai is a NAMED refusal, never a stack trace. The containment guard runs BEFORE the
+// freshness read for the same reason `already-present` needs a kind probe: a symlinked navigator
+// whose target happens to hold current bytes would otherwise report `already-current` over a file
+// this mode refuses to write through — an exit 0 proving nothing about the deployment's own file.
+const runEnsureIndex = async ({ root, docsDir, indexPath, today, deps }) => {
+  const lstat = deps.lstat ?? lstatSync;
+  const read = deps.readFile ?? readFile;
+  const line = (token) => `${ENSURE_INDEX_PREFIX} ${token} — ${relative(root, indexPath)}`;
+  // The two refusals name STAGES, not error codes: once the write has been entered, ANY failure —
+  // a containment refusal, EIO, EACCES — is a write refusal, because that is what the reader has to
+  // act on. A raw fs error reported as a failed PROBE would send them to the wrong half of the run.
+  let writing = false;
+  try {
+    assertContainedNoSymlink(root, indexPath, lstat);
+    const files = (await walkMarkdownFiles(docsDir)).sort();
+    const inspected = await Promise.all(files.map((file) => inspectFile(file, today, root)));
+    const rows = inspected.map(formatRow);
+    const meta = await discoverMeta(root, { strict: true, deps });
+    const onDisk = existsSync(indexPath) ? await read(indexPath, 'utf8') : null;
+    if (checkIndexFreshness(rows, onDisk, meta).fresh) return { code: 0, out: line('already-current') };
+    writing = true;
+    await writeIndex(rows, today, meta, { root, indexPath, deps });
+    return { code: 0, out: line('regenerated') };
+  } catch (err) {
+    const cause = writing || err?.code === INDEX_WRITE_REFUSED ? 'write-refused' : 'probe-failed';
+    return { code: 2, err: `${ENSURE_INDEX_PREFIX} ${cause} — ${indexPath}: ${err.message}` };
+  }
 };
 
 // The return-code entry point (no process.argv / process.exit / console inside): argv[] →
@@ -370,7 +506,7 @@ export const runCli = async (argv, deps = {}) => {
 
   const { flags, opts, help, error } = parseArgs(argv);
   if (help) {
-    log('Usage: check-docs-size.mjs [--report|--write-index|--check-index] [--today=YYYY-MM-DD] [--root=<dir>] [--quiet]');
+    log('Usage: check-docs-size.mjs [--report|--write-index|--check-index|--ensure-index] [--today=YYYY-MM-DD] [--root=<dir>] [--quiet]');
     return result(0);
   }
   if (error) {
@@ -379,6 +515,16 @@ export const runCli = async (argv, deps = {}) => {
   }
   const { root, docsDir, indexPath } = pathsFor(opts.root ? resolve(opts.root) : (deps.root ?? ROOT));
   const today = computeToday(opts.today);
+
+  // The finalizer owns its whole pipeline (above), so it returns BEFORE the shared walk: a tree the
+  // walk would throw on must still close with one outcome line.
+  if (flags.ensureIndex) {
+    const { code, out, err } = await runEnsureIndex({ root, docsDir, indexPath, today, deps });
+    if (out) log(out);
+    if (err) logError(err);
+    return result(code);
+  }
+
   const files = (await walkMarkdownFiles(docsDir)).sort();
   const inspected = await Promise.all(files.map((f) => inspectFile(f, today, root)));
   const rows = inspected.map(formatRow);
@@ -386,7 +532,12 @@ export const runCli = async (argv, deps = {}) => {
   const meta = flags.writeIndex || flags.checkIndex ? await discoverMeta(root) : null;
 
   if (flags.writeIndex) {
-    await writeIndex(rows, today, meta, indexPath);
+    try {
+      await writeIndex(rows, today, meta, { root, indexPath, deps });
+    } catch (err) {
+      logError(`[check-docs-size] FAIL: ${indexPath}: ${err.message}`);
+      return result(2);
+    }
     log(`Wrote ${relative(root, indexPath)}`);
     const after = await stat(indexPath);
     if (after.size === 0) {

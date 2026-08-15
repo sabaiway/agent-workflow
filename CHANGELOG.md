@@ -7,6 +7,35 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-15 — AD-096 the always-loaded navigator becomes something every deploy path actually creates (memory 4.4.0, kit 5.9.0; engine 2.1.0 and both bridges unchanged)
+
+Every fresh deployment of this family shipped broken, quietly. The entry point it writes declares
+`docs/ai/index.md` **always-loaded**, but that file is generated rather than templated — and no
+bootstrap step ever ran the generator. On a Node project the damage was visible immediately in a
+strange place: the pre-commit hook failed its own index check on the very first commit. On a project
+without Node nothing complained at all; the entry point simply pointed at a file that would never
+exist. The kit's fallback bootstrap carried an identical copy of the gap.
+
+The fix is one idempotent finalizer rather than a seed file. `check-docs-size.mjs --ensure-index`
+probes, writes only when the navigator is missing or stale, and closes with a single outcome line;
+every deploy and upgrade path — the substrate's own, the kit's fallback, and the delegated
+hand-off — runs it at its last `docs/ai` mutation. On upgrade it also becomes the fifth
+project-configuration ensure, so a deployment that never had a navigator gains one without a lineage
+bump, and the authoritative run is the LATE one, after the reconcile that rewrites `docs/ai`
+underneath it.
+
+Two things were hardened on the way, both found by review rather than planned. The navigator's write
+now refuses a symlink at any level of its path and publishes through a temp-then-rename, with the
+containment check ahead of the freshness read — otherwise a symlink whose target happened to hold
+current bytes would be reported "already current" over a file the tool refuses to write through. And
+an unreadable subtree stopped counting as an empty one: the finalizer refuses rather than publishing
+an index missing whatever it could not see.
+
+Alongside, a leak that predates this work: hidden mode's registry named 14 of the scripts a
+deployment copies, and the payload is 21 — so seven were left visible in `git status` on projects
+that chose to keep the footprint out of git (six that predate this work, plus the one it adds). The
+registry is complete, and a test now derives it from the deploy payload so the gap cannot reopen.
+
 ## 2026-08-15 — AD-095 the catalog is whatever the installed binary says, and the facts assembler stops needing a shell (kit 5.8.0, antigravity-cli-bridge 5.2.0; memory 4.3.0, engine 2.1.0 and codex-cli-bridge 3.5.0 unchanged)
 
 Gemini 3.7 Flash shipped, and every model surface of the agy bridge was still describing a catalog

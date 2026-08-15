@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 import { ENSURE_TOKENS, FAILURE_CAUSES } from '../tools/ensure-vocabulary.mjs';
 import {
-  composeFailure, ensureAutonomy, ensureGates, ensureOrchestration, ensureScripts, failedOutcome,
+  composeFailure, ensureAutonomy, ensureGates, ensureIndex, ensureOrchestration, ensureScripts, failedOutcome,
 } from '../tools/ensure-ops.mjs';
 import { main as ensureConfigsMain } from '../tools/ensure-configs.mjs';
 import { CONFIG_REL, KNOWN_PRIOR_README } from '../tools/orchestration-config.mjs';
@@ -180,6 +180,25 @@ ensureFx('scripts-skipped-no-node', ensureScripts({ cwd: project({ node: false }
   const dir = project();
   ensureFx('scripts-write-refused', ensureScripts({ cwd: dir, kitRoot: KIT, deps: { link: () => { throw eacces(); } } }));
 }
+{
+  // The navigator ensure drives a SEPARATE process, so its causes split by how far that process
+  // got — every one witnessed through the real op, never a hand-composed line.
+  const dir = project();
+  const indexFx = (id, deps, dryRun = false) => ensureFx(id, ensureIndex({ cwd: project(), kitRoot: KIT, dryRun, deps }));
+  ensureFx('index-would-regenerate', ensureIndex({ cwd: dir, kitRoot: KIT, dryRun: true, deps: {} }));
+  ensureFx('index-regenerated', ensureIndex({ cwd: dir, kitRoot: KIT, deps: {} }));
+  ensureFx('index-already-current', ensureIndex({ cwd: dir, kitRoot: KIT, deps: {} }));
+  indexFx('index-generator-unlaunchable', { spawnSync: () => ({ error: enoent(), status: null, stdout: '', stderr: '' }) });
+  indexFx('index-generator-failed', { spawnSync: () => ({ status: 3, stdout: '', stderr: 'the generator said nothing\n' }) });
+  indexFx('index-probe-failed', { spawnSync: () => ({ status: 7, stdout: '', stderr: 'neither answer\n' }) }, true);
+  indexFx('index-stale-after-write', {
+    spawnSync: (_cmd, args) => (args.some((a) => a === '--ensure-index')
+      ? { status: 0, stdout: 'ensure-index: regenerated — docs/ai/index.md\n', stderr: '' }
+      // The probe's CANONICAL stale answer — the op matches the sentence, not the words.
+      : { status: 1, stdout: '', stderr: '[check-docs-size] FAIL: docs/ai/index.md is stale (out of sync with source frontmatter).\n' }),
+  });
+}
+
 // The real ensure CLI, BOTH exits: the `  op: token` slots are the characterized exception; every
 // OTHER stdout line — the banner, the details, the failure footer — joins the scanned surface, a
 // failure's closed cause opening stripped after characterization.
@@ -350,7 +369,7 @@ describe('the ensure token slot — the AD-092 D6 closed-vocabulary exception', 
     assert.equal(CLI_RUNS.success.result.code, 0, CLI_RUNS.success.result.stderr);
     assert.equal(CLI_RUNS.failure.result.code, 1, 'a wrong-node-kind gates declaration fails the run');
     for (const key of ['success', 'failure']) {
-      assert.equal(CLI_RUNS[key].slots.length, 4, key);
+      assert.equal(CLI_RUNS[key].slots.length, 5, key);
       for (const slot of CLI_RUNS[key].slots) assert.ok(ENSURE_TOKENS.includes(slot[2]), `${key}: ${slot[0]}`);
     }
     assert.match(CLI_RUNS.failure.result.stdout, /did NOT complete/, 'the failure footer rides the failure exit');

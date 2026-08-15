@@ -1,4 +1,4 @@
-// ensure-ops.mjs — the FOUR upgrade ensure operations, one function each, behind one shared outcome
+// ensure-ops.mjs — the FIVE upgrade ensure operations, one function each, behind one shared outcome
 // shape. The CLI that orders and runs them is ensure-configs.mjs; this module owns what each ensure
 // DOES and, more importantly, what it is allowed to CLAIM.
 //
@@ -23,6 +23,7 @@
 // Dependency-free, Node >= 22. Every fs primitive is injectable (deps.*). No side effects on import.
 
 import { readFileSync, lstatSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { CANON_README, CONFIG_REL, SEED_CONFIG, loadConfig, normalizeCanonical, refreshReadme } from './orchestration-config.mjs';
 import { seedConfig, writeConfig } from './orchestration-write.mjs';
@@ -41,6 +42,7 @@ export {
   DRY_RUN_TOKENS,
   FAILURE_CAUSES,
   RELAYED_ENSURE_TOKENS,
+  RELAYED_FAILURE_CAUSES,
   SEED_SCRIPTS,
   WRITE_TOKENS,
 } from './ensure-vocabulary.mjs';
@@ -275,10 +277,86 @@ export const ensureScripts = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
   return outcome('scripts', anyCreated ? 'seeded' : 'already-present', lines, false);
 };
 
+// ── 5. docs/ai/index.md — the GENERATED navigator, regenerated when missing or stale ───────────────
+
+// The only ensure whose target is generated rather than authored: there is nothing to preserve, and
+// nothing to seed from either — the bundled generator IS the writer, driven through its idempotent
+// finalizer mode. Sync-over-async by the same precedent the ADR rotator uses (spawnSync the CLI):
+// the ensure framework is synchronous, and a second index implementation here would be the drift
+// the one-generator rule exists to prevent.
+const INDEX_REL = 'docs/ai/index.md';
+const GENERATOR_PATH = ['references', 'scripts', 'check-docs-size.mjs'];
+const ENSURE_INDEX_OUTCOME = /^ensure-index: (regenerated|already-current)\b/m;
+const ENSURE_INDEX_REFUSAL = /^ensure-index: (write-refused|probe-failed)\b/m;
+// The probe has no machine line, so its two ANSWERS are matched against the canonical sentences it
+// composes — anchored, not a loose substring: a failure that merely CONTAINS "is stale" (a path, an
+// error quoting the checker's own advice) would otherwise pass for a stale verdict and fail OPEN.
+const PROBE_FRESH = /^\[check-docs-size\] OK — .+ is in sync with source frontmatter\./m;
+const PROBE_STALE = /^\[check-docs-size\] FAIL: .+ is stale \(out of sync with source frontmatter\)\./m;
+// Only the LAUNCH and the pre-write probe are provably zero-write. Once the generator has run, a
+// failure must say that a write may already have landed — the reader's next step depends on it.
+const MAY_HAVE_WRITTEN = 'the navigator may already have been written — re-read it before re-running';
+
+const describeExit = (result) => (result.signal ? `on signal ${result.signal}` : `with code ${result.status}`);
+const bothStreams = (result) => `${String(result.stdout ?? '')}${String(result.stderr ?? '')}`.trim();
+
+export const ensureIndex = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
+  const lstat = deps.lstat ?? lstatSync;
+  const spawn = deps.spawnSync ?? spawnSync;
+  const generator = join(kitRoot, ...GENERATOR_PATH);
+  const drive = (mode) => spawn(process.execPath, [generator, mode, `--root=${cwd}`], { encoding: 'utf8' });
+  const unlaunchable = (result) =>
+    loud('index', 'generator-unlaunchable', `${INDEX_REL}: the bundled generator could not be started, so nothing was probed or written — reinstall the kit. ${causeOf(result.error)}`);
+
+  const probe = probeSeedTarget(join(cwd, INDEX_REL), lstat);
+  if (probe.wrongKind) {
+    return loud('index', 'wrong-node-kind', `${INDEX_REL}: exists but is ${probe.wrongKind} — the navigator is a generated file and this is not one; nothing was read or written, resolve it by hand and re-run`);
+  }
+
+  if (dryRun) {
+    const check = drive('--check-index');
+    if (check.error) return unlaunchable(check);
+    const out = bothStreams(check);
+    if (check.status === 0 && PROBE_FRESH.test(out)) return ok('index', 'already-current', `${INDEX_REL}: in sync with the source frontmatter — nothing would be written`);
+    if (check.status === 1 && PROBE_STALE.test(out)) return ok('index', 'would-regenerate', `${INDEX_REL}: missing or stale — would be written from the source frontmatter`);
+    return loud('index', 'index-probe-failed', `${INDEX_REL}: the freshness probe answered neither fresh nor stale (exited ${describeExit(check)}), so nothing was written. ${out}`);
+  }
+
+  const run = drive('--ensure-index');
+  if (run.error) return unlaunchable(run);
+  const outcome = String(run.stdout ?? '').match(ENSURE_INDEX_OUTCOME);
+  const refusal = String(run.stderr ?? '').match(ENSURE_INDEX_REFUSAL);
+  if (run.status === 2 && refusal) {
+    // The generator's OWN closed refusals: a write it would not publish, and a probe that could not
+    // answer. Each keeps its identity here rather than collapsing into "the generator failed".
+    const cause = refusal[1] === 'write-refused' ? 'write-refused' : 'index-probe-failed';
+    return loud('index', cause, `${INDEX_REL}: ${bothStreams(run)}`);
+  }
+  if (run.status !== 0 || !outcome) {
+    return loud('index', 'generator-failed', `${INDEX_REL}: the generator exited ${describeExit(run)} without a recognized outcome line — ${MAY_HAVE_WRITTEN}. ${bothStreams(run)}`);
+  }
+  if (outcome[1] === 'already-current') return ok('index', 'already-current', `${INDEX_REL}: in sync with the source frontmatter — nothing written`);
+
+  // A claimed regeneration is not a verified one: re-probe, so `regenerated` names a state this run
+  // PROVED rather than a line the generator printed. The verdict is read from the probe's own two
+  // ANSWERS — an exit code alone would turn a probe that merely FAILED (exit 1 on an unreadable
+  // tree) into a false "still stale after the write".
+  const verify = drive('--check-index');
+  const verdict = verify.error ? '' : bothStreams(verify);
+  if (!verify.error && verify.status === 0 && PROBE_FRESH.test(verdict)) {
+    return ok('index', 'regenerated', `${INDEX_REL}: written from the source frontmatter — the navigator is in sync again`);
+  }
+  if (!verify.error && verify.status === 1 && PROBE_STALE.test(verdict)) {
+    return loud('index', 'index-stale-after-write', `${INDEX_REL}: the generator reported a regeneration, but the re-probe still reads the navigator as missing or stale — ${MAY_HAVE_WRITTEN}. ${verdict}`);
+  }
+  return loud('index', 'index-probe-failed', `${INDEX_REL}: the generator reported a regeneration, but the verifying probe answered neither fresh nor stale — ${MAY_HAVE_WRITTEN}. ${verify.error ? causeOf(verify.error) : verdict}`);
+};
+
 // The op table the CLI walks — name → implementation, in ENSURE_OPS order.
 export const ENSURE_IMPLEMENTATIONS = Object.freeze({
   orchestration: ensureOrchestration,
   gates: ensureGates,
   autonomy: ensureAutonomy,
   scripts: ensureScripts,
+  index: ensureIndex,
 });

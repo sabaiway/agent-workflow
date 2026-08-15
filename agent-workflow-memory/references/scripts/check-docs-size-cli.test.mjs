@@ -28,12 +28,13 @@ describe('check-docs-size runCli — refusal branches', () => {
         join(root, 'docs', 'ai', 'a.md'),
         '---\ntype: state\nlastUpdated: 2026-07-18\nscope: session\nstaleAfter: never\nowner: none\nmaxLines: 10\n---\n\n# a\n',
       );
-      // The index path is a symlink into /dev/null: the write lands, the stat reads size 0 —
-      // the guard must refuse loudly instead of reporting a written index.
-      symlinkSync('/dev/null', join(root, 'docs', 'ai', 'index.md'));
+      // The index path is a symlink into /dev/null: the contained write refuses to publish THROUGH
+      // the link (it would clobber the link target), names the path, and writes nothing.
+      const indexPath = join(root, 'docs', 'ai', 'index.md');
+      symlinkSync('/dev/null', indexPath);
       const { code, stderr } = await cli(['--write-index', `--root=${root}`]);
       assert.equal(code, 2);
-      assert.match(stderr, /index\.md was written empty/);
+      assert.match(stderr, new RegExp(`${indexPath} is a symlink`));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

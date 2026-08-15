@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   KIT_OWN_PATHS,
@@ -143,17 +143,38 @@ describe('frozen snapshot', () => {
       '/scripts/archive-issues.mjs',
       '/scripts/archive-issues.test.mjs',
       '/scripts/archiver-structure.test.mjs',
+      '/scripts/check-docs-size-cli.test.mjs',
+      '/scripts/check-docs-size-ensure.test.mjs',
       '/scripts/check-docs-size.mjs',
       '/scripts/check-docs-size.test.mjs',
+      '/scripts/install-git-hooks-repo-exec.test.mjs',
       '/scripts/install-git-hooks.mjs',
+      '/scripts/install-git-hooks.test.mjs',
       '/scripts/markdown-blocks.mjs',
       '/scripts/markdown-blocks.test.mjs',
+      '/scripts/migrate-gates-branches.test.mjs',
+      '/scripts/migrate-gates.mjs',
+      '/scripts/migrate-gates.test.mjs',
       '/docs/plans/',
       '/.claude/settings.local.json',
       '/.claude/settings.json',
     ];
-    assert.equal(KIT_OWN_PATHS.length, 20, 'KIT_OWN_PATHS count sentinel — edit deliberately');
+    assert.equal(KIT_OWN_PATHS.length, 27, 'KIT_OWN_PATHS count sentinel — edit deliberately');
     assert.deepEqual(KIT_OWN_PATHS, expected);
+  });
+
+  // The frozen list above says WHAT is registered; this says the registration is COMPLETE. Bootstrap
+  // step 8 copies `references/scripts/*.mjs` (+ `*.test.mjs`) into the project's `scripts/`, so a
+  // shipped script missing from the registry is a file a hidden deployment leaves in `git status` —
+  // the leak the registry exists to prevent, and one that used to reopen with every new payload file.
+  it('every DEPLOYED enforcement script is registered (the payload is the source of truth)', () => {
+    const deployed = readdirSync(fileURLToPath(new URL('../references/scripts/', import.meta.url)))
+      .filter((name) => name.endsWith('.mjs'))
+      .map((name) => `/scripts/${name}`)
+      .sort();
+    assert.ok(deployed.length > 0, 'the deploy payload must be non-empty for this guard to mean anything');
+    const missing = deployed.filter((path) => !KIT_OWN_PATHS.includes(path));
+    assert.deepEqual(missing, [], 'these ship into scripts/ but hidden mode would leave them visible');
   });
 
   it('KNOWN_FOOTPRINT matches the frozen expected pattern set + count', () => {

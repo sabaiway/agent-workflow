@@ -70,6 +70,7 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'references/scripts/archive-changelog.test.mjs',
       'references/scripts/archive-decisions.test.mjs',
       'references/scripts/archive-issues.test.mjs',
+      'references/scripts/check-docs-size-ensure.test.mjs',
       'references/scripts/check-docs-size.test.mjs',
       'bridges/antigravity-cli-bridge/bin/agy.test.mjs',
       'bridges/antigravity-cli-bridge/bin/agy-review.test.mjs',
@@ -503,7 +504,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       step-3 run-list registry — a PURE zero-import leaf (the ensure-vocabulary pattern) the
     //       upgrade.md step-3 checklist renders from. Its structure test lives in test/ and never
     //       enters the tarball.
-    assert.equal(packed.length, 212, `tarball file count drifted (${packed.length} ≠ 212)`);
+    // 213 = 212 + references/scripts/check-docs-size-ensure.test.mjs (the navigator write contract +
+    //       the --ensure-index finalizer mode — mirrored from the memory package via sync-mirrors,
+    //       so it ships as deploy payload here too).
+    assert.equal(packed.length, 213, `tarball file count drifted (${packed.length} ≠ 213)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

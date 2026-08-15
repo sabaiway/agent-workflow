@@ -4,6 +4,41 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 5.9.0 — the always-loaded navigator becomes something every deploy path actually creates (AD-096; memory 4.4.0)
+
+**A fresh deployment's entry point declared `docs/ai/index.md` always-loaded, and no step ever
+created it.** The navigator is generated, not templated, and nothing in bootstrap ran the generator:
+a Node project was born with a pre-commit hook failing its own index check, and a project without
+Node stayed quietly broken, its entry point pointing at a file nothing writes. The kit's own
+fallback bootstrap carried the same gap. Every deploy and upgrade path now finishes by materializing
+it, and two new guards make "the entry point only points at things a deploy creates" a test rather
+than an intention.
+
+- **A fifth project-configuration ensure: `index`.** `ensure-configs --reconcile` now regenerates
+  `docs/ai/index.md` whenever it is missing or stale, so an existing deployment gains its navigator
+  without a lineage bump — exactly like the config seeds. It never skips a No-Node project: the
+  generator runs from the kit's own bundled copy, not the project's `scripts/`.
+- **The LATE run is the authoritative one.** The agent-rules lens rewrites `docs/ai` after the
+  step-3 reconcile, so `upgrade.md` documents a late `--reconcile --only index` rung at BOTH exits —
+  after the lens block on the equal-head exit, at the end of step 7 on the migrated one — and the
+  step-4/8 reports relay THAT line.
+- **`ensure-configs --only <op>`** runs exactly one ensure. An unknown, missing or repeated
+  selector is a usage error with zero writes: a run that cannot be narrowed as asked must not widen.
+- **Failure says how far it got.** The index op classifies `generator-unlaunchable` (nothing ran),
+  `generator-failed`, `index-probe-failed` and `index-stale-after-write`; every cause that can only
+  arise after the generator ran DISCLOSES that a write may already have landed, and a claimed
+  regeneration is verified by a re-probe that must ANSWER — an exit code alone would turn a failed
+  probe into a false "still stale". Every relayed cause is now doc-parity-bound into `upgrade.md`.
+- **The bundled generator's write is contained and atomic** (mirrored from the memory canon): a
+  symlink at any level of `docs/ai/index.md` refuses, the body is published through an
+  exclusive-create temp + rename, and the containment guard runs BEFORE the freshness read — a
+  symlink whose target happens to hold current bytes is refused, not reported "already current".
+- **Hidden mode now names the whole payload.** `KIT_OWN_PATHS` listed 14 of the 21 files a deploy
+  copies into `scripts/`, so six shipped scripts besides the new one stayed visible in a hidden
+  project's `git status`. The registry is complete (20 → 27) and a new test derives the expected set
+  from the deploy payload itself. Known residual: a registered path is still hidden by NAME rather
+  than proven ownership (`known_issues.md` → Issue-018).
+
 ## 5.8.0 — the bundled agy bridge speaks the catalog the installed CLI actually serves, and grounding stops needing a shell (AD-095; antigravity-cli-bridge 5.2.0)
 
 **A model display string is matched exactly, so a stale one is not a documentation bug — it is a

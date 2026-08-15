@@ -59,3 +59,13 @@ a body matching the current canon is reported *already current*; a body matching
 is refreshed; a custom body is preserved + noted; an absent section is a stated note (never an
 insert); an over-cap refresh is refused; and an unreadable bundled template canon is its own
 loud STOP naming the kit reinstall command.
+
+**Navigator finalizer (runs in BOTH paths, AFTER the lens reconcile above).** `docs/ai/index.md` is
+a GENERATED artifact the entry point declares always-loaded, and the reconcile above may have just
+rewritten a `docs/ai` file — so the finalizer runs at the LAST `docs/ai` mutation of the deploy,
+before the stamp and the report. ONE command:
+`node ${CLAUDE_SKILL_DIR}/references/scripts/check-docs-size.mjs --ensure-index --root=<project>`.
+Relay its one outcome line (*regenerated* / *already current*); a `write-refused` (the write) or
+`probe-failed` (the tree could not be read) line names the offending path and is a loud STOP,
+never a note. It is idempotent, so an earlier run in the
+delegated path (the substrate's own fill step) is never a reason to skip it here.
