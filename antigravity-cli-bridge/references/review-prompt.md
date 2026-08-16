@@ -89,6 +89,12 @@ itself can never reveal the very text it asks for, and the wrapper needs no seco
   construction) or `fed` (proven by echo). The kit's review-state gate requires the field present and
   well-formed, never a particular value, so a receipt minted before this lane existed no longer
   attests. The recovery is stated: re-run the review.
+- **Later turns are routed by a NAMED field.** Turn 1's `--output-format json` envelope carries
+  `conversation_id`; the wrapper validates it against the UUID grammar and dispatches every later
+  turn with `--conversation <id>`. There is no `--continue` fallback in this lane: an id that is
+  absent, wrong-typed or malformed stops the run **before turn 2 is spent**, with NO receipt. (It was
+  formerly scraped from `agy`'s own run log — a format that is `agy`'s to change, so the pin could
+  rot silently; a named field fails loudly instead.)
 
 ### Honest residuals (recorded, not engineered away)
 
@@ -99,9 +105,6 @@ itself can never reveal the very text it asks for, and the wrapper needs no seco
 - A change set whose parts carry **no unique interior line** in the 24..200-byte window (a single
   huge minified line, for instance) cannot be proven delivered, so the wrapper **refuses** rather
   than reviewing unprovably. Split the review, or exclude the blob.
-- The conversation id is parsed from `agy`'s own run log, whose format is `agy`'s to change. An
-  unparseable log **degrades loudly** to `--continue`; correctness still rests on the echo proof,
-  which fails closed when the wrong conversation answers.
 
 ## agy's own permission ask — surfaced, never applied
 

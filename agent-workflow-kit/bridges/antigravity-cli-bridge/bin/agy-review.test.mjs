@@ -23,10 +23,13 @@ const WRAPPER = join(HERE, 'agy-review.sh');
 // exactly — hand-rolled JSON quoting in bash is the defect farm this fake exists to avoid.
 const FAKE_ENVELOPE_ENCODER = [
   'const text = require("node:fs").readFileSync(0, "utf8");',
-  'const [cid, status, noConv] = process.argv.slice(1);',
+  'const [cid, status, shape] = process.argv.slice(1);',
   'const envelope = { conversation_id: cid, status, response: text, duration_seconds: 1.5, num_turns: 1,',
   '  usage: { input_tokens: 10, output_tokens: 5, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 15 } };',
-  'if (noConv === "1") delete envelope.conversation_id;',
+  // The fed lane ROUTES later turns at this field, so the two ways it can be present-but-unusable —
+  // absent, and present with the wrong TYPE — are knobs, not just a bad-grammar string.
+  'if (shape === "missing") delete envelope.conversation_id;',
+  'if (shape === "number") envelope.conversation_id = 42;',
   'process.stdout.write(`${JSON.stringify(envelope)}\\n`);',
 ].join('\n');
 
@@ -53,6 +56,9 @@ const FAKE_AGY = [
   ': "${AGY_FAKE_PROMPT:=/dev/null}"',
   ': "${AGY_FAKE_SENTINEL:=/dev/null}"',
   'printf invoked > "$AGY_FAKE_SENTINEL"',
+  // The fed lane dispatches from the private staging dir (deliberately — see the wrapper), so the
+  // fake's own cwd is the only handle a test has on a directory the exit trap then removes.
+  'printf "%s" "$PWD" > "${AGY_FAKE_CWD:-/dev/null}"',
   '{ for a in "$@"; do printf "%s\\n" "$a"; done; } > "$AGY_FAKE_ARGV"',
   '{ echo "FOO_API_KEY=${FOO_API_KEY:-<unset>}"; echo "ANTIGRAVITY_API_KEY=${ANTIGRAVITY_API_KEY:-<unset>}"; } > "$AGY_FAKE_ENV"',
   'prompt=""',
@@ -63,13 +69,18 @@ const FAKE_AGY = [
   // unparseable-payload arm; AGY_FAKE_STDERR is the CLI's own diagnostic.
   'aw_fmt=""',
   'prev=""; for a in "$@"; do if [[ "$prev" == "--output-format" ]]; then aw_fmt="$a"; fi; prev="$a"; done',
+  // AGY_FAKE_BAD_TURN scopes the two transport-breaking knobs to ONE turn: a fed run whose turn 1
+  // answers normally and whose turn 2 does not is the only way to reach the "no LATER turn is spent"
+  // arms — an unscoped knob breaks turn 1 and the run never gets there.
   'aw_fake_emit() {',
-  '  local body="$1"',
+  '  local body="$1" aw_status="${AGY_FAKE_STATUS:-SUCCESS}" aw_raw=""',
+  '  if [[ -n "${AGY_FAKE_RAW_STDOUT+x}" ]]; then aw_raw=1; fi',
+  '  if [[ -n "${AGY_FAKE_BAD_TURN:-}" && "$turn" != "${AGY_FAKE_BAD_TURN}" ]]; then aw_status="SUCCESS"; aw_raw=""; fi',
   '  if [[ -n "${AGY_FAKE_STDERR:-}" ]]; then printf "%s\\n" "$AGY_FAKE_STDERR" >&2; fi',
-  '  if [[ -n "${AGY_FAKE_RAW_STDOUT+x}" ]]; then printf "%s" "$AGY_FAKE_RAW_STDOUT"; return 0; fi',
+  '  if [[ -n "$aw_raw" ]]; then printf "%s" "$AGY_FAKE_RAW_STDOUT"; return 0; fi',
   '  if [[ "$aw_fmt" != "json" ]]; then printf "%s\\n" "$body"; return 0; fi',
   `  printf "%s\\n" "$body" | node -e '${FAKE_ENVELOPE_ENCODER}' \\`,
-  '    "${AGY_FAKE_CONV_ID:-11111111-2222-3333-4444-555555555555}" "${AGY_FAKE_STATUS:-SUCCESS}" "${AGY_FAKE_NO_CONV:-0}"',
+  '    "${AGY_FAKE_CONV_ID:-11111111-2222-3333-4444-555555555555}" "$aw_status" "${AGY_FAKE_CONV_SHAPE:-ok}"',
   '}',
   'prev=""; for a in "$@"; do',
   '  if [[ "$prev" == "--add-dir" ]]; then',
@@ -90,14 +101,6 @@ const FAKE_AGY = [
   '  printf "%s" "$prompt" > "${AGY_FAKE_PROMPT}.$turn"',
   '  { for a in "$@"; do printf "%s\\n" "$a"; done; } > "${AGY_FAKE_ARGV}.$turn"',
   'fi',
-  // agy writes the conversation id into its --log-file; AGY_FAKE_BAD_CONV_LOG=1 writes a log the
-  // wrapper cannot parse (the D9 degrade arm).
-  'prev=""; for a in "$@"; do',
-  '  if [[ "$prev" == "--log-file" ]]; then',
-  '    if [[ "${AGY_FAKE_BAD_CONV_LOG:-}" == "1" ]]; then printf "no conversation marker here\\n" > "$a"',
-  '    else printf "Starting new conversation %s\\n" "${AGY_FAKE_CONV_ID:-11111111-2222-3333-4444-555555555555}" > "$a"; fi',
-  '  fi; prev="$a"',
-  'done',
   'if [[ -n "${AGY_FAKE_FAIL_TURN:-}" && "$turn" == "${AGY_FAKE_FAIL_TURN}" ]]; then',
   '  printf "FAKE_TURN_FAILURE\\n" >&2; exit 3',
   'fi',
@@ -229,6 +232,7 @@ const run = (sb, { args, env = {}, cwd, wrapper } = {}) => {
     sentinel: join(home, `${tag}-sentinel`), adddir: join(home, `${tag}-adddir`),
     adddirMode: join(home, `${tag}-adddir-mode`), artifactMode: join(home, `${tag}-artifact-mode`),
     artifactCopy: join(home, `${tag}-artifact-copy`), turns: join(home, `${tag}-turns`),
+    dispatchCwd: join(home, `${tag}-dispatch-cwd`),
   };
   const r = spawnSync('bash', [wrapper || WRAPPER, ...args], {
     cwd: cwd || repo,
@@ -243,7 +247,7 @@ const run = (sb, { args, env = {}, cwd, wrapper } = {}) => {
       AGY_FAKE_ARGV: cap.argv, AGY_FAKE_ENV: cap.env, AGY_FAKE_PROMPT: cap.prompt,
       AGY_FAKE_SENTINEL: cap.sentinel, AGY_FAKE_ADDDIR: cap.adddir, AGY_FAKE_ADDDIR_MODE: cap.adddirMode,
       AGY_FAKE_ARTIFACT_MODE: cap.artifactMode, AGY_FAKE_ARTIFACT_COPY: cap.artifactCopy,
-      AGY_FAKE_TURNS: cap.turns,
+      AGY_FAKE_TURNS: cap.turns, AGY_FAKE_CWD: cap.dispatchCwd,
       ...env,
     },
   });
@@ -262,7 +266,7 @@ const run = (sb, { args, env = {}, cwd, wrapper } = {}) => {
     argv: readIf(cap.argv), capEnv: readIf(cap.env), prompt: readIf(cap.prompt),
     adddir: readIf(cap.adddir).trim(), adddirMode: readIf(cap.adddirMode).trim(),
     artifactMode: readIf(cap.artifactMode).trim(), artifactCopy: readIf(cap.artifactCopy),
-    turns, prompts, argvs,
+    dispatchCwd: readIf(cap.dispatchCwd).trim(), turns, prompts, argvs,
   };
 };
 
@@ -364,6 +368,20 @@ describe('agy-review.sh — the pre-spend capability door (Decision 2)', () => {
       assert.equal(receipts.length, 0);
     });
   }
+
+  // Each required flag buys something DIFFERENT, so the refusal must name the cost of the flag that
+  // is actually missing: a build lacking --disable-slash-commands answers perfectly readably and
+  // corrupts the delivered BODY instead, which the envelope explanation would send an operator
+  // hunting the wrong bug.
+  it('the refusal names what the MISSING flag buys, not one blanket envelope explanation', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_HELP_OMIT: '--disable-slash-commands' } });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.notEqual(r.status, 0, r.stderr);
+    assert.equal(r.invoked, false);
+    assert.match(r.stderr, /slash command/i, 'the stated cost is command expansion of the change-set body');
+    assert.doesNotMatch(r.stderr, /cannot read/, 'the unreadable-answer cost belongs to --output-format alone');
+  });
 
   it('`agy --help` exiting non-zero refuses with a DISTINCT cause — never read as "capability present"', () => {
     const sb = makeSandbox();
@@ -511,13 +529,17 @@ describe('agy-review.sh — the operator-visible answer, byte-for-byte (characte
 // raw stdout. The review CONTRACT does not move: the same prompt, the same mandated shape, the same
 // D4 arm. What changes is that a fact the wrapper used to guess at now arrives named.
 describe('agy-review.sh — the dispatch rides the JSON envelope (Phase 4.3)', () => {
+  // The transport is BOTH flags: the envelope carries the answer, and --disable-slash-commands keeps
+  // a change-set line that happens to begin with a slash command as BODY rather than an instruction
+  // the CLI expands. The pre-spend door requires both, so the dispatch must pass both — a door that
+  // demands a capability the wrapper never uses refuses working installs for nothing.
   const argvCarriesTransport = (argv) => {
     const tokens = argv.split('\n');
     const at = tokens.indexOf('--output-format');
-    return at !== -1 && tokens[at + 1] === 'json';
+    return at !== -1 && tokens[at + 1] === 'json' && tokens.includes('--disable-slash-commands');
   };
 
-  it('all three lanes carry --output-format json (single, fed, resume)', () => {
+  it('all three lanes carry the transport flags (single, fed, resume)', () => {
     const single = makeSandbox();
     const one = run(single, { args: ['code', '--facts', 'f'] });
     rmSync(single.home, { recursive: true, force: true });
@@ -1318,29 +1340,77 @@ describe('agy-review.sh — the agy permission fact is surfaced, never applied',
   });
 });
 
+// ── fed lane: the conversation id comes from the ENVELOPE (Phase 5.1) ────────────────────────────
+// The id used to be scraped out of agy's own run log — a format that is agy's to change, degrading
+// to `--continue` when it changed. It is now a NAMED envelope field the reader validates against the
+// UUID grammar, so the pin that used to rot SILENTLY now fails LOUDLY: there is no `--continue`
+// fallback left in this lane and no later turn is spent when turn 1 cannot name its conversation.
 describe('agy-review.sh — fed lane: turn targeting (D9)', () => {
-  it('every turn after the first pins the captured conversation id', () => {
+  it('every turn after the first is ROUTED at the id turn 1`s envelope named', () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
     const fed = fedRun(sb, { AGY_FAKE_CONV_ID: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 0, fed.stderr);
-    assert.match(fed.argvs[0], /(^|\n)--log-file(\n|$)/, 'turn 1 asks agy for its run log');
     assert.ok(!fed.argvs[0].includes('--conversation'), 'turn 1 is fresh');
+    for (const [i, argv] of fed.argvs.entries()) {
+      assert.ok(!argv.includes('--log-file'), `turn ${i + 1} must not ask for a run log any more: ${argv}`);
+      assert.ok(!argv.includes('--continue'), `turn ${i + 1} must never ride the guessing lane: ${argv}`);
+    }
     for (const argv of fed.argvs.slice(1)) {
       assert.match(argv, /(^|\n)--conversation(\n|$)/);
       assert.match(argv, /(^|\n)aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee(\n|$)/);
     }
   });
 
-  it('an unparseable log degrades to --continue with a stated notice, not silently', () => {
-    const sb = makeSandbox();
-    seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_FAKE_BAD_CONV_LOG: '1' });
-    rmSync(sb.home, { recursive: true, force: true });
-    assert.equal(fed.status, 0, fed.stderr);
-    assert.match(fed.stderr, /could not capture the conversation id/, 'the degrade is STATED');
-    for (const argv of fed.argvs.slice(1)) assert.match(argv, /(^|\n)--continue(\n|$)/);
+  // The three ways a NAMED field can still be unusable. Each one would otherwise route every later
+  // turn at an arbitrary conversation, so each stops the run before turn 2 is spent.
+  for (const [name, env] of [
+    ['absent', { AGY_FAKE_CONV_SHAPE: 'missing' }],
+    ['not a string', { AGY_FAKE_CONV_SHAPE: 'number' }],
+    ['failing the UUID grammar', { AGY_FAKE_CONV_ID: 'not-a-conversation-id' }],
+  ]) {
+    it(`a turn-1 conversation id ${name} fails LOUDLY before turn 2, with NO receipt`, () => {
+      const sb = makeSandbox();
+      seedFedChangeSet(sb);
+      const fed = fedRun(sb, env);
+      const receipts = readReceipts(sb.repo);
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(fed.status, 5, `an unusable envelope has the transport code: ${fed.stderr}`);
+      assert.equal(fed.turns, 1, 'no later turn is spent');
+      assert.equal(receipts.length, 0);
+      assert.match(fed.stderr, /agy-envelope: conversation-id/, 'the reader names the field');
+      assert.doesNotMatch(fed.stderr, /--continue/, 'there is no degrade lane to fall back to');
+    });
+  }
+
+  // A LATER turn breaking is a different arm from turn 1 breaking: turn 1 already answered, so the
+  // run has spent real subscription turns and must still stop without attesting anything.
+  for (const [name, env, cause] of [
+    ['whose payload is not an envelope', { AGY_FAKE_BAD_TURN: '2', AGY_FAKE_RAW_STDOUT: 'jetski: not an envelope\n' }, /agy-envelope: not-json/],
+    ['reporting a non-SUCCESS status', { AGY_FAKE_BAD_TURN: '2', AGY_FAKE_STATUS: 'ERROR' }, /agy-envelope: status/],
+  ]) {
+    it(`a fed turn 2 ${name} stops the run: NO receipt, no turn 3`, () => {
+      const sb = makeSandbox();
+      seedFedChangeSet(sb);
+      const fed = fedRun(sb, env);
+      const receipts = readReceipts(sb.repo);
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(fed.status, 5, fed.stderr);
+      assert.equal(fed.turns, 2, 'the failing turn is the last one spent');
+      assert.equal(receipts.length, 0);
+      assert.match(fed.stderr, cause, 'the reader names the cause');
+      assert.match(fed.stderr, /feed turn 2 of/, 'and the wrapper names which turn');
+    });
+  }
+
+  // The doc must not describe BOTH routings at once: a residual recording the retired log scrape
+  // beside the envelope statement leaves an operator unable to tell which lane their build runs.
+  it('the fed-lane doc states envelope routing and keeps no log-scrape residual (doc contract)', () => {
+    const prompt = readFileSync(resolve(HERE, '..', 'references', 'review-prompt.md'), 'utf8');
+    assert.match(prompt, /Later turns are routed by a NAMED field/, 'the live routing is stated');
+    assert.doesNotMatch(prompt, /conversation id is parsed from/i, 'the retired scrape is no longer described as live');
+    assert.doesNotMatch(prompt, /degrades[^\n]*--continue/, 'and neither is its degrade lane');
   });
 });
 
@@ -1664,9 +1734,8 @@ describe('agy-review.sh — size ceiling + gated --add-dir escape (6)', () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
     const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP) } });
-    // Turn 1 hands agy `--log-file <staging>/turn1.log`, so the fed lane's own argv names the dir.
-    const logFile = r.argvs[0].split('\n')[r.argvs[0].split('\n').indexOf('--log-file') + 1];
-    const stagingPath = logFile ? dirname(logFile) : '';
+    // The fed lane dispatches every turn FROM the staging dir, so the fake's own cwd names it.
+    const stagingPath = r.dispatchCwd;
     const stillThere = stagingPath ? existsSync(stagingPath) : false;
     rmSync(sb.home, { recursive: true, force: true });
     assert.ok(stagingPath, 'a staging path was captured from the run');

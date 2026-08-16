@@ -495,7 +495,12 @@ fi
 # `response` carries the model's Markdown VERBATIM, so the wrapper reads a NAMED FIELD instead of
 # guessing at raw stdout. The review CONTRACT is untouched — the model is asked for exactly what it
 # was asked for before; only the wrapper's reading of the answer moved.
-AGY_TRANSPORT_FLAGS=(--output-format json)
+# `--disable-slash-commands` rides the same array: a change set is delivered as prompt TEXT, and a
+# body line that happens to begin with a slash command is body — never an instruction for the CLI to
+# expand. It is also what makes the pre-spend door below honest: that door refuses an install whose
+# --help does not advertise this flag, and a door may never require a capability the wrapper leaves
+# unused.
+AGY_TRANSPORT_FLAGS=(--output-format json --disable-slash-commands)
 AGY_ENVELOPE_READER="$HERE/agy-envelope.mjs"
 # A captured answer that is not a readable envelope on a ZERO exit (Decision 3). Its own code, not
 # the D4 verdict-less 4: those are different failures and an operator must be able to tell them
@@ -603,18 +608,33 @@ aw_declared_flags="$(printf '%s\n' "$aw_help_probe" | LC_ALL=C awk '
       if (substr(t, 1, 1) == "-") print t
     }
   }')"
-aw_missing_flags=""
+# What each required capability BUYS — the refusal names the cost of the flag that is actually
+# missing. One blanket explanation would be false for half of them: a build without
+# --disable-slash-commands answers perfectly readably and corrupts the delivered BODY instead, and an
+# operator sent hunting an unreadable envelope would be hunting the wrong bug.
+# The subject is a NAMED local, never "$1": the source-level reverse guard reads every `case "$1"`
+# as an argument-parser arm, and this table is not one.
+aw_agy_flag_cost() {  # $1 = required flag
+  local flag="$1"
+  case "$flag" in
+    --output-format) printf '%s' 'the answer arrives as ONE JSON envelope this wrapper reads; without it a spent turn answers in a shape the wrapper cannot read' ;;
+    --disable-slash-commands) printf '%s' 'a change-set line beginning with a slash command stays BODY; without it the CLI expands it and the model reviews something other than the delivered bytes' ;;
+    *) printf '%s' 'this dispatch passes the flag and the installed build does not declare it' ;;
+  esac
+}
+aw_missing_flags=()
 for _flag in "${AW_REQUIRED_AGY_FLAGS[@]}"; do
   case $'\n'"$aw_declared_flags"$'\n' in
     *$'\n'"$_flag"$'\n'*) ;;
-    *) aw_missing_flags+="${_flag} " ;;
+    *) aw_missing_flags+=("$_flag") ;;
   esac
 done
-if [[ -n "$aw_missing_flags" ]]; then
-  echo "error: the installed agy CLI does not advertise the flag(s) this review dispatch passes: ${aw_missing_flags% }" >&2
-  echo "       The review drives the CLI in --output-format json and reads the returned envelope; a build" >&2
-  echo "       without these flags would spend a subscription turn and answer in a shape this wrapper" >&2
-  echo "       cannot read. Refusing BEFORE any run is spent." >&2
+if (( ${#aw_missing_flags[@]} > 0 )); then
+  echo "error: the installed agy CLI does not advertise the flag(s) this review dispatch passes: ${aw_missing_flags[*]}" >&2
+  echo "       Refusing BEFORE any run is spent — what each missing capability costs:" >&2
+  for _flag in "${aw_missing_flags[@]}"; do
+    echo "         ${_flag} — $(aw_agy_flag_cost "$_flag")" >&2
+  done
   echo "       Installed agy version: $(aw_agy_version). Update the CLI: agy update" >&2
   exit 127
 fi
@@ -1167,20 +1187,6 @@ fixed_occurrences() {
   printf '%s' "$(( n ))"
 }
 
-# The conversation id agy writes into its own run log (D9, Arm A). The format is agy's own to change,
-# which is exactly why an unparseable log DEGRADES LOUDLY to --continue instead of failing: the
-# correctness guarantee is the D1 echo proof, which fails closed if the wrong conversation answers.
-capture_conversation_id() {  # $1 = run log → the id, or empty
-  local id
-  [[ -f "$1" ]] || { printf ''; return 0; }
-  id="$(LC_ALL=C awk '/onversation/ && match($0, /[0-9a-fA-F]+-[0-9a-fA-F]+-[0-9a-fA-F]+-[0-9a-fA-F]+-[0-9a-fA-F]+/) { print substr($0, RSTART, RLENGTH); exit }' "$1")"
-  if [[ "$id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
-    printf '%s' "$id"
-  else
-    printf ''
-  fi
-}
-
 # A validated duration string → integer seconds (floor 1). The fed lane needs arithmetic on the cap
 # because ONE wall-clock budget has to cover N+1 turns; the banner keeps printing the duration
 # verbatim, so this conversion never changes what the user is told about the cap itself.
@@ -1327,7 +1333,7 @@ verify_delivery_proof() {  # $1 = captured final-turn output
 # produced (an OK, or a premature verdict) reaches this wrapper's stdout or the parsed capture, and
 # the FIRST non-zero feed turn stops the run so no later turn is spent.
 run_fed_review() {
-  local k conv_id="" log_file="$staging/turn1.log" feed_out="$staging/feed-turn-out" turn_rc turn_pass=()
+  local k conv_id="" conv_id_file="$staging/turn1-conversation-id" feed_out="$staging/feed-turn-out" turn_rc turn_pass=()
   local final_envelope="$staging/final-envelope"
   # ONE wall-clock budget for the WHOLE fed review, not one per turn. Handing every call the full
   # AGY_HARD_TIMEOUT multiplied the stated cap by the turn count — a 30m cap silently became up to
@@ -1356,9 +1362,8 @@ run_fed_review() {
     budget=$(( remaining - AGY_TURN_KILL_GRACE_S ))
     turn_hard="${budget}s"
     turn_soft="$(( soft_budget < budget ? soft_budget : budget ))s"
-    if (( k == 1 )); then turn_pass=(--log-file "$log_file")
-    elif [[ -n "$conv_id" ]]; then turn_pass=(--conversation "$conv_id")
-    else turn_pass=(--continue)
+    if (( k == 1 )); then turn_pass=()
+    else turn_pass=(--conversation "$conv_id")
     fi
     set +e
     # Dispatched from the STAGING dir, never the work tree: agy surfaces the cwd's context file
@@ -1379,26 +1384,30 @@ run_fed_review() {
     # premature verdict a misbehaving turn might emit — reaches neither stdout nor the parsed
     # capture; only its READABILITY is consumed here. A turn that exited 0 without answering in the
     # shape this wrapper reads stops the run before any later turn is spent.
+    # Turn 1 ALSO takes the conversation id, from the envelope's NAMED field, validated against the
+    # UUID grammar by the reader. Every later turn is then routed at THIS conversation — there is no
+    # --continue lane left to guess with, so an id that is absent, wrong-typed or malformed is the
+    # same class of loud stop as an unreadable envelope, before turn 2 is spent.
     set +e
-    read_agy_envelope "$feed_out" "$staging/feed-turn-response"
+    if (( k == 1 )); then
+      read_agy_envelope "$feed_out" "$staging/feed-turn-response" "$conv_id_file"
+    else
+      read_agy_envelope "$feed_out" "$staging/feed-turn-response"
+    fi
     turn_rc=$?
     set -e
     if (( turn_rc != 0 )); then
-      echo "error: feed turn ${k} of ${FED_PART_COUNT} exited 0 but its answer is not a readable agy JSON" >&2
-      echo "       envelope (cause above) — delivery cannot be confirmed, so no later turn is spent and NO" >&2
-      echo "       receipt is written. Re-run the review." >&2
+      echo "error: feed turn ${k} of ${FED_PART_COUNT} exited 0 but its answer is not a usable agy JSON" >&2
+      echo "       envelope — unreadable, or (turn 1) carrying no routable conversation id; cause above." >&2
+      echo "       Delivery cannot be confirmed, so no later turn is spent and NO receipt is written." >&2
+      echo "       Re-run the review." >&2
       return "$AGY_ENVELOPE_EXIT"
     fi
-    if (( k == 1 )); then
-      conv_id="$(capture_conversation_id "$log_file")"
-      if [[ -z "$conv_id" ]]; then
-        echo "notice: could not capture the conversation id from agy's run log — the remaining turns ride" >&2
-        echo "        --continue instead. Stated, never silent; the delivery proof still fails closed if" >&2
-        echo "        another conversation answers." >&2
-      fi
-    fi
+    if (( k == 1 )); then conv_id="$(cat "$conv_id_file")"; fi
   done
-  if [[ -n "$conv_id" ]]; then turn_pass=(--conversation "$conv_id"); else turn_pass=(--continue); fi
+  # The partitioner refuses a zero-part change set, so this loop ran at least once: either turn 1 set
+  # a grammar-valid conv_id or the run already returned above.
+  turn_pass=(--conversation "$conv_id")
   remaining=$(( deadline - $(date +%s) ))
   if (( remaining <= AGY_TURN_KILL_GRACE_S )); then
     echo "error: the fed review exhausted its hard wall-clock cap (AGY_HARD_TIMEOUT=${AGY_HARD_TIMEOUT}) before the" >&2
