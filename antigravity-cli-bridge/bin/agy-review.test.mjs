@@ -220,7 +220,7 @@ const makeSandbox = ({ clean = false } = {}) => {
 // Capture files are per-INVOCATION: a second run() on the same sandbox must not inherit the first
 // run's turn counter or per-turn prompt files (the fed lane reads them back by turn index).
 let runSeq = 0;
-const run = (sb, { args, env = {}, cwd } = {}) => {
+const run = (sb, { args, env = {}, cwd, wrapper } = {}) => {
   const { home, bin, repo } = sb;
   const farm = farmFor(['agy', 'agy-run']);
   const tag = `cap-${++runSeq}`;
@@ -230,7 +230,7 @@ const run = (sb, { args, env = {}, cwd } = {}) => {
     adddirMode: join(home, `${tag}-adddir-mode`), artifactMode: join(home, `${tag}-artifact-mode`),
     artifactCopy: join(home, `${tag}-artifact-copy`), turns: join(home, `${tag}-turns`),
   };
-  const r = spawnSync('bash', [WRAPPER, ...args], {
+  const r = spawnSync('bash', [wrapper || WRAPPER, ...args], {
     cwd: cwd || repo,
     encoding: 'utf8',
     timeout: 30000,
@@ -461,6 +461,215 @@ describe('agy-review.sh — the pre-spend capability door (Decision 2)', () => {
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.invoked, true);
+  });
+});
+
+// ── characterize-first: what the operator sees TODAY, pinned before the transport moves ──────────
+// Phase 4.1 of the envelope plan. The switch from raw stdout to the CLI's JSON envelope must not
+// change one byte of this: stdout carries the model's answer and NOTHING else (the posture banner
+// is stderr), and the receipt records the verdict parsed out of that same answer. Green before the
+// switch, green after — anything the transport quietly rewrites fails here.
+describe('agy-review.sh — the operator-visible answer, byte-for-byte (characterization)', () => {
+  it('stdout is EXACTLY the model answer, and the receipt records the verdict parsed from it', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, `${VERDICT_OUTPUT}\n`, 'the answer reaches the operator with nothing added and nothing dropped');
+    assert.equal(receipts[0].verdict, 'SHIP WITH NITS', 'and the receipt verdict comes from that same answer');
+  });
+
+  // The bytes a transport is most likely to mangle: blank lines, non-ASCII, quotes, a backslash, a
+  // tab. If the answer ever rides a JSON field, this is the test that catches a lossy round-trip.
+  it('blank lines, multibyte, quotes, backslashes and tabs all survive to stdout unchanged', () => {
+    const answer = [
+      '### Verdict',
+      'SHIP — «clean», no nits.',
+      '',
+      '### Blocking',
+      'none',
+      '',
+      '### Non-blocking',
+      '1. a "quoted" path C:\\tmp\\x and a\ttab',
+      '',
+      '### Questions',
+      'none',
+    ].join('\n');
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: answer } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, `${answer}\n`, 'the answer is transported verbatim');
+    assert.equal(receipts[0].verdict, 'SHIP');
+  });
+});
+
+// ── the dispatch rides agy's structured envelope (Phase 4.3) ─────────────────────────────────────
+// Every lane runs `--output-format json` and the wrapper reads the envelope's `response` instead of
+// raw stdout. The review CONTRACT does not move: the same prompt, the same mandated shape, the same
+// D4 arm. What changes is that a fact the wrapper used to guess at now arrives named.
+describe('agy-review.sh — the dispatch rides the JSON envelope (Phase 4.3)', () => {
+  const argvCarriesTransport = (argv) => {
+    const tokens = argv.split('\n');
+    const at = tokens.indexOf('--output-format');
+    return at !== -1 && tokens[at + 1] === 'json';
+  };
+
+  it('all three lanes carry --output-format json (single, fed, resume)', () => {
+    const single = makeSandbox();
+    const one = run(single, { args: ['code', '--facts', 'f'] });
+    rmSync(single.home, { recursive: true, force: true });
+    assert.equal(one.status, 0, one.stderr);
+    assert.ok(argvCarriesTransport(one.argv), `single lane argv: ${one.argv}`);
+
+    const fedSb = makeSandbox();
+    seedFedChangeSet(fedSb);
+    const fed = fedRun(fedSb);
+    rmSync(fedSb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, fed.stderr);
+    assert.ok(fed.argvs.length >= 3, 'the fixture really chunks');
+    for (const [i, argv] of fed.argvs.entries()) {
+      assert.ok(argvCarriesTransport(argv), `fed turn ${i + 1} argv: ${argv}`);
+    }
+
+    const resumeSb = makeSandbox();
+    const resumed = run(resumeSb, { args: ['--continue'] });
+    rmSync(resumeSb.home, { recursive: true, force: true });
+    assert.equal(resumed.status, 0, resumed.stderr);
+    assert.ok(argvCarriesTransport(resumed.argv), `resume lane argv: ${resumed.argv}`);
+  });
+
+  it('operator-visible stdout IS the envelope response — and a feed turn`s response is neither published nor parsed', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb);
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, fed.stderr);
+    assert.ok(fed.stdout.startsWith('### Delivery proof\n'), `stdout must be the FINAL response: ${fed.stdout.slice(0, 80)}`);
+    assert.ok(fed.stdout.endsWith('### Verdict\nSHIP\n'), 'and nothing is appended after it');
+    assert.ok(!fed.stdout.includes('PREMATURE_FEED_CHATTER'), 'a feed turn never publishes');
+    assert.ok(!fed.stdout.includes('conversation_id'), 'the raw envelope never reaches the operator');
+    assert.equal(receipts[0].verdict, 'SHIP', 'only the FINAL response is parsed');
+  });
+
+  it('a non-JSON blob on a ZERO exit is an UNREADABLE review: distinct exit, NO receipt, the cause names the envelope', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_RAW_STDOUT: 'jetski: not an envelope at all\n' } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 5, `an unreadable envelope has its OWN code, not the D4 4: ${r.stderr}`);
+    assert.equal(receipts.length, 0);
+    assert.match(r.stderr, /agy-envelope: not-json/, 'the module names the cause');
+    assert.match(r.stderr, /not a readable agy JSON envelope/, 'and the wrapper says what that means');
+  });
+
+  it('a non-SUCCESS status is unreadable too — its own named cause, NO receipt', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_STATUS: 'ERROR' } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 5, r.stderr);
+    assert.equal(receipts.length, 0);
+    assert.match(r.stderr, /agy-envelope: status/);
+  });
+
+  // Decision 4: the CLI's own failure WINS. The envelope is parsed only on a zero exit, so a
+  // non-zero run keeps its code and its message and never has a parse error layered over it.
+  it('a non-zero CLI exit keeps its code and message on the SINGLE lane — no envelope error replaces them', () => {
+    const sb = makeSandbox();
+    const r = run(sb, {
+      args: ['code', '--facts', 'f'],
+      env: { AGY_FAKE_EXIT: '7', AGY_FAKE_RAW_STDOUT: 'partial plain text\n', AGY_FAKE_STDERR: 'AGY_CLI_OWN_FAILURE' },
+    });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 7, 'the CLI exit code survives verbatim');
+    assert.match(r.stderr, /AGY_CLI_OWN_FAILURE/, 'and so does its own message');
+    assert.doesNotMatch(r.stderr, /agy-envelope:/, 'the envelope is never parsed on a non-zero exit');
+    assert.match(r.stdout, /partial plain text/, 'whatever the CLI printed still reaches the operator');
+    assert.equal(receipts.length, 0);
+  });
+
+  it('a non-zero CLI exit keeps its code and message on the FED lane too', () => {
+    const sb = makeSandbox();
+    seedFedChangeSet(sb);
+    const fed = fedRun(sb, { AGY_FAKE_FAIL_TURN: '2' });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 3, 'the failing turn`s own exit code survives');
+    assert.match(fed.stderr, /FAKE_TURN_FAILURE/);
+    assert.doesNotMatch(fed.stderr, /agy-envelope:/, 'no parse is attempted on a failed turn');
+    assert.equal(fed.turns, 2, 'no later turn is spent');
+    assert.equal(receipts.length, 0);
+  });
+
+  // The switch must not move WHICH arm fires: a readable envelope carrying a verdict-less answer is
+  // still the D4 failed review, exit 4 — not the transport failure.
+  it('a READABLE envelope with no verdict still exits 4 through the EXISTING D4 arm', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_OUTPUT: 'prose without the mandated section' } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 4, 'the D4 arm owns this, not the envelope arm');
+    assert.equal(receipts.length, 0);
+    assert.match(r.stderr, /no recognized '### Verdict' section/);
+    assert.doesNotMatch(r.stderr, /agy-envelope:/, 'the envelope was perfectly readable');
+  });
+
+  // The MANAGED INSTALL shape: `agy-review` on PATH is a SYMLINK into the placed skill
+  // (~/.local/bin/agy-review -> <placed>/bin/agy-review.sh). An unresolved BASH_SOURCE names the
+  // LINK's directory, so every sibling payload — the envelope reader above all — would be looked
+  // for beside the link and EVERY review would refuse pre-spend on a correct install.
+  it('a review launched through a managed SYMLINK resolves its own sibling payload and still attests', () => {
+    const sb = makeSandbox();
+    const linked = join(sb.bin, 'agy-review');
+    symlinkSync(WRAPPER, linked);
+    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], wrapper: linked });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, `a symlinked launch must behave identically: ${r.stderr}`);
+    assert.equal(r.invoked, true, 'the dispatch really happened');
+    assert.doesNotMatch(r.stderr, /envelope reader .* is missing/, 'the reader is found beside the SCRIPT, not beside the link');
+    assert.equal(receipts.length, 1, 'and the review still attests');
+  });
+
+  // The walk that resolves the wrapper's own directory must TERMINATE. A cycle cannot be reached
+  // through exec (the kernel resolves the path first, and would fail with ELOOP), so the reachable
+  // shape is an absurd CHAIN — and it is testable exactly because the kernel tolerates a far longer
+  // chain than this bound. An unbounded walk spins until the harness kills it and prints nothing,
+  // so the assertion is on the MESSAGE: an infinite loop can never produce it.
+  it('a symlink chain past the hop bound refuses LOUDLY and spends nothing', () => {
+    const sb = makeSandbox();
+    const chainDir = join(sb.home, 'link-chain');
+    mkdirSync(chainDir, { recursive: true });
+    const chainTip = Array.from({ length: 24 }).reduce((previous, _unused, i) => {
+      const link = join(chainDir, `hop-${i}`);
+      symlinkSync(previous, link);
+      return link;
+    }, WRAPPER);
+    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], wrapper: chainTip });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 127, `the walk must refuse, not spin: ${r.stderr}`);
+    assert.match(r.stderr, /exceeded 16 symlink hops/, 'the refusal names the bound it hit');
+    assert.match(r.stderr, /could not resolve its OWN directory/, 'and what that costs');
+    assert.equal(r.invoked, false, 'nothing is spent');
+  });
+
+  it('the resume lanes parse the envelope and mint the continuation receipt exactly as before', () => {
+    for (const args of [['--continue'], ['--conversation', 'conv-xyz']]) {
+      const sb = makeSandbox();
+      const r = run(sb, { args, env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+      const receipts = readReceipts(sb.repo);
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 0, `${args[0]}: ${r.stderr}`);
+      assert.equal(r.stdout, `${VERDICT_OUTPUT}\n`, `${args[0]}: stdout is the envelope response`);
+      assert.equal(receipts.length, 1);
+      assert.equal(receipts[0].fresh, false, `${args[0]}: a continuation still cannot attest`);
+      assert.equal(receipts[0].verdict, 'SHIP WITH NITS');
+    }
   });
 });
 

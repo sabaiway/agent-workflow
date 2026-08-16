@@ -455,7 +455,63 @@ FED_ECHO_MAX_BYTES=200
 # address nobody requested and FAILS the proof, rather than vanishing from the check entirely.
 FED_PROOF_ADDRESS_MAX=1000000000
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# This wrapper's REAL directory, symlinks RESOLVED. The managed install puts a symlink on PATH
+# (~/.local/bin/agy-review -> <placed skill>/bin/agy-review.sh), so an unresolved BASH_SOURCE names
+# the LINK's directory — and every sibling payload below, the envelope reader most of all, would be
+# looked for beside the link instead of beside the script. `readlink -f` is GNU-only (macOS ships
+# BSD readlink), so the chain is walked by hand; `cd -P` resolves a symlinked directory too.
+# The walk is HOP-BOUNDED with a loud refusal, never an unbounded loop. A symlink CYCLE cannot be
+# reached by construction — the kernel already resolved this path to exec the script and would have
+# failed with ELOOP — but it becomes reachable if a link is rewritten in the window between exec and
+# this walk, and an unbounded `while` would then spin until something killed it. Past the bound the
+# wrapper refuses BY NAME rather than guessing at a directory: a wrong answer here sends every
+# sibling lookup somewhere arbitrary. 16 is far above any managed install (which uses ONE hop) and
+# below the kernel's own chain limit, so it never truncates a real chain.
+AW_SCRIPT_LINK_MAX_HOPS=16
+aw_script_dir() {
+  local src="${BASH_SOURCE[0]}" dir hops=0
+  while [[ -L "$src" ]]; do
+    if (( hops >= AW_SCRIPT_LINK_MAX_HOPS )); then
+      echo "error: resolving this wrapper's own path exceeded ${AW_SCRIPT_LINK_MAX_HOPS} symlink hops at" >&2
+      echo "       '$src' — a symlink cycle, or an absurd chain." >&2
+      return 1
+    fi
+    hops=$(( hops + 1 ))
+    dir="$(cd -P "$(dirname "$src")" && pwd)" || return 1
+    src="$(readlink "$src")" || return 1
+    case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+  done
+  ( cd -P "$(dirname "$src")" && pwd )
+}
+if ! HERE="$(aw_script_dir)"; then
+  echo "error: this wrapper could not resolve its OWN directory, so the sibling payload every review" >&2
+  echo "       depends on cannot be located. Refusing before anything is spent — repair the link, or" >&2
+  echo "       invoke the real script path." >&2
+  exit 127
+fi
+
+# --- The dispatch transport (AGY-1.1.13, Decision 1) ---------------------------
+# EVERY review dispatch runs `--output-format json`: the CLI then answers with ONE envelope whose
+# `response` carries the model's Markdown VERBATIM, so the wrapper reads a NAMED FIELD instead of
+# guessing at raw stdout. The review CONTRACT is untouched — the model is asked for exactly what it
+# was asked for before; only the wrapper's reading of the answer moved.
+AGY_TRANSPORT_FLAGS=(--output-format json)
+AGY_ENVELOPE_READER="$HERE/agy-envelope.mjs"
+# A captured answer that is not a readable envelope on a ZERO exit (Decision 3). Its own code, not
+# the D4 verdict-less 4: those are different failures and an operator must be able to tell them
+# apart — D4 means the model answered without a verdict, this means the CLI's answer never arrived
+# in the shape this wrapper reads.
+AGY_ENVELOPE_EXIT=5
+
+# Read ONE captured envelope through the sibling module. This PRINTS NOTHING on success — the caller
+# decides what reaches stdout, which is exactly what keeps Invariant E intact when a feed turn's
+# envelope has to be validated without ever becoming operator-visible. A failure is loud and carries
+# the module's own named cause on stderr.
+read_agy_envelope() {  # $1 = captured payload, $2 = response destination, $3 = "" | conversation-id destination
+  local args=(--envelope "$1" --response-out "$2")
+  if [[ -n "${3:-}" ]]; then args+=(--conversation-id-out "$3"); fi
+  node "$AGY_ENVELOPE_READER" "${args[@]}"
+}
 
 # --- Subscription invariant (reuse agy.sh's security pattern verbatim) --------
 export PATH="$HOME/.local/bin:$PATH"
@@ -574,6 +630,13 @@ if [[ ! "$aw_node_major" =~ ^[0-9]+$ ]] || (( aw_node_major < AW_MIN_NODE_MAJOR 
   echo "error: node '${aw_node_version:-<unreadable>}' is below the family floor (Node >= ${AW_MIN_NODE_MAJOR}) this review needs" >&2
   echo "       to parse agy's JSON envelope. Refusing BEFORE any run is spent." >&2
   echo "       Upgrade Node to >= ${AW_MIN_NODE_MAJOR}, then re-run." >&2
+  exit 127
+fi
+if [[ ! -f "$AGY_ENVELOPE_READER" ]]; then
+  echo "error: the envelope reader '$AGY_ENVELOPE_READER' is missing — every review reads agy's JSON" >&2
+  echo "       envelope through it, so a bridge install without it could only fail AFTER a paid run." >&2
+  echo "       Refusing BEFORE any run is spent. Refresh the placed bridges:" >&2
+  echo "         /agent-workflow-kit setup --refresh-placed" >&2
   exit 127
 fi
 
@@ -1265,6 +1328,7 @@ verify_delivery_proof() {  # $1 = captured final-turn output
 # the FIRST non-zero feed turn stops the run so no later turn is spent.
 run_fed_review() {
   local k conv_id="" log_file="$staging/turn1.log" feed_out="$staging/feed-turn-out" turn_rc turn_pass=()
+  local final_envelope="$staging/final-envelope"
   # ONE wall-clock budget for the WHOLE fed review, not one per turn. Handing every call the full
   # AGY_HARD_TIMEOUT multiplied the stated cap by the turn count — a 30m cap silently became up to
   # 30m × (N+1). Each turn now gets only what is LEFT of the shared deadline, and a review that runs
@@ -1303,13 +1367,27 @@ run_fed_review() {
     # byte the model can read, so the fed lane removes the uncontrolled input instead of guessing
     # at it. Nothing is lost: the grounded facts already carry what the review must know.
     ( cd "$staging" && AGY_MODEL="$AGY_MODEL" AGY_TIMEOUT="$turn_soft" AGY_HARD_TIMEOUT="$turn_hard" \
-      "$AGY_RUN" "@$staging/turn-$k" -- "${turn_pass[@]}" ) > "$feed_out"
+      "$AGY_RUN" "@$staging/turn-$k" -- "${AGY_TRANSPORT_FLAGS[@]}" "${turn_pass[@]}" ) > "$feed_out"
     turn_rc=$?
     set -e
     if (( turn_rc != 0 )); then
       echo "error: feed turn ${k} of ${FED_PART_COUNT} failed (exit ${turn_rc}) — the change set was never fully" >&2
       echo "       delivered, so no later turn is spent and NO receipt is written. Re-run the review." >&2
       return "$turn_rc"
+    fi
+    # Invariant E: a feed turn's envelope is validated PRIVATELY. Its response — an OK, or the
+    # premature verdict a misbehaving turn might emit — reaches neither stdout nor the parsed
+    # capture; only its READABILITY is consumed here. A turn that exited 0 without answering in the
+    # shape this wrapper reads stops the run before any later turn is spent.
+    set +e
+    read_agy_envelope "$feed_out" "$staging/feed-turn-response"
+    turn_rc=$?
+    set -e
+    if (( turn_rc != 0 )); then
+      echo "error: feed turn ${k} of ${FED_PART_COUNT} exited 0 but its answer is not a readable agy JSON" >&2
+      echo "       envelope (cause above) — delivery cannot be confirmed, so no later turn is spent and NO" >&2
+      echo "       receipt is written. Re-run the review." >&2
+      return "$AGY_ENVELOPE_EXIT"
     fi
     if (( k == 1 )); then
       conv_id="$(capture_conversation_id "$log_file")"
@@ -1334,8 +1412,20 @@ run_fed_review() {
   turn_soft="$(( soft_budget < budget ? soft_budget : budget ))s"
   set +e
   ( cd "$staging" && AGY_MODEL="$AGY_MODEL" AGY_TIMEOUT="$turn_soft" AGY_HARD_TIMEOUT="$turn_hard" \
-    "$AGY_RUN" "@$staging/turn-final" -- "${turn_pass[@]}" ) | tee "$review_out_file"
-  turn_rc=${PIPESTATUS[0]}
+    "$AGY_RUN" "@$staging/turn-final" -- "${AGY_TRANSPORT_FLAGS[@]}" "${turn_pass[@]}" ) > "$final_envelope"
+  turn_rc=$?
+  if (( turn_rc == 0 )); then
+    if ! read_agy_envelope "$final_envelope" "$review_out_file"; then
+      set -e
+      echo "error: the final review turn exited 0 but its answer is not a readable agy JSON envelope" >&2
+      echo "       (cause above). The review is UNREADABLE, not merely verdict-less: NO receipt was" >&2
+      echo "       written. Re-run the review." >&2
+      return "$AGY_ENVELOPE_EXIT"
+    fi
+    cat "$review_out_file"
+  else
+    cat "$final_envelope"
+  fi
   set -e
   return "$turn_rc"
 }
@@ -1885,21 +1975,36 @@ aw_timeout_banner="$(aw_timeout_label "$aw_review_timeout_bin" "$AGY_HARD_TIMEOU
 echo "review posture: model=${AGY_MODEL:-<agy settings default>} timeout=$aw_timeout_banner" >&2
 
 # --- Execute via agy-run (single home of timeout + subscription + byte ceiling) ---
-# The output is teed into the private staging dir so the mandated '### Verdict' section can be
-# parsed into the review receipt — the user-facing stream is unchanged.
+# The dispatch is captured PRIVATELY as an envelope and its `response` becomes both the
+# operator-visible stream and the parsed capture — one source, so what the reader sees and what the
+# receipt attests can never diverge.
+# Error priority (Decision 4): the CLI's OWN failure wins. The envelope is parsed only on a ZERO
+# exit; on a non-zero one the captured stdout is republished untouched and the CLI's exit code and
+# its stderr survive, with no envelope-parse error layered over them.
 review_out_file="$staging/review-output"
+envelope_file="$staging/review-envelope"
+dispatch_flags=("${AGY_TRANSPORT_FLAGS[@]}")
+if (( ${#run_passthrough[@]} > 0 )); then dispatch_flags+=("${run_passthrough[@]}"); fi
 set +e
 if (( FED_MODE == 1 )); then
   run_fed_review
   rc=$?
-elif (( ${#run_passthrough[@]} > 0 )); then
-  AGY_MODEL="$AGY_MODEL" AGY_TIMEOUT="$AGY_TIMEOUT" AGY_HARD_TIMEOUT="$AGY_HARD_TIMEOUT" \
-    "$AGY_RUN" "@$prompt_file" -- "${run_passthrough[@]}" | tee "$review_out_file"
-  rc=${PIPESTATUS[0]}
 else
   AGY_MODEL="$AGY_MODEL" AGY_TIMEOUT="$AGY_TIMEOUT" AGY_HARD_TIMEOUT="$AGY_HARD_TIMEOUT" \
-    "$AGY_RUN" "@$prompt_file" | tee "$review_out_file"
-  rc=${PIPESTATUS[0]}
+    "$AGY_RUN" "@$prompt_file" -- "${dispatch_flags[@]}" > "$envelope_file"
+  rc=$?
+  if (( rc == 0 )); then
+    if ! read_agy_envelope "$envelope_file" "$review_out_file"; then
+      set -e
+      echo "error: the dispatch exited 0 but its answer is not a readable agy JSON envelope (cause above)." >&2
+      echo "       The review is UNREADABLE, not merely verdict-less: NO receipt was written. Re-run the" >&2
+      echo "       review; if it recurs, the installed CLI is not honouring --output-format json." >&2
+      exit "$AGY_ENVELOPE_EXIT"
+    fi
+    cat "$review_out_file"
+  else
+    cat "$envelope_file"
+  fi
 fi
 set -e
 

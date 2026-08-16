@@ -239,6 +239,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'references/shared/composition-handoff.md',
       'references/shared/deploy-tail.md',
       'references/shared/command-shapes.md',
+      // the agy envelope reader: every agy review shells out to it to read the CLI's
+      // `--output-format json` answer, and the wrapper refuses pre-spend without it — a placed
+      // bridge missing this file could only fail AFTER a paid subscription run
+      'bridges/antigravity-cli-bridge/bin/agy-envelope.mjs',
     ];
     const missing = required.filter((p) => !packed.includes(p));
     assert.deepEqual(missing, [], 'a runtime payload file or entry point was dropped from the tarball');
@@ -507,7 +511,13 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 213 = 212 + references/scripts/check-docs-size-ensure.test.mjs (the navigator write contract +
     //       the --ensure-index finalizer mode — mirrored from the memory package via sync-mirrors,
     //       so it ships as deploy payload here too).
-    assert.equal(packed.length, 213, `tarball file count drifted (${packed.length} ≠ 213)`);
+    // 215 = 213 + the agy envelope reader PAIR under bridges/antigravity-cli-bridge/bin/ (AGY-1.1.13):
+    //       agy-envelope.mjs, which every agy review now shells out to in order to read the CLI's
+    //       `--output-format json` answer, and its colocated agy-envelope.test.mjs. A bridge dir
+    //       ships WHOLE (it is placed as a skill), so the colocated test is payload here — unlike a
+    //       tools/ sibling, which files[] strips. The module is ALSO pinned by NAME above: an exact
+    //       count alone cannot prove THIS file ships, because another added file masks its loss.
+    assert.equal(packed.length, 215, `tarball file count drifted (${packed.length} ≠ 215)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
