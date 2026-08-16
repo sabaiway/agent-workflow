@@ -7,9 +7,9 @@
 //
 // At Stop time the turn is ENDING. That single fact turns two closing shapes from "discouraged" into
 // FALSE, so they can be judged mechanically:
-//   • the «what I need from you» slot answering "nothing" — a stopped turn always needs a resume, so
+//   * the "what I need from you" slot answering "nothing" — a stopped turn always needs a resume, so
 //     the slot must NAME it. "Nothing needed" is honest only while work is actually running;
-//   • a first-person promise of imminent work in the closing block — the turn is over, so the work
+//   * a first-person promise of imminent work in the closing block — the turn is over, so the work
 //     is not starting. This is the announce-and-stop shape.
 // A promise GATED on something named (after your yes, when CI finishes) is honest and passes.
 //
@@ -18,6 +18,12 @@
 // freshly invented wording for "nothing needed" nor parse a sentence. Where a rule to close one edge
 // required a second classifier to decide what counts as a real ask, the rule was DELETED and its
 // residual written down instead — twice. The mode contract lists every residual by name.
+//
+// ONE VOCABULARY, ENGLISH. The kit ships English markers and enumerates no other language: a
+// language list would be a shipped guess about somebody else's dialogue, and it never stops growing.
+// A deployment whose dialogue language is not English extends the arrays in ITS OWN placed copy —
+// this file is copied into the project and self-contained, so that edit is local and survives an
+// uninstalled kit. Until then such a deployment gets no detection, which the mode contract states.
 //
 // HONEST LIMIT, stated because it bounds what this can claim: a Stop hook cannot un-send the turn it
 // judges. This is DETECTION — it converts a silent recurrence into a loud one. It never blocks, and
@@ -39,8 +45,7 @@ const EXIT_OK = 0;
 // The three slots, matched on their LABEL and ANCHORED TO A LINE START. The anchor is not cosmetic:
 // a message that DISCUSSES this contract — which the sessions this guard was built for do constantly
 // — mentions the labels inline, and an unanchored match would judge that prose instead of the real
-// closing block. Russian is the dialogue language this contract was written for; the English twins
-// keep the guard usable in an English-dialogue deployment.
+// closing block.
 const LINE_LEAD = '^[ \\t\\-•]*';
 const SLOT_PATTERNS = Object.freeze({
   now: new RegExp(`${LINE_LEAD}(?:now|where we are|state now)\\s*[:：]`, 'gim'),
@@ -84,8 +89,10 @@ const stripFences = (text) => {
 
 const BLOCKQUOTE_LINE = /^[ \t]*>.*$/gm;
 const EMPHASIS_MARKS = /[*_`]/g;
-// A model writes «What’s next» and «I’ll» with a typographic apostrophe far more often than with the
-// ASCII one, so matching only ASCII made the English half fail silently on ordinary output.
+// A model writes "What's next" and "I'll" with a typographic apostrophe far more often than with the
+// ASCII one, so matching only ASCII made every label and every promise marker fail silently on
+// ordinary output. U+02BC rides as an escape because it is a modifier LETTER, and this family's
+// sources carry no non-ASCII letter; the escaped class matches exactly the same characters.
 const APOSTROPHES = /[’‘\u02bc‛]/g;
 const toProse = (text) => stripFences(text)
   .replace(BLOCKQUOTE_LINE, '')
@@ -103,7 +110,7 @@ const openingAnswer = (slot) => {
   const at = slot.search(CLAUSE_END);
   return at === -1 ? slot : slot.slice(0, at);
 };
-// A rule excusing «…, nothing else is needed» was built, tightened twice, and then DELETED. Every
+// A rule excusing "…, nothing else is needed" was built, tightened twice, and then DELETED. Every
 // version let a banned answer through behind some harmless prefix, and the next version would have
 // needed an "is this a real ask" recogniser — a second lexical classifier with its own edge set. The
 // residual is stated instead of coded: a comma-joined qualifier IS flagged, and the writer's fix is
@@ -112,25 +119,50 @@ const openingAnswer = (slot) => {
 const NOTHING_FORMS = Object.freeze([
   'nothing',
   'none',
-  'not required',
-  'not needed',
-  'no need',
-  'no action',
-  'nothing',
-  'none',
   'n/a',
   'no action',
+  'no need',
+  'not needed',
+  'not required',
+]);
+
+// -- the "what is happening NOW" slot is not a report of what was DONE ----------------------------
+// The third judgeable shape. The three slots answer three different questions; when the now-slot
+// opens with finished work, the reader's one question — what is running — is buried behind a
+// summary they can already read in the message body above.
+// Judged by TOKEN ORDER, the technique the promise/gate rule uses: a COMPLETION marker standing
+// BEFORE the first CURRENCY marker means the running fact was buried. Two consequences are
+// deliberate — a slot with NO currency marker is never judged here (nothing running is a legitimate
+// state, and whether that is honest is the from-you slot's question), and a slot that LEADS with
+// what is running passes whatever it adds afterwards.
+// Stated residual, in this file's own style: a CURRENT state phrased with a COMPLETION MARKER
+// ("the work is closed, waiting on your call" — `closed` is in the list below) is flagged, and the
+// writer's fix is to phrase the state rather than the transition. Telling that from a real
+// completion report needs a classifier this layer lacks. The specimen is deliberately one the list
+// really carries: a residual written with a word the code does not match would document a false
+// positive that cannot happen, which is worse than no residual at all.
+const COMPLETION_FORMS = Object.freeze([
+  'done', 'completed', 'finished', 'closed', 'landed', 'shipped', 'merged', 'published',
+  'committed', 'fixed', 'added', 'removed', 'updated', 'recorded', 'measured', 'marked',
+  'verified', 'ran', 'wrote',
+  "i've", 'i have',
+]);
+
+// Running STATE only, never a time-deictic. "now" is the slot's own label, so accepting it as a
+// currency marker would put one at position 0 of nearly every slot and every completion after it
+// would read as honest — one word defeating the whole rule. A marker that names WHEN rather than
+// WHAT-IS-HAPPENING cannot carry this judgement.
+const CURRENCY_FORMS = Object.freeze([
+  'running', 'in progress', 'waiting', 'awaiting', 'pending', 'is up', 'under way', 'underway',
+  'in flight', 'blocked on',
 ]);
 
 // First-person promises of imminent work. Present tense counts: at Stop it describes work that is
 // NOT running.
-// Action verbs only. Verbs of OPINION were dropped rather than qualified: they are as often
-// stative («I consider the task closed», «I read the question as settled») as they are promises, and
-// a form that cannot tell the two apart buys detection with false flags.
-// The English markers are pronoun+modal rather than action verbs, so they cannot tell «I'll start» from
-// «I'll wait». Waiting is not work: it is what a turn that ENDS actually does, and it needs no gate to
-// be honest. So a modal followed by a waiting verb is excluded rather than the modal being dropped —
-// dropping it would need an open-ended list of every action verb English can put after it.
+// The markers are pronoun+modal or pronoun+verb, so they cannot tell "I'll start" from "I'll wait".
+// Waiting is not work: it is what a turn that ENDS actually does, and it needs no gate to be honest.
+// So a modal followed by a waiting verb is excluded rather than the modal being dropped — dropping
+// it would need an open-ended list of every action verb English can put after it.
 const WAITING_CONTINUATIONS = Object.freeze([
   "i'll wait", 'i will wait', "i'll be waiting", "i'll stand by", 'i will stand by',
   "i'll hold", 'i will hold', "i'll stay", 'i will stay', "i'll remain", 'i will remain',
@@ -139,29 +171,28 @@ const WAITING_CONTINUATIONS = Object.freeze([
 const PROMISE_FORMS = Object.freeze([
   "i'll", 'i will', "i'm going to", 'i am going to', "i'm starting", "i'm taking",
   'i start', 'i begin', 'i take', 'i move on', 'next i',
-  "i'll", 'i will', "i'm going to", 'i am going to', 'i start', 'i begin', 'next i',
 ]);
 
 // A gate the promise may depend on. What is actually checked is TOKEN ORDER inside one segment: a
 // gate is treated as excusing a promise when it appears in the same segment and earlier in it. That
 // is a lexical approximation of dependency, not dependency itself, and it carries two named
-// residuals — an honest TRAILING gate («I take it when you say so») is flagged, and a gate belonging to
-// an earlier comma-clause («if the test fails I'll report, and now I start…») wrongly excuses a promise
-// that follows it. Both are accepted limits of a lexical layer, documented in the mode contract.
+// residuals — an honest TRAILING gate ("I'll take it when you say so") is flagged, and a gate
+// belonging to an earlier comma-clause ("if the test fails I'll report, and now I start the next
+// class") wrongly excuses a promise that follows it. Both are accepted limits of a lexical layer,
+// documented in the mode contract.
 const CONDITIONAL_FORMS = Object.freeze([
   'after', 'when', 'if', 'as soon as', 'once', 'upon', 'pending',
-  'after', 'when', 'if', 'as soon as', 'once', 'pending',
 ]);
 
-// Segment boundaries for the promise/gate rule. Deliberately NOT the comma: «if you agree, I take
-// the class» is one honest thought, and splitting it would flag the shape the rule exists to permit.
+// Segment boundaries for the promise/gate rule. Deliberately NOT the comma: "if you agree, I'll take
+// the class" is one honest thought, and splitting it would flag the shape the rule exists to permit.
 const PROMISE_SEGMENT_BREAK = /;|\n|[.!?](?=\s|$)/;
 
-// Word-bounded matching, Unicode-aware. JavaScript's `\b` is ASCII-only and therefore useless here:
-// with raw substring matching a marker hides inside a longer word of the dialogue language, so the
-// most natural way to name a real ask would be read as answering "nothing".
-// The class is Unicode-aware because the judged text need not be ASCII even when the markers are.
-// question, it does not decline help.
+// Word-bounded matching, Unicode-aware. The markers are English but the TEXT is the project's
+// dialogue language, which need not be ASCII, and JavaScript's `\b` is ASCII-only: under it every
+// non-ASCII letter reads as a word break, so an English marker sitting inside a non-ASCII word would
+// match as if it stood alone. The Unicode class costs nothing and keeps that door shut; on the
+// English side it is what stops `none` matching inside `nonexistent`.
 const WORD_CHAR = '\\p{L}\\p{N}';
 const escapeForRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
 const boundedPattern = (phrase) => new RegExp(
@@ -174,6 +205,25 @@ const firstMatchAt = (haystack, needles) => needles.reduce((best, needle) => {
   return best === -1 ? at : Math.min(best, at);
 }, -1);
 const containsAny = (haystack, needles) => firstMatchAt(haystack, needles) !== -1;
+
+// Nearly every English completion marker doubles as an ADJECTIVE, which the Russian verbs this rule
+// was first written against did not: "the updated test suite is running" is an honest now-slot that
+// leads with the running fact, and reading `updated` there as a completion report would flag it. A
+// marker sitting directly after a DETERMINER is attributive — it modifies the noun after it instead
+// of reporting a transition — so it is not counted.
+// Residual, stated: this also loses a completion phrased attributively ("the finished council, the
+// matrix is running" passes). That trade is deliberate. A false flag on a correct slot is noise from
+// a hook that fires on EVERY turn, and noise is the failure this file is most careful to avoid; a
+// missed marginal shape is not.
+const DETERMINERS = Object.freeze(['the', 'a', 'an', 'this', 'that', 'these', 'those', 'its', 'my', 'our', 'your', 'their']);
+const AFTER_DETERMINER = new RegExp(`(?:^|[^${WORD_CHAR}])(?:${DETERMINERS.join('|')})[ \\t]+$`, 'iu');
+const matchesIn = (haystack, needle) => [...haystack.matchAll(new RegExp(boundedPattern(needle).source, 'giu'))]
+  .map((match) => match.index);
+const firstReportedAt = (haystack, needles) => needles.reduce((best, needle) => {
+  const at = matchesIn(haystack, needle).find((index) => !AFTER_DETERMINER.test(haystack.slice(0, index)));
+  if (at === undefined) return best;
+  return best === -1 ? at : Math.min(best, at);
+}, -1);
 
 const normalise = (value) => (typeof value === 'string'
   ? value.replace(EMPHASIS_MARKS, '').replace(APOSTROPHES, "'").toLowerCase()
@@ -197,7 +247,7 @@ const groupLabels = (labels) => labels.reduce((state, label) => {
     : { current: candidate, completed: state.completed };
 }, { current: [], completed: null });
 
-// findStateBlock(text) → { now, fromYou, next } or null. The LAST STARTED candidate decides: if the
+// findStateBlock(text) -> { now, fromYou, next } or null. The LAST STARTED candidate decides: if the
 // message ends mid-block, the turn did not end on a block at all, and falling back to an earlier
 // complete one would judge text the turn already moved past.
 export const findStateBlock = (text) => {
@@ -213,7 +263,7 @@ export const findStateBlock = (text) => {
   return block;
 };
 
-// decideStop({ closingText, requireBlock }) → { ok, reasons }. Never throws: junk input decides
+// decideStop({ closingText, requireBlock }) -> { ok, reasons }. Never throws: junk input decides
 // "no block", which is a reportable state rather than a crash. An ABSENT block is reported only
 // under `requireBlock`: this kit does not mandate the three-part block, so warning about its absence
 // by default would fire on nearly every turn of a project that never adopted it — noise, from a hook
@@ -236,12 +286,24 @@ export const decideStop = (options) => {
       'from-you slot answers "nothing": the turn is ENDING, so a resume from the maintainer IS required — name the real unblocker instead',
     );
   }
+  if (buriesTheRunningFact(normalise(block.now))) {
+    reasons.push(
+      'the now-slot reports finished work before it names what is running — "now" is the state at this instant; move what you completed into the message body above the block',
+    );
+  }
   if (hasUngatedPromise(normalise(block.next))) {
     reasons.push(
       'announce-and-stop: the what-next slot promises imminent first-person work while the turn ends — either do it in this turn, or state what the work waits on',
     );
   }
   return { ok: reasons.length === 0, reasons };
+};
+
+const buriesTheRunningFact = (nowSlot) => {
+  const currencyAt = firstMatchAt(nowSlot, CURRENCY_FORMS);
+  if (currencyAt === -1) return false;
+  const completionAt = firstReportedAt(nowSlot, COMPLETION_FORMS);
+  return completionAt !== -1 && completionAt < currencyAt;
 };
 
 const hasUngatedPromise = (nextSlot) => nextSlot.split(PROMISE_SEGMENT_BREAK).some((segment) => {
@@ -285,7 +347,7 @@ const parsePayload = (rawInput) => {
 //
 // An EMPTY string is delivered text, not an absent one: a turn that ended with no prose really did
 // end without a closing block, and `--require-block` should be able to say so.
-// runHook(raw, {requireBlock}) → a decision, or null when there is genuinely nothing to judge.
+// runHook(raw, {requireBlock}) -> a decision, or null when there is genuinely nothing to judge.
 // Never throws.
 export const runHook = (rawInput, deps) => {
   const requireBlock = (deps ?? {}).requireBlock === true;

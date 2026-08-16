@@ -51,8 +51,8 @@ the project's internal `docs/ai` structure version, the stamp filename, or the i
 vocabulary — that number is inert here and only confuses; it belongs to *Version disclosure* (below).
 Frame the success itself plainly, in the **user's conversational language** (never hardcode a phrase):
 - a **zero-diff no-op `upgrade`** (step 4) → **settings already current — no update is required**
-  (illustrative tone for a Russian-speaking user, an example of the meaning, not a literal string to
-  embed: *(the meaning, said in the user's conversational language, in your own words)*);
+  (that is the MEANING to convey, not a literal string to embed — say it in the user's conversational
+  language, in your own words);
 - a **fresh `bootstrap`** → its normal "deployed and ready" success, minus the number.
 
 **Version block — the installed package versions, fed from `--json`** (the `docs/ai` structure version

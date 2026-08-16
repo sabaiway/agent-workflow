@@ -7,7 +7,10 @@ The **config writer** for `docs/ai/orchestration.json` — the answer to *"set m
 
 **Map the user's plain language → explicit ops** (the kit ships no NL parser; it performs no `all`-magic, so you expand scope explicitly, asking when unclear):
 
-| user says (RU/EN) | op | scope |
+The intents are listed in English; a user speaking any other language expresses the same four, and
+mapping their wording onto them is your job, not a shipped phrase list.
+
+| user means | op | scope |
 |---|---|---|
 | "both review" | `--set <activity>.review=council` | **disambiguate**: which activity? If both, pass `--set plan-authoring.review=council --set plan-execution.review=council`. |
 | "one reviewer" | `--set <activity>.review=reviewed` | per the named activity, else ask |

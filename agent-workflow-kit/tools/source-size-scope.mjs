@@ -31,6 +31,8 @@ const GITLINK_MODE = '160000';
 // Raw bytes in, raw bytes out: `ls-files -s -z` emits mode, object and stage, then a TAB, then the
 // path, then a NUL — and the path half is never decoded before it has been matched, so a name
 // carrying a tab or a newline survives intact (splitting on lines would mangle it).
+// The object id is carried through rather than dropped: the record already holds it, and a consumer
+// that must read what the index HOLDS (not what the worktree happens to show) needs exactly that.
 const parseIndexEntries = (buf) => {
   const entries = [];
   let start = 0;
@@ -41,7 +43,7 @@ const parseIndexEntries = (buf) => {
     const tab = record.indexOf(TAB);
     if (tab !== -1) {
       const head = record.subarray(0, tab).toString('utf8').split(' ');
-      entries.push({ mode: head[0], stage: Number(head[2]), path: record.subarray(tab + 1) });
+      entries.push({ mode: head[0], sha: head[1], stage: Number(head[2]), path: record.subarray(tab + 1) });
     }
     start = end + 1;
   }

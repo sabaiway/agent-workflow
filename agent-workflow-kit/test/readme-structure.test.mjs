@@ -27,8 +27,8 @@ const READMES = [
 
 // East-Asian-aware display width: wide/fullwidth = 2 cols, combining marks = 0, else 1. Box-drawing
 // and arrows are narrow (1), so this matches how a fixed-width terminal / GitHub code block renders.
-const WIDE = /[\u1100-\u115f⺀-꓏\uac00-\ud7a3\uf900-﫿︰-﹏＀-｠￠-￦]/;
-const COMBINING = /[̀-ͯ᪰-᫿᷀-᷿⃐-⃿︀-️︠-︯]/;
+const WIDE = /[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/;
+const COMBINING = /[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe00-\ufe0f\ufe20-\ufe2f]/;
 const displayWidth = (line) => {
   let w = 0;
   for (const ch of line) {

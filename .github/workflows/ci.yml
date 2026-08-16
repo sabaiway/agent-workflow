@@ -67,6 +67,7 @@ jobs:
             codex-cli-bridge/bin/*.test.mjs \
             scripts/release/*.test.mjs \
             scripts/sync-mirrors.test.mjs \
+            scripts/check-ascii-letters.test.mjs \
             scripts/suite-parity.test.mjs \
             scripts/suite-parity-reporter.test.mjs \
             scripts/suite-parity-branches.test.mjs

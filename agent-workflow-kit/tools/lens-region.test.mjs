@@ -159,13 +159,31 @@ const commsDoc = ({ body, maxLines = 150, after = '\n### 2.6. Planning, review &
   `---\ntype: protocol\nmaxLines: ${maxLines}\n---\n\n# Rules\n\n### 2.4. Quality Gates\n- run tests\n\n${body}${after}`;
 
 describe('comms-region — canon, priors, pure reconcile (AD-061)', () => {
-  it('the kit template canon carries the plain-language bar and both known priors parse neutral-headed', () => {
+  it('the kit template canon carries the plain-language bar AND the closing-state-block contract, over three neutral-headed priors', () => {
     assert.ok(COMMS_CANON.includes('Plain language'), 'the canon carries the plain-language bullet');
-    assert.equal(COMMS_PRIORS.length, 2, 'exactly the two known prior bodies (pre-AD-054, AD-054)');
+    assert.ok(COMMS_CANON.includes('closing state block'), 'the canon carries the closing-state-block contract');
+    assert.equal(COMMS_PRIORS.length, 3, 'three known prior bodies (pre-AD-054, AD-054, plain-language)');
     for (const prior of COMMS_PRIORS) {
       assert.match(prior.split('\n')[0], /^### 2\.x\. Communication \(user-facing messages\)/);
-      assert.ok(!prior.includes('Plain language'), 'a prior predates the plain-language bullet');
+      assert.ok(!prior.includes('closing state block'), 'every prior predates the state-block contract');
     }
+    // The vintage rule, asserted rather than assumed: each prior is the canon that shipped BEFORE
+    // the next one, so the newest prior is exactly the previous canon plus nothing.
+    assert.ok(!COMMS_PRIORS[0].includes('Plain language'), 'the oldest two predate the plain-language bullet');
+    assert.ok(!COMMS_PRIORS[1].includes('Plain language'));
+    assert.ok(COMMS_PRIORS[2].includes('Plain language'), 'the newest prior IS the plain-language canon');
+  });
+
+  // The delivery test that matters: a project deployed on the PREVIOUS canon must be refreshed, not
+  // preserved-and-advised. Without its own prior entry a changed region matches nothing and the
+  // contract never reaches the projects already running it.
+  it('a deployed §2.5 carrying the plain-language canon → refreshed to the state-block canon', () => {
+    const text = commsDoc({ body: `${commsAt(COMMS_PRIORS[2], 5)}\n` });
+    const first = reconcileCommsText(text, COMMS_CANON, COMMS_PRIORS);
+    assert.equal(first.status, 'refreshed');
+    assert.ok(extractCommsRegion(first.text).body.includes('closing state block'), 'the new contract really landed');
+    const second = reconcileCommsText(first.text, COMMS_CANON, COMMS_PRIORS);
+    assert.equal(second.status, 'current', 'and a re-run is a zero-diff no-op');
   });
 
   it('a legacy 4-bullet §2.5 (pre-AD-054) → refreshed to the canon at the SAME number', () => {

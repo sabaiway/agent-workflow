@@ -75,10 +75,13 @@ gets no detection at all**, silently — not a warning on every turn, which is w
 condition would produce. An EMPTY delivered message is different: it is text, so a turn that ended
 with no prose is judged as having no block, which `--require-block` will report.
 
-**Language.** The slot labels and both banned sets carry Russian and English twins, because the
-contract this enforces was written for a Russian-dialogue deployment. A deployment in another
-dialogue language gets no detection until its labels are added — that is a real limit, not a
-configuration you can set today.
+**Language — one vocabulary, English, and no list of others.** The slot labels and every phrase set
+are English. The kit enumerates no second language: a shipped language list is a guess about somebody
+else's dialogue, and it never stops growing. A deployment whose dialogue language is not English
+extends the arrays **in its own placed copy** — the runtime is copied into the project and
+self-contained, so that edit is local and survives an uninstalled kit. Until it is made, such a
+deployment gets **no detection**, silently. That is a real limit, stated rather than hidden, and it is
+not a configuration you can set today.
 
 **No writer yet — and why, plainly.** Every other placed thing in this kit arrives through a
 consent-gated writer. This one does not, deliberately:
@@ -162,28 +165,33 @@ the warning text. It is not a sandbox and not a permission control.
 
 - **Detection, not prevention** — restated because it is the one thing that must not blur.
 - **The judgement is LEXICAL, and that is a layer with limits, not a temporary weakness.** It matches
-  slot labels and phrase sets on Unicode-aware word boundaries, so an honest «I need your
-  confirmation» is not read as «not needed» and a marker inside a longer word is not read as a
-  refusal. It cannot parse a sentence, and it cannot recognise a wording it has never been told
-  about. Two rules that tried to close an edge here were **deleted rather than tightened a third
-  time**, because each next version needed a second classifier — the residuals below are what
-  replaced them. A named specimen of the cost: «confirm that nothing was missed» is a real ask
-  and is FLAGGED, because the banned word sits inside it. Phrase the ask without the word.
-- **A comma-joined qualifier is flagged.** «one yes, nothing else is needed» warns; the same
-  sentence with a `;` or a full stop passes. The rule that tried to exempt the comma form kept
-  letting a real "nothing" through behind a harmless prefix, so it was removed and the false flag is
-  accepted instead. It costs one line and names its own fix.
+  slot labels and phrase sets on **Unicode-aware** word boundaries — the markers are English but the
+  message is the project's dialogue language, which need not be ASCII, and JavaScript's `\b` would
+  read every non-ASCII letter as a word break and match a marker sitting inside a longer word. On the
+  English side the same class is what stops «none» matching inside «nonexistent». It cannot parse a
+  sentence, and it cannot recognise a wording it has never been told about. Two rules that tried to
+  close an edge here were **deleted rather than tightened a third time**, because each next version
+  needed a second classifier — the residuals below are what replaced them. A named specimen of the
+  cost: «confirm that nothing was missed» is a real ask and is FLAGGED, because the banned word sits
+  inside it. Phrase the ask without the word.
+- **A comma-joined qualifier is flagged.** «one yes, nothing else is needed» warns; the same sentence
+  with a `;` or a full stop passes. The rule that tried to exempt the comma form kept letting a real
+  "nothing" through behind a harmless prefix, so it was removed and the false flag is accepted
+  instead. It costs one line and names its own fix.
 - **A condition is bound to a promise by TOKEN ORDER inside one segment, which is an approximation.**
-  «after your yes — I take the class» passes; «I take the class, and if the test fails I'll report» is flagged. Two
-  known misreadings follow from the approximation, both accepted: an honest TRAILING gate («I take it,
-  when you say so») is flagged, and a gate belonging to an earlier comma-clause («if the test fails,
-  I'll report, and now I start») wrongly excuses the promise after it. Leading with the gate avoids the
-  first; the second is a miss this layer cannot close without parsing.
-- **The English side is weaker than the Russian side, structurally.** Russian promises are action
-  verbs («I take», «I start»); the others are pronoun+modal («I'll», «I will»), which cannot tell
-  starting from waiting. Waiting is explicitly excluded — «I'll wait for your approval» passes,
-  because waiting is what a turn that ends actually does — but the exclusion is a list, and an
-  unusual way of saying "I am waiting" will be flagged.
+  «after your yes — I take the class» passes; «I take the class, and if the test fails I'll report»
+  is flagged. Two known misreadings follow from the approximation, both accepted: an honest TRAILING
+  gate («I take it when you say so») is flagged, and a gate belonging to an earlier comma-clause («if
+  the test fails I'll report, and now I start the next class») wrongly excuses the promise after it.
+  Leading with the gate avoids the first; the second is a miss this layer cannot close without
+  parsing.
+- **The promise markers are a MIXED set, and each half misses differently.** Some are pronoun+modal
+  («I'll», «I will», «I'm going to»), which name no verb of their own and so cannot tell starting
+  from waiting; waiting is therefore excluded by an explicit list — «I'll wait for your approval»
+  passes, because waiting is what a turn that ends actually does — and an unusual way of saying "I am
+  waiting" is flagged. The others are pronoun+verb («I take», «I start», «I begin», «I move on»),
+  which name the action but only in the exact wording listed: a synonym nobody wrote down is missed
+  entirely, and a stative use of a listed verb («I take that as settled») is a false flag.
 - **A host that does not deliver `last_assistant_message` gets no detection**, silently. There is no
   transcript fallback, on purpose — see above.
 - **Without `--require-block`, a turn that drops the block entirely is not detected.** That is the
