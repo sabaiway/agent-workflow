@@ -18,9 +18,36 @@ const WRAPPER = join(HERE, 'agy-review.sh');
 // --add-dir escape — the staging dir's perms + the offloaded artifact's perms/contents WHILE they
 // still exist (agy-review's trap removes the staging dir on exit). Kept inline so the file is
 // standalone (the kit mirror is byte-equality; no shared helper grows that set).
+// The envelope `agy --output-format json` returns: ONE object whose `response` carries the model's
+// text VERBATIM. Encoded in node so an arbitrary body (quotes, backslashes, multibyte) round-trips
+// exactly — hand-rolled JSON quoting in bash is the defect farm this fake exists to avoid.
+const FAKE_ENVELOPE_ENCODER = [
+  'const text = require("node:fs").readFileSync(0, "utf8");',
+  'const [cid, status, noConv] = process.argv.slice(1);',
+  'const envelope = { conversation_id: cid, status, response: text, duration_seconds: 1.5, num_turns: 1,',
+  '  usage: { input_tokens: 10, output_tokens: 5, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 15 } };',
+  'if (noConv === "1") delete envelope.conversation_id;',
+  'process.stdout.write(`${JSON.stringify(envelope)}\\n`);',
+].join('\n');
+
 const FAKE_AGY = [
   '#!/usr/bin/env bash',
   'set -u',
+  // A capability probe is NOT a paid dispatch: --help / --version answer BEFORE any capture file is
+  // touched, so the wrapper's pre-spend door can never read as a spent run (the sentinel) nor shift
+  // the fed lane's per-turn counter. Keyed on the FIRST argument like the real CLI, so a prompt that
+  // merely CONTAINS "--help" is never intercepted.
+  'case "${1:-}" in',
+  '  --help|-h)',
+  '    if [[ -n "${AGY_FAKE_HELP_EXIT:-}" ]]; then echo "fake agy: help unavailable" >&2; exit "$AGY_FAKE_HELP_EXIT"; fi',
+  '    for f in --output-format --json-schema --disable-slash-commands --effort --mode; do',
+  '      if [[ "$f" == "${AGY_FAKE_HELP_OMIT:-}" ]]; then continue; fi',
+  '      printf "  %s   fake capability line\\n" "$f"',
+  '    done',
+  '    if [[ -n "${AGY_FAKE_HELP_EXTRA:-}" ]]; then printf "%s\\n" "$AGY_FAKE_HELP_EXTRA"; fi',
+  '    exit 0 ;;',
+  '  --version) printf "%s\\n" "${AGY_FAKE_VERSION:-1.1.13}"; exit 0 ;;',
+  'esac',
   ': "${AGY_FAKE_ARGV:=/dev/null}"',
   ': "${AGY_FAKE_ENV:=/dev/null}"',
   ': "${AGY_FAKE_PROMPT:=/dev/null}"',
@@ -30,6 +57,20 @@ const FAKE_AGY = [
   '{ echo "FOO_API_KEY=${FOO_API_KEY:-<unset>}"; echo "ANTIGRAVITY_API_KEY=${ANTIGRAVITY_API_KEY:-<unset>}"; } > "$AGY_FAKE_ENV"',
   'prompt=""',
   'prev=""; for a in "$@"; do if [[ "$prev" == "-p" ]]; then prompt="$a"; printf "%s" "$a" > "$AGY_FAKE_PROMPT"; fi; prev="$a"; done',
+  // Every answer leaves through ONE emitter, so the transport is a property of the INVOCATION
+  // (`--output-format json` ⇒ an envelope, otherwise text) and every existing output knob keeps
+  // meaning exactly what it meant. AGY_FAKE_RAW_STDOUT bypasses the encoder entirely — the
+  // unparseable-payload arm; AGY_FAKE_STDERR is the CLI's own diagnostic.
+  'aw_fmt=""',
+  'prev=""; for a in "$@"; do if [[ "$prev" == "--output-format" ]]; then aw_fmt="$a"; fi; prev="$a"; done',
+  'aw_fake_emit() {',
+  '  local body="$1"',
+  '  if [[ -n "${AGY_FAKE_STDERR:-}" ]]; then printf "%s\\n" "$AGY_FAKE_STDERR" >&2; fi',
+  '  if [[ -n "${AGY_FAKE_RAW_STDOUT+x}" ]]; then printf "%s" "$AGY_FAKE_RAW_STDOUT"; return 0; fi',
+  '  if [[ "$aw_fmt" != "json" ]]; then printf "%s\\n" "$body"; return 0; fi',
+  `  printf "%s\\n" "$body" | node -e '${FAKE_ENVELOPE_ENCODER}' \\`,
+  '    "${AGY_FAKE_CONV_ID:-11111111-2222-3333-4444-555555555555}" "${AGY_FAKE_STATUS:-SUCCESS}" "${AGY_FAKE_NO_CONV:-0}"',
+  '}',
   'prev=""; for a in "$@"; do',
   '  if [[ "$prev" == "--add-dir" ]]; then',
   '    printf "%s" "$a" > "${AGY_FAKE_ADDDIR:-/dev/null}"',
@@ -64,7 +105,7 @@ const FAKE_AGY = [
   // PREMATURE verdict — so the isolation invariant (feed output never reaches stdout or the parsed
   // capture) is proven against the worst case, not the polite one.
   'if [[ -z "${AGY_FAKE_OUTPUT+x}" && "$prompt" == *"--- BEGIN CHANGE-SET PART "* && "$prompt" != *"Requested addresses"* ]]; then',
-  '  printf "PREMATURE_FEED_CHATTER\\n### Verdict\\nREWORK\\n"; exit 0',
+  '  aw_fake_emit "$(printf "PREMATURE_FEED_CHATTER\\n### Verdict\\nREWORK")"; exit 0',
   'fi',
   // The FINAL turn carries the delivery-proof request. The fake answers it the only honest way:
   // by reading the bodies it was actually fed, turn by turn — so a wrapper that never delivered a
@@ -93,20 +134,23 @@ const FAKE_AGY = [
   '  done',
   '  if [[ "${AGY_FAKE_PROOF_EXTRA:-}" == "1" ]]; then entries+=("part 99 line 1: an address nobody asked for"); fi',
   '  if [[ "${AGY_FAKE_PROOF_HUGE_EXTRA:-}" == "1" ]]; then entries+=("part 99999999999999999999 line 1: an invented giant address"); fi',
-  '  if [[ "${AGY_FAKE_PROOF_LATE:-}" == "1" ]]; then printf "### Verdict\\nSHIP\\n"; fi',
-  '  if [[ "${AGY_FAKE_PROOF_CASE:-}" == "1" ]]; then printf "### Delivery Proof\\n"; else printf "### Delivery proof\\n"; fi',
-  '  if [[ "${AGY_FAKE_PROOF_OUTSIDE:-}" == "1" ]]; then',
-  '    printf "(nothing here)\\n### Verdict\\nSHIP\\n"',
-  '    if (( ${#entries[@]} > 0 )); then printf "%s\\n" "${entries[@]}"; fi',
-  '  else',
-  '    if (( ${#entries[@]} > 0 )); then printf "%s\\n" "${entries[@]}"; fi',
-  '    printf "### Verdict\\nSHIP\\n"',
-  '  fi',
+  '  out="$( {',
+  '    if [[ "${AGY_FAKE_PROOF_LATE:-}" == "1" ]]; then printf "### Verdict\\nSHIP\\n"; fi',
+  '    if [[ "${AGY_FAKE_PROOF_CASE:-}" == "1" ]]; then printf "### Delivery Proof\\n"; else printf "### Delivery proof\\n"; fi',
+  '    if [[ "${AGY_FAKE_PROOF_OUTSIDE:-}" == "1" ]]; then',
+  '      printf "(nothing here)\\n### Verdict\\nSHIP\\n"',
+  '      if (( ${#entries[@]} > 0 )); then printf "%s\\n" "${entries[@]}"; fi',
+  '    else',
+  '      if (( ${#entries[@]} > 0 )); then printf "%s\\n" "${entries[@]}"; fi',
+  '      printf "### Verdict\\nSHIP\\n"',
+  '    fi',
+  '  } )"',
+  '  aw_fake_emit "$out"',
   '  exit 0',
   'fi',
   // Unset AGY_FAKE_OUTPUT → a verdict-carrying default (D4: a verdict-less run is a FAILURE, so
   // the success-path tests need one); an EXPLICIT empty value exercises the empty-output failure.
-  'if [[ -z "${AGY_FAKE_OUTPUT+x}" ]]; then printf "FAKE_AGY_REVIEW_OUTPUT\\n### Verdict\\nSHIP\\n"; else printf "%s\\n" "$AGY_FAKE_OUTPUT"; fi',
+  'if [[ -z "${AGY_FAKE_OUTPUT+x}" ]]; then aw_fake_emit "$(printf "FAKE_AGY_REVIEW_OUTPUT\\n### Verdict\\nSHIP")"; else aw_fake_emit "$AGY_FAKE_OUTPUT"; fi',
   'exit "${AGY_FAKE_EXIT:-0}"',
   '',
 ].join('\n');
@@ -295,6 +339,128 @@ describe('agy-review.sh — model policy advisory (1)', () => {
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /non-frontier model/, 'a FRONTIER_SET member never warns');
     assert.match(r.argv, /Gemini 3\.7 Flash \(High\)/);
+  });
+});
+
+// ── the pre-spend capability door (AGY-1.1.13, Decision 2) ───────────────────────────────────────
+// The wrapper drives agy in --output-format json and reads the returned envelope in node, so a host
+// that cannot do that must refuse BEFORE a subscription turn is spent. The door probes CAPABILITY,
+// never a version floor — the release that introduced the flag is unmeasurable from one installed
+// build. Every case asserts ZERO paid dispatch: the fake answers --help/--version without touching
+// the invocation sentinel, so a probe can never read as a spent run.
+const FAKE_OLD_NODE = '#!/usr/bin/env bash\nprintf "v18.20.0\\n"\n';
+
+describe('agy-review.sh — the pre-spend capability door (Decision 2)', () => {
+  for (const flag of ['--output-format', '--disable-slash-commands']) {
+    it(`a --help that does not advertise ${flag} refuses pre-spend and names it`, () => {
+      const sb = makeSandbox();
+      const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_HELP_OMIT: flag } });
+      const receipts = readReceipts(sb.repo);
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.notEqual(r.status, 0, r.stderr);
+      assert.equal(r.invoked, false, 'the door refuses BEFORE any paid dispatch');
+      assert.match(r.stderr, /does not advertise the flag/);
+      assert.ok(r.stderr.includes(flag), `the refusal names the missing flag: ${r.stderr}`);
+      assert.equal(receipts.length, 0);
+    });
+  }
+
+  it('`agy --help` exiting non-zero refuses with a DISTINCT cause — never read as "capability present"', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_HELP_EXIT: '3' } });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.notEqual(r.status, 0, r.stderr);
+    assert.equal(r.invoked, false, 'a failed probe never becomes a paid dispatch');
+    assert.match(r.stderr, /'agy --help' exited 3/, 'the failed probe is the stated cause');
+    assert.doesNotMatch(r.stderr, /does not advertise the flag/, 'a failed probe is not a missing-flag verdict');
+  });
+
+  it('node ABSENT refuses pre-spend, naming Node and the floor', () => {
+    const sb = makeSandbox();
+    const r = run(sb, {
+      args: ['code', '--facts', 'f'],
+      env: { PATH: `${sb.bin}:${farmFor(['agy', 'agy-run', 'node'])}` },
+    });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.notEqual(r.status, 0, r.stderr);
+    assert.equal(r.invoked, false);
+    assert.match(r.stderr, /'node' is not on PATH/);
+    assert.match(r.stderr, /Node >= 22/);
+  });
+
+  it('node PRESENT but BELOW the floor refuses pre-spend — the version comparison really runs', () => {
+    const sb = makeSandbox();
+    // Into $HOME/.local/bin, which the wrapper itself prepends — so the fake wins over the real node.
+    writeFileSync(join(sb.bin, 'node'), FAKE_OLD_NODE, { mode: 0o755 });
+    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.notEqual(r.status, 0, r.stderr);
+    assert.equal(r.invoked, false, 'an existence-only check would have dispatched here');
+    assert.match(r.stderr, /v18\.20\.0/, 'the refusal quotes the version it read');
+    assert.match(r.stderr, /below the family floor \(Node >= 22\)/);
+  });
+
+  // The door reads option DECLARATIONS, not substrings. A near-miss flag and a prose mention are the
+  // two ways a substring search opens the door to a build that cannot honour the flag — and the
+  // failure would then surface only AFTER a subscription turn was already spent.
+  for (const [name, extraHelpLine] of [
+    ['a NEAR-MISS flag name', '  --output-formatting   a longer flag that is not the one we pass'],
+    ['a prose mention outside any declaration', 'Note: pass --output-format json to get structured output.'],
+    ['the flag named inside ANOTHER option`s description', '  --json-schema   enforce structured output; see --output-format'],
+    ['another option whose description BEGINS with the flag name', '  --other   --output-format is unsupported on this build'],
+  ]) {
+    it(`${name} does NOT open the door — an option declaration is required`, () => {
+      const sb = makeSandbox();
+      const r = run(sb, {
+        args: ['code', '--facts', 'f'],
+        env: { AGY_FAKE_HELP_OMIT: '--output-format', AGY_FAKE_HELP_EXTRA: extraHelpLine },
+      });
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.notEqual(r.status, 0, r.stderr);
+      assert.equal(r.invoked, false, 'a false-positive door would have spent a subscription turn here');
+      assert.match(r.stderr, /does not advertise the flag/);
+      assert.ok(r.stderr.includes('--output-format '), `the refusal still names the flag really missing: ${r.stderr}`);
+    });
+  }
+
+  // The other direction: a declaration the parser fails to READ refuses a build that CAN honour the
+  // flag — the false refusal Decision 2 exists to avoid. Both common clustered renderings count.
+  for (const [name, extraHelpLine] of [
+    ['a comma-clustered alias', '  -o, --output-format   the clustered rendering'],
+    ['a metavar rendering', '  -o FORMAT, --output-format FORMAT   the metavar rendering'],
+    ['an =<value> rendering', '  --output-format=<fmt>   the joined-value rendering'],
+    ['a declaration with no description at all', '  --output-format'],
+  ]) {
+    it(`${name} READS as declared — a capable build is never falsely refused`, () => {
+      const sb = makeSandbox();
+      const r = run(sb, {
+        args: ['code', '--facts', 'f'],
+        env: { AGY_FAKE_HELP_OMIT: '--output-format', AGY_FAKE_HELP_EXTRA: extraHelpLine },
+      });
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 0, `${name} must read as a declaration: ${r.stderr}`);
+      assert.equal(r.invoked, true);
+    });
+  }
+
+  it('the agy-capability refusal carries the INSTALLED version and the upgrade command', () => {
+    const sb = makeSandbox();
+    const r = run(sb, {
+      args: ['code', '--facts', 'f'],
+      env: { AGY_FAKE_HELP_OMIT: '--output-format', AGY_FAKE_VERSION: '1.0.9' },
+    });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.notEqual(r.status, 0, r.stderr);
+    assert.match(r.stderr, /Installed agy version: 1\.0\.9/, 'the operator is told what they actually have');
+    assert.match(r.stderr, /agy update/, 'and the command that fixes it');
+  });
+
+  it('a capable host passes the door and still dispatches (the door is not a blanket refusal)', () => {
+    const sb = makeSandbox();
+    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.invoked, true);
   });
 });
 

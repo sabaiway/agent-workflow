@@ -499,6 +499,84 @@ if ! grep -q "AGY_REQUIRE_TIMEOUT_BIN" "$aw_child_path" 2>/dev/null; then
   exit 127
 fi
 
+# --- Pre-spend capability door (AGY-1.1.13, Decision 2) ------------------------
+# This wrapper drives the CLI in `--output-format json`, passes --disable-slash-commands, and reads
+# the returned envelope in node. A host that cannot do all three must refuse BEFORE a subscription
+# turn is spent — never after a paid run returns something unreadable.
+# A version FLOOR is deliberately NOT the door: the release that introduced --output-format is not
+# measurable from one installed build, so a guessed floor would refuse working installs. The door
+# probes the CAPABILITY the dispatch actually uses instead — the flags `agy --help` advertises, plus
+# a usable node. A probe that FAILS is never read as "capability present" (fail closed).
+AW_REQUIRED_AGY_FLAGS=(--output-format --disable-slash-commands)
+AW_MIN_NODE_MAJOR=22
+aw_agy_version() {
+  local v
+  v="$(agy --version 2>/dev/null | LC_ALL=C awk 'NR == 1 { print }' || true)"
+  printf '%s' "${v:-unknown}"
+}
+set +e
+aw_help_probe="$(agy --help 2>&1)"
+aw_help_rc=$?
+set -e
+if (( aw_help_rc != 0 )); then
+  echo "error: could not read the agy capability list — 'agy --help' exited ${aw_help_rc}. A failed probe is" >&2
+  echo "       NEVER read as 'capability present', so this review refuses BEFORE any run is spent." >&2
+  echo "       Installed agy version: $(aw_agy_version). Repair the install, then re-run; to update: agy update" >&2
+  exit 127
+fi
+# The DECLARED option tokens of the probed help, never a substring search: `--output-formatting`, or
+# the flag merely NAMED in prose, would both open the door to a build that cannot honour the flag.
+# A line contributes only when its first non-space character is a dash, and only its DECLARATION
+# SEGMENT counts — the part before the description column, which help renderers separate by a run of
+# two or more spaces or a tab. Inside that segment EVERY dash-token declares (so `-o FORMAT,
+# --output-format FORMAT` declares both and a metavar declares nothing), and `--flag=<value>`
+# declares `--flag`.
+# Stated residual: a renderer that separates its columns by a SINGLE space has no machine-readable
+# boundary at all, and a description beginning with a flag name would read as a declaration there.
+# No such rendering is known; the guarantee below is the column convention, not a parse of English.
+aw_declared_flags="$(printf '%s\n' "$aw_help_probe" | LC_ALL=C awk '
+  {
+    line = $0
+    sub(/^[ \t]+/, "", line)
+    if (substr(line, 1, 1) != "-") next
+    if (match(line, /  +|\t/)) line = substr(line, 1, RSTART - 1)
+    n = split(line, token, /[ \t,]+/)
+    for (i = 1; i <= n; i++) {
+      t = token[i]
+      sub(/=.*$/, "", t)
+      if (substr(t, 1, 1) == "-") print t
+    }
+  }')"
+aw_missing_flags=""
+for _flag in "${AW_REQUIRED_AGY_FLAGS[@]}"; do
+  case $'\n'"$aw_declared_flags"$'\n' in
+    *$'\n'"$_flag"$'\n'*) ;;
+    *) aw_missing_flags+="${_flag} " ;;
+  esac
+done
+if [[ -n "$aw_missing_flags" ]]; then
+  echo "error: the installed agy CLI does not advertise the flag(s) this review dispatch passes: ${aw_missing_flags% }" >&2
+  echo "       The review drives the CLI in --output-format json and reads the returned envelope; a build" >&2
+  echo "       without these flags would spend a subscription turn and answer in a shape this wrapper" >&2
+  echo "       cannot read. Refusing BEFORE any run is spent." >&2
+  echo "       Installed agy version: $(aw_agy_version). Update the CLI: agy update" >&2
+  exit 127
+fi
+if ! command -v node >/dev/null 2>&1; then
+  echo "error: 'node' is not on PATH, and this review parses agy's JSON envelope in node (Node >= ${AW_MIN_NODE_MAJOR})." >&2
+  echo "       Refusing BEFORE any run is spent. Install Node >= ${AW_MIN_NODE_MAJOR}, then re-run." >&2
+  exit 127
+fi
+aw_node_version="$(node --version 2>/dev/null || true)"
+aw_node_major="${aw_node_version#v}"
+aw_node_major="${aw_node_major%%.*}"
+if [[ ! "$aw_node_major" =~ ^[0-9]+$ ]] || (( aw_node_major < AW_MIN_NODE_MAJOR )); then
+  echo "error: node '${aw_node_version:-<unreadable>}' is below the family floor (Node >= ${AW_MIN_NODE_MAJOR}) this review needs" >&2
+  echo "       to parse agy's JSON envelope. Refusing BEFORE any run is spent." >&2
+  echo "       Upgrade Node to >= ${AW_MIN_NODE_MAJOR}, then re-run." >&2
+  exit 127
+fi
+
 # --- Model policy (advisory, NOT a gate) -------------------------------------
 is_frontier=0
 for _m in "${FRONTIER_SET[@]}"; do

@@ -16,11 +16,33 @@ import { spawnSync } from 'node:child_process';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WRAPPER = join(HERE, 'agy-review.sh');
 
+// Same shape as the sibling spec's fake, minimally: --help / --version answer the wrapper's
+// pre-spend capability door WITHOUT touching the invocation sentinel (a probe is not a paid
+// dispatch), and the answer leaves as an `--output-format json` envelope when the dispatch asked
+// for one — the model's text rides `response` VERBATIM.
+const FAKE_ENVELOPE_ENCODER = [
+  'const text = require("node:fs").readFileSync(0, "utf8");',
+  'const envelope = { conversation_id: "11111111-2222-3333-4444-555555555555", status: "SUCCESS",',
+  '  response: text, duration_seconds: 1.5, num_turns: 1,',
+  '  usage: { input_tokens: 10, output_tokens: 5, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 15 } };',
+  'process.stdout.write(`${JSON.stringify(envelope)}\\n`);',
+].join('\n');
+
 const FAKE_AGY = [
   '#!/usr/bin/env bash',
   'set -u',
+  'case "${1:-}" in',
+  '  --help|-h) printf "  --output-format\\n  --disable-slash-commands\\n"; exit 0 ;;',
+  '  --version) printf "1.1.13\\n"; exit 0 ;;',
+  'esac',
   'printf invoked > "${AGY_FAKE_SENTINEL:-/dev/null}"',
-  'printf "%s\\n" "${AGY_FAKE_OUTPUT:-### Verdict}"',
+  'aw_fmt=""',
+  'prev=""; for a in "$@"; do if [[ "$prev" == "--output-format" ]]; then aw_fmt="$a"; fi; prev="$a"; done',
+  'if [[ "$aw_fmt" == "json" ]]; then',
+  `  printf "%s\\n" "\${AGY_FAKE_OUTPUT:-### Verdict}" | node -e '${FAKE_ENVELOPE_ENCODER}'`,
+  'else',
+  '  printf "%s\\n" "${AGY_FAKE_OUTPUT:-### Verdict}"',
+  'fi',
   'exit 0',
   '',
 ].join('\n');
