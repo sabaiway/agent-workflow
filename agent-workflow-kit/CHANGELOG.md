@@ -4,6 +4,54 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 5.10.0 — the bundled agy review reads the CLI's own envelope, and refuses a host that cannot honour the dispatch (AD-098; antigravity-cli-bridge 5.3.0, memory 4.5.0)
+
+**A review used to read whatever the CLI happened to print, and recover the conversation id by
+scraping the CLI's run log with a pattern its own comment called "agy's own to change".** Antigravity
+CLI 1.1.13 answers `--output-format json` with one object whose `response` carries the model's
+Markdown verbatim and whose `conversation_id` is a first-class field. The bundled bridge now drives
+every dispatch that way and reads named fields instead of guessing — and the guess that used to rot
+silently is deleted rather than hardened.
+
+- **The envelope is transport, not contract.** The model is asked for exactly what it was asked for
+  before, so the delivery-proof echo, the mandated section shape, the receipt and the "no recognized
+  verdict" arm keep their semantics. On a successful run the wrapper still PRINTS the review text,
+  never JSON. An unreadable envelope on a zero exit is its own loud failure (exit 5) with no receipt,
+  distinct from a verdict-less answer (exit 4); a non-zero CLI exit keeps the CLI's own code and
+  message, because the envelope is parsed only on a zero exit.
+- **A pre-spend capability door, not a version floor.** Before anything is spent, the wrapper probes
+  the DECLARED option tokens of `agy --help` for `--output-format` and `--disable-slash-commands`,
+  requires `node >= 22` and the reader module, and refuses with the cost of the capability that is
+  actually missing, the installed `agy` version and the recovery command. A `--help` that itself
+  fails is never read as "capability present". A guessed version floor would have refused working
+  installs — the release that introduced the flag is not measurable from one build.
+- **The conversation id comes from the envelope; the log scrape and its `--continue` fallback are
+  gone.** The UUID grammar the scrape validated is kept and applied to the field, so a missing,
+  wrong-typed or malformed id stops the run before the next turn is spent instead of routing it at
+  an arbitrary conversation.
+- **`--disable-slash-commands` on every review dispatch.** A change-set line that begins with a slash
+  command stays BODY, so the model reviews the delivered bytes rather than an expansion of them.
+- **`--json-schema` was measured and REFUSED, and the reference says why.** It is not a constrained
+  decode: the model answers in prose and the CLI spends a second turn asking it to restate that
+  answer in schema shape. Matched control, same prompt and model, schema off vs on: 16,585 vs 33,446
+  total tokens, with the structured reason coming back reworded rather than quoted. `stream-json`
+  stays unadopted, with its two real gains named in the reference.
+- **Node is now required for the review role** (the JSON parse lives in `bin/agy-envelope.mjs`, not
+  in bash); `SKILL.md`, `setup/README.md` and the flags reference carry the requirement and the
+  probed capability list in place of the old "1.1.13 or newer" line.
+- **The state-block guard ships ONE vocabulary — English — and enumerates no other language.** A
+  shipped phrase list is a guess about somebody else's dialogue and it never stops growing; a
+  deployment whose dialogue language differs extends its own placed copy, and the mode contract
+  states that silence instead of hiding it. The always-loaded rules template gains the closing
+  state-block rule in the same shape: the slot LABELS stay English, because they are what lets a
+  checker find the block at all, while everything written into a slot is in the project's dialogue
+  language.
+- **Two smaller consequences of that sweep, both load-bearing.** `lens-region.mjs` now recognizes the
+  intermediate communications canon that shipped between the plain-language bullet and the
+  state-block rule, so a deployment sitting on it is still detected as canon rather than flagged as a
+  custom edit; and the index reader behind the size practice carries each entry's object id, so a
+  consumer can read what the index HOLDS instead of what the worktree happens to show.
+
 ## 5.9.0 — the always-loaded navigator becomes something every deploy path actually creates (AD-096; memory 4.4.0)
 
 **A fresh deployment's entry point declared `docs/ai/index.md` always-loaded, and no step ever

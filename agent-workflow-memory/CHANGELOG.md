@@ -4,6 +4,24 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 4.5.0 — the closing state block gets a canon rule, and its slot labels are declared English (AD-098; ships with kit 5.10.0)
+
+**Three slots that answer three different questions, or one restatement written three times.** The
+deployed rules template already asked for a closing state block; what it never said was what belongs
+in each slot — so *now* drifted into a report of finished work, and the block collapsed into a
+summary the reader had already read.
+
+- **`agent_rules.md` gains the rule, in §2.5.** *Now* is the state at this instant — what is running
+  or what the work is stopped on, never a report of what was completed (that belongs in the message
+  body, above the block). *From you* is the real unblocker, named; a turn that is ending always has
+  one. *Next* is what follows.
+- **The slot LABELS stay English; the values take the dialogue language.** An English label is what
+  lets a state-block checker find the block and its slots at all; everything written into a slot is
+  in the project's own language, and the checker's English phrase sets do not judge those values.
+  This is the substrate half of the same decision the kit's guard ships.
+- **One test point renamed to describe the check it actually runs** — the `--write-index` refusal is
+  a pre-write symlink refusal on the index path, which is what the body has pinned since 4.4.0.
+
 ## 4.4.0 — the deploy finishes by writing the navigator its entry point declares (AD-096; ships with kit 5.9.0)
 
 **The substrate deployed an `AGENTS.md` that calls `docs/ai/index.md` always-loaded, and no step

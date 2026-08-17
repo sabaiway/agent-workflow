@@ -7,6 +7,41 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-17 — AD-098 the agy review reads the CLI's own envelope, and the schema half of the opportunity is measured and refused (kit 5.10.0, antigravity-cli-bridge 5.3.0, memory 4.5.0; engine 2.1.0 and codex-cli-bridge 3.5.0 unchanged)
+
+The queued opportunity said structured output would let the review stop parsing prose for its
+verdict. Probing the installed CLI inverted that: the envelope is worth adopting, the schema is worth
+refusing. `--output-format json` returns one object carrying the model's Markdown verbatim plus a
+first-class `conversation_id`, at one turn. `--json-schema` is not a constrained decode at all — the
+model answers in prose and the CLI spends a **second** turn asking it to restate that answer in
+schema shape. Measured on the same prompt and the same model, schema off vs on: **16,585 vs 33,446
+total tokens**, with the structured reason coming back reworded rather than quoted. A schema would
+therefore replace a free, deterministic regex with a billed non-deterministic re-read, and add a
+failure mode where a run dies between the two turns.
+
+So the envelope was adopted as **transport** and the review contract left prose-shaped. Every
+dispatch — single, resume, each turn of a chunked feed — now runs in JSON and the wrapper reads named
+fields, while the delivery-proof echo, the section shape, the receipt and the verdict-less arm keep
+their exact semantics and their tests. What that bought is the deletion of a guess: the conversation
+id used to come from an awk scrape of the CLI's own run log, a format its own comment called "agy's
+own to change", with a silent `--continue` fallback when the scrape failed. Both are gone, and the
+id's grammar check is kept and applied to the named field.
+
+Reading JSON in bash is a defect farm, so the parse lives in its own small module — which makes Node
+a hard requirement for every review. That cost is paid back by the other half of the work: a
+**pre-spend capability door** that probes what `agy --help` actually declares, checks Node, and
+refuses before a single subscription turn is spent, naming the capability that is missing and what
+its absence would have cost. It is a capability probe, not a version floor: the release that
+introduced the flag is not measurable from one installed build, and a guessed floor would refuse
+working installs.
+
+Riding along, the shipped half of the English-only sweep: the state-block guard now ships **one**
+vocabulary and enumerates no other language — a shipped phrase list is a guess about somebody else's
+dialogue — with the resulting silence stated in its contract rather than hidden, and the always-loaded
+rules template gains the closing state-block rule in the same shape (labels English so a checker can
+find the block; values in the project's own language). Engine and the codex bridge were measured
+unchanged and hold their published versions.
+
 ## 2026-08-15 — AD-096 the always-loaded navigator becomes something every deploy path actually creates (memory 4.4.0, kit 5.9.0; engine 2.1.0 and both bridges unchanged)
 
 Every fresh deployment of this family shipped broken, quietly. The entry point it writes declares
