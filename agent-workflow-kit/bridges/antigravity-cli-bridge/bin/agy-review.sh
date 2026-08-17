@@ -80,6 +80,18 @@ Grounding:
   AGY_PROBE=1); plan/diff proceed with a loud warning
 
 Notes:
+  transport: every review dispatch drives the CLI in --output-format json (plus
+  --disable-slash-commands) and the returned envelope is parsed in node (bin/agy-envelope.mjs) — the
+  operator-facing invocations and flags above do NOT change, and on a ZERO exit the wrapper still
+  PRINTS the review text, never JSON. A missing or unreadable envelope on a zero exit is a loud
+  failure with NO receipt, never a downgraded verdict and never a fallback to raw-stdout parsing; a
+  non-zero CLI exit keeps its own code and message, and publishes the captured stdout unchanged from
+  the SINGLE dispatch or the FINAL fed turn (which may therefore be a JSON or partial payload — the
+  envelope is parsed only on a zero exit); an INTERMEDIATE feed turn is the exception, its output
+  stays private (Invariant E) and its failure prints only a named error. Enforced by a PRE-SPEND
+  capability probe, not a version floor: agy --help must advertise --output-format and
+  --disable-slash-commands, node must be >= 22, and bin/agy-envelope.mjs must be present — otherwise
+  the review refuses before any run is spent and names the missing capability
   pre-dispatch host-diff: before the FIRST dispatch of this bridge, diff its declared networkHosts
   against the live sandbox allow-list — a missing host is surfaced to the maintainer BEFORE
   dispatching, never fired into a known prompt

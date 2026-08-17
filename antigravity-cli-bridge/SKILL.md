@@ -95,11 +95,11 @@ AGY_HARD_TIMEOUT=8m agy-run "..."             # hard wall-clock cap via timeout(
 agy-run "..." -- --add-dir .                  # passthrough agy flags (never a permission widener)
 ```
 
-`agy` is **headless-only** here (`-p`/`--print`); v1.1.13 adds `--output-format json|stream-json`,
-and text stays the wrapper default — JSON can ride passthrough (`-- --output-format json`) but with
-no first-class parsing/validation (adoption is a backlog item). If you need structure, ask
-for Markdown with explicit headings and validate it
-yourself. Wrapper inputs: first argument is the prompt (`text`, `-` for stdin, or `@file`);
+`agy` is **headless-only** here (`-p`/`--print`). `agy-run` stays **text**: `--output-format json`
+can ride passthrough (`-- --output-format json`) but this wrapper adds no parsing/validation, so if
+you need structure, ask for Markdown with explicit headings and validate it yourself. (The `review`
+role is the one that adopted the JSON envelope — see below.) Wrapper inputs: first argument is the
+prompt (`text`, `-` for stdin, or `@file`);
 `AGY_MODEL` (default `Gemini 3.7 Flash (High)`); `AGY_TIMEOUT` → `--print-timeout` (default `5m`);
 `AGY_HARD_TIMEOUT` → hard `timeout(1)` wall-clock cap (default = `AGY_TIMEOUT`); extra `agy` flags
 after `--`. Full detail: [`references/models-and-flags.md`](references/models-and-flags.md).
@@ -141,6 +141,25 @@ agy-review plan <plan-file> [--facts @f] …      # critique a plan (no facts �
 agy-review diff <diff-file> [--facts @f] …      # review a supplied diff
 agy-review --continue --decided @round1.md --focus "still-open items"   # round-2 delta, no re-assembly
 ```
+
+**Transport + host requirements (probed, never a version floor).** Every review dispatch runs
+`--output-format json` and `--disable-slash-commands`, and the wrapper reads the returned envelope
+in node ([`bin/agy-envelope.mjs`](bin/agy-envelope.mjs)) instead of guessing at raw stdout — a
+change-set line beginning with a slash command therefore stays BODY, and the answer TEXT plus the
+conversation id arrive as **named fields**. The **review contract stays prose-shaped**: the verdict
+is still parsed from that text's `### Verdict` section, unchanged. **On a zero exit** what
+`agy-review` prints is the review text, never JSON; when the **single dispatch or the FINAL fed
+turn** exits non-zero the captured stdout is published as-is (the CLI's own failure wins and the
+envelope is parsed only on a zero exit), so a failing run may print a JSON or partial payload — an
+**intermediate** feed turn is the exception, its output stays private (Invariant E) and its failure
+prints only a named error. So it **probes before
+spending anything**: `agy --help` must advertise both flags, **Node ≥ 22** must be on `PATH`, and
+`bin/agy-envelope.mjs` must be present — each refusal names the missing capability and its recovery.
+A version floor is deliberately not used (the release that introduced a flag is not measurable from
+one installed build, so a guessed floor would refuse working installs), and a failed probe is never
+read as "capability present". `--json-schema` is **rejected on measurement** — it costs a second
+billed turn restating the model's own prose (16,585 → 33,446 tokens on a matched control); see
+[`references/models-and-flags.md`](references/models-and-flags.md).
 
 **Honesty + posture (D4/D5):** a run with no recognized `### Verdict` section — empty output
 included — **exits 4 with NO receipt**: treat it as a *failed review to re-run*, never a fatal
@@ -249,9 +268,10 @@ checklist, prompt templates, output handling). Essentials:
 - Subdirectory `CLAUDE.md` files are **not** auto-loaded by `agy` (only the cwd context file +
   `.agents/skills/`). Put cross-cutting rules in the root context file, or include local rules in the
   prompt when they matter.
-- **Text is the wrapper default** — the CLI's 1.1.x `--output-format json|stream-json` can ride
-  passthrough but with no first-class parsing/validation (adoption is backlog) — and there is
-  **no `agy inspect`**: no machine-readable introspection.
+- **`agy-run` leaves JSON unparsed** — `--output-format json|stream-json` can ride its passthrough
+  with no first-class parsing/validation. (`agy-review` is the exception: it **adopted `json`** and
+  parses the envelope; only `stream-json` stays deferred there.) And there is **no `agy inspect`**:
+  no machine-readable introspection.
 - Model names must match the `agy models` display strings **exactly**.
 - **Quota is finite.** Heavy use of Pro/Claude models can exhaust the subscription; prefer Flash for
   cheap work.
@@ -260,5 +280,6 @@ checklist, prompt templates, output handling). Essentials:
   kill (a run was seen surviving 32 min past a 10m `--print-timeout`). A heavy `--add-dir` agentic
   prompt on a slow model (e.g. `Gemini 3.1 Pro (High)`) can run unbounded — prefer a faster model or
   a **self-contained prompt** (no `--add-dir`); an "exceeded the hard cap" error is the guard firing.
-- `agy` output is plain text and may be incomplete or out of date — treat it as advisory until the
-  main agent verifies it.
+- `agy` output may be incomplete or out of date — treat it as advisory until the main agent verifies
+  it. (Its FORMAT is not one thing: see the transport section for which wrapper prints text, when,
+  and what a failing run prints instead.)

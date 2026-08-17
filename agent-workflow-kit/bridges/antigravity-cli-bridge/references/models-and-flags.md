@@ -6,13 +6,25 @@ were captured from **v1.1.13**; if the binary disagrees, the binary wins. The wr
 
 ## Headless behaviour
 
-Use `-p`, `--print`, or `--prompt` to run one non-interactive prompt and print the text response. The
-wrapper always uses headless `-p`. v1.1.13 adds `--output-format text|json|stream-json` and
-`--json-schema` (structured output); **text stays the wrapper default** — raw passthrough
-(`agy-run "…" -- --output-format json`) is possible but rides with NO first-class parsing or schema
-validation (first-class adoption is a separate backlog item). When the caller needs structure
-through the wrapper, ask for Markdown, bullets, tables, or fenced blocks, then validate the text
-yourself.
+Use `-p`, `--print`, or `--prompt` to run one non-interactive prompt and print the text response.
+Both wrappers run headless `-p`, and they differ in **transport**:
+
+- **`agy-run` stays text.** It prints the CLI's text response unchanged. JSON can ride passthrough
+  (`agy-run "…" -- --output-format json`) with NO parsing or validation — if you need structure here,
+  ask for Markdown, bullets, tables or fenced blocks and validate the text yourself.
+- **`agy-review` drives every dispatch in `--output-format json`** and reads the returned envelope
+  (`bin/agy-envelope.mjs`), so the answer TEXT and the conversation id come from **named fields**
+  instead of a guess at raw stdout. The **review contract stays prose-shaped**: the verdict is still
+  parsed out of that text's `### Verdict` section, exactly as before. It also passes
+  `--disable-slash-commands`, so a delivered change-set line that begins with a slash command stays
+  BODY rather than being expanded by the CLI. **On a zero exit** what it PRINTS is the review text,
+  never JSON — the envelope is wire format, not output format. When the **single dispatch or the
+  FINAL fed turn** exits non-zero the captured stdout is published as-is (the CLI's own failure wins,
+  and the envelope is parsed only on a zero exit), so a failing run may print a JSON or partial
+  payload. An **intermediate** feed turn is the exception: its output stays private and its failure
+  prints only a named error.
+
+`--json-schema` is **not** adopted and was measured and rejected; see the flags table below.
 
 ## Wrapper contract
 
@@ -70,6 +82,15 @@ agy-review --continue | --conversation <id>   [--decided @f] [--focus "…"]   #
 passthrough (it owns the posture). The service can still **stall on large/substantive prompts**
 (Issue-001), so keep reviews **focused**; the hard timeout is the guard.
 
+**Host requirements, enforced BEFORE any run is spent.** Because the review reads agy's JSON
+envelope in node, `agy-review` needs **Node ≥ 22** on `PATH`; and because it passes flags the CLI
+must honour, it probes `agy --help` for **`--output-format`** and **`--disable-slash-commands`**
+first. A missing flag, an unreadable `agy --help`, a missing or too-old node, or a missing
+`bin/agy-envelope.mjs` each refuse with a named cause and spend nothing. This is a **capability
+probe, not a version floor** — the release that introduced `--output-format` is not measurable from
+one installed build, so a guessed floor would refuse working installs. A failed probe is never read
+as "capability present".
+
 ## Models
 
 Pass the **exact display string** from `agy models`, or set `AGY_MODEL`.
@@ -112,19 +133,31 @@ AGY_MODEL="Claude Sonnet 4.6 (Thinking)" AGY_TIMEOUT=10m agy-run @review-prompt.
 | `--dangerously-skip-permissions` | auto-approve all tool permissions | avoid by default; use only with explicit user approval |
 | `--sandbox` | run with terminal restrictions enabled | prefer when delegating a prompt that might trigger tool/terminal work |
 | `--log-file <path>` | override the CLI log-file path | keep logs secret-free and out of committed artifacts |
-| `--output-format <fmt>` | print-mode output: `text` (default), `json`, `stream-json` | NEW in 1.1.x; not wrapper-adopted (backlog) |
-| `--json-schema <s\|path>` | enforce structured output (stream-json final result) | NEW in 1.1.x; not wrapper-adopted (backlog) |
+| `--output-format <fmt>` | print-mode output: `text` (default), `json`, `stream-json` | **ADOPTED by `agy-review`** — every dispatch runs `json` and the envelope is parsed (`bin/agy-envelope.mjs`). `agy-run` stays `text`; JSON there rides passthrough, unparsed. `stream-json` is adopted by neither (see below) |
+| `--json-schema <s\|path>` | enforce structured output (stream-json final result) | **REJECTED, and the reason is a measurement.** It is not a constrained decode: the model answers in prose and the CLI then spends a **second turn** asking it to restate that answer in schema shape (`num_turns: 2`). Matched control — same prompt, same model, schema off vs on: **16,585 vs 33,446 total tokens**. So a schema does not remove prose parsing; it replaces a free, deterministic, anchored regex with a billed non-deterministic re-read (the structured `reason` came back reworded, not quoted) and adds a failure mode — a run dying between the two turns has prose but no `structured_output` |
 | `--effort <low\|medium\|high>` | reasoning effort for the session | NEW in 1.1.x; the display strings already carry an effort tier — the wrapper keeps model selection in ONE place (`AGY_MODEL`) |
 | `--mode <m>` | agent execution mode (`accept-edits`, `plan`) | NEW in 1.1.x; not used by the wrapper |
 | `--agent` / `--project <id>` / `--new-project` | agent + project selection for the session | NEW in 1.1.x; not used by the wrapper |
-| `--disable-slash-commands` | disable slash command/skill expansion in print mode | NEW in 1.1.x; not used by the wrapper |
+| `--disable-slash-commands` | disable slash command/skill expansion in print mode | **ADOPTED by `agy-review`** on every dispatch — a delivered change-set line beginning with a slash command stays BODY instead of being expanded, so the model reviews the delivered bytes. Not used by `agy-run` |
 
 ## Subcommands (v1.1.13)
 
 `agent` / `agents`, `changelog`, `help`, `install`, `models`, `plugin` / `plugins`, `update`.
 
-**Still not available in v1.1.13:** any `agy inspect`. Wrapper output stays plain text (the
-`--output-format` lane is not adopted here — see the backlog row).
+**Still not available in v1.1.13:** any `agy inspect`. On output format the two wrappers differ:
+`agy-run` is a **text-by-default passthrough** — it hands back the CLI's stdout unchanged, so
+`agy-run "…" -- --output-format json` really does print JSON; `agy-review` prints the review text it
+read out of the JSON envelope on a **successful** run. (When its single dispatch or FINAL fed turn
+exits non-zero, `agy-review` publishes that captured stdout unchanged — never an intermediate feed
+turn's; see the transport bullet above.)
+
+**`--output-format stream-json` is deliberately NOT adopted.** Its two measured gains are queued as
+follow-ups rather than built: its `init` event names the **resolved** model (neither the plain `json`
+envelope nor the stream's own `result` event carries one), which would let the receipt record what
+actually ran; and its live `step_update` events would make a stalled run visible (Issue-001). The
+seam built here makes the FLAG easy to switch, but neither gain is free: `bin/agy-envelope.mjs`
+parses ONE JSON object and refuses anything else, so NDJSON needs a stream-aware reader, and live
+progress needs an event relay rather than a captured file.
 
 ## Project-context flags
 
