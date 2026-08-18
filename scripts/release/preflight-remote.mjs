@@ -6,12 +6,16 @@
 // two-backend council, a 15/15 final gate matrix — and only then was the push rejected as
 // non-fast-forward. Measured at that moment: `git rev-list --left-right --count origin/main...HEAD`
 // = 292 / 300. Nothing in the flow looked at push-ability until the push itself, and the dispatcher's
-// own late preflight says "the approved release commit must be pushed first", which on a DIVERGED
-// branch is not merely late — it is wrong guidance, because a plain push cannot succeed.
+// own late preflight called EVERY mismatch "the approved release commit must be pushed first" —
+// wrong guidance on a diverged branch, where no plain fast-forward push can succeed. That refusal
+// now classifies what it observed and points here; this script still exists because the
+// dispatcher's check comes only after the whole release has been built and paid for.
 //
 // WHAT A PASS MEANS, EXACTLY. No remote-only commits existed on the checked ref AT CHECK TIME. It is
 // NOT push permission, NOT a statement about branch protection, and NOT proof against a race with
-// another pusher. And this run is NOT read-only: `git fetch` MAY write objects (it writes none when the
+// another pusher. And it is only claimable over a COMPLETE history: a shallow clone is refused
+// before the fetch, because counts taken across a truncated graph can invent remote-only commits
+// and this script's divergence arm prints a force-push. And this run is NOT read-only: `git fetch` MAY write objects (it writes none when the
 // fetched tip is already present locally) and DOES write one temporary ref into the local store. It
 // makes no REMOTE mutation and no working-tree change; that is the honest claim, and the fetch is
 // narrowed (`--no-tags --no-recurse-submodules --no-write-fetch-head`) so the claim is exactly true
@@ -36,7 +40,7 @@ import { pathToFileURL } from 'node:url';
 import { runGitProcess } from './git-process.mjs';
 import { EXIT, REMOTE, DEFAULT_REF, fail, firstLine } from './preflight-remote-core.mjs';
 import { sanitize } from './preflight-remote-sanitize.mjs';
-import { assertShortBranchName, assertPushTargetsDestination } from './preflight-remote-guards.mjs';
+import { assertShortBranchName, assertPushTargetsDestination, assertCompleteHistory } from './preflight-remote-guards.mjs';
 
 // The fetch lands HERE, not in FETCH_HEAD: a shared FETCH_HEAD can be overwritten by a concurrent
 // fetch between two commands, so the count would silently read another run's OID.
@@ -45,7 +49,8 @@ const PREFLIGHT_REF_NAMESPACE = 'refs/aw-preflight';
 // Re-exported so the CLI's contract has one import surface, and so a consumer never has to know which
 // module a primitive was lifted into when the caps forced the split.
 export {
-  EXIT, REMOTE, DEFAULT_REF, fail, sanitize, assertShortBranchName, assertPushTargetsDestination,
+  EXIT, REMOTE, DEFAULT_REF, fail, sanitize,
+  assertShortBranchName, assertPushTargetsDestination, assertCompleteHistory,
 };
 
 export const HELP = `preflight-remote — can this branch still reach ${REMOTE}?
@@ -219,6 +224,8 @@ export const main = async (argv, deps = {}) => {
     }
     await assertShortBranchName(opts.ref, runGit);
     await assertPushTargetsDestination(opts.ref, runGit);
+    // Before the network act: a truncated history makes every later count unsafe to print.
+    await assertCompleteHistory(runGit);
     try {
       await fetchDestination(opts.ref, landingRef, runGit);
       const oid = await readFetchedOid(landingRef, runGit);

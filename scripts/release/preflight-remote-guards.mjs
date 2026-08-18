@@ -143,3 +143,38 @@ export const assertPushTargetsDestination = async (ref, runGit) => {
     );
   }
 };
+
+// A SHALLOW clone cannot be counted. `rev-list --left-right --count` walks the graph it has, and a
+// truncated history hides the very commits that would prove a fast-forward — so on a shallow clone
+// the counts can report remote-only commits where the complete graph has none (the objects are real;
+// the truncation misclassifies them), this run would print that as a divergence, and the divergence
+// arm's remedy is a FORCE-PUSH. Printing a force-push against a
+// false divergence is the worst outcome this script could produce, so the shallow case is refused
+// BEFORE the fetch: no network act, no counts, no topology, no remedy — only the condition and how
+// to remove it.
+export const assertCompleteHistory = async (runGit) => {
+  const res = await runGit(['rev-parse', '--is-shallow-repository']);
+  if (res.error != null || res.signal != null || res.status !== 0) {
+    throw fail(
+      EXIT.refusal,
+      'whether this repository is shallow could not be established — refusing fail-closed, because every count this run would print depends on a complete history.'
+        + (res.stderr?.trim() ? `\n  git said (verbatim except credential redaction):\n${res.stderr.trim()}` : ''),
+    );
+  }
+  // EXACTLY `true`/`false` with at most one trailing newline — the same bytes dispatch-publish's
+  // probe accepts, so the two scripts cannot disagree about the one question that gates a force-push.
+  const answer = res.stdout.endsWith('\n') ? res.stdout.slice(0, -1) : res.stdout;
+  if (answer === 'false') return;
+  if (answer !== 'true') {
+    throw fail(
+      EXIT.refusal,
+      `git answered ${JSON.stringify(res.stdout)} when asked whether this repository is shallow — refusing fail-closed rather than reading an unrecognised answer as a complete history`,
+    );
+  }
+  throw fail(
+    EXIT.refusal,
+    'this repository is SHALLOW, so a divergence count would be computed over a truncated history and could report remote-only commits where the complete graph has none — refusing before the fetch rather than printing counts, a verdict, or a remedy this run cannot stand behind.\n'
+      + '  Deepen the history first:\n    git fetch --unshallow\n'
+      + '  Then re-run this check.',
+  );
+};

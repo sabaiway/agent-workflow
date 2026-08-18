@@ -27,6 +27,8 @@ const healthy = {
   'rev-parse --abbrev-ref @{push}': { stdout: `${REMOTE}/${DEFAULT_REF}\n` },
   [`remote get-url --push --all ${REMOTE}`]: { stdout: `${REMOTE_URL}\n` },
   [`remote get-url ${REMOTE}`]: { stdout: `${REMOTE_URL}\n` },
+  // The completeness guard runs before the fetch; a healthy fixture is a whole repository.
+  'rev-parse --is-shallow-repository': { stdout: 'false\n' },
   'update-ref -d': {},
 };
 
@@ -234,6 +236,9 @@ describe('preflight-remote — a structural non-answer never becomes a usage err
       'rev-parse --abbrev-ref @{push}',
       `remote get-url ${REMOTE}`,
       `remote get-url --push --all ${REMOTE}`,
+      // The completeness guard is the LAST thing before the network act and the FIRST thing that
+      // could refuse on the shape of the local graph — a shallow clone never reaches the fetch.
+      'rev-parse --is-shallow-repository',
       FETCH_ARGV,
       `rev-parse ${LANDING}`,
       `rev-list --left-right --count ${LANDING}...HEAD`,

@@ -42,6 +42,8 @@ const healthyPrefix = (ref = DEFAULT_REF) => ({
   'rev-parse --abbrev-ref @{push}': { stdout: `${REMOTE}/${ref}\n` },
   [`remote get-url --push --all ${REMOTE}`]: { stdout: `${REMOTE_URL}\n` },
   [`remote get-url ${REMOTE}`]: { stdout: `${REMOTE_URL}\n` },
+  // The completeness guard runs before the fetch; a healthy fixture is a whole repository.
+  'rev-parse --is-shallow-repository': { stdout: 'false\n' },
 });
 
 const topologyPrefix = (behind, ahead) => ({
@@ -390,5 +392,69 @@ describe('preflight-remote — the counted OID is the one THIS run fetched', () 
     assert.notEqual(preflightRefFor({ pid: 1, nonce: 'a' }), preflightRefFor({ pid: 1, nonce: 'b' }));
     assert.notEqual(preflightRefFor({ pid: 1, nonce: 'a' }), preflightRefFor({ pid: 2, nonce: 'a' }));
     assert.match(preflightRefFor({ pid: 1, nonce: 'a' }), /^refs\/aw-preflight\//);
+  });
+});
+
+// ── the completeness guard: a shallow clone can be COUNTED, and the count would lie ───
+// The divergence arm prints a FORCE-PUSH. Across a truncated history `rev-list --left-right
+// --count` can report remote-only commits that do not exist, so a shallow clone must never reach
+// the counting stage at all. RED against: no guard, or a guard placed after the fetch.
+
+describe('preflight-remote — a shallow repository is refused BEFORE the network act', () => {
+  const upToTheGuard = (shallowAnswer) => ({
+    ...healthyPrefix(),
+    'rev-parse --is-shallow-repository': shallowAnswer,
+  });
+
+  it('refuses a shallow clone, names the condition and the way out, and never fetches', async () => {
+    const run = await runMain([], upToTheGuard({ stdout: 'true\n' }));
+    assert.equal(run.code, EXIT.refusal);
+    assert.match(run.err, /this repository is SHALLOW/);
+    assert.match(run.err, /git fetch --unshallow/);
+    assert.ok(!run.calls.some((line) => line.startsWith('fetch')), 'the network act never happens');
+    assert.ok(!run.calls.some((line) => line.startsWith('rev-list')), 'nothing is counted');
+    // Both remedy forms as the EMITTER writes them — `git merge --ff-only` is the catch-up lane, and
+    // `pull --ff-only` is a string this script never prints, so asserting its absence proves nothing.
+    assert.ok(!/git push --force-with-lease/.test(run.err), 'no force-push is printed for a topology this run never established');
+    assert.ok(!/git merge --ff-only/.test(run.err), 'nor the catch-up remedy');
+    assert.ok(!/behind \d+, ahead \d+/.test(run.err), 'and no counts');
+  });
+
+  it('reads the answer EXACTLY — padding or extra lines are refused, not trimmed into a verdict', async () => {
+    // RED against: a `.trim()` or a first-line read. The sibling probe in dispatch-publish accepts
+    // exactly these bytes, and the two scripts disagreeing about shallowness is what would let one
+    // print a force-push remedy the other refused to stand behind.
+    for (const stdout of ['maybe\n', 'false ', ' false\n', 'false\nnoise\n', 'FALSE\n', '', '\n']) {
+      const run = await runMain([], upToTheGuard({ stdout }));
+      assert.equal(run.code, EXIT.refusal, JSON.stringify(stdout));
+      assert.match(run.err, /when asked whether this repository is shallow/, JSON.stringify(stdout));
+      assert.ok(!run.calls.some((line) => line.startsWith('fetch')), JSON.stringify(stdout));
+    }
+    // The two shapes git actually prints ARE answers, newline or not.
+    for (const stdout of ['true\n', 'true']) {
+      const run = await runMain([], upToTheGuard({ stdout }));
+      assert.match(run.err, /this repository is SHALLOW/, JSON.stringify(stdout));
+    }
+  });
+
+  it('refuses when the probe itself does not answer, carrying git\'s own reason', async () => {
+    const run = await runMain([], upToTheGuard({ status: 128, stderr: 'fatal: not a git repository\n' }));
+    assert.equal(run.code, EXIT.refusal);
+    assert.match(run.err, /whether this repository is shallow could not be established/);
+    assert.match(run.err, /fatal: not a git repository/);
+    assert.ok(!run.calls.some((line) => line.startsWith('fetch')));
+  });
+
+  it('refuses a probe that was killed — a signal is not an answer', async () => {
+    const run = await runMain([], upToTheGuard({ status: null, signal: 'SIGKILL' }));
+    assert.equal(run.code, EXIT.refusal);
+    assert.match(run.err, /whether this repository is shallow could not be established/);
+    assert.ok(!run.calls.some((line) => line.startsWith('fetch')));
+  });
+
+  it('a COMPLETE repository passes the guard and goes on to fetch', async () => {
+    const run = await runMain([], { ...healthyPrefix(), ...topologyPrefix(0, 0), 'rev-parse --is-shallow-repository': { stdout: 'false\n' } });
+    assert.equal(run.code, EXIT.ok);
+    assert.ok(run.calls.some((line) => line.startsWith('fetch')), 'a whole history is not blocked');
   });
 });

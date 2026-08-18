@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import {
   REPO_ROOT,
   EXIT,
@@ -17,7 +19,13 @@ import {
   ghApiDefault,
   renderVerifyOnlyCommand,
   VERIFY_TRANSPORT_DEADLINE_MS,
+  selectRemoteRef,
+  describeDestination,
+  ANCESTRY,
+  probeAncestry,
+  renderHeadMismatch,
 } from './dispatch-publish.mjs';
+import { runGitProcess, runProcess } from './git-process.mjs';
 import { buildReceipt, SMOKE_RECEIPT_BASENAME, SMOKE_RECEIPT_SCHEMA } from './smoke-candidate.mjs';
 import { buildGateReceipt, GATE_RECEIPT_BASENAME, GATE_RECEIPT_SCHEMA } from './cross-version-gate.mjs';
 
@@ -51,8 +59,17 @@ const makeWorld = ({
   smokeReceipt = undefined,
   // The cross-version gate receipt, same defaulting rule (Issue-016, the second receipt).
   crossVersionReceipt = undefined,
+  // The two ancestry probes, which run on RAW process results. The defaults reproduce the world this
+  // refusal was written in before AD-098: the remote tip is present locally AND an ancestor of HEAD,
+  // i.e. a plain unpushed commit. Either may be given a raw result object instead, for the arms where
+  // git returns no answer at all.
+  remoteObject = 'present', // 'present' | 'tag' | 'unresolvable' | a raw {status, stdout, stderr, error, signal}
+  remoteReaches = true, // merge-base --is-ancestor <peeled> <head> : true | false | a raw result
+  headReached = false, // merge-base --is-ancestor <head> <peeled> : true | false | a raw result
+  shallow = false, // rev-parse --is-shallow-repository : false | true | a raw result
+  lsRemoteBody = null, // the whole `git ls-remote origin <ref>` stdout, when an arm needs an exact one
 } = {}) => {
-  const calls = { dispatches: [], gitArgs: [], fetches: [], fetchOpts: [], ghReqs: [] };
+  const calls = { dispatches: [], gitArgs: [], gitRawArgs: [], fetches: [], fetchOpts: [], ghReqs: [] };
   const runs = [];
   let nextRunId = 100;
   let pendingRun = null;
@@ -103,11 +120,45 @@ const makeWorld = ({
     calls.gitArgs.push(args.join(' '));
     const head = args.join(' ');
     if (head === 'remote get-url origin') return 'git@github.com:sabaiway/agent-workflow.git\n';
-    if (head.startsWith('ls-remote')) return `${remoteSha}\trefs/heads/main\n`;
+    if (head.startsWith('ls-remote')) {
+      // ls-remote PATTERN-matches, so the fixture answers with the ref that was actually asked for;
+      // `lsRemoteBody` overrides it wholesale for the ambiguity and malformed-line arms.
+      const asked = args[2];
+      return lsRemoteBody ?? `${remoteSha}\t${asked.startsWith('refs/') ? asked : `refs/heads/${asked}`}\n`;
+    }
     if (head === 'status --porcelain') return dirtyTree;
     if (head === 'rev-parse HEAD') return `${localHead}\n`;
     if (head === 'rev-parse --absolute-git-dir') return `${join(REPO_ROOT, '.git')}\n`;
     throw new Error(`unscripted git: ${head}`);
+  };
+
+  // The raw-result lane (the lossless leaf in production). A result object is what the leaf returns;
+  // returning a plain status here would let a test pass against a caller that never reads `error`.
+  const rawResult = (status) => ({ status, stdout: '', stderr: '', error: null, signal: null });
+  const runGitRaw = async (args, cwd) => {
+    calls.gitRawArgs.push(args.join(' '));
+    const line = args.join(' ');
+    if (cwd !== REPO_ROOT) throw new Error(`the probes must run in the dispatch root, got ${cwd}`);
+    // The guard's STDOUT is the peeled oid — 'present' peels to itself, 'tag' peels to the local
+    // head (the annotated-tag shape ls-remote reports), and a raw result carries its own.
+    if (line.startsWith('rev-parse --verify --quiet')) {
+      if (typeof remoteObject === 'object') return remoteObject;
+      if (remoteObject === 'unresolvable') return rawResult(1);
+      return { status: 0, stdout: `${remoteObject === 'tag' ? localHead : remoteSha}\n`, stderr: '', error: null, signal: null };
+    }
+    // The two directions are DISTINCT scripted answers: a stub that returns one result for both is
+    // exactly what let "behind" be reported as a divergence.
+    if (line.startsWith('merge-base --is-ancestor') && args[3] === localHead) {
+      return typeof remoteReaches === 'object' ? remoteReaches : rawResult(remoteReaches ? 0 : 1);
+    }
+    if (line.startsWith('merge-base --is-ancestor') && args[2] === localHead) {
+      return typeof headReached === 'object' ? headReached : rawResult(headReached ? 0 : 1);
+    }
+    if (line === 'rev-parse --is-shallow-repository') {
+      if (typeof shallow === 'object') return shallow;
+      return { status: 0, stdout: `${shallow ? 'true' : 'false'}\n`, stderr: '', error: null, signal: null };
+    }
+    throw new Error(`unscripted raw git: ${line}`);
   };
 
   const receipt =
@@ -167,6 +218,7 @@ const makeWorld = ({
   const deps = {
     ghApi,
     runGit,
+    runGitRaw,
     fetchJson,
     readFile,
     sleep: async () => {},
@@ -1183,5 +1235,599 @@ describe('R3 folds — second-round review majors on the dispatcher', () => {
     const malformed = await fetchJsonDefault('https://x', { fetchImpl: async () => ({ ok: true, json: async () => { throw new SyntaxError('Unexpected token < in JSON'); } }) });
     assert.ok(malformed.parseError, 'a genuine JSON SyntaxError stays parseError (reachable red)');
     assert.ok(!malformed.transportError);
+  });
+});
+
+// ── AD-098: the head-mismatch refusal names WHICH mismatch ────────────────────────────
+// Every row here is RED against the pre-fix function, which had ONE message for all of these
+// states: "the approved release commit must be pushed first". On a branch that cannot fast-forward
+// that sentence is not merely late, it is wrong guidance — a plain push cannot succeed.
+
+describe('AD-098 — the live preflight names WHICH mismatch it observed', () => {
+  const liveArgs = ['memory', '--live', '--expect', 'memory=1.0.0'];
+  const liveWorld = (extra) => makeWorld({ localHead: OTHER_SHA, localVersions: { 'agent-workflow-memory': '1.0.0' }, ...extra });
+  const GUARD = `rev-parse --verify --quiet ${SHA}^{commit}`;
+  const REACHES = `merge-base --is-ancestor ${SHA} ${OTHER_SHA}`;
+  const REACHED = `merge-base --is-ancestor ${OTHER_SHA} ${SHA}`;
+  const COMPLETE = 'rev-parse --is-shallow-repository';
+
+  it('every probe addresses the CAPTURED head oid — never the mutable HEAD', async () => {
+    // RED against: `merge-base --is-ancestor <sha> HEAD`. A concurrent checkout between two probes
+    // would classify a commit the refusal does not name, and the operator would act on the wrong one.
+    const { deps, calls } = liveWorld({ remoteReaches: false, headReached: true });
+    assert.equal(await runDispatch(liveArgs, deps), EXIT.preflight);
+    assert.deepEqual(calls.gitRawArgs, [GUARD, REACHES, REACHED]);
+    assert.ok(!calls.gitRawArgs.some((line) => line.split(' ').includes('HEAD')), 'no probe re-reads HEAD');
+  });
+
+  it('the remote tip IS an ancestor of HEAD — the unchanged "must be pushed first" message', async () => {
+    // RED against: a fix that rewrites every arm and loses the one case where pushing IS the remedy.
+    const { deps, calls } = liveWorld({});
+    assert.equal(await runDispatch(liveArgs, deps), EXIT.preflight);
+    assert.match(calls.lastError, /the approved release commit must be pushed first/);
+    assert.ok(!/DIVERGED|preflight-remote/.test(calls.lastError), 'an unpushed commit is not sent to step 1');
+    assert.deepEqual(calls.gitRawArgs, [GUARD, REACHES], 'the object guard runs first, and one positive answer ends it');
+    assert.deepEqual(calls.dispatches, []);
+  });
+
+  it('the reported id PEELS to the local head — an annotated tag, not an unpushed commit', async () => {
+    // RED against: discarding the guard's stdout. `ls-remote` reports the object a ref points AT,
+    // which for an annotated tag is the tag object; classifying the tag id as a commit makes the
+    // refusal say a commit is unpushed when the remote already carries exactly this commit.
+    const { deps, calls } = liveWorld({ remoteObject: 'tag' });
+    assert.equal(await runDispatch(liveArgs, deps), EXIT.preflight);
+    assert.match(calls.lastError, /RESOLVES TO the local HEAD/);
+    assert.match(calls.lastError, /mismatch is one of ref\n?\s*TYPE/);
+    assert.ok(!/must be pushed first|DIVERGED/.test(calls.lastError), 'nothing is unpushed here');
+    assert.deepEqual(calls.gitRawArgs, [GUARD], 'once the peeled oid IS the head, there is no ancestry left to probe');
+    assert.deepEqual(calls.dispatches, [], 'the refusal and the exit code are unchanged — only the reason is honest');
+  });
+
+  it('the PEELED oid, not the reported id, is what the ancestry probes receive', async () => {
+    // RED against: probing the tag object. merge-base peels its arguments today, but the refusal
+    // would still be reasoning about an id it never verified is a commit.
+    const peeled = 'c'.repeat(40);
+    const { deps, calls } = liveWorld({
+      remoteObject: { status: 0, stdout: `${peeled}\n`, stderr: '', error: null, signal: null },
+      remoteReaches: false,
+      headReached: false,
+    });
+    assert.equal(await runDispatch(liveArgs, deps), EXIT.preflight);
+    assert.deepEqual(calls.gitRawArgs, [
+      GUARD,
+      `merge-base --is-ancestor ${peeled} ${OTHER_SHA}`,
+      `merge-base --is-ancestor ${OTHER_SHA} ${peeled}`,
+      COMPLETE,
+    ]);
+  });
+
+  it('a guard that answers 0 with something that is not an object id is undetermined', async () => {
+    // RED against: trusting stdout blindly and then feeding a non-oid into merge-base.
+    const { deps, calls } = liveWorld({ remoteObject: { status: 0, stdout: 'not-an-oid\n', stderr: '', error: null, signal: null } });
+    assert.equal(await runDispatch(liveArgs, deps), EXIT.preflight);
+    assert.match(calls.lastError, /which is not one object id of this repository's width/);
+    assert.deepEqual(calls.gitRawArgs, [GUARD], 'a non-oid is never handed to merge-base as an operand');
+  });
+
+  it('a guard that answers 0 with an EMPTY or MULTI-LINE body is undetermined too', async () => {
+    // RED against: `firstLine(stdout)`, which would silently take the first of several ids.
+    for (const stdout of ['', '\n', `${SHA}\n${OTHER_SHA}\n`, `${'a'.repeat(39)}\n`, `\n${SHA}\n`, `${SHA}\n\n`, ` ${SHA}\n`, `${SHA}`]) {
+      const { deps, calls } = liveWorld({ remoteObject: { status: 0, stdout, stderr: '', error: null, signal: null } });
+      assert.equal(await runDispatch(liveArgs, deps), EXIT.preflight, JSON.stringify(stdout));
+      if (stdout === `${SHA}`) {
+        // The ONE accepted shape besides `<oid>\n`: git's own output when nothing appended a newline.
+        assert.match(calls.lastError, /must be pushed first/, 'a bare <oid> with no trailing newline is the same answer');
+      } else {
+        assert.match(calls.lastError, /which is not one object id of this repository's width/, JSON.stringify(stdout));
+        assert.deepEqual(calls.gitRawArgs, [GUARD], JSON.stringify(stdout));
+      }
+    }
+  });
+
+  it('HEAD is contained in the remote tip — BEHIND, and it is not called a divergence', async () => {
+    // RED against: reading exit 1 from ONE direction as a fork. A branch that is merely behind
+    // answers exit 1 there too, and calling that a DIVERGENCE is the same false claim in a new place.
+    const { deps, calls } = liveWorld({ remoteReaches: false, headReached: true });
+    assert.equal(await runDispatch(liveArgs, deps), EXIT.preflight);
+    assert.match(calls.lastError, /the remote is AHEAD of this branch/);
+    assert.match(calls.lastError, /node scripts\/release\/preflight-remote\.mjs --ref 'main'/);
+    assert.ok(!/DIVERGED|must be pushed first/.test(calls.lastError), 'behind is neither a fork nor an unpushed commit');
+    assert.deepEqual(calls.gitRawArgs, [GUARD, REACHES, REACHED], 'the reverse probe is what separates behind from a fork');
+    assert.deepEqual(calls.dispatches, []);
+  });
+
+  it('neither commit reaches the other, in a WHOLE repository — a DIVERGENCE, named as one', async () => {
+    // RED against: the pre-fix single message, which told the operator to push a branch that cannot.
+    const { deps, calls } = liveWorld({ remoteReaches: false, headReached: false });
+    assert.equal(await runDispatch(liveArgs, deps), EXIT.preflight);
+    assert.match(calls.lastError, /neither commit reaches the other/);
+    assert.match(calls.lastError, /has DIVERGED/);
+    assert.match(calls.lastError, /node scripts\/release\/preflight-remote\.mjs --ref 'main'/);
+    assert.ok(!/must be pushed first/.test(calls.lastError), 'pushing is NOT the remedy here — saying so was the AD-098 defect');
+    assert.deepEqual(calls.gitRawArgs, [GUARD, REACHES, REACHED, COMPLETE], 'the completeness of the graph is checked before the verdict');
+    assert.deepEqual(calls.dispatches, []);
+  });
+
+  it('the same two answers in a SHALLOW clone are their OWN outcome, not a broken probe', async () => {
+    // RED against: claiming a fork from two exit-1 answers; and against filing shallow under the
+    // process-failure arm, whose text tells the operator to re-run "once git answers" — git DID
+    // answer, and the answer was that this question cannot be settled here.
+    const { deps, calls } = liveWorld({ remoteReaches: false, headReached: false, shallow: true });
+    assert.equal(await runDispatch(liveArgs, deps), EXIT.preflight);
+    assert.match(calls.lastError, /this repository is SHALLOW/);
+    assert.match(calls.lastError, /not a broken probe — git answered/);
+    assert.ok(!/has DIVERGED/.test(calls.lastError), 'a truncated graph is not evidence of a fork');
+    assert.ok(!/could NOT be determined|once git answers/.test(calls.lastError), 'shallow is not filed as an unanswered probe');
+    assert.deepEqual(calls.gitRawArgs, [GUARD, REACHES, REACHED, COMPLETE]);
+  });
+
+  it('the shallowness answer is read EXACTLY — padding or extra lines never become a verdict', async () => {
+    // RED against: `firstLine(stdout)` or `.trim()`. Either accepts `false ` and `false\nnoise`, so a
+    // malformed body becomes a confident DIVERGENCE here while preflight-remote refuses the same
+    // bytes — the two scripts disagreeing about the one question that gates a force-push remedy.
+    for (const stdout of ['perhaps\n', 'false ', ' false\n', 'false\nnoise\n', 'true\ntrue\n', '', '\n', 'FALSE\n']) {
+      const { deps, calls } = liveWorld({ remoteReaches: false, headReached: false, shallow: { status: 0, stdout, stderr: '', error: null, signal: null } });
+      assert.equal(await runDispatch(liveArgs, deps), EXIT.preflight, JSON.stringify(stdout));
+      assert.match(calls.lastError, /when asked whether this repository is shallow/, JSON.stringify(stdout));
+      assert.ok(!/has DIVERGED|is SHALLOW/.test(calls.lastError), `${JSON.stringify(stdout)} is not a verdict`);
+    }
+    // And the two shapes git actually prints ARE answers, with or without the newline.
+    for (const [stdout, expected] of [['false\n', /has DIVERGED/], ['false', /has DIVERGED/], ['true\n', /is SHALLOW/], ['true', /is SHALLOW/]]) {
+      const { deps, calls } = liveWorld({ remoteReaches: false, headReached: false, shallow: { status: 0, stdout, stderr: '', error: null, signal: null } });
+      assert.equal(await runDispatch(liveArgs, deps), EXIT.preflight, JSON.stringify(stdout));
+      assert.match(calls.lastError, expected, JSON.stringify(stdout));
+    }
+  });
+
+  it('the remote tip does not resolve to a commit here — the observation, and nothing beyond it', async () => {
+    // RED against: an unguarded `merge-base --is-ancestor`, which on an unresolvable object dies with
+    // exit 128 `fatal: Not a valid commit name`; and against promising that a fetch settles it, when
+    // exit 1 here equally covers an object that EXISTS and is simply not a commit.
+    const { deps, calls } = liveWorld({ remoteObject: 'unresolvable' });
+    assert.equal(await runDispatch(liveArgs, deps), EXIT.preflight);
+    assert.deepEqual(calls.gitRawArgs, [GUARD], 'no ancestry probe is ever reached');
+    assert.match(calls.lastError, /does not resolve to a commit in this clone/);
+    assert.match(calls.lastError, /nothing here says WHY/);
+    assert.ok(!/the remote moved|object database/.test(calls.lastError), 'the stronger claim was never observed');
+    assert.ok(!/fatal:/.test(calls.lastError), "git's own crash text never becomes the operator's diagnosis");
+    assert.deepEqual(calls.dispatches, []);
+  });
+
+  it('exactly two arms omit the step-1 pointer, and a TAG ancestor is not one of them', async () => {
+    // RED against: excluding the whole ancestor arm. Only two states have nothing for step 1 to add —
+    // a branch tip that is simply unpushed, and an id that already peels to HEAD. A tag whose commit
+    // is an ancestor still needs step 1, because this script deliberately prescribes nothing for it.
+    const branchAncestor = liveWorld({});
+    assert.equal(await runDispatch(liveArgs, branchAncestor.deps), EXIT.preflight);
+    assert.ok(!/preflight-remote\.mjs/.test(branchAncestor.calls.lastError), 'a plain unpushed branch is not sent to step 1');
+
+    const peelsToHead = liveWorld({ remoteObject: 'tag' });
+    assert.equal(await runDispatch(liveArgs, peelsToHead.deps), EXIT.preflight);
+    assert.ok(!/preflight-remote\.mjs/.test(peelsToHead.calls.lastError), 'an id that already peels to HEAD is not sent to step 1');
+
+    const tagAncestor = liveWorld({ lsRemoteBody: `${SHA}\trefs/tags/v9.9.9\n` });
+    assert.equal(await runDispatch([...liveArgs, '--ref', 'v9.9.9'], tagAncestor.deps), EXIT.preflight);
+    assert.match(tagAncestor.calls.lastError, /preflight-remote\.mjs --ref 'v9\.9\.9'/, 'a tag ancestor IS sent to step 1');
+  });
+
+  it('no arm promises what step 1 will conclude — it says what step 1 IS', async () => {
+    // RED against: "for the counts and the remedies it names". The dispatcher accepts refs the
+    // preflight refuses outright, so for those the promised counts never arrive.
+    for (const world of [
+      { remoteReaches: false, headReached: true },
+      { remoteReaches: false, headReached: false },
+      { remoteReaches: false, headReached: false, shallow: true },
+      { remoteObject: 'unresolvable' },
+      { remoteObject: { status: 2, stdout: '', stderr: 'boom\n', error: null, signal: null } },
+    ]) {
+      const { deps, calls } = liveWorld(world);
+      assert.equal(await runDispatch(liveArgs, deps), EXIT.preflight);
+      assert.match(calls.lastError, /the first check of the\n?\s*release procedure/);
+      assert.match(calls.lastError, /refuses a repository or a ref it cannot verify/);
+      assert.ok(!/for the counts/.test(calls.lastError), 'counts are not promised to a ref step 1 may refuse');
+      // And it must not promise a FETCH either: step 1 refuses a shallow repository before its
+      // network act, so the two scripts would contradict each other exactly where it matters.
+      assert.ok(!/it fetches and/.test(calls.lastError), 'no arm promises step 1 will fetch');
+    }
+  });
+
+  it('EVERY non-answer shape at EVERY probe position is undetermined — with its own cause', async () => {
+    // RED against: guarding only the first probe (a later 128 read as a fork), and against a table
+    // that runs one shape everywhere and calls that positional coverage. `status: 1` is included
+    // deliberately: it is an ANSWER for the three ancestry probes and a NON-answer for shallowness.
+    const shapes = [
+      { label: 'exit 2', res: { status: 2, stdout: '', stderr: 'usage: git\n', error: null, signal: null }, cause: /git exited with status 2: usage: git/ },
+      { label: 'exit 129', res: { status: 129, stdout: '', stderr: '', error: null, signal: null }, cause: /git exited with status 129/ },
+      { label: 'exit 128', res: { status: 128, stdout: '', stderr: 'fatal: bad object\n', error: null, signal: null }, cause: /git exited with status 128: fatal: bad object/ },
+      { label: 'no status', res: { status: null, stdout: '', stderr: '', error: null, signal: null }, cause: /git exited with no status/ },
+      { label: 'killed', res: { status: null, stdout: '', stderr: '', error: null, signal: 'SIGKILL' }, cause: /git was killed by SIGKILL/ },
+      { label: 'never spawned', res: { status: null, stdout: '', stderr: '', error: new Error('spawn git ENOENT'), signal: null }, cause: /git could not be run: spawn git ENOENT/ },
+      { label: 'exit 0 but killed', res: { status: 0, stdout: '', stderr: '', error: null, signal: 'SIGTERM' }, cause: /git was killed by SIGTERM/ },
+    ];
+    const positions = [
+      { label: 'object guard', world: (res) => ({ remoteObject: res }), seen: [GUARD] },
+      { label: 'forward probe', world: (res) => ({ remoteReaches: res }), seen: [GUARD, REACHES] },
+      { label: 'reverse probe', world: (res) => ({ remoteReaches: false, headReached: res }), seen: [GUARD, REACHES, REACHED] },
+      { label: 'shallowness probe', world: (res) => ({ remoteReaches: false, headReached: false, shallow: res }), seen: [GUARD, REACHES, REACHED, COMPLETE] },
+    ];
+    for (const position of positions) {
+      for (const shape of shapes) {
+        const where = `${shape.label} at the ${position.label}`;
+        const { deps, calls } = liveWorld(position.world(shape.res));
+        assert.equal(await runDispatch(liveArgs, deps), EXIT.preflight, where);
+        assert.match(calls.lastError, /relationship could NOT be determined/, where);
+        assert.match(calls.lastError, shape.cause, where);
+        assert.ok(!/DIVERGED|AHEAD of this branch|must be pushed first|SHALLOW/.test(calls.lastError), `${where}: no verdict is invented`);
+        assert.deepEqual(calls.gitRawArgs, position.seen, `${where}: the run stops at the probe that did not answer`);
+        assert.deepEqual(calls.dispatches, [], where);
+      }
+    }
+    // The one shape whose meaning DEPENDS on position: exit 1 answers the three ancestry probes and
+    // is a non-answer only for shallowness.
+    const one = { status: 1, stdout: '', stderr: '', error: null, signal: null };
+    const { deps, calls } = liveWorld({ remoteReaches: false, headReached: false, shallow: one });
+    assert.equal(await runDispatch(liveArgs, deps), EXIT.preflight);
+    assert.match(calls.lastError, /relationship could NOT be determined/);
+    assert.match(calls.lastError, /git exited with status 1/);
+    assert.ok(!/has DIVERGED/.test(calls.lastError), 'an exit-1 shallowness answer is not permission to call it a fork');
+  });
+
+  it('the printed remedy survives a shell as ONE argument — no nested operator can run', async () => {
+    // RED against: `--ref ${ref}` in the template. The dispatcher accepts ref names the preflight
+    // refuses, so `release;uname` would paste as TWO commands and run the second one before
+    // preflight-remote ever got the chance to refuse it. String matching alone would not prove this:
+    // the quoted form is handed to a real shell, which must return the ref verbatim as one word.
+    for (const ref of ['release;uname', 'release&touch x', 'release$(id)', "it's-a-ref", 'a b c']) {
+      const { deps, calls } = liveWorld({ remoteReaches: false, headReached: false });
+      assert.equal(await runDispatch([...liveArgs, '--ref', ref], deps), EXIT.preflight);
+      const quoted = calls.lastError.match(/--ref (('([^']|'\\'')*'))/)[1];
+      const roundTrip = execFileSync('sh', ['-c', `printf %s ${quoted}`], { encoding: 'utf8', timeout: 30_000 });
+      assert.equal(roundTrip, ref, `${ref} must come back out of a shell byte-identical`);
+    }
+  });
+
+  it('a ref carrying a TAB makes the ls-remote line unparseable, and that refuses', async () => {
+    // A real ref name cannot contain a tab, so a line with three fields is not a ref this run can
+    // identify. RED against: splitting on /\s/ and taking token 0, which reads such a line happily.
+    const { deps, calls } = liveWorld({ lsRemoteBody: `${SHA}\trefs/heads/a\tb\n` });
+    assert.equal(await runDispatch([...liveArgs, '--ref', 'a\tb'], deps), EXIT.preflight);
+    assert.match(calls.lastError, /returned a line this run cannot parse/);
+    assert.deepEqual(calls.gitRawArgs, [], 'nothing is probed about a ref this run could not identify');
+  });
+
+  it('the refusal carries the ref the release DISPATCHES with, not a hardcoded main', async () => {
+    // RED against: a step-1 command line pasted as a literal — it would send the operator to verify
+    // a branch this release never publishes from.
+    const { deps, calls } = liveWorld({ remoteReaches: false, headReached: false });
+    assert.equal(await runDispatch([...liveArgs, '--ref', 'release-2026-08'], deps), EXIT.preflight);
+    assert.match(calls.lastError, /--ref 'release-2026-08'/);
+  });
+
+  it('the destination is chosen by EXACT refname — ls-remote pattern-matching never decides it', async () => {
+    // RED against: `lsRemote.split(/\s/)[0]`. `ls-remote origin main` also matches refs/tags/main and
+    // refs/heads/foo/main, so the first token is a ref chosen by output ordering — and every later
+    // comparison, including the one that lets a live dispatch proceed, would be about that ref.
+    assert.deepEqual(
+      selectRemoteRef(`${OTHER_SHA}\trefs/heads/foo/main\n${SHA}\trefs/heads/main\n`, 'main'),
+      { oid: SHA, name: 'refs/heads/main', error: null },
+      'a suffix match never wins over the exact one, whatever the order',
+    );
+    assert.deepEqual(
+      selectRemoteRef(`${SHA}\trefs/tags/v1\n${OTHER_SHA}\trefs/tags/v1^{}\n`, 'v1'),
+      { oid: SHA, name: 'refs/tags/v1', error: null },
+      'a peeled tag line is not the ref that was asked for',
+    );
+    assert.equal(selectRemoteRef(`${SHA}\trefs/heads/main\n${OTHER_SHA}\trefs/tags/main\n`, 'main').error?.includes('AMBIGUOUS'), true, 'a branch/tag collision is refused, not resolved');
+    assert.match(selectRemoteRef(`${SHA}\trefs/heads/foo/main\n`, 'main').error, /no exact refs\/heads\/main or refs\/tags\/main/);
+    assert.match(selectRemoteRef('', 'main').error, /no exact/);
+    assert.match(selectRemoteRef(`${SHA} refs/heads/main\n`, 'main').error, /cannot parse/, 'the separator is a TAB; a space-separated line is not this format');
+    assert.match(selectRemoteRef(`zzzz\trefs/heads/main\n`, 'main').error, /cannot parse/);
+    assert.deepEqual(
+      selectRemoteRef(`${SHA}\trefs/heads/main\n`, 'refs/heads/main'),
+      { oid: SHA, name: 'refs/heads/main', error: null },
+      'a full ref is taken as written',
+    );
+    assert.deepEqual(selectRemoteRef(`${SHA}\tHEAD\n${OTHER_SHA}\trefs/heads/main\n`, 'main'), { oid: OTHER_SHA, name: 'refs/heads/main', error: null }, 'a HEAD line is present in real output and is not the branch');
+    // A `^{}` entry is a projection of a ref, not a ref: no request may select one.
+    assert.match(selectRemoteRef(`${SHA}\trefs/tags/v1\n${OTHER_SHA}\trefs/tags/v1^{}\n`, 'v1^{}').error, /no exact/, 'a short peeled request selects nothing');
+    assert.match(selectRemoteRef(`${SHA}\trefs/tags/v1^{}\n`, 'refs/tags/v1^{}').error, /no exact/, 'a full peeled request selects nothing either');
+    // Blank lines: '' is zero rows (a ref that matched nothing), anything else blank is malformed.
+    assert.match(selectRemoteRef('', 'main').error, /no exact/, 'empty stdout is a ref that matched nothing');
+    for (const body of ['\n', `\n${SHA}\trefs/heads/main\n`, `${SHA}\trefs/heads/main\n\n`, `${SHA}\trefs/heads/main\n\n${OTHER_SHA}\trefs/tags/x\n`]) {
+      assert.match(selectRemoteRef(body, 'main').error, /cannot parse/, `${JSON.stringify(body)} is malformed, not silently skipped`);
+    }
+    assert.equal(selectRemoteRef(`${SHA}\trefs/heads/main`, 'main').oid, SHA, 'a body with no trailing newline is still one row');
+  });
+
+  it('an ambiguous or unidentifiable ls-remote answer refuses before ANY probe', async () => {
+    // RED against: classifying against a sha whose ref this run could not name.
+    const { deps, calls } = liveWorld({ lsRemoteBody: `${SHA}\trefs/heads/main\n${OTHER_SHA}\trefs/tags/main\n` });
+    assert.equal(await runDispatch(liveArgs, deps), EXIT.preflight);
+    assert.match(calls.lastError, /AMBIGUOUS/);
+    assert.match(calls.lastError, /refusing before ANY dispatch/);
+    assert.deepEqual(calls.gitRawArgs, [], 'no ancestry is probed about a ref this run refused to identify');
+    assert.deepEqual(calls.dispatches, []);
+  });
+
+  it('the push prescription is earned by a BRANCH — a tag ref gets the observation only', async () => {
+    // RED against: "the approved release commit must be pushed first" printed for a tag. Pushing a
+    // branch does not move a tag, so that sentence is advice which cannot work.
+    const { deps, calls } = liveWorld({ lsRemoteBody: `${SHA}\trefs/tags/v9.9.9\n` });
+    assert.equal(await runDispatch([...liveArgs, '--ref', 'v9.9.9'], deps), EXIT.preflight);
+    assert.match(calls.lastError, /refs\/tags\/v9\.9\.9 on origin is at/);
+    assert.match(calls.lastError, /resolves to an ancestor of HEAD/);
+    assert.match(calls.lastError, /is not a branch, so no push is prescribed/);
+    assert.ok(!/must be pushed first/.test(calls.lastError), 'no push is prescribed for a ref a push cannot move');
+    assert.match(calls.lastError, /preflight-remote\.mjs --ref 'v9\.9\.9'/);
+  });
+
+  it('a FULL tag ref does not earn the push prescription either', async () => {
+    // RED against: `remoteRef === ref`, my own round-3 shortcut. `--ref refs/tags/v1` selects
+    // refs/tags/v1, the two compare equal, and the branch advice fires for a ref no push can move.
+    const { deps, calls } = liveWorld({ lsRemoteBody: `${SHA}\trefs/tags/v1\n` });
+    assert.equal(await runDispatch([...liveArgs, '--ref', 'refs/tags/v1'], deps), EXIT.preflight);
+    assert.match(calls.lastError, /is not a branch, so no push is prescribed/);
+    assert.ok(!/must be pushed first/.test(calls.lastError));
+  });
+
+  it('a FULL branch ref does earn it', async () => {
+    const { deps, calls } = liveWorld({ lsRemoteBody: `${SHA}\trefs/heads/main\n` });
+    assert.equal(await runDispatch([...liveArgs, '--ref', 'refs/heads/main'], deps), EXIT.preflight);
+    assert.match(calls.lastError, /the approved release commit must be pushed first/);
+  });
+
+  it('a BRANCH ref keeps the exact original sentence', async () => {
+    // RED against: a fold that hedges the one case where the old wording was right.
+    const { deps, calls } = liveWorld({});
+    assert.equal(await runDispatch(liveArgs, deps), EXIT.preflight);
+    assert.match(calls.lastError, /the approved release commit must be pushed first/);
+    assert.ok(!/NOT a branch/.test(calls.lastError));
+  });
+
+  it('EVERY ref-type-dependent claim comes from ONE predicate — no arm decides it alone', async () => {
+    // RED against: patching arms one at a time. Two rounds found the same assumption in two different
+    // arms; this asserts the property for all of them at once, so a new arm cannot repeat it.
+    const render = (state, remoteRef) => renderHeadMismatch({ ref: 'x', remoteRef, expectedSha: SHA, localHead: OTHER_SHA, ancestry: { state, cause: 'git exited with status 7' } });
+    for (const state of [ANCESTRY.ancestor, ANCESTRY.behind, ANCESTRY.diverged]) {
+      const asTag = render(state, 'refs/tags/v1');
+      assert.ok(!/requires an explicitly forced update|must be pushed first/.test(asTag), `${state}: no push-shaped claim for a tag`);
+      assert.match(asTag, /is not a branch, so no push is prescribed/, `${state}: it says why`);
+      assert.ok(!/this branch/.test(asTag), `${state}: a tag is not called a branch`);
+      const asBranch = render(state, 'refs/heads/main');
+      assert.ok(/must be pushed first|requires an explicitly forced update/.test(asBranch), `${state}: a branch keeps its push-shaped claim`);
+    }
+  });
+
+  it('the label is built from the SELECTED refname, so it never names a path that does not exist', async () => {
+    // RED against: `origin/${ref}` glued from the operand — `--ref refs/heads/main` printed
+    // `origin/refs/heads/main`, which is not a thing.
+    assert.deepEqual(describeDestination('refs/heads/main'), { branch: true, label: 'origin/main', subject: 'this branch' });
+    assert.deepEqual(describeDestination('refs/heads/release/2026-08'), { branch: true, label: 'origin/release/2026-08', subject: 'this branch' });
+    assert.deepEqual(describeDestination('refs/tags/v1'), { branch: false, label: 'refs/tags/v1 on origin', subject: 'the selected ref' });
+    assert.deepEqual(describeDestination('refs/notes/commits'), { branch: false, label: 'refs/notes/commits on origin', subject: 'the selected ref' });
+    assert.deepEqual(describeDestination('HEAD'), { branch: false, label: 'HEAD on origin', subject: 'the selected ref' });
+    // And the renderer REQUIRES it: defaulting would silently restore the branch assumption.
+    assert.throws(() => renderHeadMismatch({ ref: 'main', remoteRef: null, expectedSha: SHA, localHead: OTHER_SHA, ancestry: { state: ANCESTRY.ancestor, cause: null } }), /requires the selected refname/);
+    assert.throws(() => renderHeadMismatch({ ref: 'main', remoteRef: '', expectedSha: SHA, localHead: OTHER_SHA, ancestry: { state: ANCESTRY.ancestor, cause: null } }), /requires the selected refname/);
+  });
+
+  it('the header invariant and the refusal text say the same thing (tracked surfaces only)', async () => {
+    // RED against: the pre-fix header, which described ANY mismatch as an unpushed commit — the
+    // wording that made the wrong message look correct to every later reader.
+    // The hidden release-cycle SKILL.md is deliberately NOT bound here: it is absent from a clean
+    // checkout, so this test could only bind it behind a skip, and a skip destroys the guarantee.
+    const source = readFileSync(join(REPO_ROOT, 'scripts', 'release', 'dispatch-publish.mjs'), 'utf8');
+    const header = source.slice(0, source.indexOf('\nimport '));
+    // Every header assertion runs on the NORMALISED text: a claim split across a `\n//` boundary
+    // would otherwise pass or fail for a typographic reason rather than for what it says.
+    const flatten = (text) => text.split('\n').map((line) => line.replace(/^\s*\/\/ ?/, '')).join(' ').replace(/\s+/g, ' ');
+    const flat = flatten(header);
+    const render = (state, cause = null, remoteRef = 'refs/heads/main') => renderHeadMismatch({ ref: 'main', remoteRef, expectedSha: SHA, localHead: OTHER_SHA, ancestry: { state, cause } });
+    const pairs = [
+      { header: /ancestor of HEAD is an UNPUSHED commit \(push it\) — and ONLY for a branch/, message: /must be pushed first/, state: ANCESTRY.ancestor },
+      { header: /annotated tag|peels/i, message: /RESOLVES TO the local HEAD/, state: ANCESTRY.resolvesToHead },
+      { header: /behind/i, message: /AHEAD of this branch/, state: ANCESTRY.behind },
+      { header: /diverg/i, message: /DIVERGED/, state: ANCESTRY.diverged },
+      { header: /shallow/i, message: /is SHALLOW/, state: ANCESTRY.shallow },
+      { header: /does not resolve to a commit/i, message: /does not resolve to a commit/, state: ANCESTRY.unresolvable },
+      { header: /undetermined/i, message: /could NOT be determined/, state: ANCESTRY.undetermined },
+    ];
+    for (const pair of pairs) {
+      assert.match(flat, pair.header, `the header names the ${pair.state} case`);
+      assert.match(render(pair.state, 'git exited with status 7'), pair.message, `the ${pair.state} message says it`);
+    }
+    assert.match(flat, /preflight-remote\.mjs/, 'the header names the step-1 script the messages send the operator to');
+    // The tag rendering must carry no push instruction at all — the header's qualifier above is only
+    // half the guarantee; this is the other half.
+    const tagRendering = renderHeadMismatch({ ref: 'v1', remoteRef: 'refs/tags/v1', expectedSha: SHA, localHead: OTHER_SHA, ancestry: { state: ANCESTRY.ancestor, cause: null } });
+    assert.ok(!/must be pushed first|requires an explicitly forced update/.test(tagRendering), 'and the tag rendering carries no push instruction');
+    // The PUBLIC wording must not promise what step 1 will conclude either. A header is the contract
+    // a reader trusts before running anything, so green arm-tests beside a promising header would
+    // still leave the false claim standing where it is read most.
+    const preflightSource = readFileSync(join(REPO_ROOT, 'scripts', 'release', 'preflight-remote.mjs'), 'utf8');
+    // NORMALISED before matching: a promise split across a `\n//` line wrap would otherwise pass an
+    // assertion for a purely typographic reason, which is worse than having no assertion at all.
+    const surfaces = [
+      ['the dispatcher header', flat],
+      ['the preflight header', flatten(preflightSource.slice(0, preflightSource.indexOf('\nimport ')))],
+    ];
+    for (const [name, text] of surfaces) {
+      for (const promise of [/without a fetch/i, /for the counts/i, /fetches and answers/i, /points here for the counts/i]) {
+        assert.ok(!promise.test(text), `${name} must not promise a classification (${promise})`);
+      }
+    }
+    // The normaliser itself is pinned: without this, a broken normaliser would make every promise
+    // check above pass silently — the same failure shape the assertion was written to end.
+    assert.ok(flatten('// for\n// the counts').includes('for the counts'), 'a phrase split across a line wrap is visible after normalisation');
+    for (const state of [ANCESTRY.behind, ANCESTRY.diverged, ANCESTRY.shallow, ANCESTRY.unresolvable, ANCESTRY.undetermined]) {
+      assert.match(render(state, 'git exited with status 7'), /preflight-remote\.mjs --ref 'main'/, `the ${state} arm points at step 1`);
+    }
+  });
+});
+
+// ── the probe arms against REAL git ───────────────────────────────────────────────────
+// A stub can only prove the mapping. Every assumption that CAUSED this fix — exit 1 as an answer,
+// 128 on an unresolvable object, exit 1 in one direction meaning nothing on its own — was found by
+// running git, so the arms are proven against git itself.
+//
+// The graph is BUILT here, never borrowed from the checkout: CI clones at depth 1
+// (actions/checkout with no fetch-depth), so `HEAD~1` does not resolve there and any test reading
+// this repository's own history would be red in CI and green locally — the worst of both. The
+// environment is scrubbed for the same reason: an inherited GIT_DIR / GIT_WORK_TREE / GIT_CONFIG_*
+// / GIT_CONFIG_PARAMETERS / GIT_DEFAULT_HASH, or a global hooks path, would silently point these
+// commands at another repository, inject config, or change the object format under the fixture.
+
+// An ALLOW-list, not a deny-list: every inherited GIT_* is dropped and only the four this fixture
+// controls are put back. A deny-list is a guess about which variables git honours — and the list of
+// GIT_* knobs (GIT_TEMPLATE_DIR, GIT_CONFIG_PARAMETERS, GIT_DEFAULT_HASH, GIT_ALTERNATE_* …) grows
+// with git, so a fixture built on one is only hermetic until the next release.
+export const hermeticGitEnv = (source) => {
+  const env = Object.fromEntries(Object.entries(source).filter(([key]) => !key.startsWith('GIT_')));
+  return { ...env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
+};
+
+const HERMETIC_GIT_ENV = hermeticGitEnv(process.env);
+
+const buildGitGraph = () => {
+  const dir = mkdtempSync(join(tmpdir(), 'aw-ancestry-repo-'));
+  const git = (...args) => execFileSync('git', [
+    '-c', 'user.name=preflight-test', '-c', 'user.email=preflight@test.invalid',
+    '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', '-c', 'init.defaultBranch=main',
+    '-c', 'core.hooksPath=/dev/null', ...args,
+  ], { cwd: dir, encoding: 'utf8', env: HERMETIC_GIT_ENV, timeout: 30_000 }).trim();
+  git('init', '--quiet');
+  git('commit', '--allow-empty', '--quiet', '-m', 'A');
+  const shaA = git('rev-parse', 'HEAD');
+  git('commit', '--allow-empty', '--quiet', '-m', 'B');
+  const shaB = git('rev-parse', 'HEAD');
+  git('checkout', '--quiet', '-b', 'fork', shaA);
+  git('commit', '--allow-empty', '--quiet', '-m', 'C');
+  const shaC = git('rev-parse', 'HEAD'); // a real fork: C and B share only A
+  git('checkout', '--quiet', 'main');
+  // The object-id width is READ from the graph, never assumed: a host defaulting to sha256 would
+  // otherwise turn every hardcoded 40-character fixture into a silent mismatch.
+  return { dir, git, shaA, shaB, shaC, width: shaA.length, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+};
+
+describe('AD-098 — the ancestry probes, answered by real git on a graph this test builds', () => {
+  const realGit = (args, cwd) => runGitProcess(args, { cwd, env: HERMETIC_GIT_ENV });
+
+  it('the fixture environment drops EVERY inherited GIT_ variable, not a listed few', async () => {
+    // RED against: a deny-list. A hostile GIT_TEMPLATE_DIR or GIT_CONFIG_PARAMETERS would otherwise
+    // reach the fixture and change the repository these arms are reasoning about.
+    const hostile = { PATH: '/bin', HOME: '/home/x', GIT_DIR: '/evil/.git', GIT_TEMPLATE_DIR: '/evil/tpl', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.bare', GIT_DEFAULT_HASH: 'sha256' };
+    const scrubbed = hermeticGitEnv(hostile);
+    assert.equal(scrubbed.PATH, '/bin', 'the non-git environment survives');
+    assert.equal(scrubbed.HOME, '/home/x');
+    const survivors = Object.keys(scrubbed).filter((key) => key.startsWith('GIT_')).sort();
+    assert.deepEqual(survivors, ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_SYSTEM', 'GIT_TERMINAL_PROMPT'], 'only the four this fixture controls');
+  });
+
+  it('the remote tip is an ancestor of HEAD — exit 0 from the forward probe ends it', async () => {
+    const graph = buildGitGraph();
+    try {
+      assert.deepEqual(await probeAncestry(realGit, graph.shaA, graph.shaB, graph.dir), { state: ANCESTRY.ancestor, cause: null });
+    } finally {
+      graph.cleanup();
+    }
+  });
+
+  it('an ANNOTATED TAG on the head — the reported id peels to the head, and real git proves it', async () => {
+    // ls-remote reports the tag OBJECT for an annotated tag, so this is the id the dispatcher would
+    // compare: different from the head, yet naming the very same commit.
+    const graph = buildGitGraph();
+    try {
+      graph.git('tag', '-a', 'v-test', '-m', 'annotated', graph.shaB);
+      const tagObject = graph.git('rev-parse', 'v-test');
+      assert.notEqual(tagObject, graph.shaB, 'the fixture really is an annotated tag, not a lightweight one');
+      assert.deepEqual(await probeAncestry(realGit, tagObject, graph.shaB, graph.dir), { state: ANCESTRY.resolvesToHead, cause: null });
+    } finally {
+      graph.cleanup();
+    }
+  });
+
+  it('HEAD is behind the remote tip — real git answers exit 1 forward and exit 0 in reverse', async () => {
+    // This is the pair a single-direction probe called a DIVERGENCE. Real git says otherwise.
+    const graph = buildGitGraph();
+    try {
+      assert.deepEqual(await probeAncestry(realGit, graph.shaB, graph.shaA, graph.dir), { state: ANCESTRY.behind, cause: null });
+    } finally {
+      graph.cleanup();
+    }
+  });
+
+  it('a genuine fork — exit 1 in BOTH directions, on a graph git itself reports as whole', async () => {
+    const graph = buildGitGraph();
+    try {
+      assert.deepEqual(await probeAncestry(realGit, graph.shaC, graph.shaB, graph.dir), { state: ANCESTRY.diverged, cause: null });
+      const complete = await runGitProcess(['rev-parse', '--is-shallow-repository'], { cwd: graph.dir, env: HERMETIC_GIT_ENV });
+      assert.equal(complete.stdout.trim(), 'false', 'the verdict above rests on git calling this graph complete');
+    } finally {
+      graph.cleanup();
+    }
+  });
+
+  it('a REAL shallow clone reports itself shallow — the predicate the divergence verdict rests on', async () => {
+    // What this proves is the PREDICATE against real git, not a manufactured false-divergence graph:
+    // a depth-1 clone answers "true" where the full fixture answers "false". The classification rule
+    // that consumes the predicate is pinned by the stub arm above.
+    const graph = buildGitGraph();
+    const clone = mkdtempSync(join(tmpdir(), 'aw-ancestry-shallow-'));
+    try {
+      execFileSync('git', ['clone', '--quiet', '--depth', '1', `file://${graph.dir}`, clone], { encoding: 'utf8', env: HERMETIC_GIT_ENV, timeout: 60_000 });
+      const complete = await runGitProcess(['rev-parse', '--is-shallow-repository'], { cwd: clone, env: HERMETIC_GIT_ENV });
+      assert.equal(complete.status, 0);
+      assert.equal(complete.stdout.trim(), 'true');
+    } finally {
+      rmSync(clone, { recursive: true, force: true });
+      graph.cleanup();
+    }
+  });
+
+  it('exit 1 from the object guard — a well-formed sha this repository cannot resolve', async () => {
+    // This is the arm that makes exit 1 an ANSWER: the throwing runGit would raise here, and an
+    // exception cannot carry "does not resolve to a commit".
+    const graph = buildGitGraph();
+    try {
+      const absent = 'f'.repeat(graph.width);
+      assert.deepEqual(await probeAncestry(realGit, absent, graph.shaB, graph.dir), { state: ANCESTRY.unresolvable, cause: null });
+    } finally {
+      graph.cleanup();
+    }
+  });
+
+  it('exit 1 from the object guard again — an object that EXISTS but is not a commit', async () => {
+    // The case `cat-file -e` would wrongly pass, which is why the guard peels with ^{commit}.
+    const graph = buildGitGraph();
+    try {
+      writeFileSync(join(graph.dir, 'blob.txt'), 'not a commit\n');
+      const blob = graph.git('hash-object', '-w', 'blob.txt');
+      assert.equal(blob.length, graph.width, 'the fixture wrote a real object of this graphid width');
+      assert.deepEqual(await probeAncestry(realGit, blob, graph.shaB, graph.dir), { state: ANCESTRY.unresolvable, cause: null });
+    } finally {
+      graph.cleanup();
+    }
+  });
+
+  it('a real exit 128 — git run where there is no repository', async () => {
+    const outside = mkdtempSync(join(tmpdir(), 'aw-ancestry-bare-'));
+    try {
+      const out = await probeAncestry(realGit, 'f'.repeat(40), 'b'.repeat(40), outside);
+      assert.equal(out.state, ANCESTRY.undetermined, '128 is not a verdict');
+      assert.match(out.cause, /git exited with status 128/);
+      assert.match(out.cause, /not a git repository/, "git's own reason survives, unparaphrased");
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('a real execution error — the binary does not exist, so nothing was answered', async () => {
+    const missing = (args, cwd) => runProcess('aw-no-such-binary-8f3c', args, { cwd, deadlineMs: 5_000 });
+    const out = await probeAncestry(missing, 'f'.repeat(40), 'b'.repeat(40), REPO_ROOT);
+    assert.equal(out.state, ANCESTRY.undetermined);
+    // The errno is the PLATFORM's, not ours — measured ENOENT on a plain host and EACCES under this
+    // project's sandbox — so the assertion binds what the leaf guarantees: a spawn that never became
+    // a process reaches the caller as a named cause, never as a silent verdict.
+    assert.match(out.cause, /git could not be run: spawn aw-no-such-binary-8f3c E[A-Z]+/);
   });
 });

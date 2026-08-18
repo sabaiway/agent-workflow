@@ -40,6 +40,16 @@ const runPreflight = (cwd, args = ['--ref', 'main']) => {
 
 const listRefs = (repo) => runGitOrFail(['for-each-ref', '--format=%(refname) %(objectname)'], repo).split('\n').sort().join('\n');
 
+// `rev-parse --verify --quiet refs/aw-preflight` can NEVER see a landing ref: they are created as
+// `refs/aw-preflight/<pid>-<nonce>`, so that check is green whether or not one leaked. The namespace
+// has to be ENUMERATED, and the enumeration itself has to succeed — a failed call returning nothing
+// would read the same as a clean namespace.
+const assertNoLandingRef = (repo, why) => {
+  const res = runGit(['for-each-ref', '--format=%(refname)', 'refs/aw-preflight/'], repo);
+  assert.equal(res.status, 0, `for-each-ref must run to prove anything: ${res.stderr}`);
+  assert.equal(res.stdout, '', why);
+};
+
 const findPrintedCommand = (text, marker) => {
   const line = text.split('\n').map((l) => l.trim()).find((l) => l.startsWith(marker));
   assert.ok(line, `expected a printed command starting with ${JSON.stringify(marker)}; got:\n${text}`);
@@ -87,7 +97,7 @@ describe('preflight-remote (real git) — a refspec-less remote', () => {
     const run = runPreflight(fx.work);
     assert.equal(run.status, 3, 'an unresolvable @{push} is a refusal, which is the safe direction');
     assert.match(run.stderr, /@\{push\} does not resolve/);
-    assert.equal(runGit(['rev-parse', '--verify', '--quiet', 'refs/aw-preflight'], fx.work).status, 1, 'and no landing ref was created');
+    assertNoLandingRef(fx.work, 'and no landing ref was created');
   });
 });
 
@@ -259,5 +269,35 @@ describe('preflight-remote (real git) — a branch and a tag sharing one name', 
     const before = listRefs(fx.work);
     assert.equal(runPreflight(fx.work).status, 0);
     assert.equal(listRefs(fx.work), before, 'the temporary landing ref is deleted and nothing else is touched');
+  });
+});
+
+// ── a REAL shallow clone, refused before the fetch ────────────────────────────────────
+// The hazard is specific: across a truncated history the count can report remote-only commits that
+// do not exist, and this script's divergence arm prints a FORCE-PUSH. A stub can pin the rule; only
+// real git can prove that a real `--depth 1` clone takes it.
+
+describe('preflight-remote (real git) — a shallow clone never reaches the counting stage', () => {
+  it('refuses a genuine --depth 1 clone, prints no counts and no remedy, and creates no landing ref', () => {
+    const fx = createFixture('shallow');
+    commitFile(fx.work, 'b.txt', 'two\n');
+    runGitOrFail(['push', 'origin', 'main'], fx.work);
+
+    const shallow = join(fx.root, 'shallow');
+    runGitOrFail(['clone', '--quiet', '--depth', '1', `file://${fx.bare}`, shallow], fx.root);
+    assert.equal(runGitOrFail(['rev-parse', '--is-shallow-repository'], shallow), 'true', 'the fixture really is shallow');
+
+    const run = runPreflight(shallow);
+    assert.equal(run.status, 3, 'a refusal, not a verdict');
+    assert.match(run.stderr, /this repository is SHALLOW/);
+    assert.match(run.stderr, /git fetch --unshallow/);
+    // The patterns come from the EMITTER, not from memory of it: renderTopology prints its counts as
+    // `behind N, ahead M` and its two remedies as `git merge --ff-only <oid>` and
+    // `git push --force-with-lease=…`. An assertion written against text the script never emits is
+    // green whatever happens — the failure shape this file has now produced twice.
+    assert.ok(!/git push --force-with-lease/.test(run.stderr), 'the force-push remedy is never printed for a topology this run refused to establish');
+    assert.ok(!/git merge --ff-only/.test(run.stderr), 'nor is the catch-up remedy');
+    assert.ok(!/behind \d+, ahead \d+/.test(run.stderr), 'and no counts are printed');
+    assertNoLandingRef(shallow, 'and the guard fired before anything was fetched');
   });
 });
