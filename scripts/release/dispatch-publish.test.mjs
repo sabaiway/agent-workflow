@@ -1358,6 +1358,12 @@ describe('AD-098 — the live preflight names WHICH mismatch it observed', () =>
     assert.match(calls.lastError, /not a broken probe — git answered/);
     assert.ok(!/has DIVERGED/.test(calls.lastError), 'a truncated graph is not evidence of a fork');
     assert.ok(!/could NOT be determined|once git answers/.test(calls.lastError), 'shallow is not filed as an unanswered probe');
+    // The deepen command this arm hands the operator is bound to the remote, exactly as the sibling
+    // refusal in preflight-remote is: the two scripts print the same remedy for the same condition,
+    // and a bare form would resolve through the branch's configured remote instead. RED against a
+    // bare `git fetch --unshallow` in either emitter.
+    assert.match(calls.lastError, /git fetch --unshallow origin\b/);
+    assert.ok(!/git fetch --unshallow(?! origin\b)/.test(calls.lastError), 'no unbound deepen form is printed');
     assert.deepEqual(calls.gitRawArgs, [GUARD, REACHES, REACHED, COMPLETE]);
   });
 

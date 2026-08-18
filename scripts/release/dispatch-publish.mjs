@@ -854,7 +854,10 @@ export const renderHeadMismatch = ({ ref, remoteRef, expectedSha, localHead, anc
       '  truncated history that pair of answers proves nothing: the link that would establish an\n' +
       '  ancestry can lie beyond the boundary. So the relationship is NOT classified here, and this\n' +
       '  is not a broken probe — git answered. Step 1 refuses this repository for the same reason\n' +
-      '  until the history is complete:\n    git fetch --unshallow\n' +
+      // Bound to the remote, byte-for-byte the remedy the sibling guard in preflight-remote prints:
+      // the two scripts refuse the same condition, so they must hand over the same command, and a
+      // bare form would resolve through the branch's configured remote instead of this one.
+      '  until the history is complete:\n    git fetch --unshallow origin\n' +
       `  ${pointer}.\n  Refusing ANY live dispatch`
     );
   }

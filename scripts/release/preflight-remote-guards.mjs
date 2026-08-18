@@ -174,7 +174,11 @@ export const assertCompleteHistory = async (runGit) => {
   throw fail(
     EXIT.refusal,
     'this repository is SHALLOW, so a divergence count would be computed over a truncated history and could report remote-only commits where the complete graph has none — refusing before the fetch rather than printing counts, a verdict, or a remedy this run cannot stand behind.\n'
-      + '  Deepen the history first:\n    git fetch --unshallow\n'
+      // The remedy is bound to the remote for the same reason every other printed command is: a bare
+      // `git fetch --unshallow` resolves through the branch's configured remote, which need not be
+      // the one this run verifies — and the operator is deepening in order to decide about a
+      // force-push.
+      + `  Deepen the history first:\n    git fetch --unshallow ${REMOTE}\n`
       + '  Then re-run this check.',
   );
 };

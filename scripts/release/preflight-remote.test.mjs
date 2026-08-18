@@ -410,7 +410,12 @@ describe('preflight-remote — a shallow repository is refused BEFORE the networ
     const run = await runMain([], upToTheGuard({ stdout: 'true\n' }));
     assert.equal(run.code, EXIT.refusal);
     assert.match(run.err, /this repository is SHALLOW/);
-    assert.match(run.err, /git fetch --unshallow/);
+    // The deepen remedy is a PRINTED COMMAND, so the plan's binding invariant reaches it too: a bare
+    // `git fetch --unshallow` resolves through the branch's configured remote, which on a
+    // misconfigured clone is not the one this run verifies — and the operator is being sent to deepen
+    // precisely so a force-push decision can be made on the result. RED against the bare form.
+    assert.match(run.err, /git fetch --unshallow origin\b/);
+    assert.ok(!/git fetch --unshallow(?! origin\b)/.test(run.err), 'no unbound deepen form is printed');
     assert.ok(!run.calls.some((line) => line.startsWith('fetch')), 'the network act never happens');
     assert.ok(!run.calls.some((line) => line.startsWith('rev-list')), 'nothing is counted');
     // Both remedy forms as the EMITTER writes them — `git merge --ff-only` is the catch-up lane, and

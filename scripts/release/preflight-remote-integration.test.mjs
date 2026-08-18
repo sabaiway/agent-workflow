@@ -290,7 +290,13 @@ describe('preflight-remote (real git) — a shallow clone never reaches the coun
     const run = runPreflight(shallow);
     assert.equal(run.status, 3, 'a refusal, not a verdict');
     assert.match(run.stderr, /this repository is SHALLOW/);
-    assert.match(run.stderr, /git fetch --unshallow/);
+    // Against a REAL --depth 1 clone: what the operator actually reads names the remote. This
+    // fixture does NOT discriminate the two forms — `clone --depth 1` configures the branch onto
+    // `origin`, so a bare `git fetch --unshallow` would reach the same place here; the
+    // discriminating proof is the negative assertion in the unit suites. What this arm pins is that
+    // real git, on a real shallow clone, produces the bound text.
+    assert.match(run.stderr, /git fetch --unshallow origin\b/);
+    assert.ok(!/git fetch --unshallow(?! origin\b)/.test(run.stderr), 'no unbound deepen form is printed');
     // The patterns come from the EMITTER, not from memory of it: renderTopology prints its counts as
     // `behind N, ahead M` and its two remedies as `git merge --ff-only <oid>` and
     // `git push --force-with-lease=…`. An assertion written against text the script never emits is
