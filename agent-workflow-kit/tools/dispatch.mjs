@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // dispatch.mjs — the delegation ENGINE (delegation Plan 1, Phase 3; the writer verbs are Plan 2,
 // Phase 2 and the waiter Plan 2, Phase 4): the ONE human-facing surface over the record vocabulary
-// (dispatch-record.mjs) and the ledger (dispatch-store.mjs). Nine verbs:
+// (dispatch-record.mjs) and the ledger (dispatch-store.mjs). Ten verbs:
 //
-//   check <dispatch-file>  the D8 sub-task contract header, FORM-only, exit 0/1
+//   check <dispatch-file>  the D8 sub-task contract header, FORM-only, exit 0/1 (+ the advisory footer)
+//   advise --step-class    which vehicle carries this step class on THIS host — advice, never a gate
 //   register               the wave's PRE-REGISTRATION record (classes, pairing key, thresholds)
 //   observe                one OBSERVATION record (the solo baseline / a self-reported datum)
 //   open                   the DISPATCH record — every mint-time field COPIED from the header
@@ -75,6 +76,10 @@ import {
   appendDelegationRecord, readDelegationStore, resolveDelegationStorePath, delegationThreadState,
   auditDelegationStoreSemantics, uncommittedStateFingerprint, DELEGATION_STORE_BASENAME,
 } from './dispatch-store.mjs';
+import {
+  renderAdvisorBlock, renderSelectionNote, advisorDeps, advisorRow, ADVISOR_STEP_CLASSES,
+  ADVISOR_PROBE_POSTURE,
+} from './dispatch-advisor.mjs';
 import { execReceiptBasename, execReportBasename, parseExecReceipt } from './exec-receipt.mjs';
 import {
   enumerateReturnedObjects, computeReturnedDiff, assembleIntegrationBundle,
@@ -285,9 +290,65 @@ const asNumber = (flag, raw) => {
 
 const refusal = (verb, reason) => ({ code: 1, stdout: '', stderr: `dispatch ${verb}: ${reason}` });
 
+// ── advise: the vehicle-routing advisory, at its two points of use ────────────────────────────────
+// It refuses nothing and decides nothing (D1). The ledger is read through the SAME single door every
+// deriving verb uses, and its OUTCOME is handed to the advisor — an unreadable store degrades the
+// history line rather than suppressing the advice or moving an exit code.
+
+export const ADVISE_FLAG_FIELDS = Object.freeze({ '--step-class': 'stepClass' });
+
+// The advisory probe may never own an exit code, so neither of its two throwing inputs escapes it.
+// The store path resolution REFUSES a relative override and one ending in a separator by throwing
+// (dispatch-store.mjs:61-71), and the top-level resolution spawns git: an exception from either would
+// delete a form-valid `check`'s verdict line and turn its exit 0 into a refusal — which is exactly
+// the gate D1 says this surface never becomes. Caught here, the store's own words still travel, as
+// the history line, which is already where an unreadable ledger speaks.
+const ledgerOutcome = (cwd, env) => {
+  try {
+    return readLegalLedger(cwd, env);
+  } catch (err) {
+    return { ok: false, reason: err?.message ?? String(err) };
+  }
+};
+
+// The cheap vehicles live at the REPOSITORY top-level (.claude/agents/), never at the caller's cwd —
+// a run from a subdirectory would otherwise report a placed vehicle as absent. Only the VEHICLE probe
+// is re-anchored: the ledger keeps the original cwd, because its own resolution is git-common-dir
+// based and already answers the same from anywhere inside the tree.
+//
+// The result is a PAIR, not a path. `resolveRepoRoot` answers null both for "not a work tree" and for
+// "the git probe did not answer", and a throw is a third way to learn nothing — collapsing all three
+// into the caller's cwd made an unlocatable vehicle print as "not placed", which is a fact this tool
+// does not have. Unanchored, the agent lane says `unknown` instead.
+// The resolver is a SEAM (ctx.repoRoot) rather than a hard call, because "the probe threw" is a lane
+// with its own printed answer and a lane nothing can reach by arranging a directory: the throw comes
+// from a git spawn or a realpath the caller cannot make fail on demand. A seam makes the branch
+// exercisable in-process, which is the only place coverage can see it (D14).
+const vehicleAnchor = (cwd, repoRoot) => {
+  try {
+    const root = repoRoot(cwd);
+    return root === null ? { cwd, anchored: false } : { cwd: root, anchored: true };
+  } catch {
+    return { cwd, anchored: false };
+  }
+};
+
+const advisoryBlock = ({ cwd, env, stepClass, repoRoot }) =>
+  renderAdvisorBlock({ stepClass, ledger: ledgerOutcome(cwd, env), deps: advisorDeps(vehicleAnchor(cwd, repoRoot)) });
+
+const runAdvise = ({ argv, baseCwd, env, repoRoot }) => {
+  const { values, operands, cwd } = scan(argv, ADVISE_FLAG_FIELDS, baseCwd);
+  refuseOperands('advise', operands);
+  const stepClass = need(values, '--step-class');
+  if (advisorRow(stepClass) === undefined) {
+    throw usageFail(`--step-class must be one of the D9 step classes ${ADVISOR_STEP_CLASSES.join(' | ')} (got "${stepClass}")`);
+  }
+  return { code: 0, stdout: advisoryBlock({ cwd, env, stepClass, repoRoot }), stderr: '' };
+};
+
 // ── check: the D8 contract header, FORM only ──────────────────────────────────────────────────────
 
-const runCheck = ({ argv, baseCwd }) => {
+const runCheck = ({ argv, baseCwd, env, repoRoot }) => {
   const { operands, cwd } = scan(argv, {}, baseCwd);
   if (operands.length > 1) throw usageFail(`unknown argument: ${operands[1]}`);
   const file = operands[0];
@@ -302,9 +363,17 @@ const runCheck = ({ argv, baseCwd }) => {
   const form = checkDispatchContractForm(text);
   if (!form.ok) return { code: 1, stdout: `dispatch check: FORM VIOLATION — ${form.reason}`, stderr: '' };
   const c = form.contract;
+  // The advisory footer prints ONLY here, under a form-valid contract, so it can never mask a
+  // refusal: the exit code and the FIRST line above are identical whatever the advisor concludes.
+  const advisory = [advisoryBlock({ cwd, env, stepClass: c.stepClass, repoRoot }), renderSelectionNote(c)]
+    .filter((line) => line !== null && line !== undefined);
   return {
     code: 0,
-    stdout: `dispatch check: FORM OK — nonce "${c.nonce}", step class "${c.stepClass}", vehicle ${c.vehicle.requested} → ${c.vehicle.selected}, deadline ${c.deadlineS}s, retry ${c.retry.index}/${c.retry.cap}\n  (${DISPATCH_CONTRACT})`,
+    stdout: [
+      `dispatch check: FORM OK — nonce "${c.nonce}", step class "${c.stepClass}", vehicle ${c.vehicle.requested} → ${c.vehicle.selected}, deadline ${c.deadlineS}s, retry ${c.retry.index}/${c.retry.cap}`,
+      `  (${DISPATCH_CONTRACT})`,
+      ...advisory,
+    ].join('\n'),
     stderr: '',
   };
 };
@@ -1542,6 +1611,7 @@ record, the arrival waiter, and the L0 acceptance report.
 
 Usage:
   node dispatch.mjs check <dispatch-file> [--cwd <dir>]
+  node dispatch.mjs advise --step-class <c> [--cwd <dir>]
   node dispatch.mjs register --wave <id> --step-classes <c[,c...]>
                              --pairing-key ${IMPLEMENTED_PAIRING_KEYS.join('|')}
                              --min-per-class <n> --mean-l-threshold <x>
@@ -1561,7 +1631,21 @@ Usage:
   node dispatch.mjs aggregate [--wave <id>] [--cwd <dir>]
 
 check reads the ONE \`\`\`aw-dispatch-contract fenced block in the dispatch file and validates its
-FORM: ${DISPATCH_CONTRACT}. Exit 0 form-valid; 1 names the FIRST violated field.
+FORM: ${DISPATCH_CONTRACT}. Exit 0 form-valid; 1 names the FIRST violated field. On a form-VALID
+contract it then prints the advisory block below, plus a divergence NOTE when the contract's SELECTED
+vehicle is not the advised one — the footer prints only over a valid form, so it can never mask a
+refusal, and the exit code and the FIRST line never move with it.
+
+advise answers "which vehicle carries this step class on THIS host, and what has the ledger recorded
+for it" — and DECIDES nothing: it refuses no dispatch and gates no verb. Posture: ${ADVISOR_PROBE_POSTURE}.
+Host capability is read from the filesystem (the execute backend from the bridge install, the cheap
+vehicles from the presence of .claude/agents/<name>.md at the REPOSITORY top-level — where that root
+is not resolved the lane answers "unknown" rather than claiming a vehicle is unplaced);
+doc-research is HOST-LOCAL and never claimed portable, and the
+harness's own subagent lane carries no availability verdict at all. The recorded history is the
+ledger's own thread walk over the four states folded | failure-terminal | degrade-closed | open, with
+open counted SEPARATELY; an absent ledger prints "no recorded history" and an unreadable one prints
+the store's own words while the advice still prints. Exit 0 for every legal step class; 2 on usage.
 
 register appends the wave's PRE-REGISTRATION record (immutable per wave: a second one refuses).
 observe appends ONE observation — provenance ${OBSERVATION_PROVENANCE.join(' or ')} only, since
@@ -1696,6 +1780,10 @@ that discards failure wholesale discards this one too.`;
 export const main = (argv, ctx = {}) => {
   const env = ctx.env ?? process.env;
   const now = ctx.now ?? (() => new Date().toISOString());
+  // The ADVISORY lane's repository-root resolver, injectable for exactly one reason: the "the probe
+  // threw" branch cannot be reached by arranging a directory, and an unexercised branch in a lane
+  // whose whole claim is "it never owns an exit code" is the branch worth exercising.
+  const repoRoot = ctx.repoRoot ?? resolveRepoRoot;
   try {
     // Help is the FIRST argument or nothing: past the verb, `--help` is an ordinary operand or an
     // already-claimed flag value, so `check --help` reads a file by that name rather than turning a
@@ -1703,7 +1791,8 @@ export const main = (argv, ctx = {}) => {
     if (HELP_FLAGS.has(argv[0])) return { code: 0, stdout: HELP, stderr: '' };
     const [verb, ...rest] = argv;
     const baseCwd = ctx.cwd ?? process.cwd();
-    if (verb === 'check') return runCheck({ argv: rest, baseCwd });
+    if (verb === 'check') return runCheck({ argv: rest, baseCwd, env, repoRoot });
+    if (verb === 'advise') return runAdvise({ argv: rest, baseCwd, env, repoRoot });
     if (verb === 'register') return runRegister({ baseCwd, env, argv: rest, now });
     if (verb === 'observe') return runObserve({ baseCwd, env, argv: rest, now });
     if (verb === 'open') return runOpen({ baseCwd, env, argv: rest, now });
@@ -1714,7 +1803,7 @@ export const main = (argv, ctx = {}) => {
     if (verb === 'await') {
       throw usageFail('await is the one verb that WAITS, so it answers through mainAwait (the CLI routes it there) — main() returns the answer a verb has already computed, and a promise handed back here would read as a result object with no code at all');
     }
-    throw usageFail(`unknown verb: ${verb ?? '(none)'} — expected check | register | observe | open | await | return | fold | degrade | aggregate (see --help)`);
+    throw usageFail(`unknown verb: ${verb ?? '(none)'} — expected check | advise | register | observe | open | await | return | fold | degrade | aggregate (see --help)`);
   } catch (err) {
     return { code: err.exitCode ?? 1, stdout: '', stderr: `dispatch: ${err.message}` };
   }

@@ -19,9 +19,7 @@
 // Read-only: never writes, never commits, never runs a subscription CLI, spawns nothing. Dependency-
 // free, Node >= 22. No side effects on import (the isDirectRun idiom).
 
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { EXIT as DOCTOR_EXIT, STATUS as DOCTOR_STATUS, TRUSTED_DIRS as DOCTOR_TRUSTED_DIRS } from './autonomy-doctor.mjs';
 import {
   RECOMMENDATIONS_SECTION_HEADER,
@@ -47,6 +45,14 @@ import { FLOW_BOOKKEEPING_FLOOR_RESIDUAL } from './set-flow.mjs';
 import { FLOW_ARMED_HALVES_HEADER } from './procedures.mjs';
 import { RECEIPT_DEADLINE_CONTRACT } from './receipt-deadline.mjs';
 import { DISPATCH_CONTRACT } from './dispatch.mjs';
+// The routing advisor's two bound sentences, plus the matrix STRUCTURE check that holds the mode
+// doc's routing table to the advisor's frozen registry cell for cell — a correspondence no per-row
+// token check could establish, since every token survives a reorder.
+import { ADVISOR_NO_GATE, HARNESS_SUBAGENT_LANE, ADVISOR_PROBE_POSTURE } from './dispatch-advisor.mjs';
+import {
+  ADVISOR_MATRIX_DOC, ADVISOR_MATRIX_BEGIN, ADVISOR_MATRIX_END,
+  parseAdvisorMatrix, checkMatrixStructure, readKitDoc,
+} from './advisor-matrix.mjs';
 // The coverage vocabulary leaf: a CLOSED value set the gates contract doc must enumerate.
 import { COVERAGE } from './coverage-state.mjs';
 // The canonical producer body: gates.md prints the whole command byte for byte, so the doc is a
@@ -57,8 +63,6 @@ import { COVERAGE_PRODUCER_BODY } from './coverage-producer.mjs';
 // Imported from the VOCABULARY leaf, never from the ops: a read-only lint must not pull the ensure
 // implementation — and through it the orchestration writer — into its import graph.
 import { RELAYED_ENSURE_TOKENS, RELAYED_FAILURE_CAUSES } from './ensure-vocabulary.mjs';
-
-const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const AUTONOMY_DOCTOR_DOC = 'references/modes/autonomy-doctor.md';
 const RECOMMENDATIONS_DOC = 'references/modes/recommendations.md';
@@ -71,7 +75,9 @@ const PROCEDURES_DOC = 'references/modes/procedures.md';
 const SET_FLOW_DOC = 'references/modes/set-flow.md';
 const RECEIPT_DEADLINE_DOC = 'references/modes/receipt-deadline.md';
 const GATES_DOC = 'references/modes/gates.md';
-const DISPATCH_DOC = 'references/modes/dispatch.md';
+// One literal for the dispatch mode doc: the structure leaf already names it as the file it anchors
+// its table in, and a second copy here is exactly the drift this lint exists to catch.
+const DISPATCH_DOC = ADVISOR_MATRIX_DOC;
 
 // A typed usage failure (exit 2) for the CLI parser — the codebase's typed-error idiom (no classes).
 const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 });
@@ -185,6 +191,15 @@ export const BINDINGS = Object.freeze([
   // doc — a doc that softened either would promise a judgment the checker never makes, or a number
   // the aggregator refuses to compute.
   valueBinding('dispatch-contract', DISPATCH_CONTRACT, DISPATCH_CONTRACT, [DISPATCH_DOC]),
+  // The routing advisor's honesty pair (delegation Plan 3): what the advice is NOT (it never gates),
+  // and the one lane that carries no availability verdict at all. Both were prose bars a doc edit
+  // could soften into a promise the module does not make.
+  valueBinding('advisor-no-gate', ADVISOR_NO_GATE, ADVISOR_NO_GATE, [DISPATCH_DOC]),
+  valueBinding('harness-subagent-lane', HARNESS_SUBAGENT_LANE, HARNESS_SUBAGENT_LANE, [DISPATCH_DOC]),
+  // And the verb's honest PROBE posture: "spawns nothing" was true of the module and false of the
+  // verb, which resolves the store path and the vehicle anchor through git. Stated once, live, so
+  // the mode doc, the HELP and the module header can never drift into three different claims.
+  valueBinding('advisor-probe-posture', ADVISOR_PROBE_POSTURE, ADVISOR_PROBE_POSTURE, [DISPATCH_DOC]),
   // The runner's `coverage=` summary vocabulary (Decision 8): the gates contract doc enumerates the
   // CLOSED value set, so a renamed or added value fails here instead of leaving the doc describing
   // a vocabulary the runner no longer speaks. One binding per value — the set is small and closed.
@@ -215,22 +230,35 @@ export const checkBinding = (binding, readText) => {
   return { constant: binding.constant, token: binding.token, files, ok: files.every((f) => f.ok) };
 };
 
-const defaultReadText = (rel) => readFileSync(resolve(KIT_ROOT, rel), 'utf8');
+const defaultReadText = readKitDoc;
+
+// The matrix STRUCTURE check rides beside the bindings, from its own leaf: a binding proves a token
+// is somewhere in a file, while correspondence — one row per registry row, in order, every CELL
+// equal — is a different claim with its own parser and its own refusal vocabulary. Re-exported here
+// so the lint stays the ONE surface a caller reaches either check through.
+export { ADVISOR_MATRIX_DOC, ADVISOR_MATRIX_BEGIN, ADVISOR_MATRIX_END, parseAdvisorMatrix, checkMatrixStructure, readKitDoc };
 
 // checkParity(bindings, readText) → [ per-binding result ]. Default reads the real modes/*.md files
 // relative to the kit root.
 export const checkParity = (bindings = BINDINGS, readText = defaultReadText) => bindings.map((b) => checkBinding(b, readText));
 
 // ── rendering ───────────────────────────────────────────────────────────────────────
-const formatHuman = (results) => {
+const structureLine = (structure) =>
+  `  ${structure.ok ? '✓' : '✗'} ${structure.constant} → ${structure.files[0].rel}${structure.ok ? '' : ` — ${structure.files[0].reason}`}`;
+
+const formatHuman = (results, structure) => {
   const lines = ['doc-parity — code constants ⟷ references/modes/*.md contract (read-only, BUGFREE-3)'];
   for (const r of results) {
     for (const f of r.files) {
       lines.push(`  ${f.ok ? '✓' : '✗'} ${r.constant} → ${f.rel}${f.ok ? '' : ` — ${f.reason}`}`);
     }
   }
+  lines.push(structureLine(structure));
   const failed = results.flatMap((r) => r.files.filter((f) => !f.ok).map((f) => `${r.constant} @ ${f.rel}`));
-  lines.push(`  check: ${failed.length === 0 ? 'PASS' : 'FAIL'} — ${failed.length === 0 ? `${results.length} binding(s) consistent` : `${failed.length} drifted binding(s): ${failed.join('; ')}`}`);
+  // The summary verdict derives from BOTH halves. A PASS token computed from the bindings alone read
+  // as a green report while the structure check below it said FAIL — the one surface that lied.
+  const green = failed.length === 0 && structure.ok;
+  lines.push(`  check: ${green ? 'PASS' : 'FAIL'} — ${failed.length === 0 ? `${results.length} binding(s) consistent` : `${failed.length} drifted binding(s): ${failed.join('; ')}`}, structure ${structure.ok ? 'PASS' : 'FAIL'}`);
   return lines.join('\n');
 };
 
@@ -248,12 +276,24 @@ orientation contract (shared-queue rule, landing-from-main, no-dependencies inst
 worktrees cleanup-ownership rule, the worktrees include-identity rule, the worktrees
 resume-verify rule, the flow tolerate contract (the accepted flow schema version + the
 lagging-kit sentence, procedures.md), the receipt-deadline arrival contract, the dispatch engine's
-FORM-only + aggregate-refusal contract (dispatch.md), the runner's closed coverage= summary
+FORM-only + aggregate-refusal contract and the routing advisor's two honesty sentences — the
+advice never gates, and the harness-subagent lane carries no availability verdict (dispatch.md), the
+runner's closed coverage= summary
 vocabulary (gates.md), and the canonical coverage-producer-body command the same doc prints in full
 (gates.md) — to
 the exact token its references/modes/*.md contract must carry, and
 asserts the CURRENT value renders into every bound file. A drifted doc, an unreadable bound file,
 or an absent token FAILS CLOSED.
+
+Beside the bindings runs ONE structure check: the dispatch mode doc's routing matrix must CORRESPOND
+to the frozen advisor registry — one row per step class, in registry order, no duplicates, and every
+CELL of every row equal to the registry's (vehicle, availability and returns alike), with the column
+arity pinned so a fifth cell cannot sit there unread. A reorder, a duplicate, a dropped row, a
+mis-bound vehicle and a drifted availability or returns cell each leave every token present, so a
+token check would pass every one of them; this one names the first CELL that disagrees. The table is
+read only from the surface anchored between the doc's advisor-matrix begin/end markers, so a copy
+elsewhere in the doc can neither stand in for it nor mask its drift, and a drifted header inside the
+anchor fails closed rather than falling through to another table.
 
 --check exits 0/1 as a gate (declare it in docs/ai/gates.json by hand). --json prints the structured
 result. Default prints the per-binding report.
@@ -270,15 +310,18 @@ export const main = (argv, ctx = {}) => {
     const unknown = argv.find((a) => !KNOWN_ARGS.has(a));
     if (unknown !== undefined) throw usageFail(`unknown argument: ${unknown}`);
     const results = checkParity(BINDINGS, readText);
+    const structure = checkMatrixStructure(readText);
     const failed = results.filter((r) => !r.ok);
+    const green = failed.length === 0 && structure.ok;
     if (argv.includes('--json')) {
-      return { code: argv.includes('--check') && failed.length > 0 ? 1 : 0, stdout: JSON.stringify({ results, ok: failed.length === 0 }, null, 2), stderr: '' };
+      return { code: argv.includes('--check') && !green ? 1 : 0, stdout: JSON.stringify({ results, structure, ok: green }, null, 2), stderr: '' };
     }
     if (argv.includes('--check')) {
-      const reason = failed.length === 0 ? `${results.length} binding(s) consistent` : `${failed.length} drifted binding(s): ${failed.map((r) => r.constant).join(', ')} — update the contract doc(s) in the SAME edit as the code`;
-      return { code: failed.length === 0 ? 0 : 1, stdout: `doc-parity check: ${failed.length === 0 ? 'PASS' : 'FAIL'} — ${reason}`, stderr: '' };
+      const bindingReason = failed.length === 0 ? `${results.length} binding(s) consistent` : `${failed.length} drifted binding(s): ${failed.map((r) => r.constant).join(', ')} — update the contract doc(s) in the SAME edit as the code`;
+      const structureReason = structure.ok ? 'the advisor matrix structure corresponds' : `the advisor matrix structure DRIFTED — ${structure.files[0].reason}`;
+      return { code: green ? 0 : 1, stdout: `doc-parity check: ${green ? 'PASS' : 'FAIL'} — ${bindingReason}; ${structureReason}`, stderr: '' };
     }
-    return { code: 0, stdout: formatHuman(results), stderr: '' };
+    return { code: 0, stdout: formatHuman(results, structure), stderr: '' };
   } catch (err) {
     return { code: err.exitCode ?? 1, stdout: '', stderr: `doc-parity: ${err.message}` };
   }

@@ -196,6 +196,16 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // contract check, the two hand-written ledger records, and the L0 aggregate report
       'tools/dispatch.mjs',
       'references/modes/dispatch.md',
+      // the vehicle-routing advisor (delegation Plan 3 Phase 1) — the frozen row set, the
+      // filesystem-only capability resolution and the render behind `dispatch advise` and the
+      // form-valid `check` footer. Pinned by NAME: dispatch.mjs AND doc-parity.mjs both import it, so
+      // a payload drop would break the engine's load AND the declared doc-parity gate at once, and
+      // the count alone would hide it behind any other simultaneous drift.
+      'tools/dispatch-advisor.mjs',
+      // and the matrix STRUCTURE leaf the read-only lint runs beside its bindings — pinned by NAME
+      // because doc-parity.mjs imports it, so a payload drop would leave the DECLARED doc-parity gate
+      // unable to load at all, and the count alone would hide it behind any other drift.
+      'tools/advisor-matrix.mjs',
       // the D3(c)+(d) final-run checker (fixed git-dir lcov path + red-proof verification) and the
       // D10 read-only pre-commit guard that binds the run-gates --final receipt
       'tools/coverage-check.mjs',
@@ -517,7 +527,17 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       ships WHOLE (it is placed as a skill), so the colocated test is payload here — unlike a
     //       tools/ sibling, which files[] strips. The module is ALSO pinned by NAME above: an exact
     //       count alone cannot prove THIS file ships, because another added file masks its loss.
-    assert.equal(packed.length, 215, `tarball file count drifted (${packed.length} ≠ 215)`);
+    // 216 = 215 + tools/dispatch-advisor.mjs (delegation Plan 3 Phase 1): the vehicle-routing
+    //       advisor — the frozen row set, the filesystem-only capability resolution, and the render
+    //       both `dispatch advise` and the form-valid `check` footer print. Its colocated
+    //       *.test.mjs siblings are stripped by files[]. The module is ALSO pinned by NAME above.
+    // 217 = 216 + tools/advisor-matrix.mjs: the round-1 fold widened the matrix structure check to
+    //       every CELL, an anchored surface and a column-arity refusal, which pushed doc-parity.mjs
+    //       past the 400-line default — so the parser and its refusal vocabulary moved out to a leaf
+    //       instead of being recorded as fresh size debt. Pinned by NAME above for the same reason
+    //       the other lint leaves are: doc-parity imports it, so a payload drop breaks a declared
+    //       gate at load time.
+    assert.equal(packed.length, 217, `tarball file count drifted (${packed.length} ≠ 217)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

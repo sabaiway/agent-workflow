@@ -2104,10 +2104,10 @@ describe('dispatch CLI shell', () => {
     assert.match(r.stdout, /D10 stands as a BAR, not a mechanism/);
   });
 
-  it('an unknown or absent verb is usage (exit 2), and the expected set names all nine', () => {
+  it('an unknown or absent verb is usage (exit 2), and the expected set names all ten', () => {
     const unknown = main(['frobnicate'], {});
     assert.match(unknown.stderr, /unknown verb: frobnicate/);
-    assert.match(unknown.stderr, /check \| register \| observe \| open \| await \| return \| fold \| degrade \| aggregate/);
+    assert.match(unknown.stderr, /check \| advise \| register \| observe \| open \| await \| return \| fold \| degrade \| aggregate/);
     assert.match(main([], {}).stderr, /unknown verb: \(none\)/);
   });
 
