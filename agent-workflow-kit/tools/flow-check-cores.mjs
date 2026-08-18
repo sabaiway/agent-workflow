@@ -20,6 +20,7 @@ import {
   short, shellQuote, writerCommand,
   collectUnansweredRedRefusals, collectDegradeCoverageRefusals, collectReceiptCoverageRefusals,
 } from './flow-check-rungs.mjs';
+import { CONTENT_FREE_FINGERPRINT } from './core-evidence.mjs';
 
 // The checker only refuses — park/resume/complete are explicit writer actions (#59). Printed
 // operand shapes: flag values ride the inline --flag='value' form and positionals follow a
@@ -128,10 +129,21 @@ const deltaRefusals = (records, owner) => {
 // degrade after a final-start at the same fingerprint refuses unless a LATER final-start at that
 // fingerprint completed (its `final` record landed after it). The checker reads raw records,
 // never the authoritative selection (#65).
-const degradeOrderingRefusals = (coreRecords) => {
+const degradeOrderingRefusals = (coreRecords, advisories) => {
   const refusals = [];
+  let contentFree = 0;
   coreRecords.forEach((r, i) => {
     if (r.kind !== 'degrade') return;
+    // A degrade carries no base and no attempt, so on the content-free fingerprint two records
+    // from unrelated clean moments pair up and this rung refuses EVERY commit, whatever tree is
+    // being judged. Their order is not a fact about any tree, so it decides nothing here. Stated
+    // residual: #64 is therefore unenforceable for a degrade minted on a clean tree until the
+    // record carries a base — the queued store migration owns that, and a clean tree gates nothing
+    // meanwhile.
+    if (r.fingerprint === CONTENT_FREE_FINGERPRINT) {
+      contentFree += 1;
+      return;
+    }
     const startedBefore = coreRecords.some((s, j) => j < i && s.kind === 'final-start' && s.fingerprint === r.fingerprint);
     if (!startedBefore) return;
     const cured = coreRecords.some((s, j) => j > i && s.kind === 'final-start' && s.fingerprint === r.fingerprint
@@ -140,6 +152,9 @@ const degradeOrderingRefusals = (coreRecords) => {
       refusals.push(`a core degrade (backend "${r.backend}") landed AFTER a final-start at its fingerprint (${short(r.fingerprint)}) with no later completed re-run at it — degrades mint strictly BEFORE the final run (#64); re-run run-gates.mjs --final on this tree`);
     }
   });
+  if (contentFree > 0) {
+    advisories.push(`${contentFree} core degrade(s) minted on a CONTENT-FREE tree are outside the ordering rung (#64): the record carries no base, so two clean moments cannot be shown to be one and their order states nothing about any tree`);
+  }
   return refusals;
 };
 
@@ -225,7 +240,7 @@ const baseMotionRefusals = (chain, planId, owner, motion) => {
 // Phase-1 rungs (#65/#25/#42 — each self-gates on an OWN adoption). Absent inputs keep the decision
 // byte-identical to the Plan-2 checker. `consumer` rides through to the #65 lane split and defaults
 // to the STRICT lane, so a caller that forgets to thread it inherits strictness.
-export const decideFlowCheck = ({ flowRead, coreRead, owner, flowPath = 'the flow store', corePath = 'the core evidence store', motion = null, evidence = null, consumer = 'commit-guard' }) => {
+export const decideFlowCheck = ({ flowRead, coreRead, owner, flowPath = 'the flow store', corePath = 'the core evidence store', motion = null, evidence = null, consumer = 'commit-guard', treeCarriesBytes = true }) => {
   const refusals = [];
   const advisories = [];
   if (flowRead.readError) refusals.push(`the flow store is unreadable (${flowRead.readError}) — the checker consumes the FULL read-result; inspect ${flowPath} (fail closed)`);
@@ -243,11 +258,25 @@ export const decideFlowCheck = ({ flowRead, coreRead, owner, flowPath = 'the flo
     if (motion != null && plan.integrityClean) refusals.push(...baseMotionRefusals(chain, planId, owner, motion));
   }
   refusals.push(...deltaRefusals(records, owner));
-  refusals.push(...degradeOrderingRefusals(coreRead.records));
+  refusals.push(...degradeOrderingRefusals(coreRead.records, advisories));
   if (evidence != null) {
-    refusals.push(...collectUnansweredRedRefusals({ flowRecords: records, coreRecords: coreRead.records, currentBase: evidence.tree.base, owner, consumer, currentFingerprint: evidence.tree.fingerprint }));
-    refusals.push(...collectDegradeCoverageRefusals({ flowRecords: records, coreRecords: coreRead.records, tree: evidence.tree, owner, backends: evidence.degradeBackends }));
-    refusals.push(...collectReceiptCoverageRefusals({ flowRecords: records, receipts: evidence.receipts, tree: evidence.tree, owner, backends: evidence.receiptBackends, declaredPaths: evidence.declaredPaths, refreshCap: evidence.refreshCap }));
+    // The base-keyed rung always runs — it asks about this BASE's gate history, which a tree with
+    // no content does not change. The two FINGERPRINT-keyed rungs do not, when the CALLER states
+    // that the tree carries no bytes: their coverage would then be demanded of the one fingerprint
+    // every clean moment shares, so whatever they found there was minted by another moment and
+    // possibly another base (the symmetry the #65 content-free arm and commit-guard's content-free
+    // lanes state — such evidence must decide nothing, in either direction). The fact is DECLARED
+    // by the caller rather than derived here: only the caller knows whether it is judging a commit
+    // at all, and a checker that keyed it off the fingerprint alone would also silence the rungs
+    // for every routine clean-tree check, where they are exactly what the operator asked for. The
+    // skip is RECORDED, never silent.
+    refusals.push(...collectUnansweredRedRefusals({ flowRecords: records, coreRecords: coreRead.records, currentBase: evidence.tree.base, owner, consumer, currentFingerprint: evidence.tree.fingerprint, advisories }));
+    if (!treeCarriesBytes) {
+      advisories.push('the caller states this tree carries NO bytes, so the fingerprint-keyed correlations are skipped: degrade coverage (#25) and receipt coverage (#42) here, and the D10 flow-to-final binding at the guard — evidence at a content-free fingerprint belongs to some other clean moment');
+    } else {
+      refusals.push(...collectDegradeCoverageRefusals({ flowRecords: records, coreRecords: coreRead.records, tree: evidence.tree, owner, backends: evidence.degradeBackends }));
+      refusals.push(...collectReceiptCoverageRefusals({ flowRecords: records, receipts: evidence.receipts, tree: evidence.tree, owner, backends: evidence.receiptBackends, declaredPaths: evidence.declaredPaths, refreshCap: evidence.refreshCap }));
+    }
   }
   return { refusals, advisories };
 };

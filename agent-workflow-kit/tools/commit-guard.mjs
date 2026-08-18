@@ -11,7 +11,15 @@
 //      up to INDEX_LAG_PATH_CAP with the remainder stated. A dirty tracked SUBMODULE is named
 //      separately with its own recovery. Fail-closed on an undecidable probe. This BLOCKS the
 //      deliberate partial commit by design — `--no-verify` is the stated residual, not a flag;
-//   1. recomputes the CURRENT tree fingerprint (the review-state export — read-only git plumbing);
+//   1. recomputes the CURRENT tree fingerprint (the review-state export — read-only git plumbing),
+//      and decides the two CONTENT-FREE lanes here, because no store read can answer them: a
+//      payload with no bytes yields the ONE fingerprint every clean moment of every repository
+//      shares, so any receipt at it was minted elsewhere and may attest nothing. With a DIRTY
+//      index that means staged content the payload cannot see (a gitlink hidden by
+//      `submodule.<name>.ignore` / `diff.ignoreSubmodules`) and the guard REFUSES, naming the
+//      configuration rather than re-staging; with a clean index the commit introduces no bytes
+//      (`--allow-empty`, a message-only `--amend`, an empty merge) and the guard PASSES while
+//      stating that it attests NOTHING — the receipt arms are skipped, never satisfied;
 //   2. reads the LATEST completed final-run record from the core-evidence store (only the latest
 //      attempt at a fingerprint is authoritative — a green receipt is DEAD once a later attempt at
 //      the same fingerprint went red) and refuses on: no record for the current fingerprint · a
@@ -38,7 +46,10 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { computeTreeFingerprint, buildState, decideCheck, quoteReportName, shellQuoteArg } from './review-state.mjs';
-import { resolveEvidencePath, readEvidence, authoritativeOfKind, canonicalKindSerialization, computeWorkingState } from './core-evidence.mjs';
+import {
+  resolveEvidencePath, readEvidence, authoritativeOfKind, canonicalKindSerialization,
+  computeWorkingState, CONTENT_FREE_FINGERPRINT,
+} from './core-evidence.mjs';
 import { resolveLcovPath } from './coverage-check.mjs';
 import { GATES_REL, loadDeclaration } from './run-gates.mjs';
 import { computeFlowDecision } from './flow-check.mjs';
@@ -177,15 +188,42 @@ export const decideIndexLag = (state) => {
 };
 
 // runGuard({ cwd, env }) → { code, lines }. Every refusal names its recovery.
+// The flow decision's two renders, shared by every lane that consults it — the empty-commit lane
+// reaches the same store through the same consumer mode, so its wording can never drift from the
+// byte-carrying one.
+const flowRefusalLines = (flow) => [
+  `commit-guard: REFUSED — the flow store refuses this commit: ${flow.refusals[0]}`,
+  ...flow.refusals.slice(1).map((r) => `commit-guard: flow refusal — ${r}`),
+];
+const flowAdvisoryLines = (flow) => (flow.present && flow.armed
+  ? flow.advisories.map((a) => `commit-guard: flow advisory — ${a}`)
+  : []);
+
 export const runGuard = ({ cwd = process.cwd(), env = process.env } = {}) => {
   const rootTop = gitLine(['rev-parse', '--show-toplevel'], cwd);
   if (rootTop == null) return { code: 1, lines: ['commit-guard: not a git work tree — nothing to guard'] };
   // FIRST: a pure tree property needing no store read. Its recovery re-stages the tree and re-mints
   // the receipt, so every arm below is re-decided anyway — naming a stale fingerprint ahead of it
   // would send the operator down a recovery they must redo.
-  const indexLag = decideIndexLag(computeWorkingState(cwd));
+  const working = computeWorkingState(cwd);
+  const indexLag = decideIndexLag(working);
   if (indexLag !== null) return indexLag;
   const fingerprint = computeTreeFingerprint(cwd);
+  // The CONTENT-FREE lanes — the second pure tree property, decided here for the same reason the
+  // index lag is: no store read can answer it. A payload with no bytes states nothing about what
+  // this commit will carry, and its fingerprint is the ONE value every clean moment of every
+  // repository shares, so a receipt found at it was minted by some other moment, possibly at
+  // another base. Such evidence must therefore decide NOTHING here — neither refuse nor attest
+  // (the same fact flow-check-rungs.mjs applies to a red final). The index tells the two lanes
+  // apart, and `computeWorkingState` probes it with --ignore-submodules=none precisely so a
+  // config-hidden gitlink cannot pass for a clean one.
+  const contentFree = fingerprint === CONTENT_FREE_FINGERPRINT;
+  if (contentFree && working.stagedDirty) {
+    return {
+      code: 1,
+      lines: [`commit-guard: REFUSED — the index carries staged content the fingerprint domain cannot see (a submodule gitlink hidden from \`git diff\` by \`submodule.<name>.ignore\` or \`diff.ignoreSubmodules\`), so no final receipt can describe what this commit will carry. Recovery: clear that ignore setting (or set it to \`none\`) until \`git diff --cached --no-ext-diff\` shows the change, then re-run node ${FINAL_RUN_TOOL} --final`],
+    };
+  }
   // The guard's OWN reads resolve FIXED git-dir paths — a stray AW_CORE_EVIDENCE / AW_LCOV_FILE
   // in the committing shell must never redirect the LAST line of defense to a forged artifact
   // (the env stays a test seam for the producers, never for this consumer).
@@ -193,6 +231,27 @@ export const runGuard = ({ cwd = process.cwd(), env = process.env } = {}) => {
   const read = storePath ? readEvidence(storePath) : { records: [], malformed: 0 };
   if ((read.malformed ?? 0) > 0 || read.readError) {
     return { code: 1, lines: [`commit-guard: REFUSED — evidence store unavailable (${read.malformed} malformed line(s)${read.readError ? `, read error: ${read.readError}` : ''}); inspect ${storePath}`] };
+  }
+  // The empty-commit lane: the index equals HEAD, so this commit introduces no bytes at all
+  // (`git commit --allow-empty`, a message- or signature-only `--amend`, an empty merge). The
+  // guard's whole claim is about bytes, so here it has none to make and says so. The receipt arms
+  // are SKIPPED rather than satisfied — consulting a content-free receipt would make the outcome
+  // depend on which stray clean moment happened to be recorded last. The flow arm still runs: an
+  // empty commit still moves HEAD, and the chain bookkeeping is about that, not about bytes; its
+  // own fingerprint-keyed correlations (the D10 flow→final binding, receipt and degrade coverage)
+  // drop out inside flow-check on the same fact, so no stray content-free record decides here
+  // either. Store HEALTH is deliberately NOT waived above: an unreadable store is not a
+  // correlation, and a store that cannot be read cannot answer the chain questions either.
+  if (contentFree) {
+    const emptyFlow = computeFlowDecision({ cwd, consumer: 'commit-guard', treeCarriesBytes: false });
+    if (emptyFlow.refusals.length > 0) return { code: 1, lines: flowRefusalLines(emptyFlow) };
+    return {
+      code: 0,
+      lines: [
+        'commit-guard: PASS — this commit changes no tree content (the index contributes no tree-content delta and the work tree adds nothing), so the guard attests NOTHING about it: a receipt found at the shared content-free fingerprint cannot be correlated to THIS moment or base',
+        ...flowAdvisoryLines(emptyFlow),
+      ],
+    };
   }
   const finals = authoritativeOfKind(read.records, 'final');
   const current = finals.find((r) => r.fingerprintBefore === fingerprint) ?? null;
@@ -255,15 +314,7 @@ export const runGuard = ({ cwd = process.cwd(), env = process.env } = {}) => {
   // evidenceHashes.flow and the store has since VANISHED (present=false) — a deletion must
   // never un-arm the binding. A no-store repo with no flow-bearing receipt still yields zero
   // refusals (byte-exact pre-flow behavior).
-  if (flow.refusals.length > 0) {
-    return {
-      code: 1,
-      lines: [
-        `commit-guard: REFUSED — the flow store refuses this commit: ${flow.refusals[0]}`,
-        ...flow.refusals.slice(1).map((r) => `commit-guard: flow refusal — ${r}`),
-      ],
-    };
-  }
+  if (flow.refusals.length > 0) return { code: 1, lines: flowRefusalLines(flow) };
   // The ship-receipt arm: the SAME normative decision review-state --check computes, over a
   // SANITIZED env — the receipts/evidence/flow-store overrides are producer test seams, and
   // honoring them HERE would let a forged store bypass the fixed-path reads above.
@@ -278,10 +329,7 @@ export const runGuard = ({ cwd = process.cwd(), env = process.env } = {}) => {
   const flowSuffix = flow.present && flow.armed
     ? ` — flow: armed${review.flowLabels?.length ? ` (${review.flowLabels.join('; ')})` : ''}`
     : '';
-  const flowAdvisoryLines = flow.present && flow.armed
-    ? flow.advisories.map((a) => `commit-guard: flow advisory — ${a}`)
-    : [];
-  return { code: 0, lines: [`commit-guard: PASS — a green final receipt binds this exact tree (${fingerprint.slice(0, 12)}…), the declaration and evidence hashes match, and the review obligations are satisfied${flowSuffix}`, ...flowAdvisoryLines] };
+  return { code: 0, lines: [`commit-guard: PASS — a green final receipt binds this exact tree (${fingerprint.slice(0, 12)}…), the declaration and evidence hashes match, and the review obligations are satisfied${flowSuffix}`, ...flowAdvisoryLines(flow)] };
 };
 
 const HELP = `commit-guard — the read-only pre-commit guard (agent-workflow family, D10).
@@ -291,7 +339,16 @@ Usage:
 
 Re-runs NOTHING: refuses an INDEX that lags the verified working tree (FIRST — unstaged tracked
 paths, reviewable untracked paths, or a dirty tracked submodule, each named with its recovery;
-this deliberately blocks a partial commit), then recomputes the current tree fingerprint and binds
+this deliberately blocks a partial commit), then recomputes the current tree fingerprint.
+
+A CONTENT-FREE fingerprint (a payload with no bytes — the value every clean work tree shares)
+decides WITHOUT a receipt, because one found there was minted by another clean moment: with a dirty
+index it REFUSES (staged content the payload cannot see — a gitlink hidden by
+\`submodule.<name>.ignore\` / \`diff.ignoreSubmodules\`; the recovery is that configuration, not
+\`git add\`), and with a clean index it PASSES stating it attests NOTHING (the commit carries no
+bytes: \`--allow-empty\`, a message-only \`--amend\`, an empty merge).
+
+Otherwise it binds
 the LATEST completed run-gates --final receipt — refusing on { no receipt for this tree · a red
 latest attempt · before≠after · declaration content drift · evidence-hash drift · lcov drift ·
 a flow-store refusal (a PRESENT store's open own chain / base motion / coverage — verbatim; no

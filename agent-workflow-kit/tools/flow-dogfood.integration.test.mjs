@@ -231,13 +231,21 @@ const landCurrentRound = (fx) => {
 // ── the gate-silence lane (defect 1): the #65 rung's END-TO-END shapes ───────────────────────────
 // An armed chain whose FIRST council round is already landed — every receipt-consuming gate is
 // satisfied, so the unanswered-red rung is the only moving part left in the final matrix.
-const armWithLandedRound = (tag, step) => {
+// `seed` stages work BEFORE the round opens, so the round — and every red seeded at its tree —
+// sits at a fingerprint that CARRIES BYTES. Without it the round pins the content-free value every
+// clean moment of every repository shares, which the #65 rung steps over by name: a red seeded
+// there is skipped, and a case built on it goes green while pinning nothing.
+const armWithLandedRound = (tag, step, seed = null) => {
   const fx = makeFixture(tag);
   expectOk(fx, SET_FLOW, ['--preset', 'council', '--write']);
   expectOk(fx, FLOW_WRITER, ['write-plan-id', PLAN_REL, '--plan-id', PLAN_ID]);
   git(fx, 'add', '-A');
   git(fx, 'commit', '-qm', 'arm the flow');
   expectOk(fx, FLOW_WRITER, ['adoption', PLAN_REL]);
+  if (seed !== null) {
+    writeFileSync(join(fx.root, 'app.txt'), seed);
+    git(fx, 'add', '-A');
+  }
   expectOk(fx, FLOW_WRITER, ['round-open', PLAN_ID, '--backend', 'codex', '--backend', 'agy', '--step', step]);
   landCurrentRound(fx);
   return fx;
@@ -468,7 +476,10 @@ describe('flow dogfood — the Decision-8 second-red stop pair (blind third refu
 // This is the case that would have failed on 5a3f070.
 describe('flow dogfood — the #65 deadlock has a fixed point (defect 1)', { skip: !gitOk }, () => {
   it('a caused red at the current tree reaches a GREEN final in ONE run, and commit-guard then PASSes', () => {
-    const fx = armWithLandedRound('aw-dogfood-deadlock', '1.1');
+    // Seeded, so the red sits at a tree that carries bytes — see armWithLandedRound. The tree must
+    // then STAY there: the round's receipts bind this fingerprint, and moving it would make the
+    // run red on review-state instead of on the rung this case pins.
+    const fx = armWithLandedRound('aw-dogfood-deadlock', '1.1', 'ok work\n');
     expectOk(fx, FLOW_WRITER, ['freeze', PLAN_ID]);
     expectOk(fx, FLOW_WRITER, ['converged', PLAN_ID]);
     const fp = fingerprintOf(fx);
@@ -492,8 +503,14 @@ describe('flow dogfood — the #65 deadlock has a fixed point (defect 1)', { ski
 describe('flow dogfood — the D4 interrupted-run residual, pinned in full (defect 1)', { skip: !gitOk }, () => {
   it('the gate lane PASSes while the commit-guard consumer AND the real guard both refuse', () => {
     const fx = armWithLandedRound('aw-dogfood-d4', '4.1');
-    // Round 1 sat at the clean tree; the fold moves the fingerprint, so the red's tree stays
-    // base-correlated through round 1 while the guard reads the MOVED tree.
+    // Round 1 sat at the CLEAN tree, whose fingerprint is the content-free value every clean
+    // moment shares — the #65 rung steps over a red minted there, so the red needs a round whose
+    // tree carries bytes. Round 2 gives it one; round 3 then moves the tree again, so the red and
+    // the guard read different fingerprints exactly as this residual requires.
+    writeFileSync(join(fx.root, 'app.txt'), 'the work the red ran against\n');
+    git(fx, 'add', '-A');
+    expectOk(fx, FLOW_WRITER, ['round-open', PLAN_ID, '--backend', 'codex', '--backend', 'agy']);
+    landCurrentRound(fx);
     const redTree = lastRound(fx).fingerprint;
     writeFileSync(join(fx.root, 'app.txt'), 'ok work\n');
     git(fx, 'add', '-A');

@@ -160,6 +160,16 @@ export const computeTreeFingerprint = (cwd, fsx) => {
   return payload == null ? null : createHash('sha256').update(payload).digest('hex');
 };
 
+// The fingerprint of a CONTENT-FREE payload — a clean work tree emits no bytes at all, so this ONE
+// value is shared by every clean moment of every repository. It therefore identifies no working
+// state and correlates to no base: evidence found at it was minted by some other clean moment,
+// possibly at another base, and can decide nothing in either direction. Two situations reach it,
+// and only the INDEX tells them apart (never the payload): an empty commit, where the index equals
+// HEAD and no byte enters the repository, and staged content the payload cannot see — a gitlink
+// hidden from `git diff` by an ignore configuration. Read by the consumers that correlate a
+// fingerprint to a base (flow-check-rungs.mjs #65) and by commit-guard's two content-free lanes.
+export const CONTENT_FREE_FINGERPRINT = createHash('sha256').update(Buffer.alloc(0)).digest('hex');
+
 // The index↔worktree split the fingerprint deliberately CANNOT see: the payload above concatenates
 // the staged and unstaged diffs, so against an otherwise-empty index a hunk moving into the index
 // leaves it byte-identical — while `git commit` builds the commit from the INDEX alone. This is the

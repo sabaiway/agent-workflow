@@ -60,7 +60,7 @@ const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 }
 // PREVIOUS one and an in-matrix comparison would make a new green final unreachable. The SAME
 // distinction reaches the #65 unanswered-red rung (its own header states the split): the 'gate'
 // lane also answers a red under a provable in-progress retry, for the same reason.
-export const computeFlowDecision = ({ cwd = process.cwd(), consumer = 'gate', probes = {} } = {}) => {
+export const computeFlowDecision = ({ cwd = process.cwd(), consumer = 'gate', probes = {}, treeCarriesBytes = true } = {}) => {
   const fingerprintProbe = probes.fingerprint ?? computeTreeFingerprint;
   const owner = deriveFlowOwner(cwd);
   if (owner == null) {
@@ -161,14 +161,29 @@ export const computeFlowDecision = ({ cwd = process.cwd(), consumer = 'gate', pr
   // authoritative completed final at the CURRENT fingerprint, status green FIRST (a newer red
   // is never bypassed by an older green's matching hash — the guard's own red arm refuses it),
   // then the hash comparison.
+  // …and NOT when the CALLER states the tree carries no bytes: the receipt it would bind was then
+  // found at the one fingerprint every clean moment of every repository shares, so it was minted by
+  // some other moment and its projection hash describes that moment's store, not this one.
+  // Correlating it would make the outcome depend on which stray clean moment the store recorded
+  // last — the same fact the #65 rung and commit-guard's own content-free lanes apply.
+  // The probe stays INSIDE this lane: an armed decision already paid for the tree (evidence.tree),
+  // and every other lane — the gate consumer, a broken store, an unarmed flow — must stay inert.
+  // A hoisted probe would make those lanes read the whole tree and let an unreadable untracked
+  // file throw where the answer is otherwise a quiet, healthy no-op.
   const bindingRefusals = [];
-  if (consumer === 'commit-guard' && !healthBroken) {
+  const completedFinals = consumer === 'commit-guard' && !healthBroken && treeCarriesBytes
+    ? authoritativeOfKind(coreRead.records, 'final')
+    : [];
+  // …and only when a final record EXISTS to bind: with none in the store there is no binding to
+  // verify, so reading the tree would answer a question nobody asked.
+  if (completedFinals.length > 0) {
     const currentFingerprint = evidence?.tree.fingerprint ?? fingerprintProbe(cwd);
     if (currentFingerprint == null) {
       bindingRefusals.push('the current tree fingerprint is unresolvable — the D10 flow binding cannot be verified (fail closed); re-run run-gates.mjs --final on a healthy tree');
     }
-    const currentFinal = currentFingerprint == null ? undefined : authoritativeOfKind(coreRead.records, 'final')
-      .find((r) => r.fingerprintBefore === currentFingerprint);
+    const currentFinal = currentFingerprint == null
+      ? undefined
+      : completedFinals.find((r) => r.fingerprintBefore === currentFingerprint);
     if (currentFinal !== undefined && currentFinal.status === 'green') {
       const bound = currentFinal.evidenceHashes?.flow;
       if (typeof bound === 'string') {
@@ -193,7 +208,7 @@ export const computeFlowDecision = ({ cwd = process.cwd(), consumer = 'gate', pr
       }
     }
   }
-  const { refusals, advisories } = decideFlowCheck({ flowRead, coreRead, owner, flowPath, corePath, motion, evidence, consumer });
+  const { refusals, advisories } = decideFlowCheck({ flowRead, coreRead, owner, flowPath, corePath, motion, evidence, consumer, treeCarriesBytes });
   // Semantic refusals bind only an ARMED store; the D10 binding refusals ride the commit-guard
   // lane UNCONDITIONALLY — a deleted or truncated store must never un-arm the binding.
   const effectiveRefusals = healthBroken ? refusals : [...(armed ? [...refusals, ...evidenceRefusals] : []), ...bindingRefusals];

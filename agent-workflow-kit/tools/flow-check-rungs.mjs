@@ -13,7 +13,7 @@ import {
   CHAIN_KIND, canonicalFlowDigest, authoritativeFlowRecords, flowTreeIdentity,
 } from './flow-record.mjs';
 import { resolveRecordReference } from './flow-store.mjs';
-import { authoritativeOfKind, summarizeReviewReceiptsForTree } from './core-evidence.mjs';
+import { authoritativeOfKind, summarizeReviewReceiptsForTree, CONTENT_FREE_FINGERPRINT } from './core-evidence.mjs';
 import { FALLBACK_LENS_ADDITIONAL_ONLY } from './cheap-agents.mjs';
 
 export const short = (digest) => `${digest.slice(0, 12)}…`;
@@ -161,7 +161,21 @@ export const evaluateVetoOverride = ({ records, vetoReceipt, tree }) => {
 // runner-attested capability (a one-time unpublished nonce over stdin or an inherited FD, verified
 // against a one-way commitment recorded in the final-start); it needs its own IPC contract and is
 // QUEUED, never pretended here.
-export const collectUnansweredRedRefusals = ({ flowRecords, coreRecords, currentBase, owner, consumer = 'commit-guard', currentFingerprint = null }) => {
+//
+// The CONTENT-FREE arm (FINGERPRINT-BASE-BINDING, second face): a red final minted while the work
+// tree was CLEAN hashes an empty payload, and that one value is shared by every clean moment of
+// every repository — so the base correlation resolves to as many bases as the store has clean
+// moments and refuses fail-closed forever, on a record that describes no working state at all.
+// The arm is keyed on the FINGERPRINT, not on how many bases happen to correlate: resolving to
+// exactly one base is an accident of store history, never a statement about the tree. It is one
+// half of a symmetry, and it is only sound WITH the other: content-free evidence must decide
+// nothing in either direction, so commit-guard equally refuses to ATTEST from a content-free
+// receipt (commit-guard.mjs, the two content-free lanes) — without that half, stepping over a red
+// here would leave a stale green free to acquit. The skip is RECORDED in the `advisories` sink —
+// a rung that steps over evidence says so. That sink is the ONLY place the skip is observable:
+// decideFlowCheck always passes one, and a caller that omits it (a test, a future consumer) gets
+// the same refusals and no record of the step.
+export const collectUnansweredRedRefusals = ({ flowRecords, coreRecords, currentBase, owner, consumer = 'commit-guard', currentFingerprint = null, advisories = [] }) => {
   if (!hasOwnAdoption(flowRecords, owner)) return [];
   const adoptionInstants = flowRecords
     .filter((r) => r.kind === CHAIN_KIND && r.purpose === 'adoption' && r.owner === owner)
@@ -192,6 +206,10 @@ export const collectUnansweredRedRefusals = ({ flowRecords, coreRecords, current
   for (const { r, i } of finals) {
     if (r.status !== 'red') continue;
     if (armingInstant !== null && isCanonicalInstant(r.timestamp) && Date.parse(r.timestamp) < armingInstant) continue;
+    if (r.fingerprintBefore === CONTENT_FREE_FINGERPRINT) {
+      advisories.push(`a red final (attempt "${r.attempt}") is OUTSIDE the rung: its tree fingerprint ${short(r.fingerprintBefore)} is CONTENT-FREE — a clean work tree emits an empty payload, so the value identifies no working state, correlates to no base, and gates no commit (#65 content-free arm)`);
+      continue;
+    }
     const bases = basesAt(r.fingerprintBefore);
     if (bases.length === 0) {
       refusals.push(`a red final (attempt "${r.attempt}") cannot be base-correlated: no flow record carries its tree fingerprint ${short(r.fingerprintBefore)} — the zero-base lane is a fail-closed ambiguity (#65); the rung demands exactly ONE base through the flow store`);
