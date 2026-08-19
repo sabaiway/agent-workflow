@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // dispatch.mjs — the delegation ENGINE (delegation Plan 1, Phase 3; the writer verbs are Plan 2,
 // Phase 2 and the waiter Plan 2, Phase 4): the ONE human-facing surface over the record vocabulary
-// (dispatch-record.mjs) and the ledger (dispatch-store.mjs). Ten verbs:
+// (dispatch-record.mjs) and the ledger (dispatch-store.mjs). Eleven verbs:
 //
 //   check <dispatch-file>  the D8 sub-task contract header, FORM-only, exit 0/1 (+ the advisory footer)
 //   advise --step-class    which vehicle carries this step class on THIS host — advice, never a gate
@@ -12,6 +12,7 @@
 //   return                 the RETURN record — the wrapper's exec receipt ABSORBED through this door
 //   fold                   the FOLD record — the integration re-confirmation
 //   degrade                the DEGRADE record — the recorded no-fold closure
+//   handoff-return         the worktree-stream return rung — deliver, prove, then count
 //   aggregate [--wave]     the L0 deterministic report over ONE wave
 //
 // Why an engine at all: the funded metric — how much leverage a delegated sub-task actually buys —
@@ -59,18 +60,19 @@
 //
 // Writer: appends to the delegation ledger through the store's lock-serialized append (the store's
 // preflight is the single legality door — this module adds NO second validator). Never commits,
-// never runs a subscription CLI, spawns nothing but git READS. Dependency-free, Node >= 22. No side
-// effects on import (the isDirectRun idiom).
+// never runs a subscription CLI, spawns nothing but git READS — with ONE stated exception:
+// `handoff-return` attests MAIN's index with `git write-tree`, which may write a tree OBJECT into
+// the odb and moves no ref (the same probe `land --prepare` itself uses). Dependency-free,
+// Node >= 22. No side effects on import (the isDirectRun idiom).
 
-import { readFileSync, openSync, closeSync, realpathSync, readlinkSync, constants as fsConstants } from 'node:fs';
-import { resolve, isAbsolute, sep, dirname, basename, join } from 'node:path';
+import { readFileSync, realpathSync, readlinkSync } from 'node:fs';
+import { resolve, isAbsolute, dirname, basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import {
   DELEGATION_SCHEMA_VERSION, STEP_CLASSES, OBSERVATION_PROVENANCE, RETURN_OUTCOMES,
   SESSION_ID_NULLABLE_OUTCOMES, checkDispatchContractForm, checkDispatchMintConsistency,
   contractDigest, canonicalDelegationDigest, computeNumerator, evaluateMetricEligibility,
-  evaluateObservationEligibility,
 } from './dispatch-record.mjs';
 import {
   appendDelegationRecord, readDelegationStore, resolveDelegationStorePath, delegationThreadState,
@@ -85,9 +87,12 @@ import {
   enumerateReturnedObjects, computeReturnedDiff, assembleIntegrationBundle,
 } from './exec-producer.mjs';
 import { gitBuf, isTreeClean } from './core-evidence.mjs';
-import { lstatNoFollowRead, describeNonRegular, readRegularFileNoFollow, readFileBytesNoFollow } from './fs-read-nofollow.mjs';
+import { lstatNoFollowRead, readRegularFileNoFollow, readFileBytesNoFollow } from './fs-read-nofollow.mjs';
 import { gitLine } from './flow-store-read.mjs';
-import { lexicalRepoRelative } from './repo-lex.mjs';
+import {
+  resolveRepoRoot, measureScope, ratio, formatRatio, buildObservationRecord,
+} from './observation-builder.mjs';
+import { handoffReturn, HANDOFF_SLUG_RE } from './worktree-handoff-return.mjs';
 
 const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 });
 
@@ -199,11 +204,6 @@ const OBSERVE_REPEATABLE = new Set(['--scope']);
 // string so a future key is expressible, but a wave registered under a key the engine never honours
 // would record a contract the computation does not follow — refused at both ends.
 export const IMPLEMENTED_PAIRING_KEYS = Object.freeze(['stepClass']);
-
-// The solo baseline counts each scope object's POST-IMAGE — the bytes on disk after the construction
-// — which is exactly the `new` numerator rule (D6). No exec diff kind enumerates ranges, so a solo
-// observation can never claim a partial object.
-const SOLO_COMPONENT_KIND = 'new';
 
 // Acceptance aggregates the git-provable domain only (D6/R2).
 const ACCEPTANCE_PROVENANCE = 'wrapper-git';
@@ -411,83 +411,12 @@ const runRegister = ({ baseCwd, env, argv, now }) => {
 };
 
 // ── observe: one hand-recorded observation ────────────────────────────────────────────────────────
-
-const ratio = (value) => value.toFixed(3);
-
-// L is printed ONLY where the metric is eligible: an ineligible metric has a NAMED reason and no
-// ratio at all, and printing a number beside the name is how a silent zero gets read as a measurement.
-const formatRatio = (metric) => (metric.eligible
-  ? `L = ${ratio(metric.numeratorBytes / metric.denominatorBytes)} (${metric.numeratorBytes} B / ${metric.denominatorBytes} B)`
-  : `L = n/a — INELIGIBLE (${metric.ineligibleReason})`);
+// The scope measurement and the record construction live in observation-builder.mjs, so this verb
+// and the handoff-return rung build the IDENTICAL record through ONE path (the rung cannot import
+// this module back — dispatch.mjs imports the rung for its verb, and the tools graph is pinned
+// acyclic).
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
-
-// The scope's anchor is the git TOP-LEVEL, never the caller's cwd: a recorded scope must name the
-// same objects whoever runs the tool from wherever. `null` outside a work tree — a repo-relative
-// domain with no repository has nothing to be relative TO, and falling back to cwd would be a
-// second, incompatible semantics for the same field.
-const resolveRepoRoot = (cwd) => {
-  if (gitLine(['rev-parse', '--is-inside-work-tree'], cwd) !== 'true') return null;
-  const top = gitLine(['rev-parse', '--show-toplevel'], cwd);
-  return top === null ? null : realpathSync(top);
-};
-
-// The read is no-follow on the LEAF (a symlinked leaf is already refused by name above; O_NOFOLLOW
-// makes a swap between the classification and the read fail loudly rather than counting another
-// object's bytes). Honest limit: classify-then-read is not race-free, and it is not meant to be —
-// the scope is the orchestrator's OWN work tree and the result is a MAGNITUDE, never a store
-// identity, so a pathname race costs a wrong byte count, not a forged record.
-const readObjectBytes = (path) => {
-  const fd = openSync(path, (fsConstants.O_RDONLY ?? 0) | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0));
-  try {
-    return readFileSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-};
-
-// One scope object → one numerator entry. Refuses by NAME on anything it cannot count honestly: a
-// path escaping the repo LEXICALLY, an absent path, a non-regular path (a symlinked leaf included —
-// following one would count another object's bytes under this name), and a path whose REAL location
-// is outside the repository. The last one is the case the lexical rule alone cannot see: it rejects
-// `../x` while accepting `link/x`, where `link` is an ancestor symlink pointing out of the tree.
-// The identity is the CANONICAL repo-relative path taken from the verified real path — not a content
-// hash. The solo domain has no rename lineage for a content id to protect, and a content id would
-// let one object read between two measurements look like TWO objects instead of refusing as the
-// producer contradiction it is ("one identity, one size"). Two equal-byte files at different paths
-// are two objects and count twice; one path reached twice (a second listing, an in-repo ancestor
-// symlink) is one object and counts once.
-const measureObject = (root, rel) => {
-  const lexical = lexicalRepoRelative(rel);
-  if (!lexical.ok) return { ok: false, reason: `scope path "${rel}": ${lexical.reason}` };
-  const path = resolve(root, rel);
-  const stat = lstatNoFollowRead(path);
-  if (stat === null) return { ok: false, reason: `scope path "${rel}" does not exist — an observation counts objects that are actually there (fail closed)` };
-  if (!stat.isFile()) return { ok: false, reason: `scope path "${rel}" is a ${describeNonRegular(stat)}, not a regular file — the scope names repository objects (fail closed)` };
-  const real = realpathSync(path);
-  if (!real.startsWith(`${root}${sep}`)) {
-    return { ok: false, reason: `scope path "${rel}" resolves to ${real}, which leaves the repository at ${root} — an ancestor symlink is not a way out of the scope domain (fail closed)` };
-  }
-  const canonical = real.slice(root.length + 1);
-  const bytes = readObjectBytes(path);
-  return { ok: true, entry: { kind: SOLO_COMPONENT_KIND, path: canonical, objectId: canonical, postImageBytes: bytes.length } };
-};
-
-// One repo-relative path per `--scope` occurrence, in the order given. The measured CANONICAL paths
-// become the record's `scope` as a canonical JSON array, so what was measured and what is written
-// down are the same statement — and a path carrying a space says so unambiguously.
-const measureScope = (root, paths) => {
-  const entries = [];
-  for (const rel of paths) {
-    const measured = measureObject(root, rel);
-    if (!measured.ok) return measured;
-    entries.push(measured.entry);
-  }
-  const numerator = computeNumerator(entries);
-  return numerator.ok
-    ? { ...numerator, scope: JSON.stringify(entries.map((e) => e.path)) }
-    : { ok: false, reason: numerator.reason };
-};
 
 const runObserve = ({ baseCwd, env, argv, now }) => {
   const { values, operands, cwd } = scan(argv, OBSERVE_FLAG_FIELDS, baseCwd, { repeatable: OBSERVE_REPEATABLE });
@@ -513,25 +442,16 @@ const runObserve = ({ baseCwd, env, argv, now }) => {
   const denominatorBytes = solo
     ? measured.numeratorBytes
     : asInteger('--denominator-bytes', need(values, '--denominator-bytes'));
-  const eligibility = evaluateObservationEligibility({ numeratorBytes: measured.numeratorBytes, denominatorBytes });
-  const record = {
-    schema: DELEGATION_SCHEMA_VERSION,
-    kind: 'observation',
+  const record = buildObservationRecord({
     waveId: need(values, '--wave'),
     stepClass: need(values, '--step-class'),
-    scope: measured.scope,
-    metric: {
-      numeratorBytes: measured.numeratorBytes,
-      denominatorBytes,
-      components: measured.components,
-      provenance,
-      eligible: eligibility.eligible,
-      ineligibleReason: eligibility.ineligibleReason,
-    },
+    measured,
+    provenance,
+    denominatorBytes,
     planId: need(values, '--plan'),
     phase: asInteger('--phase', need(values, '--phase')),
     timestamp: now(),
-  };
+  });
   const { writtenPath } = appendDelegationRecord({ cwd, record, env });
   // DISTINCT objects, not scope entries: the numerator dedups on the canonical path, so counting
   // entries would report two objects where one was counted — the echo must agree with the number.
@@ -1417,6 +1337,40 @@ const runDegrade = ({ baseCwd, env, argv, now }) => {
   };
 };
 
+// ── handoff-return: the worktree-stream return rung ───────────────────────────────────────────────
+// The rung itself lives in worktree-handoff-return.mjs (it locates the satellite through the shared
+// locator leaf, so the worktrees tool never enters this CLI's import closure); this wrapper owns
+// only the flag surface, exactly like every other verb.
+
+export const HANDOFF_RETURN_FLAG_FIELDS = Object.freeze({
+  '--wave': 'waveId',
+  '--plan': 'planId',
+  '--phase': 'phase',
+});
+export const HANDOFF_RETURN_INPUT_FLAGS = Object.freeze({
+  '--slug': 'the satellite slug the handoff identity is resolved from',
+});
+
+const runHandoffReturn = ({ baseCwd, env, argv, now }) => {
+  const { values, operands, cwd } = scan(argv, { ...HANDOFF_RETURN_FLAG_FIELDS, ...HANDOFF_RETURN_INPUT_FLAGS }, baseCwd);
+  refuseOperands('handoff-return', operands);
+  const slug = need(values, '--slug');
+  // Refused as USAGE before any probe: the locator's own refusals interpolate the slug into a
+  // terminal message, and the worktrees grammar is what keeps that echo safe.
+  if (!HANDOFF_SLUG_RE.test(slug)) {
+    throw usageFail(`--slug must match the worktrees slug grammar (lowercase letters, digits, hyphens, max 64 chars, letter/digit first; got ${JSON.stringify(slug)})`);
+  }
+  return handoffReturn({
+    cwd,
+    env,
+    now,
+    slug,
+    waveId: need(values, '--wave'),
+    planId: need(values, '--plan'),
+    phase: asInteger('--phase', need(values, '--phase')),
+  });
+};
+
 // ── aggregate: the L0 report over ONE wave ────────────────────────────────────────────────────────
 
 const WAVE_BEARING_KINDS = ['pre-registration', 'dispatch', 'observation', 'degrade'];
@@ -1628,6 +1582,7 @@ Usage:
   node dispatch.mjs fold --nonce <n> --verdict <text> [--cwd <dir>]
   node dispatch.mjs degrade --wave <id> --step-class <c> --rationale <text>
                             [--nonce <n>] [--cwd <dir>]
+  node dispatch.mjs handoff-return --slug <s> --wave <id> --plan <id> --phase <n> [--cwd <dir>]
   node dispatch.mjs aggregate [--wave <id>] [--cwd <dir>]
 
 check reads the ONE \`\`\`aw-dispatch-contract fenced block in the dispatch file and validates its
@@ -1737,6 +1692,24 @@ degrade appends the recorded no-fold closure, threaded (with --nonce) or PRE-DIS
 pre-dispatch form opens no nonce thread, so aggregate REFUSES the whole wave by name once one is
 recorded — stated here because it is a live cost of writing that record.
 
+handoff-return is the worktree-stream return rung: run FROM MAIN after land --prepare, it locates
+the satellite through the handoff identity, DELIVERS every user-owned fragment of the handoff byte
+verbatim (with its boundaries and byte lengths, naming the MAIN-owned destinations), requires BOTH
+prepared-tree and prepared-head from the record and re-attests them against MAIN's staged write-tree
+and HEAD (a record with no prepared-head was written by an earlier kit — re-run land --prepare), and
+appends ONE self-reported worktree-stream observation (numerator: the prepared change set's blob
+bytes, read from the ATTESTED tree itself via git cat-file — never from disk, which an unstaged
+edit after the prepare moves silently; denominator: the handoff byte count) ONLY when the prepared
+change set lies wholly inside the observation domain, re-checking the staged write-tree and HEAD
+once more immediately before EITHER answer (the pre-append idiom: it narrows the race window rather
+than closing it). A deletion, a rename's absent old side, a symlink, a submodule, a mode-only
+change, a path whose name is not valid UTF-8, and every other unrepresentable form end instead with
+"observation: NOT RECORDED — <form> at <path> is outside the observation domain" at exit 0,
+delivery and proof still printed — no partial scope is ever recorded. The handoff digest and the two OIDs are the rung's printed PROOF,
+not ledger fields (the closed observation key set carries no artifact digest — an accepted
+limitation). The fold stays orchestrator judgment, and a fold landed after the gates leaves them
+stale: the printed next-step order says so.
+
 aggregate reports ONE wave: the registered thresholds, every observation (context, never acceptance),
 and per registered step class the delegated threads with the D7 inclusion table applied — a folded
 success with an eligible wrapper-git metric contributes its L; a folded success whose metric is
@@ -1771,7 +1744,9 @@ against the payload, not claimed away here. A receipt is forgeable exactly like 
 and D10 stands as a BAR, not a mechanism — at most one in-tree exec dispatch at a time, and nothing
 refuses a second.
 
-Never commits, never runs a subscription CLI, spawns nothing but git READS. Exit codes: 0 success;
+Never commits, never runs a subscription CLI, spawns nothing but git READS — except handoff-return,
+which attests MAIN's index with git write-tree: that may write a tree OBJECT into the odb and moves
+no ref (the same probe land --prepare itself uses). Exit codes: 0 success;
 1 a refusal (store STOP verbatim, a form violation, an unreadable file, a supervision question); 2
 usage; ${AWAIT_UNANSWERED_STATUS} an await that ended with no terminal receipt (the absolute deadline or the --timeout
 bound) — its own status so a caller that BRANCHES on the code can tell it from a refusal; a caller
@@ -1799,11 +1774,12 @@ export const main = (argv, ctx = {}) => {
     if (verb === 'return') return runReturn({ baseCwd, env, argv: rest, now });
     if (verb === 'fold') return runFold({ baseCwd, env, argv: rest, now });
     if (verb === 'degrade') return runDegrade({ baseCwd, env, argv: rest, now });
+    if (verb === 'handoff-return') return runHandoffReturn({ baseCwd, env, argv: rest, now });
     if (verb === 'aggregate') return runAggregate({ baseCwd, env, argv: rest });
     if (verb === 'await') {
       throw usageFail('await is the one verb that WAITS, so it answers through mainAwait (the CLI routes it there) — main() returns the answer a verb has already computed, and a promise handed back here would read as a result object with no code at all');
     }
-    throw usageFail(`unknown verb: ${verb ?? '(none)'} — expected check | advise | register | observe | open | await | return | fold | degrade | aggregate (see --help)`);
+    throw usageFail(`unknown verb: ${verb ?? '(none)'} — expected check | advise | register | observe | open | await | return | fold | degrade | handoff-return | aggregate (see --help)`);
   } catch (err) {
     return { code: err.exitCode ?? 1, stdout: '', stderr: `dispatch: ${err.message}` };
   }

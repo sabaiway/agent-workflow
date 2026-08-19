@@ -40,6 +40,9 @@ import { QUEUE_SHARED_RULE, LANDING_FROM_MAIN, NO_DEPENDENCIES_POSTURE, CLEANUP_
 // The one-writer BAR the satellite cold-start prompt states at both of its print sites — read from
 // the composer that emits it, not from the worktrees tool, so the lint keeps the leaf's own words.
 import { ONE_WRITER_BAR } from './worktree-prompt.mjs';
+// The after-the-fold order the handoff-return rung prints (D9) — bound from the rung that owns it,
+// so the Landing-flow doc can never drift from what the tool actually tells an operator to do.
+import { AFTER_FOLD_ORDER } from './worktree-handoff-return.mjs';
 // The flow contract constants: the accepted schema version + the honest lagging-kit sentence
 // (owned by the config validator), and the set-flow bookkeeping-floor residual (owned by the
 // arming writer) — each pinned byte-exact into its mode doc(s).
@@ -164,6 +167,7 @@ export const BINDINGS = Object.freeze([
   // prompt states it at every print site, so the mode doc must carry the exact words the satellite
   // reads — a doc that softened it would promise a guard the tool does not have.
   valueBinding('one-writer-bar', ONE_WRITER_BAR, ONE_WRITER_BAR, [WORKTREES_DOC]),
+  valueBinding('after-fold-order', AFTER_FOLD_ORDER, AFTER_FOLD_ORDER, [WORKTREES_DOC]),
   valueBinding('landing-from-main', LANDING_FROM_MAIN, LANDING_FROM_MAIN, [WORKTREES_DOC]),
   valueBinding('no-dependencies-posture', NO_DEPENDENCIES_POSTURE, NO_DEPENDENCIES_POSTURE, [WORKTREES_DOC]),
   // The cleanup-ownership contract (AD-069): the exact live sentence every ownership STOP emits —

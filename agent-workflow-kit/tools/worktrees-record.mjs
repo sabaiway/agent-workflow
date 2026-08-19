@@ -80,7 +80,7 @@ export const recordValue = (name, value) => {
 // that kit never wrote must survive the round-trip as absence, not as a literal null string.
 export const optionalField = (name, value) => (value == null ? [] : [`- ${name}: ${recordValue(name, value)}`]);
 
-export const composeProvisionRecordSection = ({ slug, branch, includes, nodeModules, vscode, install = null, sharedQueue = null, landing = null, prepared = null }) => [
+export const composeProvisionRecordSection = ({ slug, branch, includes, nodeModules, vscode, install = null, sharedQueue = null, landing = null, prepared = null, preparedHead = null }) => [
   '## Provision record',
   '',
   `- slug: ${recordValue('slug', slug)}`,
@@ -92,6 +92,9 @@ export const composeProvisionRecordSection = ({ slug, branch, includes, nodeModu
   ...optionalField('shared-queue', sharedQueue),
   ...optionalField('landing', landing),
   ...optionalField('prepared-tree', prepared),
+  // prepared-head rides beside prepared-tree (D8): after a commit a clean index reproduces the
+  // committed tree, so the tree OID alone cannot show whether the prepared set is still pending.
+  ...optionalField('prepared-head', preparedHead),
   '',
   // The rule says "at the absolute path above", so it ships only WITH that path: a record from an
   // earlier kit carries no shared-queue field, and a rule pointing at nothing is worse than silence.
@@ -135,10 +138,10 @@ export const locateProvisionRecordSection = (text) => {
 export const parseProvisionRecord = (text) => {
   const section = locateProvisionRecordSection(text);
   const scan = section.source.slice(section.start, section.end).split('\n').slice(1);
-  const record = { slug: null, branch: null, includes: [], nodeModules: null, vscode: null, install: null, sharedQueue: null, landing: null, prepared: null };
+  const record = { slug: null, branch: null, includes: [], nodeModules: null, vscode: null, install: null, sharedQueue: null, landing: null, prepared: null, preparedHead: null };
   const single = {
     slug: 'slug', branch: 'branch', node_modules: 'nodeModules',
-    'vscode-settings': 'vscode', 'prepared-tree': 'prepared',
+    'vscode-settings': 'vscode', 'prepared-tree': 'prepared', 'prepared-head': 'preparedHead',
     install: 'install', 'shared-queue': 'sharedQueue', landing: 'landing',
   };
   const seen = new Set();

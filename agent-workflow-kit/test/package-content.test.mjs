@@ -237,6 +237,13 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/worktrees-record.mjs',
       'tools/satellite-locator.mjs',
       'tools/worktree-prompt.mjs',
+      // the handoff-return pair (delegation Plan 3 Phase 3): the observation builder (dispatch.mjs
+      // AND the rung build the observation record through it) and the return rung itself
+      // (dispatch.mjs routes the verb, doc-parity.mjs binds AFTER_FOLD_ORDER). Pinned by NAME: a
+      // payload drop breaks the dispatch CLI's load and a declared gate at once, and the exact
+      // count alone cannot prove THESE files ship.
+      'tools/observation-builder.mjs',
+      'tools/worktree-handoff-return.mjs',
       'references/templates/adr-record.md',
       'references/templates/adr/log.md',
       // the guarded autonomy provisioner doctor + its mode contract (AD-044 Plan 2)
@@ -553,7 +560,15 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       dispatch side reads too, which is what keeps the 3200-line worktrees tool out of the
     //       dispatch CLI's import closure. All three are pinned by NAME above; their colocated
     //       *.test.mjs siblings are stripped by files[].
-    assert.equal(packed.length, 220, `tarball file count drifted (${packed.length} ≠ 220)`);
+    // 222 = 220 + the handoff-return pair (delegation Plan 3 Phase 3): tools/
+    //       observation-builder.mjs (the scope measurement + the ONE observation-record
+    //       construction, extracted from dispatch.mjs so the rung cannot import the CLI back —
+    //       the tools graph is pinned acyclic) + tools/worktree-handoff-return.mjs (the
+    //       worktree-stream return rung: byte-verbatim delivery, the prepared-tree/prepared-head
+    //       re-attestation, the observation-domain classification). Both are pinned by NAME above;
+    //       their colocated *.test.mjs siblings (the integration E2E included) are stripped by
+    //       files[] and never enter the tarball.
+    assert.equal(packed.length, 222, `tarball file count drifted (${packed.length} ≠ 222)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

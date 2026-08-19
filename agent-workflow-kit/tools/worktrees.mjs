@@ -2695,12 +2695,15 @@ const runSyncAdapter = ({ root, mainHead, transferPaths, git, fs, deps, report }
   return delta;
 };
 
-const recordPreparedTree = ({ identity, slug, entry, prepared, fs }) => {
+// prepared-head rides the SAME record refresh as prepared-tree (D8): MAIN's HEAD at prepare time
+// is what lets the return rung tell a still-pending prepared set from an already-committed one —
+// a clean post-commit index reproduces the committed tree, so the tree OID alone cannot.
+const recordPreparedTree = ({ identity, slug, entry, prepared, preparedHead, fs }) => {
   writeHandoffRecord({
     wtRoot: entry.path,
     slug,
     branch: identity.branch,
-    fields: { ...identity.record, prepared },
+    fields: { ...identity.record, prepared, preparedHead },
     fs,
     report: [],
   });
@@ -2794,7 +2797,7 @@ export const runLand = ({ argvSlug, flags, cwd, git, deps, log }) => {
     const syncDelta = runSyncAdapter({ root, mainHead, transferPaths, git, fs, deps, report });
     const preparedTree = gitRead(git, ['write-tree'], root, 'cannot write the prepared main tree').stdout.trim();
     try {
-      recordPreparedTree({ identity, slug, entry, prepared: preparedTree, fs });
+      recordPreparedTree({ identity, slug, entry, prepared: preparedTree, preparedHead: mainHead, fs });
     } catch (error) {
       throw withRollbackFailures(error, rollbackMain({ root, mainHead, git, fs }));
     }

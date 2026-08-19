@@ -167,7 +167,11 @@ own verbatim error through the existing Git-error surface.
 **Provision record (`docs/plans/handoff-<slug>.md`, `## Provision record` — tool-owned):** resume
 IDENTITY (`slug`, `branch`, and the seeded plan name — a mismatch STOPs) · recorded provision FACTS
 that never authorize a resume (`include`, `node_modules`, `vscode-settings`) · and, after a prepare,
-`prepared-tree`, which is a land/cleanup attestation-and-recovery surface, not resume identity —
+`prepared-tree` plus `prepared-head` (MAIN's HEAD at prepare time — what lets the handoff-return
+rung tell a still-pending prepared set from an already-committed one, since a clean post-commit
+index reproduces the committed tree; a record from an earlier kit simply lacks it and the rung
+refuses by name), a land/cleanup/handoff-return attestation-and-recovery surface, not resume
+identity —
 PLUS the three facts a fresh satellite session cannot derive from its own checkout:
 
 - `shared-queue` — the ABSOLUTE path to MAIN's `docs/plans/queue.md`, followed by the rule the record states verbatim: the series index is SHARED and lives ONLY in main: read it at the absolute path above, and never copy it into this worktree, because docs/plans is git-ignored and machine-local, so a copy silently diverges from what main and every other worktree are writing. This worktree never WRITES that file: reaching outside it is an fs_outside_repo action the autonomy policy denies by default. Put new findings in THIS handoff record instead — it is the channel that survives the landing, and main appends them to the index from here. Provision never seeds a copy: the queue is deliberately absent from the satellite, and the absolute path is the only pointer — `--include` refuses to copy the index (or any directory containing it) into the worktree.
@@ -207,7 +211,13 @@ preview prints the exact `--apply`). Neither is proof of write
 capability: the create+delete probe above stays the runtime truth, and the ack binds to the
 resolved probe dir, so the item re-fires only when that resolved dir changes.
 
-**Landing flow:** provision → work → handoff → land → re-attest → commit → cleanup. Satellite
+**Landing flow:** provision → work → handoff → land --prepare → handoff-return → fold → re-stage →
+configured review → run-gates --final → commit-guard --check → commit ask → cleanup. The
+`dispatch handoff-return` rung (see the dispatch mode) delivers the handoff's user-owned content
+byte verbatim, re-attests the prepared pair against MAIN, and records the worktree-stream
+observation where the change set allows one; what follows it is one order, stated exactly:
+a fold landed AFTER the gates leaves those gates STALE — the order is fold → re-stage (git add) → the configured review → run-gates --final (the receipt is minted over the CURRENT post-fold staged tree) → commit-guard --check (the final re-attestation) → the commit ask.
+Satellite
 commits are outside v1: graph divergence stops land and prints cherry-pick/rebase recovery. A gate
 failure keeps the prepared main tree and names both recovery lanes. A second prepare is reset-only:
 the STOP prints the current staged write-tree, compares it with the PREPARED OID recorded in the
