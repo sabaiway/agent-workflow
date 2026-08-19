@@ -4,6 +4,97 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 5.11.0 — the fan-out half: which vehicle carries a sub-task, what a satellite is told, and what its handoff brings back (AD-100)
+
+**A delegated thread could be recorded end to end, and the two questions around it still had no
+mechanism.** The one BEFORE it — which vehicle carries this step class, and is that vehicle even
+present on this host — lived in canon prose and in a remembered rule. The one AFTER it, one level up:
+`worktrees` provisions a satellite and lands its diff, but nothing composed the prompt that satellite
+starts from, and the handoff coming back was a convention with no rung — nothing read it, nothing
+delivered what it held, nothing counted what it bought. Three new verbs close both.
+
+- **`dispatch advise --step-class <c>`, and the same block as a footer on a form-VALID `dispatch
+  check`.** It answers which vehicle carries the class on THIS host, what the ledger has recorded for
+  it, and what the fallback is — and it can never decide. `check`'s exit code and FIRST line are
+  byte-identical whether the advised vehicle is present or absent, and a form-INVALID contract still
+  prints only its first violated field, so the advice cannot mask a refusal. Where the advice differs
+  from `vehicle.selected`, it NOTEs the divergence — never a refusal — and names `vehicle.requested`
+  only where that in turn differs from what the contract selected.
+- **Capability is read off the filesystem, and each kind of ignorance keeps its own name.** The
+  advisor module itself writes nothing and spawns nothing, and the verb's only subprocesses are
+  read-only git probes: the repository top-level the cheap vehicles are anchored at, and the
+  delegation store path unless `AW_DELEGATION_STORE` names it outright. It never runs a vehicle, a
+  subscription CLI, or anything that writes. The execute backend resolves through the existing
+  detector, the cheap vehicles through the
+  presence of `.claude/agents/<name>.md` anchored at the repository top-level. That lane is
+  FOUR-valued — present, missing, `unanchored` (no root resolved, so a file found here proves nothing
+  against a nested shadow copy) and `probe-error` — because folding either ignorance into "missing"
+  asserts something about a root the module does not know. The bundled vehicles are portable rows;
+  `doc-research` renders HOST-LOCAL and names the solo fallback when absent; the harness-subagent lane
+  renders ASSUMED/manual with no availability verdict at all.
+- **Recorded history arrives through the ledger's existing single door**, over the closed state set
+  `folded · failure-terminal · degrade-closed · open` — `open` counted separately, never as a closed
+  thread. An absent store prints `history: no recorded history`; an unreadable one answers
+  `history: unavailable — ` and then the store's own reason, verbatim. The advice prints either way,
+  and the advisor never refuses.
+- **`worktrees prompt <slug>` — the satellite's cold-start prompt, read-only — and `provision` now
+  ends its report with the same composed text.** It carries the worktree path and branch, the seeded
+  plan, where the shared series index lives, that landing runs from MAIN, and that the handoff is the
+  one channel back. Every value is derived LIVE: the record freezes MAIN's paths at provision time, so
+  a moved MAIN or a hand-edited field would otherwise put a stale RUNNABLE command in front of a
+  satellite — a recorded value that no longer matches is NAMED beside the live one, and the install
+  posture, which is probed on the satellite itself, carries its own cause rather than borrowing
+  "MAIN moved". Commands are attributed: `MAIN $ …` / `HERE $ …`, because the landing command mutates
+  MAIN — exactly what the satellite is forbidden to do — while a dependency-bearing checkout's install
+  command runs HERE, and an unattributed `$` line read as an instruction to whoever held the prompt.
+- **`dispatch handoff-return` — deliver, prove, then count.** It prints every user-owned fragment of
+  the handoff — the content before and after `## Provision record` alike — BYTE VERBATIM, each
+  fragment's OPENING boundary carrying its byte length so a fragment that itself imitates a boundary
+  line cannot hide where it really ends, and names the MAIN-owned destinations that content folds into;
+  the fold stays yours and the rung claims nothing about it. Its window is bound by TWO facts, because
+  one cannot close it: a clean post-commit index reproduces the committed tree, so `prepared-tree`
+  equality survives the commit. `land --prepare` now also records `prepared-head`, and the rung
+  requires an UNCHANGED HEAD and a staged write-tree equal to `prepared-tree`, re-attesting both
+  immediately before either answer. A record written by an earlier kit, carrying no `prepared-head`,
+  refuses by name and names `land --prepare` as the fix. It is MAIN-side by construction and refuses
+  from inside a satellite, where the shared common dir would let it measure the wrong tree.
+- **One observation, recorded WHOLLY or not at all.** The `worktree-stream` numerator is the ATTESTED
+  tree's blob bytes read through a fail-closed `cat-file` — never off disk, so an edit made after the
+  prepare cannot move it — with component identity the canonical path. Anything unrepresentable is a
+  NAMED `observation: NOT RECORDED` at exit 0: a deletion, a rename's absent old side, a symlink, a
+  submodule, a non-UTF-8 path name, and a mode-only change, which has no measurable byte change at all
+  and gets its own rule. A regular BINARY file is inside the domain. A number that silently omitted
+  the deletions half of a landing would be worse than a named non-record.
+- **A fold that lands AFTER the gates leaves those gates stale, and the fix is a printed command.**
+  The rung and `references/modes/worktrees.md` carry one order: fold, re-stage, the configured review,
+  `run-gates --final` over the current staged tree, `commit-guard --check`, the commit ask. "One
+  writer per worktree" is stated at both points of use and in the composed prompt as the BAR it is —
+  nothing new refuses a second writer.
+- **Content-free evidence stops deciding commits on the two rungs where it had failed closed.**
+  A degrade minted on a CLEAN tree binds the empty-payload fingerprint — the one value every clean
+  moment of every repository shares — and the `#65` correlation resolved it to 19 distinct bases and
+  failed closed forever, blocking every commit through `commit-guard`. The `#65` red rung and the `#64` ordering rung now
+  step over content-free records and RECORD the step in the advisory channel, and `commit-guard`
+  splits its content-free lanes by the INDEX rather than the payload: a dirty index means staged bytes
+  the fingerprint cannot see and REFUSES, naming the `submodule.<name>.ignore` /
+  `diff.ignoreSubmodules` configuration as the recovery; a clean one SKIPS the RECEIPT arms and PASSES
+  while stating it attests NOTHING. That pass is scoped, never blanket — store HEALTH is deliberately
+  not waived, and a flow refusal still refuses there, because neither is a correlation. The tree-bound
+  correlations drop out only where the CALLER declares `treeCarriesBytes: false` — a routine
+  clean-tree check still wants those rungs.
+- **Seven new modules, and every moved name is re-exported.** `dispatch-advisor.mjs`,
+  `advisor-matrix.mjs`, `worktrees-record.mjs`, `satellite-locator.mjs`, `worktree-prompt.mjs`,
+  `worktree-handoff-return.mjs`, and `observation-builder.mjs` — the last extracted so `observe` and
+  the rung build the identical record by ONE path. `worktrees.mjs` re-exports everything the leaves
+  took, and the characterization claim held literally: no existing assertion or fixture in the
+  worktrees suites changed.
+
+**Known limitation, accepted.** The `observation` record's key set is closed and carries no artifact
+digest, so the handoff digest and the two attested OIDs are the rung's PRINTED proof rather than
+ledger fields — a later reader of the ledger alone cannot re-derive which handoff bytes and which tree
+an observation was taken over. Widening a closed key set is a schema change with its own migration; it
+is tracked as a follow-up.
+
 ## 5.10.0 — the bundled agy review reads the CLI's own envelope, and refuses a host that cannot honour the dispatch (AD-098; antigravity-cli-bridge 5.3.0, memory 4.5.0)
 
 **A review used to read whatever the CLI happened to print, and recover the conversation id by

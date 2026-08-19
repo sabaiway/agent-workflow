@@ -7,6 +7,58 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-19 — AD-100 the fan-out half: routing that advises and never gates, a satellite that starts oriented, and a handoff that comes back delivered (kit 5.11.0; memory 4.5.0, engine 2.1.0, codex-cli-bridge 3.5.0 and antigravity-cli-bridge 5.3.0 unchanged)
+
+The delegation series had already shipped what a delegated thread RECORDS — the sub-task contract, the
+ledger, the end-to-end dispatch lane. What it had not shipped were the two questions on either side of
+that thread, and both were being answered from memory. Before a sub-task: which vehicle should carry
+it, and is that vehicle even present on this machine. After one that ran in a worktree satellite:
+nothing composed the prompt the satellite starts from, and its handoff back into MAIN was a convention
+with no rung at all — nothing read it, nothing delivered what it held, nothing counted what it bought.
+
+`dispatch advise` now answers the first one at the point of use, and prints the same block as a footer
+on any form-valid `dispatch check`. The design constraint that shaped it is that it must never be able
+to decide: `check`'s exit code and first line are byte-identical whether the advised vehicle is there
+or not, and an invalid contract still shows only its first violated field. Capability is read off the
+filesystem: the advisor module itself spawns nothing, and the verb's only subprocesses are read-only
+git probes for the repository top-level and the delegation store path — never a vehicle, never a
+subscription CLI, never anything that writes. Which means the honest answer is sometimes "I do not
+know" — so the agent lane distinguishes *missing* from *unanchored* (no repository root resolved, and a file found
+here proves nothing against a nested shadow copy) from *probe-error*, rather than reporting all three
+as absence. Recorded history comes through the ledger's existing door over a closed state set, and an
+absent or unreadable store degrades to a named line while the advice still prints.
+
+The other half is the satellite's round trip. `worktrees prompt <slug>` composes the cold-start prompt
+— and `provision` now ends its report with it — carrying the branch, the seeded plan, where the shared
+series index lives, that landing runs from MAIN, and that the handoff is the one channel back. Every
+value is derived LIVE rather than replayed out of the provision record, because a moved MAIN would
+otherwise put a stale runnable command in front of a fresh session; a recorded value that no longer
+matches is named beside the live one. Commands are attributed `MAIN $` or `HERE $`, since the landing
+command mutates MAIN — exactly what the satellite is forbidden to do — while a dependency-bearing
+checkout's install command runs HERE, and an unattributed `$` line read as an instruction to whoever
+held the prompt.
+
+`dispatch handoff-return` closes the loop. It delivers every user-owned fragment of the handoff byte
+verbatim with its byte lengths, names the MAIN-owned files that content folds into, and only then
+proves the window it is measuring: an unchanged HEAD plus a staged tree equal to the recorded
+`prepared-tree`, re-attested immediately before either answer. One fact was not enough — a clean
+post-commit index reproduces the committed tree — so `land --prepare` now records MAIN's HEAD as well,
+and a record from an earlier kit refuses by name. The observation it appends is recorded wholly or not
+at all: the numerator is the attested tree's blob bytes, and a deletion, a rename's absent old side, a
+symlink, a submodule, a non-UTF-8 path name or a mode-only change each produce a NAMED non-record at
+exit 0. A number that silently dropped the deletions half of a landing would be worse than no number.
+
+Riding along, the fix that had to land before any of it could be committed: evidence minted on a clean
+tree binds the empty-payload fingerprint, the one value every clean moment of every repository shares,
+and the correlation rung had resolved it to nineteen distinct bases and failed closed forever —
+blocking every commit through `commit-guard`. The two rungs that had failed closed — the `#65` red
+correlation and the `#64` degrade ordering — now step over content-free records and record the step,
+and the guard splits its clean-tree lanes by the INDEX instead of the payload: a dirty index means
+staged bytes the fingerprint cannot see and refuses with the git configuration named as the recovery,
+while a clean one skips the RECEIPT arms and passes, stating plainly that it attests nothing. That
+pass is scoped, not blanket — an unreadable evidence store and a flow refusal still stop the commit
+there, which is exactly what they are for.
+
 ## 2026-08-17 — AD-098 the agy review reads the CLI's own envelope, and the schema half of the opportunity is measured and refused (kit 5.10.0, antigravity-cli-bridge 5.3.0, memory 4.5.0; engine 2.1.0 and codex-cli-bridge 3.5.0 unchanged)
 
 The queued opportunity said structured output would let the review stop parsing prose for its
