@@ -273,7 +273,7 @@ const CATALOG = [
     invocation: invocationOf('worktrees'),
     group: 'Orchestrate',
     kind: WRITER,
-    oneLine: 'Run features in parallel git worktrees: provision an isolated sibling copy, list them, stage a finished one back onto clean main (the commit still asks in dialogue), and remove a live-verified landed one. No preview step; list is read-only; cleanup --abandon destroys unlanded work.',
+    oneLine: 'Run features in parallel git worktrees: provision an isolated sibling copy, list them, print the cold-start prompt a fresh session in one of them needs — where it is, what MAIN answers NOW rather than what the record froze, the handoff as the one way back, and the bars nothing enforces — stage a finished one back onto clean main (the commit still asks in dialogue), and remove a live-verified landed one. No preview step; list is read-only and so is prompt; cleanup --abandon destroys unlanded work.',
   },
 ];
 

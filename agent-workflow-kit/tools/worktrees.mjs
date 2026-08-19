@@ -24,20 +24,35 @@ import { isScratchPlanName, plansInFlight, PLANS_REL, shellQuoteArg } from './re
 import { writeContainedFileAtomic } from './atomic-write.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
 import { isFinalCapableDeclaration } from './run-gates.mjs';
+import {
+  WORKTREES_STOP, stop, EXIT, handoffBasename, recordValue, hasControlByte, displayValue,
+  composeProvisionRecordSection, composeLandingValue, composeHandoffStub,
+  locateProvisionRecordSection, parseProvisionRecord,
+} from './worktrees-record.mjs';
+import {
+  DEFAULT_BRANCH_PREFIX, listWorktrees, classifyNodeNoFollow, scanPlansDir, findSatelliteEntry,
+  readSatelliteIdentity,
+} from './satellite-locator.mjs';
+import { composeSatellitePrompt, resolveSeededPlan } from './worktree-prompt.mjs';
 
-export const WORKTREES_STOP = 'WORKTREES_STOP';
-export const stop = (message, fields = {}) =>
-  Object.assign(new Error(`[agent-workflow-kit] ${message}`), { name: 'WorktreesStop', code: WORKTREES_STOP, ...fields });
+// The record format and the satellite locator now live in leaves the dispatch side reads too — but
+// every name they took away is re-exported here, so no import site and no asserted error `code`
+// moved when they left.
+export {
+  WORKTREES_STOP, stop, EXIT, handoffBasename, QUEUE_SHARED_RULE, composeHandoffStub,
+  parseProvisionRecord,
+} from './worktrees-record.mjs';
+export {
+  DEFAULT_BRANCH_PREFIX, parseWorktreeList, findSatelliteEntry, readSatelliteIdentity,
+} from './satellite-locator.mjs';
+
 const usageStop = (message) => stop(message, { exitCode: EXIT.usage });
 const errorText = (error) => String(error?.message ?? error).replace(/^\[agent-workflow-kit\] /, '');
 const composeFailure = (primary, secondaryName, secondary) =>
   stop(`${errorText(primary)}; ${secondaryName} failed: ${errorText(secondary)}`);
 
-export const EXIT = Object.freeze({ ok: 0, stop: 1, usage: 2 });
 export const CONFIG_REL = 'docs/ai/worktrees.json';
 export const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
-export const DEFAULT_BRANCH_PREFIX = 'aw/';
-export const handoffBasename = (slug) => `handoff-${slug}.md`;
 const WORKTREES_TOOL_ABS = fileURLToPath(import.meta.url);
 const WORKTREES_TOOL_DIR = dirname(WORKTREES_TOOL_ABS);
 
@@ -67,6 +82,10 @@ const USAGE = [
   `            the ${CONFIG_REL} "parentDir" setting when present). --install only PRINTS the`,
   '            install command. --resume completes a half-done provision (identity-checked).',
   '  list      show every worktree of this repo: slug, path, branch, base OID, dirty, handoff.',
+  '  prompt <slug>',
+  '            re-print the satellite cold-start prompt for a provisioned worktree: where it is,',
+  '            what MAIN answers now (derived LIVE, a stale record value is named), the handoff as',
+  '            the one return channel, and the bars. Read-only — it writes nothing.',
   '  land <slug> --prepare',
   '            stage the satellite diff onto a clean main (no commit — the commit stays a',
   '            dialogue ask). Refuses divergence, incomplete satellite state, or a dirty main.',
@@ -74,13 +93,21 @@ const USAGE = [
   '            remove a LANDED worktree (fail-closed verification); --abandon is the one',
   '            destructive arm and destroys unlanded work.',
   '',
-  'The slug is REQUIRED and positional on provision/land/cleanup: lowercase letters, digits,',
+  'The slug is REQUIRED and positional on provision/prompt/land/cleanup: lowercase letters, digits,',
   'hyphens, max 64 chars, letter/digit first. Exit codes: 0 ok / 1 refusal / 2 usage.',
 ].join('\n');
 
 // ── deps + git plumbing (every seam injectable for hermetic tests) ─────────────────────
 
-const fsOf = (deps) => ({
+const fsOf = (deps) => {
+  const fs = fsSeams(deps);
+  // The ONE content read, bound to THIS seam set and handed to the locator leaf, which owns no read
+  // door of its own — one body, one place, provable by the tripwires below it.
+  fs.readFileNoFollow = (abs) => readFileNoFollow(fs, abs);
+  return fs;
+};
+
+const fsSeams = (deps) => ({
   lstat: deps.lstat ?? lstatSync,
   mkdir: deps.mkdir ?? ((p) => mkdirSync(p, { recursive: true })),
   mkdirPlain: deps.mkdirPlain ?? mkdirSync,
@@ -133,43 +160,9 @@ const lstatNoFollow = (lstat, path) => {
   }
 };
 
-const classifyNodeNoFollow = (path, fs) => {
-  const node = (() => {
-    try {
-      return { stat: fs.lstat(path) };
-    } catch (error) {
-      return error?.code === 'ENOENT'
-        ? { stat: null }
-        : { error: error?.code ?? 'fs error' };
-    }
-  })();
-  if (node.error) return { kind: 'error', error: node.error };
-  if (node.stat === null) return { kind: 'absent' };
-  if (!node.stat.isSymbolicLink()) {
-    if (node.stat.isDirectory()) return { kind: 'plain-directory', stat: node.stat };
-    if (node.stat.isFile()) return { kind: 'regular-file', stat: node.stat };
-    return { kind: 'special', stat: node.stat };
-  }
-  const realPath = (() => {
-    try {
-      return { path: fs.realpath(path) };
-    } catch (error) {
-      return { error: error?.code ?? 'fs error' };
-    }
-  })();
-  if (realPath.error) return { kind: 'symlink-unresolvable', error: realPath.error };
-  const target = (() => {
-    try {
-      return { stat: fs.lstat(realPath.path) };
-    } catch (error) {
-      return { error: error?.code ?? 'fs error' };
-    }
-  })();
-  if (target.error) return { kind: 'symlink-unresolvable', error: target.error };
-  if (target.stat.isDirectory()) return { kind: 'symlink-to-directory', realPath: realPath.path, stat: node.stat };
-  if (target.stat.isFile()) return { kind: 'symlink-to-file', realPath: realPath.path, stat: node.stat };
-  return { kind: 'symlink-to-special', realPath: realPath.path, stat: node.stat };
-};
+// classifyNodeNoFollow moved to satellite-locator.mjs; the ONE content-read door stays HERE, and the
+// locator receives it through its injected fs seam — a second body anywhere is exactly what the
+// door tripwires exist to prevent.
 
 // The ONE content-read door: no-follow lstat, then an O_NOFOLLOW|O_NONBLOCK descriptor with an
 // fstat recheck — a node swapped after the lstat can neither follow a link nor block on a FIFO.
@@ -541,36 +534,8 @@ export const realpathThroughExistingParent = (target, deps = {}) => {
 
 // ── roots + worktree registry ──────────────────────────────────────────────────────────
 
-export const parseWorktreeList = (text) => {
-  const entries = [];
-  let fields = [];
-  const finishEntry = () => {
-    if (fields.length === 0) return;
-    const entry = { path: null, head: null, branch: null, detached: false, prunable: false, bare: false };
-    for (const field of fields) {
-      if (field.startsWith('worktree ')) entry.path = field.slice('worktree '.length);
-      else if (field.startsWith('HEAD ')) entry.head = field.slice('HEAD '.length);
-      else if (field.startsWith('branch ')) entry.branch = field.slice('branch '.length);
-      else if (field === 'detached') entry.detached = true;
-      else if (field === 'bare') entry.bare = true;
-      else if (field === 'prunable' || field.startsWith('prunable ')) entry.prunable = true;
-    }
-    if (entry.path !== null) entries.push(entry);
-    fields = [];
-  };
-  for (const field of String(text).split('\0')) {
-    if (field === '') finishEntry();
-    else fields.push(field);
-  }
-  finishEntry();
-  return entries;
-};
-
-const listWorktrees = (git, cwd) => {
-  const r = git(['worktree', 'list', '--porcelain', '-z'], cwd);
-  if (r.status !== 0) throw stop(`git worktree list failed: ${r.stderr.trim() || r.stdout.trim()}`);
-  return parseWorktreeList(r.stdout);
-};
+// parseWorktreeList and listWorktrees moved to satellite-locator.mjs with the resolver that needs
+// them; both are re-exported above, so every caller and test import site is unchanged.
 
 // The MAIN worktree is the first `git worktree list --porcelain -z` entry; provision/land/cleanup
 // refuse to run from inside a linked worktree.
@@ -994,33 +959,8 @@ const assertTargetOutsideSources = ({ targetReal, sources }) => {
 
 // ── the shared plans-chain scanner (resume identity + list ride the SAME no-follow walk) ─
 
-// Whole-chain no-follow: the worktree root, docs, and docs/plans must be plain directories;
-// handoff candidates count ONLY as regular files. states: ok | absent | unreadable.
-// ANY stat failure (not just readdir) renders honestly — list must never crash on a bad node.
-const scanPlansDir = ({ wtRoot, fs }) => {
-  if (classifyNodeNoFollow(wtRoot, fs).kind !== 'plain-directory') return { state: 'unreadable' };
-  const docs = classifyNodeNoFollow(join(wtRoot, 'docs'), fs);
-  if (docs.kind === 'absent') return { state: 'absent' };
-  if (docs.kind !== 'plain-directory') return { state: 'unreadable' };
-  const plans = classifyNodeNoFollow(join(wtRoot, PLANS_REL), fs);
-  if (plans.kind === 'absent') return { state: 'absent' };
-  if (plans.kind !== 'plain-directory') return { state: 'unreadable' };
-  let names;
-  try {
-    names = fs.readdir(join(wtRoot, PLANS_REL));
-  } catch {
-    return { state: 'unreadable' };
-  }
-  const handoffs = [];
-  const nonRegular = [];
-  for (const n of names) {
-    if (!/^handoff-.+\.md$/.test(n)) continue;
-    const cand = classifyNodeNoFollow(join(wtRoot, PLANS_REL, n), fs);
-    if (cand.kind !== 'regular-file') nonRegular.push(n);
-    else handoffs.push(n);
-  }
-  return { state: 'ok', handoffs, nonRegular };
-};
+// scanPlansDir moved to satellite-locator.mjs — the resolver is its heaviest caller, and the
+// dispatch side needs the same walk to find a satellite without importing this tool.
 
 // Resume writes NOTHING before this: the existing handoff must be the live identity.
 const assertResumeHandoffIdentity = ({ wtRoot, slug, branch, fs }) => {
@@ -1030,24 +970,24 @@ const assertResumeHandoffIdentity = ({ wtRoot, slug, branch, fs }) => {
   }
   if (scan.state === 'absent') return;
   if (scan.nonRegular.length > 0) {
-    throw stop(`--resume: handoff-named entr${scan.nonRegular.length === 1 ? 'y is' : 'ies are'} not regular file(s): ${scan.nonRegular.join(', ')} — fix before resuming`);
+    throw stop(`--resume: handoff-named entr${scan.nonRegular.length === 1 ? 'y is' : 'ies are'} not regular file(s): ${scan.nonRegular.map(displayValue).join(', ')} — fix before resuming`);
   }
   if (scan.handoffs.length === 0) return;
   if (scan.handoffs.length > 1) {
-    throw stop(`--resume: multiple handoff files found (${scan.handoffs.join(', ')}) — exactly one may exist`);
+    throw stop(`--resume: multiple handoff files found (${scan.handoffs.map(displayValue).join(', ')}) — exactly one may exist`);
   }
   const name = scan.handoffs[0];
   if (name !== handoffBasename(slug)) {
-    throw stop(`--resume identity mismatch: the existing handoff is ${name}, the live slug is ${slug} (${handoffBasename(slug)})`);
+    throw stop(`--resume identity mismatch: the existing handoff is ${displayValue(name)}, the live slug is ${slug} (${handoffBasename(slug)})`);
   }
   const rf = readFileNoFollow(fs, join(wtRoot, PLANS_REL, name));
-  if (!rf.bytes) throw stop(`--resume: the handoff ${name} is not readable as a regular file — fix it before resuming`);
+  if (!rf.bytes) throw stop(`--resume: the handoff ${displayValue(name)} is not readable as a regular file — fix it before resuming`);
   const record = parseProvisionRecord(String(rf.bytes));
   if (record.slug !== slug) {
-    throw stop(`--resume identity mismatch: the handoff record slug is ${record.slug ?? '(missing)'}, the live slug is ${slug}`);
+    throw stop(`--resume identity mismatch: the handoff record slug is ${record.slug === null ? '(missing)' : displayValue(record.slug)}, the live slug is ${slug}`);
   }
   if (record.branch !== branch) {
-    throw stop(`--resume identity mismatch: the handoff record branch is ${record.branch ?? '(missing)'}, the live branch is ${branch}`);
+    throw stop(`--resume identity mismatch: the handoff record branch is ${record.branch === null ? '(missing)' : displayValue(record.branch)}, the live branch is ${branch}`);
   }
 };
 
@@ -1056,12 +996,12 @@ const assertResumePlanCompatibility = ({ wtRoot, seedName, fs }) => {
   if (inFlight.length === 0 || (inFlight.length === 1 && inFlight[0] === seedName)) return;
   if (inFlight.length === 1) {
     throw stop(
-      `--resume plan mismatch: found [${inFlight[0]}], expected [${seedName}] or no in-flight plan — ` +
-        `re-run with --as ${inFlight[0]}, or remove the existing plan by hand`,
+      `--resume plan mismatch: found [${displayValue(inFlight[0])}], expected [${displayValue(seedName)}] or no in-flight plan — ` +
+        `re-run with --as ${displayValue(inFlight[0])}, or remove the existing plan by hand`,
     );
   }
   throw stop(
-    `the worktree must hold EXACTLY ONE in-flight plan, found [${inFlight.join(', ')}] — remove the extras (or re-seed) and re-run --resume`,
+    `the worktree must hold EXACTLY ONE in-flight plan, found [${inFlight.map(displayValue).join(', ')}] — remove the extras (or re-seed) and re-run --resume`,
   );
 };
 
@@ -1222,8 +1162,8 @@ const assertPlansChainCleanOnResume = ({ git, root, wtRoot, slug, branch, rels, 
       const rf = readFileNoFollow(fs, join(wtRoot, PLANS_REL, handoffBasename(slug)));
       if (!rf.bytes) return { binds: false, reason: 'the handoff is not readable as a regular file' };
       const record = parseProvisionRecord(String(rf.bytes));
-      if (record.slug !== slug) return { binds: false, reason: `the record slug is ${record.slug ?? '(missing)'}, the live slug is ${slug}` };
-      if (record.branch !== branch) return { binds: false, reason: `the record branch is ${record.branch ?? '(missing)'}, the live branch is ${branch}` };
+      if (record.slug !== slug) return { binds: false, reason: `the record slug is ${record.slug === null ? '(missing)' : displayValue(record.slug)}, the live slug is ${slug}` };
+      if (record.branch !== branch) return { binds: false, reason: `the record branch is ${record.branch === null ? '(missing)' : displayValue(record.branch)}, the live branch is ${branch}` };
       return { binds: true, reason: null };
     } catch (err) {
       return { binds: false, reason: errorText(err) };
@@ -1287,8 +1227,8 @@ const assertPlansChainCleanOnResume = ({ git, root, wtRoot, slug, branch, rels, 
 // The orientation facts a fresh satellite session cannot derive from its own checkout. They are
 // CONSTANTS so the doc-parity registry can pin the mode doc to the exact strings the tool emits.
 export const QUEUE_BASENAME = 'queue.md';
-export const QUEUE_SHARED_RULE =
-  'the series index is SHARED and lives ONLY in main: read it at the absolute path above, and never copy it into this worktree, because docs/plans is git-ignored and machine-local, so a copy silently diverges from what main and every other worktree are writing. This worktree never WRITES that file: reaching outside it is an fs_outside_repo action the autonomy policy denies by default. Put new findings in THIS handoff record instead — it is the channel that survives the landing, and main appends them to the index from here';
+// QUEUE_SHARED_RULE travels with the composer that emits it (worktrees-record.mjs) and is
+// re-exported above; LANDING_FROM_MAIN stays where its only user is.
 export const LANDING_FROM_MAIN = 'landing runs FROM MAIN, never from this worktree';
 export const NO_DEPENDENCIES_POSTURE = 'no install needed — the project declares no dependencies';
 // The recorded node_modules mode for that same verdict: provision neither advised nor created a
@@ -1431,108 +1371,16 @@ const verifyPlacedPaths = ({ git, wtRoot, members }) => {
   if (failures.length > 0) throw stop(composeOwnedVerifyStop(failures));
 };
 
-// The record is LINE-oriented and is parsed back for IDENTITY, so a value carrying a control byte
-// is refused rather than written: a newline spills a second line the parser reads as a real field
-// (`- include:` is exempt from the duplicate-identity STOP, and an `## …` spill truncates or bricks
-// the whole section). Values reach here from the repo ROOT path and from --include, both of which
-// may legally carry a newline on POSIX — so the guard is the only thing between them and a forged
-// record. U+2028/U+2029 ride the same refusal: they are line terminators to the JS regex `.` but
-// not to String.split('\n'), so such a value WRITES fine and is then silently DROPPED on read —
-// a lost field with no error, which is the one outcome this codebase never allows.
-// Fail closed: refuse to write, never sanitize silently.
-const RECORD_CONTROL_BYTE = /[\u0000-\u001F\u007F\u2028\u2029]/;
-const recordValue = (name, value) => {
-  const text = String(value);
-  if (RECORD_CONTROL_BYTE.test(text)) {
-    throw stop(`handoff record: the ${name} value carries a control character (newline/CR/NUL) — refusing to write a record whose fields could be forged by an injected line`);
-  }
-  // The parser `.trim()`s every value on read, and String.prototype.trim strips UNICODE whitespace
-  // — so an edge space (a Unicode one is legal even in a git branch name) writes fine and reads
-  // back as a DIFFERENT identity, stranding the worktree behind a record that no longer matches.
-  if (text !== text.trim()) {
-    throw stop(`handoff record: the ${name} value carries leading or trailing whitespace, which the record trims on read — the identity would change across a write→read round-trip: ${JSON.stringify(text)}`);
-  }
-  return text;
-};
-
-// An OPTIONAL field is omitted when absent, never rendered as "null": a record written by an
-// earlier kit is re-composed from its PARSED form at every refresh (land --prepare), so a field
-// that kit never wrote must survive the round-trip as absence, not as a literal null string.
-const optionalField = (name, value) => (value == null ? [] : [`- ${name}: ${recordValue(name, value)}`]);
-
-const composeProvisionRecordSection = ({ slug, branch, includes, nodeModules, vscode, install = null, sharedQueue = null, landing = null, prepared = null }) => [
-  '## Provision record',
-  '',
-  `- slug: ${recordValue('slug', slug)}`,
-  `- branch: ${recordValue('branch', branch)}`,
-  ...(includes.length === 0 ? ['- include: (none)'] : includes.map((p) => `- include: ${recordValue('include', p)}`)),
-  `- node_modules: ${recordValue('node_modules', nodeModules)}`,
-  `- vscode-settings: ${recordValue('vscode-settings', vscode)}`,
-  ...optionalField('install', install),
-  ...optionalField('shared-queue', sharedQueue),
-  ...optionalField('landing', landing),
-  ...optionalField('prepared-tree', prepared),
-  '',
-  // The rule says "at the absolute path above", so it ships only WITH that path: a record from an
-  // earlier kit carries no shared-queue field, and a rule pointing at nothing is worse than silence.
-  ...(sharedQueue == null ? [] : [QUEUE_SHARED_RULE, '']),
-].join('\n');
-
-export const composeHandoffStub = (fields) => [
-  `# Handoff — ${fields.slug}`,
-  '',
-  'provisioned, nothing done yet',
-  '',
-  composeProvisionRecordSection(fields),
-].join('\n');
-
-const ATX_SECTION_HEADING = /^ {0,3}#{1,2} /;
-
-const locateProvisionRecordSection = (text) => {
-  const source = String(text);
-  const lines = [...source.matchAll(/.*(?:\r?\n|$)/g)].filter((match) => match[0] !== '');
-  const headings = lines.filter((match) => match[0].replace(/\r?\n$/, '').trim() === '## Provision record');
-  if (headings.length === 0) throw stop('handoff record: missing required "## Provision record" section');
-  if (headings.length > 1) throw stop('handoff record: multiple "## Provision record" sections — the record is ambiguous');
-  const start = headings[0].index;
-  const nextHeading = lines.find((match) => match.index > start && ATX_SECTION_HEADING.test(match[0].replace(/\r?\n$/, '')));
-  return { source, start, end: nextHeading?.index ?? source.length };
-};
-
-// ONLY the required section is parsed, so decoy fields elsewhere cannot hijack identity.
-// Duplicated single-valued fields are ambiguous identity → typed STOP, never last-wins.
-export const parseProvisionRecord = (text) => {
-  const section = locateProvisionRecordSection(text);
-  const scan = section.source.slice(section.start, section.end).split('\n').slice(1);
-  const record = { slug: null, branch: null, includes: [], nodeModules: null, vscode: null, install: null, sharedQueue: null, landing: null, prepared: null };
-  const single = {
-    slug: 'slug', branch: 'branch', node_modules: 'nodeModules',
-    'vscode-settings': 'vscode', 'prepared-tree': 'prepared',
-    install: 'install', 'shared-queue': 'sharedQueue', landing: 'landing',
-  };
-  const seen = new Set();
-  for (const line of scan) {
-    const m = line.match(/^- ([a-z_-]+): (.*)$/);
-    if (!m) continue;
-    const value = m[2].trim();
-    if (m[1] === 'include') {
-      if (value !== '(none)') record.includes.push(value);
-      continue;
-    }
-    const key = single[m[1]];
-    if (!key) continue;
-    if (seen.has(m[1])) throw stop(`handoff record: duplicate "${m[1]}" field — the record is ambiguous`);
-    seen.add(m[1]);
-    record[key] = value;
-  }
-  return record;
-};
-
 // Derived from MAIN's root, so the satellite reads an absolute path and a command that already
-// cd-s back to main — neither is derivable from inside the worktree.
+// cd-s back to main — neither is derivable from inside the worktree. The landing COMMAND is its own
+// derivation because the cold-start prompt offers it as a runnable line while the record carries the
+// composed value; one source, so the two can never disagree.
+const landingCommand = ({ root, slug }) =>
+  `${composeOwnToolPrefix(root)} land ${shellQuoteArg(slug)} --prepare`;
+
 const orientationFields = ({ root, slug }) => ({
   sharedQueue: join(root, PLANS_REL, QUEUE_BASENAME),
-  landing: `${LANDING_FROM_MAIN} — ${composeOwnToolPrefix(root)} land ${shellQuoteArg(slug)} --prepare`,
+  landing: composeLandingValue({ rule: LANDING_FROM_MAIN, command: landingCommand({ root, slug }) }),
 });
 
 // Pre-mutation gate for everything the record will carry. `sharedQueue`/`landing` are derived from
@@ -1628,21 +1476,30 @@ const writeHandoffRecord = ({ wtRoot, slug, branch, fields, fs, report, journal 
 
 // Validated BEFORE any git mutation — a bad --plan/--as never leaves a half-made worktree.
 const validateSeedPlan = ({ root, rootReal, planFlag, asFlag, fs }) => {
+  // The --as ARGUMENT is checked first, before any diagnostic that would render it: a refusal is read
+  // in the same terminal the cold-start prompt is. The --plan path needs no separate refusal — every
+  // message below renders it through displayValue, and a hostile path reaches the derived-name guard
+  // anyway, where the refusal is a runtime STOP because the offending value is a filesystem name and
+  // not an argument. JSON.stringify is not the guard for either: it escapes C0 and passes C1 and
+  // U+2028/U+2029 straight through.
+  if (asFlag !== null && hasControlByte(asFlag)) {
+    throw usageStop(`--as carries a control character, which would forge a line wherever it is rendered: ${displayValue(asFlag)}`);
+  }
   if (asFlag !== null && (asFlag.includes('/') || asFlag.includes('\\') || !asFlag.endsWith('.md'))) {
-    throw usageStop(`--as must be a basename ending in .md, got ${JSON.stringify(asFlag)}`);
+    throw usageStop(`--as must be a basename ending in .md, got ${displayValue(JSON.stringify(asFlag))}`);
   }
   const srcAbs = resolve(root, planFlag);
   const node = classifyNodeNoFollow(srcAbs, fs);
-  if (node.kind === 'absent') throw stop(`--plan: not found: ${planFlag}`);
-  if (node.kind === 'error') throw stop(`--plan: cannot inspect ${planFlag} (${node.error})`);
-  if (node.kind !== 'regular-file') throw stop(`--plan must be a regular non-symlink file: ${planFlag}`);
+  if (node.kind === 'absent') throw stop(`--plan: not found: ${displayValue(planFlag)}`);
+  if (node.kind === 'error') throw stop(`--plan: cannot inspect ${displayValue(planFlag)} (${node.error})`);
+  if (node.kind !== 'regular-file') throw stop(`--plan must be a regular non-symlink file: ${displayValue(planFlag)}`);
   let srcReal;
   try {
     srcReal = fs.realpath(srcAbs);
   } catch {
-    throw stop(`--plan: not found: ${planFlag}`);
+    throw stop(`--plan: not found: ${displayValue(planFlag)}`);
   }
-  if (!isInside(rootReal, srcReal)) throw stop(`--plan must resolve inside the main repo: ${planFlag}`);
+  if (!isInside(rootReal, srcReal)) throw stop(`--plan must resolve inside the main repo: ${displayValue(planFlag)}`);
   if (normalizeSlashes(dirname(srcReal)) === normalizeSlashes(join(rootReal, PLANS_REL)) && !isScratchPlanName(basename(srcReal))) {
     throw stop(
       `--plan names a bare (in-flight) plan inside MAIN's ${PLANS_REL} — the feature plan must live in the satellite ONLY, ` +
@@ -1651,10 +1508,14 @@ const validateSeedPlan = ({ root, rootReal, planFlag, asFlag, fs }) => {
     );
   }
   const name = asFlag ?? basename(srcAbs);
-  if (!name.endsWith('.md')) throw stop(`the seeded plan name must end in .md: ${name}`);
+  if (!name.endsWith('.md')) throw stop(`the seeded plan name must end in .md: ${displayValue(name)}`);
+  // The derived name too: without --as it is the source basename, which the checks above never saw.
+  if (hasControlByte(name)) {
+    throw stop(`the seeded plan name carries a control character, which would forge a line in the satellite's cold-start prompt: ${displayValue(name)}`);
+  }
   if (isScratchPlanName(name)) {
     throw stop(
-      `refusing to seed a scratch-class plan name (${name}) — the worktree's review-state would read it as "no plan ` +
+      `refusing to seed a scratch-class plan name (${displayValue(name)}) — the worktree's review-state would read it as "no plan ` +
         'in flight" and every council check would pass vacuously. Seed a bare name via --as <name>.md.',
     );
   }
@@ -1669,7 +1530,7 @@ const writeSeedPlan = ({ wtRoot, srcAbs, name, fs, report, journal = NO_JOURNAL 
     return;
   }
   const src = readFileNoFollow(fs, srcAbs);
-  if (!src.bytes) throw stop(`--plan: not readable as a regular file: ${srcAbs}`);
+  if (!src.bytes) throw stop(`--plan: not readable as a regular file: ${displayValue(srcAbs)}`);
   guardDst(fs, wtRoot, dirname(dst));
   fs.mkdir(dirname(dst));
   writeContainedFileAtomic(wtRoot, dst, String(src.bytes), fs, { stop: (m) => stop(m) });
@@ -1877,17 +1738,156 @@ const declaresNoDependencies = ({ wtRoot, fs }) => {
 // an earlier provision left — an install through it writes into MAIN, and the posture must never
 // hide that). Only then may a PROVEN dependency-free checkout short-circuit: a verdict of
 // "nothing to install" must not ride an install instruction.
-const resolveInstallPosture = ({ wtRoot, dependencyFree, fs }) => {
+const SYMLINK_POSTURE_HEAD = 'the provisioned node_modules is a symlink into MAIN (an install through it writes into MAIN)';
+// Two DIFFERENT facts, never one wording: a link whose target was read and is not MAIN's, and a link
+// whose target could not be read at all. Claiming the second points elsewhere would state something
+// nothing established; both withhold the removal advice for the same reason.
+// Stated as the PROVEN fact and no more: the raw target does not equal the absolute path provision
+// writes. A relative target may still resolve to the same directory, and an absolute one may be a
+// provisioned link left behind by a MAIN that moved — neither is disproved here, and claiming the
+// link "points somewhere else" or "was not placed by this tool" would assert what was never checked.
+const FOREIGN_NODE_MODULES_LINK = 'node_modules here is a symlink whose raw target is not the absolute MAIN node_modules path this tool writes, so its ownership is unproven — nothing is claimed about what an install through it would write, and no removal is advised; inspect it before installing';
+const UNREADABLE_NODE_MODULES_LINK = 'node_modules here is a symlink whose target could not be read, so this tool cannot tell whether it points at MAIN — nothing is claimed about it and no removal is advised; inspect it before installing';
+const TRACKED_NODE_MODULES_LINK = 'node_modules here is a TRACKED symlink — its target is MAIN node_modules, but a tracked path is repository content the landing lane protects, so no removal is advised; take it up with the checkout that tracked it';
+const LANE_UNPROVEN_NODE_MODULES_LINK = 'node_modules here is a symlink whose target IS MAIN node_modules, but this tool could not establish that the path sits in the ignored lane, and only an ignored matching link is the one provision places — so nothing is claimed about it and no removal is advised';
+
+// ONE wording for every not-ours verdict, so the report and the prompt can never describe the same
+// link differently. The foreign target is decoded FATALLY: bytes that are not text are quoted
+// nowhere, and fall to the unreadable answer rather than to a replaced string.
+const unverifiedLinkPosture = (ownership) => {
+  if (ownership.verdict === 'tracked') return TRACKED_NODE_MODULES_LINK;
+  if (ownership.verdict === 'lane-unproven') return `${LANE_UNPROVEN_NODE_MODULES_LINK} (${ownership.error})`;
+  if (ownership.verdict === 'unreadable') return `${UNREADABLE_NODE_MODULES_LINK} (${ownership.error})`;
+  const decoded = decodeTargetStrictly(ownership.target);
+  return decoded === null
+    ? `${UNREADABLE_NODE_MODULES_LINK} (its target is not decodable text)`
+    : `${FOREIGN_NODE_MODULES_LINK}: ${decoded}`;
+};
+
+// Ownership is decided on the RAW TARGET BYTES, the same evidence cleanup binds on. A decoded string
+// is not that: two different byte sequences can decode to ONE string through UTF-8 replacement, and
+// the pair that collides would authorize removing a link this tool never placed. The outcome is
+// STRUCTURED because the three answers are different facts: ours, someone else's, or unknown — and
+// an unreadable link is the last of those, never a claim about where it points.
+const readLinkTarget = (fs, path) => {
+  try {
+    const raw = fs.readlink(path, { encoding: 'buffer' });
+    return { target: Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw)) };
+  } catch (err) {
+    return { error: err?.code ?? 'fs error' };
+  }
+};
+
+// Fatal UTF-8: a target that is not decodable text is not a target this tool will quote. Returning
+// null keeps it out of the record and the prompt entirely, rather than quoting a replaced string.
+const FATAL_UTF8_TARGET = new TextDecoder('utf-8', { fatal: true });
+const decodeTargetStrictly = (buffer) => {
+  try {
+    return FATAL_UTF8_TARGET.decode(buffer);
+  } catch {
+    return null;
+  }
+};
+
+// The ONE ownership question, asked the same way by every lane that acts on that link:
+// 'ours' | 'foreign' | 'tracked' | 'unreadable', plus the raw target where one was read.
+//
+// Matching bytes are HALF the proof. The cleanup ownership rule states the other half — only a
+// matching link IN THE IGNORED LANE is provision-ephemeral — and it is the half that decides whether
+// removal may be advised at all: a TRACKED link at this path is repository content, and offering to
+// delete it would advise destroying something the landing lane protects. A lane the probe cannot
+// establish is not the ignored lane either.
+const nodeModulesLinkOwnership = ({ fs, git, nmPath, wtRoot, mainRoot }) => {
+  const read = readLinkTarget(fs, nmPath);
+  if (read.error !== undefined) return { verdict: 'unreadable', error: read.error };
+  if (Buffer.compare(read.target, Buffer.from(join(mainRoot, NODE_MODULES_REL))) !== 0) {
+    return { verdict: 'foreign', target: read.target };
+  }
+  const lane = probeOwnedLane({ git, wtRoot, rel: NODE_MODULES_REL });
+  if (lane.lane === 'ignored') return { verdict: 'ours', target: read.target };
+  if (lane.lane === 'tracked') return { verdict: 'tracked', target: read.target };
+  // The target WAS read here — only the lane is unsettled — so this must not borrow the wording of a
+  // failed target read. Its cause is the lane probe's own: an untracked path, or a probe that could
+  // not answer at all.
+  return {
+    verdict: 'lane-unproven',
+    error: lane.detail ?? `the path is ${lane.lane}, and only an ignored one is the link provision places`,
+    target: read.target,
+  };
+};
+const INSTALL_RUNNABLE_DESCRIPTION = 'this checkout installs its own dependencies — the command below runs in it';
+
+// Three views of ONE probe, so the record and the cold-start prompt can never disagree about this
+// checkout: `posture` is the RECORD's field, byte-for-byte what it has always been; `description` is
+// the prose half with no command in it; `command` is the runnable half, or null where none exists.
+// The split is what keeps a runnable install out of an unattributed prompt line — the posture string
+// IS a command in the ordinary case, so rendering it as prose would offer an instruction nothing
+// attributes and no command parser can see.
+const resolveInstall = ({ wtRoot, mainRoot, dependencyFree, fs, git }) => {
   const nmPath = join(wtRoot, 'node_modules');
   const nm = lstatNoFollow(fs.lstat, nmPath);
+  const removal = `rm ${shellQuoteArg(nmPath)}`;
   if (nm !== null && nm.isSymbolicLink()) {
+    // A symlink is not proof of THIS tool's link. The provisioned one points at MAIN's
+    // node_modules; anything else is a node the session (or a later hand) put there, and claiming
+    // "a symlink into MAIN" about it would state a live fact nothing checked — and then advise
+    // removing something this tool never placed. Ownership is decided by the raw target bytes,
+    // the same evidence cleanup binds on.
+    const ownership = nodeModulesLinkOwnership({ fs, git, nmPath, wtRoot, mainRoot });
+    if (ownership.verdict !== 'ours') {
+      // The target reaches the record's own value guard and the prompt's, and each refuses a hostile
+      // one by NAME — so it is decoded FATALLY here: a lossy decode would fold undecodable bytes to
+      // U+FFFD and hand both guards a sanitized string, a silent pass where a typed STOP was
+      // promised. Bytes that are not text at all get the same treatment as an unreadable link:
+      // nothing is claimed about them. displayValue belongs in diagnostics only.
+      const unverified = unverifiedLinkPosture(ownership);
+      return { posture: unverified, description: unverified, command: null };
+    }
     const advice = resolveInstallAdvice({ wtRoot, fs });
     const separator = advice.command === null ? ' — ' : ' && ';
-    return `the provisioned node_modules is a symlink into MAIN (an install through it writes into MAIN) — for isolation remove it first: rm ${shellQuoteArg(nmPath)}${separator}${advice.instruction}`;
+    // The REMOVAL is runnable even when no install command is derivable, so it rides the attributed
+    // line either way and never sits loose inside prose.
+    return {
+      posture: `${SYMLINK_POSTURE_HEAD} — for isolation remove it first: ${removal}${separator}${advice.instruction}`,
+      description: advice.command === null
+        ? `${SYMLINK_POSTURE_HEAD} — for isolation remove it first with the command below; then ${NEUTRAL_INSTALL_ADVICE}`
+        : `${SYMLINK_POSTURE_HEAD} — for isolation remove it first and install; the command below does both`,
+      command: advice.command === null ? removal : `${removal} && ${advice.command}`,
+    };
   }
-  if (dependencyFree) return NO_DEPENDENCIES_POSTURE;
-  return resolveInstallAdvice({ wtRoot, fs }).instruction;
+  if (dependencyFree) {
+    return { posture: NO_DEPENDENCIES_POSTURE, description: NO_DEPENDENCIES_POSTURE, command: null };
+  }
+  const advice = resolveInstallAdvice({ wtRoot, fs });
+  return advice.command === null
+    ? { posture: advice.instruction, description: advice.instruction, command: null }
+    : { posture: advice.instruction, description: INSTALL_RUNNABLE_DESCRIPTION, command: advice.command };
 };
+
+
+// The satellite's cold-start prompt, composed from LIVE facts at both print sites (D16): provision
+// ends its report with it, and `prompt <slug>` re-prints it later from MAIN. The record is passed in
+// only so a value FROZEN at provision time can be named where it no longer matches.
+//
+// It PROBES NOTHING. The satellite-derived facts — the seeded plan and the install posture — are
+// arguments, because provision has already established both by the time it composes and a second
+// read there would be a fresh failure window after the work is done; `prompt` resolves them itself,
+// where a failure is the whole outcome of the run.
+const composeSatellitePromptFor = ({ root, wtRoot, slug, branch, record, plan, install }) => composeSatellitePrompt({
+  slug,
+  branch,
+  worktreePath: wtRoot,
+  plan,
+  live: {
+    sharedQueue: orientationFields({ root, slug }).sharedQueue,
+    landingRule: LANDING_FROM_MAIN,
+    landingCommand: landingCommand({ root, slug }),
+    installPosture: install.posture,
+    installDescription: install.description,
+    installCommand: install.command,
+  },
+  record,
+});
 
 const provisionNodeModules = ({ root, rootReal, wtRoot, installFlag, dependencyFree, git, fs, report, journal = NO_JOURNAL }) => {
   // The lane places ONLY a symlink, so the kind gate admits only a symlink at this path: a
@@ -1898,6 +1898,16 @@ const provisionNodeModules = ({ root, rootReal, wtRoot, installFlag, dependencyF
     const dst = join(wtRoot, NODE_MODULES_REL);
     const existing = lstatNoFollow(fs.lstat, dst);
     if (existing !== null && existing.isSymbolicLink()) {
+      // The unlink-first advice belongs to OUR link and to no other: for a link this tool never
+      // placed it would offer to delete a node whose target it has not established, and the
+      // cold-start prompt would then contradict the report in the same breath. Same ownership
+      // question, same raw-bytes evidence.
+      const ownership = nodeModulesLinkOwnership({ fs, git, nmPath: dst, wtRoot, mainRoot: root });
+      if (ownership.verdict !== 'ours') {
+        journalLink('kept');
+        report.push(`  node_modules: ${displayValue(unverifiedLinkPosture(ownership))}`);
+        return 'install-printed-unverified-link';
+      }
       // isolation only exists BEFORE the link: an install through it would write into MAIN
       const separator = install.command === null ? ' — ' : ' && ';
       journalLink('kept');
@@ -2254,7 +2264,7 @@ const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed
   const inFlight = plansInFlight(targetPath, fs.readdir);
   if (inFlight.length !== 1 || inFlight[0] !== seed.name) {
     throw stop(
-      `the worktree must hold EXACTLY ONE in-flight plan, found [${inFlight.join(', ')}] — remove the extras (or re-seed) and re-run --resume`,
+      `the worktree must hold EXACTLY ONE in-flight plan, found [${inFlight.map(displayValue).join(', ')}] — remove the extras (or re-seed) and re-run --resume`,
     );
   }
 
@@ -2278,6 +2288,33 @@ const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed
     }
   }
 
+  // ONE probe, three views: the record takes the posture, the prompt takes the prose and the
+  // runnable half. A second probe here could disagree with what the record is about to state.
+  const install = resolveInstall({ wtRoot: targetPath, mainRoot: root, dependencyFree, fs, git });
+  const fields = {
+    slug,
+    branch,
+    includes: includesRecorded,
+    nodeModules: nodeModulesMode,
+    vscode: vscodeMode,
+    install: install.posture,
+    ...orientationFields({ root, slug }),
+  };
+  // Composed BEFORE the record is written and before ANY output: the values are already established
+  // (the seeded plan passed the EXACTLY-ONE check above, the install posture is the one going into
+  // the record), so a composition failure lands where every other late provision failure lands —
+  // with the record bytes untouched and no success line printed — instead of contradicting a success
+  // message it would otherwise follow.
+  const prompt = composeSatellitePromptFor({
+    root,
+    wtRoot: targetPath,
+    slug,
+    branch,
+    record: fields,
+    plan: seed.name,
+    install,
+  });
+
   // The record refresh runs LAST, after the in-flight check and the verify, in BOTH lanes —
   // the record attests only a VERIFIED provision; a failed run leaves the prior record bytes
   // (the stub on a failed first provision). On resume the generic kept-worktree NOTE does not
@@ -2289,15 +2326,7 @@ const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed
       slug,
       branch,
       journal,
-      fields: {
-        slug,
-        branch,
-        includes: includesRecorded,
-        nodeModules: nodeModulesMode,
-        vscode: vscodeMode,
-        install: resolveInstallPosture({ wtRoot: targetPath, dependencyFree, fs }),
-        ...orientationFields({ root, slug }),
-      },
+      fields,
       fs,
       report,
     });
@@ -2312,6 +2341,10 @@ const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed
   for (const line of report) log(line);
   log(`[worktrees] provisioned ${slug} at ${targetPath} (branch ${branch}, base ${base})`);
   log(`open it: code -n ${shellQuoteArg(targetPath)}`);
+  // The report ENDS with the satellite's cold-start prompt: the facts a fresh session in that
+  // checkout cannot derive are worth nothing if they are only re-derivable on request.
+  log('');
+  log(prompt);
   return EXIT.ok;
 };
 
@@ -2359,6 +2392,30 @@ export const runList = ({ cwd, git, deps, log }) => {
     log(`${r.slug} · ${r.path} · branch ${r.branch} · base ${r.base} · ${state}`);
     if (!r.prunable) log(`  open: code -n ${shellQuoteArg(r.path)}`);
   }
+  return EXIT.ok;
+};
+
+// ── prompt ─────────────────────────────────────────────────────────────────────────────
+
+// Read-only: it resolves the satellite, proves the handoff identity there, and prints. Nothing is
+// written, and MAIN is where it must run — the orientation it composes is MAIN's, so the
+// linked-worktree refusal in resolveRoots is the guard that keeps it honest.
+export const runPrompt = ({ argvSlug, cwd, git, deps, log }) => {
+  const fs = fsOf(deps);
+  const slug = validateSlug(argvSlug);
+  const { root } = resolveRoots(cwd, git);
+  const entry = findSatelliteEntry({ root, slug, branch: null, git, fs });
+  const identity = readSatelliteIdentity({ entry, slug, fs });
+  const wtRoot = entry.path;
+  log(composeSatellitePromptFor({
+    root,
+    wtRoot,
+    slug,
+    branch: identity.branch,
+    record: identity.record,
+    plan: resolveSeededPlan({ wtRoot, readdir: fs.readdir }),
+    install: resolveInstall({ wtRoot, mainRoot: root, dependencyFree: declaresNoDependencies({ wtRoot, fs }), fs, git }),
+  }));
   return EXIT.ok;
 };
 
@@ -2431,57 +2488,6 @@ const withPrepareLock = ({ commonDir, fs, now }, action) => {
   if (actionError) throw actionError;
   if (releaseError) throw releaseError;
   return result;
-};
-
-const branchNameOf = (entry) => entry.branch?.replace(/^refs\/heads\//, '') ?? null;
-
-const findSatelliteEntry = ({ root, slug, branch, git, fs }) => {
-  const entries = listWorktrees(git, root).slice(1);
-  const exactHandoff = [];
-  for (const entry of entries) {
-    if (entry.prunable) continue;
-    const scan = scanPlansDir({ wtRoot: entry.path, fs });
-    if (scan.state === 'ok' && scan.handoffs.includes(handoffBasename(slug))) exactHandoff.push(entry);
-  }
-  if (exactHandoff.length > 1) {
-    throw stop(`multiple worktrees carry ${handoffBasename(slug)} — cleanup the duplicate identity before continuing`);
-  }
-  if (branch !== null) {
-    const byBranch = entries.filter((entry) => entry.branch === `refs/heads/${branch}`);
-    if (byBranch.length > 1) throw stop(`multiple worktrees claim branch ${branch}`);
-    if (byBranch.length === 1) return byBranch[0];
-  }
-  if (exactHandoff.length === 1) return exactHandoff[0];
-  const fallback = entries.filter((entry) => entry.branch === `refs/heads/${DEFAULT_BRANCH_PREFIX}${slug}`);
-  if (fallback.length === 1) return fallback[0];
-  throw stop(`no registered satellite worktree for ${slug}`);
-};
-
-const readSatelliteIdentity = ({ entry, slug, expectedBranch, fs, abandon = false }) => {
-  const name = handoffBasename(slug);
-  const scan = scanPlansDir({ wtRoot: entry.path, fs });
-  if (scan.state === 'ok' && scan.nonRegular.includes(name)) {
-    throw stop(`handoff identity mismatch: ${name} is not a regular file`);
-  }
-  if (scan.state !== 'ok' || !scan.handoffs.includes(name)) {
-    if (abandon) throw stop(`${name} is absent — force deletion is forbidden without the handoff identity`);
-    throw stop(`handoff identity mismatch: expected ${name} in the satellite`);
-  }
-  if (scan.handoffs.length !== 1) {
-    throw stop(`handoff identity mismatch: expected exactly ${name}, found [${scan.handoffs.join(', ')}]`);
-  }
-  const leaf = readFileNoFollow(fs, join(entry.path, PLANS_REL, name));
-  if (!leaf.bytes) throw stop(`handoff identity mismatch: ${name} is not readable as a regular file`);
-  const record = parseProvisionRecord(String(leaf.bytes));
-  const liveBranch = branchNameOf(entry);
-  const wantedBranch = expectedBranch ?? liveBranch;
-  if (record.slug !== slug || record.branch !== wantedBranch || liveBranch !== wantedBranch) {
-    throw stop(
-      `handoff identity mismatch: expected slug ${slug} and branch ${wantedBranch}; ` +
-      `record has slug ${record.slug ?? '(missing)'} and branch ${record.branch ?? '(missing)'}, live branch ${liveBranch ?? '(detached)'}`,
-    );
-  }
-  return { record, path: join(entry.path, PLANS_REL, name), branch: wantedBranch };
 };
 
 const changedPaths = (git, args, cwd, label) =>
@@ -2714,12 +2720,12 @@ const dirtyMainStop = ({ root, git, record, porcelain }) => {
   const hasTrackedUnstaged = trackedEntries.some((entry) => entry.code[1] !== ' ');
   const mayReset = converged && !hasTrackedUnstaged;
   const classification = converged
-    ? `converged re-run: current staged write-tree matches the previous prepare's recorded OID ${record.prepared}`
+    ? `converged re-run: current staged write-tree matches the previous prepare's recorded OID ${displayValue(record.prepared)}`
     : record.prepared === null
       ? 'foreign staged work: no previous prepare OID is recorded'
       : treeMatchesRecord
-        ? `foreign staged work: the index has no staged delta against HEAD, although its write-tree matches the recorded OID ${record.prepared}`
-      : `foreign staged work: current staged write-tree differs from the previous prepare's recorded OID ${record.prepared}`;
+        ? `foreign staged work: the index has no staged delta against HEAD, although its write-tree matches the recorded OID ${displayValue(record.prepared)}`
+      : `foreign staged work: current staged write-tree differs from the previous prepare's recorded OID ${displayValue(record.prepared)}`;
   const leftoversReport = leftovers.length === 0
     ? []
     : mayReset
@@ -2876,7 +2882,7 @@ const registryRoots = () => {
 const safeRecordedPath = (path) => {
   const normalized = normalizeSlashes(String(path)).replace(/^\.\//, '').replace(/\/$/, '');
   if (!normalized || isAbsolute(normalized) || normalized.split('/').includes('..')) {
-    throw stop(`handoff record carries an unsafe provision path: ${path}`);
+    throw stop(`handoff record carries an unsafe provision path: ${displayValue(path)}`);
   }
   return normalized;
 };
@@ -3196,12 +3202,13 @@ export const runCleanup = ({ argvSlug, flags, cwd, git, deps, log }) => {
 export const parseArgs = (argv) => {
   const [sub, ...rest] = argv;
   if (sub === undefined || sub === '--help' || sub === '-h') return { sub: 'help' };
-  if (!['provision', 'list', 'land', 'cleanup'].includes(sub)) {
+  if (!['provision', 'list', 'prompt', 'land', 'cleanup'].includes(sub)) {
     throw usageStop(`unknown subcommand ${JSON.stringify(sub)}\n${USAGE}`);
   }
   const SUB_FLAGS = {
     provision: ['--plan', '--as', '--dir', '--branch', '--include', '--install', '--resume'],
     list: [],
+    prompt: [],
     land: ['--prepare'],
     cleanup: ['--branch', '--abandon'],
   };
@@ -3245,6 +3252,7 @@ export const runCli = (argv, deps = {}) => {
       return runProvision({ argvSlug: parsed.slug, flags: parsed.flags, cwd, git, deps, log });
     }
     if (parsed.sub === 'list') return runList({ cwd, git, deps, log });
+    if (parsed.sub === 'prompt') return runPrompt({ argvSlug: parsed.slug, cwd, git, deps, log });
     if (parsed.sub === 'land') {
       return runLand({ argvSlug: parsed.slug, flags: parsed.flags, cwd, git, deps, log });
     }

@@ -229,6 +229,14 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the parallel-feature worktrees tool + its mode contract (AD-060)
       'tools/worktrees.mjs',
       'references/modes/worktrees.md',
+      // the satellite cold-start trio (delegation Plan 3 Phase 2): the handoff RECORD format as a
+      // pure leaf, the slug → satellite locator with git and fs injected, and the prompt composer.
+      // Pinned by NAME: worktrees.mjs imports all three and doc-parity.mjs imports the composer, so
+      // a payload drop would break the tool's load AND a declared gate at once — and the count alone
+      // would hide it behind any other simultaneous drift.
+      'tools/worktrees-record.mjs',
+      'tools/satellite-locator.mjs',
+      'tools/worktree-prompt.mjs',
       'references/templates/adr-record.md',
       'references/templates/adr/log.md',
       // the guarded autonomy provisioner doctor + its mode contract (AD-044 Plan 2)
@@ -537,7 +545,15 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       instead of being recorded as fresh size debt. Pinned by NAME above for the same reason
     //       the other lint leaves are: doc-parity imports it, so a payload drop breaks a declared
     //       gate at load time.
-    assert.equal(packed.length, 217, `tarball file count drifted (${packed.length} ≠ 217)`);
+    // 220 = 217 + the satellite cold-start trio (delegation Plan 3 Phase 2): tools/
+    //       worktrees-record.mjs (the handoff record format as a PURE leaf — the typed STOP, the
+    //       exit codes, compose + parse) + tools/satellite-locator.mjs (slug → satellite worktree
+    //       and the handoff identity proof, git and fs injected) + tools/worktree-prompt.mjs (the
+    //       cold-start prompt composer and its two bars). The first two are extractions the
+    //       dispatch side reads too, which is what keeps the 3200-line worktrees tool out of the
+    //       dispatch CLI's import closure. All three are pinned by NAME above; their colocated
+    //       *.test.mjs siblings are stripped by files[].
+    assert.equal(packed.length, 220, `tarball file count drifted (${packed.length} ≠ 220)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

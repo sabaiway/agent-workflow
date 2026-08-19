@@ -37,6 +37,9 @@ import { PARITY } from './refresh-parity.mjs';
 import { HOST_HONORS_QUALIFIER } from './velocity-profile.mjs';
 import { LATENT_ARM_NOTICE } from './review-state.mjs';
 import { QUEUE_SHARED_RULE, LANDING_FROM_MAIN, NO_DEPENDENCIES_POSTURE, CLEANUP_OWNERSHIP_RULE, INCLUDE_IDENTITY_RULE, RESUME_VERIFY_RULE } from './worktrees.mjs';
+// The one-writer BAR the satellite cold-start prompt states at both of its print sites — read from
+// the composer that emits it, not from the worktrees tool, so the lint keeps the leaf's own words.
+import { ONE_WRITER_BAR } from './worktree-prompt.mjs';
 // The flow contract constants: the accepted schema version + the honest lagging-kit sentence
 // (owned by the config validator), and the set-flow bookkeeping-floor residual (owned by the
 // arming writer) — each pinned byte-exact into its mode doc(s).
@@ -157,6 +160,10 @@ export const BINDINGS = Object.freeze([
   // prose-only bars a doc could silently drop, so all are pinned to the live strings the record
   // actually carries.
   valueBinding('queue-shared-rule', QUEUE_SHARED_RULE, QUEUE_SHARED_RULE, [WORKTREES_DOC]),
+  // D7, the same class: one writer per worktree is a BAR and nothing refuses a second writer. The
+  // prompt states it at every print site, so the mode doc must carry the exact words the satellite
+  // reads — a doc that softened it would promise a guard the tool does not have.
+  valueBinding('one-writer-bar', ONE_WRITER_BAR, ONE_WRITER_BAR, [WORKTREES_DOC]),
   valueBinding('landing-from-main', LANDING_FROM_MAIN, LANDING_FROM_MAIN, [WORKTREES_DOC]),
   valueBinding('no-dependencies-posture', NO_DEPENDENCIES_POSTURE, NO_DEPENDENCIES_POSTURE, [WORKTREES_DOC]),
   // The cleanup-ownership contract (AD-069): the exact live sentence every ownership STOP emits —

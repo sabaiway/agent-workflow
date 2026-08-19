@@ -164,3 +164,76 @@ describe('worktrees provision record — the three facts a fresh satellite sessi
     }
   });
 });
+
+// ── the control-byte class (delegation Plan 3, Phase 2 — round-4/5 folds) ──────────────
+//
+// APPENDED, never woven in: every assertion above is byte-identical to what it was, and these are
+// new distinctions. They live in THIS file rather than a new one for a mechanical reason worth
+// stating — their red-proofs bind {base, testId}, and a testId can only be superseded where it was
+// minted; moving them would leave obligations no run could ever satisfy at this base.
+//
+// The leaf was extracted byte-for-byte with ONE deliberate exception: the control-byte class was
+// widened to cover C1. That tightening is pinned here rather than resting on the extraction claim.
+
+const guardLeaf = () => import('./worktrees-record.mjs');
+
+// Built by CODE POINT, never typed as literal bytes.
+const withCode = (cp) => `a${String.fromCharCode(cp)}b`;
+
+const C0 = [0x00, 0x09, 0x0a, 0x0d, 0x1f];
+const C1 = [0x7f, 0x80, 0x85, 0x9b, 0x9f];
+const LINE_TERMINATORS = [0x2028, 0x2029];
+
+describe('worktrees-record — the control-byte class', () => {
+  it('the record refuses a C1 value, not only a C0 one — the widening is a real tightening', async () => {
+    const { WORKTREES_STOP, recordValue, hasControlByte } = await guardLeaf();
+    for (const cp of [...C0, ...C1, ...LINE_TERMINATORS]) {
+      assert.equal(hasControlByte(withCode(cp)), true, `U+${cp.toString(16)} must be in the class`);
+      assert.throws(
+        () => recordValue('branch', withCode(cp)),
+        (e) => e.code === WORKTREES_STOP && /control character/.test(e.message),
+        `U+${cp.toString(16)} must be refused as a record value`,
+      );
+    }
+  });
+
+  it('an ordinary value with punctuation, spaces and non-ASCII letters is still accepted', async () => {
+    const { recordValue } = await guardLeaf();
+    // The tightening must not have swallowed printable text: a branch or a path may legally carry
+    // any of these, and refusing them would break provisioning rather than protect it.
+    // The non-ASCII letters are written as escapes: same bytes at runtime, ASCII in the source, which
+    // is the project's English-only invariant applied to a fixture that needs them.
+    for (const value of ['aw/feature-1', 'a b', 'path/with.dots', 'caf\u00e9', '\u4e2d\u6587']) {
+      assert.equal(recordValue('branch', value), value);
+    }
+  });
+
+  it('a field line carrying CR or a Unicode line terminator refuses instead of reading back as absent', async () => {
+    const { parseProvisionRecord, WORKTREES_STOP } = await guardLeaf();
+    const section = (branch) => [
+      '## Provision record', '', '- slug: alpha', `- branch: ${branch}`,
+      '- node_modules: absent', '- vscode-settings: absent', '',
+    ].join('\n');
+    // A JS `.` crosses none of these, so the field line stops matching and the field would read back
+    // as ABSENT — indistinguishable from an older kit that never wrote it.
+    for (const cp of [0x0d, 0x2028, 0x2029]) {
+      assert.throws(
+        () => parseProvisionRecord(section(`aw/a${String.fromCharCode(cp)}b`)),
+        (e) => e.code === WORKTREES_STOP && /silently read back as absent/.test(e.message),
+        `U+${cp.toString(16)} must refuse, not vanish`,
+      );
+    }
+    // A tab is crossed by `.` and trimmed on read — carried through, never a parse refusal.
+    assert.equal(parseProvisionRecord(section('aw/a\t')).branch, 'aw/a');
+  });
+
+  it('displayValue renders every member of the class as a visible escape, never as itself', async () => {
+    const { hasControlByte, displayValue } = await guardLeaf();
+    for (const cp of [...C0, ...C1, ...LINE_TERMINATORS]) {
+      const rendered = displayValue(withCode(cp));
+      assert.equal(hasControlByte(rendered), false, `U+${cp.toString(16)} must not survive rendering`);
+      assert.match(rendered, new RegExp(`^a\\\\u${cp.toString(16).padStart(4, '0')}b$`));
+    }
+    assert.equal(displayValue('aw/feature-1'), 'aw/feature-1', 'ordinary text is untouched');
+  });
+});

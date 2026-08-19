@@ -22,7 +22,16 @@ own verbatim error through the existing Git-error surface.
   `node_modules` symlink when main has one and the link stays ignored — a SHARED MUTABLE cache:
   writes through it hit MAIN's node_modules; for isolation RUN the printed isolated-install
   command (`--install` only prints it), and on `--resume` an existing symlink is kept — run the
-  printed unlink-first recovery first. Absolute root-pinned gate commands are rebased on UNTRACKED copies only — and only
+  printed unlink-first recovery first. That recovery is printed ONLY for a link this tool can prove
+  it placed — BOTH halves of the ownership rule below: raw target bytes equal to MAIN's
+  `node_modules`, AND the ignored lane. Every other state is reported in its own words and advises no
+  removal, because deleting a node whose provenance was never established is not a recovery: a
+  FOREIGN target (read, and not equal to that path — which says where it points, never who placed
+  it), a TRACKED path (matching target, but repository content the landing lane protects), a
+  LANE-UNPROVEN path (matching target, but the ignore probe did not settle, carrying the probe's own
+  cause), and an UNREADABLE link (the target read itself failed, carrying its errno). The same five
+  verdicts render the same way in `provision`'s report and in the `prompt` output, so the two can
+  never describe one link differently. Absolute root-pinned gate commands are rebased on UNTRACKED copies only — and only
   while their bytes still equal the MAIN source (or its rebased form); user-modified copies stay
   byte-untouched. `--install` only PRINTS the install command — zero spawn, zero write.
   `--resume <slug>` completes a half-done provision (identity fail-closed; handoff user sections,
@@ -97,6 +106,31 @@ own verbatim error through the existing Git-error surface.
   symlinked docs/plans (or ancestor), a handoff-named entry that is not a regular file, a
   vanished worktree dir, or any other read failure renders `handoff: (unreadable)` — never a
   silent "no".
+- `prompt <slug>` — read-only: re-print the satellite's cold-start prompt, the same text
+  `provision` ends its report with. It carries the worktree path and branch, the ONE seeded plan,
+  the handoff as the one return channel, MAIN's orientation (the shared series index and the landing)
+  and — under its own heading, because it is probed on the SATELLITE and not in MAIN — that
+  checkout's install posture. Every value is derived LIVE, never replayed from the provision record:
+  the record FREEZES them at provision time, so a moved MAIN or a hand-edited field would otherwise
+  put a stale runnable command in front of a satellite. A recorded value that no longer matches is
+  NAMED as a divergence beside the live one, with the cause its own source makes likely (a moved MAIN
+  or a hand edit for the MAIN-derived pair; a changed dependency declaration for the install
+  posture), and a field an earlier kit never wrote is no divergence at all. Every command the prompt
+  offers is a marked line naming WHO runs it: `MAIN $ …` for the landing, `HERE $ …` for this
+  checkout's own install — including the removal of a provisioned `node_modules` symlink, which is
+  runnable even where the install command itself is not derivable. A posture with nothing to run
+  stays prose, and the recorded posture string is never printed loose: it IS a command in the
+  ordinary case, and an unattributed one reads as an instruction. A `node_modules` symlink is
+  claimed to point into MAIN only when its RAW TARGET says so — the same evidence cleanup binds
+  ownership on; any other target reads as a link this tool did not place, with nothing claimed about
+  it and no removal advised. A control character in any value it would render is a
+  typed STOP, not a sanitized string: the prompt is line-oriented, so a newline in a filename would
+  otherwise forge a line — including a line imitating a command. Run it from MAIN — a cwd inside a
+  linked worktree is the same refusal `provision`/`land`/`cleanup` make. It resolves the satellite
+  through the handoff identity (the duplicate-identity, missing-record and slug/branch-mismatch STOPs
+  are the same ones `cleanup` binds on), and it writes nothing.
+  One writer per worktree is a BAR the prompt states and nothing enforces:
+  ONE writer per worktree: this session is the only agent writing in this checkout, and nothing enforces that — a second session writing here interleaves two agents into one tree, which neither this tool nor git can detect or undo. It is a bar you keep, not a lock you hold.
 - `land <slug> --prepare` — stage the satellite's finished diff onto a CLEAN main; the commit is
   NEVER run by the tool — it stays a dialogue ask at the primary session. Land takes the transient
   common-git-dir lock, refuses a dirty main, graph divergence, visible `docs/ai` drift, excluded
