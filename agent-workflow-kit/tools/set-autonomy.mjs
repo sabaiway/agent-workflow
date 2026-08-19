@@ -22,7 +22,6 @@
 // Dependency-free, Node >= 22. No side effects on import (the isDirectRun idiom).
 
 import { readFileSync, lstatSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
 import {
   AUTONOMY_REL,
   fail,
@@ -35,6 +34,7 @@ import {
   AUTONOMY_README,
 } from './autonomy-config.mjs';
 import { writeAutonomy as writeAutonomyFs } from './autonomy-write.mjs';
+import { isDirectRun } from './direct-run.mjs';
 
 // ── argument parsing (usage errors → exit 2) ────────────────────────────────────────
 
@@ -186,8 +186,7 @@ export const main = (argv, ctx = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) {
+if (isDirectRun(import.meta.url)) {
   const r = main(process.argv.slice(2));
   if (r.stdout) console.log(r.stdout);
   if (r.stderr) console.error(r.stderr);

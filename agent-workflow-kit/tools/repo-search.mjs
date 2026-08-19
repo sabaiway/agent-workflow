@@ -50,7 +50,7 @@
 import { openSync, fstatSync, readSync, closeSync, opendirSync, realpathSync, lstatSync, constants } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, resolve, relative, isAbsolute, sep } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { isDirectRun } from './direct-run.mjs';
 
 export const EXIT_OK = 0;
 export const EXIT_ERROR = 1;
@@ -590,5 +590,4 @@ const emitResult = (r) => {
   process.exitCode = r.code;
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) emitResult(main(process.argv.slice(2)));
+if (isDirectRun(import.meta.url)) emitResult(main(process.argv.slice(2)));

@@ -28,9 +28,10 @@ import {
   chmodSync, readFileSync, realpathSync,
 } from 'node:fs';
 import { join, resolve, relative, dirname, isAbsolute } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { KNOWN_BACKENDS, detectBackend, detectBackends, resolveDir, guideFor, READY } from './detect-backends.mjs';
+import { isDirectRun } from './direct-run.mjs';
 import { copyTreeRefresh, linkManaged, isReadonlyWriteBoundary } from './fs-safe.mjs';
 import {
   READONLY_RERUN_HINT, WRAPPER_MODE, scanBundleOwnedDrift, scanWrapperParity, parityVerdict,
@@ -821,5 +822,4 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
   return worst;
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) process.exit(main(process.argv.slice(2)));
+if (isDirectRun(import.meta.url)) process.exit(main(process.argv.slice(2)));

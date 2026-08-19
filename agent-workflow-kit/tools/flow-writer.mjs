@@ -48,7 +48,7 @@
 
 import { readFileSync, lstatSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { pathToFileURL, fileURLToPath } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   FLOW_SCHEMA_VERSION, CHAIN_KIND, canonicalFlowDigest, flowTreeIdentity,
@@ -59,6 +59,7 @@ import {
   appendFlowRecord, appendFlowRecordWithPreflight, mintAdoption, readPlanFrontmatterId,
   resolveRecordReference, priorChainTerminal,
 } from './flow-store.mjs';
+import { isDirectRun } from './direct-run.mjs';
 import { readFileBytesNoFollow, gitLine } from './flow-store-read.mjs';
 import {
   resolveBase, computeTreeFingerprint, lexicalRepoRelative,
@@ -1256,8 +1257,7 @@ export const main = (argv, ctx = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) {
+if (isDirectRun(import.meta.url)) {
   const r = main(process.argv.slice(2));
   if (r.stdout) console.log(r.stdout);
   if (r.stderr) console.error(r.stderr);

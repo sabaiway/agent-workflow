@@ -21,9 +21,9 @@
 // Node >= 22. No side effects on import (the isDirectRun idiom).
 
 import { join, dirname } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { resolveReceiptsPath } from './core-evidence.mjs';
+import { isDirectRun } from './direct-run.mjs';
 import { SAFE_NONCE_RE, findingManifestBasename, decodeFindingManifest } from './flow-record.mjs';
 import { readFileBytesNoFollow } from './flow-store-read.mjs';
 
@@ -254,8 +254,7 @@ export const main = async (argv, ctx = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) {
+if (isDirectRun(import.meta.url)) {
   main(process.argv.slice(2)).then((r) => {
     if (r.stdout) process.stdout.write(r.stdout.endsWith('\n') ? r.stdout : `${r.stdout}\n`);
     if (r.stderr) process.stderr.write(r.stderr.endsWith('\n') ? r.stderr : `${r.stderr}\n`);

@@ -27,7 +27,8 @@
 
 import { lstatSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
+import { isDirectRun } from './direct-run.mjs';
 import { ACKS_FILE, ACK_LANES } from './recommendations.mjs';
 import { assertDocsAiDeployment, writeDocsAiFileAtomic, lstatNoFollow } from './atomic-write.mjs';
 import { shellQuoteArg } from './review-state.mjs';
@@ -207,5 +208,4 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) process.exit(main(process.argv.slice(2)));
+if (isDirectRun(import.meta.url)) process.exit(main(process.argv.slice(2)));

@@ -90,10 +90,11 @@
 
 import { lstatSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { pathToFileURL, fileURLToPath } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { detectBackends, READY } from './detect-backends.mjs';
+import { isDirectRun } from './direct-run.mjs';
 import { resolveActivityRecipe, DISPLAY_ALIASES, requiredBackendsForConfiguredRecipe } from './recipes.mjs';
 import { CONFIG_REL, fail, loadConfig } from './orchestration-config.mjs';
 import { resolveFlowStorePath, readFlowStore, deriveFlowOwner, readPlanFrontmatterId } from './flow-store.mjs';
@@ -819,8 +820,7 @@ const emitResult = (r) => {
   process.exitCode = r.code;
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) {
+if (isDirectRun(import.meta.url)) {
   const argv = process.argv.slice(2);
   if (argv.includes('--await')) mainAwait(argv).then(emitResult);
   else emitResult(main(argv));

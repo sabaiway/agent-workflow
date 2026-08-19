@@ -20,11 +20,12 @@
 import { readFileSync, lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { pathToFileURL, fileURLToPath } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { detectBackends, wrapperCmdFor, wrapperContractFor } from './detect-backends.mjs';
 // The host-level bridge-settings registry (manifest-as-source) + its allowed-value labels. READ-ONLY
 // core only — never the writer — so this read-only advisor never imports the atomic-write core.
 import { loadRegistry, allowedLabel } from './bridge-settings-read.mjs';
+import { isDirectRun } from './direct-run.mjs';
 import { ACTIVITIES, resolveActivityRecipe, planRecipe } from './recipes.mjs';
 import { resolveEngineDir, readEngineFragment, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
 // The plan-in-flight detector (AD-038) — imported from the plan-files.mjs LEAF (read-only fs by
@@ -586,8 +587,7 @@ export const main = (argv, ctx = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) {
+if (isDirectRun(import.meta.url)) {
   const r = main(process.argv.slice(2));
   if (r.stdout) console.log(r.stdout);
   if (r.stderr) console.error(r.stderr);

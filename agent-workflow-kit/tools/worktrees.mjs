@@ -13,13 +13,14 @@ import {
   closeSync, constants as fsC,
 } from 'node:fs';
 import { join, dirname, basename, resolve, relative, isAbsolute, sep } from 'node:path';
-import { pathToFileURL, fileURLToPath } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import {
   KIT_OWN_PATHS, KNOWN_FOOTPRINT, expandGlob, normalizeSlashes, isDirPattern, isGlobPattern,
   patternToProbe,
 } from './known-footprint.mjs';
+import { isDirectRun } from './direct-run.mjs';
 import { isScratchPlanName, plansInFlight, PLANS_REL, shellQuoteArg } from './review-state.mjs';
 import { writeContainedFileAtomic } from './atomic-write.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
@@ -3266,5 +3267,4 @@ export const runCli = (argv, deps = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) process.exitCode = runCli(process.argv.slice(2));
+if (isDirectRun(import.meta.url)) process.exitCode = runCli(process.argv.slice(2));

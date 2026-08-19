@@ -24,8 +24,8 @@
 
 import { existsSync, statSync, lstatSync, readlinkSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { join, resolve, dirname, basename, isAbsolute } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import os from 'node:os';
+import { isDirectRun } from './direct-run.mjs';
 import { surveyFamily, surveyProject, FAMILY_MEMBERS, classifyMember, OK } from './family-registry.mjs';
 import { removeTreeManaged, unlinkManaged, MANAGED_LINK_CONFLICT } from './fs-safe.mjs';
 import { deriveLinks } from './setup-backends.mjs';
@@ -606,8 +606,7 @@ const main = (argv) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) {
+if (isDirectRun(import.meta.url)) {
   try {
     main(process.argv.slice(2));
   } catch (err) {

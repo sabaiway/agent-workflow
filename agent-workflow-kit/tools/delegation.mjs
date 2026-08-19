@@ -10,7 +10,7 @@
 
 import { statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { isDirectRun } from './direct-run.mjs';
 import { validateManifest, VALID } from './manifest/validate.mjs';
 
 // The exact skill name a delegable memory candidate must declare (guards against a wrong-name
@@ -120,5 +120,4 @@ const main = (argv) => {
   console.log(`[delegation] commit gate: ${plan.commitGate} (memory raises its own gate: ${plan.memoryRaisesCommitGate})`);
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) main(process.argv.slice(2));
+if (isDirectRun(import.meta.url)) main(process.argv.slice(2));

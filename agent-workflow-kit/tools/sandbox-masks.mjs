@@ -36,8 +36,9 @@
 
 import { lstatSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { isDirectRun } from './direct-run.mjs';
 import { fail } from './orchestration-config.mjs';
 import { isNeverCommittableStat, shellQuoteArg } from './review-state.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
@@ -366,5 +367,4 @@ const emitResult = (r) => {
   process.exitCode = r.code;
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) emitResult(main(process.argv.slice(2)));
+if (isDirectRun(import.meta.url)) emitResult(main(process.argv.slice(2)));

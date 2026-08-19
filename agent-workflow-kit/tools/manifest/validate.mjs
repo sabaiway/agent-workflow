@@ -20,7 +20,7 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, join, isAbsolute } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { isDirectRun } from '../direct-run.mjs';
 
 export const FAMILY = 'agent-workflow';
 export const SUPPORTED_SCHEMA = 1;
@@ -765,5 +765,4 @@ const main = (argv) => {
   if (strict && notValid > 0) process.exit(1);
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) main(process.argv.slice(2));
+if (isDirectRun(import.meta.url)) main(process.argv.slice(2));

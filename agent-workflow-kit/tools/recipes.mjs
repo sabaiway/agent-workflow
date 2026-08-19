@@ -16,10 +16,10 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 // The host-level bridge-settings snapshot (fact-only, best-effort). READ-ONLY core only — never the
 // writer — so this read-only advisor never pulls in the atomic-write core.
 import { settingsSnapshot, DEFAULT_BUNDLE_ROOT } from './bridge-settings-read.mjs';
+import { isDirectRun } from './direct-run.mjs';
 import {
   detectBackends,
   wrapperCmdFor,
@@ -596,11 +596,10 @@ exclusive. Detection only — never writes, never commits, never runs a subscrip
   return 0;
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 // Natural exit via process.exitCode — never process.exit inside the async main (it would drop buffered
 // stdio writes on piped stderr), and never a TOP-LEVEL await here: orchestration-config.mjs statically
 // imports this module, so awaiting the dynamic import during our own evaluation would deadlock the cycle.
-if (isDirectRun) {
+if (isDirectRun(import.meta.url)) {
   main(process.argv.slice(2)).then(
     (code) => {
       process.exitCode = code ?? 0;

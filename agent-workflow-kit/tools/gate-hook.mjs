@@ -41,7 +41,7 @@
 
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import {
   CLAUDE_DIR,
   EXPECTED_WORKFLOW_VERSION,
@@ -54,6 +54,7 @@ import {
   resolveEffectiveMode,
 } from './velocity-profile.mjs';
 import { assertDocsAiDeployment, writeDocsAiFileAtomic } from './atomic-write.mjs';
+import { isDirectRun } from './direct-run.mjs';
 import { shellQuoteArg } from './review-state.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -572,5 +573,4 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) process.exit(main(process.argv.slice(2)));
+if (isDirectRun(import.meta.url)) process.exit(main(process.argv.slice(2)));

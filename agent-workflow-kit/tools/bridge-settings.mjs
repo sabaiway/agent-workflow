@@ -23,7 +23,7 @@
 //
 // Dependency-free, Node >= 22. No side effects on import (the isDirectRun idiom).
 
-import { pathToFileURL } from 'node:url';
+import { isDirectRun } from './direct-run.mjs';
 import { settingValueValid } from './manifest/validate.mjs';
 import { writeHostConfigFileAtomic } from './atomic-write.mjs';
 import {
@@ -294,8 +294,7 @@ export const main = (argv = [], ctx = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) {
+if (isDirectRun(import.meta.url)) {
   const r = main(process.argv.slice(2));
   if (r.stdout) console.log(r.stdout);
   if (r.stderr) console.error(r.stderr);

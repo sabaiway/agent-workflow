@@ -36,11 +36,11 @@
 
 import { readFileSync, lstatSync, realpathSync, readlinkSync, openSync, readSync, closeSync } from 'node:fs';
 import { join, dirname, normalize, sep, basename } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { writeContainedFileAtomic } from './atomic-write.mjs';
 import { parsePositiveIntKnob, probeVerdict } from './changed-surface.mjs';
+import { isDirectRun } from './direct-run.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 import { lexicalRepoRelative } from './repo-lex.mjs';
 // The coverage vocabulary leaf: run-gates RECORDS the token this validator checks, and run-gates
@@ -1230,8 +1230,7 @@ export const main = (argv, ctx = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) {
+if (isDirectRun(import.meta.url)) {
   const r = main(process.argv.slice(2));
   if (r.stdout) process.stdout.write(r.stdout.endsWith('\n') ? r.stdout : `${r.stdout}\n`);
   if (r.stderr) process.stderr.write(r.stderr.endsWith('\n') ? r.stderr : `${r.stderr}\n`);

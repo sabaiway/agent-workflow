@@ -31,8 +31,8 @@
 import { readFileSync, writeFileSync, lstatSync, realpathSync } from 'node:fs';
 import { resolve, join, relative, isAbsolute, dirname, basename, sep } from 'node:path';
 import { tmpdir } from 'node:os';
-import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { isDirectRun } from './direct-run.mjs';
 import { fail } from './orchestration-config.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 // (f) --autonomy (AD-044 Plan 3): the effective per-project autonomy policy for the facts payload.
@@ -466,8 +466,7 @@ export const main = (argv, ctx = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) {
+if (isDirectRun(import.meta.url)) {
   const r = main(process.argv.slice(2));
   // Exact writes + a natural exit: console.log would append a stray newline to the
   // byte-exact facts payload, and process.exit() can truncate large piped stdout before Node

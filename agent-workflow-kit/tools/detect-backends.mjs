@@ -21,8 +21,8 @@
 
 import { existsSync, statSync, accessSync, realpathSync, constants } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import os from 'node:os';
+import { isDirectRun } from './direct-run.mjs';
 import { validateManifest, UNSUPPORTED, INVALID } from './manifest/validate.mjs';
 
 // Probe states. `unknown` (a wrapped fs error) NEVER counts as present in any readiness rule.
@@ -439,5 +439,4 @@ const main = (_argv, deps = {}) => {
   process.exit(0); // informational, like validate.mjs non-strict — never blocks anything
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) main(process.argv.slice(2));
+if (isDirectRun(import.meta.url)) main(process.argv.slice(2));

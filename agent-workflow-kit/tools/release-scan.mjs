@@ -12,7 +12,7 @@
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, extname, basename, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { isDirectRun } from './direct-run.mjs';
 
 export const ALLOWLIST = [
   'codex-cli-bridge',
@@ -274,5 +274,4 @@ export const main = (argv) => {
   return reportOnly ? 0 : 1;
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) process.exitCode = main(process.argv.slice(2));
+if (isDirectRun(import.meta.url)) process.exitCode = main(process.argv.slice(2));

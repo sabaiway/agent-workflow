@@ -19,7 +19,6 @@
 // Read-only: never writes, never commits, never runs a subscription CLI, spawns nothing. Dependency-
 // free, Node >= 22. No side effects on import (the isDirectRun idiom).
 
-import { pathToFileURL } from 'node:url';
 import { EXIT as DOCTOR_EXIT, STATUS as DOCTOR_STATUS, TRUSTED_DIRS as DOCTOR_TRUSTED_DIRS } from './autonomy-doctor.mjs';
 import {
   RECOMMENDATIONS_SECTION_HEADER,
@@ -30,6 +29,7 @@ import {
   VERDICT_SKIPS_TEMPLATE,
   ACKS_FILE,
 } from './recommendations.mjs';
+import { isDirectRun } from './direct-run.mjs';
 import { SKIPPED_READONLY } from './setup-backends.mjs';
 // The parity verdicts that read-only skip may report — a CLOSED set the same two mode docs enumerate.
 import { PARITY } from './refresh-parity.mjs';
@@ -338,8 +338,7 @@ export const main = (argv, ctx = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) {
+if (isDirectRun(import.meta.url)) {
   const r = main(process.argv.slice(2));
   if (r.stdout) process.stdout.write(r.stdout.endsWith('\n') ? r.stdout : `${r.stdout}\n`);
   if (r.stderr) process.stderr.write(r.stderr.endsWith('\n') ? r.stderr : `${r.stderr}\n`);

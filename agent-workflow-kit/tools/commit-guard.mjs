@@ -42,9 +42,10 @@
 
 import { readFileSync, lstatSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { pathToFileURL, fileURLToPath } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { isDirectRun } from './direct-run.mjs';
 import { computeTreeFingerprint, buildState, decideCheck, quoteReportName, shellQuoteArg } from './review-state.mjs';
 import {
   resolveEvidencePath, readEvidence, authoritativeOfKind, canonicalKindSerialization,
@@ -381,8 +382,7 @@ export const main = (argv, ctx = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) {
+if (isDirectRun(import.meta.url)) {
   const r = main(process.argv.slice(2));
   if (r.stdout) process.stdout.write(r.stdout.endsWith('\n') ? r.stdout : `${r.stdout}\n`);
   if (r.stderr) process.stderr.write(r.stderr.endsWith('\n') ? r.stderr : `${r.stderr}\n`);

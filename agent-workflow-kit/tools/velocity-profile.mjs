@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 // The --autonomy render reads the per-project autonomy policy through the read-only autonomy core
 // (AD-044). This file is the family's one .claude/settings.json writer, so the policy render lives here;
 // it never imports the policy fs-writer (autonomy-write.mjs) — the render owns the settings file, not
@@ -10,6 +10,7 @@ import { AUTONOMY_REL, loadAutonomy, resolveAutonomy, COMMAND_REDLINES } from '.
 // The bridge-wrappers tier's placement probe (AD-044 Plan 4, Decision 2): a tier entry derives ONLY
 // for a PLACED bridge wrapper — findOnPath is the same read-only PATH scan the backend detector uses.
 import { findOnPath } from './detect-backends.mjs';
+import { isDirectRun } from './direct-run.mjs';
 import { compareSemver } from './semver-lite.mjs';
 // The declared-path resolution + segment containment the allowWrite degrade shares with the
 // advisor's worktrees-dir convergence lane — ONE leaf, so the two readings cannot drift.
@@ -1820,5 +1821,4 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
   }
 };
 
-export const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) process.exit(main(process.argv.slice(2)));
+if (isDirectRun(import.meta.url)) process.exit(main(process.argv.slice(2)));

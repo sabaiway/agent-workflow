@@ -27,6 +27,7 @@
 //
 // Pure string functions (fs only in the CLI); dependency-free, Node >= 22.
 
+import { isDirectRun } from './direct-run.mjs';
 import { normalizeCanonical } from './orchestration-config.mjs';
 
 // The deployed-heading matcher (prefix, like the historical extractLensBlock: robust to a future
@@ -386,6 +387,4 @@ export const runCli = async (argv, deps = {}) => {
   return 0;
 };
 
-const { pathToFileURL } = await import('node:url');
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) process.exitCode = await runCli(process.argv.slice(2));
+if (isDirectRun(import.meta.url)) process.exitCode = await runCli(process.argv.slice(2));

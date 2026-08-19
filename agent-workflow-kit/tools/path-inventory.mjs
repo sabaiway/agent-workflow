@@ -46,7 +46,7 @@
 
 import { openSync, fstatSync, readSync, closeSync, opendirSync, realpathSync, lstatSync, constants } from 'node:fs';
 import { resolve, relative, isAbsolute, sep, dirname } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { isDirectRun } from './direct-run.mjs';
 
 import {
   UsageError,
@@ -512,5 +512,4 @@ const emitResult = (r) => {
   process.exitCode = r.code;
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) emitResult(main(process.argv.slice(2)));
+if (isDirectRun(import.meta.url)) emitResult(main(process.argv.slice(2)));

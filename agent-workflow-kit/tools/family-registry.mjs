@@ -18,9 +18,10 @@
 
 import { existsSync, statSync, readFileSync, lstatSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
-import { pathToFileURL, fileURLToPath } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { resolveDir, detectBackends, findOnPath } from './detect-backends.mjs';
+import { isDirectRun } from './direct-run.mjs';
 // The ONE dependency-free semver (shared with bin/install.mjs) — the bridge freshness probe compares
 // the placed version against the kit-bundled mirror; null-on-unparseable maps to 'unknown' (INV-B).
 import { parseSemver, compareSemver } from './semver-lite.mjs';
@@ -773,5 +774,4 @@ const main = (argv) => {
   console.log(args.surface.mode === 'json' ? JSON.stringify(envelope, null, 2) : render(toViewModel(envelope), args.surface));
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) main(process.argv.slice(2));
+if (isDirectRun(import.meta.url)) main(process.argv.slice(2));

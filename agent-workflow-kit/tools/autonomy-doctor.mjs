@@ -40,7 +40,7 @@
 import { spawnSync } from 'node:child_process';
 import { closeSync, lstatSync, openSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { isDirectRun } from './direct-run.mjs';
 import { isExecutableFile, probeSandboxAvailability } from './velocity-profile.mjs';
 import { assertDocsAiDeployment } from './atomic-write.mjs';
 
@@ -484,5 +484,4 @@ export const main = (argv, deps = {}) => {
   return finish(applied.status, applied.finalPlan);
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) process.exit(main(process.argv.slice(2)));
+if (isDirectRun(import.meta.url)) process.exit(main(process.argv.slice(2)));

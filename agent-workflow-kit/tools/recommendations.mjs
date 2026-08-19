@@ -35,7 +35,7 @@ import { readFileSync, readdirSync, lstatSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import {
   preflightVelocityProfile,
   planVelocityProfile,
@@ -51,6 +51,7 @@ import {
 import { loadAutonomy, isSparseSeedConfig, AUTONOMY_REL } from './autonomy-config.mjs';
 import { deriveDoctorPlan } from './autonomy-doctor.mjs';
 import { detectBackends, findOnPath } from './detect-backends.mjs';
+import { isDirectRun } from './direct-run.mjs';
 import { ACTIVITIES, resolveActivityRecipe } from './recipes.mjs';
 import { surveyFamily, surveyGateHook, surveyAdrLayoutStrict } from './family-registry.mjs';
 import { probeSandboxMasks, needsMasksApply } from './sandbox-masks.mjs';
@@ -1534,8 +1535,7 @@ export const main = (argv, ctx = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) {
+if (isDirectRun(import.meta.url)) {
   const r = main(process.argv.slice(2));
   if (r.stdout) process.stdout.write(r.stdout.endsWith('\n') ? r.stdout : `${r.stdout}\n`);
   if (r.stderr) process.stderr.write(r.stderr.endsWith('\n') ? r.stderr : `${r.stderr}\n`);

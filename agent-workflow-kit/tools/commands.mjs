@@ -19,7 +19,7 @@
 // the `### Mode:` headers in SKILL.md, so the catalog cannot silently drift from the documented modes.
 // Pure, dependency-free, Node >= 22. No side effects on import (the isDirectRun idiom).
 
-import { pathToFileURL } from 'node:url';
+import { isDirectRun } from './direct-run.mjs';
 
 const SKILL_NAME = 'agent-workflow-kit';
 const BARE_INVOCATION = `/${SKILL_NAME}`;
@@ -380,7 +380,6 @@ const main = (argv) => {
   console.log(formatHelp());
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) main(process.argv.slice(2));
+if (isDirectRun(import.meta.url)) main(process.argv.slice(2));
 
 export { KINDS, SKILL_NAME, BARE_INVOCATION };

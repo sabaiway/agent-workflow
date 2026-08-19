@@ -26,6 +26,7 @@
 // ONLY when its content normalize-matches a KNOWN PRIOR canonical fragment (drift-guarded, append-only
 // per descriptor). A customized slot never matches → preserved verbatim + a read-only upgrade advisory.
 
+import { isDirectRun } from './direct-run.mjs';
 import { normalizeCanonical } from './orchestration-config.mjs';
 
 export const START_MARKER = '<!-- workflow:methodology:start -->';
@@ -599,9 +600,7 @@ export const runCli = async (argv, deps = {}) => {
   }
 };
 
-const { pathToFileURL } = await import('node:url');
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) {
+if (isDirectRun(import.meta.url)) {
   const { code, stdout, stderr } = await runCli(process.argv.slice(2));
   if (stdout) process.stdout.write(stdout);
   if (stderr) process.stderr.write(stderr);

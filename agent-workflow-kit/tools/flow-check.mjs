@@ -19,10 +19,10 @@
 // discipline) — a poisoned override can neither redirect nor mask the real stores.
 
 import { lstatSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
 import {
   CHAIN_KIND, canonicalFlowDigest, ownerScopedFlowProjection, flowProjectionHash,
 } from './flow-record.mjs';
+import { isDirectRun } from './direct-run.mjs';
 import { resolveFlowStorePath, readFlowStore, deriveFlowOwner } from './flow-store.mjs';
 import {
   resolveEvidencePath, readEvidence, resolveBase, authoritativeOfKind,
@@ -260,8 +260,7 @@ export const main = (argv, ctx = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) {
+if (isDirectRun(import.meta.url)) {
   const r = main(process.argv.slice(2));
   if (r.stdout) process.stdout.write(r.stdout.endsWith('\n') ? r.stdout : `${r.stdout}\n`);
   if (r.stderr) process.stderr.write(r.stderr.endsWith('\n') ? r.stderr : `${r.stderr}\n`);

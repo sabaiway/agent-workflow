@@ -23,9 +23,9 @@
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { computeChangedSurface } from './changed-surface.mjs';
+import { isDirectRun } from './direct-run.mjs';
 import { lcovCoveredMap, uncoveredChangedFromLcov } from './lcov.mjs';
 import {
   computeTreeFingerprint,
@@ -365,8 +365,7 @@ export const main = (argv, ctx = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) {
+if (isDirectRun(import.meta.url)) {
   // The capability is CONSUMED here: snapshot it, then remove it from this process's environment
   // before anything spawns. Every `git` query and every bound-test probe below inherits
   // process.env, so leaving it in place would hand a live attestation context to each of them —

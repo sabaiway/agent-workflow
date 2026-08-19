@@ -33,7 +33,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, writeFileSync, chmodSync } from 'node:fs';
 import { join, resolve, dirname, relative, isAbsolute } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { writeContainedFileAtomic, assertDocsAiDeployment } from './atomic-write.mjs';
@@ -47,6 +47,7 @@ import {
   defaultRegenerateIndex,
   runCli as runArchiveDecisions,
 } from '../references/scripts/archive-decisions.mjs';
+import { isDirectRun } from './direct-run.mjs';
 import { surveyAdrLayoutStrict, ADR_LAYOUT_PATHS } from './family-registry.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -463,5 +464,4 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) process.exitCode = main();
+if (isDirectRun(import.meta.url)) process.exitCode = main();

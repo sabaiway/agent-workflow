@@ -24,8 +24,8 @@ import {
 } from 'node:fs';
 import { join, resolve, relative, isAbsolute, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
 import os from 'node:os';
+import { isDirectRun } from './direct-run.mjs';
 import {
   KIT_OWN_PATHS, KNOWN_FOOTPRINT, FOOTPRINT_STOP, stop,
   normalizeSlashes, isDirPattern, patternToProbe, expandGlob, matchesKnownGlob,
@@ -584,5 +584,4 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) process.exit(main(process.argv.slice(2)));
+if (isDirectRun(import.meta.url)) process.exit(main(process.argv.slice(2)));

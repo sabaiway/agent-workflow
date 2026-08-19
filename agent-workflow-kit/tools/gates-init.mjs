@@ -58,7 +58,8 @@
 
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
+import { isDirectRun } from './direct-run.mjs';
 import { discoverGateCandidates, EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
 import { GATES_REL, validateDeclaration } from './run-gates.mjs';
 import { canonicalCheckerGates, coverageDeclarationDefects, isKitOwnedCheckerGate } from './gates-declaration.mjs';
@@ -795,5 +796,4 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) process.exit(main(process.argv.slice(2)));
+if (isDirectRun(import.meta.url)) process.exit(main(process.argv.slice(2)));

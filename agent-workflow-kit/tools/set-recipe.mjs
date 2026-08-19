@@ -23,8 +23,8 @@
 
 import { readFileSync, lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { pathToFileURL } from 'node:url';
 import { detectBackends } from './detect-backends.mjs';
+import { isDirectRun } from './direct-run.mjs';
 import { resolveActivityRecipe, composeActiveRecipeLine } from './recipes.mjs';
 import { loadAutonomy, resolveAutonomy } from './autonomy-config.mjs';
 import {
@@ -230,8 +230,7 @@ export const main = (argv, ctx = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) {
+if (isDirectRun(import.meta.url)) {
   const r = main(process.argv.slice(2));
   if (r.stdout) console.log(r.stdout);
   if (r.stderr) console.error(r.stderr);

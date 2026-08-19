@@ -32,8 +32,8 @@
 import { readFileSync, lstatSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
+import { isDirectRun } from './direct-run.mjs';
 import { computeTreeFingerprint } from './review-state.mjs';
 import { CONFIG_REL, loadConfig } from './orchestration-config.mjs';
 // The D3(a) final receipt rides the core-evidence SOLE WRITER (the sole-writer boundary — this
@@ -942,5 +942,4 @@ export const runCli = (argv, deps = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) process.exitCode = runCli(process.argv.slice(2));
+if (isDirectRun(import.meta.url)) process.exitCode = runCli(process.argv.slice(2));

@@ -30,7 +30,7 @@
 
 import { readFileSync, lstatSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
-import { pathToFileURL, fileURLToPath } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
   CONFIG_REL,
@@ -44,6 +44,7 @@ import {
   FLOW_CANDIDATE_CLASSES,
   FLOW_SCHEMA_1_FIXTURE,
 } from './orchestration-config.mjs';
+import { isDirectRun } from './direct-run.mjs';
 import { writeConfig as writeConfigFs } from './orchestration-write.mjs';
 import { loadDeclaration } from './run-gates.mjs';
 import { compareSemver } from './semver-lite.mjs';
@@ -456,8 +457,7 @@ export const main = (argv, ctx = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) {
+if (isDirectRun(import.meta.url)) {
   const r = main(process.argv.slice(2));
   if (r.stdout) console.log(r.stdout);
   if (r.stderr) console.error(r.stderr);
