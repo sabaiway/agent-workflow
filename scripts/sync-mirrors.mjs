@@ -33,9 +33,9 @@
 // touch the real tree; scripts/release/version-sync.mjs --bump reuses syncBridgeMirror after a
 // bridge bump. Dependency-free, Node >= 22. No side effects on import.
 
-import { readFileSync, existsSync, readdirSync, mkdirSync, statSync, copyFileSync, chmodSync, rmSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, mkdirSync, statSync, copyFileSync, chmodSync, rmSync, realpathSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(HERE, '..');
@@ -281,5 +281,16 @@ export const runCli = (argv, deps = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+// Run main() only when executed directly, never on import. Compare by REAL path: an entry point
+// reached through a symlink resolves to its target, so a raw string compare reads the two as
+// different and the CLI never runs. realpathSync collapses the link so both sides match.
+const isDirectRun = (() => {
+  const invoked = process.argv[1];
+  if (!invoked) return false;
+  try {
+    return realpathSync(invoked) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+})();
 if (isDirectRun) process.exitCode = runCli(process.argv.slice(2));

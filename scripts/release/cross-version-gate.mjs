@@ -26,11 +26,11 @@
 // step, and the repo's `git status --porcelain` is captured before and compared after on BOTH
 // paths. Exit 0 iff every axis held; 1 otherwise; 2 usage. Dependency-free, Node >= 22.
 
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { installPublishedKit } from './published-kit.mjs';
 import { fail, REPO_ROOT, KIT_DIR, KIT_PACKAGE_NAME, candidateDeclaration } from './smoke-candidate.mjs';
 import { buildForeignFixture } from '../testing/foreign-fixture.mjs';
@@ -258,5 +258,16 @@ export const runCli = (argv, deps = {}) => {
   return code;
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+// Run main() only when executed directly, never on import. Compare by REAL path: an entry point
+// reached through a symlink resolves to its target, so a raw string compare reads the two as
+// different and the CLI never runs. realpathSync collapses the link so both sides match.
+const isDirectRun = (() => {
+  const invoked = process.argv[1];
+  if (!invoked) return false;
+  try {
+    return realpathSync(invoked) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+})();
 if (isDirectRun) process.exitCode = runCli(process.argv.slice(2));

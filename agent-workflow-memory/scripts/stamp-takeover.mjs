@@ -15,10 +15,11 @@
 // The Markdown twin `migrations/legacy-stamp-takeover.md` documents the same table as the
 // no-Node manual fallback. Dependency-free, Node >= 22.
 
+import { realpathSync } from 'node:fs';
 import { readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import { dirname, basename, join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 // The shared agent-workflow deployment-lineage head. Bumped only when a project-migration
 // changes the deployed docs/ai structure — NOT on a packaging-only release.
@@ -177,5 +178,16 @@ const main = async (argv) => {
   if (decision.status === 'stop') process.exit(1);
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+// Run main() only when executed directly, never on import. Compare by REAL path: an entry point
+// reached through a symlink resolves to its target, so a raw string compare reads the two as
+// different and the CLI never runs. realpathSync collapses the link so both sides match.
+const isDirectRun = (() => {
+  const invoked = process.argv[1];
+  if (!invoked) return false;
+  try {
+    return realpathSync(invoked) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+})();
 if (isDirectRun) await main(process.argv.slice(2));

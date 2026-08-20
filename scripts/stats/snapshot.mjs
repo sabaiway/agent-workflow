@@ -17,9 +17,9 @@
 // Dependency-free, Node >= 22. Every function below is pure except main(); the network and the
 // filesystem enter through injected seams so the whole contract is unit-testable offline.
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 // The history's column order IS its schema — appending a column is safe, reordering is not.
 export const COLUMNS = [
@@ -218,7 +218,16 @@ export const main = async ({
   return 0;
 };
 
-// pathToFileURL rather than a hand-built `file://` string — the latter disagrees with the argv path
-// off-POSIX and would silently stop running as an entry point. Same idiom as the sibling scripts.
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+// Run main() only when executed directly, never on import. Compare by REAL path: an entry point
+// reached through a symlink resolves to its target, so a raw string compare reads the two as
+// different and the CLI never runs. realpathSync collapses the link so both sides match.
+const isDirectRun = (() => {
+  const invoked = process.argv[1];
+  if (!invoked) return false;
+  try {
+    return realpathSync(invoked) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+})();
 if (isDirectRun) process.exitCode = await main();

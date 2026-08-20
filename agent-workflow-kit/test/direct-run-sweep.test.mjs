@@ -69,6 +69,19 @@ const STANDALONE_MODULES = Object.freeze([
   'agent-workflow-kit/references/hooks/state-block-guard.mjs',
   'agent-workflow-kit/references/hooks/gate-approve.mjs',
 ]);
+const REMAINING_STANDALONE_MODULES = Object.freeze([
+  'agent-workflow-memory/scripts/stamp-takeover.mjs',
+  'scripts/suite-parity.mjs',
+  'scripts/check-ascii-letters.mjs',
+  'scripts/sync-mirrors.mjs',
+  'scripts/stats/snapshot.mjs',
+  'scripts/release/smoke-init.mjs',
+  'scripts/release/smoke-candidate.mjs',
+  'scripts/release/version-sync.mjs',
+  'scripts/release/cross-version-gate.mjs',
+  'scripts/release/dispatch-publish.mjs',
+  'scripts/release/preflight-remote.mjs',
+]);
 
 test('the swept-module list is complete and duplicate-free', () => {
   // Object.freeze pins the CONTENTS, never the completeness: a dropped entry, or one replaced by a
@@ -82,16 +95,21 @@ test('the standalone-module list is complete and duplicate-free', () => {
   assert.equal(new Set(STANDALONE_MODULES).size, 12, 'the frozen W2 site list has no duplicate entry');
 });
 
+test('the remaining-standalone-module list is complete and duplicate-free', () => {
+  assert.equal(REMAINING_STANDALONE_MODULES.length, 11, 'the frozen W3 site list is 11 files');
+  assert.equal(new Set(REMAINING_STANDALONE_MODULES).size, 11, 'the frozen W3 site list has no duplicate entry');
+});
+
 test('an unresolvable entry point fails the standalone guard CLOSED', async () => {
   // Each standalone file inlines the realpath compare instead of importing the shared leaf, so each
   // copy carries its own catch arm — and that arm runs ONLY when realpathSync throws, which needs an
-  // argv[1] that does not resolve. These twelve modules are imported for the FIRST time in this
+  // argv[1] that does not resolve. These standalone modules are imported for the FIRST time in this
   // process right here, so the guard runs under the broken entry and the arm executes IN-PROCESS;
   // a spawned child's executed lines never reach the coverage map.
   const realEntry = process.argv[1];
   process.argv[1] = join(REPOSITORY_ROOT, 'no-such-entry-point.mjs');
   try {
-    for (const relativePath of STANDALONE_MODULES) {
+    for (const relativePath of [...STANDALONE_MODULES, ...REMAINING_STANDALONE_MODULES]) {
       const exitCodeBefore = process.exitCode;
       const namespace = await import(pathToFileURL(join(REPOSITORY_ROOT, relativePath)).href);
       assert.equal(typeof namespace, 'object', `${relativePath}: import did not produce a module object`);
@@ -115,7 +133,7 @@ test('no swept production file keeps the lexical direct-run pattern', () => {
   // agent-workflow-kit/tools/direct-run.mjs is excluded by name because its bug-documentation
   // comment legitimately carries LEGACY_PATTERN.
   const findings = [];
-  for (const relativePath of [...SWEPT_MODULES, ...STANDALONE_MODULES]) {
+  for (const relativePath of [...SWEPT_MODULES, ...STANDALONE_MODULES, ...REMAINING_STANDALONE_MODULES]) {
     const source = readFileSync(join(REPOSITORY_ROOT, relativePath), 'utf8');
     const index = source.indexOf(LEGACY_PATTERN);
     if (index !== -1) findings.push(`${relativePath}:${source.slice(0, index).split('\n').length}`);
@@ -138,6 +156,23 @@ test('a converted CLI runs when its entry point is a symlink', () => {
     // marker on the EXPECTED stream is what separates "ran" from "silently did nothing" — any
     // stderr byte (a stray Node warning) would not.
     assert.match(result.stdout, /command index \(this list is read-only\)/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('a converted memory CLI runs when its entry point is a symlink', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'direct-run-memory-sweep-'));
+  try {
+    const target = join(REPOSITORY_ROOT, 'agent-workflow-memory/scripts/stamp-takeover.mjs');
+    const link = join(directory, 'stamp-takeover.mjs');
+    symlinkSync(target, link);
+    // An empty directory has no lineage stamps, so this argument is read-only. This is exactly the
+    // arm that would have been green on the broken form: status 0 alone cannot prove the CLI ran.
+    const result = spawnSync(process.execPath, [link, directory], { encoding: 'utf8' });
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /\[stamp-takeover\] rebootstrap: no stamp found/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

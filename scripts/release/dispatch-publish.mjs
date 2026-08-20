@@ -67,9 +67,9 @@
 // verify OUTSIDE the sandbox with the printed `--verify-only` command — NOT a failed release).
 // Dependency-free, Node >= 22 (global fetch). No side effects on import.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { runGitProcess } from './git-process.mjs';
 import { readSmokeReceipt, candidateSmokeViolation } from './smoke-candidate.mjs';
@@ -1029,7 +1029,18 @@ export const runDispatch = async (argv, deps = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+// Run main() only when executed directly, never on import. Compare by REAL path: an entry point
+// reached through a symlink resolves to its target, so a raw string compare reads the two as
+// different and the CLI never runs. realpathSync collapses the link so both sides match.
+const isDirectRun = (() => {
+  const invoked = process.argv[1];
+  if (!invoked) return false;
+  try {
+    return realpathSync(invoked) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+})();
 if (isDirectRun) {
   runDispatch(process.argv.slice(2)).then((code) => {
     process.exitCode = code;
