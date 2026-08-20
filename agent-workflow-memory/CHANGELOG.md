@@ -4,6 +4,36 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 4.5.1 — the deployed scripts decide direct-run by real path, so a symlinked entry point stops silently doing nothing (AD-102; ships with kit 5.11.1)
+
+**A script invoked through a symlink ran nothing and exited 0.** The guard that decides "was I run
+directly, or imported?" compared `import.meta.url` against `process.argv[1]` — a comparison that is
+false whenever the entry point reached the script through a symlink. The script then took the
+imported-as-a-module path, did no work, and reported success. The fix has been sitting in-repo,
+unpublished, since the delegation series' own measurement came back FAIL and the fix was correctly
+held back from a release it should not have justified (AD-101). It ships here as the plain bug fix it
+is.
+
+- **The six standalone scripts this package deploys inline a fail-closed realpath guard.** A deployed
+  script cannot reach the kit's shared direct-run leaf, so one lexical line becomes an 11-line IIFE
+  that resolves both sides through `realpath` and refuses to guess when it cannot: `references/scripts/`
+  `archive-changelog.mjs` · `archive-decisions.mjs` · `archive-issues.mjs` · `check-docs-size.mjs` ·
+  `migrate-gates.mjs`, plus `scripts/stamp-takeover.mjs`.
+- **No behaviour changes for a script invoked by its real path** — which is why this is a PATCH. What
+  changes is that invoking one through a symlink now does what you asked instead of nothing.
+
+Recorded size effect (reason: a standalone deployed script cannot reach the kit's shared direct-run
+leaf, so it inlines the realpath guard — one lexical line becomes an 11-line fail-closed IIFE):
+
+```text
+  agent-workflow-memory/references/scripts/archive-changelog.mjs: lines 546 -> 557 (raise)
+  agent-workflow-memory/references/scripts/archive-decisions.mjs: lines 1199 -> 1210 (raise)
+  agent-workflow-memory/references/scripts/archive-issues.mjs: lines 415 -> 426 (raise)
+  agent-workflow-memory/references/scripts/check-docs-size.mjs: lines 580 -> 591 (raise)
+  agent-workflow-memory/references/scripts/migrate-gates.mjs: lines 722 -> 733 (raise)
+  agent-workflow-memory: aggregate lines 10907 -> 10962 -> 10974 (raise)
+```
+
 ## 4.5.0 — the closing state block gets a canon rule, and its slot labels are declared English (AD-098; ships with kit 5.10.0)
 
 **Three slots that answer three different questions, or one restatement written three times.** The

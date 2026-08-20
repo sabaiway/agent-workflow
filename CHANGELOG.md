@@ -7,6 +7,47 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-20 — AD-102 the flow store becomes a facade over five leaves, and the direct-run guard fix finally ships (kit 5.11.1, memory 4.5.1; engine 2.1.0, codex-cli-bridge 3.5.0 and antigravity-cli-bridge 5.3.0 measured unchanged)
+
+Two halves ride this train, and only one of them is new work.
+
+The half that is not new is a bug fix that has been finished and deliberately unpublished for a day. A
+tool or script invoked through a symlink used to run nothing and exit 0, because the guard deciding
+"was I run directly?" compared `import.meta.url` against `process.argv[1]` — false through a symlink,
+so the module took its imported-as-a-library path, did no work, and reported success. Five of the
+affected sites are declared gates. The sweep converting all 66 sites to a realpath decision was
+complete on 2026-08-19, and the series it was produced by then measured its own delegation lane and
+came back FAIL against a pre-registered threshold (AD-101). The named fail lane held the commits back,
+which was right: a release that publishes work while the measurement funding it says FAIL is a silent
+pass in release clothing. What the fail lane never said was that the bug should stay live on every
+deployed host. It ships here, on the next regular train, as the plain bug fix it is — and the wave's
+verdict stays FAIL as printed, re-measured by nothing.
+
+The new half is the second tranche of the source-size cleanup campaign. `flow-store.mjs` was 827 lines
+carrying seven responsibilities behind one path, and 23 measured reads paid for that every time
+someone opened it. It keeps its path, its 29 export names and all 22 of its import sites, and becomes a
+50-line re-export facade over five leaves with one responsibility each and one-way edges — the pure
+chain-state walk, the pure subset budget, the single write door, the adoption mint and the
+bookkeeping-delta custody proof. Nothing on the public surface moved, which is why a split this large
+is a PATCH.
+
+The interesting part is what makes that claim checkable. A line-multiset conservation check compares
+the pre-split module against the union of the five leaves and expects exactly two lines to have gained
+a copy; it was then run twice more — against the unsplit module alone, and with one leaf deliberately
+omitted — so a comparator that cannot report loss could not pass for one that does. The three owning
+suites stay byte-identical and reproduce 169/169. A new layout suite pins the frozen surface, that
+every facade name is the SAME binding as its leaf's export, that the facade carries no logic at all,
+the size caps, and the one-way import direction including its negative edges. The recorded debt for
+`flow-store.mjs` is gone rather than moved: 827 to none.
+
+One process finding is worth carrying out of this release. The plan prescribed
+`git diff --quiet BASE..HEAD -- <dir>` to decide which packages bump — and in this harness that call
+returned exit 0 on a directory `git diff --stat` proves carries 47 changed files, while
+`merge-base --is-ancestor`'s exit 1 surfaced normally in the same batch. Read literally, the probe
+would have published the kit at its old version. The measurement moved to `git diff --name-only`,
+whose answer is stdout rather than an exit code. A probe that fails OPEN is worse than one that
+refuses.
+
 ## 2026-08-19 — AD-100 the fan-out half: routing that advises and never gates, a satellite that starts oriented, and a handoff that comes back delivered (kit 5.11.0; memory 4.5.0, engine 2.1.0, codex-cli-bridge 3.5.0 and antigravity-cli-bridge 5.3.0 unchanged)
 
 The delegation series had already shipped what a delegated thread RECORDS — the sub-task contract, the

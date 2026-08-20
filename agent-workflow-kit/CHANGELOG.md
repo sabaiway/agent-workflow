@@ -4,6 +4,67 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 5.11.1 — the flow store becomes a facade over five leaves, and the direct-run guard fix finally reaches you (AD-102)
+
+**A tool invoked through a symlink used to run nothing and exit 0 — and five of the affected tools are
+declared gates.** That fix has been sitting in-repo, unpublished, since the delegation series' own
+measurement came back FAIL and the fix was correctly held back from a release it should not have
+justified (AD-101). It ships here, on a regular train, because it is a bug fix and every deployed
+host still carries the broken form. Beside it, the flow store stops being one 827-line module.
+
+- **The direct-run entry guard now decides by REAL PATH, in all 66 frozen sites.** The lexical form
+  compared `import.meta.url` against `process.argv[1]`, which is false when the entry point is a
+  symlink — so the tool did nothing, said nothing, and exited 0. Every one of the 39 kit tools now
+  decides through the shipped `isDirectRun(import.meta.url)` leaf; the seven mirrored
+  `references/scripts` and `references/hooks` payload scripts, which cannot reach that leaf from a
+  deployed project, inline the same fail-closed realpath guard. `velocity-profile.mjs` also drops a
+  vestigial exported predicate with no importer. The new `test/direct-run-sweep.test.mjs` pins list
+  completeness, in-process import of all 39, the absence of the lexical byte pattern, and a SPAWNED
+  symlink smoke — observed red 3/3 before the fix, so the silent-pass class is proven dead rather than
+  believed dead.
+- **`tools/flow-store.mjs` keeps its path, its 29 export names and every one of its 22 import sites,
+  and becomes a 50-line re-export facade.** The flow-specific write side moved verbatim into five
+  leaves with one responsibility each and one-way edges: `flow-chain-state.mjs` (91, the pure chain
+  walk and the prior-terminal reference validator) · `flow-subset-budget.mjs` (81, the pure
+  Decision-7/8 counting-context budget) · `flow-append.mjs` (309, the store's ONE write door, keeping
+  the locked subset-attempt factory beside the lane it is the only sanctioned entrance to) ·
+  `flow-adoption-mint.mjs` (70) · `flow-delta-proof.mjs` (307, the bookkeeping-delta custody proof).
+  Nothing about the public surface moved, so nothing you import changes.
+- **The split is proven, not asserted.** A line-multiset conservation check compares the pre-split
+  module against the union of the five leaves and expects exactly two lines to have gained a copy —
+  and it was run twice more, against the unsplit module alone and with one leaf omitted, so that a
+  comparator which cannot report loss could not pass for one that does. The three owning suites are
+  BYTE-IDENTICAL and reproduce 169/169; the ten named suites show an empty `git diff --name-only`.
+  `test/flow-store-layout.test.mjs` (not shipped) now pins the frozen surface, that every facade name
+  is the SAME binding as its leaf's export, that the facade carries no logic at all, the size caps,
+  and the one-way import direction including its negative edges.
+- **`test/package-content.test.mjs` moves its payload pin from 222 to 227 files** and names the five
+  leaves: the facade imports all five, so a leaf falling out of the published tarball would break
+  every append at load, and the pin is what says so.
+
+Recorded size effect, reason `tranche 2: flow-store split`:
+
+```text
+  agent-workflow-kit/test/package-content.test.mjs: lines 583 -> 600 (raise)
+  agent-workflow-kit/tools/flow-store.mjs: lines 827 -> none
+  agent-workflow-kit: aggregate lines 124960 -> 125315 (raise)
+```
+
+Recorded size effect of the direct-run sweep that ships with it (reason: a standalone deployed script
+cannot reach the kit's shared direct-run leaf, so it inlines the realpath guard — one lexical line
+becomes an 11-line fail-closed IIFE; the 39 converted tool guards themselves only shrink):
+
+```text
+  agent-workflow-kit/references/hooks/gate-approve.mjs: lines 559 -> 570 (raise)
+  agent-workflow-kit/references/hooks/state-block-guard.mjs: lines 425 -> 437 (raise)
+  agent-workflow-kit/references/scripts/archive-changelog.mjs: lines 546 -> 557 (raise)
+  agent-workflow-kit/references/scripts/archive-decisions.mjs: lines 1199 -> 1210 (raise)
+  agent-workflow-kit/references/scripts/archive-issues.mjs: lines 415 -> 426 (raise)
+  agent-workflow-kit/references/scripts/check-docs-size.mjs: lines 580 -> 591 (raise)
+  agent-workflow-kit/references/scripts/migrate-gates.mjs: lines 722 -> 733 (raise)
+  agent-workflow-kit: aggregate lines 124726 -> 124805 -> 124925 -> 124960 (raise)
+```
+
 ## 5.11.0 — the fan-out half: which vehicle carries a sub-task, what a satellite is told, and what its handoff brings back (AD-100)
 
 **A delegated thread could be recorded end to end, and the two questions around it still had no
