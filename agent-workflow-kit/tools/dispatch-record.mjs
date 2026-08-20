@@ -12,7 +12,7 @@
 //
 // The record family (D3, versioned + closed): pre-registration · dispatch · return · fold ·
 // observation · degrade. Fail-closed in BOTH directions — unknown schema, unknown kind, a missing
-// field, a malformed field and an unknown EXTRA field are all refusals (the flow-record.mjs:22-24
+// field, a malformed field and an unknown EXTRA field are all refusals (the flow-record.mjs header's
 // discipline): the per-record canonical digest is the record's identity, so a stray key would fork
 // it.
 //

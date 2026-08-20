@@ -193,6 +193,14 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/flow-append.mjs',
       'tools/flow-adoption-mint.mjs',
       'tools/flow-delta-proof.mjs',
+      // and the five leaves the flow-record facade now composes (baseline-practices tranche 3): the
+      // facade imports all five, so a leaf falling out of the payload would leave EVERY flow consumer
+      // — 16 runtime modules — unable to load — pinned by NAME, not only by the count
+      'tools/flow-vocabulary.mjs',
+      'tools/flow-record-shape.mjs',
+      'tools/flow-record-identity.mjs',
+      'tools/flow-legality.mjs',
+      'tools/flow-finding-manifest.mjs',
       // the closed delegation-record vocabulary (delegation Plan 1 Phase 1) — the record family, the
       // exec-return schema, the sub-task contract header and the metric byte domains the delegation
       // store and engine consume; pinned by NAME for the same reason
@@ -585,7 +593,16 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       keeps its path as a re-export facade, so no consumer import site moved. All five are
     //       pinned by NAME above; the new test/flow-store-layout.test.mjs suite is outside files[]
     //       and never enters the tarball.
-    assert.equal(packed.length, 227, `tarball file count drifted (${packed.length} ≠ 227)`);
+    // 232 = 227 + the five leaves the flow-record facade now composes (baseline-practices tranche 3):
+    //       tools/flow-vocabulary.mjs (the closed kind/purpose sets, the transition table and the
+    //       shared form bindings) + tools/flow-record-shape.mjs (the per-kind field shapes and
+    //       validateFlowRecord) + tools/flow-record-identity.mjs (keys, tree identity, the canonical
+    //       digest and the projection) + tools/flow-legality.mjs (the two raw-order legality walks) +
+    //       tools/flow-finding-manifest.mjs (the wrapper manifest and its fatal-UTF-8 decoder).
+    //       flow-record.mjs keeps its path as a re-export facade, so none of the 30 import sites
+    //       moved. All five are pinned by NAME above; the new test/flow-record-layout.test.mjs suite
+    //       is outside files[] and never enters the tarball.
+    assert.equal(packed.length, 232, `tarball file count drifted (${packed.length} ≠ 232)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
