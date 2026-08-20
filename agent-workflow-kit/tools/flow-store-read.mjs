@@ -1,8 +1,8 @@
 // flow-store-read.mjs — the read half of the flow store (flow-orchestration, Plan 3 Phase 3):
 // common-dir path resolution, the fail-closed reader, the race-free no-follow file read, and the
 // canonical owning-worktree identity. This module OWNS no write API: the append surface and the
-// lock/CAS stay behind flow-store.mjs (which imports and RE-EXPORTS everything here, so every
-// existing consumer keeps its import site), and the procedures advisor imports ONLY this module.
+// lock/CAS discipline live in flow-append.mjs; flow-store.mjs re-exports the EIGHT store-surface
+// names below (never everything here), and the procedures advisor imports ONLY this module.
 // The no-follow read primitive lives in the fs-read-nofollow.mjs LEAF (re-exported here under the
 // same idiom); the transitive read graph is pinned write-module-free and acyclic by
 // test/read-graph-purity.test.mjs (FLOW-READ-GRAPH-PURITY).
@@ -17,7 +17,7 @@ import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 export { lstatNoFollowRead, describeNonRegular, readRegularFileNoFollow, readFileBytesNoFollow } from './fs-read-nofollow.mjs';
 
 export const FLOW_STORE_STOP = 'FLOW_STORE_STOP';
-// The ONE typed-STOP factory for the store's read AND write halves (flow-store.mjs imports it).
+// The ONE typed-STOP factory for the store's read AND write halves (the write leaves import it).
 export const flowStoreStop = (message) => Object.assign(new Error(`[agent-workflow-kit] ${message}`), { name: 'FlowStoreStop', code: FLOW_STORE_STOP });
 
 export const FLOW_STORE_BASENAME = 'agent-workflow-flow.jsonl';

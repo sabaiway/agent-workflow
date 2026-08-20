@@ -26,7 +26,7 @@
 // Plan-4 addition (Decision 7/8 — NOT a design-§5 seed member; the drift-guard test records it as
 // the one post-seed addition): the store-global kind "subset-attempt" — the --pre-review subset
 // hard-stop counter. Key {planId, cycle, stepId, foldBatch, subsetDigest}; attemptIndex is the
-// monotonic per-key index (the locked append factory in flow-store.mjs computes it under the
+// monotonic per-key index (the locked append factory in flow-append.mjs computes it under the
 // lock); `diagnosis` rides ONLY attemptIndex >= 3 (Decision 8 — the recorded, self-servable
 // continuation past two reds; never a wait-for-maintainer).
 //

@@ -185,6 +185,14 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/flow-check-cores.mjs',
       'tools/flow-check-rungs.mjs',
       'tools/flow-check-git-lane.mjs',
+      // and the five leaves the flow-store facade now composes (baseline-practices tranche 2): the
+      // facade imports all five, so a leaf falling out of the payload would break EVERY append at
+      // load time — pinned by NAME, not only by the count, exactly like the flow-check halves
+      'tools/flow-chain-state.mjs',
+      'tools/flow-subset-budget.mjs',
+      'tools/flow-append.mjs',
+      'tools/flow-adoption-mint.mjs',
+      'tools/flow-delta-proof.mjs',
       // the closed delegation-record vocabulary (delegation Plan 1 Phase 1) — the record family, the
       // exec-return schema, the sub-task contract header and the metric byte domains the delegation
       // store and engine consume; pinned by NAME for the same reason
@@ -568,7 +576,16 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       re-attestation, the observation-domain classification). Both are pinned by NAME above;
     //       their colocated *.test.mjs siblings (the integration E2E included) are stripped by
     //       files[] and never enter the tarball.
-    assert.equal(packed.length, 222, `tarball file count drifted (${packed.length} ≠ 222)`);
+    // 227 = 222 + the five leaves the flow-store facade now composes (baseline-practices tranche 2):
+    //       tools/flow-chain-state.mjs + tools/flow-subset-budget.mjs (the two PURE leaves — the
+    //       chain-state walk with the generic reference validator, and the Decision-7/8 counting
+    //       budget) + tools/flow-append.mjs (the ONE write door: the lane over store-append.mjs, the
+    //       semantic preflight, the run-lock lanes and the locked subset-attempt factory) +
+    //       tools/flow-adoption-mint.mjs + tools/flow-delta-proof.mjs (the two mints). flow-store.mjs
+    //       keeps its path as a re-export facade, so no consumer import site moved. All five are
+    //       pinned by NAME above; the new test/flow-store-layout.test.mjs suite is outside files[]
+    //       and never enters the tarball.
+    assert.equal(packed.length, 227, `tarball file count drifted (${packed.length} ≠ 227)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

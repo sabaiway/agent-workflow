@@ -1,6 +1,6 @@
 // store-append.mjs — the PARAMETERIZED lock/CAS serialized-append leaf (delegation Plan 1, Phase 2,
-// D12). Extracted VERBATIM from flow-store.mjs, which is now its first caller; the delegation store
-// (dispatch-store.mjs) is the second. No CLI, no side effects on import.
+// D12). Extracted VERBATIM from the flow store, whose write door flow-append.mjs is now its first
+// caller; the delegation store (dispatch-store.mjs) is the second. No CLI, no side effects on import.
 //
 // Why a leaf rather than an import of the flow appender: `appendFlowRecordWithPreflight` hardwires
 // the AW_FLOW_STORE seam and validateFlowRecord, so a second store could only reuse it by pretending
