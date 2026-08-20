@@ -7,6 +7,37 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-20 — AD-103 the record vocabulary becomes a facade over five leaves (kit 5.11.2; memory 4.5.1, engine 2.1.0, codex-cli-bridge 3.5.0 and antigravity-cli-bridge 5.3.0 measured unchanged)
+
+One thing rides this train: tranche 3 of the source-size cleanup campaign. `flow-record.mjs` was the
+family's most expensive module to read — 795 lines, 13 measured reads — and it was pure form all the
+way down, with eleven of its own section rules already marking where it wanted to be cut. It keeps
+its path and its 29 export names, all 30 import sites stay exactly as they were, and it becomes a
+55-line re-export facade over `flow-vocabulary.mjs` (96), `flow-record-shape.mjs` (283),
+`flow-record-identity.mjs` (115), `flow-legality.mjs` (248) and `flow-finding-manifest.mjs` (70).
+Nothing on the public surface moved, which is why a split this large is a PATCH.
+
+Tranche 2 proved its conservation by line multiset. A multiset cannot see a reordering, so this one
+proves both: per leaf, the normalised line SEQUENCE must equal the concatenation of its declared
+source ranges in declared order, and over the union the multiset must equal the pre-split module.
+Across the 587 executable lines both differences came back empty — and because a comparator nobody
+tested is a claim about a script rather than about the code, it was run three more times: against the
+unsplit module alone, with one leaf omitted, and with one line duplicated, so it is shown able to
+report equality, loss and excess before its verdict is believed.
+
+The other decision worth carrying forward inverts tranche 2's. There, shared one-liners were copied
+into each leaf. Here the five shared names are the record family's grammars — `isHex64`/`HEX64_RE` IS
+the 64-hex digest grammar every consumer takes by reference, and `refuse` IS the shape of a refusal —
+so they live once, off-surface on the lowest leaf, with the layout suite pinning that set exactly. A
+copy would be the only way two of them could ever drift.
+
+The council converged in one round, and the reason is legible: the plan named the leaves, their
+source ranges and the line arithmetic before execution wrote a file, so the review had a claim to
+check rather than a design to finish. One backend returned a bare `Verdict: ship` with no citation;
+a bare verdict weighs nothing against a grounded one, so it was pushed into a narrow advisory consult
+on its own session instead of being counted as a second opinion, and came back with six confirmations
+each carrying a `file:line`.
+
 ## 2026-08-20 — AD-102 the flow store becomes a facade over five leaves, and the direct-run guard fix finally ships (kit 5.11.1, memory 4.5.1; engine 2.1.0, codex-cli-bridge 3.5.0 and antigravity-cli-bridge 5.3.0 measured unchanged)
 
 Two halves ride this train, and only one of them is new work.

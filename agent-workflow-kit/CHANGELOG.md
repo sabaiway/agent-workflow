@@ -4,6 +4,56 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 5.11.2 — the record vocabulary becomes a facade over five leaves (AD-103)
+
+**Nothing you import changes, and that is the whole claim — now certified rather than asserted.**
+`tools/flow-record.mjs` was the kit's most expensive module to read: 795 lines holding eleven of its
+own section seams, from the closed record vocabulary through the field shapes, the identity family,
+the two legality walks and the wrapper finding manifest. It keeps its path and its 29 export names,
+and becomes a 55-line re-export facade over five single-responsibility leaves.
+
+- **`tools/flow-record.mjs` keeps its path, its 29 export names and every one of its 30 import
+  sites.** The internals moved verbatim into `flow-vocabulary.mjs` (96, the lowest leaf: the closed
+  kinds, purposes, terminal lanes, seed assignment and transition table) · `flow-record-shape.mjs`
+  (283, the closed per-kind field shapes and `validateFlowRecord`) · `flow-record-identity.mjs` (115,
+  every answer to "what identifies this record or this set" — keys, tree identity, the canonical
+  digest, the owner-scoped projection) · `flow-legality.mjs` (248, the two raw-order legality walks)
+  · `flow-finding-manifest.mjs` (70). The edges run one way and the family is acyclic by
+  construction; no leaf reaches a write module, so "pure form" is a structural pin instead of a
+  header sentence.
+- **Conservation is certified by ORDER as well as by count.** A comparator normalises both sides
+  identically and then checks, per leaf, that its line SEQUENCE equals the concatenation of its
+  declared source ranges in declared order — a reordering is caught, not just a loss — AND that the
+  multiset over the union of the five leaves equals the pre-split module. Over the 587 executable
+  lines: five sequences EQUAL, the difference EMPTY in both directions. It was then run three more
+  times — against the unsplit module alone, with one leaf omitted, and with one line duplicated — so
+  a comparator that could not report loss or excess could not pass for one that does.
+- **The five shared grammars live in exactly one place.** `HEX64_RE`, `isHex64`, `isPlainObject`,
+  `isNonEmptyString` and `refuse` are exported off-surface from the lowest leaf and used by the
+  others. They are the record family's named grammars — `isHex64` IS the 64-hex digest grammar every
+  consumer takes by reference — and a per-leaf copy is the only way two of them could ever drift.
+  The layout suite pins that off-surface set exactly, so it cannot widen unnoticed.
+- **The owning suite never moved.** `tools/flow-record.test.mjs` is BYTE-IDENTICAL and reproduces
+  58/58; the fifteen named suites show an empty `git diff --name-only` in the worktree and under
+  `--cached`. `test/flow-record-layout.test.mjs` (not shipped) pins the frozen 29-name surface, the
+  facade-declared owner of every name, that the facade carries no logic at all, the size caps, and
+  the one-way edges including their negative direction — four of its five cases were red-proofed on
+  the unsplit tree before the split existed.
+- **`test/package-content.test.mjs` moves its payload pin from 227 to 232 files** and names the five
+  leaves: the facade imports all five, so a leaf falling out of the published tarball would break
+  every flow read at load, and the pin is what says so.
+- **One consumer line changed in the whole tree, and it is a comment.** `dispatch-record.mjs:15`
+  cited the fail-closed rule by line number (`flow-record.mjs:22-24`); the split falsified that
+  reference, so it now names the rule semantically.
+
+Recorded size effect, reason `tranche 3: flow-record split`:
+
+```text
+  agent-workflow-kit/test/package-content.test.mjs: lines 600 → 617 (raise)
+  agent-workflow-kit/tools/flow-record.mjs: lines 795 → none
+  agent-workflow-kit: aggregate lines 125315 → 125669 (raise)
+```
+
 ## 5.11.1 — the flow store becomes a facade over five leaves, and the direct-run guard fix finally reaches you (AD-102)
 
 **A tool invoked through a symlink used to run nothing and exit 0 — and five of the affected tools are
