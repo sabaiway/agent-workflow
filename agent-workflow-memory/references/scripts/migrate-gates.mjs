@@ -28,7 +28,7 @@
 
 import { existsSync, lstatSync, readFileSync, writeFileSync, renameSync, unlinkSync, realpathSync } from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
-import { pathToFileURL, fileURLToPath } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 
@@ -718,5 +718,16 @@ export const main = (argv = process.argv.slice(2), io = {}) => {
   }
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+// Run main() only when executed directly, never on import. Compare by REAL path: an entry point
+// reached through a symlink resolves to its target, so a raw string compare reads the two as
+// different and the CLI never runs. realpathSync collapses the link so both sides match.
+const isDirectRun = (() => {
+  const invoked = process.argv[1];
+  if (!invoked) return false;
+  try {
+    return realpathSync(invoked) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+})();
 if (isDirectRun) process.exitCode = main();

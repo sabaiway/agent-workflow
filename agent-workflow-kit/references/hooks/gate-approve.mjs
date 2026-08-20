@@ -85,7 +85,7 @@
 
 import { readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 export const HOOK_EVENT_NAME = 'PreToolUse';
 export const BASH_TOOL_NAME = 'Bash';
@@ -555,5 +555,16 @@ export const main = async () => {
   return EXIT_OK;
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+// Run main() only when executed directly, never on import. Compare by REAL path: an entry point
+// reached through a symlink resolves to its target, so a raw string compare reads the two as
+// different and the CLI never runs. realpathSync collapses the link so both sides match.
+const isDirectRun = (() => {
+  const invoked = process.argv[1];
+  if (!invoked) return false;
+  try {
+    return realpathSync(invoked) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+})();
 if (isDirectRun) main().then((code) => process.exit(code));

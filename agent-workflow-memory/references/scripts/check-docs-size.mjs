@@ -25,9 +25,9 @@
 //   --quiet            print only failures (and final summary)
 
 import { readFile, writeFile, readdir, stat, rename, rm } from 'node:fs/promises';
-import { existsSync, lstatSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { dirname, resolve, relative, join, basename, sep } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -571,7 +571,18 @@ export const runCli = async (argv, deps = {}) => {
   return result(errorCount > 0 && !flags.report ? 1 : 0);
 };
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+// Run main() only when executed directly, never on import. Compare by REAL path: an entry point
+// reached through a symlink resolves to its target, so a raw string compare reads the two as
+// different and the CLI never runs. realpathSync collapses the link so both sides match.
+const isDirectRun = (() => {
+  const invoked = process.argv[1];
+  if (!invoked) return false;
+  try {
+    return realpathSync(invoked) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+})();
 if (isDirectRun) {
   const { code, stdout, stderr } = await runCli(process.argv.slice(2));
   if (stdout) process.stdout.write(stdout);

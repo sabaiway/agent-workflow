@@ -37,7 +37,8 @@
 // fields (`decision`, `continue`, `stopReason`, `hookSpecificOutput`) are deliberately never emitted:
 // blocking the stop would re-enter the model on a message already sent to the reader.
 
-import { pathToFileURL } from 'node:url';
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 export const HOOK_EVENT_NAME = 'Stop';
 const EXIT_OK = 0;
@@ -419,7 +420,18 @@ export const main = async ({
   return EXIT_OK;
 };
 
+// Run main() only when executed directly, never on import. Compare by REAL path: an entry point
+// reached through a symlink resolves to its target, so a raw string compare reads the two as
+// different and the CLI never runs. realpathSync collapses the link so both sides match.
+const isDirectRun = (() => {
+  const invoked = process.argv[1];
+  if (!invoked) return false;
+  try {
+    return realpathSync(invoked) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+})();
 // `process.exitCode`, never `process.exit()`: an immediate exit can truncate a pending stdout write
 // to a pipe, and that single warning is the entire product of this hook.
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isDirectRun) main().then((code) => { process.exitCode = code; });
