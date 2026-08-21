@@ -137,13 +137,19 @@ describe('agent-rules-lens-priors — append-only prior store shape', () => {
   });
 
   it('the OUTGOING body of the previous release IS the newest entry — exact normalized equality', () => {
-    // The current fragment differs from the IMMEDIATELY-previous release's body by EXACTLY the
-    // reworded writer-economy sentence-suffix on the cost-lanes line (strip-the-kit: the
-    // ledger-triad example died with the ledger) — so the exact expected outgoing body is
-    // computable, and a typo in the prior entry goes red instead of sliding past a spot-check.
-    const OLD_WRITER_ECONOMY = " **Writer economy:** a stage's repeated WRITER commands batch into ONE invocation — the review-ledger triad rides one batched write, other stage writers combine via one launcher per stage; never one writer call at a time (each write is its own prompt).";
-    const outgoing = normalize(fragment.replace(/ \*\*Writer economy:\*\*[^\n]*/, OLD_WRITER_ECONOMY));
-    assert.notEqual(outgoing, normalize(fragment), 'sanity: the swap actually changes the sentence');
+    // The current fragment differs from the IMMEDIATELY-previous release's body by EXACTLY the two
+    // per-Step clauses the planning-canon rewrite turned into per-row (ledger rows ARE the steps;
+    // one Verification carries the commands) — so the exact expected outgoing body is computable,
+    // and a typo in the prior entry goes red instead of sliding past a spot-check.
+    const outgoing = normalize(
+      fragment
+        .replace(
+          'A ledger row carries its path and anchor, and Verification carries the exact commands (the plan-shape canon)',
+          'A Step still carries its exact paths + commands (the plan-structure / self-review canon)',
+        )
+        .replace('the exhaustive per-row review runs against', 'the exhaustive per-Step review runs against'),
+    );
+    assert.notEqual(outgoing, normalize(fragment), 'sanity: the swap actually changes the body');
     assert.ok(outgoing.includes(CURRENT_INTRO), 'the outgoing body carries the provenance intro (post-E4)');
     assert.equal(priors[priors.length - 1], outgoing, 'the newest prior byte-equals the pre-strip fragment (normalized)');
   });

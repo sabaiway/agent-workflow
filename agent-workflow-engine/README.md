@@ -1,7 +1,7 @@
 # @sabaiway/agent-workflow-engine
 
 **The canonical home of the `agent-workflow` planning methodology.** It owns the
-methodology *text* — the Plan → Phase → Step vocabulary, the plan-file lifecycle
+methodology *text* — the capped plan shape (goal and boundary, module ledger, verification), the plan-file lifecycle
 (`docs/plans/*.md`, ephemeral, never committed), the `queue.md` series index, the mandatory
 final **Phase: Cleanup**, the **orchestration-recipe** vocabulary (Solo / Reviewed / Council /
 Delegated), the bounded slot fragments the family kit injects into a deployed project's
@@ -39,9 +39,9 @@ you install and use the **kit** (`@sabaiway/agent-workflow-kit`), which injects 
 methodology slot into your project's `AGENTS.md`. Install the engine standalone when you want
 the canonical methodology reference on disk:
 
-- [`references/planning.md`](references/planning.md) — the **full methodology**: the
-  Plan → Phase → Step vocabulary, the plan-file lifecycle, the `queue.md` series index, the
-  mandatory final **Phase: Cleanup**, and the plan-then-execute split.
+- [`references/planning.md`](references/planning.md) — the **plan canon**: the capped plan shape
+  (Goal and boundary · Module ledger · Verification), the subtraction rubric, the plan-file
+  lifecycle, the `queue.md` series index, and the mandatory final **Phase: Cleanup**.
 - [`references/methodology-slot.md`](references/methodology-slot.md) — the **bounded**
   methodology fragment the composition root injects into a deployed `AGENTS.md` (a short summary +
   pointer, kept under the entry point's line cap).

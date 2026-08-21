@@ -1,6 +1,6 @@
 // grounding.test.mjs — the AD-038 facts assembler: slice exactness (byte-for-byte vs the source
-// section), the plan heading policy (required-missing STOP, optional-absent OK, duplicate STOP),
-// the writer-honesty --out guard (tracked / in-repo-not-ignored refusal), and the byte budget
+// section), the plan heading policy (the three canon headings, each required; missing or duplicate
+// STOP), the writer-honesty --out guard (tracked / in-repo-not-ignored refusal), and the byte budget
 // (AGY_MAX_PROMPT_BYTES − --reserve-bytes; loud tail-trim keeps the final wrapper prompt under
 // the ceiling).
 
@@ -24,28 +24,26 @@ const CONSTRAINTS_SECTION = [
 
 const AGENTS_MD = `# Project\n\nintro prose\n\n${CONSTRAINTS_SECTION}\n## Quick Commands\n\nnone\n`;
 
+// The canon plan shape (engine planning.md): three literal headings, then Cleanup.
 const PLAN_MD = [
   '# Plan: sample',
   '',
-  '## Context',
+  '## Goal and boundary',
   '',
-  'why',
+  'the outcome. Non-goals: X, Y.',
   '',
-  '## Approach',
+  '## Module ledger',
   '',
-  'the shape. **What we are NOT doing:** X, Y.',
-  '',
-  '## Decisions (locked)',
-  '',
-  '- fixture is normative',
-  '',
-  '## Phase 1: work',
-  '',
-  'steps',
+  'c1 | create | src/a.mjs | exports a() | 200 | src/b.mjs:b',
+  'total: 10 → 12 lines',
   '',
   '## Verification',
   '',
   '1. gates green',
+  '',
+  '## Phase: Cleanup',
+  '',
+  'delete the plan',
   '',
 ].join('\n');
 
@@ -93,30 +91,28 @@ describe('grounding --constraints — exactly-one-match slice, byte-for-byte', (
   });
 });
 
-describe('grounding --plan — the canonical §7 heading policy', () => {
-  it('extracts Approach + Decisions (locked) + Verification, whole and verbatim', () => {
+describe('grounding --plan — the canon heading policy', () => {
+  it('extracts Goal and boundary + Module ledger + Verification, whole and verbatim', () => {
     const root = makeDir();
     const r = run(root, ['--plan', 'plan.md']);
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /^## Approach\n/m);
-    assert.match(r.stdout, /What we are NOT doing:\*\* X, Y\./, 'the NOT-doing text rides inside Approach');
-    assert.match(r.stdout, /^## Decisions \(locked\)\n/m);
-    assert.match(r.stdout, /fixture is normative/);
+    assert.match(r.stdout, /^## Goal and boundary\n/m);
+    assert.match(r.stdout, /Non-goals: X, Y\./, 'the non-goals ride inside Goal and boundary');
+    assert.match(r.stdout, /^## Module ledger\n/m);
+    assert.match(r.stdout, /total: 10 → 12 lines/, 'the ledger total line rides inside the ledger');
     assert.match(r.stdout, /^## Verification\n/m);
     assert.match(r.stdout, /gates green/);
-    assert.doesNotMatch(r.stdout, /## Phase 1/, 'phase bodies are not decision-bearing — not extracted');
-    assert.doesNotMatch(r.stdout, /## Context/, 'context is not extracted');
+    assert.doesNotMatch(r.stdout, /## Phase: Cleanup/, 'Cleanup is procedure, not decision-bearing — not extracted');
+    assert.doesNotMatch(r.stdout, /delete the plan/);
   });
 
-  it('optional Decisions (locked) absent → OK, the other two still extracted', () => {
-    const root = makeDir({ plan: PLAN_MD.replace('## Decisions (locked)\n\n- fixture is normative\n\n', '') });
+  it('a retired "## Approach" section is neither required nor extracted — the canon headings decide', () => {
+    const root = makeDir({ plan: `${PLAN_MD}\n## Approach\n\nfree prose the canon deleted\n` });
     const r = run(root, ['--plan', 'plan.md']);
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /^## Approach\n/m);
-    assert.match(r.stdout, /^## Verification\n/m);
-    assert.doesNotMatch(r.stdout, /Decisions \(locked\)/);
+    assert.doesNotMatch(r.stdout, /Approach|free prose/);
   });
 
   it('--plan outside the work tree → loud STOP, nothing read into the payload (review-grounding-r04-major-01: the tier auto-allows this tool)', () => {
@@ -130,20 +126,23 @@ describe('grounding --plan — the canonical §7 heading policy', () => {
     assert.equal(r.stdout, '', 'no outside-tree content reaches stdout');
   });
 
-  it('required section missing (no Verification) → STOP', () => {
-    const root = makeDir({ plan: PLAN_MD.replace('## Verification', '## Checks') });
-    const r = run(root, ['--plan', 'plan.md']);
-    rmSync(root, { recursive: true, force: true });
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /required section "## Verification" not found/);
+  it('every canon section is required — a plan missing any one of the three STOPs, nothing emitted', () => {
+    for (const heading of ['## Goal and boundary', '## Module ledger', '## Verification']) {
+      const root = makeDir({ plan: PLAN_MD.replace(heading, '## Other') });
+      const r = run(root, ['--plan', 'plan.md']);
+      rmSync(root, { recursive: true, force: true });
+      assert.equal(r.code, 1, heading);
+      assert.match(r.stderr, new RegExp(`required section "${heading}" not found`));
+      assert.equal(r.stdout, '', heading);
+    }
   });
 
-  it('duplicate heading (two Approach) → STOP even though it is required-present', () => {
-    const root = makeDir({ plan: `${PLAN_MD}\n## Approach\n\nsecond\n` });
+  it('duplicate heading (two Module ledger) → STOP even though it is required-present', () => {
+    const root = makeDir({ plan: `${PLAN_MD}\n## Module ledger\n\nsecond\n` });
     const r = run(root, ['--plan', 'plan.md']);
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /"## Approach" appears 2 times/);
+    assert.match(r.stderr, /"## Module ledger" appears 2 times/);
   });
 
   it('--constraints and --plan compose (constraints first, then the plan sections)', () => {
@@ -151,7 +150,7 @@ describe('grounding --plan — the canonical §7 heading policy', () => {
     const r = run(root, ['--constraints', '--plan', 'plan.md']);
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.code, 0, r.stderr);
-    assert.ok(r.stdout.indexOf('Hard Constraints') < r.stdout.indexOf('## Approach'));
+    assert.ok(r.stdout.indexOf('Hard Constraints') < r.stdout.indexOf('## Goal and boundary'));
   });
 });
 
@@ -240,7 +239,7 @@ describe('grounding --autonomy — effective policy from the git-top docs/ai/aut
     assert.equal(composed.code, 0, composed.stderr);
     const atConstraints = composed.stdout.indexOf('Hard Constraints');
     const atAutonomy = composed.stdout.indexOf('## Autonomy policy');
-    const atPlan = composed.stdout.indexOf('## Approach');
+    const atPlan = composed.stdout.indexOf('## Goal and boundary');
     assert.ok(atConstraints !== -1 && atAutonomy !== -1 && atPlan !== -1, 'all three sections present');
     assert.ok(atConstraints < atAutonomy && atAutonomy < atPlan, 'constraints → autonomy → plan');
   });

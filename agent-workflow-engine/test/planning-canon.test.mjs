@@ -5,133 +5,78 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const PLANNING = join(ROOT, 'references', 'planning.md');
+const planning = readFileSync(join(ROOT, 'references', 'planning.md'), 'utf8');
+const flat = planning.replace(/\s+/g, ' ');
 
-const planning = readFileSync(PLANNING, 'utf8');
-
-const sectionOf = (text, headingPattern) => {
-  const match = text.match(headingPattern);
-  if (!match) return '';
-  const rest = text.slice(match.index);
-  const next = rest.slice(match[0].length).search(/\n## /);
-  return next === -1 ? rest : rest.slice(0, match[0].length + next);
-};
-
-describe('planning.md — right-altitude/code-grounded canon', () => {
-  it('carries §9 with all three discipline elements', () => {
-    assert.match(planning, /^## 9\..*right-altitude.*code-grounded folds/im);
-
-    const section9 = sectionOf(planning, /^## 9\..*$/im);
-    assert.match(section9, /altitude/i);
-    assert.match(section9, /invariant/i);
-    assert.match(section9, /acceptance/i);
-    assert.match(section9, /fold by code/i);
-    assert.match(section9, /`file:line`/);
-    assert.match(section9, /convergence/i);
-    assert.match(section9, /raise/i);
-    assert.match(section9, /Execute/);
-  });
-
-  it('adds the code-grounded §8 self-review bullet', () => {
-    const section8 = sectionOf(planning, /^## 8\..*$/im);
-
-    assert.match(section8, /file:line/);
-    assert.match(section8, /altitude/i);
-  });
-
-  // D-17 U2 — the §8 twin of the procedures.md Draft rung (the checklist the Self-review step runs).
-  it('checklist-carries-file-responsibility-line: §8 requires a named file + single responsibility, conditional on a DECLARED cap', () => {
-    const flat = sectionOf(planning, /^## 8\..*$/im).replace(/\s+/g, ' ');
-    assert.match(flat, /Every Step that CREATES a file names that file and its single responsibility/);
-    assert.match(flat, /declares a source-size cap, the planned layout fits it/, 'the cap clause is conditional on the project declaring one');
-    assert.match(flat, /no declared cap → no invented limit/, 'a project without the practice gets no hallucinated limit');
-    assert.match(flat, /cheap lever/, 'states WHY plan time is where the layout is decided');
-  });
-
-  // AD-038: the optional Decisions-(locked) home for review-settled, executor-binding decisions —
-  // one §7 structure row + one §8 checklist mention (grounding.mjs extracts the section by this
-  // exact heading, so the heading string is load-bearing).
-  it('carries the optional §7 "Decisions (locked)" row + its §8 checklist mention (AD-038)', () => {
-    // §7's skeleton lives inside a code fence whose lines start with `## `, so sectionOf would
-    // truncate it — pin the exact row line on the whole document instead (the heading string is
-    // load-bearing: grounding.mjs extracts the section by trimmed-line equality).
-    assert.match(planning, /^## Decisions \(locked\)\s+← optional: .*re-litigate/m, 'the §7 skeleton row: exact heading, optional, executor-binding');
-    assert.ok(
-      planning.indexOf('## Decisions (locked)') > planning.indexOf('## Approach             ←'),
-      'the row sits after Approach in the §7 skeleton',
-    );
-    const section8 = sectionOf(planning, /^## 8\..*$/im);
-    assert.match(section8, /Decisions \(locked\)/, 'the §8 checklist routes settled decisions there');
-    assert.match(section8, /never re-litigated/i, 'binding for the executor');
-  });
-
-  // A1 (process-fidelity): §6 is the home of the plan-then-execute boundary, so the
-  // ExitPlanMode-≠-execute clause + the §6↔Definition-of-Done disambiguation are pinned here (NOT §9,
-  // so A1 is intentionally not a lens-mirror token — see lens-mirror.test.mjs).
-  it('carries the §6 ExitPlanMode-≠-execute boundary (A1)', () => {
-    const section6 = sectionOf(planning, /^## 6\..*$/im);
-    assert.match(section6, /ExitPlanMode/);
-    assert.match(section6, /authoriz/i);
-    assert.match(section6, /plan-execution/);
-    assert.match(section6, /deliberate/i);
-    // Pin the load-bearing SEMANTICS, not just the keywords — so the clause can't keep the words while
-    // losing "authorizes the plan only / not a licence to execute / emit the cold-start prompt".
-    assert.match(section6, /PLAN only/);
-    assert.match(section6, /cold-start execution prompt/i);
-    assert.match(section6, /licence to execute|license to execute|not a licence|not a license/i);
-  });
-
-  // A3 + B4–B7 (convergence bar + regression-free editing): the §9-native review/fold disciplines,
-  // pinned by their distinctive cross-all-four tokens (same strings lens-mirror.test.mjs pins).
-  it('carries the §9 convergence-bar + regression-free invariants (A3, B4–B7)', () => {
-    const section9 = sectionOf(planning, /^## 9\..*$/im);
-    assert.match(section9, /0 blockers \+ 0 majors/i); // A3 convergence bar
-    assert.match(section9, /test-as-spec/i); // B4
-    assert.match(section9, /no code-mechanics/i); // B5
-    assert.match(section9, /at the diff/i); // B6
-    assert.match(section9, /characterize-first/i); // B7
-    // B5 sharpening (checked-vs-unchecked boundary) — same two strings lens-mirror.test.mjs pins.
-    assert.match(section9, /checked syntax/i); // checked = asserted by the plan's own Verification
-    assert.match(section9, /logic-bearing/i); // un-run, logic-bearing syntax never lives in plan prose
-  });
-
-  // Review-loop economics (M2/M3/M4/M5-b): the round cap + crossover already lived in §9 but were
-  // token-unguarded here; the backend-divergence stop, the thin-plan/diff-review carve-out, and the
-  // self-consistency fold discipline are the new §9-native tokens. Same strings lens-mirror.test.mjs pins.
-  it('carries the §9 review-loop-economics tokens (round cap, crossover, divergence, diff-review, self-consistency)', () => {
-    const section9 = sectionOf(planning, /^## 9\..*$/im);
-    assert.match(section9, /≤2 rounds/); // architecture round cap
-    assert.match(section9, /crossover/i); // the crossover stop
-    assert.match(section9, /backend divergence/i); // M3 — divergence IS the crossover
-    assert.match(section9, /diff-review/i); // M5-b — thin plan + diff-review for all-mechanics/prose-only
-    assert.match(section9, /self-consistency/i); // M4 — self-consistency read before every re-review
-  });
-
-  // strip-the-kit: §9 names the D3 instruments as the plan-execution computed loop (point, don't
-  // restate — each exit contract's single home stays the tool header), and keeps the tally +
-  // classification discipline stated neutrally for BOTH activities.
-  it('carries the §9 computed-instrument naming (the D3 loop) + the classification vocabulary', () => {
-    const section9 = sectionOf(planning, /^## 9\..*$/im);
-    for (const token of ['core-evidence red-proof', 'core-evidence degrade', 'run-gates --final', 'commit-guard --check', 'core-evidence summary']) {
-      assert.ok(section9.includes(token), `§9 names the instrument "${token}"`);
+// Pins the FEW rules a plan cannot lose, never the wording around them. The prior version asserted
+// ~40 sentences, which made every past clause undeletable — that is why the canon reached 152 lines
+// and produced a 690-line plan for a 587-line change. A rule earns a pin here only when its loss
+// would let a plan grow again.
+describe('planning.md — the plan shape', () => {
+  it('caps the plan by BOTH lines and bytes, and budgets its three sections', () => {
+    assert.match(flat, /capped at \*\*100 lines and 8000 bytes\*\*/, 'a line cap alone is paid off with longer lines');
+    for (const [heading, budget] of [['Goal and boundary', 10], ['Module ledger', 60], ['Verification', 20]]) {
+      assert.match(flat, new RegExp(`\\*\\*${heading}\\*\\* \\(${budget} lines\\)`), `${heading} carries its budget`);
     }
-    assert.match(section9, /no ledger records it/, '§9 states the no-ledger posture (the tally stays dialogue-level)');
-    assert.ok(!/review-ledger/.test(section9), 'the retired ledger is never named as an instrument');
-    for (const token of ['fixable-bug', 'inherent-layer-residual', 'escalate']) {
-      assert.ok(section9.includes(token), `§9 carries the classification token "${token}"`);
-    }
+    assert.match(flat, /never by document size/, 'an over-cap plan splits on verifiable boundaries, not on length');
   });
 
-  // AD-044 Plan 4: the trailing §10 — autonomy at the plan checkpoints. Appended, never
-  // renumbering; the checkpoints are FIXED and the policy only changes the texture between them.
-  it('carries the trailing §10 autonomy-at-checkpoints canon (AD-044 Plan 4)', () => {
-    const flat = sectionOf(planning, /^## 10\..*$/im).replace(/\s+/g, ' ');
-    assert.match(flat, /Autonomy at the plan checkpoints/i);
-    assert.match(flat, /fixed points the autonomy policy never moves/i, 'the checkpoints never move');
-    assert.match(flat, /orchestration\.md.*§7/, 'points at the orchestration §7 policy canon, never restates it');
-    assert.match(flat, /Read the policy at session start/i, 'the read-at-start clause');
-    assert.match(flat, /computed defaults ARE the policy/i, 'absent-file semantics');
-    assert.match(flat, /never needs to restate the policy/i, 'a plan never restates per-project configuration');
-    assert.match(flat, /explicit ask, never a silent widening/i, 'a departure from the level is an explicit ask');
+  it('pins the literal headings tooling extracts by exact match — the skeleton lines ARE the bare headings', () => {
+    assert.match(flat, /headings are LITERAL/);
+    // A plan copied from the skeleton must pass an exact-match extractor as copied: no annotation,
+    // budget or arrow may ride on a heading line.
+    const skeleton = planning.split('```')[1].trim().split('\n');
+    assert.deepEqual(skeleton, [
+      '# Plan: <title>',
+      '## Goal and boundary',
+      '## Module ledger',
+      '## Verification',
+      '## Phase: Cleanup',
+      '## Next steps',
+    ]);
+  });
+
+  it('makes the ledger decide layout before any file exists, and bounds the row itself', () => {
+    assert.match(flat, /check-id/, 'a row carries the id its one validator checks');
+    assert.match(flat, /create\|modify\|delete/, 'a deletion row is expressible');
+    assert.match(flat, /≤200 bytes per row/, 'the row cannot absorb the complexity the cap removed');
+    assert.match(flat, /never an invented number/, 'a project without a declared cap gets no hallucinated limit');
+  });
+
+  it('budgets the TOTAL, not only each file — the growth loophole', () => {
+    assert.match(flat, /total: <before> → <after> lines/);
+    assert.match(flat, /the per-file budget cannot see that/, 'states WHY a per-file cap is not enough');
+    assert.match(flat, /Growth is allowed only with a stated reason/);
+  });
+
+  it('gives a wide mechanical change one legal row instead of a split', () => {
+    assert.match(flat, /A SWEEP is one row/);
+    assert.match(flat, /costs more prose than the sweep/, 'states why splitting a sweep is the worse option');
+  });
+
+  it('validates the ledger with ONE command, not an assertion per row', () => {
+    assert.match(flat, /validated by ONE command/);
+    assert.match(flat, /Per-row assertions in prose are the repetition/);
+  });
+
+  it('makes the rows the steps — no second execution model', () => {
+    assert.match(flat, /The rows ARE the steps/);
+    assert.match(flat, /no separate step\/phase numbering/);
+  });
+
+  it('owes a create row its exported surface — the one thing not derivable from the checkout', () => {
+    assert.match(flat, /exported surface/);
+    assert.match(flat, /cannot be derived from it/);
+  });
+
+  it('keeps review subtractive and un-run logic out of plan prose', () => {
+    assert.match(flat, /Review asks what to cut, not what is missing/);
+    assert.match(flat, /deleting at least as many lower-value lines/);
+    assert.match(flat, /prose has no checker/);
+  });
+
+  it('keeps plan files ephemeral, never committed, and always cleaned up', () => {
+    assert.match(flat, /never committed/);
+    assert.match(flat, /Every plan ends with `## Phase: Cleanup`/);
   });
 });

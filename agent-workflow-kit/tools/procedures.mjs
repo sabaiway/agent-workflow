@@ -208,8 +208,8 @@ const backendSetLabel = (backends) =>
       : ` → ${backends[0]}`;
 
 // The review-loop economics block (M1 + M6's firing half) — printed when the activity engages a review
-// backend (a slot resolving reviewed | council) and OMITTED for solo. It paraphrases the §9 +
-// orchestration §4 canon (no rival rule): the ≤2-round architecture cap, the bar met by RAISING a
+// backend (a slot resolving reviewed | council) and OMITTED for solo. It paraphrases the procedures.md
+// Fold + loop step + orchestration §4 canon (no rival rule): the ≤2-round architecture cap, the bar met by RAISING a
 // surviving major to an acceptance invariant (not exhausting prose), backend divergence = the crossover
 // stop, the thin-plan/diff-review carve-out, a self-consistency read before every re-review, and the
 // REQUIRED per-round structured emission {round N · finding-origin tally · per-backend verdict}. Only a
@@ -221,7 +221,7 @@ const REVIEW_RECIPES = new Set(['reviewed', 'council']);
 const reviewLoopAdvice = (slots, activity) =>
   slots.some((s) => REVIEW_RECIPES.has(s.recipe))
     ? [
-        'Review-loop economics (planning.md §9 · orchestration.md §4) — the review this recipe runs:',
+        'Review-loop economics (procedures.md Fold + loop · orchestration.md §4) — the review this recipe runs:',
         '  • Cap architecture plan-review at ≤2 rounds; the bar is met by RAISING a surviving major to an acceptance invariant (or handing it to Execute/diff-review), never by exhausting the strictest backend.',
         '  • Backend divergence (one backend grounded-ships while another keeps revising mechanics) IS the crossover stop.',
         '  • Route an all-mechanics/CI or prose-only artifact to a thin plan + diff-review; run a self-consistency read before every re-review.',
@@ -299,7 +299,7 @@ const autonomyAdvice = (activity, facts) => {
 };
 
 // The cost-lane advisory block (cost-tiered execution — orchestration.md §5 canon, paraphrased
-// at the point of use like reviewLoopAdvice paraphrases §9/§4). Rendered UNCONDITIONALLY for
+// at the point of use like reviewLoopAdvice paraphrases procedures.md Fold + loop / orchestration §4). Rendered UNCONDITIONALLY for
 // every activity — the lanes route EVERY step, review-backed or not (unlike reviewLoopAdvice,
 // which fires only when a review backend engages). It may name the kit's own GENERIC L0
 // surfaces (the gate runner, the rotation checks, the cheap-agents vehicles) — point-of-use
@@ -368,9 +368,9 @@ const flowHalvesAdvice = (flow, probe) => {
 };
 
 // ── the declared source-size practice (D-17 U1) ────────────────────────────────────
-// A practice the agent meets only when a gate refuses is a practice learned too late: the caps, their
-// reason and the plan-time rung ride EVERY named-activity render, so the layout is cut to them while
-// the plan is being written. Composed from the project's live declaration, never from constants here.
+// A practice the agent meets only when a gate refuses is a practice learned too late: the caps and
+// their reason ride EVERY named-activity render, so the plan's Module ledger is cut to them while the
+// plan is being written. Composed from the project's live declaration, never from constants here.
 // Each config state speaks as itself: ABSENT renders NOTHING (a project that declares no practice must
 // not be handed invented limits); AUTHORED and INCOMPLETE render the declared caps plus the honest
 // "nothing is recorded yet" line — both are pre-mint states, and treating INCOMPLETE as MINTED would
@@ -406,7 +406,6 @@ const declaredPracticeAdvice = (cwd, readFile, lstat) => {
       ? `  recorded: ${facts.recordedFiles} file(s) carry a recorded size (debt, not permission) · aggregate ${facts.aggregateLines} line(s), EXACT — growth takes a reasoned bump, never free headroom.`
       : unmintedRecord,
     `  why: ${SOURCE_SIZE_WHY}`,
-    '  at plan time: every Step that CREATES a file names the file and its single responsibility, and the planned layout fits these caps — the gate is the backstop, never the teacher.',
   ];
 };
 

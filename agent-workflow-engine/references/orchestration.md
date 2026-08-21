@@ -75,9 +75,9 @@ reviewers are `ready`, EVERY review round runs BOTH — skipping a ready backend
 or "the other one already shipped" is a **SILENT downgrade of Council → Reviewed, and is forbidden**.
 The distinction is strict: an *unavailable* backend is a LOUD, stated degrade (the lattice above); a
 *ready* backend you quietly drop is a fidelity breach, not a degrade. The same holds for any recipe
-that names ≥2 backends. Folding a finding and re-reviewing (the convergence bar, [`planning.md`](planning.md)
-§9) re-runs **every named backend each round** — convergence is reached only when one round comes back
-clean from all of them.
+that names ≥2 backends. Folding a finding and re-reviewing (the convergence bar, [`procedures.md`](procedures.md)
+*Fold + loop*) re-runs **every named backend each round** — convergence is reached only when one round
+comes back clean from all of them.
 
 **Backend divergence is the crossover stop — it bounds the ROUNDS, never the backends.** Running every
 named backend every round CONVERGES when one round returns **0 blockers + 0 majors** from all of them.

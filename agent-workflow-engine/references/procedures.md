@@ -1,44 +1,29 @@
 # Activity Procedures
 
-Canonical, on-demand reference for **how an orchestrating agent performs a named activity** — the
-ordered steps of a workflow activity with **typed recipe slots** that bind to the
-[orchestration recipes](orchestration.md) (Solo / Reviewed / Council / Delegated). This is the
-*how to perform* source of truth; it composes with — and never restates — the plan structure and
-lifecycle in [`planning.md`](planning.md). The composition root (`agent-workflow-kit`) reads this
-canon LIVE and renders the requested activity's steps + the resolved effective recipe per slot via
-the read-only `/agent-workflow-kit procedures <activity>`; it parses ONLY each section's `Slots:`
-line (drift-guarded against its activity table), never the steps.
+The ordered steps of each named activity, with **typed recipe slots** bound to the
+[orchestration recipes](orchestration.md). It composes with — never restates —
+[`planning.md`](planning.md), naming that canon's sections by *heading*. The kit reads this file
+LIVE and parses ONLY each section's `Slots:` line, never the steps.
 
-A **recipe slot** is a point in an activity where a recipe applies: `review` accepts
-`solo | reviewed | council`; `execute` accepts `solo | delegated`. The per-project default lives in
-`docs/ai/orchestration.json` and is resolved against backend readiness by the kit — never decided in
-this canon. Each activity section below begins with a machine-parseable `Slots:` line (the only line
-the kit parses) and then its ordered steps. Terse by design: it points at the canon it binds to, it
-does not restate it.
+A **recipe slot**: `review` accepts `solo | reviewed | council`; `execute` accepts
+`solo | delegated`. The per-project default lives in `docs/ai/orchestration.json`, resolved against
+backend readiness by the kit.
 
-The commit rule holds across every activity: **when an activity has a commit boundary, the
-orchestrator owns that commit; a backend is advisory or delegated, never autonomous, and never
-commits** (see [`orchestration.md`](orchestration.md) §6). Not every activity commits —
-`plan-authoring` ends at **approval** and produces **no** commit (plans are ephemeral, never
-committed); `plan-execution` commits **per Step**. Any project-declared release/publishing or extra
-stages are honored per the project's `workflow:methodology` slot — this generic canon bakes in no
-single project's stages.
+**When an activity has a commit boundary, the orchestrator owns that commit; a backend is advisory
+or delegated, never autonomous, and never commits** (`orchestration.md` §6). `plan-authoring` ends
+at **approval** with no commit (plans are ephemeral, never committed); `plan-execution` commits per
+ledger row.
 
-**Read your preference at session start.** At the start of a planning or execution session, read the
-project's standing recipe preference in `docs/ai/orchestration.json` (set it in plain language with
-`/agent-workflow-kit set-recipe` — it previews then writes; hand-editing the file stays supported); the
-kit resolves it against backend readiness. Do not re-ask each session what is already configured there.
-Read the **autonomy policy** the same way and at the same moment: `docs/ai/autonomy.json` declares the
-red-lines and the per-activity autonomy level (absent → the computed defaults ARE the policy; malformed
-→ STOP loudly, never guess; set it with `/agent-workflow-kit set-autonomy`) — the per-activity
-procedures below run UNDER that policy (`orchestration.md` §7), and the kit's `procedures` advisor
-prints the resolved level beside each activity's recipes.
+**Read your preference at session start.** At the start of a planning or execution session, read
+`docs/ai/orchestration.json` (`/agent-workflow-kit set-recipe` writes it; hand-editing stays
+supported) and never re-ask it. Read the **autonomy policy** the same way and at the same moment:
+`docs/ai/autonomy.json` (absent → the computed defaults ARE the policy; malformed → STOP loudly,
+never guess; `/agent-workflow-kit set-autonomy` writes it) — every procedure below runs UNDER it
+(`orchestration.md` §7).
 
-**Communication contract.** Every user-facing message delivers the artifact **inline** — the plan, the
-next-session prompt, the diff, the value asked for — never a bare pointer ("see §X / open the file") as a
-*substitute* for showing it; lead with the result, show exactly what was asked, and never read as
-mockery. For a genuinely large artifact, deliver a real summary or the key excerpt inline **and** link
-the file — never flood, never hide.
+**Communication contract.** Every user-facing message delivers the artifact **inline** — never a
+bare pointer ("see §X") as a substitute; lead with the result; a large artifact gets a real summary
+inline plus the link.
 
 ---
 
@@ -46,92 +31,57 @@ the file — never flood, never hide.
 
 Slots: review
 
-Produce a self-contained, cold-readable plan, reviewed to the configured depth before approval.
+1. **Research** — the exact files, contracts and constraints touched.
+2. **Draft** — write to the shape [`planning.md`](planning.md) fixes; its *Module ledger* decides
+   the layout and every budget before any file exists — a size gate is only the backstop.
+3. **Self-review** — apply *What gets cut*; fold by code (read and cite the `file:line`); update
+   `queue.md` for a series.
+4. **review {recipe}** — Solo (self-review only) / Reviewed (one backend) / Council (both; you
+   synthesize), as the resolved `review` recipe selects.
+5. **Fold + loop** — fold every finding and re-review; CLEAN is **0 blockers + 0 majors** from every
+   backend the recipe names — folding ≠ convergence. Fold a code-touching finding **test-as-spec**,
+   with **no code-mechanics** in the plan: only **checked syntax** its Verification runs; un-run,
+   **logic-bearing** syntax never enters prose (*Un-run syntax never ships in prose*). Council runs
+   every named backend **every round** (recipe fidelity, `orchestration.md` §4). Cap architecture
+   review at **≤2 rounds**; **backend divergence** (one ships, one keeps revising mechanics) IS the
+   **crossover** — resolve the surviving major at altitude, never by exhausting the strictest
+   backend; a **self-consistency** read precedes each re-review; an all-mechanics or prose-only
+   artifact takes a thin plan + **diff-review** (*The plan must read cold*). Each round MUST emit
+   **{round N · finding-origin tally · per-backend verdict}**. At the cap, classify each surviving
+   blocker or major: **fixable-bug** (fold ONCE as a red→green test, re-review) /
+   **inherent-layer-residual** (raise to an acceptance criterion) / **escalate**.
+6. **Present for approval** — never execute here: a harness "approved — start coding" prompt
+   (**ExitPlanMode**) authorizes the PLAN only; `plan-execution` is a deliberate transition once
+   the plan and its cold-start prompt exist.
 
-1. **Research** — gather the exact files, contracts, and constraints the plan will touch.
-2. **Draft** — write the plan to the document structure defined in [`planning.md`](planning.md) §7,
-   with exact paths and commands per Step. Bind to that structure; do not restate it here. Name the
-   LAYOUT as you draft: every Step that CREATES a file names that file and the single responsibility
-   it carries, and — **when the project declares a source-size cap** (the composition root's
-   `procedures` advisor prints the declared practice; a project that declares none carries no limit
-   to invent) — the planned layout fits that cap. Scope fixed before any code exists is what keeps a
-   module small; a size gate is only the backstop.
-3. **Self-review** — run the [`planning.md`](planning.md) §8 checklist (exact paths/commands, strict
-   vocabulary, every created file named with its single responsibility (fitting the declared cap
-   where there is one), every out-of-plan recommendation folded into a Step, `queue.md` updated for a
-   series).
-   Apply the [`planning.md`](planning.md) §9 lens — fold by code (read and cite the `file:line`), and
-   hold the right altitude.
-4. **review {recipe}** — review the draft at the depth the resolved `review` recipe selects: Solo
-   (self-review only), Reviewed (one backend reviews), or Council (both backends review, you
-   synthesize). The kit resolves the effective recipe from `docs/ai/orchestration.json` + readiness.
-5. **Fold + loop** — fold every finding back into the draft and re-review. A loop is CLEAN only at
-   **0 blockers + 0 majors** from every backend the recipe names (the convergence bar,
-   [`planning.md`](planning.md) §9); folding ≠ convergence — re-review after folding. Fold a
-   code-touching finding **test-as-spec** (a named acceptance test, not a prose paragraph); a fold must
-   add **no code-mechanics** to the plan — a Step still carries its own exact paths + commands
-   (checked syntax: its Verification asserts an expected outcome), but un-run, logic-bearing syntax
-   (control-flow, a regex, a glob, a mini-DSL) never enters plan prose — a fold needing one is the
-   trigger to name the test instead. Council runs every named backend
-   **every round** (recipe fidelity,
-   [`orchestration.md`](orchestration.md) §4) — never quietly drop a ready backend. Cap architecture
-   plan-review at **≤2 rounds**, stopping at the **crossover** where **backend divergence** (one backend
-   grounded-ships while another keeps revising mechanics) IS the stop — the bar is still met by RESOLVING
-   the surviving major at altitude (raise it to an acceptance invariant, or hand it to Execute), never by
-   exhausting the strictest backend. Run a **self-consistency** read before every re-review and route an
-   all-mechanics/CI or prose-only artifact to a **thin plan + diff-review** ([`planning.md`](planning.md)
-   §9). Each round MUST emit **{round N · finding-origin tally (first-draft / fold-induced / mechanics) ·
-   per-backend verdict}** so the crossover is a computed signal, not a remembered rule. At the cap,
-   classify every surviving blocking finding — **fixable-bug** (fold ONCE as a red→green test, re-review)
-   / **inherent-layer-residual** (document + raise to an acceptance criterion) / **escalate** (the
-   maintainer decides); a minor never forces triage.
-6. **Present for approval** — surface the finished plan to the user; do not begin execution here. A
-   harness "approved — start coding" prompt (**ExitPlanMode**) authorizes the PLAN only
-   ([`planning.md`](planning.md) §6); continuing into `plan-execution` is a deliberate transition taken
-   after the plan + its cold-start prompt exist, never an implicit slide.
-
-**Required output (Definition of Done):** a planning session produces a self-contained plan in
-`docs/plans/` **and** a cold-start execution prompt to begin the next session — **both produced without
-the user asking**. A planning session that ends without both is not done.
-
-The plan MUST end with the mandatory **Phase: Cleanup** ([`planning.md`](planning.md) §4) — a plan
-without it is not done.
+**Definition of Done:** a plan in `docs/plans/` ending with **Phase: Cleanup** **and** a cold-start
+execution prompt to begin the next session — both produced without the user asking.
 
 ## plan-execution
 
 Slots: execute, review
 
-Execute an approved plan Step by Step; each Step is one logical commit.
+Each ledger row is one logical commit.
 
-1. **Per Step, resolve the recipe** — the kit resolves `execute` and `review` for this run from
-   `docs/ai/orchestration.json` + readiness (a per-run `--override <slot>=<recipe>` is allowed).
-2. **If `execute` resolved to Delegated, dispatch execution FIRST** — hand the bounded sub-task to the
-   backend (codex-exec → a diff) *before* integrating; otherwise the orchestrator implements the Step
-   directly.
-3. **Implement / integrate** — apply the change (your own edits, or the reviewed delegated diff),
-   following the project's reuse + clean-code rules.
-4. **Self-review** — run the [`planning.md`](planning.md) §8 self-review on the change, applying the
-   [`planning.md`](planning.md) §9 lens — fold by code (read and cite the `file:line`), and hold the
-   right altitude. Edit-time corollary: **characterize-first** — before editing uncovered code, pin its
-   current behavior in a green test, then edit (any unintended change goes red); fold each finding
-   **test-as-spec** (red→green), and keep edits atomic/reversible.
-5. **review {recipe}** — review the result at the resolved `review` depth (Solo / Reviewed / Council),
-   exactly as in plan-authoring. This is the **heavy review at the diff** — real compiling code + the
-   full suite, where a regression fails a gate immediately ([`planning.md`](planning.md) §9). Council
-   runs every named backend **every round** (recipe fidelity, [`orchestration.md`](orchestration.md) §4);
-   loop to **0 blockers + 0 majors** from every backend before the gate. Each round MUST emit
-   **{round N · finding-origin tally · per-backend verdict}**; when backends diverge, that is the
-   crossover — resolve at altitude, not by exhausting the strictest backend. Classify survivors at the
-   cap the same way (**fixable-bug / inherent-layer-residual / escalate**). This loop's computed
-   instruments: `core-evidence red-proof` declares each bugfix red BEFORE the fix; `core-evidence
-   degrade` records an unavailable backend explicitly; the reviews run on the STAGED tree and
-   `run-gates --final` mints the ONE receipt `commit-guard --check` gates the commit against — the
-   exit contracts live in each tool's own header, never restated here.
-6. **Gates** — run the project's verification gate (tests + checks) to green before committing.
-7. **Commit boundary** — the orchestrator makes the single commit for the Step; a backend never
-   commits. The project's commit-approval policy (e.g. ask first) lives in the project's own rules.
-
-**Output:** each Step lands as one logical commit with its gates green; the orchestrator owns the commit.
-
-Honor any project-declared release/publishing or extra stages (per the `workflow:methodology` slot)
-before the plan's Cleanup — this generic canon does not enumerate them.
+1. **Resolve the recipe per row** — `execute` and `review` from `docs/ai/orchestration.json` +
+   readiness (`--override <slot>=<recipe>` per run).
+2. **If `execute` resolved to Delegated, dispatch execution FIRST** — the backend returns a diff
+   (codex-exec) *before* you integrate; otherwise implement directly.
+3. **Implement / integrate** — your own edits or the reviewed delegated diff.
+4. **Self-review** — the change against its [`planning.md`](planning.md) ledger row and the plan's
+   Verification, under the project's reuse and clean-code rules; fold by code (cite the
+   `file:line`); **characterize-first**: pin uncovered code's behaviour in a green test before
+   editing it; fold each finding test-as-spec (red→green); atomic, reversible edits.
+5. **review {recipe}** — the **heavy review at the diff** (*The plan must read cold*): real code and
+   the full suite. The plan-authoring loop applies unchanged — every named backend every round,
+   **0 blockers + 0 majors**, the **{round N · finding-origin tally · per-backend verdict}**
+   emission, **fixable-bug / inherent-layer-residual / escalate** at the cap. Its instruments:
+   `core-evidence red-proof` declares each bugfix red BEFORE the fix; `core-evidence
+   degrade` records an unavailable backend; reviews run on the STAGED tree; `run-gates --final`
+   mints the ONE receipt `commit-guard --check` gates the commit against.
+6. **Gates** — the project's verification gate to green.
+7. **Commit boundary** — the orchestrator makes the single commit; a backend never commits; the
+   commit-approval policy lives in the project's own rules.
+8. **After the last row** — the project-declared release or extra stages (the `workflow:methodology`
+   slot; this canon bakes in none) and then `## Phase: Cleanup` (*Cleanup, and the plan's own
+   life*) run as rows of their own, each through steps 1–7.

@@ -197,7 +197,7 @@ optional backends (placed once by setup, NOT by init; init refreshes them):
   that bust a cap or let the auto-generated index go stale.
 - **3-tier rolling archive** — `changelog.md` (HOT) → `history/recent.md` (WARM) → per-month
   COLD. Hot files stay small forever.
-- **Plan lifecycle** — Plan → Phase → Step, ephemeral plan files, a **mandatory Cleanup phase**.
+- **Plan lifecycle** — a capped plan (goal and boundary, module ledger, verification), ephemeral plan files, a **mandatory Cleanup phase**.
 - **No silent failures** — every guard that rejects an action surfaces a real error.
 
 Enforcement ships as dependency-free **Node ≥ 22** scripts; non-Node projects follow the policy
@@ -279,7 +279,7 @@ This is a monorepo (npm workspaces) for the whole family.
 |---|---|---|
 | [`agent-workflow-kit`](agent-workflow-kit) | `@sabaiway/agent-workflow-kit` | composition root: detects the substrate, delegates or falls back, injects the methodology, ships the manifest schema + validator + backend detector |
 | [`agent-workflow-memory`](agent-workflow-memory) | `@sabaiway/agent-workflow-memory` | standalone memory substrate: `AGENTS.md` + `docs/ai/` with cap / archive / index enforcement |
-| [`agent-workflow-engine`](agent-workflow-engine) | `@sabaiway/agent-workflow-engine` | methodology engine: the canonical planning methodology (Plan→Phase→Step, lifecycle, `queue.md`, mandatory Cleanup) the kit injects; ships the canon + its manifest, no family tooling |
+| [`agent-workflow-engine`](agent-workflow-engine) | `@sabaiway/agent-workflow-engine` | methodology engine: the canonical planning methodology (the capped plan shape, lifecycle, `queue.md`, mandatory Cleanup) the kit injects; ships the canon + its manifest, no family tooling |
 
 - `codex-cli-bridge` · `antigravity-cli-bridge` — in-repo agent skills (not npm workspaces); each
   declares its role + detection contract in `capability.json`.

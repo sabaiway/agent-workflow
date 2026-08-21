@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 // renders it via the read-only `/agent-workflow-kit procedures <activity>`; it parses ONLY each
 // section's `Slots:` line, drift-guarded against its activity table — never the steps). This test
 // guards the shapes the kit relies on: the two `## <activity>` sections, each declaring its typed
-// recipe slots; the binds to planning.md §§4/7/8 (without restating); the load-bearing "Delegated →
+// recipe slots; the binds to planning.md by NAMED anchor (without restating); the load-bearing "Delegated →
 // dispatch first" phrasing + the universal commit rule; and that the canon stays GENERIC (no concrete
 // project release-publishing bake-in — that is a project overlay, not engine canon).
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -59,20 +59,21 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.equal(slotsLineOf(sectionOf(procedures, 'plan-execution')), 'Slots: execute, review');
   });
 
-  it('binds to planning.md §§4/7/8 (the structure, self-review, and Cleanup canon) without restating', () => {
-    assert.match(procedures, /planning\.md/, 'points at the plan-lifecycle canon');
-    for (const sec of ['§7', '§8', '§4']) {
-      assert.ok(procedures.includes(sec), `binds to planning.md ${sec}`);
+  // planning.md is bound by HEADING, never by section number: a number dangles the moment a section
+  // is deleted (§6–§9 once pointed at sections that no longer existed). Every anchor this canon
+  // names must be a live `## ` heading in planning.md.
+  it('binds to planning.md by named anchor — every anchor is a live heading, no numbered pointer', () => {
+    const planning = readFileSync(join(ROOT, 'references', 'planning.md'), 'utf8');
+    const headings = planning.split('\n').filter((l) => l.startsWith('## ')).map((l) => l.slice(3).trim());
+    const flat = procedures.replace(/\s+/g, ' '); // an anchor may wrap across a markdown line
+    for (const anchor of ['Module ledger', 'What gets cut', 'Un-run syntax never ships in prose', 'The plan must read cold', "Cleanup, and the plan's own life"]) {
+      assert.ok(flat.includes(`*${anchor}*`), `names the planning.md anchor *${anchor}*`);
+      assert.ok(headings.includes(anchor), `planning.md still carries the heading "${anchor}"`);
     }
-    // "Without restating": it must NOT re-define the plan vocabulary (planning.md §1) nor re-enumerate
-    // the §7 document structure inline (a pure pointer to §7 is the contract; an inline section list is
-    // drift risk). The §7 enumeration is recognisable by its tail trio Critical files → Reuse →
-    // Verification appearing together.
+    assert.doesNotMatch(flat, /planning\.md\)? ?§/, 'no numbered pointer into planning.md');
+    // "Without restating": neither the retired vocabulary nor the ledger row grammar is re-defined here.
     assert.ok(!procedures.includes('Substep'), 'does not restate the Plan→Phase→Step→Substep vocabulary');
-    assert.ok(
-      !/Critical files[^]*Reuse[^]*Verification/.test(procedures),
-      'does not re-enumerate the planning.md §7 document structure inline (points at §7, never restates it)',
-    );
+    assert.ok(!procedures.includes('<check-id>'), 'does not restate the planning.md ledger row grammar');
   });
 
   // Set-1 coverage (Phase 3 consistency invariant): every cross-all-four regression-free / convergence
@@ -135,18 +136,17 @@ describe('procedures.md — canonical activity-procedures reference', () => {
   });
 
   // D-17 U2 — the upfront-knowledge rung: the layout is decided while the plan is drafted, not
-  // discovered when a gate refuses a written file. Pinned WITH its conditional form: a project that
-  // declares no cap must not be handed an invented one.
-  it('canon-authoring-carries-decomposition-rung: file + single responsibility per created file, conditional on a DECLARED cap', () => {
+  // discovered when a gate refuses a written file. The rung itself (path, responsibility, budget from
+  // the declared cap or `n/a`) is the planning.md Module ledger; the Draft step points at it.
+  it('canon-authoring-carries-decomposition-rung: the Module ledger decides layout + budget before any file exists (plan-authoring only)', () => {
     const section = sectionOf(procedures, 'plan-authoring');
     const draft = stepOf(section, 2).replace(/\s+/g, ' ');
-    assert.match(draft, /every Step that CREATES a file names that file and the single responsibility it carries/, 'the Draft step names the file and its responsibility');
-    assert.match(draft, /when the project declares a source-size cap/, 'the rung is CONDITIONAL on a declared cap');
-    assert.match(draft, /declares none carries no limit to invent/, 'no declared practice → no hallucinated limit');
+    assert.match(draft, /\*Module ledger\*/, 'the Draft step points at the ledger');
+    assert.match(draft, /before any file exists/, 'the layout is a plan-time decision');
     assert.match(draft, /a size gate is only the backstop/, 'the cap is the backstop, never the teacher');
-    assert.match(stepOf(section, 3).replace(/\s+/g, ' '), /every created file named with its single responsibility/, 'the Self-review step re-checks the layout');
+    assert.match(stepOf(section, 3).replace(/\s+/g, ' '), /\*What gets cut\*/, 'the Self-review step applies the subtraction rubric');
     // The layout is a PLAN-time decision: plan-execution must not grow a rival copy of the rung.
-    assert.ok(!/single responsibility/.test(sectionOf(procedures, 'plan-execution')), 'the rung lives in plan-authoring only');
+    assert.ok(!/Module ledger/.test(sectionOf(procedures, 'plan-execution')), 'the rung lives in plan-authoring only');
   });
 
   it('BOTH review steps (5) carry the triage classification vocabulary', () => {
@@ -178,7 +178,7 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     }
   });
 
-  // Terse process-fidelity pointers: A1 (ExitPlanMode boundary → planning.md §6) in plan-authoring
+  // Terse process-fidelity pointers: A1 (the ExitPlanMode approval boundary) in plan-authoring
   // step 6; A2 (recipe fidelity → orchestration.md §4) in the review steps.
   it('carries the terse A1 (ExitPlanMode) + A2 (recipe-fidelity) process-fidelity pointers', () => {
     assert.match(procedures, /ExitPlanMode/, 'names the ExitPlanMode boundary (A1)');
@@ -186,15 +186,20 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.match(procedures, /every round/i, 'A2 — every named backend every round');
   });
 
-  it('pins the §9 review lens inside both activity sections', () => {
+  it('pins the review lens inside both activity sections; the plan-prose rubric judges plans only', () => {
     const planAuthoring = sectionOf(procedures, 'plan-authoring');
     const planExecution = sectionOf(procedures, 'plan-execution');
 
     for (const section of [planAuthoring, planExecution]) {
       assert.match(section, /fold by code/i, 'section carries the fold-by-code lens');
       assert.match(section, /planning\.md/, 'section references planning.md');
-      assert.match(section, /§9/, 'section references planning.md §9');
     }
+    assert.match(planAuthoring, /\*What gets cut\*/, 'plan-authoring applies the planning.md subtraction rubric');
+    // "What gets cut" deletes plan PROSE a verifier can do without; applied to a diff it would invite
+    // deleting implementation because Verification would catch it. Execution judges the change
+    // against its ledger row and the plan's Verification instead.
+    assert.doesNotMatch(planExecution, /What gets cut/, 'the plan-prose rubric never judges a code change');
+    assert.match(planExecution, /ledger row/, 'execution self-review is bound to the ledger row');
   });
 
   it('carries the load-bearing "Delegated → dispatch first" phrasing', () => {
@@ -221,6 +226,15 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     // slot") is REQUIRED; the concrete enforcement (skill names, a mandatory Release-Publishing phase)
     // is a project overlay and must NOT appear in the engine canon.
     assert.match(procedures, /workflow:methodology/, 'defers project stages to the methodology slot');
+    // Rows are the steps, but Cleanup is a PHASE, not a row: plan-execution must close with the
+    // project-declared stages and then Phase: Cleanup, in that order, or neither is guaranteed to run.
+    const closing = stepOf(sectionOf(procedures, 'plan-execution'), 8);
+    const atStages = closing.indexOf('workflow:methodology');
+    const atCleanup = closing.indexOf('Phase: Cleanup');
+    assert.ok(atStages !== -1 && atCleanup !== -1 && atStages < atCleanup, 'plan-execution closes with the project stages, then Phase: Cleanup');
+    // Post-row mutations are not exempt from the loop: they run as rows, through the same steps.
+    assert.match(closing, /rows of their own/, 'the project stages and Cleanup run as rows of their own');
+    assert.match(closing, /each through steps 1.7/, 'each such row passes steps 1–7 (review, gates, commit boundary)');
     assert.ok(!/release-engineering/.test(procedures), 'no concrete release-engineering skill bake-in');
     assert.ok(!/release-marketing/.test(procedures), 'no concrete release-marketing skill bake-in');
     assert.ok(!/Phase:\s*Release Publishing/i.test(procedures), 'no mandatory Release-Publishing phase bake-in');

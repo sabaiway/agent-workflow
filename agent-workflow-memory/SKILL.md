@@ -19,8 +19,8 @@ protocols, frontmatter caps, one-file-per-ADR archive, index-freshness gate. Enf
 manually).
 
 This skill is the **memory layer** of the `agent-workflow` family. It **knows nobody else** in
-the family. In particular it does **not** own the **workflow methodology** (plan → execute →
-review vocabulary, lifecycle, `docs/plans/queue.md`, mandatory Cleanup, plan-then-execute), **the
+the family. In particular it does **not** own the **workflow methodology** (the plan shape,
+lifecycle, `docs/plans/queue.md`, mandatory Cleanup, the activity procedures), **the
 orchestration recipes, or the autonomy-policy contract** — those are injected into **three delimited
 pointer slots** in `AGENTS.md` (`workflow:methodology` + `workflow:orchestration` +
 `workflow:autonomy`) by the family **composition root**, never by this
@@ -46,7 +46,7 @@ pointers are the **three empty slots** the composition root fills — never auth
 | `docs/ai/` files, frontmatter caps, one-file-per-ADR archive, index-freshness gate | **memory** | `docs/ai/*` + scripts + hook |
 | Visibility / conversational-language / agent-attribution contracts | **memory** | the three `AGENTS.md` blocks |
 | Deployment-lineage stamp | **memory** | `docs/ai/.memory-version` |
-| Plan→Phase→Step vocabulary, lifecycle, `queue.md`, mandatory Cleanup | **methodology** (not this skill) | the empty `workflow:methodology` slot — filled by the composition root |
+| Plan shape (goal and boundary, module ledger, verification), lifecycle, `queue.md`, mandatory Cleanup | **methodology** (not this skill) | the empty `workflow:methodology` slot — filled by the composition root |
 | Orchestration recipes (Solo / Reviewed / Council / Delegated) | **methodology engine** (not this skill) | the empty `workflow:orchestration` slot — filled by the composition root |
 | Autonomy-policy read contract (`docs/ai/autonomy.json`) | **methodology engine** (not this skill) | the empty `workflow:autonomy` slot — filled by the composition root |
 | Per-project recipe **CONFIG** (which recipe each activity/slot uses) | **memory** seeds an *editable default* | `docs/ai/orchestration.json` (agent-writable via the composition root's `set-recipe` writer, or hand-edited; the recipe **canon** + the slot **vocabulary** live in the engine / composition root, never here) |

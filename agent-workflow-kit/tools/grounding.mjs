@@ -6,11 +6,9 @@
 //
 //   --constraints        slice the root AGENTS.md `## 🚫 Hard Constraints` section, verbatim
 //                        (exactly-one-match — 0 or >1 headings is a loud STOP, never a guess);
-//   --plan <path>        extract the plan's decision-bearing canonical sections, verbatim + whole:
-//                        `## Approach` (REQUIRED — its "What we are NOT doing" text rides inside;
-//                        it is not a heading in canon) and `## Verification` (REQUIRED — STOP if
-//                        missing), plus `## Decisions (locked)` (optional-if-absent, the engine §7
-//                        heading this release adds); a DUPLICATE heading is always a STOP.
+//   --plan <path>        extract the plan's three canon sections, verbatim + whole — `## Goal and
+//                        boundary`, `## Module ledger`, `## Verification` (the engine planning.md
+//                        literal headings; each REQUIRED — a missing or DUPLICATE heading is a STOP).
 //   --extra <text|@file> append orchestrator-supplied facts verbatim AFTER the mechanical halves
 //                        (repeatable; @file reads are confined to the work tree + the system temp
 //                        surface — the merge happens INSIDE the tool, corpus #88/#95).
@@ -46,18 +44,14 @@ export const DEFAULT_MAX_PROMPT_BYTES = 120000;
 export const ARGV_HARD_MAX = 131000;
 
 export const CONSTRAINTS_HEADING = /^## .*Hard Constraints$/;
-export const PLAN_SECTIONS = [
-  { heading: '## Approach', optional: false },
-  { heading: '## Verification', optional: false },
-  { heading: '## Decisions (locked)', optional: true },
-];
+export const PLAN_SECTIONS = ['## Goal and boundary', '## Module ledger', '## Verification'];
 
 // ── pure section slicing (exactly-one-match; the inject-methodology discipline) ────────
 
 // Slice ONE `## `-level section (its heading line through the line before the next `## ` heading),
 // verbatim. `heading` is a string (trimmed-line equality) or a RegExp over the trimmed line.
-// 0 matches → null when optional, else STOP; >1 matches → always STOP (never guess which).
-export const sliceSection = (text, heading, { optional = false, label = 'document' } = {}) => {
+// 0 matches → STOP; >1 matches → STOP (never guess which).
+export const sliceSection = (text, heading, { label = 'document' } = {}) => {
   const lines = text.split('\n');
   const matchesAt = [];
   for (let i = 0; i < lines.length; i += 1) {
@@ -66,7 +60,6 @@ export const sliceSection = (text, heading, { optional = false, label = 'documen
   }
   const shown = typeof heading === 'string' ? heading : String(heading);
   if (matchesAt.length === 0) {
-    if (optional) return null;
     throw fail(1, `${label}: required section "${shown}" not found — STOP (nothing sliced)`);
   }
   if (matchesAt.length > 1) {
@@ -95,10 +88,7 @@ export const assembleGrounding = ({ constraintsText = null, autonomyText = null,
   // how autonomous this session is → what this plan decides).
   if (autonomyText != null) parts.push(autonomyText);
   if (planText != null) {
-    for (const { heading, optional } of PLAN_SECTIONS) {
-      const section = sliceSection(planText, heading, { optional, label: planLabel });
-      if (section != null) parts.push(section);
-    }
+    for (const heading of PLAN_SECTIONS) parts.push(sliceSection(planText, heading, { label: planLabel }));
   }
   // Orchestrator extras ride LAST, verbatim in argv order — live judgment facts read after the
   // mechanical slices, and the merge happens INSIDE the tool (corpus #88/#95: a shell append onto
@@ -268,9 +258,9 @@ Usage:
                        stated source line; absent file → the computed defaults ARE the policy
                        (exit 0); malformed/unreadable → fail-closed STOP (exit 1); informational —
                        enforcement stays the sandbox + the orchestrator
-  --plan <path>        extract the plan's decision-bearing sections verbatim + whole:
-                       "## Approach" + "## Verification" (REQUIRED — STOP if missing),
-                       "## Decisions (locked)" when present; a duplicate heading is a STOP
+  --plan <path>        extract the plan's three canon sections verbatim + whole: "## Goal and
+                       boundary", "## Module ledger", "## Verification" (each REQUIRED — a
+                       missing or duplicate heading is a STOP)
   --extra <text|@file> append orchestrator-supplied extra facts byte-verbatim AFTER the
                        mechanical sections (repeatable, argv order; the agy-review --facts
                        convention: literal text, or @path read whole through a race-free

@@ -800,7 +800,7 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
   const MINTED = { ...AUTHORED, baseline: BASELINE, aggregate: AGGREGATE };
   const writePractice = (value) => writeFileSync(join(cwd, SOURCE_SIZE_CONFIG_REL), typeof value === 'string' ? value : JSON.stringify(value));
 
-  it('render-declared-practice-with-config: a MINTED declaration renders caps, record and rung on BOTH activities', () => {
+  it('render-declared-practice-with-config: a MINTED declaration renders caps and record on BOTH activities, never a rival layout rung', () => {
     writePractice(MINTED);
     for (const activity of ['plan-authoring', 'plan-execution']) {
       const r = run([activity], { codex: READY, agy: READY });
@@ -808,7 +808,8 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
       assert.ok(r.stdout.includes(DECLARED_PRACTICE_HEADER), `${activity} renders the declared practice`);
       assert.match(r.stdout, /caps: 400 lines · 1000 bytes per line, over 2 declared root\(s\)\./);
       assert.match(r.stdout, /recorded: 1 file\(s\) carry a recorded size \(debt, not permission\) · aggregate 1240 line\(s\), EXACT — growth takes a reasoned bump, never free headroom\./);
-      assert.match(r.stdout, /at plan time: every Step that CREATES a file names the file and its single responsibility/);
+      // The plan-time layout is the planning canon's Module ledger — the advisor states facts only.
+      assert.doesNotMatch(r.stdout, /at plan time:/, 'no advisor-side copy of the layout rung');
     }
   });
 
@@ -900,6 +901,10 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
     assert.match(modeDoc, /declaredPractice/, 'the mode doc names the JSON field');
     assert.match(modeDoc, /UNREADABLE/, 'the mode doc states the in-band unreadable lane');
     assert.match(modeDoc, /INCOMPLETE/, 'the mode doc states the four config states');
+    // The execution unit is the ledger ROW (the planning canon): the mode doc must not keep the
+    // retired per-Step model alive beside the live canon it points at.
+    assert.match(modeDoc, /commits per ledger row/, 'the mode doc commits per ledger row');
+    assert.doesNotMatch(modeDoc, /per Step/, 'no retired per-Step execution model in the mode doc');
   });
 
   it('render-why-sentence-verbatim: the ONE canonical sentence, byte-exact on every surface', () => {

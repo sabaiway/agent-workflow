@@ -455,8 +455,9 @@ describe('slotNeedsFill — lazy-read predicate (matches reconcileSlot fill deci
 // ── canonical-refresh (AD-025 §1.6a/§1.9): push a NEW canon clause to FILLED-but-stale slots, preserve a
 //    customization, advise on the customized case. Covers BOTH the methodology + orchestration slots. ──
 describe('canonical-refresh — refresh a known-prior slot, preserve a customization', () => {
-  const PRIOR_METH = KNOWN_PRIOR_METHODOLOGY_SLOT[0];
-  const PRIOR_ORCH = KNOWN_PRIOR_ORCH_SLOT[0];
+  // current-minus-one is the NEWEST prior — the entry the release that changed the fragment appended.
+  const PRIOR_METH = KNOWN_PRIOR_METHODOLOGY_SLOT.at(-1);
+  const PRIOR_ORCH = KNOWN_PRIOR_ORCH_SLOT.at(-1);
   const NEW_METH = '> **Workflow methodology (new canon)** — see `/agent-workflow-kit procedures`. **Communication:** deliver the artifact inline.\n';
   const NEW_ORCH = '> **Orchestration recipes (new canon)** — `/agent-workflow-kit recipes`; set it with `/agent-workflow-kit set-recipe`.\n';
   const ENGINE_DIR = join(HERE, '..', '..', 'agent-workflow-engine');
@@ -514,9 +515,12 @@ describe('canonical-refresh — refresh a known-prior slot, preserve a customiza
     const realOrch = readFileSync(join(ENGINE_DIR, 'references', 'orchestration-slot.md'), 'utf8');
     assert.notEqual(realMeth.trim(), PRIOR_METH, 'the shipped methodology fragment must differ from its prior');
     assert.notEqual(realOrch.trim(), PRIOR_ORCH, 'the shipped orchestration fragment must differ from its prior');
-    const m = reconcileSlot(wrap(`\n${PRIOR_METH}\n`), realMeth, { maxLines: AGENTS_MD_CAP });
-    assert.equal(m.status, 'reconciled-refreshed');
-    assert.equal(extractSlot(m.text).trim(), realMeth.trim());
+    // EVERY stored prior refreshes (append-only: a deployment seeded from any past release converges).
+    for (const prior of KNOWN_PRIOR_METHODOLOGY_SLOT) {
+      const m = reconcileSlot(wrap(`\n${prior}\n`), realMeth, { maxLines: AGENTS_MD_CAP });
+      assert.equal(m.status, 'reconciled-refreshed', `prior ${KNOWN_PRIOR_METHODOLOGY_SLOT.indexOf(prior)} refreshes`);
+      assert.equal(extractSlot(m.text).trim(), realMeth.trim());
+    }
     const o = reconcileMarkerSlot(wrapDual('\nuser\n', `\n${PRIOR_ORCH}\n`), ORCHESTRATION_DESCRIPTOR, realOrch, { maxLines: AGENTS_MD_CAP });
     assert.equal(o.status, 'reconciled-refreshed');
     assert.equal(extractOrch(o.text).trim(), realOrch.trim());
