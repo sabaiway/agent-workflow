@@ -1146,12 +1146,16 @@ aw_ns_is_string_content() {
 # a hostile parent environment): the trace's only non-CLI content is plain stderr, which does not
 # start with `{`, and a tool call's own output is JSON-escaped into a string and cannot inject
 # structure. Anything not matching the walk is "not evidence" — never an error, never a stop.
-# Every slice is taken by a SHORT-pattern `#*` cut plus length arithmetic. That is not a style
-# choice: `${var%%<long>*}` and a prefix removal whose PATTERN is a huge variable are both
-# quadratic in bash, and either one hangs the wrapper outright on a 200KB aggregated_output
-# (measured, not assumed — a real tool call's output reaches that size).
+# Slice costs are MEASURED, never assumed — a real tool call's aggregated_output reaches 200KB.
+# `${var%%<long>*}` and a prefix removal whose PATTERN is a huge variable both hang the wrapper
+# outright at that size. A SHORT-pattern `#*` cut is cheap only while the delimiter sits NEAR the
+# start: bash tries each prefix in turn, so the same cut costs 20.7s when the delimiter sits at
+# the far end of a 200KB value. That is exactly where `","exit_code":` sits, so that one cut
+# reads the delimiter's first-match offset from ONE linear grep pass instead (8ms, same slices).
+# The whole walk runs in byte semantics for it: grep reports BYTES and the slices index by them.
 aw_ns_item_evidence() {
-  local line="$1" d1='","aggregated_output":"' d2='","exit_code":' rest tail cmd agg code after
+  local LC_ALL=C
+  local line="$1" d1='","aggregated_output":"' d2='","exit_code":' rest tail cmd agg code after off
   case "$line" in '{'*) ;; *) return 1 ;; esac
   rest="${line#*'"type":"command_execution","command":"'}"
   if [[ "$rest" == "$line" ]]; then return 1; fi
@@ -1159,9 +1163,10 @@ aw_ns_item_evidence() {
   if [[ "$tail" == "$rest" ]]; then return 1; fi
   cmd="${rest:0:$(( ${#rest} - ${#tail} - ${#d1} ))}"
   aw_ns_is_string_content "$cmd" || return 1
-  after="${tail#*"$d2"}"
-  if [[ "$after" == "$tail" ]]; then return 1; fi
-  agg="${tail:0:$(( ${#tail} - ${#after} - ${#d2} ))}"
+  while IFS=: read -r off _; do break; done < <(grep -aboF -- "$d2" <<<"$tail")
+  if [[ -z "$off" ]]; then return 1; fi
+  agg="${tail:0:off}"
+  after="${tail:$(( off + ${#d2} ))}"
   aw_ns_is_string_content "$agg" || return 1
   code="${after%%,*}"
   if [[ "$code" =~ ^-?[0-9]+$ && "$code" != "0" ]]; then

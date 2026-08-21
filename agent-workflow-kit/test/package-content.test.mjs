@@ -74,8 +74,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'references/scripts/check-docs-size.test.mjs',
       'bridges/antigravity-cli-bridge/bin/agy.test.mjs',
       'bridges/antigravity-cli-bridge/bin/agy-review.test.mjs',
+      'bridges/antigravity-cli-bridge/bin/agy-review-await-guard.test.mjs',
       'bridges/codex-cli-bridge/bin/codex-exec.test.mjs',
       'bridges/codex-cli-bridge/bin/codex-review.test.mjs',
+      'bridges/codex-cli-bridge/bin/codex-await-guard.test.mjs',
     ];
     const missing = required.filter((p) => !packed.includes(p));
     assert.deepEqual(missing, [], 'a deploy/mirror payload test was dropped from the tarball');
@@ -602,7 +604,15 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       flow-record.mjs keeps its path as a re-export facade, so none of the 30 import sites
     //       moved. All five are pinned by NAME above; the new test/flow-record-layout.test.mjs suite
     //       is outside files[] and never enters the tarball.
-    assert.equal(packed.length, 232, `tarball file count drifted (${packed.length} ≠ 232)`);
+    // 233 = 232 + bridges/antigravity-cli-bridge/bin/agy-review-await-guard.test.mjs (the suite-speed
+    //       work): the agy-review dispatches are awaited so the suite stops pinning one core, and a
+    //       missing await is NOT self-announcing at the one site whose result is discarded. A bridge
+    //       dir ships WHOLE, so this colocated guard is payload here — unlike a tools/ sibling.
+    // 234 = 233 + bridges/codex-cli-bridge/bin/codex-await-guard.test.mjs — the twin guard for the
+    //       codex bundle (its two suites carry five discarded-result dispatches between them). One
+    //       guard per BUNDLE, not one per family: a bridge dir is placed on its own, so neither
+    //       guard can read the other bundle's suites.
+    assert.equal(packed.length, 234, `tarball file count drifted (${packed.length} ≠ 234)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

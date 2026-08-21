@@ -223,7 +223,12 @@ const makeSandbox = ({ clean = false } = {}) => {
 // Capture files are per-INVOCATION: a second run() on the same sandbox must not inherit the first
 // run's turn counter or per-turn prompt files (the fed lane reads them back by turn index).
 let runSeq = 0;
-const run = (sb, { args, env = {}, cwd, wrapper } = {}) => {
+// ASYNCHRONOUS on purpose. A blocking spawnSync here holds the event loop for the whole dispatch,
+// which pinned this file to ONE core: 208 points in a serial chain, 91.4s solo at 103% CPU while
+// the other seven cores idled. Awaiting the child instead lets a `{ concurrency }` describe
+// overlap its tests. The per-test environment still rides the CHILD's options — `process.env` is
+// never mutated, which is what keeps overlapping tests from reading each other's PATH.
+const run = (sb, { args, env = {}, cwd, wrapper } = {}) => new Promise((settle) => {
   const { home, bin, repo } = sb;
   const farm = farmFor(['agy', 'agy-run']);
   const tag = `cap-${++runSeq}`;
@@ -234,10 +239,11 @@ const run = (sb, { args, env = {}, cwd, wrapper } = {}) => {
     artifactCopy: join(home, `${tag}-artifact-copy`), turns: join(home, `${tag}-turns`),
     dispatchCwd: join(home, `${tag}-dispatch-cwd`),
   };
-  const r = spawnSync('bash', [wrapper || WRAPPER, ...args], {
+  const child = execFile('bash', [wrapper || WRAPPER, ...args], {
     cwd: cwd || repo,
     encoding: 'utf8',
     timeout: 30000,
+    maxBuffer: 64 * 1024 * 1024,
     env: {
       HOME: home,
       PATH: `${bin}:${farm}`,
@@ -250,68 +256,42 @@ const run = (sb, { args, env = {}, cwd, wrapper } = {}) => {
       AGY_FAKE_TURNS: cap.turns, AGY_FAKE_CWD: cap.dispatchCwd,
       ...env,
     },
-  });
-  const readIf = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '');
-  // Per-turn captures are read EAGERLY: callers rmSync the sandbox before asserting.
-  const turns = existsSync(cap.turns) ? Number(readFileSync(cap.turns, 'utf8')) : 0;
-  const prompts = [];
-  const argvs = [];
-  for (let i = 1; i <= turns; i += 1) {
-    prompts.push(readIf(`${cap.prompt}.${i}`));
-    argvs.push(readIf(`${cap.argv}.${i}`));
-  }
-  return {
-    ...r,
-    invoked: existsSync(cap.sentinel),
-    argv: readIf(cap.argv), capEnv: readIf(cap.env), prompt: readIf(cap.prompt),
-    adddir: readIf(cap.adddir).trim(), adddirMode: readIf(cap.adddirMode).trim(),
-    artifactMode: readIf(cap.artifactMode).trim(), artifactCopy: readIf(cap.artifactCopy),
-    dispatchCwd: readIf(cap.dispatchCwd).trim(), turns, prompts, argvs,
-  };
-};
-
-// Async twin of run() for the two sleep-bound timeout tests: spawnSync blocks the event loop
-// for the whole deliberate wait, so a concurrent describe could not overlap them. Same spawn
-// contract and captures.
-const runAsync = (sb, { args, env = {}, cwd } = {}) =>
-  new Promise((done) => {
-    const { home, bin, repo } = sb;
-    const cap = {
-      argv: join(home, 'cap-argv'), env: join(home, 'cap-env'), prompt: join(home, 'cap-prompt'),
-      sentinel: join(home, 'cap-sentinel'), adddir: join(home, 'cap-adddir'),
-      adddirMode: join(home, 'cap-adddir-mode'), artifactMode: join(home, 'cap-artifact-mode'),
-      artifactCopy: join(home, 'cap-artifact-copy'),
-    };
-    const child = execFile('bash', [WRAPPER, ...args], {
-      cwd: cwd || repo,
-      encoding: 'utf8',
-      timeout: 30000,
-      env: {
-        HOME: home,
-        PATH: `${bin}:${farmFor(['agy', 'agy-run'])}`,
-        TMPDIR: process.env.TMPDIR ?? '/tmp',
-        AGY_FAKE_ARGV: cap.argv, AGY_FAKE_ENV: cap.env, AGY_FAKE_PROMPT: cap.prompt,
-        AGY_FAKE_SENTINEL: cap.sentinel, AGY_FAKE_ADDDIR: cap.adddir, AGY_FAKE_ADDDIR_MODE: cap.adddirMode,
-        AGY_FAKE_ARTIFACT_MODE: cap.artifactMode, AGY_FAKE_ARTIFACT_COPY: cap.artifactCopy,
-        ...env,
-      },
-    }, (error, stdout, stderr) => {
-      const readIf = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '');
-      done({
-        status: error ? (error.code ?? 1) : 0, stdout, stderr,
-        invoked: existsSync(cap.sentinel),
-        argv: readIf(cap.argv), capEnv: readIf(cap.env), prompt: readIf(cap.prompt),
-        adddir: readIf(cap.adddir).trim(), adddirMode: readIf(cap.adddirMode).trim(),
-        artifactMode: readIf(cap.artifactMode).trim(), artifactCopy: readIf(cap.artifactCopy),
-      });
+  }, (error, stdout, stderr) => {
+    const readIf = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '');
+    // Per-turn captures are read EAGERLY: callers rmSync the sandbox before asserting.
+    const turns = existsSync(cap.turns) ? Number(readFileSync(cap.turns, 'utf8')) : 0;
+    const prompts = [];
+    const argvs = [];
+    for (let i = 1; i <= turns; i += 1) {
+      prompts.push(readIf(`${cap.prompt}.${i}`));
+      argvs.push(readIf(`${cap.argv}.${i}`));
+    }
+    settle({
+      status: error ? (error.code ?? 1) : 0, signal: error?.signal ?? null, stdout, stderr,
+      invoked: existsSync(cap.sentinel),
+      argv: readIf(cap.argv), capEnv: readIf(cap.env), prompt: readIf(cap.prompt),
+      adddir: readIf(cap.adddir).trim(), adddirMode: readIf(cap.adddirMode).trim(),
+      artifactMode: readIf(cap.artifactMode).trim(), artifactCopy: readIf(cap.artifactCopy),
+      dispatchCwd: readIf(cap.dispatchCwd).trim(), turns, prompts, argvs,
     });
-    child.stdin.end();
   });
+  // The wrapper refuses many inputs BEFORE it reads stdin, so the pipe can already be closed here.
+  // The blocking spawn swallowed that; an async one throws EPIPE at the test. A closed pipe is the
+  // refusal working — but ONLY EPIPE is: any other write failure is a real fault and must reach
+  // the test instead of passing as a green.
+  child.stdin.on('error', (err) => { if (err.code !== 'EPIPE') throw err; });
+  child.stdin.end();
+});
 
-describe('agy-review.sh — model policy advisory (1)', () => {
-  it('warns for a non-frontier model but still runs', () => {
+// runAsync was the async twin kept for the two sleep-bound timeout tests, back when run() blocked.
+// run() IS that twin now, with the fuller capture surface, so the twin is one name pointing at it
+// — two spawn paths could only drift.
+const runAsync = run;
+
+describe('agy-review.sh — model policy advisory (1)', { concurrency: 2 }, () => {
+  it('warns for a non-frontier model but still runs', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: 'Gemini 3.5 Flash (Low)' } });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: 'Gemini 3.5 Flash (Low)' } });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /non-frontier model 'Gemini 3.5 Flash \(Low\)'/);
@@ -319,26 +299,26 @@ describe('agy-review.sh — model policy advisory (1)', () => {
     assert.match(r.argv, /Gemini 3\.5 Flash \(Low\)/, 'the chosen model reaches agy via --model');
   });
 
-  it('AGY_PROBE=1 silences the advisory', () => {
+  it('AGY_PROBE=1 silences the advisory', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: 'Gemini 3.5 Flash (Low)', AGY_PROBE: '1' } });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: 'Gemini 3.5 Flash (Low)', AGY_PROBE: '1' } });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /non-frontier model/);
   });
 
-  it('the frontier default (no AGY_MODEL) earns no advisory', () => {
+  it('the frontier default (no AGY_MODEL) earns no advisory', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'] });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /non-frontier model/);
     assert.match(r.argv, /Gemini 3\.7 Flash \(High\)/, 'the frontier default reaches agy');
   });
 
-  it('an explicit Gemini 3.7 Flash (High) is FRONTIER — no advisory (fork (a), maintainer 2026-08-14)', () => {
+  it('an explicit Gemini 3.7 Flash (High) is FRONTIER — no advisory (fork (a), maintainer 2026-08-14)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: 'Gemini 3.7 Flash (High)' } });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: 'Gemini 3.7 Flash (High)' } });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /non-frontier model/, 'a FRONTIER_SET member never warns');
@@ -354,11 +334,11 @@ describe('agy-review.sh — model policy advisory (1)', () => {
 // the invocation sentinel, so a probe can never read as a spent run.
 const FAKE_OLD_NODE = '#!/usr/bin/env bash\nprintf "v18.20.0\\n"\n';
 
-describe('agy-review.sh — the pre-spend capability door (Decision 2)', () => {
+describe('agy-review.sh — the pre-spend capability door (Decision 2)', { concurrency: 2 }, () => {
   for (const flag of ['--output-format', '--disable-slash-commands']) {
-    it(`a --help that does not advertise ${flag} refuses pre-spend and names it`, () => {
+    it(`a --help that does not advertise ${flag} refuses pre-spend and names it`, async () => {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_HELP_OMIT: flag } });
+      const r = await run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_HELP_OMIT: flag } });
       const receipts = readReceipts(sb.repo);
       rmSync(sb.home, { recursive: true, force: true });
       assert.notEqual(r.status, 0, r.stderr);
@@ -373,9 +353,9 @@ describe('agy-review.sh — the pre-spend capability door (Decision 2)', () => {
   // is actually missing: a build lacking --disable-slash-commands answers perfectly readably and
   // corrupts the delivered BODY instead, which the envelope explanation would send an operator
   // hunting the wrong bug.
-  it('the refusal names what the MISSING flag buys, not one blanket envelope explanation', () => {
+  it('the refusal names what the MISSING flag buys, not one blanket envelope explanation', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_HELP_OMIT: '--disable-slash-commands' } });
+    const r = await run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_HELP_OMIT: '--disable-slash-commands' } });
     rmSync(sb.home, { recursive: true, force: true });
     assert.notEqual(r.status, 0, r.stderr);
     assert.equal(r.invoked, false);
@@ -383,9 +363,9 @@ describe('agy-review.sh — the pre-spend capability door (Decision 2)', () => {
     assert.doesNotMatch(r.stderr, /cannot read/, 'the unreadable-answer cost belongs to --output-format alone');
   });
 
-  it('`agy --help` exiting non-zero refuses with a DISTINCT cause — never read as "capability present"', () => {
+  it('`agy --help` exiting non-zero refuses with a DISTINCT cause — never read as "capability present"', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_HELP_EXIT: '3' } });
+    const r = await run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_HELP_EXIT: '3' } });
     rmSync(sb.home, { recursive: true, force: true });
     assert.notEqual(r.status, 0, r.stderr);
     assert.equal(r.invoked, false, 'a failed probe never becomes a paid dispatch');
@@ -393,9 +373,9 @@ describe('agy-review.sh — the pre-spend capability door (Decision 2)', () => {
     assert.doesNotMatch(r.stderr, /does not advertise the flag/, 'a failed probe is not a missing-flag verdict');
   });
 
-  it('node ABSENT refuses pre-spend, naming Node and the floor', () => {
+  it('node ABSENT refuses pre-spend, naming Node and the floor', async () => {
     const sb = makeSandbox();
-    const r = run(sb, {
+    const r = await run(sb, {
       args: ['code', '--facts', 'f'],
       env: { PATH: `${sb.bin}:${farmFor(['agy', 'agy-run', 'node'])}` },
     });
@@ -406,11 +386,11 @@ describe('agy-review.sh — the pre-spend capability door (Decision 2)', () => {
     assert.match(r.stderr, /Node >= 22/);
   });
 
-  it('node PRESENT but BELOW the floor refuses pre-spend — the version comparison really runs', () => {
+  it('node PRESENT but BELOW the floor refuses pre-spend — the version comparison really runs', async () => {
     const sb = makeSandbox();
     // Into $HOME/.local/bin, which the wrapper itself prepends — so the fake wins over the real node.
     writeFileSync(join(sb.bin, 'node'), FAKE_OLD_NODE, { mode: 0o755 });
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.notEqual(r.status, 0, r.stderr);
     assert.equal(r.invoked, false, 'an existence-only check would have dispatched here');
@@ -427,9 +407,9 @@ describe('agy-review.sh — the pre-spend capability door (Decision 2)', () => {
     ['the flag named inside ANOTHER option`s description', '  --json-schema   enforce structured output; see --output-format'],
     ['another option whose description BEGINS with the flag name', '  --other   --output-format is unsupported on this build'],
   ]) {
-    it(`${name} does NOT open the door — an option declaration is required`, () => {
+    it(`${name} does NOT open the door — an option declaration is required`, async () => {
       const sb = makeSandbox();
-      const r = run(sb, {
+      const r = await run(sb, {
         args: ['code', '--facts', 'f'],
         env: { AGY_FAKE_HELP_OMIT: '--output-format', AGY_FAKE_HELP_EXTRA: extraHelpLine },
       });
@@ -449,9 +429,9 @@ describe('agy-review.sh — the pre-spend capability door (Decision 2)', () => {
     ['an =<value> rendering', '  --output-format=<fmt>   the joined-value rendering'],
     ['a declaration with no description at all', '  --output-format'],
   ]) {
-    it(`${name} READS as declared — a capable build is never falsely refused`, () => {
+    it(`${name} READS as declared — a capable build is never falsely refused`, async () => {
       const sb = makeSandbox();
-      const r = run(sb, {
+      const r = await run(sb, {
         args: ['code', '--facts', 'f'],
         env: { AGY_FAKE_HELP_OMIT: '--output-format', AGY_FAKE_HELP_EXTRA: extraHelpLine },
       });
@@ -461,9 +441,9 @@ describe('agy-review.sh — the pre-spend capability door (Decision 2)', () => {
     });
   }
 
-  it('the agy-capability refusal carries the INSTALLED version and the upgrade command', () => {
+  it('the agy-capability refusal carries the INSTALLED version and the upgrade command', async () => {
     const sb = makeSandbox();
-    const r = run(sb, {
+    const r = await run(sb, {
       args: ['code', '--facts', 'f'],
       env: { AGY_FAKE_HELP_OMIT: '--output-format', AGY_FAKE_VERSION: '1.0.9' },
     });
@@ -473,9 +453,9 @@ describe('agy-review.sh — the pre-spend capability door (Decision 2)', () => {
     assert.match(r.stderr, /agy update/, 'and the command that fixes it');
   });
 
-  it('a capable host passes the door and still dispatches (the door is not a blanket refusal)', () => {
+  it('a capable host passes the door and still dispatches (the door is not a blanket refusal)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.invoked, true);
@@ -487,10 +467,10 @@ describe('agy-review.sh — the pre-spend capability door (Decision 2)', () => {
 // change one byte of this: stdout carries the model's answer and NOTHING else (the posture banner
 // is stderr), and the receipt records the verdict parsed out of that same answer. Green before the
 // switch, green after — anything the transport quietly rewrites fails here.
-describe('agy-review.sh — the operator-visible answer, byte-for-byte (characterization)', () => {
-  it('stdout is EXACTLY the model answer, and the receipt records the verdict parsed from it', () => {
+describe('agy-review.sh — the operator-visible answer, byte-for-byte (characterization)', { concurrency: 2 }, () => {
+  it('stdout is EXACTLY the model answer, and the receipt records the verdict parsed from it', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -500,7 +480,7 @@ describe('agy-review.sh — the operator-visible answer, byte-for-byte (characte
 
   // The bytes a transport is most likely to mangle: blank lines, non-ASCII, quotes, a backslash, a
   // tab. If the answer ever rides a JSON field, this is the test that catches a lossy round-trip.
-  it('blank lines, multibyte, quotes, backslashes and tabs all survive to stdout unchanged', () => {
+  it('blank lines, multibyte, quotes, backslashes and tabs all survive to stdout unchanged', async () => {
     const answer = [
       '### Verdict',
       'SHIP — «clean», no nits.',
@@ -515,7 +495,7 @@ describe('agy-review.sh — the operator-visible answer, byte-for-byte (characte
       'none',
     ].join('\n');
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: answer } });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: answer } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -528,7 +508,7 @@ describe('agy-review.sh — the operator-visible answer, byte-for-byte (characte
 // Every lane runs `--output-format json` and the wrapper reads the envelope's `response` instead of
 // raw stdout. The review CONTRACT does not move: the same prompt, the same mandated shape, the same
 // D4 arm. What changes is that a fact the wrapper used to guess at now arrives named.
-describe('agy-review.sh — the dispatch rides the JSON envelope (Phase 4.3)', () => {
+describe('agy-review.sh — the dispatch rides the JSON envelope (Phase 4.3)', { concurrency: 2 }, () => {
   // The transport is BOTH flags: the envelope carries the answer, and --disable-slash-commands keeps
   // a change-set line that happens to begin with a slash command as BODY rather than an instruction
   // the CLI expands. The pre-spend door requires both, so the dispatch must pass both — a door that
@@ -539,16 +519,16 @@ describe('agy-review.sh — the dispatch rides the JSON envelope (Phase 4.3)', (
     return at !== -1 && tokens[at + 1] === 'json' && tokens.includes('--disable-slash-commands');
   };
 
-  it('all three lanes carry the transport flags (single, fed, resume)', () => {
+  it('all three lanes carry the transport flags (single, fed, resume)', async () => {
     const single = makeSandbox();
-    const one = run(single, { args: ['code', '--facts', 'f'] });
+    const one = await run(single, { args: ['code', '--facts', 'f'] });
     rmSync(single.home, { recursive: true, force: true });
     assert.equal(one.status, 0, one.stderr);
     assert.ok(argvCarriesTransport(one.argv), `single lane argv: ${one.argv}`);
 
     const fedSb = makeSandbox();
     seedFedChangeSet(fedSb);
-    const fed = fedRun(fedSb);
+    const fed = await fedRun(fedSb);
     rmSync(fedSb.home, { recursive: true, force: true });
     assert.equal(fed.status, 0, fed.stderr);
     assert.ok(fed.argvs.length >= 3, 'the fixture really chunks');
@@ -557,16 +537,16 @@ describe('agy-review.sh — the dispatch rides the JSON envelope (Phase 4.3)', (
     }
 
     const resumeSb = makeSandbox();
-    const resumed = run(resumeSb, { args: ['--continue'] });
+    const resumed = await run(resumeSb, { args: ['--continue'] });
     rmSync(resumeSb.home, { recursive: true, force: true });
     assert.equal(resumed.status, 0, resumed.stderr);
     assert.ok(argvCarriesTransport(resumed.argv), `resume lane argv: ${resumed.argv}`);
   });
 
-  it('operator-visible stdout IS the envelope response — and a feed turn`s response is neither published nor parsed', () => {
+  it('operator-visible stdout IS the envelope response — and a feed turn`s response is neither published nor parsed', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb);
+    const fed = await fedRun(sb);
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 0, fed.stderr);
@@ -577,9 +557,9 @@ describe('agy-review.sh — the dispatch rides the JSON envelope (Phase 4.3)', (
     assert.equal(receipts[0].verdict, 'SHIP', 'only the FINAL response is parsed');
   });
 
-  it('a non-JSON blob on a ZERO exit is an UNREADABLE review: distinct exit, NO receipt, the cause names the envelope', () => {
+  it('a non-JSON blob on a ZERO exit is an UNREADABLE review: distinct exit, NO receipt, the cause names the envelope', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_RAW_STDOUT: 'jetski: not an envelope at all\n' } });
+    const r = await run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_RAW_STDOUT: 'jetski: not an envelope at all\n' } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 5, `an unreadable envelope has its OWN code, not the D4 4: ${r.stderr}`);
@@ -588,9 +568,9 @@ describe('agy-review.sh — the dispatch rides the JSON envelope (Phase 4.3)', (
     assert.match(r.stderr, /not a readable agy JSON envelope/, 'and the wrapper says what that means');
   });
 
-  it('a non-SUCCESS status is unreadable too — its own named cause, NO receipt', () => {
+  it('a non-SUCCESS status is unreadable too — its own named cause, NO receipt', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_STATUS: 'ERROR' } });
+    const r = await run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_STATUS: 'ERROR' } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 5, r.stderr);
@@ -600,9 +580,9 @@ describe('agy-review.sh — the dispatch rides the JSON envelope (Phase 4.3)', (
 
   // Decision 4: the CLI's own failure WINS. The envelope is parsed only on a zero exit, so a
   // non-zero run keeps its code and its message and never has a parse error layered over it.
-  it('a non-zero CLI exit keeps its code and message on the SINGLE lane — no envelope error replaces them', () => {
+  it('a non-zero CLI exit keeps its code and message on the SINGLE lane — no envelope error replaces them', async () => {
     const sb = makeSandbox();
-    const r = run(sb, {
+    const r = await run(sb, {
       args: ['code', '--facts', 'f'],
       env: { AGY_FAKE_EXIT: '7', AGY_FAKE_RAW_STDOUT: 'partial plain text\n', AGY_FAKE_STDERR: 'AGY_CLI_OWN_FAILURE' },
     });
@@ -615,10 +595,10 @@ describe('agy-review.sh — the dispatch rides the JSON envelope (Phase 4.3)', (
     assert.equal(receipts.length, 0);
   });
 
-  it('a non-zero CLI exit keeps its code and message on the FED lane too', () => {
+  it('a non-zero CLI exit keeps its code and message on the FED lane too', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_FAKE_FAIL_TURN: '2' });
+    const fed = await fedRun(sb, { AGY_FAKE_FAIL_TURN: '2' });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 3, 'the failing turn`s own exit code survives');
@@ -630,9 +610,9 @@ describe('agy-review.sh — the dispatch rides the JSON envelope (Phase 4.3)', (
 
   // The switch must not move WHICH arm fires: a readable envelope carrying a verdict-less answer is
   // still the D4 failed review, exit 4 — not the transport failure.
-  it('a READABLE envelope with no verdict still exits 4 through the EXISTING D4 arm', () => {
+  it('a READABLE envelope with no verdict still exits 4 through the EXISTING D4 arm', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_OUTPUT: 'prose without the mandated section' } });
+    const r = await run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_OUTPUT: 'prose without the mandated section' } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 4, 'the D4 arm owns this, not the envelope arm');
@@ -645,11 +625,11 @@ describe('agy-review.sh — the dispatch rides the JSON envelope (Phase 4.3)', (
   // (~/.local/bin/agy-review -> <placed>/bin/agy-review.sh). An unresolved BASH_SOURCE names the
   // LINK's directory, so every sibling payload — the envelope reader above all — would be looked
   // for beside the link and EVERY review would refuse pre-spend on a correct install.
-  it('a review launched through a managed SYMLINK resolves its own sibling payload and still attests', () => {
+  it('a review launched through a managed SYMLINK resolves its own sibling payload and still attests', async () => {
     const sb = makeSandbox();
     const linked = join(sb.bin, 'agy-review');
     symlinkSync(WRAPPER, linked);
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], wrapper: linked });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], wrapper: linked });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, `a symlinked launch must behave identically: ${r.stderr}`);
@@ -663,7 +643,7 @@ describe('agy-review.sh — the dispatch rides the JSON envelope (Phase 4.3)', (
   // shape is an absurd CHAIN — and it is testable exactly because the kernel tolerates a far longer
   // chain than this bound. An unbounded walk spins until the harness kills it and prints nothing,
   // so the assertion is on the MESSAGE: an infinite loop can never produce it.
-  it('a symlink chain past the hop bound refuses LOUDLY and spends nothing', () => {
+  it('a symlink chain past the hop bound refuses LOUDLY and spends nothing', async () => {
     const sb = makeSandbox();
     const chainDir = join(sb.home, 'link-chain');
     mkdirSync(chainDir, { recursive: true });
@@ -672,7 +652,7 @@ describe('agy-review.sh — the dispatch rides the JSON envelope (Phase 4.3)', (
       symlinkSync(previous, link);
       return link;
     }, WRAPPER);
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], wrapper: chainTip });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], wrapper: chainTip });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 127, `the walk must refuse, not spin: ${r.stderr}`);
     assert.match(r.stderr, /exceeded 16 symlink hops/, 'the refusal names the bound it hit');
@@ -680,10 +660,10 @@ describe('agy-review.sh — the dispatch rides the JSON envelope (Phase 4.3)', (
     assert.equal(r.invoked, false, 'nothing is spent');
   });
 
-  it('the resume lanes parse the envelope and mint the continuation receipt exactly as before', () => {
+  it('the resume lanes parse the envelope and mint the continuation receipt exactly as before', async () => {
     for (const args of [['--continue'], ['--conversation', 'conv-xyz']]) {
       const sb = makeSandbox();
-      const r = run(sb, { args, env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+      const r = await run(sb, { args, env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
       const receipts = readReceipts(sb.repo);
       rmSync(sb.home, { recursive: true, force: true });
       assert.equal(r.status, 0, `${args[0]}: ${r.stderr}`);
@@ -695,17 +675,17 @@ describe('agy-review.sh — the dispatch rides the JSON envelope (Phase 4.3)', (
   });
 });
 
-describe('agy-review.sh — guard + grounding (2, 3)', () => {
-  it('the model/cutoff GUARD line is in the captured prompt', () => {
+describe('agy-review.sh — guard + grounding (2, 3)', { concurrency: 2 }, () => {
+  it('the model/cutoff GUARD line is in the captured prompt', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'] });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.match(r.prompt, /Do NOT comment on AI model names\/versions or your own knowledge cutoff/);
   });
 
-  it('--facts / --decided / --focus all reach the prompt', () => {
+  it('--facts / --decided / --focus all reach the prompt', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: [
+    const r = await run(sb, { args: [
       'code', '--facts', 'GROUNDED_FACT_MARKER', '--decided', 'DECIDED_MARKER', '--focus', 'FOCUS_MARKER',
     ] });
     rmSync(sb.home, { recursive: true, force: true });
@@ -717,29 +697,29 @@ describe('agy-review.sh — guard + grounding (2, 3)', () => {
     assert.match(r.prompt, /## Focus\nFOCUS_MARKER/);
   });
 
-  it('--facts @file reads the file; --decided @file too', () => {
+  it('--facts @file reads the file; --decided @file too', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'facts.md'), 'FILE_FACT_BODY\n');
     writeFileSync(join(sb.repo, 'decided.md'), 'FILE_DECIDED_BODY\n');
-    const r = run(sb, { args: ['code', '--facts', '@facts.md', '--decided', '@decided.md'] });
+    const r = await run(sb, { args: ['code', '--facts', '@facts.md', '--decided', '@decided.md'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.prompt, /FILE_FACT_BODY/);
     assert.match(r.prompt, /FILE_DECIDED_BODY/);
   });
 
-  it('merges --focus and trailing focus words into one Focus block, in parse order', () => {
+  it('merges --focus and trailing focus words into one Focus block, in parse order', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'f', '--focus', 'first', 'second', 'third'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f', '--focus', 'first', 'second', 'third'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.prompt, /## Focus\nfirst second third/);
   });
 
-  it('plan mode with no --facts keeps the warning and proceeds (unchanged contract)', () => {
+  it('plan mode with no --facts keeps the warning and proceeds (unchanged contract)', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'p.md'), '# plan body\n');
-    const r = run(sb, { args: ['plan', 'p.md'] });
+    const r = await run(sb, { args: ['plan', 'p.md'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /no --facts supplied/);
@@ -753,10 +733,10 @@ describe('agy-review.sh — guard + grounding (2, 3)', () => {
 // the run would be paid for and attest nothing. The wrapper refuses BEFORE the spend, keyed on the
 // resolved CONTENT (an empty --facts payload refuses identically). Escapes: the explicit
 // --ungrounded flag (throwaway opinion) and AGY_PROBE=1 (a probe receipt never attests anyway).
-describe('agy-review.sh — code mode fails CLOSED without grounded facts (D4)', () => {
-  it('code mode with no --facts exits 2 before any agy invocation', () => {
+describe('agy-review.sh — code mode fails CLOSED without grounded facts (D4)', { concurrency: 2 }, () => {
+  it('code mode with no --facts exits 2 before any agy invocation', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code'] });
+    const r = await run(sb, { args: ['code'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 2, r.stderr);
     assert.equal(r.invoked, false, 'the refusal must fire before any agy invocation — zero runs spent');
@@ -767,19 +747,19 @@ describe('agy-review.sh — code mode fails CLOSED without grounded facts (D4)',
     assert.ok(existsSync(hint[1]), 'the resolved hint path exists on this layout');
   });
 
-  it('code mode with --facts naming an EMPTY payload exits 2 before any agy invocation', () => {
+  it('code mode with --facts naming an EMPTY payload exits 2 before any agy invocation', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'empty-facts.md'), '');
-    const r = run(sb, { args: ['code', '--facts', '@empty-facts.md'] });
+    const r = await run(sb, { args: ['code', '--facts', '@empty-facts.md'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 2, 'the refusal keys on the CONTENT, not the flag');
     assert.equal(r.invoked, false, 'an empty payload must not spend a run');
     assert.match(r.stderr, /agy-review code --facts @/);
   });
 
-  it('code --ungrounded proceeds and the receipt records grounded:false', () => {
+  it('code --ungrounded proceeds and the receipt records grounded:false', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--ungrounded'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const r = await run(sb, { args: ['code', '--ungrounded'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -790,9 +770,9 @@ describe('agy-review.sh — code mode fails CLOSED without grounded facts (D4)',
     assert.match(r.stderr, /no --facts supplied/, 'the escape path stays loud, never silent');
   });
 
-  it('AGY_PROBE=1 code with no --facts proceeds and the receipt records probe:true', () => {
+  it('AGY_PROBE=1 code with no --facts proceeds and the receipt records probe:true', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code'], env: { AGY_PROBE: '1', AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const r = await run(sb, { args: ['code'], env: { AGY_PROBE: '1', AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -801,28 +781,28 @@ describe('agy-review.sh — code mode fails CLOSED without grounded facts (D4)',
     assert.equal(receipts[0].grounded, false);
   });
 
-  it('--ungrounded with --facts is a refusal (contradiction)', () => {
+  it('--ungrounded with --facts is a refusal (contradiction)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--ungrounded', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--ungrounded', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.equal(r.invoked, false);
     assert.match(r.stderr, /--ungrounded contradicts --facts/);
   });
 
-  it('--ungrounded outside code mode is a refusal', () => {
+  it('--ungrounded outside code mode is a refusal', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'p.md'), '# p\n');
-    const r = run(sb, { args: ['plan', 'p.md', '--ungrounded'] });
+    const r = await run(sb, { args: ['plan', 'p.md', '--ungrounded'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.equal(r.invoked, false);
     assert.match(r.stderr, /--ungrounded is only valid in code mode/);
   });
 
-  it('--ungrounded on a continuation is a refusal', () => {
+  it('--ungrounded on a continuation is a refusal', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['--continue', '--ungrounded'] });
+    const r = await run(sb, { args: ['--continue', '--ungrounded'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.equal(r.invoked, false);
@@ -830,11 +810,11 @@ describe('agy-review.sh — code mode fails CLOSED without grounded facts (D4)',
   });
 });
 
-describe('agy-review.sh — code-mode precomputed diff (4, 5, 8)', () => {
-  it('assembles repo map + status + untracked CONTENTS', () => {
+describe('agy-review.sh — code-mode precomputed diff (4, 5, 8)', { concurrency: 2 }, () => {
+  it('assembles repo map + status + untracked CONTENTS', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'untra.txt'), 'UNIQUE_UNTRACKED_BODY\n');
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     for (const sec of [/repo file map/, /git status/, /untracked: untra\.txt/, /UNIQUE_UNTRACKED_BODY/]) {
@@ -842,46 +822,46 @@ describe('agy-review.sh — code-mode precomputed diff (4, 5, 8)', () => {
     }
   });
 
-  it('skips a binary untracked file (noted; raw bytes not inlined)', () => {
+  it('skips a binary untracked file (noted; raw bytes not inlined)', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'blob.bin'), Buffer.from([0x00, 0x01, 0x02, 0x00, 0x42]));
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.match(r.prompt, /binary, skipped\): blob\.bin/);
   });
 
-  it('does not follow an untracked symlink (no out-of-tree leak)', () => {
+  it('does not follow an untracked symlink (no out-of-tree leak)', async () => {
     const sb = makeSandbox();
     const secret = join(sb.home, 'outside-secret.txt'); // OUTSIDE the repo
     writeFileSync(secret, 'TOP_SECRET_LEAK_MARKER\n');
     symlinkSync(secret, join(sb.repo, 'link-to-outside'));
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.match(r.prompt, /untracked \(symlink\): link-to-outside -> /);
     assert.doesNotMatch(r.prompt, /TOP_SECRET_LEAK_MARKER/, 'symlink target content must never leak');
   });
 
-  it('handles untracked paths with spaces (NUL-safe)', () => {
+  it('handles untracked paths with spaces (NUL-safe)', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'a b c.txt'), 'SPACED_BODY\n');
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.match(r.prompt, /untracked: a b c\.txt/);
     assert.match(r.prompt, /SPACED_BODY/);
   });
 
-  it('no-diff preflight: a clean tree exits 0 without invoking agy', () => {
+  it('no-diff preflight: a clean tree exits 0 without invoking agy', async () => {
     const sb = makeSandbox({ clean: true });
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0);
     assert.match(r.stderr, /no uncommitted changes to review/);
     assert.equal(r.invoked, false, 'agy must NOT be invoked on a clean tree');
   });
 
-  it('the strict output-shape footer is present in a fresh review', () => {
+  it('the strict output-shape footer is present in a fresh review', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     for (const sec of [/### Verdict/, /### Blocking/, /### Non-blocking/, /### Questions/]) {
       assert.match(r.prompt, sec);
@@ -914,11 +894,11 @@ const seedOversizedMap = (sb, count = 100) => {
 const mapSectionOf = (prompt) =>
   prompt.slice(prompt.indexOf(MAP_HEADER) + MAP_HEADER.length, prompt.indexOf('\n\n=== git status (porcelain) ==='));
 
-describe('agy-review.sh — repo file map budget (Phase 2)', () => {
-  it('agy-review sets the map budget and degrades an over-budget map', () => {
+describe('agy-review.sh — repo file map budget (Phase 2)', { concurrency: 2 }, () => {
+  it('agy-review sets the map budget and degrades an over-budget map', async () => {
     const sb = makeSandbox();
     const count = seedOversizedMap(sb);
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     const note = r.prompt.match(new RegExp(`=== repo file map TRUNCATED to the changed-path subset: (\\d+) of (\\d+) tracked paths shown, (\\d+) omitted \\(map budget ${AGY_MAP_BUDGET_BYTES} bytes\\) ===`));
@@ -931,10 +911,10 @@ describe('agy-review.sh — repo file map budget (Phase 2)', () => {
     assert.ok(!r.prompt.includes(untouchedPath(0)), 'an untouched path is dropped, and it appears nowhere else in the payload');
   });
 
-  it('the degraded changed-path subset itself stays inside the wrapper budget', () => {
+  it('the degraded changed-path subset itself stays inside the wrapper budget', async () => {
     const sb = makeSandbox();
     seedOversizedMap(sb);
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     const lines = mapSectionOf(r.prompt).split('\n');
@@ -945,9 +925,9 @@ describe('agy-review.sh — repo file map budget (Phase 2)', () => {
     assert.ok(pathBytes <= AGY_MAP_BUDGET_BYTES, `the subset (${pathBytes} bytes) must stay inside the ${AGY_MAP_BUDGET_BYTES}-byte budget`);
   });
 
-  it('an ordinary in-budget repo keeps the whole map, unnoted', () => {
+  it('an ordinary in-budget repo keeps the whole map, unnoted', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.prompt, /=== repo file map \(git ls-files\) ===\nbase\.txt\n/);
@@ -997,12 +977,12 @@ const requestedOf = (finalPrompt) => requestedBlockOf(finalPrompt).map((item) =>
 const fedRun = (sb, extraEnv = {}) =>
   run(sb, { args: ['code', '--facts', 'grounded fact'], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP), ...extraEnv } });
 
-describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)', () => {
-  it('an over-cap code review feeds every part and the concatenated BODIES reproduce the change set exactly', () => {
+describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)', { concurrency: 2 }, () => {
+  it('an over-cap code review feeds every part and the concatenated BODIES reproduce the change set exactly', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const inline = run(sb, { args: ['code', '--facts', 'grounded fact'], env: { AGY_MAX_PROMPT_BYTES: '130000' } });
-    const fed = fedRun(sb);
+    const inline = await run(sb, { args: ['code', '--facts', 'grounded fact'], env: { AGY_MAX_PROMPT_BYTES: '130000' } });
+    const fed = await fedRun(sb);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(inline.status, 0, inline.stderr);
     assert.equal(fed.status, 0, fed.stderr);
@@ -1012,10 +992,10 @@ describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)'
     assert.equal(bodies.join(''), inlineArtifactOf(inline.prompt), 'the bodies concatenate to the change set byte-for-byte');
   });
 
-  it('no envelope text appears in the reconstructed review artifact', () => {
+  it('no envelope text appears in the reconstructed review artifact', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb);
+    const fed = await fedRun(sb);
     rmSync(sb.home, { recursive: true, force: true });
     const reconstructed = fed.prompts.slice(0, -1).map(bodyOf).join('');
     for (const envelope of ['--- BEGIN CHANGE-SET PART', '--- END CHANGE-SET PART', 'Chunked delivery', 'Reply with exactly OK', 'Grounded facts', 'Requested:']) {
@@ -1023,10 +1003,10 @@ describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)'
     }
   });
 
-  it('every fed turn prompt is under AGY_MAX_PROMPT_BYTES', () => {
+  it('every fed turn prompt is under AGY_MAX_PROMPT_BYTES', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb);
+    const fed = await fedRun(sb);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 0, fed.stderr);
     for (const [i, p] of fed.prompts.entries()) {
@@ -1034,10 +1014,10 @@ describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)'
     }
   });
 
-  it('the shape block appears only on the final turn, and every feed turn carries the acknowledge-only instruction', () => {
+  it('the shape block appears only on the final turn, and every feed turn carries the acknowledge-only instruction', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb);
+    const fed = await fedRun(sb);
     rmSync(sb.home, { recursive: true, force: true });
     const feed = fed.prompts.slice(0, -1);
     const final = fed.prompts[fed.prompts.length - 1];
@@ -1056,10 +1036,10 @@ describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)'
   // lines, headless agy auto-denied it ("no output produced — a tool required the \"command\"
   // permission"), and the whole answer was lost. Every turn must forbid tool use outright — the
   // change set is already IN the conversation, so no tool can add anything.
-  it('every turn forbids tool use — a denied tool loses the whole answer on this host', () => {
+  it('every turn forbids tool use — a denied tool loses the whole answer on this host', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb);
+    const fed = await fedRun(sb);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 0, fed.stderr);
     for (const [i, p] of fed.prompts.entries()) {
@@ -1071,10 +1051,10 @@ describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)'
   // The delivery verdict must not blame delivery for a run that produced no answer at all: the parts
   // WERE fed, the model was blocked from replying. Reporting it as "the change set never arrived"
   // sends the reader hunting the wrong bug.
-  it('a final turn that produced NO answer reports that cause, never a delivery failure', () => {
+  it('a final turn that produced NO answer reports that cause, never a delivery failure', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_FAKE_OUTPUT: 'jetski: no output produced — a tool required the "command" permission that headless mode cannot prompt for, so it was auto-denied.' });
+    const fed = await fedRun(sb, { AGY_FAKE_OUTPUT: 'jetski: no output produced — a tool required the "command" permission that headless mode cannot prompt for, so it was auto-denied.' });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 4, fed.stderr);
@@ -1086,31 +1066,31 @@ describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)'
     assert.equal(receipts.length, 0, 'still no receipt — an unanswered review attests nothing');
   });
 
-  it('an answerless final turn with NO recognizable diagnostic reports the cause as unknown', () => {
+  it('an answerless final turn with NO recognizable diagnostic reports the cause as unknown', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_FAKE_OUTPUT: 'something the wrapper has never seen before' });
+    const fed = await fedRun(sb, { AGY_FAKE_OUTPUT: 'something the wrapper has never seen before' });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 4, fed.stderr);
     assert.match(fed.stderr, /CAUSE: unknown/, 'an unrecognized failure is never dressed up as a known one');
     assert.doesNotMatch(fed.stderr, /named by agy itself/);
   });
 
-  it('the grounding rides turn 1 only', () => {
+  it('the grounding rides turn 1 only', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_MAX_PROMPT_BYTES: String(FED_CAP) });
+    const fed = await fedRun(sb, { AGY_MAX_PROMPT_BYTES: String(FED_CAP) });
     rmSync(sb.home, { recursive: true, force: true });
     assert.match(fed.prompts[0], /## Grounded facts — review AGAINST these/);
     assert.match(fed.prompts[0], /grounded fact/);
     for (const p of fed.prompts.slice(1)) assert.ok(!p.includes('## Grounded facts'), 'the grounding is not re-sent');
   });
 
-  it('a multibyte body is cut at LINE boundaries — every part decodes cleanly and concatenation stays byte-exact', () => {
+  it('a multibyte body is cut at LINE boundaries — every part decodes cleanly and concatenation stays byte-exact', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb, { multibyte: true, lines: 400 });
-    const inline = run(sb, { args: ['code', '--facts', 'grounded fact'], env: { AGY_MAX_PROMPT_BYTES: '130000' } });
-    const fed = fedRun(sb);
+    const inline = await run(sb, { args: ['code', '--facts', 'grounded fact'], env: { AGY_MAX_PROMPT_BYTES: '130000' } });
+    const fed = await fedRun(sb);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 0, fed.stderr);
     assert.ok(fed.turns >= 3, 'the multibyte fixture really chunks');
@@ -1125,12 +1105,12 @@ describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)'
   // The partitioner's two boundary defects, both caught at review: an invented separator byte on an
   // unterminated last line (an extra part and an extra TURN), and an over-eager refusal for a line
   // that is merely longer than the FIRST part's smaller budget.
-  it('an artifact with NO trailing newline yields no extra or empty part, and reassembles byte-exactly', () => {
+  it('an artifact with NO trailing newline yields no extra or empty part, and reassembles byte-exactly', async () => {
     const sb = makeSandbox();
     // An untracked file with no final newline: the assembled change set ends without one too.
     writeFileSync(join(sb.repo, 'oversized.txt'), `${Array.from({ length: 400 }, (_, i) => `unique change-set line ${String(i).padStart(4, '0')} — a distinctive body marker ${'x'.repeat(20)}`).join('\n')}`);
-    const inline = run(sb, { args: ['code', '--facts', 'grounded fact'], env: { AGY_MAX_PROMPT_BYTES: '130000' } });
-    const fed = fedRun(sb);
+    const inline = await run(sb, { args: ['code', '--facts', 'grounded fact'], env: { AGY_MAX_PROMPT_BYTES: '130000' } });
+    const fed = await fedRun(sb);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 0, fed.stderr);
     const bodies = fed.prompts.slice(0, -1).map(bodyOf);
@@ -1141,7 +1121,7 @@ describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)'
     assert.equal(Number(announced[2]), fed.turns, 'and no phantom turn');
   });
 
-  it('a line longer than the FIRST part budget but not the later one is placed, not refused', () => {
+  it('a line longer than the FIRST part budget but not the later one is placed, not refused', async () => {
     const sb = makeSandbox();
     // Turn 1 carries the grounding too, so its body budget is SMALLER by exactly the grounding size.
     // A fat grounding opens a real window between the two budgets; a line inside that window must be
@@ -1152,7 +1132,7 @@ describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)'
     const filler = (from, n) => Array.from({ length: n }, (_, i) => `unique change-set line ${String(from + i).padStart(4, '0')} — a distinctive body marker ${'x'.repeat(20)}`).join('\n');
     const longLine = `unique long marker line ${'y'.repeat(4200)}`;
     writeFileSync(join(sb.repo, 'oversized.txt'), `${filler(0, 20)}\n${longLine}\n${filler(20, 60)}\n`);
-    const fed = run(sb, { args: ['code', '--facts', facts], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP) } });
+    const fed = await run(sb, { args: ['code', '--facts', facts], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP) } });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 0, `a placeable long line must not refuse the run: ${fed.stderr}`);
     const bodies = fed.prompts.slice(0, -1).map(bodyOf);
@@ -1160,20 +1140,20 @@ describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)'
     assert.ok(!bodies[0].includes(longLine), 'and it was moved OFF the smaller first part');
   });
 
-  it('a line that fits NO part refuses before any turn is spent', () => {
+  it('a line that fits NO part refuses before any turn is spent', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'oversized.txt'), `head\n${'z'.repeat(FED_CAP * 2)}\ntail\n`);
-    const fed = fedRun(sb);
+    const fed = await fedRun(sb);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 2, fed.stderr);
     assert.equal(fed.invoked, false, 'not one turn is spent');
     assert.match(fed.stderr, /does not fit even an EMPTY fed part/);
   });
 
-  it('feed-turn output never reaches stdout or the parsed capture (a premature verdict is discarded)', () => {
+  it('feed-turn output never reaches stdout or the parsed capture (a premature verdict is discarded)', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb);
+    const fed = await fedRun(sb);
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 0, fed.stderr);
@@ -1183,10 +1163,10 @@ describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)'
     assert.equal(receipts[0].verdict, 'SHIP', 'only the FINAL turn is parsed into the receipt');
   });
 
-  it('a non-zero feed turn stops the run, spends no later turn, and writes NO receipt', () => {
+  it('a non-zero feed turn stops the run, spends no later turn, and writes NO receipt', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_FAKE_FAIL_TURN: '2' });
+    const fed = await fedRun(sb, { AGY_FAKE_FAIL_TURN: '2' });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.notEqual(fed.status, 0, 'a failed feed turn is a failed review');
@@ -1197,10 +1177,10 @@ describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)'
   // The hard cap is ONE wall-clock budget for the whole review. Handing each of the N+1 calls the
   // full AGY_HARD_TIMEOUT multiplied the stated guarantee by the turn count — a 30m cap could run
   // for hours. Each turn now gets only what is LEFT of a shared deadline.
-  it('the hard cap is ONE budget for the whole review, not one per turn', () => {
+  it('the hard cap is ONE budget for the whole review, not one per turn', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb, { lines: 150 });
-    const fed = run(sb, {
+    const fed = await run(sb, {
       args: ['code', '--facts', 'grounded fact'],
       env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP), AGY_HARD_TIMEOUT: '600s', AGY_TIMEOUT: '600s', AGY_FAKE_SLEEP: '1' },
     });
@@ -1223,10 +1203,10 @@ describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)'
 
   // council R2-M2: shrinking a turn to 1s does not save the cap — a TERM-ignoring process still runs
   // for the SIGKILL grace on top. Too little budget left is a REFUSAL, never a tiny turn.
-  it('a cap smaller than the SIGKILL grace refuses BEFORE spending a single turn', () => {
+  it('a cap smaller than the SIGKILL grace refuses BEFORE spending a single turn', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb, { lines: 150 });
-    const fed = run(sb, {
+    const fed = await run(sb, {
       args: ['code', '--facts', 'grounded fact'],
       env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP), AGY_HARD_TIMEOUT: '5s', AGY_TIMEOUT: '5s' },
     });
@@ -1238,10 +1218,10 @@ describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)'
     assert.equal(receipts.length, 0, 'a refused review mints NO receipt');
   });
 
-  it('the fed lane announces part and turn counts before the first dispatch (D5 quota honesty)', () => {
+  it('the fed lane announces part and turn counts before the first dispatch (D5 quota honesty)', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb);
+    const fed = await fedRun(sb);
     rmSync(sb.home, { recursive: true, force: true });
     const announce = fed.stderr.match(/feeding the change set in (\d+) part\(s\) over (\d+) subscription turns/);
     assert.ok(announce, `the cost must be stated before it is spent: ${fed.stderr}`);
@@ -1252,10 +1232,10 @@ describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)'
   // The ceiling is a SPENDING guard, so a value the operator sets and the wrapper cannot honour must
   // never be silently ignored. `008000` used to make bash evaluate an invalid octal constant: both
   // range tests errored to false and the ceiling simply stopped existing.
-  it('a leading-zero ceiling is canonicalized, not read as octal — and it still refuses', () => {
+  it('a leading-zero ceiling is canonicalized, not read as octal — and it still refuses', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_REVIEW_MAX_TOTAL_BYTES: '008000' });
+    const fed = await fedRun(sb, { AGY_REVIEW_MAX_TOTAL_BYTES: '008000' });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 2, fed.stderr);
     assert.equal(fed.invoked, false, 'the ceiling really bound — not one turn was spent');
@@ -1263,11 +1243,11 @@ describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)'
     assert.doesNotMatch(fed.stderr, /value too great for base|invalid arithmetic/, 'no octal diagnostic anywhere');
   });
 
-  it('an explicit env ceiling the wrapper cannot honour REFUSES, never silently defaults', () => {
+  it('an explicit env ceiling the wrapper cannot honour REFUSES, never silently defaults', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
     for (const bad of ['999999999999999999999', '200000000', 'lots']) {
-      const fed = fedRun(sb, { AGY_REVIEW_MAX_TOTAL_BYTES: bad });
+      const fed = await fedRun(sb, { AGY_REVIEW_MAX_TOTAL_BYTES: bad });
       assert.equal(fed.status, 2, `${bad}: ${fed.stderr}`);
       assert.equal(fed.invoked, false, `${bad}: no run is spent under an unhonoured ceiling`);
       assert.match(fed.stderr, /not a valid byte ceiling/, `${bad}: the refusal names the cause`);
@@ -1275,20 +1255,20 @@ describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)'
     rmSync(sb.home, { recursive: true, force: true });
   });
 
-  it('the DEFAULT ceiling still lets an ordinary fed review through', () => {
+  it('the DEFAULT ceiling still lets an ordinary fed review through', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_REVIEW_MAX_TOTAL_BYTES: '240000' });
+    const fed = await fedRun(sb, { AGY_REVIEW_MAX_TOTAL_BYTES: '240000' });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 0, fed.stderr);
     assert.equal(receipts[0].delivery, 'fed');
   });
 
-  it('a change set whose total outgoing prompt bytes exceed AGY_REVIEW_MAX_TOTAL_BYTES refuses before the first turn is spent', () => {
+  it('a change set whose total outgoing prompt bytes exceed AGY_REVIEW_MAX_TOTAL_BYTES refuses before the first turn is spent', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_REVIEW_MAX_TOTAL_BYTES: '9000' });
+    const fed = await fedRun(sb, { AGY_REVIEW_MAX_TOTAL_BYTES: '9000' });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 2, fed.stderr);
@@ -1297,10 +1277,10 @@ describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)'
     assert.equal(receipts.length, 0);
   });
 
-  it('a fixed overhead that cannot fit refuses rather than emitting an empty body', () => {
+  it('a fixed overhead that cannot fit refuses rather than emitting an empty body', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_MAX_PROMPT_BYTES: '900' });
+    const fed = await fedRun(sb, { AGY_MAX_PROMPT_BYTES: '900' });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 2, fed.stderr);
     assert.equal(fed.invoked, false);
@@ -1311,20 +1291,20 @@ describe('agy-review.sh — chunked feed: the change set is DELIVERED (Phase 3)'
 // 4.3: agy's own denial names the permission rule it wants. The kit SURFACES that fact and never
 // applies it — granting read_file would widen a boundary for ALL agy use on the machine to re-arm
 // the one lane whose failure mode is undetectable by construction.
-describe('agy-review.sh — the agy permission fact is surfaced, never applied', () => {
+describe('agy-review.sh — the agy permission fact is surfaced, never applied', { concurrency: 2 }, () => {
   const BRIDGE_ROOT = resolve(HERE, '..');
 
-  it('the over-cap path states why the change set is delivered rather than read', () => {
+  it('the over-cap path states why the change set is delivered rather than read', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb);
+    const fed = await fedRun(sb);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 0, fed.stderr);
     assert.match(fed.stderr, /read_file/, 'the notice names the denied tool');
     assert.match(fed.stderr, /never (grants|writes)/, 'and states that the kit does not grant it');
   });
 
-  it('the bridge docs state the never-applied posture (doc contract)', () => {
+  it('the bridge docs state the never-applied posture (doc contract)', async () => {
     const prompt = readFileSync(join(BRIDGE_ROOT, 'references', 'review-prompt.md'), 'utf8');
     assert.match(prompt, /read_file/, 'the denial is named');
     assert.match(prompt, /never writes it|never applied/i, 'the never-applied posture is stated');
@@ -1332,7 +1312,7 @@ describe('agy-review.sh — the agy permission fact is surfaced, never applied',
     assert.doesNotMatch(prompt, /grant (the )?read_file permission to (fix|enable)/i, 'the docs never RECOMMEND granting it');
   });
 
-  it('no wrapper or doc surface ever writes an agy permission rule', () => {
+  it('no wrapper or doc surface ever writes an agy permission rule', async () => {
     for (const rel of [join('bin', 'agy-review.sh'), join('bin', 'agy.sh')]) {
       const text = readFileSync(join(BRIDGE_ROOT, rel), 'utf8');
       assert.doesNotMatch(text, /--dangerously-skip-permissions/, `${rel} must never pass the blanket-permission flag`);
@@ -1345,11 +1325,11 @@ describe('agy-review.sh — the agy permission fact is surfaced, never applied',
 // to `--continue` when it changed. It is now a NAMED envelope field the reader validates against the
 // UUID grammar, so the pin that used to rot SILENTLY now fails LOUDLY: there is no `--continue`
 // fallback left in this lane and no later turn is spent when turn 1 cannot name its conversation.
-describe('agy-review.sh — fed lane: turn targeting (D9)', () => {
-  it('every turn after the first is ROUTED at the id turn 1`s envelope named', () => {
+describe('agy-review.sh — fed lane: turn targeting (D9)', { concurrency: 2 }, () => {
+  it('every turn after the first is ROUTED at the id turn 1`s envelope named', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_FAKE_CONV_ID: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' });
+    const fed = await fedRun(sb, { AGY_FAKE_CONV_ID: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 0, fed.stderr);
     assert.ok(!fed.argvs[0].includes('--conversation'), 'turn 1 is fresh');
@@ -1370,10 +1350,10 @@ describe('agy-review.sh — fed lane: turn targeting (D9)', () => {
     ['not a string', { AGY_FAKE_CONV_SHAPE: 'number' }],
     ['failing the UUID grammar', { AGY_FAKE_CONV_ID: 'not-a-conversation-id' }],
   ]) {
-    it(`a turn-1 conversation id ${name} fails LOUDLY before turn 2, with NO receipt`, () => {
+    it(`a turn-1 conversation id ${name} fails LOUDLY before turn 2, with NO receipt`, async () => {
       const sb = makeSandbox();
       seedFedChangeSet(sb);
-      const fed = fedRun(sb, env);
+      const fed = await fedRun(sb, env);
       const receipts = readReceipts(sb.repo);
       rmSync(sb.home, { recursive: true, force: true });
       assert.equal(fed.status, 5, `an unusable envelope has the transport code: ${fed.stderr}`);
@@ -1390,10 +1370,10 @@ describe('agy-review.sh — fed lane: turn targeting (D9)', () => {
     ['whose payload is not an envelope', { AGY_FAKE_BAD_TURN: '2', AGY_FAKE_RAW_STDOUT: 'jetski: not an envelope\n' }, /agy-envelope: not-json/],
     ['reporting a non-SUCCESS status', { AGY_FAKE_BAD_TURN: '2', AGY_FAKE_STATUS: 'ERROR' }, /agy-envelope: status/],
   ]) {
-    it(`a fed turn 2 ${name} stops the run: NO receipt, no turn 3`, () => {
+    it(`a fed turn 2 ${name} stops the run: NO receipt, no turn 3`, async () => {
       const sb = makeSandbox();
       seedFedChangeSet(sb);
-      const fed = fedRun(sb, env);
+      const fed = await fedRun(sb, env);
       const receipts = readReceipts(sb.repo);
       rmSync(sb.home, { recursive: true, force: true });
       assert.equal(fed.status, 5, fed.stderr);
@@ -1406,7 +1386,7 @@ describe('agy-review.sh — fed lane: turn targeting (D9)', () => {
 
   // The doc must not describe BOTH routings at once: a residual recording the retired log scrape
   // beside the envelope statement leaves an operator unable to tell which lane their build runs.
-  it('the fed-lane doc states envelope routing and keeps no log-scrape residual (doc contract)', () => {
+  it('the fed-lane doc states envelope routing and keeps no log-scrape residual (doc contract)', async () => {
     const prompt = readFileSync(resolve(HERE, '..', 'references', 'review-prompt.md'), 'utf8');
     assert.match(prompt, /Later turns are routed by a NAMED field/, 'the live routing is stated');
     assert.doesNotMatch(prompt, /conversation id is parsed from/i, 'the retired scrape is no longer described as live');
@@ -1414,11 +1394,11 @@ describe('agy-review.sh — fed lane: turn targeting (D9)', () => {
   });
 });
 
-describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1, D7)', () => {
-  it('a fed review reproducing every selected line writes a fresh code receipt at the tree fingerprint', () => {
+describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1, D7)', { concurrency: 2 }, () => {
+  it('a fed review reproducing every selected line writes a fresh code receipt at the tree fingerprint', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb);
+    const fed = await fedRun(sb);
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 0, fed.stderr);
@@ -1429,10 +1409,10 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
     assert.equal(receipts[0].delivery, 'fed', 'the receipt declares HOW delivery was established');
   });
 
-  it('a fed review whose output omits a part`s echo exits 4 and writes NO receipt', () => {
+  it('a fed review whose output omits a part`s echo exits 4 and writes NO receipt', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_FAKE_PROOF_OMIT: '2' });
+    const fed = await fedRun(sb, { AGY_FAKE_PROOF_OMIT: '2' });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 4, fed.stderr);
@@ -1441,10 +1421,10 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
     assert.equal(receipts.length, 0);
   });
 
-  it('a fed review whose echo differs from the recorded line exits 4 and writes NO receipt', () => {
+  it('a fed review whose echo differs from the recorded line exits 4 and writes NO receipt', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_FAKE_PROOF_CORRUPT: '2' });
+    const fed = await fedRun(sb, { AGY_FAKE_PROOF_CORRUPT: '2' });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 4, fed.stderr);
@@ -1452,10 +1432,10 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
     assert.equal(receipts.length, 0);
   });
 
-  it('a fed review echoing one part`s line for two parts exits 4 and writes NO receipt', () => {
+  it('a fed review echoing one part`s line for two parts exits 4 and writes NO receipt', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_FAKE_PROOF_DUP: '1' });
+    const fed = await fedRun(sb, { AGY_FAKE_PROOF_DUP: '1' });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 4, fed.stderr);
@@ -1464,10 +1444,10 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
 
   // The proof GRAMMAR, pinned red→green (Test-as-spec). A substring search over the whole answer
   // accepted every shape below except the bullet — which is the one shape that should pass.
-  it('an echo placed OUTSIDE the proof section does not count', () => {
+  it('an echo placed OUTSIDE the proof section does not count', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_FAKE_PROOF_OUTSIDE: '1' });
+    const fed = await fedRun(sb, { AGY_FAKE_PROOF_OUTSIDE: '1' });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 4, fed.stderr);
@@ -1477,20 +1457,20 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
   // The proof comes FIRST so output truncation can never silently drop it. A block that arrives
   // after a verdict is not that shape, so it is not searched for — otherwise the "first" in the
   // contract would be decoration.
-  it('a proof block placed AFTER the verdict does not count — the proof must be the first section', () => {
+  it('a proof block placed AFTER the verdict does not count — the proof must be the first section', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_FAKE_PROOF_LATE: '1' });
+    const fed = await fedRun(sb, { AGY_FAKE_PROOF_LATE: '1' });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 4, fed.stderr);
     assert.equal(receipts.length, 0);
   });
 
-  it('an address echoed TWICE fails — one address, one line', () => {
+  it('an address echoed TWICE fails — one address, one line', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_FAKE_PROOF_TWICE: '1' });
+    const fed = await fedRun(sb, { AGY_FAKE_PROOF_TWICE: '1' });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 4, fed.stderr);
@@ -1498,10 +1478,10 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
     assert.equal(receipts.length, 0);
   });
 
-  it('an UNREQUESTED address in the proof section fails', () => {
+  it('an UNREQUESTED address in the proof section fails', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_FAKE_PROOF_EXTRA: '1' });
+    const fed = await fedRun(sb, { AGY_FAKE_PROOF_EXTRA: '1' });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 4, fed.stderr);
@@ -1509,10 +1489,10 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
     assert.equal(receipts.length, 0);
   });
 
-  it('a marker BURIED inside a sentence is not an echo (the anchor is real)', () => {
+  it('a marker BURIED inside a sentence is not an echo (the anchor is real)', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_FAKE_PROOF_NESTED: '2' });
+    const fed = await fedRun(sb, { AGY_FAKE_PROOF_NESTED: '2' });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 4, fed.stderr);
@@ -1523,10 +1503,10 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
   // and array indexing as `08`, which bash reads as OCTAL — the wrapper crashed with `value too
   // great for base` instead of the contracted clean refusal, and a safely padded `01` also mismatched
   // the unpadded `1`. Both die at the PARSE boundary now: awk hands bash plain decimals.
-  it('a zero-padded proof address is normalized, never an octal crash and never a false refusal', () => {
+  it('a zero-padded proof address is normalized, never an octal crash and never a false refusal', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_FAKE_PROOF_PAD: '1' });
+    const fed = await fedRun(sb, { AGY_FAKE_PROOF_PAD: '1' });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 0, `a padded address must pass, not crash: ${fed.stderr}`);
@@ -1535,20 +1515,20 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
     assert.equal(receipts[0].delivery, 'fed');
   });
 
-  it('a capitalized heading and anchor still count — and the payload keeps its own case', () => {
+  it('a capitalized heading and anchor still count — and the payload keeps its own case', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_FAKE_PROOF_CASE: '1' });
+    const fed = await fedRun(sb, { AGY_FAKE_PROOF_CASE: '1' });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 0, `a capitalization must not fail a real delivery: ${fed.stderr}`);
     assert.equal(receipts.length, 1, 'the review attests');
   });
 
-  it('an absurd proof address never reaches bash arithmetic — no crash, no impersonated address', () => {
+  it('an absurd proof address never reaches bash arithmetic — no crash, no impersonated address', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_FAKE_PROOF_HUGE: '2' });
+    const fed = await fedRun(sb, { AGY_FAKE_PROOF_HUGE: '2' });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 4, fed.stderr);
@@ -1558,10 +1538,10 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
 
   // Dropping an out-of-range address made it INVISIBLE: an answer with every correct echo plus one
   // invented giant address then satisfied a grammar whose whole point is that it is closed.
-  it('a VALID proof carrying one extra out-of-range address still fails — an invented address is never invisible', () => {
+  it('a VALID proof carrying one extra out-of-range address still fails — an invented address is never invisible', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_FAKE_PROOF_HUGE_EXTRA: '1' });
+    const fed = await fedRun(sb, { AGY_FAKE_PROOF_HUGE_EXTRA: '1' });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 4, fed.stderr);
@@ -1571,7 +1551,7 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
 
   // The candidate cap was 25, so a change set whose first 25 middle-nearest candidates all fail the
   // fixed-string checks earned a false "no usable candidate" refusal while candidate 26 was fine.
-  it('a part whose first 25 candidates are unusable still finds the one after them', () => {
+  it('a part whose first 25 candidates are unusable still finds the one after them', async () => {
     const sb = makeSandbox();
     // Each decoy is a unique WHOLE line (so it survives the cheap prefilter) that also occurs as a
     // SUBSTRING of a longer line — exactly the case the exact occurrence check must reject.
@@ -1580,7 +1560,7 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
     const filler = (from, n) => Array.from({ length: n }, (_, i) => `unique change-set line ${String(from + i).padStart(4, '0')} — a distinctive body marker ${'x'.repeat(20)}`);
     const body = [...filler(0, 40), ...decoys, ...filler(40, 40), ...echoes, ...filler(80, 60)];
     writeFileSync(join(sb.repo, 'oversized.txt'), `${body.join('\n')}\n`);
-    const fed = fedRun(sb);
+    const fed = await fedRun(sb);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 0, `a usable candidate past position 25 must be found: ${fed.stderr}`);
     const final = fed.prompts[fed.prompts.length - 1];
@@ -1591,10 +1571,10 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
     }
   });
 
-  it('a harmless `- ` bullet still counts — the anchor is strict, not brittle', () => {
+  it('a harmless `- ` bullet still counts — the anchor is strict, not brittle', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb, { AGY_FAKE_PROOF_BULLET: '1' });
+    const fed = await fedRun(sb, { AGY_FAKE_PROOF_BULLET: '1' });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 0, `a bulleted proof must not be a false refusal: ${fed.stderr}`);
@@ -1602,10 +1582,10 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
     assert.equal(receipts[0].delivery, 'fed');
   });
 
-  it('the selected lines never appear in any envelope the wrapper sends', () => {
+  it('the selected lines never appear in any envelope the wrapper sends', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const fed = fedRun(sb);
+    const fed = await fedRun(sb);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 0, fed.stderr);
     const final = fed.prompts[fed.prompts.length - 1];
@@ -1628,7 +1608,7 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
   // anywhere but the body it is being asked to prove — so it must occur exactly once across the
   // bodies AND nowhere in what the wrapper itself sends, including the request line that names the
   // addresses (which only exists once every address is chosen).
-  it('a change-set line that duplicates the wrapper`s own framing is never chosen as a proof', () => {
+  it('a change-set line that duplicates the wrapper`s own framing is never chosen as a proof', async () => {
     const sb = makeSandbox();
     // The change set contains lines copied verbatim out of the envelope the wrapper will send.
     const framing = [
@@ -1639,7 +1619,7 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
     const filler = Array.from({ length: 400 }, (_, i) => `unique change-set line ${String(i).padStart(4, '0')} — a distinctive body marker ${'x'.repeat(20)}`);
     const woven = filler.flatMap((l, i) => (i % 40 === 20 ? [framing[(i / 40) | 0 % framing.length] ?? framing[0], l] : [l]));
     writeFileSync(join(sb.repo, 'oversized.txt'), `${woven.join('\n')}\n`);
-    const fed = fedRun(sb);
+    const fed = await fedRun(sb);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 0, fed.stderr);
     const final = fed.prompts[fed.prompts.length - 1];
@@ -1658,7 +1638,7 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
     }
   });
 
-  it('a change-set line whose text IS a request address is never chosen (the request would reveal it)', () => {
+  it('a change-set line whose text IS a request address is never chosen (the request would reveal it)', async () => {
     const sb = makeSandbox();
     // Seed every plausible address form the request line could carry, so a naive selector that
     // filters only against the PRE-request envelope can pick one of them.
@@ -1666,7 +1646,7 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
     const filler = Array.from({ length: 400 }, (_, i) => `unique change-set line ${String(i).padStart(4, '0')} — a distinctive body marker ${'x'.repeat(20)}`);
     const woven = filler.flatMap((l, i) => (i % 7 === 3 && addresses[(i / 7) | 0] ? [addresses[(i / 7) | 0], l] : [l]));
     writeFileSync(join(sb.repo, 'oversized.txt'), `${woven.join('\n')}\n`);
-    const fed = fedRun(sb);
+    const fed = await fedRun(sb);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(fed.status, 0, fed.stderr);
     const final = fed.prompts[fed.prompts.length - 1];
@@ -1681,9 +1661,9 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
     }
   });
 
-  it('an UNDER-cap single-turn review declares delivery `inline` and still attests', () => {
+  it('an UNDER-cap single-turn review declares delivery `inline` and still attests', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -1691,13 +1671,13 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
   });
 });
 
-describe('agy-review.sh — size ceiling + gated --add-dir escape (6)', () => {
+describe('agy-review.sh — size ceiling + gated --add-dir escape (6)', { concurrency: 2 }, () => {
   // D2: chunking is CODE-mode only. A plan/diff artifact is an operator-supplied file the operator
   // can split, so those modes keep today's refuse-over-cap behaviour verbatim.
-  it('plan mode: an oversized prompt exits 2 with guidance, agy not invoked (chunking is code-only)', () => {
+  it('plan mode: an oversized prompt exits 2 with guidance, agy not invoked (chunking is code-only)', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'big-plan.md'), `# plan\n${'a plan line that is long enough to matter\n'.repeat(400)}`);
-    const r = run(sb, { args: ['plan', 'big-plan.md', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: '4000' } });
+    const r = await run(sb, { args: ['plan', 'big-plan.md', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: '4000' } });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 2, r.stderr);
     assert.match(r.stderr, /over AGY_MAX_PROMPT_BYTES=4000/);
@@ -1708,10 +1688,10 @@ describe('agy-review.sh — size ceiling + gated --add-dir escape (6)', () => {
 
   // D3: the offload is RETIRED, not removed. The key stays recognized (an existing settings line must
   // never start warning as unknown) but it arms nothing, and setting it says so.
-  it('a set AGY_REVIEW_ALLOW_ADDDIR prints the retirement notice and does not pass --add-dir', () => {
+  it('a set AGY_REVIEW_ALLOW_ADDDIR prints the retirement notice and does not pass --add-dir', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP), AGY_REVIEW_ALLOW_ADDDIR: '1' } });
+    const r = await run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP), AGY_REVIEW_ALLOW_ADDDIR: '1' } });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /AGY_REVIEW_ALLOW_ADDDIR is set \(env\) but it is RETIRED/, 'the notice names the retirement AND where the dead value came from');
@@ -1721,19 +1701,19 @@ describe('agy-review.sh — size ceiling + gated --add-dir escape (6)', () => {
     assert.match(r.stderr, /feeding the change set in \d+ part\(s\)/, 'the fed lane runs regardless of the retired knob');
   });
 
-  it('the settings registry still recognizes the retired key (an existing line never warns as unknown)', () => {
+  it('the settings registry still recognizes the retired key (an existing line never warns as unknown)', async () => {
     const sb = makeSandbox();
     writeSettings(sb, 'AGY_REVIEW_ALLOW_ADDDIR=1\n');
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /unknown key 'AGY_REVIEW_ALLOW_ADDDIR'/);
   });
 
-  it('the staging dir is trap-cleaned on exit (no leftover after the run)', () => {
+  it('the staging dir is trap-cleaned on exit (no leftover after the run)', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP) } });
+    const r = await run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP) } });
     // The fed lane dispatches every turn FROM the staging dir, so the fake's own cwd names it.
     const stagingPath = r.dispatchCwd;
     const stillThere = stagingPath ? existsSync(stagingPath) : false;
@@ -1743,11 +1723,11 @@ describe('agy-review.sh — size ceiling + gated --add-dir escape (6)', () => {
   });
 });
 
-describe('agy-review.sh — resume / round-2 delta (7)', () => {
-  it('--continue takes NO mode, sends a delta (shape + focus + decided), never re-embeds the artifact', () => {
+describe('agy-review.sh — resume / round-2 delta (7)', { concurrency: 2 }, () => {
+  it('--continue takes NO mode, sends a delta (shape + focus + decided), never re-embeds the artifact', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'decided.md'), 'ALREADY_DECIDED_ITEM\n');
-    const r = run(sb, { args: ['--continue', '--decided', '@decided.md', '--focus', 'ROUND2_FOCUS'] });
+    const r = await run(sb, { args: ['--continue', '--decided', '@decided.md', '--focus', 'ROUND2_FOCUS'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.argv, /(^|\n)--continue(\n|$)/, 'agy is continued');
@@ -1758,10 +1738,10 @@ describe('agy-review.sh — resume / round-2 delta (7)', () => {
     assert.doesNotMatch(r.prompt, /repo file map/, 'a continuation must NOT re-assemble the artifact');
   });
 
-  it('--continue rejects a mode token and rejects --facts', () => {
+  it('--continue rejects a mode token and rejects --facts', async () => {
     const sb = makeSandbox();
-    const r1 = run(sb, { args: ['--continue', 'code'] });
-    const r2 = run(sb, { args: ['--continue', '--facts', 'x'] });
+    const r1 = await run(sb, { args: ['--continue', 'code'] });
+    const r2 = await run(sb, { args: ['--continue', '--facts', 'x'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r1.status, 2);
     assert.match(r1.stderr, /takes no positional args/);
@@ -1769,9 +1749,9 @@ describe('agy-review.sh — resume / round-2 delta (7)', () => {
     assert.match(r2.stderr, /--facts is not valid on a continuation/);
   });
 
-  it('--conversation <id> threads the id through to agy', () => {
+  it('--conversation <id> threads the id through to agy', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['--conversation', 'conv-xyz', '--focus', 'f'] });
+    const r = await run(sb, { args: ['--conversation', 'conv-xyz', '--focus', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.argv, /(^|\n)--conversation(\n|$)/);
@@ -1779,7 +1759,7 @@ describe('agy-review.sh — resume / round-2 delta (7)', () => {
   });
 });
 
-describe('agy-review.sh — delegated guards inherited via agy-run (9, 10)', { concurrency: true }, () => {
+describe('agy-review.sh — delegated guards inherited via agy-run (9, 10)', { concurrency: 2 }, () => {
   it('hard timeout: a sleeping stub is killed at AGY_HARD_TIMEOUT', async () => {
     const sb = makeSandbox();
     const started = Date.now();
@@ -1791,9 +1771,9 @@ describe('agy-review.sh — delegated guards inherited via agy-run (9, 10)', { c
     assert.match(r.stderr, /exceeded the hard cap/);
   });
 
-  it('subscription invariant: a stray FOO_API_KEY is unset for the agy subprocess', () => {
+  it('subscription invariant: a stray FOO_API_KEY is unset for the agy subprocess', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { FOO_API_KEY: 'bar', ANTIGRAVITY_API_KEY: 'baz' } });
+    const r = await run(sb, { args: ['code', '--facts', 'f'], env: { FOO_API_KEY: 'bar', ANTIGRAVITY_API_KEY: 'baz' } });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.capEnv, /^FOO_API_KEY=<unset>$/m);
@@ -1801,81 +1781,81 @@ describe('agy-review.sh — delegated guards inherited via agy-run (9, 10)', { c
   });
 });
 
-describe('agy-review.sh — mode / arg validation (11)', () => {
-  it('unknown mode → usage + exit 2', () => {
+describe('agy-review.sh — mode / arg validation (11)', { concurrency: 2 }, () => {
+  it('unknown mode → usage + exit 2', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['bogus'] });
+    const r = await run(sb, { args: ['bogus'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /usage:/);
     assert.equal(r.invoked, false);
   });
 
-  it('plan mode with a missing file → exit 2', () => {
+  it('plan mode with a missing file → exit 2', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['plan', 'nope.md'] });
+    const r = await run(sb, { args: ['plan', 'nope.md'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /plan file 'nope\.md' not found/);
   });
 
-  it('diff mode inlines the supplied file', () => {
+  it('diff mode inlines the supplied file', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'change.diff'), 'DIFF_FILE_BODY_MARKER\n');
-    const r = run(sb, { args: ['diff', 'change.diff', '--facts', 'f'] });
+    const r = await run(sb, { args: ['diff', 'change.diff', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.prompt, /The diff under review/);
     assert.match(r.prompt, /DIFF_FILE_BODY_MARKER/);
   });
 
-  it('rejects a stray -- passthrough (the wrapper owns the posture)', () => {
+  it('rejects a stray -- passthrough (the wrapper owns the posture)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--', '--add-dir', '.'] });
+    const r = await run(sb, { args: ['code', '--', '--add-dir', '.'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /this wrapper OWNS the review posture/);
   });
 
-  it('rejects a value-flag that swallows the NEXT flag as its value (--facts --focus x → exit 2)', () => {
+  it('rejects a value-flag that swallows the NEXT flag as its value (--facts --focus x → exit 2)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', '--focus', 'x'] });
+    const r = await run(sb, { args: ['code', '--facts', '--focus', 'x'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 2, r.stderr);
     assert.match(r.stderr, /--facts needs a value/);
     assert.equal(r.invoked, false, 'a misplaced flag must not be spent as bogus grounding');
   });
 
-  it('rejects a value-flag with no value at the end of args (--decided → exit 2)', () => {
+  it('rejects a value-flag with no value at the end of args (--decided → exit 2)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'f', '--decided'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f', '--decided'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 2, r.stderr);
     assert.match(r.stderr, /--decided needs a value/);
   });
 });
 
-describe('agy-review.sh — no-env run (12)', () => {
-  it('a code review with NO AGY_* env vars runs cleanly (no unbound-var abort under set -u)', () => {
+describe('agy-review.sh — no-env run (12)', { concurrency: 2 }, () => {
+  it('a code review with NO AGY_* env vars runs cleanly (no unbound-var abort under set -u)', async () => {
     const sb = makeSandbox();
     // run() sets only HOME/PATH + the AGY_FAKE_* capture vars (not AGY_* config) — so this exercises
     // the all-defaults path.
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.invoked, true);
   });
 });
 
-describe('agy-review.sh — subdir invocation is repo-complete (13)', () => {
-  it('from a subdir, assembles a repo-complete change set AND reads a relative --facts path', () => {
+describe('agy-review.sh — subdir invocation is repo-complete (13)', { concurrency: 2 }, () => {
+  it('from a subdir, assembles a repo-complete change set AND reads a relative --facts path', async () => {
     const sb = makeSandbox();
     // a change to a ROOT file (sibling of the subdir we invoke from)
     writeFileSync(join(sb.repo, 'root-change.txt'), 'ROOT_SIBLING_CHANGE\n');
     const sub = join(sb.repo, 'deep', 'nested');
     mkdirSync(sub, { recursive: true });
     writeFileSync(join(sub, 'local-facts.md'), 'SUBDIR_RELATIVE_FACT\n');
-    const r = run(sb, { args: ['code', '--facts', '@local-facts.md'], cwd: sub });
+    const r = await run(sb, { args: ['code', '--facts', '@local-facts.md'], cwd: sub });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.prompt, /ROOT_SIBLING_CHANGE/, 'the root/sibling change must appear (repo-complete via cd to toplevel)');
@@ -1987,8 +1967,8 @@ const consultsEnv = (source, name) =>
 // `<facts-file>` behind a stray character) — the catalog declares the whole token a user types.
 const SLOT_RE = /@?<[^<>]+>|\[[^[\]]*\]/g;
 
-describe('agy-review.sh — --help contract (manifest-pinned)', () => {
-  it('--help and -h exit 0 pre-preflight (no agy, no git)', () => {
+describe('agy-review.sh — --help contract (manifest-pinned)', { concurrency: 2 }, () => {
+  it('--help and -h exit 0 pre-preflight (no agy, no git)', async () => {
     for (const arg of ['--help', '-h']) {
       const r = runHelp(arg);
       assert.equal(r.status, 0, `${arg}: ${r.stderr}`);
@@ -1997,39 +1977,39 @@ describe('agy-review.sh — --help contract (manifest-pinned)', () => {
     }
   });
 
-  it('Usage set-EQUALS the manifest invocation descriptors (both directions)', () => {
+  it('Usage set-EQUALS the manifest invocation descriptors (both directions)', async () => {
     const help = runHelp('--help').stdout;
     const got = helpSection(help, 'Usage:').filter((l) => l.startsWith('agy-review')).map(norm);
     assert.ok(REVIEW_CONTRACT.invocations.length > 0, 'manifest invocations must be non-empty');
     setEq(got, REVIEW_CONTRACT.invocations.map(norm), 'help Usage ⟷ manifest invocations');
   });
 
-  it('Flags set-EQUALS the manifest flag descriptors (both directions)', () => {
+  it('Flags set-EQUALS the manifest flag descriptors (both directions)', async () => {
     const help = runHelp('--help').stdout;
     const got = helpSection(help, 'Flags:').filter((l) => l.startsWith('--')).map(norm);
     assert.ok(REVIEW_CONTRACT.flags.length > 0, 'manifest flags must be non-empty');
     setEq(got, REVIEW_CONTRACT.flags.map(norm), 'help Flags ⟷ manifest flags');
   });
 
-  it('Grounding renders the manifest grounding note verbatim', () => {
+  it('Grounding renders the manifest grounding note verbatim', async () => {
     const help = runHelp('--help').stdout;
     assert.equal(norm(helpSection(help, 'Grounding:').join(' ')), norm(REVIEW_CONTRACT.grounding));
   });
 
-  it('Notes renders the manifest contract.notes verbatim (a typed contract key that MUST surface)', () => {
+  it('Notes renders the manifest contract.notes verbatim (a typed contract key that MUST surface)', async () => {
     const help = runHelp('--help').stdout;
     assert.ok(REVIEW_CONTRACT.notes.length > 0, 'manifest notes must be non-empty');
     assert.equal(norm(helpSection(help, 'Notes:').join(' ')), norm(REVIEW_CONTRACT.notes.join(' ')));
   });
 
-  it('Round-2 / resume set-EQUALS the manifest continue descriptors', () => {
+  it('Round-2 / resume set-EQUALS the manifest continue descriptors', async () => {
     const help = runHelp('--help').stdout;
     const got = helpSection(help, 'Round-2 / resume:').filter((l) => l.startsWith('agy-review')).map(norm);
     assert.ok(REVIEW_CONTRACT.continue.length > 0, 'manifest continue must be non-empty');
     setEq(got, REVIEW_CONTRACT.continue.map(norm), 'help continue ⟷ manifest continue');
   });
 
-  it('Receipt renders the manifest receipt contract verbatim (AD-038 three-way lockstep)', () => {
+  it('Receipt renders the manifest receipt contract verbatim (AD-038 three-way lockstep)', async () => {
     const help = runHelp('--help').stdout;
     assert.equal(norm(helpSection(help, 'Receipt:').join(' ')), norm(REVIEW_CONTRACT.receipt));
     assert.match(REVIEW_CONTRACT.receipt, /sha256 over the canonical uncommitted-state payload/, 'the fingerprint definition lives in the manifest contract');
@@ -2037,10 +2017,10 @@ describe('agy-review.sh — --help contract (manifest-pinned)', () => {
   });
 });
 
-describe('agy-review.sh — source-level reverse guard (parser arms ⟷ manifest)', () => {
+describe('agy-review.sh — source-level reverse guard (parser arms ⟷ manifest)', { concurrency: 2 }, () => {
   const arms = extractArgCaseArms(readFileSync(WRAPPER, 'utf8'));
 
-  it('the real mode arms equal the manifest modes (adding a mode without the manifest fails here)', () => {
+  it('the real mode arms equal the manifest modes (adding a mode without the manifest fails here)', async () => {
     // Deliberately a UNION over every `case "$mode"` in the wrapper (the CLI dispatch AND the
     // emit_artifact renderer): the union can only be conservative — a mode added to EITHER case
     // without the manifest goes red; no renderer-only arm can make a missing manifest entry green.
@@ -2049,14 +2029,14 @@ describe('agy-review.sh — source-level reverse guard (parser arms ⟷ manifest
     setEq(new Set(modes), MANIFEST.roles.review.modes, 'parser mode arms ⟷ manifest modes');
   });
 
-  it('the real flag arms equal the manifest flag set (closed grammar; catch-alls excluded)', () => {
+  it('the real flag arms equal the manifest flag set (closed grammar; catch-alls excluded)', async () => {
     const flagArms = splitArms(arms.get('"$1"')).filter((a) => !['--', '--*', '*'].includes(a));
     const declared = REVIEW_CONTRACT.flags.map(leadingFlag);
     assert.ok(declared.length > 0, 'manifest flag set must be non-empty');
     setEq(new Set(flagArms), new Set(declared), 'parser flag arms ⟷ manifest flags');
   });
 
-  it('the first-arg entrypoints are exactly --help/-h + the manifest continue flags', () => {
+  it('the first-arg entrypoints are exactly --help/-h + the manifest continue flags', async () => {
     const declared = REVIEW_CONTRACT.continue.map(leadingFlag);
     assert.ok(declared.length > 0, 'manifest continue set must be non-empty');
     setEq(new Set(splitArms(arms.get('"${1:-}"'))), new Set(['--help', '-h', ...declared]));
@@ -2067,20 +2047,20 @@ describe('agy-review.sh — source-level reverse guard (parser arms ⟷ manifest
 // The kit validator owns the catalog's INTERNAL shape; these arms pin the half only this wrapper's
 // source can settle — the cataloged review modes ARE the real parser arms, every declared contract
 // invocation is cataloged, and the env-hook the catalog aims at review is a real env var.
-describe('agy-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)', () => {
+describe('agy-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)', { concurrency: 2 }, () => {
   const source = readFileSync(WRAPPER, 'utf8');
   const arms = extractArgCaseArms(source);
   const catalog = MANIFEST.modeCatalog ?? [];
   const reviewEntries = catalog.filter((e) => e.role === 'review');
   const reviewPrimaries = reviewEntries.filter((e) => e.kind === 'primary');
 
-  it('the catalog submodes ARE the wrapper\'s real parser mode arms (both directions)', () => {
+  it('the catalog submodes ARE the wrapper\'s real parser mode arms (both directions)', async () => {
     const modes = splitArms(arms.get('"$mode"')).filter((a) => a !== '*');
     assert.ok(reviewPrimaries.length > 0, 'the manifest must catalog its review modes');
     setEq(new Set(reviewPrimaries.map((e) => e.submode)), new Set(modes), 'catalog submodes ⟷ real parser mode arms');
   });
 
-  it('every review entry composes BY REFERENCE and every reference resolves', () => {
+  it('every review entry composes BY REFERENCE and every reference resolves', async () => {
     for (const entry of reviewEntries) {
       assert.ok(
         Array.isArray(entry.invocationRefs) && entry.invocationRefs.length > 0,
@@ -2096,7 +2076,7 @@ describe('agy-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)',
     }
   });
 
-  it('every review contract invocation is claimed by exactly ONE catalog entry (no uncataloged mode)', () => {
+  it('every review contract invocation is claimed by exactly ONE catalog entry (no uncataloged mode)', async () => {
     const claims = reviewEntries.flatMap((e) => e.invocationRefs.map((r) => `${r.contractField}[${r.index}]`));
     assert.equal(new Set(claims).size, claims.length, 'a contract invocation is claimed at most once');
     const declared = [
@@ -2106,7 +2086,7 @@ describe('agy-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)',
     setEq(new Set(claims), declared, 'catalog claims ⟷ declared contract invocations');
   });
 
-  it('every env-hook the catalog aims at a review mode is a real EXECUTABLE guard, not a mention', () => {
+  it('every env-hook the catalog aims at a review mode is a real EXECUTABLE guard, not a mention', async () => {
     const hooks = catalog.filter((e) => e.kind === 'env-hook' && e.parents.some((p) => reviewPrimaries.some((r) => r.key === p)));
     assert.ok(hooks.length > 0, 'AGY_PROBE must be cataloged as an env-hook over the review modes');
     for (const hook of hooks) {
@@ -2117,7 +2097,7 @@ describe('agy-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)',
     }
   });
 
-  it('the catalog operand slots set-EQUAL the slots its rendered forms really carry (both directions)', () => {
+  it('the catalog operand slots set-EQUAL the slots its rendered forms really carry (both directions)', async () => {
     for (const entry of reviewEntries) {
       const forms = entry.invocationRefs.map((r) => REVIEW_CONTRACT[r.contractField][r.index]);
       // The DEDUPLICATED UNION over every resolved form: a plural-ref entry legitimately spreads its
@@ -2127,7 +2107,7 @@ describe('agy-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)',
     }
   });
 
-  it('an entry rendering a LITERAL descriptor is slot-checked too (env-hooks have no role to filter on)', () => {
+  it('an entry rendering a LITERAL descriptor is slot-checked too (env-hooks have no role to filter on)', async () => {
     // The contract-backed arm above filters by role — and an env-hook HAS no role, so its descriptor
     // was never slot-checked at all. That is exactly how a hardcoded dead path can reach the
     // discovery surface looking ready-to-run. Every literal-descriptor kind is covered here:
@@ -2140,7 +2120,7 @@ describe('agy-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)',
     }
   });
 
-  it('AGY_PROBE really silences the advisory on EVERY review parent the catalog claims (behavioural)', () => {
+  it('AGY_PROBE really silences the advisory on EVERY review parent the catalog claims (behavioural)', async () => {
     // The catalog CLAIMS these modes are modified by the hook; prove it per parent rather than
     // trusting a source scan: the off-frontier advisory fires without it, is silent with it.
     const hook = catalog.find((e) => e.key === 'AGY_PROBE');
@@ -2157,14 +2137,14 @@ describe('agy-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)',
       // Both runs must really REACH agy: asserting the diagnostic text alone would let an early
       // failure that never dispatched pass the probe-on branch (its stderr simply lacks the string).
       const noisy = makeSandbox();
-      const off = run(noisy, { args: drive[parent](noisy), env: { AGY_MODEL: 'Some Weak Model' } });
+      const off = await run(noisy, { args: drive[parent](noisy), env: { AGY_MODEL: 'Some Weak Model' } });
       rmSync(noisy.home, { recursive: true, force: true });
       assert.equal(off.status, 0, `${parent}: ${off.stderr}`);
       assert.equal(off.invoked, true, `${parent}: the control run must reach agy`);
       assert.match(off.stderr, /non-frontier model/, `${parent}: the advisory must fire without the hook`);
 
       const quiet = makeSandbox();
-      const on = run(quiet, { args: drive[parent](quiet), env: { AGY_MODEL: 'Some Weak Model', AGY_PROBE: '1' } });
+      const on = await run(quiet, { args: drive[parent](quiet), env: { AGY_MODEL: 'Some Weak Model', AGY_PROBE: '1' } });
       rmSync(quiet.home, { recursive: true, force: true });
       assert.equal(on.status, 0, `${parent}: ${on.stderr}`);
       assert.equal(on.invoked, true, `${parent}: AGY_PROBE=1 must still reach agy — silence must come from the hook, not from an early exit`);
@@ -2173,8 +2153,8 @@ describe('agy-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)',
   });
 });
 
-describe('agy-review.sh — declared contract is really accepted (forward guard)', () => {
-  it('every manifest mode runs green', () => {
+describe('agy-review.sh — declared contract is really accepted (forward guard)', { concurrency: 2 }, () => {
+  it('every manifest mode runs green', async () => {
     const drive = {
       code: () => ['code', '--facts', 'f'],
       plan: (sb) => { writeFileSync(join(sb.repo, 'p.md'), '# p\n'); return ['plan', 'p.md', '--facts', 'f']; },
@@ -2183,14 +2163,14 @@ describe('agy-review.sh — declared contract is really accepted (forward guard)
     for (const mode of MANIFEST.roles.review.modes) {
       assert.ok(drive[mode], `no test drive for manifest mode "${mode}" — add one`);
       const sb = makeSandbox();
-      const r = run(sb, { args: drive[mode](sb) });
+      const r = await run(sb, { args: drive[mode](sb) });
       rmSync(sb.home, { recursive: true, force: true });
       assert.equal(r.status, 0, `mode ${mode}: ${r.stderr}`);
       assert.equal(r.invoked, true, `mode ${mode} must reach agy`);
     }
   });
 
-  it('every manifest flag is accepted in code mode', () => {
+  it('every manifest flag is accepted in code mode', async () => {
     for (const descriptor of REVIEW_CONTRACT.flags) {
       const flag = leadingFlag(descriptor);
       const sb = makeSandbox();
@@ -2199,24 +2179,24 @@ describe('agy-review.sh — declared contract is really accepted (forward guard)
       const args = flag === '--facts' ? ['code', '--facts', 'f']
         : flag === '--ungrounded' ? ['code', '--ungrounded']
           : ['code', '--facts', 'f', flag, 'f'];
-      const r = run(sb, { args });
+      const r = await run(sb, { args });
       rmSync(sb.home, { recursive: true, force: true });
       assert.equal(r.status, 0, `${flag}: ${r.stderr}`);
     }
   });
 
-  it('an invented flag is rejected (closed grammar negative)', () => {
+  it('an invented flag is rejected (closed grammar negative)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'f', '--bogus-flag'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f', '--bogus-flag'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /unknown flag '--bogus-flag'/);
     assert.equal(r.invoked, false, 'an unknown flag must not spend a run');
   });
 
-  it('--help NOT in first position is an unknown flag, never an intercepted help', () => {
+  it('--help NOT in first position is an unknown flag, never an intercepted help', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'f', '--help'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f', '--help'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 2, 'help is keyed on the FIRST argument only');
     assert.doesNotMatch(r.stdout, /Usage:/);
@@ -2241,10 +2221,10 @@ const sha256HexOf = async (buf) => {
 };
 const VERDICT_OUTPUT = '### Verdict\nSHIP WITH NITS — solid, two nits.\n### Blocking\nnone\n### Non-blocking\n1. nit\n### Questions\nnone';
 
-describe('agy-review.sh — review receipts (AD-038)', () => {
+describe('agy-review.sh — review receipts (AD-038)', { concurrency: 2 }, () => {
   it('a fresh grounded code review appends ONE fixture-shaped receipt (verdict verbatim, factsHash real)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -2268,9 +2248,9 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
   // the kit's review-state gate rejects it. EVERY receipt carries the marker (true or false): it
   // self-declares, so the gate reads the fact rather than inferring it from a version string that
   // bumps in a different release phase. Silence is not a declaration.
-  it('AGY_PROBE=1 stamps probe:true — a throwaway probe can never attest a tree (D3)', () => {
+  it('AGY_PROBE=1 stamps probe:true — a throwaway probe can never attest a tree (D3)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_PROBE: '1', AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_PROBE: '1', AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -2280,17 +2260,17 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
 
   // Every receipt SELF-DECLARES: the kit's gate reads the marker, never the wrapper version — so
   // the marker must not depend on a version bump landing in the same release phase.
-  it('a normal review self-declares probe:false — the receipt states the fact, not a version', () => {
+  it('a normal review self-declares probe:false — the receipt states the fact, not a version', async () => {
     const sb = makeSandbox();
-    run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(receipts[0].probe, false, 'silence is not a declaration — the gate rejects an unmarked receipt');
   });
 
-  it('a probe CONTINUATION is marked too (it is doubly unable to attest — fresh:false AND probe)', () => {
+  it('a probe CONTINUATION is marked too (it is doubly unable to attest — fresh:false AND probe)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['--continue'], env: { AGY_PROBE: '1', AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const r = await run(sb, { args: ['--continue'], env: { AGY_PROBE: '1', AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -2298,9 +2278,9 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
     assert.equal(receipts[0].probe, true, 'both write paths carry the marker — no unmarked probe lane');
   });
 
-  it('an --ungrounded fresh run records grounded:false + factsHash null (the vacuous-grounding hole stays visible)', () => {
+  it('an --ungrounded fresh run records grounded:false + factsHash null (the vacuous-grounding hole stays visible)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--ungrounded'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const r = await run(sb, { args: ['code', '--ungrounded'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -2308,10 +2288,10 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
     assert.equal(receipts[0].factsHash, null);
   });
 
-  it('an EMPTY --facts file in code mode refuses pre-spend — no run, no receipt (D4 fail-closed)', () => {
+  it('an EMPTY --facts file in code mode refuses pre-spend — no run, no receipt (D4 fail-closed)', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.home, 'empty-facts.md'), '');
-    const r = run(sb, { args: ['code', '--facts', `@${join(sb.home, 'empty-facts.md')}`], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const r = await run(sb, { args: ['code', '--facts', `@${join(sb.home, 'empty-facts.md')}`], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 2, 'vacuous grounding no longer spends a run');
@@ -2319,13 +2299,13 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
     assert.equal(receipts.length, 0, 'no run — no receipt');
   });
 
-  it('parses REWORK and plain SHIP verbatim (an absent section is a FAILED run — the D4 describe owns that arm)', () => {
+  it('parses REWORK and plain SHIP verbatim (an absent section is a FAILED run — the D4 describe owns that arm)', async () => {
     for (const [output, want] of [
       ['### Verdict\nREWORK — the contract is violated.', 'REWORK'],
       ['### Verdict\nSHIP — clean.', 'SHIP'],
     ]) {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_OUTPUT: output } });
+      const r = await run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_OUTPUT: output } });
       const receipts = readReceipts(sb.repo);
       rmSync(sb.home, { recursive: true, force: true });
       assert.equal(r.status, 0, r.stderr);
@@ -2336,12 +2316,12 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
   // The wrapper-minted finding manifest (flow-orchestration Phase 4.2, Decision 2/P5/P24-25):
   // nonce-supplied dispatches mint {schema, backend, nonce, fingerprint, findings} beside the
   // receipt, atomic + no-clobber + ORDERED — a failed mint EXCLUDES the receipt append.
-  describe('finding manifest (AW_REVIEW_NONCE)', () => {
+  describe('finding manifest (AW_REVIEW_NONCE)', { concurrency: 2 }, () => {
     const manifestPath = (repo, nonce) => join(repo, '.git', `agent-workflow-finding-manifest-agy-${nonce}.json`);
 
-    it('a nonce-supplied grounded code dispatch mints the {backend, nonce}-named manifest carrying the captured findings + the receipt fingerprint', () => {
+    it('a nonce-supplied grounded code dispatch mints the {backend, nonce}-named manifest carrying the captured findings + the receipt fingerprint', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'r1-d2' } });
+      const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'r1-d2' } });
       const receipts = readReceipts(sb.repo);
       const manifest = JSON.parse(readFileSync(manifestPath(sb.repo, 'r1-d2'), 'utf8'));
       rmSync(sb.home, { recursive: true, force: true });
@@ -2356,9 +2336,9 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
       assert.equal(receipts[0].nonce, 'r1-d2', 'a nonce-supplied receipt carries the dispatch nonce — the flow round-land matcher requires exact equality (dispatch identity end-to-end)');
     });
 
-    it('a nonce-less invocation mints NO manifest and adds NO nonce field — the receipt field set is unchanged (Decision 2 both branches)', () => {
+    it('a nonce-less invocation mints NO manifest and adds NO nonce field — the receipt field set is unchanged (Decision 2 both branches)', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+      const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
       const receipts = readReceipts(sb.repo);
       const gitEntries = readdirSync(join(sb.repo, '.git')).filter((n) => n.startsWith('agent-workflow-finding-manifest-'));
       rmSync(sb.home, { recursive: true, force: true });
@@ -2367,10 +2347,10 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
       assert.deepEqual(Object.keys(receipts[0]), Object.keys(RECEIPT_FIXTURE), 'the receipt line field set is unchanged');
     });
 
-    it('DIFFERENT bytes at the derived name refuse loudly AND EXCLUDE the receipt append (ordering, behaviorally)', () => {
+    it('DIFFERENT bytes at the derived name refuse loudly AND EXCLUDE the receipt append (ordering, behaviorally)', async () => {
       const sb = makeSandbox();
       writeFileSync(manifestPath(sb.repo, 'r1-d2'), '{"schema":1,"backend":"agy","nonce":"r1-d2","fingerprint":null,"findings":"other bytes"}\n');
-      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'r1-d2' } });
+      const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'r1-d2' } });
       const receipts = readReceipts(sb.repo);
       const manifest = readFileSync(manifestPath(sb.repo, 'r1-d2'), 'utf8');
       rmSync(sb.home, { recursive: true, force: true });
@@ -2381,15 +2361,15 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
       assert.match(manifest, /other bytes/, 'the pre-existing manifest is never clobbered');
     });
 
-    it('a SYMLINK at the derived manifest path refuses and EXCLUDES the receipt — even when its target is byte-identical', () => {
+    it('a SYMLINK at the derived manifest path refuses and EXCLUDES the receipt — even when its target is byte-identical', async () => {
       const sb = makeSandbox();
-      assert.equal(run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'sym2' } }).status, 0);
+      assert.equal((await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'sym2' } })).status, 0);
       const mPath = manifestPath(sb.repo, 'sym2');
       const target = join(sb.repo, '.git', 'manifest-target-copy.json');
       writeFileSync(target, readFileSync(mPath));
       rmSync(mPath);
       symlinkSync(target, mPath);
-      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'sym2' } });
+      const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'sym2' } });
       const receipts = readReceipts(sb.repo);
       rmSync(sb.home, { recursive: true, force: true });
       assert.equal(r.status, 0, 'the review itself still succeeds (the artifact lane failed loudly)');
@@ -2397,11 +2377,11 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
       assert.equal(receipts.length, 1, 'the second receipt is EXCLUDED — a symlinked manifest is never read through as the idempotent no-op');
     });
 
-    it('a FIFO at the derived manifest path refuses fast and EXCLUDES the receipt (O_NONBLOCK — no hang; fix characterization)', () => {
+    it('a FIFO at the derived manifest path refuses fast and EXCLUDES the receipt (O_NONBLOCK — no hang; fix characterization)', async () => {
       const sb = makeSandbox();
       const mPath = manifestPath(sb.repo, 'fifo2');
       assert.equal(spawnSync('mkfifo', [mPath], { encoding: 'utf8' }).status, 0, 'mkfifo fixture');
-      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'fifo2' } });
+      const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'fifo2' } });
       const receipts = readReceipts(sb.repo);
       rmSync(sb.home, { recursive: true, force: true });
       assert.equal(r.status, 0, r.stderr);
@@ -2409,18 +2389,18 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
       assert.equal(receipts.length, 0, 'a FIFO manifest is never read (fstat-first) and the receipt is excluded');
     });
 
-    it('a BOM-prefixed captured output round-trips VERBATIM into the manifest (U+FEFF preserved)', () => {
+    it('a BOM-prefixed captured output round-trips VERBATIM into the manifest (U+FEFF preserved)', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: `\uFEFFpreamble\n${VERDICT_OUTPUT}`, AW_REVIEW_NONCE: 'b2' } });
+      const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: `\uFEFFpreamble\n${VERDICT_OUTPUT}`, AW_REVIEW_NONCE: 'b2' } });
       const manifest = JSON.parse(readFileSync(manifestPath(sb.repo, 'b2'), 'utf8'));
       rmSync(sb.home, { recursive: true, force: true });
       assert.equal(r.status, 0, r.stderr);
       assert.equal(manifest.findings, `\uFEFFpreamble\n${VERDICT_OUTPUT}\n`, 'the captured output is VERBATIM — a stripped BOM would move the findingDigest');
     });
 
-    it('an unsafe nonce refuses PRE-SPEND (exit 2, agy never runs) — a non-ASCII letter refuses under a UTF-8 locale too', () => {
+    it('an unsafe nonce refuses PRE-SPEND (exit 2, agy never runs) — a non-ASCII letter refuses under a UTF-8 locale too', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AW_REVIEW_NONCE: 'a/b' } });
+      const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AW_REVIEW_NONCE: 'a/b' } });
       rmSync(sb.home, { recursive: true, force: true });
       assert.equal(r.status, 2);
       assert.match(r.stderr, /safe nonce grammar/);
@@ -2428,15 +2408,15 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
       // The grammar ENUMERATES the ASCII set (no ranges): a locale-collated [A-Za-z] could admit a
       // non-ASCII letter the kit's JS reader then refuses, breaking correlation after a paid run.
       const utf8 = makeSandbox();
-      const r2 = run(utf8, { args: ['code', '--facts', 'a tiny fact'], env: { AW_REVIEW_NONCE: 'r\u00e91', LC_ALL: 'en_US.UTF-8', LANG: 'en_US.UTF-8' } });
+      const r2 = await run(utf8, { args: ['code', '--facts', 'a tiny fact'], env: { AW_REVIEW_NONCE: 'r\u00e91', LC_ALL: 'en_US.UTF-8', LANG: 'en_US.UTF-8' } });
       rmSync(utf8.home, { recursive: true, force: true });
       assert.equal(r2.status, 2, 'a non-ASCII nonce letter refuses whatever the locale collation says');
       assert.match(r2.stderr, /safe nonce grammar/);
     });
 
-    it('a nonce-supplied CONTINUATION mints its manifest with fingerprint null (the receipt identity is null too)', () => {
+    it('a nonce-supplied CONTINUATION mints its manifest with fingerprint null (the receipt identity is null too)', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['--continue'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'r2-c1' } });
+      const r = await run(sb, { args: ['--continue'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'r2-c1' } });
       const receipts = readReceipts(sb.repo);
       const manifest = JSON.parse(readFileSync(manifestPath(sb.repo, 'r2-c1'), 'utf8'));
       rmSync(sb.home, { recursive: true, force: true });
@@ -2448,9 +2428,9 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
 
     // The --nonce flag (FLOW-NONCE-DISPATCH-LANE): the plain-argument lane onto the SAME seam —
     // for hosts whose dispatch policy has no env-prefix form.
-    it('--nonce rides the AW_REVIEW_NONCE seam: manifest minted, receipt nonce-stamped (flag form ≡ env form)', () => {
+    it('--nonce rides the AW_REVIEW_NONCE seam: manifest minted, receipt nonce-stamped (flag form ≡ env form)', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', 'f2-d2'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+      const r = await run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', 'f2-d2'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
       const receipts = readReceipts(sb.repo);
       const manifest = JSON.parse(readFileSync(manifestPath(sb.repo, 'f2-d2'), 'utf8'));
       rmSync(sb.home, { recursive: true, force: true });
@@ -2459,45 +2439,45 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
       assert.equal(receipts[0].nonce, 'f2-d2', 'the flag stamps the receipt exactly like the env form');
     });
 
-    it('an unsafe --nonce value refuses PRE-SPEND (exit 2, agy never runs) — same grammar as the env screen', () => {
+    it('an unsafe --nonce value refuses PRE-SPEND (exit 2, agy never runs) — same grammar as the env screen', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', 'a/b'] });
+      const r = await run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', 'a/b'] });
       rmSync(sb.home, { recursive: true, force: true });
       assert.equal(r.status, 2);
       assert.match(r.stderr, /safe nonce grammar/);
       assert.equal(r.invoked, false, 'the containment refusal fires before any CLI spend');
     });
 
-    it('a missing value, a duplicate flag, and a disagreeing env+flag pair each refuse (exit 2); an agreeing pair proceeds', () => {
+    it('a missing value, a duplicate flag, and a disagreeing env+flag pair each refuse (exit 2); an agreeing pair proceeds', async () => {
       const sb = makeSandbox();
-      const missing = run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce'] });
+      const missing = await run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce'] });
       assert.equal(missing.status, 2);
       assert.match(missing.stderr, /--nonce needs a value/);
-      const dup = run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', 'n1', '--nonce', 'n2'] });
+      const dup = await run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', 'n1', '--nonce', 'n2'] });
       assert.equal(dup.status, 2);
       assert.match(dup.stderr, /duplicate --nonce/);
-      const clash = run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', 'n1'], env: { AW_REVIEW_NONCE: 'n2' } });
+      const clash = await run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', 'n1'], env: { AW_REVIEW_NONCE: 'n2' } });
       assert.equal(clash.status, 2);
       assert.match(clash.stderr, /disagrees with the AW_REVIEW_NONCE environment value/);
-      const agree = run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', 'n3'], env: { AW_REVIEW_NONCE: 'n3', AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+      const agree = await run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', 'n3'], env: { AW_REVIEW_NONCE: 'n3', AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
       const exists = existsSync(manifestPath(sb.repo, 'n3'));
       rmSync(sb.home, { recursive: true, force: true });
       assert.equal(agree.status, 0, agree.stderr);
       assert.equal(exists, true, 'an agreeing pair is ONE seam value — the dispatch proceeds');
     });
 
-    it('--nonce is valid on a CONTINUATION too — the flag lane covers every seam-honoring form', () => {
+    it('--nonce is valid on a CONTINUATION too — the flag lane covers every seam-honoring form', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['--continue', '--nonce', 'r2-c2'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+      const r = await run(sb, { args: ['--continue', '--nonce', 'r2-c2'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
       const manifest = JSON.parse(readFileSync(manifestPath(sb.repo, 'r2-c2'), 'utf8'));
       rmSync(sb.home, { recursive: true, force: true });
       assert.equal(r.status, 0, r.stderr);
       assert.equal(manifest.fingerprint, null, 'a continuation manifest carries no tree identity');
     });
 
-    it('a grammar-valid leading-dash --nonce value is ACCEPTED — the flag lane spans the whole declared grammar', () => {
+    it('a grammar-valid leading-dash --nonce value is ACCEPTED — the flag lane spans the whole declared grammar', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', '--n1'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+      const r = await run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', '--n1'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
       const receipts = readReceipts(sb.repo);
       const exists = existsSync(manifestPath(sb.repo, '--n1'));
       rmSync(sb.home, { recursive: true, force: true });
@@ -2506,18 +2486,18 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
       assert.equal(receipts[0].nonce, '--n1', 'the receipt carries the exact grammar-valid value — flag lane ≡ env lane');
     });
 
-    it('an EMPTY --nonce value refuses pre-spend under the grammar screen (presence is tracked separately from the value)', () => {
+    it('an EMPTY --nonce value refuses pre-spend under the grammar screen (presence is tracked separately from the value)', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', ''] });
+      const r = await run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', ''] });
       rmSync(sb.home, { recursive: true, force: true });
       assert.equal(r.status, 2);
       assert.match(r.stderr, /safe nonce grammar/);
       assert.equal(r.invoked, false, 'the refusal fires before any CLI spend');
     });
 
-    it('a duplicate --nonce after an EMPTY first value still refuses as a duplicate — an empty value never erases presence', () => {
+    it('a duplicate --nonce after an EMPTY first value still refuses as a duplicate — an empty value never erases presence', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', '', '--nonce', 'n2'] });
+      const r = await run(sb, { args: ['code', '--facts', 'a tiny fact', '--nonce', '', '--nonce', 'n2'] });
       rmSync(sb.home, { recursive: true, force: true });
       assert.equal(r.status, 2);
       assert.match(r.stderr, /duplicate --nonce/);
@@ -2525,9 +2505,9 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
     });
   });
 
-  it('a continuation receipt is fresh:false with null identity fields, and the wrapper prints the fresh-run notice', () => {
+  it('a continuation receipt is fresh:false with null identity fields, and the wrapper prints the fresh-run notice', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['--continue', '--decided', 'already folded'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const r = await run(sb, { args: ['--continue', '--decided', 'already folded'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -2549,7 +2529,7 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
   it('plan mode: artifact "plan", fingerprint = the artifact-file sha256', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'p.md'), '# plan body\n');
-    const r = run(sb, { args: ['plan', 'p.md', '--facts', 'f'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const r = await run(sb, { args: ['plan', 'p.md', '--facts', 'f'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -2557,18 +2537,18 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
     assert.equal(receipts[0].fingerprint, await sha256HexOf('# plan body\n'), 'plan fingerprint = file sha256');
   });
 
-  it('plan/diff outside a git work tree: warn + skip the receipt (exit 0) unless AW_REVIEW_RECEIPTS is set', () => {
+  it('plan/diff outside a git work tree: warn + skip the receipt (exit 0) unless AW_REVIEW_RECEIPTS is set', async () => {
     const sb = makeSandbox();
     const outside = join(sb.home, 'no-repo');
     mkdirSync(outside, { recursive: true });
     writeFileSync(join(outside, 'p.md'), '# plan outside git\n');
 
-    const skipped = run(sb, { args: ['plan', 'p.md', '--facts', 'f'], cwd: outside, env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
+    const skipped = await run(sb, { args: ['plan', 'p.md', '--facts', 'f'], cwd: outside, env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
     assert.equal(skipped.status, 0, skipped.stderr);
     assert.match(skipped.stderr, /not inside a git work tree and AW_REVIEW_RECEIPTS is unset — skipping/);
 
     const override = join(sb.home, 'receipts-override.jsonl');
-    const written = run(sb, {
+    const written = await run(sb, {
       args: ['plan', 'p.md', '--facts', 'f'],
       cwd: outside,
       env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_RECEIPTS: override },
@@ -2580,9 +2560,9 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
     assert.match(body, /"artifact":"plan"/);
   });
 
-  it('a receipt write failure warns loudly but never fails the review (fail-safe direction)', () => {
+  it('a receipt write failure warns loudly but never fails the review (fail-safe direction)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, {
+    const r = await run(sb, {
       args: ['code', '--facts', 'f'],
       env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_RECEIPTS: join(sb.home, 'no-such-dir', 'r.jsonl') },
     });
@@ -2592,18 +2572,18 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
     assert.match(r.stdout, /SHIP WITH NITS/, 'the findings still reach stdout');
   });
 
-  it('a failed agy run writes NO receipt (only a successful review attests)', () => {
+  it('a failed agy run writes NO receipt (only a successful review attests)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_EXIT: '7' } });
+    const r = await run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_EXIT: '7' } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
     assert.equal(receipts.length, 0);
   });
 
-  it('the clean-tree preflight exits before any receipt is written', () => {
+  it('the clean-tree preflight exits before any receipt is written', async () => {
     const sb = makeSandbox({ clean: true });
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0);
@@ -2614,7 +2594,7 @@ describe('agy-review.sh — review receipts (AD-038)', () => {
 // MANIFEST-TMP-ORPHAN-ON-FAILURE: on a FAILURE exit of the finding-manifest mint whose temp
 // unlink ALSO fails, the error names the orphan path — parameterized over BOTH failure codes
 // (rc 3 no-clobber, rc 1 fs failure); a failure whose temp IS removable stays orphan-silent.
-describe('agy-review.sh — finding-manifest failure branches name the orphan (MANIFEST-TMP-ORPHAN-ON-FAILURE)', () => {
+describe('agy-review.sh — finding-manifest failure branches name the orphan (MANIFEST-TMP-ORPHAN-ON-FAILURE)', { concurrency: 2 }, () => {
   const manifestPath = (repo, nonce) => join(repo, '.git', `agent-workflow-finding-manifest-agy-${nonce}.json`);
   const UNLINK_FAIL = "const fs = require('node:fs');\nconst real = fs.unlinkSync;\nfs.unlinkSync = (p) => { if (String(p).includes('.tmp')) { const e = new Error('EPERM'); e.code = 'EPERM'; throw e; } return real(p); };\n";
   const LINK_FAIL = "const fsLink = require('node:fs');\nfsLink.linkSync = () => { const e = new Error('EPERM'); e.code = 'EPERM'; throw e; };\n";
@@ -2622,12 +2602,12 @@ describe('agy-review.sh — finding-manifest failure branches name the orphan (M
     { rc: 3, name: 'no-clobber (rc 3)', preload: UNLINK_FAIL, plant: true, errRe: /DIFFERENT bytes or is not a regular file/ },
     { rc: 1, name: 'fs failure (rc 1)', preload: UNLINK_FAIL + LINK_FAIL, plant: false, errRe: /could not compose or write the finding manifest/ },
   ]) {
-    it(`a FAILURE exit (${failure.name}) whose temp unlink also fails names the ORPHAN PATH in the error`, () => {
+    it(`a FAILURE exit (${failure.name}) whose temp unlink also fails names the ORPHAN PATH in the error`, async () => {
       const sb = makeSandbox();
       if (failure.plant) writeFileSync(manifestPath(sb.repo, 'orphf1'), 'planted different bytes\n');
       const preload = join(sb.home, 'orphan-fail-preload.cjs');
       writeFileSync(preload, failure.preload);
-      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'orphf1', NODE_OPTIONS: `--require ${preload}` } });
+      const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'orphf1', NODE_OPTIONS: `--require ${preload}` } });
       const receipts = readReceipts(sb.repo);
       rmSync(sb.home, { recursive: true, force: true });
       assert.equal(r.status, 0, 'the review itself still succeeds (the artifact lane failed loudly)');
@@ -2637,10 +2617,10 @@ describe('agy-review.sh — finding-manifest failure branches name the orphan (M
     });
   }
 
-  it('a FAILURE exit whose temp IS removable stays orphan-silent (no leftover, no orphan line)', () => {
+  it('a FAILURE exit whose temp IS removable stays orphan-silent (no leftover, no orphan line)', async () => {
     const sb = makeSandbox();
     writeFileSync(manifestPath(sb.repo, 'orphf2'), 'planted different bytes\n');
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'orphf2' } });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_NONCE: 'orphf2' } });
     const leftovers = readdirSync(join(sb.repo, '.git')).filter((n) => n.endsWith('.tmp'));
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, 'the review itself still succeeds (the artifact lane failed loudly)');
@@ -2666,12 +2646,12 @@ const writeSettings = (sb, text) => {
 };
 const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 
-describe('agy-review.sh — bridge settings file (bridges 2.3.0)', { concurrency: true }, () => {
-  it('a file-set AGY_REVIEW_ALLOW_ADDDIR=1 arms nothing and states its retirement', () => {
+describe('agy-review.sh — bridge settings file (bridges 2.3.0)', { concurrency: 2 }, () => {
+  it('a file-set AGY_REVIEW_ALLOW_ADDDIR=1 arms nothing and states its retirement', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
     writeSettings(sb, 'AGY_REVIEW_ALLOW_ADDDIR=1\n');
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP) } });
+    const r = await run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP) } });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /AGY_REVIEW_ALLOW_ADDDIR is set \(file\) but it is RETIRED/, 'a FILE-set value is named as such, not as an env override');
@@ -2681,32 +2661,32 @@ describe('agy-review.sh — bridge settings file (bridges 2.3.0)', { concurrency
 
   // With the knob DISARMED an over-cap code review is no longer a refusal — it is the fed lane. So
   // "env wins over file" is now proven by which LANE runs, not by which error prints.
-  it('env overrides file: AGY_REVIEW_ALLOW_ADDDIR env=0 file=1 → the offload stays disarmed and the fed lane runs', () => {
+  it('env overrides file: AGY_REVIEW_ALLOW_ADDDIR env=0 file=1 → the offload stays disarmed and the fed lane runs', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
     writeSettings(sb, 'AGY_REVIEW_ALLOW_ADDDIR=1\n');
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP), AGY_REVIEW_ALLOW_ADDDIR: '0' } });
+    const r = await run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP), AGY_REVIEW_ALLOW_ADDDIR: '0' } });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.ok(!r.argv.includes('--add-dir'), 'the file-set knob is overridden — no offload');
     assert.match(r.stderr, /feeding the change set in \d+ part\(s\)/);
   });
 
-  it('an EXPLICITLY EMPTY env (AGY_REVIEW_ALLOW_ADDDIR=) disables the file knob', () => {
+  it('an EXPLICITLY EMPTY env (AGY_REVIEW_ALLOW_ADDDIR=) disables the file knob', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
     writeSettings(sb, 'AGY_REVIEW_ALLOW_ADDDIR=1\n');
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP), AGY_REVIEW_ALLOW_ADDDIR: '' } });
+    const r = await run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP), AGY_REVIEW_ALLOW_ADDDIR: '' } });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, 'env wins over file — empty means knob off (built-in default 0)');
     assert.ok(!r.argv.includes('--add-dir'));
   });
 
-  it('an invalid boolean warns and falls back to the built-in default (the offload stays disarmed)', () => {
+  it('an invalid boolean warns and falls back to the built-in default (the offload stays disarmed)', async () => {
     const sb = makeSandbox();
     seedFedChangeSet(sb);
     writeSettings(sb, 'AGY_REVIEW_ALLOW_ADDDIR=yes\n');
-    const r = run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP) } });
+    const r = await run(sb, { args: ['code', '--facts', 'f'], env: { AGY_MAX_PROMPT_BYTES: String(FED_CAP) } });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /invalid value 'yes'/);
@@ -2722,20 +2702,20 @@ describe('agy-review.sh — bridge settings file (bridges 2.3.0)', { concurrency
     assert.match(r.stderr, /exceeded the hard cap AGY_HARD_TIMEOUT=2s/);
   });
 
-  it("another bridge's valid key is skipped silently", () => {
+  it("another bridge's valid key is skipped silently", async () => {
     const sb = makeSandbox();
     writeSettings(sb, 'CODEX_SERVICE_TIER=priority\nCODEX_HARD_TIMEOUT=2\nCODEX_REVIEW_MAX_TOTAL_BYTES=100\n');
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /bridge settings/, 'a recognized non-applied key earns NO warning');
     assert.equal(r.invoked, true);
   });
 
-  it('a truly unknown key warns ONCE naming the file; the review is unaffected', () => {
+  it('a truly unknown key warns ONCE naming the file; the review is unaffected', async () => {
     const sb = makeSandbox();
     writeSettings(sb, 'TOTALLY_UNKNOWN=1\nTOTALLY_UNKNOWN=2\n');
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     const warns = r.stderr.match(/unknown key 'TOTALLY_UNKNOWN'/g) ?? [];
@@ -2744,10 +2724,10 @@ describe('agy-review.sh — bridge settings file (bridges 2.3.0)', { concurrency
     assert.equal(r.invoked, true);
   });
 
-  it('malformed lines warn and are ignored; comments and blank lines are silent', () => {
+  it('malformed lines warn and are ignored; comments and blank lines are silent', async () => {
     const sb = makeSandbox();
     writeSettings(sb, '# a comment\n\nNOT A KEY VALUE LINE\n');
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     const malformed = r.stderr.match(/malformed line/g) ?? [];
@@ -2755,22 +2735,22 @@ describe('agy-review.sh — bridge settings file (bridges 2.3.0)', { concurrency
     assert.equal(r.invoked, true);
   });
 
-  it('an existing-but-unreadable file warns loudly and falls back to built-ins', { skip: isRoot }, () => {
+  it('an existing-but-unreadable file warns loudly and falls back to built-ins', { skip: isRoot }, async () => {
     const sb = makeSandbox();
     const file = writeSettings(sb, 'AGY_REVIEW_ALLOW_ADDDIR=1\n');
     chmodSync(file, 0o000);
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /unreadable/);
     assert.equal(r.invoked, true);
   });
 
-  it('a settings line can NEVER execute code (command-substitution payload inert)', () => {
+  it('a settings line can NEVER execute code (command-substitution payload inert)', async () => {
     const sb = makeSandbox();
     const pwned = join(sb.home, 'pwned');
     writeSettings(sb, `AGY_HARD_TIMEOUT=$(touch ${pwned})\nEVIL_KEY=\`touch ${pwned}2\`\n`);
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     const executed = existsSync(pwned) || existsSync(`${pwned}2`);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -2778,19 +2758,19 @@ describe('agy-review.sh — bridge settings file (bridges 2.3.0)', { concurrency
     assert.equal(r.invoked, true);
   });
 
-  it('no file → byte-identical behaviour to today (no settings chatter)', () => {
+  it('no file → byte-identical behaviour to today (no settings chatter)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /bridge settings/);
     assert.equal(r.invoked, true);
   });
 
-  it('a DIRECTORY at the settings path warns loudly and falls back to built-ins (no crash)', () => {
+  it('a DIRECTORY at the settings path warns loudly and falls back to built-ins (no crash)', async () => {
     const sb = makeSandbox();
     mkdirSync(join(sb.home, '.config', 'agent-workflow', 'bridge-settings.conf'), { recursive: true });
-    const r = run(sb, { args: ['code', '--facts', 'f'] });
+    const r = await run(sb, { args: ['code', '--facts', 'f'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, `a directory must degrade honestly, not kill the run: ${r.stderr}`);
     assert.match(r.stderr, /unreadable or not a regular file/);
@@ -2805,8 +2785,8 @@ const SIBLING_MANIFEST = JSON.parse(readFileSync(join(HERE, '..', '..', 'codex-c
 const ALL_SETTINGS = [...(MANIFEST.settings ?? []), ...(SIBLING_MANIFEST.settings ?? [])];
 const SETTINGS_CMD = 'agy-review';
 
-describe('agy-review.sh — settings surface ⟷ manifest (D6, manifest-pinned)', () => {
-  it('--help Settings section keys set-EQUAL the manifest appliesTo subset', () => {
+describe('agy-review.sh — settings surface ⟷ manifest (D6, manifest-pinned)', { concurrency: 2 }, () => {
+  it('--help Settings section keys set-EQUAL the manifest appliesTo subset', async () => {
     const help = runHelp('--help').stdout;
     const section = helpSection(help, SETTINGS_HEADER);
     const got = section.filter((l) => /^[A-Z][A-Z0-9_]+ —/.test(l)).map((l) => l.split(' ')[0]);
@@ -2818,14 +2798,14 @@ describe('agy-review.sh — settings surface ⟷ manifest (D6, manifest-pinned)'
 
   const source = readFileSync(WRAPPER, 'utf8');
 
-  it('aw_settings_known carries exactly the UNION of both bridges settings keys', () => {
+  it('aw_settings_known carries exactly the UNION of both bridges settings keys', async () => {
     const m = source.match(/aw_settings_known\(\) \{\n  case " ([^"]+) " in/);
     assert.ok(m, 'aw_settings_known registry case not found');
     assert.ok(ALL_SETTINGS.length >= 5, 'both manifests must contribute settings');
     setEq(m[1].trim().split(/\s+/), ALL_SETTINGS.map((s) => s.key), 'shell registry ⟷ manifest union');
   });
 
-  it('AW_SETTINGS_APPLIED equals the manifest appliesTo subset for this wrapper', () => {
+  it('AW_SETTINGS_APPLIED equals the manifest appliesTo subset for this wrapper', async () => {
     const m = source.match(/^AW_SETTINGS_APPLIED="([^"]*)"$/m);
     assert.ok(m, 'AW_SETTINGS_APPLIED not found');
     const want = ALL_SETTINGS.filter((s) => s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
@@ -2833,7 +2813,7 @@ describe('agy-review.sh — settings surface ⟷ manifest (D6, manifest-pinned)'
     setEq(m[1].trim().split(/\s+/), want, 'applied subset ⟷ manifest appliesTo');
   });
 
-  it('aw_settings_valid arms carry the manifest typed constants per key', () => {
+  it('aw_settings_valid arms carry the manifest typed constants per key', async () => {
     const body = source.match(/aw_settings_valid\(\) \{[\s\S]*?\n\}/);
     assert.ok(body, 'aw_settings_valid not found');
     const armKeys = [...body[0].matchAll(/^    ([A-Z][A-Z0-9_]*)\)/gm)].map((x) => x[1]);
@@ -2857,10 +2837,10 @@ describe('agy-review.sh — settings surface ⟷ manifest (D6, manifest-pinned)'
 });
 
 // ── strip-the-kit Phase 4: wrapper honesty (D4) + dispatch-posture labeling (D5) ────────────────
-describe('agy-review.sh — wrapper honesty: a verdict-less run is a FAILED review (D4)', () => {
-  it('a VERDICT-LESS review output: non-zero exit, NO receipt, the stated re-run recovery', () => {
+describe('agy-review.sh — wrapper honesty: a verdict-less run is a FAILED review (D4)', { concurrency: 2 }, () => {
+  it('a VERDICT-LESS review output: non-zero exit, NO receipt, the stated re-run recovery', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: 'prose without the mandated section' } });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: 'prose without the mandated section' } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.notEqual(r.status, 0, 'a verdict-less review never exits 0');
@@ -2869,19 +2849,19 @@ describe('agy-review.sh — wrapper honesty: a verdict-less run is a FAILED revi
     assert.match(r.stderr, /re-run/i, 'documented as a failed review — re-run, never fatal');
   });
 
-  it('EMPTY review output is the same failed run (non-zero, no receipt)', () => {
+  it('EMPTY review output is the same failed run (non-zero, no receipt)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: '' } });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: '' } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
     assert.equal(receipts.length, 0);
   });
 
-  it('the closed vocabulary still parses (SHIP WITH NITS before SHIP; REWORK) and a recognized run exits 0', () => {
+  it('the closed vocabulary still parses (SHIP WITH NITS before SHIP; REWORK) and a recognized run exits 0', async () => {
     for (const [out, want] of [[VERDICT_OUTPUT, 'SHIP WITH NITS'], ['### Verdict\nREWORK — reasons.\n', 'REWORK']]) {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: out } });
+      const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: out } });
       const receipts = readReceipts(sb.repo);
       rmSync(sb.home, { recursive: true, force: true });
       assert.equal(r.status, 0, r.stderr);
@@ -2890,10 +2870,10 @@ describe('agy-review.sh — wrapper honesty: a verdict-less run is a FAILED revi
   });
 });
 
-describe('agy-review.sh — dispatch-posture labeling (D5)', () => {
-  it('ONE banner line carries the ACTUAL model and the receipt carries the SAME posture (agy has no tier)', () => {
+describe('agy-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 }, () => {
+  it('ONE banner line carries the ACTUAL model and the receipt carries the SAME posture (agy has no tier)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'] });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'] });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -2902,9 +2882,9 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', () => {
     assert.deepEqual(Object.keys(receipts[0]), Object.keys(RECEIPT_FIXTURE), 'fixture key set + order');
   });
 
-  it('an ATTESTING review with AGY_MODEL explicitly emptied REFUSES pre-spend naming the fix', () => {
+  it('an ATTESTING review with AGY_MODEL explicitly emptied REFUSES pre-spend naming the fix', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: '' } });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: '' } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
@@ -2913,9 +2893,9 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', () => {
     assert.match(r.stderr, /AGY_MODEL/, 'the fix is named');
   });
 
-  it('AGY_PROBE=1 with AGY_MODEL emptied still runs (probe exempt; posture model null on the probe receipt)', () => {
+  it('AGY_PROBE=1 with AGY_MODEL emptied still runs (probe exempt; posture model null on the probe receipt)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: '', AGY_PROBE: '1' } });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: '', AGY_PROBE: '1' } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -2923,10 +2903,10 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', () => {
     assert.deepEqual(receipts[0].posture, { model: null }, 'an unknowable model is recorded null, never guessed');
   });
 
-  it('a HOSTILE model string (quotes + backslash) rides the receipt strictly JSON-encoded', () => {
+  it('a HOSTILE model string (quotes + backslash) rides the receipt strictly JSON-encoded', async () => {
     const hostile = 'we"ird \\ mo"del';
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: hostile } });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: hostile } });
     const receipts = readReceipts(sb.repo); // JSON.parse throwing here IS the encoding failure
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -2934,9 +2914,9 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', () => {
     assert.match(r.stderr, /review posture: /, 'the banner still renders');
   });
 
-  it('a model string carrying CONTROL BYTES refuses pre-spend (never a broken banner or receipt)', () => {
+  it('a model string carrying CONTROL BYTES refuses pre-spend (never a broken banner or receipt)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: `bad${String.fromCharCode(1)}model` } });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: `bad${String.fromCharCode(1)}model` } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
@@ -2945,9 +2925,9 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', () => {
     assert.match(r.stderr, /control/i);
   });
 
-  it('the banner appends the RESOLVED hard timeout verbatim — banner-only, never in the receipt (AD-061)', () => {
+  it('the banner appends the RESOLVED hard timeout verbatim — banner-only, never in the receipt (AD-061)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'] });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'] });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -2955,28 +2935,28 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', () => {
     assert.deepEqual(Object.keys(receipts[0].posture), ['model'], 'timeout never enters the receipt posture');
   });
 
-  it('the banner prints the EFFECTIVE hard cap: an env override and a fractional duration ride verbatim', () => {
+  it('the banner prints the EFFECTIVE hard cap: an env override and a fractional duration ride verbatim', async () => {
     for (const [envValue, want] of [['90s', '90s'], ['1.5m', '1\\.5m']]) {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_HARD_TIMEOUT: envValue } });
+      const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_HARD_TIMEOUT: envValue } });
       rmSync(sb.home, { recursive: true, force: true });
       assert.equal(r.status, 0, r.stderr);
       assert.match(r.stderr, new RegExp(`^review posture: .* timeout=${want}$`, 'm'));
     }
   });
 
-  it('AGY_TIMEOUT (soft print-timeout) alone never moves the banner — the hard cap governs (precedence pin)', () => {
+  it('AGY_TIMEOUT (soft print-timeout) alone never moves the banner — the hard cap governs (precedence pin)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_TIMEOUT: '5m' } });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_TIMEOUT: '5m' } });
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /^review posture: .* timeout=30m$/m, 'the soft print-timeout is not the banner value');
   });
 
-  it('an INVALID / EMPTY / OVERFLOW effective AGY_HARD_TIMEOUT falls back to the built-in default (loud on invalid)', () => {
+  it('an INVALID / EMPTY / OVERFLOW effective AGY_HARD_TIMEOUT falls back to the built-in default (loud on invalid)', async () => {
     for (const [bad, wantWarn] of [['10x', true], ['', false], ['99999999m', true]]) {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_HARD_TIMEOUT: bad } });
+      const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_HARD_TIMEOUT: bad } });
       rmSync(sb.home, { recursive: true, force: true });
       assert.equal(r.status, 0, r.stderr);
       assert.match(r.stderr, /^review posture: .* timeout=30m$/m, `default must stand for ${JSON.stringify(bad)}`);
@@ -2984,9 +2964,9 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', () => {
     }
   });
 
-  it('a timeout value carrying CONTROL BYTES refuses pre-spend (the banner-field screen)', () => {
+  it('a timeout value carrying CONTROL BYTES refuses pre-spend (the banner-field screen)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_HARD_TIMEOUT: `30m${String.fromCharCode(1)}` } });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_HARD_TIMEOUT: `30m${String.fromCharCode(1)}` } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
@@ -3000,12 +2980,12 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', () => {
   // child that HONORS the seam. A stale installed agy-run that never reads it could run uncapped
   // past the parent preflight, so the parent verifies the resolved child carries the seam token
   // and refuses loudly naming the refresh recovery otherwise.
-  it('a STALE agy-run child that does not honor the timeout seam refuses fail-closed (never a silently uncapped dispatch)', () => {
+  it('a STALE agy-run child that does not honor the timeout seam refuses fail-closed (never a silently uncapped dispatch)', async () => {
     const sb = makeSandbox();
     const staleDir = join(sb.home, 'stale-bin');
     mkdirSync(staleDir, { recursive: true });
     writeFileSync(join(staleDir, 'agy-run'), '#!/usr/bin/env bash\nprintf "FAKE_AGY_REVIEW_OUTPUT\\n### Verdict\\nSHIP\\n"\n', { mode: 0o755 });
-    const r = run(sb, {
+    const r = await run(sb, {
       args: ['code', '--facts', 'a tiny fact'],
       env: { PATH: `${staleDir}:${sb.bin}:${farmFor(['agy-run'])}` },
     });
@@ -3019,9 +2999,9 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', () => {
   // Flow-orchestration Phase 4.2 (#26): the uncapped lane is CLOSED — without a capping binary the
   // preflight refuses by name BEFORE any CLI run (the pre-fix wrapper printed timeout=uncapped and
   // ran anyway). The shadow-proof resolver discipline now surfaces as the REFUSAL, not a banner.
-  it('fails CLOSED when no timeout/gtimeout is on PATH — refuses by name, agy never runs', () => {
+  it('fails CLOSED when no timeout/gtimeout is on PATH — refuses by name, agy never runs', async () => {
     const sb = makeSandbox();
-    const r = run(sb, {
+    const r = await run(sb, {
       args: ['code', '--facts', 'a tiny fact'],
       env: { PATH: `${sb.bin}:${farmFor(['agy', 'agy-run', 'timeout', 'gtimeout'])}` },
     });
@@ -3031,9 +3011,9 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', () => {
     assert.equal(r.invoked, false, 'agy must NOT be invoked when the preflight refuses');
   });
 
-  it('an EXPORTED shell function shadowing timeout never fools the preflight (type -P discipline)', () => {
+  it('an EXPORTED shell function shadowing timeout never fools the preflight (type -P discipline)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, {
+    const r = await run(sb, {
       args: ['code', '--facts', 'a tiny fact'],
       env: {
         PATH: `${sb.bin}:${farmFor(['agy', 'agy-run', 'timeout', 'gtimeout'])}`,
@@ -3045,9 +3025,9 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', () => {
     assert.match(r.stderr, /hard-timeout preflight fails CLOSED/);
   });
 
-  it('an EXPORTED `type` function faking a path never fools the resolver (builtin type discipline)', () => {
+  it('an EXPORTED `type` function faking a path never fools the resolver (builtin type discipline)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, {
+    const r = await run(sb, {
       args: ['code', '--facts', 'a tiny fact'],
       env: {
         PATH: `${sb.bin}:${farmFor(['agy', 'agy-run', 'timeout', 'gtimeout'])}`,
@@ -3059,9 +3039,9 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', () => {
     assert.match(r.stderr, /hard-timeout preflight fails CLOSED/);
   });
 
-  it('a DEL (0x7f) byte in a banner field refuses pre-spend like the C0 range', () => {
+  it('a DEL (0x7f) byte in a banner field refuses pre-spend like the C0 range', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: `bad${String.fromCharCode(127)}model` } });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: `bad${String.fromCharCode(127)}model` } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
@@ -3070,10 +3050,10 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', () => {
     assert.match(r.stderr, /control/i);
   });
 
-  it('a control byte in AGY_TIMEOUT refuses pre-spawn — agy-review forwards it to the child agy-run', () => {
+  it('a control byte in AGY_TIMEOUT refuses pre-spawn — agy-review forwards it to the child agy-run', async () => {
     for (const c of [1, 127]) {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_TIMEOUT: `30m${String.fromCharCode(c)}` } });
+      const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_TIMEOUT: `30m${String.fromCharCode(c)}` } });
       const receipts = readReceipts(sb.repo);
       rmSync(sb.home, { recursive: true, force: true });
       assert.notEqual(r.status, 0, `must refuse control byte ${c}`);

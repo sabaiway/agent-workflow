@@ -139,15 +139,19 @@ const farmFor = (exclude) => {
   return farms.get(key);
 };
 
-const run = ({ repo, bin }, { args = ['-'], input = 'do the thing', env = {}, path, cwd } = {}) => {
+// ASYNCHRONOUS on purpose: a blocking dispatch holds the event loop for its whole duration, which
+// is what used to pin this file to one core while the rest of the machine idled. Awaiting the child
+// lets a `{ concurrency }` describe overlap its tests. Per-test environment rides the CHILD's
+// options — `process.env` is never mutated, so overlapping tests cannot read each other's PATH.
+const run = ({ repo, bin }, { args = ['-'], input = 'do the thing', env = {}, path, cwd, timeout = 30000 } = {}) => new Promise((settle) => {
   const argvFile = join(repo, '.cap-argv');
   const envFile = join(repo, '.cap-env');
   const stdinFile = join(repo, '.cap-stdin');
-  const r = spawnSync('bash', [WRAPPER, ...args], {
+  const child = execFile('bash', [WRAPPER, ...args], {
     cwd: cwd || repo,
-    input,
     encoding: 'utf8',
-    timeout: 30000,
+    timeout,
+    maxBuffer: 64 * 1024 * 1024,
     env: {
       PATH: path || `${bin}:${process.env.PATH}`,
       HOME: repo,
@@ -159,59 +163,46 @@ const run = ({ repo, bin }, { args = ['-'], input = 'do the thing', env = {}, pa
       CODEX_FAKE_STDIN: stdinFile,
       ...env,
     },
-  });
-  const readIf = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '');
-  return { ...r, argv: readIf(argvFile), capEnv: readIf(envFile), capStdin: readIf(stdinFile) };
-};
-
-// Async twin of run() for the sleep-bound timeout tests: spawnSync blocks the event loop for
-// the whole deliberate wait, so a concurrent describe could not overlap them. Same contract.
-const runAsync = ({ repo, bin }, { args = ['-'], input = 'do the thing', env = {}, path, cwd } = {}) =>
-  new Promise((done) => {
-    const argvFile = join(repo, '.cap-argv');
-    const envFile = join(repo, '.cap-env');
-    const stdinFile = join(repo, '.cap-stdin');
-    const child = execFile('bash', [WRAPPER, ...args], {
-      cwd: cwd || repo,
-      encoding: 'utf8',
-      timeout: 30000,
-      env: {
-        PATH: path || `${bin}:${process.env.PATH}`,
-        HOME: repo,
-        TMPDIR: process.env.TMPDIR ?? '/tmp',
-        CODEX_FAKE_ARGV: argvFile,
-        CODEX_FAKE_ENV: envFile,
-        CODEX_FAKE_STDIN: stdinFile,
-        ...env,
-      },
-    }, (error, stdout, stderr) => {
-      const readIf = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '');
-      done({ status: error ? (error.code ?? 1) : 0, stdout, stderr, argv: readIf(argvFile), capEnv: readIf(envFile), capStdin: readIf(stdinFile) });
+  }, (error, stdout, stderr) => {
+    const readIf = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '');
+    settle({
+      status: error ? (error.code ?? 1) : 0, signal: error?.signal ?? null, stdout, stderr,
+      argv: readIf(argvFile), capEnv: readIf(envFile), capStdin: readIf(stdinFile),
     });
-    child.stdin.end(input);
   });
+  // The wrapper refuses many inputs BEFORE it reads stdin, so the pipe can already be closed when
+  // the prompt is written. The blocking spawn swallowed that; an async one throws EPIPE at the
+  // test. A closed pipe is the refusal working — but ONLY EPIPE is: any other write failure is a
+  // real fault and must reach the test instead of passing as a green.
+  child.stdin.on('error', (err) => { if (err.code !== 'EPIPE') throw err; });
+  child.stdin.end(input);
+});
 
-describe('codex-exec.sh — quality-first model/effort guard (1.1)', () => {
-  it('refuses a non-default CODEX_MODEL and never spends a run', () => {
+// runAsync was the async twin kept for the sleep-bound timeout tests, back when run() blocked.
+// run() IS that twin now, so the twin is one name pointing at it — two spawn paths could only drift.
+const runAsync = run;
+
+describe('codex-exec.sh — quality-first model/effort guard (1.1)', { concurrency: 2 }, () => {
+  it('refuses a non-default CODEX_MODEL and never spends a run', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_MODEL: 'gpt-5.4-mini' } });
+    const r = await run(sb, { env: { CODEX_MODEL: 'gpt-5.4-mini' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /not the pinned frontier model/);
     assert.equal(r.capStdin, '', 'codex must not be invoked when the guard fires');
   });
 
-  it('refuses a non-default CODEX_EFFORT', () => {
+  it('refuses a non-default CODEX_EFFORT', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_EFFORT: 'high' } });
+    const r = await run(sb, { env: { CODEX_EFFORT: 'high' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /not the pinned max effort/);
   });
 
-  it('CODEX_PROBE=1 allows a non-default model and warns loudly', () => {
+  it('CODEX_PROBE=1 allows a non-default model and warns loudly', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_PROBE: '1', CODEX_MODEL: 'gpt-5.4-mini' } });
+    const r = await run(sb, { env: { CODEX_PROBE: '1', CODEX_MODEL: 'gpt-5.4-mini' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /THROWAWAY PROBE MODE/);
@@ -235,18 +226,18 @@ const PROBE_RELAXABLE = [
   ['--ignore-rules'], ['--enable', 'foo'], ['--disable', 'foo'],
 ];
 
-describe('codex-exec.sh — passthrough guard, two tiers (1.1)', () => {
+describe('codex-exec.sh — passthrough guard, two tiers (1.1)', { concurrency: 2 }, () => {
   for (const flag of ALWAYS_BLOCKED) {
-    it(`always rejects ${flag[0]} (no probe)`, () => {
+    it(`always rejects ${flag[0]} (no probe)`, async () => {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['-', '--', ...flag] });
+      const r = await run(sb, { args: ['-', '--', ...flag] });
       rmSync(sb.root, { recursive: true, force: true });
       assert.notEqual(r.status, 0);
       assert.match(r.stderr, /is not allowed/);
     });
-    it(`still rejects ${flag[0]} even under CODEX_PROBE=1`, () => {
+    it(`still rejects ${flag[0]} even under CODEX_PROBE=1`, async () => {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['-', '--', ...flag], env: { CODEX_PROBE: '1' } });
+      const r = await run(sb, { args: ['-', '--', ...flag], env: { CODEX_PROBE: '1' } });
       rmSync(sb.root, { recursive: true, force: true });
       assert.notEqual(r.status, 0);
       assert.match(r.stderr, /blocked even under CODEX_PROBE=1/);
@@ -254,18 +245,18 @@ describe('codex-exec.sh — passthrough guard, two tiers (1.1)', () => {
   }
 
   for (const flag of PROBE_RELAXABLE) {
-    it(`rejects ${flag[0]} for a real run (no probe)`, () => {
+    it(`rejects ${flag[0]} for a real run (no probe)`, async () => {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['-', '--', ...flag] });
+      const r = await run(sb, { args: ['-', '--', ...flag] });
       rmSync(sb.root, { recursive: true, force: true });
       assert.notEqual(r.status, 0);
       assert.match(r.stderr, /is not allowed/);
     });
   }
 
-  it('CODEX_PROBE=1 lets a context flag (--add-dir) through and warns', () => {
+  it('CODEX_PROBE=1 lets a context flag (--add-dir) through and warns', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['-', '--', '--add-dir', '/x'], env: { CODEX_PROBE: '1' } });
+    const r = await run(sb, { args: ['-', '--', '--add-dir', '/x'], env: { CODEX_PROBE: '1' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.argv, /--add-dir/);
@@ -273,10 +264,10 @@ describe('codex-exec.sh — passthrough guard, two tiers (1.1)', () => {
   });
 });
 
-describe('codex-exec.sh — subscription / config isolation (invariant)', () => {
-  it('clears every *_API_KEY + OPENAI_BASE_URL and passes --ignore-user-config', () => {
+describe('codex-exec.sh — subscription / config isolation (invariant)', { concurrency: 2 }, () => {
+  it('clears every *_API_KEY + OPENAI_BASE_URL and passes --ignore-user-config', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: {
+    const r = await run(sb, { env: {
       OPENAI_API_KEY: 'sk-should-be-cleared', OPENAI_BASE_URL: 'http://evil.example', FOO_API_KEY: 'bar',
     } });
     rmSync(sb.root, { recursive: true, force: true });
@@ -288,19 +279,19 @@ describe('codex-exec.sh — subscription / config isolation (invariant)', () => 
   });
 });
 
-describe('codex-exec.sh — clean output + session capture (1.2)', () => {
-  it('prints ONLY the final message, not the JSON event stream', () => {
+describe('codex-exec.sh — clean output + session capture (1.2)', { concurrency: 2 }, () => {
+  it('prints ONLY the final message, not the JSON event stream', async () => {
     const sb = makeSandbox();
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /FAKE_FINAL_MESSAGE/);
     assert.doesNotMatch(r.stdout, /thread\.started/, 'the JSON trace must not leak to stdout');
   });
 
-  it('passes the clean-capture flags to codex', () => {
+  it('passes the clean-capture flags to codex', async () => {
     const sb = makeSandbox();
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     for (const f of [/(^|\n)-o(\n|$)/, /(^|\n)--json(\n|$)/, /(^|\n)--color(\n|$)/,
       /hide_agent_reasoning=true/, /model_reasoning_summary=none/]) {
@@ -308,9 +299,9 @@ describe('codex-exec.sh — clean output + session capture (1.2)', () => {
     }
   });
 
-  it('captures the session id to the default sidecar and stderr', () => {
+  it('captures the session id to the default sidecar and stderr', async () => {
     const sb = makeSandbox();
-    const r = run(sb);
+    const r = await run(sb);
     const sidecar = join(sb.repo, '.codex-last-session');
     const got = existsSync(sidecar) ? readFileSync(sidecar, 'utf8').trim() : '';
     rmSync(sb.root, { recursive: true, force: true });
@@ -318,10 +309,10 @@ describe('codex-exec.sh — clean output + session capture (1.2)', () => {
     assert.match(r.stderr, /session: fake-thread-123/);
   });
 
-  it('honours CODEX_SESSION_FILE and leaves the default sidecar untouched', () => {
+  it('honours CODEX_SESSION_FILE and leaves the default sidecar untouched', async () => {
     const sb = makeSandbox();
     const custom = join(sb.repo, 'my-session');
-    run(sb, { env: { CODEX_SESSION_FILE: custom } });
+    await run(sb, { env: { CODEX_SESSION_FILE: custom } });
     const customGot = existsSync(custom) ? readFileSync(custom, 'utf8').trim() : '';
     const defaultWritten = existsSync(join(sb.repo, '.codex-last-session'));
     rmSync(sb.root, { recursive: true, force: true });
@@ -329,18 +320,18 @@ describe('codex-exec.sh — clean output + session capture (1.2)', () => {
     assert.equal(defaultWritten, false, 'the default sidecar must not be written when CODEX_SESSION_FILE is set');
   });
 
-  it('falls back to the trace tail when the final-message file is missing', () => {
+  it('falls back to the trace tail when the final-message file is missing', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_FAKE_NO_OUT: '1' } });
+    const r = await run(sb, { env: { CODEX_FAKE_NO_OUT: '1' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /no final-message file/);
     assert.match(r.stdout, /turn\.completed/, 'the trace tail should carry the event stream');
   });
 
-  it('on a codex failure, prints the trace tail to stderr and exits codex code', () => {
+  it('on a codex failure, prints the trace tail to stderr and exits codex code', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_FAKE_EXIT: '7' } });
+    const r = await run(sb, { env: { CODEX_FAKE_EXIT: '7' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 7);
     assert.match(r.stderr, /codex exec failed \(exit 7\)/);
@@ -348,9 +339,9 @@ describe('codex-exec.sh — clean output + session capture (1.2)', () => {
     assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'a plain failure (no bwrap signature) never triggers the hint');
   });
 
-  it('on a NESTED-SANDBOX failure (bwrap/read-only trace) surfaces the stated recovery hint', () => {
+  it('on a NESTED-SANDBOX failure (bwrap/read-only trace) surfaces the stated recovery hint', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_FAKE_EXIT: '1', CODEX_FAKE_STDERR: 'bwrap: setting up sandbox: mkdir /newroot: Read-only file system' } });
+    const r = await run(sb, { env: { CODEX_FAKE_EXIT: '1', CODEX_FAKE_STDERR: 'bwrap: setting up sandbox: mkdir /newroot: Read-only file system' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 1);
     assert.match(r.stderr, /NESTED-SANDBOX/, 'names the failure class');
@@ -358,33 +349,33 @@ describe('codex-exec.sh — clean output + session capture (1.2)', () => {
     assert.match(r.stderr, /Do NOT blanket-disable/, 'warns against a preemptive blanket');
   });
 
-  it('a NON-nested codex failure does NOT emit the nested-sandbox hint (no false positive)', () => {
+  it('a NON-nested codex failure does NOT emit the nested-sandbox hint (no false positive)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_FAKE_EXIT: '3', CODEX_FAKE_STDERR: 'model error: rate limited, try again later' } });
+    const r = await run(sb, { env: { CODEX_FAKE_EXIT: '3', CODEX_FAKE_STDERR: 'model error: rate limited, try again later' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 3);
     assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'a generic failure never triggers the hint');
   });
 
-  it('#6 fold: a mechanism+failure trace whose message contains the letter n (mkdir /newroot) still fires — the old [^\\n]* wrongly excluded n', () => {
+  it('#6 fold: a mechanism+failure trace whose message contains the letter n (mkdir /newroot) still fires — the old [^\\n]* wrongly excluded n', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_FAKE_EXIT: '1', CODEX_FAKE_STDERR: 'bwrap: mkdir /newroot: operation not permitted' } });
+    const r = await run(sb, { env: { CODEX_FAKE_EXIT: '1', CODEX_FAKE_STDERR: 'bwrap: mkdir /newroot: operation not permitted' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 1);
     assert.match(r.stderr, /NESTED-SANDBOX/, 'bwrap (mechanism) + operation not permitted (failure) fire even through n-bearing words');
   });
 
-  it('#6 fold: a LONE mechanism token (a bwrap banner, no failure) does NOT fire — a combination is required', () => {
+  it('#6 fold: a LONE mechanism token (a bwrap banner, no failure) does NOT fire — a combination is required', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_FAKE_EXIT: '2', CODEX_FAKE_STDERR: 'bwrap version 0.11.0' } });
+    const r = await run(sb, { env: { CODEX_FAKE_EXIT: '2', CODEX_FAKE_STDERR: 'bwrap version 0.11.0' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'a mechanism token without a permission/read-only failure is not nested-sandbox proof');
   });
 
-  it('#6 fold: a LONE failure token (permission denied, no sandbox mechanism) does NOT fire', () => {
+  it('#6 fold: a LONE failure token (permission denied, no sandbox mechanism) does NOT fire', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_FAKE_EXIT: '2', CODEX_FAKE_STDERR: 'curl: (7) permission denied' } });
+    const r = await run(sb, { env: { CODEX_FAKE_EXIT: '2', CODEX_FAKE_STDERR: 'curl: (7) permission denied' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'a permission failure from unrelated code is not nested-sandbox proof');
@@ -401,9 +392,9 @@ describe('codex-exec.sh — clean output + session capture (1.2)', () => {
   const FAILURE = 'mkdir /newroot: Read-only file system';
   const SIGNATURE = `${MECHANISM}: ${FAILURE}\n`;
 
-  it('an rc == 0 run whose trace carries a command_execution with a NONZERO exit_code and the signature warns loudly and still prints the answer', () => {
+  it('an rc == 0 run whose trace carries a command_execution with a NONZERO exit_code and the signature warns loudly and still prints the answer', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_FAKE_EVENT: cmdItem({ output: SIGNATURE, exitCode: 1, status: 'completed' }) } });
+    const r = await run(sb, { env: { CODEX_FAKE_EVENT: cmdItem({ output: SIGNATURE, exitCode: 1, status: 'completed' }) } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, 'the warning lane never changes the exit status');
     assert.match(r.stdout, /FAKE_FINAL_MESSAGE/, 'the answer is printed FIRST, on stdout, unchanged');
@@ -412,17 +403,17 @@ describe('codex-exec.sh — clean output + session capture (1.2)', () => {
     assert.match(r.stderr, /excludedCommands|per-run consented bypass/, 'names the reroute');
   });
 
-  it('an rc == 0 run whose trace carries a command_execution with a null exit_code and an explicitly FAILED status warns', () => {
+  it('an rc == 0 run whose trace carries a command_execution with a null exit_code and an explicitly FAILED status warns', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_FAKE_EVENT: cmdItem({ output: SIGNATURE, exitCode: null, status: 'failed' }) } });
+    const r = await run(sb, { env: { CODEX_FAKE_EVENT: cmdItem({ output: SIGNATURE, exitCode: null, status: 'failed' }) } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0);
     assert.match(r.stderr, /NESTED-SANDBOX/, 'the serialized failed status is the second failure proof');
   });
 
-  it('plain non-JSON stderr lines before and after a matching failed command_execution do not suppress the warning', () => {
+  it('plain non-JSON stderr lines before and after a matching failed command_execution do not suppress the warning', async () => {
     const sb = makeSandbox();
-    const r = run(sb, {
+    const r = await run(sb, {
       env: {
         CODEX_FAKE_STDERR: 'ERROR codex_core::session: failed to load skill /x/SKILL.md: missing field description',
         CODEX_FAKE_EVENT: `not json at all\n${cmdItem({ output: SIGNATURE, exitCode: 2, status: 'failed' })}\nstill not json`,
@@ -433,9 +424,9 @@ describe('codex-exec.sh — clean output + session capture (1.2)', () => {
     assert.match(r.stderr, /NESTED-SANDBOX/, 'the merged stream is judged line by line — noise is not evidence and never a stop');
   });
 
-  it('the resume lane warns on an rc == 0 nested-sandbox signature — the lane the incident fired on', () => {
+  it('the resume lane warns on an rc == 0 nested-sandbox signature — the lane the incident fired on', async () => {
     const sb = makeSandbox();
-    const r = run(sb, {
+    const r = await run(sb, {
       args: ['--resume', 'sess-nested', '-'], input: 'continue',
       env: { CODEX_FAKE_EVENT: cmdItem({ output: SIGNATURE, exitCode: 1, status: 'failed' }) },
     });
@@ -445,36 +436,36 @@ describe('codex-exec.sh — clean output + session capture (1.2)', () => {
     assert.match(r.stderr, /NESTED-SANDBOX/, 'the whole point of unifying the capture');
   });
 
-  it('an rc == 0 run with a clean trace warns nothing', () => {
+  it('an rc == 0 run with a clean trace warns nothing', async () => {
     const sb = makeSandbox();
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'a clean run must stay silent');
   });
 
-  it('a lone mechanism token and a lone failure token each warn nothing on the rc == 0 lane', () => {
+  it('a lone mechanism token and a lone failure token each warn nothing on the rc == 0 lane', async () => {
     for (const output of [`${MECHANISM} version 0.11.0\n`, `curl: (7) ${FAILURE}\n`]) {
       const sb = makeSandbox();
-      const r = run(sb, { env: { CODEX_FAKE_EVENT: cmdItem({ output, exitCode: 1, status: 'failed' }) } });
+      const r = await run(sb, { env: { CODEX_FAKE_EVENT: cmdItem({ output, exitCode: 1, status: 'failed' }) } });
       rmSync(sb.root, { recursive: true, force: true });
       assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, `a lone token class is not proof: ${output}`);
     }
   });
 
-  it('nested-sandbox text appearing ONLY inside an agent_message item never warns', () => {
+  it('nested-sandbox text appearing ONLY inside an agent_message item never warns', async () => {
     const sb = makeSandbox();
     const event = JSON.stringify({ type: 'item.completed', item: { id: 'item_9', type: 'agent_message', text: `I hit ${SIGNATURE}` } });
-    const r = run(sb, { env: { CODEX_FAKE_EVENT: event } });
+    const r = await run(sb, { env: { CODEX_FAKE_EVENT: event } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'the model TALKING about a sandbox is not a failed tool call');
   });
 
-  it('a SUCCESSFUL command_execution whose output merely QUOTES both tokens never warns', () => {
+  it('a SUCCESSFUL command_execution whose output merely QUOTES both tokens never warns', async () => {
     const sb = makeSandbox();
     // The concrete false positive: codex-exec.sh itself carries both token classes, so any
     // successful grep over it would trip a loose whole-trace rule.
-    const r = run(sb, {
+    const r = await run(sb, {
       env: { CODEX_FAKE_EVENT: cmdItem({ command: '/bin/bash -lc grep -n bwrap codex-exec.sh', output: SIGNATURE, exitCode: 0, status: 'completed' }) },
     });
     rmSync(sb.root, { recursive: true, force: true });
@@ -482,20 +473,20 @@ describe('codex-exec.sh — clean output + session capture (1.2)', () => {
     assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'a command that SUCCEEDED proves nothing failed');
   });
 
-  it('a command_execution with a null exit_code and no proven failed status never warns', () => {
+  it('a command_execution with a null exit_code and no proven failed status never warns', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_FAKE_EVENT: cmdItem({ output: SIGNATURE, exitCode: null, status: 'in_progress' }) } });
+    const r = await run(sb, { env: { CODEX_FAKE_EVENT: cmdItem({ output: SIGNATURE, exitCode: null, status: 'in_progress' }) } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'a null exit_code is never failure by itself');
   });
 
-  it('tokens split across two different items never warn', () => {
+  it('tokens split across two different items never warn', async () => {
     const sb = makeSandbox();
     const split = [
       cmdItem({ id: 'item_1', output: `${MECHANISM} version 0.11.0\n`, exitCode: 1, status: 'failed' }),
       cmdItem({ id: 'item_2', output: `curl: (7) ${FAILURE}\n`, exitCode: 1, status: 'failed' }),
     ].join('\n');
-    const r = run(sb, { env: { CODEX_FAKE_EVENT: split } });
+    const r = await run(sb, { env: { CODEX_FAKE_EVENT: split } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'the combination must sit in ONE item — two failures are not one nested sandbox');
   });
@@ -504,28 +495,28 @@ describe('codex-exec.sh — clean output + session capture (1.2)', () => {
   // Testing the four fields independently is not enough: position in the line is not membership in
   // the item. The scan walks ONE contiguous chain of raw delimiters instead, and every gap in that
   // chain is inside a JSON string, where a quote is escaped and cannot forge the next delimiter.
-  it('a decoy object carrying the type, with the failure fields on a DIFFERENT item, never warns', () => {
+  it('a decoy object carrying the type, with the failure fields on a DIFFERENT item, never warns', async () => {
     const sb = makeSandbox();
     const decoy = '{"type":"item.completed","decoy":{"type":"command_execution"},"item":{"type":"agent_message","aggregated_output":"bwrap: operation not permitted","exit_code":0,"status":"failed"}}';
-    const r = run(sb, { env: { CODEX_FAKE_EVENT: decoy } });
+    const r = await run(sb, { env: { CODEX_FAKE_EVENT: decoy } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'the type belongs to the decoy; the failure fields belong to an agent_message');
   });
 
-  it('a decoy carrying BOTH the type and a command, with the failure fields on a DIFFERENT item, never warns', () => {
+  it('a decoy carrying BOTH the type and a command, with the failure fields on a DIFFERENT item, never warns', async () => {
     const sb = makeSandbox();
     // Anchoring on a longer literal is not enough: the skip between fields must itself be PROVEN to
     // be one JSON string's content, or the walk leaves the decoy's command and lands in the
     // agent_message's fields.
     const decoy = '{"type":"item.completed","decoy":{"type":"command_execution","command":"x"},"item":{"type":"agent_message","aggregated_output":"bwrap: setting up sandbox: operation not permitted","exit_code":1,"status":"failed"}}';
-    const r = run(sb, { env: { CODEX_FAKE_EVENT: decoy } });
+    const r = await run(sb, { env: { CODEX_FAKE_EVENT: decoy } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'an unvalidated gap lets the walk cross an object boundary');
   });
 
-  it('a genuinely failed item with a ~200KB aggregated_output still warns — and the scan does not hang', () => {
+  it('a genuinely failed item with a ~200KB aggregated_output still warns — and the scan does not hang', async () => {
     const sb = makeSandbox();
     // Two edges at once: the signature sits FIRST, so any early-exit consumer must not lose it, and
     // the field is far larger than a pipe buffer. It also pins the cost: the quadratic bash string
@@ -534,65 +525,67 @@ describe('codex-exec.sh — clean output + session capture (1.2)', () => {
     // The payload rides a FILE: 200KB in the environment is E2BIG on a normal host.
     const payload = join(sb.repo, 'big-event.jsonl');
     writeFileSync(payload, `${cmdItem({ output: big, exitCode: 1, status: 'failed' })}\n`);
-    const r = run(sb, { env: { CODEX_FAKE_EVENT_FILE: payload } });
+    // "does not hang" needs a NUMBER or it cannot fail: a shortest-match `#*` cut to the exit_code
+    // delimiter costs 17s here (measured), a linear pass costs milliseconds. The cap sits between.
+    const r = await run(sb, { env: { CODEX_FAKE_EVENT_FILE: payload }, timeout: 8000 });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /NESTED-SANDBOX/, 'a large output must not silently drop a real signature');
   });
 
-  it('a plain non-JSON log line carrying the same substrings never warns', () => {
+  it('a plain non-JSON log line carrying the same substrings never warns', async () => {
     const sb = makeSandbox();
     const lookalike = `ERROR codex_core: replaying "type":"command_execution","command":"x","aggregated_output":"${SIGNATURE.trim()}","exit_code":1,"status":"failed"`;
-    const r = run(sb, { env: { CODEX_FAKE_EVENT: lookalike } });
+    const r = await run(sb, { env: { CODEX_FAKE_EVENT: lookalike } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'prose ABOUT an event is not an event — an event line starts with {');
   });
 
-  it('a FOREIGN "status":"failed" elsewhere on the line never proves a SUCCESSFUL item failed', () => {
+  it('a FOREIGN "status":"failed" elsewhere on the line never proves a SUCCESSFUL item failed', async () => {
     const sb = makeSandbox();
     const event = `${cmdItem({ output: SIGNATURE, exitCode: 0, status: 'completed' })}{"type":"turn.failed","status":"failed"}`;
-    const r = run(sb, { env: { CODEX_FAKE_EVENT: event } });
+    const r = await run(sb, { env: { CODEX_FAKE_EVENT: event } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'the failed status must sit immediately after THIS item exit_code');
   });
 
-  it('an escaped delimiter inside aggregated_output never fools the slice', () => {
+  it('an escaped delimiter inside aggregated_output never fools the slice', async () => {
     const sb = makeSandbox();
-    const r = run(sb, {
+    const r = await run(sb, {
       env: { CODEX_FAKE_EVENT: cmdItem({ output: `${SIGNATURE}","exit_code":1,"status":"failed"`, exitCode: 0, status: 'completed' }) },
     });
     rmSync(sb.root, { recursive: true, force: true });
     assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'a quote inside a JSON string is escaped, so the raw delimiter cannot occur there');
   });
 
-  it('only the FIRST command_execution item of a line is judged — a second item on the same line is missed (a STATED false negative)', () => {
+  it('only the FIRST command_execution item of a line is judged — a second item on the same line is missed (a STATED false negative)', async () => {
     const sb = makeSandbox();
     const glued = `${cmdItem({ id: 'item_1', output: 'all good\n', exitCode: 0, status: 'completed' })}${cmdItem({ id: 'item_2', output: SIGNATURE, exitCode: 1, status: 'failed' })}`;
-    const r = run(sb, { env: { CODEX_FAKE_EVENT: glued } });
+    const r = await run(sb, { env: { CODEX_FAKE_EVENT: glued } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.doesNotMatch(r.stderr, /NESTED-SANDBOX/, 'under-firing is the deliberate direction on a warning lane; this pins it so it cannot change silently');
   });
 
-  it('a trace of plain non-JSON lines alone carrying both tokens never warns on the rc == 0 arm — while the FAILED arm warns on exactly those bytes', () => {
+  it('a trace of plain non-JSON lines alone carrying both tokens never warns on the rc == 0 arm — while the FAILED arm warns on exactly those bytes', async () => {
     const bytes = `${MECHANISM}: ${FAILURE}`;
     const clean = makeSandbox();
-    const ok = run(clean, { env: { CODEX_FAKE_STDERR: bytes } });
+    const ok = await run(clean, { env: { CODEX_FAKE_STDERR: bytes } });
     rmSync(clean.root, { recursive: true, force: true });
     assert.equal(ok.status, 0, ok.stderr);
     assert.doesNotMatch(ok.stderr, /NESTED-SANDBOX/, 'on a COMPLETED run only per-item evidence speaks');
     const failed = makeSandbox();
-    const bad = run(failed, { env: { CODEX_FAKE_STDERR: bytes, CODEX_FAKE_EXIT: '1' } });
+    const bad = await run(failed, { env: { CODEX_FAKE_STDERR: bytes, CODEX_FAKE_EXIT: '1' } });
     rmSync(failed.root, { recursive: true, force: true });
     assert.equal(bad.status, 1);
     assert.match(bad.stderr, /NESTED-SANDBOX/, 'the failed-run arm keeps its loose whole-trace rule — that is what makes the dual policy visible');
   });
 
-  it('warns (never silently) when the session sidecar cannot be written', () => {
+  it('warns (never silently) when the session sidecar cannot be written', async () => {
     const sb = makeSandbox();
     const blocker = join(sb.repo, 'blocker');
     writeFileSync(blocker, 'x');                  // a regular file …
     const bad = join(blocker, 'session');         // … so this path is unwritable (ENOTDIR)
-    const r = run(sb, { env: { CODEX_SESSION_FILE: bad } });
+    const r = await run(sb, { env: { CODEX_SESSION_FILE: bad } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /could not write the session sidecar/);
@@ -600,10 +593,10 @@ describe('codex-exec.sh — clean output + session capture (1.2)', () => {
   });
 });
 
-describe('codex-exec.sh — leaner prompt (1.4)', () => {
-  it('directive obeys AGENTS.md from context without a read-AGENTS action', () => {
+describe('codex-exec.sh — leaner prompt (1.4)', { concurrency: 2 }, () => {
+  it('directive obeys AGENTS.md from context without a read-AGENTS action', async () => {
     const sb = makeSandbox();
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.match(r.capStdin, /Obey EVERY Hard Constraint declared in the project's root AGENTS\.md \(already/);
     assert.doesNotMatch(r.capStdin, /Read the target project's root AGENTS\.md/);
@@ -611,7 +604,7 @@ describe('codex-exec.sh — leaner prompt (1.4)', () => {
   });
 });
 
-describe('codex-exec.sh — hard timeout (1.3)', { concurrency: true }, () => {
+describe('codex-exec.sh — hard timeout (1.3)', { concurrency: 2 }, () => {
   it('kills a hung codex at CODEX_HARD_TIMEOUT and reports it', async () => {
     const sb = makeSandbox();
     const started = Date.now();
@@ -623,20 +616,20 @@ describe('codex-exec.sh — hard timeout (1.3)', { concurrency: true }, () => {
     assert.match(r.stderr, /exceeded the hard cap/);
   });
 
-  it('warns and runs uncapped when neither timeout nor gtimeout is on PATH', () => {
+  it('warns and runs uncapped when neither timeout nor gtimeout is on PATH', async () => {
     const sb = makeSandbox();
     const path = `${sb.bin}:${farmFor(['timeout', 'gtimeout'])}`;
-    const r = run(sb, { path });
+    const r = await run(sb, { path });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /WITHOUT a hard wall-clock cap/);
     assert.match(r.stdout, /FAKE_FINAL_MESSAGE/);
   });
 
-  it('resume runs uncapped (and warns) when no timeout binary is on PATH', () => {
+  it('resume runs uncapped (and warns) when no timeout binary is on PATH', async () => {
     const sb = makeSandbox();
     const path = `${sb.bin}:${farmFor(['timeout', 'gtimeout'])}`;
-    const r = run(sb, { args: ['--resume', 'sess-1', '-'], input: 'go', path });
+    const r = await run(sb, { args: ['--resume', 'sess-1', '-'], input: 'go', path });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /WITHOUT a hard wall-clock cap/);
@@ -644,18 +637,18 @@ describe('codex-exec.sh — hard timeout (1.3)', { concurrency: true }, () => {
   });
 });
 
-describe('codex-exec.sh — preflight (unchanged invariants)', () => {
-  it('STOPs when there is no root AGENTS.md', () => {
+describe('codex-exec.sh — preflight (unchanged invariants)', { concurrency: 2 }, () => {
+  it('STOPs when there is no root AGENTS.md', async () => {
     const sb = makeSandbox();
     rmSync(join(sb.repo, 'AGENTS.md'));
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /no root AGENTS\.md/);
   });
 });
 
-describe('codex-exec.sh — resume entrypoint restates every invariant (3.1)', () => {
+describe('codex-exec.sh — resume entrypoint restates every invariant (3.1)', { concurrency: 2 }, () => {
   const RESUME_INVARIANTS = [
     /(^|\n)resume(\n|$)/, /(^|\n)--ignore-user-config(\n|$)/, /(^|\n)gpt-5\.6-sol(\n|$)/,
     /model_reasoning_effort=xhigh/, /sandbox_mode=workspace-write/,
@@ -675,9 +668,9 @@ describe('codex-exec.sh — resume entrypoint restates every invariant (3.1)', (
     '--output-schema', '--json', '-o', '--output-last-message', '-h', '--help',
   ]);
 
-  it('every flag the resume lane sends is one the REAL `codex exec resume` accepts', () => {
+  it('every flag the resume lane sends is one the REAL `codex exec resume` accepts', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['--resume', 'sess-flags', '-'], input: 'go' });
+    const r = await run(sb, { args: ['--resume', 'sess-flags', '-'], input: 'go' });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     const sent = r.argv.split('\n').filter((a) => a.startsWith('-') && a !== '-');
@@ -689,9 +682,9 @@ describe('codex-exec.sh — resume entrypoint restates every invariant (3.1)', (
     assert.equal(sent.includes('--color'), false, 'the regression this list exists to prevent');
   });
 
-  it('--resume <id>: composes `exec resume <id>` with the full restated policy', () => {
+  it('--resume <id>: composes `exec resume <id>` with the full restated policy', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['--resume', 'sess-xyz', '-'], input: 'continue please' });
+    const r = await run(sb, { args: ['--resume', 'sess-xyz', '-'], input: 'continue please' });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.argv, /(^|\n)sess-xyz(\n|$)/, 'the session id is passed positionally');
@@ -702,9 +695,9 @@ describe('codex-exec.sh — resume entrypoint restates every invariant (3.1)', (
   // The capture unification: resume used to be the odd mode out — no -o, no --json, its event
   // stream nowhere — which is precisely why the lane the nested-sandbox incident fired on had no
   // evidence surface. `codex exec resume` accepts both (live-probed, codex-cli 0.147.0).
-  it('resume composes the unified capture — -o and --json, and NOT --color (which it rejects)', () => {
+  it('resume composes the unified capture — -o and --json, and NOT --color (which it rejects)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['--resume', 'sess-unified', '-'], input: 'continue please' });
+    const r = await run(sb, { args: ['--resume', 'sess-unified', '-'], input: 'continue please' });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.argv, /(^|\n)-o(\n|$)/, 'resume writes the final message through -o');
@@ -715,84 +708,84 @@ describe('codex-exec.sh — resume entrypoint restates every invariant (3.1)', (
     assert.match(r.stdout, /FAKE_FINAL_MESSAGE/, 'resume stdout is still the final message');
   });
 
-  it('resume falls back to the trace tail when the final-message file is missing', () => {
+  it('resume falls back to the trace tail when the final-message file is missing', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['--resume', 'sess-noout', '-'], input: 'go', env: { CODEX_FAKE_NO_OUT: '1' } });
+    const r = await run(sb, { args: ['--resume', 'sess-noout', '-'], input: 'go', env: { CODEX_FAKE_NO_OUT: '1' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /no final-message file/, 'the fallback is loud, never silent');
     assert.match(r.stdout, /turn\.completed/, 'the trace tail carries the event stream resume now captures');
   });
 
-  it('--resume-last reads the session id from the sidecar', () => {
+  it('--resume-last reads the session id from the sidecar', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, '.codex-last-session'), 'sess-from-sidecar\n');
-    const r = run(sb, { args: ['--resume-last', '-'], input: 'continue' });
+    const r = await run(sb, { args: ['--resume-last', '-'], input: 'continue' });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.argv, /(^|\n)sess-from-sidecar(\n|$)/);
   });
 
-  it('--resume-last honours CODEX_SESSION_FILE', () => {
+  it('--resume-last honours CODEX_SESSION_FILE', async () => {
     const sb = makeSandbox();
     const custom = join(sb.repo, 'mysess');
     writeFileSync(custom, 'sess-custom\n');
-    const r = run(sb, { args: ['--resume-last', '-'], input: 'go', env: { CODEX_SESSION_FILE: custom } });
+    const r = await run(sb, { args: ['--resume-last', '-'], input: 'go', env: { CODEX_SESSION_FILE: custom } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.match(r.argv, /(^|\n)sess-custom(\n|$)/);
   });
 
-  it('--resume-last with no sidecar STOPs (never guesses)', () => {
+  it('--resume-last with no sidecar STOPs (never guesses)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['--resume-last', '-'], input: 'go' });
+    const r = await run(sb, { args: ['--resume-last', '-'], input: 'go' });
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /no session sidecar/);
   });
 
-  it('--resume with no id STOPs', () => {
+  it('--resume with no id STOPs', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['--resume', '-'], input: 'go' });
+    const r = await run(sb, { args: ['--resume', '-'], input: 'go' });
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /--resume needs a <session-id>/);
   });
 
-  it('rejects an empty resumed instruction', () => {
+  it('rejects an empty resumed instruction', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['--resume', 'sess-1', '-'], input: '   \n' });
+    const r = await run(sb, { args: ['--resume', 'sess-1', '-'], input: '   \n' });
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /empty resumed/);
   });
 
-  it('resume takes no passthrough flags', () => {
+  it('resume takes no passthrough flags', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['--resume', 'sess-1', '-', '--', '--add-dir', '/x'], input: 'go' });
+    const r = await run(sb, { args: ['--resume', 'sess-1', '-', '--', '--add-dir', '/x'], input: 'go' });
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /resume modes take no extra flags/);
   });
 
-  it('resume never sets --ephemeral', () => {
+  it('resume never sets --ephemeral', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['--resume', 'sess-1', '-'], input: 'go' });
+    const r = await run(sb, { args: ['--resume', 'sess-1', '-'], input: 'go' });
     rmSync(sb.root, { recursive: true, force: true });
     assert.doesNotMatch(r.argv, /--ephemeral/);
   });
 
-  it('--resume-last with an EMPTY sidecar STOPs (no blank id)', () => {
+  it('--resume-last with an EMPTY sidecar STOPs (no blank id)', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, '.codex-last-session'), '   \n');
-    const r = run(sb, { args: ['--resume-last', '-'], input: 'go' });
+    const r = await run(sb, { args: ['--resume-last', '-'], input: 'go' });
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /sidecar.*is empty/);
   });
 
-  it('resume still clears every *_API_KEY/OPENAI_BASE_URL and keeps --ignore-user-config', () => {
+  it('resume still clears every *_API_KEY/OPENAI_BASE_URL and keeps --ignore-user-config', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['--resume', 'sess-1', '-'], input: 'go', env: {
+    const r = await run(sb, { args: ['--resume', 'sess-1', '-'], input: 'go', env: {
       OPENAI_API_KEY: 'sk-x', OPENAI_BASE_URL: 'http://evil.example', FOO_API_KEY: 'bar',
     } });
     rmSync(sb.root, { recursive: true, force: true });
@@ -803,29 +796,29 @@ describe('codex-exec.sh — resume entrypoint restates every invariant (3.1)', (
     assert.match(r.argv, /(^|\n)--ignore-user-config(\n|$)/);
   });
 
-  it('resume keeps the FULL restated policy plus the tier when set (2.3.0)', () => {
+  it('resume keeps the FULL restated policy plus the tier when set (2.3.0)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['--resume', 'sess-1', '-'], input: 'go', env: { CODEX_SERVICE_TIER: 'priority' } });
+    const r = await run(sb, { args: ['--resume', 'sess-1', '-'], input: 'go', env: { CODEX_SERVICE_TIER: 'priority' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     for (const inv of RESUME_INVARIANTS) assert.match(r.argv, inv, `resume argv must include ${inv}`);
     assert.match(r.argv, /(^|\n)service_tier=priority(\n|$)/, 'a resume must not silently drop the tier');
   });
 
-  it('resume without the tier carries no service_tier flag (2.3.0)', () => {
+  it('resume without the tier carries no service_tier flag (2.3.0)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['--resume', 'sess-1', '-'], input: 'go' });
+    const r = await run(sb, { args: ['--resume', 'sess-1', '-'], input: 'go' });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.argv, /service_tier/);
   });
 });
 
-describe('codex-exec.sh — enforced git-write boundary shim (3.2)', () => {
-  it('passes read-only verbs, blocks writes/unknown/config-writes; no env bypass', () => {
+describe('codex-exec.sh — enforced git-write boundary shim (3.2)', { concurrency: 2 }, () => {
+  it('passes read-only verbs, blocks writes/unknown/config-writes; no env bypass', async () => {
     const sb = makeSandbox();
     const result = join(sb.repo, 'git-probe-result');
-    const r = run(sb, { env: { CODEX_FAKE_GIT_PROBE: '1', CODEX_FAKE_GIT_RESULT: result } });
+    const r = await run(sb, { env: { CODEX_FAKE_GIT_PROBE: '1', CODEX_FAKE_GIT_RESULT: result } });
     const probe = existsSync(result) ? readFileSync(result, 'utf8') : '';
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -849,121 +842,121 @@ describe('codex-exec.sh — enforced git-write boundary shim (3.2)', () => {
     assert.match(probe, /reflog_write=13/, 'git reflog (has write modes) is blocked');
   });
 
-  it('the codex env carries no CODEX_REAL_GIT (bypass vector closed)', () => {
+  it('the codex env carries no CODEX_REAL_GIT (bypass vector closed)', async () => {
     const sb = makeSandbox();
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.match(r.capEnv, /^CODEX_REAL_GIT=<unset>$/m);
   });
 });
 
-describe('codex-exec.sh — environment preflight (fail fast, before a run)', () => {
-  it('STOPs with 127 when codex is not on PATH', () => {
+describe('codex-exec.sh — environment preflight (fail fast, before a run)', { concurrency: 2 }, () => {
+  it('STOPs with 127 when codex is not on PATH', async () => {
     const sb = makeSandbox();
     // PATH WITHOUT the fake codex bin and without any real codex.
     const path = farmFor(['codex']);
-    const r = run(sb, { path });
+    const r = await run(sb, { path });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 127);
     assert.match(r.stderr, /'codex'.*not found on PATH/);
     assert.equal(r.capStdin, '', 'codex must never be invoked');
   });
 
-  it('STOPs with 127 when git is not on PATH', () => {
+  it('STOPs with 127 when git is not on PATH', async () => {
     const sb = makeSandbox();
     // codex present (sb.bin) but git stripped — exercises the type -P git guard.
     const path = `${sb.bin}:${farmFor(['git'])}`;
-    const r = run(sb, { path });
+    const r = await run(sb, { path });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 127);
     assert.match(r.stderr, /'git' not found on PATH/);
   });
 
-  it('STOPs (exit 1) when codex is not on a ChatGPT subscription', () => {
+  it('STOPs (exit 1) when codex is not on a ChatGPT subscription', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_FAKE_LOGIN: 'Logged in using API key' } });
+    const r = await run(sb, { env: { CODEX_FAKE_LOGIN: 'Logged in using API key' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 1);
     assert.match(r.stderr, /not on a ChatGPT subscription/);
     assert.equal(r.capStdin, '', 'a wrong login must never spend a run');
   });
 
-  it('STOPs (exit 2) when not inside a git work tree', () => {
+  it('STOPs (exit 2) when not inside a git work tree', async () => {
     const sb = makeSandbox();
     const nongit = join(sb.root, 'nongit');
     mkdirSync(nongit, { recursive: true });
     writeFileSync(join(nongit, 'AGENTS.md'), '# AGENTS\n'); // present, but the work-tree check fires first
-    const r = run(sb, { cwd: nongit });
+    const r = await run(sb, { cwd: nongit });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /must run inside a git working tree/);
   });
 });
 
-describe('codex-exec.sh — argument & prompt-source dispatch', () => {
-  it('prints usage and STOPs (exit 2) with no arguments', () => {
+describe('codex-exec.sh — argument & prompt-source dispatch', { concurrency: 2 }, () => {
+  it('prints usage and STOPs (exit 2) with no arguments', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: [] });
+    const r = await run(sb, { args: [] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /usage:/);
   });
 
-  it('STOPs on a stray extra argument without the -- separator', () => {
+  it('STOPs on a stray extra argument without the -- separator', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['-', 'stray'], input: 'go' });
+    const r = await run(sb, { args: ['-', 'stray'], input: 'go' });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /unexpected argument 'stray'/);
   });
 
-  it('passes an allowed (non-blocked) passthrough flag through to codex', () => {
+  it('passes an allowed (non-blocked) passthrough flag through to codex', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['-', '--', '--foobar', 'val'], input: 'go' });
+    const r = await run(sb, { args: ['-', '--', '--foobar', 'val'], input: 'go' });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.argv, /(^|\n)--foobar(\n|$)/, 'an unguarded flag reaches codex argv');
   });
 
-  it('reads the task from a prompt FILE (not just stdin)', () => {
+  it('reads the task from a prompt FILE (not just stdin)', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'task.md'), 'PROMPT_FROM_FILE_MARKER\n');
-    const r = run(sb, { args: ['task.md'], input: '' });
+    const r = await run(sb, { args: ['task.md'], input: '' });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.capStdin, /PROMPT_FROM_FILE_MARKER/);
   });
 
-  it('STOPs (exit 2) when the prompt path is neither - nor a file', () => {
+  it('STOPs (exit 2) when the prompt path is neither - nor a file', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['no-such-file.md'], input: '' });
+    const r = await run(sb, { args: ['no-such-file.md'], input: '' });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /'no-such-file\.md' is not a file/);
   });
 
-  it('STOPs on an empty task in normal mode (no "resumed" wording)', () => {
+  it('STOPs on an empty task in normal mode (no "resumed" wording)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['-'], input: '   \n' });
+    const r = await run(sb, { args: ['-'], input: '   \n' });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /empty plan\/instruction/);
     assert.doesNotMatch(r.stderr, /resumed/, 'normal mode must not say "resumed"');
   });
 
-  it('--resume-last with no prompt argument STOPs (missing <plan-file>)', () => {
+  it('--resume-last with no prompt argument STOPs (missing <plan-file>)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['--resume-last'], input: '' });
+    const r = await run(sb, { args: ['--resume-last'], input: '' });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /missing <plan-file/);
   });
 });
 
-describe('codex-exec.sh — session id absent', () => {
-  it('writes no sidecar and no session line when codex emits no thread id', () => {
+describe('codex-exec.sh — session id absent', { concurrency: 2 }, () => {
+  it('writes no sidecar and no session line when codex emits no thread id', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_FAKE_NO_THREAD: '1' } });
+    const r = await run(sb, { env: { CODEX_FAKE_NO_THREAD: '1' } });
     const wrote = existsSync(join(sb.repo, '.codex-last-session'));
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -1051,8 +1044,8 @@ const extractArgCaseArms = (source) => {
 };
 const splitArms = (labels) => (labels ?? []).flatMap((l) => l.split('|'));
 
-describe('codex-exec.sh — --help contract (manifest-pinned)', () => {
-  it('--help and -h exit 0 pre-preflight (no codex, no git, no AGENTS.md)', () => {
+describe('codex-exec.sh — --help contract (manifest-pinned)', { concurrency: 2 }, () => {
+  it('--help and -h exit 0 pre-preflight (no codex, no git, no AGENTS.md)', async () => {
     for (const arg of ['--help', '-h']) {
       const r = runHelp(arg);
       assert.equal(r.status, 0, `${arg}: ${r.stderr}`);
@@ -1061,26 +1054,26 @@ describe('codex-exec.sh — --help contract (manifest-pinned)', () => {
     }
   });
 
-  it('Usage set-EQUALS the manifest invocation descriptors (both directions)', () => {
+  it('Usage set-EQUALS the manifest invocation descriptors (both directions)', async () => {
     const help = runHelp('--help').stdout;
     const got = helpSection(help, 'Usage:').filter((l) => l.startsWith('codex-exec')).map(norm);
     assert.ok(EXEC_CONTRACT.invocations.length > 0, 'manifest invocations must be non-empty');
     setEq(got, EXEC_CONTRACT.invocations.map(norm), 'help Usage ⟷ manifest invocations');
   });
 
-  it('Grounding renders the manifest grounding note verbatim', () => {
+  it('Grounding renders the manifest grounding note verbatim', async () => {
     const help = runHelp('--help').stdout;
     assert.equal(norm(helpSection(help, 'Grounding:').join(' ')), norm(EXEC_CONTRACT.grounding));
   });
 
-  it('Round-2 / resume set-EQUALS the manifest continue descriptors', () => {
+  it('Round-2 / resume set-EQUALS the manifest continue descriptors', async () => {
     const help = runHelp('--help').stdout;
     const got = helpSection(help, 'Round-2 / resume:').filter((l) => l.startsWith('codex-exec')).map(norm);
     assert.ok(EXEC_CONTRACT.continue.length > 0, 'manifest continue must be non-empty');
     setEq(got, EXEC_CONTRACT.continue.map(norm), 'help continue ⟷ manifest continue');
   });
 
-  it('the guarded-passthrough TIERS set-EQUAL the manifest tiers (never a flat set)', () => {
+  it('the guarded-passthrough TIERS set-EQUAL the manifest tiers (never a flat set)', async () => {
     const help = runHelp('--help').stdout;
     const section = helpSection(help, "Guarded passthrough after '--':");
     const tier = (prefix) => {
@@ -1094,15 +1087,15 @@ describe('codex-exec.sh — --help contract (manifest-pinned)', () => {
     setEq(tier('relaxed only under CODEX_PROBE=1:'), EXEC_CONTRACT.passthrough.probeRelaxed, 'help tier-2 ⟷ manifest probeRelaxed');
   });
 
-  it('Notes renders the manifest contract.notes verbatim (a typed contract key that MUST surface)', () => {
+  it('Notes renders the manifest contract.notes verbatim (a typed contract key that MUST surface)', async () => {
     const help = runHelp('--help').stdout;
     assert.ok(EXEC_CONTRACT.notes.length > 0, 'manifest notes must be non-empty');
     assert.equal(norm(helpSection(help, 'Notes:').join(' ')), norm(EXEC_CONTRACT.notes.join(' ')));
   });
 
-  it('--help after the -- separator is passthrough payload, never intercepted', () => {
+  it('--help after the -- separator is passthrough payload, never intercepted', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['-', '--', '--help'], input: 'go' });
+    const r = await run(sb, { args: ['-', '--', '--help'], input: 'go' });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stdout, /Usage:/, 'help is keyed on the FIRST argument only');
@@ -1110,23 +1103,23 @@ describe('codex-exec.sh — --help contract (manifest-pinned)', () => {
   });
 });
 
-describe('codex-exec.sh — source-level reverse guard (parser arms ⟷ manifest)', () => {
+describe('codex-exec.sh — source-level reverse guard (parser arms ⟷ manifest)', { concurrency: 2 }, () => {
   const arms = extractArgCaseArms(readFileSync(WRAPPER, 'utf8'));
 
-  it('the first-arg entrypoints are exactly --help/-h + the manifest resume flags', () => {
+  it('the first-arg entrypoints are exactly --help/-h + the manifest resume flags', async () => {
     const declared = EXEC_CONTRACT.continue.map(leadingFlag);
     assert.ok(declared.length > 0, 'manifest resume set must be non-empty');
     setEq(new Set(splitArms(arms.get('"${1:-}"'))), new Set(['--help', '-h', ...declared]));
   });
 
-  it('the real passthrough tier arms equal the manifest tiers (git-shim heredoc excluded)', () => {
+  it('the real passthrough tier arms equal the manifest tiers (git-shim heredoc excluded)', async () => {
     const tierArms = arms.get('"$_arg"') ?? [];
     assert.equal(tierArms.length, 2, 'exactly two passthrough tiers: always-blocked, probe-relaxed');
     setEq(tierArms[0].split('|'), EXEC_CONTRACT.passthrough.blocked, 'tier-1 arm ⟷ manifest blocked');
     setEq(tierArms[1].split('|'), EXEC_CONTRACT.passthrough.probeRelaxed, 'tier-2 arm ⟷ manifest probeRelaxed');
   });
 
-  it('the in-test tier samples cover every manifest tier pattern (behavioural forward guard)', () => {
+  it('the in-test tier samples cover every manifest tier pattern (behavioural forward guard)', async () => {
     // ALWAYS_BLOCKED / PROBE_RELAXABLE drive the real behaviour suite above; pin them
     // to the manifest so a tier edit cannot leave the behavioural samples stale.
     const sample = (patterns) => patterns.map((p) => p.replace(/\*$/, ''));
@@ -1164,19 +1157,19 @@ const consultsEnv = (source, name) =>
 // The optional `@` prefix rides WITH the slot — the catalog declares the whole token a user types.
 const SLOT_RE = /@?<[^<>]+>|\[[^[\]]*\]/g;
 
-describe('codex-exec.sh — mode catalog ⟷ wrapper reality (manifest-pinned)', () => {
+describe('codex-exec.sh — mode catalog ⟷ wrapper reality (manifest-pinned)', { concurrency: 2 }, () => {
   const source = readFileSync(WRAPPER, 'utf8');
   const catalog = MANIFEST.modeCatalog ?? [];
   const execEntries = catalog.filter((e) => e.role === 'execute');
 
-  it('the execute role is cataloged: one primary plus a continuation per resume flag', () => {
+  it('the execute role is cataloged: one primary plus a continuation per resume flag', async () => {
     const primaries = execEntries.filter((e) => e.kind === 'primary');
     const continuations = execEntries.filter((e) => e.kind === 'continuation');
     assert.equal(primaries.length, 1, 'codex-exec has exactly one primary drive form');
     assert.equal(continuations.length, EXEC_CONTRACT.continue.length, 'one continuation entry per declared resume descriptor');
   });
 
-  it('every execute entry composes BY REFERENCE and every reference resolves', () => {
+  it('every execute entry composes BY REFERENCE and every reference resolves', async () => {
     for (const entry of execEntries) {
       assert.ok(
         Array.isArray(entry.invocationRefs) && entry.invocationRefs.length > 0,
@@ -1192,7 +1185,7 @@ describe('codex-exec.sh — mode catalog ⟷ wrapper reality (manifest-pinned)',
     }
   });
 
-  it('every execute contract invocation is claimed by exactly ONE catalog entry (no uncataloged form)', () => {
+  it('every execute contract invocation is claimed by exactly ONE catalog entry (no uncataloged form)', async () => {
     const claims = execEntries.flatMap((e) => e.invocationRefs.map((r) => `${r.contractField}[${r.index}]`));
     assert.equal(new Set(claims).size, claims.length, 'a contract invocation is claimed at most once');
     const declared = [
@@ -1202,7 +1195,7 @@ describe('codex-exec.sh — mode catalog ⟷ wrapper reality (manifest-pinned)',
     setEq(new Set(claims), declared, 'catalog claims ⟷ declared contract invocations');
   });
 
-  it('every env-hook the catalog aims at an execute mode is a real EXECUTABLE guard, not a mention', () => {
+  it('every env-hook the catalog aims at an execute mode is a real EXECUTABLE guard, not a mention', async () => {
     const hooks = catalog.filter((e) => e.kind === 'env-hook' && e.parents.some((p) => execEntries.some((x) => x.key === p)));
     assert.ok(hooks.length > 0, 'CODEX_PROBE must be cataloged as an env-hook over codex-exec');
     for (const hook of hooks) {
@@ -1213,7 +1206,7 @@ describe('codex-exec.sh — mode catalog ⟷ wrapper reality (manifest-pinned)',
     }
   });
 
-  it('the catalog operand slots set-EQUAL the slots its rendered forms really carry (both directions)', () => {
+  it('the catalog operand slots set-EQUAL the slots its rendered forms really carry (both directions)', async () => {
     for (const entry of execEntries) {
       const forms = entry.invocationRefs.map((r) => EXEC_CONTRACT[r.contractField][r.index]);
       // The DEDUPLICATED UNION over every resolved form: `exec` legitimately spreads its slots across
@@ -1223,7 +1216,7 @@ describe('codex-exec.sh — mode catalog ⟷ wrapper reality (manifest-pinned)',
     }
   });
 
-  it('the catalog claims CODEX_PROBE over the resume modes because the guard really precedes resume parsing', () => {
+  it('the catalog claims CODEX_PROBE over the resume modes because the guard really precedes resume parsing', async () => {
     // Verified in source: the quality guard runs BEFORE the resume dispatch, so a resume run is
     // relaxed too — the catalog must say so, and this pins the ORDER the claim rests on.
     const lines = executableLines(source);
@@ -1237,7 +1230,7 @@ describe('codex-exec.sh — mode catalog ⟷ wrapper reality (manifest-pinned)',
     }
   });
 
-  it('CODEX_PROBE really relaxes the guard on EVERY execute parent the catalog claims (behavioural)', () => {
+  it('CODEX_PROBE really relaxes the guard on EVERY execute parent the catalog claims (behavioural)', async () => {
     // Source ORDER alone is not the claim: a branch bug after resume parsing would keep it green.
     // Drive each claimed parent for real — the guard must stop the dispatch without the hook, and
     // codex must really be reached with it (r.argv is non-empty only on a real invocation).
@@ -1256,13 +1249,13 @@ describe('codex-exec.sh — mode catalog ⟷ wrapper reality (manifest-pinned)',
       assert.ok(drive[parent], `no behavioural drive for claimed parent "${parent}" — add one`);
 
       const guarded = makeSandbox();
-      const off = run(guarded, { ...drive[parent](guarded), env: { CODEX_MODEL: 'not-the-pinned-model' } });
+      const off = await run(guarded, { ...drive[parent](guarded), env: { CODEX_MODEL: 'not-the-pinned-model' } });
       rmSync(guarded.root, { recursive: true, force: true });
       assert.equal(off.status, 2, `${parent}: the quality guard must refuse an off-pin model without the hook`);
       assert.equal(off.argv, '', `${parent}: the guard must refuse BEFORE spending a run`);
 
       const probed = makeSandbox();
-      const on = run(probed, { ...drive[parent](probed), env: { CODEX_MODEL: 'not-the-pinned-model', CODEX_PROBE: '1' } });
+      const on = await run(probed, { ...drive[parent](probed), env: { CODEX_MODEL: 'not-the-pinned-model', CODEX_PROBE: '1' } });
       rmSync(probed.root, { recursive: true, force: true });
       assert.equal(on.status, 0, `${parent}: CODEX_PROBE=1 must really relax the guard — the catalog claims it does`);
       assert.notEqual(on.argv, '', `${parent}: CODEX_PROBE=1 must really reach codex, not merely exit 0`);
@@ -1286,55 +1279,55 @@ const writeSettings = (sb, text) => {
 // chmod-based unreadability is void for root (root reads anything) — skip there.
 const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 
-describe('codex-exec.sh — service tier knob (bridges 2.3.0)', () => {
-  it('default: no env, no file → NO service_tier flag in codex argv', () => {
+describe('codex-exec.sh — service tier knob (bridges 2.3.0)', { concurrency: 2 }, () => {
+  it('default: no env, no file → NO service_tier flag in codex argv', async () => {
     const sb = makeSandbox();
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.argv, /service_tier/, 'default OFF: the flag must be absent');
     assert.doesNotMatch(r.stderr, /bridge settings/, 'no file → no settings chatter');
   });
 
-  it('env CODEX_SERVICE_TIER=priority → -c service_tier=priority reaches codex argv', () => {
+  it('env CODEX_SERVICE_TIER=priority → -c service_tier=priority reaches codex argv', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_SERVICE_TIER: 'priority' } });
+    const r = await run(sb, { env: { CODEX_SERVICE_TIER: 'priority' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.argv, /(^|\n)service_tier=priority(\n|$)/);
   });
 
-  it('a file-set tier lands (file wins over the built-in default)', () => {
+  it('a file-set tier lands (file wins over the built-in default)', async () => {
     const sb = makeSandbox();
     writeSettings(sb, 'CODEX_SERVICE_TIER=priority\n');
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.argv, /(^|\n)service_tier=priority(\n|$)/);
   });
 
-  it('an EXPLICITLY EMPTY env (CODEX_SERVICE_TIER=) disables a file-set tier for one run', () => {
+  it('an EXPLICITLY EMPTY env (CODEX_SERVICE_TIER=) disables a file-set tier for one run', async () => {
     const sb = makeSandbox();
     writeSettings(sb, 'CODEX_SERVICE_TIER=priority\n');
-    const r = run(sb, { env: { CODEX_SERVICE_TIER: '' } });
+    const r = await run(sb, { env: { CODEX_SERVICE_TIER: '' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.argv, /service_tier/, 'env wins over file — empty means knob off');
   });
 
-  it('an invalid env tier warns and runs on the standard tier (never passed to codex)', () => {
+  it('an invalid env tier warns and runs on the standard tier (never passed to codex)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_SERVICE_TIER: 'turbo' } });
+    const r = await run(sb, { env: { CODEX_SERVICE_TIER: 'turbo' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /not a supported service tier/);
     assert.doesNotMatch(r.argv, /service_tier/, 'an unvalidated value must never reach codex');
   });
 
-  it('an invalid file tier warns and falls back to the built-in default', () => {
+  it('an invalid file tier warns and falls back to the built-in default', async () => {
     const sb = makeSandbox();
     writeSettings(sb, 'CODEX_SERVICE_TIER=turbo\n');
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /invalid value 'turbo'/);
@@ -1343,7 +1336,7 @@ describe('codex-exec.sh — service tier knob (bridges 2.3.0)', () => {
 
 });
 
-describe('codex-exec.sh — bridge settings file semantics (bridges 2.3.0)', { concurrency: true }, () => {
+describe('codex-exec.sh — bridge settings file semantics (bridges 2.3.0)', { concurrency: 2 }, () => {
   it('env overrides file: CODEX_HARD_TIMEOUT env=2 file=9999 → killed at the env cap', async () => {
     const sb = makeSandbox();
     writeSettings(sb, 'CODEX_HARD_TIMEOUT=9999\n');
@@ -1362,20 +1355,20 @@ describe('codex-exec.sh — bridge settings file semantics (bridges 2.3.0)', { c
     assert.match(r.stderr, /exceeded the hard cap CODEX_HARD_TIMEOUT=2s/);
   });
 
-  it("another wrapper's / another bridge's valid key is skipped silently", () => {
+  it("another wrapper's / another bridge's valid key is skipped silently", async () => {
     const sb = makeSandbox();
     writeSettings(sb, 'CODEX_REVIEW_MAX_TOTAL_BYTES=100\nAGY_HARD_TIMEOUT=30m\nAGY_REVIEW_ALLOW_ADDDIR=1\n');
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /bridge settings/, 'a recognized non-applied key earns NO warning');
     assert.match(r.stdout, /FAKE_FINAL_MESSAGE/);
   });
 
-  it('a truly unknown key warns ONCE naming the file; the run is unaffected', () => {
+  it('a truly unknown key warns ONCE naming the file; the run is unaffected', async () => {
     const sb = makeSandbox();
     writeSettings(sb, 'TOTALLY_UNKNOWN=1\nTOTALLY_UNKNOWN=2\n');
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     const warns = r.stderr.match(/unknown key 'TOTALLY_UNKNOWN'/g) ?? [];
@@ -1384,30 +1377,30 @@ describe('codex-exec.sh — bridge settings file semantics (bridges 2.3.0)', { c
     assert.match(r.stdout, /FAKE_FINAL_MESSAGE/);
   });
 
-  it('duplicate key → the LAST occurrence wins (invalid then valid → applied, no warning)', () => {
+  it('duplicate key → the LAST occurrence wins (invalid then valid → applied, no warning)', async () => {
     const sb = makeSandbox();
     writeSettings(sb, 'CODEX_SERVICE_TIER=bogus\nCODEX_SERVICE_TIER=priority\n');
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.argv, /(^|\n)service_tier=priority(\n|$)/);
     assert.doesNotMatch(r.stderr, /invalid value/, 'only the LAST occurrence is the value');
   });
 
-  it('duplicate key → the LAST occurrence wins (valid then invalid → warned + default)', () => {
+  it('duplicate key → the LAST occurrence wins (valid then invalid → warned + default)', async () => {
     const sb = makeSandbox();
     writeSettings(sb, 'CODEX_SERVICE_TIER=priority\nCODEX_SERVICE_TIER=bogus\n');
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /invalid value 'bogus'/);
     assert.doesNotMatch(r.argv, /service_tier/);
   });
 
-  it('malformed lines warn and are ignored; comments and blank lines are silent', () => {
+  it('malformed lines warn and are ignored; comments and blank lines are silent', async () => {
     const sb = makeSandbox();
     writeSettings(sb, '# a comment\n\nNOT A KEY VALUE LINE\nCODEX_SERVICE_TIER=priority\n');
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /malformed line/);
@@ -1416,18 +1409,18 @@ describe('codex-exec.sh — bridge settings file semantics (bridges 2.3.0)', { c
     assert.match(r.argv, /(^|\n)service_tier=priority(\n|$)/, 'valid lines still apply');
   });
 
-  it('an existing-but-unreadable file warns loudly and falls back to built-ins', { skip: isRoot }, () => {
+  it('an existing-but-unreadable file warns loudly and falls back to built-ins', { skip: isRoot }, async () => {
     const sb = makeSandbox();
     const file = writeSettings(sb, 'CODEX_SERVICE_TIER=priority\n');
     chmodSync(file, 0o000);
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /unreadable/);
     assert.doesNotMatch(r.argv, /service_tier/, 'an unreadable file must yield built-in defaults');
   });
 
-  it('a settings line can NEVER execute code (command-substitution payload inert)', () => {
+  it('a settings line can NEVER execute code (command-substitution payload inert)', async () => {
     const sb = makeSandbox();
     const pwned = join(sb.repo, 'pwned');
     const pwned2 = join(sb.repo, 'pwned2');
@@ -1435,7 +1428,7 @@ describe('codex-exec.sh — bridge settings file semantics (bridges 2.3.0)', { c
       sb,
       `CODEX_SERVICE_TIER=$(touch ${pwned})\nEVIL_KEY=\`touch ${pwned2}\`\n`,
     );
-    const r = run(sb);
+    const r = await run(sb);
     const executed = existsSync(pwned) || existsSync(pwned2);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -1443,10 +1436,10 @@ describe('codex-exec.sh — bridge settings file semantics (bridges 2.3.0)', { c
     assert.doesNotMatch(r.argv, /service_tier/, 'the payload value must fail validation');
   });
 
-  it('a DIRECTORY at the settings path warns loudly and falls back to built-ins (no crash)', () => {
+  it('a DIRECTORY at the settings path warns loudly and falls back to built-ins (no crash)', async () => {
     const sb = makeSandbox();
     mkdirSync(join(sb.repo, '.config', 'agent-workflow', 'bridge-settings.conf'), { recursive: true });
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, `a directory must degrade honestly, not kill the run: ${r.stderr}`);
     assert.match(r.stderr, /unreadable or not a regular file/);
@@ -1454,26 +1447,26 @@ describe('codex-exec.sh — bridge settings file semantics (bridges 2.3.0)', { c
     assert.match(r.stdout, /FAKE_FINAL_MESSAGE/, 'the run must proceed on built-ins');
   });
 
-  it('a FIFO at the settings path warns and falls back (never opened — no pre-timeout hang)', () => {
+  it('a FIFO at the settings path warns and falls back (never opened — no pre-timeout hang)', async () => {
     const sb = makeSandbox();
     const dir = join(sb.repo, '.config', 'agent-workflow');
     mkdirSync(dir, { recursive: true });
     const fifo = join(dir, 'bridge-settings.conf');
     const mk = spawnSync('mkfifo', [fifo]);
     if (mk.status !== 0) { rmSync(sb.root, { recursive: true, force: true }); return; } // no mkfifo here — the directory case covers the class
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /unreadable or not a regular file/);
     assert.match(r.stdout, /FAKE_FINAL_MESSAGE/);
   });
 
-  it('XDG_CONFIG_HOME relocates the settings file', () => {
+  it('XDG_CONFIG_HOME relocates the settings file', async () => {
     const sb = makeSandbox();
     const xdg = join(sb.root, 'xdg');
     mkdirSync(join(xdg, 'agent-workflow'), { recursive: true });
     writeFileSync(join(xdg, 'agent-workflow', 'bridge-settings.conf'), 'CODEX_SERVICE_TIER=priority\n');
-    const r = run(sb, { env: { XDG_CONFIG_HOME: xdg } });
+    const r = await run(sb, { env: { XDG_CONFIG_HOME: xdg } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.argv, /(^|\n)service_tier=priority(\n|$)/);
@@ -1491,8 +1484,8 @@ const SIBLING_MANIFEST = JSON.parse(readFileSync(join(HERE, '..', '..', 'antigra
 const ALL_SETTINGS = [...(MANIFEST.settings ?? []), ...(SIBLING_MANIFEST.settings ?? [])];
 const SETTINGS_CMD = 'codex-exec';
 
-describe('codex-exec.sh — settings surface ⟷ manifest (D6, manifest-pinned)', () => {
-  it('--help Settings section keys set-EQUAL the manifest appliesTo subset', () => {
+describe('codex-exec.sh — settings surface ⟷ manifest (D6, manifest-pinned)', { concurrency: 2 }, () => {
+  it('--help Settings section keys set-EQUAL the manifest appliesTo subset', async () => {
     const help = runHelp('--help').stdout;
     const section = helpSection(help, SETTINGS_HEADER);
     const got = section.filter((l) => /^[A-Z][A-Z0-9_]+ —/.test(l)).map((l) => l.split(' ')[0]);
@@ -1504,14 +1497,14 @@ describe('codex-exec.sh — settings surface ⟷ manifest (D6, manifest-pinned)'
 
   const source = readFileSync(WRAPPER, 'utf8');
 
-  it('aw_settings_known carries exactly the UNION of both bridges settings keys', () => {
+  it('aw_settings_known carries exactly the UNION of both bridges settings keys', async () => {
     const m = source.match(/aw_settings_known\(\) \{\n  case " ([^"]+) " in/);
     assert.ok(m, 'aw_settings_known registry case not found');
     assert.ok(ALL_SETTINGS.length >= 5, 'both manifests must contribute settings');
     setEq(m[1].trim().split(/\s+/), ALL_SETTINGS.map((s) => s.key), 'shell registry ⟷ manifest union');
   });
 
-  it('AW_SETTINGS_APPLIED equals the manifest appliesTo subset for this wrapper', () => {
+  it('AW_SETTINGS_APPLIED equals the manifest appliesTo subset for this wrapper', async () => {
     const m = source.match(/^AW_SETTINGS_APPLIED="([^"]*)"$/m);
     assert.ok(m, 'AW_SETTINGS_APPLIED not found');
     const want = ALL_SETTINGS.filter((s) => s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
@@ -1519,7 +1512,7 @@ describe('codex-exec.sh — settings surface ⟷ manifest (D6, manifest-pinned)'
     setEq(m[1].trim().split(/\s+/), want, 'applied subset ⟷ manifest appliesTo');
   });
 
-  it('aw_settings_valid arms carry the manifest typed constants per key', () => {
+  it('aw_settings_valid arms carry the manifest typed constants per key', async () => {
     const body = source.match(/aw_settings_valid\(\) \{[\s\S]*?\n\}/);
     assert.ok(body, 'aw_settings_valid not found');
     const armKeys = [...body[0].matchAll(/^    ([A-Z][A-Z0-9_]*)\)/gm)].map((x) => x[1]);
@@ -1542,12 +1535,12 @@ describe('codex-exec.sh — settings surface ⟷ manifest (D6, manifest-pinned)'
   });
 });
 
-describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', () => {
+describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', { concurrency: 2 }, () => {
   const banners = (stderr) => stderr.split('\n').filter((l) => l.startsWith('exec posture: '));
 
-  it('ONE banner line carries the ACTUAL {model, effort, tier, sandbox, session, timeout} on a fresh run', () => {
+  it('ONE banner line carries the ACTUAL {model, effort, tier, sandbox, session, timeout} on a fresh run', async () => {
     const sb = makeSandbox();
-    const r = run(sb, {});
+    const r = await run(sb, {});
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     const lines = banners(r.stderr);
@@ -1556,17 +1549,17 @@ describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', () => {
       'exec posture: model=gpt-5.6-sol effort=xhigh tier=standard sandbox=workspace-write session=fresh timeout=3600s');
   });
 
-  it('an ARMED Fast tier rides the banner (tier=priority)', () => {
+  it('an ARMED Fast tier rides the banner (tier=priority)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_SERVICE_TIER: 'priority' } });
+    const r = await run(sb, { env: { CODEX_SERVICE_TIER: 'priority' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /^exec posture: .* tier=priority .*$/m);
   });
 
-  it('a resume banner carries the RESOLVED session id (explicit --resume)', () => {
+  it('a resume banner carries the RESOLVED session id (explicit --resume)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['--resume', 'sess-xyz', '-'] });
+    const r = await run(sb, { args: ['--resume', 'sess-xyz', '-'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     const lines = banners(r.stderr);
@@ -1574,19 +1567,19 @@ describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', () => {
     assert.match(lines[0], / session=resume:sess-xyz /, 'the banner names the resolved id');
   });
 
-  it('--resume-last resolves the sidecar id into the banner', () => {
+  it('--resume-last resolves the sidecar id into the banner', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, '.codex-last-session'), 'sess-from-sidecar\n');
-    const r = run(sb, { args: ['--resume-last', '-'] });
+    const r = await run(sb, { args: ['--resume-last', '-'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, / session=resume:sess-from-sidecar /);
   });
 
-  it('a HOSTILE/malformed EXPLICIT session id refuses pre-spend (no codex invocation)', () => {
+  it('a HOSTILE/malformed EXPLICIT session id refuses pre-spend (no codex invocation)', async () => {
     for (const hostile of ['evil;rm -rf /', 'a b', `x${String.fromCharCode(1)}y`]) {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['--resume', hostile, '-'] });
+      const r = await run(sb, { args: ['--resume', hostile, '-'] });
       rmSync(sb.root, { recursive: true, force: true });
       assert.notEqual(r.status, 0, `must refuse: ${JSON.stringify(hostile)}`);
       assert.equal(r.capStdin, '', 'codex is never invoked');
@@ -1594,21 +1587,21 @@ describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', () => {
     }
   });
 
-  it('a HOSTILE SIDECAR-READ session id refuses pre-spend the same way', () => {
+  it('a HOSTILE SIDECAR-READ session id refuses pre-spend the same way', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, '.codex-last-session'), 'evil$(touch pwned)\n');
-    const r = run(sb, { args: ['--resume-last', '-'] });
+    const r = await run(sb, { args: ['--resume-last', '-'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
     assert.equal(r.capStdin, '', 'codex is never invoked');
     assert.match(r.stderr, /session id/i);
   });
 
-  it('a FLAG-SHAPED sidecar id (leading dash) refuses at the grammar — never reaches codex as an option', () => {
+  it('a FLAG-SHAPED sidecar id (leading dash) refuses at the grammar — never reaches codex as an option', async () => {
     for (const bad of ['--last\n', '-x\n']) {
       const sb = makeSandbox();
       writeFileSync(join(sb.repo, '.codex-last-session'), bad);
-      const r = run(sb, { args: ['--resume-last', '-'] });
+      const r = await run(sb, { args: ['--resume-last', '-'] });
       rmSync(sb.root, { recursive: true, force: true });
       assert.notEqual(r.status, 0, `must refuse: ${JSON.stringify(bad)}`);
       assert.equal(r.capStdin, '', 'codex is never invoked');
@@ -1616,30 +1609,30 @@ describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', () => {
     }
   });
 
-  it('a sidecar carrying a NUL byte refuses pre-spend — bash would silently repair it into a valid id', () => {
+  it('a sidecar carrying a NUL byte refuses pre-spend — bash would silently repair it into a valid id', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, '.codex-last-session'), Buffer.from('sess-\0target\n', 'binary'));
-    const r = run(sb, { args: ['--resume-last', '-'] });
+    const r = await run(sb, { args: ['--resume-last', '-'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
     assert.equal(r.capStdin, '', 'codex is never invoked');
     assert.match(r.stderr, /NUL/i, 'named as the NUL class — the raw bytes are checked before the shell variable');
   });
 
-  it('a valid id containing the ASCII digit 0 gets no false NUL refusal', () => {
+  it('a valid id containing the ASCII digit 0 gets no false NUL refusal', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, '.codex-last-session'), 'sess-01\n');
-    const r = run(sb, { args: ['--resume-last', '-'] });
+    const r = await run(sb, { args: ['--resume-last', '-'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, / session=resume:sess-01 /);
   });
 
-  it('a sidecar id with inner WHITESPACE refuses — never silently repaired into a different id', () => {
+  it('a sidecar id with inner WHITESPACE refuses — never silently repaired into a different id', async () => {
     for (const bad of ['sess bad\n', 'sess\tbad\n']) {
       const sb = makeSandbox();
       writeFileSync(join(sb.repo, '.codex-last-session'), bad);
-      const r = run(sb, { args: ['--resume-last', '-'] });
+      const r = await run(sb, { args: ['--resume-last', '-'] });
       rmSync(sb.root, { recursive: true, force: true });
       assert.notEqual(r.status, 0, `must refuse: ${JSON.stringify(bad)}`);
       assert.equal(r.capStdin, '', 'codex is never invoked');
@@ -1647,7 +1640,7 @@ describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', () => {
     }
   });
 
-  it('a banner field carrying CONTROL BYTES refuses pre-spend (model / effort / tier / timeout / DEL)', () => {
+  it('a banner field carrying CONTROL BYTES refuses pre-spend (model / effort / tier / timeout / DEL)', async () => {
     const cases = [
       { CODEX_MODEL: `gpt-5.6-sol${String.fromCharCode(1)}` },
       { CODEX_EFFORT: `xhigh${String.fromCharCode(2)}` },
@@ -1657,7 +1650,7 @@ describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', () => {
     ];
     for (const env of cases) {
       const sb = makeSandbox();
-      const r = run(sb, { env });
+      const r = await run(sb, { env });
       rmSync(sb.root, { recursive: true, force: true });
       assert.notEqual(r.status, 0, `must refuse: ${JSON.stringify(env)}`);
       assert.equal(r.capStdin, '', 'codex is never invoked');
@@ -1665,17 +1658,17 @@ describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', () => {
     }
   });
 
-  it('timeout honesty: no timeout/gtimeout on PATH → timeout=uncapped, never a fabricated number', () => {
+  it('timeout honesty: no timeout/gtimeout on PATH → timeout=uncapped, never a fabricated number', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { path: `${sb.bin}:${farmFor(['timeout', 'gtimeout'])}` });
+    const r = await run(sb, { path: `${sb.bin}:${farmFor(['timeout', 'gtimeout'])}` });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /^exec posture: .* timeout=uncapped$/m);
   });
 
-  it('an EXPORTED shell function shadowing timeout never fools the banner (type -P discipline)', () => {
+  it('an EXPORTED shell function shadowing timeout never fools the banner (type -P discipline)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, {
+    const r = await run(sb, {
       path: `${sb.bin}:${farmFor(['timeout', 'gtimeout'])}`,
       env: { 'BASH_FUNC_timeout%%': '() { return 0; }' },
     });
@@ -1684,9 +1677,9 @@ describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', () => {
     assert.match(r.stderr, /^exec posture: .* timeout=uncapped$/m, 'a shell function is not a capping binary');
   });
 
-  it('an EXPORTED `type` function faking a path never fools the resolver (builtin type discipline)', () => {
+  it('an EXPORTED `type` function faking a path never fools the resolver (builtin type discipline)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, {
+    const r = await run(sb, {
       path: `${sb.bin}:${farmFor(['timeout', 'gtimeout'])}`,
       env: { 'BASH_FUNC_type%%': '() { echo /fake/timeout; }' },
     });
@@ -1695,14 +1688,14 @@ describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', () => {
     assert.match(r.stderr, /^exec posture: .* timeout=uncapped$/m, 'builtin type bypasses an exported type function');
   });
 
-  it('a RELATIVE first PATH git entry + shadowed dirname/basename still bakes an ABSOLUTE real git into the shim', () => {
+  it('a RELATIVE first PATH git entry + shadowed dirname/basename still bakes an ABSOLUTE real git into the shim', async () => {
     const sb = makeSandbox();
     const realGit = (process.env.PATH || '').split(':').filter(Boolean).map((d) => join(d, 'git')).find((p) => existsSync(p));
     assert.ok(realGit, 'a real git exists on PATH');
     mkdirSync(join(sb.repo, 'relgit'), { recursive: true });
     writeFileSync(join(sb.repo, 'relgit', 'git'), `#!/usr/bin/env bash\nexec ${realGit} "$@"\n`, { mode: 0o755 });
     const gitResult = join(sb.repo, '.cap-git');
-    const r = run(sb, {
+    const r = await run(sb, {
       path: `relgit:${sb.bin}:${process.env.PATH}`,
       env: {
         CODEX_FAKE_GIT_PROBE: '1',
@@ -1717,7 +1710,7 @@ describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', () => {
     assert.match(probe, /cdaway=0/, 'the shim git works from a different cwd — the embedded path is absolute, shadow-proof');
   });
 
-  it('a RELATIVE PATH entry still yields an ABSOLUTE capping binary (the stub sees an absolute $0)', () => {
+  it('a RELATIVE PATH entry still yields an ABSOLUTE capping binary (the stub sees an absolute $0)', async () => {
     const sb = makeSandbox();
     mkdirSync(join(sb.repo, 'relbin'), { recursive: true });
     const cap = join(sb.repo, '.stub-argv0');
@@ -1729,7 +1722,7 @@ describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', () => {
       'exec "$@"',
       '',
     ].join('\n'), { mode: 0o755 });
-    const r = run(sb, {
+    const r = await run(sb, {
       path: `relbin:${sb.bin}:${farmFor(['timeout', 'gtimeout'])}`,
       env: { TIMEOUT_STUB_CAP: cap },
     });
@@ -1740,10 +1733,10 @@ describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', () => {
     assert.ok(argv0.startsWith('/'), `the stub must be invoked by ABSOLUTE path, got: ${JSON.stringify(argv0)}`);
   });
 
-  it('an INVALID effective CODEX_HARD_TIMEOUT (env — the closed aw_settings_valid bypass) warns and falls back to the default', () => {
+  it('an INVALID effective CODEX_HARD_TIMEOUT (env — the closed aw_settings_valid bypass) warns and falls back to the default', async () => {
     for (const bad of ['abc', '0', '999999999']) {
       const sb = makeSandbox();
-      const r = run(sb, { env: { CODEX_HARD_TIMEOUT: bad } });
+      const r = await run(sb, { env: { CODEX_HARD_TIMEOUT: bad } });
       rmSync(sb.root, { recursive: true, force: true });
       assert.equal(r.status, 0, r.stderr);
       assert.match(r.stderr, new RegExp(`invalid value '${bad}' for CODEX_HARD_TIMEOUT`), 'the fallback is loud');
@@ -1798,11 +1791,11 @@ const clearCaptures = (sb) => {
   for (const name of ['.cap-argv', '.cap-env', '.cap-stdin']) rmSync(join(sb.repo, name), { force: true });
 };
 
-describe('codex-exec.sh — the nonce seam (D11)', () => {
-  it('a nonce-LESS run writes NO artifact into the store directory', () => {
+describe('codex-exec.sh — the nonce seam (D11)', { concurrency: 2 }, () => {
+  it('a nonce-LESS run writes NO artifact into the store directory', async () => {
     const sb = makeSandbox();
     const file = writeContract(sb, 'unused');
-    const r = run(sb, { args: [file] });
+    const r = await run(sb, { args: [file] });
     const artifacts = execArtifacts(storeDirOf(sb));
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -1810,7 +1803,7 @@ describe('codex-exec.sh — the nonce seam (D11)', () => {
     assert.doesNotMatch(r.stderr, /exec receipt:/, 'and it says nothing about a receipt either');
   });
 
-  it('each of the three D11 argv forms is accepted and reaches the right mode', () => {
+  it('each of the three D11 argv forms is accepted and reaches the right mode', async () => {
     const cases = [
       { label: 'fresh', args: (f) => ['--nonce', 'nf', f], nonce: 'nf', wantSession: 'fake-thread-123', resume: false },
       { label: 'resume-last', args: (f) => ['--resume-last', '--nonce', 'nl', f], nonce: 'nl', wantSession: 'sess-from-sidecar', resume: true },
@@ -1820,7 +1813,7 @@ describe('codex-exec.sh — the nonce seam (D11)', () => {
       const sb = makeSandbox();
       writeFileSync(join(sb.repo, '.codex-last-session'), 'sess-from-sidecar\n');
       const file = writeContract(sb, c.nonce);
-      const r = run(sb, { args: c.args(file) });
+      const r = await run(sb, { args: c.args(file) });
       const receipt = r.status === 0 ? readReceipt(storeDirOf(sb), c.nonce) : null;
       rmSync(sb.root, { recursive: true, force: true });
       assert.equal(r.status, 0, `${c.label}: ${r.stderr}`);
@@ -1832,11 +1825,11 @@ describe('codex-exec.sh — the nonce seam (D11)', () => {
     }
   });
 
-  it('a --nonce AFTER the prompt operand or after -- is payload, never a flag', () => {
+  it('a --nonce AFTER the prompt operand or after -- is payload, never a flag', async () => {
     const sb = makeSandbox();
     const file = writeContract(sb, 'late');
-    const passthrough = run(sb, { args: [file, '--', '--nonce', 'late'] });
-    const afterOperand = run(sb, { args: [file, '--nonce', 'late'] });
+    const passthrough = await run(sb, { args: [file, '--', '--nonce', 'late'] });
+    const afterOperand = await run(sb, { args: [file, '--nonce', 'late'] });
     const artifacts = execArtifacts(storeDirOf(sb));
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(passthrough.status, 0, passthrough.stderr);
@@ -1846,10 +1839,10 @@ describe('codex-exec.sh — the nonce seam (D11)', () => {
     assert.match(afterOperand.stderr, /unexpected argument '--nonce'/);
   });
 
-  it('the flag and the environment value are ONE seam: agreeing runs, disagreeing refuses pre-spend', () => {
+  it('the flag and the environment value are ONE seam: agreeing runs, disagreeing refuses pre-spend', async () => {
     const agree = makeSandbox();
     const agreeFile = writeContract(agree, 'same');
-    const ok = run(agree, { args: ['--nonce', 'same', agreeFile], env: { AW_DISPATCH_NONCE: 'same' } });
+    const ok = await run(agree, { args: ['--nonce', 'same', agreeFile], env: { AW_DISPATCH_NONCE: 'same' } });
     const okState = ok.status === 0 ? readReceipt(storeDirOf(agree), 'same').state : null;
     rmSync(agree.root, { recursive: true, force: true });
     assert.equal(ok.status, 0, ok.stderr);
@@ -1857,7 +1850,7 @@ describe('codex-exec.sh — the nonce seam (D11)', () => {
 
     const clash = makeSandbox();
     const clashFile = writeContract(clash, 'flagnonce');
-    const bad = run(clash, { args: ['--nonce', 'flagnonce', clashFile], env: { AW_DISPATCH_NONCE: 'envnonce' } });
+    const bad = await run(clash, { args: ['--nonce', 'flagnonce', clashFile], env: { AW_DISPATCH_NONCE: 'envnonce' } });
     const artifacts = execArtifacts(storeDirOf(clash));
     rmSync(clash.root, { recursive: true, force: true });
     assert.equal(bad.status, 2);
@@ -1866,11 +1859,11 @@ describe('codex-exec.sh — the nonce seam (D11)', () => {
     assert.deepEqual(artifacts, [], 'and it reserves nothing');
   });
 
-  it('a nonce outside the safe grammar refuses pre-spend, from either source', () => {
+  it('a nonce outside the safe grammar refuses pre-spend, from either source', async () => {
     for (const bad of ['a/b', '../x', 'a b', 'x'.repeat(65), '']) {
       const viaFlag = makeSandbox();
       const file = writeContract(viaFlag, 'grammar');
-      const f = run(viaFlag, { args: ['--nonce', bad, file] });
+      const f = await run(viaFlag, { args: ['--nonce', bad, file] });
       const flagArtifacts = execArtifacts(storeDirOf(viaFlag));
       rmSync(viaFlag.root, { recursive: true, force: true });
       assert.equal(f.status, 2, `--nonce "${bad}" must refuse`);
@@ -1880,18 +1873,18 @@ describe('codex-exec.sh — the nonce seam (D11)', () => {
 
       if (bad === '') continue; // an EMPTY env value is "unset" to the seam, not a bad nonce
       const viaEnv = makeSandbox();
-      const e = run(viaEnv, { args: [writeContract(viaEnv, 'grammar')], env: { AW_DISPATCH_NONCE: bad } });
+      const e = await run(viaEnv, { args: [writeContract(viaEnv, 'grammar')], env: { AW_DISPATCH_NONCE: bad } });
       rmSync(viaEnv.root, { recursive: true, force: true });
       assert.equal(e.status, 2, `AW_DISPATCH_NONCE "${bad}" must refuse`);
       assert.match(e.stderr, /AW_DISPATCH_NONCE fails the safe nonce grammar/);
     }
   });
 
-  it('a duplicate --nonce refuses, and a --nonce with no value refuses', () => {
+  it('a duplicate --nonce refuses, and a --nonce with no value refuses', async () => {
     const sb = makeSandbox();
     const file = writeContract(sb, 'dup');
-    const dup = run(sb, { args: ['--nonce', 'dup', '--nonce', 'other', file] });
-    const bare = run(sb, { args: ['--nonce'] });
+    const dup = await run(sb, { args: ['--nonce', 'dup', '--nonce', 'other', file] });
+    const bare = await run(sb, { args: ['--nonce'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(dup.status, 2);
     assert.match(dup.stderr, /duplicate --nonce — one dispatch carries one nonce/);
@@ -1899,12 +1892,12 @@ describe('codex-exec.sh — the nonce seam (D11)', () => {
     assert.match(bare.stderr, /--nonce needs a value/);
   });
 
-  it('an accounted dispatch needs a contract FILE: stdin and a header-less file both refuse pre-spend', () => {
+  it('an accounted dispatch needs a contract FILE: stdin and a header-less file both refuse pre-spend', async () => {
     const sb = makeSandbox();
-    const stdin = run(sb, { args: ['--nonce', 'n1', '-'], input: 'do the thing' });
+    const stdin = await run(sb, { args: ['--nonce', 'n1', '-'], input: 'do the thing' });
     writeFileSync(join(sb.repo, 'plain.md'), '# just a plan\n\nno contract block here\n');
     clearCaptures(sb);
-    const headerless = run(sb, { args: ['--nonce', 'n1', 'plain.md'] });
+    const headerless = await run(sb, { args: ['--nonce', 'n1', 'plain.md'] });
     const artifacts = execArtifacts(storeDirOf(sb));
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(stdin.status, 2);
@@ -1916,8 +1909,8 @@ describe('codex-exec.sh — the nonce seam (D11)', () => {
   });
 });
 
-describe('codex-exec.sh — the pre-spend reservation (D1/D8)', () => {
-  it('the reservation EXISTS, in state reserved, while the CLI is still running', () => {
+describe('codex-exec.sh — the pre-spend reservation (D1/D8)', { concurrency: 2 }, () => {
+  it('the reservation EXISTS, in state reserved, while the CLI is still running', async () => {
     // The ordering claim needs a mid-flight observation. Asserting it from a SECOND run would prove
     // nothing: by then the first run has finished and left a TERMINAL artifact, so moving the
     // reservation to after the CLI would keep such a test green. The fake copies the receipt while
@@ -1925,7 +1918,7 @@ describe('codex-exec.sh — the pre-spend reservation (D1/D8)', () => {
     const sb = makeSandbox();
     const file = writeContract(sb, 'midflight');
     const snapshot = join(sb.root, 'receipt-during-the-run.json');
-    const r = run(sb, {
+    const r = await run(sb, {
       args: ['--nonce', 'midflight', file],
       env: { CODEX_FAKE_SNAPSHOT_SRC: join(storeDirOf(sb), receiptName('midflight')), CODEX_FAKE_SNAPSHOT_DST: snapshot },
     });
@@ -1936,14 +1929,14 @@ describe('codex-exec.sh — the pre-spend reservation (D1/D8)', () => {
     assert.equal(JSON.parse(seen).state, 'reserved', 'and it is the RESERVATION — the terminal receipt comes later');
   });
 
-  it('a second dispatch on the same nonce refuses unspent, leaving the first run\'s evidence untouched', () => {
+  it('a second dispatch on the same nonce refuses unspent, leaving the first run\'s evidence untouched', async () => {
     const sb = makeSandbox();
     const file = writeContract(sb, 'once');
-    const first = run(sb, { args: ['--nonce', 'once', file] });
+    const first = await run(sb, { args: ['--nonce', 'once', file] });
     const receiptPath = join(storeDirOf(sb), receiptName('once'));
     const afterFirst = readFileSync(receiptPath, 'utf8');
     clearCaptures(sb);
-    const second = run(sb, { args: ['--nonce', 'once', file] });
+    const second = await run(sb, { args: ['--nonce', 'once', file] });
     const afterSecond = readFileSync(receiptPath, 'utf8');
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(first.status, 0, first.stderr);
@@ -1953,12 +1946,12 @@ describe('codex-exec.sh — the pre-spend reservation (D1/D8)', () => {
     assert.equal(afterSecond, afterFirst, 'the first dispatch\'s evidence is byte-untouched');
   });
 
-  it('the dispatch nonce must equal the contract header\'s nonce — a disagreement refuses unspent', () => {
+  it('the dispatch nonce must equal the contract header\'s nonce — a disagreement refuses unspent', async () => {
     // `dispatch open` COPIES the nonce from the header, so a disagreeing --nonce could only reserve
     // an identity no return would ever absorb — after paying for the run.
     const sb = makeSandbox();
     const file = writeContract(sb, 'header');
-    const r = run(sb, { args: ['--nonce', 'other', file] });
+    const r = await run(sb, { args: ['--nonce', 'other', file] });
     const artifacts = execArtifacts(storeDirOf(sb));
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 2);
@@ -1967,17 +1960,17 @@ describe('codex-exec.sh — the pre-spend reservation (D1/D8)', () => {
     assert.deepEqual(artifacts, [], 'and precedes the reservation');
   });
 
-  it('a nonce-LESS run of a contract-bearing file never compares nonces — the accounted lane owns that rule', () => {
+  it('a nonce-LESS run of a contract-bearing file never compares nonces — the accounted lane owns that rule', async () => {
     const sb = makeSandbox();
     const file = writeContract(sb, 'header');
-    const r = run(sb, { args: [file] });
+    const r = await run(sb, { args: [file] });
     const artifacts = execArtifacts(storeDirOf(sb));
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(artifacts, [], 'an ordinary plan file that happens to carry a contract block still runs unaccounted');
   });
 
-  it('a store directory whose parent name ends in a NEWLINE resolves as the kit resolves it', () => {
+  it('a store directory whose parent name ends in a NEWLINE resolves as the kit resolves it', async () => {
     // `$( )` strips every trailing newline; the kit's own reader strips exactly ONE (git's
     // terminator). Without a sentinel the two sides would resolve different directories here, and the
     // wrapper would write beside a ledger the kit never reads.
@@ -1985,7 +1978,7 @@ describe('codex-exec.sh — the pre-spend reservation (D1/D8)', () => {
     const weird = join(sb.root, 'ledger\n');
     mkdirSync(weird, { recursive: true });
     const file = writeContract(sb, 'nlstore');
-    const r = run(sb, { args: ['--nonce', 'nlstore', file], env: { AW_DELEGATION_STORE: join(weird, STORE_BASENAME) } });
+    const r = await run(sb, { args: ['--nonce', 'nlstore', file], env: { AW_DELEGATION_STORE: join(weird, STORE_BASENAME) } });
     const landed = execArtifacts(weird);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -1993,25 +1986,25 @@ describe('codex-exec.sh — the pre-spend reservation (D1/D8)', () => {
       'the artifacts land in the directory the kit would compute, newline and all');
   });
 
-  it('an already-taken REPORT name refuses the reservation too — the kit refuses on either name', () => {
+  it('an already-taken REPORT name refuses the reservation too — the kit refuses on either name', async () => {
     const sb = makeSandbox();
     const file = writeContract(sb, 'leftover');
     writeFileSync(join(storeDirOf(sb), reportName('leftover')), 'a report from something else\n');
-    const r = run(sb, { args: ['--nonce', 'leftover', file] });
+    const r = await run(sb, { args: ['--nonce', 'leftover', file] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /already exists at .*agent-workflow-exec-report-5-codex-leftover\.txt/);
     assert.equal(r.argv, '', 'nothing was spent');
   });
 
-  it('a NONCED run with no capping binary refuses pre-spend, while a nonce-less one still warns and runs', () => {
+  it('a NONCED run with no capping binary refuses pre-spend, while a nonce-less one still warns and runs', async () => {
     const sb = makeSandbox();
     const file = writeContract(sb, 'uncapped');
     const path = `${sb.bin}:${farmFor(['timeout', 'gtimeout'])}`;
-    const nonced = run(sb, { args: ['--nonce', 'uncapped', file], path });
+    const nonced = await run(sb, { args: ['--nonce', 'uncapped', file], path });
     const artifacts = execArtifacts(storeDirOf(sb));
     clearCaptures(sb);
-    const plain = run(sb, { args: [file], path });
+    const plain = await run(sb, { args: [file], path });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(nonced.status, 2, nonced.stderr);
     assert.match(nonced.stderr, /a nonced dispatch refuses to run uncapped/);
@@ -2021,7 +2014,7 @@ describe('codex-exec.sh — the pre-spend reservation (D1/D8)', () => {
     assert.match(plain.stderr, /running codex WITHOUT a hard wall-clock cap/, 'the nonce-less lane is unchanged');
   });
 
-  it('a PREFLIGHT refusal leaves NO reservation (login guard, missing AGENTS.md, off-pin model)', () => {
+  it('a PREFLIGHT refusal leaves NO reservation (login guard, missing AGENTS.md, off-pin model)', async () => {
     const cases = [
       { label: 'login', env: { CODEX_FAKE_LOGIN: 'Not logged in' } },
       { label: 'model', env: { CODEX_MODEL: 'gpt-5.4-mini' } },
@@ -2031,7 +2024,7 @@ describe('codex-exec.sh — the pre-spend reservation (D1/D8)', () => {
       const sb = makeSandbox();
       const file = writeContract(sb, 'preflight');
       if (c.drop) rmSync(join(sb.repo, 'AGENTS.md'), { force: true });
-      const r = run(sb, { args: ['--nonce', 'preflight', file], env: c.env });
+      const r = await run(sb, { args: ['--nonce', 'preflight', file], env: c.env });
       const artifacts = execArtifacts(storeDirOf(sb));
       rmSync(sb.root, { recursive: true, force: true });
       assert.notEqual(r.status, 0, `${c.label}: the preflight must refuse`);
@@ -2039,13 +2032,13 @@ describe('codex-exec.sh — the pre-spend reservation (D1/D8)', () => {
     }
   });
 
-  it('the reservation carries everything knowable PRE-SPEND and nulls every terminal-only field', () => {
+  it('the reservation carries everything knowable PRE-SPEND and nulls every terminal-only field', async () => {
     // Proven on the artifact the CLI-blocking refusal leaves behind: a second dispatch is refused
     // pre-spend, so the FIRST run's reservation is the only shape a fixture can observe mid-flight —
     // instead, block the terminal publication and read the surviving reservation.
     const sb = makeSandbox();
     const file = writeContract(sb, 'resv');
-    const r = run(sb, {
+    const r = await run(sb, {
       args: ['--nonce', 'resv', file],
       env: { CODEX_FAKE_MKDIR: join(storeDirOf(sb), reportName('resv')) },
     });
@@ -2063,17 +2056,17 @@ describe('codex-exec.sh — the pre-spend reservation (D1/D8)', () => {
     }
   });
 
-  it('the store directory resolves as the kit resolves it: absolute override wins, relative and trailing-separator refuse', () => {
+  it('the store directory resolves as the kit resolves it: absolute override wins, relative and trailing-separator refuse', async () => {
     const sb = makeSandbox();
     const file = writeContract(sb, 'store');
     const elsewhere = join(sb.root, 'ledger');
     mkdirSync(elsewhere, { recursive: true });
-    const ok = run(sb, { args: ['--nonce', 'store', file], env: { AW_DELEGATION_STORE: join(elsewhere, STORE_BASENAME) } });
+    const ok = await run(sb, { args: ['--nonce', 'store', file], env: { AW_DELEGATION_STORE: join(elsewhere, STORE_BASENAME) } });
     const landed = execArtifacts(elsewhere);
     clearCaptures(sb);
-    const rel = run(sb, { args: ['--nonce', 'store2', writeContract(sb, 'store2')], env: { AW_DELEGATION_STORE: `ledger/${STORE_BASENAME}` } });
+    const rel = await run(sb, { args: ['--nonce', 'store2', writeContract(sb, 'store2')], env: { AW_DELEGATION_STORE: `ledger/${STORE_BASENAME}` } });
     clearCaptures(sb);
-    const trailing = run(sb, { args: ['--nonce', 'store3', writeContract(sb, 'store3')], env: { AW_DELEGATION_STORE: `${elsewhere}/` } });
+    const trailing = await run(sb, { args: ['--nonce', 'store3', writeContract(sb, 'store3')], env: { AW_DELEGATION_STORE: `${elsewhere}/` } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(ok.status, 0, ok.stderr);
     assert.deepEqual(landed, [receiptName('store'), reportName('store')].sort(), 'both artifacts land in the override\'s dirname');
@@ -2084,11 +2077,11 @@ describe('codex-exec.sh — the pre-spend reservation (D1/D8)', () => {
   });
 });
 
-describe('codex-exec.sh — the fail-closed terminal receipt (D1/D3/3.1.d)', () => {
-  it('a SUCCESSFUL run publishes a complete report and a terminal receipt that describes it', () => {
+describe('codex-exec.sh — the fail-closed terminal receipt (D1/D3/3.1.d)', { concurrency: 2 }, () => {
+  it('a SUCCESSFUL run publishes a complete report and a terminal receipt that describes it', async () => {
     const sb = makeSandbox();
     const file = writeContract(sb, 'ok');
-    const r = run(sb, { args: ['--nonce', 'ok', file] });
+    const r = await run(sb, { args: ['--nonce', 'ok', file] });
     const dir = storeDirOf(sb);
     const receipt = readReceipt(dir, 'ok');
     const report = readFileSync(join(dir, reportName('ok')));
@@ -2103,10 +2096,10 @@ describe('codex-exec.sh — the fail-closed terminal receipt (D1/D3/3.1.d)', () 
     assert.match(r.stderr, /exec receipt: nonce=ok outcome=success exit=0 session=fake-thread-123/);
   });
 
-  it('a FAILED run still publishes a terminal receipt — with its exit status, outcome and session id', () => {
+  it('a FAILED run still publishes a terminal receipt — with its exit status, outcome and session id', async () => {
     const sb = makeSandbox();
     const file = writeContract(sb, 'boom');
-    const r = run(sb, { args: ['--nonce', 'boom', file], env: { CODEX_FAKE_EXIT: '5' } });
+    const r = await run(sb, { args: ['--nonce', 'boom', file], env: { CODEX_FAKE_EXIT: '5' } });
     const receipt = readReceipt(storeDirOf(sb), 'boom');
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 5, 'the wrapper still exits with the run\'s own status');
@@ -2118,7 +2111,7 @@ describe('codex-exec.sh — the fail-closed terminal receipt (D1/D3/3.1.d)', () 
     assert.ok(r.stderr.indexOf('codex exec failed') < r.stderr.indexOf('exec receipt:'), 'a publication never swallows the trace tail');
   });
 
-  it('an ABSENT capture and an EXISTING EMPTY one both record zero bytes — and neither is a failed probe', () => {
+  it('an ABSENT capture and an EXISTING EMPTY one both record zero bytes — and neither is a failed probe', async () => {
     // `mktemp` used to pre-create the capture file, so ENOENT could never occur and "absent" was not
     // a case the publisher could even see. It matters because of what it collides with: once an
     // absent capture is possible, the fail-closed read-error branch has to tell it apart from a
@@ -2128,7 +2121,7 @@ describe('codex-exec.sh — the fail-closed terminal receipt (D1/D3/3.1.d)', () 
     // stated rather than papered over, and the outcome stays D3's (rc 0 + a session id is success).
     const absent = makeSandbox();
     const absentFile = writeContract(absent, 'noout');
-    const a = run(absent, { args: ['--nonce', 'noout', absentFile], env: { CODEX_FAKE_NO_OUT: '1' } });
+    const a = await run(absent, { args: ['--nonce', 'noout', absentFile], env: { CODEX_FAKE_NO_OUT: '1' } });
     const absentReceipt = readReceipt(storeDirOf(absent), 'noout');
     const absentReport = readFileSync(join(storeDirOf(absent), reportName('noout')));
     rmSync(absent.root, { recursive: true, force: true });
@@ -2141,7 +2134,7 @@ describe('codex-exec.sh — the fail-closed terminal receipt (D1/D3/3.1.d)', () 
 
     const empty = makeSandbox();
     const emptyFile = writeContract(empty, 'emptyout');
-    const e = run(empty, { args: ['--nonce', 'emptyout', emptyFile], env: { CODEX_FAKE_EMPTY_OUT: '1' } });
+    const e = await run(empty, { args: ['--nonce', 'emptyout', emptyFile], env: { CODEX_FAKE_EMPTY_OUT: '1' } });
     const emptyReceipt = readReceipt(storeDirOf(empty), 'emptyout');
     rmSync(empty.root, { recursive: true, force: true });
     assert.equal(e.status, 0, e.stderr);
@@ -2152,7 +2145,7 @@ describe('codex-exec.sh — the fail-closed terminal receipt (D1/D3/3.1.d)', () 
       'the existing-but-EMPTY capture takes the same -s fallback — it too has no answer to print');
   });
 
-  it('an UNREADABLE final message is a failed probe — exit 71, never a silent empty report', () => {
+  it('an UNREADABLE final message is a failed probe — exit 71, never a silent empty report', async () => {
     const sb = makeSandbox();
     const file = writeContract(sb, 'unread');
     // A DIRECTORY at the capture path: readable-as-a-path, unreadable as a file (EISDIR), and
@@ -2169,7 +2162,7 @@ fs.readFileSync = (target, ...rest) => {
   return real(target, ...rest);
 };
 `);
-    const r = run(sb, { args: ['--nonce', 'unread', file] });
+    const r = await run(sb, { args: ['--nonce', 'unread', file] });
     const receipt = readReceipt(storeDirOf(sb), 'unread');
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 71, r.stderr);
@@ -2177,7 +2170,7 @@ fs.readFileSync = (target, ...rest) => {
     assert.equal(receipt.state, 'reserved', 'nothing terminal was published over a probe that failed');
   });
 
-  it('a DANGLING SYMLINK at the capture path is a failed probe, never a clean empty report', () => {
+  it('a DANGLING SYMLINK at the capture path is a failed probe, never a clean empty report', async () => {
     // The trap the ENOENT split set for itself: readFileSync FOLLOWS the link, so a dangling one
     // reports ENOENT — indistinguishable from "the delegate wrote nothing" — and a corrupt capture
     // would be published as an empty report on a `success` receipt. lstat decides first.
@@ -2193,7 +2186,7 @@ fs.lstatSync = (target, ...rest) => {
   return realLstat(target, ...rest);
 };
 `);
-    const r = run(sb, { args: ['--nonce', 'dangle', file] });
+    const r = await run(sb, { args: ['--nonce', 'dangle', file] });
     const receipt = readReceipt(storeDirOf(sb), 'dangle');
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 71, r.stderr);
@@ -2201,10 +2194,10 @@ fs.lstatSync = (target, ...rest) => {
     assert.equal(receipt.state, 'reserved', 'nothing terminal was published over a corrupt capture');
   });
 
-  it('a run that identified no session records sessionId null with outcome missing-identity', () => {
+  it('a run that identified no session records sessionId null with outcome missing-identity', async () => {
     const sb = makeSandbox();
     const file = writeContract(sb, 'anon');
-    const r = run(sb, { args: ['--nonce', 'anon', file], env: { CODEX_FAKE_NO_THREAD: '1' } });
+    const r = await run(sb, { args: ['--nonce', 'anon', file], env: { CODEX_FAKE_NO_THREAD: '1' } });
     const receipt = readReceipt(storeDirOf(sb), 'anon');
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -2227,11 +2220,11 @@ fs.lstatSync = (target, ...rest) => {
     assert.match(r.stderr, /exceeded the hard cap/);
   });
 
-  it('a FOREIGN owner refuses with NOTHING published — both artifacts stay byte-unchanged', () => {
+  it('a FOREIGN owner refuses with NOTHING published — both artifacts stay byte-unchanged', async () => {
     const sb = makeSandbox();
     const file = writeContract(sb, 'tamper');
     const dir = storeDirOf(sb);
-    const r = run(sb, {
+    const r = await run(sb, {
       args: ['--nonce', 'tamper', file],
       env: { CODEX_FAKE_TAMPER: join(dir, receiptName('tamper')), CODEX_FAKE_TAMPER_NONCE: 'tamper' },
     });
@@ -2245,11 +2238,11 @@ fs.lstatSync = (target, ...rest) => {
     assert.match(r.stderr, /PARTIALLY EDITED/, 'and the tree is named dirtied, never silently accepted');
   });
 
-  it('a failed REPORT write exits 71 naming the report, and the reservation survives for --no-receipt', () => {
+  it('a failed REPORT write exits 71 naming the report, and the reservation survives for --no-receipt', async () => {
     const sb = makeSandbox();
     const file = writeContract(sb, 'noreport');
     const dir = storeDirOf(sb);
-    const r = run(sb, {
+    const r = await run(sb, {
       args: ['--nonce', 'noreport', file],
       env: { CODEX_FAKE_MKDIR: join(dir, reportName('noreport')) },
     });
@@ -2261,7 +2254,7 @@ fs.lstatSync = (target, ...rest) => {
     assert.match(r.stderr, /dispatch return --nonce noreport --no-receipt --exit-status 0 --outcome <o>/);
   });
 
-  it('an UNWRITABLE store directory stops the REPORT lane nonzero and says the tree is dirtied — NOT the review lane\'s warn-only receipt', () => {
+  it('an UNWRITABLE store directory stops the REPORT lane nonzero and says the tree is dirtied — NOT the review lane\'s warn-only receipt', async () => {
     // Named for the branch it really reaches. Both artifacts live in one directory, so a directory
     // turned read-only stops the FIRST write — the report. The two POST-report branches need a
     // failure injected between the writes, which the two tests below do.
@@ -2269,7 +2262,7 @@ fs.lstatSync = (target, ...rest) => {
     const file = writeContract(sb, 'rodir');
     const store = join(sb.root, 'ledger');
     mkdirSync(store, { recursive: true });
-    const r = run(sb, {
+    const r = await run(sb, {
       args: ['--nonce', 'rodir', file],
       env: { AW_DELEGATION_STORE: join(store, STORE_BASENAME), CODEX_FAKE_RO_DIR: store },
     });
@@ -2341,13 +2334,13 @@ fs.readFileSync = (target, ...rest) => {
 };
 `;
 
-describe('codex-exec.sh — the POST-report failure lanes never claim an untouched tree', () => {
-  it('a terminal-receipt write that fails AFTER the report exits 71 and says the report IS published', () => {
+describe('codex-exec.sh — the POST-report failure lanes never claim an untouched tree', { concurrency: 2 }, () => {
+  it('a terminal-receipt write that fails AFTER the report exits 71 and says the report IS published', async () => {
     const sb = makeSandbox();
     const file = writeContract(sb, 'postr');
     nodeShimWith(sb, 'break-receipt.cjs', BREAK_RECEIPT_RENAME);
     const dir = storeDirOf(sb);
-    const r = run(sb, { args: ['--nonce', 'postr', file] });
+    const r = await run(sb, { args: ['--nonce', 'postr', file] });
     const receipt = readReceipt(dir, 'postr');
     const report = readFileSync(join(dir, reportName('postr')), 'utf8');
     rmSync(sb.root, { recursive: true, force: true });
@@ -2359,12 +2352,12 @@ describe('codex-exec.sh — the POST-report failure lanes never claim an untouch
     assert.equal(receipt.state, 'reserved', 'the replace never happened, so the reservation is what survives here');
   });
 
-  it('a SECOND owner check that fails after the report exits 71 without claiming nothing was published', () => {
+  it('a SECOND owner check that fails after the report exits 71 without claiming nothing was published', async () => {
     const sb = makeSandbox();
     const file = writeContract(sb, 'forge');
     nodeShimWith(sb, 'forge-owner.cjs', FORGE_SECOND_CLAIM);
     const dir = storeDirOf(sb);
-    const r = run(sb, { args: ['--nonce', 'forge', file] });
+    const r = await run(sb, { args: ['--nonce', 'forge', file] });
     const reportExists = existsSync(join(dir, reportName('forge')));
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 71, r.stderr);
@@ -2374,7 +2367,7 @@ describe('codex-exec.sh — the POST-report failure lanes never claim an untouch
     assert.equal(reportExists, true, 'and the report really is there — which is what the message says');
   });
 
-  it('an inherited NODE_OPTIONS cannot reach the mint cores — the wrapper clears it', () => {
+  it('an inherited NODE_OPTIONS cannot reach the mint cores — the wrapper clears it', async () => {
     // The regression guard for the hole the two tests above used to lean on: a --require inherited
     // from the caller's environment could rewrite `fs` inside the owner checks and the publication.
     // Here the SAME preload that breaks the receipt rename is handed to the wrapper as NODE_OPTIONS
@@ -2383,7 +2376,7 @@ describe('codex-exec.sh — the POST-report failure lanes never claim an untouch
     const file = writeContract(sb, 'envopt');
     const hook = join(sb.root, 'break-receipt.cjs');
     writeFileSync(hook, BREAK_RECEIPT_RENAME);
-    const r = run(sb, { args: ['--nonce', 'envopt', file], env: { NODE_OPTIONS: `--require=${hook}` } });
+    const r = await run(sb, { args: ['--nonce', 'envopt', file], env: { NODE_OPTIONS: `--require=${hook}` } });
     const receipt = readReceipt(storeDirOf(sb), 'envopt');
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -2391,11 +2384,11 @@ describe('codex-exec.sh — the POST-report failure lanes never claim an untouch
     assert.equal(receipt.outcome, 'success');
   });
 
-  it('a FIRST owner check that fails is the only lane that may claim NOTHING was published', () => {
+  it('a FIRST owner check that fails is the only lane that may claim NOTHING was published', async () => {
     const sb = makeSandbox();
     const file = writeContract(sb, 'first');
     const dir = storeDirOf(sb);
-    const r = run(sb, {
+    const r = await run(sb, {
       args: ['--nonce', 'first', file],
       env: { CODEX_FAKE_TAMPER: join(dir, receiptName('first')), CODEX_FAKE_TAMPER_NONCE: 'first' },
     });
@@ -2408,8 +2401,8 @@ describe('codex-exec.sh — the POST-report failure lanes never claim an untouch
   });
 });
 
-describe('codex-exec.sh — the inline node mint cores stay intact', () => {
-  it('the wrapper parses', () => {
+describe('codex-exec.sh — the inline node mint cores stay intact', { concurrency: 2 }, () => {
+  it('the wrapper parses', async () => {
     // The apostrophe SCANNER this replaced is gone with the class it policed: every mint core now
     // rides a QUOTED heredoc, where an apostrophe is ordinary text. A scanner that had to model
     // shell quoting was a second parser for a problem the quoting choice created — and it had its own
@@ -2418,7 +2411,7 @@ describe('codex-exec.sh — the inline node mint cores stay intact', () => {
     assert.equal(syntax.status, 0, syntax.stderr);
   });
 
-  it('every mint core is read by a BUILTIN, run with NODE_OPTIONS cleared, and asserted non-empty', () => {
+  it('every mint core is read by a BUILTIN, run with NODE_OPTIONS cleared, and asserted non-empty', async () => {
     const source = readFileSync(WRAPPER, 'utf8');
     assert.equal((source.match(/^ *IFS= read -r -d '' aw_js <<'AW_JS' \|\| true$/gm) ?? []).length, 4,
       'the four cores: the store-dir resolver, the contract header, the reservation, the terminal publication');

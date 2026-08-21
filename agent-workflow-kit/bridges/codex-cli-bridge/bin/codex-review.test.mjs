@@ -115,15 +115,19 @@ const makePathWithout = (root, exclude = []) => {
   return dir;
 };
 
-const run = ({ repo, bin }, { args = ['code'], env = {}, path, cwd } = {}) => {
+// ASYNCHRONOUS on purpose: a blocking dispatch holds the event loop for its whole duration, which
+// pins this file to one core. Awaiting the child lets a `{ concurrency }` describe overlap its
+// tests; the per-test environment still rides the CHILD's options, never `process.env`.
+const run = ({ repo, bin }, { args = ['code'], env = {}, path, cwd } = {}) => new Promise((settle) => {
   const argvFile = join(repo, '.cap-argv');
   const envFile = join(repo, '.cap-env');
   const stdinFile = join(repo, '.cap-stdin');
   const codexHome = join(repo, '..', 'codex-home');
-  const r = spawnSync('bash', [WRAPPER, ...args], {
+  const child = execFile('bash', [WRAPPER, ...args], {
     cwd: cwd || repo,
     encoding: 'utf8',
     timeout: 30000,
+    maxBuffer: 64 * 1024 * 1024,
     env: {
       PATH: path || `${bin}:${process.env.PATH}`,
       HOME: repo,
@@ -137,80 +141,65 @@ const run = ({ repo, bin }, { args = ['code'], env = {}, path, cwd } = {}) => {
       CODEX_FAKE_STDIN: stdinFile,
       ...env,
     },
-  });
-  const readIf = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '');
-  return { ...r, codexHome, argv: readIf(argvFile), capEnv: readIf(envFile), capStdin: readIf(stdinFile) };
-};
-
-// Async twin of run() for the sleep-bound timeout test: spawnSync blocks the event loop for
-// the whole deliberate wait, so a concurrent describe could not overlap it. Same contract.
-const runAsync = ({ repo, bin }, { args = ['code'], env = {}, path, cwd } = {}) =>
-  new Promise((done) => {
-    const argvFile = join(repo, '.cap-argv');
-    const envFile = join(repo, '.cap-env');
-    const stdinFile = join(repo, '.cap-stdin');
-    const codexHome = join(repo, '..', 'codex-home');
-    const child = execFile('bash', [WRAPPER, ...args], {
-      cwd: cwd || repo,
-      encoding: 'utf8',
-      timeout: 30000,
-      env: {
-        PATH: path || `${bin}:${process.env.PATH}`,
-        HOME: repo,
-        TMPDIR: process.env.TMPDIR ?? '/tmp',
-        CODEX_HOME: codexHome,
-        CODEX_FAKE_ARGV: argvFile,
-        CODEX_FAKE_ENV: envFile,
-        CODEX_FAKE_STDIN: stdinFile,
-        ...env,
-      },
-    }, (error, stdout, stderr) => {
-      const readIf = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '');
-      done({ status: error ? (error.code ?? 1) : 0, stdout, stderr, codexHome, argv: readIf(argvFile), capEnv: readIf(envFile), capStdin: readIf(stdinFile) });
+  }, (error, stdout, stderr) => {
+    const readIf = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '');
+    settle({
+      status: error ? (error.code ?? 1) : 0, signal: error?.signal ?? null, stdout, stderr,
+      codexHome, argv: readIf(argvFile), capEnv: readIf(envFile), capStdin: readIf(stdinFile),
     });
-    child.stdin.end();
   });
+  // The wrapper refuses many inputs BEFORE it reads stdin, so the pipe can already be closed here.
+  // The blocking spawn swallowed that; an async one throws EPIPE at the test. A closed pipe is the
+  // refusal working — but ONLY EPIPE is: any other write failure is a real fault and must reach
+  // the test instead of passing as a green.
+  child.stdin.on('error', (err) => { if (err.code !== 'EPIPE') throw err; });
+  child.stdin.end();
+});
 
-describe('codex-review.sh — quality-first model/effort guard (1.1)', () => {
-  it('refuses a non-default CODEX_MODEL', () => {
+// runAsync was the async twin kept for the sleep-bound timeout test, back when run() blocked.
+// run() IS that twin now, so the twin is one name pointing at it — two spawn paths could only drift.
+const runAsync = run;
+
+describe('codex-review.sh — quality-first model/effort guard (1.1)', { concurrency: 2 }, () => {
+  it('refuses a non-default CODEX_MODEL', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_MODEL: 'gpt-5.4-mini' } });
+    const r = await run(sb, { env: { CODEX_MODEL: 'gpt-5.4-mini' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /not the pinned frontier model/);
     assert.equal(r.capStdin, '', 'codex must not be invoked when the guard fires');
   });
 
-  it('refuses a non-default CODEX_EFFORT', () => {
+  it('refuses a non-default CODEX_EFFORT', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_EFFORT: 'high' } });
+    const r = await run(sb, { env: { CODEX_EFFORT: 'high' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /not the pinned max effort/);
   });
 
-  it('CODEX_PROBE=1 relaxes the guard and warns', () => {
+  it('CODEX_PROBE=1 relaxes the guard and warns', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_PROBE: '1', CODEX_EFFORT: 'low' } });
+    const r = await run(sb, { env: { CODEX_PROBE: '1', CODEX_EFFORT: 'low' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /THROWAWAY PROBE MODE/);
   });
 });
 
-describe('codex-review.sh — clean output + session capture (1.2)', () => {
-  it('prints ONLY the final findings, not the JSON event stream', () => {
+describe('codex-review.sh — clean output + session capture (1.2)', { concurrency: 2 }, () => {
+  it('prints ONLY the final findings, not the JSON event stream', async () => {
     const sb = makeSandbox();
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /FAKE_FINAL_MESSAGE/);
     assert.doesNotMatch(r.stdout, /thread\.started/);
   });
 
-  it('passes the clean-capture flags and read-only sandbox to codex', () => {
+  it('passes the clean-capture flags and read-only sandbox to codex', async () => {
     const sb = makeSandbox();
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     for (const f of [/(^|\n)-o(\n|$)/, /(^|\n)--json(\n|$)/, /hide_agent_reasoning=true/,
       /(^|\n)read-only(\n|$)/]) {
@@ -218,9 +207,9 @@ describe('codex-review.sh — clean output + session capture (1.2)', () => {
     }
   });
 
-  it('surfaces the session id on STDERR only — never the shared resume sidecar', () => {
+  it('surfaces the session id on STDERR only — never the shared resume sidecar', async () => {
     const sb = makeSandbox();
-    const r = run(sb);
+    const r = await run(sb);
     const sidecar = join(sb.repo, '.codex-last-session');
     const wrote = existsSync(sidecar);
     rmSync(sb.root, { recursive: true, force: true });
@@ -228,35 +217,35 @@ describe('codex-review.sh — clean output + session capture (1.2)', () => {
     assert.equal(wrote, false, 'a review must NOT clobber codex-exec --resume-last target');
   });
 
-  it('on a codex failure, prints the trace tail and exits codex code', () => {
+  it('on a codex failure, prints the trace tail and exits codex code', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_FAKE_EXIT: '5' } });
+    const r = await run(sb, { env: { CODEX_FAKE_EXIT: '5' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 5);
     assert.match(r.stderr, /codex review failed \(exit 5\)/);
   });
 });
 
-describe('codex-review.sh — leaner prompt + read-fence line (1.4 / 1.5)', () => {
-  it('code mode: obeys AGENTS.md from context, states the read fence, no read-AGENTS action', () => {
+describe('codex-review.sh — leaner prompt + read-fence line (1.4 / 1.5)', { concurrency: 2 }, () => {
+  it('code mode: obeys AGENTS.md from context, states the read fence, no read-AGENTS action', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code'] });
+    const r = await run(sb, { args: ['code'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.match(r.capStdin, /already merged into your context/);
     assert.doesNotMatch(r.capStdin, /Also read the project's root AGENTS\.md/);
     assert.match(r.capStdin, /Do not read files outside this git working tree/);
   });
 
-  it('code mode: appends extra focus', () => {
+  it('code mode: appends extra focus', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code', 'the new reducer'] });
+    const r = await run(sb, { args: ['code', 'the new reducer'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.match(r.capStdin, /Extra focus: the new reducer/);
   });
 
-  it('plan mode: includes the plan body and a PLAN-specific read fence', () => {
+  it('plan mode: includes the plan body and a PLAN-specific read fence', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['plan', 'plan.md'] });
+    const r = await run(sb, { args: ['plan', 'plan.md'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.match(r.capStdin, /Do a thing in two steps/);
     assert.match(r.capStdin, /the plan above plus the in-repo code/);
@@ -264,10 +253,10 @@ describe('codex-review.sh — leaner prompt + read-fence line (1.4 / 1.5)', () =
   });
 });
 
-describe('codex-review.sh — best-effort env read-fence (1.5)', () => {
-  it('repoints HOME/XDG to a throwaway dir while keeping an absolute CODEX_HOME', () => {
+describe('codex-review.sh — best-effort env read-fence (1.5)', { concurrency: 2 }, () => {
+  it('repoints HOME/XDG to a throwaway dir while keeping an absolute CODEX_HOME', async () => {
     const sb = makeSandbox();
-    const r = run(sb);
+    const r = await run(sb);
     const home = (r.capEnv.match(/^HOME=(.*)$/m) || [])[1];
     const codexHome = (r.capEnv.match(/^CODEX_HOME=(.*)$/m) || [])[1];
     const xdg = (r.capEnv.match(/^XDG_CONFIG_HOME=(.*)$/m) || [])[1];
@@ -277,9 +266,9 @@ describe('codex-review.sh — best-effort env read-fence (1.5)', () => {
     assert.ok(xdg && xdg.startsWith(home), 'XDG_CONFIG_HOME must live under the fenced HOME');
   });
 
-  it('resolves a literal ~/ in CODEX_HOME against HOME, not $PWD', () => {
+  it('resolves a literal ~/ in CODEX_HOME against HOME, not $PWD', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_HOME: '~/.codex' } });
+    const r = await run(sb, { env: { CODEX_HOME: '~/.codex' } });
     const codexHome = (r.capEnv.match(/^CODEX_HOME=(.*)$/m) || [])[1];
     rmSync(sb.root, { recursive: true, force: true });
     // HOME handed to the wrapper is sb.repo → ~/.codex must expand to <repo>/.codex,
@@ -288,10 +277,10 @@ describe('codex-review.sh — best-effort env read-fence (1.5)', () => {
   });
 });
 
-describe('codex-review.sh — subscription / config isolation (invariant)', () => {
-  it('clears every *_API_KEY + OPENAI_BASE_URL and passes --ignore-user-config', () => {
+describe('codex-review.sh — subscription / config isolation (invariant)', { concurrency: 2 }, () => {
+  it('clears every *_API_KEY + OPENAI_BASE_URL and passes --ignore-user-config', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: {
+    const r = await run(sb, { env: {
       OPENAI_API_KEY: 'sk-x', OPENAI_BASE_URL: 'http://evil.example', FOO_API_KEY: 'bar',
     } });
     rmSync(sb.root, { recursive: true, force: true });
@@ -303,7 +292,7 @@ describe('codex-review.sh — subscription / config isolation (invariant)', () =
   });
 });
 
-describe('codex-review.sh — hard timeout (1.3)', { concurrency: true }, () => {
+describe('codex-review.sh — hard timeout (1.3)', { concurrency: 2 }, () => {
   it('kills a hung review at CODEX_HARD_TIMEOUT and reports it', async () => {
     const sb = makeSandbox();
     const started = Date.now();
@@ -317,10 +306,10 @@ describe('codex-review.sh — hard timeout (1.3)', { concurrency: true }, () => 
 
   // Flow-orchestration Phase 4.2 (#26): the uncapped lane is CLOSED — without a capping binary the
   // preflight refuses by name BEFORE any CLI run (the pre-fix wrapper warned and ran uncapped).
-  it('fails CLOSED when neither timeout nor gtimeout is on PATH — refuses by name, codex never runs', () => {
+  it('fails CLOSED when neither timeout nor gtimeout is on PATH — refuses by name, codex never runs', async () => {
     const sb = makeSandbox();
     const path = `${sb.bin}:${farmFor(['timeout', 'gtimeout'])}`;
-    const r = run(sb, { path });
+    const r = await run(sb, { path });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 127, 'the hard-timeout preflight is a refusal, never a warned uncapped run');
     assert.match(r.stderr, /hard-timeout preflight fails CLOSED/);
@@ -328,23 +317,23 @@ describe('codex-review.sh — hard timeout (1.3)', { concurrency: true }, () => 
   });
 });
 
-describe('codex-review.sh — precomputed diff for code mode (2.1)', () => {
-  it('no-diff preflight: a clean tree exits 0 without spending a codex run', () => {
+describe('codex-review.sh — precomputed diff for code mode (2.1)', { concurrency: 2 }, () => {
+  it('no-diff preflight: a clean tree exits 0 without spending a codex run', async () => {
     const sb = makeSandbox({ clean: true });
-    const r = run(sb, { args: ['code'] });
+    const r = await run(sb, { args: ['code'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0);
     assert.match(r.stderr, /no uncommitted changes to review/);
     assert.equal(r.capStdin, '', 'codex must NOT be invoked on a clean tree');
   });
 
-  it('assembles repo map, status, staged + unstaged diffs; drops the run-git-yourself directive', () => {
+  it('assembles repo map, status, staged + unstaged diffs; drops the run-git-yourself directive', async () => {
     const sb = makeSandbox();
     const g = (...a) => spawnSync('git', a, { cwd: sb.repo, encoding: 'utf8' });
     writeFileSync(join(sb.repo, 'AGENTS.md'), '# AGENTS\n\nHard Constraints: none.\nan unstaged edit\n');
     writeFileSync(join(sb.repo, 'staged.mjs'), 'export const s = 1\n');
     g('add', 'staged.mjs');
-    const r = run(sb, { args: ['code'] });
+    const r = await run(sb, { args: ['code'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     for (const sec of [/repo file map/, /git status/, /staged diff/, /unstaged diff/, /staged\.mjs/]) {
@@ -353,50 +342,50 @@ describe('codex-review.sh — precomputed diff for code mode (2.1)', () => {
     assert.doesNotMatch(r.capStdin, /Run `git status --short`/, 'the old self-discovery directive must be gone');
   });
 
-  it('inlines untracked file CONTENTS, not just the path', () => {
+  it('inlines untracked file CONTENTS, not just the path', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'untra.txt'), 'UNIQUE_UNTRACKED_BODY\n');
-    const r = run(sb, { args: ['code'] });
+    const r = await run(sb, { args: ['code'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.match(r.capStdin, /untracked: untra\.txt/);
     assert.match(r.capStdin, /UNIQUE_UNTRACKED_BODY/);
   });
 
-  it('skips binary untracked files (noted; raw bytes not inlined)', () => {
+  it('skips binary untracked files (noted; raw bytes not inlined)', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'blob.bin'), Buffer.from([0x00, 0x01, 0x02, 0x00, 0x42]));
-    const r = run(sb, { args: ['code'] });
+    const r = await run(sb, { args: ['code'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.match(r.capStdin, /binary, skipped\): blob\.bin/);
   });
 
-  it('handles untracked paths with spaces (NUL-safe)', () => {
+  it('handles untracked paths with spaces (NUL-safe)', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'a b c.txt'), 'SPACED_BODY\n');
-    const r = run(sb, { args: ['code'] });
+    const r = await run(sb, { args: ['code'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.match(r.capStdin, /untracked: a b c\.txt/);
     assert.match(r.capStdin, /SPACED_BODY/);
   });
 
-  it('does not follow untracked symlinks (no out-of-tree content leak)', () => {
+  it('does not follow untracked symlinks (no out-of-tree content leak)', async () => {
     const sb = makeSandbox();
     const secret = join(sb.root, 'outside-secret.txt');   // OUTSIDE the repo
     writeFileSync(secret, 'TOP_SECRET_LEAK_MARKER\n');
     symlinkSync(secret, join(sb.repo, 'link-to-outside')); // untracked symlink → outside
-    const r = run(sb, { args: ['code'] });
+    const r = await run(sb, { args: ['code'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.match(r.capStdin, /untracked \(symlink\): link-to-outside -> /);
     assert.doesNotMatch(r.capStdin, /TOP_SECRET_LEAK_MARKER/, 'symlink target content must never leak');
   });
 
-  it('oversized → git-dir temp file: 600 perms, untruncated, carve-out fence, cleaned up', () => {
+  it('oversized → git-dir temp file: 600 perms, untruncated, carve-out fence, cleaned up', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'unique.txt'), 'OVERSIZE_UNIQUE_MARKER\n');
     writeFileSync(join(sb.repo, 'big.txt'), 'x'.repeat(5000));
     const perms = join(sb.root, 'cap-perms');
     const copy = join(sb.root, 'cap-diffcopy');
-    const r = run(sb, { args: ['code'], env: {
+    const r = await run(sb, { args: ['code'], env: {
       CODEX_REVIEW_MAX_TOTAL_BYTES: '100', CODEX_FAKE_DIFF_PERMS: perms, CODEX_FAKE_DIFF_COPY: copy,
     } });
     const leftover = readdirSync(join(sb.repo, '.git')).filter((f) => f.startsWith('codex-review-diff.'));
@@ -415,29 +404,29 @@ describe('codex-review.sh — precomputed diff for code mode (2.1)', () => {
   });
 });
 
-describe('codex-review.sh — optional structured findings (2.2)', () => {
-  it('CODEX_REVIEW_SCHEMA=1 passes --output-schema to codex', () => {
+describe('codex-review.sh — optional structured findings (2.2)', { concurrency: 2 }, () => {
+  it('CODEX_REVIEW_SCHEMA=1 passes --output-schema to codex', async () => {
     const sb = makeSandbox();
     // Schema mode parses the schema's verdict FIELD (D4) — the fixture output must carry it.
-    const r = run(sb, { args: ['code'], env: { CODEX_REVIEW_SCHEMA: '1', CODEX_FAKE_FINAL: '{"verdict":"ship","findings":[]}' } });
+    const r = await run(sb, { args: ['code'], env: { CODEX_REVIEW_SCHEMA: '1', CODEX_FAKE_FINAL: '{"verdict":"ship","findings":[]}' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.argv, /(^|\n)--output-schema(\n|$)/);
   });
 
-  it('is OFF by default — no --output-schema', () => {
+  it('is OFF by default — no --output-schema', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code'] });
+    const r = await run(sb, { args: ['code'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.doesNotMatch(r.argv, /--output-schema/);
   });
 
-  it('falls back to a raw-text run when the schema run fails (loud; exit 0) — and parses the TEXT verdict', () => {
+  it('falls back to a raw-text run when the schema run fails (loud; exit 0) — and parses the TEXT verdict', async () => {
     const sb = makeSandbox();
     // No CODEX_FAKE_FINAL: the fallback run emits the TEXT default (FAKE_FINAL_MESSAGE +
     // Verdict: ship) — the wrapper must parse the mode of the run that actually SUCCEEDED,
     // or every fallback would read verdict-less and die on the D4 arm.
-    const r = run(sb, { args: ['code'], env: { CODEX_REVIEW_SCHEMA: '1', CODEX_FAKE_FAIL_ON_SCHEMA: '1' } });
+    const r = await run(sb, { args: ['code'], env: { CODEX_REVIEW_SCHEMA: '1', CODEX_FAKE_FAIL_ON_SCHEMA: '1' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /without the schema constraint/);
@@ -445,117 +434,117 @@ describe('codex-review.sh — optional structured findings (2.2)', () => {
     assert.match(r.stdout, /FAKE_FINAL_MESSAGE/);
   });
 
-  it('schema ON makes the directive ask for schema JSON, not one-per-line text', () => {
+  it('schema ON makes the directive ask for schema JSON, not one-per-line text', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code'], env: { CODEX_REVIEW_SCHEMA: '1' } });
+    const r = await run(sb, { args: ['code'], env: { CODEX_REVIEW_SCHEMA: '1' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.match(r.capStdin, /JSON object matching the provided output schema/);
     assert.doesNotMatch(r.capStdin, /one per line/);
   });
 
-  it('schema OFF (default) asks for one-finding-per-line text', () => {
+  it('schema OFF (default) asks for one-finding-per-line text', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code'] });
+    const r = await run(sb, { args: ['code'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.match(r.capStdin, /one per line/);
   });
 });
 
-describe('codex-review.sh — environment preflight (fail fast, before a run)', () => {
-  it('STOPs with 127 when codex is not on PATH', () => {
+describe('codex-review.sh — environment preflight (fail fast, before a run)', { concurrency: 2 }, () => {
+  it('STOPs with 127 when codex is not on PATH', async () => {
     const sb = makeSandbox();
     const path = farmFor(['codex']); // no fake codex, no real codex
-    const r = run(sb, { args: ['code'], path });
+    const r = await run(sb, { args: ['code'], path });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 127);
     assert.match(r.stderr, /'codex'.*not found on PATH/);
     assert.equal(r.capStdin, '', 'codex must never be invoked');
   });
 
-  it('STOPs (exit 1) when codex is not on a ChatGPT subscription', () => {
+  it('STOPs (exit 1) when codex is not on a ChatGPT subscription', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code'], env: { CODEX_FAKE_LOGIN: 'Logged in using API key' } });
+    const r = await run(sb, { args: ['code'], env: { CODEX_FAKE_LOGIN: 'Logged in using API key' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 1);
     assert.match(r.stderr, /not on a ChatGPT subscription/);
     assert.equal(r.capStdin, '', 'a wrong login must never spend a run');
   });
 
-  it('STOPs (exit 2) when not inside a git work tree', () => {
+  it('STOPs (exit 2) when not inside a git work tree', async () => {
     const sb = makeSandbox();
     const nongit = join(sb.root, 'nongit');
     mkdirSync(nongit, { recursive: true });
     writeFileSync(join(nongit, 'AGENTS.md'), '# AGENTS\n');
-    const r = run(sb, { args: ['code'], cwd: nongit });
+    const r = await run(sb, { args: ['code'], cwd: nongit });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /must run inside a git working tree/);
   });
 
-  it('STOPs (exit 2) when there is no root AGENTS.md', () => {
+  it('STOPs (exit 2) when there is no root AGENTS.md', async () => {
     const sb = makeSandbox();
     rmSync(join(sb.repo, 'AGENTS.md'));
-    const r = run(sb, { args: ['code'] });
+    const r = await run(sb, { args: ['code'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /no root AGENTS\.md/);
   });
 });
 
-describe('codex-review.sh — CODEX_HOME resolution arms (1.5)', () => {
-  it('resolves a bare ~ in CODEX_HOME to HOME', () => {
+describe('codex-review.sh — CODEX_HOME resolution arms (1.5)', { concurrency: 2 }, () => {
+  it('resolves a bare ~ in CODEX_HOME to HOME', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code'], env: { CODEX_HOME: '~' } });
+    const r = await run(sb, { args: ['code'], env: { CODEX_HOME: '~' } });
     const codexHome = (r.capEnv.match(/^CODEX_HOME=(.*)$/m) || [])[1];
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(codexHome, sb.repo, 'bare ~ → the HOME handed to the wrapper');
   });
 
-  it('anchors a relative CODEX_HOME to $PWD', () => {
+  it('anchors a relative CODEX_HOME to $PWD', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code'], env: { CODEX_HOME: 'rel/.codex' } });
+    const r = await run(sb, { args: ['code'], env: { CODEX_HOME: 'rel/.codex' } });
     const codexHome = (r.capEnv.match(/^CODEX_HOME=(.*)$/m) || [])[1];
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(codexHome, join(sb.repo, 'rel/.codex'), 'a relative path anchors to cwd, never left bare');
   });
 });
 
-describe('codex-review.sh — mode dispatch & plan validation', () => {
-  it('unknown mode prints usage and STOPs (exit 2)', () => {
+describe('codex-review.sh — mode dispatch & plan validation', { concurrency: 2 }, () => {
+  it('unknown mode prints usage and STOPs (exit 2)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['bogus'] });
+    const r = await run(sb, { args: ['bogus'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /usage: .* plan <plan-file> \[--nonce <n>\] \| code \[--nonce <n>\]/);
   });
 
-  it('no mode prints usage and STOPs (exit 2)', () => {
+  it('no mode prints usage and STOPs (exit 2)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: [] });
+    const r = await run(sb, { args: [] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /usage:/);
   });
 
-  it('plan mode: STOPs (exit 2) when the plan file is missing', () => {
+  it('plan mode: STOPs (exit 2) when the plan file is missing', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['plan', 'nope.md'] });
+    const r = await run(sb, { args: ['plan', 'nope.md'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /plan file 'nope\.md' not found/);
   });
 
-  it('plan mode: STOPs (exit 2) on unexpected trailing arguments', () => {
+  it('plan mode: STOPs (exit 2) on unexpected trailing arguments', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['plan', 'plan.md', 'extra', 'junk'] });
+    const r = await run(sb, { args: ['plan', 'plan.md', 'extra', 'junk'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /unexpected arguments after plan file: extra junk/);
   });
 });
 
-describe('codex-review.sh — assemble & output edge cases', () => {
-  it('skips a non-regular untracked path (an embedded git repo dir) without reading it', () => {
+describe('codex-review.sh — assemble & output edge cases', { concurrency: 2 }, () => {
+  it('skips a non-regular untracked path (an embedded git repo dir) without reading it', async () => {
     // git enumerates an untracked path as non-regular only as a DIRECTORY: a FIFO /
     // socket / device is not listed by `git ls-files --others` at all, but an embedded
     // git repo surfaces as `nested/` — a directory, so `[[ ! -f ]]` skips it (and a
@@ -566,35 +555,35 @@ describe('codex-review.sh — assemble & output edge cases', () => {
     const g = (...a) => spawnSync('git', a, { cwd: nested, encoding: 'utf8' });
     g('init', '-q');
     writeFileSync(join(nested, 'inner.txt'), 'INNER_SHOULD_NOT_BE_INLINED\n');
-    const r = run(sb, { args: ['code'] });
+    const r = await run(sb, { args: ['code'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.capStdin, /non-regular, skipped\): nested\//);
     assert.doesNotMatch(r.capStdin, /INNER_SHOULD_NOT_BE_INLINED/, 'a non-regular path must not be inlined');
   });
 
-  it('appends extra focus on the oversized (temp-file) path too', () => {
+  it('appends extra focus on the oversized (temp-file) path too', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'big.txt'), 'x'.repeat(5000));
-    const r = run(sb, { args: ['code', 'watch the parser'], env: { CODEX_REVIEW_MAX_TOTAL_BYTES: '100' } });
+    const r = await run(sb, { args: ['code', 'watch the parser'], env: { CODEX_REVIEW_MAX_TOTAL_BYTES: '100' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.capStdin, /with ONE exception/, 'this is the oversized temp-file path');
     assert.match(r.capStdin, /Extra focus: watch the parser/);
   });
 
-  it('warns and prints the trace tail when codex writes no final-message file (then fails the D4 arm)', () => {
+  it('warns and prints the trace tail when codex writes no final-message file (then fails the D4 arm)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code'], env: { CODEX_FAKE_NO_OUT: '1' } });
+    const r = await run(sb, { args: ['code'], env: { CODEX_FAKE_NO_OUT: '1' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0, 'no final message ⇒ no verdict ⇒ a FAILED review (D4)');
     assert.match(r.stderr, /no final-message file/);
     assert.match(r.stdout, /turn\.completed/, 'the trace tail still carries the event stream');
   });
 
-  it('prints no session line when codex emits no thread id', () => {
+  it('prints no session line when codex emits no thread id', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { args: ['code'], env: { CODEX_FAKE_NO_THREAD: '1' } });
+    const r = await run(sb, { args: ['code'], env: { CODEX_FAKE_NO_THREAD: '1' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /session:/);
@@ -700,8 +689,8 @@ const consultsEnv = (source, name) =>
 // `<facts-file>` behind a stray character) — the catalog declares the whole token a user types.
 const SLOT_RE = /@?<[^<>]+>|\[[^[\]]*\]/g;
 
-describe('codex-review.sh — --help contract (manifest-pinned)', () => {
-  it('--help and -h exit 0 pre-preflight (no codex, no git, no AGENTS.md)', () => {
+describe('codex-review.sh — --help contract (manifest-pinned)', { concurrency: 2 }, () => {
+  it('--help and -h exit 0 pre-preflight (no codex, no git, no AGENTS.md)', async () => {
     for (const arg of ['--help', '-h']) {
       const r = runHelp(arg);
       assert.equal(r.status, 0, `${arg}: ${r.stderr}`);
@@ -710,57 +699,57 @@ describe('codex-review.sh — --help contract (manifest-pinned)', () => {
     }
   });
 
-  it('Usage set-EQUALS the manifest invocation descriptors (both directions)', () => {
+  it('Usage set-EQUALS the manifest invocation descriptors (both directions)', async () => {
     const help = runHelp('--help').stdout;
     const got = helpSection(help, 'Usage:').filter((l) => l.startsWith('codex-review')).map(norm);
     assert.ok(REVIEW_CONTRACT.invocations.length > 0, 'manifest invocations must be non-empty');
     setEq(got, REVIEW_CONTRACT.invocations.map(norm), 'help Usage ⟷ manifest invocations');
   });
 
-  it('Grounding renders the manifest grounding note verbatim', () => {
+  it('Grounding renders the manifest grounding note verbatim', async () => {
     const help = runHelp('--help').stdout;
     assert.equal(norm(helpSection(help, 'Grounding:').join(' ')), norm(REVIEW_CONTRACT.grounding));
   });
 
-  it('Round-2 / resume set-EQUALS the manifest continue descriptors (empty — one-shot)', () => {
+  it('Round-2 / resume set-EQUALS the manifest continue descriptors (empty — one-shot)', async () => {
     const help = runHelp('--help').stdout;
     const got = helpSection(help, 'Round-2 / resume:').filter((l) => l.startsWith('codex-review')).map(norm);
     setEq(got, (REVIEW_CONTRACT.continue ?? []).map(norm), 'help continue ⟷ manifest continue');
     assert.deepEqual(REVIEW_CONTRACT.continue, [], 'codex-review is one-shot — no continue descriptor');
   });
 
-  it('Receipt renders the manifest receipt contract verbatim (AD-038 three-way lockstep)', () => {
+  it('Receipt renders the manifest receipt contract verbatim (AD-038 three-way lockstep)', async () => {
     const help = runHelp('--help').stdout;
     assert.equal(norm(helpSection(help, 'Receipt:').join(' ')), norm(REVIEW_CONTRACT.receipt));
     assert.match(REVIEW_CONTRACT.receipt, /sha256 over the canonical uncommitted-state payload/, 'the fingerprint definition lives in the manifest contract');
   });
 
-  it('Notes renders the manifest review contract.notes verbatim (AD-061 — a typed contract key that MUST surface)', () => {
+  it('Notes renders the manifest review contract.notes verbatim (AD-061 — a typed contract key that MUST surface)', async () => {
     const help = runHelp('--help').stdout;
     assert.ok((REVIEW_CONTRACT.notes ?? []).length >= 2, 'the review contract declares the banner-only-timeout + quote-verbatim notes');
     assert.equal(norm(helpSection(help, 'Notes:').join(' ')), norm(REVIEW_CONTRACT.notes.join(' ')));
   });
 });
 
-describe('codex-review.sh — source-level reverse guard (parser arms ⟷ manifest)', () => {
+describe('codex-review.sh — source-level reverse guard (parser arms ⟷ manifest)', { concurrency: 2 }, () => {
   const arms = extractArgCaseArms(readFileSync(WRAPPER, 'utf8'));
 
-  it('the real mode arms equal the manifest modes (adding a mode without the manifest fails here)', () => {
+  it('the real mode arms equal the manifest modes (adding a mode without the manifest fails here)', async () => {
     const modes = splitArms(arms.get('"$mode"')).filter((a) => a !== '*');
     assert.ok(MANIFEST.roles.review.modes.length > 0, 'manifest modes must be non-empty');
     setEq(new Set(modes), MANIFEST.roles.review.modes, 'parser mode arms ⟷ manifest modes');
   });
 
-  it('the first-arg entrypoints are exactly --help/-h (no undeclared resume/flag entrypoint)', () => {
+  it('the first-arg entrypoints are exactly --help/-h (no undeclared resume/flag entrypoint)', async () => {
     setEq(new Set(splitArms(arms.get('"${1:-}"'))), ['--help', '-h']);
   });
 
-  it('every manifest mode is really accepted (forward guard)', () => {
+  it('every manifest mode is really accepted (forward guard)', async () => {
     const drive = { plan: ['plan', 'plan.md'], code: ['code'] };
     for (const mode of MANIFEST.roles.review.modes) {
       assert.ok(drive[mode], `no test drive for manifest mode "${mode}" — add one`);
       const sb = makeSandbox();
-      const r = run(sb, { args: drive[mode] });
+      const r = await run(sb, { args: drive[mode] });
       rmSync(sb.root, { recursive: true, force: true });
       assert.equal(r.status, 0, `mode ${mode}: ${r.stderr}`);
     }
@@ -773,10 +762,10 @@ describe('codex-review.sh — source-level reverse guard (parser arms ⟷ manife
 // a git-dir temp file — so its budget is set at the default inline cap: the map can never outgrow
 // the whole payload, and every realistic repo's map assembles byte-UNCHANGED. Behaviour alone
 // cannot tell "a huge budget" from "no budget at all", so the pinned value is asserted at source.
-describe('codex-review.sh — repo file map budget (Phase 2)', () => {
+describe('codex-review.sh — repo file map budget (Phase 2)', { concurrency: 2 }, () => {
   const MAP_DIR = 'deeply/nested/fixture/directory/for/the/repo/file/map/budget';
 
-  it("codex-review's assembled payload is byte-unchanged by the map budget", () => {
+  it("codex-review's assembled payload is byte-unchanged by the map budget", async () => {
     const sb = makeSandbox();
     const g = (...a) => spawnSync('git', a, { cwd: sb.repo, encoding: 'utf8' });
     mkdirSync(join(sb.repo, MAP_DIR), { recursive: true });
@@ -787,7 +776,7 @@ describe('codex-review.sh — repo file map budget (Phase 2)', () => {
     g('add', '-A');
     g('commit', '-qm', 'map fixture');
     for (let i = 0; i < 100; i += 1) writeFileSync(join(sb.repo, `${MAP_DIR}/zz-modified-file-${String(i).padStart(3, '0')}.txt`), `body ${i} v2 — changed\n`);
-    const r = run(sb, { args: ['code'] });
+    const r = await run(sb, { args: ['code'] });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.capStdin, /TRUNCATED/, 'a 17 KB map is far inside the budget — no degradation');
@@ -795,7 +784,7 @@ describe('codex-review.sh — repo file map budget (Phase 2)', () => {
     assert.ok(r.capStdin.includes(`${MAP_DIR}/aa-untouched-file-099.txt`), 'including its last entry');
   });
 
-  it('the wrapper pins a map budget no smaller than its default inline-payload cap', () => {
+  it('the wrapper pins a map budget no smaller than its default inline-payload cap', async () => {
     const source = readFileSync(WRAPPER, 'utf8');
     const pinned = source.match(/^AW_REVIEW_MAP_BUDGET_BYTES=(\d+)$/m);
     assert.ok(pinned, 'codex-review.sh must PIN AW_REVIEW_MAP_BUDGET_BYTES (a plain assignment, never an env knob)');
@@ -809,20 +798,20 @@ describe('codex-review.sh — repo file map budget (Phase 2)', () => {
 // The kit validator owns the catalog's INTERNAL shape; these arms pin what only the wrapper source
 // can settle — the catalog documents THIS wrapper's real modes and real escape hatches, and every
 // contract invocation the wrapper honours is cataloged (adding a mode without one fails here).
-describe('codex-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)', () => {
+describe('codex-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)', { concurrency: 2 }, () => {
   const source = readFileSync(WRAPPER, 'utf8');
   const arms = extractArgCaseArms(source);
   const catalog = MANIFEST.modeCatalog ?? [];
   const reviewEntries = catalog.filter((e) => e.role === 'review');
   const reviewPrimaries = reviewEntries.filter((e) => e.kind === 'primary');
 
-  it('the catalog submodes ARE the wrapper\'s real parser mode arms (both directions)', () => {
+  it('the catalog submodes ARE the wrapper\'s real parser mode arms (both directions)', async () => {
     const modes = splitArms(arms.get('"$mode"')).filter((a) => a !== '*');
     assert.ok(reviewPrimaries.length > 0, 'the manifest must catalog its review modes');
     setEq(reviewPrimaries.map((e) => e.submode), modes, 'catalog submodes ⟷ real parser mode arms');
   });
 
-  it('every review entry composes BY REFERENCE and every reference resolves', () => {
+  it('every review entry composes BY REFERENCE and every reference resolves', async () => {
     for (const entry of reviewEntries) {
       assert.ok(
         Array.isArray(entry.invocationRefs) && entry.invocationRefs.length > 0,
@@ -838,7 +827,7 @@ describe('codex-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)
     }
   });
 
-  it('every review contract invocation is claimed by exactly ONE catalog entry (no uncataloged mode)', () => {
+  it('every review contract invocation is claimed by exactly ONE catalog entry (no uncataloged mode)', async () => {
     const claims = reviewEntries.flatMap((e) => e.invocationRefs.map((r) => `${r.contractField}[${r.index}]`));
     assert.equal(new Set(claims).size, claims.length, 'a contract invocation is claimed at most once');
     const declared = [
@@ -848,7 +837,7 @@ describe('codex-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)
     setEq(new Set(claims), declared, 'catalog claims ⟷ declared contract invocations');
   });
 
-  it('every env-hook the catalog aims at a review mode is a real EXECUTABLE guard, not a mention', () => {
+  it('every env-hook the catalog aims at a review mode is a real EXECUTABLE guard, not a mention', async () => {
     const hooks = catalog.filter((e) => e.kind === 'env-hook' && e.parents.some((p) => reviewPrimaries.some((r) => r.key === p)));
     assert.ok(hooks.length > 0, 'CODEX_PROBE must be cataloged as an env-hook over the review modes');
     for (const hook of hooks) {
@@ -859,7 +848,7 @@ describe('codex-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)
     }
   });
 
-  it('the catalog operand slots set-EQUAL the slots its rendered forms really carry (both directions)', () => {
+  it('the catalog operand slots set-EQUAL the slots its rendered forms really carry (both directions)', async () => {
     for (const entry of reviewEntries) {
       const forms = entry.invocationRefs.map((r) => REVIEW_CONTRACT[r.contractField][r.index]);
       // The DEDUPLICATED UNION over every resolved form: a plural-ref entry legitimately spreads its
@@ -869,7 +858,7 @@ describe('codex-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)
     }
   });
 
-  it('an entry rendering a LITERAL descriptor is slot-checked too (env-hooks have no role to filter on)', () => {
+  it('an entry rendering a LITERAL descriptor is slot-checked too (env-hooks have no role to filter on)', async () => {
     // The contract-backed arm above filters by role — and an env-hook HAS no role, so its descriptor
     // would never be slot-checked. That is exactly how a hardcoded dead path can reach the discovery
     // surface looking ready-to-run. Every literal-descriptor kind is covered here: env-hooks and
@@ -882,7 +871,7 @@ describe('codex-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)
     }
   });
 
-  it('CODEX_PROBE really relaxes the guard on EVERY review parent the catalog claims (behavioural)', () => {
+  it('CODEX_PROBE really relaxes the guard on EVERY review parent the catalog claims (behavioural)', async () => {
     // The catalog CLAIMS these modes are modified by the hook; prove it per parent rather than
     // trusting a source scan: an off-pin model is exit 2 normally, exit 0 under probe.
     const hook = catalog.find((e) => e.key === 'CODEX_PROBE');
@@ -894,13 +883,13 @@ describe('codex-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)
       // The exit code alone is weak evidence: pin the real DISPATCH too (capStdin is non-empty only
       // when codex was actually invoked), so a run that dies early can never pass the probe-on branch.
       const guarded = makeSandbox();
-      const off = run(guarded, { args: drive[parent], env: { CODEX_MODEL: 'not-the-pinned-model' } });
+      const off = await run(guarded, { args: drive[parent], env: { CODEX_MODEL: 'not-the-pinned-model' } });
       rmSync(guarded.root, { recursive: true, force: true });
       assert.equal(off.status, 2, `${parent}: the quality guard must refuse an off-pin model without the hook`);
       assert.equal(off.capStdin, '', `${parent}: the guard must refuse BEFORE spending a run`);
 
       const probed = makeSandbox();
-      const on = run(probed, { args: drive[parent], env: { CODEX_MODEL: 'not-the-pinned-model', CODEX_PROBE: '1' } });
+      const on = await run(probed, { args: drive[parent], env: { CODEX_MODEL: 'not-the-pinned-model', CODEX_PROBE: '1' } });
       rmSync(probed.root, { recursive: true, force: true });
       assert.equal(on.status, 0, `${parent}: CODEX_PROBE=1 must really relax the guard — the catalog claims it does`);
       assert.notEqual(on.capStdin, '', `${parent}: CODEX_PROBE=1 must really reach codex, not merely exit 0`);
@@ -922,10 +911,10 @@ const readReceipts = (repo) => {
 };
 const sha256Hex = (buf) => createHash('sha256').update(buf).digest('hex');
 
-describe('codex-review.sh — review receipts (AD-038)', () => {
-  it('a successful code review appends ONE fixture-shaped receipt (text-mode verdict parse)', () => {
+describe('codex-review.sh — review receipts (AD-038)', { concurrency: 2 }, () => {
+  it('a successful code review appends ONE fixture-shaped receipt (text-mode verdict parse)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_FAKE_FINAL: '[major] — a.txt:1 — x — y\nVerdict: revise' } });
+    const r = await run(sb, { env: { CODEX_FAKE_FINAL: '[major] — a.txt:1 — x — y\nVerdict: revise' } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -949,9 +938,9 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
   // review-state gate rejects a probe-marked receipt. EVERY receipt carries the marker (true or
   // false): it self-declares, so the gate reads the fact rather than inferring it from a version
   // string that bumps in a different release phase. Silence is not a declaration.
-  it('CODEX_PROBE=1 stamps probe:true — a throwaway probe can never attest a tree (D3)', () => {
+  it('CODEX_PROBE=1 stamps probe:true — a throwaway probe can never attest a tree (D3)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_PROBE: '1', CODEX_FAKE_FINAL: 'Verdict: ship' } });
+    const r = await run(sb, { env: { CODEX_PROBE: '1', CODEX_FAKE_FINAL: 'Verdict: ship' } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -961,32 +950,32 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
 
   // Every receipt SELF-DECLARES: the kit's gate reads the marker, never the wrapper version — so
   // the marker must not depend on a version bump landing in the same release phase.
-  it('a normal review self-declares probe:false — the receipt states the fact, not a version', () => {
+  it('a normal review self-declares probe:false — the receipt states the fact, not a version', async () => {
     const sb = makeSandbox();
-    run(sb, { env: { CODEX_FAKE_FINAL: 'Verdict: ship' } });
+    await run(sb, { env: { CODEX_FAKE_FINAL: 'Verdict: ship' } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(receipts[0].probe, false, 'silence is not a declaration — the gate rejects an unmarked receipt');
   });
 
-  it('the marker tracks the RELAXED GUARD, not the model — a probe on an off-pinned model still marks', () => {
+  it('the marker tracks the RELAXED GUARD, not the model — a probe on an off-pinned model still marks', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_PROBE: '1', CODEX_MODEL: 'gpt-5-mini', CODEX_EFFORT: 'low', CODEX_FAKE_FINAL: 'Verdict: ship' } });
+    const r = await run(sb, { env: { CODEX_PROBE: '1', CODEX_MODEL: 'gpt-5-mini', CODEX_EFFORT: 'low', CODEX_FAKE_FINAL: 'Verdict: ship' } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(receipts[0].probe, true, 'exactly the runs the guard let through unpinned are marked');
   });
 
-  it('the code-mode fingerprint tracks the uncommitted state (same tree → same hash; edit → different)', () => {
+  it('the code-mode fingerprint tracks the uncommitted state (same tree → same hash; edit → different)', async () => {
     const sb = makeSandbox();
     // Route the fake-codex capture files to /dev/null so the runs themselves leave the repo
     // byte-identical (the default capture files land inside the repo and would change the tree).
     const quiet = { CODEX_FAKE_ARGV: '/dev/null', CODEX_FAKE_ENV: '/dev/null', CODEX_FAKE_STDIN: '/dev/null', CODEX_FAKE_FINAL: 'Verdict: ship' };
-    run(sb, { env: quiet });
-    run(sb, { env: quiet });
+    await run(sb, { env: quiet });
+    await run(sb, { env: quiet });
     writeFileSync(join(sb.repo, 'pending.txt'), 'edited after the first two reviews\n');
-    run(sb, { env: quiet });
+    await run(sb, { env: quiet });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(receipts.length, 3);
@@ -994,9 +983,9 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
     assert.notEqual(receipts[1].fingerprint, receipts[2].fingerprint, 'an edited tree changes the fingerprint');
   });
 
-  it('CODEX_REVIEW_SCHEMA=1 reads the schema verdict field', () => {
+  it('CODEX_REVIEW_SCHEMA=1 reads the schema verdict field', async () => {
     const sb = makeSandbox();
-    const r = run(sb, {
+    const r = await run(sb, {
       env: { CODEX_REVIEW_SCHEMA: '1', CODEX_FAKE_FINAL: '{"findings":[],"verdict":"ship","notes":"ok"}' },
     });
     const receipts = readReceipts(sb.repo);
@@ -1005,19 +994,19 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
     assert.equal(receipts[0].verdict, 'ship');
   });
 
-  it('no parseable verdict is a FAILED run — never recorded as "unknown" (D4 owns the arm)', () => {
+  it('no parseable verdict is a FAILED run — never recorded as "unknown" (D4 owns the arm)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_FAKE_FINAL: 'looks fine to me overall' } });
+    const r = await run(sb, { env: { CODEX_FAKE_FINAL: 'looks fine to me overall' } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
     assert.equal(receipts.length, 0, 'an unknown verdict never reaches the receipt store');
   });
 
-  it('plan mode: artifact "plan", fingerprint = the artifact-file sha256', () => {
+  it('plan mode: artifact "plan", fingerprint = the artifact-file sha256', async () => {
     const sb = makeSandbox();
     const planBytes = readFileSync(join(sb.repo, 'plan.md'));
-    const r = run(sb, { args: ['plan', 'plan.md'], env: { CODEX_FAKE_FINAL: 'Verdict: ship' } });
+    const r = await run(sb, { args: ['plan', 'plan.md'], env: { CODEX_FAKE_FINAL: 'Verdict: ship' } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -1025,10 +1014,10 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
     assert.equal(receipts[0].fingerprint, sha256Hex(planBytes), 'plan fingerprint = file sha256');
   });
 
-  it('AW_REVIEW_RECEIPTS overrides the receipt destination', () => {
+  it('AW_REVIEW_RECEIPTS overrides the receipt destination', async () => {
     const sb = makeSandbox();
     const override = join(sb.root, 'my-receipts.jsonl');
-    const r = run(sb, { env: { AW_REVIEW_RECEIPTS: override, CODEX_FAKE_FINAL: 'Verdict: ship' } });
+    const r = await run(sb, { env: { AW_REVIEW_RECEIPTS: override, CODEX_FAKE_FINAL: 'Verdict: ship' } });
     const inGitDir = readReceipts(sb.repo);
     const atOverride = existsSync(override) ? readFileSync(override, 'utf8') : '';
     rmSync(sb.root, { recursive: true, force: true });
@@ -1040,15 +1029,15 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
   // The wrapper-minted finding manifest (flow-orchestration Phase 4.2, Decision 2/P5/P24-25):
   // nonce-supplied dispatches mint {schema, backend, nonce, fingerprint, findings} beside the
   // receipt, atomic + no-clobber + ORDERED — a failed mint EXCLUDES the receipt append.
-  describe('finding manifest (AW_REVIEW_NONCE)', () => {
+  describe('finding manifest (AW_REVIEW_NONCE)', { concurrency: 2 }, () => {
     const manifestPath = (repo, nonce) => join(repo, '.git', `agent-workflow-finding-manifest-codex-${nonce}.json`);
     // Capture files ride /dev/null so repeated runs see an UNCHANGED tree (the manifest binds the
     // fingerprint — a moved tree would legitimately change its bytes).
     const quiet = { CODEX_FAKE_ARGV: '/dev/null', CODEX_FAKE_ENV: '/dev/null', CODEX_FAKE_STDIN: '/dev/null', CODEX_FAKE_FINAL: 'Verdict: ship' };
 
-    it('a nonce-supplied code dispatch mints the {backend, nonce}-named manifest carrying the captured findings + the receipt fingerprint', () => {
+    it('a nonce-supplied code dispatch mints the {backend, nonce}-named manifest carrying the captured findings + the receipt fingerprint', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'r1-d1' } });
+      const r = await run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'r1-d1' } });
       const receipts = readReceipts(sb.repo);
       const manifest = JSON.parse(readFileSync(manifestPath(sb.repo, 'r1-d1'), 'utf8'));
       rmSync(sb.root, { recursive: true, force: true });
@@ -1063,9 +1052,9 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
       assert.equal(receipts[0].nonce, 'r1-d1', 'a nonce-supplied receipt carries the dispatch nonce — the flow round-land matcher requires exact equality (dispatch identity end-to-end)');
     });
 
-    it('a nonce-less invocation mints NO manifest and adds NO nonce field — the receipt field set is unchanged (Decision 2 both branches)', () => {
+    it('a nonce-less invocation mints NO manifest and adds NO nonce field — the receipt field set is unchanged (Decision 2 both branches)', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { env: { ...quiet } });
+      const r = await run(sb, { env: { ...quiet } });
       const receipts = readReceipts(sb.repo);
       const gitEntries = readdirSync(join(sb.repo, '.git')).filter((n) => n.startsWith('agent-workflow-finding-manifest-'));
       rmSync(sb.root, { recursive: true, force: true });
@@ -1074,11 +1063,11 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
       assert.deepEqual(Object.keys(receipts[0]), Object.keys(RECEIPT_FIXTURE), 'the receipt line field set is unchanged');
     });
 
-    it('a byte-identical re-mint is an idempotent no-op — the second receipt still lands', () => {
+    it('a byte-identical re-mint is an idempotent no-op — the second receipt still lands', async () => {
       const sb = makeSandbox();
-      assert.equal(run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'r1-d1' } }).status, 0);
+      assert.equal((await run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'r1-d1' } })).status, 0);
       const before = readFileSync(manifestPath(sb.repo, 'r1-d1'), 'utf8');
-      const r2 = run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'r1-d1' } });
+      const r2 = await run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'r1-d1' } });
       const receipts = readReceipts(sb.repo);
       const after = readFileSync(manifestPath(sb.repo, 'r1-d1'), 'utf8');
       rmSync(sb.root, { recursive: true, force: true });
@@ -1087,10 +1076,10 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
       assert.equal(after, before, 'the manifest bytes are untouched');
     });
 
-    it('DIFFERENT bytes at the derived name refuse loudly AND EXCLUDE the receipt append (ordering, behaviorally)', () => {
+    it('DIFFERENT bytes at the derived name refuse loudly AND EXCLUDE the receipt append (ordering, behaviorally)', async () => {
       const sb = makeSandbox();
       writeFileSync(manifestPath(sb.repo, 'r1-d1'), '{"schema":1,"backend":"codex","nonce":"r1-d1","fingerprint":null,"findings":"other bytes"}\n');
-      const r = run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'r1-d1' } });
+      const r = await run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'r1-d1' } });
       const receipts = readReceipts(sb.repo);
       const manifest = readFileSync(manifestPath(sb.repo, 'r1-d1'), 'utf8');
       rmSync(sb.root, { recursive: true, force: true });
@@ -1101,11 +1090,11 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
       assert.match(manifest, /other bytes/, 'the pre-existing manifest is never clobbered');
     });
 
-    it('a tmp-unlink failure after a successful mint warns with the ORPHAN PATH and still appends the receipt (preload-forced; parity carries the agy twin)', () => {
+    it('a tmp-unlink failure after a successful mint warns with the ORPHAN PATH and still appends the receipt (preload-forced; parity carries the agy twin)', async () => {
       const sb = makeSandbox();
       const preload = join(sb.root, 'unlink-fail-preload.cjs');
       writeFileSync(preload, "const fs = require('node:fs');\nconst real = fs.unlinkSync;\nfs.unlinkSync = (p) => { if (String(p).includes('.tmp')) { const e = new Error('EPERM'); e.code = 'EPERM'; throw e; } return real(p); };\n");
-      const r = run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'orph1', NODE_OPTIONS: `--require ${preload}` } });
+      const r = await run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'orph1', NODE_OPTIONS: `--require ${preload}` } });
       const receipts = readReceipts(sb.repo);
       const manifestExists = existsSync(manifestPath(sb.repo, 'orph1'));
       rmSync(sb.root, { recursive: true, force: true });
@@ -1124,12 +1113,12 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
       { rc: 3, name: 'no-clobber (rc 3)', preload: UNLINK_FAIL, plant: true, errRe: /DIFFERENT bytes or is not a regular file/ },
       { rc: 1, name: 'fs failure (rc 1)', preload: UNLINK_FAIL + LINK_FAIL, plant: false, errRe: /could not compose or write the finding manifest/ },
     ]) {
-      it(`a FAILURE exit (${failure.name}) whose temp unlink also fails names the ORPHAN PATH in the error`, () => {
+      it(`a FAILURE exit (${failure.name}) whose temp unlink also fails names the ORPHAN PATH in the error`, async () => {
         const sb = makeSandbox();
         if (failure.plant) writeFileSync(manifestPath(sb.repo, 'orphf1'), 'planted different bytes\n');
         const preload = join(sb.root, 'orphan-fail-preload.cjs');
         writeFileSync(preload, failure.preload);
-        const r = run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'orphf1', NODE_OPTIONS: `--require ${preload}` } });
+        const r = await run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'orphf1', NODE_OPTIONS: `--require ${preload}` } });
         const receipts = readReceipts(sb.repo);
         rmSync(sb.root, { recursive: true, force: true });
         assert.equal(r.status, 0, 'the review itself still succeeds (the artifact lane failed loudly)');
@@ -1139,10 +1128,10 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
       });
     }
 
-    it('a FAILURE exit whose temp IS removable stays orphan-silent (no leftover, no orphan line)', () => {
+    it('a FAILURE exit whose temp IS removable stays orphan-silent (no leftover, no orphan line)', async () => {
       const sb = makeSandbox();
       writeFileSync(manifestPath(sb.repo, 'orphf2'), 'planted different bytes\n');
-      const r = run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'orphf2' } });
+      const r = await run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'orphf2' } });
       const leftovers = readdirSync(join(sb.repo, '.git')).filter((n) => n.endsWith('.tmp'));
       rmSync(sb.root, { recursive: true, force: true });
       assert.equal(r.status, 0, 'the review itself still succeeds (the artifact lane failed loudly)');
@@ -1151,15 +1140,15 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
       assert.deepEqual(leftovers, [], 'the temp really was removed');
     });
 
-    it('a SYMLINK at the derived manifest path refuses and EXCLUDES the receipt — even when its target is byte-identical', () => {
+    it('a SYMLINK at the derived manifest path refuses and EXCLUDES the receipt — even when its target is byte-identical', async () => {
       const sb = makeSandbox();
-      assert.equal(run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'sym1' } }).status, 0);
+      assert.equal((await run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'sym1' } })).status, 0);
       const mPath = manifestPath(sb.repo, 'sym1');
       const target = join(sb.repo, '.git', 'manifest-target-copy.json');
       writeFileSync(target, readFileSync(mPath));
       rmSync(mPath);
       symlinkSync(target, mPath);
-      const r = run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'sym1' } });
+      const r = await run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'sym1' } });
       const receipts = readReceipts(sb.repo);
       rmSync(sb.root, { recursive: true, force: true });
       assert.equal(r.status, 0, 'the review itself still succeeds (the artifact lane failed loudly)');
@@ -1167,11 +1156,11 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
       assert.equal(receipts.length, 1, 'the second receipt is EXCLUDED — a symlinked manifest is never read through as the idempotent no-op');
     });
 
-    it('a FIFO at the derived manifest path refuses fast and EXCLUDES the receipt (O_NONBLOCK — no hang; fix characterization)', () => {
+    it('a FIFO at the derived manifest path refuses fast and EXCLUDES the receipt (O_NONBLOCK — no hang; fix characterization)', async () => {
       const sb = makeSandbox();
       const mPath = manifestPath(sb.repo, 'fifo1');
       assert.equal(spawnSync('mkfifo', [mPath], { encoding: 'utf8' }).status, 0, 'mkfifo fixture');
-      const r = run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'fifo1' } });
+      const r = await run(sb, { env: { ...quiet, AW_REVIEW_NONCE: 'fifo1' } });
       const receipts = readReceipts(sb.repo);
       rmSync(sb.root, { recursive: true, force: true });
       assert.equal(r.status, 0, r.stderr);
@@ -1179,18 +1168,18 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
       assert.equal(receipts.length, 0, 'a FIFO manifest is never read (fstat-first) and the receipt is excluded');
     });
 
-    it('a BOM-prefixed findings payload round-trips VERBATIM into the manifest (U+FEFF preserved)', () => {
+    it('a BOM-prefixed findings payload round-trips VERBATIM into the manifest (U+FEFF preserved)', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { env: { ...quiet, CODEX_FAKE_FINAL: '\uFEFFFinding A\nVerdict: ship', AW_REVIEW_NONCE: 'b1' } });
+      const r = await run(sb, { env: { ...quiet, CODEX_FAKE_FINAL: '\uFEFFFinding A\nVerdict: ship', AW_REVIEW_NONCE: 'b1' } });
       const manifest = JSON.parse(readFileSync(manifestPath(sb.repo, 'b1'), 'utf8'));
       rmSync(sb.root, { recursive: true, force: true });
       assert.equal(r.status, 0, r.stderr);
       assert.equal(manifest.findings, '\uFEFFFinding A\nVerdict: ship\n', 'the captured findings are VERBATIM — a stripped BOM would move the findingDigest');
     });
 
-    it('an unsafe nonce refuses PRE-SPEND (exit 2, codex never runs) — a non-ASCII letter refuses under a UTF-8 locale too', () => {
+    it('an unsafe nonce refuses PRE-SPEND (exit 2, codex never runs) — a non-ASCII letter refuses under a UTF-8 locale too', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { env: { AW_REVIEW_NONCE: '../escape' } });
+      const r = await run(sb, { env: { AW_REVIEW_NONCE: '../escape' } });
       rmSync(sb.root, { recursive: true, force: true });
       assert.equal(r.status, 2);
       assert.match(r.stderr, /safe nonce grammar/);
@@ -1198,25 +1187,25 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
       // The grammar ENUMERATES the ASCII set (no ranges): a locale-collated [A-Za-z] could admit a
       // non-ASCII letter the kit's JS reader then refuses, breaking correlation after a paid run.
       const utf8 = makeSandbox();
-      const r2 = run(utf8, { env: { AW_REVIEW_NONCE: 'r\u00e91', LC_ALL: 'en_US.UTF-8', LANG: 'en_US.UTF-8' } });
+      const r2 = await run(utf8, { env: { AW_REVIEW_NONCE: 'r\u00e91', LC_ALL: 'en_US.UTF-8', LANG: 'en_US.UTF-8' } });
       rmSync(utf8.root, { recursive: true, force: true });
       assert.equal(r2.status, 2, 'a non-ASCII nonce letter refuses whatever the locale collation says');
       assert.match(r2.stderr, /safe nonce grammar/);
     });
 
-    it('plan mode with a nonce mints the manifest too (fingerprint = the artifact sha256)', () => {
+    it('plan mode with a nonce mints the manifest too (fingerprint = the artifact sha256)', async () => {
       const sb = makeSandbox();
       const planBytes = readFileSync(join(sb.repo, 'plan.md'));
-      const r = run(sb, { args: ['plan', 'plan.md'], env: { CODEX_FAKE_FINAL: 'Verdict: ship', AW_REVIEW_NONCE: 'p1' } });
+      const r = await run(sb, { args: ['plan', 'plan.md'], env: { CODEX_FAKE_FINAL: 'Verdict: ship', AW_REVIEW_NONCE: 'p1' } });
       const manifest = JSON.parse(readFileSync(manifestPath(sb.repo, 'p1'), 'utf8'));
       rmSync(sb.root, { recursive: true, force: true });
       assert.equal(r.status, 0, r.stderr);
       assert.equal(manifest.fingerprint, sha256Hex(planBytes));
     });
 
-    it('a FAILED review (no verdict) mints neither receipt nor manifest — the pair rides success only', () => {
+    it('a FAILED review (no verdict) mints neither receipt nor manifest — the pair rides success only', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { env: { CODEX_FAKE_FINAL: 'no verdict here', AW_REVIEW_NONCE: 'r9' } });
+      const r = await run(sb, { env: { CODEX_FAKE_FINAL: 'no verdict here', AW_REVIEW_NONCE: 'r9' } });
       const receipts = readReceipts(sb.repo);
       const exists = existsSync(manifestPath(sb.repo, 'r9'));
       rmSync(sb.root, { recursive: true, force: true });
@@ -1227,9 +1216,9 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
 
     // The --nonce flag (FLOW-NONCE-DISPATCH-LANE): the plain-argument lane onto the SAME seam —
     // for hosts whose dispatch policy has no env-prefix form.
-    it('--nonce in code mode rides the AW_REVIEW_NONCE seam: manifest minted, receipt nonce-stamped, focus words intact', () => {
+    it('--nonce in code mode rides the AW_REVIEW_NONCE seam: manifest minted, receipt nonce-stamped, focus words intact', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['code', '--nonce', 'f1-d1', 'look', 'harder'], env: { CODEX_FAKE_FINAL: 'Verdict: ship' } });
+      const r = await run(sb, { args: ['code', '--nonce', 'f1-d1', 'look', 'harder'], env: { CODEX_FAKE_FINAL: 'Verdict: ship' } });
       const receipts = readReceipts(sb.repo);
       const manifest = JSON.parse(readFileSync(manifestPath(sb.repo, 'f1-d1'), 'utf8'));
       const stdin = r.capStdin;
@@ -1240,45 +1229,45 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
       assert.match(stdin, /Extra focus: look harder/, 'the flag pair is stripped — trailing focus words still ride');
     });
 
-    it('--nonce in plan mode mints the manifest (the consult-dispatch lane) — the flag never trips the no-extra-args refusal', () => {
+    it('--nonce in plan mode mints the manifest (the consult-dispatch lane) — the flag never trips the no-extra-args refusal', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['plan', 'plan.md', '--nonce', 'p2'], env: { CODEX_FAKE_FINAL: 'Verdict: ship' } });
+      const r = await run(sb, { args: ['plan', 'plan.md', '--nonce', 'p2'], env: { CODEX_FAKE_FINAL: 'Verdict: ship' } });
       const exists = existsSync(manifestPath(sb.repo, 'p2'));
       rmSync(sb.root, { recursive: true, force: true });
       assert.equal(r.status, 0, r.stderr);
       assert.equal(exists, true);
     });
 
-    it('an unsafe --nonce value refuses PRE-SPEND (exit 2, codex never runs) — same grammar as the env screen', () => {
+    it('an unsafe --nonce value refuses PRE-SPEND (exit 2, codex never runs) — same grammar as the env screen', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['code', '--nonce', 'a/b'] });
+      const r = await run(sb, { args: ['code', '--nonce', 'a/b'] });
       rmSync(sb.root, { recursive: true, force: true });
       assert.equal(r.status, 2);
       assert.match(r.stderr, /safe nonce grammar/);
       assert.equal(r.capStdin, '', 'the refusal fires before any CLI spend');
     });
 
-    it('a missing value, a duplicate flag, and a disagreeing env+flag pair each refuse (exit 2); an agreeing pair proceeds', () => {
+    it('a missing value, a duplicate flag, and a disagreeing env+flag pair each refuse (exit 2); an agreeing pair proceeds', async () => {
       const sb = makeSandbox();
-      const missing = run(sb, { args: ['code', '--nonce'] });
+      const missing = await run(sb, { args: ['code', '--nonce'] });
       assert.equal(missing.status, 2);
       assert.match(missing.stderr, /--nonce needs a value/);
-      const dup = run(sb, { args: ['code', '--nonce', 'n1', '--nonce', 'n2'] });
+      const dup = await run(sb, { args: ['code', '--nonce', 'n1', '--nonce', 'n2'] });
       assert.equal(dup.status, 2);
       assert.match(dup.stderr, /duplicate --nonce/);
-      const clash = run(sb, { args: ['code', '--nonce', 'n1'], env: { AW_REVIEW_NONCE: 'n2' } });
+      const clash = await run(sb, { args: ['code', '--nonce', 'n1'], env: { AW_REVIEW_NONCE: 'n2' } });
       assert.equal(clash.status, 2);
       assert.match(clash.stderr, /disagrees with the AW_REVIEW_NONCE environment value/);
-      const agree = run(sb, { args: ['code', '--nonce', 'n3'], env: { AW_REVIEW_NONCE: 'n3', CODEX_FAKE_FINAL: 'Verdict: ship' } });
+      const agree = await run(sb, { args: ['code', '--nonce', 'n3'], env: { AW_REVIEW_NONCE: 'n3', CODEX_FAKE_FINAL: 'Verdict: ship' } });
       const exists = existsSync(manifestPath(sb.repo, 'n3'));
       rmSync(sb.root, { recursive: true, force: true });
       assert.equal(agree.status, 0, agree.stderr);
       assert.equal(exists, true, 'an agreeing pair is ONE seam value — the dispatch proceeds');
     });
 
-    it('a grammar-valid leading-dash --nonce value is ACCEPTED — the flag lane spans the whole declared grammar', () => {
+    it('a grammar-valid leading-dash --nonce value is ACCEPTED — the flag lane spans the whole declared grammar', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['code', '--nonce', '--n1'], env: { CODEX_FAKE_FINAL: 'Verdict: ship' } });
+      const r = await run(sb, { args: ['code', '--nonce', '--n1'], env: { CODEX_FAKE_FINAL: 'Verdict: ship' } });
       const receipts = readReceipts(sb.repo);
       const exists = existsSync(manifestPath(sb.repo, '--n1'));
       rmSync(sb.root, { recursive: true, force: true });
@@ -1287,18 +1276,18 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
       assert.equal(receipts[0].nonce, '--n1', 'the receipt carries the exact grammar-valid value — flag lane ≡ env lane');
     });
 
-    it('an EMPTY --nonce value refuses pre-spend under the grammar screen (presence is tracked separately from the value)', () => {
+    it('an EMPTY --nonce value refuses pre-spend under the grammar screen (presence is tracked separately from the value)', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['code', '--nonce', ''] });
+      const r = await run(sb, { args: ['code', '--nonce', ''] });
       rmSync(sb.root, { recursive: true, force: true });
       assert.equal(r.status, 2);
       assert.match(r.stderr, /safe nonce grammar/);
       assert.equal(r.capStdin, '', 'the refusal fires before any CLI spend');
     });
 
-    it('a duplicate --nonce after an EMPTY first value still refuses as a duplicate — an empty value never erases presence', () => {
+    it('a duplicate --nonce after an EMPTY first value still refuses as a duplicate — an empty value never erases presence', async () => {
       const sb = makeSandbox();
-      const r = run(sb, { args: ['code', '--nonce', '', '--nonce', 'n2'] });
+      const r = await run(sb, { args: ['code', '--nonce', '', '--nonce', 'n2'] });
       rmSync(sb.root, { recursive: true, force: true });
       assert.equal(r.status, 2);
       assert.match(r.stderr, /duplicate --nonce/);
@@ -1306,9 +1295,9 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
     });
   });
 
-  it('a receipt write failure warns loudly but never fails the review (fail-safe direction)', () => {
+  it('a receipt write failure warns loudly but never fails the review (fail-safe direction)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, {
+    const r = await run(sb, {
       env: { AW_REVIEW_RECEIPTS: join(sb.repo, 'no-such-dir', 'r.jsonl'), CODEX_FAKE_FINAL: 'Verdict: ship' },
     });
     rmSync(sb.root, { recursive: true, force: true });
@@ -1317,18 +1306,18 @@ describe('codex-review.sh — review receipts (AD-038)', () => {
     assert.match(r.stdout, /Verdict: ship/, 'the findings still reach stdout');
   });
 
-  it('a failed codex run writes NO receipt (only a successful review attests)', () => {
+  it('a failed codex run writes NO receipt (only a successful review attests)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_FAKE_EXIT: '5' } });
+    const r = await run(sb, { env: { CODEX_FAKE_EXIT: '5' } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
     assert.equal(receipts.length, 0);
   });
 
-  it('the clean-tree preflight exits before any receipt is written', () => {
+  it('the clean-tree preflight exits before any receipt is written', async () => {
     const sb = makeSandbox({ clean: true });
-    const r = run(sb);
+    const r = await run(sb);
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0);
@@ -1351,45 +1340,45 @@ const writeSettings = (sb, text) => {
 };
 const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 
-describe('codex-review.sh — service tier knob (bridges 2.3.0)', () => {
-  it('default: no env, no file → NO service_tier flag in codex argv', () => {
+describe('codex-review.sh — service tier knob (bridges 2.3.0)', { concurrency: 2 }, () => {
+  it('default: no env, no file → NO service_tier flag in codex argv', async () => {
     const sb = makeSandbox();
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.argv, /service_tier/, 'default OFF: the flag must be absent');
     assert.doesNotMatch(r.stderr, /bridge settings/, 'no file → no settings chatter');
   });
 
-  it('env CODEX_SERVICE_TIER=priority → -c service_tier=priority reaches codex argv', () => {
+  it('env CODEX_SERVICE_TIER=priority → -c service_tier=priority reaches codex argv', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_SERVICE_TIER: 'priority' } });
+    const r = await run(sb, { env: { CODEX_SERVICE_TIER: 'priority' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.argv, /(^|\n)service_tier=priority(\n|$)/);
   });
 
-  it('a file-set tier lands (file wins over the built-in default)', () => {
+  it('a file-set tier lands (file wins over the built-in default)', async () => {
     const sb = makeSandbox();
     writeSettings(sb, 'CODEX_SERVICE_TIER=priority\n');
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.argv, /(^|\n)service_tier=priority(\n|$)/);
   });
 
-  it('an EXPLICITLY EMPTY env (CODEX_SERVICE_TIER=) disables a file-set tier for one run', () => {
+  it('an EXPLICITLY EMPTY env (CODEX_SERVICE_TIER=) disables a file-set tier for one run', async () => {
     const sb = makeSandbox();
     writeSettings(sb, 'CODEX_SERVICE_TIER=priority\n');
-    const r = run(sb, { env: { CODEX_SERVICE_TIER: '' } });
+    const r = await run(sb, { env: { CODEX_SERVICE_TIER: '' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.argv, /service_tier/, 'env wins over file — empty means knob off');
   });
 
-  it('an invalid env tier warns and reviews on the standard tier (never passed to codex)', () => {
+  it('an invalid env tier warns and reviews on the standard tier (never passed to codex)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_SERVICE_TIER: 'turbo' } });
+    const r = await run(sb, { env: { CODEX_SERVICE_TIER: 'turbo' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /not a supported service tier/);
@@ -1397,52 +1386,52 @@ describe('codex-review.sh — service tier knob (bridges 2.3.0)', () => {
   });
 });
 
-describe('codex-review.sh — bridge settings file semantics (bridges 2.3.0)', () => {
-  it('a file-set CODEX_REVIEW_MAX_TOTAL_BYTES is effective (switches to the temp-file path)', () => {
+describe('codex-review.sh — bridge settings file semantics (bridges 2.3.0)', { concurrency: 2 }, () => {
+  it('a file-set CODEX_REVIEW_MAX_TOTAL_BYTES is effective (switches to the temp-file path)', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'big.txt'), 'B'.repeat(5000));
     writeSettings(sb, 'CODEX_REVIEW_MAX_TOTAL_BYTES=100\n');
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.capStdin, /codex-review-diff\./, 'the tiny file cap must force the temp-file path');
     assert.doesNotMatch(r.capStdin, /ASSEMBLED CHANGE SET:/, 'the payload must not ALSO ride inline');
   });
 
-  it('env overrides file: a large env cap keeps the payload inline', () => {
+  it('env overrides file: a large env cap keeps the payload inline', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'big.txt'), 'B'.repeat(5000));
     writeSettings(sb, 'CODEX_REVIEW_MAX_TOTAL_BYTES=100\n');
-    const r = run(sb, { env: { CODEX_REVIEW_MAX_TOTAL_BYTES: '5000000' } });
+    const r = await run(sb, { env: { CODEX_REVIEW_MAX_TOTAL_BYTES: '5000000' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.capStdin, /ASSEMBLED CHANGE SET:/, 'the env cap (large) must win over the file cap (100)');
     assert.doesNotMatch(r.capStdin, /codex-review-diff\./);
   });
 
-  it('duplicate key → the LAST occurrence wins (100 then 5000000 → inline)', () => {
+  it('duplicate key → the LAST occurrence wins (100 then 5000000 → inline)', async () => {
     const sb = makeSandbox();
     writeFileSync(join(sb.repo, 'big.txt'), 'B'.repeat(5000));
     writeSettings(sb, 'CODEX_REVIEW_MAX_TOTAL_BYTES=100\nCODEX_REVIEW_MAX_TOTAL_BYTES=5000000\n');
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.capStdin, /ASSEMBLED CHANGE SET:/);
   });
 
-  it("another wrapper's / another bridge's valid key is skipped silently", () => {
+  it("another wrapper's / another bridge's valid key is skipped silently", async () => {
     const sb = makeSandbox();
     writeSettings(sb, 'AGY_HARD_TIMEOUT=30m\nAGY_REVIEW_ALLOW_ADDDIR=1\n');
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /bridge settings/, 'a recognized non-applied key earns NO warning');
   });
 
-  it('a truly unknown key warns ONCE naming the file; the review is unaffected', () => {
+  it('a truly unknown key warns ONCE naming the file; the review is unaffected', async () => {
     const sb = makeSandbox();
     writeSettings(sb, 'TOTALLY_UNKNOWN=1\nTOTALLY_UNKNOWN=2\n');
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     const warns = r.stderr.match(/unknown key 'TOTALLY_UNKNOWN'/g) ?? [];
@@ -1450,10 +1439,10 @@ describe('codex-review.sh — bridge settings file semantics (bridges 2.3.0)', (
     assert.match(r.stderr, /bridge-settings\.conf/, 'the warning must name the settings file');
   });
 
-  it('malformed lines warn and are ignored; comments and blank lines are silent', () => {
+  it('malformed lines warn and are ignored; comments and blank lines are silent', async () => {
     const sb = makeSandbox();
     writeSettings(sb, '# a comment\n\nNOT A KEY VALUE LINE\nCODEX_SERVICE_TIER=priority\n');
-    const r = run(sb);
+    const r = await run(sb);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     const malformed = r.stderr.match(/malformed line/g) ?? [];
@@ -1461,7 +1450,7 @@ describe('codex-review.sh — bridge settings file semantics (bridges 2.3.0)', (
     assert.match(r.argv, /(^|\n)service_tier=priority(\n|$)/, 'valid lines still apply');
   });
 
-  it('an existing-but-unreadable file warns loudly and falls back to built-ins', { skip: isRoot }, () => {
+  it('an existing-but-unreadable file warns loudly and falls back to built-ins', { skip: isRoot }, async () => {
     // The settings file goes OUTSIDE the repo (XDG_CONFIG_HOME): an unreadable file INSIDE the
     // work tree would fail the review-payload assembly itself (untracked contents are cat'ed),
     // which is pre-existing behaviour unrelated to the settings reader.
@@ -1471,14 +1460,14 @@ describe('codex-review.sh — bridge settings file semantics (bridges 2.3.0)', (
     const file = join(xdg, 'agent-workflow', 'bridge-settings.conf');
     writeFileSync(file, 'CODEX_SERVICE_TIER=priority\n');
     chmodSync(file, 0o000);
-    const r = run(sb, { env: { XDG_CONFIG_HOME: xdg } });
+    const r = await run(sb, { env: { XDG_CONFIG_HOME: xdg } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /unreadable/);
     assert.doesNotMatch(r.argv, /service_tier/, 'an unreadable file must yield built-in defaults');
   });
 
-  it('a settings line can NEVER execute code (command-substitution payload inert)', () => {
+  it('a settings line can NEVER execute code (command-substitution payload inert)', async () => {
     const sb = makeSandbox();
     const pwned = join(sb.repo, 'pwned');
     const pwned2 = join(sb.repo, 'pwned2');
@@ -1486,7 +1475,7 @@ describe('codex-review.sh — bridge settings file semantics (bridges 2.3.0)', (
       sb,
       `CODEX_SERVICE_TIER=$(touch ${pwned})\nEVIL_KEY=\`touch ${pwned2}\`\n`,
     );
-    const r = run(sb);
+    const r = await run(sb);
     const executed = existsSync(pwned) || existsSync(pwned2);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -1494,13 +1483,13 @@ describe('codex-review.sh — bridge settings file semantics (bridges 2.3.0)', (
     assert.doesNotMatch(r.argv, /service_tier/, 'the payload value must fail validation');
   });
 
-  it('a DIRECTORY at the settings path warns loudly and falls back to built-ins (no crash)', () => {
+  it('a DIRECTORY at the settings path warns loudly and falls back to built-ins (no crash)', async () => {
     // Outside the repo (XDG) — an unreadable path INSIDE the work tree would fail the
     // review-payload assembly itself (pre-existing behaviour, unrelated to the reader).
     const sb = makeSandbox();
     const xdg = join(sb.root, 'xdg');
     mkdirSync(join(xdg, 'agent-workflow', 'bridge-settings.conf'), { recursive: true });
-    const r = run(sb, { env: { XDG_CONFIG_HOME: xdg } });
+    const r = await run(sb, { env: { XDG_CONFIG_HOME: xdg } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, `a directory must degrade honestly, not kill the run: ${r.stderr}`);
     assert.match(r.stderr, /unreadable or not a regular file/);
@@ -1514,8 +1503,8 @@ const SIBLING_MANIFEST = JSON.parse(readFileSync(join(HERE, '..', '..', 'antigra
 const ALL_SETTINGS = [...(MANIFEST.settings ?? []), ...(SIBLING_MANIFEST.settings ?? [])];
 const SETTINGS_CMD = 'codex-review';
 
-describe('codex-review.sh — settings surface ⟷ manifest (D6, manifest-pinned)', () => {
-  it('--help Settings section keys set-EQUAL the manifest appliesTo subset', () => {
+describe('codex-review.sh — settings surface ⟷ manifest (D6, manifest-pinned)', { concurrency: 2 }, () => {
+  it('--help Settings section keys set-EQUAL the manifest appliesTo subset', async () => {
     const help = runHelp('--help').stdout;
     const section = helpSection(help, SETTINGS_HEADER);
     const got = section.filter((l) => /^[A-Z][A-Z0-9_]+ —/.test(l)).map((l) => l.split(' ')[0]);
@@ -1527,14 +1516,14 @@ describe('codex-review.sh — settings surface ⟷ manifest (D6, manifest-pinned
 
   const source = readFileSync(WRAPPER, 'utf8');
 
-  it('aw_settings_known carries exactly the UNION of both bridges settings keys', () => {
+  it('aw_settings_known carries exactly the UNION of both bridges settings keys', async () => {
     const m = source.match(/aw_settings_known\(\) \{\n  case " ([^"]+) " in/);
     assert.ok(m, 'aw_settings_known registry case not found');
     assert.ok(ALL_SETTINGS.length >= 5, 'both manifests must contribute settings');
     setEq(m[1].trim().split(/\s+/), ALL_SETTINGS.map((s) => s.key), 'shell registry ⟷ manifest union');
   });
 
-  it('AW_SETTINGS_APPLIED equals the manifest appliesTo subset for this wrapper', () => {
+  it('AW_SETTINGS_APPLIED equals the manifest appliesTo subset for this wrapper', async () => {
     const m = source.match(/^AW_SETTINGS_APPLIED="([^"]*)"$/m);
     assert.ok(m, 'AW_SETTINGS_APPLIED not found');
     const want = ALL_SETTINGS.filter((s) => s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
@@ -1542,7 +1531,7 @@ describe('codex-review.sh — settings surface ⟷ manifest (D6, manifest-pinned
     setEq(m[1].trim().split(/\s+/), want, 'applied subset ⟷ manifest appliesTo');
   });
 
-  it('aw_settings_valid arms carry the manifest typed constants per key', () => {
+  it('aw_settings_valid arms carry the manifest typed constants per key', async () => {
     const body = source.match(/aw_settings_valid\(\) \{[\s\S]*?\n\}/);
     assert.ok(body, 'aw_settings_valid not found');
     const armKeys = [...body[0].matchAll(/^    ([A-Z][A-Z0-9_]*)\)/gm)].map((x) => x[1]);
@@ -1566,10 +1555,10 @@ describe('codex-review.sh — settings surface ⟷ manifest (D6, manifest-pinned
 });
 
 // ── strip-the-kit Phase 4: wrapper honesty (D4) + dispatch-posture labeling (D5) ────────────────
-describe('codex-review.sh — wrapper honesty: a verdict-less run is a FAILED review (D4)', () => {
-  it('a VERDICT-LESS final message: non-zero exit, NO receipt, the stated re-run recovery', () => {
+describe('codex-review.sh — wrapper honesty: a verdict-less run is a FAILED review (D4)', { concurrency: 2 }, () => {
+  it('a VERDICT-LESS final message: non-zero exit, NO receipt, the stated re-run recovery', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_FAKE_FINAL: 'prose without the mandated verdict line' } });
+    const r = await run(sb, { env: { CODEX_FAKE_FINAL: 'prose without the mandated verdict line' } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0, 'a verdict-less review never exits 0');
@@ -1578,18 +1567,18 @@ describe('codex-review.sh — wrapper honesty: a verdict-less run is a FAILED re
     assert.match(r.stderr, /re-run/i, 'documented as a failed review — re-run, never fatal');
   });
 
-  it('an EMPTY final message is the same failed run (non-zero, no receipt)', () => {
+  it('an EMPTY final message is the same failed run (non-zero, no receipt)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_FAKE_FINAL: '' } });
+    const r = await run(sb, { env: { CODEX_FAKE_FINAL: '' } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
     assert.equal(receipts.length, 0);
   });
 
-  it('a MISSING final-message file is the same failed run', () => {
+  it('a MISSING final-message file is the same failed run', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_FAKE_NO_OUT: '1' } });
+    const r = await run(sb, { env: { CODEX_FAKE_NO_OUT: '1' } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
@@ -1597,10 +1586,10 @@ describe('codex-review.sh — wrapper honesty: a verdict-less run is a FAILED re
   });
 });
 
-describe('codex-review.sh — dispatch-posture labeling (D5)', () => {
-  it('ONE banner line carries the ACTUAL {model, effort, tier} and the receipt carries the SAME posture', () => {
+describe('codex-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 }, () => {
+  it('ONE banner line carries the ACTUAL {model, effort, tier} and the receipt carries the SAME posture', async () => {
     const sb = makeSandbox();
-    const r = run(sb, {});
+    const r = await run(sb, {});
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -1609,9 +1598,9 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', () => {
     assert.deepEqual(Object.keys(receipts[0]), Object.keys(RECEIPT_FIXTURE), 'fixture key set + order');
   });
 
-  it('an ARMED Fast tier rides both surfaces (banner tier=priority; receipt tier "priority")', () => {
+  it('an ARMED Fast tier rides both surfaces (banner tier=priority; receipt tier "priority")', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_SERVICE_TIER: 'priority' } });
+    const r = await run(sb, { env: { CODEX_SERVICE_TIER: 'priority' } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -1619,10 +1608,10 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', () => {
     assert.equal(receipts[0].posture.tier, 'priority');
   });
 
-  it('a HOSTILE model string (quotes + backslash) rides the receipt strictly JSON-encoded (probe lane)', () => {
+  it('a HOSTILE model string (quotes + backslash) rides the receipt strictly JSON-encoded (probe lane)', async () => {
     const hostile = 'we"ird \\ mo"del';
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_PROBE: '1', CODEX_MODEL: hostile } });
+    const r = await run(sb, { env: { CODEX_PROBE: '1', CODEX_MODEL: hostile } });
     const receipts = readReceipts(sb.repo); // JSON.parse throwing here IS the encoding failure
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -1630,9 +1619,9 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', () => {
     assert.equal(receipts[0].probe, true, 'an off-pinned model runs only on the probe lane');
   });
 
-  it('a posture value carrying CONTROL BYTES refuses pre-spend, BEFORE the frontier guard', () => {
+  it('a posture value carrying CONTROL BYTES refuses pre-spend, BEFORE the frontier guard', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_MODEL: `gpt-5.6-sol${String.fromCharCode(1)}` } });
+    const r = await run(sb, { env: { CODEX_MODEL: `gpt-5.6-sol${String.fromCharCode(1)}` } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
@@ -1641,9 +1630,9 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', () => {
     assert.match(r.stderr, /control/i, 'named as the control-byte class, not a policy refusal');
   });
 
-  it('the banner appends the RESOLVED hard timeout — banner-only, never in the receipt (AD-061)', () => {
+  it('the banner appends the RESOLVED hard timeout — banner-only, never in the receipt (AD-061)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, {});
+    const r = await run(sb, {});
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -1651,18 +1640,18 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', () => {
     assert.deepEqual(Object.keys(receipts[0].posture), ['model', 'effort', 'tier'], 'timeout never enters the receipt posture');
   });
 
-  it('an INVALID effective CODEX_HARD_TIMEOUT (env — the closed aw_settings_valid bypass) warns and the banner prints the default', () => {
+  it('an INVALID effective CODEX_HARD_TIMEOUT (env — the closed aw_settings_valid bypass) warns and the banner prints the default', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_HARD_TIMEOUT: 'nonsense' } });
+    const r = await run(sb, { env: { CODEX_HARD_TIMEOUT: 'nonsense' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /invalid value 'nonsense' for CODEX_HARD_TIMEOUT/, 'the fallback is loud');
     assert.match(r.stderr, /^review posture: .* timeout=1800s$/m, 'the banner prints the built-in default');
   });
 
-  it('a CODEX_HARD_TIMEOUT carrying CONTROL BYTES refuses pre-spend (the banner-field screen)', () => {
+  it('a CODEX_HARD_TIMEOUT carrying CONTROL BYTES refuses pre-spend (the banner-field screen)', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_HARD_TIMEOUT: `1800${String.fromCharCode(1)}` } });
+    const r = await run(sb, { env: { CODEX_HARD_TIMEOUT: `1800${String.fromCharCode(1)}` } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
@@ -1671,9 +1660,9 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', () => {
     assert.match(r.stderr, /control/i);
   });
 
-  it('a DEL (0x7f) byte in a banner field refuses pre-spend like the C0 range', () => {
+  it('a DEL (0x7f) byte in a banner field refuses pre-spend like the C0 range', async () => {
     const sb = makeSandbox();
-    const r = run(sb, { env: { CODEX_MODEL: `gpt-5.6-sol${String.fromCharCode(127)}` } });
+    const r = await run(sb, { env: { CODEX_MODEL: `gpt-5.6-sol${String.fromCharCode(127)}` } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
