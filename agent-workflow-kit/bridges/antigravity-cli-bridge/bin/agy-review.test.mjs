@@ -945,6 +945,18 @@ describe('agy-review.sh — repo file map budget (Phase 2)', { concurrency: 2 },
 const ARTIFACT_HEADER = '## The change set under review (assembled working-tree diff — repo-complete)';
 const SHAPE_HEADER = '\n## Output — Markdown, this exact shape, nothing else';
 const FED_CAP = 6000;
+// The proof asks the model to COUNT to the address with no tool, so the address has to be reachable
+// that way. The walk used to start at each part's middle: measured 847..1024 on a 701464-byte change
+// set, which is where the three live false refusals sat. FED_WIDE_CAP gives the countability
+// regression parts wide enough that a midpoint address is unmistakably out of reach — under the
+// narrow FED_CAP the midpoint lands at 80, close enough to the bar that fixture drift could hide it.
+const MAX_COUNTABLE_PROOF_ADDRESS = 40;
+const FED_WIDE_CAP = 24000;
+// The assembler's OWN section banners — the vocabulary the proof selector refuses, because it emits
+// them for every change set and a model can rebuild the per-path forms from part 1's git-status
+// block. A change set's own `=== … ===` line is NOT in this set and stays admissible.
+const isAssemblerBanner = (line) =>
+  /^=== (repo file map|git status|staged diff|unstaged diff|untracked)/.test(line) && line.endsWith(' ===');
 
 // A change set big enough to need several parts under FED_CAP.
 const seedFedChangeSet = (sb, { lines = 400, multibyte = false } = {}) => {
@@ -1549,8 +1561,147 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
     assert.equal(receipts.length, 0, 'a closed grammar does not mint a receipt beside an invented address');
   });
 
-  // The candidate cap was 25, so a change set whose first 25 middle-nearest candidates all fail the
-  // fixed-string checks earned a false "no usable candidate" refusal while candidate 26 was fine.
+  // A model told to count lines BY READING cannot reach line 1000, and a proof it cannot answer is a
+  // false refusal on a correctly delivered change set — the failure that made this lane unusable for
+  // exactly the payloads it exists for. The address must therefore stay near the part's start. The
+  // banner guard is the other half: without it part 1 resolves to `=== repo file map (git ls-files)
+  // ===`, which the wrapper emits for EVERY change set, so echoing it would prove nothing.
+  it('proof addresses stay countable on a multi-part change set', async () => {
+    const sb = makeSandbox();
+    const body = Array.from({ length: 2400 }, (_, i) => `unique body marker line ${String(i).padStart(4, '0')}`);
+    writeFileSync(join(sb.repo, 'oversized.txt'), `${body.join('\n')}\n`);
+    const fed = await fedRun(sb, { AGY_MAX_PROMPT_BYTES: String(FED_WIDE_CAP) });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, fed.stderr);
+    assert.equal(receipts.length, 1, 'a countable proof still mints its receipt');
+    assert.equal(receipts[0].delivery, 'fed');
+    const bodies = fed.prompts.slice(0, -1).map(bodyOf);
+    assert.ok(bodies.length >= 3, `the fixture must really chunk (got ${bodies.length} parts)`);
+    for (const { part, line } of requestedOf(fed.prompts[fed.prompts.length - 1])) {
+      assert.ok(line <= MAX_COUNTABLE_PROOF_ADDRESS,
+        `part ${part} asks for line ${line} — a model counting by reading cannot reach it`);
+      const chosen = bodies[part - 1].split('\n')[line - 1].trim();
+      assert.ok(!isAssemblerBanner(chosen),
+        `part ${part} proves delivery with a line the wrapper emits for every change set: ${chosen}`);
+    }
+  });
+
+  // The reject is the assembler's VOCABULARY, not the `=== … ===` shape. Refusing the whole class
+  // discards a change set's own banner-shaped prose, and in a part where nothing else qualifies that
+  // is the false refusal this lane exists to prevent — so an admissible one must still be CHOSEN.
+  // The per-path `=== untracked: <p> ===` is in the reject set for the opposite reason: it is not a
+  // fixed string, and part 1 carries the git-status block a model would rebuild it from.
+  it('a change set may prove delivery with its own banner-shaped line, never with the assembler\'s', async () => {
+    const sb = makeSandbox();
+    const admissible = '=== Deployment configuration notes ===';
+    const body = [admissible, ...Array.from({ length: 900 }, (_, i) => `unique body marker line ${String(i).padStart(4, '0')}`)];
+    writeFileSync(join(sb.repo, 'oversized.txt'), `${body.join('\n')}\n`);
+    const fed = await fedRun(sb);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, `an admissible banner-shaped line must not earn a refusal: ${fed.stderr}`);
+    const bodies = fed.prompts.slice(0, -1).map(bodyOf);
+    const requested = requestedOf(fed.prompts[fed.prompts.length - 1]);
+    const part1 = requested.find((r) => r.part === 1);
+    assert.equal(bodies[0].split('\n')[part1.line - 1].trim(), admissible,
+      'the change set\'s own banner-shaped line is the first admissible candidate and must be chosen');
+    for (const { part, line } of requested) {
+      assert.ok(!isAssemblerBanner(bodies[part - 1].split('\n')[line - 1].trim()),
+        `part ${part} proves delivery with an assembler banner`);
+    }
+  });
+
+  // A head-first walk lands where the DERIVABLE lines live. The repo map and the status block travel
+  // in part 1, so a model holding part 1 can reproduce a tracked path, its `diff --git a/P b/P`
+  // header and the `--- a/P` / `+++ b/P` pair for a LATER part it never received — and prove a
+  // delivery that never happened. Enumerating those families as a blacklist was the wrong shape; the
+  // wrapper feeds what it can COMPUTE into $nonbody and lets the existing filter reject it.
+  it('no proof line is one a model could derive from the repo map or status block', async () => {
+    const sb = makeSandbox();
+    // Long tracked paths, so the map/header lines clear the 24-byte candidate floor and really compete.
+    const tracked = Array.from({ length: 12 }, (_, i) => `src/deeply/nested/module-directory-${String(i).padStart(3, '0')}.mjs`);
+    mkdirSync(join(sb.repo, 'src', 'deeply', 'nested'), { recursive: true });
+    for (const rel of tracked) writeFileSync(join(sb.repo, rel), `export const seed = ${JSON.stringify(rel)};\n`);
+    sb.g('add', '-A');
+    sb.g('commit', '-qm', 'tracked seed');
+    for (const [i, rel] of tracked.entries()) {
+      const extra = Array.from({ length: 60 }, (_, j) => `changed body line ${i}-${String(j).padStart(3, '0')} in ${rel}`);
+      writeFileSync(join(sb.repo, rel), `export const seed = ${JSON.stringify(rel)};\n${extra.join('\n')}\n`);
+    }
+    const fed = await fedRun(sb);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, fed.stderr);
+    const bodies = fed.prompts.slice(0, -1).map(bodyOf);
+    assert.ok(bodies.length >= 2, `the fixture must really chunk (got ${bodies.length} parts)`);
+    const derivable = new Set(tracked.flatMap((p) => [p, `diff --git a/${p} b/${p}`, `--- a/${p}`, `+++ b/${p}`, `?? ${p}`, `M ${p}`]));
+    for (const { part, line } of requestedOf(fed.prompts[fed.prompts.length - 1])) {
+      const chosen = bodies[part - 1].split('\n')[line - 1].trim();
+      assert.ok(!derivable.has(chosen),
+        `part ${part} proves delivery with a line part 1 already reveals: ${chosen}`);
+      assert.ok(!isAssemblerBanner(chosen), `part ${part} proves delivery with an assembler banner: ${chosen}`);
+    }
+  });
+
+  // A RENAME is the case no re-derivation could have covered: git writes `diff --git a/old b/new`
+  // plus a `rename from`/`rename to` pair, none of which follows from the new path alone — and the
+  // status block spells the rename out, so all of it is derivable. Slicing the assembled artifact
+  // catches them because it never has to guess what git wrote.
+  it('a renamed path leaks no proof line — the derivable set comes from the artifact, not a guess', async () => {
+    const sb = makeSandbox();
+    const from = 'src/original/long-enough-module-name-before-rename.mjs';
+    const to = 'src/relocated/long-enough-module-name-after-rename.mjs';
+    mkdirSync(join(sb.repo, 'src', 'original'), { recursive: true });
+    mkdirSync(join(sb.repo, 'src', 'relocated'), { recursive: true });
+    const seed = Array.from({ length: 400 }, (_, i) => `stable renamed body line ${String(i).padStart(4, '0')} carrying enough bytes`);
+    writeFileSync(join(sb.repo, from), `${seed.join('\n')}\n`);
+    sb.g('add', '-A');
+    sb.g('commit', '-qm', 'seed for rename');
+    sb.g('mv', from, to);
+    writeFileSync(join(sb.repo, to), `${seed.join('\n')}\nappended line so the rename also carries a diff\n`);
+    sb.g('add', '-A');
+    // Rename detection collapses the diff to a few header lines, so the change set needs real bulk
+    // elsewhere or the review never leaves the inline lane and there is no proof to inspect.
+    seedFedChangeSet(sb);
+    const fed = await fedRun(sb);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, fed.stderr);
+    const bodies = fed.prompts.slice(0, -1).map(bodyOf);
+    const renameLines = new Set([
+      `diff --git a/${from} b/${to}`, `rename from ${from}`, `rename to ${to}`,
+      `--- a/${from}`, `+++ b/${to}`, from, to, `R  ${from} -> ${to}`,
+    ]);
+    for (const { part, line } of requestedOf(fed.prompts[fed.prompts.length - 1])) {
+      const chosen = bodies[part - 1].split('\n')[line - 1].trim();
+      assert.ok(!renameLines.has(chosen), `part ${part} proves delivery with a rename header: ${chosen}`);
+    }
+  });
+
+  // The derivable-set scan reads the artifact by section, and an untracked file's own content can
+  // contain anything — including a line that looks exactly like a section banner. If that flipped the
+  // scan back into metadata mode, every line after it would be swept into the set, starving the parts
+  // that follow of candidates and refusing a change set that is perfectly provable.
+  it('a banner-shaped line inside untracked CONTENT does not sweep the rest of the change set', async () => {
+    const sb = makeSandbox();
+    const body = Array.from({ length: 900 }, (_, i) => `unique body marker line ${String(i).padStart(4, '0')}`);
+    body.splice(1, 0, '=== git status (porcelain) ===');
+    writeFileSync(join(sb.repo, 'oversized.txt'), `${body.join('\n')}\n`);
+    const fed = await fedRun(sb);
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(fed.status, 0, `content that merely LOOKS like a banner must not starve the walk: ${fed.stderr}`);
+    assert.equal(receipts.length, 1, 'the review still mints its receipt');
+    const bodies = fed.prompts.slice(0, -1).map(bodyOf);
+    for (const { part, line } of requestedOf(fed.prompts[fed.prompts.length - 1])) {
+      const chosen = bodies[part - 1].split('\n')[line - 1].trim();
+      assert.match(chosen, /^unique body marker line \d{4}$/,
+        `part ${part} settled on ${chosen} instead of ordinary untracked content`);
+    }
+  });
+
+  // The candidate cap was 25, so a change set whose first 25 candidates all fail the fixed-string
+  // checks earned a false "no usable candidate" refusal while candidate 26 was fine. The decoys sit
+  // FIRST in the fixture because the walk starts at the part's head — buried mid-file they would
+  // never be reached, and this regression would pass while proving nothing.
   it('a part whose first 25 candidates are unusable still finds the one after them', async () => {
     const sb = makeSandbox();
     // Each decoy is a unique WHOLE line (so it survives the cheap prefilter) that also occurs as a
@@ -1558,7 +1709,7 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
     const decoys = Array.from({ length: 30 }, (_, i) => `decoy candidate ${String(i).padStart(3, '0')} — appears twice as a substring`);
     const echoes = decoys.map((d) => `carrier line wrapping ${d} inside a longer line`);
     const filler = (from, n) => Array.from({ length: n }, (_, i) => `unique change-set line ${String(from + i).padStart(4, '0')} — a distinctive body marker ${'x'.repeat(20)}`);
-    const body = [...filler(0, 40), ...decoys, ...filler(40, 40), ...echoes, ...filler(80, 60)];
+    const body = [...decoys, ...filler(0, 40), ...echoes, ...filler(40, 100)];
     writeFileSync(join(sb.repo, 'oversized.txt'), `${body.join('\n')}\n`);
     const fed = await fedRun(sb);
     rmSync(sb.home, { recursive: true, force: true });
@@ -1569,6 +1720,14 @@ describe('agy-review.sh — fed lane: delivery is PROVEN or the review FAILS (D1
       const chosen = bodies[part - 1].split('\n')[line - 1].trim();
       assert.ok(!decoys.includes(chosen), `a twice-occurring decoy was chosen for part ${part}: ${chosen}`);
     }
+    // Not choosing a decoy is cheap to satisfy by never REACHING one, so the walk must be shown to
+    // have crossed the whole unusable run — that, not the negative, is the no-cap property.
+    const part1 = bodies[0].split('\n');
+    const lastDecoyAt = part1.reduce((at, l, i) => (decoys.includes(l.trim()) ? i + 1 : at), 0);
+    assert.ok(lastDecoyAt > 0, 'the decoy block must land in part 1, or this regression proves nothing');
+    const part1Line = requestedOf(final).find((r) => r.part === 1).line;
+    assert.ok(part1Line > lastDecoyAt,
+      `part 1 settled on line ${part1Line}, before the decoy run ended at ${lastDecoyAt} — never traversed`);
   });
 
   it('a harmless `- ` bullet still counts — the anchor is strict, not brittle', async () => {

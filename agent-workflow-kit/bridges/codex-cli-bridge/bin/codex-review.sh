@@ -21,8 +21,8 @@
 # back as a validated JSON object, with a raw-text fallback.
 #
 # Auth/policy: subscription-only, identical to codex-exec.sh. Quality-first: the
-# review runs on the frontier model at max effort (advisory findings still bear on
-# what ships, so the same no-downgrade guard applies; CODEX_PROBE=1 relaxes it for
+# review runs on the PINNED model at max effort (advisory findings still bear on
+# what ships, so the same pin-integrity guard applies; CODEX_PROBE=1 relaxes it for
 # a throwaway probe only).
 #
 # Best-effort read hygiene: the review runs under a temporary HOME / XDG_* with an
@@ -39,7 +39,7 @@ set -euo pipefail
 case "${1:-}" in
   --help|-h)
     cat <<'HELP'
-codex-review — read-only ADVISORY review by the OpenAI Codex CLI (subscription-only; frontier model at max effort).
+codex-review — read-only ADVISORY review by the OpenAI Codex CLI (subscription-only; the PINNED model at max effort).
 
 Usage:
   codex-review plan <plan-file> [--nonce <n>]
@@ -348,7 +348,7 @@ fi
 aw_timeout_banner="$(aw_timeout_label "$timeout_bin" "$CODEX_HARD_TIMEOUT")"
 echo "review posture: model=$CODEX_MODEL effort=$CODEX_EFFORT tier=${CODEX_SERVICE_TIER:-standard} timeout=$aw_timeout_banner" >&2
 
-# --- Quality-first guard: refuse a silent model/effort downgrade ---------------
+# --- Quality-first guard: refuse any non-pinned model/effort ---------------
 # A relaxed run is RECORDED, not just warned about: the receipt carries probe:true so the kit's
 # review-state gate rejects it — "do NOT use this as a real review" becomes a mechanism, not a plea.
 REVIEW_PROBE=false
@@ -358,8 +358,8 @@ if [[ "${CODEX_PROBE:-}" == "1" ]]; then
   echo "         output as a real review (model='$CODEX_MODEL' effort='$CODEX_EFFORT')." >&2
 else
   if [[ "$CODEX_MODEL" != "$DEFAULT_CODEX_MODEL" ]]; then
-    echo "error: CODEX_MODEL='$CODEX_MODEL' is not the pinned frontier model '$DEFAULT_CODEX_MODEL'." >&2
-    echo "       A delegated review must run on the frontier model at max effort (quality-first)." >&2
+    echo "error: CODEX_MODEL='$CODEX_MODEL' is not the pinned model '$DEFAULT_CODEX_MODEL'." >&2
+    echo "       A delegated review must run on the pinned model at max effort (quality-first)." >&2
     echo "       For a throwaway probe whose result is effort-independent, set CODEX_PROBE=1." >&2
     exit 2
   fi

@@ -1160,16 +1160,28 @@ plan_fed_parts() {  # $1 = file, $2 = first-part budget, $3 = later-part budget,
   ' "$1"
 }
 
-# ORDERED delivery-proof candidates for ONE part (D1), nearest that part's middle first: an INTERIOR
+# ORDERED delivery-proof candidates for ONE part (D1), from that part's head inward: an INTERIOR
 # line whose trimmed text sits in the echo window and is unique as a WHOLE line across the change
 # set. This is only the cheap prefilter — the exact fixed-string checks (exactly one occurrence
 # across the bodies, ZERO anywhere the wrapper's own envelope text can reveal it) run in bash over
 # this list, because a candidate that is merely a unique LINE can still occur as a SUBSTRING of
 # another body's line, and a model without that part could then copy it.
-# The order is produced by WALKING OUTWARD from the part's middle, never by sorting: a comparison
-# sort here was quadratic, and the caller may walk the whole list, so the cost of merely ORDERING
-# candidates must not depend on how many there are. There is no cap — capping made the wrapper claim
-# "no usable candidate" while a usable one sat at position 26.
+# HEAD-first, because the model is told to count the address BY READING and is denied every tool: an
+# earlier walk outward from the part's MIDDLE asked for line 847..1024 on a 701464-byte change set,
+# and a model that had received the part perfectly answered with the wrong line three times running
+# — a false refusal on exactly the payload size this lane exists for.
+# The banner reject is the other half of that move. assemble_code_diff emits its section banners for
+# EVERY change set, so echoing one proves no delivery at all. It never mattered while the walk started
+# mid-part. It rejects the assembler's own VOCABULARY, not the "=== … ===" shape: a change set's own
+# "=== Deployment configuration notes ===" must stay admissible, or a part where nothing else
+# qualifies earns the false refusal this move exists to remove.
+# It does NOT duplicate $nonbody. That file now carries the banners it can SEE — up to the first
+# untracked section, where the scan stops by design (emit_derivable_from_artifact). Everything after
+# it is untracked file content, and the per-path banners interleaved with that content are exactly
+# what nothing upstream can enumerate: they are built from paths, not fixed strings, and a model
+# holding part 1 rebuilds them from the git-status block there. This reject is what covers them.
+# There is no cap — capping made the wrapper claim "no usable candidate" while a usable one sat at
+# position 26.
 list_echo_candidates() {  # $1 = part file, $2 = unique-trimmed-lines file → "<line number><TAB><text>"
   LC_ALL=C awk -v minlen="$FED_ECHO_MIN_BYTES" -v maxlen="$FED_ECHO_MAX_BYTES" '
     NR == FNR { uniq[$0] = 1; next }
@@ -1178,16 +1190,12 @@ list_echo_candidates() {  # $1 = part file, $2 = unique-trimmed-lines file → "
       if (i < 2 || i >= FNR) return 0
       t = lines[i]
       gsub(/^[ \t]+|[ \t]+$/, "", t)
+      if (t ~ /^=== (repo file map|git status|staged diff|unstaged diff|untracked)/ && t ~ / ===$/) return 0
       if (length(t) < minlen || length(lines[i]) > maxlen) return 0
       return (t in uniq)
     }
     END {
-      mid = int((FNR + 1) / 2)
-      if (usable(mid)) printf "%s\t%s\n", mid, lines[mid]
-      for (d = 1; d <= FNR; d++) {
-        if (usable(mid - d)) printf "%s\t%s\n", mid - d, lines[mid - d]
-        if (usable(mid + d)) printf "%s\t%s\n", mid + d, lines[mid + d]
-      }
+      for (i = 1; i <= FNR; i++) if (usable(i)) printf "%s\t%s\n", i, lines[i]
     }' "$2" "$1"
 }
 
@@ -1457,6 +1465,39 @@ run_fed_review() {
 # payload is byte-identical with and without a device mask). Symlinks are shown as their target
 # (never followed — no out-of-repo leak); directories/vanished paths are noted, never read (a `cat`
 # on a FIFO would hang BEFORE the hard timeout applies — that class never reaches this loop).
+# Everything in the ASSEMBLED artifact that a model holding part 1 could reproduce for a part it
+# never received. Sliced from the artifact's own bytes rather than recomputed: recomputing raced the
+# assembly (an index or worktree change between the two reads leaves a line the REAL part 1 revealed
+# outside the filter) and could only ever re-derive the header shapes it thought of — a rename's
+# `diff --git a/old b/new`, its `rename from`/`rename to` pair, and git's quoting of an awkward name
+# were all missing. The artifact carries the true bytes, so there is nothing to reproduce.
+#   - the repo-map and status blocks entire: they travel in part 1 and name every path;
+#   - inside the two diff sections, every line that is NOT a content line. A unified diff's payload
+#     lines begin with '+', '-' or ' '; everything else is metadata git derives from those paths, so
+#     one positive rule covers `diff --git`, `@@`, `index`, mode/similarity/rename/copy and
+#     `Binary files` without enumerating any of them. The `--- a/P` / `+++ b/P` file headers are the
+#     exception the rule cannot see: they open with '-' and '+' and so READ as payload. A regression
+#     caught one being chosen as proof, so they are named. The cost is that a removed line whose own
+#     text starts with '-- ' is skipped too — the walk simply continues, which only ever narrows what
+#     may be proven with.
+# Untracked file CONTENTS are deliberately absent: nothing in part 1 reveals them, so they remain the
+# honest proof material this lane depends on. Reaching the untracked section is therefore TERMINAL —
+# a file whose own content happens to carry a `=== git status … ===` line would otherwise flip the
+# scan back into metadata mode and sweep every line after it into the set, starving later parts of
+# candidates and earning the false refusal this whole move exists to remove.
+emit_derivable_from_artifact() {  # $1 = the assembled artifact
+  LC_ALL=C awk '
+    sec == "body" { next }
+    /^=== repo file map/ { sec = "meta"; print; next }
+    /^=== git status/    { sec = "meta"; print; next }
+    /^=== staged diff/   { sec = "diff"; print; next }
+    /^=== unstaged diff/ { sec = "diff"; print; next }
+    /^=== untracked/     { sec = "body"; print; next }
+    sec == "meta" { print; next }
+    sec == "diff" { if ($0 !~ /^[-+ ]/ || $0 ~ /^(--- |\+\+\+ )/) print; next }
+  ' "$1"
+}
+
 assemble_code_diff() {
   echo "=== repo file map (git ls-files) ==="
   emit_repo_file_map
@@ -1853,9 +1894,14 @@ else
       echo "       because an unprovable delivery is exactly what this lane exists to prevent." >&2
       exit 2
     fi
-    # Everything the wrapper itself will SEND that is not a BODY. A candidate occurring anywhere in
-    # here would be revealed to a model that never received its part, so the proof would prove
-    # nothing. Rendered with the REAL part indices, because the frames carry them.
+    # Everything a model could hold WITHOUT the part a candidate belongs to. Two families, and the
+    # second is why this is not just "what the wrapper sends":
+    #   1. the envelope the wrapper sends outside every body, rendered with the REAL part indices;
+    #   2. every line DERIVABLE from the repo map and status blocks — which travel in part 1, so a
+    #      model holding part 1 can reproduce them for any LATER part it never received. Sliced from
+    #      the assembled artifact's own bytes (see emit_derivable_from_artifact), never recomputed.
+    # Enumerating families was already the wrong shape once (a banner blacklist); this instead lets
+    # the existing fixed-string filter do the work against what the artifact itself already shows.
     ( umask 077; {
         cat "$staging/grounding"
         for (( k = 1; k <= n; k++ )); do
@@ -1865,6 +1911,7 @@ else
         done
         emit_fed_final_head
         emit_shape_fed "(addresses are appended below)"
+        emit_derivable_from_artifact "$artifact_file"
       } > "$nonbody" )
 
     # ONE pass, no re-picking. The address list cannot reveal a candidate BY CONSTRUCTION (see

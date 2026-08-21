@@ -48,12 +48,25 @@ this skill. Both wrappers enforce the subscription path before invoking codex:
 
 ## Models quality-first pinned
 
-Delegated codex work ALWAYS runs on the **frontier model at maximum reasoning effort**: the wrappers
+Delegated codex work ALWAYS runs on the **PINNED model at maximum reasoning effort**: the wrappers
 **pin** `gpt-5.6-sol` / `xhigh` and **refuse** (exit 2, loud) a non-default `CODEX_MODEL` / `CODEX_EFFORT`
-— knowingly-worse output is never traded for quota. The pin is deliberate (an explicit `-m gpt-5.6-sol`
-guarantees the *strongest* model, not merely the CLI's current default); a release-time gate against
-<https://developers.openai.com/codex/models> re-checks that `gpt-5.6-sol` is still the strongest selectable
-Codex model. Economy comes only from **quality-neutral waste removal** (clean capture, a hard timeout,
+— knowingly-worse output is never traded for quota. The pin is deliberate: an explicit `-m gpt-5.6-sol`
+names one model rather than following the CLI's current default. That the pinned id is also the
+*strongest* selectable Codex model is a **separate, time-bounded claim**, checked BY HAND against
+<https://developers.openai.com/codex/models>. There is **no automated gate and this file records no
+date for that check**, so treat "strongest" as unverified until someone looks. Upstream can move
+either way between releases:
+- **retirement** is loud — the pinned id stops being served and codex fails with an error naming the
+  model. That is an upstream failure, not a wrapper refusal; the fix is a pin bump in its own reviewed
+  commit, never a `CODEX_PROBE=1` run, whose output is never delegated work.
+- **a newer, stronger model is SILENT** — nothing fails, and the pin simply stops being the best
+  available until someone re-checks the page.
+
+The guard is therefore a **pin-integrity** guard, not a quality guarantee: it enforces that runs use
+the id named here, and it refuses a *stronger* model exactly as it refuses a weaker one. Read a
+refusal as "not the pinned id", never as "a downgrade was prevented".
+
+Economy comes only from **quality-neutral waste removal** (clean capture, a hard timeout,
 a precomputed review diff, `resume` instead of re-sending context), never from a downgrade.
 
 The ONLY escape is a **throwaway probe** whose result is effort-independent (a reachability / smoke

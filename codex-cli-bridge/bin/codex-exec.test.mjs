@@ -188,7 +188,7 @@ describe('codex-exec.sh — quality-first model/effort guard (1.1)', { concurren
     const r = await run(sb, { env: { CODEX_MODEL: 'gpt-5.4-mini' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /not the pinned frontier model/);
+    assert.match(r.stderr, /not the pinned model/);
     assert.equal(r.capStdin, '', 'codex must not be invoked when the guard fires');
   });
 

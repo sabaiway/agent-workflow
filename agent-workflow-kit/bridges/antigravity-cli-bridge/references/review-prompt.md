@@ -61,15 +61,31 @@ the operator can split.
   of the change set. Only BODIES concatenate, and they concatenate **byte-for-byte**: nothing the
   wrapper adds ever enters the reviewed artifact, and the receipt's fingerprint domain is untouched.
 - **Delivery is proven, never assumed.** After assembly the wrapper picks, per part, an interior line
-  the model cannot anticipate, and asks for it **by address only**. The mandated shape gains
-  `### Delivery proof` as its **FIRST** section, so output truncation cannot silently drop it:
+  the model cannot anticipate, and asks for it **by address only**. The candidate walk starts at the
+  part's HEAD, which MINIMIZES the address rather than bounding it — the model is denied every tool
+  and must count by reading, and a midpoint address it cannot count to is a false refusal on a
+  correctly delivered change set.
+  A line the ASSEMBLER emits — one of its own `=== repo file map / git status / staged diff /
+  unstaged diff / untracked … ===` banners, per-path forms included — is never a candidate (with one
+  stated exception below). The change set's OWN banner-shaped lines stay admissible: refusing the
+  shape rather than the vocabulary would discard real content and re-earn the refusal this
+  design removes.
+  Nor is a line a model could **derive** without the part it belongs to. The repo-map and status
+  blocks travel in part 1 and name every path, so those blocks and all git diff METADATA (the
+  `diff --git`, `@@`, `index`, mode, rename and copy headers) would prove nothing about a LATER part.
+  They are sliced out of the assembled change set — its own bytes, never recomputed, so a rename's
+  headers and git's quoting of an awkward name are covered without guessing what git wrote — and fed
+  to the same non-body filter. Untracked file CONTENTS are deliberately NOT in that set: nothing in
+  part 1 reveals them, so they stay the proof material this lane depends on.
+  The mandated shape gains `### Delivery proof` as its **FIRST** section, so output truncation cannot
+  silently drop it:
 
 ```text
 ### Delivery proof
 part <K> line <L>: <the text of line L of part K, VERBATIM>
 Requested addresses, one per line:
-part 1 line 743
-part 2 line 512
+part 1 line 16
+part 2 line 2
 ### Verdict
 …
 ```
@@ -105,6 +121,28 @@ itself can never reveal the very text it asks for, and the wrapper needs no seco
 - A change set whose parts carry **no unique interior line** in the 24..200-byte window (a single
   huge minified line, for instance) cannot be proven delivered, so the wrapper **refuses** rather
   than reviewing unprovably. Split the review, or exclude the blob.
+- The head-first walk **minimizes** the requested address; it does not BOUND it. A part whose head is
+  a long run of unusable lines — too short, not unique, or an assembler banner — still yields a large
+  address, and the miscount case above returns with it. No runtime maximum is enforced: refusing on
+  address size would trade a false refusal for a different false refusal.
+- The banner reject matches the assembler's **vocabulary**, so a change set carrying a line like
+  `=== untracked notes ===` of its own loses that one candidate. Harmless while any other line
+  qualifies; the walk simply continues.
+- The derivable set is computed **once for the whole change set**, not per part, and the partition
+  cuts by BYTES — so the repo-map and status blocks are not guaranteed to sit in part 1. A change set
+  with thousands of changed paths can put a whole part inside the status block, whose every line is
+  then excluded, and that part refuses for want of a candidate. The failure is **fail-closed** — a
+  named refusal telling the operator to split the review, never an unsound proof — and the repo map is
+  already budget-truncated, so only an unbounded status block reaches it. A per-part exclusion would
+  have to carry derivation provenance (which path was named where) to avoid re-opening the leak it
+  exists to close; that is queued, not smuggled in here.
+- The reject is by vocabulary, **not exact by origin**. An untracked path containing a literal
+  NEWLINE splits its own `=== untracked: <p> ===` banner across lines, and the tail fragment
+  (`<rest> ===`) does not carry the vocabulary, so it stays admissible — while a model holding
+  part 1 could rebuild it from the quoted git-status entry there. The exposure is strictly SMALLER
+  than before the reject existed (the whole banner line was admissible then) and needs a newline in
+  a filename; closing it exactly means escaping the dynamic field, which changes the assembled
+  artifact BYTES and so must move in both bridges together under the fingerprint-parity contract.
 
 ## agy's own permission ask — surfaced, never applied
 

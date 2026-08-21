@@ -20,8 +20,10 @@ judgment.
 
 ## Quality-first: model & effort are pinned
 
-Delegated codex work ALWAYS runs on the frontier model at max effort: `gpt-5.6-sol` / `xhigh` are **pinned**
-and a non-default `CODEX_MODEL`/`CODEX_EFFORT` is **refused** (exit 2). Do not try to "tune down" the
+Delegated codex work ALWAYS runs on the PINNED model at max effort: `gpt-5.6-sol` / `xhigh` are **pinned**
+and a non-default `CODEX_MODEL`/`CODEX_EFFORT` is **refused** (exit 2). That the pinned id is still the
+strongest selectable model is a hand-checked claim with no automated gate and no recorded date — see
+SKILL.md. Do not try to "tune down" the
 model or effort for a real run — the wrapper will stop you. Quota is metered in **messages** (rolling
 5h + weekly), so economy comes from removing waste (clean capture, the precomputed review diff, resume),
 never from a downgrade. The only opt-out is a throwaway, effort-independent probe: `CODEX_PROBE=1`

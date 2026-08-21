@@ -141,7 +141,7 @@
       ],
       "guardrails": [
         { "value": "read-only sandbox — codex cannot edit, create or delete a file", "enforcement": "enforced", "source": "bin/codex-review.sh" },
-        { "value": "runs on the pinned frontier model at max effort", "enforcement": "enforced", "condition": "unless CODEX_PROBE=1 relaxes the guard for a throwaway probe", "source": "bin/codex-review.sh" },
+        { "value": "runs on the pinned model at max effort", "enforcement": "enforced", "condition": "unless CODEX_PROBE=1 relaxes the guard for a throwaway probe", "source": "bin/codex-review.sh" },
         { "value": "a successful review appends one receipt line the review-state gate reads", "enforcement": "enforced", "condition": "a receipt write failure warns and the review still succeeds — the tree then reads un-receipted", "source": "capability.json roles.review.contract.receipt" }
       ],
       "customHooks": ["CODEX_PROBE"]

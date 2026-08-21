@@ -166,7 +166,7 @@ describe('codex-review.sh — quality-first model/effort guard (1.1)', { concurr
     const r = await run(sb, { env: { CODEX_MODEL: 'gpt-5.4-mini' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /not the pinned frontier model/);
+    assert.match(r.stderr, /not the pinned model/);
     assert.equal(r.capStdin, '', 'codex must not be invoked when the guard fires');
   });
 
@@ -934,7 +934,7 @@ describe('codex-review.sh — review receipts (AD-038)', { concurrency: 2 }, () 
   });
 
   // The probe marker (BRIDGE-MODES-CATALOG, D3): a CODEX_PROBE=1 review runs with the
-  // frontier-model/max-effort guard OFF, so its receipt must be distinguishable — the kit's
+  // pinned-model/max-effort guard OFF, so its receipt must be distinguishable — the kit's
   // review-state gate rejects a probe-marked receipt. EVERY receipt carries the marker (true or
   // false): it self-declares, so the gate reads the fact rather than inferring it from a version
   // string that bumps in a different release phase. Silence is not a declaration.
@@ -1619,7 +1619,7 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 
     assert.equal(receipts[0].probe, true, 'an off-pinned model runs only on the probe lane');
   });
 
-  it('a posture value carrying CONTROL BYTES refuses pre-spend, BEFORE the frontier guard', async () => {
+  it('a posture value carrying CONTROL BYTES refuses pre-spend, BEFORE the pinned-model guard', async () => {
     const sb = makeSandbox();
     const r = await run(sb, { env: { CODEX_MODEL: `gpt-5.6-sol${String.fromCharCode(1)}` } });
     const receipts = readReceipts(sb.repo);

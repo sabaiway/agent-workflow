@@ -13,11 +13,11 @@
 #   - network access OFF: new dependencies / network installs are done by a human
 #   - approval_policy=never: there is no TTY in exec; anything needing escalation
 #     is refused and reported, then handled by hand
-#   - strongest model at maximum reasoning effort (quality-first — see below)
+#   - the PINNED model at maximum reasoning effort (quality-first — see below)
 #   - git WRITES are blocked by a physical shim (codex spawns git via execve, which
 #     bypasses shell functions) — the orchestrator owns the commit boundary.
 #
-# Quality-first (hard rule): delegated codex work ALWAYS runs on the frontier
+# Quality-first (hard rule): delegated codex work ALWAYS runs on the PINNED
 # model at maximum reasoning effort. The defaults below are pinned and the wrapper
 # REFUSES a non-default CODEX_MODEL/CODEX_EFFORT — knowingly-worse output is never
 # traded for quota. The ONLY exception is a throwaway probe whose result does not
@@ -319,7 +319,7 @@ aw_resolve_timeout_bin() {
   printf '%s' "$bin"
 }
 
-DEFAULT_CODEX_MODEL="gpt-5.6-sol"   # frontier coding model (verified locally) — pinned
+DEFAULT_CODEX_MODEL="gpt-5.6-sol"   # pinned model id (see SKILL.md: strongest-model status is hand-checked, ungated)
 DEFAULT_CODEX_EFFORT="xhigh"    # maximum reasoning effort — pinned
 CODEX_MODEL="${CODEX_MODEL:-$DEFAULT_CODEX_MODEL}"
 CODEX_EFFORT="${CODEX_EFFORT:-$DEFAULT_CODEX_EFFORT}"
@@ -378,16 +378,16 @@ AW_BRIDGE_VERSION="3.5.0"  # aw-version-anchor
 # actually applied.
 CODEX_KILL_GRACE_S=15
 
-# --- Quality-first guard: refuse a silent model/effort downgrade ---------------
-# Real delegated runs must use the frontier model at max effort. A throwaway probe
+# --- Quality-first guard: refuse any non-pinned model/effort ---------------
+# Real delegated runs must use the pinned model at max effort. A throwaway probe
 # (effort-independent result) may opt out with CODEX_PROBE=1, announced loudly.
 if [[ "${CODEX_PROBE:-}" == "1" ]]; then
   echo "warning: CODEX_PROBE=1 — THROWAWAY PROBE MODE. Quality guards relaxed; do NOT use this run's" >&2
   echo "         output as real delegated work (model='$CODEX_MODEL' effort='$CODEX_EFFORT')." >&2
 else
   if [[ "$CODEX_MODEL" != "$DEFAULT_CODEX_MODEL" ]]; then
-    echo "error: CODEX_MODEL='$CODEX_MODEL' is not the pinned frontier model '$DEFAULT_CODEX_MODEL'." >&2
-    echo "       Delegated codex work must run on the frontier model at max effort (quality-first)." >&2
+    echo "error: CODEX_MODEL='$CODEX_MODEL' is not the pinned model '$DEFAULT_CODEX_MODEL'." >&2
+    echo "       Delegated codex work must run on the pinned model at max effort (quality-first)." >&2
     echo "       For a throwaway probe whose result is effort-independent, set CODEX_PROBE=1." >&2
     exit 2
   fi
@@ -623,7 +623,7 @@ else
   #  (1) ALWAYS rejected — they would defeat the subscription / sandbox / approval /
   #      config-isolation policy (-c/-s/--full-auto/bypass), switch the provider off
   #      the subscription (--oss/--local-provider), load alternate config (-p/--profile),
-  #      override the pinned frontier model (-m), or break the wrapper-owned clean
+  #      override the pinned model (-m), or break the wrapper-owned clean
   #      output / session capture (-o/--json/--color/--output-schema/--ephemeral).
   #      CODEX_PROBE=1 NEVER relaxes these: a probe still runs on the subscription, in
   #      the sandbox, with clean capture; its model is chosen via CODEX_MODEL, not -m.
@@ -634,7 +634,7 @@ else
       case "$_arg" in
         -c*|--config*|-s*|--sandbox*|--dangerously-bypass-approvals-and-sandbox|--dangerously-bypass-hook-trust|--full-auto|--oss|--local-provider*|-p*|--profile*|-m*|--model*|-o*|--output-last-message*|--json*|--color*|--output-schema*|--ephemeral*)
           echo "error: passthrough flag '$_arg' is not allowed — it would defeat the subscription / sandbox /" >&2
-          echo "       approval / config-isolation policy, the pinned frontier model, or the clean output/session" >&2
+          echo "       approval / config-isolation policy, the pinned model, or the clean output/session" >&2
           echo "       capture. It stays blocked even under CODEX_PROBE=1. Invoke 'codex' directly if you must." >&2
           exit 2
           ;;

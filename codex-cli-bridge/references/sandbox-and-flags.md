@@ -64,8 +64,9 @@ failure is proven.
 ## Quality-first guard (pinned model & effort)
 
 The wrappers default `CODEX_MODEL=gpt-5.6-sol` and `CODEX_EFFORT=xhigh` and **refuse** (exit 2, loud) any
-non-default — delegated work always uses the frontier model at max effort; quality is never traded for
-quota. `CODEX_PROBE=1` relaxes this for a throwaway, effort-independent probe only (echoed loudly), and
+non-default — delegated work always uses the PINNED model at max effort; quality is never traded for
+quota. (Whether the pinned id is still the strongest selectable model is a hand-checked claim with no
+automated gate — see SKILL.md.) `CODEX_PROBE=1` relaxes this for a throwaway, effort-independent probe only (echoed loudly), and
 a probe still runs on the subscription, in the sandbox, with clean capture.
 
 ## Passthrough guard (two tiers, after a literal `--`)
