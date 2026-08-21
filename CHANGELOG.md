@@ -7,6 +7,54 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-21 — AD-104 the plan canon becomes a capped index, and the grounding tool follows it (engine 3.0.0, kit 6.0.0, memory 4.5.2; codex-cli-bridge 3.5.0 and antigravity-cli-bridge 5.3.0 measured unchanged)
+
+One thing rides this train: the planning canon is rewritten, and every surface that quoted it moves
+with it. The canon used to say what a plan CONTAINS and never what it may COST. The measurement that
+started this: the last plan written to the old shape ran 690 lines, and most of that was free prose
+under `## Approach` — a section with a budget of nothing and no check on its content, which review
+could only ever ask to extend.
+
+A plan is now an index plus constraints, capped at 100 lines AND 8000 bytes — both, because a line
+cap alone is paid off with longer lines. Its centre is a **Module ledger**: one row per path, six
+fields, at most 200 bytes, and those rows ARE the steps. The Plan → Phase → Step → Substep numbering
+is deleted; rows execute top to bottom, each is one logical commit, and the only phases left are
+session boundaries and Cleanup. A wide mechanical change is ONE row with a glob path and an asserted
+count, because splitting a sweep into per-file rows costs more prose than the sweep. The ledger ends
+with `total: <before> → <after> lines`, since five files under a 400-line cap can each be legal while
+the change doubles the codebase — the per-file budget cannot see that, and the total refuses a
+"refactor" that grows at plan time rather than at review.
+
+The review rule is the other half. *What gets cut* deletes any line for which a zero-context executor
+still picks the right files and verification still catches a wrong result. A line may be ADDED only
+by naming the specific wrong execution it prevents AND deleting at least as many lower-value lines —
+so "please add more detail" is refused by the document itself.
+
+The headings are LITERAL, and that is a tool contract rather than a style note: kit **6.0.0**'s
+`grounding --plan` extracts by exact match, and it now requires exactly the three canon sections it
+grounds. A plan written to the old shape STOPs there — not because `## Approach` is present (a
+section the canon does not name is simply never sliced) but because `## Goal and boundary` and
+`## Module ledger` are absent, and the refusal names the missing heading. The `optional` arm of the
+slicer went with the optional heading: a section the canon does not name cannot be sliced, and one
+it does name cannot be absent.
+
+**Both engine and kit take a MAJOR, and the family's own precedents are what decided it.** An input
+that exited 0 exits 1 now, with no deprecation window and no alias — the shape kit already sized
+MAJOR twice (4.0.0, a receipt no longer accepted; 5.0.0, a `--check` that silently passed and now
+refuses), and the converse case is on record too: 5.6.0 stayed a MINOR *because* it kept the old
+field as an alias. On the engine side, 2.0.0 had already taken a MAJOR for a documents-only canon
+rewrite that deleted a vocabulary, and this rewrite deletes two skeleton headings and the whole
+Plan → Phase → Step → Substep vocabulary. The sizing was put to both review backends and to a third
+independent reader; all three returned MAJOR / MAJOR / PATCH, and memory stays a PATCH because
+nothing in it refuses anything it used to accept.
+
+`procedures.md` went from 137 to 87 lines and from 10427 to 5768 bytes, back under `planning.md` as
+its own long-standing assertion requires — every restated planning rule cut to a pointer. Those
+pointers now name planning sections by heading, because `planning.md` has no numbered sections and
+the old `§4/§6/§7/§8/§9` references had been pointing at moved or deleted text. A test checks that
+each named anchor is a live heading and that no `§N` pointer survives, which is the guard that would
+have caught the dangling numbers before a reader did.
+
 ## 2026-08-20 — AD-103 the record vocabulary becomes a facade over five leaves (kit 5.11.2; memory 4.5.1, engine 2.1.0, codex-cli-bridge 3.5.0 and antigravity-cli-bridge 5.3.0 measured unchanged)
 
 One thing rides this train: tranche 3 of the source-size cleanup campaign. `flow-record.mjs` was the

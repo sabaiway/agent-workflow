@@ -4,6 +4,22 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 4.5.2 — the boundary sentence names the plan SHAPE, not the retired vocabulary (AD-104; ships with engine 3.0.0 / kit 6.0.0)
+
+**Wording only — no contract, no script, no gate changes.** This substrate records only *where* the
+workflow methodology lives, never the methodology itself, and the words it used to point with were
+the ones engine **3.0.0** retired. Nothing here refuses anything it used to accept, and nothing new
+is offered, so this stays a PATCH while its two siblings take a MAJOR each.
+
+- **`SKILL.md`** — the "knows nobody else in the family" boundary paragraph and the ownership table
+  say **plan shape** (goal and boundary, module ledger, verification) and **activity procedures**
+  where they used to say "plan → execute → review vocabulary" and "Plan→Phase→Step". The slots, the
+  owners and the composition-root contract are untouched.
+- **`references/templates/agent_rules.md`** — the rendered lens fragment picks up the same
+  re-render the kit template gets: the two per-Step clauses are per-row, and §5's plan-file summary
+  says "shape, lifecycle" instead of "vocabulary, lifecycle". The session-continuity sentence went
+  with the heuristic the canon dropped.
+
 ## 4.5.1 — the deployed scripts decide direct-run by real path, so a symlinked entry point stops silently doing nothing (AD-102; ships with kit 5.11.1)
 
 **A script invoked through a symlink ran nothing and exited 0.** The guard that decides "was I run

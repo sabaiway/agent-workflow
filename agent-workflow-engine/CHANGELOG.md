@@ -4,6 +4,68 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 3.0.0 — the plan canon becomes a capped index: a module ledger whose rows ARE the steps (AD-104)
+
+A plan is an **index plus constraints**, never a transcript. The executor reads the repository; the
+plan says which files to open, what each may become, and how the result is checked. The canon used
+to say what a plan CONTAINS and never what it may COST — the last plan written to the old shape ran
+690 lines, most of it free prose under `## Approach`, a section with a budget of nothing and no
+check on its content.
+
+> ### ⚠ BREAKING — a plan written to any 2.x canon is invalid, and a shipped tool now refuses it
+>
+> The skeleton is LITERAL and tooling extracts by exact match: the title line `# Plan: <title>`,
+> then five `## ` headings — `Goal and boundary`, `Module ledger`, `Verification`, `Phase: Cleanup`,
+> `Next steps`. `## Approach` and `## Decisions (locked)` are gone, and the
+> Plan → Phase → Step → Substep vocabulary with them. Kit **6.0.0**'s `grounding --plan` requires the
+> three canon sections and refuses a MISSING one by name — a plan that exited 0 under every 2.x
+> canon now exits 1. That refusal IS the migration signal, and it is why this is a MAJOR: the same
+> class as **2.0.0**, where deleting a vocabulary from the canon was already called BREAKING.
+> A leftover `## Approach` is not itself the trigger: a section the canon does not name is simply
+> never sliced. A settled decision is no longer a section either — it becomes a boundary or non-goal
+> in *Goal and boundary*, or a check in *Verification*.
+>
+> **Migration.** Rewrite the plan to the skeleton above: the old `## Approach` prose becomes a
+> `## Goal and boundary` (observable outcome, preserved behaviour, explicit non-goals) plus a
+> `## Module ledger` (one row per path, ending in the `total: <before> → <after> lines` budget); its
+> Steps become ledger rows. Nothing in a deployed project's `docs/ai/` moves — the deployment-lineage
+> stamp is unchanged and no migration file is needed.
+
+- **`planning.md` 152 → 114 lines.** The whole plan file is capped at **100 lines AND 8000 bytes** —
+  both, because a line cap alone is paid off with longer lines. Reserves: Goal and boundary 10,
+  Module ledger 60, Verification 20, Cleanup plus Next steps 10. A plan that does not fit is not
+  under-described: either the TASK splits along independently verifiable boundaries, or it is a sweep.
+- **The ledger rows ARE the steps**, so the Plan → Phase → Step → Substep numbering is DELETED. One
+  row per path, at most 200 bytes, six fields: `<check-id> | create|modify|delete | <path> |
+  <responsibility> | <max lines | n/a> | <anchor>`. Rows execute top to bottom, each is one logical
+  commit, and a row may anchor only on a path above it or on existing code. The only surviving phases
+  are session boundaries and Cleanup. A `create` row's responsibility names the **exported surface**
+  — the one interface contract a plan owes its executor, because it is not in the checkout to derive.
+- **A wide mechanical change is ONE row** — a glob path, the invariant every site must satisfy, an
+  asserted count. Splitting a sweep into per-file rows costs more prose than the sweep and breaks
+  the intermediate states.
+- **The budget that decides is the TOTAL.** The ledger ends with `total: <before> → <after> lines`.
+  Five files under a 400-line cap can each be legal while the change doubles the codebase. Growth
+  takes a stated reason on that line; a refactor that claims to reduce anything and grows is refused
+  at plan time.
+- **Review asks what to cut, not what is missing.** *What gets cut* deletes any line for which both
+  answers are yes — can a zero-context executor still pick the right files without it, and can
+  verification still catch a wrong result without it. A line may be ADDED only by naming the specific
+  wrong execution it prevents AND deleting at least as many lower-value lines.
+- **`procedures.md` 137 → 87 lines, 10427 → 5768 bytes** — back under `planning.md` (5977), as its
+  own long-standing assertion requires. Every restated planning rule became a pointer, and the
+  pointers name planning sections **by heading**: `planning.md` has no numbered sections, so the old
+  `§4/§6/§7/§8/§9` references pointed at moved or deleted text. `procedures-canon.test.mjs` now
+  checks that every named anchor is a live `## ` heading and that no `planning.md §N` pointer
+  survives.
+- `orchestration.md`'s convergence-bar pointer, the agent-rules **lens fragment** (its two per-Step
+  clauses are now per-row, the outgoing body appended verbatim to `agent-rules-lens-priors.md` per
+  the AD-041 append-only contract), the methodology **slot** blurb, and the SKILL/README/`package.json`
+  descriptions all drop the retired vocabulary.
+- Unchanged and still binding: right altitude and fold-by-code (AD-027/AD-029), checked-vs-unchecked
+  syntax — *Un-run syntax never ships in prose* (AD-036), heavy review at the diff, and the mandatory
+  `## Phase: Cleanup`.
+
 ## 2.1.0 — the plan names the layout it is about to create (AD-091)
 
 The authoring canon now asks for the layout while the plan is still text: every Step that creates a

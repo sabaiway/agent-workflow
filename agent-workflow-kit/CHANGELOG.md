@@ -4,6 +4,52 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 6.0.0 — `grounding --plan` follows the canon it grounds: the three literal headings (AD-104; ships with engine 3.0.0 / memory 4.5.2)
+
+**The tool required a heading the canon had deleted.** `grounding --plan` demanded `## Approach` —
+the unbudgeted free-prose section engine **3.0.0** removes — so a plan written to the new capped
+shape STOPped at the grounding step, and the author was pushed back into re-adding the very section
+that grew the last plan to 690 lines.
+
+> ### ⚠ BREAKING — an input that exited 0 now exits 1, and two exported symbols changed shape
+>
+> `grounding --plan <file>` on a plan written to any earlier canon now STOPs with exit 1, naming the
+> missing heading. There is no deprecation window and no compatibility shim, which is the same shape
+> this package twice sized as MAJOR — **4.0.0** (a receipt that used to be accepted is refused) and
+> **5.0.0** (a `--check` that silently passed can now refuse). **5.6.0** is the converse precedent:
+> it stayed a MINOR precisely because it kept the old result field as an alias, and nothing here
+> keeps an alias. The incompatibility is created by the reader, so the kit takes a MAJOR for it in
+> its own right — engine **3.0.0** takes one for the canon it rewrote, and the two are independent.
+>
+> For a programmatic consumer of `tools/grounding.mjs`: exported `PLAN_SECTIONS` changed from
+> `[{ heading, optional }, …]` to a plain `string[]`, and `sliceSection(text, heading, { optional,
+> label })` is now `sliceSection(text, heading, { label })`. Read the array as headings, and drop
+> the `optional` option — there is no third state left for it to express.
+
+- **`tools/grounding.mjs` — `PLAN_SECTIONS` is now the canon's three literal headings:**
+  `## Goal and boundary`, `## Module ledger`, `## Verification`. Each is REQUIRED; a missing or
+  duplicate heading is a loud STOP naming the heading it wanted. `## Approach` and
+  `## Decisions (locked)` are gone with the canon that named them.
+- **`sliceSection`'s `optional` arm went with the optional heading.** A section the canon does not
+  name cannot be sliced, and one it does name cannot be absent — so the third state had no caller
+  left. `sliceSection(text, heading, { label })` is the whole signature.
+- Red-first: `tools/grounding.test.mjs` was rewritten to a canon-shaped fixture and a
+  `core-evidence red-proof` was minted on the pre-fix tree for
+  `grounding.test.mjs#extracts Goal and boundary` before the fix landed.
+- The module header, `--help`, `references/modes/grounding.md` and the README row now say the same
+  thing — one contract, four surfaces, each updated with the code.
+- **`tools/procedures.mjs`** — the advisor's review-loop header pointed at `planning.md §9`, a
+  numbered section that no longer exists; it now names the `procedures.md` *Fold + loop* anchor. The
+  plan-time line "every Step that CREATES a file…" is DELETED with the Step vocabulary it belonged
+  to — the declared source-size practice still rides every named-activity render, and the plan's
+  *Module ledger* is where the layout is now cut to it.
+- **`tools/inject-methodology.mjs`** — the outgoing methodology-slot text is appended to
+  `KNOWN_PRIOR_METHODOLOGY_SLOT`, so an `AGENTS.md` still carrying the pre-rewrite pointer is
+  recognised and refreshed instead of being flagged as a custom edit.
+- **`references/templates/agent_rules.md`** — the lens fragment re-rendered through
+  `reconcileLensText`: two per-Step clauses became per-row, and the session-continuity sentence went
+  with the heuristic the canon dropped.
+
 ## 5.11.2 — the record vocabulary becomes a facade over five leaves (AD-103)
 
 **Nothing you import changes, and that is the whole claim — now certified rather than asserted.**
