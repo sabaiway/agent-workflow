@@ -59,6 +59,18 @@ describe('planning.md — the plan shape', () => {
     assert.match(flat, /Per-row assertions in prose are the repetition/);
   });
 
+  // The acceptance criteria are a CLOSED, machine-readable list: the fold arm of the finding-scope
+  // rule asks "is this invariant already required?", and a checker can only answer that against a
+  // list with an unambiguous unit. Losing any of these three lines makes the answer a judgment call
+  // again, which is exactly what the rule exists to remove.
+  it('makes the acceptance criteria a machine-readable bullet list matched WITHIN ONE bullet', () => {
+    assert.match(flat, /The acceptance criteria ARE the `- ` bullets/);
+    assert.match(flat, /nothing outside a bullet is one/, 'the list is closed — prose beside it is not a criterion');
+    assert.match(flat, /A claim matches WITHIN ONE bullet/);
+    assert.match(flat, /bullets are reordered, split and deleted independently/, 'states WHY a cross-bullet literal is out of scope');
+    assert.match(flat, /declares NO criteria/, 'a bullet-less Verification fails closed — no criteria, not "all of them"');
+  });
+
   it('makes the rows the steps — no second execution model', () => {
     assert.match(flat, /The rows ARE the steps/);
     assert.match(flat, /no separate step\/phase numbering/);

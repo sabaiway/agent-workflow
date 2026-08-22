@@ -31,6 +31,9 @@ import { resolveEngineDir, readEngineFragment, PROCEDURES_FRAGMENT_REL } from '.
 // The plan-in-flight detector (AD-038) — imported from the plan-files.mjs LEAF (read-only fs by
 // construction); the WRITER-capable grounding.mjs is only NAMED in rendered text, never imported.
 import { plansInFlight, PLANS_REL } from './plan-files.mjs';
+// The family's ONE shell quoter for a RENDERED command operand (bare when the value is already safe,
+// single-quoted otherwise) — the same leaf eight other command renderers here read through.
+import { shellQuoteArg } from './repo-lex.mjs';
 // The config schema/read core lives in orchestration-config.mjs (the single config contract). procedures
 // is READ-ONLY: it imports the reader + the SHARED slot/recipe validity, never the fs-writer
 // (orchestration-write.mjs) DIRECTLY — the import-split test pins the direct-import rule.
@@ -298,6 +301,24 @@ const autonomyAdvice = (activity, facts) => {
   ];
 };
 
+// The finding-scope block (procedures.md plan-execution step 5) — plan-execution ONLY and
+// UNCONDITIONAL: the rule routes EVERY finding, review-backed or not, so gating it on REVIEW_RECIPES
+// (which gates only the loop economics above) would hide it from every Solo project. The canon
+// section is printed VERBATIM above, so this block never re-states the rule — it carries only what
+// the canon cannot: the POPULATED checker command, and which of the two registers `--queue` names.
+export const FOLD_SCOPE_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'fold-scope-cli.mjs');
+const foldScopeAdvice = (activity, config, plans) => {
+  if (activity !== 'plan-execution') return [];
+  const declared = config?.flow?.debtQueue ?? null;
+  const queue = declared ?? `${PLANS_REL}/queue.md`;
+  const plan = plans.length === 1 ? `${PLANS_REL}/${plans[0]}` : '<plan-file>';
+  return [
+    'Finding scope (procedures.md plan-execution step 5) — the rule is the section above; this is the checker it names:',
+    `  • node ${shellQuoteArg(FOLD_SCOPE_TOOL)} --class '<in-scope|new-invariant|blocking>' --claim '<the invariant>' --plan ${shellQuoteArg(plan)} --queue ${shellQuoteArg(queue)}`,
+    `  • --queue is ${declared ? `${declared}, the declared flow.debtQueue` : `${queue}, the planning lifecycle queue (no flow.debtQueue is declared)`}. Advisory: nothing records that it ran, so a skipped or late call is indistinguishable from a pre-edit declaration.`,
+  ];
+};
+
 // The cost-lane advisory block (cost-tiered execution — orchestration.md §5 canon, paraphrased
 // at the point of use like reviewLoopAdvice paraphrases procedures.md Fold + loop / orchestration §4). Rendered UNCONDITIONALLY for
 // every activity — the lanes route EVERY step, review-backed or not (unlike reviewLoopAdvice,
@@ -445,7 +466,7 @@ const contractLines = ({ cmd, contract, settings }) => {
   return lines;
 };
 
-const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flowHalves, declaredPractice }) => {
+const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flowHalves, declaredPractice, foldScope }) => {
   const lines = [
     section,
     '',
@@ -464,6 +485,7 @@ const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flow
   if (grounding.length) lines.push('', ...grounding);
   const advice = reviewLoopAdvice(slots, activity);
   if (advice.length) lines.push('', ...advice);
+  if (foldScope.length) lines.push('', ...foldScope);
   lines.push('', ...costLanesAdvice());
   if (declaredPractice.length) lines.push('', ...declaredPractice);
   if (warnings.length) {
@@ -473,7 +495,7 @@ const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flow
   return lines.join('\n');
 };
 
-const buildJson = ({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, declaredPractice }) => ({
+const buildJson = ({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, declaredPractice, foldScope }) => ({
   activity,
   section,
   slots: Object.fromEntries(
@@ -486,6 +508,8 @@ const buildJson = ({ activity, section, slots, configSource, warnings, plans, au
   groundingPreStep: groundingPreStepAdvice(activity, slots, plans),
   // ADDITIVE (cost-tiered execution): the unconditional cost-lane advisory, structured.
   costLanes: costLanesAdvice(),
+  // ADDITIVE (the fold channel): the finding-scope block, structured (empty outside plan-execution).
+  foldScope,
   // ADDITIVE (AD-044 Plan 4): the per-activity autonomy block, structured (empty when unresolvable).
   autonomy: autonomyAdvice(activity, autonomy),
   // ADDITIVE (D-17 U1): the SAME composed lines the human render prints — one array, two renders, so
@@ -574,9 +598,10 @@ export const main = (argv, ctx = {}) => {
     const flowProbe = ctx.flowProbe ?? defaultFlowProbe;
     const flowHalves = config?.flow == null ? null : flowHalvesAdvice(config.flow, flowProbe(cwd));
     const declaredPractice = declaredPracticeAdvice(cwd, readFile, lstat);
+    const foldScope = foldScopeAdvice(activity, config, plans);
     const stdout = json
-      ? JSON.stringify(buildJson({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, declaredPractice }), null, 2)
-      : formatHuman({ activity, section, slots, warnings, plans, autonomy, flowHalves, declaredPractice });
+      ? JSON.stringify(buildJson({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, declaredPractice, foldScope }), null, 2)
+      : formatHuman({ activity, section, slots, warnings, plans, autonomy, flowHalves, declaredPractice, foldScope });
     if (autonomy?.error) {
       return { code: 1, stdout, stderr: `procedures: malformed ${AUTONOMY_REL} — ${autonomy.error}` };
     }

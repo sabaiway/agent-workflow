@@ -76,6 +76,12 @@ const DISCIPLINE_TOKENS = [
   // writer-economy (AD-054; strip-the-kit rewording) — evidence declarations batch, stage
   // writers combine
   'unbatched writer scatter',
+  // finding scope (the fold channel) — the rule's three arms plus the two bars each round declares
+  'finding scope',
+  'narrow fix',
+  'never queued',
+  'write/remove decision',
+  'routes to subtraction',
 ];
 
 // The pre-E4 intro line (the outgoing body differs from the current fragment ONLY by the
@@ -137,18 +143,13 @@ describe('agent-rules-lens-priors — append-only prior store shape', () => {
   });
 
   it('the OUTGOING body of the previous release IS the newest entry — exact normalized equality', () => {
-    // The current fragment differs from the IMMEDIATELY-previous release's body by EXACTLY the two
-    // per-Step clauses the planning-canon rewrite turned into per-row (ledger rows ARE the steps;
-    // one Verification carries the commands) — so the exact expected outgoing body is computable,
-    // and a typo in the prior entry goes red instead of sliding past a spot-check.
-    const outgoing = normalize(
-      fragment
-        .replace(
-          'A ledger row carries its path and anchor, and Verification carries the exact commands (the plan-shape canon)',
-          'A Step still carries its exact paths + commands (the plan-structure / self-review canon)',
-        )
-        .replace('the exhaustive per-row review runs against', 'the exhaustive per-Step review runs against'),
-    );
+    // The current fragment differs from the IMMEDIATELY-previous release's body by EXACTLY the
+    // finding-scope bullet — so the exact expected outgoing body is computable, and a typo in the
+    // prior entry goes red instead of sliding past a spot-check.
+    const lines = fragment.split('\n');
+    const kept = lines.filter((l) => !l.startsWith('- **Finding scope'));
+    assert.equal(lines.length - kept.length, 1, 'sanity: exactly ONE finding-scope bullet is this release\'s delta');
+    const outgoing = normalize(kept.join('\n'));
     assert.notEqual(outgoing, normalize(fragment), 'sanity: the swap actually changes the body');
     assert.ok(outgoing.includes(CURRENT_INTRO), 'the outgoing body carries the provenance intro (post-E4)');
     assert.equal(priors[priors.length - 1], outgoing, 'the newest prior byte-equals the pre-strip fragment (normalized)');

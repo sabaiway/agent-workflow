@@ -79,6 +79,15 @@ Each ledger row is one logical commit.
    `core-evidence red-proof` declares each bugfix red BEFORE the fix; `core-evidence
    degrade` records an unavailable backend; reviews run on the STAGED tree; `run-gates --final`
    mints the ONE receipt `commit-guard --check` gates the commit against.
+
+   **Finding scope** — every finding NAMES the invariant its fix enforces, BEFORE the edit, every
+   round. Already an acceptance criterion (*Verification*'s `- ` bullets) → **fold here**. It would
+   have to be ADDED → the **narrow fix** for the found site ships now (red first) and ONLY the
+   generalization is queued, as a row carrying five fields: the invariant, the origin `file:line`,
+   the narrow fix, its proof, and a residual exposure declared NOT live. No correct narrow fix →
+   **blocking** — the phase does not close, and it is never queued. Two bars, before each round: a
+   finding counts only if it changes a WRITE/REMOVE decision or is a false statement in shipped
+   text; a repeat finding in one subarea routes to SUBTRACTION, not a fourth patch.
 6. **Gates** — the project's verification gate to green.
 7. **Commit boundary** — the orchestrator makes the single commit; a backend never commits; the
    commit-approval policy lives in the project's own rules.

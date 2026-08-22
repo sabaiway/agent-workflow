@@ -67,6 +67,14 @@ command over its `check-id`s — existence and budget for create/modify, absence
 for a sweep, and the total line. Per-row assertions in prose are the repetition this section exists
 to avoid.
 
+**The acceptance criteria ARE the `- ` bullets.** Every top-level `- ` bullet in this section is one
+acceptance criterion, and they are the whole list — nothing outside a bullet is one. That makes the
+list machine-readable, so a review can be told mechanically whether a claimed invariant is already
+required. A claim matches WITHIN ONE bullet: a literal spanning two is not in scope, because bullets
+are reordered, split and deleted independently. A criterion that needs two bullets is two criteria —
+write each one self-contained. A Verification written as prose with no bullets therefore declares NO
+criteria, and every finding against that plan is a new invariant: the closed list fails closed.
+
 ## What gets cut
 
 Delete any line for which both answers are yes: *can a zero-context executor still pick the right

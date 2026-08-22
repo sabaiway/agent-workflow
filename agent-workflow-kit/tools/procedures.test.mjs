@@ -5,7 +5,8 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { main, extractSection, CONFIG_REL, FLOW_ARMED_HALVES_HEADER, DECLARED_PRACTICE_HEADER, defaultFlowProbe } from './procedures.mjs';
+import { main, extractSection, CONFIG_REL, FLOW_ARMED_HALVES_HEADER, DECLARED_PRACTICE_HEADER, defaultFlowProbe, FOLD_SCOPE_TOOL } from './procedures.mjs';
+import { shellQuoteArg } from './repo-lex.mjs';
 import { READY, NEEDS_SKILL } from './detect-backends.mjs';
 import { allowedLabel } from './bridge-settings-read.mjs';
 import { SOURCE_SIZE_CONFIG_REL, SOURCE_SIZE_WHY } from './source-size-core.mjs';
@@ -289,7 +290,7 @@ describe('procedures CLI — --json schema (§2.0)', () => {
     const j = JSON.parse(r.stdout);
     // The unarmed JSON key set stays byte-exact to the pre-flow shape — the flowHalves key is
     // CONDITIONAL on a flow block (unarmed neutrality), unlike the unconditional additive keys.
-    assert.deepEqual(Object.keys(j).sort(), ['activity', 'autonomy', 'configSource', 'costLanes', 'declaredPractice', 'groundingPreStep', 'reviewLoop', 'section', 'slots', 'warnings'].sort());
+    assert.deepEqual(Object.keys(j).sort(), ['activity', 'autonomy', 'configSource', 'costLanes', 'declaredPractice', 'foldScope', 'groundingPreStep', 'reviewLoop', 'section', 'slots', 'warnings'].sort());
     assert.equal(j.activity, 'plan-execution');
     assert.match(j.section, /## plan-execution/);
     for (const slot of ['execute', 'review']) {
@@ -495,6 +496,72 @@ describe('procedures CLI — cost-lane advisory block (cost-tiered execution): u
       const src = readFileSync(join(HERE, rel), 'utf8');
       assert.match(src, /Sandbox-safe/, `${rel} states its sandbox-lane contract line`);
     }
+  });
+});
+
+describe('procedures CLI — the finding-scope block: plan-execution ONLY, unconditional across recipes', () => {
+  const SENTINEL = /Finding scope \(procedures\.md plan-execution step 5\)/;
+  const FLOW = { schema: 1, preset: 'council', councilRounds: 3, kitMinVersion: '5.1.0', debtQueue: 'docs/debt.md' };
+  const foldScopeOf = (argv, setup) => JSON.parse(run([...argv, '--json'], setup).stdout).foldScope;
+
+  it('PRINTS under solo, reviewed AND council — the rule routes every finding, review-backed or not', () => {
+    for (const [recipe, setup] of [['solo', { codex: NEEDS_SKILL, agy: NEEDS_SKILL }], ['reviewed', { codex: READY, agy: NEEDS_SKILL }], ['council', { codex: READY, agy: READY }]]) {
+      const r = run(['plan-execution', '--override', `review=${recipe}`], setup);
+      assert.equal(r.code, 0, r.stderr);
+      assert.match(r.stdout, SENTINEL, `review=${recipe} still prints the finding-scope block`);
+    }
+  });
+
+  // The canon section is printed VERBATIM directly above this block, so a paraphrase of the three
+  // arms and the two bars duplicates text on the same screen — and a token assertion over stdout
+  // would pass on the canon text alone, guarding nothing. The WHOLE structured block is compared,
+  // so neither a paraphrase nor a prefix/suffix can ride along unnoticed.
+  const expectedBlock = (plan, queue, register) => [
+    'Finding scope (procedures.md plan-execution step 5) — the rule is the section above; this is the checker it names:',
+    `  • node ${shellQuoteArg(FOLD_SCOPE_TOOL)} --class '<in-scope|new-invariant|blocking>' --claim '<the invariant>' --plan ${shellQuoteArg(plan)} --queue ${shellQuoteArg(queue)}`,
+    `  • --queue is ${register}. Advisory: nothing records that it ran, so a skipped or late call is indistinguishable from a pre-edit declaration.`,
+  ];
+
+  it('carries ONLY what the canon cannot: the populated checker command and the register it chose', () => {
+    const lines = foldScopeOf(['plan-execution', '--override', 'review=solo'], { codex: NEEDS_SKILL, agy: NEEDS_SKILL });
+    assert.deepEqual(lines, expectedBlock('<plan-file>', 'docs/plans/queue.md', 'docs/plans/queue.md, the planning lifecycle queue (no flow.debtQueue is declared)'));
+    for (const paraphrased of ['fold here', 'NARROW fix', 'never queued', 'WRITE/REMOVE', 'SUBTRACTION']) {
+      assert.ok(!lines.some((l) => l.includes(paraphrased)), `the block must not re-state the canon token "${paraphrased}"`);
+    }
+  });
+
+  // The rendered command is meant to be PASTED, so every operand goes through the same shell quoter
+  // the family's other command renderers use: the class/claim placeholders are shell syntax in their
+  // own right, and a plan filename may carry `$` or a backtick, which stay active inside "…".
+  it('renders a shell-safe command — placeholders inert, a metacharacter plan path quoted', () => {
+    const nasty = 'a$plan`x.md';
+    mkdirSync(join(cwd, 'docs', 'plans'), { recursive: true });
+    writeFileSync(join(cwd, 'docs', 'plans', nasty), '# Plan: x\n');
+    const lines = foldScopeOf(['plan-execution'], { codex: READY, agy: READY });
+    assert.deepEqual(lines, expectedBlock(`docs/plans/${nasty}`, 'docs/plans/queue.md', 'docs/plans/queue.md, the planning lifecycle queue (no flow.debtQueue is declared)'));
+    assert.ok(lines[1].includes(`'docs/plans/a$plan\`x.md'`), 'the metacharacter path is single-quoted, so $ and the backtick are inert');
+    assert.ok(!lines[1].includes('--class <in-scope'), 'the class placeholder is never bare shell syntax');
+  });
+
+  it('plan-authoring prints NEITHER the block nor the checker (non-vacuous — the same tokens flip)', () => {
+    const r = run(['plan-authoring', '--override', 'review=council'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!SENTINEL.test(r.stdout), 'the rule is plan-execution-scoped');
+    assert.ok(!r.stdout.includes('fold-scope-cli.mjs'), 'and so is its checker command');
+  });
+
+  it('populates --queue from a declared flow.debtQueue and NAMES that register', () => {
+    writeConfig(JSON.stringify({ flow: FLOW }));
+    const r = run(['plan-execution'], { codex: READY, agy: READY });
+    assert.match(r.stdout, /--queue docs\/debt\.md$/m, 'the command is populated, never a placeholder');
+    assert.match(r.stdout, /docs\/debt\.md, the declared flow\.debtQueue/, 'which register was chosen is stated');
+  });
+
+  it('falls back to the planning lifecycle queue when none is declared, and names THAT', () => {
+    const r = run(['plan-execution'], { codex: READY, agy: READY });
+    assert.match(r.stdout, /--queue docs\/plans\/queue\.md$/m);
+    assert.match(r.stdout, /no flow\.debtQueue is declared/, 'the fallback is named, never silently assumed');
+    assert.deepEqual(foldScopeOf(['plan-authoring'], { codex: READY, agy: READY }), [], 'plan-authoring carries no structured block');
   });
 });
 

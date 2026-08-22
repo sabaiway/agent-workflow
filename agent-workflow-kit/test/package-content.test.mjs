@@ -128,6 +128,14 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/mcp.mjs',
       'tools/mcp-registration.mjs',
       'references/modes/mcp.md',
+      // the finding-scope checker — the pure rule and its CLI half. By NAME: the procedures advisor
+      // renders the CLI path into a copy-paste command, so a payload drop hands every deployed
+      // project a command that cannot run.
+      'tools/fold-scope.mjs',
+      'tools/fold-scope-cli.mjs',
+      // and the block tokenizer fold-scope.mjs reads its markdown through: a TOOL now imports this
+      // deployed payload leaf, so a drop breaks the checker at load, not merely an archiver run.
+      'references/scripts/markdown-blocks.mjs',
       // the cheap-lane subagent writer + its bundled vehicles
       'tools/cheap-agents.mjs',
       'references/agents/mechanical-sweep.md',
@@ -632,7 +640,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       and uninstall ask) + references/modes/mcp.md (the mode contract, which every mode doc
     //       ships). The two *.test.mjs siblings are stripped by files[]; all three are pinned by
     //       NAME above.
-    assert.equal(packed.length, 239, `tarball file count drifted (${packed.length} ≠ 239)`);
+    // 241 = 239 + the finding-scope checker (the fold channel): tools/fold-scope.mjs (the pure rule)
+    //       + tools/fold-scope-cli.mjs (argv + fs). Their *.test.mjs siblings are stripped by files[].
+    assert.equal(packed.length, 241, `tarball file count drifted (${packed.length} ≠ 241)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

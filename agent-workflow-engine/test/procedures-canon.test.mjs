@@ -108,6 +108,32 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     }
   });
 
+  // The finding-scope rule (the fold channel): a finding NAMES the invariant its fix enforces
+  // BEFORE the edit, and WHERE that invariant already lives decides the disposition. Pinned in the
+  // plan-execution review STEP only — plan-authoring settles boundaries and has no shipped behaviour
+  // to call a live defect in, so the queue and blocking arms mean nothing there. Both directions,
+  // like the AD-046 ledger pointer below: neither a silent deletion nor a scope-creeping copy into
+  // plan-authoring survives with tests green. (`stepOf` is declared below — the callback runs after
+  // the describe body, so the anchor stays with the per-round emission it belongs to.)
+  it('the plan-execution review STEP (5) carries the finding-scope rule + the two round bars; plan-authoring carries none', () => {
+    const step5 = stepOf(sectionOf(procedures, 'plan-execution'), 5).replace(/\s+/g, ' ');
+    assert.match(step5, /\*\*Finding scope\*\*/, 'the rule is named');
+    assert.match(step5, /NAMES the invariant its fix enforces, BEFORE the edit/, 'the decision is pre-edit, not post-hoc');
+    assert.match(step5, /\*\*fold here\*\*/, 'the in-scope arm');
+    assert.match(step5, /\*\*narrow fix\*\* for the found site ships now/, 'the deferral arm ships the narrow fix first');
+    assert.match(step5, /ONLY the generalization is queued/, 'only the generalization defers');
+    for (const field of ['the invariant', 'the origin `file:line`', 'the narrow fix', 'its proof', 'a residual exposure declared NOT live']) {
+      assert.ok(step5.includes(field), `a deferral row carries the field "${field}"`);
+    }
+    assert.match(step5, /\*\*blocking\*\* — the phase does not close, and it is never queued/, 'the blocking arm is never a queue row');
+    assert.match(step5, /changes a WRITE\/REMOVE decision or is a false statement in shipped text/, 'bar 1 — what counts as a finding');
+    assert.match(step5, /repeat finding in one subarea routes to SUBTRACTION, not a fourth patch/, 'bar 2 — a repeat subtracts');
+    const auth = sectionOf(procedures, 'plan-authoring').replace(/\s+/g, ' ');
+    for (const token of ['Finding scope', 'WRITE/REMOVE', 'SUBTRACTION']) {
+      assert.ok(!auth.includes(token), `plan-authoring must not carry "${token}" — the rule is plan-execution-scoped`);
+    }
+  });
+
   // The activity-aware LEDGER pointer (AD-046): the review-round ledger is plan-EXECUTION-scoped
   // (AD-045), so the canon points at it from the plan-execution review step ONLY — the plan-authoring
   // step keeps the tally + the triage classification vocabulary with NO tool pointer. Pinned in BOTH
