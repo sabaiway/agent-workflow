@@ -7,6 +7,28 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-22 — AD-108 the typed channel reaches a deployed project, and a veto check is subtracted after it worked (kit 7.0.0 — MAJOR for an `uninstall` outcome that stopped lying; every other member measured unchanged)
+
+The kit's stdio MCP server shipped in 6.0.0 and no project could see it — a client sees a
+project-scoped server only once the project declares it. `/agent-workflow-kit mcp` is that
+declaration: the `agent-workflow` entry in `.mcp.json` plus the enable key and two derived allow
+rules in `.claude/settings.json`, preview-first, with the exact entry on screen before consent.
+
+The decision worth keeping is the one that removed working code. A `disabledMcpjsonServers` check
+was built during review and generated seven findings across three rounds, because honouring that
+veto means reading it from every settings scope the client merges and each scope has its own masked,
+symlinked, malformed and unreadable states in which a hidden deny still yields a confident answer.
+It was **subtracted** and the limit stated by name instead. The same review generalised `uninstall`'s
+containment from one named directory to the whole parent chain, and gave an interrupted teardown a
+typed outcome that distinguishes a refusal proven pre-mutation from a possibly-partial failure.
+
+**That last change is what makes this a MAJOR.** An interrupted teardown used to return
+`{ applied: true }` — a run that had not finished, reported as one that had — and now refuses with a
+typed INCOMPLETE stop, with no alias and no deprecation window. This package sized exactly that shape
+as MAJOR twice before (4.0.0, 5.0.0) and stayed MINOR once (5.6.0) only because that release kept an
+alias. Three independent opinions were taken on the bump; the two that said MINOR gave no reasoning,
+the one that said MAJOR cited those precedent lines, and the citations were verified before the call.
+
 ## 2026-08-21 — AD-104 the plan canon becomes a capped index, and the grounding tool follows it (engine 3.0.0, kit 6.0.0, memory 4.5.2; codex-cli-bridge 3.5.0 and antigravity-cli-bridge 5.3.0 measured unchanged)
 
 One thing rides this train: the planning canon is rewritten, and every surface that quoted it moves

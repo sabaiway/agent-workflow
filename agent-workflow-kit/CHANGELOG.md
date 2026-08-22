@@ -4,6 +4,77 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 7.0.0 — `/agent-workflow-kit mcp` registers the typed channel in ONE project, and `uninstall` stops reporting an interrupted teardown as a success (AD-108)
+
+> ### ⚠ BREAKING — an `uninstall` run that silently passed can now refuse, and its plan reports more
+>
+> **The outcome flips for the same filesystem situation.** When a mutable surface changed between the
+> preflight and its own removal, `executePlan` passed over it and returned `{ applied: true }` — a
+> teardown that had not finished, reported as one that had. It now raises a typed `UNINSTALL_STOP`
+> whose message opens `the teardown is INCOMPLETE` and lists, separately, what was refused before it
+> was touched, what may be **partially** removed, and what had already been applied. There is no
+> alias and no deprecation window, which is the same shape this package twice sized as MAJOR —
+> **4.0.0** (a receipt that used to be accepted is refused) and **5.0.0** (a `--check` that silently
+> passed can now refuse); **5.6.0** stayed MINOR only because it kept the old field as an alias.
+>
+> **And it is not only the race.** `uninstall` previously read *through* a symlinked `.claude`, a
+> symlinked `settings.json` and a non-regular pre-commit hook without saying so; each is now a
+> REPORT_ONLY item read no further. For a project in any of those states the printed plan contains
+> **more items than before** — and for a CLI the report is public surface.
+>
+> **Upgrading:** nothing to change in a normal teardown, which is unaffected. `uninstall` is complete
+> **only on exit 0** — an `INCOMPLETE` stop is never a finished run. If you script it, branch on the
+> two lists rather than on the word, because they call for opposite actions:
+>
+> - **left untouched** — the removal was refused *before* it touched anything (containment, or a
+>   surface that stopped being provably ours). Nothing was changed by it: settle the tree and re-run.
+> - **may be partially removed** — a removal failed *part way* and the tool cannot tell what survived.
+>   **Do not re-run blind and do not proceed to a next step.** Inspect the named path by hand, decide
+>   what is left, and only then continue. The run stops at the first of these on purpose, so anything
+>   after it in the plan was not attempted either.
+
+**The server shipped, and no project could see it.** 6.0.0 bundled a stdio MCP server exposing the
+two promptless readers — `path_inventory` and `repo_search` — as typed tools whose arguments are
+named JSON fields rather than a string handed to a shell. Shipping it did nothing on its own: a
+client sees a project-scoped server only once the project **declares** it. This release is that
+declaration.
+
+`/agent-workflow-kit mcp` (guarded, preview-first) writes exactly two files: the `agent-workflow`
+stdio entry in **`.mcp.json`** at the project root, and `enabledMcpjsonServers` plus the two allow
+rules **derived from the server's own name and tool list** in `.claude/settings.json`. The exact
+entry is printed **before** consent is asked — registering a server means your client will run that
+command — and `--apply` writes `.mcp.json` first, then settings, merge-don't-clobber with each
+file's EOL kept. Where an OS sandbox masks `.mcp.json` with a device node it writes nothing and
+hands over **the entry alone** to merge, keeping every server it cannot see through the mask; a
+whole-file body would have deleted them. An existing `agent-workflow` entry that **structurally
+differs** (key order ignored) is refused unwritten.
+
+**A veto check was built, worked, and then subtracted.** `disabledMcpjsonServers` rejects a server
+in every mode, so a project can hold the entry, the enable and both rules and still have a dark
+channel. Honouring it means reading that key from every settings scope the client merges, and each
+scope has its own masked, symlinked, malformed and unreadable states in which a hidden deny still
+yields a confident answer — three review rounds each closed one such hole and opened the next. **A
+check that is wrong in states it cannot enumerate is worse than a stated limit**, so the limit is
+now stated by name in the mode contract and pinned by tests: `registered` means *what this mode
+writes is in place*, never *the client will load it*.
+
+**`uninstall` learned that containment is the whole parent chain.** Guarding one named container is
+a ladder with no top — close `.claude` and the next symlink moves to `.claude/hooks`, then to
+`.git` — so the teardown now walks from the project root before every read and every removal, with
+the project as the containment root. A surface that changes after the preflight is no longer passed
+over under a successful report: a removal **refused before it touched anything** reads *left
+untouched*, one that **failed part way** reads *possibly partially removed* and stops the run, and
+both are fields of one typed INCOMPLETE outcome.
+
+Also: the promptless-lane hint the gate hook delivers now names the typed tools before the CLI
+lanes; `uninstall` reports both MCP seams as KEEP with the exact edit; and `doc-parity` binds the
+registration's five public strings into both the mode contract and the uninstall KEEP list.
+
+Source-size raises accepted for: the typed channel gains its registration half — the guarded mcp
+writer, its read-only leaf, and the registry rows every drift guard keeps. The uninstall growth is a
+15-round diff council: whole-chain containment, a typed incomplete-teardown lane, per-cause
+classification.
+
 ## 6.0.0 — `grounding --plan` follows the canon it grounds: the three literal headings (AD-104; ships with engine 3.0.0 / memory 4.5.2)
 
 **The tool required a heading the canon had deleted.** `grounding --plan` demanded `## Approach` —
