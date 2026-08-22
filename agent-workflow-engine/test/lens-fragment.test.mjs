@@ -76,8 +76,11 @@ const DISCIPLINE_TOKENS = [
   // writer-economy (AD-054; strip-the-kit rewording) — evidence declarations batch, stage
   // writers combine
   'unbatched writer scatter',
-  // finding scope (the fold channel) — the rule's three arms plus the two bars each round declares
-  'finding scope',
+  // finding scope (the fold channel) — the rule's three arms plus the two bars each round declares.
+  // The token carries its SCOPE: this lens intro applies every bullet to plan-AUTHORING as well, and
+  // the rule is plan-execution's alone (a plan has no shipped behaviour to call a live defect in), so
+  // an unqualified bullet would contradict the canon it is rendered from.
+  'finding scope (plan-execution)',
   'narrow fix',
   'never queued',
   'write/remove decision',

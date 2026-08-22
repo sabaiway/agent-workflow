@@ -4,6 +4,45 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 3.1.0 — a finding NAMES the invariant its fix enforces, and the acceptance criteria become a machine-readable list (AD-110)
+
+A review round produces findings, and the canon never said which of them the phase owes. The two
+ways of getting that wrong are silent and opposite: work the plan already requires gets deferred into
+a queue row nobody reads, and work that was never in scope gets folded in until the round count is
+the only thing that converges. `plan-execution` step 5 now carries the **finding-scope rule**.
+
+- **`procedures.md` — the rule, in the plan-execution review step.** Every finding NAMES the
+  invariant its fix would enforce, BEFORE the edit, in every round, and where that invariant already
+  lives decides the arm. Already an acceptance criterion → **fold here**. It would have to be ADDED →
+  the **narrow fix** for the found site ships now (red first) and ONLY the generalization is queued,
+  as a row carrying five fields: the invariant, the origin `file:line`, the narrow fix, its proof,
+  and a residual exposure declared NOT live. No correct narrow fix → **blocking**: the phase does not
+  close, and it is never queued.
+- **Two round bars ride along, declared before each round.** A finding counts only if it changes a
+  WRITE/REMOVE decision or is a false statement in shipped text; a repeat finding in one subarea
+  routes to SUBTRACTION, not a fourth patch.
+- **Plan-execution scope only.** Plan-authoring settles boundaries and has no shipped behaviour to
+  call a live defect in, so it carries none of the three — pinned in both directions, so neither a
+  silent deletion nor a scope-creeping copy survives with tests green.
+- **`planning.md` — the acceptance criteria ARE the `- ` bullets under `## Verification`, and they
+  are the whole list.** Nothing outside a bullet is one, and a claim matches WITHIN ONE bullet,
+  because bullets are reordered, split and deleted independently. A criterion needing two bullets is
+  two criteria. A Verification written as prose declares NO criteria and every finding against that
+  plan is a new invariant — the closed list fails closed.
+- **The agent-rules lens gains the rule as one bullet, and that bullet carries its SCOPE.** The lens
+  intro applies every bullet to plan-AUTHORING as well, so an unqualified bullet would have
+  contradicted the canon it is rendered from — it opens `Finding scope (plan-execution)` and says
+  plan-review carries none of it. The outgoing body is appended to the append-only prior store, so
+  every deployed `agent_rules.md` still carrying the previous canonical body converges on first
+  touch.
+
+Engine-only release: no migration, no structural change to a deployed `docs/ai/`, and the
+deployment-lineage stamp does not move. One thing in a deployment DOES change, stamp-independently —
+the `agent_rules.md` lens region itself, which the kit's `lens-region` reconcile refreshes on its
+next touch for any deployment still carrying a known canonical body; a customized region is preserved
+verbatim and flagged. The checker the rule names ships in **agent-workflow-kit 7.1.0**
+(`fold-scope`).
+
 ## 3.0.0 — the plan canon becomes a capped index: a module ledger whose rows ARE the steps (AD-104)
 
 A plan is an **index plus constraints**, never a transcript. The executor reads the repository; the

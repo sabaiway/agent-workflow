@@ -7,6 +7,44 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-22 — AD-110 a finding names the invariant its fix enforces, and the fold channel gets a checker (engine 3.1.0 + kit 7.1.0, both MINOR; memory NOT published here, stays 4.5.2)
+
+**Why memory is not in this release, although a file inside it changed.** Its bundled
+`agent_rules.md` template is re-rendered in the repository. That file is deliberately divergent
+between kit and memory and is hard-excluded from whole-file parity; what IS pinned is its lens
+REGION — both templates must carry the CURRENT render of the same engine fragment, so a fragment
+edit moves both or fails. It is not published: the engine's own contract
+(`agent-workflow-engine/SKILL.md`) says a canon wording change edits the lens fragment plus its
+append-only prior store and ships as an **engine-only release**, and `lens-region.mjs` gives the
+mechanism — the kit holds no prior constants of its own, so a deployment seeded from the published
+memory 4.5.2 carries a KNOWN prior body and its lens region converges on the next kit touch. The
+re-rendered template rides memory's next release.
+
+
+A review round produces findings, and until now nothing said which of them the phase owes. Measured
+on this repository: 8 rounds where the declared scope closed at round 2, and 15 in the 7.0.0 cycle —
+each one re-deciding, per finding and from scratch, whether it belonged to the work in hand.
+
+The rule is one sentence with three arms. Every finding NAMES the invariant its fix would enforce,
+BEFORE the edit, and where that invariant already lives decides the arm: already an acceptance
+criterion of the phase, fold it here; it would have to be ADDED, ship the narrow fix for the found
+site now and queue ONLY the generalization; no correct narrow fix, it is blocking and the phase does
+not close. What makes the arms checkable rather than rhetorical is the second half: the acceptance
+criteria ARE the `- ` bullets under a plan's `## Verification`, and they are the whole list — so
+`fold-scope` can refuse a claim whose reference does not resolve, and refuse a deferral whose queue
+row is absent, closed, ambiguous, self-contradictory, or short of one of its five fields.
+
+The slice is deliberately ADVISORY: nothing records that the checker ran. Binding it to a receipt a
+gate reads is the next slice, and saying so is the point — a mechanism that cannot yet prove it ran
+should not be described as if it could.
+
+Its own execution is the first evidence either way. Eight council rounds on this diff, 22 findings
+folded, two rebutted with a live probe, and exactly ONE deferred — as a five-field queue row the
+shipped checker itself accepts. The second bar (a repeat in one subarea routes to SUBTRACTION) fired
+twice against this change's own code: a hand-rolled markdown grammar was deleted in favour of the
+block model the archivers already read through, and a pattern asking two questions at once was split
+so it asks one.
+
 ## 2026-08-22 — AD-108 the typed channel reaches a deployed project, and a veto check is subtracted after it worked (kit 7.0.0 — MAJOR for an `uninstall` outcome that stopped lying; every other member measured unchanged)
 
 The kit's stdio MCP server shipped in 6.0.0 and no project could see it — a client sees a

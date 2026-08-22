@@ -4,6 +4,37 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 7.1.0 — `fold-scope`: the fold channel gets a checker that refuses a claim whose reference does not resolve (AD-110)
+
+The engine canon now asks every finding to NAME the invariant its fix enforces before the edit
+(engine **3.1.0**). Prose cannot check that a named invariant is really where you say it is.
+
+- **`tools/fold-scope.mjs` + `tools/fold-scope-cli.mjs`** — the pure rule and its CLI half:
+  `--class in-scope|new-invariant|blocking`, `--claim "<the invariant>"`, `--plan <plan-file>`,
+  `--queue <queue-file>`. Exit 0 for every ACCEPT, non-zero for every REFUSE, one case per arm.
+- **`--plan` and `--queue` are REQUIRED and never defaulted.** A project can have two registers that
+  both look like "the queue" — the planning lifecycle's `docs/plans/queue.md` and a declared
+  `flow.debtQueue` — and a checker that guessed would attest a deferral against the wrong file.
+- **What it refuses**, each naming the lane out of it: an `in-scope` claim matching no acceptance
+  bullet; a `new-invariant` whose invariant IS an acceptance bullet (route to fold); a deferral with
+  no queue row, with several, whose row title carries `DONE`/`CLOSED`, that repeats a field label,
+  that is missing a field (named, including an `origin` that is not a `file:line`), whose claim is
+  not inside the row's `invariant` field, or whose residual exposure is declared live (route to
+  blocking) or declares neither.
+- **`/agent-workflow-kit procedures plan-execution` renders the populated command** — under solo,
+  reviewed AND council, because the rule routes every finding and a Solo project must see the checker
+  too — and NAMES which of the two registers it chose for `--queue`. Every PATH operand goes through
+  the family's shell quoter (bare when the value is already safe, single-quoted when it is not), and
+  the two placeholders are single-quoted literals so their angle brackets and pipe are inert — the
+  line is safe to paste as rendered. `--json` gains an additive `foldScope` array.
+- **Markdown is read through `references/scripts/markdown-blocks.mjs`**, the block model the
+  archivers already use, so fenced examples, heading levels and CRLF are solved once for the family;
+  a document that model refuses is a loud refusal, never a silent empty read.
+
+**Advisory by design:** nothing records that the checker ran, so a skipped or late call is
+indistinguishable from a pre-edit declaration. A fingerprint-bound receipt a gate reads is the next
+slice. Additive throughout — no existing command, flag, output field or exit code changed.
+
 ## 7.0.0 — `/agent-workflow-kit mcp` registers the typed channel in ONE project, and `uninstall` stops reporting an interrupted teardown as a success (AD-108)
 
 > ### ⚠ BREAKING — an `uninstall` run that silently passed can now refuse, and its plan reports more
