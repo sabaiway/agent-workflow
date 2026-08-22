@@ -53,6 +53,9 @@ export const LIBRARY_ONLY_MODULES = Object.freeze({
   // command that APPLIES that decision is the ensure CLI, and the one that edits the config by intent
   // is set-recipe.
   'orchestration-config.mjs': '/agent-workflow-kit set-recipe',
+  // Named by references/modes/mcp.md as the read half the advisor and uninstall ask. It only ever
+  // REPORTS; the command that acts on what it reports is the mode itself.
+  'mcp-registration.mjs': '/agent-workflow-kit mcp',
 });
 
 // The frozen refusal line. One line, names the module, names the command.

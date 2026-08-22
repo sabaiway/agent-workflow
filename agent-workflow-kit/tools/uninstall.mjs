@@ -27,10 +27,24 @@ import { join, resolve, dirname, basename, isAbsolute } from 'node:path';
 import os from 'node:os';
 import { isDirectRun } from './direct-run.mjs';
 import { surveyFamily, surveyProject, FAMILY_MEMBERS, classifyMember, OK } from './family-registry.mjs';
-import { removeTreeManaged, unlinkManaged, MANAGED_LINK_CONFLICT } from './fs-safe.mjs';
+import { assertContainedRealPath, removeTreeManaged, unlinkManaged, MANAGED_LINK_CONFLICT } from './fs-safe.mjs';
 import { deriveLinks } from './setup-backends.mjs';
 import { hideFootprint, excludePath } from './hide-footprint.mjs';
 import { HOOK_FILE_REL as GATE_HOOK_FILE_REL, readBundledHook } from './gate-hook.mjs';
+// The MCP registration's two seams are recognized through the registration LEAF — its constants and
+// its own entry decision — so this reporter can never disagree with the writer about what is ours.
+import {
+  CLAUDE_DIR_REL,
+  DEFAULT_SERVER_PATH as MCP_SERVER_PATH,
+  ENABLED_KEY as MCP_ENABLED_KEY,
+  MCP_JSON_REL,
+  SERVER_NAME as MCP_SERVER_NAME,
+  SERVERS_KEY as MCP_SERVERS_KEY,
+  STATE as MCP_STATE,
+  allowRulesFor,
+  buildServerEntry,
+  decideMcpJsonText,
+} from './mcp-registration.mjs';
 
 // ── surface classes ────────────────────────────────────────────────────────────
 export const SAFE_REMOVE = 'safe-remove';
@@ -172,10 +186,36 @@ export const buildPlan = ({ family, project = null, projectDir = null, member = 
       items.push({ surface: 'fence', path: fencePath, class: MANAGED_MARKER, reason: 'hidden-mode managed block (removed via the existing unhide path; only the fenced lines)' });
     }
 
-    const hookPath = join(dir, '.git/hooks/pre-commit');
-    const hook = (() => {
+    // Plan time reads through the same parent chains the executor removes through, so it asks the
+    // same question: a hook reached only by traversing a symlink is neither read nor planned.
+    // Validates the PARENT CHAIN only. Walking the leaf too collapsed a symlinked settings file or
+    // placed hook into "absent", which made their REPORT_ONLY branches unreachable and dropped the
+    // surface from the plan entirely — worse than reporting it. The leaf is classified below, by its
+    // own no-follow lstat, and reported without being followed.
+    const reachable = (target) => {
       try {
-        return fs.exists(hookPath) ? String(fs.readFile(hookPath, 'utf8')) : null;
+        assertContainedRealPath(dir, dirname(target), { lstat: fs.lstat });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const hookPath = join(dir, '.git/hooks/pre-commit');
+    // `reachable` answers for the PARENT CHAIN only (by design — walking the leaf dropped surfaces
+    // from the plan). The leaf therefore needs its own no-follow classification before any read: a
+    // symlinked hook would expose an out-of-tree file, and a FIFO would block planning outright.
+    const hookStat = reachable(hookPath) ? lstatNoFollow(hookPath, fs.lstat) : null;
+    if (hookStat !== null && (hookStat.isSymbolicLink() || !hookStat.isFile())) {
+      items.push({
+        surface: 'hook', path: hookPath, class: REPORT_ONLY,
+        reason: 'a pre-commit hook path exists but is a symlink or not a regular file — reported UNREAD and left untouched; check it by hand',
+        hand: `inspect ${shq(hookPath)} by hand — this tool neither follows nor removes it`,
+      });
+    }
+    const hook = (() => {
+      if (hookStat === null || hookStat.isSymbolicLink() || !hookStat.isFile()) return null;
+      try {
+        return String(fs.readFile(hookPath, 'utf8'));
       } catch {
         return null;
       }
@@ -195,10 +235,43 @@ export const buildPlan = ({ family, project = null, projectDir = null, member = 
         return null;
       }
     };
+    // The `.claude` CONTAINER is classified before anything inside it is read. Path resolution
+    // follows an INTERMEDIATE symlink (a no-follow open guards the final component only), so reading
+    // first would let a symlinked `.claude` put a settings file from OUTSIDE the work tree into this
+    // report — as a claim about surfaces this family placed. An ABSENT container is ordinary (the
+    // reads below simply find nothing); a symlinked or non-directory one is reported UNREAD.
+    const claudeDirPath = join(dir, CLAUDE_DIR_REL);
+    const claudeDirStat = lstatNoFollow(claudeDirPath, fs.lstat);
+    // NOT-A-DIRECTORY is the whole class, and every member of it blinds the reads below: a symlink
+    // escapes the work tree, and a device / FIFO / socket turns each of them into ENOTDIR. Naming
+    // only symlink-or-regular-file left the special classes to fail as an unhandled error instead.
+    const claudeDirForeign = claudeDirStat !== null && !claudeDirStat.isDirectory();
+    if (claudeDirForeign) {
+      // Its own surface AND its own hand line. Under `settings` the report would tell the maintainer
+      // to remove a settings KEY from a directory; under the generic fallback it would suggest
+      // `rm -rf` on a path this tool has deliberately refused to look inside.
+      items.push({
+        surface: 'claude-dir', path: claudeDirPath, class: REPORT_ONLY,
+        reason: `${CLAUDE_DIR_REL} exists but is not a directory — nothing inside it was read, so no settings or hook surface is reported from here`,
+        hand: `inspect ${shq(claudeDirPath)} by hand — it exists but is not a directory, and this tool neither reads through it nor removes it`,
+      });
+    }
+    // A settings file the tool will not read is REPORTED rather than dropped: the seams it may hold
+    // are exactly what a teardown owes the maintainer, and silence about them is the worse answer.
     const settingsPath = join(dir, '.claude/settings.json');
-    const settings = readRaw(settingsPath);
+    const settingsStat = claudeDirForeign || !reachable(settingsPath) ? null : lstatNoFollow(settingsPath, fs.lstat);
+    const settingsUnread = !claudeDirForeign && reachable(settingsPath) && settingsStat !== null
+      && (settingsStat.isSymbolicLink() || !settingsStat.isFile());
+    if (settingsUnread) {
+      items.push({
+        surface: 'settings', path: settingsPath, class: REPORT_ONLY,
+        reason: `${SETTINGS_REL_TXT} is a symlink or not a regular file — left UNREAD and untouched, so no seam in it is reported; check it by hand`,
+        hand: `inspect ${shq(settingsPath)} by hand — this tool neither follows nor edits it`,
+      });
+    }
+    const settings = claudeDirForeign || !reachable(settingsPath) || settingsUnread ? null : readRaw(settingsPath);
     const settingsSeams = detectSettingsSeams(settings);
-    if (settingsSeams.attribution || settingsSeams.permissions || settingsSeams.gateHook) {
+    if (settingsSeams.attribution || settingsSeams.permissions || settingsSeams.gateHook || settingsSeams.mcp) {
       items.push({
         surface: 'settings',
         path: settingsPath,
@@ -216,7 +289,11 @@ export const buildPlan = ({ family, project = null, projectDir = null, member = 
     // itself would warn about; while any entry is present, all surfaces are reported as one bundle
     // (edit settings first, re-run to remove the file).
     const localSettingsPath = join(dir, '.claude/settings.local.json');
-    const localSeams = detectSettingsSeams(readRaw(localSettingsPath));
+    // Same leaf discipline as the hook: classified no-follow before any read, so a symlinked local
+    // settings file is not followed out of the tree and a non-regular one is never opened.
+    const localStat = !claudeDirForeign && reachable(localSettingsPath) ? lstatNoFollow(localSettingsPath, fs.lstat) : null;
+    const localReadable = localStat !== null && !localStat.isSymbolicLink() && localStat.isFile();
+    const localSeams = detectSettingsSeams(localReadable ? readRaw(localSettingsPath) : null);
     if (localSeams.gateHook) {
       items.push({
         surface: 'settings',
@@ -227,7 +304,9 @@ export const buildPlan = ({ family, project = null, projectDir = null, member = 
       });
     }
     const gateHookPath = join(dir, GATE_HOOK_FILE_REL);
-    const gateHookStat = lstatNoFollow(gateHookPath, fs.lstat);
+    // The placed hook lives INSIDE `.claude` too, so a foreign container blinds this probe as well —
+    // its own no-follow lstat guards the leaf, never the path that reaches it.
+    const gateHookStat = claudeDirForeign || !reachable(gateHookPath) ? null : lstatNoFollow(gateHookPath, fs.lstat);
     // lstat no-follow BEFORE reading: a symlink (or any non-regular file) at the placed path is
     // never a kit-placed hook we remove — reading through it would classify a symlink-to-bundle as
     // SAFE_REMOVE and only removeTreeManaged would catch it at mutate time, AFTER earlier removals.
@@ -268,6 +347,40 @@ export const buildPlan = ({ family, project = null, projectDir = null, member = 
       }
     }
 
+    // The MCP registration's file seam (Mode: mcp). REPORT_ONLY without exception: `.mcp.json` is a
+    // shared declaration that may list servers this kit never placed, so it is never rewritten and
+    // never removed — only the entry to delete is named. lstat no-follow BEFORE any read: a symlink
+    // or a sandbox device mask at this path is reported UNREAD, never followed and never parsed.
+    const mcpJsonPath = join(dir, MCP_JSON_REL);
+    const mcpStat = lstatNoFollow(mcpJsonPath, fs.lstat);
+    if (mcpStat !== null && (mcpStat.isSymbolicLink() || !mcpStat.isFile())) {
+      items.push({
+        surface: 'mcp-json', path: mcpJsonPath, class: REPORT_ONLY,
+        reason: `a file exists at ${MCP_JSON_REL} but is a symlink or not a regular file (an OS sandbox device mask reads exactly this way) — reported unread and left untouched; check it by hand from outside the sandbox`,
+        // Every arm of this surface carries its OWN hand line: `.mcp.json` is a SHARED declaration
+        // that may list servers this kit never placed, and the generic fallback would offer `rm -rf`.
+        hand: `inspect ${shq(mcpJsonPath)} by hand from outside the sandbox — this tool neither follows nor removes it`,
+      });
+    } else if (mcpStat !== null) {
+      const mcpText = readRaw(mcpJsonPath);
+      const decided = mcpText == null ? null : decideMcpJsonText(mcpText, buildServerEntry(MCP_SERVER_PATH));
+      if (decided === null || decided.state !== MCP_PRESENT) {
+        // "Is our entry there?" has no answer over bytes that could not be read or parsed — and
+        // treating no-answer as NO made the file vanish from a report whose whole job is completeness.
+        items.push({
+          surface: 'mcp-json', path: mcpJsonPath, class: REPORT_ONLY,
+          reason: `${MCP_JSON_REL} could not be read or parsed (${decided?.reason ?? 'unreadable'}) — left untouched; check it by hand for an "${MCP_SERVER_NAME}" entry`,
+          hand: `inspect ${shq(mcpJsonPath)} by hand and remove any "${MCP_SERVER_NAME}" entry under "${MCP_SERVERS_KEY}" — never delete the file, it may declare servers this kit never placed`,
+        });
+      } else if (decided.hasEntry) {
+        items.push({
+          surface: 'mcp-json', path: mcpJsonPath, class: REPORT_ONLY,
+          reason: `an MCP server entry named "${MCP_SERVER_NAME}" is present in ${MCP_JSON_REL} — remove that entry by hand to unregister the typed channel (the file may declare servers this kit never placed, so it is never rewritten or removed)`,
+          hand: `edit ${shq(mcpJsonPath)} → remove the "${MCP_SERVER_NAME}" entry under "${MCP_SERVERS_KEY}" (keep every other server)`,
+        });
+      }
+    }
+
     for (const rel of REPORT_PATHS) {
       const p = join(dir, rel);
       if (fs.exists(p)) {
@@ -290,7 +403,11 @@ export const executePlan = (plan, opts = {}, deps = {}) => {
   const unlink = deps.unlink ?? unlinkManaged;
   const unhide = deps.hideFootprint ?? hideFootprint;
   const classify = deps.classify ?? classifyMember;
-  const rmFile = deps.rmFile ?? ((p) => removeTreeManaged(p, dirname(p), deps)); // marker hook is a regular file
+  // `root` names the containment boundary the removal must stay inside. It defaults to the file's own
+  // parent (the marker hook in .git/hooks), but a surface living under `.claude` passes the PROJECT
+  // dir instead: with the parent as root, a symlinked `.claude` is inside the boundary by
+  // construction and the guard can never fire.
+  const rmFile = deps.rmFile ?? ((p, root) => removeTreeManaged(p, root ?? dirname(p), deps));
 
   const mutable = plan.items.filter((i) => i.class === SAFE_REMOVE || i.class === MANAGED_MARKER);
   // `reported` (returned + summarized) = everything we do NOT mutate: user-authored (report-only) AND
@@ -309,6 +426,62 @@ export const executePlan = (plan, opts = {}, deps = {}) => {
   // ours, a wrapper turned foreign, a hook that lost our marker, or a malformed fence (validated by a
   // dry-run unhide — codex #2 — so the fence can't blow up AFTER wrappers/skills were already removed).
   // (Plan-time STOP items are NOT a conflict — they were never ours; they are reported + left, above.)
+  // Guarding ONE named container is a ladder with no top: close `.claude` and the next symlink moves
+  // to `.claude/hooks`, then to `.git`. The property is the WHOLE parent chain from the project root,
+  // and the kit already owns the walk that decides it — so this asks that primitive instead of adding
+  // a third bespoke check. Re-read LIVE at each call site, never captured: the entire point is that
+  // the chain can change, so a cached answer describes a moment that has already passed.
+  const reachedSafely = (target) => {
+    if (!plan.projectDir) return true;
+    try {
+      assertContainedRealPath(plan.projectDir, target, { lstat: fs.lstat });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // The ONE classification both phases use, so the preflight and the mutate arm can never disagree
+  // about what a leaf is. A non-ENOENT lstat failure is `unreadable`, NOT absent — the distinction the
+  // whole late-conflict lane rests on.
+  // Every call site runs AFTER `reachedSafely`, whose walk already lstats this same leaf: it turns a
+  // non-ENOENT failure AND a symlink into their own conflicts before this is reached. So both a
+  // separate unreadable branch and a separate symlink branch here were dead code, and both are gone
+  // rather than covered — what still reaches this is the class that walk permits: a non-regular,
+  // non-symlink leaf (a device, a FIFO, a socket), which must never be opened.
+  const readableRegular = (target) => {
+    const st = lstatNoFollow(target, fs.lstat);
+    if (st === null) return { kind: 'absent' };
+    if (!st.isFile()) return { kind: 'foreign', reason: 'is not a regular file — left untouched, and never opened' };
+    return { kind: 'regular', st };
+  };
+
+  // A surface that changes, or whose removal REFUSES, between the conflict pass and its own mutation
+  // is a LATE conflict: earlier mutations have already happened, so the zero-mutation guarantee no
+  // longer applies and pretending otherwise would be the lie. Every mutating branch routes through
+  // here — a contract implemented for two surfaces while documented for all of them is the same
+  // silent-shape failure it exists to prevent.
+  const lateConflicts = [];
+  const partialFailures = [];
+  // "left untouched" is a CLAIM, and only a containment/ownership REFUSAL proves it: those are raised
+  // before the primitive touches anything. A recursive delete or a fence write that throws part way
+  // has already changed the tree, so it is reported as POSSIBLY PARTIAL — and it stops the run,
+  // because continuing to remove later surfaces on top of an unknown state is not a teardown.
+  const isProvenRefusal = (err) =>
+    err?.code === MANAGED_LINK_CONFLICT || err?.code === UNINSTALL_STOP || /refusing to/.test(String(err?.message ?? ''));
+  const attemptRemoval = (label, run) => {
+    if (partialFailures.length) return false; // stop after an unknown-state failure
+    try {
+      run();
+      return true;
+    } catch (err) {
+      const note = `${label}: ${err?.message ?? err}`;
+      if (isProvenRefusal(err)) lateConflicts.push(`${note} — refused before any change, left untouched`);
+      else partialFailures.push(`${note} — it MAY BE PARTIALLY removed; the tool cannot tell`);
+      return false;
+    }
+  };
+
   const conflicts = [];
   for (const item of mutable) {
     if (item.surface === 'skill') {
@@ -320,24 +493,49 @@ export const executePlan = (plan, opts = {}, deps = {}) => {
       const info = inspectWrapper(item.path, item.expectedSrc, fs);
       if (info.state === 'conflict') conflicts.push(`${item.path} is not ours (${info.reason})`);
     } else if (item.surface === 'hook') {
-      const present = (() => { try { return fs.exists(item.path); } catch { return false; } })();
-      if (present) {
-        const content = (() => { try { return String(fs.readFile(item.path, 'utf8')); } catch { return ''; } })();
-        if (!content.includes(HOOK_MARKER_SUFFIX)) conflicts.push(`${item.path} no longer carries our marker`);
+      // The marker hook lives under `.git/`, which is a parent chain like any other: a symlinked
+      // `.git` makes the read below describe a file outside the project, and the removal delete it.
+      if (!reachedSafely(item.path)) {
+        conflicts.push(`${item.path} is no longer reachable without traversing a symlink — refusing to read or remove anything through it`);
+        continue;
       }
+      // lstat, not exists: `exists` answers FALSE for a merely unreadable leaf, which would read as
+      // the one state documented benign (vanished), and it follows a symlink. Only ENOENT is benign;
+      // a non-regular leaf is classified and refused BEFORE any read, because reading a FIFO blocks.
+      const st = readableRegular(item.path);
+      if (st.kind === 'absent') continue;
+      if (st.kind === 'foreign') {
+        conflicts.push(`${item.path} ${st.reason}`);
+        continue;
+      }
+      const content = (() => { try { return String(fs.readFile(item.path, 'utf8')); } catch { return null; } })();
+      if (content == null) conflicts.push(`${item.path} could not be read — refusing to decide whether it is ours`);
+      else if (!content.includes(HOOK_MARKER_SUFFIX)) conflicts.push(`${item.path} no longer carries our marker`);
     } else if (item.surface === 'gate-hook') {
       // Same AD-011 recheck as the marker hook: the file must STILL be a regular (non-symlink)
       // file, byte-identical to the bundle, AND still unwired — a symlink swapped in, a divergence,
       // or a new settings entry since the plan ⇒ zero mutations. lstat no-follow FIRST: a symlink
       // read through by fs.readFile would masquerade as the bundle and slip past this guard.
-      const st = lstatNoFollow(item.path, fs.lstat);
-      if (st !== null) {
-        if (st.isSymbolicLink() || !st.isFile()) conflicts.push(`${item.path} is no longer a regular file (symlink or special file)`);
-        else {
-          const content = (() => { try { return String(fs.readFile(item.path, 'utf8')); } catch { return null; } })();
-          if (content !== item.expectedContent) conflicts.push(`${item.path} no longer matches the kit bundle`);
-          else if (gateHookWiredNow(plan.projectDir, fs)) conflicts.push(`${item.path} became wired in Claude settings since the plan`);
-        }
+      //
+      // The CONTAINER is rechecked before the leaf, because the leaf's no-follow lstat resolves
+      // THROUGH it: a `.claude` swapped for a symlink since the plan makes every check below describe
+      // a file outside the project, and the removal would then delete that file.
+      if (!reachedSafely(item.path)) {
+        conflicts.push(`${item.path} is no longer reachable without traversing a symlink — refusing to read or remove anything through it`);
+        continue;
+      }
+      const cls = readableRegular(item.path);
+      if (cls.kind === 'foreign') {
+        conflicts.push(`${item.path} ${cls.reason}`);
+        continue;
+      }
+      if (cls.kind === 'regular') {
+        const content = (() => { try { return String(fs.readFile(item.path, 'utf8')); } catch { return null; } })();
+        // Unreadable is its own cause — reporting it as a bundle mismatch states a comparison that
+        // never happened.
+        if (content == null) conflicts.push(`${item.path} could not be read — refusing to decide whether it is the kit bundle`);
+        else if (content !== item.expectedContent) conflicts.push(`${item.path} no longer matches the kit bundle`);
+        else if (gateHookWiredNow(plan.projectDir, fs)) conflicts.push(`${item.path} became wired in Claude settings since the plan`);
       }
     } else if (item.surface === 'fence') {
       // Validate the unhide WITHOUT writing — a malformed managed block throws here, before any mutation,
@@ -359,45 +557,122 @@ export const executePlan = (plan, opts = {}, deps = {}) => {
 
   // ── MUTATE (wrappers first, then skill dirs, then project surfaces) ──
   for (const item of mutable.filter((i) => i.surface === 'wrapper')) {
-    const realBindir = (() => { try { return fs.realpath(dirname(item.path)); } catch { return dirname(item.path); } })();
-    const action = unlink(join(realBindir, basename(item.path)), item.expectedSrc, realBindir, deps);
-    if (action === 'unlinked') result.unlinked.push(item.path);
+    attemptRemoval(item.path, () => {
+      const realBindir = (() => { try { return fs.realpath(dirname(item.path)); } catch { return dirname(item.path); } })();
+      const action = unlink(join(realBindir, basename(item.path)), item.expectedSrc, realBindir, deps);
+      if (action === 'unlinked') result.unlinked.push(item.path);
+    });
   }
   for (const item of mutable.filter((i) => i.surface === 'skill')) {
-    const action = removeTree(item.path, dirname(item.path), deps);
-    if (action === 'removed') result.removed.push(item.path);
+    attemptRemoval(item.path, () => {
+      // Ownership is re-established immediately before the RECURSIVE delete, not only in the conflict
+      // pass: a dir replaced in between would otherwise be removed whole on the strength of a check
+      // that described something else. The shipped contract promises exactly this.
+      const now = classify(FAMILY_MEMBERS.find((m) => m.name === item.member), deps);
+      if (!(now.installed && now.manifestState === OK && now.skillDir === item.path)) {
+        throw stop(`${item.path} stopped being a proven-managed ${item.member} skill after the preflight — refusing to remove it`);
+      }
+      const action = removeTree(item.path, dirname(item.path), deps);
+      if (action === 'removed') result.removed.push(item.path);
+    });
   }
   for (const item of mutable.filter((i) => i.surface === 'fence')) {
-    const r = unhide({ dir: plan.projectDir, unhide: true }, deps);
-    result.unhidden = r && r.action === 'unhidden';
+    attemptRemoval(item.path, () => {
+      const r = unhide({ dir: plan.projectDir, unhide: true }, deps);
+      result.unhidden = r && r.action === 'unhidden';
+    });
   }
   for (const item of mutable.filter((i) => i.surface === 'hook')) {
     // Marker-aware even at mutate time (belt-and-suspenders past the preflight): remove the hook ONLY
-    // while it still carries our marker, so a user hook can never be deleted even under a TOCTOU race.
-    const content = (() => { try { return fs.exists(item.path) ? String(fs.readFile(item.path, 'utf8')) : null; } catch { return null; } })();
-    if (content != null && content.includes(HOOK_MARKER_SUFFIX)) {
-      rmFile(item.path);
-      result.hookRemoved = true;
+    // while it still carries our marker. That closes the STATIC case — a user hook standing there is
+    // never deleted. It is NOT a race guarantee: substitution of one regular file for another between
+    // this read and the path-based removal stays open, for the reason named in mcp-registration.mjs.
+    if (!reachedSafely(item.path)) {
+      lateConflicts.push(`${item.path} became reachable only through a symlink after the preflight — left untouched`);
+      continue;
     }
+    // A surface that merely VANISHED stays benign — the mutate is a no-op and nothing is owed. Every
+    // OTHER mismatch is a late conflict: passing over a hook that changed, or that could not be read,
+    // and then reporting `applied: true` is the silent skip this arm claims not to have.
+    const st = readableRegular(item.path);
+    if (st.kind === 'absent') continue;
+    if (st.kind === 'foreign') {
+      lateConflicts.push(`${item.path} ${st.reason}`);
+      continue;
+    }
+    const content = (() => { try { return String(fs.readFile(item.path, 'utf8')); } catch { return null; } })();
+    if (content == null) {
+      lateConflicts.push(`${item.path} could not be read at removal time — left untouched`);
+      continue;
+    }
+    if (!content.includes(HOOK_MARKER_SUFFIX)) {
+      lateConflicts.push(`${item.path} no longer carries our marker (it changed after the preflight) — left untouched`);
+      continue;
+    }
+    if (attemptRemoval(item.path, () => rmFile(item.path, plan.projectDir))) result.hookRemoved = true;
   }
   for (const item of mutable.filter((i) => i.surface === 'gate-hook')) {
     // Bundle-identity + unwired re-verified at mutate time too (the TOCTOU posture above), lstat
     // no-follow FIRST so a symlink swapped in cannot be read-through as the bundle and removed: a
     // file that changed, turned into a symlink, or got wired between preflight and now is left
     // untouched, never removed.
-    const st = lstatNoFollow(item.path, fs.lstat);
-    const content = st !== null && st.isFile() && !st.isSymbolicLink()
-      ? (() => { try { return String(fs.readFile(item.path, 'utf8')); } catch { return null; } })()
-      : null;
-    if (content != null && content === item.expectedContent && !gateHookWiredNow(plan.projectDir, fs)) {
-      rmFile(item.path);
-      result.gateHookRemoved = true;
-      // A `.claude/hooks/` dir left EMPTY by that removal is removed too (clean footprint); a dir
-      // with anything else in it is untouched.
-      const hooksDir = dirname(item.path);
-      const leftover = (() => { try { return fs.readdir(hooksDir); } catch { return null; } })();
-      if (leftover != null && leftover.length === 0) removeTree(hooksDir, dirname(hooksDir), deps);
+    // The chain is re-walked here too, immediately before the removal — the conflict pass above ran
+    // at a different instant, and this is the call that deletes.
+    if (!reachedSafely(item.path)) {
+      lateConflicts.push(`${item.path} became reachable only through a symlink after the preflight — left untouched`);
+      continue;
     }
+    const placed = readableRegular(item.path);
+    if (placed.kind === 'absent') continue; // vanished — benign, the same documented no-op as everywhere else
+    if (placed.kind === 'foreign') {
+      lateConflicts.push(`${item.path} ${placed.reason}`);
+      continue;
+    }
+    const content = (() => { try { return String(fs.readFile(item.path, 'utf8')); } catch { return null; } })();
+    if (content !== item.expectedContent) {
+      lateConflicts.push(`${item.path} ${content == null ? 'could not be read at removal time' : 'no longer matches the kit bundle (it changed after the preflight)'} — left untouched`);
+      continue;
+    }
+    if (gateHookWiredNow(plan.projectDir, fs)) {
+      lateConflicts.push(`${item.path} became wired in Claude settings after the preflight — left untouched (removing it would leave a wired-but-missing hook)`);
+      continue;
+    }
+    {
+      // Containment root = the PROJECT, not the file's parent: with the parent as root a symlinked
+      // `.claude` sits inside the boundary by construction, so the traversal guard could never fire.
+      if (attemptRemoval(item.path, () => rmFile(item.path, plan.projectDir))) {
+        result.gateHookRemoved = true;
+        // A `.claude/hooks/` dir left EMPTY by that removal is removed too (clean footprint); a dir
+        // with anything else in it is untouched.
+        const hooksDir = dirname(item.path);
+        const leftover = (() => { try { return fs.readdir(hooksDir); } catch { return null; } })();
+        if (leftover != null && leftover.length === 0) {
+          attemptRemoval(hooksDir, () => removeTree(hooksDir, plan.projectDir ?? dirname(hooksDir), deps));
+        }
+      }
+    }
+  }
+  if (partialFailures.length || lateConflicts.length) {
+    // Unlike the preflight STOP, this one CANNOT promise zero changes — so it reports what actually
+    // happened, DERIVED from the result. "Earlier removals were applied" is a claim, and on a plan
+    // holding only the conflicted surface it is a false one.
+    const done = [
+      ...result.removed.map((p) => `removed ${p}`),
+      ...result.unlinked.map((p) => `unlinked ${p}`),
+      ...(result.unhidden ? ['unhidden the managed git-exclude block'] : []),
+      ...(result.hookRemoved ? ['removed the marked pre-commit hook'] : []),
+      ...(result.gateHookRemoved ? ['removed the placed gate-approval hook'] : []),
+    ];
+    const parts = [`the teardown is INCOMPLETE.`];
+    if (partialFailures.length) {
+      parts.push(`  ${partialFailures.length} removal(s) FAILED in an unknown state, so the run stopped there:\n  - ${partialFailures.join('\n  - ')}`);
+    }
+    if (lateConflicts.length) {
+      parts.push(`  ${lateConflicts.length} surface(s) could not be touched safely and were left alone:\n  - ${lateConflicts.join('\n  - ')}`);
+    }
+    parts.push(`  ${done.length ? `Already applied before that point:\n  - ${done.join('\n  - ')}` : 'nothing had been removed before that point.'}`);
+    parts.push('  Re-run the teardown once the tree is settled; anything listed as left untouched was not removed.');
+    throw stop(parts.join('\n'), { lateConflicts, partialFailures, applied: done, partial: result });
   }
   result.applied = true;
   return result;
@@ -406,9 +681,18 @@ export const executePlan = (plan, opts = {}, deps = {}) => {
 // Is the gate-approval hook wired NOW (either settings file)? Probed by the placed-path substring
 // (the same broad detectSettingsSeams posture). Fail-CLOSED: an unreadable settings file counts as
 // wired — "cannot prove unwired" must preserve the file, never remove it.
+// This probe DECIDES a removal — a hook that reads as unwired gets deleted — so a settings file
+// reached through a symlink would let bytes from outside the project drive that deletion. Each exact
+// settings leaf is chain-validated from the project root before it is read; an unreachable one is
+// answered the same way an unreadable one already was, by erring toward WIRED (preserve the file).
 const gateHookWiredNow = (projectDir, fs) => {
   if (!projectDir) return false;
   const probe = (p) => {
+    try {
+      assertContainedRealPath(projectDir, p, { lstat: fs.lstat });
+    } catch {
+      return true;
+    }
     try {
       return fs.exists(p) ? settingsMentionsGateHook(String(fs.readFile(p, 'utf8'))) : false;
     } catch {
@@ -457,10 +741,26 @@ const settingsMentionsGateHook = (settings) => {
 // attribution key so it is still surfaced (no silent miss). The velocity writer stores NO ownership
 // marker, so the permissions seam is reported NON-COMMITTALLY — never a false ownership claim,
 // never auto-removed.
+// The MCP seam: the enabled-list membership or either derived tool allow rule. Same posture as the
+// two seams beside it — over-detection is safe (REPORT_ONLY is never auto-removed), a silent miss
+// would leave a registration nobody was told about.
+const MCP_ALLOW_RULES = allowRulesFor();
+const MCP_PRESENT = MCP_STATE.PRESENT;
+const SETTINGS_REL_TXT = '.claude/settings.json';
+const settingsMentionsMcp = (settings, parsed) => {
+  if (parsed == null || typeof parsed !== 'object') {
+    return settings.includes(MCP_ENABLED_KEY) || MCP_ALLOW_RULES.some((rule) => settings.includes(rule));
+  }
+  const enabled = Array.isArray(parsed[MCP_ENABLED_KEY]) ? parsed[MCP_ENABLED_KEY] : [];
+  const allow = Array.isArray(parsed.permissions?.allow) ? parsed.permissions.allow : [];
+  return enabled.includes(MCP_SERVER_NAME) || MCP_ALLOW_RULES.some((rule) => allow.includes(rule));
+};
+
 const detectSettingsSeams = (settings) => {
-  if (settings == null) return { attribution: false, permissions: false, gateHook: false };
+  if (settings == null) return { attribution: false, permissions: false, gateHook: false, mcp: false, parsed: true };
   const gateHook = settingsMentionsGateHook(settings);
   const parsed = (() => { try { return JSON.parse(settings); } catch { return null; } })();
+  const mcp = settingsMentionsMcp(settings, parsed);
   if (parsed == null || typeof parsed !== 'object') {
     // Malformed / JSONC settings.json (comments, trailing commas) — probe the seams by substring so
     // none is silently missed (over-reporting REPORT_ONLY is safe; it is never auto-removed).
@@ -468,23 +768,33 @@ const detectSettingsSeams = (settings) => {
       attribution: settings.includes('includeCoAuthoredBy'),
       permissions: settings.includes('"permissions"') && (settings.includes('"defaultMode"') || settings.includes('"allow"')),
       gateHook,
+      mcp,
+      parsed: false,
     };
   }
   const perms = parsed.permissions;
   const permissions = perms != null && typeof perms === 'object'
     && (Object.prototype.hasOwnProperty.call(perms, 'defaultMode') || Object.prototype.hasOwnProperty.call(perms, 'allow'));
-  return { attribution: Object.prototype.hasOwnProperty.call(parsed, 'includeCoAuthoredBy'), permissions, gateHook };
+  return { attribution: Object.prototype.hasOwnProperty.call(parsed, 'includeCoAuthoredBy'), permissions, gateHook, mcp, parsed: true };
 };
 
 const ATTRIBUTION_REASON = 'we set "includeCoAuthoredBy": false here — review/remove that key by hand (the file may hold your own settings)';
 const PERMISSIONS_REASON = 'a "permissions.defaultMode" and/or "permissions.allow" key is present in this file — if the velocity profile seeded them, review/remove by hand (no ownership marker is stored); otherwise leave them';
 const GATE_HOOK_SEAM_REASON = `a PreToolUse entry wiring the kit-placed gate-approval hook (${GATE_HOOK_FILE_REL}) is present — remove that entry by hand to unwire it (the tool never edits settings)`;
 
+const MCP_SEAM_REASON = `the MCP registration keys for "${MCP_SERVER_NAME}" are present in this file ("${MCP_ENABLED_KEY}" and/or the ${MCP_ALLOW_RULES.join(' / ')} allow rules) — remove them by hand to unregister the typed channel (the tool never edits settings)`;
+// Over a file that could not be PARSED, the same seams are probed by substring — so any string or
+// comment mentioning a managed token matches. That is deliberate (a missed seam is worse than an
+// over-reported one), but the sentence must not then assert presence it never established.
+const UNCERTAIN_PREFIX = 'this file could not be parsed, so the seams below are text matches rather than established keys — verify before acting. ';
+
 const settingsSeamReason = (seams) =>
+  (seams.parsed === false ? UNCERTAIN_PREFIX : '') +
   [
     ...(seams.attribution ? [ATTRIBUTION_REASON] : []),
     ...(seams.permissions ? [PERMISSIONS_REASON] : []),
     ...(seams.gateHook ? [GATE_HOOK_SEAM_REASON] : []),
+    ...(seams.mcp ? [MCP_SEAM_REASON] : []),
   ].join('. Also: ');
 
 const settingsSeamHand = (seams, p) => {
@@ -496,6 +806,7 @@ const settingsSeamHand = (seams, p) => {
           : 'if the velocity profile seeded "permissions.defaultMode"/"permissions.allow", review/remove them by hand']
       : []),
     ...(seams.gateHook ? [`remove the PreToolUse entry whose command runs ${GATE_HOOK_FILE_REL}`] : []),
+    ...(seams.mcp ? [`remove "${MCP_SERVER_NAME}" from "${MCP_ENABLED_KEY}" and the ${MCP_ALLOW_RULES.join(" / ")} allow rules`] : []),
   ];
   return `edit ${shq(p)} → ${clauses.join(' and ')} (keep the rest of your settings)`;
 };

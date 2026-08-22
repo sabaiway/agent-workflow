@@ -25,8 +25,13 @@ const IMPORT_RE = /(?:^|\n)\s*(?:import\s[^'"]*?|export\s[^'"]*?from\s*)['"](\.{
 // be ASKABLE from surfaces that must not reach a writer (the procedures render, the fill's candidate,
 // the advisor's probe), and "the core is pure" is a claim only this walk can keep true as the halves
 // behind it move.
-const READ_ROOTS = ['flow-store-read.mjs', 'procedures.mjs', 'source-size-core.mjs'];
-const WRITE_MODULES = ['atomic-write.mjs', 'flow-store.mjs', 'orchestration-write.mjs'];
+// mcp-registration.mjs joins the roots for the same reason: the advisor's `mcp-channel` probe and
+// `uninstall`'s report both ask it "is this project registered?", and neither may reach a writer.
+// The two `.claude/` writers join the write side with it — velocity-profile.mjs is what makes the
+// leaf's own settings-path literals load-bearing rather than a duplication (it exports the same two
+// strings, and importing them would pull the whole settings WRITER into the read graph).
+const READ_ROOTS = ['flow-store-read.mjs', 'procedures.mjs', 'source-size-core.mjs', 'mcp-registration.mjs'];
+const WRITE_MODULES = ['atomic-write.mjs', 'flow-store.mjs', 'orchestration-write.mjs', 'mcp.mjs', 'velocity-profile.mjs'];
 
 const moduleFiles = (() => {
   const files = [];
@@ -75,6 +80,13 @@ describe('read-graph purity — the advisor surface is structurally read-only (F
     const closure = closureOf(READ_ROOTS.map((r) => resolve(TOOLS_DIR, r)));
     const reachedWriters = [...closure].map(rel).filter((r) => WRITE_MODULES.includes(r));
     assert.deepEqual(reachedWriters, [], `the read surface must not import the write half — reached: ${reachedWriters.join(', ')}; full closure: ${[...closure].map(rel).sort().join(', ')}`);
+    // Non-vacuity for the two entries added with the MCP mode — a name on the write list that writes
+    // nothing would make "the read roots avoid it" a claim about nothing. The two are proven
+    // differently ON PURPOSE: mcp.mjs publishes through the shared atomic core, while
+    // velocity-profile.mjs writes `.claude/settings.json` with a bare writeFile, which no import walk
+    // can see. Asserting the same edge for both would have been a green test over a false claim.
+    assert.ok([...closureOf([resolve(TOOLS_DIR, 'mcp.mjs')])].map(rel).includes('atomic-write.mjs'), 'mcp.mjs really does reach the write core');
+    assert.match(readFileSync(resolve(TOOLS_DIR, 'velocity-profile.mjs'), 'utf8'), /fs\.writeFile\(/u, 'velocity-profile.mjs really does write, directly');
   });
 
   // ── the source-size practice's own two edges (D-18) ──────────────────────────────────

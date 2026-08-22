@@ -121,6 +121,13 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // pinned by NAME, because a registration pointing at an absent server fails at every session start
       'tools/mcp-stdio.mjs',
       'tools/mcp-server.mjs',
+      // and the mode that makes a project DECLARE it: the guarded writer, its read-only registration
+      // leaf (what the advisor and uninstall both ask), and the mode contract. The server shipping
+      // without the registration mode is exactly the "opt-in ships invisible" state — a capability
+      // present in the tarball that no deployment can ever reach.
+      'tools/mcp.mjs',
+      'tools/mcp-registration.mjs',
+      'references/modes/mcp.md',
       // the cheap-lane subagent writer + its bundled vehicles
       'tools/cheap-agents.mjs',
       'references/agents/mechanical-sweep.md',
@@ -620,7 +627,12 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       line-framing leaf over injected streams) + tools/mcp-server.mjs (the stdio MCP server
     //       exposing path_inventory and repo_search as typed tools over the readers' exported main).
     //       The three *.test.mjs siblings are stripped by files[]; both are pinned by NAME above.
-    assert.equal(packed.length, 236, `tarball file count drifted (${packed.length} ≠ 236)`);
+    // 239 = 236 + the typed channel's REGISTRATION half (mcp-registration Plan 2): tools/mcp.mjs
+    //       (the guarded writer) + tools/mcp-registration.mjs (its read-only leaf, which the advisor
+    //       and uninstall ask) + references/modes/mcp.md (the mode contract, which every mode doc
+    //       ships). The two *.test.mjs siblings are stripped by files[]; all three are pinned by
+    //       NAME above.
+    assert.equal(packed.length, 239, `tarball file count drifted (${packed.length} ≠ 239)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

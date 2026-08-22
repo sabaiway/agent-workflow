@@ -69,6 +69,9 @@ import { COVERAGE_PRODUCER_BODY } from './coverage-producer.mjs';
 // Imported from the VOCABULARY leaf, never from the ops: a read-only lint must not pull the ensure
 // implementation — and through it the orchestration writer — into its import graph.
 import { RELAYED_ENSURE_TOKENS, RELAYED_FAILURE_CAUSES } from './ensure-vocabulary.mjs';
+// The MCP registration's four public strings. Imported from the READ-ONLY leaf, never from the
+// writer: a read-only lint must not pull the atomic-write core into its import graph.
+import { ENABLED_KEY as MCP_ENABLED_KEY, MCP_JSON_REL, SERVER_NAME as MCP_SERVER_NAME, allowRulesFor } from './mcp-registration.mjs';
 
 const AUTONOMY_DOCTOR_DOC = 'references/modes/autonomy-doctor.md';
 const RECOMMENDATIONS_DOC = 'references/modes/recommendations.md';
@@ -81,6 +84,8 @@ const PROCEDURES_DOC = 'references/modes/procedures.md';
 const SET_FLOW_DOC = 'references/modes/set-flow.md';
 const RECEIPT_DEADLINE_DOC = 'references/modes/receipt-deadline.md';
 const GATES_DOC = 'references/modes/gates.md';
+const MCP_DOC = 'references/modes/mcp.md';
+const UNINSTALL_DOC = 'references/modes/uninstall.md';
 // One literal for the dispatch mode doc: the structure leaf already names it as the file it anchors
 // its table in, and a second copy here is exactly the drift this lint exists to catch.
 const DISPATCH_DOC = ADVISOR_MATRIX_DOC;
@@ -222,6 +227,15 @@ export const BINDINGS = Object.freeze([
   // sees the doc. Bound here, a future move fails a declared gate instead of leaving the contract
   // doc quietly describing a command the kit no longer emits.
   valueBinding('coverage-producer-body', COVERAGE_PRODUCER_BODY, COVERAGE_PRODUCER_BODY, [GATES_DOC]),
+  // The MCP registration's four public strings (mode: mcp). TWO docs quote each of them: the mode
+  // contract, which tells a reader what will be declared, and the uninstall KEEP list, which tells
+  // them what to edit to undo it — so a renamed key or tool would otherwise leave one of the two
+  // teaching a registration nobody writes. The server name is bound QUOTED: the bare word rides
+  // nearly every kit doc, and a token that is trivially present pins nothing.
+  valueBinding('mcp-json-rel', MCP_JSON_REL, `\`${MCP_JSON_REL}\``, [MCP_DOC, UNINSTALL_DOC]),
+  valueBinding('mcp-enabled-key', MCP_ENABLED_KEY, `\`${MCP_ENABLED_KEY}\``, [MCP_DOC, UNINSTALL_DOC]),
+  valueBinding('mcp-server-name', MCP_SERVER_NAME, `\`"${MCP_SERVER_NAME}"\``, [MCP_DOC, UNINSTALL_DOC]),
+  ...allowRulesFor().map((rule) => valueBinding(`mcp-allow-rule:${rule}`, rule, `\`${rule}\``, [MCP_DOC, UNINSTALL_DOC])),
 ].map((b) => Object.freeze(b)));
 
 // ── the pure checker (readText is injectable for hermetic tests) ────────────────────────
@@ -290,8 +304,10 @@ lagging-kit sentence, procedures.md), the receipt-deadline arrival contract, the
 FORM-only + aggregate-refusal contract and the routing advisor's two honesty sentences — the
 advice never gates, and the harness-subagent lane carries no availability verdict (dispatch.md), the
 runner's closed coverage= summary
-vocabulary (gates.md), and the canonical coverage-producer-body command the same doc prints in full
-(gates.md) — to
+vocabulary (gates.md), the canonical coverage-producer-body command the same doc prints in full
+(gates.md), and the MCP registration's five public strings — mcp-json-rel, mcp-enabled-key,
+mcp-server-name and the two mcp-allow-rule entries, each quoted by BOTH the mcp mode contract and the
+uninstall KEEP list that undoes it (mcp.md, uninstall.md) — to
 the exact token its references/modes/*.md contract must carry, and
 asserts the CURRENT value renders into every bound file. A drifted doc, an unreadable bound file,
 or an absent token FAILS CLOSED.

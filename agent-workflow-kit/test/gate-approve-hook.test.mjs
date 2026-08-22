@@ -26,6 +26,7 @@ import {
   DECISION_ALLOW,
   DECISION_ASK,
   GATES_REL,
+  HINT_CORE,
   LANES_REL,
   READ_LANE_KEY,
   HOOK_EVENT_NAME,
@@ -652,6 +653,19 @@ describe('read-lane rung (c) — the adversarial no-allow battery (lane ON; neve
   // exactly today's behaviour: silence.
   describe('the ask teaches the caller, not only the human', () => {
     const noDeclaration = hookDeps(undefined);
+
+    // HINT_CORE ORDER. The hint exists to name the lane that avoids the prompt, and the two lanes
+    // are no longer equivalent: the typed MCP tools take their pattern and paths as JSON fields, so
+    // the residual byte cannot appear in a command string at all, while the CLI forms still compose
+    // one. Naming the CLI first would teach the weaker recovery to every caller who reads only as
+    // far as the first suggestion — so the ORDER is the contract, not merely the presence.
+    it('the lane hint names the TYPED tools BEFORE the CLI lanes', () => {
+      const at = (needle) => HINT_CORE.indexOf(needle);
+      for (const typed of ['repo_search', 'path_inventory']) assert.notEqual(at(typed), -1, `the hint names ${typed}`);
+      for (const cli of ['repo-search.mjs', 'path-inventory.mjs']) assert.notEqual(at(cli), -1, `the hint still names ${cli}`);
+      assert.ok(at('repo_search') < at('repo-search.mjs'), 'the typed search tool is named before the CLI form');
+      assert.ok(at('path_inventory') < at('path-inventory.mjs'), 'the typed inventory tool is named before the CLI form');
+    });
 
     it('a residual on a seeded-core read carries a lane hint addressed to the caller', () => {
       const result = runHook(bashPayload('wc -l a b c 2>/dev/null'), noDeclaration);

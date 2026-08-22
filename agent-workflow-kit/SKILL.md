@@ -147,6 +147,10 @@ guarded — read `${CLAUDE_SKILL_DIR}/references/modes/autonomy-doctor.md` befor
 
 guarded — read `${CLAUDE_SKILL_DIR}/references/modes/sandbox-masks.md` before acting.
 
+### Mode: mcp
+
+guarded — read `${CLAUDE_SKILL_DIR}/references/modes/mcp.md` before acting.
+
 ### Mode: uninstall
 
 guarded — read `${CLAUDE_SKILL_DIR}/references/modes/uninstall.md` before acting.

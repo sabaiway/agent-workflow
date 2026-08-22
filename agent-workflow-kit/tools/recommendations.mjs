@@ -59,6 +59,13 @@ import { shellQuoteArg } from './review-state.mjs';
 import { isFinalCapableDeclaration } from './run-gates.mjs';
 import { loadDeclaration, canonicalCheckerGates, coverageProducerPrecedes, isKitOwnedCheckerGate, GATES_REL, LCOV_PRODUCER_KEY } from './gates-declaration.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
+// The typed channel's READ-ONLY leaf only — never tools/mcp.mjs, which reaches the write core.
+import {
+  MCP_JSON_REL,
+  SERVER_NAME as MCP_SERVER_NAME,
+  STATE as MCP_STATE,
+  readRegistration,
+} from './mcp-registration.mjs';
 import { matchesCoverageProducer, isCoverageProducerGate } from './coverage-producer.mjs';
 // How much of the TRACKED tree the changed-line coverage domain can assess at all — the fact that
 // turns "the checker certifies" into "the checker certifies the assessable minority".
@@ -143,6 +150,13 @@ export const SEVERITIES = Object.freeze({
   'read-lane.stale': SEVERITY_ATTENTION,
   'read-lane.missing': SEVERITY_ATTENTION,
   'state-block': SEVERITY_OPTIONAL,
+  // The typed channel. The base arm is an ordinary offer; `.masked` stays an offer too (nothing is
+  // broken — the kit simply cannot write through a device node, so the remedy is handed over);
+  // `.differing` reports a CONFIGURED declaration that would launch something else, which is the
+  // one state here a maintainer must actually look at.
+  'mcp-channel': SEVERITY_OPTIONAL,
+  'mcp-channel.masked': SEVERITY_OPTIONAL,
+  'mcp-channel.differing': SEVERITY_ATTENTION,
   agents: SEVERITY_OPTIONAL,
   'family-freshness': SEVERITY_ATTENTION,
   'adr-store-migration': SEVERITY_ATTENTION,
@@ -210,6 +224,9 @@ export const WHATS = Object.freeze({
   'read-lane.stale': 'the read-lane is ON but the placed gate hook is stale — an old hook never reads lanes.json, so the lane is silently dark; reseed it',
   'read-lane.missing': 'the gate hook is wired but its placed file is missing — every Bash call errors and the read-lane is dark; re-place it',
   'state-block': 'nothing checks the closing state block — a turn that ends on «nothing needed from you», or on a promise it never started, passes unseen',
+  'mcp-channel': "the kit's read-only MCP server is not registered here — path questions and literal searches stay shell strings",
+  'mcp-channel.masked': '{rel} is a {className} here (a sandbox device mask is the usual cause), so the entry to merge is printed instead',
+  'mcp-channel.differing': 'an "{server}" MCP entry is already declared here and DIFFERS from the registration this kit copy would write',
   agents: '{n} read-only subagent(s) not placed (Claude Code) — no shell-free vehicle for that work; the apply PREVIEWS first',
   'family-freshness': '{parts}',
   'adr-store-migration': 'still on the retired 3-tier ADR layout — {shape}',
@@ -266,6 +283,7 @@ export const BENEFITS = Object.freeze({
   'commit-guard': 'integrity — commits require the ONE green --final receipt at the exact staged fingerprint (consented pre-commit arm)',
   'read-lane': 'velocity — pipes/chains of your seeded read-only commands auto-approve instead of prompting (opt-in, conservatively classified)',
   'state-block': 'no silent stalls — a turn ending on «you are not needed», or on work it never started, warns at once instead of waiting to be spotted',
+  'mcp-channel': 'velocity — path facts and literal searches arrive as typed tool calls whose arguments are JSON fields, never a shell string',
   agents: 'cost and quiet — mechanical work runs on a cheap model, and no vehicle has a shell, so a read-only fan-out cannot flood you with prompts',
   'family-freshness': 'currency — placed family members carry the latest shipped fixes and features',
   'adr-store-migration': 'durability — every decision becomes its own file with a generated navigator, instead of one hand-rotated pile',
@@ -311,6 +329,7 @@ export const OPT_IN_CAPABILITIES = Object.freeze([
   { id: 'commit-guard', mode: 'commit-guard', advisorKey: 'commit-guard' },
   { id: 'state-block', mode: 'state-block-guard', advisorKey: 'state-block' },
   { id: 'sandbox-masks', mode: 'sandbox-masks', advisorKey: 'sandbox-masks' },
+  { id: 'mcp-channel', mode: 'mcp', advisorKey: 'mcp-channel' },
   { id: 'worktrees-dir', mode: 'worktrees', advisorKey: 'worktrees-dir' },
   { id: 'family-freshness', mode: 'upgrade', advisorKey: 'family-freshness' },
   { id: 'adr-store-migration', mode: 'migrate-adr-store', advisorKey: 'adr-store-migration' },
@@ -1189,7 +1208,7 @@ const readReadLaneToggle = (root, deps) => {
 // D3: the risk-marked keys — every key here has a per-item posture note in the mode doc, surfaced
 // at the consent moment; the static contract test asserts EXACT bidirectional coverage
 // (risk-marked keys == mode-doc note keys — a dropped note goes red, not silent).
-export const RISK_NOTED_KEYS = Object.freeze(['sandbox-lane', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert', 'source-size', 'gate-hook']);
+export const RISK_NOTED_KEYS = Object.freeze(['sandbox-lane', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert', 'source-size', 'gate-hook', 'mcp-channel']);
 
 const probeSandboxLane = ({ root, deps, add, skip }) => {
   try {
@@ -1384,6 +1403,75 @@ export const probeAdrStore = ({ root, deps, add, skip }) => {
   }
 };
 
+// The typed-channel item. It asks the READ-ONLY registration leaf and nothing else — importing the
+// writer would pull the atomic-write core into the advisor's graph (read-graph-purity.test.mjs).
+// The rendered apply is the mode's FLAGLESS preview on purpose: registering an MCP server means the
+// client will RUN that command, so the entry is read before it is declared and the `--apply` stays
+// the maintainer's separate step.
+const probeMcpChannel = ({ root, deps, add, skip }) => {
+  try {
+    const registration = readRegistration(root, deps);
+    // A target we could not read is never turned into a verdict about what it contains.
+    const assertReadable = (target) => {
+      if (target.state === MCP_STATE.FOREIGN) throw new Error(`${target.rel} is a ${target.className} — refusing to read through it`);
+      if (target.state === MCP_STATE.MALFORMED) throw new Error(`${target.rel} is ${target.reason}`);
+      if (target.state === MCP_STATE.UNREADABLE) throw new Error(`${target.rel} cannot be read (${target.reason})`);
+    };
+    const preview = `node ${q(toolPath('mcp.mjs'))} --cwd ${q(root)}`;
+    // ORDER: the `.mcp.json` half is judged and REPORTED on its own before anything about the
+    // settings half can end the probe. A differing entry is fully observable, and an unreadable
+    // settings file says nothing about it — returning on the settings mask first hid it.
+    assertReadable(registration.mcpJson);
+    const settingsUsable = registration.settings.state !== MCP_STATE.MASKED
+      && registration.settings.state !== MCP_STATE.FOREIGN
+      && registration.settings.state !== MCP_STATE.UNREADABLE
+      && registration.settings.state !== MCP_STATE.MALFORMED;
+    if (registration.mcpJson.differs) {
+      // The remedy is the maintainer's edit either way; the "then run" tail is dropped where that
+      // command could not succeed, so the item never hands over a line that exits 1.
+      const tail = settingsUsable ? `, then run ${preview}` : '';
+      add(
+        'mcp-channel',
+        fillTemplate(WHATS['mcp-channel.differing'], { server: MCP_SERVER_NAME }),
+        `HAND-APPLY: edit ${q(join(root, MCP_JSON_REL))} → remove or rename the "${MCP_SERVER_NAME}" entry${tail}`,
+        'mcp-channel.differing',
+      );
+      return;
+    }
+    assertReadable(registration.settings);
+    // The HAND-APPLY arm renders the MODE's own preview, so it may fire only where that command can
+    // actually run — and the writer refuses a masked settings.json outright (it can neither write it
+    // nor merge into what it cannot read). A masked settings half is therefore a stated SKIP: the
+    // completeness this item decides on is unknowable, and offering a command that exits 1 is worse
+    // than saying nothing.
+    if (registration.settings.state === MCP_STATE.MASKED) {
+      skip('mcp-channel', new Error(`${registration.settings.rel} is a ${registration.settings.className} here (a sandbox device mask is the usual cause) — the registration cannot be judged or written from in here; verify it outside the sandbox`));
+      return;
+    }
+    if (registration.mcpJson.state === MCP_STATE.MASKED) {
+      // The kit cannot write through the mask either, so the remedy is HAND-APPLY. But when the
+      // settings half is already complete, the registration was almost certainly made from outside
+      // the sandbox: what cannot be observed becomes a stated SKIP (optimality withheld), never the
+      // same offer again on every single upgrade.
+      if (registration.settings.complete) {
+        skip('mcp-channel', new Error(`${registration.mcpJson.rel} is a ${registration.mcpJson.className} here (a sandbox device mask is the usual cause) and the settings half is already complete — verify the entry outside the sandbox`));
+        return;
+      }
+      add(
+        'mcp-channel',
+        fillTemplate(WHATS['mcp-channel.masked'], { rel: registration.mcpJson.rel, className: registration.mcpJson.className }),
+        `HAND-APPLY: ${preview}`,
+        'mcp-channel.masked',
+      );
+      return;
+    }
+    if (registration.registered) return;
+    add('mcp-channel', fillTemplate(WHATS['mcp-channel'], {}), preview);
+  } catch (err) {
+    skip('mcp-channel', err);
+  }
+};
+
 // ── assembly (frozen presentation order) ─────────────────────────────────────────────────────────
 const PROBES = Object.freeze([
   probeVelocityItems,
@@ -1402,6 +1490,7 @@ const PROBES = Object.freeze([
   probeMasksItem,
   probeSandboxLane,
   probeWorktreesDir,
+  probeMcpChannel,
 ]);
 
 export const buildRecommendations = ({ cwd, deps = {} } = {}) => {

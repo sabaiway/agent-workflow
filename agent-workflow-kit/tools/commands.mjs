@@ -169,6 +169,13 @@ const CATALOG = [
     oneLine: 'Hide the sandbox’s injected device masks from git status via one managed block in the repo’s local exclude file — probe-derived (never a frozen list), preview first, full-block replace on your yes; reviews already ignore the masks by construction.',
   },
   {
+    key: 'mcp',
+    invocation: invocationOf('mcp'),
+    group: 'Configure',
+    kind: GUARDED,
+    oneLine: 'Register the kit’s read-only MCP server in this project, so path questions and literal searches run as typed tool calls instead of shell command strings — previews the exact entry it would declare, writes only on your yes, and where a sandbox hides the file it hands you the text to paste instead.',
+  },
+  {
     key: 'recipes',
     invocation: invocationOf('recipes'),
     group: 'Orchestrate',

@@ -11,6 +11,7 @@ import { INCLUDE_IDENTITY_RULE, RESUME_VERIFY_RULE } from './worktrees.mjs';
 import { DISPATCH_CONTRACT } from './dispatch.mjs';
 import { FLOW_SCHEMA_VERSION, FLOW_LAGGING_KIT_CONTRACT } from './orchestration-config.mjs';
 import { COVERAGE_PRODUCER_BODY } from './coverage-producer.mjs';
+import { ENABLED_KEY, MCP_JSON_REL, SERVER_NAME, allowRulesFor } from './mcp-registration.mjs';
 // Through the NAMESPACE, not named imports: the relayed-cause export is what this contract
 // introduces, and a red-first test has to LOAD against the pre-fix module.
 import * as ensureVocabulary from './ensure-vocabulary.mjs';
@@ -212,6 +213,25 @@ describe('the REAL registry is consistent with the shipped contract docs (dogfoo
     assert.equal(binding.token, COVERAGE_PRODUCER_BODY, 'the doc must carry the whole command, not a fragment');
     assert.deepEqual([...binding.files].sort(), ['references/modes/gates.md']);
     assert.match(main(['--help']).stdout, /coverage-producer-body/, 'the HELP inventory must name the binding');
+  });
+
+  // The MCP registration's four public strings are what BOTH the mode contract and the uninstall
+  // KEEP list quote verbatim. Pinned BY CONSTANT NAME: deleting a binding would shrink BINDINGS and
+  // leave every dogfood check green — the guard disarming itself in silence.
+  it('doc-parity registry carries the MCP registration bindings, by constant name and non-vacuously', () => {
+    const byName = (c) => BINDINGS.find((b) => b.constant === c);
+    for (const constant of ['mcp-json-rel', 'mcp-enabled-key', 'mcp-server-name', ...allowRulesFor().map((r) => `mcp-allow-rule:${r}`)]) {
+      assert.ok(byName(constant), `registry must bind ${constant}`);
+      assert.deepEqual([...byName(constant).files].sort(), ['references/modes/mcp.md', 'references/modes/uninstall.md']);
+    }
+    assert.equal(byName('mcp-json-rel').value, MCP_JSON_REL, 'the binding tracks the LIVE constant, never re-typed bytes');
+    assert.equal(byName('mcp-enabled-key').value, ENABLED_KEY);
+    // Non-vacuity where it matters: "agent-workflow" rides nearly every kit doc, so a bare-word token
+    // would pass without the doc ever naming the SERVER. This one is quoted.
+    const serverName = byName('mcp-server-name');
+    assert.equal(serverName.value, SERVER_NAME);
+    assert.ok(serverName.token.includes(`"${SERVER_NAME}"`) && serverName.token !== SERVER_NAME, 'only a real declaration satisfies a quoted token');
+    assert.match(main(['--help']).stdout, /mcp-server-name/, 'the HELP inventory must name the binding');
   });
 
   it('doc-parity registry carries the worktrees cleanup-ownership binding', () => {

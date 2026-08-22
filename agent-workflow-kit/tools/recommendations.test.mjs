@@ -52,6 +52,9 @@ import { COVERAGE_PRODUCER_BODY } from './coverage-producer.mjs';
 // consented apply run against the rendered selection — the real writer, never a re-implementation.
 import { applyFill } from './gates-init.mjs';
 import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
+// The registration fixtures are built from the LEAF's own constants and derived rules — a fixture
+// spelling its own server path or allow rules would drift off the thing the probe actually reads.
+import { DEFAULT_SERVER_PATH, ENABLED_KEY, MCP_JSON_REL, SERVER_NAME, SETTINGS_REL, allowRulesFor } from './mcp-registration.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -1295,6 +1298,182 @@ describe('recommendations — the read-lane offer (AD-055 Part II, Help-through-
     assert.ok(item);
     assert.match(item.apply, /rm \/[^\s,]*\.claude\/hooks\/agent-workflow-gates\.mjs/);
     assert.doesNotMatch(item.apply, /rm \.claude\/hooks/);
+  });
+});
+
+// ── the typed-channel registration offer ──────────────────────────────────────────
+//
+// The offer's shape is unusual on purpose and each property is pinned here: a registration is a
+// command the MCP client will RUN, so the rendered apply is the mode's FLAGLESS preview and the
+// `--apply` stays a separate step the maintainer takes after reading the entry. Two arms are
+// HAND-APPLY (a differing entry, a sandbox-masked file), and the arm that must NOT render is the
+// one where the file is unreadable but the settings half is already complete.
+
+describe('recommendations — the typed-channel (mcp) registration offer', () => {
+  const OUR_ENTRY = { type: 'stdio', command: 'node', args: [DEFAULT_SERVER_PATH] };
+  const mcpProject = ({ servers, settings } = {}) => {
+    const root = makeProject();
+    if (servers !== undefined) writeFileSync(join(root, MCP_JSON_REL), JSON.stringify({ mcpServers: servers }));
+    if (settings !== undefined) {
+      mkdirSync(join(root, '.claude'), { recursive: true });
+      writeFileSync(join(root, SETTINGS_REL), JSON.stringify(settings));
+    }
+    return root;
+  };
+  const registeredSettings = { [ENABLED_KEY]: [SERVER_NAME], permissions: { allow: allowRulesFor() } };
+  // Delegates to the REAL lstat for every other path, so masking `.mcp.json` cannot silently change
+  // what any other probe in the same run sees.
+  const maskingDeps = (root, rels = [MCP_JSON_REL]) =>
+    hermeticDeps(root, {
+      lstat: (path, ...rest) =>
+        rels.some((rel) => path === join(root, rel))
+          ? Object.fromEntries(
+              ['isCharacterDevice', 'isBlockDevice', 'isFIFO', 'isSocket', 'isSymbolicLink', 'isDirectory', 'isFile'].map((p) => [
+                p,
+                () => p === 'isCharacterDevice',
+              ]),
+            )
+          : lstatSync(path, ...rest),
+    });
+  const build = (root, deps) => {
+    const r = buildRecommendations({ cwd: root, deps: deps ?? hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    return r;
+  };
+
+  it('unregistered → an OPTIONAL offer whose apply is the mode PREVIEW, with no --apply in the line', () => {
+    const root = makeProject();
+    const { items, skips } = build(root);
+    const item = items.find((i) => i.key === 'mcp-channel');
+    assert.ok(item, 'a project with no registration gets the offer');
+    assert.equal(item.severity, SEVERITY_OPTIONAL);
+    assert.equal(item.apply, `node ${join(HERE, 'mcp.mjs')} --cwd ${root}`, 'an absolute tool path and a pinned --cwd (cwd-independent)');
+    assert.doesNotMatch(item.apply, /--apply/u, 'the offer is the PREVIEW — the entry is read before it is declared');
+    assert.ok(!skips.some((s) => s.key === 'mcp-channel'));
+  });
+
+  it('fully registered → silent (no item, no skip)', () => {
+    const { items, skips } = build(mcpProject({ servers: { [SERVER_NAME]: OUR_ENTRY }, settings: registeredSettings }));
+    assert.ok(!items.some((i) => i.key === 'mcp-channel'), 'a complete registration converges the item');
+    assert.ok(!skips.some((s) => s.key === 'mcp-channel'));
+  });
+
+  it('half-registered (the entry stands, one allow rule missing) → the offer still fires', () => {
+    const [first] = allowRulesFor();
+    const root = mcpProject({
+      servers: { [SERVER_NAME]: OUR_ENTRY },
+      settings: { [ENABLED_KEY]: [SERVER_NAME], permissions: { allow: [first] } },
+    });
+    assert.ok(build(root).items.some((i) => i.key === 'mcp-channel'), 'a missing rule is still an unfinished registration');
+  });
+
+  it('a DIFFERING entry → ATTENTION and HAND-APPLY: the kit never repoints a declared server', () => {
+    const root = mcpProject({ servers: { [SERVER_NAME]: { type: 'stdio', command: 'node', args: ['/elsewhere/mcp-server.mjs'] } } });
+    const item = build(root).items.find((i) => i.key === 'mcp-channel');
+    assert.ok(item, 'a differing entry is reported');
+    assert.equal(item.severity, SEVERITY_ATTENTION);
+    assert.match(item.apply, /^HAND-APPLY: /u, 'the remedy is the maintainer\'s edit, never a command the flow runs');
+    assert.match(item.apply, /\.mcp\.json/u, 'and it names the file to edit');
+  });
+
+  // `differs` is any STRUCTURAL difference from what this kit copy would write — a second copy of the
+  // kit, an added env block, a null. The item may claim only that, never the narrower "points at a
+  // different executable", which is one cause among several and false for the rest.
+  it('fold: the differing WHAT states only the proven fact, not a cause it did not establish', () => {
+    const sameExecutablePlusEnv = { ...OUR_ENTRY, env: { EXTRA: '1' } };
+    const root = mcpProject({ servers: { [SERVER_NAME]: sameExecutablePlusEnv } });
+    const item = build(root).items.find((i) => i.key === 'mcp-channel');
+    assert.ok(item, 'an entry that is structurally different is still reported');
+    assert.equal(item.variant, 'mcp-channel.differing');
+    assert.doesNotMatch(item.what, /different executable/iu, 'this entry names the SAME executable — the claim would be false');
+    // Nor may it claim where the typed tools GO: this arm is reached with settings absent, with the
+    // server not enabled, and with an entry that is not a launchable shape at all.
+    assert.doesNotMatch(item.what, /reach/iu, 'no claim about what the tools reach — nothing here established it');
+  });
+
+  it('a MASKED .mcp.json with the settings half INCOMPLETE → HAND-APPLY (the kit cannot write through a device node)', () => {
+    const root = makeProject();
+    const item = build(root, maskingDeps(root)).items.find((i) => i.key === 'mcp-channel');
+    assert.ok(item, 'something IS missing regardless of what the masked file says');
+    assert.match(item.apply, /^HAND-APPLY: /u);
+    assert.match(item.apply, /mcp\.mjs --cwd /u, 'the line still runs the mode — it prints the text to paste');
+  });
+
+  it('a MASKED .mcp.json with the settings half COMPLETE → a stated SKIP, never the offer again', () => {
+    const root = mcpProject({ settings: registeredSettings });
+    const { items, skips } = build(root, maskingDeps(root));
+    assert.ok(!items.some((i) => i.key === 'mcp-channel'), 'a registration already made is not offered again');
+    const skip = skips.find((s) => s.key === 'mcp-channel');
+    assert.ok(skip, 'what cannot be observed is a stated skip — optimality is withheld, not claimed');
+    assert.match(skip.reason, /mask/iu, 'the reason names the cause');
+    // A skip that states an unknown and hands over nothing is honest but inert. The reason carries
+    // the one action that resolves it — no new item, no new mechanism, and nothing that re-offers a
+    // registration this project may well already have.
+    assert.match(skip.reason, /outside the sandbox/iu, 'and it names the check that would settle it');
+  });
+
+  // The HAND-APPLY arm renders the mode's own preview, so it may only fire where that command can
+  // actually run. The writer refuses a masked settings.json outright — offering it there would hand
+  // the maintainer a command that exits 1, which is worse than saying nothing.
+  it('fold: a masked settings.json is a SKIP — never a HAND-APPLY the writer would refuse', () => {
+    const root = mcpProject({ servers: { [SERVER_NAME]: OUR_ENTRY } });
+    const { items, skips } = build(root, maskingDeps(root, [SETTINGS_REL]));
+    assert.ok(!items.some((i) => i.key === 'mcp-channel'), 'no offer for a path the mode refuses');
+    assert.ok(skips.some((s) => s.key === 'mcp-channel'), 'a stated skip instead');
+  });
+
+  // An unreadable settings half says nothing about the .mcp.json half, which may be perfectly
+  // observable AND wrong. Returning on the settings mask first hid a real attention-class state.
+  it('fold: a DIFFERING entry is reported even when the settings half is masked', () => {
+    const root = mcpProject({ servers: { [SERVER_NAME]: { type: 'stdio', command: 'node', args: ['/elsewhere/mcp-server.mjs'] } } });
+    const item = build(root, maskingDeps(root, [SETTINGS_REL])).items.find((i) => i.key === 'mcp-channel');
+    assert.ok(item, 'the .mcp.json half is fully observable, so its verdict stands on its own');
+    assert.equal(item.severity, SEVERITY_ATTENTION);
+    assert.equal(item.variant, 'mcp-channel.differing');
+    assert.match(item.apply, /^HAND-APPLY: /u);
+    assert.doesNotMatch(item.apply, /mcp\.mjs --cwd/u, 'and it appends no preview the writer would refuse on this tree');
+  });
+
+
+  // The scope limit, pinned where the ADVISOR would have reported it. A converged `mcp-channel` means
+  // what the mode writes is in place — never that the client will load the server.
+  it('fold: a disabled server is reported ahead of nothing — the advisor has no such arm', () => {
+    const root = mcpProject({
+      servers: { [SERVER_NAME]: OUR_ENTRY },
+      settings: { [ENABLED_KEY]: [SERVER_NAME], disabledMcpjsonServers: [SERVER_NAME], permissions: { allow: allowRulesFor() } },
+    });
+    const { items, skips } = build(root);
+    assert.ok(!items.some((i) => i.key === 'mcp-channel'), 'the item converges on what this kit writes');
+    assert.ok(!skips.some((s) => s.key === 'mcp-channel'), 'and does not pretend to withhold a verdict it never forms');
+    // Non-vacuity: "no item" must mean CONVERGED, not "this advisor has no such item at all" — which
+    // is what the same two assertions would have proved on a kit without the mcp-channel probe.
+    assert.ok(build(makeProject()).items.some((i) => i.key === 'mcp-channel'), 'the item does exist and does fire when the registration is missing');
+  });
+
+  it('fold: BOTH targets masked is a SKIP — completeness is unknowable from in here', () => {
+    const root = makeProject();
+    const { items, skips } = build(root, maskingDeps(root, [MCP_JSON_REL, SETTINGS_REL]));
+    assert.ok(!items.some((i) => i.key === 'mcp-channel'));
+    assert.ok(skips.some((s) => s.key === 'mcp-channel'));
+  });
+
+  it('a MALFORMED or SYMLINKED .mcp.json is a fail-closed SKIP — never a fabricated offer', () => {
+    for (const make of [
+      () => {
+        const root = makeProject();
+        writeFileSync(join(root, MCP_JSON_REL), '{ not json');
+        return root;
+      },
+      () => {
+        const root = makeProject();
+        symlinkSync(join(root, 'nonexistent-mcp-target'), join(root, MCP_JSON_REL));
+        return root;
+      },
+    ]) {
+      const { items, skips } = build(make());
+      assert.ok(!items.some((i) => i.key === 'mcp-channel'));
+      assert.ok(skips.some((s) => s.key === 'mcp-channel'));
+    }
   });
 });
 
