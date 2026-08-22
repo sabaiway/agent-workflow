@@ -117,6 +117,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the promptless inventory lane, pinned by NAME for the same reason: a count alone would let it
       // fall out of the payload unnoticed if some other file leaked in at the same time
       'tools/path-inventory.mjs',
+      // the typed channel over those two readers: the stdio MCP server and its JSON-RPC framing leaf —
+      // pinned by NAME, because a registration pointing at an absent server fails at every session start
+      'tools/mcp-stdio.mjs',
+      'tools/mcp-server.mjs',
       // the cheap-lane subagent writer + its bundled vehicles
       'tools/cheap-agents.mjs',
       'references/agents/mechanical-sweep.md',
@@ -612,7 +616,11 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       codex bundle (its two suites carry five discarded-result dispatches between them). One
     //       guard per BUNDLE, not one per family: a bridge dir is placed on its own, so neither
     //       guard can read the other bundle's suites.
-    assert.equal(packed.length, 234, `tarball file count drifted (${packed.length} ≠ 234)`);
+    // 236 = 234 + the typed channel (typed-channel-mcp Plan 1): tools/mcp-stdio.mjs (the JSON-RPC 2.0
+    //       line-framing leaf over injected streams) + tools/mcp-server.mjs (the stdio MCP server
+    //       exposing path_inventory and repo_search as typed tools over the readers' exported main).
+    //       The three *.test.mjs siblings are stripped by files[]; both are pinned by NAME above.
+    assert.equal(packed.length, 236, `tarball file count drifted (${packed.length} ≠ 236)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
