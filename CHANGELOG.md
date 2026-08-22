@@ -7,18 +7,20 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
-## 2026-08-22 — AD-110 a finding names the invariant its fix enforces, and the fold channel gets a checker (engine 3.1.0 + kit 7.1.0, both MINOR; memory NOT published here, stays 4.5.2)
+## 2026-08-22 — AD-110 a finding names the invariant its fix enforces, and the fold channel gets a checker (engine 3.1.0 + kit 7.1.0 MINOR, memory 4.5.3 PATCH)
 
-**Why memory is not in this release, although a file inside it changed.** Its bundled
-`agent_rules.md` template is re-rendered in the repository. That file is deliberately divergent
-between kit and memory and is hard-excluded from whole-file parity; what IS pinned is its lens
-REGION — both templates must carry the CURRENT render of the same engine fragment, so a fragment
-edit moves both or fails. It is not published: the engine's own contract
-(`agent-workflow-engine/SKILL.md`) says a canon wording change edits the lens fragment plus its
-append-only prior store and ships as an **engine-only release**, and `lens-region.mjs` gives the
-mechanism — the kit holds no prior constants of its own, so a deployment seeded from the published
-memory 4.5.2 carries a KNOWN prior body and its lens region converges on the next kit touch. The
-re-rendered template rides memory's next release.
+**Memory ships too, and the reason it does is worth recording, because the plan said it would not.**
+The engine's contract is that a lens wording change is an **engine-only release**: a deployed
+`agent_rules.md` region converges from the live engine read on the next kit touch, so no other
+package needs to move for a DEPLOYMENT to be correct. That reasoning was carried into this release
+and it was wrong about one thing — it is a statement about deployments, not about PACKAGES. This
+package's own bundled template is a shipped artifact, and the publish workflow refuses to no-op a
+package whose subtree changed without a version bump: the existing tag still points at exactly the
+bytes on npm, and it is the CHANGED subtree that no longer matches them, so a no-op would leave that
+change unversioned and unpublished. The live dispatch is what said so, by name,
+after engine 3.1.0 had already published — the review had raised exactly this and it was rebutted on
+the lens mechanism, which was true and beside the point. Memory 4.5.3 carries the re-rendered
+template and nothing else.
 
 
 A review round produces findings, and until now nothing said which of them the phase owes. Measured

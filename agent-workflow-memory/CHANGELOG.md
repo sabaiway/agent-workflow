@@ -4,6 +4,20 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 4.5.3 — the bundled `agent_rules.md` template carries the finding-scope lens bullet (AD-110)
+
+The engine's agent-rules lens gained one bullet in **3.1.0** — the finding-scope rule, scoped to
+plan-execution — and this package's bundled `agent_rules.md` template carries its render. Nothing
+else in the substrate moves: no new template, no schema change, no migration.
+
+**Why this is its own release rather than a free ride.** The lens canon lives in the engine and a
+wording change is an engine-only release by contract, because a deployed region converges from the
+engine read on the next kit touch. That is true of a DEPLOYED project and says nothing about this
+PACKAGE: the publish workflow refuses to no-op a package whose subtree changed without a version
+bump, and it is right to — the existing 4.5.2 tag still points at exactly the bytes on npm, and it is
+the CHANGED subtree that no longer matches them, so a no-op would leave that change unversioned and
+unpublished.
+
 ## 4.5.2 — the boundary sentence names the plan SHAPE, not the retired vocabulary (AD-104; ships with engine 3.0.0 / kit 6.0.0)
 
 **Wording only — no contract, no script, no gate changes.** This substrate records only *where* the
