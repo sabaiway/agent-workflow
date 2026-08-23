@@ -1,6 +1,8 @@
-// ensure-ops.mjs — the FIVE upgrade ensure operations, one function each, behind one shared outcome
-// shape. The CLI that orders and runs them is ensure-configs.mjs; this module owns what each ensure
-// DOES and, more importantly, what it is allowed to CLAIM.
+// ensure-ops.mjs — FIVE of the upgrade ensure operations, one function each, behind one shared
+// outcome shape; the sixth (the spec-layer ensure, ensure-specs.mjs) composes its outcomes through
+// the same door and probes exported below. The CLI that orders and runs them is ensure-configs.mjs —
+// it owns the op table, so the import graph stays acyclic; this module owns what each ensure DOES
+// and, more importantly, what it is allowed to CLAIM.
 //
 // Why they became code at all: `references/modes/upgrade.md` prescribed each of them as prose an agent
 // was expected to carry out by hand ("create it from the template if missing", "copy the pair from
@@ -86,14 +88,14 @@ export const failedOutcome = (op, err) => loud(op, 'unexpected-error', `${op}: $
 // directory or a symlink named gates.json report a green ensure while the declaration the project
 // needs does not exist — an exit 0 proving nothing (both review backends found this).
 const NODE_KIND = (st) => (st.isSymbolicLink() ? 'a symlink' : st.isDirectory() ? 'a directory' : 'not a regular file');
-const probeSeedTarget = (abs, lstat) => {
+export const probeSeedTarget = (abs, lstat) => {
   const st = lstatNoFollow(abs, lstat);
   if (st === null) return { present: false };
   return st.isFile() ? { present: true } : { present: true, wrongKind: NODE_KIND(st) };
 };
 
 // A leftover temp file never fails a completed write, and is never silent either.
-const tmpNote = (rel, tmpLeftBehind) =>
+export const tmpNote = (rel, tmpLeftBehind) =>
   (tmpLeftBehind ? [`${rel}: the write stands, but its temp file could not be removed — delete it by hand: ${tmpLeftBehind}`] : []);
 
 // ── 1. orchestration.json — seed, or refresh ONLY a still-canonical onboarding note ────────────────
@@ -204,7 +206,7 @@ export const ensureAutonomy = ({ cwd, kitRoot, dryRun = false, deps = {} }) =>
 
 // A project with no package.json at its root is not where Node enforcement scripts belong. Stated,
 // never silent: the token names the evidence, and the three config ensures still run.
-const isNodeProject = (cwd, lstat) => lstatNoFollow(join(cwd, PACKAGE_JSON), lstat) !== null;
+export const isNodeProject = (cwd, lstat) => lstatNoFollow(join(cwd, PACKAGE_JSON), lstat) !== null;
 
 const OLD_ADR_LAYOUTS = new Set(['old', 'old-unrotated']);
 
@@ -352,8 +354,9 @@ export const ensureIndex = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
   return loud('index', 'index-probe-failed', `${INDEX_REL}: the generator reported a regeneration, but the verifying probe answered neither fresh nor stale — ${MAY_HAVE_WRITTEN}. ${verify.error ? causeOf(verify.error) : verdict}`);
 };
 
-// The op table the CLI walks — name → implementation, in ENSURE_OPS order.
-export const ENSURE_IMPLEMENTATIONS = Object.freeze({
+// The five ops this module owns, by name. The CLI composes the full ENSURE_OPS table from these plus
+// the spec-layer ensure (ensure-specs.mjs imports THIS module, so the table cannot live here).
+export const OWN_IMPLEMENTATIONS = Object.freeze({
   orchestration: ensureOrchestration,
   gates: ensureGates,
   autonomy: ensureAutonomy,

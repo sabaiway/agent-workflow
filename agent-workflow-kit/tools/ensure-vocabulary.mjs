@@ -8,12 +8,16 @@
 // read-only tool's import graph. Vocabulary here, behaviour in ensure-ops.mjs.
 
 // The FIXED order the CLI runs them in — the order references/modes/upgrade.md already prescribed.
-export const ENSURE_OPS = Object.freeze(['orchestration', 'gates', 'autonomy', 'scripts', 'index']);
+// `specs` sits after `scripts` (its reader pair is a scripts/ seed too) and BEFORE `index`: the store
+// root it seeds is a docs/ai file the navigator must count.
+export const ENSURE_OPS = Object.freeze(['orchestration', 'gates', 'autonomy', 'scripts', 'specs', 'index']);
 
 // Tokens that assert a WRITE happened. --dry-run may never emit one of these (the CLI's contract test
-// walks this set), and each has exactly one `would-` counterpart below.
-export const WRITE_TOKENS = Object.freeze(['seeded', 'note-refreshed', 'regenerated']);
-export const DRY_RUN_TOKENS = Object.freeze(['would-seed', 'would-refresh-note', 'would-regenerate']);
+// walks this set), and each has exactly one `would-` counterpart below. `refreshed` is the spec-layer
+// ensure's checker-pair refresh — a deployed script on a body a release shipped, rewritten to the
+// bundled one (a custom body is never refreshed).
+export const WRITE_TOKENS = Object.freeze(['seeded', 'note-refreshed', 'refreshed', 'regenerated']);
+export const DRY_RUN_TOKENS = Object.freeze(['would-seed', 'would-refresh-note', 'would-refresh', 'would-regenerate']);
 
 // The CLOSED outcome vocabulary. Closed at RUNTIME, not by convention: composing an outcome with a
 // token outside this list throws, so an op cannot quietly invent a word the mode doc has never heard
@@ -65,6 +69,7 @@ export const RELAYED_FAILURE_CAUSES = FAILURE_CAUSES;
 export const RELAYED_ENSURE_TOKENS = Object.freeze([
   'seeded',
   'note-refreshed',
+  'refreshed',
   'regenerated',
   'already-current',
   'customized-preserved',

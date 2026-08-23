@@ -38,6 +38,7 @@ export const UPGRADE_RUNLIST = Object.freeze([
     [
       'seeded',
       'note-refreshed',
+      'refreshed',
       'regenerated',
       'already-current',
       'customized-preserved',

@@ -2,7 +2,7 @@
 //
 // The ops themselves are covered in ensure-ops.test.mjs. What is pinned HERE is everything the mode
 // doc now relies on when it invokes this tool exactly once: --reconcile is required, --dry-run writes
-// nothing at all, the five ops run in a FIXED order, `--only <op>` narrows the run to exactly one of
+// nothing at all, the six ops run in a FIXED order, `--only <op>` narrows the run to exactly one of
 // them, one op's failure never skips the rest, and the exit code says whether anything failed.
 
 import { describe, it } from 'node:test';
@@ -125,7 +125,10 @@ describe('the reconcile run', () => {
     withProject((dir) => {
       const first = main(['--reconcile'], { cwd: dir });
       assert.equal(first.code, 0);
-      assert.deepEqual(tokensOf(first.stdout).map((t) => t.token), ['seeded', 'seeded', 'seeded', 'seeded', 'regenerated']);
+      // Six ops: the spec-layer ensure seeds the reader pair, the checker pair and the store root on a
+      // bare tree, and the navigator is regenerated AFTER it (the store root is a docs/ai file).
+      assert.deepEqual(tokensOf(first.stdout).map((t) => t.token), ['seeded', 'seeded', 'seeded', 'seeded', 'seeded', 'regenerated']);
+      assert.equal(existsSync(join(dir, 'docs', 'ai', 'specs', 'index.md')), true, 'the spec store root landed');
       const afterFirst = snapshot(dir);
 
       const second = main(['--reconcile'], { cwd: dir });
@@ -169,6 +172,16 @@ describe('--only <op> narrows the run to exactly one operation', () => {
       assert.deepEqual(tokensOf(r.stdout).map((t) => t.op), ['index']);
       assert.equal(existsSync(join(dir, 'docs', 'ai', 'index.md')), true);
       assert.equal(existsSync(join(dir, CONFIG_REL)), false, 'the ops that were not selected never ran');
+    });
+  });
+
+  it('--only specs runs the spec-layer ensure alone (the refresh lane a custom checker is told about)', () => {
+    withProject((dir) => {
+      const r = main(['--reconcile', '--only', 'specs'], { cwd: dir });
+      assert.equal(r.code, 0, r.stderr);
+      assert.deepEqual(tokensOf(r.stdout), [{ op: 'specs', token: 'seeded' }]);
+      assert.equal(existsSync(join(dir, 'scripts', 'spec-schema.mjs')), true);
+      assert.equal(existsSync(join(dir, 'docs', 'ai', 'index.md')), false, 'the navigator op did not run');
     });
   });
 
@@ -306,6 +319,7 @@ describe('one op failing never skips the rest', () => {
         { op: 'gates', token: 'seeded' },
         { op: 'autonomy', token: 'seeded' },
         { op: 'scripts', token: 'seeded' },
+        { op: 'specs', token: 'seeded' },
         { op: 'index', token: 'regenerated' },
       ]);
       assert.match(r.stdout, /part of this configuration run did NOT complete/);
@@ -327,7 +341,7 @@ describe('one op failing never skips the rest', () => {
       const r = main(['--reconcile'], { cwd: dir, deps });
       assert.equal(r.code, 1);
       const tokens = tokensOf(r.stdout);
-      assert.deepEqual(tokens.map((t) => t.token), ['seeded', 'failed', 'seeded', 'seeded', 'regenerated']);
+      assert.deepEqual(tokens.map((t) => t.token), ['seeded', 'failed', 'seeded', 'seeded', 'seeded', 'regenerated']);
       assert.match(r.stdout, /unexpected-error — gates: /);
     });
   });
@@ -343,6 +357,7 @@ describe('one op failing never skips the rest', () => {
       const tokens = tokensOf(r.stdout);
       assert.deepEqual(tokens.slice(0, 3).map((t) => t.token), ['seeded', 'seeded', 'seeded']);
       assert.deepEqual(tokens.find((t) => t.op === 'scripts'), { op: 'scripts', token: 'failed' });
+      assert.deepEqual(tokens.find((t) => t.op === 'specs'), { op: 'specs', token: 'failed' }, 'the spec-layer seeds refuse the same link');
       assert.match(r.stdout, /symlink/);
       assert.deepEqual(readdirSync(join(dir, 'elsewhere')), [], 'nothing was written through the link');
     });

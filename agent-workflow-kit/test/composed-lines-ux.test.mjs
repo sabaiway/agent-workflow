@@ -18,6 +18,9 @@ import {
   composeFailure, ensureAutonomy, ensureGates, ensureIndex, ensureOrchestration, ensureScripts, failedOutcome,
 } from '../tools/ensure-ops.mjs';
 import { main as ensureConfigsMain } from '../tools/ensure-configs.mjs';
+// Loaded against the pre-fix tree too (red-first): absent, the specs fixtures below are skipped and
+// the completeness suite reds on the unwitnessed tokens.
+const { ensureSpecs } = await import('../tools/ensure-specs.mjs').catch(() => ({}));
 import { CONFIG_REL, KNOWN_PRIOR_README } from '../tools/orchestration-config.mjs';
 import { PARITY, parityVerdict, unverifiableParity } from '../tools/refresh-parity.mjs';
 import { REFRESH_LINES, SKIPPED_READONLY, driftSummary } from '../tools/setup-backends.mjs';
@@ -199,6 +202,33 @@ ensureFx('scripts-skipped-no-node', ensureScripts({ cwd: project({ node: false }
   });
 }
 
+if (ensureSpecs) {
+  // The spec-layer ensure: every token through the real op — seed, prior refresh, custom preserved,
+  // the no-Node skip — and its four failure causes (bundle, node kind, write, template).
+  const PRIOR_CHECKER = join(KIT, 'test', 'fixtures', 'script-priors', '4.5.1', 'check-docs-size.mjs.txt');
+  const specsFx = (id, dir, extra = {}) => ensureFx(id, ensureSpecs({ cwd: dir, kitRoot: KIT, deps: {}, ...extra }));
+  const dir = project();
+  specsFx('specs-would-seed', dir, { dryRun: true });
+  specsFx('specs-seeded', dir);
+  specsFx('specs-already-present', dir);
+  writeFileSync(join(dir, 'scripts', 'check-docs-size.mjs'), readFileSync(PRIOR_CHECKER));
+  specsFx('specs-would-refresh', dir, { dryRun: true });
+  specsFx('specs-refreshed', dir);
+  writeFileSync(join(dir, 'scripts', 'check-docs-size.mjs'), '// mine\n');
+  specsFx('specs-customized-preserved', dir);
+  specsFx('specs-skipped-no-node', project({ node: false }));
+  const wrongKind = project();
+  mkdirSync(join(wrongKind, 'scripts', 'spec-schema.mjs'), { recursive: true });
+  specsFx('specs-wrong-node-kind', wrongKind);
+  specsFx('specs-bundle-unreadable', project(), { kitRoot: tmp('clux-empty-') });
+  specsFx('specs-write-refused', project(), { deps: { link: () => { throw eacces(); } } });
+  const badTemplateKit = tmp('clux-kit-');
+  mkdirSync(join(badTemplateKit, 'references', 'templates', 'specs'), { recursive: true });
+  symlinkSync(join(KIT, 'references', 'scripts'), join(badTemplateKit, 'references', 'scripts'));
+  writeFileSync(join(badTemplateKit, 'references', 'templates', 'specs', 'index.md'), 'owner: {{OWNER}}\n');
+  specsFx('specs-template-unreadable', project(), { kitRoot: badTemplateKit });
+}
+
 // The real ensure CLI, BOTH exits: the `  op: token` slots are the characterized exception; every
 // OTHER stdout line — the banner, the details, the failure footer — joins the scanned surface, a
 // failure's closed cause opening stripped after characterization.
@@ -369,7 +399,7 @@ describe('the ensure token slot — the AD-092 D6 closed-vocabulary exception', 
     assert.equal(CLI_RUNS.success.result.code, 0, CLI_RUNS.success.result.stderr);
     assert.equal(CLI_RUNS.failure.result.code, 1, 'a wrong-node-kind gates declaration fails the run');
     for (const key of ['success', 'failure']) {
-      assert.equal(CLI_RUNS[key].slots.length, 5, key);
+      assert.equal(CLI_RUNS[key].slots.length, 6, key);
       for (const slot of CLI_RUNS[key].slots) assert.ok(ENSURE_TOKENS.includes(slot[2]), `${key}: ${slot[0]}`);
     }
     assert.match(CLI_RUNS.failure.result.stdout, /did NOT complete/, 'the failure footer rides the failure exit');

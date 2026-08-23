@@ -196,7 +196,13 @@ const BUDGET = {
   // documented KB-multiple bump, never a silent re-pin. History: 10240 → 11264 (11 KB): AD-044
   // Plan 4 adds the sandbox-masks and recommendations modes to the router (~110 B each) against
   // 27 B of headroom — the same documented bump.
-  routerPlusMode: 46080, // router + any single mode file. 43008 → 46080 (45 KB): the index-navigator
+  routerPlusMode: 47104, // router + any single mode file. 46080 → 47104 (46 KB): spec layer 1b —
+  // upgrade.md gains the sixth `configs` ensure (the `refreshed` token on the run-list row, the
+  // specs token set, the "what the spec-layer ensure does" rationale block with the seed-behind-
+  // checker rule and its remedy) against 1107 B of headroom; measured 46312 B after a compression
+  // pass (the refresh-class sentence defers to the block instead of restating it), 232 B over the
+  // 45 KB ceiling — a documented KB-multiple bump, never a silent re-pin (792 B of headroom).
+  // History: 43008 → 46080 (45 KB): the index-navigator
   // hotfix — upgrade.md gains the fifth `configs` ensure (the run-list token row, the
   // "what the navigator ensure does" rationale, the two-refresh-class correction), the LATE
   // `--only index` rung documented at BOTH exits with its step-4/8 report rows, the closed
@@ -248,7 +254,12 @@ const BUDGET = {
   // THREE pointers (the autonomy slot: step-3 wording, the (a)(iii) anchor-absent soft-skip lane,
   // the No-Node walk, the step-4/8 report row) — ~575 B of new contract content over 179 B of
   // headroom; a documented KB-multiple bump, never a silent re-pin.)
-  fullReadSet: 75776, // router + mode + its declared shared files. 70656 → 75776 (74 KB): the
+  fullReadSet: 76800, // router + mode + its declared shared files. 75776 → 76800 (75 KB): spec
+  // layer 1b — upgrade's set carries the same growth (see routerPlusMode above) and measures
+  // 75498 B, which would leave 278 B under the 74 KB ceiling — the re-pin-waiting shape this file
+  // rejects — so it takes the following multiple (1302 B of headroom). A documented KB-multiple
+  // bump, never a silent re-pin.
+  // History: 70656 → 75776 (74 KB): the
   // index-navigator hotfix — upgrade's set carries BOTH its own growth (see routerPlusMode above)
   // and composition-handoff.md's navigator-finalizer block. FINAL measurement after the last
   // council fold: 74159 B (the 44973 pair + report-footer 11299 + composition-handoff 6253 +
