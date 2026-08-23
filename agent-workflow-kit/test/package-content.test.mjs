@@ -164,6 +164,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // and the PURE vocabulary leaf both they and the read-only doc-parity lint import — pinned by
       // NAME because dropping it would break the ops AND the lint at once
       'tools/ensure-vocabulary.mjs',
+      // the spec-layer delivery (1b): the append-only catalog of shipped checker bodies the specs
+      // ensure classifies a deployed script through — by NAME, a drop would turn every shipped prior
+      // into "custom" and silently stop the refresh
+      'tools/script-priors.mjs',
       // the shared realpath direct-run predicate + the library-only registry. Every guarded module
       // imports it, so a leaf missing from the payload breaks them all — by NAME for the same reason.
       'tools/direct-run.mjs',
@@ -653,7 +657,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 245 = 243 + references/templates/SPEC_TEMPLATE.md (the spec authoring reference, skill-home only
     //       like adr-record.md) + references/templates/specs/index.md (the seed spec store root the
     //       bootstrap deploys) — both mirrored from the memory canon by sync-mirrors.
-    assert.equal(packed.length, 245, `tarball file count drifted (${packed.length} ≠ 245)`);
+    // 246 = 245 + tools/script-priors.mjs (spec layer 1b): the append-only digest catalog of every
+    //       shipped checker body + the current|prior|custom classifier. Its test and the .txt
+    //       fixtures under test/ are outside files[] and never enter the tarball.
+    assert.equal(packed.length, 246, `tarball file count drifted (${packed.length} ≠ 246)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
