@@ -4,6 +4,33 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 3.3.0 — the feature-spec canon: `references/specs.md`, the `Spec-first` lens bullet, specs as plan rows (AD-112)
+
+- **`references/specs.md`** (NEW) — the canon of the feature-spec layer in the family's own
+  vocabulary: where specs live and how the navigator counts them; the FROZEN schema (kinds,
+  statuses and their forward-only transitions, the caps and the numeric fan-out / promotion
+  thresholds, the slug pattern, the scenario-binding grammar, the module-root grammar, the
+  Out-of-scope rule, the advisory unbound warning); the shape per kind; the 33-row refusal table
+  the deployed reader enforces; lifecycle, per-scenario binding and atomic plan approval; the
+  complete feature-vs-page precedence table; spec-driven feature-sliced architecture with ONE
+  dependency rule and an honestly stated review-level enforcement altitude; spec vs ADR; the
+  retroactive onboarding path; the scale budget. `test/specs-canon.test.mjs` pins this file against
+  the reader's `SPEC_SCHEMA` — no second source of the numbers — reads the repo-only fixture corpus
+  (81 files: every accept case clean, every refuse case exactly its one rule) and reads the two
+  rendered templates clean.
+- **`references/agent-rules-lens.md`** gains ONE bullet, `Spec-first`: a plan names its governing
+  spec(s) — zero, one or many, one per touched slice — each one's Out of scope bounds that slice
+  (no global union; a conflict is a spec revision BEFORE approval); a new feature's draft spec
+  exists AT plan review, a contract change rides the plan as a proposed revision, and the revision
+  lands with the code; page-only coverage governs as an adoption shim. The outgoing body is appended
+  to the append-only prior store, so every unmodified deployment converges on the next kit touch.
+- **`references/planning.md`** — Goal and boundary names the governing spec(s); a contract change
+  is a ledger row present at review (`create` = draft spec, `modify` = revision; the landing row
+  moves `draft -> live`, a removal row `live -> retired`). **`references/procedures.md`** —
+  plan-authoring step 2 names the governing spec(s) and writes the `create` / `modify` spec rows so
+  they exist at review; plan-execution step 3 lands the approved draft or revision WITH the code.
+- `provides` stays `["plan"]`; the payload pins (tarball, installer) name the new file.
+
 ## 3.2.0 — the state table comes BEFORE the guard: enumerate by proof, never by exclusion (AD-111)
 
 The canon already said a repeat finding in one subarea routes to SUBTRACTION rather than a fourth

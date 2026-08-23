@@ -4,6 +4,26 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 7.3.0 — the spec layer's delivery half: hidden from day one, mirrored, bootstrapped (AD-112)
+
+The memory substrate ships the feature-spec layer in 4.6.0 and the engine its canon in 3.3.0; this
+release is what makes a FRESH kit bootstrap deliver it whole and hidden.
+
+- **Hidden mode, no new machinery.** `KIT_OWN_PATHS` gains `/scripts/spec-schema.mjs` and
+  `/scripts/spec-schema.test.mjs` (sentinel 28 -> 30) — the reader the navigator checker now imports
+  and its deployed test; `/docs/ai/` already subsumes the store. The integration suite proves it on a
+  bootstrapped layout with real `git check-ignore` on both files and on `docs/ai/specs/x.md`: nothing
+  of the layer is visible to git.
+- **Mirrors.** `references/scripts/` carries the reader pair and the GROUPS-collapse checker
+  byte-identical to the memory canon; `references/templates/` carries `specs/index.md` and
+  `SPEC_TEMPLATE.md` (the mirror manifest names both; template-parity reverse-pins them). The kit's
+  own fallback bootstrap excludes `SPEC_TEMPLATE.md` by NAME in its prose AND its E2E copy loop, and
+  the finalized navigator carries ONE counted `specs/` row.
+- **Templates.** `agent_rules.md` §1.2/§1.3 reworded (governing specs, adoption shim, the revision
+  lands with the code) and its lens region re-rendered with the engine's `Spec-first` bullet;
+  `AGENTS.md` routes `technical_specification.md` readers to the contracts under `docs/ai/specs/`.
+- Package-content pins: 241 -> 245 (the reader pair + the two templates), each by NAME.
+
 ## 7.2.0 — `.mcp.json` joins the hidden-mode footprint, and a worktree never owns it (AD-111)
 
 7.0.0 taught the kit to register its MCP server. It did not teach hidden mode about the file that

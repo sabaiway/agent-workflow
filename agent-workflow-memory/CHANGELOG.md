@@ -4,6 +4,50 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 4.6.0 — the feature-spec layer: a store under `docs/ai/specs/`, one text-only reader, a counted navigator row (AD-112)
+
+A deployed project gains a middle altitude of durable knowledge between the whole-project
+`technical_specification.md` and the ephemeral plan: one contract per feature — what it accepts and
+returns, which scenarios pin it, and, the part the family actually suffers from, what is OUT of its
+scope. This is an adapted layer in the substrate's own vocabulary, not a methodology import: the
+existing plan-approval checkpoint confirms a contract, the existing `maxLines` caps bound every file,
+the existing `[[AD-NNN]]` convention links the why, and hidden mode covers the store with no new
+machinery (`/docs/ai/` already subsumes it).
+
+- **`references/scripts/spec-schema.mjs`** (+ its deploy-payload test) — the ONE reader that DEFINES
+  a well-formed spec. Pure text in (`readSpecDocument(text, rel)`), a verdict out; it imports nothing
+  and opens no file, so it seeds layout-free into any deployment. It carries the frozen schema
+  (`SPEC_SCHEMA`: kinds `index|spec|part`, statuses `draft|live|retired`, fan-out 30, promotion at
+  `maxLines: 150`, the kebab slug, the scenario-binding grammar, the module-root grammar) and names
+  exactly ONE rule id per defect — 33 rules, each pinned by a repo-only fixture. It models no markdown
+  code: a fence line refuses, a spec carries no code sample.
+- **`references/scripts/check-docs-size.mjs`** — the ADR-only collapse became a GROUPS loop the spec
+  store joins: every file the reader accepts folds into ONE `specs/` navigator row with live counts
+  (specs / parts / indexes), so adding or removing a valid spec changes the generated index and
+  `--check-index` sees it; a file the reader refuses keeps its own visible row and its schema
+  refusal surfaces as `spec <rule>:` WARNINGS — advisory (the structural checker is a later slice);
+  the substrate's own frontmatter and `maxLines` errors stay blocking, as for every `docs/ai` file.
+  The 591-line ratchet held by trimming prose, not by raising a record.
+- **`references/templates/specs/index.md`** — the seed store root (`kind: index`, the exact up-link
+  line to `technical_specification.md`, an empty `## Children`); deployed by the bootstrap like the
+  `adr/` seed. **`references/templates/SPEC_TEMPLATE.md`** — the `kind: spec` authoring reference
+  with one bound and one unbound scenario; skill-home only, excluded by NAME like `adr-record.md` —
+  in the SKILL prose AND in the bootstrap E2E copy loop, which also runs the real installed
+  pre-commit hook over a seeded spec and asserts the one counted row.
+- **`references/templates/agent_rules.md`** §1.2/§1.3 — name the governing spec(s) before a
+  feature (zero, one or many; page-only coverage governs as an adoption shim), the revision lands
+  with the code; the `### 2.6` lens region carries the engine's new `Spec-first` bullet.
+  **`references/templates/AGENTS.md`** — the `technical_specification.md` Memory-Map row now points
+  at the contracts under `docs/ai/specs/` (96 lines; the cap is 100).
+- **Scale is a release gate.** 1000 valid specs in a 30-per-folder tree: both hook runs sum to a
+  median of 843 ms against a 1500 ms budget (pre-slice 0.75 s for 1161 docs); over budget blocks the
+  release.
+
+**Reaches a FRESH bootstrap only.** An existing deployment keeps its old checker (which never imports
+the reader) and has no `docs/ai/specs/` to collapse; delivery to existing deployments — the `specs`
+ensure op, the layout-free reader seed, the prior-matching checker refresh, an upgrade E2E — is slice
+1b of the same series.
+
 ## 4.5.4 — the deployed `agent_rules.md` carries the state-table clause (AD-111)
 
 Template-only follow-up to engine 3.2.0: the rendered lens block in

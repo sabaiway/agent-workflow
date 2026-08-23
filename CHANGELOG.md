@@ -7,6 +7,41 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-23 — AD-112 the feature-spec layer (memory 4.6.0 + engine 3.3.0 + kit 7.3.0, all MINOR)
+
+**A deployed project gains per-feature contracts with a mandatory Out of scope.** The family had no
+durable layer between the whole-project `technical_specification.md` and the plan that dies at
+Cleanup; a feature's boundary lived in tests and memory, and scope creep was the measured pain. The
+maintainer ordered an adapted spec layer shipped into the family at once, under six binding
+constraints (no 1:1 copy; hidden mode from day one with no new machinery; Out of scope as the core
+value; spec as an architecture discipline; thousands of specs as a designed scale; order, not chaos).
+The design brief settled ten decisions over four council rounds; slice 1a lands the layer and its
+fresh-bootstrap delivery.
+
+- **One frozen schema, one reader, one definition of well-formed.** The engine canon
+  `references/specs.md` and a repo-only corpus (81 fixtures: 9 accept cases covering every kind, 33
+  refuse-rule folders) freeze the schema; the deployed, import-free, text-only reader
+  `scripts/spec-schema.mjs` enforces it with exactly one rule id per defect (33 rules), and the
+  navigator collapse reads through it today so the slice-2 checker can read through the SAME module.
+  Review subtracted the one attempt to model markdown code inside the reader — two fold-induced
+  majors in one subarea meant the grammar shrank (a fence refuses) instead of growing a parser.
+- **A counted navigator row, visible refusals, a release-gating budget.** The ADR-only collapse in
+  the checker became a GROUPS loop; `specs/` is ONE row with live counts; a file the reader refuses
+  keeps its own visible row and its schema refusal is advisory (the substrate's own frontmatter and
+  cap errors stay blocking, as for every `docs/ai` file). 1000 specs in a 30-per-folder tree: 843 ms for both hook runs against a
+  1500 ms budget.
+- **Plans bind to specs without a new checkpoint.** Governing specs are plural and per slice, Out of
+  scope composes per slice, a draft or revision is a ledger row present at review — the existing
+  approval confirms plan and contract atomically. The lens gains `Spec-first`; both `agent_rules.md`
+  templates and `AGENTS.md` carry it.
+- **Delivery.** Fresh bootstrap only (memory standalone + kit fallback, each E2E-pinned with
+  `SPEC_TEMPLATE.md` excluded by NAME and the store root present; the memory E2E runs the real hook
+  over a seeded spec). Existing deployments are slice 1b.
+
+Review: three execution commits, each a codex (gpt-5.6-sol, xhigh, priority) + agy (Gemini 3.7
+Flash (High), single run) council on the staged tree — 5 + 1 + 4 rounds to ship/ship; 16 findings
+folded and two more answered by subtracting a surface, at the originating bridge's call.
+
 ## 2026-08-23 — AD-111 a placed file joins the hidden-mode registry in the same change that places it (kit 7.2.0 + engine 3.2.0 MINOR, memory 4.5.4 PATCH)
 
 **The bug was shipped by the release that created the file.** kit 7.0.0 added the MCP registration

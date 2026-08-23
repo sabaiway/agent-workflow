@@ -74,6 +74,7 @@ layer fixes the **mechanism**, not just the symptom.
 | **Cross-session memory** | none | `handover.md` — where we left off |
 | **Past decisions** | re-litigated | `decisions.md` (ADRs) — settled once |
 | **Known bugs** | re-discovered | `known_issues.md` — impact + workaround |
+| **Scope creep** | a feature's boundary lives in someone's head | `docs/ai/specs/` — one contract per feature with a mandatory **Out of scope**, scenarios bound to tests (or declared `unbound`), cited by a plan as its governing spec(s) — zero, one or many |
 | **Doc growth** | unbounded sprawl | frontmatter caps + rolling changelog archive + one-file-per-ADR store |
 | **Drift** | docs ≠ code over time | pre-commit gate keeps them honest |
 | **Cross-agent** | re-explain the project to each tool | one `AGENTS.md`, read by 20+ agents |
@@ -135,6 +136,7 @@ your-repo/
     ├── active_plan.md     <- current task
     ├── decisions.md       <- ADRs — the HOT window (newest)
     ├── adr/               <- one file per archived ADR + log.md navigator
+    ├── specs/             <- one contract per feature, Out of scope mandatory
     ├── known_issues.md    <- bugs + workarounds
     ├── architecture.md · current_state.md · changelog.md · …
     └── history/           <- changelog archive (HOT -> WARM -> COLD)
