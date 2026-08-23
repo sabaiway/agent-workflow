@@ -225,6 +225,20 @@ Fill strategy:
    hook gains its `archive-decisions.mjs --check` line only when the hook is next refreshed via
    `node scripts/install-git-hooks.mjs`; an old hook without the line stays consistent-safe (the
    decisions gate is simply not enforced yet — never a broken hook). **Same gate, also
+   stamp-independent — ensure the SPEC LAYER (Node projects; skip on a No-Node project like the
+   pair above):** copy `spec-schema.mjs` + `spec-schema.test.mjs` from
+   `${CLAUDE_SKILL_DIR}/references/scripts/` into the project's `scripts/` **if missing** (preserve
+   an existing file byte-for-byte). Then seed `docs/ai/specs/index.md` **if missing** from
+   `${CLAUDE_SKILL_DIR}/references/templates/specs/` (date filled; an existing root is preserved
+   byte-for-byte) **ONLY if BOTH pairs** — that reader pair AND `check-docs-size.mjs` +
+   `check-docs-size.test.mjs` — are regular files (probe with `ls -l`, never a follow-the-link
+   test: a symlink, dangling or not, or a directory at any of the five paths means NOTHING is
+   written) **byte-equal** to this skill's bundled copies (compare with `cmp`): the deployed checker
+   is what the pre-commit hook runs, and an older or edited one renders the store row by row and
+   reds its own index check. Otherwise seed NO store root and report which file differs: a
+   checker still on a body a release shipped is refreshed by the composition root's own upgrade
+   (it carries the catalog of shipped bodies), an edited one is the user's to refresh by hand — this
+   substrate carries no such catalog and never overwrites a deployed script. **Same gate, also
    stamp-independent — ensure the NAVIGATOR:** `docs/ai/index.md` is a GENERATED artifact the entry
    point declares always-loaded, so a deployment that never had one must gain it even at head — run
    `node ${CLAUDE_SKILL_DIR}/references/scripts/check-docs-size.mjs --ensure-index --root=<target>`

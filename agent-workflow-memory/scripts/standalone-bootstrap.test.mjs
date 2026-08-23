@@ -20,6 +20,7 @@ import {
   readFileSync,
   writeFileSync,
   existsSync,
+  lstatSync,
   symlinkSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -47,6 +48,9 @@ const AGENTS_MD_CAP = 100;
 // authoring references — a stray adr-record.md under adr/ fails the store integrity guard, and a stray
 // SPEC_TEMPLATE.md would be a docs/ai file the cap-validator reads and the spec reader never sees.
 const SKILL_HOME_ONLY = new Set(['AGENTS.md', 'adr-record.md', 'SPEC_TEMPLATE.md']);
+const READER_PAIR = ['spec-schema.mjs', 'spec-schema.test.mjs'];
+const CHECKER_PAIR = ['check-docs-size.mjs', 'check-docs-size.test.mjs'];
+const VALID_SPEC = '---\ntype: spec\nlastUpdated: 2026-08-23\nscope: permanent\nstaleAfter: 90d\nowner: none\nmaxLines: 150\nkind: spec\nstatus: draft\nrevision: 1\n---\n\n# Spec: login\n\n## Contract\n\nc\n\n## Scenarios\n\n- S1 a :: test/login.test.mjs :: spec:login/S1\n\n## Out of scope\n\n- b\n\n## Module\n\n- src/login/\n';
 const lineCount = (text) => text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
 const extractPair = (text, start, end) => {
   const a = text.indexOf(start);
@@ -60,9 +64,7 @@ const makeProject = () => {
   tempDirs.push(dir);
   return dir;
 };
-afterEach(() => {
-  while (tempDirs.length) rmSync(tempDirs.pop(), { recursive: true, force: true });
-});
+afterEach(() => { while (tempDirs.length) rmSync(tempDirs.pop(), { recursive: true, force: true }); });
 
 // Mirrors the bootstrap WRITE steps: entry point at the root (+ tool alias symlink), every
 // other template under docs/ai, enforcement scripts copied in, the hook installed against a
@@ -85,10 +87,7 @@ const bootstrap = (project) => {
   // The hook installer resolves its target from its OWN location, so run the copied-in copy
   // (project/scripts/...) to install into project/.git/hooks — exactly as the procedure does.
   execFileSync('git', ['init', '-q'], { cwd: project });
-  execFileSync(process.execPath, [join(projectScripts, 'install-git-hooks.mjs')], {
-    cwd: project,
-    stdio: 'pipe',
-  });
+  execFileSync(process.execPath, [join(projectScripts, 'install-git-hooks.mjs')], { cwd: project, stdio: 'pipe' });
 
   return docsAi;
 };
@@ -120,10 +119,7 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
     assert.ok(!existsSync(join(docsAi, 'adr', 'adr-record.md')), 'the authoring reference is NOT placed in the adr/ store');
 
     // The deployed rotator (project/scripts/) resolves its root from its own location → the project.
-    const check = execFileSync(process.execPath, [join(project, 'scripts', 'archive-decisions.mjs'), '--check'], {
-      cwd: project,
-      encoding: 'utf8',
-    });
+    const check = execFileSync(process.execPath, [join(project, 'scripts', 'archive-decisions.mjs'), '--check'], { cwd: project, encoding: 'utf8' });
     assert.match(check, /OK — HOT within cap, store integrity intact, navigator fresh/, 'fresh-bootstrap --check is green');
   });
 
@@ -138,10 +134,7 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
     assert.ok(existsSync(join(docsAi, 'specs', 'index.md')), 'the store root navigator is deployed');
     assert.ok(!existsSync(join(docsAi, 'SPEC_TEMPLATE.md')), 'the authoring reference is NOT deployed (skill-home only)');
     assert.ok(!existsSync(join(docsAi, 'specs', 'SPEC_TEMPLATE.md')), 'nor placed in the store');
-    writeFileSync(
-      join(docsAi, 'specs', 'login.md'),
-      '---\ntype: spec\nlastUpdated: 2026-08-23\nscope: permanent\nstaleAfter: 90d\nowner: none\nmaxLines: 150\nkind: spec\nstatus: draft\nrevision: 1\n---\n\n# Spec: login\n\n## Contract\n\nc\n\n## Scenarios\n\n- S1 a :: test/login.test.mjs :: spec:login/S1\n\n## Out of scope\n\n- b\n\n## Module\n\n- src/login/\n',
-    );
+    writeFileSync(join(docsAi, 'specs', 'login.md'), VALID_SPEC);
     const checker = join(project, 'scripts', 'check-docs-size.mjs');
     execFileSync(process.execPath, [checker, '--write-index', `--root=${project}`], { cwd: project, stdio: 'pipe' });
     const navigator = readFileSync(join(docsAi, 'index.md'), 'utf8');
@@ -166,15 +159,11 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
     bootstrap(project);
 
     const entry = readFileSync(join(project, 'AGENTS.md'), 'utf8');
-    const meth = extractPair(entry, SLOT_START, SLOT_END);
-    const orch = extractPair(entry, ORCH_START, ORCH_END);
-    const aut = extractPair(entry, AUT_START, AUT_END);
-    assert.notEqual(meth, null, 'an ordered methodology marker pair is present');
-    assert.equal(meth.trim(), '', 'the methodology slot is empty as shipped');
-    assert.notEqual(orch, null, 'an ordered orchestration marker pair is present');
-    assert.equal(orch.trim(), '', 'the orchestration slot is empty as shipped');
-    assert.notEqual(aut, null, 'an ordered autonomy marker pair is present');
-    assert.equal(aut.trim(), '', 'the autonomy slot is empty as shipped');
+    for (const [label, start, end] of [['methodology', SLOT_START, SLOT_END], ['orchestration', ORCH_START, ORCH_END], ['autonomy', AUT_START, AUT_END]]) {
+      const slot = extractPair(entry, start, end);
+      assert.notEqual(slot, null, `an ordered ${label} marker pair is present`);
+      assert.equal(slot.trim(), '', `the ${label} slot is empty as shipped`);
+    }
   });
 
   it('seeds docs/ai/orchestration.json from the template (the bootstrap loop deploys it)', () => {
@@ -182,11 +171,7 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
     const docsAi = bootstrap(project);
     const seeded = join(docsAi, 'orchestration.json');
     assert.ok(existsSync(seeded), 'the orchestration.json config is seeded into docs/ai');
-    assert.equal(
-      readFileSync(seeded, 'utf8'),
-      readFileSync(join(TEMPLATES, 'orchestration.json'), 'utf8'),
-      'the seeded config is byte-identical to the template',
-    );
+    assert.equal(readFileSync(seeded, 'utf8'), readFileSync(join(TEMPLATES, 'orchestration.json'), 'utf8'), 'the seeded config is byte-identical to the template');
     // strict JSON valid + the conservative all-solo default the maintainer chose.
     const config = JSON.parse(readFileSync(seeded, 'utf8'));
     assert.equal(typeof config._README, 'string', 'an onboarding _README is present');
@@ -198,11 +183,7 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
     const docsAi = bootstrap(project);
     const seeded = join(docsAi, 'gates.json');
     assert.ok(existsSync(seeded), 'the gates.json declaration is seeded into docs/ai');
-    assert.equal(
-      readFileSync(seeded, 'utf8'),
-      readFileSync(join(TEMPLATES, 'gates.json'), 'utf8'),
-      'the seeded declaration is byte-identical to the template',
-    );
+    assert.equal(readFileSync(seeded, 'utf8'), readFileSync(join(TEMPLATES, 'gates.json'), 'utf8'), 'the seeded declaration is byte-identical to the template');
     // strict JSON valid + the conservative empty-list default (a project declares its own gates).
     const declaration = JSON.parse(readFileSync(seeded, 'utf8'));
     assert.equal(typeof declaration._README, 'string', 'an onboarding _README is present');
@@ -252,16 +233,69 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
     };
     ensureEnforcementPair();
     for (const name of pair) {
-      assert.equal(
-        readFileSync(join(projectScripts, name), 'utf8'),
-        readFileSync(join(ENFORCEMENT, name), 'utf8'),
-        `${name} seeded byte-identical from references/scripts`,
-      );
+      assert.equal(readFileSync(join(projectScripts, name), 'utf8'), readFileSync(join(ENFORCEMENT, name), 'utf8'), `${name} seeded byte-identical from references/scripts`);
     }
     // An existing (possibly older) file is preserved — drift repair is a migration's job.
     writeFileSync(join(projectScripts, 'archive-decisions.mjs'), '// locally pinned older copy\n');
     ensureEnforcementPair();
     assert.match(readFileSync(join(projectScripts, 'archive-decisions.mjs'), 'utf8'), /locally pinned/, 'never overwritten');
+  });
+
+  // The spec-layer ensure (SKILL.md upgrade step 2), modeled the way the prose performs it: Node projects only;
+  // the reader pair copy-if-missing; the store root create-only, date rendered, ONLY behind BOTH pairs as REGULAR
+  // files byte-equal to the bundle (the hook runs the DEPLOYED checker). No catalog: a differing pair is reported.
+  it('the upgrade ensure seeds a MISSING reader pair, and the store root ONLY behind bundle-equal reader + checker pairs', () => {
+    const project = makeProject();
+    const docsAi = bootstrap(project);
+    const scripts = join(project, 'scripts');
+    const root = join(docsAi, 'specs', 'index.md');
+    const checker = join(scripts, 'check-docs-size.mjs');
+    for (const name of READER_PAIR) rmSync(join(scripts, name)); // a pre-spec deployment: no reader, no store
+    rmSync(join(docsAi, 'specs'), { recursive: true });
+    // Presence is probed WITHOUT following links: a dangling symlink is present (and not a regular file).
+    const present = (p) => { try { lstatSync(p); return true; } catch { return false; } };
+    const regular = (p) => present(p) && lstatSync(p).isFile();
+    const regularAndEqual = (name) => regular(join(scripts, name)) && readFileSync(join(scripts, name)).equals(readFileSync(join(ENFORCEMENT, name)));
+    const ensureSpecLayer = () => {
+      if (!present(join(project, 'package.json'))) return 'skipped-no-node';
+      if ([...READER_PAIR, ...CHECKER_PAIR].map((name) => join(scripts, name)).concat(root).some((p) => present(p) && !regular(p))) return 'reported';
+      for (const name of READER_PAIR) if (!present(join(scripts, name))) cpSync(join(ENFORCEMENT, name), join(scripts, name));
+      if (![...READER_PAIR, ...CHECKER_PAIR].every(regularAndEqual)) return 'reported';
+      if (present(root)) return 'already-present';
+      mkdirSync(dirname(root), { recursive: true });
+      writeFileSync(root, readFileSync(join(TEMPLATES, 'specs', 'index.md'), 'utf8').replaceAll('{{DATE}}', '2026-08-23'));
+      return 'seeded';
+    };
+    assert.equal(ensureSpecLayer(), 'skipped-no-node', 'a No-Node deployment: nothing written');
+    assert.equal(present(join(scripts, READER_PAIR[0])), false);
+    writeFileSync(join(project, 'package.json'), '{"name":"fixture"}\n');
+    symlinkSync(join(project, 'nowhere'), join(scripts, READER_PAIR[0]));
+    assert.equal(ensureSpecLayer(), 'reported', 'a DANGLING symlink where the reader belongs: nothing is written through it');
+    assert.equal(present(join(project, 'nowhere')), false, 'the link target was never created');
+    rmSync(join(scripts, READER_PAIR[0]));
+    writeFileSync(checker, '// locally edited checker\n');
+    assert.equal(ensureSpecLayer(), 'reported', 'an edited checker: the reader pair lands, the store root does not');
+    for (const name of READER_PAIR) assert.ok(regularAndEqual(name), `${name} seeded byte-identical`);
+    assert.match(readFileSync(checker, 'utf8'), /locally edited/, 'never overwritten');
+    assert.equal(existsSync(join(docsAi, 'specs')), false, 'no store root behind an edited checker');
+    rmSync(checker);
+    symlinkSync(join(ENFORCEMENT, 'check-docs-size.mjs'), checker);
+    assert.equal(ensureSpecLayer(), 'reported', 'a symlink to the bundled body is not a regular file');
+    rmSync(checker);
+    cpSync(join(ENFORCEMENT, 'check-docs-size.mjs'), checker);
+    mkdirSync(dirname(root), { recursive: true });
+    symlinkSync(join(project, 'nowhere'), root);
+    assert.equal(ensureSpecLayer(), 'reported', 'a DANGLING symlink where the store root belongs: nothing is written through it');
+    assert.equal(present(join(project, 'nowhere')), false);
+    rmSync(root);
+    assert.equal(ensureSpecLayer(), 'seeded', 'a bundle-equal checker: the store root lands');
+    assert.equal(readFileSync(root, 'utf8').includes('{{'), false, 'the date placeholder is rendered');
+    writeFileSync(join(docsAi, 'specs', 'login.md'), VALID_SPEC);
+    execFileSync(process.execPath, [checker, '--write-index', `--root=${project}`], { cwd: project, stdio: 'pipe' });
+    execFileSync('bash', [join(project, '.git', 'hooks', 'pre-commit')], { cwd: project, stdio: 'pipe' });
+    writeFileSync(root, '# mine\n');
+    assert.equal(ensureSpecLayer(), 'already-present', 'an existing root is never rewritten');
+    assert.equal(readFileSync(root, 'utf8'), '# mine\n');
   });
 
   // The stamp-independent upgrade "ensure" (SKILL.md upgrade step 2): create-if-missing /
@@ -356,6 +390,15 @@ describe('standalone bootstrap — the navigator the entry point declares always
     execFileSync(process.execPath, [documentedFinalizer(SKILL_MD), '--check-index', `--root=${project}`], { stdio: 'pipe' });
   });
 
+  it('the upgrade flow documents the spec-layer ensure (reader pair if missing; store root only behind bundle-equal pairs) BEFORE the navigator ensure', () => {
+    const upgrade = SKILL_MD.slice(SKILL_MD.indexOf(UPGRADE_HEADING));
+    const specLayer = upgrade.indexOf('ensure the SPEC LAYER');
+    const navigator = upgrade.indexOf('ensure the NAVIGATOR');
+    assert.ok(specLayer > 0 && specLayer < navigator && navigator < upgrade.indexOf(EQUAL_HEAD_ANCHOR), 'spec layer -> navigator -> equal-head exit');
+    const block = upgrade.slice(specLayer, navigator);
+    for (const token of [...READER_PAIR, ...CHECKER_PAIR, 'regular files', 'dangling', 'byte-equal', 'index.md` **if missing**', 'date filled', 'No-Node', 'never overwrites a deployed script']) assert.ok(block.includes(token), token);
+  });
+
   it('the upgrade flow documents the finalizer at BOTH positions the deploy needs it', () => {
     const upgrade = SKILL_MD.slice(SKILL_MD.indexOf(UPGRADE_HEADING));
     const equalHead = upgrade.indexOf(EQUAL_HEAD_ANCHOR);
@@ -363,13 +406,7 @@ describe('standalone bootstrap — the navigator the entry point declares always
     assert.ok(equalHead > 0 && restamp > equalHead, 'the upgrade flow must still carry both anchors, in order');
 
     const positions = [...upgrade.matchAll(/--ensure-index/g)].map((m) => m.index);
-    assert.ok(
-      positions.some((at) => at < equalHead),
-      'a deployment already at the head must gain the navigator too — the finalizer runs BEFORE the equal-head short-circuit',
-    );
-    assert.ok(
-      positions.some((at) => at > equalHead && at < restamp),
-      'the migrations may change docs/ai — the finalizer runs again AFTER them and BEFORE the re-stamp',
-    );
+    assert.ok(positions.some((at) => at < equalHead), 'a deployment already at the head must gain the navigator too — the finalizer runs BEFORE the equal-head short-circuit');
+    assert.ok(positions.some((at) => at > equalHead && at < restamp), 'the migrations may change docs/ai — the finalizer runs again AFTER them and BEFORE the re-stamp');
   });
 });
