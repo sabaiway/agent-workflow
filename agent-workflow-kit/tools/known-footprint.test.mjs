@@ -155,12 +155,14 @@ describe('frozen snapshot', () => {
       '/scripts/migrate-gates-branches.test.mjs',
       '/scripts/migrate-gates.mjs',
       '/scripts/migrate-gates.test.mjs',
+      '/scripts/spec-schema.mjs',
+      '/scripts/spec-schema.test.mjs',
       '/docs/plans/',
       '/.claude/settings.local.json',
       '/.claude/settings.json',
       '/.mcp.json',
     ];
-    assert.equal(KIT_OWN_PATHS.length, 28, 'KIT_OWN_PATHS count sentinel — edit deliberately');
+    assert.equal(KIT_OWN_PATHS.length, 30, 'KIT_OWN_PATHS count sentinel — edit deliberately');
     assert.deepEqual(KIT_OWN_PATHS, expected);
   });
 

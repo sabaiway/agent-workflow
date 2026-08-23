@@ -29,6 +29,7 @@ import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { dirname, resolve, relative, join, basename, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
+import { readSpecDocument, SPECS_COLLAPSE } from './spec-schema.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -36,10 +37,8 @@ const ROOT = resolve(__dirname, '..');
 const DOCS_DIR = resolve(ROOT, 'docs/ai');
 const INDEX_PATH = resolve(DOCS_DIR, 'index.md');
 
-// Root-parameterized (BUGFREE-3 / AD-049, item (h)): the module ROOT constants are the CLI DEFAULT
-// (this deployment's own root); `--root=<dir>` and the exported `regenerateIndex(root, today)`
-// override them so the ADR-rotation hook (archive-decisions.mjs) and hermetic tests can regenerate
-// an arbitrary root's index without ever touching the real repo tree.
+// The module ROOT constants are the CLI DEFAULT (this deployment's own root); `--root=<dir>` and the
+// exported `regenerateIndex(root, today)` target an arbitrary root (the ADR-rotation hook, hermetic tests).
 const pathsFor = (root) => {
   const base = resolve(root);
   return { root: base, docsDir: resolve(base, 'docs/ai'), indexPath: resolve(base, 'docs/ai/index.md') };
@@ -58,12 +57,9 @@ const ENSURE_INDEX_PREFIX = 'ensure-index:';
 const DEFAULT_PROJECT_NAME = 'this project';
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'dist-ssr', 'coverage', 'build', '.next']);
 
-// `strict` is the finalizer's lens on the SAME walk: for a report, an unreadable subtree is fairly
-// skipped, but a run that WRITES the navigator may not silently treat "could not read" as "nothing
-// there" — it would publish an index missing whatever it could not see and call that success. Only
-// a genuine ENOENT stays an absence; every other fs error propagates.
-// Only a genuine ENOENT is an absence. A code-LESS throw (an injected reader, a wrapped client) is
-// not evidence of absence either, so it propagates too — "unknown" must never read as "empty".
+// `strict` is the finalizer's lens on the SAME walk: a run that WRITES the navigator may not treat
+// "could not read" as "nothing there". Only a genuine ENOENT is an absence — a code-LESS throw (an
+// injected reader, a wrapped client) propagates too: "unknown" must never read as "empty".
 const rethrowUnlessAbsent = (err, strict) => {
   if (strict && err?.code !== 'ENOENT') throw err;
 };
@@ -204,24 +200,25 @@ export const computeToday = (todayStr) =>
     ? new Date(`${todayStr}T00:00:00Z`)
     : new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00Z');
 
+// A file under the spec store is ALSO read through the shared reader (already-read text, no second
+// read): its verdict rides the row as `spec` and decides collapse eligibility; a refusal is ADVISORY
+// here — surfaced as warnings, never a cap error — the structural checker owns the refusal.
+const readSpecVerdict = (rel, text) =>
+  rel.startsWith(SPECS_COLLAPSE.prefix) ? readSpecDocument(text, rel.slice(SPECS_COLLAPSE.prefix.length)) : null;
+
 export const inspectFile = async (filePath, today, root = ROOT) => {
   const text = await readFile(filePath, 'utf8');
   const lineCount = text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
   const fm = parseFrontmatter(text);
   const rel = relative(root, filePath);
+  const spec = readSpecVerdict(rel, text);
 
   if (!fm) {
-    return {
-      path: rel,
-      lineCount,
-      frontmatter: null,
-      errors: [`missing YAML frontmatter`],
-      warnings: [],
-    };
+    return { path: rel, lineCount, frontmatter: null, spec, errors: [`missing YAML frontmatter`], warnings: [] };
   }
 
   const errors = [];
-  const warnings = [];
+  const warnings = (spec === null ? [] : [...spec.errors, ...spec.warnings]).map((finding) => `spec ${finding.rule}: ${finding.message}`);
 
   const maxLines = fm.maxLines ? Number(fm.maxLines) : null;
   if (maxLines === null || Number.isNaN(maxLines)) {
@@ -241,7 +238,7 @@ export const inspectFile = async (filePath, today, root = ROOT) => {
     }
   }
 
-  return { path: rel, lineCount, frontmatter: fm, errors, warnings };
+  return { path: rel, lineCount, frontmatter: fm, spec, errors, warnings };
 };
 
 const formatRow = (row) => {
@@ -304,18 +301,15 @@ const formatIndexRow = (row) => {
   return `| ${link} | ${fm.type ?? '—'} | ${row.lineCount}/${fm.maxLines ?? '—'} | ${fm.lastUpdated ?? '—'} | ${fm.staleAfter ?? '—'} |`;
 };
 
-// The one-file-per-ADR store (docs/ai/adr/) grows O(n) forever, so its rows would blow the index's
-// own 80-line cap. It COLLAPSES to a single aggregate row (link → the navigator adr/log.md, record
-// count + numeric id range) — while walkMarkdownFiles still finds + cap-checks every individual body
-// (a body over its own cap still fails in the main flow; only the index RENDERING is collapsed).
+// Two stores grow O(n) forever and would blow the index's own 80-line cap: the one-file-per-ADR store
+// (docs/ai/adr/) and the spec store (docs/ai/specs/). Each is a GROUP that COLLAPSES to a single
+// counted row — while walkMarkdownFiles still finds + cap-checks every individual body (only the
+// index RENDERING is collapsed). Membership is by PROOF: a genuine ADR record / the adr navigator,
+// or a spec-store file the shared reader accepts. Anything else under either dir (a stray README.md,
+// a malformed spec) renders as its OWN visible row — never silently hidden by the collapse.
 const ADR_DIR_PREFIX = 'docs/ai/adr/';
 const ADR_RECORD_RE = /\/AD-(\d{3,})-[^/]*\.md$/;
 const ADR_NAV_PATH = 'docs/ai/adr/log.md';
-
-// Only genuine records + the navigator collapse into the aggregate row; an UNEXPECTED file under
-// adr/ (a stray README.md, AD-foo.md) renders as its OWN visible index row — never silently hidden
-// by the collapse (it also fails archive-decisions' own store-integrity check).
-const isCollapsibleAdr = (path) => path.startsWith(ADR_DIR_PREFIX) && (ADR_RECORD_RE.test(path) || path === ADR_NAV_PATH);
 
 const formatAdrCollapseRow = (adrRows) => {
   const recs = adrRows
@@ -329,23 +323,37 @@ const formatAdrCollapseRow = (adrRows) => {
   return `| [\`adr/\`](./adr/log.md) | adr | ${recs.length} records | ${range} | — |`;
 };
 
-// Pure index renderer — given inspected rows + the date to stamp in the header,
-// returns the exact bytes `docs/ai/index.md` should contain. Shared by
-// `--write-index` (writes it) and `--check-index` (diffs against on-disk).
+// The live counts make the row change when a spec is added or removed, so --check-index sees it.
+const formatSpecsCollapseRow = (specRows) => {
+  const count = (kind) => specRows.filter((r) => r.spec.kind === kind).length;
+  const link = `[\`${SPECS_COLLAPSE.label}\`](./${SPECS_COLLAPSE.navPath.replace(/^docs\/ai\//, '')})`;
+  return `| ${link} | ${SPECS_COLLAPSE.type} | ${count('spec')} specs | ${count('part')} parts · ${count('index')} indexes | — |`;
+};
+
+const COLLAPSE_GROUPS = [
+  { sortPath: ADR_DIR_PREFIX, isMember: (r) => r.path.startsWith(ADR_DIR_PREFIX) && (ADR_RECORD_RE.test(r.path) || r.path === ADR_NAV_PATH), format: formatAdrCollapseRow },
+  { sortPath: SPECS_COLLAPSE.prefix, isMember: (r) => Boolean(r.spec) && r.spec.errors.length === 0, format: formatSpecsCollapseRow },
+];
+
+// Pure index renderer — inspected rows + the header date → the exact bytes `docs/ai/index.md` should
+// contain. Shared by `--write-index` (writes it) and `--check-index` (diffs against on-disk).
 export const buildIndex = (rows, todayStr, meta = {}) => {
   const projectName = meta.projectName ?? DEFAULT_PROJECT_NAME;
   const onDemandLinks = meta.onDemandLinks ?? [];
   const hierarchicalLinks = meta.hierarchicalLinks ?? [];
   const header = INDEX_HEADER.replace('__TODAY__', todayStr).replace('__PROJECT__', projectName);
   const tableHeader = `| File | Type | Lines/Max | Updated | Stale after |\n|------|------|-----------|---------|-------------|`;
-  const nonAdr = [];
-  const adrRows = [];
+  const singles = [];
+  const grouped = COLLAPSE_GROUPS.map(() => []);
   for (const r of rows) {
     if (r.path === 'docs/ai/index.md') continue;
-    (isCollapsibleAdr(r.path) ? adrRows : nonAdr).push(r);
+    const group = COLLAPSE_GROUPS.findIndex((g) => g.isMember(r));
+    (group === -1 ? singles : grouped[group]).push(r);
   }
-  const tableEntries = nonAdr.map((r) => ({ sortPath: r.path, md: formatIndexRow(r) }));
-  if (adrRows.length > 0) tableEntries.push({ sortPath: ADR_DIR_PREFIX, md: formatAdrCollapseRow(adrRows) });
+  const tableEntries = singles.map((r) => ({ sortPath: r.path, md: formatIndexRow(r) }));
+  COLLAPSE_GROUPS.forEach((g, i) => {
+    if (grouped[i].length > 0) tableEntries.push({ sortPath: g.sortPath, md: g.format(grouped[i]) });
+  });
   tableEntries.sort((a, b) => a.sortPath.localeCompare(b.sortPath));
   const tableRows = tableEntries.map((e) => e.md).join('\n');
   const onDemandSection =
@@ -359,11 +367,8 @@ export const buildIndex = (rows, todayStr, meta = {}) => {
   return `${header}${tableHeader}\n${tableRows}${onDemandSection}${hierarchicalSection}\n`;
 };
 
-// Decides whether an on-disk index is in sync with the source frontmatter.
-// The index is regenerated in memory using the on-disk index's OWN `lastUpdated`
-// for the header, so a mere day-rollover (no content change) is NOT flagged —
-// only genuine drift in the file table (added/removed files, changed
-// type/cap/lastUpdated/staleAfter, or a changed line count) makes it stale.
+// Freshness regenerates the index with the on-disk header's OWN `lastUpdated`, so a mere day-rollover
+// is NOT flagged — only genuine drift in the file table makes it stale.
 export const checkIndexFreshness = (rows, onDiskText, meta = {}) => {
   if (onDiskText === null || onDiskText === undefined || onDiskText === '') {
     return { fresh: false, expected: buildIndex(rows, 'unknown', meta) };
@@ -374,13 +379,11 @@ export const checkIndexFreshness = (rows, onDiskText, meta = {}) => {
   return { fresh: expected === onDiskText, expected };
 };
 
-// The navigator is a GENERATED artifact, so its write must land on the deployment's own file and
-// nowhere else: every component of <root>/docs/ai/index.md is lstat'ed no-follow (a symlinked root,
-// `docs`, `docs/ai` or leaf REFUSES — publishing through one would clobber whatever it points at),
-// the body goes out through a unique exclusive-create temp renamed into place with the chain
-// re-checked immediately before the rename, and the temp never survives a failure. The kit runs the
-// same discipline in atomic-write.mjs; this deployment script ships dependency-free, so the
-// semantics are REIMPLEMENTED here rather than imported.
+// The navigator write lands on the deployment's own file and nowhere else: every component of
+// <root>/docs/ai/index.md is lstat'ed no-follow (a symlink anywhere REFUSES — publishing through one
+// would clobber its target), the body goes out through an exclusive-create temp renamed into place
+// with the chain re-checked before the rename, and the temp never survives a failure. The kit's
+// atomic-write.mjs runs the same discipline; this script ships dependency-free, so it is REIMPLEMENTED.
 export const INDEX_WRITE_REFUSED = 'INDEX_WRITE_REFUSED';
 const refuse = (message) => Object.assign(new Error(message), { code: INDEX_WRITE_REFUSED });
 
@@ -444,11 +447,8 @@ const writeIndex = async (rows, today, meta, { root = ROOT, indexPath = INDEX_PA
   }
 };
 
-// regenerateIndex(root, todayStr) — the ONE reused generator, root-parameterized (item (h)). It runs
-// the SAME walk → inspect → discoverMeta → writeIndex pipeline as `--write-index`, against `root`
-// (default this deployment). The ADR-rotation hook reaches it via the CLI (`--write-index --root=…`);
-// hermetic tests call it directly. `todayStr` is 'YYYY-MM-DD' (null → today). Returns the written
-// index path + row count. No second index implementation exists.
+// regenerateIndex(root, todayStr) — the ONE reused generator: the SAME walk → inspect → discoverMeta →
+// writeIndex pipeline as `--write-index`, against `root`. `todayStr` is 'YYYY-MM-DD' (null → today).
 export const regenerateIndex = async (root, todayStr = null, deps = {}) => {
   const paths = pathsFor(root);
   const today = computeToday(todayStr);
@@ -460,12 +460,10 @@ export const regenerateIndex = async (root, todayStr = null, deps = {}) => {
   return { indexPath: paths.indexPath, files: rows.length };
 };
 
-// The finalizer promises its caller EXACTLY ONE outcome line, so every step it owns — the walk, the
-// metadata discovery, the freshness read and the write — runs inside one classified error path: an
-// unreadable docs/ai is a NAMED refusal, never a stack trace. The containment guard runs BEFORE the
-// freshness read for the same reason `already-present` needs a kind probe: a symlinked navigator
-// whose target happens to hold current bytes would otherwise report `already-current` over a file
-// this mode refuses to write through — an exit 0 proving nothing about the deployment's own file.
+// The finalizer promises EXACTLY ONE outcome line, so every step it owns runs inside one classified
+// error path: an unreadable docs/ai is a NAMED refusal, never a stack trace. The containment guard
+// runs BEFORE the freshness read: a symlinked navigator whose target holds current bytes would
+// otherwise report `already-current` over a file this mode refuses to write through.
 const runEnsureIndex = async ({ root, docsDir, indexPath, today, deps }) => {
   const lstat = deps.lstat ?? lstatSync;
   const read = deps.readFile ?? readFile;
@@ -571,9 +569,8 @@ export const runCli = async (argv, deps = {}) => {
   return result(errorCount > 0 && !flags.report ? 1 : 0);
 };
 
-// Run main() only when executed directly, never on import. Compare by REAL path: an entry point
-// reached through a symlink resolves to its target, so a raw string compare reads the two as
-// different and the CLI never runs. realpathSync collapses the link so both sides match.
+// Run main() only when executed directly, never on import — compared by REAL path, so an entry point
+// reached through a symlink still runs.
 const isDirectRun = (() => {
   const invoked = process.argv[1];
   if (!invoked) return false;

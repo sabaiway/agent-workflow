@@ -72,6 +72,7 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'references/scripts/archive-issues.test.mjs',
       'references/scripts/check-docs-size-ensure.test.mjs',
       'references/scripts/check-docs-size.test.mjs',
+      'references/scripts/spec-schema.test.mjs',
       'bridges/antigravity-cli-bridge/bin/agy.test.mjs',
       'bridges/antigravity-cli-bridge/bin/agy-review.test.mjs',
       'bridges/antigravity-cli-bridge/bin/agy-review-await-guard.test.mjs',
@@ -136,6 +137,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // and the block tokenizer fold-scope.mjs reads its markdown through: a TOOL now imports this
       // deployed payload leaf, so a drop breaks the checker at load, not merely an archiver run.
       'references/scripts/markdown-blocks.mjs',
+      // the spec reader the deployed navigator collapse imports: a drop breaks check-docs-size at load
+      'references/scripts/spec-schema.mjs',
       // the cheap-lane subagent writer + its bundled vehicles
       'tools/cheap-agents.mjs',
       'references/agents/mechanical-sweep.md',
@@ -642,7 +645,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       NAME above.
     // 241 = 239 + the finding-scope checker (the fold channel): tools/fold-scope.mjs (the pure rule)
     //       + tools/fold-scope-cli.mjs (argv + fs). Their *.test.mjs siblings are stripped by files[].
-    assert.equal(packed.length, 241, `tarball file count drifted (${packed.length} ≠ 241)`);
+    // 243 = 241 + the spec layer's reader pair (spec layer 1a): references/scripts/spec-schema.mjs
+    //       (the ONE import-free reader that defines a well-formed spec; the navigator collapse reads
+    //       through it) + its deploy-payload test — both mirrored from the memory canon by sync-mirrors.
+    assert.equal(packed.length, 243, `tarball file count drifted (${packed.length} ≠ 243)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

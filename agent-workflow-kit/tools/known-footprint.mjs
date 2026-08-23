@@ -69,6 +69,8 @@ export const KIT_OWN_PATHS = [
   '/scripts/migrate-gates-branches.test.mjs',
   '/scripts/migrate-gates.mjs',
   '/scripts/migrate-gates.test.mjs',
+  '/scripts/spec-schema.mjs',
+  '/scripts/spec-schema.test.mjs',
   '/docs/plans/',
   '/.claude/settings.local.json',
   '/.claude/settings.json',

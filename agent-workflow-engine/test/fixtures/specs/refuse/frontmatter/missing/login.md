@@ -1,0 +1,3 @@
+# Spec: login
+
+## Contract

@@ -178,11 +178,7 @@ describe('buildIndex — docs/ai/adr/ directory collapse (Decision 11)', () => {
   });
 
   it('a stray adr/ markdown file renders as its OWN visible row (never collapsed/hidden)', () => {
-    const rows = [
-      makeRow('docs/ai/adr/AD-001-a.md', { frontmatter: { type: 'adr', maxLines: '400' } }),
-      makeRow('docs/ai/adr/log.md', { frontmatter: { type: 'reference', maxLines: '200' } }),
-      makeRow('docs/ai/adr/notes.md', { frontmatter: { type: 'reference', maxLines: '100' } }),
-    ];
+    const rows = [makeRow('docs/ai/adr/AD-001-a.md', { frontmatter: { type: 'adr', maxLines: '400' } }), makeRow('docs/ai/adr/log.md', { frontmatter: { type: 'reference', maxLines: '200' } }), makeRow('docs/ai/adr/notes.md', { frontmatter: { type: 'reference', maxLines: '100' } })];
     const out = buildIndex(rows, '2026-07-09');
     expect(out).toMatch(/adr\/notes\.md/); // the stray is a visible row, not swallowed by the collapse
     const aggregateRows = out.split('\n').filter((l) => l.includes('](./adr/log.md)'));
@@ -190,11 +186,7 @@ describe('buildIndex — docs/ai/adr/ directory collapse (Decision 11)', () => {
   });
 
   it('the aggregate row shows the record count and a NUMERIC id range (AD-200 … AD-1000)', () => {
-    const rows = [
-      makeRow('docs/ai/adr/AD-200-a.md', { frontmatter: { type: 'adr', maxLines: '400' } }),
-      makeRow('docs/ai/adr/AD-1000-b.md', { frontmatter: { type: 'adr', maxLines: '400' } }),
-      makeRow('docs/ai/adr/log.md', { frontmatter: { type: 'reference', maxLines: '200' } }),
-    ];
+    const rows = [makeRow('docs/ai/adr/AD-200-a.md', { frontmatter: { type: 'adr', maxLines: '400' } }), makeRow('docs/ai/adr/AD-1000-b.md', { frontmatter: { type: 'adr', maxLines: '400' } }), makeRow('docs/ai/adr/log.md', { frontmatter: { type: 'reference', maxLines: '200' } })];
     const out = buildIndex(rows, '2026-07-09');
     expect(out).toMatch(/\[`adr\/`\]\(\.\/adr\/log\.md\) \| adr \| 2 records \| AD-200 … AD-1000/);
   });
@@ -219,13 +211,70 @@ describe('buildIndex — docs/ai/adr/ directory collapse (Decision 11)', () => {
   });
 });
 
+// The spec store (docs/ai/specs/**) joins the collapse as a second GROUP: every file whose reader
+// verdict is clean folds into ONE counted `specs/` row; a file the reader refuses keeps its own row.
+const SPEC_FRONT = (kind, maxLines, extra = '') =>
+  `---\ntype: spec\nlastUpdated: 2026-08-23\nscope: permanent\nstaleAfter: 90d\nowner: none\nmaxLines: ${maxLines}\nkind: ${kind}\n${extra}---\n`;
+const specBody = (slug) =>
+  `\n# Spec: ${slug}\n\n## Contract\n\nc\n\n## Scenarios\n\n- S1 a :: test/${slug}.test.mjs :: spec:${slug}/S1\n\n## Out of scope\n\n- b\n\n## Module\n\n- src/${slug}/\n`;
+const specRow = (path, kind, errors = []) => makeRow(path, { frontmatter: { type: 'spec', maxLines: '150' }, spec: { kind, status: 'draft', revision: 1, errors, warnings: [] } });
+const SPECS_ROW_RE = /\| \[`specs\/`\]\(\.\/specs\/index\.md\) \| spec \| (\d+) specs \| (\d+) parts · (\d+) indexes \| — \|/;
+
+describe('buildIndex — docs/ai/specs/ store collapse (spec layer 1a)', () => {
+  it('1000 valid specs + their indexes render ONE counted specs/ row; the index stays <= 80 lines', () => {
+    const specs = Array.from({ length: 1000 }, (_, i) => specRow(`docs/ai/specs/d${Math.floor(i / 30)}/s${i}.md`, 'spec'));
+    const indexes = Array.from({ length: 34 }, (_, i) => specRow(`docs/ai/specs/d${i}/index.md`, 'index'));
+    const rows = [makeRow('docs/ai/handover.md'), specRow('docs/ai/specs/index.md', 'index'), ...indexes, ...specs];
+    const out = buildIndex(rows, '2026-08-23');
+    const lines = out.split('\n');
+    expect(lines.filter((l) => l.includes('](./specs/index.md)')).length).toBe(1);
+    expect(out).not.toMatch(/s999\.md/);
+    expect(lines.length <= 80).toBe(true);
+    expect(out.match(SPECS_ROW_RE).slice(1)).toEqual(['1000', '0', '35']);
+  });
+
+  it('the counted row carries live counts per kind; a malformed file under specs/ keeps its OWN visible row beside it', () => {
+    const rows = [specRow('docs/ai/specs/index.md', 'index'), specRow('docs/ai/specs/a/index.md', 'spec'), specRow('docs/ai/specs/a/p.md', 'part'), specRow('docs/ai/specs/b.md', 'spec'), specRow('docs/ai/specs/broken.md', null, [{ rule: 'kind', message: 'x' }])];
+    const out = buildIndex(rows, '2026-08-23');
+    expect(out).toMatch(/specs\/broken\.md/);
+    expect(out.match(SPECS_ROW_RE).slice(1)).toEqual(['2', '1', '1']);
+  });
+
+  it('adding or removing one valid spec drifts the counted row -> the on-disk index is stale', () => {
+    const base = [specRow('docs/ai/specs/index.md', 'index'), specRow('docs/ai/specs/a.md', 'spec')];
+    const onDisk = buildIndex(base, '2026-08-23');
+    expect(checkIndexFreshness([...base, specRow('docs/ai/specs/b.md', 'spec')], onDisk).fresh).toBe(false);
+    expect(checkIndexFreshness(base.slice(0, 1), onDisk).fresh).toBe(false);
+    expect(checkIndexFreshness(base, onDisk).fresh).toBe(true);
+  });
+
+  it('inspectFile reads a file under docs/ai/specs/ through the reader: clean -> spec verdict, malformed -> advisory warnings only', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'specs-inspect-'));
+    try {
+      await mkdir(join(root, 'docs', 'ai', 'specs'), { recursive: true });
+      const clean = join(root, 'docs', 'ai', 'specs', 'login.md');
+      await writeFile(clean, `${SPEC_FRONT('spec', 150, 'status: draft\nrevision: 1\n')}${specBody('login')}`);
+      const ok = await inspectFile(clean, computeToday('2026-08-23'), root);
+      expect(ok.errors).toEqual([]);
+      expect(ok.spec.kind).toBe('spec');
+      expect(ok.spec.errors).toEqual([]);
+      const malformed = join(root, 'docs', 'ai', 'specs', 'broken.md');
+      await writeFile(malformed, `${SPEC_FRONT('spec', 150, 'status: draft\nrevision: 1\n')}${specBody('login')}`);
+      const bad = await inspectFile(malformed, computeToday('2026-08-23'), root);
+      expect(bad.errors).toEqual([]);
+      expect(bad.spec.errors.map((e) => e.rule)).toEqual(['scenario-marker']);
+      expect(bad.warnings.some((w) => /spec scenario-marker/.test(w))).toBe(true);
+      await writeFile(join(root, 'docs', 'ai', 'handover.md'), `${SPEC_FRONT('spec', 150)}\n# outside the store\n`);
+      expect((await inspectFile(join(root, 'docs', 'ai', 'handover.md'), computeToday('2026-08-23'), root)).spec).toBe(null);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('buildIndex', () => {
   it('is deterministic, sorts rows by path, and excludes index.md itself', () => {
-    const rows = [
-      makeRow('docs/ai/index.md'),
-      makeRow('docs/ai/b.md'),
-      makeRow('docs/ai/a.md'),
-    ];
+    const rows = [makeRow('docs/ai/index.md'), makeRow('docs/ai/b.md'), makeRow('docs/ai/a.md')];
     const out = buildIndex(rows, '2026-05-29');
     expect(out).toBe(buildIndex(rows, '2026-05-29')); // deterministic
     expect(out).not.toMatch(/\[`index\.md`\]/); // index.md row excluded
@@ -327,5 +376,20 @@ describe('root parameterization (item (h))', () => {
     const stale = runCli(['--check-index', `--root=${root}`]);
     expect(stale.status).toBe(1);
     expect(stale.stderr).toMatch(/stale/);
+  });
+
+  it('the hook path over a real specs/ store: ONE counted row in the written index, a new spec makes --check-index exit 1', async () => {
+    const store = join(root, 'docs', 'ai', 'specs');
+    await mkdir(store, { recursive: true });
+    await writeFile(join(store, 'index.md'), `${SPEC_FRONT('index', 80)}\n# Specs\n\n> Up: [technical_specification.md](../technical_specification.md)\n\n## Children\n\n- [login](./login.md)\n`);
+    await writeFile(join(store, 'login.md'), `${SPEC_FRONT('spec', 150, 'status: draft\nrevision: 1\n')}${specBody('login')}`);
+    expect(runCli(['--write-index', `--root=${root}`]).status).toBe(0);
+    const index = await readFile(join(root, 'docs', 'ai', 'index.md'), 'utf8');
+    expect(index.match(SPECS_ROW_RE).slice(1)).toEqual(['1', '0', '1']);
+    expect(index).not.toMatch(/specs\/login\.md/);
+    expect(runCli(['--check-index', `--root=${root}`]).status).toBe(0);
+    await writeFile(join(store, 'signup.md'), `${SPEC_FRONT('spec', 150, 'status: draft\nrevision: 1\n')}${specBody('signup')}`);
+    expect(runCli(['--check-index', `--root=${root}`]).status).toBe(1);
+    expect(runCli([`--root=${root}`]).status).toBe(0);
   });
 });

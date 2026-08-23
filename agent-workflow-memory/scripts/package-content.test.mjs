@@ -145,6 +145,7 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
       'references/scripts/check-docs-size-ensure.test.mjs',
       'references/scripts/check-docs-size.test.mjs',
       'references/scripts/markdown-blocks.test.mjs',
+      'references/scripts/spec-schema.test.mjs',
     ];
     const missing = required.filter((p) => !packed.includes(p));
     assert.deepEqual(missing, [], 'a deploy payload test was dropped from the tarball');
@@ -157,6 +158,7 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
       'references/scripts/archive-issues.mjs',
       'references/scripts/check-docs-size.mjs',
       'references/scripts/markdown-blocks.mjs',
+      'references/scripts/spec-schema.mjs',
       'references/scripts/_expect-shim.mjs',
       'references/scripts/install-git-hooks.mjs',
       'references/scripts/migrate-gates.mjs',
@@ -212,6 +214,8 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
     // 55 = 54 + references/scripts/check-docs-size-ensure.test.mjs (the navigator write contract +
     //      the --ensure-index finalizer mode — a deploy-payload spec beside the parity-frozen main
     //      pair; kit-mirrored via sync-mirrors).
-    assert.equal(packed.length, 55, `tarball file count drifted (${packed.length} ≠ 55)`);
+    // 57 = 55 + references/scripts/spec-schema.mjs (the ONE import-free spec reader the navigator
+    //      collapse reads through — spec layer 1a) + its deploy-payload test; kit-mirrored.
+    assert.equal(packed.length, 57, `tarball file count drifted (${packed.length} ≠ 57)`);
   });
 });
