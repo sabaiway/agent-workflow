@@ -134,6 +134,7 @@ describe('readSpecDocument — refuse, exactly one rule per defect', () => {
   it('out-of-scope / module-empty / module-* path refusals / module-mix / parts', () => {
     refuses(specDoc({ outOfScope: '' }), 'login.md', 'out-of-scope');
     refuses(specDoc({ outOfScope: 'nothing excluded' }), 'login.md', 'out-of-scope');
+    refuses(specDoc({ outOfScope: '- ' }), 'login.md', 'out-of-scope');
     refuses(specDoc({ module: '' }), 'login.md', 'module-empty');
     refuses(specDoc({ module: '*(empty)*' }), 'login.md', 'module-empty');
     refuses(specDoc({ module: '- ../src/' }), 'login.md', 'module-traversal');
@@ -172,6 +173,17 @@ describe('readSpecDocument — refuse, exactly one rule per defect', () => {
     refuses(partDoc({ extra: '\n~~~js\nconst sample = 1;\n~~~\n' }), 'auth/login/sessions.md', 'fence');
     refuses(indexDoc({ preamble: `\nWrite \`\`${UPLINK_LINE}\`\` here.\n`, children: [] }), 'index.md', 'root-uplink');
     refuses(indexDoc({ preamble: `\n${UPLINK_LINE} — the top spec\n`, children: [] }), 'index.md', 'root-uplink');
+  });
+
+  it('a frontmatter defect ENDS the read with frontmatter-key alone (a malformed kind line is not a missing kind)', () => {
+    refuses(specDoc().replace('kind: spec\n', 'kind spec\n'), 'login.md', 'frontmatter-key');
+    refuses(specDoc({ fields: { priority: 'high', kind: 'feature' } }), 'login.md', 'frontmatter-key');
+  });
+
+  it('the title precedes every section; prose-only Module is module-line; a blank Module on a retired spec is module-empty', () => {
+    refuses(specDoc().replace('# Spec: Login\n', '## Surprise\n\nx\n\n# Spec: Login\n'), 'login.md', 'title');
+    refuses(specDoc({ module: 'the root is src' }), 'login.md', 'module-line');
+    refuses(specDoc({ fields: { status: 'retired' }, module: '' }), 'login.md', 'module-empty');
   });
 
   it('every rule id a refusal names is declared in SPEC_SCHEMA.rules', () => {

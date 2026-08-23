@@ -33,7 +33,10 @@ Slots: review
 
 1. **Research** — the exact files, contracts and constraints touched.
 2. **Draft** — write to the shape [`planning.md`](planning.md) fixes; its *Module ledger* decides
-   the layout and every budget before any file exists — a size gate is only the backstop.
+   the layout and every budget before any file exists — a size gate is only the backstop. Name the
+   governing spec(s) in *Goal and boundary* ([`specs.md`](specs.md)); a new feature's draft spec is
+   a `create` row and a revision of a governed contract a `modify` row, both written here so they
+   exist AT review.
 3. **Self-review** — apply *What gets cut*; fold by code (read and cite the `file:line`); update
    `queue.md` for a series.
 4. **review {recipe}** — Solo (self-review only) / Reviewed (one backend) / Council (both; you
@@ -67,7 +70,8 @@ Each ledger row is one logical commit.
    readiness (`--override <slot>=<recipe>` per run).
 2. **If `execute` resolved to Delegated, dispatch execution FIRST** — the backend returns a diff
    (codex-exec) *before* you integrate; otherwise implement directly.
-3. **Implement / integrate** — your own edits or the reviewed delegated diff.
+3. **Implement / integrate** — your own edits or the reviewed delegated diff; a spec row lands its
+   approved draft or revision WITH the code ([`specs.md`](specs.md)).
 4. **Self-review** — the change against its [`planning.md`](planning.md) ledger row and the plan's
    Verification, under the project's reuse and clean-code rules; fold by code (cite the
    `file:line`); **characterize-first**: pin uncovered code's behaviour in a green test before

@@ -1,6 +1,6 @@
 ---
 name: agent-workflow-engine
-description: Canonical home of the agent-workflow planning methodology — the capped plan shape (goal and boundary, module ledger, verification), plan lifecycle, queue.md series index, mandatory Cleanup phase, the bounded methodology slot fragment, the orchestration-recipe vocabulary (Solo / Reviewed / Council / Delegated), and the activity-procedures canon (plan-authoring / plan-execution, with typed recipe slots). A published, installable npm package (available:true) that *provides* the methodology text; it mutates nothing. The composition root (agent-workflow-kit) reads this canon LIVE from the installed engine and injects the bounded slots from it — one source of truth, no bundled mirror; `npx @sabaiway/agent-workflow-kit@latest init` installs the engine.
+description: Canonical home of the agent-workflow planning methodology — the capped plan shape (goal and boundary, module ledger, verification), plan lifecycle, queue.md series index, mandatory Cleanup phase, the feature-spec canon (the durable per-feature contract layer with its frozen schema and Out-of-scope discipline), the bounded methodology slot fragment, the orchestration-recipe vocabulary (Solo / Reviewed / Council / Delegated), and the activity-procedures canon (plan-authoring / plan-execution, with typed recipe slots). A published, installable npm package (available:true) that *provides* the methodology text; it mutates nothing. The composition root (agent-workflow-kit) reads this canon LIVE from the installed engine and injects the bounded slots from it — one source of truth, no bundled mirror; `npx @sabaiway/agent-workflow-kit@latest init` installs the engine.
 disable-model-invocation: true
 metadata:
   version: '3.2.0'
@@ -22,6 +22,13 @@ slot fill is needed but the engine is absent, the kit's reconcile **fails loudly
   (Goal and boundary · Module ledger · Verification — literal headings), the subtraction rubric for
   review, the plan-file lifecycle (`docs/plans/*.md`, gitignored, never committed), the `queue.md`
   series index and the mandatory final **Phase: Cleanup**.
+- [`references/specs.md`](references/specs.md) — the **feature-spec canon**: the durable per-feature
+  contract layer under `docs/ai/specs/` (Contract · Scenarios · Out of scope · Module), the frozen
+  schema (kinds, statuses, forward-only transitions, the numeric fan-out and promotion thresholds,
+  the scenario-binding grammar, the refusal table the deployed reader enforces), governing specs
+  cited per plan, the feature-vs-page precedence table, spec-driven feature-sliced architecture,
+  and the retroactive onboarding path. The memory substrate's deployed reader
+  `scripts/spec-schema.mjs` is pinned against this canon by the engine's own test.
 - [`references/methodology-slot.md`](references/methodology-slot.md) — the **bounded** fragment the
   composition root injects into a deployed project's `AGENTS.md`, between the
   `<!-- workflow:methodology:start -->` / `<!-- workflow:methodology:end -->` markers. A short

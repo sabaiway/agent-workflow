@@ -50,6 +50,7 @@ describe('engine installer — payload + symlink-traversal hardening', () => {
       'references/orchestration-slot.md',
       'references/autonomy-slot.md',
       'references/procedures.md',
+      'references/specs.md',
     ]) {
       assert.ok(existsSync(join(target, f)), `missing installed entry: ${f}`);
     }

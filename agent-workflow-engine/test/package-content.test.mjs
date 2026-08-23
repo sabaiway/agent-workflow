@@ -87,6 +87,7 @@ describe('engine package content — DAG guard (knows nobody)', () => {
       'references/orchestration.md',
       'references/planning.md',
       'references/procedures.md',
+      'references/specs.md', // the feature-spec canon (spec layer 1a)
     ].sort();
     // Sandbox-safe npm shape (D4): cache under $TMPDIR (cleaned after the run), network
     // side-channels off — a sandboxed run (read-only ~/.npm, no network) stays green and prompt-free.

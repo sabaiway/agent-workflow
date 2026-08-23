@@ -99,11 +99,12 @@ const parseBody = (body) => {
   const sections = [];
   const preamble = [];
   const fenced = [];
-  const state = { title: null, current: null };
+  const state = { title: null, current: null, sectionBeforeTitle: false };
   for (const raw of body.split('\n')) {
     const line = raw.replace(/\s+$/, '');
     if (FENCE_RE.test(line)) fenced.push(line);
     if (line.startsWith('## ')) {
+      if (state.title === null) state.sectionBeforeTitle = true;
       state.current = { heading: line, lines: [] };
       sections.push(state.current);
     } else if (state.title === null && line.startsWith('# ')) {
@@ -112,7 +113,7 @@ const parseBody = (body) => {
       (state.current ? state.current.lines : preamble).push(line);
     }
   }
-  return { title: state.title, sections, preamble, fenced };
+  return { title: state.title, sections, preamble, fenced, sectionBeforeTitle: state.sectionBeforeTitle };
 };
 
 // Lexical classification of a repo-relative path field — the same vocabulary for module roots and
@@ -134,7 +135,9 @@ const MODULE_PATH_RULES = Object.freeze({
   glob: 'module-glob',
 });
 
-const bulletsOf = (lines) => lines.filter((line) => line.startsWith('- ')).map((line) => line.slice(2));
+// A bare `-` is a bullet with a blank payload (trailing whitespace is stripped before parsing).
+const isBullet = (line) => line === '-' || line.startsWith('- ');
+const bulletsOf = (lines) => lines.filter(isBullet).map((line) => line.slice(2));
 const contentOf = (lines) => lines.filter((line) => line.trim() !== '');
 
 // The slug a document owns: the file stem for a flat file, the folder name for an index.md.
@@ -178,8 +181,8 @@ const checkPath = (rel, kind, errors) => {
 const checkSections = (parsed, kind, errors) => {
   const headings = parsed.sections.map((section) => section.heading);
   const prefix = SPEC_SCHEMA.titlePrefix[kind];
-  if (parsed.title === null || !parsed.title.startsWith(prefix) || parsed.title.slice(prefix.length).trim() === '') {
-    errors.push({ rule: 'title', message: `the first heading is \`${prefix}<title>\`` });
+  if (parsed.title === null || parsed.sectionBeforeTitle || !parsed.title.startsWith(prefix) || parsed.title.slice(prefix.length).trim() === '') {
+    errors.push({ rule: 'title', message: `the FIRST heading is \`${prefix}<title>\`, before every section` });
   }
   const required = SPEC_SCHEMA.requiredSections[kind];
   const missing = required.filter((heading) => !headings.includes(heading));
@@ -252,8 +255,9 @@ const checkOutOfScope = (parsed, errors) => {
   const lines = sectionLines(parsed, '## Out of scope');
   if (lines === null) return;
   const content = contentOf(lines);
-  if (bulletsOf(content).length === 0 && !(content.length === 1 && content[0] === SPEC_SCHEMA.emptyMarker)) {
-    errors.push({ rule: 'out-of-scope', message: `at least one \`- \` bullet, or exactly \`${SPEC_SCHEMA.emptyMarker}\`` });
+  const exclusions = bulletsOf(content).filter((text) => text.trim() !== '');
+  if (exclusions.length === 0 && !(content.length === 1 && content[0] === SPEC_SCHEMA.emptyMarker)) {
+    errors.push({ rule: 'out-of-scope', message: `at least one non-blank \`- \` bullet, or exactly \`${SPEC_SCHEMA.emptyMarker}\`` });
   }
 };
 
@@ -261,16 +265,17 @@ const checkModule = (parsed, status, errors) => {
   const lines = sectionLines(parsed, '## Module');
   if (lines === null) return;
   const content = contentOf(lines);
-  const paths = bulletsOf(content);
-  if (paths.length === 0) {
-    if (!(status === 'retired' && content.length === 1 && content[0] === SPEC_SCHEMA.emptyMarker)) {
-      errors.push({ rule: 'module-empty', message: `a module root is required (\`${SPEC_SCHEMA.emptyMarker}\` only on a retired spec)` });
-    }
-    return;
-  }
-  const prose = content.find((line) => !line.startsWith('- '));
+  const isEmptyMarker = content.length === 1 && content[0] === SPEC_SCHEMA.emptyMarker;
+  const prose = isEmptyMarker ? undefined : content.find((line) => !isBullet(line));
   if (prose !== undefined) {
     errors.push({ rule: 'module-line', message: `"${prose}" — every ## Module line is a \`- <path>\` bullet` });
+    return;
+  }
+  const paths = bulletsOf(content);
+  if (paths.length === 0) {
+    if (!(status === 'retired' && isEmptyMarker)) {
+      errors.push({ rule: 'module-empty', message: `a module root is required (\`${SPEC_SCHEMA.emptyMarker}\` only on a retired spec)` });
+    }
     return;
   }
   const kinds = paths.map(classifyPath);
@@ -306,8 +311,8 @@ const checkParts = (parsed, at, errors) => {
 };
 
 // The verdict: { kind, status, revision, errors: [{ rule, message }], warnings: [{ rule, message }] }.
-// Errors are collected past the first defect wherever later checks stay meaningful; a missing
-// frontmatter or an unknown kind ends the read, because no shape can be judged without them.
+// Errors are collected past the first defect wherever later checks stay meaningful; a missing or
+// defective frontmatter and an unknown kind each end the read, because no shape can be judged without them.
 export const readSpecDocument = (text, rel) => {
   const errors = [];
   const warnings = [];
@@ -318,12 +323,15 @@ export const readSpecDocument = (text, rel) => {
     return verdict(null, null, null);
   }
   const { fields, defects, body } = front;
+  if (defects.length > 0) {
+    errors.push({ rule: 'frontmatter-key', message: defects.join('; ') });
+    return verdict(null, null, null);
+  }
   const kind = fields.kind;
   if (!SPEC_SCHEMA.kinds.includes(kind)) {
     errors.push({ rule: 'kind', message: `kind must be one of ${SPEC_SCHEMA.kinds.join('|')}` });
     return verdict(null, null, null);
   }
-  if (defects.length > 0) errors.push({ rule: 'frontmatter-key', message: defects.join('; ') });
   checkFrontmatter(fields, kind, errors);
   const at = checkPath(rel, kind, errors);
   const parsed = parseBody(body);

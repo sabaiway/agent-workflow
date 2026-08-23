@@ -24,7 +24,8 @@ A plan that does not fit is not under-described. Either the TASK is too big — 
 independently verifiable boundaries, never by document size — or it is a SWEEP (below).
 
 - **Goal and boundary** (10 lines) — the observable outcome, what behaviour is preserved, explicit
-  non-goals.
+  non-goals, and the GOVERNING spec(s) ([`specs.md`](specs.md)): zero, one or many — one per touched
+  spec-covered slice — each cited spec's Out of scope restated as a non-goal for that slice.
 - **Module ledger** (60 lines) — the single list of paths, and the plan's execution order.
 - **Verification** (20 lines) — the acceptance check, plus one command that validates the whole ledger.
 - **Phase: Cleanup** and **Next steps** (human-actionable only) share the 10 reserved lines.
@@ -40,6 +41,11 @@ One row per path, ≤200 bytes per row, six fields:
 **The rows ARE the steps.** They execute top to bottom, each row is one logical commit, and a row may
 only anchor on a path above it or on existing code. There is no separate step/phase numbering — the
 only phases are session boundaries in a multi-session plan, and Cleanup.
+
+**A contract change is a row, present at review.** A NEW feature's draft spec is a `create` row
+(`docs/ai/specs/<slug>.md`) and a proposed REVISION of a governed contract is a `modify` row — both
+written WITH the plan, so approval confirms the plan and every cited draft or revision atomically; the
+landing row moves the spec `draft -> live`, a removal row `live -> retired`.
 
 A `create` row's responsibility names the **exported surface** the module must provide — the names
 other rows import. That surface does not exist in the checkout yet, so it cannot be derived from it;

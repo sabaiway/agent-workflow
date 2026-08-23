@@ -85,6 +85,16 @@ const DISCIPLINE_TOKENS = [
   'never queued',
   'write/remove decision',
   'routes to subtraction',
+  // spec-first (the spec layer, AD-112) — governing specs are plural and cited per touched slice,
+  // page-only coverage governs as an adoption shim, the revision lands with the code.
+  'spec-first',
+  'governing spec',
+  'zero, one or many',
+  'no global union',
+  'before approval',
+  'exists at plan review',
+  'lands with the code',
+  'adoption shim',
 ];
 
 // The pre-E4 intro line (the outgoing body differs from the current fragment ONLY by the
@@ -147,12 +157,12 @@ describe('agent-rules-lens-priors — append-only prior store shape', () => {
 
   it('the OUTGOING body of the previous release IS the newest entry — exact normalized equality', () => {
     // The current fragment differs from the IMMEDIATELY-previous release's body by EXACTLY the
-    // state-table bullet — so the exact expected outgoing body is computable, and a typo in the
+    // spec-first bullet — so the exact expected outgoing body is computable, and a typo in the
     // prior entry goes red instead of sliding past a spot-check. This line moves with every canon
     // release: it names THIS release's delta, never a past one.
     const lines = fragment.split('\n');
-    const kept = lines.filter((l) => !l.startsWith('- **State table BEFORE the guard'));
-    assert.equal(lines.length - kept.length, 1, 'sanity: exactly ONE state-table bullet is this release\'s delta');
+    const kept = lines.filter((l) => !l.startsWith('- **Spec-first.**'));
+    assert.equal(lines.length - kept.length, 1, 'sanity: exactly ONE spec-first bullet is this release\'s delta');
     const outgoing = normalize(kept.join('\n'));
     assert.notEqual(outgoing, normalize(fragment), 'sanity: the swap actually changes the body');
     assert.ok(outgoing.includes(CURRENT_INTRO), 'the outgoing body carries the provenance intro (post-E4)');
