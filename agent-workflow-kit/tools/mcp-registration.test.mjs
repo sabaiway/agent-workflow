@@ -372,3 +372,105 @@ describe('readRegistration — the registration facts of one project', () => {
     });
   });
 });
+
+// withoutRegistration is the token-removal COMPLEMENT of mergeSettings — not its exact inverse: a
+// merge into an empty file leaves managed containers a removal does not take back. For a settings
+// copy separated from its launcher. It may remove only our own tokens — never add, never repair.
+describe('withoutRegistration — removing exactly our own tokens', () => {
+  const rules = (t = TOOLS) => t.map((tool) => `mcp__${SERVER_NAME}__${tool.name}`);
+  const pick = (r) => ({ changed: r.changed, hasTokens: r.hasTokens, unreadable: /not readable/u.test(r.reason ?? '') });
+
+  it('drops our enable and our rules, keeps foreign values, keys and NON-INDEX key order', async () => {
+    const { withoutRegistration } = await load();
+    const before = JSON.stringify({
+      includeCoAuthoredBy: false,
+      enabledMcpjsonServers: ['someone-else', SERVER_NAME],
+      permissions: { defaultMode: 'ask', allow: [rules()[0], 'Bash(ls:*)', rules()[1]] },
+    }, null, 2);
+    const { text, changed } = withoutRegistration(`${before}\n`);
+    assert.equal(changed, true);
+    const after = JSON.parse(text);
+    assert.deepEqual(after.enabledMcpjsonServers, ['someone-else']);
+    assert.deepEqual(after.permissions.allow, ['Bash(ls:*)']);
+    assert.equal(after.permissions.defaultMode, 'ask', 'a sibling permission value survives');
+    assert.equal(after.includeCoAuthoredBy, false, 'a foreign key survives');
+    assert.deepEqual(Object.keys(after), Object.keys(JSON.parse(before)), 'non-index key order is unchanged');
+  });
+
+  // The stated exception, pinned so it is a KNOWN limit rather than a surprise: any JSON round-trip
+  // hoists integer-like keys to the front — JS object semantics, not something this function does.
+  // The fixture is literal TEXT with "zeta" ahead of "7", and the move is asserted in the OUTPUT
+  // TEXT: re-parsing the output would hoist the key itself and prove nothing.
+  it('an integer-like key is hoisted by the round-trip — the limit is pinned, not claimed away', async () => {
+    const { withoutRegistration } = await load();
+    const before = `{\n  "zeta": 1,\n  "7": "seven",\n  "enabledMcpjsonServers": ["${SERVER_NAME}"]\n}\n`;
+    assert.ok(before.indexOf('"zeta"') < before.indexOf('"7"'), 'sanity: the source really has zeta first');
+    const out = withoutRegistration(before).text;
+    assert.ok(out.indexOf('"7"') < out.indexOf('"zeta"'), 'the integer-like key moved to the front');
+    assert.match(out, /"7": "seven"/u, 'and its VALUE is untouched — only the position moves');
+  });
+
+  // Each way a JSON round-trip can LOSE foreign data refuses the rewrite whole — and says so, since
+  // the caller must tell "nothing of ours" apart from "ours is here and I refused to touch it".
+  const LOSSY = [
+    ['a number past double precision', `{"limit":9007199254740993,"enabledMcpjsonServers":["${SERVER_NAME}"]}`, /number would not survive/u],
+    ['a duplicate key at the top level', `{"a":1,"a":2,"enabledMcpjsonServers":["${SERVER_NAME}"]}`, /duplicate key/u],
+    ['a duplicate key nested deeper', `{"x":{"b":1,"b":2},"enabledMcpjsonServers":["${SERVER_NAME}"]}`, /duplicate key/u],
+    ['a duplicate key inside an array element', `{"x":[{"c":1,"c":2}],"enabledMcpjsonServers":["${SERVER_NAME}"]}`, /duplicate key/u],
+  ];
+  for (const [name, body, reason] of LOSSY) {
+    it(`${name} refuses the rewrite entirely, and names why`, async () => {
+      const { withoutRegistration } = await load();
+      const r = withoutRegistration(body);
+      assert.equal(r.text, body, 'untouched, not corrupted');
+      assert.equal(r.changed, false);
+      assert.equal(r.hasTokens, true, 'the caller can still tell ours IS present');
+      assert.match(r.reason, reason);
+    });
+  }
+
+  it('a quoted digit run and a quoted colon never trip the guards', async () => {
+    const { withoutRegistration } = await load();
+    const body = `{"note":"9007199254740993","q":"a\\":b","enabledMcpjsonServers":["${SERVER_NAME}"]}`;
+    const r = withoutRegistration(body);
+    assert.equal(r.changed, true, 'string CONTENT is never read as a number or a key');
+    assert.equal(JSON.parse(r.text).note, '9007199254740993');
+  });
+
+  it('the four outcomes are distinguishable by hasTokens and reason', async () => {
+    const { withoutRegistration } = await load();
+    assert.deepEqual(pick(withoutRegistration('not json')), { changed: false, hasTokens: false, unreadable: true });
+    assert.deepEqual(pick(withoutRegistration('{}')), { changed: false, hasTokens: false, unreadable: false });
+    assert.deepEqual(pick(withoutRegistration(`{"enabledMcpjsonServers":["${SERVER_NAME}"]}`)),
+      { changed: true, hasTokens: true, unreadable: false });
+  });
+
+  it('never synthesises an allow array the file did not have', async () => {
+    const { withoutRegistration } = await load();
+    const { text } = withoutRegistration(JSON.stringify({
+      enabledMcpjsonServers: [SERVER_NAME], permissions: { defaultMode: 'ask' },
+    }, null, 2));
+    assert.equal('allow' in JSON.parse(text).permissions, false, 'removing ours never adds foreign content');
+  });
+
+  it('keeps CRLF, and returns the input untouched when there is nothing of ours', async () => {
+    const { withoutRegistration } = await load();
+    const crlf = JSON.stringify({ enabledMcpjsonServers: [SERVER_NAME] }, null, 2).replaceAll('\n', '\r\n');
+    assert.match(withoutRegistration(`${crlf}\r\n`).text, /\r\n/u);
+    for (const inert of ['not json at all', JSON.stringify({ enabledMcpjsonServers: ['other'] }), '{}']) {
+      const r = withoutRegistration(inert);
+      assert.equal(r.text, inert, inert.slice(0, 20));
+      assert.equal(r.changed, false, inert.slice(0, 20));
+      assert.equal(r.hasTokens, false, inert.slice(0, 20));
+    }
+  });
+
+  it('a wrong-typed managed key is left alone — this never repairs what it did not understand', async () => {
+    const { withoutRegistration } = await load();
+    const wrong = JSON.stringify({ enabledMcpjsonServers: 'all', permissions: { allow: [rules()[0]] } });
+    const r = withoutRegistration(wrong);
+    assert.equal(r.text, wrong);
+    assert.equal(r.changed, false);
+    assert.equal(r.hasTokens, false, 'a malformed managed key is not "ours is here" — it is unreadable');
+  });
+});

@@ -14,10 +14,25 @@ The ONE stored-metadata exception is the PREPARED OID recorded in the handoff: l
 Git ≥ 2.36 is required for NUL-terminated worktree porcelain; an older Git fails closed with its
 own verbatim error through the existing Git-error surface.
 
+**The MCP registration is never HANDED to a worktree, and never owned by one.** The scope is the
+untracked lanes this tool drives — the registry copy set and `--include` (refused pre-mutation, and
+a recorded include from an older handoff is filtered out too); a TRACKED `.mcp.json` still arrives
+with `git worktree add`, because that is the checkout, not a copy. `/.mcp.json` names an absolute
+machine path and its consent is per checkout, so it is excluded from the copy set, from the provision
+containment sweep, and from what `cleanup` may remove — a satellite's own `.mcp.json` therefore stays
+classified as foreign work and blocks cleanup, rather than being deleted as ours. The settings half
+is rewritten only under ONE conjunction of proven facts: untracked, bytes still MAIN's (or their
+rebased form), and a launcher proven ABSENT — then the copy loses our `enabledMcpjsonServers`
+membership and our two derived allow rules and nothing else. Every other state keeps its registration
+TOKENS — not necessarily its bytes, since `rebasePins` may still rewrite absolute pins in that same
+file on its own lane — and, where the settings file is readable, well-formed and actually carries
+tokens, gets a neutral line naming them; orphanhood is claimed only where it is proven.
+
 - `provision <slug> --plan <path> [--as <name>.md] [--dir <path>] [--branch <name>] [--include <path>]... [--install] [--resume]`
   — create a feature worktree (default: the visible sibling `<repoParent>/<repoName>--<slug>`,
   branch `aw/<slug>`) and populate it: the registry-derived footprint copy-if-missing (a tracked
-  file is NEVER overwritten), EXACTLY ONE seeded feature plan, the `handoff-<slug>.md` stub
+  file is NEVER overwritten, and `/.mcp.json` is never copied or owned — see below), EXACTLY ONE seeded
+  feature plan, the `handoff-<slug>.md` stub
   (written at provision — the tool's own record; `list` and `cleanup` read it), a
   `node_modules` symlink when main has one and the link stays ignored — a SHARED MUTABLE cache:
   writes through it hit MAIN's node_modules; for isolation RUN the printed isolated-install

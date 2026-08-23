@@ -4,6 +4,59 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 7.2.0 — `.mcp.json` joins the hidden-mode footprint, and a worktree never owns it (AD-111)
+
+7.0.0 taught the kit to register its MCP server. It did not teach hidden mode about the file that
+registration writes — so a hidden deployment that ran `/agent-workflow-kit mcp` left `.mcp.json`
+sitting in `git status`, one `git add -A` away from a commit. That is exactly the leak the footprint
+registry exists to prevent, and it shipped anyway.
+
+- **`/.mcp.json` is in `KIT_OWN_PATHS`.** It joins `/.claude/settings.json` as a SHARED container the
+  kit merges into rather than owns, on the same terms: the tracked→ASK arm means a project that
+  already commits its own registration is asked, never silently un-tracked. Candidacy is
+  unconditional on purpose — the path is CONSIDERED before a later `mcp --apply` writes the file
+  rather than only after it appears, and is then hidden, dropped as already covered by a tracked
+  `.gitignore`, or surfaced as an ASK. That is what removes the follow-up reconcile the bug depended
+  on. The `contracts.md` prose mirror names it.
+- **A worktree is never HANDED one, and never owns one.** The scope is the untracked lanes this tool
+  drives — the registry copy set and `--include`; a TRACKED `.mcp.json` still arrives with
+  `git worktree add`, because that is the checkout, not a copy. One frozen never-provisioned set,
+  read at three sites because each needs it for a different reason: the copy set would hand a
+  satellite a launcher pinned to a path consented for the MAIN checkout; the containment sweep would
+  STOP the whole provision on an escaping symlink at that path (a device-node mask realpaths inside
+  the repo and reaches the later special-file refusal instead); and `registryRoots` decides what
+  `cleanup` may REMOVE. That third one was measured — without the guard, `cleanup` on a landed
+  worktree carrying a satellite's own `.mcp.json` exited 0 and took the file with it. `--include` is
+  refused pre-mutation for the same paths: it is the one door that bypasses the copy set, and it
+  would have recorded the launcher as ours.
+- **A settings copy this tool wrote never enables a server the worktree cannot declare.** The
+  guarantee is exactly that narrow. `.claude/settings.json` rides `REBASE_TARGETS` into a worktree
+  carrying `enabledMcpjsonServers`, which `mcp.md` itself calls a client error on every startup. An
+  untracked copy still equal to MAIN loses our enable and our two derived allow rules — and ONLY
+  those; every foreign server, rule and key survives, as do the file's EOL and the order of its
+  non-index keys (`withoutRegistration`, the token-removal complement of `mergeSettings`, not its
+  exact inverse — a JSON round-trip still hoists integer-like keys, as JS object semantics require).
+  **Where a rewrite would LOSE something the kit does not own, it is refused whole and says why.**
+  Three ways, each detected before anything is written: a number past double precision comes back a
+  different value; a duplicate key at any depth collapses to the last one (both found on the source
+  TEXT, because after the parse the evidence is gone); and invalid UTF-8 would become U+FFFD, so both
+  rewriting lanes — the pin rebase and the token strip — decode with FATAL UTF-8 and refuse
+  separately. The MAIN-equality proof compares BYTES, with the BOM preserved through the decode, so
+  a BOM-carrying original and a BOM-less copy can never pass for the same file.
+  The rewrite is admitted by ONE positive conjunction — untracked, bytes still MAIN's or their
+  rebased form, and a launcher proven ABSENT — so a tracked or user-modified settings file keeps its
+  registration tokens on purpose, as does one standing beside a launcher that is present or that
+  cannot be read. Those states get a neutral line naming the tokens; orphanhood is only CLAIMED where
+  it is proven.
+- **All three output arms name the reconcile.** Applied, masked hand-off, and already-registered —
+  the last one matters most, because a deployment registered under 7.0.0 learns about the reconcile
+  on its next run. A settings write that fails after the entry landed carries the note too: that
+  path never reaches the report, and it strands a standing registration.
+
+**Known residual, stated:** a VISIBLE deployment still commits a launcher carrying an absolute
+machine path. The fix is not symmetric with hidden mode — a visible `.mcp.json` may legitimately hold
+a team's own committable servers — so it is its own queued decision, not a line in this release.
+
 ## 7.1.0 — `fold-scope`: the fold channel gets a checker that refuses a claim whose reference does not resolve (AD-110)
 
 The engine canon now asks every finding to NAME the invariant its fix enforces before the edit

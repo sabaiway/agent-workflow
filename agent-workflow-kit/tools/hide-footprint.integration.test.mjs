@@ -121,6 +121,30 @@ describe('hide-footprint integration (real git)', { skip: !gitOk }, () => {
     assert.ok(r.wrote.includes('/AGENTS.md') && r.wrote.includes('/docs/ai/'));
   });
 
+  // The mcp mode (AD-108) writes .mcp.json at the project root; hidden mode must keep it out of git.
+  it('an untracked .mcp.json is seated in the managed block and really ignored', () => {
+    const { dir, git, deps } = env;
+    writeFileSync(join(dir, 'AGENTS.md'), '# entry\n');
+    writeFileSync(join(dir, '.mcp.json'), '{"mcpServers":{}}\n');
+    const r = hideFootprint({ dir }, deps);
+    assert.ok(r.wrote.includes('/.mcp.json'), 'the registration is in the written set');
+    assert.ok(readExclude(dir).includes('/.mcp.json'), 'and inside the managed fence');
+    assert.match(checkIgnoreSource(git, dir, '.mcp.json') ?? '', /info\/exclude/, 'git really ignores it');
+  });
+
+  it('a TRACKED .mcp.json is an ASK, never written into the block and never un-tracked', () => {
+    const { dir, git, deps } = env;
+    writeFileSync(join(dir, 'AGENTS.md'), '# entry\n');
+    writeFileSync(join(dir, '.mcp.json'), '{"mcpServers":{}}\n');
+    git(['add', '.mcp.json']);
+    git(['commit', '-m', 'team commits its own mcp registration']);
+    const r = hideFootprint({ dir }, deps);
+    assert.ok(!r.wrote.includes('/.mcp.json'), 'a tracked path is never hidden silently');
+    const ask = r.asks.find((a) => a.path === '/.mcp.json');
+    assert.match(ask?.reason ?? '', /tracked in git/, 'it is surfaced as the tracked ASK');
+    assert.equal(git(['ls-files', '--', '.mcp.json']).trim(), '.mcp.json', 'still tracked');
+  });
+
   it('delegated-hidden, STALE memory: a memory-old GLOBAL block is migrated away with --remove-global', () => {
     const { dir, git, deps } = env;
     const globalExcludes = join(env.home, 'gitignore_global');

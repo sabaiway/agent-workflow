@@ -4,6 +4,27 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 3.2.0 — the state table comes BEFORE the guard: enumerate by proof, never by exclusion (AD-111)
+
+The canon already said a repeat finding in one subarea routes to SUBTRACTION rather than a fourth
+patch. That rule fires LATE — by the time it triggers, the review has paid for every miss. This
+release adds the early, structural trigger, learned from three consecutive review rounds that each
+found one more unenumerated input state in a single function, every miss failing OPEN.
+
+- **`references/agent-rules-lens.md`** gains one clause: where a decision's input has several
+  independent state dimensions, write the table FIRST, admit the write with ONE conjunction of proven
+  facts, funnel every other cell into a single refusal, and make the table the table-driven test. An
+  exclusion list (`if (bad1) return; if (bad2) return;`) fails open on the first state nobody
+  enumerated — and "unreadable" is a state, distinct from "absent". The clause also states plainly
+  what a reviewer can and cannot do here: it judges the patch in front of it and can name only the
+  NEXT missing state, one round at a time, so the enumeration is the author's job.
+- The OUTGOING body is appended verbatim to **`references/agent-rules-lens-priors.md`** per the
+  [[AD-041]] append-only contract, so every unmodified deployment still normalize-matches and
+  converges on first touch, while a customized region stays preserved.
+
+Engine-only content, but it ships with kit 7.2.0 and memory 4.5.4 because both carry the rendered
+`agent_rules.md` template.
+
 ## 3.1.0 — a finding NAMES the invariant its fix enforces, and the acceptance criteria become a machine-readable list (AD-110)
 
 A review round produces findings, and the canon never said which of them the phase owes. The two

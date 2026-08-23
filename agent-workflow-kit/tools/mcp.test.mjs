@@ -101,13 +101,31 @@ describe('writeMcp — the guarded registration writer', () => {
     const { writeMcp } = await load();
     await withRoot((root) => {
       const rec = recorder('settings.json');
-      assert.throws(() => writeMcp({ cwd: root, dryRun: false }, { ...io, rename: rec.rename }), /EIO/u);
+      // The STANDING entry never reaches formatResult, so the reconcile note must ride the failure.
+      assert.throws(() => writeMcp({ cwd: root, dryRun: false }, { ...io, rename: rec.rename }), (err) => {
+        assert.match(err.message, /EIO/u);
+        assert.match(err.message, /hide-footprint/u, 'a standing registration is named even on the failure path');
+        return true;
+      });
       assert.deepEqual(readJson(mcpAbs(root))[SERVERS_KEY][SERVER_NAME], ENTRY, 'the completed write is not rolled back');
       assert.equal(existsSync(settingsAbs(root)), false, 'and the failed one left nothing behind');
       // The next run converges: it sees .mcp.json as already-current and writes only the settings.
       const again = writeMcp({ cwd: root, dryRun: false }, io);
       assert.equal(again.wrote, true);
       assert.equal(readRegistration(root, io).registered, true);
+    });
+  });
+
+  // The entry was ALREADY current, so this run wrote none of it — but an older deployment's
+  // registration is standing on disk unreconciled, which is exactly when the note is warranted.
+  it('a settings failure over an ALREADY-current entry still names the reconcile', async () => {
+    const { writeMcp } = await load();
+    await withRoot((root) => {
+      writeJson(mcpAbs(root), registeredEntry);
+      assert.throws(() => writeMcp({ cwd: root, dryRun: false }, { ...io, rename: recorder('settings.json').rename }), (err) => {
+        assert.match(err.message, /hide-footprint/u);
+        return true;
+      });
     });
   });
 
@@ -174,6 +192,20 @@ describe('writeMcp — the guarded registration writer', () => {
       assert.equal(r.plan.writeMcpJson, false);
       assert.equal(r.plan.writeSettings, false);
       assert.match(formatResult(r), /already registered/u);
+    });
+  });
+
+  // `/.mcp.json` is in the hidden-mode registry, and a registration made before that entry shipped
+  // is still visible to `git status` until a reconcile runs — so EVERY arm that reports a standing
+  // registration names it, not just the one that wrote it. Parity with gate-hook.mjs / cheap-agents.
+  it('every registered-state arm names the hidden-mode reconcile', async () => {
+    const { writeMcp, formatResult } = await load();
+    await withRoot((root) => {
+      const applied = formatResult(writeMcp({ cwd: root, dryRun: false }, io));
+      assert.match(applied, /hide-footprint/u, 'the applied report');
+      const already = formatResult(writeMcp({ cwd: root }, io));
+      assert.match(already, /already registered/u);
+      assert.match(already, /hide-footprint/u, 'and the already-registered report');
     });
   });
 
@@ -250,6 +282,7 @@ describe('writeMcp — the guarded registration writer', () => {
       assert.match(report, /merge/iu, 'the instruction is a MERGE');
       assert.match(report, /keep every other server/iu, 'and it says so about what the kit cannot see');
       assert.doesNotMatch(report, /paste into/iu, 'a paste-the-whole-file instruction IS the clobber');
+      assert.match(report, /hide-footprint/u, 'a hand-applied registration needs the reconcile just as much');
     });
   });
 

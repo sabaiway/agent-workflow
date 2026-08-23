@@ -183,6 +183,76 @@ export const decideSettingsText = (text, allowRules) => {
   };
 };
 
+// The token-removal COMPLEMENT of mergeSettings (not its exact inverse — merging into an empty file
+// and removing again leaves the managed containers behind), for a settings copy moved away from its `.mcp.json`
+// (a provisioned worktree: it gets no launcher, so a copied enable would be a client error on every
+// client start). Removes ONLY our own tokens — our `SERVER_NAME` membership and our derived allow
+// rules — and preserves every foreign server, foreign rule, foreign key and the file's EOL. Returns
+// `{ text, changed, hasTokens, reason }` (the four outcomes are tabulated at the function); `text`
+// is the input byte-for-byte whenever `changed` is false — this never repairs, and never edits what
+// it did not understand.
+// A JSON round-trip is not content-preserving for everything a file may legally carry, and this
+// function rewrites a file it does NOT own — so each way the trip can lose data is detected and
+// REFUSES the rewrite whole. Two are known and both are checked on the SOURCE TEXT, because after
+// `JSON.parse` the evidence is already gone:
+//   • a number past double precision (9007199254740993 → …992) comes back a different value;
+//   • a duplicate key ({"a":1,"a":2}) collapses to the last one, dropping foreign data silently.
+// String bodies are blanked to `""` first, so a digit run or a colon inside a string is never read
+// as a number or a key. Deliberately strict on numbers: `1.0` and `1e2` are re-spellings rather
+// than losses and are refused too — fail-closed is the correct direction here.
+const blankStrings = (text) => text.replace(/"(?:[^"\\]|\\.)*"/g, '""');
+const JSON_NUMBER = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][-+]?\d+)?/g;
+
+const countKeys = (value) => (Array.isArray(value)
+  ? value.reduce((n, v) => n + countKeys(v), 0)
+  : isPlainObject(value)
+    ? Object.entries(value).reduce((n, [, v]) => n + 1 + countKeys(v), 0)
+    : 0);
+
+// Why a COUNT: a duplicate at any depth makes the source carry more key tokens than the parsed
+// value has keys. No second JSON parser, and nothing depends on where the duplicate sits.
+const roundTripLoss = (text, parsed) => {
+  const blanked = blankStrings(text);
+  const numbers = blanked.match(JSON_NUMBER) ?? [];
+  if (!numbers.every((lit) => String(JSON.parse(lit)) === lit)) return 'a number would not survive the rewrite';
+  const keyTokens = (blanked.match(/""\s*:/g) ?? []).length;
+  if (keyTokens !== countKeys(parsed)) return 'a duplicate key would be collapsed by the rewrite';
+  return null;
+};
+
+// Four outcomes over `{ text, changed, hasTokens, reason }`, and a caller must be able to tell them
+// apart — `changed:false` alone conflates
+// "nothing of ours is here" with "ours is here and the rewrite was REFUSED", and the second one owes
+// the operator a word:
+//   unreadable          → {changed:false, hasTokens:false, reason:'…'}   not JSON of the shape we write
+//   nothing of ours     → {changed:false, hasTokens:false, reason:null}
+//   refused (lossy)     → {changed:false, hasTokens:true,  reason:'…'}   tokens stay, say why
+//   rewritten           → {changed:true,  hasTokens:true,  reason:null}
+export const withoutRegistration = (text, allowRules = allowRulesFor()) => {
+  const keep = (hasTokens, reason) => ({ text, changed: false, hasTokens, reason });
+  const decided = decideSettingsText(text, allowRules);
+  if (decided.state !== STATE.PRESENT) return keep(false, 'not readable as settings JSON');
+  if (!decided.enabled && decided.allowPresent.length === 0) return keep(false, null);
+  const loss = roundTripLoss(text, decided.data);
+  if (loss !== null) return keep(true, loss);
+  const { [ENABLED_KEY]: enabledList, permissions } = decided.data;
+  const keptEnabled = (Array.isArray(enabledList) ? enabledList : []).filter((n) => n !== SERVER_NAME);
+  const keptAllow = (isPlainObject(permissions) && Array.isArray(permissions.allow) ? permissions.allow : [])
+    .filter((rule) => !allowRules.includes(rule));
+  // Only an allow array that ALREADY existed is rewritten — synthesising `allow: []` where the file
+  // had no such key would be adding foreign content under the name of removing ours.
+  const nextPermissions = isPlainObject(permissions) && Array.isArray(permissions.allow)
+    ? { ...permissions, allow: keptAllow }
+    : permissions;
+  // Rebuilt through the original order of the NON-INDEX keys — a settings file the user reads should
+  // not be reordered by a removal it did not ask for. Integer-like keys are the stated exception:
+  // any JSON round-trip hoists them to the front, because JS object semantics say so.
+  const next = Object.fromEntries(Object.entries(decided.data).map(([key, value]) => (
+    key === ENABLED_KEY ? [key, keptEnabled] : key === 'permissions' ? [key, nextPermissions] : [key, value]
+  )));
+  return { text: formatJson(next, decided.eol), changed: true, hasTokens: true, reason: null };
+};
+
 // readRegistration(root, io?) → the full registration picture of ONE project. `io.serverPath`
 // overrides the running kit's server path (tests); every fs primitive in `io` is the fs-read-nofollow
 // injection contract. NEVER throws.

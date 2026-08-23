@@ -4,6 +4,18 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 4.5.4 — the deployed `agent_rules.md` carries the state-table clause (AD-111)
+
+Template-only follow-up to engine 3.2.0: the rendered lens block in
+`references/templates/agent_rules.md` gains the clause that asks for a state table before a guard,
+admitted by a conjunction of proven facts rather than a list of exclusions. No substrate behaviour
+changes.
+
+**Which deployments actually see it, stated precisely:** a FRESH bootstrap (the template is copied)
+and any project the KIT reconciles — the lens reconciler lives in the kit, not here. A standalone
+`agent-workflow-memory` upgrade over an existing `agent_rules.md` preserves that file and does NOT
+re-render its lens region, so this clause does not reach it by that path.
+
 ## 4.5.3 — the bundled `agent_rules.md` template carries the finding-scope lens bullet (AD-110)
 
 The engine's agent-rules lens gained one bullet in **3.1.0** — the finding-scope rule, scoped to

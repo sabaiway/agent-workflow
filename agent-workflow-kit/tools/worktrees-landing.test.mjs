@@ -604,6 +604,29 @@ describe('cleanup — live landed verification and plain removal', () => {
     assert.match(result.text, /cleanup complete/);
   });
 
+  // `/.mcp.json` is in the hidden-mode registry but is NEVER provisioned, so it is never ours to
+  // remove: a satellite that registered its own typed channel must stop cleanup, not lose the file.
+  it('a satellite-created .mcp.json is foreign work — cleanup refuses and the file survives', () => {
+    const fixture = prepareAndCommit('cleanup-mcp-json');
+    writeFileSync(join(fixture.worktree, '.mcp.json'), '{"mcpServers":{}}\n');
+    const result = cleanup(fixture);
+    assert.notEqual(result.code, EXIT.ok, `cleanup must refuse; said: ${result.errText}`);
+    assert.match(result.errText, /\.mcp\.json/, 'and it names the file');
+    assert.ok(existsSync(join(fixture.worktree, '.mcp.json')), 'the registration was never removed');
+  });
+
+  // Ownership has two sources. The --include refusal closes the NEW door; a handoff record written
+  // before that refusal existed still names the path, and that legacy record must not re-own it.
+  it('a LEGACY record naming .mcp.json as an include still does not make cleanup own it', () => {
+    const fixture = prepareAndCommit('cleanup-mcp-legacy');
+    writeFileSync(join(fixture.worktree, '.mcp.json'), '{"mcpServers":{}}\n');
+    const handoff = readFileSync(fixture.handoff, 'utf8');
+    writeFileSync(fixture.handoff, handoff.replace('- include: (none)', '- include: .mcp.json'));
+    const result = cleanup(fixture);
+    assert.notEqual(result.code, EXIT.ok, `cleanup must refuse; said: ${result.errText}`);
+    assert.ok(existsSync(join(fixture.worktree, '.mcp.json')), 'a recorded include never re-owns it');
+  });
+
   it('live verification handles deleted and renamed entries', () => {
     const fixture = provision('cleanup-delete-rename');
     sh(['mv', 'old.txt', 'moved.txt'], fixture.worktree);

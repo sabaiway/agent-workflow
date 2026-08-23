@@ -147,11 +147,12 @@ describe('agent-rules-lens-priors — append-only prior store shape', () => {
 
   it('the OUTGOING body of the previous release IS the newest entry — exact normalized equality', () => {
     // The current fragment differs from the IMMEDIATELY-previous release's body by EXACTLY the
-    // finding-scope bullet — so the exact expected outgoing body is computable, and a typo in the
-    // prior entry goes red instead of sliding past a spot-check.
+    // state-table bullet — so the exact expected outgoing body is computable, and a typo in the
+    // prior entry goes red instead of sliding past a spot-check. This line moves with every canon
+    // release: it names THIS release's delta, never a past one.
     const lines = fragment.split('\n');
-    const kept = lines.filter((l) => !l.startsWith('- **Finding scope'));
-    assert.equal(lines.length - kept.length, 1, 'sanity: exactly ONE finding-scope bullet is this release\'s delta');
+    const kept = lines.filter((l) => !l.startsWith('- **State table BEFORE the guard'));
+    assert.equal(lines.length - kept.length, 1, 'sanity: exactly ONE state-table bullet is this release\'s delta');
     const outgoing = normalize(kept.join('\n'));
     assert.notEqual(outgoing, normalize(fragment), 'sanity: the swap actually changes the body');
     assert.ok(outgoing.includes(CURRENT_INTRO), 'the outgoing body carries the provenance intro (post-E4)');

@@ -185,15 +185,34 @@ export const writeMcp = ({ cwd, dryRun = true } = {}, deps = {}) => {
     writeContainedFileAtomic(root, registration.mcpJson.abs, plan.mcpBody, deps, { stop, label: MCP_JSON_REL });
   }
   if (plan.writeSettings) {
-    // The ONE write the preflight deliberately does not do: creating `.claude/` is a mutation, so it
-    // belongs on the apply lane only — a preview that made a directory would not be a preview.
-    assertCreatableDirSafe(join(root, CLAUDE_DIR_REL), deps, { stop, noun: SETTINGS_REL });
-    writeContainedFileAtomic(root, registration.settings.abs, plan.settingsBody, deps, { stop, label: SETTINGS_REL });
+    // A settings failure AFTER the entry landed leaves a STANDING registration on disk that never
+    // reaches formatResult — so the reconcile note has to ride the failure too, or a hidden
+    // deployment is left with a visible `.mcp.json` and no mention of it anywhere.
+    // The catch is around the WRITE, not inside it: a raw fs error (a failing rename) never passes
+    // through the injected stop, and it is exactly the case that strands a standing registration.
+    try {
+      // The ONE write the preflight deliberately does not do: creating `.claude/` is a mutation, so
+      // it belongs on the apply lane only — a preview that made a directory would not be a preview.
+      assertCreatableDirSafe(join(root, CLAUDE_DIR_REL), deps, { stop, noun: SETTINGS_REL });
+      writeContainedFileAtomic(root, registration.settings.abs, plan.settingsBody, deps, { stop, label: SETTINGS_REL });
+    } catch (err) {
+      // Reaching here always leaves a STANDING registration on disk — either this run wrote the
+      // entry (`writeMcpJson`) or the preflight found it already current (`matches`), and those two
+      // are exhaustive, so the note is unconditional rather than guarded by a branch nothing can
+      // take. A differing entry never reaches the writer at all; it STOPs in the preflight.
+      throw Object.assign(err, { message: `${err.message}\n${HIDDEN_MODE_LINE}` });
+    }
   }
   return { ...base, wrote: plan.writeMcpJson || plan.writeSettings };
 };
 
 // ── the report ─────────────────────────────────────────────────────────────────────────
+
+// A registration is an AI-tool footprint: `/.mcp.json` is in the known-footprint registry, so a
+// HIDDEN deployment needs the reconcile before `git status` is clean again. Stated conditionally —
+// this mode never detects visibility, and detecting it would widen what it reads.
+const HIDDEN_MODE_LINE =
+  'hidden-mode note: if this deployment is hidden, run the hide-footprint reconcile so the registration stays out of `git status` (the registry carries /.mcp.json).';
 
 const POSTURE_LINE =
   'trust posture: the registered server is a READ-ONLY child of your MCP client (path/type/size/line facts and literal search over this project root) — it runs OUTSIDE the Bash sandbox, as the client itself does, and exposes no write or exec API. The two allow rules make its tool calls promptless; nothing else in this project changes.';
@@ -229,6 +248,7 @@ const maskedReport = (result) => {
     `  merge into ${SETTINGS_REL} (that file was observable — and read where present — so this body already carries what is in it):`,
     indented(result.fragments.settings),
     POSTURE_LINE,
+    HIDDEN_MODE_LINE,
   ].join(LF);
 };
 
@@ -236,7 +256,7 @@ export const formatResult = (result) => {
   if (result.masked) return maskedReport(result);
   const nothingToDo = !result.plan.writeMcpJson && !result.plan.writeSettings;
   if (nothingToDo) {
-    return [`agent-workflow MCP registration — already registered ("${SERVER_NAME}"); nothing to do.`, POSTURE_LINE].join(LF);
+    return [`agent-workflow MCP registration — already registered ("${SERVER_NAME}"); nothing to do.`, POSTURE_LINE, HIDDEN_MODE_LINE].join(LF);
   }
   const lines = [
     result.dryRun
@@ -247,6 +267,7 @@ export const formatResult = (result) => {
     '  the entry this registration declares (re-serialized here; the same structured value goes into the file):',
     indented(JSON.stringify(result.registration.entry, null, JSON_INDENT)),
     POSTURE_LINE,
+    HIDDEN_MODE_LINE,
   ];
   if (result.dryRun) lines.push(`  to apply: ${applyMcpCommand(result.root)}`);
   return lines.join(LF);

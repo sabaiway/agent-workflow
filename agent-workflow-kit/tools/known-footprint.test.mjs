@@ -158,8 +158,9 @@ describe('frozen snapshot', () => {
       '/docs/plans/',
       '/.claude/settings.local.json',
       '/.claude/settings.json',
+      '/.mcp.json',
     ];
-    assert.equal(KIT_OWN_PATHS.length, 27, 'KIT_OWN_PATHS count sentinel — edit deliberately');
+    assert.equal(KIT_OWN_PATHS.length, 28, 'KIT_OWN_PATHS count sentinel — edit deliberately');
     assert.deepEqual(KIT_OWN_PATHS, expected);
   });
 

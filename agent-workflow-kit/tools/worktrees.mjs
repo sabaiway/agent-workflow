@@ -16,6 +16,7 @@ import { join, dirname, basename, resolve, relative, isAbsolute, sep } from 'nod
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { MCP_JSON_REL, SERVER_NAME, SETTINGS_REL, withoutRegistration } from './mcp-registration.mjs';
 import {
   KIT_OWN_PATHS, KNOWN_FOOTPRINT, expandGlob, normalizeSlashes, isDirPattern, isGlobPattern,
   patternToProbe,
@@ -65,6 +66,9 @@ const EXCLUDED_BASENAMES = new Set([
 ]);
 // Registry entries provision seeds by its own rules instead of copying wholesale.
 const SEEDED_SEPARATELY = new Set([`/${PLANS_REL}/`]);
+// Never copied AND never owned — unlike SEEDED_SEPARATELY, whose members cleanup may still remove.
+// A satellite's own `.mcp.json` must stay FOREIGN or an ordinary cleanup deletes what we never placed.
+const NEVER_PROVISIONED = new Set(['/.mcp.json']);
 // Copied files whose absolute main-root pins are rebased onto the worktree root.
 const REBASE_TARGETS = Object.freeze(['docs/ai/gates.json', '.claude/settings.json', '.claude/settings.local.json']);
 const TRACKED_PIN_DECLARATION =
@@ -191,6 +195,12 @@ const readFileNoFollow = (fs, abs) => {
     if (fd !== null) closeSync(fd);
   }
 };
+
+// Fatal UTF-8: a lossy decode would let invalid bytes become U+FFFD and pass for text we may rewrite.
+// `ignoreBOM: true` KEEPS a leading BOM in the string — the default STRIPS it, which would make a
+// BOM-carrying file and a BOM-less one decode identically and defeat a byte-faithful comparison.
+const UTF8_STRICT = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+const decodeUtf8Strict = (buf) => { try { return UTF8_STRICT.decode(buf); } catch { return null; } };
 
 const NOFOLLOW_WRITE = fsC.O_WRONLY | fsC.O_CREAT | fsC.O_EXCL | (fsC.O_NOFOLLOW ?? 0);
 const COPY_BUFFER_BYTES = 64 * 1024;
@@ -650,7 +660,7 @@ export const provisionCopySet = (root, deps = {}) => {
   const fs = fsOf(deps);
   const out = [];
   for (const pattern of KIT_OWN_PATHS) {
-    if (SEEDED_SEPARATELY.has(pattern)) continue;
+    if (SEEDED_SEPARATELY.has(pattern) || NEVER_PROVISIONED.has(pattern)) continue;
     if (isPresent(root, pattern, fs)) out.push(pattern);
   }
   for (const entry of KNOWN_FOOTPRINT) {
@@ -902,7 +912,7 @@ export const rebaseAbsolutePins = (text, mainRoot, wtRoot) => {
 const assertProvisionSourcesContained = ({ root, rootReal, fs, statFollow }) => {
   const rels = [];
   for (const pattern of [...KIT_OWN_PATHS, ...KNOWN_FOOTPRINT.map((e) => e.pattern)]) {
-    if (SEEDED_SEPARATELY.has(pattern)) continue;
+    if (SEEDED_SEPARATELY.has(pattern) || NEVER_PROVISIONED.has(pattern)) continue;
     if (isGlobPattern(pattern)) {
       rels.push(...expandGlob(pattern, { dir: root, readdir: fs.readdir, stat: statFollow }).map((p) => patternToProbe(p)));
       continue;
@@ -2057,7 +2067,13 @@ const rebasePins = ({ root, wtRoot, git, fs, report, journal = NO_JOURNAL }) => 
     }
     const tracked = git(['ls-files', '--', target], wtRoot);
     if (tracked.status !== 0) throw stop(`git ls-files failed for ${target}: ${(tracked.stderr || tracked.stdout).trim()}`);
-    const text = String(cur.bytes);
+    // Fatal decode BEFORE any rewrite: `String(buffer)` turns invalid bytes into U+FFFD, so a
+    // rebase would silently destroy them in a file this lane only means to re-point.
+    const text = decodeUtf8Strict(cur.bytes);
+    if (text === null) {
+      report.push(`  ${target}: not valid UTF-8 — left untouched, pins not rebased`);
+      continue;
+    }
     const { text: rebased, changes } = rebaseAbsolutePins(text, root, wtRoot);
     if (tracked.stdout.trim() !== '') {
       if (changes.length > 0) report.push(`  ${target}: ${TRACKED_PIN_DECLARATION}`);
@@ -2065,7 +2081,7 @@ const rebasePins = ({ root, wtRoot, git, fs, report, journal = NO_JOURNAL }) => 
     }
     if (changes.length === 0) continue;
     const main = readFileNoFollow(fs, join(root, target));
-    const mainText = main.bytes ? String(main.bytes) : null;
+    const mainText = main.bytes ? decodeUtf8Strict(main.bytes) : null;
     const rebasedMain = mainText === null ? null : rebaseAbsolutePins(mainText, root, wtRoot).text;
     if (mainText !== null && (text === mainText || text === rebasedMain)) {
       writeContainedFileAtomic(wtRoot, wtAbs, rebasedMain, fs, { stop: (m) => stop(m) });
@@ -2163,6 +2179,13 @@ export const runProvision = ({ argvSlug, flags, cwd, git, deps, log }) => {
     // Overlap refusal (pre-mutation): an include rel that another provision lane also populates
     // (the frozen registry footprint, the seeded plan, the handoff) — or another include root —
     // would meet the copy-if-missing kept-exit and skip the identity door entirely.
+    // A NEVER_PROVISIONED path is absent from reservedRels precisely because provision skips it, so
+    // the overlap arm below cannot see it — and an --include would copy it AND record it as owned,
+    // which is the never-owned half of the rule defeated through the one door that bypasses the set.
+    const neverProvisioned = [...NEVER_PROVISIONED].find((p) => includeRelsOverlap(rel, patternToProbe(p).replace(/\/$/, '')));
+    if (neverProvisioned !== undefined) {
+      throw stop(`--include names a path a worktree never gets and never owns (${neverProvisioned}): ${inc} — an MCP registration is machine-local and its consent is per checkout; register the satellite itself instead`);
+    }
     const reserved = reservedRels.find((r) => includeRelsOverlap(rel, r));
     if (reserved !== undefined) {
       throw stop(`--include overlaps a path provision itself populates (${reserved}): ${inc} — the footprint, the seeded plan, and the handoff are copied by provision; drop the --include`);
@@ -2239,6 +2262,69 @@ export const runProvision = ({ argvSlug, flags, cwd, git, deps, log }) => {
   }
 };
 
+// The worktree gets no `.mcp.json`, so a settings enable carried over would name a server it does
+// not declare. Eligibility is decided LIVE by the same two questions rebasePins asks — is the file
+// tracked, and is it still MAIN's bytes (before or after the pin rebase)? — never by a run-local
+// copy log, which a --resume turns into `kept` and silently skips. Anything else is user work: the
+// registration TOKENS stay — the bytes may still move, since rebasePins rewrites absolute pins on
+// its own lane — and the tokens are REPORTED rather than quietly left. Scope note: this is the
+// untracked provision lane; a TRACKED `.mcp.json` arrives with `git worktree add`, not with us.
+//
+// SCOPE, stated: this speaks only about a settings file that is readable, well-formed and actually
+// carries tokens of ours. An absent, unreadable or non-JSON one is not this lane's business and
+// returns silently — `rebasePins` above already reports the unreadable case in its own words.
+const dropMcpRegistration = ({ root, wtRoot, git, fs, report }) => {
+  const wtAbs = join(wtRoot, SETTINGS_REL);
+  const cur = readFileNoFollow(fs, wtAbs);
+  if (!cur.bytes) return;
+  // STRICT decode, and the MAIN comparison below is on BYTES: `String(buffer)` replaces invalid
+  // UTF-8 with U+FFFD, so two DIFFERENT byte sequences can decode to the same string — which would
+  // let a file that is not MAIN's satisfy the "matches MAIN" proof and be rewritten.
+  const text = decodeUtf8Strict(cur.bytes);
+  if (text === null) {
+    report.push(`  ${SETTINGS_REL}: not valid UTF-8 — left untouched, and no registration claim is made about it`);
+    return;
+  }
+  const removal = withoutRegistration(text);
+  if (!removal.hasTokens) return; // nothing of ours in it, or not readable as ours
+  if (removal.reason !== null) {
+    // Tokens ARE here and the rewrite was refused to protect foreign data — never a silent skip.
+    report.push(`  ${SETTINGS_REL}: carries registration tokens for "${SERVER_NAME}" but ${removal.reason}; left untouched`);
+    return;
+  }
+  // ONE conjunction of PROVEN facts admits the write; every other state — including every state a
+  // read cannot settle — takes the single report branch below. Stated as a positive proof rather
+  // than a list of exclusions on purpose: three review rounds each found one more launcher/copy
+  // sub-state an exclusion list had not enumerated, and an unenumerated state failed OPEN.
+  const tracked = git(['ls-files', '--', SETTINGS_REL], wtRoot);
+  if (tracked.status !== 0) throw stop(`git ls-files failed for ${SETTINGS_REL}: ${(tracked.stderr || tracked.stdout).trim()}`);
+  const main = readFileNoFollow(fs, join(root, SETTINGS_REL));
+  const mainText = main.bytes ? decodeUtf8Strict(main.bytes) : null;
+  // Byte equality, and it is NOT interchangeable with string equality: a decoder that strips the BOM
+  // maps a BOM-carrying file and a BOM-less one to the same string. Only the DIRECT branch is
+  // independent of that policy — the rebased branch rebuilds the expected bytes FROM `mainText`, so
+  // it holds only because `ignoreBOM: true` kept the BOM in the decode.
+  const isMainCopy = mainText !== null
+    && (cur.bytes.equals(main.bytes)
+      || cur.bytes.equals(Buffer.from(rebaseAbsolutePins(mainText, root, wtRoot).text, 'utf8')));
+  // ABSENT is the only launcher state that proves the tokens are orphaned. Unreadable, symlinked,
+  // device-masked and present-with-an-entry all mean "a declaration may be live" — never strip.
+  const launcherAbsent = readFileNoFollow(fs, join(wtRoot, MCP_JSON_REL)).absent === true;
+  // The admission is ONE positive conjunction; the chain below only NAMES which proof was missing.
+  const canStrip = tracked.stdout.trim() === '' && isMainCopy && launcherAbsent;
+  const why = canStrip ? null
+    : tracked.stdout.trim() !== '' ? 'tracked'
+      // NOT "user-modified": the same arm covers a MAIN settings file that is absent or unreadable.
+      : !isMainCopy ? 'not proven to match MAIN'
+        : `a ${MCP_JSON_REL} is present or unreadable`;
+  if (!canStrip) {
+    report.push(`  ${SETTINGS_REL}: ${why} — carries registration tokens for "${SERVER_NAME}"; left untouched, remove them by hand if this worktree declares no server`);
+    return;
+  }
+  writeContainedFileAtomic(wtRoot, wtAbs, removal.text, fs, { stop: (m) => stop(m) });
+  report.push(`  ${SETTINGS_REL}: dropped our registration tokens (this worktree declares no ${MCP_JSON_REL})`);
+};
+
 const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed, includeSources, provisionSet, git, deps, fs, report, log }) => {
   // THIS run's proof set: every lane journals the leaf it placed or kept, and nothing else is ever
   // examined by the resume verify — the session's own work is out of scope by construction.
@@ -2261,6 +2347,9 @@ const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed
   const vscodeMode = provisionVscode({ root, wtRoot: targetPath, slug, git, fs, report, journal });
 
   rebasePins({ root, wtRoot: targetPath, git, fs, report, journal });
+  // AFTER the rebase: stripping first makes the copy differ from MAIN, and rebasePins would then
+  // read it as user work and skip the pins it exists to fix.
+  dropMcpRegistration({ root, wtRoot: targetPath, git, fs, report });
 
   const inFlight = plansInFlight(targetPath, fs.readdir);
   if (inFlight.length !== 1 || inFlight[0] !== seed.name) {
@@ -2877,6 +2966,7 @@ const headEntry = (git, cwd, head, path) => {
 const registryRoots = () => {
   const roots = [];
   for (const pattern of [...KIT_OWN_PATHS, ...KNOWN_FOOTPRINT.map((entry) => entry.pattern)]) {
+    if (NEVER_PROVISIONED.has(pattern)) continue; // on the RAW pattern — normalizing first never matches
     const normalized = normalizeSlashes(pattern).replace(/^\//, '').replace(/\/$/, '');
     if (normalized) roots.push(normalized);
   }
@@ -2891,10 +2981,20 @@ const safeRecordedPath = (path) => {
   return normalized;
 };
 
+// Ownership has TWO sources — the registry and the record's own includes — and BOTH must honour
+// NEVER_PROVISIONED. A record written before the --include refusal existed still names the path, and
+// without this filter that legacy record hands cleanup a registration it may delete. The comparison
+// is includeRelsOverlap, the SAME predicate the refusal uses. Stated honestly: on POSIX that is
+// indistinguishable from an exact match here (a recorded DESCENDANT covers nothing at this path, and
+// case is significant); what it buys is the backslash-platform case fold, already pinned on the
+// predicate itself (worktrees-include-identity.test.mjs) rather than claimed by a test run here.
+const NEVER_PROVISIONED_RELS = [...NEVER_PROVISIONED].map((p) => patternToProbe(p).replace(/\/$/, ''));
+const isNeverProvisionedRel = (rel) => NEVER_PROVISIONED_RELS.some((p) => includeRelsOverlap(rel, p));
+
 const provisionKnownRoots = (identity) => {
   const roots = [
     ...registryRoots(),
-    ...identity.record.includes.map(safeRecordedPath),
+    ...identity.record.includes.map(safeRecordedPath).filter((rel) => !isNeverProvisionedRel(rel)),
     PLANS_REL,
   ];
   if (identity.record.vscode === 'written') roots.push('.vscode/settings.json');

@@ -17,6 +17,8 @@ Run `node ${CLAUDE_SKILL_DIR}/tools/mcp.mjs [--dry-run | --apply] [--cwd <dir>]`
 2. **Ask consent** via **`AskUserQuestion` where supported**, the no-change option first: keep the shell lanes, or register the typed channel — presenting the trust posture above in plain language.
 3. **Only on an explicit yes**, re-run with `--apply`. It writes **`.mcp.json` FIRST, then `.claude/settings.json`** — settings that enable a server whose entry is not yet there is a client error on every startup. Both writes are merge-don't-clobber (foreign servers, foreign keys and existing allow rules preserved; a re-apply adds nothing twice) and keep each file's existing EOL. New MCP servers are picked up when the client next starts — unlike the `hook` mode, this is not a hot reload.
 
+4. **Hidden-mode deployments:** after apply, run the hide-footprint reconcile (`node ${CLAUDE_SKILL_DIR}/tools/hide-footprint.mjs --dir <project> --reconcile`) so the registration stays invisible to `git status` — `/.mcp.json` is in the known-footprint registry; every output arm reminds you.
+
 **The two arms that are not a write:**
 
 - **DIFFERING** — `.mcp.json` already carries an `"agent-workflow"` entry that **structurally differs** from ours (another kit copy, a hand-edited path, an added `env`, a `null`). The comparison is deliberately key-order-independent, so a re-serialized identical entry is the SAME registration, while any real difference in what would be launched is a difference. The run **STOPs unwritten, on both lanes**: silently changing what an MCP server launches is exactly what consent must not slide past. The recovery is named — review that entry, then remove or rename it and re-run. The kit never resolves this for you.

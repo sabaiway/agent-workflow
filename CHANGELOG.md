@@ -7,6 +7,27 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-23 — AD-111 a placed file joins the hidden-mode registry in the same change that places it (kit 7.2.0 + engine 3.2.0 MINOR, memory 4.5.4 PATCH)
+
+**The bug was shipped by the release that created the file.** kit 7.0.0 added the MCP registration
+writer; `.mcp.json` never entered the hidden-mode footprint registry, so a hidden deployment that
+registered the typed channel left it visible to `git status`. The omission had even been *recorded*
+as forced — but the recorded reason was about the worktrees consumer, and hidden mode's loss was
+written down nowhere. This repository had quietly grown a hand-written exclude line outside the
+managed fence to compensate.
+
+Kit seats the path and gives worktrees their own predicate: one frozen never-provisioned set at three
+sites (copy set, containment sweep, cleanup ownership) plus a pre-mutation `--include` refusal, and a
+settings strip that rewrites only an untracked copy whose bytes are still byte-identical to MAIN (or
+to its rebased form) beside a launcher proven absent — every other state keeps its tokens on purpose.
+Measured, not assumed:
+without the ownership guard, `cleanup` removed a satellite's own registration and exited 0.
+
+Engine adds the canon clause the cycle earned — a guard is admitted by a conjunction of PROVEN facts,
+never by a list of exclusions, and the state table is written before the code. Three review rounds
+each found one more unenumerated state in one function; every miss failed open. Memory ships the
+re-rendered template.
+
 ## 2026-08-22 — AD-110 a finding names the invariant its fix enforces, and the fold channel gets a checker (engine 3.1.0 + kit 7.1.0 MINOR, memory 4.5.3 PATCH)
 
 **Memory ships too, and the reason it does is worth recording, because the plan said it would not.**

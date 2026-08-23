@@ -42,7 +42,7 @@ diverge:
 | `/.aider.input.history` | Aider | file | no | input history |
 | `/.continue/` | Continue | dir | no | project config dir |
 
-The kit's OWN footprint (`KIT_OWN_PATHS`) — `AGENTS.md`, `CLAUDE.md`, `docs/ai/` (subsumes the stamp), the added `scripts/*.mjs`, `docs/plans/`, `.claude/settings.local.json`, and `.claude/settings.json` (hidden-only — visible mode commits it) — is always a candidate in hidden mode.
+The kit's OWN footprint (`KIT_OWN_PATHS`) — `AGENTS.md`, `CLAUDE.md`, `docs/ai/` (subsumes the stamp), the added `scripts/*.mjs`, `docs/plans/`, `.claude/settings.local.json`, `.claude/settings.json` (hidden-only — visible mode commits it), and `.mcp.json` (the `mcp` mode's registration; hidden-only for the same reason, and it carries an absolute machine path) — is always a candidate in hidden mode.
 
 Not in this version: a fully-external hidden mode (artifacts relocated outside the repo tree).
 Deferred to a later release + migration.

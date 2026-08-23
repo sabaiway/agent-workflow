@@ -33,7 +33,12 @@ export const stop = (message, fields = {}) =>
 // may have unrelated scripts). `/.claude/settings.json` is carried HIDDEN-ONLY: in hidden mode the
 // kit's own attribution file is a footprint; in visible mode the kit commits it and never runs this
 // tool. It passes the same tracked→ASK classifier, so a project that already commits it gets an ASK,
-// never a silent un-track. `/docs/plans/` + both `.claude/settings*.json` are listed because a pure
+// never a silent un-track. `/.mcp.json` (the `mcp` mode's registration) is the second shared
+// container carried on those terms — the kit merges into it and preserves foreign servers, so the
+// same tracked→ASK arm is what protects a team that commits its own. It is seated here rather than
+// in KNOWN_FOOTPRINT deliberately: KIT_OWN candidacy is unconditional, so the path is in the block
+// BEFORE a later `mcp --apply` writes the file — present-only candidacy would re-open the very
+// follow-up-reconcile gap this entry closes. Never provisioned into a worktree (worktrees.mjs). `/docs/plans/` + both `.claude/settings*.json` are listed because a pure
 // hidden deploy has no tracked `.gitignore`; the classifier drops any candidate a tracked `.gitignore`
 // already covers, so in a repo that DOES track those ignores they are never re-written.
 // The enumeration must cover EVERY file the deploy copies into `scripts/` (bootstrap step 8 copies
@@ -67,6 +72,7 @@ export const KIT_OWN_PATHS = [
   '/docs/plans/',
   '/.claude/settings.local.json',
   '/.claude/settings.json',
+  '/.mcp.json',
 ];
 
 // Every OTHER tool's footprint. `falsePositiveRisk` flags a name generic/ambiguous enough that a
