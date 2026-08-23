@@ -145,6 +145,26 @@ describe('hide-footprint integration (real git)', { skip: !gitOk }, () => {
     assert.equal(git(['ls-files', '--', '.mcp.json']).trim(), '.mcp.json', 'still tracked');
   });
 
+  // The spec layer (spec layer 1a): a BOOTSTRAPPED layout — the deployed reader pair under scripts/ and
+  // a spec under docs/ai/specs/ — is hidden with no new machinery: the pair is enumerated in
+  // KIT_OWN_PATHS and the anchored /docs/ai/ pattern subsumes the store. Real git check-ignore, not a
+  // registry read, is what proves it.
+  it('a bootstrapped spec layer is hidden: real check-ignore on both spec-schema files and docs/ai/specs/x.md', () => {
+    const { dir, git, deps } = env;
+    writeFileSync(join(dir, 'AGENTS.md'), '# entry\n');
+    mkdirSync(join(dir, 'scripts'), { recursive: true });
+    mkdirSync(join(dir, 'docs', 'ai', 'specs'), { recursive: true });
+    writeFileSync(join(dir, 'scripts', 'spec-schema.mjs'), 'export const SPEC_SCHEMA = {};\n');
+    writeFileSync(join(dir, 'scripts', 'spec-schema.test.mjs'), 'import "./spec-schema.mjs";\n');
+    writeFileSync(join(dir, 'docs', 'ai', 'specs', 'x.md'), '---\ntype: spec\n---\n# Spec: x\n');
+    const r = hideFootprint({ dir }, deps);
+    assert.ok(r.wrote.includes('/scripts/spec-schema.mjs') && r.wrote.includes('/scripts/spec-schema.test.mjs'), 'the reader pair is in the written set');
+    for (const probe of ['scripts/spec-schema.mjs', 'scripts/spec-schema.test.mjs', 'docs/ai/specs/x.md']) {
+      assert.match(checkIgnoreSource(git, dir, probe) ?? '', /info\/exclude/, `${probe} is really ignored`);
+    }
+    assert.equal(git(['status', '--porcelain', '--untracked-files=all']).trim(), '', 'nothing of the spec layer is visible to git');
+  });
+
   it('delegated-hidden, STALE memory: a memory-old GLOBAL block is migrated away with --remove-global', () => {
     const { dir, git, deps } = env;
     const globalExcludes = join(env.home, 'gitignore_global');

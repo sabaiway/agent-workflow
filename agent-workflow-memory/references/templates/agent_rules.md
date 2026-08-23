@@ -23,12 +23,12 @@ Read in order, then confirm before starting:
 4. Confirm with the user: *"I'm taking task X. Confirm?"*
 
 ### 1.2. During Work
-**Before any feature:** read the relevant page spec (`docs/ai/pages/<page>.md`). If behaviour changes, update the spec FIRST so docs and code never diverge.
+**Before any feature:** name its governing spec(s) — the feature spec under `docs/ai/specs/` for every touched spec-covered slice (zero is legal during adoption; each cited spec's Out of scope bounds that slice's work). Where only a page spec (`docs/ai/pages/<page>.md`) exists it governs as an ADOPTION SHIM: state Out of scope + Revision inline in the plan. If the contract changes, the spec revision is authored WITH the plan (visible at review) and lands with the code, so docs and code never diverge.
 
 **For every code change:**
 1. Grep for similar implementations — reuse existing patterns.
 2. Check the design-system layer for an existing component; if missing, add it there FIRST, then use it.
-3. Verify changes align with `docs/ai/pages/<page>.md`; for a new page, create a full spec.
+3. Verify changes align with the governing spec(s) and `docs/ai/pages/<page>.md`; a new feature gets a `draft` spec (the skill's `SPEC_TEMPLATE.md`), a new page a full page spec.
 4. Follow §2 (Self-Review): functional style, named exports, full variable names, no magic literals.
 5. Write/update tests FIRST (TDD): unit for pure functions, E2E for user flows.
 6. Run quality checks: lint, type-check, tests.
@@ -38,7 +38,7 @@ Read in order, then confirm before starting:
 
 Before claiming "done":
 1. Run all quality gates (lint + type-check + tests) — all green.
-2. Update docs: `current_state.md` (feature ready), `changelog.md` (entry), `handover.md` (**REPLACE** the last-session block — session delta, never append; older deltas live in `changelog.md` → `history/`), `pages/<page>.md` (matches implementation). Only bump "Last Updated" when content actually changed.
+2. Update docs: `current_state.md` (feature ready), `changelog.md` (entry), `handover.md` (**REPLACE** the last-session block — session delta, never append; older deltas live in `changelog.md` → `history/`), `pages/<page>.md` (matches implementation), the governing spec (its revision lands with the code: `draft` -> `live` on the landing row). Only bump "Last Updated" when content actually changed.
 3. Run the docs cap-validator + index-freshness gate (pre-commit also enforces). On failure: trim the offending file, or run the changelog rotation if the offender is `changelog.md`.
 4. If the work executed a plan file — complete it per the project's **planning skill / methodology** (the `workflow:methodology` slot in `AGENTS.md` points to it; see §5). Without completing that step the plan is not done. (The methodology, including any mandatory final cleanup, is defined there — not in this substrate.)
 5. **Ask before committing** (§4): report lint / type-check / test counts + docs status, then wait for explicit approval. DO NOT auto-commit.

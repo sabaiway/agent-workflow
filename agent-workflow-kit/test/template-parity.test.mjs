@@ -38,7 +38,7 @@ describe('kit ⟷ memory template parity — every manifest-listed template byte
 
 describe('the mirror manifest itself — reverse pins (the sync and this guard govern ONE set)', () => {
   it('keeps the load-bearing seeds IN the manifest', () => {
-    for (const required of ['AGENTS.md', 'orchestration.json', 'gates.json', 'autonomy.json', 'adr-record.md', 'adr/log.md']) {
+    for (const required of ['AGENTS.md', 'orchestration.json', 'gates.json', 'autonomy.json', 'adr-record.md', 'adr/log.md', 'SPEC_TEMPLATE.md', 'specs/index.md']) {
       assert.ok(
         MIRROR_TEMPLATE_FILES.includes(required),
         `${required} must stay in the mirror manifest — dropping it would silently stop both the sync and this parity guard`,

@@ -43,6 +43,10 @@ const AUT_END = '<!-- workflow:autonomy:end -->';
 // The deployed AGENTS.md line budget the composition root fills ALL THREE pointers inside (D-CAP).
 // A representative single-line fragment per slot models what the composition root injects.
 const AGENTS_MD_CAP = 100;
+// The templates that never enter docs/ai: the entry point (placed at the root) and the two skill-home
+// authoring references — a stray adr-record.md under adr/ fails the store integrity guard, and a stray
+// SPEC_TEMPLATE.md would be a docs/ai file the cap-validator reads and the spec reader never sees.
+const SKILL_HOME_ONLY = new Set(['AGENTS.md', 'adr-record.md', 'SPEC_TEMPLATE.md']);
 const lineCount = (text) => text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
 const extractPair = (text, start, end) => {
   const a = text.indexOf(start);
@@ -70,10 +74,7 @@ const bootstrap = (project) => {
   const docsAi = join(project, 'docs', 'ai');
   mkdirSync(docsAi, { recursive: true });
   for (const entry of readdirSync(TEMPLATES)) {
-    // AGENTS.md is the entry point (placed at the root above); adr-record.md is a skill-home
-    // authoring reference (never deployed — it would be a stray in docs/ai and, under adr/, would
-    // fail the ADR store's integrity guard). Both are excluded from the docs/ai copy loop.
-    if (entry === 'AGENTS.md' || entry === 'adr-record.md') continue;
+    if (SKILL_HOME_ONLY.has(entry)) continue;
     cpSync(join(TEMPLATES, entry), join(docsAi, entry), { recursive: true });
   }
 
@@ -124,6 +125,31 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
       encoding: 'utf8',
     });
     assert.match(check, /OK — HOT within cap, store integrity intact, navigator fresh/, 'fresh-bootstrap --check is green');
+  });
+
+  // The spec layer (spec layer 1a): the store root navigator deploys, the authoring reference does NOT
+  // (the PAGE_TEMPLATE prose-only exclusion bug is not repeated — this pins the copy loop), the
+  // regenerated docs/ai navigator collapses the store into ONE counted row, and the REAL installed
+  // pre-commit hook (the deployed checker + --check-index + the deployed test suite) exits 0 over a
+  // seeded valid spec — the hook path a deployed project actually runs.
+  it('deploys docs/ai/specs/index.md, never SPEC_TEMPLATE.md; ONE specs/ navigator row; the installed hook exits 0 over a seeded spec', () => {
+    const project = makeProject();
+    const docsAi = bootstrap(project);
+    assert.ok(existsSync(join(docsAi, 'specs', 'index.md')), 'the store root navigator is deployed');
+    assert.ok(!existsSync(join(docsAi, 'SPEC_TEMPLATE.md')), 'the authoring reference is NOT deployed (skill-home only)');
+    assert.ok(!existsSync(join(docsAi, 'specs', 'SPEC_TEMPLATE.md')), 'nor placed in the store');
+    writeFileSync(
+      join(docsAi, 'specs', 'login.md'),
+      '---\ntype: spec\nlastUpdated: 2026-08-23\nscope: permanent\nstaleAfter: 90d\nowner: none\nmaxLines: 150\nkind: spec\nstatus: draft\nrevision: 1\n---\n\n# Spec: login\n\n## Contract\n\nc\n\n## Scenarios\n\n- S1 a :: test/login.test.mjs :: spec:login/S1\n\n## Out of scope\n\n- b\n\n## Module\n\n- src/login/\n',
+    );
+    const checker = join(project, 'scripts', 'check-docs-size.mjs');
+    execFileSync(process.execPath, [checker, '--write-index', `--root=${project}`], { cwd: project, stdio: 'pipe' });
+    const navigator = readFileSync(join(docsAi, 'index.md'), 'utf8');
+    const specsRows = navigator.split('\n').filter((line) => line.includes('](./specs/index.md)'));
+    assert.equal(specsRows.length, 1, 'exactly one specs/ row');
+    assert.match(specsRows[0], /\| 1 specs \| 0 parts · 1 indexes \|/, 'the row carries live counts');
+    assert.ok(!navigator.includes('specs/login.md'), 'the spec itself is collapsed, not listed');
+    execFileSync('bash', [join(project, '.git', 'hooks', 'pre-commit')], { cwd: project, stdio: 'pipe' });
   });
 
   it('stamps .memory-version (lineage head) ONLY — no second stamp', async () => {
@@ -319,7 +345,7 @@ describe('standalone bootstrap — the navigator the entry point declares always
     const docsAi = join(project, 'docs', 'ai');
     mkdirSync(docsAi, { recursive: true });
     for (const entry of readdirSync(TEMPLATES)) {
-      if (entry === 'AGENTS.md' || entry === 'adr-record.md') continue;
+      if (SKILL_HOME_ONLY.has(entry)) continue;
       cpSync(join(TEMPLATES, entry), join(docsAi, entry), { recursive: true });
     }
     assert.equal(existsSync(join(project, 'scripts')), false, 'the No-Node lane copies no enforcement scripts');

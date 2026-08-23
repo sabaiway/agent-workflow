@@ -37,7 +37,7 @@ All project knowledge lives in `docs/ai/`. Layered, lazy-loaded context:
 | [`docs/ai/handover.md`](./docs/ai/handover.md) | **Start of every session** | End of session if context changed |
 | [`docs/ai/active_plan.md`](./docs/ai/active_plan.md) | Picking next task | Completing a task |
 | [`docs/ai/current_state.md`](./docs/ai/current_state.md) | Need system overview | After feature completion |
-| [`docs/ai/technical_specification.md`](./docs/ai/technical_specification.md) | App overview & data models | Data-model changes |
+| [`docs/ai/technical_specification.md`](./docs/ai/technical_specification.md) | App overview & data models; feature contracts live under `docs/ai/specs/` | Data-model or contract changes |
 | [`docs/ai/pages/index.md`](./docs/ai/pages/index.md) | Understanding a page | Page behaviour changes |
 | [`docs/ai/architecture.md`](./docs/ai/architecture.md) | Understanding structure | Architecture changes |
 | [`docs/ai/known_issues.md`](./docs/ai/known_issues.md) | Debugging | New issue discovered |
@@ -72,7 +72,7 @@ Start-of-session, during-work, and task-completion procedures live in [`docs/ai/
 | Interactive elements semantic (button/link, not div+onClick) | Linter / a11y |
 | No business logic in components → hooks/services | Architecture review |
 | No changes without tests (TDD) | Required |
-| Check page docs before changes; update them after | Process |
+| Check the governing spec(s) + page docs before changes; update them after | Process |
 | Ask user before committing | Process |
 | Every page has an HTML-validity / a11y E2E test | Required |
 | **No silent failures** — structured logging on every rejected action | Required |

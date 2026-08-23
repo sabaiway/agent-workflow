@@ -285,6 +285,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/observation-builder.mjs',
       'tools/worktree-handoff-return.mjs',
       'references/templates/adr-record.md',
+      'references/templates/SPEC_TEMPLATE.md',
+      'references/templates/specs/index.md',
       'references/templates/adr/log.md',
       // the guarded autonomy provisioner doctor + its mode contract (AD-044 Plan 2)
       'tools/autonomy-doctor.mjs',
@@ -648,7 +650,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 243 = 241 + the spec layer's reader pair (spec layer 1a): references/scripts/spec-schema.mjs
     //       (the ONE import-free reader that defines a well-formed spec; the navigator collapse reads
     //       through it) + its deploy-payload test — both mirrored from the memory canon by sync-mirrors.
-    assert.equal(packed.length, 243, `tarball file count drifted (${packed.length} ≠ 243)`);
+    // 245 = 243 + references/templates/SPEC_TEMPLATE.md (the spec authoring reference, skill-home only
+    //       like adr-record.md) + references/templates/specs/index.md (the seed spec store root the
+    //       bootstrap deploys) — both mirrored from the memory canon by sync-mirrors.
+    assert.equal(packed.length, 245, `tarball file count drifted (${packed.length} ≠ 245)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

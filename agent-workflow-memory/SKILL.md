@@ -102,11 +102,13 @@ bootstrapping over a live system, but the user makes the final call.
    (`ln -s AGENTS.md CLAUDE.md`). **Leave ALL THREE pointer slots (`workflow:methodology` +
    `workflow:orchestration` + `workflow:autonomy`) exactly as shipped — empty.** Filling them is the
    composition root's job.
-6. **Deploy `docs/ai/`.** Create the files + `pages/` + the seed `adr/` store from
-   `${CLAUDE_SKILL_DIR}/references/templates/` (every non-`AGENTS.md`, non-`adr-record.md` template —
-   the latter is a skill-home authoring reference, never deployed). This deploys the HOT ADR window
-   `docs/ai/decisions.md` **and** the seed navigator `docs/ai/adr/log.md` (its `adr/` subdir copies
-   in wholesale), plus the three seeded, **user-editable** strict-JSON configs:
+6. **Deploy `docs/ai/`.** Create the files + `pages/` + the seed `adr/` store + the seed `specs/`
+   store from `${CLAUDE_SKILL_DIR}/references/templates/` (every template except `AGENTS.md`,
+   `adr-record.md` and `SPEC_TEMPLATE.md` — the latter two are skill-home authoring references, never
+   deployed). This deploys the HOT ADR window `docs/ai/decisions.md` **and** the seed navigator
+   `docs/ai/adr/log.md` (its `adr/` subdir copies in wholesale), the spec store root
+   `docs/ai/specs/index.md` (its `specs/` subdir copies in wholesale; feature contracts are authored
+   under it from `SPEC_TEMPLATE.md`), plus the three seeded, **user-editable** strict-JSON configs:
    `docs/ai/orchestration.json` — the per-project recipe defaults the composition root's `procedures`
    advisor reads — `docs/ai/gates.json` — the project's gate declaration, an empty list to fill with
    its own verification commands, consumed by the composition root's gate runner — and
@@ -333,9 +335,12 @@ The three setup choices each have a full contract in
 - [`references/templates/`](references/templates/) — stack-agnostic `AGENTS.md` (with the three empty
   pointer slots — methodology + orchestration + autonomy), `agent_rules.md`, the seeded user-editable
   `orchestration.json` + `autonomy.json` configs, the `adr-record.md` ADR authoring reference + the
-  seed `adr/log.md` navigator, and all `docs/ai/` files to deploy.
+  seed `adr/log.md` navigator, the `SPEC_TEMPLATE.md` spec authoring reference + the seed
+  `specs/index.md` store root, and all `docs/ai/` files to deploy.
 - [`references/scripts/`](references/scripts/) — the Node enforcement scripts (caps + staleness +
-  index-freshness gate, one-file-per-ADR archive, hook installer) and their unit tests.
+  index-freshness gate with the counted `specs/` collapse, the import-free spec reader
+  `spec-schema.mjs` that defines a well-formed spec, one-file-per-ADR archive, hook installer) and
+  their unit tests.
 - [`scripts/stamp-takeover.mjs`](scripts/stamp-takeover.mjs) — the upgrade-time lineage state
   machine (`LINEAGE_HEAD`, atomic stamp writes) + tests.
 - [`migrations/`](migrations/) — per-version upgrade steps, incl. `legacy-stamp-takeover.md`;

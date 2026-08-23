@@ -40,13 +40,15 @@ afterEach(() => {
 });
 
 // The fallback bootstrap's WRITE steps, as its prose orders them: the entry point at the root and
-// every other template under docs/ai (adr-record.md is a skill-home authoring reference).
+// every other template under docs/ai (adr-record.md and SPEC_TEMPLATE.md are skill-home authoring
+// references — this loop is hardcoded independently of the memory model, so the exclusion is pinned here too).
+const SKILL_HOME_ONLY = new Set(['AGENTS.md', 'adr-record.md', 'SPEC_TEMPLATE.md']);
 const materialize = (project) => {
   cpSync(join(TEMPLATES, 'AGENTS.md'), join(project, 'AGENTS.md'));
   const docsAi = join(project, 'docs', 'ai');
   mkdirSync(docsAi, { recursive: true });
   for (const entry of readdirSync(TEMPLATES)) {
-    if (entry === 'AGENTS.md' || entry === 'adr-record.md') continue;
+    if (SKILL_HOME_ONLY.has(entry)) continue;
     cpSync(join(TEMPLATES, entry), join(docsAi, entry), { recursive: true });
   }
   return docsAi;
@@ -69,6 +71,19 @@ describe('kit fallback bootstrap — the deployed entry point actually works', (
 
     assert.match(runFinalizer(project), /ensure-index: (regenerated|already-current)/);
     assert.ok(existsSync(join(docsAi, 'index.md')), 'the finalizer wrote the navigator');
+    assert.match(checkIndex(project), /OK/);
+  });
+
+  it('deploys docs/ai/specs/index.md, never SPEC_TEMPLATE.md, and the finalized navigator carries ONE counted specs/ row', () => {
+    const project = makeProject();
+    const docsAi = materialize(project);
+    assert.ok(existsSync(join(docsAi, 'specs', 'index.md')), 'the store root navigator is deployed');
+    assert.ok(!existsSync(join(docsAi, 'SPEC_TEMPLATE.md')), 'the authoring reference is NOT deployed (skill-home only)');
+    runFinalizer(project);
+    const navigator = readFileSync(join(docsAi, 'index.md'), 'utf8');
+    const specsRows = navigator.split('\n').filter((line) => line.includes('](./specs/index.md)'));
+    assert.equal(specsRows.length, 1, 'exactly one specs/ row');
+    assert.match(specsRows[0], /\| 0 specs \| 0 parts · 1 indexes \|/, 'the row counts the fresh store: the root index only');
     assert.match(checkIndex(project), /OK/);
   });
 

@@ -44,6 +44,7 @@ const seedFamily = (root) => {
     const templates = join(root, side, 'references', 'templates');
     mkdirSync(join(templates, 'pages'), { recursive: true });
     mkdirSync(join(templates, 'adr'), { recursive: true }); // the seed adr/log.md subdir entry
+    mkdirSync(join(templates, 'specs'), { recursive: true }); // the seed specs/index.md subdir entry
     for (const rel of MIRROR_TEMPLATE_FILES) writeFileSync(join(templates, rel), `template ${rel}\n`);
     for (const rel of TEMPLATE_HARD_EXCLUDES) writeFileSync(join(templates, rel), `${side} divergent ${rel}\n`);
     writeFileSync(join(templates, 'local-extra.md'), `${side} extra outside the manifest\n`);

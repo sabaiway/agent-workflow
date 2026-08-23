@@ -169,6 +169,8 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
       'references/templates/gates.json',
       'references/templates/adr-record.md',
       'references/templates/adr/log.md',
+      'references/templates/SPEC_TEMPLATE.md',
+      'references/templates/specs/index.md',
     ];
     const missing = required.filter((p) => !packed.includes(p));
     assert.deepEqual(missing, [], 'a runtime payload file or entry point was dropped from the tarball');
@@ -216,6 +218,9 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
     //      pair; kit-mirrored via sync-mirrors).
     // 57 = 55 + references/scripts/spec-schema.mjs (the ONE import-free spec reader the navigator
     //      collapse reads through — spec layer 1a) + its deploy-payload test; kit-mirrored.
-    assert.equal(packed.length, 57, `tarball file count drifted (${packed.length} ≠ 57)`);
+    // 59 = 57 + references/templates/SPEC_TEMPLATE.md (the spec authoring reference, skill-home only
+    //      like adr-record.md) + references/templates/specs/index.md (the seed spec store root the
+    //      bootstrap deploys); both kit-mirrored via sync-mirrors.
+    assert.equal(packed.length, 59, `tarball file count drifted (${packed.length} ≠ 59)`);
   });
 });
