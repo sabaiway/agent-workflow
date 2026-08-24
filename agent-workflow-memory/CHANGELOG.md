@@ -4,6 +4,25 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 4.6.1 — the standalone upgrade delivers the spec layer behind a checker it can prove (AD-113)
+
+4.6.0 shipped the feature-spec layer for FRESH bootstraps; an EXISTING deployment at lineage head
+`3.0.0` had no lane to it. The standalone (skill-only) upgrade now closes that gap in prose, with no
+digest catalog and no change to the shipped payload:
+
+- **SKILL.md upgrade step 2 gains the spec-layer twin.** The reader pair (`scripts/spec-schema.mjs`
+  + its test) seeds create-only if missing. The store root `docs/ai/specs/index.md` seeds ONLY when
+  BOTH deployed pairs — reader and checker — are regular files byte-equal to the bundled copies
+  (checked via lstat; a dangling symlink anywhere means nothing is written), with the template's
+  date placeholder rendered. Every other state — a custom or partial pair, reader or checker — is
+  reported as is, with the composition root's upgrade named as the refresh lane and NO store root
+  written.
+- **`standalone-bootstrap.test.mjs` models the equal-head upgrade both ways:** both pairs
+  bundle-equal -> store seeded and the installed pre-commit hook exits 0 over a seeded spec; a
+  custom or partial pair -> reported, no store.
+
+PATCH: prose + the E2E model only.
+
 ## 4.6.0 — the feature-spec layer: a store under `docs/ai/specs/`, one text-only reader, a counted navigator row (AD-112)
 
 A deployed project gains a middle altitude of durable knowledge between the whole-project

@@ -7,6 +7,34 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-24 — AD-113 the spec layer reaches existing deployments (kit 7.4.0 MINOR, memory 4.6.1 PATCH)
+
+**An EXISTING deployment at lineage head `3.0.0` gains the AD-112 layer on an equal-head upgrade,
+with no lineage bump.** AD-112 delivered the feature-spec layer to fresh bootstraps only; the brief's
+delivery invariant (D1) says a new deployed `scripts/` file ships create-only BEFORE any refresh of a
+file that imports it. One measured fact shaped the slice: the kit's bundled navigator generator
+collapses `docs/ai/specs/` into one counted row while the project's pre-commit hook runs its DEPLOYED
+`check-docs-size.mjs` — a store root seeded behind an older checker renders row by row and reds
+`--check-index` on the next commit. Hence the two rules this release ships:
+
+- **A deployed script is refreshed only when its bytes are a body a release shipped.** The kit's
+  append-only `script-priors` catalog (sha256 of every checker/test body since memory 4.0.0,
+  verbatim fixtures held equal both ways, a literal immutable prefix pin) classifies a deployed
+  `check-docs-size.mjs` as `current` · `prior` · `custom`; a custom body is preserved verbatim and
+  said so, and no other deployed script is refreshed.
+- **The store root is seeded ONLY behind a checker pair proven current after the run.** The sixth
+  `specs` ensure surveys four scripts and the store root before writing, admits each write through
+  ONE conjunction, re-proves a lost create-only race, composes every line from the fate of its
+  write, and relays one token (`seeded` > `refreshed` > `customized-preserved` > `already-present`).
+  The closed vocabulary gains `refreshed` / `would-refresh`; engine unchanged at 3.3.0.
+- **The memory standalone upgrade is the twin with NO catalog:** seed the reader pair if missing,
+  seed the store root only when BOTH deployed pairs are regular files byte-equal to the bundle, else
+  report the composition root's upgrade as the refresh lane with no store root written.
+
+Review: three execution commits, each a codex (gpt-5.6-sol, xhigh, priority) + agy (Gemini 3.7 Flash
+(High), single run) council on the staged tree — 2 + 2 + 4 rounds to ship/ship, 9 findings folded;
+one agy degrade recorded (unreadable envelope), loudly, per single-run policy.
+
 ## 2026-08-23 — AD-112 the feature-spec layer (memory 4.6.0 + engine 3.3.0 + kit 7.3.0, all MINOR)
 
 **A deployed project gains per-feature contracts with a mandatory Out of scope.** The family had no

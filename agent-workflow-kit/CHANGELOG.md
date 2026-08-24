@@ -4,6 +4,47 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 7.4.0 — the spec layer reaches existing deployments: known-prior refresh, seed-behind-checker, the `specs` ensure (AD-113)
+
+7.3.0 made a FRESH bootstrap deliver the feature-spec layer whole; this release gives every EXISTING
+deployment the same layer on an equal-head upgrade, with no lineage bump. The shaping fact: the kit's
+`index` ensure drives the BUNDLED navigator generator, which collapses `docs/ai/specs/` into one
+counted row, while the project's pre-commit hook runs ITS deployed `check-docs-size.mjs` — a store
+root seeded behind an older checker renders row by row and reds `--check-index` on the next commit.
+
+- **`tools/script-priors.mjs` — a deployed script is refreshed only when its bytes are a body a
+  release shipped.** An append-only catalog of sha256 digests of every `check-docs-size.mjs` body
+  since memory 4.0.0 (three checker bodies + the one test body); `classifyDeployedScript` answers
+  `current` · `prior` · `custom`. The fixtures are the shipped bytes verbatim
+  (`test/fixtures/script-priors/<firstShipped>/<file>.txt`, outside the test glob, the source-size
+  scope and `files[]`); the test holds catalog and fixtures equal BOTH ways and pins the rows as a
+  literal immutable prefix — a count alone would let a row and its fixture be replaced together,
+  turning a shipped body into `custom` on every deployment that carries it. No other deployed script
+  is refreshed; a custom body is preserved verbatim and said so.
+- **`tools/ensure-specs.mjs` — the sixth ensure op, and the store root seeds ONLY behind a checker
+  pair proven current after the run.** `specs` sits after `scripts` and before `index`. It surveys
+  the four script files and the store root into current | prior | custom | absent | wrong-kind
+  BEFORE writing and admits each write through ONE conjunction: an absent reader file seeds
+  create-only (nothing depends on it); the checker pair refreshes or seeds only when BOTH reader
+  files are current after the seed and NEITHER checker file is custom; the store root only when the
+  checker pair is then current. A custom file preserves itself AND withholds every dependent write,
+  and the line names the remedy (copy the pair from `references/scripts/` by hand, re-run). A seed
+  that loses the create-only race is re-PROVEN — the appeared file must classify `current`, else
+  `race-unresolved` and nothing further; every line composes from the FATE of its write (written ·
+  stood · would · withheld · stopped); the run token follows one precedence — `seeded` >
+  `refreshed` > `customized-preserved` > `already-present`. The no-Node skip stays; there is NO
+  legacy-ADR early return (the store has no ADR-layout dependency).
+- **Vocabulary + wiring.** The closed vocabulary gains the relayed pair `refreshed` /
+  `would-refresh` (doc-parity binds the `upgrade.md` step-3 line, the run-list registry mirrors the
+  op, the composed-lines guard witnesses the tokens); `ENSURE_IMPLEMENTATIONS` moved from
+  `ensure-ops.mjs` to `ensure-configs.mjs`, its only consumer, keeping the tools graph acyclic;
+  `--only specs` works and the CLI counts 6 slots.
+- **Proof.** The state table runs as a table-driven test over every cell with injected fs
+  (`--dry-run` emits only `would-*`); the integration E2E upgrades a 4.5.4-byte deployment with
+  `--reconcile` and the real installed hook — seeded/refreshed on the plain and legacy-ADR layouts,
+  and the custom-checker variant keeps the checker verbatim, seeds NO store root and prints
+  `customized-preserved`. Package-content pins 245 -> 247.
+
 ## 7.3.0 — the spec layer's delivery half: hidden from day one, mirrored, bootstrapped (AD-112)
 
 The memory substrate ships the feature-spec layer in 4.6.0 and the engine its canon in 3.3.0; this
