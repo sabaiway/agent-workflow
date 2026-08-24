@@ -1,11 +1,12 @@
 // ensure-specs.mjs — the SIXTH upgrade ensure: the spec layer (memory 4.6.0, AD-112) delivered to an
 // EXISTING deployment on an equal-head upgrade. Four deployed scripts and one store root, written in
 // a FIXED order the measured coupling dictates:
-//   1. the reader pair   scripts/spec-schema.mjs + .test.mjs      — CREATE-ONLY (brief D1: a new
-//      deployed script ships create-only before any refresh of a file that imports it);
-//   2. the checker pair  scripts/check-docs-size.mjs + .test.mjs  — REFRESHED only when the deployed
-//      bytes are a body a release shipped (script-priors.mjs), created when absent, a custom body
-//      preserved verbatim — and only behind a reader pair that is byte-current;
+//   1. the reader pair   scripts/spec-schema.mjs + .test.mjs      — created when absent; since 2a
+//      also REFRESHED when the deployed bytes are a body a release shipped (script-priors.mjs), a
+//      custom body preserved verbatim (brief D1 shipped it create-only; the 4.6.x bodies joining the
+//      catalog is what keeps those deployments out of the stranded-custom cell);
+//   2. the checker pair  scripts/check-docs-size.mjs + .test.mjs  — the same prior-refresh lane, and
+//      only behind a reader pair this run leaves byte-current;
 //   3. the store root    docs/ai/specs/index.md                   — seeded (placeholders rendered)
 //      only once both pairs are current.
 // Why the order: the kit's bundled navigator generator collapses `specs/` into one row, while the
@@ -24,7 +25,7 @@
 import { readFileSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeContainedFileAtomic, writeProjectFileCreateOnly } from './atomic-write.mjs';
-import { PRIOR_FILES, classifyDeployedScript } from './script-priors.mjs';
+import { classifyDeployedScript } from './script-priors.mjs';
 import { composeFailure, composeOutcome, isNodeProject, probeSeedTarget, tmpNote } from './ensure-ops.mjs';
 
 const OP = 'specs';
@@ -33,8 +34,10 @@ const BUNDLED_SCRIPTS = ['references', 'scripts'];
 const STORE_ROOT_REL = 'docs/ai/specs/index.md';
 const STORE_ROOT_TEMPLATE = ['references', 'templates', 'specs', 'index.md'];
 const DATE_PLACEHOLDER = '{{DATE}}';
-const READER_PAIR = Object.freeze(['spec-schema.mjs', 'spec-schema.test.mjs']);
-const CHECKER_PAIR = PRIOR_FILES;
+// Explicit pairs, deliberately NOT aliased to the catalog's PRIOR_FILES (which spans both): each
+// file is surveyed exactly once. Exported so the suite pins pairs-union === catalog domain.
+export const READER_PAIR = Object.freeze(['spec-schema.mjs', 'spec-schema.test.mjs']);
+export const CHECKER_PAIR = Object.freeze(['check-docs-size.mjs', 'check-docs-size.test.mjs']);
 
 const ok = (token, lines) => composeOutcome(OP, token, lines, false);
 const loud = (cause, ...lines) => composeFailure(OP, cause, ...lines);
@@ -67,14 +70,20 @@ const surveyStoreRoot = (cwd, lstat) => {
 
 // ── the decision: which writes the survey admits (pure over the survey) ───────────────────────────
 
-const CURRENT_AFTER_SEED = new Set(['current', 'absent']);
-const CHECKER_ELIGIBLE = new Set(['current', 'prior', 'absent']);
+// Reader seeds are create-only and always admitted. A REFRESH overwrites bytes, so it runs only
+// inside a pair whose every file is proven refreshable (current | prior | absent) — one custom file
+// withholds its whole pair; the checker lane (its seeds included) and the store additionally wait
+// for a reader pair this run leaves byte-current (seeded + refreshed = current).
+const PAIR_ELIGIBLE = new Set(['current', 'prior', 'absent']);
 
 export const decideWrites = ({ reader, checker, store }) => {
-  const readerCurrentAfter = reader.every((f) => CURRENT_AFTER_SEED.has(f.state));
-  const checkerEligible = readerCurrentAfter && checker.every((f) => CHECKER_ELIGIBLE.has(f.state));
+  const readerEligible = reader.every((f) => PAIR_ELIGIBLE.has(f.state));
+  const checkerEligible = readerEligible && checker.every((f) => PAIR_ELIGIBLE.has(f.state));
   const writes = [];
-  for (const f of reader) if (f.state === 'absent') writes.push({ kind: 'seed', file: f });
+  for (const f of reader) {
+    if (f.state === 'absent') writes.push({ kind: 'seed', file: f });
+    if (readerEligible && f.state === 'prior') writes.push({ kind: 'refresh', file: f });
+  }
   if (checkerEligible) {
     for (const f of checker) {
       if (f.state === 'absent') writes.push({ kind: 'seed', file: f });

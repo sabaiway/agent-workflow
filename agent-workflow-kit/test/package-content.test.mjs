@@ -164,9 +164,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // and the PURE vocabulary leaf both they and the read-only doc-parity lint import — pinned by
       // NAME because dropping it would break the ops AND the lint at once
       'tools/ensure-vocabulary.mjs',
-      // the spec-layer delivery (1b): the append-only catalog of shipped checker bodies the specs
-      // ensure classifies a deployed script through — by NAME, a drop would turn every shipped prior
-      // into "custom" and silently stop the refresh
+      // the spec-layer delivery (1b, widened in 2a): the append-only catalog of shipped reader and
+      // checker bodies the specs ensure classifies a deployed script through — by NAME, a drop would
+      // turn every shipped prior into "custom" and silently stop the refresh
       'tools/script-priors.mjs',
       // and the sixth ensure itself: the op the CLI table composes — by NAME, a drop would break
       // ensure-configs at load and every upgrade with it
@@ -660,12 +660,13 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 245 = 243 + references/templates/SPEC_TEMPLATE.md (the spec authoring reference, skill-home only
     //       like adr-record.md) + references/templates/specs/index.md (the seed spec store root the
     //       bootstrap deploys) — both mirrored from the memory canon by sync-mirrors.
-    // 246 = 245 + tools/script-priors.mjs (spec layer 1b): the append-only digest catalog of every
-    //       shipped checker body + the current|prior|custom classifier. Its test and the .txt
-    //       fixtures under test/ are outside files[] and never enter the tarball.
+    // 246 = 245 + tools/script-priors.mjs (spec layer 1b; 2a widened it to the reader pair): the
+    //       append-only digest catalog of every shipped refreshable-script body + the
+    //       current|prior|custom classifier. Its test and the .txt fixtures under test/ are outside
+    //       files[] and never enter the tarball.
     // 247 = 246 + tools/ensure-specs.mjs (spec layer 1b, rows b04-b09): the sixth upgrade ensure —
-    //       reader pair seed, prior-matching checker refresh, store root behind a current checker.
-    //       Its table test and the E2E are outside files[].
+    //       pair seed + prior-matching refresh for BOTH pairs (reader since 2a), store root behind a
+    //       current checker. Its table test and the E2E are outside files[].
     assert.equal(packed.length, 247, `tarball file count drifted (${packed.length} ≠ 247)`);
   });
 

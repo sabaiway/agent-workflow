@@ -18,13 +18,15 @@ const BUNDLE = join(KIT_ROOT, 'references', 'scripts');
 // The append-only pin, INDEPENDENT of the module: every row the catalog has ever carried, as a
 // literal, held as an immutable PREFIX of SCRIPT_PRIORS. A count alone would let a row and its
 // fixture be replaced together — the digests would still agree — and a shipped body would silently
-// become "custom" on every deployment that carries it. Appending the outgoing body of a checker
-// release appends a row HERE too; a row is never edited or removed.
+// become "custom" on every deployment that carries it. A release that changes ANY PRIOR_FILES member
+// appends the outgoing body's row HERE too; a row is never edited or removed.
 const FROZEN_PRIORS = [
   ['check-docs-size.mjs', '4.0.0', '4.3.0', '84fb3673b034d4b2ba5bedf4a3e47899f98da3971c17902d1f2a548d07dc53bf'],
   ['check-docs-size.mjs', '4.4.0', '4.5.0', '7a5cd7f98571c3248d0378623172e9c60073b8d8761bce7a95c263f99bfb3a42'],
   ['check-docs-size.mjs', '4.5.1', '4.5.4', 'fef3555b14a5ade46071bac18bd6dfc87daec39dd63ce1f7965864c3e51558d9'],
   ['check-docs-size.test.mjs', '4.0.0', '4.5.4', '88fbb3d7f097d74771b7c5d9ad99fcd58b274ae33f391e1ff01f4b138b9236cd'],
+  ['spec-schema.mjs', '4.6.0', '4.6.1', 'f8ee23d81e90fd4225ca4ece288cba41982c4430290bc6d033f5ca18d2d283f4'],
+  ['spec-schema.test.mjs', '4.6.0', '4.6.1', 'a12d6d3f5d32c6dabdee7e15af7d2ab15a0ced37515d1844fe0951f60cddbc99'],
 ];
 const CATALOG_ROWS = FROZEN_PRIORS.length;
 

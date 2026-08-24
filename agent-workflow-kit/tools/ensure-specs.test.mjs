@@ -11,8 +11,9 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { WRITE_TOKENS } from './ensure-vocabulary.mjs';
+import { PRIOR_FILES } from './script-priors.mjs';
 
-const { ensureSpecs, decideWrites } = await import('./ensure-specs.mjs').catch(() => ({}));
+const { ensureSpecs, decideWrites, READER_PAIR, CHECKER_PAIR } = await import('./ensure-specs.mjs').catch(() => ({}));
 
 const KIT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BUNDLE = join(KIT_ROOT, 'references', 'scripts');
@@ -24,8 +25,15 @@ const TODAY = '2026-08-23';
 const CUSTOM = '// my own body\n';
 
 const bundle = (name) => readFileSync(join(BUNDLE, name), 'utf8');
-// The 4.5.1..4.5.4 checker body + the 4.0.0..4.5.4 test body — both shipped priors.
-const prior = (name) => readFileSync(join(FIXTURES, name === CHECKER[0] ? '4.5.1' : '4.0.0', `${name}.txt`), 'utf8');
+// One shipped prior body per refreshable script: the 4.5.1..4.5.4 / 4.0.0..4.5.4 checker pair and
+// the 4.6.0..4.6.1 reader pair.
+const PRIOR_DIR = {
+  'check-docs-size.mjs': '4.5.1',
+  'check-docs-size.test.mjs': '4.0.0',
+  'spec-schema.mjs': '4.6.0',
+  'spec-schema.test.mjs': '4.6.0',
+};
+const prior = (name) => readFileSync(join(FIXTURES, PRIOR_DIR[name], `${name}.txt`), 'utf8');
 
 // deploy(dir, table) materializes one row of the state table: each script current | prior | custom |
 // absent | wrong-kind, the store root present | absent | wrong-kind.
@@ -86,6 +94,8 @@ const ROWS = [
   { label: 'reader current, checker on a shipped prior, store present', table: { reader: ['current', 'current'], checker: ['prior', 'prior'], store: 'present' }, token: 'refreshed', after: allCurrent },
   { label: 'reader absent, checker on a shipped prior (the 4.5.4 deployment)', table: { checker: ['prior', 'prior'] }, token: 'seeded', after: (dir) => { allCurrent(dir); storeSeeded(dir); } },
   { label: 'checker .mjs absent beside a current test', table: { reader: ['current', 'current'], checker: ['absent', 'current'] }, token: 'seeded', after: (dir) => { allCurrent(dir); storeSeeded(dir); } },
+  { label: 'the 4.6.x deployment: reader pair on the 4.6.0 bodies, checker current, store present', table: { reader: ['prior', 'prior'], checker: ['current', 'current'], store: 'present' }, token: 'refreshed', after: allCurrent },
+  { label: 'reader prior + checker prior + store absent: the whole chain refreshes, then the store seeds', table: { reader: ['prior', 'prior'], checker: ['prior', 'prior'] }, token: 'seeded', after: (dir) => { allCurrent(dir); storeSeeded(dir); } },
 ];
 // The withheld cells: a custom file preserves itself and withholds every write that depends on it.
 // The token still follows the ONE precedence — a seed that was admitted (nothing depends on it) is
@@ -95,6 +105,7 @@ const WITHHELD_ROWS = [
   { label: 'a custom reader .mjs: the checker refresh and the store wait', table: { reader: ['custom', 'current'], checker: ['prior', 'prior'] }, token: 'customized-preserved', seeded: [], leftAsIs: ['scripts/check-docs-size.mjs', 'scripts/check-docs-size.test.mjs'] },
   { label: 'a custom reader test beside an absent reader .mjs: the .mjs is still seeded (create-only), so the token is seeded', table: { reader: ['absent', 'custom'], checker: ['absent', 'prior'] }, token: 'seeded', seeded: ['scripts/spec-schema.mjs'], leftAsIs: ['scripts/check-docs-size.test.mjs'], notCopied: ['scripts/check-docs-size.mjs'] },
   { label: 'a custom checker beside a store root that already exists: both preserved, the root line says present, not withheld', table: { reader: ['current', 'current'], checker: ['custom', 'current'], store: 'present' }, token: 'customized-preserved', seeded: [], leftAsIs: [] },
+  { label: 'a custom reader test beside a PRIOR reader .mjs: the pair is preserved whole, every refresh and the store wait', table: { reader: ['prior', 'custom'], checker: ['prior', 'prior'] }, token: 'customized-preserved', seeded: [], leftAsIs: ['scripts/spec-schema.mjs', 'scripts/check-docs-size.mjs', 'scripts/check-docs-size.test.mjs'] },
 ];
 
 describe('the state table — admitted writes and the run token', () => {
@@ -141,13 +152,47 @@ describe('the state table — admitted writes and the run token', () => {
     });
   }
 
-  it('the pure decision: a reader on a shipped prior (a future catalog row) withholds like a custom one', () => {
+  it('the pure decision: a PRIOR reader refreshes ahead of the checker pair, and the store then seeds', () => {
+    const reader = [{ state: 'prior' }, { state: 'current' }];
+    const checker = [{ state: 'prior' }, { state: 'prior' }];
+    const d = decideWrites({ reader, checker, store: { state: 'absent' } });
+    assert.deepEqual(d, {
+      writes: [
+        { kind: 'refresh', file: reader[0] },
+        { kind: 'refresh', file: checker[0] },
+        { kind: 'refresh', file: checker[1] },
+        { kind: 'store' },
+      ],
+      withheld: false,
+    });
+  });
+
+  it('the withhold is DIRECTIONAL: a PRIOR reader refreshes beside a custom checker, which holds back only its own pair and the store', () => {
+    withProject({ reader: ['prior', 'prior'], checker: ['custom', 'prior'] }, (dir) => {
+      const r = run(dir);
+      assert.equal(r.token, 'refreshed', r.lines.join('\n'));
+      for (const name of READER) assert.equal(read(dir, `scripts/${name}`), bundle(name), `${name} refreshed`);
+      assert.equal(read(dir, 'scripts/check-docs-size.mjs'), CUSTOM, 'the custom checker is preserved');
+      assert.equal(read(dir, 'scripts/check-docs-size.test.mjs'), prior('check-docs-size.test.mjs'), 'the prior checker test is NOT refreshed behind it');
+      assert.equal(existsSync(join(dir, STORE)), false, 'no store root behind a withheld checker');
+    });
+  });
+
+  it('the pure decision: a custom reader test withholds even the PRIOR reader .mjs refresh (pair discipline)', () => {
     const d = decideWrites({
-      reader: [{ state: 'prior' }, { state: 'current' }],
-      checker: [{ state: 'prior' }, { state: 'prior' }],
+      reader: [{ state: 'prior' }, { state: 'custom' }],
+      checker: [{ state: 'absent' }, { state: 'prior' }],
       store: { state: 'absent' },
     });
     assert.deepEqual(d, { writes: [], withheld: true });
+  });
+
+  it('the refresh-lane pairs and the catalog domain agree (drift pin on the PRODUCTION constants)', () => {
+    const pairs = [...READER_PAIR, ...CHECKER_PAIR];
+    assert.equal(new Set(pairs).size, pairs.length, 'no file sits in both pairs');
+    assert.deepEqual([...pairs].sort(), [...PRIOR_FILES].sort());
+    assert.deepEqual(READER_PAIR, READER);
+    assert.deepEqual(CHECKER_PAIR, CHECKER);
   });
 });
 
@@ -155,6 +200,8 @@ describe('--dry-run — only would-* tokens, a byte-identical tree', () => {
   const DRY = [
     [{}, 'would-seed'],
     [{ reader: ['current', 'current'], checker: ['prior', 'prior'], store: 'present' }, 'would-refresh'],
+    [{ reader: ['prior', 'prior'], checker: ['current', 'current'], store: 'present' }, 'would-refresh'],
+    [{ reader: ['prior', 'prior'], checker: ['custom', 'current'] }, 'would-refresh'],
     [{ reader: ['current', 'current'], checker: ['custom', 'prior'] }, 'customized-preserved'],
     [{ reader: ['absent', 'custom'], checker: ['prior', 'prior'] }, 'would-seed'],
     [{ reader: ['current', 'current'], checker: ['current', 'current'], store: 'present' }, 'already-present'],

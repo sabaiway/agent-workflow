@@ -5,7 +5,7 @@
 //   gates          docs/ai/gates.json          seed-if-missing (an existing declaration is authored content)
 //   autonomy       docs/ai/autonomy.json       seed-if-missing (same)
 //   scripts        scripts/<ADR enforcement>   seed-if-missing, ADR-layout detect FIRST
-//   specs          scripts/<spec layer>        reader pair seed-if-missing, checker pair refreshed only on
+//   specs          scripts/<spec layer>        reader + checker pairs seeded when absent, refreshed only on
 //                  + docs/ai/specs/index.md    a shipped prior body, store root seeded behind a current checker
 //   index          docs/ai/index.md            regenerate-if-missing-or-stale (a GENERATED artifact)
 //
@@ -64,9 +64,10 @@ Usage:
 
 Every SEED is CREATE-ONLY: an existing file is preserved byte-for-byte, never clobbered and never
 refreshed in place. Three ops refresh instead: the orchestration onboarding note, only while it still
-matches a canonical the kit shipped (your own wording is preserved verbatim); the spec-layer checker
-pair, only while its bytes are a body a release shipped (an edited checker is preserved, and the spec
-store root is then NOT seeded behind it); and the navigator index — a GENERATED artifact, regenerated
+matches a canonical the kit shipped (your own wording is preserved verbatim); the spec-layer reader
+and checker pairs, only while a file's bytes are a body a release shipped (an edited file is
+preserved, and the writes that depend on it — the spec store root included — are withheld behind
+it); and the navigator index — a GENERATED artifact, regenerated
 whenever it is missing or stale. The enforcement-script ensure detects an older ADR-store layout
 FIRST and instructs the opt-in migration instead of seeding.
 

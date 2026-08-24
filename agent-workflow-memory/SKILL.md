@@ -236,7 +236,7 @@ Fill strategy:
    written) **byte-equal** to this skill's bundled copies (compare with `cmp`): the deployed checker
    is what the pre-commit hook runs, and an older or edited one renders the store row by row and
    reds its own index check. Otherwise seed NO store root and report which file differs: a
-   checker still on a body a release shipped is refreshed by the composition root's own upgrade
+   file of either pair still on a body a release shipped is refreshed by the composition root's own upgrade
    (it carries the catalog of shipped bodies), an edited one is the user's to refresh by hand — this
    substrate carries no such catalog and never overwrites a deployed script. **Same gate, also
    stamp-independent — ensure the NAVIGATOR:** `docs/ai/index.md` is a GENERATED artifact the entry

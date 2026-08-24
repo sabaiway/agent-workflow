@@ -3,9 +3,10 @@
 // checker on a shipped prior) runs the kit's ONE ensure command with --reconcile and gains the reader
 // pair, a refreshed checker pair byte-equal to the bundle, and a rendered store root; then the REAL
 // deployed pre-commit hook (the refreshed checker + --check-index + the deployed test suite) lets a
-// seeded valid spec commit, and the navigator carries ONE collapsed specs/ row. Two variants pin the
-// decided edges: the legacy ADR layout still seeds (D-G), a custom checker is preserved with no
-// store root (D-E).
+// seeded valid spec commit, and the navigator carries ONE collapsed specs/ row. Three variants pin
+// the decided edges: a 4.6.x deployment's reader pair (2a: on the 4.6.0 bodies, checker current)
+// refreshes and the store then seeds, the legacy ADR layout still seeds (D-G), a custom checker is
+// preserved with no store root (D-E).
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -29,13 +30,19 @@ const SKILL_HOME_ONLY = new Set(['AGENTS.md', 'adr-record.md', 'SPEC_TEMPLATE.md
 const VALID_SPEC = '---\ntype: spec\nlastUpdated: 2026-08-23\nscope: permanent\nstaleAfter: 90d\nowner: none\nmaxLines: 150\nkind: spec\nstatus: draft\nrevision: 1\n---\n\n# Spec: login\n\n## Contract\n\nc\n\n## Scenarios\n\n- S1 a :: test/login.test.mjs :: spec:login/S1\n\n## Out of scope\n\n- b\n\n## Module\n\n- src/login/\n';
 
 const bundle = (name) => readFileSync(join(BUNDLE, name), 'utf8');
-const prior = (name) => readFileSync(join(PRIORS, name === CHECKER[0] ? '4.5.1' : '4.0.0', `${name}.txt`), 'utf8');
+const PRIOR_DIR = {
+  'check-docs-size.mjs': '4.5.1',
+  'check-docs-size.test.mjs': '4.0.0',
+  'spec-schema.mjs': '4.6.0',
+  'spec-schema.test.mjs': '4.6.0',
+};
+const prior = (name) => readFileSync(join(PRIORS, PRIOR_DIR[name], `${name}.txt`), 'utf8');
 const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=probe', '-c', 'user.email=probe@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8', stdio: 'pipe' });
 
 // A deployment the way memory 4.5.x left it: the current docs/ai templates minus the spec store,
 // every enforcement script minus the reader pair, the checker pair on the 4.5.1..4.5.4 bytes, a real
 // git checkout with the deployed hook installed and the base committed.
-const deploy = ({ checker = 'prior', legacyAdr = false } = {}) => {
+const deploy = ({ checker = 'prior', reader = 'absent', legacyAdr = false } = {}) => {
   const project = mkdtempSync(join(tmpdir(), 'upgrade-spec-layer-'));
   cpSync(join(TEMPLATES, 'AGENTS.md'), join(project, 'AGENTS.md'));
   writeFileSync(join(project, 'package.json'), '{"name":"fixture"}\n');
@@ -51,8 +58,11 @@ const deploy = ({ checker = 'prior', legacyAdr = false } = {}) => {
   const scripts = join(project, 'scripts');
   mkdirSync(scripts);
   for (const name of readdirSync(BUNDLE)) {
-    if (READER.includes(name)) continue;
-    writeFileSync(join(scripts, name), CHECKER.includes(name) ? (checker === 'prior' ? prior(name) : '// my own checker\n') : bundle(name));
+    if (READER.includes(name)) {
+      if (reader === 'prior') writeFileSync(join(scripts, name), prior(name));
+      continue;
+    }
+    writeFileSync(join(scripts, name), CHECKER.includes(name) ? (checker === 'prior' ? prior(name) : checker === 'current' ? bundle(name) : '// my own checker\n') : bundle(name));
   }
   git(project, 'init', '-q');
   execFileSync(process.execPath, [join(scripts, 'install-git-hooks.mjs')], { cwd: project, stdio: 'pipe' });
@@ -69,7 +79,7 @@ const withDeployment = (opts, fn) => {
 const tokensOf = (stdout) => Object.fromEntries(stdout.split('\n').map((l) => l.match(/^ {2}([a-z]+): ([a-z-]+)$/)).filter(Boolean).map(([, op, token]) => [op, token]));
 const reconcile = (project) => main(['--reconcile', '--cwd', project], { kitRoot: KIT_ROOT });
 
-describe('the spec layer reaches an existing 4.5.x deployment on --reconcile (rows b05-b08 end to end)', () => {
+describe('the spec layer reaches an existing deployment on --reconcile (the 4.5.x and 4.6.x lines end to end)', () => {
   it('seeds the reader pair, refreshes the prior checker pair, renders the store root; the real hook commits a seeded spec; ONE specs/ row', () => {
     withDeployment({}, (project) => {
       assert.equal(existsSync(join(project, STORE)), false, 'no store root before the upgrade');
@@ -102,6 +112,23 @@ describe('the spec layer reaches an existing 4.5.x deployment on --reconcile (ro
       git(project, 'add', '-A');
       const commit = spawnSync('git', ['-c', 'user.name=probe', '-c', 'user.email=probe@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'seed'], { cwd: project, encoding: 'utf8' });
       assert.equal(commit.status, 0, `the deployed pre-commit hook refused the seeded spec:\n${commit.stdout}\n${commit.stderr}`);
+    });
+  });
+
+  it('a 4.6.x deployment (reader pair on the 4.6.0 bodies, checker already current) upgrades WHOLE: reader refreshed, store seeded, the real hook commits', () => {
+    withDeployment({ reader: 'prior', checker: 'current' }, (project) => {
+      const r = reconcile(project);
+      assert.equal(r.code, 0, r.stdout);
+      assert.equal(tokensOf(r.stdout).specs, 'seeded', r.stdout);
+      assert.match(r.stdout, /spec-schema\.mjs: matches a body an earlier release shipped — refreshed to the bundled one/);
+      for (const name of [...READER, ...CHECKER]) {
+        assert.equal(readFileSync(join(project, 'scripts', name), 'utf8'), bundle(name), `${name} is the bundled body`);
+      }
+      assert.ok(existsSync(join(project, STORE)));
+      execFileSync(process.execPath, [join(project, 'scripts', 'check-docs-size.mjs'), '--write-index', `--root=${project}`], { cwd: project, stdio: 'pipe' });
+      git(project, 'add', '-A');
+      const commit = spawnSync('git', ['-c', 'user.name=probe', '-c', 'user.email=probe@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'upgrade'], { cwd: project, encoding: 'utf8' });
+      assert.equal(commit.status, 0, `the deployed pre-commit hook refused the upgraded tree:\n${commit.stdout}\n${commit.stderr}`);
     });
   });
 

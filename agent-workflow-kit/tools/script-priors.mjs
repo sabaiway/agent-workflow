@@ -13,9 +13,12 @@
 
 import { createHash } from 'node:crypto';
 
-// The deployed scripts the spec-layer ensure may REFRESH (the checker pair that imports the reader).
-// Every other deployed script is outside the refresh lane by design.
-export const PRIOR_FILES = Object.freeze(['check-docs-size.mjs', 'check-docs-size.test.mjs']);
+// The deployed scripts the spec-layer ensure may REFRESH — the FULL refreshable catalog: the checker
+// pair that imports the reader, and (since 2a) the reader pair itself. Every other deployed script is
+// outside the refresh lane by design.
+export const PRIOR_FILES = Object.freeze([
+  'check-docs-size.mjs', 'check-docs-size.test.mjs', 'spec-schema.mjs', 'spec-schema.test.mjs',
+]);
 
 const prior = (file, firstShipped, lastShipped, digest) => Object.freeze({ file, firstShipped, lastShipped, digest });
 
@@ -26,6 +29,8 @@ export const SCRIPT_PRIORS = Object.freeze([
   prior('check-docs-size.mjs', '4.4.0', '4.5.0', '7a5cd7f98571c3248d0378623172e9c60073b8d8761bce7a95c263f99bfb3a42'),
   prior('check-docs-size.mjs', '4.5.1', '4.5.4', 'fef3555b14a5ade46071bac18bd6dfc87daec39dd63ce1f7965864c3e51558d9'),
   prior('check-docs-size.test.mjs', '4.0.0', '4.5.4', '88fbb3d7f097d74771b7c5d9ad99fcd58b274ae33f391e1ff01f4b138b9236cd'),
+  prior('spec-schema.mjs', '4.6.0', '4.6.1', 'f8ee23d81e90fd4225ca4ece288cba41982c4430290bc6d033f5ca18d2d283f4'),
+  prior('spec-schema.test.mjs', '4.6.0', '4.6.1', 'a12d6d3f5d32c6dabdee7e15af7d2ab15a0ced37515d1844fe0951f60cddbc99'),
 ]);
 
 export const digestOf = (bytes) => createHash('sha256').update(bytes).digest('hex');
