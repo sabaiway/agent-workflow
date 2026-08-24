@@ -310,13 +310,45 @@ const checkParts = (parsed, at, errors) => {
   if (duplicate !== undefined) errors.push({ rule: 'parts', message: `part "${duplicate}" is listed twice` });
 };
 
-// The verdict: { kind, status, revision, errors: [{ rule, message }], warnings: [{ rule, message }] }.
-// Errors are collected past the first defect wherever later checks stay meaningful; a missing or
-// defective frontmatter and an unknown kind each end the read, because no shape can be judged without them.
+// The structure verdict (additive, slice 2a): the DETERMINISTIC extraction of what parsed, per
+// section, targets VERBATIM as written (`./x.md` and `./x/index.md` stay distinct strings). The
+// grammar is per line for scenarios/children/parts — a malformed line is simply absent — while the
+// module is a conjunction (ONE `dir/` root or an all-file list): prose, a refused path, a mix or
+// `*(empty)*` extracts null. `## Links` is free prose and is never extracted.
+const scenarioEntry = (line) => {
+  const scenario = parseScenario(line);
+  if (scenario === null) return null;
+  return { ordinal: scenario.n, binding: scenario.bound ? { file: scenario.path, marker: scenario.marker } : null };
+};
+const linkEntry = (re) => (line) => {
+  const m = line.match(re);
+  return m && SLUG_RE.test(m[2]) ? { name: m[1], target: `./${m[2]}${m[3] ?? ''}.md` } : null;
+};
+const entriesOf = (parsed, heading, entryOf) =>
+  contentOf(sectionLines(parsed, heading) ?? []).map(entryOf).filter((entry) => entry !== null);
+const extractModule = (parsed) => {
+  const content = contentOf(sectionLines(parsed, '## Module') ?? []);
+  const paths = bulletsOf(content);
+  if (paths.length === 0 || content.some((line) => !isBullet(line))) return null;
+  const kinds = paths.map(classifyPath);
+  if (paths.length === 1 && kinds[0] === 'dir') return { form: 'root', paths };
+  return kinds.every((kind) => kind === 'file') ? { form: 'fileSet', paths } : null;
+};
+const extractStructure = (parsed) => ({
+  scenarios: entriesOf(parsed, '## Scenarios', scenarioEntry),
+  children: entriesOf(parsed, '## Children', linkEntry(CHILD_LINK_RE)),
+  parts: entriesOf(parsed, '## Parts', linkEntry(PART_LINK_RE)),
+  module: extractModule(parsed),
+});
+
+// The verdict: { kind, status, revision, structure, errors: [{ rule, message }], warnings: [{ rule,
+// message }] }. Errors are collected past the first defect wherever later checks stay meaningful; a
+// missing or defective frontmatter and an unknown kind each end the read (structure stays null),
+// because no shape can be judged without them.
 export const readSpecDocument = (text, rel) => {
   const errors = [];
   const warnings = [];
-  const verdict = (kind, status, revision) => ({ kind, status, revision, errors, warnings });
+  const verdict = (kind, status, revision, structure = null) => ({ kind, status, revision, structure, errors, warnings });
   const front = parseFrontmatter(text.replace(/\r\n/g, '\n'));
   if (front === null) {
     errors.push({ rule: 'frontmatter', message: 'missing YAML frontmatter' });
@@ -351,5 +383,5 @@ export const readSpecDocument = (text, rel) => {
   }
   const status = kind === 'spec' ? fields.status ?? null : null;
   const revision = kind === 'spec' && REVISION_RE.test(fields.revision ?? '') ? Number(fields.revision) : null;
-  return verdict(kind, status, revision);
+  return verdict(kind, status, revision, extractStructure(parsed));
 };

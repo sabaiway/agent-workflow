@@ -194,6 +194,73 @@ describe('readSpecDocument — refuse, exactly one rule per defect', () => {
   });
 });
 
+describe('readSpecDocument — the structure verdict (additive, slice 2a)', () => {
+  const structureOf = (text, rel) => readSpecDocument(text, rel).structure;
+  const BOTH_SCENARIOS = [
+    { ordinal: 1, binding: { file: 'test/login.test.mjs', marker: 'spec:login/S1' } },
+    { ordinal: 2, binding: null },
+  ];
+
+  it('a flat spec extracts scenarios (bound + unbound) and its one dir/ module root', () => {
+    expect(structureOf(specDoc(), 'login.md')).toEqual({
+      scenarios: BOTH_SCENARIOS,
+      children: [],
+      parts: [],
+      module: { form: 'root', paths: ['src/login/'] },
+    });
+  });
+
+  it('a promoted root extracts parts and a fileSet module; ## Links stays free prose, never extracted', () => {
+    const text = specDoc({ module: '- src/a.mjs\n- src/b.mjs', extra: '\n## Parts\n\n- [sessions](./sessions.md)\n\n## Links\n\n- [[AD-112]]\n' });
+    expect(structureOf(text, 'auth/login/index.md')).toEqual({
+      scenarios: BOTH_SCENARIOS,
+      children: [],
+      parts: [{ name: 'sessions', target: './sessions.md' }],
+      module: { form: 'fileSet', paths: ['src/a.mjs', 'src/b.mjs'] },
+    });
+  });
+
+  it('an index extracts children with VERBATIM targets — ./x.md and ./x/index.md stay distinct strings', () => {
+    expect(structureOf(indexDoc(), 'auth/index.md')).toEqual({
+      scenarios: [],
+      children: [{ name: 'login', target: './login.md' }, { name: 'billing', target: './billing/index.md' }],
+      parts: [],
+      module: null,
+    });
+  });
+
+  it('a part extracts the empty structure; a retired *(empty)* module extracts null on a CLEAN document', () => {
+    expect(structureOf(partDoc(), 'auth/login/sessions.md')).toEqual({ scenarios: [], children: [], parts: [], module: null });
+    const retired = specDoc({ fields: { status: 'retired' }, module: '*(empty)*', scenarios: ['- S1 gone :: unbound'] });
+    expect(structureOf(retired, 'login.md').module).toBeNull();
+  });
+
+  it('EVERY early refusal reads structure null: missing frontmatter, a frontmatter defect, an unknown or absent kind', () => {
+    expect(structureOf('# Spec: Login\n', 'login.md')).toBeNull();
+    expect(structureOf(specDoc({ fields: { priority: 'high' } }), 'login.md')).toBeNull();
+    expect(structureOf(specDoc({ fields: { kind: 'feature' } }), 'login.md')).toBeNull();
+    expect(structureOf(specDoc({ drop: ['kind'] }), 'login.md')).toBeNull();
+  });
+
+  it('a grammar-malformed scenario/child/part line is simply ABSENT — valid lines before and after it extract', () => {
+    const s = structureOf(specDoc({ scenarios: ['- S1 a :: unbound', '- S2 broken', '- S3 c :: unbound'] }), 'login.md');
+    expect(s.scenarios).toEqual([{ ordinal: 1, binding: null }, { ordinal: 3, binding: null }]);
+    const c = structureOf(indexDoc({ children: ['- [a](./a.md)', '- broken', '- [b](./b/index.md)'] }), 'auth/index.md');
+    expect(c.children).toEqual([{ name: 'a', target: './a.md' }, { name: 'b', target: './b/index.md' }]);
+    const p = structureOf(specDoc({ extra: '\n## Parts\n\n- [a](./a.md)\n- broken\n- [b](./b.md)\n' }), 'auth/login/index.md');
+    expect(p.parts).toEqual([{ name: 'a', target: './a.md' }, { name: 'b', target: './b.md' }]);
+  });
+
+  it('the module is a CONJUNCTION — prose, a refused path, a dir/file mix each extract null; a rule-refused scenario line still extracts verbatim', () => {
+    for (const module of ['the root is\n- src/login/', '- ../src/', '- src/login/\n- src/login/a.mjs']) {
+      expect(structureOf(specDoc({ module }), 'login.md').module).toBeNull();
+    }
+    const v = readSpecDocument(specDoc({ scenarios: ['- S1 a :: test/a.mjs :: spec:login/S2'] }), 'login.md');
+    expect(v.errors.map((e) => e.rule)).toEqual(['scenario-marker']);
+    expect(v.structure.scenarios).toEqual([{ ordinal: 1, binding: { file: 'test/a.mjs', marker: 'spec:login/S2' } }]);
+  });
+});
+
 describe('classifyPath + the frozen constants', () => {
   it('classifies the lexical path forms', () => {
     expect(['src/', 'src/a.mjs', '../x', '/x', 'C:/x', 'a\\b', 'src/*.mjs'].map(classifyPath)).toEqual([
