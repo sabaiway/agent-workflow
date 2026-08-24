@@ -7,6 +7,26 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-24 — AD-114 the structure verdict + the reader refresh lane (kit 7.5.0 MINOR, memory 4.7.0 MINOR)
+
+**The ONE reader now hands the coming `spec-check` its structural read, and the reader pair itself
+becomes refreshable on deployments.** Slice 2b needs `{scenarios, children, parts, module}` out of a
+spec document, and the only module allowed to define "malformed" is the reader — so its verdict
+gains an additive, deterministically-extracted `structure` field (shape frozen at plan time,
+verbatim targets, null only on the early refusals, `## Links` never extracted, the module a
+conjunction). And because the bundled reader bytes move, the reader pair joins the AD-113
+known-prior refresh lane in the SAME release — the catalog gains the outgoing 4.6.0..4.6.1 bodies,
+`ensure-specs` decouples its pair constants (the alias would have double-surveyed) and admits a
+reader refresh through the same one-conjunction discipline, directionally: a custom file withholds
+its pair's refreshes and everything downstream (create-only reader seeds stay admitted), nothing
+above it. A real 4.6.x deployment now upgrades whole under its real hook instead of stranding as
+`custom`. Engine unchanged at 3.3.0.
+
+Review: two execution commits + the release commit, each a codex (gpt-5.6-sol, xhigh, priority) +
+agy (Gemini 3.7 Flash (High), single run) council on the staged tree — commit 1 closed in 1 round
+(codex ship, zero findings; agy degraded LOUDLY on an unreadable envelope, single-run policy),
+commit 2 in 4 rounds and the release commit in 3, each to ship/ship; 12 findings folded.
+
 ## 2026-08-24 — AD-113 the spec layer reaches existing deployments (kit 7.4.0 MINOR, memory 4.6.1 PATCH)
 
 **An EXISTING deployment at lineage head `3.0.0` gains the AD-112 layer on an equal-head upgrade,

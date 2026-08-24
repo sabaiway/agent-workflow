@@ -4,6 +4,38 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 7.5.0 — the reader pair joins the known-prior refresh lane; the mirrored reader gains the structure verdict (AD-114)
+
+Slice 2b's `spec-check` will need a structural read of a spec document, and the reader is the ONE
+definition of well-formed — so the memory canon's reader (mirrored here byte-identically) now
+returns an additive `structure` field. Because the bundled reader bytes move, the reader pair joins
+the AD-113 known-prior refresh lane in the SAME release: without catalog rows for the outgoing
+bodies, every 4.6.x deployment would classify `custom` against the new bundle and be stranded out of
+the store seed forever.
+
+- **`tools/script-priors.mjs` — the catalog spans both pairs.** `PRIOR_FILES` is now the FULL
+  refreshable catalog (checker pair + reader pair); `SCRIPT_PRIORS` appends the outgoing
+  4.6.0..4.6.1 reader-pair bodies (rows 4 -> 6, fixtures under `4.6.0/`, the literal frozen prefix
+  extended with its first four rows byte-identical). The maintenance rule generalizes with it: a
+  release that changes ANY catalog member appends the outgoing body's row.
+- **`tools/ensure-specs.mjs` — the pairs decoupled, the reader refreshes.** `CHECKER_PAIR` was an
+  alias of `PRIOR_FILES`, so the widened catalog would have double-surveyed the readers: the op now
+  owns exported `READER_PAIR`/`CHECKER_PAIR` (the suite pins pairs-union === catalog domain), and
+  `decideWrites` admits a reader REFRESH — reader seeds stay unconditional create-only (a custom
+  neighbour never blocks them); a refresh runs only inside a pair whose every file is
+  current | prior | absent; one custom file withholds its pair's REFRESHES and every downstream
+  write, DIRECTIONALLY (a prior reader still refreshes beside a custom checker, which holds back
+  only its own pair and the store). Order reader -> checker -> store unchanged; lines and tokens
+  unchanged (`refreshed` now covers either pair).
+- **Prose caught up at every live surface** — `references/modes/upgrade.md` (the configs summary
+  and the spec-layer paragraph), the `ensure-configs` header + help, the vocabulary comment, the
+  package-content ledger, and the memory twin's refresh-lane sentence all name BOTH pairs.
+- **Proof.** The state table gains the reader-prior rows, the directional-withhold pin and dry-run
+  rows; the E2E upgrades a real 4.6.x deployment (reader on the 4.6.0 bodies, checker current)
+  whole under the real installed pre-commit hook, and the whole-chain prior+prior cell stays
+  table-covered. Red-first throughout — three red-proofs minted on frozen test bytes against the
+  pre-fix modules. Tarball count unchanged at 247.
+
 ## 7.4.0 — the spec layer reaches existing deployments: known-prior refresh, seed-behind-checker, the `specs` ensure (AD-113)
 
 7.3.0 made a FRESH bootstrap deliver the feature-spec layer whole; this release gives every EXISTING

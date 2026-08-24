@@ -4,6 +4,33 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 4.7.0 — the reader's verdict gains the additive `structure` extraction (AD-114)
+
+The slice-2 checker (`spec-check`, next release) must read a document's structure through the SAME
+module that defines "malformed" — a second parser of the frozen grammar would fork that definition.
+`readSpecDocument` therefore now returns, beside the untouched errors and warnings, an additive
+`structure` field in a shape frozen at plan time:
+
+- **`{scenarios: [{ordinal, binding: {file, marker} | null}], children: [{name, target}], parts:
+  [{name, target}], module: {form: 'root' | 'fileSet', paths: [...]} | null}`** — every target
+  VERBATIM as written (`./x.md` and `./x/index.md` stay distinct strings).
+- **Null ONLY on the early refusals** (missing frontmatter, a frontmatter-key defect, an unknown
+  kind); for a known kind with errors it is the DETERMINISTIC extraction of what parsed: a
+  grammar-malformed scenario/child/part line is simply absent (valid lines before and after it
+  extract), while a line that parses but breaks a rule still extracts verbatim beside its error.
+- **The module is a conjunction** — ONE `dir/` root or an all-file list; prose, a refused path, a
+  dir/file mix or `*(empty)*` extracts `module: null`. `## Links` stays free prose, never
+  extracted.
+- The 33 rule ids, every refusal and every existing verdict field stay behaviour-identical (the
+  engine corpus suite is green untouched; engine stays 3.3.0). The deep-equal suite pins the shape
+  per kind, both module forms, every early-refusal branch and the partial extractions; the new
+  tests were red-proofed against the pre-change reader.
+
+MINOR: a shipped script gains a capability. One prose alignment rides along: the upgrade's
+refresh-lane sentence now names a file of EITHER deployed pair (reader or checker) on a shipped
+body as refreshed by the composition root's upgrade — this substrate still carries no catalog and
+never overwrites a deployed script itself.
+
 ## 4.6.1 — the standalone upgrade delivers the spec layer behind a checker it can prove (AD-113)
 
 4.6.0 shipped the feature-spec layer for FRESH bootstraps; an EXISTING deployment at lineage head
