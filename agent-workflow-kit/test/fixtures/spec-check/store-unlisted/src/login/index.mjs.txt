@@ -1,0 +1,3 @@
+// The module ground the login spec governs — present, so the ONLY finding this store yields is the
+// unlisted child it exists to demonstrate.
+export const login = () => 'a synthetic module root';

@@ -319,6 +319,22 @@ const foldScopeAdvice = (activity, config, plans) => {
   ];
 };
 
+// The spec-store block (the feature-spec layer) — plan-execution ONLY and unconditional, like the
+// finding-scope block above: a change to docs/ai/specs/ is judged whoever reviews it. It carries
+// only what no canon can: the POPULATED checker commands, and the session register they read. The
+// register is NEVER defaulted by the tool — naming it here is the whole point of the block.
+export const SPEC_CHECK_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'spec-check-cli.mjs');
+const SPEC_OPS_REGISTER = `${PLANS_REL}/spec-ops.list`;
+const specCheckAdvice = (activity) => {
+  if (activity !== 'plan-execution') return [];
+  return [
+    'Spec store (the feature-spec layer) — state what this session changed, then let the checker judge the store against it:',
+    `  • node ${shellQuoteArg(SPEC_CHECK_TOOL)} --ops-file ${shellQuoteArg(SPEC_OPS_REGISTER)}   (or --op '<add|modify|remove>=docs/ai/specs/<slug>.md', repeatable; rename=<old>:<new>)`,
+    `  • node ${shellQuoteArg(SPEC_CHECK_TOOL)} --all — the whole store instead: unlisted child vs orphan, acyclicity, store-wide slug uniqueness, module overlap.`,
+    `  • ${SPEC_OPS_REGISTER} is SESSION SCRATCH: this session writes it, the plan's Cleanup deletes it. It is never defaulted — an unnamed register would attest a post-state nobody declared. Advisory: nothing records that it ran.`,
+  ];
+};
+
 // The cost-lane advisory block (cost-tiered execution — orchestration.md §5 canon, paraphrased
 // at the point of use like reviewLoopAdvice paraphrases procedures.md Fold + loop / orchestration §4). Rendered UNCONDITIONALLY for
 // every activity — the lanes route EVERY step, review-backed or not (unlike reviewLoopAdvice,
@@ -466,7 +482,7 @@ const contractLines = ({ cmd, contract, settings }) => {
   return lines;
 };
 
-const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flowHalves, declaredPractice, foldScope }) => {
+const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flowHalves, declaredPractice, foldScope, specCheck }) => {
   const lines = [
     section,
     '',
@@ -486,6 +502,7 @@ const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flow
   const advice = reviewLoopAdvice(slots, activity);
   if (advice.length) lines.push('', ...advice);
   if (foldScope.length) lines.push('', ...foldScope);
+  if (specCheck.length) lines.push('', ...specCheck);
   lines.push('', ...costLanesAdvice());
   if (declaredPractice.length) lines.push('', ...declaredPractice);
   if (warnings.length) {
@@ -495,7 +512,7 @@ const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flow
   return lines.join('\n');
 };
 
-const buildJson = ({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, declaredPractice, foldScope }) => ({
+const buildJson = ({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, declaredPractice, foldScope, specCheck }) => ({
   activity,
   section,
   slots: Object.fromEntries(
@@ -510,6 +527,8 @@ const buildJson = ({ activity, section, slots, configSource, warnings, plans, au
   costLanes: costLanesAdvice(),
   // ADDITIVE (the fold channel): the finding-scope block, structured (empty outside plan-execution).
   foldScope,
+  // ADDITIVE (spec layer 2b): the spec-store block, structured (empty outside plan-execution).
+  specCheck,
   // ADDITIVE (AD-044 Plan 4): the per-activity autonomy block, structured (empty when unresolvable).
   autonomy: autonomyAdvice(activity, autonomy),
   // ADDITIVE (D-17 U1): the SAME composed lines the human render prints — one array, two renders, so
@@ -599,9 +618,10 @@ export const main = (argv, ctx = {}) => {
     const flowHalves = config?.flow == null ? null : flowHalvesAdvice(config.flow, flowProbe(cwd));
     const declaredPractice = declaredPracticeAdvice(cwd, readFile, lstat);
     const foldScope = foldScopeAdvice(activity, config, plans);
+    const specCheck = specCheckAdvice(activity);
     const stdout = json
-      ? JSON.stringify(buildJson({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, declaredPractice, foldScope }), null, 2)
-      : formatHuman({ activity, section, slots, warnings, plans, autonomy, flowHalves, declaredPractice, foldScope });
+      ? JSON.stringify(buildJson({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, declaredPractice, foldScope, specCheck }), null, 2)
+      : formatHuman({ activity, section, slots, warnings, plans, autonomy, flowHalves, declaredPractice, foldScope, specCheck });
     if (autonomy?.error) {
       return { code: 1, stdout, stderr: `procedures: malformed ${AUTONOMY_REL} — ${autonomy.error}` };
     }

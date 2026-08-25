@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 // specs-scale-probe.mjs — the D-scale gate of the spec layer (repo-only tooling, never shipped).
 //
-// Builds a VALID 30-per-folder spec tree of N specs under a temp root, runs the deployed navigator
-// generator once untimed (--write-index), then times BOTH pre-commit hook runs (check-docs-size.mjs
-// + --check-index) per trial and judges the MEDIAN of the per-trial sums against the budget.
+// Builds a VALID 30-per-folder spec tree of N specs under a temp root — with RESOLVABLE scenario
+// bindings and module roots, so the structural checker has real ground to judge — runs the deployed
+// navigator generator once untimed (--write-index), then times TWO independent things per trial:
+// both pre-commit hook runs (check-docs-size.mjs + --check-index), and `spec-check --all`. Each
+// median is judged against the budget SEPARATELY: the hook measurement is frozen by the 1a probe,
+// and the checker's own cost must never hide inside it.
 //
 //   node scripts/testing/specs-scale-probe.mjs --n 1000 --budget-ms 1500 [--trials 3]
 //
 // Exit 0 within budget · 1 over budget (blocks the release) · 2 usage, or a child run that did not
-// exit 0 (a tree the hook refuses measures nothing).
+// exit 0 (a tree the hook or the checker refuses measures nothing).
 
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -18,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const CHECKER = resolve(HERE, '..', 'check-docs-size.mjs');
+export const SPEC_CHECK = resolve(HERE, '..', '..', 'agent-workflow-kit', 'tools', 'spec-check-cli.mjs');
 export const FAN_OUT = 30;
 export const STORE_REL = join('docs', 'ai', 'specs');
 const DEFAULT_TRIALS = 3;
@@ -56,13 +60,35 @@ export const planTree = (n) => {
   return files;
 };
 
-export const buildTree = (root, n) => {
-  const files = planTree(n);
+// What the specs POINT AT: one binding file per spec carrying its marker exactly once, and one
+// module root per spec. Without them the store is well-formed text over ground that does not exist,
+// and `spec-check --all` would refuse the tree instead of measuring it. Repo-relative, so they land
+// OUTSIDE the store and the navigator plan above stays byte-identical.
+export const planGround = (n) =>
+  planTree(n)
+    .filter((f) => !f.rel.endsWith('index.md'))
+    .flatMap((f) => {
+      const slug = f.rel.slice(f.rel.lastIndexOf('/') + 1, -3);
+      return [
+        { rel: `test/${slug}.test.mjs`, text: `// scale-probe binding\ntest('${slug} :: spec:${slug}/S1', () => {});\n` },
+        { rel: `src/${slug}/.keep`, text: '' },
+      ];
+    });
+
+const writeAll = (base, files) => {
   for (const { rel, text } of files) {
-    const path = join(root, STORE_REL, rel);
+    const path = join(base, rel);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, text);
   }
+};
+
+// Returns the STORE document count — the tree's own size. The ground files are scaffolding for the
+// checker, never documents, and are deliberately not counted as such.
+export const buildTree = (root, n) => {
+  const files = planTree(n);
+  writeAll(join(root, STORE_REL), files);
+  writeAll(root, planGround(n));
   return files.length;
 };
 
@@ -72,28 +98,47 @@ const median = (values) => {
   return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 };
 
+// BOTH streams ride the diagnostic: check-docs-size explains itself on stderr, spec-check prints its
+// findings on stdout, and a diagnostic that quoted only one of them would report the refusal without
+// the reason for it.
 const runChild = (spawn, checker, args, label) => {
   const result = spawn(process.execPath, [checker, ...args], { encoding: 'utf8' });
   if (result.status !== 0) {
-    throw fail(2, `${label} exited ${result.status ?? 'null'} — nothing measured\n${(result.stderr ?? '').trim()}`);
+    const said = [result.stdout, result.stderr].map((s) => (s ?? '').trim()).filter(Boolean).join('\n');
+    throw fail(2, `${label} exited ${result.status ?? 'null'} — nothing measured\n${said}`);
   }
 };
 
-// The measurement: build, one untimed --write-index, then `trials` timed trials of both hook runs.
-export const runProbe = ({ n, budgetMs, trials = DEFAULT_TRIALS, checker = CHECKER, spawn = spawnSync, now = performance.now.bind(performance) }) => {
+// The measurement: build, one untimed --write-index, then `trials` timed trials of TWO separately
+// judged things — the hook pair and the structural checker. Split medians on purpose: a checker that
+// got slower must not be able to pass by sitting inside a hook budget that has headroom.
+export const runProbe = ({ n, budgetMs, trials = DEFAULT_TRIALS, checker = CHECKER, specCheck = SPEC_CHECK, spawn = spawnSync, now = performance.now.bind(performance) }) => {
   const root = mkdtempSync(join(tmpdir(), 'specs-scale-'));
   try {
     const files = buildTree(root, n);
     const rootArg = `--root=${root}`;
     runChild(spawn, checker, ['--write-index', rootArg], '--write-index');
     const trialsMs = range(trials).map(() => {
-      const start = now();
+      const hookStart = now();
       runChild(spawn, checker, [rootArg], 'check-docs-size');
       runChild(spawn, checker, ['--check-index', rootArg], '--check-index');
-      return now() - start;
+      const hook = now() - hookStart;
+      const checkStart = now();
+      runChild(spawn, specCheck, ['--all', rootArg], 'spec-check --all');
+      return { hook, checker: now() - checkStart };
     });
-    const medianMs = median(trialsMs);
-    return { n, files, trialsMs, medianMs, budgetMs, withinBudget: medianMs <= budgetMs };
+    const hookMedianMs = median(trialsMs.map((t) => t.hook));
+    const checkerMedianMs = median(trialsMs.map((t) => t.checker));
+    return {
+      n,
+      files,
+      trialsMs,
+      hookMedianMs,
+      checkerMedianMs,
+      medianMs: hookMedianMs,
+      budgetMs,
+      withinBudget: hookMedianMs <= budgetMs && checkerMedianMs <= budgetMs,
+    };
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -123,7 +168,8 @@ export const main = (argv, deps = {}) => {
     const opts = parseArgs(argv);
     const result = runProbe({ ...opts, ...probeDeps });
     const verdict = result.withinBudget ? 'OK' : 'OVER BUDGET';
-    log(`specs-scale-probe: n=${result.n} files=${result.files} trials=${result.trialsMs.map((ms) => Math.round(ms)).join('/')}ms median=${Math.round(result.medianMs)}ms budget=${result.budgetMs}ms -> ${verdict}`);
+    const run = (key) => result.trialsMs.map((t) => Math.round(t[key])).join('/');
+    log(`specs-scale-probe: n=${result.n} files=${result.files} hook=${run('hook')}ms median=${Math.round(result.hookMedianMs)}ms spec-check=${run('checker')}ms median=${Math.round(result.checkerMedianMs)}ms budget=${result.budgetMs}ms -> ${verdict}`);
     return result.withinBudget ? 0 : 1;
   } catch (err) {
     logError(`[specs-scale-probe] ${err.message}`);

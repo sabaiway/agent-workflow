@@ -134,6 +134,12 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // project a command that cannot run.
       'tools/fold-scope.mjs',
       'tools/fold-scope-cli.mjs',
+      // the structural checker of the spec store (spec layer 2b) — the op grammar, the IO-free judge
+      // and the CLI half. By NAME for the same reason as fold-scope: the procedures advisor renders
+      // the CLI path into a copy-paste command, and the judge imports the other two at load.
+      'tools/spec-check-ops.mjs',
+      'tools/spec-check.mjs',
+      'tools/spec-check-cli.mjs',
       // and the block tokenizer fold-scope.mjs reads its markdown through: a TOOL now imports this
       // deployed payload leaf, so a drop breaks the checker at load, not merely an archiver run.
       'references/scripts/markdown-blocks.mjs',
@@ -667,7 +673,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 247 = 246 + tools/ensure-specs.mjs (spec layer 1b, rows b04-b09): the sixth upgrade ensure —
     //       pair seed + prior-matching refresh for BOTH pairs (reader since 2a), store root behind a
     //       current checker. Its table test and the E2E are outside files[].
-    assert.equal(packed.length, 247, `tarball file count drifted (${packed.length} ≠ 247)`);
+    // 250 = 247 + the structural checker (spec layer 2b): tools/spec-check-ops.mjs (the frozen change-op
+    //       grammar) + tools/spec-check.mjs (the IO-free judge) + tools/spec-check-cli.mjs (argv + fs).
+    //       Their *.test.mjs siblings and the fixture stores under test/ are outside files[].
+    assert.equal(packed.length, 250, `tarball file count drifted (${packed.length} ≠ 250)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

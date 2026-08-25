@@ -1,0 +1,3 @@
+// The module ground the login spec governs — a spec that names code which is not there is itself a
+// finding, so a fixture store meant to read CLEAN has to lay its ground down.
+export const login = () => 'a synthetic module root';

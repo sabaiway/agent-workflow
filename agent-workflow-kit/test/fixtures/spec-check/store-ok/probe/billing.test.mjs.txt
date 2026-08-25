@@ -1,0 +1,2 @@
+// A binding target for the spec-check fixtures — a .txt suffix so `node --test` never collects it.
+test('invoice totals — spec:billing/S1', () => {});

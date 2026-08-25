@@ -1,0 +1,3 @@
+// A binding target for the spec-check fixtures — a .txt suffix so `node --test` never collects it.
+// The scenario marker occurs EXACTLY ONCE, which is what the D4 binding probe requires.
+test('login happy path — spec:login/S1', () => {});

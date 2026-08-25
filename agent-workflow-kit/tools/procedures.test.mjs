@@ -290,7 +290,7 @@ describe('procedures CLI — --json schema (§2.0)', () => {
     const j = JSON.parse(r.stdout);
     // The unarmed JSON key set stays byte-exact to the pre-flow shape — the flowHalves key is
     // CONDITIONAL on a flow block (unarmed neutrality), unlike the unconditional additive keys.
-    assert.deepEqual(Object.keys(j).sort(), ['activity', 'autonomy', 'configSource', 'costLanes', 'declaredPractice', 'foldScope', 'groundingPreStep', 'reviewLoop', 'section', 'slots', 'warnings'].sort());
+    assert.deepEqual(Object.keys(j).sort(), ['activity', 'autonomy', 'configSource', 'costLanes', 'declaredPractice', 'foldScope', 'groundingPreStep', 'reviewLoop', 'section', 'slots', 'specCheck', 'warnings'].sort());
     assert.equal(j.activity, 'plan-execution');
     assert.match(j.section, /## plan-execution/);
     for (const slot of ['execute', 'review']) {
@@ -562,6 +562,73 @@ describe('procedures CLI — the finding-scope block: plan-execution ONLY, uncon
     assert.match(r.stdout, /--queue docs\/plans\/queue\.md$/m);
     assert.match(r.stdout, /no flow\.debtQueue is declared/, 'the fallback is named, never silently assumed');
     assert.deepEqual(foldScopeOf(['plan-authoring'], { codex: READY, agy: READY }), [], 'plan-authoring carries no structured block');
+  });
+});
+
+// Reached through the module NAMESPACE, not a named import: a static named import of an export that
+// does not exist yet is a link error, and a suite that cannot load cannot be observed red.
+const { SPEC_CHECK_TOOL } = await import('./procedures.mjs');
+
+describe('procedures CLI — the spec-check block: plan-execution ONLY, unconditional across recipes', () => {
+  const SENTINEL = /Spec store \(the feature-spec layer\)/;
+  const REGISTER = 'docs/plans/spec-ops.list';
+  const specCheckOf = (argv, setup) => JSON.parse(run([...argv, '--json'], setup).stdout).specCheck;
+
+  it('PRINTS under solo, reviewed AND council — the store is judged whoever reviews the change', () => {
+    for (const [recipe, setup] of [['solo', { codex: NEEDS_SKILL, agy: NEEDS_SKILL }], ['reviewed', { codex: READY, agy: NEEDS_SKILL }], ['council', { codex: READY, agy: READY }]]) {
+      const r = run(['plan-execution', '--override', `review=${recipe}`], setup);
+      assert.equal(r.code, 0, r.stderr);
+      assert.match(r.stdout, SENTINEL, `review=${recipe} still prints the spec-check block`);
+    }
+  });
+
+  // The WHOLE structured block is compared, so neither a paraphrase of the canon nor an extra line
+  // can ride along unnoticed — the same bar the finding-scope block is held to.
+  const expectedBlock = () => [
+    'Spec store (the feature-spec layer) — state what this session changed, then let the checker judge the store against it:',
+    `  • node ${shellQuoteArg(SPEC_CHECK_TOOL)} --ops-file ${shellQuoteArg(REGISTER)}   (or --op '<add|modify|remove>=docs/ai/specs/<slug>.md', repeatable; rename=<old>:<new>)`,
+    `  • node ${shellQuoteArg(SPEC_CHECK_TOOL)} --all — the whole store instead: unlisted child vs orphan, acyclicity, store-wide slug uniqueness, module overlap.`,
+    `  • ${REGISTER} is SESSION SCRATCH: this session writes it, the plan's Cleanup deletes it. It is never defaulted — an unnamed register would attest a post-state nobody declared. Advisory: nothing records that it ran.`,
+  ];
+
+  it('carries the populated commands and NAMES the session register it chose', () => {
+    assert.deepEqual(specCheckOf(['plan-execution', '--override', 'review=solo'], { codex: NEEDS_SKILL, agy: NEEDS_SKILL }), expectedBlock());
+  });
+
+  it('renders a shell-safe command — the op placeholder is inert, never bare shell syntax', () => {
+    const lines = specCheckOf(['plan-execution'], { codex: READY, agy: READY });
+    assert.ok(lines[1].includes(`'${REGISTER}'`) || lines[1].includes(REGISTER), 'the register is rendered through the shell quoter');
+    assert.ok(!lines[1].includes('--op <add'), 'the op placeholder is quoted, so < and | are inert');
+    assert.ok(!lines.some((l) => l.includes('`')), 'no backtick reaches a line meant to be pasted');
+  });
+
+  it('the rendered tool path is ABSOLUTE and self-locating — it runs from any cwd', () => {
+    const fromElsewhere = mkdtempSync(join(tmpdir(), 'procedures-other-cwd-'));
+    try {
+      mkdirSync(join(fromElsewhere, 'docs', 'ai'), { recursive: true });
+      const lines = JSON.parse(main(['plan-execution', '--json'], { cwd: fromElsewhere, env: { AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR }, detect: detect(READY, READY) }).stdout).specCheck;
+      assert.deepEqual(lines, expectedBlock(), 'the block does not depend on the cwd it was rendered from');
+      assert.equal(SPEC_CHECK_TOOL, join(HERE, 'spec-check-cli.mjs'), 'the tool locates itself beside procedures.mjs');
+      assert.equal(readFileSync(SPEC_CHECK_TOOL, 'utf8').length > 0, true, 'and the rendered path really is a file');
+    } finally {
+      rmSync(fromElsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it('plan-authoring prints NEITHER the block nor the checker (non-vacuous — the same tokens flip)', () => {
+    const r = run(['plan-authoring', '--override', 'review=council'], { codex: READY, agy: READY });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!SENTINEL.test(r.stdout), 'the block is plan-execution-scoped');
+    assert.ok(!r.stdout.includes('spec-check-cli.mjs'), 'and so is its checker command');
+    assert.deepEqual(specCheckOf(['plan-authoring'], { codex: READY, agy: READY }), [], 'the structured key is empty, never absent');
+  });
+
+  it('the JSON key set stays ADDITIVE — specCheck joins the others, none is dropped or renamed', () => {
+    const json = JSON.parse(run(['plan-execution', '--json'], { codex: READY, agy: READY }).stdout);
+    for (const key of ['activity', 'section', 'slots', 'reviewLoop', 'groundingPreStep', 'costLanes', 'foldScope', 'specCheck', 'autonomy', 'declaredPractice']) {
+      assert.ok(key in json, `the --json contract keeps "${key}"`);
+    }
+    assert.ok(Array.isArray(json.specCheck), 'specCheck is an array of lines, like its siblings');
   });
 });
 

@@ -7,6 +7,40 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-25 — AD-115 `spec-check`, the spec store's structural checker (kit 7.6.0 MINOR)
+
+**The spec store is now judged against what the session SAYS it changed — explicitly, never from
+git.** A checker that inferred the change set would attest a post-state nobody declared, and a diff
+cannot tell "renamed" from "deleted plus added" at all. So a session states its ops in a frozen
+grammar with exactly ONE accepted spelling per document (nothing is normalized away; a path holds at
+most one role; the store root is never a target), and the checker judges the closure of those ops —
+the targets plus each one's listing parent — on their post-state, their reader verdict, their
+per-kind cap, their scenario bindings and the containment of every path they name. A `## Module`
+path must now also EXIST with the kind it declares, so a contract can no longer name code that is
+not there. `--all` judges
+the whole store instead and adds the four questions no document can answer about itself: an unlisted
+child (distinct from an orphan), acyclicity, store-wide slug uniqueness and module overlap. Nothing
+here re-defines "well-formed": every per-document verdict is relayed from the 7.5.0 reader.
+
+The half worth remembering is what "fail-closed" turned out to mean. Not "safe unless proven to
+escape": a path whose realpath does not resolve is never read; containment asks the platform's own
+path model, because a textual prefix test reads `/repo\outside` as a child of `/repo` on POSIX; every
+listed edge is probed before it may enter the reachability graph, or a phantom target gets marked
+reached and launders an orphan into a reached document; and the census admits a closed set — plain
+directories and regular `.md` files — and states everything else, because a symlinked directory was
+the hole through which an edge resolved to documents nothing had ever observed. A census that
+observed nothing keeps its own refusal rather than
+collapsing into a usage error. Memory 4.7.0 and engine 3.3.0 unchanged.
+
+Review: a codex (gpt-5.6-sol, xhigh, priority) + agy (Gemini 3.7 Flash (High), single run) council
+on the staged tree, **5 rounds and 17 findings, all folded** — codex `revise` four times then `ship`,
+agy SHIP from round 1 and clean for its last four. Round 2 overturned round 1's own prescription (a
+dual-separator overlap comparison, wrong on POSIX where a backslash is an ordinary filename
+character). Two defects were caught by this repo's own gates rather than by either backend: a D-scale
+regression when platform-native containment made the pairwise overlap sweep 4.5x too slow at
+n=1000 (now an index over an injective pair key, 573 ms against a 1500 ms budget), and a raw NUL byte
+an edit put into the module, refused by the tarball guard.
+
 ## 2026-08-24 — AD-114 the structure verdict + the reader refresh lane (kit 7.5.0 MINOR, memory 4.7.0 MINOR)
 
 **The ONE reader now hands the coming `spec-check` its structural read, and the reader pair itself

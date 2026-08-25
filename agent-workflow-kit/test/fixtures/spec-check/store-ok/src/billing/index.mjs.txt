@@ -1,0 +1,3 @@
+// The module ground the billing spec governs. Distinct from src/login/ on purpose: two contracts
+// must never claim overlapping ground.
+export const billing = () => 'a synthetic module root';

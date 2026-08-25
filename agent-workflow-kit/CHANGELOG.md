@@ -4,6 +4,53 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 7.6.0 — `spec-check`: the spec store judged against what the session SAYS it changed (AD-115)
+
+The feature-spec layer gets its structural checker. The change source is EXPLICIT and never git — a
+session states what it did, and the checker decides whether the store on disk says the same thing.
+"Well-formed" keeps its ONE definition: every per-document verdict is RELAYED from the shipped
+reader's 7.5.0 `structure` extraction, and this release adds no second parser.
+
+- **`tools/spec-check-ops.mjs` — one accepted spelling per document.** Four verbs
+  (`add` | `modify` | `remove` | `rename=<old>:<new>`) over POSIX repo-relative `.md` paths inside
+  `docs/ai/specs/` whose every segment is D-schema shaped. Nothing is normalized away: `./x.md`,
+  `a//b.md`, `a/../b.md`, a backslash, a drive letter, an absolute path and a trailing-slash
+  directory all REFUSE rather than resolving to some other path — so a dedup can be an equality, and
+  because no accepted target can carry a `:` the rename separator is unambiguous. A path holds at
+  most ONE role (self-rename, fan-out, fan-in, chain and any two-role clash refuse); the store root
+  is never a target; any error empties the whole op list.
+- **`tools/spec-check.mjs` — the judge, with no filesystem of its own.** `{read, probe, realpath,
+  list}` are injected and an uninjected one throws. The SESSION lane judges the closure of the
+  declared ops (targets plus each one's listing parent) on the post-state, the reader verdict, the
+  per-kind line cap, the scenario bindings (the marker must occur EXACTLY once in the file the
+  scenario names) and the containment of every path each document names. A `## Module` path must
+  also EXIST with the kind it declares — a `dir/` root resolving to a directory, a file-list entry
+  to a regular file — so a contract can no longer name code that is not there. `--all` judges the
+  whole store instead and adds the four questions no document can answer about itself: an unlisted
+  child (DISTINCT from an orphan), acyclicity, store-wide slug uniqueness and module overlap.
+- **Fail-closed means PROVEN contained.** A path whose realpath does not resolve is never read.
+  Containment asks the platform's own path model, because a textual prefix test reads
+  `/repo\outside` as a child of `/repo` on POSIX and mis-reads a filesystem root in both directions.
+  Every listed edge is resolved, contained and probed before it may enter the reachability graph — a
+  phantom target would otherwise be marked reached and launder an orphan into a reached document.
+  The census admits a CLOSED set — plain directories and regular `.md` files — and states everything
+  else: an unlistable directory, one that resolves outside the root, any non-regular entry, and a
+  regular file that is not a spec document. A census that observed nothing keeps its own refusal
+  instead of collapsing into a usage error. The leaf read is descriptor-bound and no-follow.
+- **`tools/spec-check-cli.mjs` — the IO shell.** `--op` (repeatable) unions `--ops-file`, `--all` is
+  exclusive of both, `--root` defaults to the cwd. The register is never defaulted: guessing which
+  file states the change set would attest a post-state nobody declared. Blank and `#` lines parse
+  away, CRLF reads like LF, and every other line is passed on UNTRIMMED so both op sources accept
+  exactly the same strings. Exit 0 clean, 1 findings, 2 usage.
+- **`tools/procedures.mjs` — the advisor names it.** A `plan-execution` render now carries the
+  populated `spec-check` commands for both lanes and the session register they read, plus the
+  additive `specCheck` `--json` key. Advisory, like the finding-scope block beside it: nothing
+  records that it ran.
+- **Proof.** Every suite authored RED first and observed failing before its module existed; the
+  D-scale gate measures the checker's OWN median (573 ms) beside the unchanged hook median against
+  the 1500 ms budget, so a slower checker can never pass by sitting inside the hook's headroom.
+  Tarball count 247 -> 250.
+
 ## 7.5.0 — the reader pair joins the known-prior refresh lane; the mirrored reader gains the structure verdict (AD-114)
 
 Slice 2b's `spec-check` will need a structural read of a spec document, and the reader is the ONE

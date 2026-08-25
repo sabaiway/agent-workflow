@@ -76,7 +76,7 @@ describe('specs-scale-probe — arguments and exit polarity', () => {
   it('a tiny tree within a generous budget exits 0 and prints the one summary line; a zero budget exits 1', () => {
     const ok = capture();
     assert.equal(main(['--n', '3', '--budget-ms', '60000', '--trials', '1'], ok.deps), 0);
-    assert.match(ok.out[0], /^specs-scale-probe: n=3 files=6 trials=\d+ms median=\d+ms budget=60000ms -> OK$/);
+    assert.match(ok.out[0], /^specs-scale-probe: n=3 files=6 hook=\d+ms median=\d+ms spec-check=\d+ms median=\d+ms budget=60000ms -> OK$/);
     const over = capture();
     assert.equal(main(['--n', '3', '--budget-ms', '0', '--trials', '1'], over.deps), 1);
     assert.match(over.out[0], /-> OVER BUDGET$/);
@@ -95,14 +95,47 @@ describe('specs-scale-probe — arguments and exit polarity', () => {
     assert.equal(calls.length, 3, 'write-index, the cap run, then the failing freshness run — no further trial');
   });
 
-  it('runProbe returns the median of the per-trial sums and cleans its temp root', () => {
-    const ticks = [0, 100, 0, 300, 0, 200];
+  it('runProbe medians the two measurements SEPARATELY and cleans its temp root', () => {
+    // per trial: hook start/end, then checker start/end — four ticks, two independent spans.
+    const ticks = [0, 100, 0, 10, 0, 300, 0, 30, 0, 200, 0, 20];
     const now = () => ticks.shift();
     const spawn = () => ({ status: 0, stderr: '' });
     const result = runProbe({ n: 2, budgetMs: 250, trials: 3, spawn, now });
-    assert.deepEqual(result.trialsMs, [100, 300, 200]);
-    assert.equal(result.medianMs, 200);
+    assert.deepEqual(result.trialsMs, [{ hook: 100, checker: 10 }, { hook: 300, checker: 30 }, { hook: 200, checker: 20 }]);
+    assert.equal(result.hookMedianMs, 200);
+    assert.equal(result.checkerMedianMs, 20);
+    assert.equal(result.medianMs, result.hookMedianMs, 'the frozen 1a measurement keeps its name');
     assert.equal(result.withinBudget, true);
-    assert.equal(result.files, 5);
+    assert.equal(result.files, 5, 'the ground files are scaffolding, never counted as documents');
+  });
+
+  it('EITHER median over budget fails the probe — the checker can never hide inside the hook budget', () => {
+    const spans = (hook, checker) => [0, hook, 0, checker];
+    const probeWith = (hook, checker) => {
+      const ticks = spans(hook, checker);
+      return runProbe({ n: 2, budgetMs: 250, trials: 1, spawn: () => ({ status: 0, stderr: '' }), now: () => ticks.shift() });
+    };
+    assert.equal(probeWith(100, 10).withinBudget, true);
+    assert.equal(probeWith(900, 10).withinBudget, false, 'a slow hook fails');
+    assert.equal(probeWith(100, 900).withinBudget, false, 'and so does a slow checker, on its own median');
+  });
+
+  it('a spec-check run that does not exit 0 measures nothing: exit 2 naming THAT run', () => {
+    const spawn = (_node, args) => ({ status: args.includes('--all') ? 1 : 0, stderr: 'simulated finding' });
+    const { err, deps } = capture();
+    assert.equal(main(['--n', '2', '--budget-ms', '60000'], { ...deps, spawn }), 2);
+    assert.match(err[0], /spec-check --all exited 1/);
+    assert.match(err[0], /simulated finding/);
+  });
+
+  // spec-check prints its findings on STDOUT and exits 1. A diagnostic that quoted stderr alone
+  // would report the refusal without the one thing that says WHY the tree was refused.
+  it('a failing child is diagnosed from BOTH streams, so a stdout-only refusal is not silent', () => {
+    const spawn = (_node, args) => (args.includes('--all')
+      ? { status: 1, stdout: 'spec-check: REFUSE — 1 finding(s)\n  docs/ai/specs/x.md: orphan — no index reaches it', stderr: '' }
+      : { status: 0, stdout: '', stderr: '' });
+    const { err, deps } = capture();
+    assert.equal(main(['--n', '2', '--budget-ms', '60000'], { ...deps, spawn }), 2);
+    assert.match(err[0], /orphan/, 'the reason the child refused rides the diagnostic');
   });
 });

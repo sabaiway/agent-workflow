@@ -1,0 +1,2 @@
+// A binding target for the spec-check fixtures — a .txt suffix so `node --test` never collects it.
+test('login happy path — spec:login/S1', () => {});

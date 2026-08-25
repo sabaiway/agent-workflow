@@ -1,0 +1,3 @@
+// The module ground the deep spec governs — present, so the ONLY finding this store yields is the
+// orphan it exists to demonstrate.
+export const deep = () => 'a synthetic module root';
