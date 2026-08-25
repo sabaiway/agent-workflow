@@ -158,11 +158,18 @@ describe('buildChangelog', () => {
 });
 
 describe('buildRecent', () => {
-  it('emits frontmatter with maxLines 3500 for WARM archive', () => {
+  it('emits frontmatter at the WARM floor for a corpus that fits under it', () => {
     const result = buildRecent([makeEntry('2026.05.10', 'warm')], '2026-05-24');
     expect(result).toMatch(/maxLines: 3500/);
     expect(result).toMatch(/Changelog WARM Archive/);
     expect(result).toMatch(/## 2026\.05\.10/);
+  });
+
+  // 3500/1500/1500 are tier FLOORS reached through capFor (archive-caps.mjs), not literals a builder
+  // still carries — this pins all three onto that path; band/ceiling/fixed point: archive-caps.test.mjs.
+  it('every builder stamps its own tier floor on a corpus that fits under it', () => {
+    expect(buildCold('2026', '03', [makeEntry('2026.03.10', 'c')], '2026-05-24')).toMatch(/maxLines: 1500/);
+    expect(buildCondensedIndex([makeEntry('2026.05.10', 'w')], new Map(), '2026-05-24')).toMatch(/maxLines: 1500/);
   });
 });
 

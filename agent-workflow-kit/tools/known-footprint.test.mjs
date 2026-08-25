@@ -135,6 +135,8 @@ describe('frozen snapshot', () => {
       '/CLAUDE.md',
       '/docs/ai/',
       '/scripts/_expect-shim.mjs',
+      '/scripts/archive-caps.mjs',
+      '/scripts/archive-caps.test.mjs',
       '/scripts/archive-changelog.mjs',
       '/scripts/archive-changelog.test.mjs',
       '/scripts/archive-conservation.test.mjs',
@@ -162,7 +164,7 @@ describe('frozen snapshot', () => {
       '/.claude/settings.json',
       '/.mcp.json',
     ];
-    assert.equal(KIT_OWN_PATHS.length, 30, 'KIT_OWN_PATHS count sentinel — edit deliberately');
+    assert.equal(KIT_OWN_PATHS.length, 32, 'KIT_OWN_PATHS count sentinel — edit deliberately');
     assert.deepEqual(KIT_OWN_PATHS, expected);
   });
 

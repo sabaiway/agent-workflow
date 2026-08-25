@@ -49,6 +49,8 @@ export const KIT_OWN_PATHS = [
   '/CLAUDE.md',
   '/docs/ai/',
   '/scripts/_expect-shim.mjs',
+  '/scripts/archive-caps.mjs',
+  '/scripts/archive-caps.test.mjs',
   '/scripts/archive-changelog.mjs',
   '/scripts/archive-changelog.test.mjs',
   '/scripts/archive-conservation.test.mjs',

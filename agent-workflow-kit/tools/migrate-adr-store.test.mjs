@@ -527,6 +527,28 @@ describe('migrate-adr-store — companion seed keeps refreshed archivers loadabl
     await import(pathToFileURL(join(cwd, 'scripts', 'archive-changelog.mjs')).href);
   });
 
+  // archive-caps.mjs is imported by archive-changelog.mjs ALONE, so it rides that archiver and no
+  // other. Seeding it on a migration that never refreshed the changelog archiver would write a file
+  // with no importer — the directional "never ADD a basename the consumer lacks" rule broken.
+  it('seeds archive-caps ONLY when the changelog archiver is among the refreshed set', () => {
+    mkOldLayout({ git: true, deployedScripts: ['archive-decisions.mjs', 'archive-changelog.mjs', 'check-docs-size.mjs'] });
+    const io = quiet();
+    assert.equal(run(['--apply'], io), 0, io.err() || io.out());
+    // The PAIR, not just the module: pinning only the module would let its deploy-payload test
+    // silently stop seeding, or go unconditional, without a red arm anywhere.
+    assert.ok(existsSync(join(cwd, 'scripts', 'archive-caps.mjs')), 'the importer is refreshed, so its dependency is seeded');
+    assert.ok(existsSync(join(cwd, 'scripts', 'archive-caps.test.mjs')), 'its deploy-payload test rides the same condition');
+  });
+
+  it('seeds NO archive-caps when the changelog archiver is absent from the consumer', () => {
+    mkOldLayout({ git: true, deployedScripts: ['archive-decisions.mjs', 'check-docs-size.mjs'] });
+    const io = quiet();
+    assert.equal(run(['--apply'], io), 0, io.err() || io.out());
+    assert.ok(existsSync(join(cwd, 'scripts', 'markdown-blocks.mjs')), 'every archiver imports it — still unconditional');
+    assert.ok(!existsSync(join(cwd, 'scripts', 'archive-caps.mjs')), 'no importer here — a file with no importer must not be written');
+    assert.ok(!existsSync(join(cwd, 'scripts', 'archive-caps.test.mjs')), 'its test must not be written either');
+  });
+
   it('a dry run names the companion seed in the plan and writes nothing', () => {
     mkOldLayout({ git: true, deployedScripts: ['archive-decisions.mjs', 'check-docs-size.mjs'] });
     const io = quiet();

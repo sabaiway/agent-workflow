@@ -67,6 +67,7 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
 
   it('retains the deploy/mirror payload tests (reverse pins)', () => {
     const required = [
+      'references/scripts/archive-caps.test.mjs',
       'references/scripts/archive-changelog.test.mjs',
       'references/scripts/archive-decisions.test.mjs',
       'references/scripts/archive-issues.test.mjs',
@@ -86,6 +87,7 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
 
   it('retains every deployed runtime payload file and entry point', () => {
     const required = [
+      'references/scripts/archive-caps.mjs',
       'references/scripts/archive-changelog.mjs',
       'references/scripts/archive-decisions.mjs',
       'references/scripts/archive-issues.mjs',
@@ -676,7 +678,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 250 = 247 + the structural checker (spec layer 2b): tools/spec-check-ops.mjs (the frozen change-op
     //       grammar) + tools/spec-check.mjs (the IO-free judge) + tools/spec-check-cli.mjs (argv + fs).
     //       Their *.test.mjs siblings and the fixture stores under test/ are outside files[].
-    assert.equal(packed.length, 250, `tarball file count drifted (${packed.length} ≠ 250)`);
+    // 252 = 250 + references/scripts/archive-caps.mjs (the frozen tier table every rolling archive
+    //       stamps from) + its deploy-payload test — both mirrored from the memory canon by
+    //       sync-mirrors.
+    assert.equal(packed.length, 252, `tarball file count drifted (${packed.length} ≠ 252)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

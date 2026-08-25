@@ -13,19 +13,25 @@
 // does not parse as an entry refuses with file:line — it is never glued into the previous entry,
 // never duplicated into the footer, never normalised into a different calendar date.
 //
-// NOTE (multi-year scaling): condensed-index.md grows O(total archived entries),
-// so on a multi-year horizon it approaches its cap (~1159 lines over 2y in a stress
-// test). When it nears the cap, shard it per-year (condensed-index-YYYY.md) or switch
-// to an append-only cap. Stress-test rotation via the exported pure functions against
-// a /tmp copy seeded with a synthetic multi-year dataset (include burst periods).
+// NOTE (multi-year scaling): condensed-index.md grows O(total archived entries) and never sheds, so
+// on a multi-year horizon it is the tier that runs out of room first (~1159 lines over 2y in a
+// stress test). Its floor is 1500 and its ceiling 3000 (archive-caps.mjs): past the FLOOR every run
+// prints a sharding warning, and once the count goes PAST the ceiling the run refuses outright
+// rather than stamp a cap it cannot honour — the ceiling itself is still stamped. The remedy is per-year sharding (condensed-index-YYYY.md) — a queued row, never
+// something a run decides for itself. Stress-test rotation via the exported pure functions against
+// a temp copy seeded with a synthetic multi-year dataset (include burst periods).
 //
 // Modes:
 //   (default)   run rotation, mutate files in place
 //   --dry-run   print planned distribution, do not change files
 //   --check     exit 1 if changelog.md still holds entries that should be archived
 //
-// Every mode parses every source BEFORE any write, so a refusal fires identically for the
-// default run, --dry-run and --check, and nothing is written on a refused input.
+// Every mode parses every source AND builds every tier-STAMPED output (WARM, COLD, META) BEFORE any
+// write, so a refusal — an unparsable source, or a tier that has outgrown its ceiling — fires
+// identically for the default run, --dry-run and --check, and nothing is written on a refused input.
+// The HOT changelog is deliberately NOT in that set: buildChangelog passes the file's OWN
+// frontmatter through and reaches a literal only when the file carries none. That fallback is
+// unguarded, and it is a filed queue row rather than an oversight.
 //
 // CLI overrides:
 //   --hot-days=N  (default 3)
@@ -36,6 +42,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, realpa
 import { dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tokenizeMarkdown, findParagraphBreak, fail } from './markdown-blocks.mjs';
+import { capFor, countLines, shardingWarning } from './archive-caps.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -347,22 +354,25 @@ export const buildChangelog = ({ frontmatter, preamble, hot, footer, hasArchive 
   return parts.filter((p) => p !== null && p !== undefined).join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
 };
 
+// Each tier renders TWICE and stamps what the second render can honour. The cap is one line of
+// frontmatter whatever integer it holds, so the first render's line count IS the final file's line
+// count — which makes the stamp a fixed point rather than a promise about a corpus nobody has seen.
+// capFor refuses outright past the tier's ceiling; see archive-caps.mjs.
+const stamped = (tier, render) => render(capFor({ tier, count: countLines(render(0)) }));
+
 export const buildRecent = (entries, todayStr) => {
-  const frontmatter = FRONTMATTER('history', 3500, todayStr);
   const preamble = `# Changelog WARM Archive — ${PROJECT_NAME}\n\n> Entries aged **7–30 days** from today. Newer → [\`../changelog.md\`](../changelog.md). Older → [\`condensed-index.md\`](./condensed-index.md) plus per-month \`YYYY-MM.md\` files.`;
   const body = renderEntries(entries);
-  return `${frontmatter}\n${preamble}\n\n---\n\n${body}\n`;
+  return stamped('warm', (cap) => `${FRONTMATTER('history', cap, todayStr)}\n${preamble}\n\n---\n\n${body}\n`);
 };
 
 export const buildCold = (year, month, entries, todayStr) => {
-  const frontmatter = FRONTMATTER('history', 1500, todayStr);
   const preamble = `# Changelog COLD Archive — ${year}-${month}\n\n> Compressed entries from ${year}-${month} (older than 30 days). Cross-month one-liners → [\`condensed-index.md\`](./condensed-index.md). Full commit history: \`git log --since=${year}-${month}-01 --until=${year}-${month}-31\`.`;
   const compressed = entries.map(compressEntry).join('\n\n---\n\n');
-  return `${frontmatter}\n${preamble}\n\n---\n\n${compressed}\n`;
+  return stamped('cold', (cap) => `${FRONTMATTER('history', cap, todayStr)}\n${preamble}\n\n---\n\n${compressed}\n`);
 };
 
 export const buildCondensedIndex = (warmEntries, coldByMonth, todayStr) => {
-  const frontmatter = FRONTMATTER('history', 300, todayStr);
   const intro = `# Condensed Index — ${PROJECT_NAME} Changelog\n\n> One-line TL;DR for every archived entry. Each line links to the file holding the full text.`;
 
   const lines = [];
@@ -378,7 +388,7 @@ export const buildCondensedIndex = (warmEntries, coldByMonth, todayStr) => {
     for (const e of coldByMonth.get(key)) lines.push(summarizeEntry(e, `${year}-${month}.md`));
     lines.push('');
   }
-  return `${frontmatter}\n${intro}\n\n${lines.join('\n').trim()}\n`;
+  return stamped('meta', (cap) => `${FRONTMATTER('history', cap, todayStr)}\n${intro}\n\n${lines.join('\n').trim()}\n`);
 };
 
 export const groupByMonth = (entries) => {
@@ -471,6 +481,27 @@ export const runCli = (argv, deps = {}) => {
       coldFiles: [...coldByMonth.keys()].sort(),
     };
 
+    // EVERY cap-bearing output is BUILT here, before the mode branch, and capFor refuses a tier that
+    // has outgrown its ceiling. That refusal has to fire identically in all three modes: a `--check`
+    // that went green on a corpus the next real run cannot write would be exactly the fail-open the
+    // parse above already refuses to be. Building is pure — nothing reaches disk until the writes
+    // below, so a refusal still leaves the tree untouched.
+    const archives = [];
+    if (warm.length > 0) archives.push({ path: recentPath, text: buildRecent(warm, todayStr) });
+    for (const [key, entries] of coldByMonth) {
+      const [year, month] = key.split('-');
+      archives.push({ path: resolve(historyDir, `${year}-${month}.md`), text: buildCold(year, month, entries, todayStr) });
+    }
+    if (warm.length > 0 || cold.length > 0) {
+      const index = buildCondensedIndex(warm, coldByMonth, todayStr);
+      // The sharding tripwire. META grows O(total) and never sheds, so it is the tier that reaches
+      // its ceiling first; warning at the floor puts the remedy in front of whoever runs the
+      // archiver while there is still room, instead of at the ceiling where the run refuses.
+      const warning = shardingWarning({ tier: 'meta', count: countLines(index) });
+      if (warning) logError(`[archive-changelog] WARNING: ${warning}`);
+      archives.push({ path: indexPath, text: index });
+    }
+
     if (flags.check) {
       const tooOldInHot = parsed.entries.filter((e) => e.dateObj < cutoffs.hotCutoff);
       if (tooOldInHot.length > 0) {
@@ -516,18 +547,7 @@ export const runCli = (argv, deps = {}) => {
     });
     writeFileSync(changelogPath, newChangelog, 'utf8');
 
-    if (warm.length > 0) {
-      writeFileSync(recentPath, buildRecent(warm, todayStr), 'utf8');
-    }
-
-    for (const [key, entries] of coldByMonth) {
-      const [year, month] = key.split('-');
-      writeFileSync(resolve(historyDir, `${year}-${month}.md`), buildCold(year, month, entries, todayStr), 'utf8');
-    }
-
-    if (warm.length > 0 || cold.length > 0) {
-      writeFileSync(indexPath, buildCondensedIndex(warm, coldByMonth, todayStr), 'utf8');
-    }
+    for (const archive of archives) writeFileSync(archive.path, archive.text, 'utf8');
 
     log('[archive-changelog] migrated:');
     log(`  HOT (${CHANGELOG_REL}): ${hot.length}`);

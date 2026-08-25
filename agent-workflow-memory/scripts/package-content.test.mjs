@@ -137,6 +137,8 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
 
   it('retains the deploy payload tests (reverse pins)', () => {
     const required = [
+      'references/scripts/archive-caps.mjs',
+      'references/scripts/archive-caps.test.mjs',
       'references/scripts/archive-changelog.test.mjs',
       'references/scripts/archive-conservation.test.mjs',
       'references/scripts/archive-decisions.test.mjs',
@@ -221,6 +223,9 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
     // 59 = 57 + references/templates/SPEC_TEMPLATE.md (the spec authoring reference, skill-home only
     //      like adr-record.md) + references/templates/specs/index.md (the seed spec store root the
     //      bootstrap deploys); both kit-mirrored via sync-mirrors.
-    assert.equal(packed.length, 59, `tarball file count drifted (${packed.length} ≠ 59)`);
+    // 61 = 59 + references/scripts/archive-caps.mjs (the frozen tier table every rolling archive
+    //      stamps from — floors, ceilings and the capFor stamp) + its deploy-payload test; both
+    //      kit-mirrored via sync-mirrors.
+    assert.equal(packed.length, 61, `tarball file count drifted (${packed.length} ≠ 61)`);
   });
 });

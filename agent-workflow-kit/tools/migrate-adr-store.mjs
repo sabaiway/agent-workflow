@@ -125,14 +125,29 @@ export const planScriptRefresh = (cwd, deps = {}) => {
 // archivers to this kit's canon without their runtime dependency would leave every refreshed
 // script crashing on a missing `./markdown-blocks.mjs` import until a separate upgrade run — so
 // the dependency rides the SAME apply, atomically, written before its importers.
-const COMPANION_SEEDS = ['markdown-blocks.mjs', 'markdown-blocks.test.mjs'];
+// `archive-caps.mjs` joined the list the moment `archive-changelog.mjs` began importing it: a new
+// import by a refreshed archiver reopens this exact hole, so the list moves with the imports.
+//
+// A seed is UNCONDITIONAL only when every refreshable archiver imports it. `markdown-blocks.mjs` is
+// imported by all three (changelog, decisions, issues), so any refresh needs it. `archive-caps.mjs`
+// is imported by `archive-changelog.mjs` ALONE — seeding it on a plain ADR migration that never
+// refreshed the changelog archiver would write a file with no importer, which is the directional
+// "never ADD a basename the consumer lacks" rule broken and a log line that says something untrue.
+const COMPANION_SEEDS = [
+  { name: 'markdown-blocks.mjs', requiredBy: null },
+  { name: 'markdown-blocks.test.mjs', requiredBy: null },
+  { name: 'archive-caps.mjs', requiredBy: 'archive-changelog.mjs' },
+  { name: 'archive-caps.test.mjs', requiredBy: 'archive-changelog.mjs' },
+];
 export const planCompanionSeeds = (cwd, refresh, deps = {}) => {
   if (refresh.length === 0) return [];
   const exists = deps.exists ?? existsSync;
   const kitScripts = deps.kitScripts ?? KIT_SCRIPTS;
   const consumerScripts = join(cwd, CONSUMER_SCRIPTS_REL);
+  const refreshed = new Set(refresh.map((entry) => entry.name));
   const out = [];
-  for (const name of COMPANION_SEEDS) {
+  for (const { name, requiredBy } of COMPANION_SEEDS) {
+    if (requiredBy !== null && !refreshed.has(requiredBy)) continue;
     const canon = join(kitScripts, name);
     const dst = join(consumerScripts, name);
     if (exists(canon) && !exists(dst)) out.push({ name, canon, dst });
