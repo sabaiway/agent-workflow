@@ -72,6 +72,7 @@ const linkedTool = (name) => {
 };
 
 describe('source-size — a recorded size is debt for exactly what it records', () => {
+  // spec:source-size/S3
   it('baseline-entry-exempts-only-recorded-dimension: a lines-only record does not hide a new long line', () => {
     const cwd = project(
       { 'src/wide.mjs': `${'x'.repeat(1001)}\n` },
@@ -99,6 +100,7 @@ describe('source-size — a recorded size is debt for exactly what it records', 
 });
 
 describe('source-size — the recorded ratchet (D-3)', () => {
+  // spec:source-size/S1
   it('ratchet-recorded-file-may-not-grow: recorded debt is not permission to grow', () => {
     const cwd = project({ 'src/big.mjs': lines(420) }, { 'src/big.mjs': { lines: 401, reason: 'recorded at adoption' } });
     const result = check(cwd);
@@ -116,6 +118,7 @@ describe('source-size — the recorded ratchet (D-3)', () => {
     assert.match(result.stdout, /src\/wide\.mjs: maxLineBytes 1200 exceeds its recorded baseline 1001/);
   });
 
+  // spec:source-size/S2
   it('ratchet-stale-baseline-fails: a record ABOVE the tree is headroom nobody earned', () => {
     const cwd = project({ 'src/big.mjs': lines(401) }, { 'src/big.mjs': { lines: 500, reason: 'recorded at adoption' } });
     const result = check(cwd);
@@ -165,6 +168,7 @@ describe('source-size — the recorded ratchet (D-3)', () => {
     assert.match(result.stdout, /"src\/w\.mjs": \{ "lines": 420, "maxLineBytes": 1001, "reason": "<why this size is accepted>" \}/);
   });
 
+  // spec:source-size/S7
   it('ratchet-entry-file-gone-errors: a deleted record and a renamed one both surface, never silently', () => {
     const deleted = project({ 'src/keep.mjs': lines(10) }, { 'src/gone.mjs': { lines: 900, reason: 'recorded at adoption' } });
     const afterDelete = check(deleted);

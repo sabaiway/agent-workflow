@@ -106,6 +106,7 @@ describe('source-size — the standing echo on a GREEN run (D-17 U4)', () => {
 });
 
 describe('source-size — every rendered refusal states WHY (D-17 U4)', () => {
+  // spec:source-size/S8
   it('refusal-states-why: the absent, unminted, violating and reason-required renders all close with the ONE sentence', () => {
     assert.equal(SOURCE_SIZE_WHY, CANONICAL_WHY, 'the practice exports the canonical sentence');
     const violating = project({

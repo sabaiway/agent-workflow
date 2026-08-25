@@ -21,6 +21,7 @@ const run = (files, opList, extra = {}, options = {}) => {
 };
 
 describe('spec-check ops — the frozen grammar (four verbs, D-schema targets, one role per path)', () => {
+  // spec:spec-check/S1
   it('freezes exactly four verbs and the unambiguous separator', () => {
     assert.deepEqual([...SPEC_OPS_GRAMMAR.verbs], ['add', 'modify', 'remove', 'rename']);
     assert.equal(SPEC_OPS_GRAMMAR.separator, ':');
@@ -96,6 +97,7 @@ describe('spec-check ops — the frozen grammar (four verbs, D-schema targets, o
     });
   }
 
+  // spec:spec-check/S2
   it('dedups by identity, and NO spelling aliases a path — the accepted form is the only form', () => {
     const parsed = parseSpecOps(['add=docs/ai/specs/a.md', 'add=docs/ai/specs/a.md']);
     assert.deepEqual(parsed.errors, []);
@@ -143,6 +145,7 @@ describe('spec-check — the corpus read BOTH ways at the reader layer (no secon
     }
   });
 
+  // spec:spec-check/S3
   it(`every refuse rule (${refuses.length}) surfaces as EXACTLY its reader rule id, relayed not re-derived`, () => {
     assert.deepEqual(refuses.filter((r) => !SPEC_SCHEMA.rules.includes(r)), [], 'no refuse folder outside the rule list');
     for (const rule of refuses) {

@@ -93,6 +93,7 @@ describe('spec-check-cli — the op sources: --op, --ops-file, their union, and 
     assert.match(r.stderr, /unreadable|not readable/);
   });
 
+  // spec:spec-check/S4
   it('refuses an empty op source with no --all (exit 2) — there is no "judge everything" default', async () => {
     const r = await run(['--root', OK()]);
     assert.equal(r.code, 2);
@@ -123,6 +124,7 @@ describe('spec-check-cli — --all is EXCLUSIVE and judges the whole store', () 
     assert.match(r.stdout, /^spec-check: ACCEPT/);
   });
 
+  // spec:spec-check/S5
   it('refuses --all mixed with either op source (exit 2)', async () => {
     for (const extra of [['--op', `modify=${LOGIN}`], ['--ops-file', opsFile('ops-mixed.list', `modify=${LOGIN}\n`)]]) {
       const r = await run(['--root', OK(), '--all', ...extra]);

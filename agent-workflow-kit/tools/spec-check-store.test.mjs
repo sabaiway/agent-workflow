@@ -92,6 +92,7 @@ describe('spec-check --all — the census walk observes the store, and never gue
 });
 
 describe('spec-check --all — the cross-document invariants', () => {
+  // spec:spec-check/S6
   it('an unlisted child is DISTINCT from an orphan — a reached index skips it vs no index reaches it', () => {
     const unlisted = run(UNLISTED_STORE);
     assert.deepEqual(rulesOf(unlisted, 'unlisted-child'), [`${STORE}login.md`]);

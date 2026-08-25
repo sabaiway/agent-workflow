@@ -16,16 +16,19 @@ describe('validateManifest — result classes', () => {
     assert.deepEqual(r.errors, []);
   });
 
+  // spec:manifest-validate/S1
   it('available:false stub → valid (version + fs existence checks skipped)', () => {
     const r = validateManifest(at('stub'));
     assert.equal(r.result, VALID, r.errors.join('; '));
   });
 
+  // spec:manifest-validate/S2
   it('unknown schema → unsupported (distinct from invalid)', () => {
     const r = validateManifest(at('unknown-schema'));
     assert.equal(r.result, UNSUPPORTED);
   });
 
+  // spec:manifest-validate/S3
   it('a non-object root (JSON null) → invalid, not a crash', () => {
     const r = validateManifest(at('null-root'));
     assert.equal(r.result, INVALID);
@@ -70,6 +73,7 @@ describe('validateManifest — result classes', () => {
     assert.deepEqual(r.errors, []);
   });
 
+  // spec:manifest-validate/S4
   it('an ABSENT `modeCatalog` → valid (additive-optional: a bridge predating the catalog stays valid)', () => {
     assert.ok(!Object.hasOwn(manifestOf('valid'), 'modeCatalog'), 'the valid fixture must carry no catalog — else this is vacuous');
     assert.equal(validateManifest(at('valid')).result, VALID);
@@ -214,6 +218,7 @@ describe('validateManifest — negative fixtures MUST fail (strict)', () => {
 });
 
 describe('validateManifest — modeCatalog string caps', () => {
+  // spec:manifest-validate/S5
   it('the over-cap fixture sits exactly one character over the EXPORTED cap (non-vacuity)', () => {
     const catalog = manifestOf('mode-catalog-bad-strings').modeCatalog;
     assert.equal(catalog[0].purpose.length, CATALOG_LINE_MAX + 1);

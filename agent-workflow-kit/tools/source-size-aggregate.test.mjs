@@ -55,6 +55,7 @@ const writeBaseline = (cwd, reason) =>
 const configOf = (cwd) => JSON.parse(readFileSync(join(cwd, 'docs', 'ai', 'source-size.json'), 'utf8'));
 
 describe('source-size — the aggregate budget (D-4)', () => {
+  // spec:source-size/S4
   it('aggregate-split-buys-no-headroom: two halves under the per-file cap still exceed the recorded root budget', () => {
     const cwd = project({
       files: { 'src/a.mjs': lines(260), 'src/b.mjs': lines(260) },
@@ -66,6 +67,7 @@ describe('source-size — the aggregate budget (D-4)', () => {
     assert.doesNotMatch(result.stdout, /exceeds the declared default/, 'neither half violates the per-file cap — only the budget does');
   });
 
+  // spec:source-size/S5
   it('aggregate-growth-needs-reason: the budget bump is reasoned, and the reason lands in the entry', () => {
     const cwd = project({
       files: { 'src/a.mjs': lines(260), 'src/b.mjs': lines(260) },
@@ -105,6 +107,7 @@ describe('source-size — the aggregate budget (D-4)', () => {
     assert.match(result.stdout, /dropped: recorded in "aggregate" but no longer a declared root/);
   });
 
+  // spec:source-size/S6
   it('aggregate-entries-mirror-roots-exactly: a missing entry can never disarm the budget, and the writer restores the exact set', () => {
     const cwd = project({
       files: { 'src/a.mjs': lines(10), 'extra/b.mjs': lines(20) },
