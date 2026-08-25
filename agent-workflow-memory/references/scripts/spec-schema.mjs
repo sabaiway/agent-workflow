@@ -38,7 +38,7 @@ export const SPEC_SCHEMA = Object.freeze({
     'frontmatter', 'frontmatter-key', 'substrate-key', 'type', 'kind', 'maxlines', 'status', 'revision',
     'root-owns', 'slug', 'kind-path', 'root-uplink', 'title', 'section-missing', 'section-order',
     'section-forbidden', 'fence', 'children-link', 'children-duplicate', 'fan-out', 'scenario-line',
-    'scenario-number', 'scenario-marker', 'scenario-path', 'out-of-scope', 'module-line', 'module-empty',
+    'scenario-number', 'scenario-marker', 'scenario-path', 'scenarios-empty', 'out-of-scope', 'module-line', 'module-empty',
     'module-traversal', 'module-absolute', 'module-backslash', 'module-glob', 'module-mix', 'parts',
   ]),
 });
@@ -237,6 +237,10 @@ const checkScenarios = (parsed, slug, status, errors, warnings) => {
       return;
     }
     scenarios.push(scenario);
+  }
+  if (scenarios.length === 0) {
+    errors.push({ rule: 'scenarios-empty', message: `at least one scenario line (\`${SPEC_SCHEMA.unboundMarker}\` while no test pins it)` });
+    return;
   }
   const gap = scenarios.findIndex((scenario, i) => scenario.n !== i + 1);
   if (gap !== -1) errors.push({ rule: 'scenario-number', message: `scenario ${gap + 1} is numbered S${scenarios[gap].n} — N runs contiguously from 1` });

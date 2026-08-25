@@ -46,6 +46,9 @@ against it.
   `^[a-z0-9]+(-[a-z0-9]+)*$`. Every path segment under the store is a slug.
 - **Scenario line** — `- S<N> <name> :: <repo-relative test path> :: spec:<slug>/S<N>` or
   `- S<N> <name> :: unbound`; N runs contiguously from 1; the marker equals the line's own id.
+- **`## Scenarios`** — at least one scenario line; `*(empty)*` is NOT an escape here (it refuses as
+  `scenario-line`), because an `unbound` line already covers a scenario no test pins yet. A contract
+  that pins nothing is the one shape the layer exists to refuse.
 - **`## Module`** — bullets of repo-relative paths: ONE `dir/` root OR a literal file list. `..`,
   an absolute path, a backslash, a glob, and a dir + file mix each REFUSE. A retired spec may carry
   `*(empty)*`.
@@ -99,6 +102,7 @@ refuse case per rule and an accept case per kind; a refuse fixture yields exactl
 | `scenario-number` | scenario ids not contiguous from 1 |
 | `scenario-marker` | a marker whose slug or id differs from its own line |
 | `scenario-path` | a binding's test path that is not a repo-relative file |
+| `scenarios-empty` | a `## Scenarios` section carrying no scenario line |
 | `out-of-scope` | no non-blank bullet and not exactly `*(empty)*` |
 | `module-line` | a `## Module` line that is not a `- <path>` bullet |
 | `module-empty` | no module path and not exactly `*(empty)*` (a retired spec may carry the marker instead of a path) |
@@ -129,12 +133,17 @@ refuse case per rule and an accept case per kind; a refuse fixture yields exactl
   scenario on a live spec is individually `unbound` until its test lands within the same plan — the
   spec's status never regresses for an extension. The binding is literal and language-agnostic: the
   marker `spec:<slug>/S<N>` must occur exactly once in the named file. The honest claim is an
-  advisory structural pin; runnability and greenness stay the test suite's own gate.
+  advisory structural pin; runnability and greenness stay the test suite's own gate. A marker is an
+  ORDINARY source line — it counts toward the source-size practice like any other, and a pinning file
+  already at its cap raises the recorded ratchet to host one. There is NO sidecar binding form:
+  retroactive coverage of a PUBLISHED package rides a release train, because the marker moves that
+  package's subtree.
 - **Containment** is lexical AND realpath on every path-bearing field (bindings, child links, module
   roots). The reader judges the lexical half; realpath and symlink escapes are the structural
   checker's duty (`spec-check`, a later slice), together with marker existence and uniqueness, link
   resolution and the global invariants (slug uniqueness, module-root overlap, tree acyclicity) that
-  only a full-tree sweep can prove.
+  only a full-tree sweep can prove. The store ROOT is never an op target and needs no `root` verb: it
+  is the navigator, judged as the listing parent of its declared child.
 
 ## Precedence — feature spec and page spec
 
@@ -176,8 +185,11 @@ that changes a contract triggers a spec revision.
 
 The onboarding path for an existing feature: read the code, author a `draft` spec from it (the
 contract it actually keeps, the scenarios its tests already pin, the Out of scope its boundaries
-imply), then human review promotes it to `live` through a plan. Used to dogfood the family's own
-subsystems; a legacy module binds through a declared file set, never a refactor ride-along.
+imply), then human review promotes it to `live` through a plan. The promoting event of a retroactive
+draft is PLAN APPROVAL — `live` lands in the SAME slice that authors the draft, once every scenario
+is bound; a slice whose whole deliverable is the specs needs no later plan to leave them provisional.
+Used to dogfood the family's own subsystems; a legacy module binds through a declared file set, never
+a refactor ride-along.
 
 ## Scale
 

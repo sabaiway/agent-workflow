@@ -131,14 +131,6 @@ describe('readSpecDocument — refuse, exactly one rule per defect', () => {
     refuses(specDoc({ scenarios: ['- S1 a :: /abs/login.test.mjs :: spec:login/S1'] }), 'login.md', 'scenario-path');
   });
 
-  it('scenarios-empty / no empty-marker escape', () => {
-    refuses(specDoc({ scenarios: [] }), 'login.md', 'scenarios-empty');
-    refuses(specDoc({ scenarios: ['*(empty)*'] }), 'login.md', 'scenario-line');
-    for (const status of SPEC_SCHEMA.statuses) {
-      expect(readSpecDocument(specDoc({ scenarios: ['- S1 x :: unbound'], fields: { status } }), 'login.md').errors).toEqual([]);
-    }
-  });
-
   it('out-of-scope / module-empty / module-* path refusals / module-mix / parts', () => {
     refuses(specDoc({ outOfScope: '' }), 'login.md', 'out-of-scope');
     refuses(specDoc({ outOfScope: 'nothing excluded' }), 'login.md', 'out-of-scope');

@@ -72,6 +72,14 @@ describe('specs.md — the canon carries the frozen schema the reader enforces',
     assert.deepEqual(listed, [...SPEC_SCHEMA.rules], 'the table rows ARE the rule list, in order');
   });
 
+  it('the five decided answers are stated at their point of use', () => {
+    assert.match(flat, /at least one scenario line[^.]*`\*\(empty\)\*` is NOT an escape/, '(1) no empty-marker escape on ## Scenarios');
+    assert.match(flat, /an ORDINARY source line/, '(2) a binding marker is size-counted like code');
+    assert.match(flat, /rides a release train/, '(3) no sidecar binding form');
+    assert.match(flat, /the listing parent of its declared child/, '(4) no `root` op verb');
+    assert.match(flat, /promoting event[^.]*is PLAN APPROVAL/, '(5) plan approval promotes a retroactive draft');
+  });
+
   it('non-vacuity: stripping a frozen value from an in-memory copy goes red (injected)', () => {
     for (const token of ['`retired`', '`*(empty)*`', 'never backwards']) {
       assert.ok(canon.includes(token), `sanity: the canon carries ${token}`);
