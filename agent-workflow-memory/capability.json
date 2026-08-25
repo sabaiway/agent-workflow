@@ -3,7 +3,7 @@
   "schema": 1,
   "name": "agent-workflow-memory",
   "kind": "memory-substrate",
-  "version": "4.7.0",
+  "version": "5.0.0",
   "provides": ["context"],
   "roles": {},
   "detect": {

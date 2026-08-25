@@ -7,6 +7,47 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-25 — AD-117 the scenario floor and the five canon answers (kit 8.0.0 · memory 5.0.0 · engine 4.0.0, all MAJOR)
+
+**A `kind: spec` document could pin NOTHING and pass everything.** `checkOutOfScope` enforced a
+minimum; `checkScenarios` enforced none — so an empty `## Scenarios` section satisfied the reader,
+both `spec-check` lanes and the gate row alike. Measured cost, from writing the layer's first real
+specs one slice earlier: three stub specs would have cleared every mechanical check and delivered
+nothing. The reader now carries one new frozen rule, `scenarios-empty`, in table position between
+`scenario-path` and `out-of-scope`. `*(empty)*` is deliberately not an escape there — written under
+`## Scenarios` it still refuses as `scenario-line` — because the grammar already has the honest form
+for a scenario no test pins yet, `- S<N> <name> :: unbound`, and that form accepts on every status.
+The asymmetry with `## Out of scope` is the whole point: an empty exclusion list is a claim, an empty
+scenario list is an absence. Nothing that exists refuses — the corpus, the live store and the shipped
+templates were all measured before the floor shipped.
+
+MAJOR on all three because the same refusal reaches each package by a different road: the reader
+refuses a document it accepted (memory), the kit ships those bytes so a deployment's spec gate turns
+red with no edit of its own (kit), and a spec written to the 3.3.0 canon can be invalid under this
+one (engine — the class engine 3.0.0 already called MAJOR). The release also discharges
+KIT-SUBTREE-CHANGED-WITHOUT-A-BUMP, the obligation slice 4 left when it wrote 19 binding markers into
+the kit subtree and shipped no bump. The reader pair's outgoing 4.7.0 bodies join the known-prior
+catalog in the same release, so an unmodified deployment converges instead of stranding as `custom`.
+
+The other four frictions slice 4 recorded are answered IN the canon, at their own points of use, and
+four of the five answers are a refusal to add a mechanism: a binding marker is an ORDINARY source
+line (no carve-out in the size judge — it counts bytes and must not learn spec vocabulary); there is
+no sidecar binding form (retroactive coverage of a published package rides a release train, because
+the marker moves that package's subtree); there is no `root` op verb (the store root is the
+navigator, judged as the listing parent of its declared child); and the promoting event of a
+retroactive draft is PLAN APPROVAL, so `live` lands in the slice that authors the draft — otherwise
+the store's first contracts stay permanently provisional by the canon's own wording.
+
+Review: the plan took five councils before approval (23 findings, all folded or withdrawn) and a
+sixth NARROW round over the two round-5 folds nothing had re-reviewed. That sixth round paid three
+times over, all before a line of code: the sequencing sentence claimed a queue row ordered another
+plan first when the row names neither this slice nor a successor; the precondition passed three pairs
+to a single `version-sync --expect`, which exits 2 — so the check could never have detected the
+release order it existed to detect; and the Cleanup re-pin named two of the three version sites in
+the sibling plan. Both backends found the third independently. Execution converged in ONE round —
+codex `ship` (gpt-5.6-sol, xhigh, priority), agy `SHIP` 0/0 (Gemini 3.7 Flash (High)) — with a narrow
+grounded consult finding no new defect.
+
 ## 2026-08-25 — AD-115 `spec-check`, the spec store's structural checker (kit 7.6.0 MINOR)
 
 **The spec store is now judged against what the session SAYS it changed — explicitly, never from

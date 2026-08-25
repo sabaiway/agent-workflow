@@ -4,6 +4,31 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 8.0.0 — the bundled reader gets the scenario floor, and the refresh lane carries it out (AD-117)
+
+Memory **5.0.0** gives the spec reader one new refusal — a `## Scenarios` section carrying no
+scenario line — and this kit ships those bytes. Nothing in the kit's own logic changed shape; what
+changed is what the deployed reader says about a document, and therefore what a project's spec gate
+says about its store.
+
+> ### ⚠ BREAKING — inherited from memory 5.0.0
+>
+> `spec-check` (both lanes) and the `spec-check` gate row relay the reader's verdict, so a spec that
+> pins NOTHING now turns a deployment red with no edit of its own. The remedy is one line per
+> scenario — `- S<N> <name> :: unbound` while no test pins it. The refusal is the migration signal:
+> a contract that pins nothing is the one shape the layer exists to refuse.
+
+- **`references/scripts/spec-schema{,.test}.mjs`** — refreshed to the 5.0.0 bodies; the four mirrored
+  copies stay byte-identical, `sync-mirrors --check` green.
+- **`tools/script-priors.mjs`** — the catalog gains the two OUTGOING `4.7.0..4.7.0` reader rows
+  (`spec-schema.mjs`, `spec-schema.test.mjs`), read from the released bytes, so an unmodified 4.7.0
+  deployment is recognised as unmodified and converges on the next kit touch instead of stranding as
+  `custom`. The independent `FROZEN_PRIORS` pin in the test moves with it — 8 catalog rows, none
+  equal to the bundled body.
+- **Obligation discharged: KIT-SUBTREE-CHANGED-WITHOUT-A-BUMP.** Slice 4 wrote 19 spec-binding
+  markers into this package's subtree and shipped no bump. This release carries them.
+
+
 ## 7.6.0 — `spec-check`: the spec store judged against what the session SAYS it changed (AD-115)
 
 The feature-spec layer gets its structural checker. The change source is EXPLICIT and never git — a

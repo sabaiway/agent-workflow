@@ -4,6 +4,33 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 5.0.0 — the scenario floor: a contract can no longer pin NOTHING (AD-117)
+
+The reader enforced a minimum on `## Out of scope` and none on `## Scenarios`. A `kind: spec`
+document could therefore carry an EMPTY scenario section and pass everything — the reader, both
+`spec-check` lanes, the gate row. Measured cost, from writing the layer's first real specs: three
+stub specs would have satisfied every mechanical check of that slice and delivered nothing.
+
+> ### ⚠ BREAKING — the reader refuses a document it used to accept
+>
+> `SPEC_SCHEMA.rules` gains ONE frozen rule, **`scenarios-empty`**, in table position between
+> `scenario-path` and `out-of-scope`: a `## Scenarios` section carrying no scenario line is now an
+> error. The rule list is a frozen ordered contract, so a consumer that deep-equals it sees a 34th
+> id, and a deployment's spec gate can turn red with no edit of its own. The remedy is one line per
+> scenario — `- S<N> <name> :: unbound` while no test pins it.
+
+- **`*(empty)*` is deliberately NOT an escape here.** Written under `## Scenarios` it still refuses,
+  as `scenario-line`, and a fixture now pins that. The asymmetry with `## Out of scope` (where the
+  marker IS the decision) is the point: an empty exclusion list is a claim, an empty scenario list is
+  an absence, and the grammar already carries the honest form for the absence.
+- **`unbound` accepts on every status** — `draft`, `live` and `retired` alike — so the floor costs a
+  spec nothing but the statement that a scenario exists.
+- Measured before shipping: no document in the fixture corpus, the live store or the shipped
+  templates carries an empty section, so the floor refuses nothing that already exists.
+- The other 33 rule ids, every existing refusal and the whole `structure` extraction stay
+  behaviour-identical. The new arm was red-proofed against the pre-change reader.
+
+
 ## 4.7.0 — the reader's verdict gains the additive `structure` extraction (AD-114)
 
 The slice-2 checker (`spec-check`, next release) must read a document's structure through the SAME

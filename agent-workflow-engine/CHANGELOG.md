@@ -4,6 +4,41 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 4.0.0 — the scenario floor, and five answers the canon now states at its own points of use (AD-117)
+
+Slice 4 wrote the layer's first real specs and came back with six questions the canon had left for
+the next reader to rediscover. Five are answered here, IN `references/specs.md`, each at the point
+where it is needed — and four of the five answers are a refusal to add a mechanism.
+
+> ### ⚠ BREAKING — a spec written to the 3.3.0 canon can be invalid under this one
+>
+> `## Scenarios` gains a floor: at least one scenario line, with no empty-marker escape. A document
+> the 3.3.0 canon and its reader both accepted now refuses as `scenarios-empty`. Same class as
+> **3.0.0**, where deleting a vocabulary from the canon was already called MAJOR. The remedy is one
+> line per scenario — `- S<N> <name> :: unbound` while no test pins it.
+
+- **(1) No empty-marker escape on `## Scenarios`.** `*(empty)*` written there refuses as
+  `scenario-line`; `unbound` already covers a scenario no test pins yet. An empty exclusion list is a
+  claim, an empty scenario list is an absence. The refusal table gains the matching `scenarios-empty`
+  row, in the reader's own order.
+- **(2) A binding marker is an ORDINARY source line.** It counts toward the source-size practice like
+  any other line, and a pinning file already at its cap raises its recorded ratchet to host one. No
+  carve-out: the size judge counts bytes and must not learn spec vocabulary.
+- **(3) There is NO sidecar binding form.** Retroactive coverage of a PUBLISHED package rides a
+  release train, because the marker moves that package's subtree — a cost the family already pays
+  deliberately, against a second place a binding could live.
+- **(4) No `root` op verb.** The store root is the navigator, never an op target; it is judged as the
+  listing parent of its declared child. The canon says so where containment is defined.
+- **(5) The promoting event of a RETROACTIVE draft is PLAN APPROVAL.** `live` lands in the SAME slice
+  that authors the draft, once every scenario is bound — otherwise a slice whose whole deliverable IS
+  the specs has no later landing row, and the store's first contracts stay permanently provisional by
+  the canon's own wording.
+- `test/specs-canon.test.mjs` pins all five as prose assertions at their point of use, absorbs the
+  new rule in the rules-table deep-equal, and gains two refuse fixtures — the empty section and the
+  empty marker — each yielding exactly its one rule. The arm was red-proofed against the unchanged
+  canon.
+
+
 ## 3.3.0 — the feature-spec canon: `references/specs.md`, the `Spec-first` lens bullet, specs as plan rows (AD-112)
 
 - **`references/specs.md`** (NEW) — the canon of the feature-spec layer in the family's own
