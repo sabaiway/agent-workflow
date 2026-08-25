@@ -4,6 +4,38 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 9.0.0 — the archiver's cap table ships, and the migration seeds it behind its importer (AD-118)
+
+Memory **6.0.0** replaces the changelog archiver's fixed cap literals with a stamp it can honour,
+and this kit ships those bytes. One kit-owned behaviour moved with them, and it is the interesting
+half: a new import by a refreshed archiver reopens a hole the companion seed exists to close.
+
+> ### ⚠ BREAKING — inherited from memory 6.0.0
+>
+> The archiver REFUSES once a tier's line count goes past its ceiling, in every mode including
+> `--check`, and META's floor rises 300 → 1500.
+>
+> **When it bites.** The new bytes reach a project's `scripts/` on a FRESH bootstrap, a
+> `migrate-adr-store` refresh, or a hand copy — installing this kit does NOT overwrite an existing
+> deployed `archive-changelog.mjs`. Once they land, a project whose archive has already outgrown a
+> ceiling sees its `changelog-rotation` gate turn red with no edit of its own.
+
+- **`references/scripts/archive-caps{,.test}.mjs`** — new, mirrored byte-identical from the memory
+  canon; `references/scripts/archive-changelog{,.test}.mjs` refreshed to the 6.0.0 bodies.
+  `sync-mirrors --check` green over all three copies.
+- **`tools/migrate-adr-store.mjs` — `COMPANION_SEEDS` gains a per-entry condition.** The list exists
+  so a refreshed archiver never crashes on a missing runtime import, and it was flat: every entry
+  seeded on every migration. That was correct for what it held — the ONE runtime dependency
+  `markdown-blocks.mjs`, which all three archivers import, plus its deploy-payload test riding along
+  with it. `archive-caps.mjs` is imported by `archive-changelog.mjs` ALONE, so seeding it
+  unconditionally would write a file with no importer during a plain ADR migration — the directional
+  "never ADD a basename the consumer lacks" rule broken, and a log line saying something untrue. An
+  entry may now NAME the importer it rides: the markdown pair stays unconditional, the `archive-caps`
+  pair rides `archive-changelog.mjs`, and two arms pin both cases — importer present, importer absent.
+- **`tools/known-footprint.mjs`** — `KIT_OWN_PATHS` gains both new script paths (30 → 32), so a
+  HIDDEN deployment does not leave them visible in `git status`.
+- Tarball sentinels move with the payload on their documented ladders: kit 250 → 252, memory 59 → 61.
+
 ## 8.0.0 — the bundled reader gets the scenario floor, and the refresh lane carries it out (AD-117)
 
 Memory **5.0.0** gives the spec reader one new refusal — a `## Scenarios` section carrying no

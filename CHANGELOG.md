@@ -7,6 +7,38 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-25 — AD-118 a rolling archive stamps a cap it can honour (kit 9.0.0 · memory 6.0.0, both MAJOR)
+
+**The archiver emitted files its own gate refuses.** Each tier's frontmatter `maxLines` was a
+LITERAL in the builder that wrote it — WARM 3500, COLD 1500, META 300 — which is a promise about a
+corpus nobody has seen yet. When a tier outgrew its number the run produced an over-cap file, the
+repair was a hand edit, and the next run stamped the literal straight back over the repair. This
+repository was carrying two such workarounds when the work opened: a hand-raised `maxLines: 1800`
+on a COLD month against 1750 live lines, and a changelog that could only be rotated with
+`--warm-days=21`. Both are gone. `capFor({tier, count})` stamps the tier floor while the file fits
+under it, the file's OWN line count once it does not, and REFUSES past a ceiling — in the default
+run, `--dry-run` and `--check` alike, which required every cap-bearing output to be built before the
+mode branch rather than on the write path. The ceiling is 2x the floor, fixed and never measured
+from a corpus, because the refusal rides a standing `--check` gate: a ceiling derived from whatever
+happened to be on disk would brick every commit the day the corpus grew past it.
+
+MAJOR on both because a shipped CLI gains a non-zero exit and refuses input it previously accepted.
+It bites when the new bytes actually reach a project's `scripts/` — a fresh bootstrap, a
+`migrate-adr-store` refresh, or a hand copy; installing the packages does not overwrite an existing
+deployed archiver, and delivery to existing deployments stays a filed row rather than part of this
+release. Once the bytes land, a deployment whose archive has already outgrown a ceiling turns red
+with no edit of its own, and META's floor rises 300 → 1500. The kit's own half is the companion
+seed: `archive-caps.mjs` is imported by `archive-changelog.mjs` alone, so the migration's flat seed
+list — correct for the one runtime dependency it held — became a way to write a file with no
+importer, and an entry can now name the importer it rides.
+
+Four review rounds over the diff, and each of the first three paid. `capFor` returned `undefined`
+instead of refusing for an inherited key like `toString`. A gate the plan never anticipated went red
+because a new import by a refreshed archiver reopened the exact hole the companion seed closes. And
+the per-tier remedy text, added in one round, was found in the next to be advising a file layout the
+archiver cannot read back — following the COLD remedy would have dropped those files out of the
+corpus, so both COLD and META now state their sharding as not implemented and say why.
+
 ## 2026-08-25 — AD-117 the scenario floor and the five canon answers (kit 8.0.0 · memory 5.0.0 · engine 4.0.0, all MAJOR)
 
 **A `kind: spec` document could pin NOTHING and pass everything.** `checkOutOfScope` enforced a

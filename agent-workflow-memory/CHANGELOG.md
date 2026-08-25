@@ -4,6 +4,53 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 6.0.0 — a rolling archive stamps a cap it can honour, and refuses past a ceiling (AD-118)
+
+The changelog archiver wrote each tier's frontmatter `maxLines` as a LITERAL in the builder that
+emitted it: WARM 3500, COLD 1500, META 300. A literal is a promise about a corpus nobody has seen
+yet, so the day a tier outgrew its number the archiver emitted a file the docs gate refuses — its
+own output failing its own gate, and the repair was a hand edit that the next run stamped straight
+back over.
+
+> ### ⚠ BREAKING — the archiver now exits non-zero on input it used to accept
+>
+> New module `references/scripts/archive-caps.mjs` exports `capFor({tier, count})` over a frozen
+> floor/ceiling table — COLD 1500/3000, WARM 3500/7000, META 1500/3000. Once a tier's line count
+> goes PAST its ceiling the run REFUSES rather than stamp a cap it cannot honour, and it refuses
+> identically in every mode: the default run, `--dry-run` and `--check` alike. META's floor also
+> RISES 300 → 1500.
+>
+> **When it bites.** These bytes reach a project's `scripts/` only on a FRESH bootstrap, a
+> `migrate-adr-store` refresh, or a hand copy — installing this package does NOT overwrite an
+> existing deployed `archive-changelog.mjs`, and delivery to existing deployments is deliberately
+> out of scope here (a filed row). Once the bytes do land, a project whose archive has already
+> outgrown a ceiling sees its `changelog-rotation` gate turn red with no edit of its own, and an
+> existing `condensed-index.md` is re-stamped on the next run.
+
+- **The stamp is now a function of the file.** Below the floor a tier stamps the floor; inside the
+  band it stamps its OWN final line count; the ceiling itself is still stamped. `count` is the count
+  the docs gate computes (`check-docs-size.mjs` — a trailing newline ends a line, it never opens
+  one), restated as `countLines` so the stamp and the judge cannot disagree. Each builder renders
+  twice: once with a placeholder to learn its length, once with what `capFor` returns. The stamped
+  integer is one line whatever its value, so the first render's count IS the final count and the
+  stamp is a fixed point.
+- **Every cap-bearing output is BUILT before the mode branch.** WARM/COLD/META used to be built only
+  on the write path, so `--check` and `--dry-run` could never have seen a ceiling breach. A `--check`
+  that went green on a corpus the next real run cannot write is the same fail-open the parse already
+  refuses to be. Building is pure, so a refusal still leaves the tree byte-unchanged.
+- **The ceiling is 2x the floor, FIXED here, never measured from a corpus.** The refusal rides a
+  standing `--check` gate, so a ceiling derived from whatever happened to be on disk the day someone
+  wrote the test would brick every commit as soon as the corpus grew past it. Raising one is a
+  reviewed edit to the table, never something a run decides for itself.
+- **A sharding tripwire warns at the FLOOR.** META grows O(total archived entries) and never sheds,
+  so it reaches its ceiling first; warning while there is still room puts the remedy in front of
+  whoever runs the archiver. Both the COLD and META remedies state their sharding as NOT
+  IMPLEMENTED and say why — COLD discovery matches `YYYY-MM.md` only, so a hand-split file would
+  drop out of the corpus, and META is always regenerated whole. A remedy must never instruct a
+  layout the archiver cannot read back.
+- Deliberately out of scope, each a filed row: the HOT changelog's own fallback stamp, the sibling
+  `archive-issues` / `archive-decisions` stampers, and per-year META sharding.
+
 ## 5.0.0 — the scenario floor: a contract can no longer pin NOTHING (AD-117)
 
 The reader enforced a minimum on `## Out of scope` and none on `## Scenarios`. A `kind: spec`
