@@ -223,6 +223,10 @@ describe('spec-check — the session lane: post-state, probe, thresholds, bindin
     ['the marker occurs exactly once', { 'probe/login.txt': marker('login') }, {}, false],
     ['the marker is absent from the bound file', { 'probe/login.txt': '// nothing here\n' }, {}, true],
     ['the marker occurs twice', { 'probe/login.txt': marker('login', 2) }, {}, true],
+    // A marker is a WHOLE ordinal. Counting it as a substring made S1 occur twice the moment a file
+    // also carried S11 — so a store reaching ten scenarios refused a binding that was correct, and
+    // named the wrong scenario while doing it. Measured live at S11 in this repo's own store.
+    ['a HIGHER ordinal sharing the prefix is not a second occurrence', { 'probe/login.txt': `spec:login/S1\nspec:login/S11\nspec:login/S123\n` }, {}, false],
     ['the bound file is absent', {}, {}, true],
     ['the bound path is unreadable', {}, { 'probe/login.txt': 'unreadable' }, true],
     ['the bound path is a directory', {}, { 'probe/login.txt': 'dir' }, true],

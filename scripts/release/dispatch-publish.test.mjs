@@ -1827,13 +1827,25 @@ describe('AD-098 — the ancestry probes, answered by real git on a graph this t
     }
   });
 
-  it('a real execution error — the binary does not exist, so nothing was answered', async () => {
-    const missing = (args, cwd) => runProcess('aw-no-such-binary-8f3c', args, { cwd, deadlineMs: 5_000 });
-    const out = await probeAncestry(missing, 'f'.repeat(40), 'b'.repeat(40), REPO_ROOT);
+  it('a real execution error — the binary does not exist, so nothing was answered', async (t) => {
+    // The leaf runs ONCE and its result is replayed into the probe, so the errno this arm judges is
+    // the one it screened. A HOST fault is not this arm's answer: when the child never started for a
+    // machine reason the spawn never reached the name resolution the arm is about, so it is SKIPPED
+    // by errno. The screen reads the STRUCTURAL `error.code`, never the message text — the deferred
+    // errnos (EACCES, EAGAIN, EMFILE, ENFILE, ENOENT) and the synchronously thrown ones print
+    // differently, and a resource fault read as a missing-binary verdict is the exact defect this
+    // change set removes.
+    const HOST_SPAWN_FAULTS = ['EIO', 'EAGAIN', 'ENOMEM', 'EMFILE', 'ENFILE'];
+    const res = await runProcess('aw-no-such-binary-8f3c', ['rev-parse'], { cwd: REPO_ROOT, deadlineMs: 5_000 });
+    if (HOST_SPAWN_FAULTS.includes(res.error?.code)) {
+      return t.skip(`host spawn fault ${res.error.code}: the child never started, so this run carries no missing-binary verdict`);
+    }
+    const out = await probeAncestry(async () => res, 'f'.repeat(40), 'b'.repeat(40), REPO_ROOT);
     assert.equal(out.state, ANCESTRY.undetermined);
     // The errno is the PLATFORM's, not ours — measured ENOENT on a plain host and EACCES under this
     // project's sandbox — so the assertion binds what the leaf guarantees: a spawn that never became
-    // a process reaches the caller as a named cause, never as a silent verdict.
-    assert.match(out.cause, /git could not be run: spawn aw-no-such-binary-8f3c E[A-Z]+/);
+    // a process reaches the caller as a named cause, never as a silent verdict. The oracle names
+    // exactly those two: a wider `E[A-Z]+` would accept a resource fault as a missing-binary answer.
+    assert.match(out.cause, /git could not be run: spawn aw-no-such-binary-8f3c (ENOENT|EACCES)\b/);
   });
 });

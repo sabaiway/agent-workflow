@@ -43,7 +43,17 @@ const dirOf = (rel) => rel.slice(0, rel.lastIndexOf('/'));
 const leafOf = (rel) => rel.slice(rel.lastIndexOf('/') + 1);
 const bare = (rel) => (rel.endsWith('/') ? rel.slice(0, -1) : rel);
 const lineCount = (text) => text.replace(/\n$/, '').split('\n').length;
-const occurrences = (text, needle) => text.split(needle).length - 1;
+// A marker is counted as a WHOLE ordinal, never as a prefix of a longer one. A plain substring count
+// makes `spec:…/S1` occur twice the moment `spec:…/S11` is written in the same file — so a store
+// that reaches ten scenarios starts refusing bindings that are perfectly correct, and the refusal
+// names the wrong scenario. Measured here at S11.
+const occurrences = (text, needle) => {
+  let found = 0;
+  for (let at = text.indexOf(needle); at !== -1; at = text.indexOf(needle, at + needle.length)) {
+    if (!/[0-9]/.test(text[at + needle.length] ?? '')) found += 1;
+  }
+  return found;
+};
 // Containment is a question about path COMPONENTS, and only the platform's own path model answers
 // it. A textual prefix test reads "/repo\outside" as a child of "/repo" on a POSIX host — where the
 // backslash is an ordinary filename character — and it mis-reads a filesystem root ("/" or "C:\")

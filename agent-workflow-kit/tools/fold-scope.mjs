@@ -44,25 +44,52 @@ const contains = (haystack, needle) => normalize(haystack).toLowerCase().include
 // AND a boundary: it closes the block it interrupts, so text past a fence can never join the bullet
 // before it (which would let a far-side literal satisfy a near-side claim). A `-` plus any whitespace
 // run opens a block; a blank or indented line continues it; any other unindented line closes it.
-// Blocks are returned RAW (their own lines) — the queue reader needs the field lines inside them.
-const bulletBlocks = (lines, fencedLines, from, to) => {
+// Blocks are returned RAW (their own lines) — the queue reader needs the field lines inside them —
+// each carrying the body index it OPENS at, because a second reader (queue-audit.mjs) reports rows by
+// file line and a scan that dropped the index would have to re-derive it against a different grammar.
+//
+// `fenceContinues` is the SECOND reader's question, and it is a different one. A deferral row asks
+// what a bullet CLAIMS, so a fence must cut it. A queue row asks what a bullet COSTS and whether it
+// is still work, and there the fence-as-boundary is a hole: measured, a row carrying a code block
+// reported ONE line and its `**DONE 2026-01-01:**` two lines further down was invisible, so the
+// per-row cap could be walked straight past and a closure went unseen.
+//
+// Under the option only a NESTED fence continues an open block — one whose opening line is indented,
+// which is what makes it part of the list item at all. A fence opening at column 0 is a
+// DOCUMENT-level block and still closes the row, exactly as an unindented line does; absorbing it
+// charged a one-line row for six. The run is decided ONCE, at its opening line, so a content line
+// inside it cannot re-decide the question.
+//
+// The absorbed lines never enter `lines` — a marker inside a quotation is not a status — so the
+// block records where they were: `span` is the row's PHYSICAL extent, and `gaps` holds the `lines`
+// indices a fence run follows, so a reader assembling a multi-line span cannot join text from both
+// sides of a code block into one claim.
+export const bulletBlocks = (lines, fencedLines, from, to, { fenceContinues = false } = {}) => {
   const blocks = [];
   let current = null;
+  let absorbing = null;
   const close = () => {
     if (current) blocks.push(current);
     current = null;
   };
   for (let index = from; index < to; index += 1) {
     if (fencedLines.has(index)) {
-      close();
+      if (absorbing === null) absorbing = Boolean(fenceContinues && current && /^\s+\S/.test(lines[index]));
+      if (!absorbing) close();
+      else {
+        current.span += 1;
+        current.gaps.add(current.lines.length - 1);
+      }
       continue;
     }
+    absorbing = null;
     const line = lines[index];
     if (BULLET.test(line)) {
       close();
-      current = [line];
+      current = { start: index, lines: [line], span: 1, gaps: new Set() };
     } else if (current && (line.trim() === '' || /^\s+\S/.test(line))) {
-      current.push(line);
+      current.lines.push(line);
+      current.span += 1;
     } else {
       close();
     }
@@ -83,7 +110,7 @@ export const extractAcceptance = (planText) => {
   if (!open) return [];
   const next = headings.find((heading) => heading.index > open.index && heading.level <= 2);
   return bulletBlocks(lines, fencedLines, open.index + 1, next ? next.index : lines.length)
-    .map((block) => normalize(block.join('\n').replace(/^-\s+/, '')))
+    .map((block) => normalize(block.lines.join('\n').replace(/^-\s+/, '')))
     .filter(Boolean);
 };
 
@@ -134,7 +161,7 @@ const exposureOf = (value) => {
 
 const topLevelRows = (queueText) => {
   const { lines, fencedLines } = tokenizeMarkdown(String(queueText ?? ''), 'the queue');
-  return bulletBlocks(lines, fencedLines, 0, lines.length).map((block) => block.join('\n'));
+  return bulletBlocks(lines, fencedLines, 0, lines.length).map((block) => block.lines.join('\n'));
 };
 
 const EMPTY_ROW = () => ({ found: false, matches: 0, fields: {}, missing: [...ROW_FIELDS], duplicates: [], exposure: null, closed: null, claimInInvariant: false });

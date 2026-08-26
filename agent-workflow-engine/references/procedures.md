@@ -38,7 +38,7 @@ Slots: review
    a `create` row and a revision of a governed contract a `modify` row, both written here so they
    exist AT review.
 3. **Self-review** — apply *What gets cut*; fold by code (read and cite the `file:line`); update
-   `queue.md` for a series.
+   `queue.md` for a series, to the shape *The queue* fixes.
 4. **review {recipe}** — Solo (self-review only) / Reviewed (one backend) / Council (both; you
    synthesize), as the resolved `review` recipe selects.
 5. **Fold + loop** — fold every finding and re-review; CLEAN is **0 blockers + 0 majors** from every

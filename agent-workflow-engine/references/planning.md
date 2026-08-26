@@ -118,6 +118,20 @@ plan file, and plan paths inside committed docs, are forbidden.
 and the docs cap-validator is green. An aborted plan still runs Cleanup — partial outputs land in
 `known_issues.md`.
 
+## The queue
+
+`docs/plans/queue.md` NAMES work; it never holds the analysis of it. A row is one plain sentence
+saying what the work is and for whom, then its id, then a short body — measurements, `file:line`
+citations and fix direction belong to an ADR or the record the row points at. A row that goes
+terminal is DELETED in the same change that mints its closing artifact — and where the queue is
+gitignored, the deleted text is first written to a purge archive beside the history docs, because
+there git history is no tombstone. In a hidden deployment that archive is machine-local like the rest
+of the substrate: its guarantee is the working copy, not git. Frozen work with a stated resume
+condition is not terminal and stays, in its own bucket. Order inside a bucket IS priority.
+A prose promise to trim later has been measured failing: a checker over the file is the rung, and it
+is runnable — `node <kit>/tools/queue-audit-cli.mjs --check docs/plans/queue.md --section '<bucket
+heading>' --max-rows <n> --max-row-lines <n>`, declared as a project gate once the queue has migrated.
+
 ## The plan must read cold
 
 The executing session sees the plan file and the repository, never the authoring conversation.

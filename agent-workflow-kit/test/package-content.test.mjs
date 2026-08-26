@@ -142,6 +142,17 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/spec-check-ops.mjs',
       'tools/spec-check.mjs',
       'tools/spec-check-cli.mjs',
+      // the backlog-queue classifier and its CLI half — by NAME for the same reason: a project
+      // declares the CLI path as a gate command, so a payload drop hands a deployed project a gate
+      // row that cannot run.
+      'tools/queue-audit.mjs',
+      'tools/queue-audit-rows.mjs',
+      'tools/queue-audit-cli.mjs',
+      // the coverage requirement — no work without a specification. By NAME because a project
+      // declares the CLI path as a gate command, so a payload drop hands a deployed project a gate
+      // row that cannot run, and the requirement would silently stop being one.
+      'tools/spec-coverage.mjs',
+      'tools/spec-coverage-cli.mjs',
       // and the block tokenizer fold-scope.mjs reads its markdown through: a TOOL now imports this
       // deployed payload leaf, so a drop breaks the checker at load, not merely an archiver run.
       'references/scripts/markdown-blocks.mjs',
@@ -681,7 +692,14 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 252 = 250 + references/scripts/archive-caps.mjs (the frozen tier table every rolling archive
     //       stamps from) + its deploy-payload test — both mirrored from the memory canon by
     //       sync-mirrors.
-    assert.equal(packed.length, 252, `tarball file count drifted (${packed.length} ≠ 252)`);
+    // 255 = 252 + the backlog-queue checker's three modules: tools/queue-audit-rows.mjs (the status
+    //       grammar of one row), tools/queue-audit.mjs (the document pass and the caps) and
+    //       tools/queue-audit-cli.mjs (argv + fs). Split at the 400-line cap, twice.
+    // 257 = 255 + the coverage requirement: tools/spec-coverage.mjs (the rule) and
+    //       tools/spec-coverage-cli.mjs (argv, fs and the one write, the shrink-only debt).
+    //       Both also ride the NAMED list above: a count alone would let either fall out of the
+    //       payload unnoticed the moment some other file leaked in at the same time.
+    assert.equal(packed.length, 257, `tarball file count drifted (${packed.length} ≠ 257)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

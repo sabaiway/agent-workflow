@@ -4,6 +4,30 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 10.1.0 — no work without a specification, and a ratchet that does not trust its own file (AD-121)
+
+A shipped tool that no LIVE contract claims is now a REFUSAL, not a preference. `tools/spec-coverage.mjs`
+(the rule) and `tools/spec-coverage-cli.mjs` (argv, fs and the one write) read each contract's own
+`## Module` list as the coverage map — coverage is never declared twice — and a project declares the
+check as a gate. Measured at adoption in this repo: 122 tool modules, 14 governed by a contract.
+
+The other 108 are owed, and what is owed is never STORED — it is a subtraction. `adopted` is the set
+measured once at adoption and never rewritten; `settled` names the adopted paths whose contract has
+since been written; the debt is the difference. So there is no list a hand can edit into a lie: the
+only editable claim is "this one was paid", and every run checks that claim against the contracts
+themselves — a settled path no live contract covers refuses, and refuses twice, because the tool is
+uncovered again. A stored debt list was the first design and a review killed it: `--write-debt`
+refusing to add a path guaranteed nothing while nobody was obliged to use it.
+
+The scope file is validated before it is used: a wrong schema, an empty `roots` or `extensions`, a
+non-string entry, or a census of ZERO files all refuse — a gate that passes because it looked at
+nothing is not a pass. Exclusions are path-component boundaries, so excluding `x/fixtures` never also
+hides `x/fixtures-escape.mjs`. `draft` and `retired` contracts cover nothing.
+
+Also in this release: `tools/spec-check.mjs` counts a scenario marker as a WHOLE ordinal, so a store
+reaching ten scenarios no longer refuses a correct binding while naming the wrong scenario
+(`spec:x/S1` used to occur twice the moment `spec:x/S11` was written beside it).
+
 ## 10.0.0 — a symlinked docs file gets named instead of skipped (AD-119)
 
 Mirrors the memory canon: `references/scripts/check-docs-size.mjs` no longer lets a symlinked docs

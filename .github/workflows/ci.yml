@@ -54,8 +54,14 @@ jobs:
       # hermetic wrapper tests (antigravity `agy` + codex exec/review). The kit
       # test/ glob also runs the bridge-mirror + package-content drift guards.
       # scripts/sync-mirrors.test.mjs + the scripts/suite-parity*.test.mjs trio are listed
-      # EXPLICITLY (not a scripts/ glob): the other scripts/*.test.mjs files are machine-local
-      # and absent here.
+      # EXPLICITLY (not a scripts/ glob). What that list still OMITS, measured 2026-08-26 and
+      # stated rather than implied: scripts/stats/snapshot.test.mjs,
+      # scripts/testing/foreign-fixture.test.mjs and scripts/testing/specs-scale-probe.test.mjs are
+      # TRACKED and run by the local gate, and they do not run here yet.
+      #
+      # The kit's tools list here ENUMERATES its subdirectories, so a future one is silently dropped
+      # until this list is extended — measured once already. Widening it to the gate's recursive glob
+      # is queued with the test that would pin it; an unpinned widening is a change without a test.
       - name: Unit tests (tracked content)
         run: |
           node --test \

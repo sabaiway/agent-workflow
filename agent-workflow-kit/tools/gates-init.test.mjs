@@ -44,8 +44,12 @@ const NPM_EXEC = (body) => `${CN} npm exec --offline --script-shell /bin/sh -- $
 const PNPM_EXEC = (body) => `${CN} pnpm exec -- ${body}`;
 const YARN_EXEC = (body) => `${CN} yarn exec -- ${body}`;
 
-// pnpm/yarn spawn cases skip-if-absent during dev; the release lane provisions all three via
-// corepack and runs them mandatory (Phase 5 of the shipping plan — never ship on skips).
+// pnpm/yarn spawn cases skip-if-absent during dev; provisioning all three via corepack is what
+// makes those STATIC lanes mandatory. The scope of that promise is exactly the absent-PM skips
+// below — it never covered the RUNTIME skip the T4d arms take when the host answers a spawn with a
+// non-start errno, which is a machine fault and not a lane a release can provision away. Nothing in
+// this repository enforces either kind today; the runtime skip states its errno in a fixed form so
+// an enforcement rung can be built against it later.
 // COREPACK_ENABLE_NETWORK=0 on the probe itself (AD-044 Plan 4): an unprovisioned corepack shim
 // would otherwise fetch the PM from the registry AT MODULE LOAD — a network prompt under a
 // sandboxed run — and then be skipped anyway when the fetch is denied. Offline: provisioned PMs
@@ -422,10 +426,11 @@ describe('gates-init — T4 per-PM exec forms (uniform, hook-free, -- separated)
 });
 
 describe('gates-init — T4d per-PM no-network fail-closed (missing package-runner)', () => {
-  it('npm: --offline + an ISOLATED empty cache → the missing runner is refused as a cache miss, never fetched', () => {
+  it('npm: --offline + an ISOLATED empty cache → the missing runner is refused as a cache miss, never fetched', (t) => {
     mkProject({ scripts: { test: 'vitest run' } });
     const r = spawnSeeded(seededCmdOf('test'));
     const out = `${r.stdout}\n${r.stderr}`;
+    if (skipOnHostFault(t, r, out)) return;
     assert.notEqual(r.status, 0, 'fail-closed');
     assert.match(out, /ENOTCACHED|only-if-cached/, `offline cache-miss refusal, not a fetch: ${out}`);
   });
@@ -437,18 +442,75 @@ describe('gates-init — T4d per-PM no-network fail-closed (missing package-runn
   // binary`) but is disjoint from the executed-and-failed `Command failed / Exit code: N` string a
   // runner that ran-then-failed would print (the wrong-path admission we must exclude).
   const NOT_FOUND = /Couldn't find the binary|command not found|no such file|EACCES|ENOENT|ERR_PNPM/i;
-  it('pnpm: a missing runner fails closed locally, no network', { skip: !PNPM_AVAILABLE || onPath('vitest') }, () => {
-    mkProject({ scripts: { test: 'vitest run' }, lockfile: 'pnpm-lock.yaml' });
-    const r = spawnSeeded(seededCmdOf('test'));
-    assert.notEqual(r.status, 0, 'fail-closed');
-    assert.match(`${r.stdout}\n${r.stderr}`, NOT_FOUND, 'a runner-not-found refusal, never an executed-and-failed runner');
+
+  // A HOST fault is not a runner verdict. When the child process never STARTED for a machine
+  // reason — `spawn EIO` on a broken IO path, or a resource-exhaustion sibling — the run observed
+  // nothing about whether the runner was findable, so scoring it against NOT_FOUND reports the
+  // machine's failure as this gate's verdict. Such a run is SKIPPED, naming the errno.
+  // ENOENT/EACCES are deliberately NOT in this set: those two ARE the runner-not-found signature
+  // the arms judge, and absorbing them would delete the oracle. This never widens NOT_FOUND —
+  // the refusal pattern stays exactly as strict, and only a named non-start bypasses it.
+  //
+  // The errno is bound to the EXACT grammar the two real forms use, never merely to a `spawn`
+  // somewhere earlier on the line. Measured in node v24 (internal/child_process): the DEFERRED
+  // errnos build their message as `'spawn ' + spawnfile` (`spawn vitest EAGAIN`), the SYNCHRONOUS
+  // throw builds plain `'spawn'` (`spawn EIO`) — so at most ONE non-space token sits between the
+  // two. A looser window turns `spawn vitest ENOENT; cleanup EIO` into a host fault and hides the
+  // very refusal this arm exists to prove.
+  // The two sources answer DIFFERENT questions, and conflating them was a live defect.
+  // `r.error` is THIS suite's own `spawnSync('bash', …)` failing: whatever its errno, the shell
+  // never ran, so the package manager was never asked and there is no verdict to read — ENOENT and
+  // EACCES included, which there mean "bash could not be started", not "the runner is missing".
+  // The TEXT is the package manager's own message about the RUNNER, and only there are ENOENT and
+  // EACCES the answer this arm judges.
+  const HOST_SPAWN_FAULTS = ['EIO', 'EAGAIN', 'ENOMEM', 'EMFILE', 'ENFILE'];
+  const hostSpawnFault = (r, out) => {
+    if (r?.error?.code) return `${r.error.code} (the suite's own shell never started)`;
+    const named = new RegExp(String.raw`\bspawn(?: \S+)? (${HOST_SPAWN_FAULTS.join('|')})\b`).exec(out ?? '');
+    return named ? named[1] : null;
+  };
+  const skipOnHostFault = (t, r, out) => {
+    const fault = hostSpawnFault(r, out);
+    if (fault) t.skip(`host spawn fault ${fault}: the child never started, so this run carries no runner verdict`);
+    return Boolean(fault);
+  };
+
+  it('a non-start is named and never scored: the host-fault predicate reads the errno, the refusal oracle stays untouched', () => {
+    const YARN_EIO = 'error An unexpected error occurred: "spawn EIO".\n';
+    assert.equal(hostSpawnFault({ status: 1 }, YARN_EIO), 'EIO', 'yarn reporting its own failed spawn is a host fault');
+    assert.match(hostSpawnFault({ error: { code: 'EAGAIN' } }, ''), /^EAGAIN /, 'this suite own spawnSync failing is a host fault too');
+    // The STRUCTURAL error is about `bash`, never about the runner: ENOENT there means the shell
+    // could not be started, so it carries no verdict either — the exclusion below is TEXT-only.
+    assert.match(hostSpawnFault({ error: { code: 'ENOENT' } }, ''), /^ENOENT .*shell never started/, 'a structural ENOENT is bash, not the runner');
+    assert.match(hostSpawnFault({ error: { code: 'EACCES' } }, ''), /^EACCES .*shell never started/, 'and so is a structural EACCES');
+    assert.equal(hostSpawnFault({ status: 1 }, "error Couldn't find the binary vitest\n"), null, 'a runner-not-found refusal is NOT a host fault');
+    assert.equal(hostSpawnFault({ status: 1 }, 'spawn vitest ENOENT\n'), null, 'ENOENT stays the oracle refusal, never absorbed');
+    assert.equal(hostSpawnFault({ status: 1 }, 'spawn vitest EACCES\n'), null, 'EACCES stays the oracle refusal, never absorbed');
+    assert.equal(hostSpawnFault({ status: 1 }, 'EIO reading the lockfile\n'), null, 'an errno with no spawn beside it is not a non-start');
+    assert.equal(
+      hostSpawnFault({ status: 1 }, 'spawn vitest ENOENT; cleanup EIO\n'),
+      null,
+      'a real refusal followed by an unrelated errno on ONE line stays a refusal — the errno binds to the spawn grammar, not to the line',
+    );
+    assert.equal(hostSpawnFault({ status: 1 }, 'spawn vitest EAGAIN\n'), 'EAGAIN', 'the DEFERRED form carries the binary name and is still a non-start');
+    assert.doesNotMatch(YARN_EIO, NOT_FOUND, 'the refusal pattern was never widened to absorb the fault');
   });
 
-  it('yarn: a missing runner fails closed locally, no network', { skip: !YARN_AVAILABLE || onPath('vitest') }, () => {
+  it('pnpm: a missing runner fails closed locally, no network', { skip: !PNPM_AVAILABLE || onPath('vitest') }, (t) => {
+    mkProject({ scripts: { test: 'vitest run' }, lockfile: 'pnpm-lock.yaml' });
+    const r = spawnSeeded(seededCmdOf('test'));
+    const out = `${r.stdout}\n${r.stderr}`;
+    if (skipOnHostFault(t, r, out)) return;
+    assert.notEqual(r.status, 0, 'fail-closed');
+    assert.match(out, NOT_FOUND, 'a runner-not-found refusal, never an executed-and-failed runner');
+  });
+
+  it('yarn: a missing runner fails closed locally, no network', { skip: !YARN_AVAILABLE || onPath('vitest') }, (t) => {
     mkProject({ scripts: { test: 'vitest run' }, lockfile: 'yarn.lock' });
     const r = spawnSeeded(seededCmdOf('test'));
-    assert.notEqual(r.status, 0, 'fail-closed');
     const out = `${r.stdout}\n${r.stderr}`;
+    if (skipOnHostFault(t, r, out)) return;
+    assert.notEqual(r.status, 0, 'fail-closed');
     assert.match(out, NOT_FOUND, 'a runner-not-found refusal, never an executed-and-failed runner');
     assert.doesNotMatch(out, /Command failed\.?\s*\n?\s*Exit code:/i, 'must not be the yarn executed-and-failed signature');
   });

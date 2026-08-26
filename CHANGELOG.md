@@ -7,6 +7,24 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-26 — AD-121 no work without a specification (kit 10.1.0, MINOR)
+
+**A contract stops being a suggestion.** A shipped tool that no LIVE contract under `docs/ai/specs/`
+claims is now a REFUSAL, enforced by `spec-coverage --check` and declared as a gate. Each contract's
+own `## Module` list IS the coverage map, so coverage is never declared twice. Measured at adoption
+in this repo: **122 tool modules, 14 governed by a contract.**
+
+The other 108 are recorded as debt — and the debt is DERIVED, not stored: `adopted` is the set
+measured once and never rewritten, `settled` names the paths whose contract has since been written,
+and what is owed is the difference. There is no list a hand can edit into a lie; the one editable
+claim, "this was paid", is checked against the contracts on every run. Storing the debt directly was
+the first design and a review killed it: nothing obliged anyone to use the safe write path.
+
+The scope file is validated before use (a census of zero REFUSES — a gate that passes because it
+looked at nothing is not a pass), exclusions are path-component boundaries, and `draft` / `retired`
+contracts cover nothing. Also in this release: `spec-check` counts a scenario marker as a whole
+ordinal, so a store reaching ten scenarios no longer refuses a correct binding.
+
 ## 2026-08-26 — AD-119 a symlinked docs file gets named instead of skipped (kit 10.0.0 · memory 7.0.0, both MAJOR)
 
 **A gate that skips silently is a gate that lies.** The docs cap-validator kept a walk entry only

@@ -106,12 +106,27 @@ export const runProcess = (command, args, {
 
   // stdin is never inherited: a child that cannot reach the terminal cannot prompt on it, whatever
   // its own environment says.
-  const child = spawnImpl(command, args, {
-    cwd,
-    env: { ...env, ...extraEnv },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: true,
-  });
+  //
+  // Node DEFERS exactly five spawn errnos to an `error` event — EACCES, EAGAIN, EMFILE, ENFILE,
+  // ENOENT (measured in node v24, internal/child_process); every OTHER errno is thrown straight out
+  // of `spawn`, EIO among them. The two forms even read differently: the deferred one builds its
+  // message as `'spawn ' + spawnfile` and sets `err.path`, the thrown one builds plain `'spawn'`.
+  // Uncaught, such a throw leaves this leaf as a REJECTED promise — the one shape the contract has
+  // no room for, since every caller reads the outcome out of `error`. A synchronous throw states the
+  // same fact as the deferred event, that no process was created, so it settles through the same path.
+  let child;
+  try {
+    child = spawnImpl(command, args, {
+      cwd,
+      env: { ...env, ...extraEnv },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
+    });
+  } catch (err) {
+    state.error = err;
+    settle();
+    return;
+  }
 
   child.stdout?.on('data', (chunk) => stdoutChunks.push(Buffer.from(chunk)));
   child.stderr?.on('data', (chunk) => stderrChunks.push(Buffer.from(chunk)));

@@ -159,6 +159,19 @@ describe('git-process — the result stays lossless', () => {
     assert.deepEqual(clock.armed, [], 'without a pid there is no process to bound, so no deadline is armed');
   });
 
+  // Node defers exactly five spawn errnos to an `error` event (EACCES, EAGAIN, EMFILE, ENFILE,
+  // ENOENT); every other one is thrown straight out of `spawn` — measured here: EIO — and uncaught
+  // it escapes this leaf as a REJECTION. The whole result is pinned, not just the error: a
+  // non-start must answer in the same five fields as every other outcome.
+  it('a spawn that THROWS settles like one that emits — a named cause, never a rejection', async () => {
+    const thrown = Object.assign(new Error('spawn EIO'), { code: 'EIO', errno: -5, syscall: 'spawn' });
+    const clock = timerHarness();
+    const res = await runProcess('git', ['status'], { spawnImpl: () => { throw thrown; }, ...clock });
+    assert.deepEqual(res, { status: null, stdout: '', stderr: '', error: thrown, signal: null });
+    assert.equal(res.error, thrown, 'the platform error object reaches the caller, never re-wrapped');
+    assert.deepEqual(clock.armed, [], 'no process was created, so no deadline is armed');
+  });
+
   // Red against the alternative the round-1 review prescribed: waiting for `close` after a spawn
   // error. Node documents that close "may or may not" follow error, and no deadline is armed without
   // a pid — so that wait is unbounded in the one leaf that exists to be bounded. Measured live, the
