@@ -7,6 +7,31 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-26 — AD-119 a symlinked docs file gets named instead of skipped (kit 10.0.0 · memory 7.0.0, both MAJOR)
+
+**A gate that skips silently is a gate that lies.** The docs cap-validator kept a walk entry only
+when `entry.isFile()` — FALSE for a symlink, as is `isDirectory()` — so a symlinked `*.md` under
+`docs/ai` fell through both arms and left the walk entirely: no cap check, no missing-frontmatter
+error, no navigator row, and not counted in the report's own file total either. Probed live, a tree
+with one real over-cap doc and two symlinks reported `1 files inspected  —  1 error(s)`, which is
+what turns a gap into a false report. Such a link, and one resolving to a directory, is now a NAMED
+error row that is never read.
+
+MAJOR on both because a docs tree that was green can now go RED with no edit of its own. Two scopes,
+the second wider than the first: a symlinked docs FILE produces an error row, and `--check-index`
+now runs the navigator's containment guard BEFORE it reads — so on a chain the walk can traverse, a
+symlink at the project root, `docs`, `docs/ai` or `docs/ai/index.md` exits 2 where the mode used
+to compare and pass. That is the guard `--write-index` and `--ensure-index` already ran. A chain the
+walk cannot traverse at all still ends the run as it always did, before any guard — unchanged here.
+
+It bites only once the new bytes reach a project's `scripts/`: a fresh bootstrap, a
+`migrate-adr-store` refresh, the `specs` ensure's prior-matched lane, or a hand copy — an ordinary
+install does not overwrite a deployed `check-docs-size.mjs`. The gate names the path and which case
+it is; the remedy is to replace it with a real file or a real directory, whichever it stands for, or
+move it out of `docs/ai`. For a symlink on the navigator's own chain, regeneration is itself refused,
+so `--write-index` cannot clear the gate — only replacing the link can. Package changelogs carry the
+per-package detail, including what this deliberately does NOT move.
+
 ## 2026-08-25 — AD-118 a rolling archive stamps a cap it can honour (kit 9.0.0 · memory 6.0.0, both MAJOR)
 
 **The archiver emitted files its own gate refuses.** Each tier's frontmatter `maxLines` was a

@@ -4,6 +4,57 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 7.0.0 — a symlinked docs file gets named instead of skipped (AD-119)
+
+The docs cap-validator discovered files through `readdir(dir, { withFileTypes: true })` and kept an
+entry only when `entry.isFile()`. For a symlink that predicate is FALSE — and so is `isDirectory()`
+— so a symlinked `*.md` under `docs/ai` fell through BOTH arms of the walk and left it entirely.
+Probed: a temp tree holding a 14-line `real.md` under `maxLines: 3`, a `linked.md` pointing at it and
+an `escaped.md` pointing outside `docs/ai` reported `1 files inspected  —  1 error(s)`. No cap check,
+no missing-frontmatter error, no staleness check, no navigator row — and not counted in the file
+total either, which is what made it a lie rather than a gap.
+
+> ### ⚠ BREAKING — a docs tree that was green can now go RED
+>
+> A symlink under `docs/ai` named `*.md`, or resolving to a directory, is now a NAMED error row and
+> is never read.
+>
+> `--check-index` additionally runs the navigator's containment guard BEFORE it reads. On a chain
+> the walk can TRAVERSE, that guard rejects a symlink at the project root, `docs`, `docs/ai` or
+> `docs/ai/index.md` and exits 2 — where the mode used to compare and pass. It is the same guard
+> `--write-index` and `--ensure-index` already applied. (A chain the walk cannot traverse at all —
+> a dangling or unreadable `docs/ai` — still ends the run as it always did, before any guard; only
+> `--ensure-index` promises one named line there. That is unchanged by this release.)
+> Reading through a link matters because `buildIndex` drops the navigator's own row, so a symlinked
+> `index.md` whose target held the current bytes compared EQUAL and reported it fresh (measured:
+> exit 0 before, exit 2 after).
+>
+> **When it bites.** Only a deployment that actually has such a symlink — and only once these bytes
+> reach its `scripts/`, which happens on a fresh bootstrap, a `migrate-adr-store` refresh, a
+> prior-matched `specs` ensure, or a hand copy; installing this package does not overwrite an
+> existing deployed `check-docs-size.mjs`. Such a project sees `docs-caps` turn red with no edit of
+> its own. For a symlinked docs FILE, `docs-index` reds until the navigator is regenerated with that
+> link's row. For a symlink on the navigator's own chain the regeneration is itself REFUSED, so
+> `--write-index` cannot clear it — only replacing the link can.
+>
+> **Remedy.** Replace it with a real file or a real directory, whichever it stands for, or move it out
+> of `docs/ai`. The gate names the path and which case it is.
+
+**What is deliberately preserved.** A symlinked NON-`.md` regular file is still skipped, so the
+pinned `orchestration.json` skip is unchanged; a tree with no symlink under `docs/ai` writes a
+byte-identical navigator; and an over-cap REAL `adr/` record still collapses into the aggregate row,
+because the collapse guard keys on the refusal and never on `errors.length`. Each is pinned by its
+own arm.
+
+**Only `ENOENT` and `ENOTDIR` mean "nothing is there".** The name decides first — a link named `*.md`
+is refused with no `stat` at all — and only a differently named one is stat'ed, to learn whether it
+stands where a directory would and would hide a whole subtree. Every other code (`EACCES`, `EIO`,
+`ELOOP` from a symlink cycle) yields a named refusal carrying the code, because treating an
+unclassifiable link as a skip is how the subtree behind it escapes all over again.
+
+`walkMarkdownFiles` keeps its exact historical one-argument signature and contract: the `*.md` files
+a run may READ. A refused symlink is not one of them — it is a row, not a file.
+
 ## 6.0.0 — a rolling archive stamps a cap it can honour, and refuses past a ceiling (AD-118)
 
 The changelog archiver wrote each tier's frontmatter `maxLines` as a LITERAL in the builder that

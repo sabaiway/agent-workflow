@@ -4,6 +4,51 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 10.0.0 — a symlinked docs file gets named instead of skipped (AD-119)
+
+Mirrors the memory canon: `references/scripts/check-docs-size.mjs` no longer lets a symlinked docs
+file leave the walk in silence. The predicate `entry.isFile()` is FALSE for a symlink and so is
+`isDirectory()`, so a symlinked `*.md` under `docs/ai` fell through both arms of the walk and was not
+even counted in the report's file total.
+
+> ### ⚠ BREAKING — a docs tree that was green can now go RED
+>
+> A symlink under `docs/ai` named `*.md`, or resolving to a directory, is a NAMED error row and is
+> never read.
+>
+> `--check-index` additionally runs the navigator's containment guard BEFORE it reads. On a chain
+> the walk can TRAVERSE, that guard rejects a symlink at the project root, `docs`, `docs/ai` or
+> `docs/ai/index.md` and exits 2 — where the mode used to compare and pass; it is the same guard
+> `--write-index` and `--ensure-index` already applied. (A chain the walk cannot traverse at all
+> still ends the run as it always did, before any guard — unchanged by this release.) It matters
+> because `buildIndex` drops the navigator's own row, so a symlinked `index.md` whose target held
+> the current bytes compared EQUAL and reported it fresh.
+>
+> **When it bites.** Only a deployment that actually has such a symlink, and only once these bytes
+> reach its `scripts/`. `init` does NOT overwrite an existing deployed `check-docs-size.mjs`; the
+> paths that do land it are a fresh bootstrap, a `migrate-adr-store` refresh, and the `specs` ensure's
+> prior-matched refresh lane — which is what the catalog row below is for.
+>
+> **Remedy.** Replace it with a real file or a real directory, whichever it stands for, or move it out
+> of `docs/ai`. The gate names the path and which case it is. For a symlink on the NAVIGATOR's own
+> chain, note that regeneration is itself refused — `--write-index` cannot clear it, only replacing
+> the link can.
+
+**Deployments on the previous body stay upgradeable.** The prior catalog gains
+`check-docs-size.mjs` `4.6.0..6.0.0`, so a project still carrying that body classifies `prior`
+and remains inside the refresh lane instead of stranding as `custom` — which is what would otherwise
+withhold every write that lane gates.
+
+**Preserved, each pinned by its own arm.** A symlinked NON-`.md` regular file is still skipped; a
+tree with no symlink under `docs/ai` writes a byte-identical navigator; an over-cap REAL `adr/`
+record still collapses into the aggregate row, because the guard keys on the refusal and never on
+`errors.length`; and `walkMarkdownFiles` keeps its exact historical one-argument signature, which is
+why the parity-frozen spec file needed no edit.
+
+**Only `ENOENT` and `ENOTDIR` mean absence.** Every other `stat` code — `EACCES`, `EIO`, `ELOOP` from
+a symlink cycle — leaves the kind UNKNOWN and yields a named refusal carrying the code. Treating an
+unclassifiable link as a skip is exactly how the subtree behind it escapes again.
+
 ## 9.0.0 — the archiver's cap table ships, and the migration seeds it behind its importer (AD-118)
 
 Memory **6.0.0** replaces the changelog archiver's fixed cap literals with a stamp it can honour,

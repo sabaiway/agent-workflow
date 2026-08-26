@@ -178,22 +178,68 @@ export const parseStaleAfter = (value) => {
   return Number(m[1]);
 };
 
-// Discover the docs to validate: ONLY `*.md` files (recursively). Non-`.md` files — e.g. a hand-edited
-// `docs/ai/orchestration.json` config — are inherently skipped, so they are never subject to the
-// frontmatter / maxLines caps. Exported so that skip is pinned by a regression test.
-export const walkMarkdownFiles = async (dir) => {
-  const entries = await readdir(dir, { withFileTypes: true });
-  const files = [];
+// A symlink is neither `isFile()` nor `isDirectory()`, so it used to fall through BOTH arms of the
+// walk and leave it entirely — silently, not even counted in the report's file total. It is REFUSED
+// instead, and the NAME decides first: a link named `*.md` is refused with no stat at all, and only
+// a differently named one is stat'ed, to learn whether it stands where a directory would and would
+// therefore hide a whole subtree. A stat that throws leaves a link this run cannot classify, which
+// is a refusal only when the name already put it in scope — so a dangling `notes.txt` link stays as
+// out of scope as a real one. Refusing rather than FOLLOWING is deliberate: following would need
+// realpath, a containment test and a cycle guard, while the write side of this very module already
+// refuses to publish through a link (assertContainedNoSymlink).
+// The ONLY stat failures that mean "there is nothing there": the target is absent, or a path
+// component is not a directory. Every other code — EACCES, EIO, and ELOOP from a symlink cycle —
+// means the kind is UNKNOWN, and "unknown" must never read as "skip": that is how a link standing
+// where a directory would, with a whole `.md` subtree behind it, would silently escape again.
+const ABSENT_STAT_CODES = new Set(['ENOENT', 'ENOTDIR']);
+
+const symlinkRefusal = async (full, name, statPath) => {
+  if (name.endsWith('.md')) {
+    return 'is a symlink — the caps gate reads only real files it owns; replace it or move it out of docs/ai';
+  }
+  try {
+    if (!(await statPath(full)).isDirectory()) return null;
+  } catch (err) {
+    if (ABSENT_STAT_CODES.has(err?.code)) return null;
+    return `is a symlink this run could not classify (${err?.code ?? 'unknown'}) — it may stand where a directory would and hide a whole subtree; resolve it or move it out of docs/ai`;
+  }
+  return 'is a symlink to a directory — its whole subtree would escape the caps gate; replace it or move it out of docs/ai';
+};
+
+// Discover what the docs walk found: ONLY `*.md` files (recursively) plus the symlinks it refuses.
+// Non-`.md` files — e.g. a hand-edited `docs/ai/orchestration.json` config — are inherently skipped,
+// so they are never subject to the frontmatter / maxLines caps. Each entry is `{ path, refusal }`:
+// a refusal rides out as a row nobody reads, never as a file nobody sees.
+const walkDocsEntries = async (dir, deps = {}) => {
+  const readDir = deps.readdir ?? readdir;
+  const statPath = deps.stat ?? stat;
+  const entries = await readDir(dir, { withFileTypes: true });
+  const found = [];
   for (const entry of entries) {
     const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...(await walkMarkdownFiles(full)));
+    if (entry.isSymbolicLink()) {
+      const refusal = await symlinkRefusal(full, entry.name, statPath);
+      if (refusal !== null) found.push({ path: full, refusal });
+    } else if (entry.isDirectory()) {
+      found.push(...(await walkDocsEntries(full, deps)));
     } else if (entry.isFile() && entry.name.endsWith('.md')) {
-      files.push(full);
+      found.push({ path: full, refusal: null });
     }
   }
-  return files;
+  return found;
 };
+
+// The historical export, signature and contract BOTH unchanged: the `*.md` files this run may READ,
+// as paths, from one argument. A refused symlink is not one of them — it is a row, not a file — so
+// the pinned non-`.md` skip still reads exactly as it always did. The entry walk above and the
+// comparator below stay private: they are this module's internals, and the injectable they carry has
+// no business in a deployed script's public surface.
+export const walkMarkdownFiles = async (dir) =>
+  (await walkDocsEntries(dir)).filter((entry) => entry.refusal === null).map((entry) => entry.path);
+
+// The walk's ORDER is unchanged: a bare `.sort()` over the old string list compared UTF-16 code
+// units, and `<`/`>` on strings compares them the same way.
+const byPath = (a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 
 export const computeToday = (todayStr) =>
   todayStr
@@ -206,11 +252,19 @@ export const computeToday = (todayStr) =>
 const readSpecVerdict = (rel, text) =>
   rel.startsWith(SPECS_COLLAPSE.prefix) ? readSpecDocument(text, rel.slice(SPECS_COLLAPSE.prefix.length)) : null;
 
-export const inspectFile = async (filePath, today, root = ROOT) => {
+// Takes a walk entry; a bare path string still works, so a caller holding one file keeps its call.
+export const inspectFile = async (found, today, root = ROOT) => {
+  const filePath = typeof found === 'string' ? found : found.path;
+  const refusal = typeof found === 'string' ? null : found.refusal;
+  const rel = relative(root, filePath);
+  // A refused entry is REPORTED, never read — reading through the link is the whole thing being
+  // refused. `refused` rides the row so the navigator's collapse can keep it visible.
+  if (refusal) {
+    return { path: rel, lineCount: 0, frontmatter: null, spec: null, refused: true, errors: [refusal], warnings: [] };
+  }
   const text = await readFile(filePath, 'utf8');
   const lineCount = text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
   const fm = parseFrontmatter(text);
-  const rel = relative(root, filePath);
   const spec = readSpecVerdict(rel, text);
 
   if (!fm) {
@@ -330,8 +384,11 @@ const formatSpecsCollapseRow = (specRows) => {
   return `| ${link} | ${SPECS_COLLAPSE.type} | ${count('spec')} specs | ${count('part')} parts · ${count('index')} indexes | — |`;
 };
 
+// Membership keys on the REFUSAL, never on `errors.length`: a refused symlink is exactly the row
+// this gate exists to make visible, so it must not be absorbed into a count — while an over-cap or
+// frontmatter-less REAL record keeps collapsing as it always did, so no deployment's navigator moves.
 const COLLAPSE_GROUPS = [
-  { sortPath: ADR_DIR_PREFIX, isMember: (r) => r.path.startsWith(ADR_DIR_PREFIX) && (ADR_RECORD_RE.test(r.path) || r.path === ADR_NAV_PATH), format: formatAdrCollapseRow },
+  { sortPath: ADR_DIR_PREFIX, isMember: (r) => !r.refused && r.path.startsWith(ADR_DIR_PREFIX) && (ADR_RECORD_RE.test(r.path) || r.path === ADR_NAV_PATH), format: formatAdrCollapseRow },
   { sortPath: SPECS_COLLAPSE.prefix, isMember: (r) => Boolean(r.spec) && r.spec.errors.length === 0, format: formatSpecsCollapseRow },
 ];
 
@@ -398,15 +455,18 @@ const lstatNoFollow = (target, lstat) => {
 
 // The target is always DERIVED from `root` here (the navigator and its temp sibling), never handed
 // in by a caller, so there is no escape arm to guard: what remains is the no-follow walk.
-const assertContainedNoSymlink = (root, target, lstat) => {
+// `verb` names what the CALLER was about to do, because the refusal is now shared with a read-only
+// mode: `--check-index` compares the navigator's bytes, and a comparison that followed a link would
+// judge a file this deployment does not own.
+const assertContainedNoSymlink = (root, target, lstat, verb = 'write') => {
   const rel = relative(root, target);
   if (lstatNoFollow(root, lstat)?.isSymbolicLink()) {
-    throw refuse(`${root} is a symlink — refusing to write the navigator through it`);
+    throw refuse(`${root} is a symlink — refusing to ${verb} the navigator through it`);
   }
   rel.split(sep).filter(Boolean).reduce((walked, part) => {
     const current = join(walked, part);
     if (lstatNoFollow(current, lstat)?.isSymbolicLink()) {
-      throw refuse(`${current} is a symlink — refusing to write the navigator through it`);
+      throw refuse(`${current} is a symlink — refusing to ${verb} the navigator through it`);
     }
     return current;
   }, root);
@@ -452,7 +512,7 @@ const writeIndex = async (rows, today, meta, { root = ROOT, indexPath = INDEX_PA
 export const regenerateIndex = async (root, todayStr = null, deps = {}) => {
   const paths = pathsFor(root);
   const today = computeToday(todayStr);
-  const files = (await walkMarkdownFiles(paths.docsDir)).sort();
+  const files = (await walkDocsEntries(paths.docsDir, deps)).sort(byPath);
   const inspected = await Promise.all(files.map((f) => inspectFile(f, today, paths.root)));
   const rows = inspected.map(formatRow);
   const meta = await discoverMeta(paths.root);
@@ -474,7 +534,7 @@ const runEnsureIndex = async ({ root, docsDir, indexPath, today, deps }) => {
   let writing = false;
   try {
     assertContainedNoSymlink(root, indexPath, lstat);
-    const files = (await walkMarkdownFiles(docsDir)).sort();
+    const files = (await walkDocsEntries(docsDir, deps)).sort(byPath);
     const inspected = await Promise.all(files.map((file) => inspectFile(file, today, root)));
     const rows = inspected.map(formatRow);
     const meta = await discoverMeta(root, { strict: true, deps });
@@ -523,7 +583,7 @@ export const runCli = async (argv, deps = {}) => {
     return result(code);
   }
 
-  const files = (await walkMarkdownFiles(docsDir)).sort();
+  const files = (await walkDocsEntries(docsDir, deps)).sort(byPath);
   const inspected = await Promise.all(files.map((f) => inspectFile(f, today, root)));
   const rows = inspected.map(formatRow);
 
@@ -545,6 +605,16 @@ export const runCli = async (argv, deps = {}) => {
   }
 
   if (flags.checkIndex) {
+    // BEFORE the read, and by NAME: `buildIndex` drops the navigator's own row, so a symlinked
+    // index.md contributes nothing to compare against — and a link whose target happened to hold
+    // the current bytes would compare EQUAL and report the navigator fresh. Freshness can never
+    // see this one; only the containment walk can.
+    try {
+      assertContainedNoSymlink(root, indexPath, deps.lstat ?? lstatSync, 'read');
+    } catch (err) {
+      logError(`[check-docs-size] FAIL: ${indexPath}: ${err.message}`);
+      return result(2);
+    }
     const onDisk = existsSync(indexPath) ? await readFile(indexPath, 'utf8') : null;
     const { fresh } = checkIndexFreshness(rows, onDisk, meta);
     if (!fresh) {
