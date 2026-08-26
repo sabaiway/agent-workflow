@@ -4,6 +4,22 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 4.1.0 — the queue is a named surface with a checker, not a prose promise
+
+`references/planning.md` gains **`## The queue`**: `docs/plans/queue.md` NAMES work and never holds
+the analysis of it — a row is one plain sentence saying what the work is and for whom, then its id,
+then a short body, while measurements and `file:line` citations belong to an ADR or the record the
+row points at. A row that goes terminal is DELETED in the same change that mints its closing
+artifact, and where the queue is gitignored the deleted text is first written to a purge archive,
+because there git history is no tombstone. Frozen work with a stated resume condition is not
+terminal and stays, in its own bucket; order inside a bucket IS priority.
+
+The canon names its own rung and the command that runs it, because a prose promise to trim later was
+measured failing — 62 dead rows had accumulated by the time anybody counted.
+
+`references/procedures.md` points at the new section by named anchor and stays the terse pointer it
+is meant to be (its own test asserts it stays smaller than the canon it binds to).
+
 ## 4.0.0 — the scenario floor, and five answers the canon now states at its own points of use (AD-117)
 
 Slice 4 wrote the layer's first real specs and came back with six questions the canon had left for

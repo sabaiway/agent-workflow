@@ -7,7 +7,7 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
-## 2026-08-26 — AD-121 no work without a specification (kit 10.1.0, MINOR)
+## 2026-08-26 — AD-121 no work without a specification (kit 10.1.0 · engine 4.1.0, both MINOR)
 
 **A contract stops being a suggestion.** A shipped tool that no LIVE contract under `docs/ai/specs/`
 claims is now a REFUSAL, enforced by `spec-coverage --check` and declared as a gate. Each contract's
@@ -24,6 +24,12 @@ The scope file is validated before use (a census of zero REFUSES — a gate that
 looked at nothing is not a pass), exclusions are path-component boundaries, and `draft` / `retired`
 contracts cover nothing. Also in this release: `spec-check` counts a scenario marker as a whole
 ordinal, so a store reaching ten scenarios no longer refuses a correct binding.
+
+**Engine 4.1.0** carries the other half: `references/planning.md` gains `## The queue` — the backlog
+NAMES work and never holds the analysis of it, a terminal row is deleted in the same change that
+mints its closing artifact, and where the queue is gitignored the deleted text goes to a purge
+archive first. The canon names the runnable checker instead of promising the discipline in prose,
+which had been measured failing at 62 dead rows.
 
 ## 2026-08-26 — AD-119 a symlinked docs file gets named instead of skipped (kit 10.0.0 · memory 7.0.0, both MAJOR)
 
