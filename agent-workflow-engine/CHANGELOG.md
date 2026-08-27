@@ -4,6 +4,21 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 4.2.0 — a zero governing-spec citation names the adoption state it relies on (AD-123)
+
+`references/agent-rules-lens.md`'s **Spec-first** bullet, `references/planning.md`'s *Goal and boundary*
+and `references/specs.md`'s *Governing specs are plural* said a plan may cite ZERO governing specs
+"during adoption" — and nothing defined adoption, so "zero, every plan, forever" read exactly like
+adopting. Each now says the same thing at its own point of use: a ZERO names the state it relies on —
+`not adopted` (no store, or a recorded decline), `adopting` (a store with no live contract) or
+`nothing spec-covered touched` (a store with live contracts) — and a bare zero is never a licence; the
+store's own state is what the kit's `status` and upgrade advisor report.
+
+The outgoing lens body is appended to `agent-rules-lens-priors.md` (append-only), so every deployed
+`agent_rules.md` on the previous wording refreshes on the next upgrade instead of reading as a custom
+edit; `test/lens-fragment.test.mjs` computes the outgoing body by swapping the Spec-first line back and
+pins the tokens `adoption state` and `never a licence`.
+
 ## 4.1.0 — the queue is a named surface with a checker, not a prose promise
 
 `references/planning.md` gains **`## The queue`**: `docs/plans/queue.md` NAMES work and never holds

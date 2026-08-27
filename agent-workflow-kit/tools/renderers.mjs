@@ -8,6 +8,7 @@
 // Pure, no side effects, Node >= 22.
 
 import { BLOCK_TITLES, SETTINGS_LABELS, glyphsFor, NO_DEPLOYMENT } from './presentation.mjs';
+import { describeAdoption } from './spec-adoption.mjs';
 
 const MEMBER_COL = 20;
 const VERSION_COL = 12;
@@ -95,6 +96,14 @@ const renderProject = (vm, { color }) => {
   // old-scheme rotator that never rotated) differ only in the discriminator, never in the remedy.
   if (ACTIONABLE_ADR_LAYOUTS.includes(p.adrLayout)) {
     lines.push(`  ${pad('ADR store', STAMP_COL)}old layout — run /agent-workflow-kit migrate-adr-store`);
+  }
+  // Every state renders — an owner opens this surface deliberately, so "not adopted" is the one line
+  // that must never be missing; an envelope without the field says so rather than inventing a state.
+  if (p.specs) {
+    const declineNote = p.specs.declineError ? ` (decline ack unreadable: ${p.specs.declineError})` : '';
+    lines.push(`  ${pad('specs', STAMP_COL)}${describeAdoption(p.specs, { declined: p.specs.declined })}${declineNote}`);
+  } else {
+    lines.push(`  ${pad('specs', STAMP_COL)}unknown — the installed kit predates the adoption state`);
   }
   if (p.visibility) {
     const v = p.visibility.error ? `error: ${p.visibility.error}` : p.visibility.phrase;

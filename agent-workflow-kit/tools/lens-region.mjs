@@ -62,7 +62,10 @@ Apply this as part of §2 before any user-facing summary:
 - **No condescension, no filler.** Own a miss plainly and fix it in the same message.
 - **Large artifact (≈>100 lines):** deliver a real summary or the key excerpt inline **and** link the file — never flood the reader with a 2000-line paste, never hide the answer behind a bare pointer.
 - **Live host/session facts are tool-composed only.** Any claim about the current host or session state (prompts fired, sandbox scope, whether a bypass was needed, network reachability, approval counts) must trace to **live tool output** from **this session**; a memory/handover snapshot is **context, never report facts**, and a claim with no live signal is **omitted or explicitly marked unverified** — never asserted from recollection.`;
-export const COMMS_PRIORS = [COMMS_PRIOR_PRE_AD054, COMMS_PRIOR_AD054, COMMS_PRIOR_PLAIN_LANGUAGE];
+// The canon that shipped between the closing-state-block contract and the contradicted-skip bullet.
+const COMMS_PRIOR_STATE_BLOCK = `${COMMS_PRIOR_PLAIN_LANGUAGE}
+- **The closing state block answers three DIFFERENT questions.** Close a user-facing message with three labelled slots — *now* · *what I need from you* · *what's next*. The slot LABELS stay ENGLISH — an English label is what lets a state-block checker FIND the block and its slots at all; everything written INTO a slot is in the project's dialogue language; when that language is not English, the checker's English phrase sets do not judge those values. **Now** = the state at this instant: what is RUNNING, or what the work is stopped on. It is **never a report of finished work** — what you completed goes in the message BODY, above the block. **From you** = the real unblocker, named; a turn that is ENDING always has one. **Next** = what follows. A *now* slot that opens with what was completed buries the one fact the reader opened the message for, and the three slots collapse into one restatement.`;
+export const COMMS_PRIORS = [COMMS_PRIOR_PRE_AD054, COMMS_PRIOR_AD054, COMMS_PRIOR_PLAIN_LANGUAGE, COMMS_PRIOR_STATE_BLOCK];
 
 const stripCr = (line) => (line.endsWith('\r') ? line.slice(0, -1) : line);
 const isBoundary = (bareLine) => bareLine === '---' || /^#{2,3} /.test(bareLine);

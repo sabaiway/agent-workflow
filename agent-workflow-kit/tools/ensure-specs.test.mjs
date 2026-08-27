@@ -5,7 +5,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -259,11 +259,34 @@ describe('the create-only race — a file that appears under the seed is re-prov
 });
 
 describe('fail-closed arms', () => {
-  it('a project with no package.json is a stated skip', () => {
+  // spec:node-evidence/S7 — the same three evidence arms as the scripts ensure, on the spec layer.
+  it('a project with NO Node evidence is a stated skip naming every probe', () => {
     withProject({}, (dir) => {
       const r = run(dir);
-      assert.equal(r.token, 'skipped-no-node');
+      assert.equal(r.token, 'skipped-no-node-evidence');
+      assert.equal(r.failed, false);
       assert.equal(existsSync(join(dir, 'scripts')), false);
+      assert.match(r.lines.join('\n'), /probed package\.json and the kit-seeded scripts\/ files/);
+    }, { node: false });
+  });
+
+  it('a deployed kit checker WITHOUT a package.json is Node evidence — the layer seeds', () => {
+    withProject({ checker: ['current', 'current'] }, (dir) => {
+      const r = run(dir);
+      assert.equal(r.token, 'seeded', r.lines.join('\n'));
+      allCurrent(dir);
+      storeSeeded(dir);
+    }, { node: false });
+  });
+
+  it('an UNREADABLE Node probe fails closed — nothing is written', () => {
+    withProject({ checker: ['prior', 'prior'] }, (dir) => {
+      const before = snapshot(dir);
+      const lstat = (p) => { if (p.endsWith('package.json')) throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); return lstatSync(p); };
+      const r = ensureSpecs({ cwd: dir, kitRoot: KIT_ROOT, deps: { today: TODAY, lstat } });
+      assert.equal(r.token, 'failed');
+      assert.match(r.lines[0], /^node-evidence-unverifiable — scripts\/: whether Node runs here could not be read \(EACCES on package\.json\)/);
+      assert.deepEqual(snapshot(dir), before);
     }, { node: false });
   });
 

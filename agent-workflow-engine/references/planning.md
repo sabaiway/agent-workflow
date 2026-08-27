@@ -25,7 +25,9 @@ independently verifiable boundaries, never by document size — or it is a SWEEP
 
 - **Goal and boundary** (10 lines) — the observable outcome, what behaviour is preserved, explicit
   non-goals, and the GOVERNING spec(s) ([`specs.md`](specs.md)): zero, one or many — one per touched
-  spec-covered slice — each cited spec's Out of scope restated as a non-goal for that slice.
+  spec-covered slice — a ZERO names the adoption state it relies on (not adopted · adopting — either
+  with a recorded decline — · nothing spec-covered touched); a bare zero is never a licence. Each
+  cited spec's Out of scope is restated as a non-goal for that slice.
 - **Module ledger** (60 lines) — the single list of paths, and the plan's execution order.
 - **Verification** (20 lines) — the acceptance check, plus one command that validates the whole ledger.
 - **Phase: Cleanup** and **Next steps** (human-actionable only) share the 10 reserved lines.

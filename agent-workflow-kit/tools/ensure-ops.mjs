@@ -16,8 +16,8 @@
 //   • The DECISION lives where it already lived. The orchestration `_README` refresh asks
 //     orchestration-config.mjs (refreshReadme / the known-prior canonical set) and writes through
 //     orchestration-write.mjs — the file's one writer. Nothing here re-derives either.
-//   • Every token names a state this run PROVED. `already-present` follows a probe; `skipped-no-node`
-//     names the missing package.json; an ADR-layout read that fails is `adr-layout-unverifiable` and
+//   • Every token names a state this run PROVED. `already-present` follows a probe; `skipped-no-node-evidence`
+//     names every Node probe that answered absent; an ADR-layout read that fails is `adr-layout-unverifiable` and
 //     writes NOTHING (the STRICT survey, fail-closed — the lenient status wrapper reads an unreadable
 //     tree as `none`, which here would mean seeding a rotator beside a store nobody could inspect).
 //   • A failed op is a non-zero signal, never a line that reads like success.
@@ -34,6 +34,7 @@ import { GATES_REL } from './gates-declaration.mjs';
 import { AUTONOMY_REL } from './autonomy-config.mjs';
 import { surveyAdrLayoutStrict } from './family-registry.mjs';
 import { ENSURE_TOKENS, FAILURE_CAUSES, SEED_SCRIPTS } from './ensure-vocabulary.mjs';
+import { NODE_EVIDENCE, describeNodeProbes, probeNodeEvidence } from './node-evidence.mjs';
 
 // The closed vocabulary lives in its own PURE leaf so the read-only doc-parity lint can bind the
 // relayed token set without importing this module's writer graph. Re-exported here because every
@@ -49,7 +50,6 @@ export {
   WRITE_TOKENS,
 } from './ensure-vocabulary.mjs';
 
-const PACKAGE_JSON = 'package.json';
 const SCRIPTS_DIR = 'scripts';
 
 const outcome = (op, token, lines, failed = false) => {
@@ -204,9 +204,19 @@ export const ensureAutonomy = ({ cwd, kitRoot, dryRun = false, deps = {} }) =>
 
 // ── 4. scripts/ — the ADR-cascade enforcement pairs, detect-first ──────────────────────────────────
 
-// A project with no package.json at its root is not where Node enforcement scripts belong. Stated,
-// never silent: the token names the evidence, and the three config ensures still run.
-export const isNodeProject = (cwd, lstat) => lstatNoFollow(join(cwd, PACKAGE_JSON), lstat) !== null;
+// The Node-evidence refusal every ensure that places Node scripts shares (contract: kit/node-evidence):
+// null when Node provably runs here, else the ONE outcome the caller returns — a stated skip naming the
+// probes that answered absent, or a fail-closed failure when a probe could not be read.
+export const nodeEvidenceRefusal = (op, cwd, lstat) => {
+  const evidence = probeNodeEvidence(cwd, lstat);
+  if (evidence.state === NODE_EVIDENCE.UNREADABLE) {
+    return loud(op, 'node-evidence-unverifiable', `${SCRIPTS_DIR}/: whether Node runs here could not be read (${evidence.error}), so nothing was written — resolve it by hand, then re-run`);
+  }
+  if (evidence.state === NODE_EVIDENCE.NONE) {
+    return ok(op, 'skipped-no-node-evidence', `${SCRIPTS_DIR}/: no Node evidence in this tree — probed ${describeNodeProbes(evidence)}, no regular file present; the seeded pairs are Node enforcement, so nothing written`);
+  }
+  return null;
+};
 
 const OLD_ADR_LAYOUTS = new Set(['old', 'old-unrotated']);
 
@@ -221,9 +231,8 @@ const partialNote = (lines) => {
 export const ensureScripts = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
   const lstat = deps.lstat ?? lstatSync;
   const read = deps.readFile ?? readFileSync;
-  if (!isNodeProject(cwd, lstat)) {
-    return ok('scripts', 'skipped-no-node', `${SCRIPTS_DIR}/: no ${PACKAGE_JSON} at the project root — the seeded pairs are Node enforcement; nothing written`);
-  }
+  const refusal = nodeEvidenceRefusal('scripts', cwd, lstat);
+  if (refusal) return refusal;
   let layout;
   try {
     layout = surveyAdrLayoutStrict(cwd, deps);

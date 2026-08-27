@@ -117,9 +117,11 @@ refuse case per rule and an accept case per kind; a refuse fixture yields exactl
 
 - **One entity.** A spec is the durable contract; the ephemeral plan is the delta vehicle; the spec
   revision lands with the code. There is no change-spec entity.
-- **Governing specs are plural.** A plan cites ZERO (nothing spec-covered touched — legal during
-  adoption), ONE or MANY governing specs — one per touched spec-covered slice; a shared-module change
-  cites the specs of every slice whose contract it can alter.
+- **Governing specs are plural.** A plan cites ZERO — naming the adoption state it relies on:
+  `not adopted` (no store) or `adopting` (no live contract yet), either with a recorded decline, or
+  `nothing spec-covered touched`; a bare zero is never a licence — ONE or MANY governing specs —
+  one per touched spec-covered slice; a shared-module change cites the specs of every slice whose
+  contract it can alter.
 - **Out of scope composes PER GOVERNING SLICE — there is no global union.** Each cited spec's
   exclusions bound only the work inside that slice, and the plan's non-goals restate them per slice.
   A cross-spec conflict is resolved by a spec REVISION BEFORE plan approval — never by silent

@@ -3,7 +3,7 @@ name: agent-workflow-memory
 description: Deploy or upgrade a portable AI-agent memory substrate in any project — an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) and a structured `docs/ai/` context store with cap/archive/index enforcement. Use when the user wants to bootstrap `docs/ai/`, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-memory` / `/agent-workflow-memory upgrade`. Triggers on "set up the memory system", "deploy the AI memory here", "bootstrap docs/ai", "upgrade the memory substrate". This is the substrate only — the workflow methodology (plan→execute→review, queue, Cleanup) is owned elsewhere and injected into AGENTS.md by the family composition root.
 disable-model-invocation: true
 metadata:
-  version: '7.0.0'
+  version: '7.1.0'
 ---
 
 # agent-workflow-memory
@@ -211,7 +211,9 @@ Fill strategy:
    **Same gate, also stamp-independent: ensure the ADR-store enforcement pair** — copy
    `archive-decisions.mjs` + `archive-decisions.test.mjs` from
    `${CLAUDE_SKILL_DIR}/references/scripts/` into the project's `scripts/` **if missing**
-   (preserve an existing file byte-for-byte; skip on a No-Node project). **Legacy-monolith
+   (preserve an existing file byte-for-byte; skip ONLY when no Node evidence exists — no
+   regular `package.json` at the root and none of the kit-seeded `scripts/*.mjs` present; a
+   probe that cannot be read is a stated failure, never a skip). **Legacy-monolith
    gate:** if a retired `docs/ai/history/decisions-archive*.md` monolith is still on disk, do
    **NOT** copy the pair as a silent ensure — the new-scheme rotator must **never sit beside
    un-migrated monoliths** (its default/`--check` runs refuse such a tree). Instead ASK the
@@ -225,8 +227,9 @@ Fill strategy:
    hook gains its `archive-decisions.mjs --check` line only when the hook is next refreshed via
    `node scripts/install-git-hooks.mjs`; an old hook without the line stays consistent-safe (the
    decisions gate is simply not enforced yet — never a broken hook). **Same gate, also
-   stamp-independent — ensure the SPEC LAYER (Node projects; skip on a No-Node project like the
-   pair above):** copy `spec-schema.mjs` + `spec-schema.test.mjs` from
+   stamp-independent — ensure the SPEC LAYER (skip only on the same absence of Node evidence as
+   the pair above — a deployed kit script is evidence enough):** copy `spec-schema.mjs` +
+   `spec-schema.test.mjs` from
    `${CLAUDE_SKILL_DIR}/references/scripts/` into the project's `scripts/` **if missing** (preserve
    an existing file byte-for-byte). Then seed `docs/ai/specs/index.md` **if missing** from
    `${CLAUDE_SKILL_DIR}/references/templates/specs/` (date filled; an existing root is preserved

@@ -31,7 +31,7 @@ export const ENSURE_TOKENS = Object.freeze([
   'already-present',
   'customized-preserved',
   'malformed-preserved',
-  'skipped-no-node',
+  'skipped-no-node-evidence',
   'old-adr-layout-migration-instructed',
   'failed',
 ]);
@@ -44,6 +44,9 @@ export const FAILURE_CAUSES = Object.freeze([
   'template-unreadable',
   'bundle-unreadable',
   'adr-layout-unverifiable',
+  // A Node probe (package.json, a kit-seeded script) failed with anything but ENOENT: whether Node runs
+  // here is unproven, so the ensures that place Node scripts write nothing (contract: kit/node-evidence).
+  'node-evidence-unverifiable',
   'wrong-node-kind',
   'write-refused',
   'unexpected-error',
@@ -75,7 +78,7 @@ export const RELAYED_ENSURE_TOKENS = Object.freeze([
   'customized-preserved',
   'malformed-preserved',
   'already-present',
-  'skipped-no-node',
+  'skipped-no-node-evidence',
   'old-adr-layout-migration-instructed',
   'failed',
 ]);

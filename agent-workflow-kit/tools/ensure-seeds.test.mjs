@@ -8,7 +8,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -154,13 +154,35 @@ describe('enforcement-script ensure — ADR layout FIRST, then seed-if-missing',
     });
   });
 
-  it('a project with no package.json is a stated skip', () => {
+  // spec:node-evidence/S6 — the skip names what it probed, a deployed kit script is evidence enough,
+  // and a probe that cannot be read writes nothing.
+  it('a project with NO Node evidence is a stated skip naming every probe', () => {
     withProject((dir) => {
       const r = ensureScripts({ cwd: dir, kitRoot: KIT_ROOT, deps: {} });
-      assert.equal(r.token, 'skipped-no-node');
+      assert.equal(r.token, 'skipped-no-node-evidence');
       assert.equal(r.failed, false);
       assert.equal(existsSync(join(dir, 'scripts')), false);
-      assert.match(r.lines.join('\n'), /package\.json/);
+      assert.match(r.lines.join('\n'), /probed package\.json and the kit-seeded scripts\/ files \(archive-caps\.mjs, .*spec-schema\.mjs\), no regular file present/);
+    }, { node: false });
+  });
+
+  it('a deployed kit script WITHOUT a package.json is Node evidence — the pairs seed', () => {
+    withProject((dir) => {
+      mkdirSync(join(dir, 'scripts'));
+      writeFileSync(scriptPath(dir, 'check-docs-size.mjs'), '// deployed by a bootstrap\n');
+      const r = ensureScripts({ cwd: dir, kitRoot: KIT_ROOT, deps: {} });
+      assert.equal(r.token, 'seeded', r.lines.join('\n'));
+      for (const name of SEED_SCRIPTS) assert.equal(existsSync(scriptPath(dir, name)), true, `${name} landed`);
+    }, { node: false });
+  });
+
+  it('an UNREADABLE Node probe fails closed — nothing is written', () => {
+    withProject((dir) => {
+      const deps = { lstat: (p) => { if (p.endsWith('package.json')) throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); return lstatSync(p); } };
+      const r = ensureScripts({ cwd: dir, kitRoot: KIT_ROOT, deps });
+      assert.equal(r.token, 'failed');
+      assert.match(r.lines[0], /^node-evidence-unverifiable — scripts\/: whether Node runs here could not be read \(EACCES on package\.json\)/);
+      assert.equal(existsSync(join(dir, 'scripts')), false);
     }, { node: false });
   });
 

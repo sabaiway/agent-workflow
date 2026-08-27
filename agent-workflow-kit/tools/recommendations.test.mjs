@@ -55,6 +55,12 @@ import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
 // The registration fixtures are built from the LEAF's own constants and derived rules — a fixture
 // spelling its own server path or allow rules would drift off the thing the probe actually reads.
 import { DEFAULT_SERVER_PATH, ENABLED_KEY, MCP_JSON_REL, SERVER_NAME, SETTINGS_REL, allowRulesFor } from './mcp-registration.mjs';
+// The decline fact is the leaf's own derivation, and the store fixtures are the spec-check harness's
+// document builders — a fixture spelling either here would drift off what the probe reads.
+// Dynamic: the suite must LOAD against the pre-fix tree (no spec-adoption leaf, no probe export) so the red proof observes assertion failures.
+const { declineFingerprint } = await import('./spec-adoption.mjs').catch(() => ({}));
+const { probeSpecAdoption } = await import('./recommendations.mjs');
+import { ROOT_DOC, specDoc } from './spec-check-harness.test.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -378,6 +384,77 @@ describe('recommendations — the ADR-store crossing offer', () => {
     const runnable = items[0].apply.split(' — ')[0];
     assert.match(runnable, /--dry-run/);
     assert.doesNotMatch(runnable, /--apply/, 'the runnable half is the PREVIEW, never the mutation');
+  });
+});
+
+describe('recommendations — the spec-adoption item (spec:spec-adoption/S5)', () => {
+  const specsAt = (root) => join(root, 'docs', 'ai', 'specs');
+  const ackAt = (root) => join(root, 'docs', 'ai', 'acks.json');
+  const draftDoc = (slug) => specDoc(slug).replace('status: live', 'status: draft');
+  const DRAFTS = { 'index.md': ROOT_DOC(['- [a](./a.md)', '- [b](./b.md)']), 'a.md': draftDoc('a'), 'b.md': draftDoc('b') };
+  const seedStore = (root, docs) => {
+    mkdirSync(specsAt(root), { recursive: true });
+    for (const [name, text] of Object.entries(docs)) writeFileSync(join(specsAt(root), name), text);
+    return root;
+  };
+  const advise = (root) => {
+    const built = buildRecommendations({ cwd: root, deps: { probes: [probeSpecAdoption] } });
+    rmSync(root, { recursive: true, force: true });
+    return built;
+  };
+
+  it('an absent store is ONE optional offer: the ensure applies it, the decline is a NAMED hand-apply alternative on the recipe line', () => {
+    const { items, skips } = advise(makeProject());
+    assert.deepEqual([items.length, skips.length], [1, 0]);
+    // Both arms are OFFERS: the layer is opt-in, and the frozen registry reserves attention for a
+    // configured declaration that is broken.
+    assert.deepEqual([items[0].key, items[0].variant, items[0].severity], ['spec-adoption', 'spec-adoption', SEVERITY_OPTIONAL]);
+    assert.deepEqual([SEVERITIES['spec-adoption'], SEVERITIES['spec-adoption.adopting']], [SEVERITY_OPTIONAL, SEVERITY_OPTIONAL]);
+    assert.match(items[0].what, /feature-spec store absent \(docs\/ai\/specs\)/);
+    assert.ok(items[0].apply.startsWith('node ') && items[0].apply.includes('ensure-configs.mjs'), items[0].apply);
+    assert.ok(items[0].apply.includes('--reconcile --only specs --cwd '), items[0].apply);
+    // The alternative is exclusive of the apply and is never run by the consent flow — the label says so.
+    assert.ok(items[0].detail.startsWith('HAND-APPLY alternative (instead of the apply, never after it):'), items[0].detail);
+    assert.ok(items[0].detail.includes('ack-write.mjs'), items[0].detail);
+    assert.ok(items[0].detail.includes(`--lane spec-adoption --fingerprint ${declineFingerprint()}`), items[0].detail);
+    const out = formatRecommendations({ items, skips });
+    assert.ok(!out.includes(RECOMMENDATIONS_EMPTY_LINE), 'an item never renders beside the flow-optimal line');
+    assert.match(out, /1 optional recommendation\(s\)/);
+  });
+
+  it('drafts only is the OPTIONAL adopting variant whose apply IS the decline preview; one live contract silences it', () => {
+    const { items, skips } = advise(seedStore(makeProject(), DRAFTS));
+    assert.deepEqual([items.length, skips.length], [1, 0]);
+    assert.deepEqual([items[0].variant, items[0].severity, items[0].detail], ['spec-adoption.adopting', SEVERITY_OPTIONAL, null]);
+    assert.match(items[0].what, /2 draft spec\(s\)/);
+    assert.ok(items[0].apply.startsWith('node ') && items[0].apply.includes('--lane spec-adoption'), items[0].apply);
+    const live = advise(seedStore(makeProject(), { ...DRAFTS, 'c.md': specDoc('c') }));
+    assert.deepEqual([live.items.length, live.skips.length], [0, 0]);
+  });
+
+  it('a RECORDED decline silences the item, and the flow-optimal line renders over this probe alone', () => {
+    const root = makeProject();
+    writeFileSync(ackAt(root), JSON.stringify({ specAdoptionAck: declineFingerprint() }));
+    const { items, skips } = advise(root);
+    assert.deepEqual([items.length, skips.length], [0, 0]);
+    assert.equal(formatRecommendations({ items, skips }), `${RECOMMENDATIONS_SECTION_HEADER}\n\n${RECOMMENDATIONS_EMPTY_LINE}`);
+  });
+
+  it('an unreadable store and a malformed ack store are stated skips — never an item, never a claimed optimum', () => {
+    const asFile = makeProject();
+    writeFileSync(specsAt(asFile), 'not a directory\n');
+    const store = advise(asFile);
+    assert.deepEqual([store.items.length, store.skips.length], [0, 1]);
+    assert.equal(store.skips[0].key, 'spec-adoption');
+    assert.match(store.skips[0].reason, /docs\/ai\/specs is a file/);
+    const out = formatRecommendations(store);
+    assert.match(out, /NOT attested/);
+    assert.ok(!out.includes(RECOMMENDATIONS_EMPTY_LINE), 'a probe that could not run never renders flow-optimal');
+    const bad = makeProject();
+    writeFileSync(ackAt(bad), '{ not json');
+    const ack = advise(bad);
+    assert.deepEqual([ack.items.length, ack.skips.length], [0, 1]);
+    assert.equal(ack.skips[0].key, 'spec-adoption');
   });
 });
 

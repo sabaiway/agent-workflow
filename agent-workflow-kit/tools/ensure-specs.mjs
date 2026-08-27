@@ -26,7 +26,7 @@ import { readFileSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeContainedFileAtomic, writeProjectFileCreateOnly } from './atomic-write.mjs';
 import { classifyDeployedScript } from './script-priors.mjs';
-import { composeFailure, composeOutcome, isNodeProject, probeSeedTarget, tmpNote } from './ensure-ops.mjs';
+import { composeFailure, composeOutcome, nodeEvidenceRefusal, probeSeedTarget, tmpNote } from './ensure-ops.mjs';
 
 const OP = 'specs';
 const SCRIPTS_DIR = 'scripts';
@@ -159,9 +159,8 @@ const renderStoreRoot = (kitRoot, read, today) => {
 export const ensureSpecs = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
   const lstat = deps.lstat ?? lstatSync;
   const read = deps.readFile ?? readFileSync;
-  if (!isNodeProject(cwd, lstat)) {
-    return ok('skipped-no-node', [`${SCRIPTS_DIR}/: no package.json at the project root — the spec reader and checker are Node scripts; nothing written`]);
-  }
+  const refusal = nodeEvidenceRefusal(OP, cwd, lstat);
+  if (refusal) return refusal;
   const survey = (name) => surveyScript({ cwd, kitRoot, name, read, lstat });
   const reader = READER_PAIR.map(survey);
   const checker = CHECKER_PAIR.map(survey);

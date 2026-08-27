@@ -71,7 +71,14 @@ describe('recommendations language contract — the presentation tokens are PRES
     assert.ok(readmeRow, 'the README recommendations row exists');
     assert.match(readmeRow, LANGUAGE_TOKEN);
     assert.match(readmeRow, BYTE_EXACT_TOKEN);
+    assert.match(readmeRow, /spec-adoption decline preview/, 'the row lists the fourth `recipe:` kind');
     assert.match(TOOL_SOURCE, LANGUAGE_TOKEN, 'the tool header states the presentation contract');
+  });
+
+  it('the README status row names the feature-spec adoption state it now renders', () => {
+    const statusRow = README.split('\n').find((l) => l.includes('`/agent-workflow-kit status`'));
+    assert.ok(statusRow, 'the README status row exists');
+    assert.match(statusRow, /feature-spec adoption state/);
   });
 });
 

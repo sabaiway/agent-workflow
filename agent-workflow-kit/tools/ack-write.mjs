@@ -29,7 +29,7 @@ import { lstatSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDirectRun } from './direct-run.mjs';
-import { ACKS_FILE, ACK_LANES } from './recommendations.mjs';
+import { ACKS_FILE, ACK_LANES } from './ack-store.mjs';
 import { assertDocsAiDeployment, writeDocsAiFileAtomic, lstatNoFollow } from './atomic-write.mjs';
 import { shellQuoteArg } from './review-state.mjs';
 

@@ -159,19 +159,24 @@ const commsDoc = ({ body, maxLines = 150, after = '\n### 2.6. Planning, review &
   `---\ntype: protocol\nmaxLines: ${maxLines}\n---\n\n# Rules\n\n### 2.4. Quality Gates\n- run tests\n\n${body}${after}`;
 
 describe('comms-region — canon, priors, pure reconcile (AD-061)', () => {
-  it('the kit template canon carries the plain-language bar AND the closing-state-block contract, over three neutral-headed priors', () => {
+  it('the kit template canon carries the plain-language bar AND the contradicted-skip bullet, over four neutral-headed priors', () => {
     assert.ok(COMMS_CANON.includes('Plain language'), 'the canon carries the plain-language bullet');
     assert.ok(COMMS_CANON.includes('closing state block'), 'the canon carries the closing-state-block contract');
-    assert.equal(COMMS_PRIORS.length, 3, 'three known prior bodies (pre-AD-054, AD-054, plain-language)');
+    assert.ok(COMMS_CANON.includes('contradicts the tree'), 'the canon carries the contradicted-skip bullet');
+    assert.equal(COMMS_PRIORS.length, 4, 'four known prior bodies (pre-AD-054, AD-054, plain-language, state-block)');
     for (const prior of COMMS_PRIORS) {
       assert.match(prior.split('\n')[0], /^### 2\.x\. Communication \(user-facing messages\)/);
-      assert.ok(!prior.includes('closing state block'), 'every prior predates the state-block contract');
+      assert.ok(!prior.includes('contradicts the tree'), 'every prior predates the contradicted-skip bullet');
     }
+    for (const prior of COMMS_PRIORS.slice(0, 3)) {
+      assert.ok(!prior.includes('closing state block'), 'the first three predate the state-block contract');
+    }
+    assert.ok(COMMS_PRIORS[3].includes('closing state block'), 'the newest prior carries the state-block contract');
     // The vintage rule, asserted rather than assumed: each prior is the canon that shipped BEFORE
     // the next one, so the newest prior is exactly the previous canon plus nothing.
     assert.ok(!COMMS_PRIORS[0].includes('Plain language'), 'the oldest two predate the plain-language bullet');
     assert.ok(!COMMS_PRIORS[1].includes('Plain language'));
-    assert.ok(COMMS_PRIORS[2].includes('Plain language'), 'the newest prior IS the plain-language canon');
+    assert.ok(COMMS_PRIORS[2].includes('Plain language'), 'the plain-language canon stays a prior');
   });
 
   // The delivery test that matters: a project deployed on the PREVIOUS canon must be refreshed, not
@@ -182,6 +187,15 @@ describe('comms-region — canon, priors, pure reconcile (AD-061)', () => {
     const first = reconcileCommsText(text, COMMS_CANON, COMMS_PRIORS);
     assert.equal(first.status, 'refreshed');
     assert.ok(extractCommsRegion(first.text).body.includes('closing state block'), 'the new contract really landed');
+    const second = reconcileCommsText(first.text, COMMS_CANON, COMMS_PRIORS);
+    assert.equal(second.status, 'current', 'and a re-run is a zero-diff no-op');
+  });
+
+  it('a deployed §2.5 carrying the state-block canon → refreshed to the contradicted-skip canon', () => {
+    const text = commsDoc({ body: `${commsAt(COMMS_PRIORS[3], 5)}\n` });
+    const first = reconcileCommsText(text, COMMS_CANON, COMMS_PRIORS);
+    assert.equal(first.status, 'refreshed');
+    assert.ok(extractCommsRegion(first.text).body.includes('contradicts the tree'), 'the new contract really landed');
     const second = reconcileCommsText(first.text, COMMS_CANON, COMMS_PRIORS);
     assert.equal(second.status, 'current', 'and a re-run is a zero-diff no-op');
   });

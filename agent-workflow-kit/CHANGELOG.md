@@ -4,6 +4,48 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 10.3.0 — a deployed project is never in an unnamed spec-adoption state, and a skip names a fact the tree can check (AD-123)
+
+A consumer's `upgrade` printed `specs: skipped-no-node — no package.json at the project root` beside
+its own deployed `scripts/check-docs-size.mjs`; the same project's advisor said `no recommendations —
+flow optimal.` over a tree with no `docs/ai/specs/` at all. Both lines were false about the tree they
+described, and nothing in the kit could say so.
+
+**Node is PROVEN, never proxied.** `tools/node-evidence.mjs` (contract `docs/ai/specs/kit/node-evidence.md`)
+answers `package-json` · `deployed-node-scripts` (any kit-seeded `scripts/*.mjs`, the list pinned
+against the bundle) · `none` · `unreadable`. The enforcement-script and spec-layer ensures seed on either
+evidence, skip ONLY on `none` with the new token `skipped-no-node-evidence` — a line naming every probe
+and every wrong-kind path — and fail closed on `unreadable` with the new cause
+`node-evidence-unverifiable`. `skipped-no-node` is retired: a skip whose reason the tool could itself
+disprove may not exist. `upgrade.md` and `deploy-tail.md` add the agent-facing half — a skip line that
+contradicts the observed tree is raised as a finding in the report, never pasted as neutral.
+
+**The adoption state is a surface.** `tools/spec-adoption.mjs` (contract `kit/spec-adoption`) reads the
+store through `spec-check`'s now-exported census and read (`kit/spec-check` rev 2) and answers
+`not-adopted` · `adopting` · `adopted` · `unreadable`. The advisor's 18th probe renders `spec-adoption`:
+the seed on an absent store (apply: the spec-layer ensure one-liner; recipe line: the decline
+preview as a named hand-apply alternative), the decline while a store holds no live contract — both
+OPTIONAL, the frozen registry keeping attention for a broken configured declaration — and a stated
+skip over a store it cannot read;
+so `flow optimal` cannot render over a store nobody observed. `status` prints one `specs` line in every
+state, with ` — declined` once the `spec-adoption` ack lane (`specAdoptionAck`) records the choice, and
+its own `(decline ack unreadable: …)` when that read fails.
+
+**The ack store has one reader.** `tools/ack-store.mjs` (contract `kit/ack-store`) now owns the store
+path, the keys, the closed lane registry, `factFingerprint` and `readAckValue`; the advisor re-exports
+them and `recipeFingerprint` derives through the same leaf. The leaf read moved from a path-based
+`readFile` after `lstat` to the descriptor-bound no-follow door.
+
+Docs: `status.md` documents the line and doc-parity binds the four state tokens into it; the
+`recommendations.md` posture note names both arms and the lane; both `agent_rules.md` templates carry
+the re-rendered Spec-first lens, the zero-state wording in §1.2 and the contradicted-skip bullet in
+§2.5 (`COMMS_PRIORS` gains the outgoing state-block canon so a deployed §2.5 refreshes instead of
+reading as a custom edit). Tarball pin 259 → 262.
+
+Not shipped, with reason: the brief's mechanical refusal of a bare "zero governing specs" once the
+store exists — no plan-shape checker exists and the citation has no literal grammar; queued with its
+entry condition.
+
 ## 10.2.0 — a review can no longer pass a change it called broken (AD-122)
 
 Ships antigravity-cli-bridge **5.4.0** in the bundled bridge tree. A consumer recorded a clean

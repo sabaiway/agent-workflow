@@ -7,6 +7,30 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-27 — AD-123 a deployed project is never in an unnamed spec-adoption state (kit 10.3.0 · engine 4.2.0 · memory 7.1.0, all MINOR)
+
+**Two lines stopped being false about the tree they described.** A Bash-only consumer's `upgrade`
+printed `specs: skipped-no-node — no package.json at the project root` beside its own deployed Node
+scripts, and its advisor said `flow optimal` over a project with no spec store at all. The kit now
+PROVES Node — a root `package.json` OR any kit-seeded `scripts/*.mjs` — and the skip that remains
+(`skipped-no-node-evidence`) names every probe it checked; a probe it cannot read fails closed
+(`node-evidence-unverifiable`) instead of skipping. The advisor's new `spec-adoption` item renders
+the seed on an absent store and the decline while a store holds no live contract (both optional —
+the layer is opt-in), a stated skip over a store it cannot read, silenced only by a recorded decline (`ack-write --lane spec-adoption`); `status`
+prints one `specs` line in every state. The ack store's guarded no-follow read became ONE leaf both
+surfaces import.
+
+**The canon names the state instead of licensing the zero.** Engine 4.2.0's Spec-first lens,
+`planning.md` and `specs.md` say a ZERO cites `not adopted` / `adopting` / `nothing spec-covered
+touched` and is never a licence; the outgoing lens body joins the priors so deployed rules refresh.
+Memory 7.1.0's template carries the same words, plus the §2.5 bullet the kit's upgrade doc now enforces
+too: a skip line that contradicts the observed tree is a FINDING, never pasted as neutral.
+
+Refused from the brief, with reason: a mechanical refusal of a bare zero once the store exists — no
+plan-shape checker exists and the citation has no literal grammar; queued with its entry condition.
+Two plan-review rounds and two diff-review rounds converged; every fold was confirmed on the finding's
+own axis before it landed.
+
 ## 2026-08-26 — AD-122 a review can no longer pass a change it called broken (kit 10.2.0 · antigravity-cli-bridge 5.4.0, both MINOR)
 
 **The receipt stops lying.** A consumer's council round recorded a clean `SHIP WITH NITS` receipt

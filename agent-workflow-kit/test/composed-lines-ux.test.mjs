@@ -165,7 +165,8 @@ ensureFx('unexpected-error-catch-all', failedOutcome('orchestration', new Error(
   mkdirSync(join(wrongKindDir, 'scripts', 'archive-decisions.mjs'), { recursive: true });
   ensureFx('scripts-wrong-node-kind', ensureScripts({ cwd: wrongKindDir, kitRoot: KIT, deps: {} }));
 }
-ensureFx('scripts-skipped-no-node', ensureScripts({ cwd: project({ node: false }), kitRoot: KIT, deps: {} }));
+ensureFx('scripts-skipped-no-node-evidence', ensureScripts({ cwd: project({ node: false }), kitRoot: KIT, deps: {} }));
+ensureFx('scripts-node-evidence-unverifiable', ensureScripts({ cwd: project({ node: false }), kitRoot: KIT, deps: { lstat: () => { throw eacces(); } } }));
 {
   const dir = project();
   mkdirSync(join(dir, 'docs', 'ai', 'history'), { recursive: true });
@@ -204,7 +205,7 @@ ensureFx('scripts-skipped-no-node', ensureScripts({ cwd: project({ node: false }
 
 if (ensureSpecs) {
   // The spec-layer ensure: every token through the real op — seed, prior refresh, custom preserved,
-  // the no-Node skip — and its four failure causes (bundle, node kind, write, template).
+  // the no-Node-evidence skip — and its four failure causes (bundle, node kind, write, template).
   const PRIOR_CHECKER = join(KIT, 'test', 'fixtures', 'script-priors', '4.5.1', 'check-docs-size.mjs.txt');
   const specsFx = (id, dir, extra = {}) => ensureFx(id, ensureSpecs({ cwd: dir, kitRoot: KIT, deps: {}, ...extra }));
   const dir = project();
@@ -216,7 +217,7 @@ if (ensureSpecs) {
   specsFx('specs-refreshed', dir);
   writeFileSync(join(dir, 'scripts', 'check-docs-size.mjs'), '// mine\n');
   specsFx('specs-customized-preserved', dir);
-  specsFx('specs-skipped-no-node', project({ node: false }));
+  specsFx('specs-skipped-no-node-evidence', project({ node: false }));
   const wrongKind = project();
   mkdirSync(join(wrongKind, 'scripts', 'spec-schema.mjs'), { recursive: true });
   specsFx('specs-wrong-node-kind', wrongKind);

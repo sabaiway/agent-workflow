@@ -196,7 +196,12 @@ const BUDGET = {
   // documented KB-multiple bump, never a silent re-pin. History: 10240 → 11264 (11 KB): AD-044
   // Plan 4 adds the sandbox-masks and recommendations modes to the router (~110 B each) against
   // 27 B of headroom — the same documented bump.
-  routerPlusMode: 47104, // router + any single mode file. 46080 → 47104 (46 KB): spec layer 1b —
+  routerPlusMode: 49152, // router + any single mode file. 47104 → 49152 (48 KB): AD-123 — upgrade.md
+  // gains the Node-evidence rule inside the enforcement-script and spec-layer rationale blocks (the
+  // retired proxy named, the new token + cause, the adoption-state report) and the contradicted-skip
+  // finding rule on the equal-head exit; measured 48307 B, 1203 B over the 46 KB ceiling — a documented
+  // KB-multiple bump, never a silent re-pin (845 B of headroom).
+  // History: 46080 → 47104 (46 KB): spec layer 1b —
   // upgrade.md gains the sixth `configs` ensure (the `refreshed` token on the run-list row, the
   // specs token set, the "what the spec-layer ensure does" rationale block with the seed-behind-
   // checker rule and its remedy) against 1107 B of headroom; measured 46312 B after a compression
@@ -254,7 +259,12 @@ const BUDGET = {
   // THREE pointers (the autonomy slot: step-3 wording, the (a)(iii) anchor-absent soft-skip lane,
   // the No-Node walk, the step-4/8 report row) — ~575 B of new contract content over 179 B of
   // headroom; a documented KB-multiple bump, never a silent re-pin.)
-  fullReadSet: 76800, // router + mode + its declared shared files. 75776 → 76800 (75 KB): spec
+  fullReadSet: 78848, // router + mode + its declared shared files. 76800 → 78848 (77 KB): AD-123 —
+  // upgrade's set carries its own growth (see routerPlusMode above) plus deploy-tail.md's Node-evidence
+  // + contradicted-skip gotcha; measures 78084 B, 1284 B over the 75 KB ceiling, and the 76 KB
+  // multiple would leave -260 B, so this takes the following multiple (764 B of headroom). A
+  // documented KB-multiple bump, never a silent re-pin.
+  // History: 75776 → 76800 (75 KB): spec
   // layer 1b — upgrade's set carries the same growth (see routerPlusMode above) and measures
   // 75498 B, which would leave 278 B under the 74 KB ceiling — the re-pin-waiting shape this file
   // rejects — so it takes the following multiple (1302 B of headroom). A documented KB-multiple

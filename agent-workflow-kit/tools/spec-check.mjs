@@ -87,7 +87,7 @@ const refusal = (message) => ({ verdict: 'REFUSE', exit: 2, findings: [], docume
 // Every document of the closure, read ONCE: probe, then (only for a regular file) the descriptor-
 // bound read and the reader verdict. Containment of the containing directory is decided BEFORE the
 // read, so a directory that resolves outside the root is never opened through.
-const readClosure = (closure, ctx) => {
+export const readClosure = (closure, ctx) => {
   const { io, at, rootReal, add } = ctx;
   const docs = new Map();
   for (const { path, roles } of closure) {
@@ -247,7 +247,7 @@ const judgeListing = (doc, docs, add) => {
 // FINDING, never an empty directory quietly walked past: an incomplete census that reported a clean
 // store would be the one answer this lane must never give. A directory is contained BEFORE it is
 // listed, and a non-regular `.md` sitting in the store is stated rather than skipped.
-const walkStore = (ctx) => {
+export const walkStore = (ctx) => {
   const { io, at, rootReal, add } = ctx;
   const found = [];
   const stack = [STORE_DIR];

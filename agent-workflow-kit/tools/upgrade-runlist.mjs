@@ -44,7 +44,7 @@ export const UPGRADE_RUNLIST = Object.freeze([
       'customized-preserved',
       'malformed-preserved',
       'already-present',
-      'skipped-no-node',
+      'skipped-no-node-evidence',
       'old-adr-layout-migration-instructed',
       'failed',
     ],

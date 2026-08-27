@@ -72,6 +72,8 @@ import { RELAYED_ENSURE_TOKENS, RELAYED_FAILURE_CAUSES } from './ensure-vocabula
 // The MCP registration's four public strings. Imported from the READ-ONLY leaf, never from the
 // writer: a read-only lint must not pull the atomic-write core into its import graph.
 import { ENABLED_KEY as MCP_ENABLED_KEY, MCP_JSON_REL, SERVER_NAME as MCP_SERVER_NAME, allowRulesFor } from './mcp-registration.mjs';
+// The spec-adoption state tokens the status mode doc must name (contract: kit/spec-adoption).
+import { ADOPTION_STATES, SPEC_ADOPTION_LANE } from './spec-adoption.mjs';
 
 const AUTONOMY_DOCTOR_DOC = 'references/modes/autonomy-doctor.md';
 const RECOMMENDATIONS_DOC = 'references/modes/recommendations.md';
@@ -86,6 +88,7 @@ const RECEIPT_DEADLINE_DOC = 'references/modes/receipt-deadline.md';
 const GATES_DOC = 'references/modes/gates.md';
 const MCP_DOC = 'references/modes/mcp.md';
 const UNINSTALL_DOC = 'references/modes/uninstall.md';
+const STATUS_DOC = 'references/modes/status.md';
 // One literal for the dispatch mode doc: the structure leaf already names it as the file it anchors
 // its table in, and a second copy here is exactly the drift this lint exists to catch.
 const DISPATCH_DOC = ADVISOR_MATRIX_DOC;
@@ -236,6 +239,11 @@ export const BINDINGS = Object.freeze([
   valueBinding('mcp-enabled-key', MCP_ENABLED_KEY, `\`${MCP_ENABLED_KEY}\``, [MCP_DOC, UNINSTALL_DOC]),
   valueBinding('mcp-server-name', MCP_SERVER_NAME, `\`"${MCP_SERVER_NAME}"\``, [MCP_DOC, UNINSTALL_DOC]),
   ...allowRulesFor().map((rule) => valueBinding(`mcp-allow-rule:${rule}`, rule, `\`${rule}\``, [MCP_DOC, UNINSTALL_DOC])),
+  // The spec-adoption state tokens: status.md renders a plain phrase per token, so the doc must name
+  // every token the survey can answer — a fifth state added to the leaf with no phrase fails here.
+  // The decline lane rides both the status line and the advisor item, so both docs name it.
+  ...ADOPTION_STATES.map((state) => valueBinding(`spec-adoption:${state}`, state, `\`${state}\``, [STATUS_DOC])),
+  valueBinding('spec-adoption-lane', SPEC_ADOPTION_LANE, `--lane ${SPEC_ADOPTION_LANE}`, [RECOMMENDATIONS_DOC, UPGRADE_DOC]),
 ].map((b) => Object.freeze(b)));
 
 // ── the pure checker (readText is injectable for hermetic tests) ────────────────────────

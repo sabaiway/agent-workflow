@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   HOT_REL as ROTATOR_HOT_REL,
@@ -6,7 +6,7 @@ import {
   COLD_REL as ROTATOR_COLD_REL,
   ADR_DIR_REL as ROTATOR_ADR_DIR_REL,
 } from '../references/scripts/archive-decisions.mjs';
-import { readFileSync, writeFileSync, mkdtempSync, rmSync, cpSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, cpSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -38,6 +38,13 @@ import {
   UNKNOWN,
 } from './family-registry.mjs';
 import { VALID, INVALID, UNSUPPORTED } from './manifest/validate.mjs';
+// Dynamic: the suite must LOAD against the pre-fix tree (no spec-adoption leaf) so the red proof observes assertion failures.
+const { declineFingerprint } = await import('./spec-adoption.mjs').catch(() => ({}));
+import { ROOT_DOC, specDoc } from './spec-check-harness.test.mjs';
+
+const dirsToClean = [];
+after(() => { for (const dir of dirsToClean) rmSync(dir, { recursive: true, force: true }); });
+
 import { INTERNAL_RENDER_FORBIDDEN } from './labels.mjs';
 import { START_MARKER } from './hide-footprint.mjs';
 import { ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL, AUTONOMY_FRAGMENT_REL, LENS_FRAGMENT_REL, LENS_PRIORS_REL } from './engine-source.mjs';
@@ -319,6 +326,45 @@ describe('surveyProject', () => {
     // A monolith present WINS over an adr/ dir (a half-migrated tree still needs the migration to finish).
     const half = surveyProject(dir, projectDeps({ files: { [join(dir, 'docs/ai/history/decisions-archive-early.md')]: '', [join(dir, 'docs/ai/adr')]: null } }));
     assert.equal(half.adrLayout, 'old', 'a monolith still on disk keeps the layout old even beside adr/');
+  });
+
+  // The specs survey reads the REAL tree through its own io seam — the fake deps above answer nothing here.
+  const specsProject = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'family-specs-'));
+    dirsToClean.push(dir);
+    mkdirSync(join(dir, 'docs', 'ai'), { recursive: true });
+    return dir;
+  };
+  const specsOf = (dir) => surveyProject(dir, {}).specs;
+
+  it('reports the spec-adoption state, the recorded decline and the ack read error (spec:spec-adoption/S6)', () => {
+    const absent = specsProject();
+    assert.deepEqual(specsOf(absent), { state: 'not-adopted', live: 0, draft: 0, reason: null, declined: false, declineError: null });
+    writeFileSync(join(absent, 'docs', 'ai', 'acks.json'), JSON.stringify({ specAdoptionAck: declineFingerprint() }));
+    assert.equal(specsOf(absent).declined, true, 'the recorded decline is a fact on disk');
+    writeFileSync(join(absent, 'docs', 'ai', 'acks.json'), '[]');
+    const unreadableAck = specsOf(absent);
+    assert.equal(unreadableAck.declined, false, 'never a decline the reader could not read');
+    assert.match(unreadableAck.declineError, /expected a JSON object/);
+    assert.equal(unreadableAck.state, 'not-adopted', 'the store state survives its own ack failing');
+  });
+
+  it('an unreadable store keeps its reason, and a live contract makes the store adopted', () => {
+    const asFile = specsProject();
+    writeFileSync(join(asFile, 'docs', 'ai', 'specs'), 'not a directory\n');
+    assert.equal(specsOf(asFile).state, 'unreadable');
+    assert.match(specsOf(asFile).reason, /is a file/);
+    const store = specsProject();
+    mkdirSync(join(store, 'docs', 'ai', 'specs'));
+    writeFileSync(join(store, 'docs', 'ai', 'specs', 'index.md'), ROOT_DOC(['- [x](./x.md)']));
+    writeFileSync(join(store, 'docs', 'ai', 'specs', 'x.md'), specDoc('x'));
+    assert.deepEqual([specsOf(store).state, specsOf(store).live], ['adopted', 1]);
+    // A survey that THROWS (an io primitive failing outright) is the unreadable state with its reason —
+    // the read-only view never crashes and never reads a failure as "not adopted".
+    const thrown = surveyProject(store, { io: { probe: () => { throw Object.assign(new Error('EIO: io failed'), { code: 'EIO' }); } } }).specs;
+    assert.equal(thrown.state, 'unreadable');
+    assert.match(thrown.reason, /EIO/);
+    assert.deepEqual([thrown.declined, thrown.declineError], [false, null], 'the decline is still read on its own');
   });
 });
 
@@ -732,6 +778,7 @@ describe('buildEnvelope — no-leak --json envelope', () => {
       deployed: true,
       docsAiPresent: true,
       adrLayout: 'old',
+      specs: { state: 'adopting', live: 0, draft: 1, reason: null, declined: false, declineError: null },
       hiddenFence: true,
       stamps: [
         { name: 'agent-workflow-kit', file: 'docs/ai/.workflow-version', version: '1.3.0' },
@@ -743,6 +790,9 @@ describe('buildEnvelope — no-leak --json envelope', () => {
     assert.equal(env.project.deployed, true);
     assert.equal(env.project.docsAi, true);
     assert.equal(env.project.adrLayout, 'old', 'the ADR-store layout is a user-safe token on the envelope');
+    assert.deepEqual(env.project.specs, project.specs, 'the spec-adoption state rides the envelope whole');
+    const noSpecs = buildEnvelope(fam, { ...project, specs: undefined });
+    assert.equal('specs' in noSpecs.project, false, 'a project without the survey carries no specs key at all');
     for (const s of env.project.deployStamps) {
       assert.deepEqual(Object.keys(s).sort(), ['display', 'member', 'version'].sort());
       assert.equal('file' in s, false, 'the internal stamp filename must never appear');

@@ -21,6 +21,14 @@ describe('planning.md — the plan shape', () => {
     assert.match(flat, /never by document size/, 'an over-cap plan splits on verifiable boundaries, not on length');
   });
 
+  // AD-123: a plan may still cite ZERO governing specs, but only by naming the adoption state it relies
+  // on — the word that used to license it ("during adoption") had no state behind it.
+  it('a zero governing-spec citation names its adoption state, and a bare zero is never a licence', () => {
+    assert.match(flat, /a ZERO names the adoption state it relies on/);
+    assert.match(flat, /not adopted · adopting/);
+    assert.match(flat, /a bare zero is never a licence/);
+  });
+
   it('pins the literal headings tooling extracts by exact match — the skeleton lines ARE the bare headings', () => {
     assert.match(flat, /headings are LITERAL/);
     // A plan copied from the skeleton must pass an exact-match extractor as copied: no annotation,

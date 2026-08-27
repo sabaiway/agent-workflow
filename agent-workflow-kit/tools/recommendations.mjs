@@ -32,7 +32,6 @@
 // idiom).
 
 import { readFileSync, readdirSync, lstatSync, existsSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -84,6 +83,25 @@ import { DEFAULT_BUNDLE_ROOT } from './bridge-settings-read.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
 import { loadWorktreesConfig, resolveProbeDir } from './worktrees.mjs';
 import { preflightCheapAgents } from './cheap-agents.mjs';
+// The ack store's path, keys, lane registry, fingerprint and guarded reader live in their own leaf
+// (contract: kit/ack-store) — `status` reads the same store, and a second copy is what drifts.
+import {
+  ACKS_FILE,
+  ACKS_LANE_KEY,
+  ACKS_WORKTREES_DIR_KEY,
+  ACKS_COVERAGE_DOMAIN_KEY,
+  ACKS_SOURCE_SIZE_COPY_KEY,
+  ACK_LANES,
+  factFingerprint,
+  readAckValue,
+} from './ack-store.mjs';
+import { ADOPTION, STORE_DIR_REL as SPEC_STORE_DIR_REL, SPEC_ADOPTION_LANE, declineFingerprint, readDeclineAck, surveySpecAdoption } from './spec-adoption.mjs';
+import { ENSURE_OPS } from './ensure-vocabulary.mjs';
+
+// The upgrade ensure that seeds the spec store — the not-adopted item's apply; pinned to the vocabulary.
+const SPEC_LAYER_ENSURE = ENSURE_OPS.includes('specs') ? 'specs' : null;
+
+export { ACKS_FILE, ACKS_LANE_KEY, ACKS_WORKTREES_DIR_KEY, ACKS_COVERAGE_DOMAIN_KEY, ACKS_SOURCE_SIZE_COPY_KEY, ACK_LANES, factFingerprint };
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const toolPath = (rel) => join(HERE, rel);
@@ -163,6 +181,11 @@ export const SEVERITIES = Object.freeze({
   'sandbox-masks': SEVERITY_OPTIONAL,
   'sandbox-lane': SEVERITY_OPTIONAL,
   'worktrees-dir': SEVERITY_OPTIONAL,
+  // The layer is opt-in, so both arms are OFFERS under the frozen registry (attention is a CONFIGURED
+  // declaration that is broken): an absent store offers the seed, a store with no live contract offers
+  // the decline. Neither arm can leave the flow-optimal line standing — an offer is still an item.
+  'spec-adoption': SEVERITY_OPTIONAL,
+  'spec-adoption.adopting': SEVERITY_OPTIONAL,
 });
 // The per-item render tags (frozen presentation data, same language contract as the templates).
 export const SEVERITY_LABELS = Object.freeze({
@@ -234,6 +257,8 @@ export const WHATS = Object.freeze({
   'sandbox-masks.stale-real': '{n} sandbox device mask(s) clutter git status — the exclude block is stale; {m} fenced entr(ies) are REAL paths (a fresh apply drops them)',
   'sandbox-lane': 'the wired review wrappers declare a session-sandbox recipe (egress hosts + writable state dirs) not yet acknowledged for this project',
   'worktrees-dir': 'write access to the worktrees parent dir {dir} is not confirmed — provision may still stop',
+  'spec-adoption': 'feature-spec store absent (docs/ai/specs) — no feature contract can govern a plan here yet; seed the store, or record the decline',
+  'spec-adoption.adopting': 'feature-spec store: {n} draft spec(s), no live contract — nothing governs a plan through it yet; land a live contract, or record the decline',
 });
 
 // ── the shape contract (D2): registry strings AND composed items stay one line under the cap ────
@@ -290,6 +315,7 @@ export const BENEFITS = Object.freeze({
   'sandbox-masks': 'zero clutter — git status shows only your changes (the review domain already ignores the masks by construction)',
   'sandbox-lane': 'discoverability — the manifest-declared observed sandbox recipe for bridge runs surfaces itself instead of waiting to be asked',
   'worktrees-dir': 'parallel features — the host-specific write allowance or terminal fallback is surfaced before provision',
+  'spec-adoption': 'contracts — a plan names the contract it builds to, and a change to a governed slice is visible at review instead of after it',
 });
 
 // ── the CLOSED opt-in capability registry (OPT-IN-SHIPS-INVISIBLE) ──────────────────────────────
@@ -332,6 +358,9 @@ export const OPT_IN_CAPABILITIES = Object.freeze([
   { id: 'mcp-channel', mode: 'mcp', advisorKey: 'mcp-channel' },
   { id: 'worktrees-dir', mode: 'worktrees', advisorKey: 'worktrees-dir' },
   { id: 'family-freshness', mode: 'upgrade', advisorKey: 'family-freshness' },
+  // The feature-spec layer is delivered by upgrade's spec-layer ensure (there is no specs mode), so
+  // its adoption state is declared where the store is seeded.
+  { id: 'spec-adoption', mode: 'upgrade', advisorKey: 'spec-adoption' },
   { id: 'adr-store-migration', mode: 'migrate-adr-store', advisorKey: 'adr-store-migration' },
   { id: 'review-recipe', mode: 'set-recipe', advisorKey: 'review-recipe' },
   // The execute slot is a DISTINCT opt-in from the review slot, and the same probe reports both —
@@ -1042,41 +1071,13 @@ export const recipeFingerprint = ({ hosts, dirs, home }) => {
     if (abs === homeAbs) return '~';
     return abs.startsWith(`${homeAbs}/`) ? `~/${abs.slice(homeAbs.length + 1)}` : abs;
   };
-  const canonical = JSON.stringify({ hosts: [...hosts].sort(), dirs: [...new Set(dirs.map(norm))].sort() });
-  return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
+  return factFingerprint(JSON.stringify({ hosts: [...hosts].sort(), dirs: [...new Set(dirs.map(norm))].sort() }));
 };
 
-// The fingerprint for an acknowledgment whose subject is already a canonical STRING — the census
-// fact, the sorted set of declared tool-elsewhere claims — rather than a hosts ∪ dirs recipe. Same
-// 16-hex shape the ack writer validates, so every lane records one comparable token; the canonical
-// form is the caller's, because only the caller knows which part of its fact is durable and which
-// is churn (the census binds the verdict + extension set, never per-file counts).
-export const factFingerprint = (fact) => createHash('sha256').update(fact).digest('hex').slice(0, 16);
-
-// The kit-owned neutral ack store (D4; AD-055 Part I): a FAMILY-OWNED strict-JSON file no host
-// validator guards — top-level key `sandboxLaneAck` (+ optional `_README`), unknown keys tolerated
-// on read (future acks are siblings). This is the PRIMARY ack channel; the legacy settings-scope
-// keys below are read for one deprecation window. The sandbox/permissions security keys are NEVER
-// consulted as an ack.
-export const ACKS_FILE = 'docs/ai/acks.json';
-export const ACKS_LANE_KEY = 'sandboxLaneAck';
-export const ACKS_WORKTREES_DIR_KEY = 'worktreesDirAck';
-export const ACKS_COVERAGE_DOMAIN_KEY = 'coverageDomainAck';
-export const ACKS_SOURCE_SIZE_COPY_KEY = 'sourceSizeCopyAck';
-// The CLOSED-WORLD ack-lane registry: the lane name an advisor item renders on the writer's
-// command line → the store key that writer sets. A lane the registry does not name is a usage
-// refusal at the writer, never a newly-invented key in the shared store.
-//
-// An ack lane exists for a state the maintainer can only ANSWER, never converge: a tracked tree the
-// coverage domain cannot reach, a checker deliberately vendored elsewhere. It is deliberately NOT
-// available to a state that is simply BROKEN — a dead checker/producer pair is fixed, not
-// acknowledged, so no lane names it.
-export const ACK_LANES = Object.freeze({
-  'sandbox-lane': ACKS_LANE_KEY,
-  'worktrees-dir': ACKS_WORKTREES_DIR_KEY,
-  'coverage-domain': ACKS_COVERAGE_DOMAIN_KEY,
-  'source-size-copy': ACKS_SOURCE_SIZE_COPY_KEY,
-});
+// The ack store (D4; AD-055 Part I) is the kit-owned PRIMARY ack channel; the legacy settings-scope
+// keys below are read for one deprecation window. An ack lane exists for a state the maintainer can
+// only ANSWER, never converge — a dead checker/producer pair is fixed, not acknowledged, so no lane
+// names it. The store's path, keys, lane registry and reader are ack-store.mjs (re-exported above).
 
 // The opt-in read-lane toggle file (AD-055 Part II) — the SAME kit-owned docs/ai/lanes.json the
 // placed hook reads live. The read-lane item offers to enable it once the hook is placed+wired.
@@ -1146,38 +1147,6 @@ const declarationCarriesMarker = (root, deps) => {
 export const SANDBOX_LANE_ACK_PARENT = 'agentWorkflow';
 export const SANDBOX_LANE_ACK_KEY = 'sandboxLaneAck';
 
-// Read the family-owned ack store. An ABSENT file (or absent docs/ai) is the NORMAL not-yet-acked
-// state → null (plain fall-through, never a skip). A parse/IO error on an EXISTING file THROWS — the
-// probe's catch turns it into a stated skip line (Decisions 2). A non-object root is a malformed
-// store (fail-closed skip); a non-string value at the key is tolerated → null (the item re-fires).
-// The WHOLE path chain (root / docs / ai / acks.json) is guarded WITHOUT following symlinks
-// BEFORE any read: a symlinked ANCESTOR could otherwise read an ack from OUTSIDE the project (the
-// writer refuses such a deployment — the reader must too), a symlinked/dangling LEAF must not read as
-// not-yet-acked, and a non-regular target (FIFO/dir/device) is a fail-closed SKIP — never read it (a
-// FIFO would BLOCK the advisor). ENOENT-safe: an absent file/dir is the NORMAL not-yet-acked null.
-const readAckValue = (root, deps, ackKey) => {
-  const readFile = deps.readFile ?? readFileSync;
-  const lstat = deps.lstat ?? lstatSync;
-  const absPath = join(root, ACKS_FILE);
-  let st;
-  try {
-    assertContainedRealPath(root, absPath, { lstat }); // symlinked root/ancestor/leaf or escape → throws
-    st = lstat(absPath);
-  } catch (err) {
-    if (err?.code === 'ENOENT') return null; // genuinely absent (file or docs/ai) — normal not-yet-acked
-    throw err; // a symlinked ancestor/leaf, an escape, or a real IO error — stated skip
-  }
-  if (!st.isFile()) {
-    throw new Error(`${ACKS_FILE} is not a regular file — refusing to read it`);
-  }
-  const parsed = JSON.parse(readFile(absPath, 'utf8'));
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`${ACKS_FILE}: expected a JSON object`);
-  }
-  const value = parsed[ackKey];
-  return typeof value === 'string' ? value : null;
-};
-
 // Read the opt-in read-lane toggle for the read-lane item. An ABSENT file (or absent docs/ai) →
 // false (the lane is off — offer it). `readLane === true` → enabled (converged). A parse/IO error on
 // an EXISTING file, a symlinked ancestor/leaf, an escape, or a non-object root THROWS — the probe
@@ -1208,7 +1177,38 @@ const readReadLaneToggle = (root, deps) => {
 // D3: the risk-marked keys — every key here has a per-item posture note in the mode doc, surfaced
 // at the consent moment; the static contract test asserts EXACT bidirectional coverage
 // (risk-marked keys == mode-doc note keys — a dropped note goes red, not silent).
-export const RISK_NOTED_KEYS = Object.freeze(['sandbox-lane', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert', 'source-size', 'gate-hook', 'mcp-channel']);
+export const RISK_NOTED_KEYS = Object.freeze(['sandbox-lane', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert', 'source-size', 'gate-hook', 'mcp-channel', 'spec-adoption']);
+
+// The feature-spec layer's adoption state (contract: kit/spec-adoption). The canon lets a plan cite
+// zero governing specs while a project adopts the layer, and nothing ever said whether adoption had
+// started — an owner found the store absent only by asking. The survey reads the store through
+// spec-check's own census; a recorded decline (the `spec-adoption` ack lane) is the fact that
+// silences the item, and an unreadable store is a stated skip so the flow-optimal line never renders
+// over it. The not-adopted apply is the spec-layer ensure; the decline preview rides the recipe line.
+export const probeSpecAdoption = ({ root, deps, add, skip }) => {
+  try {
+    const survey = surveySpecAdoption(root, deps);
+    if (survey.state === ADOPTION.UNREADABLE) {
+      skip('spec-adoption', new Error(`${survey.reason} — the adoption state under ${SPEC_STORE_DIR_REL} cannot be judged`));
+      return;
+    }
+    if (survey.state === ADOPTION.ADOPTED || readDeclineAck(root, deps)) return;
+    const decline = `node ${q(toolPath('ack-write.mjs'))} --lane ${SPEC_ADOPTION_LANE} --fingerprint ${declineFingerprint()} --cwd ${q(root)}`;
+    if (survey.state === ADOPTION.NOT_ADOPTED) {
+      add(
+        'spec-adoption',
+        fillTemplate(WHATS['spec-adoption'], {}),
+        `node ${q(toolPath('ensure-configs.mjs'))} --reconcile --only ${SPEC_LAYER_ENSURE} --cwd ${q(root)}`,
+        'spec-adoption',
+        `HAND-APPLY alternative (instead of the apply, never after it): decline the layer by recording it — ${decline}`,
+      );
+      return;
+    }
+    add('spec-adoption', fillTemplate(WHATS['spec-adoption.adopting'], { n: survey.draft }), decline, 'spec-adoption.adopting');
+  } catch (err) {
+    skip('spec-adoption', err);
+  }
+};
 
 const probeSandboxLane = ({ root, deps, add, skip }) => {
   try {
@@ -1491,6 +1491,7 @@ const PROBES = Object.freeze([
   probeSandboxLane,
   probeWorktreesDir,
   probeMcpChannel,
+  probeSpecAdoption,
 ]);
 
 export const buildRecommendations = ({ cwd, deps = {} } = {}) => {

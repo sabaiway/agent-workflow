@@ -82,6 +82,8 @@ import {
 import { detectSurface } from './surface.mjs';
 import { toViewModel } from './view-model.mjs';
 import { render } from './renderers.mjs';
+// The feature-spec adoption state (contract: kit/spec-adoption) — read-only leaves, no cycle.
+import { ADOPTION, readDeclineAck, surveySpecAdoption } from './spec-adoption.mjs';
 
 // ── manifestState values — re-export the EXACT public subset family-registry exported before B1 ─────
 // (the 7 state constants + DISPLAY_NAMES) so every existing importer (uninstall.mjs, the test suites)
@@ -428,9 +430,33 @@ const surveyAdrLayout = (dir, deps) => {
   }
 };
 
+// The spec-adoption survey, LENIENT for the read-only view — two facts, each failing on its own: a
+// survey that throws becomes the `unreadable` state with its reason, and an ack read that throws
+// keeps the store state and carries `declineError` beside `declined: false` — the status line still
+// renders, never a crash, never a silent "not adopted" and never a decline it could not read.
+const surveySpecs = (dir, deps) => {
+  const survey = (() => {
+    try {
+      return surveySpecAdoption(dir, deps);
+    } catch (err) {
+      return { state: ADOPTION.UNREADABLE, live: 0, draft: 0, reason: localizeError(err) };
+    }
+  })();
+  const decline = (() => {
+    if (survey.state === ADOPTION.ADOPTED) return { declined: false, declineError: null };
+    try {
+      return { declined: readDeclineAck(dir, deps), declineError: null };
+    } catch (err) {
+      return { declined: false, declineError: localizeError(err) };
+    }
+  })();
+  return { state: survey.state, live: survey.live, draft: survey.draft, reason: survey.reason, ...decline };
+};
+
 // surveyProject → the deploy axis for a target project dir: the per-member deployment stamps, whether
-// docs/ai/ exists, the ADR-store layout, and whether the hidden-mode fence is present. Pure (fs reads
-// only, all injectable), no git subprocess — the read-only `status` view must never mutate or spawn.
+// docs/ai/ exists, the ADR-store layout, the spec-adoption state, and whether the hidden-mode fence is
+// present. Pure (fs reads only, all injectable), no git subprocess — the read-only `status` view must
+// never mutate or spawn.
 export const surveyProject = (projectDir, deps = {}) => {
   const exists = deps.exists ?? existsSync;
   const dir = resolve(projectDir);
@@ -445,7 +471,7 @@ export const surveyProject = (projectDir, deps = {}) => {
     }
   })();
   const deployed = stamps.some((s) => s.version != null) || docsAiPresent;
-  return { dir, deployed, docsAiPresent, adrLayout: surveyAdrLayout(dir, deps), hiddenFence: hasHiddenFence(dir, deps), stamps };
+  return { dir, deployed, docsAiPresent, adrLayout: surveyAdrLayout(dir, deps), specs: surveySpecs(dir, deps), hiddenFence: hasHiddenFence(dir, deps), stamps };
 };
 
 // ── report ───────────────────────────────────────────────────────────────────────
@@ -683,6 +709,9 @@ export const buildEnvelope = (family, project = null, extras = {}) => {
       deployed: project.deployed,
       docsAi: project.docsAiPresent,
       adrLayout: project.adrLayout, // 'old' | 'old-unrotated' | 'migrated' | 'none' — a user-safe token, never a raw path
+      // { state: not-adopted | adopting | adopted | unreadable, live, draft, reason, declined, declineError }
+      // — an envelope predating the field omits it (the view-model reads that as unknown, never as a state).
+      ...(project.specs ? { specs: project.specs } : {}),
       // member + display + version only — never the internal stamp FILENAME (s.file).
       deployStamps: project.stamps.map((s) => ({ member: s.name, display: displayOf(s.name), version: s.version ?? null })),
     };

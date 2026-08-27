@@ -145,6 +145,11 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the backlog-queue classifier and its CLI half — by NAME for the same reason: a project
       // declares the CLI path as a gate command, so a payload drop hands a deployed project a gate
       // row that cannot run.
+      // the spec-adoption trio the advisor and status both read: the Node-evidence probe every seeding
+      // ensure gates on, the adoption survey, and the one guarded ack reader they share
+      'tools/node-evidence.mjs',
+      'tools/spec-adoption.mjs',
+      'tools/ack-store.mjs',
       'tools/queue-audit.mjs',
       'tools/queue-audit-rows.mjs',
       'tools/queue-audit-cli.mjs',
@@ -703,7 +708,11 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       agy-review-harness.test.mjs (the shared fake CLI + sandbox) and agy-review-verdict.test.mjs
     //       (the verdict-body honesty topic). A bridge subtree ships its tests — files[] excludes
     //       only tools/ and bin/ tests of the kit itself.
-    assert.equal(packed.length, 259, `tarball file count drifted (${packed.length} ≠ 259)`);
+    // 262 = 259 + the adoption-state leaves (AD-123): tools/node-evidence.mjs (the four-state Node
+    //       probe the ensures gate on), tools/spec-adoption.mjs (the store survey + decline the advisor
+    //       and status read) and tools/ack-store.mjs (the ack store's path, lanes, fingerprint and the
+    //       one guarded reader, extracted from the advisor). Their *.test.mjs siblings are stripped.
+    assert.equal(packed.length, 262, `tarball file count drifted (${packed.length} ≠ 262)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

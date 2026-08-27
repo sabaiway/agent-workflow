@@ -114,6 +114,8 @@ const projectVm = (p) =>
         deployed: p.deployed,
         docsAi: p.docsAi,
         adrLayout: p.adrLayout ?? null,
+        // null = an envelope predating the field (unknown), never a state.
+        specs: p.specs ?? null,
         deployStamps: (p.deployStamps ?? []).map((st) => ({ display: st.display, version: st.version ?? null })),
         visibility: visibilityVm(p.visibility),
         settings: settingsVm(p.settings),

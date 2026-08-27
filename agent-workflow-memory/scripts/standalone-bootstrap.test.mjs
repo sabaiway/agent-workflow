@@ -241,9 +241,10 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
     assert.match(readFileSync(join(projectScripts, 'archive-decisions.mjs'), 'utf8'), /locally pinned/, 'never overwritten');
   });
 
-  // The spec-layer ensure (SKILL.md upgrade step 2), modeled the way the prose performs it: Node projects only;
-  // the reader pair copy-if-missing; the store root create-only, date rendered, ONLY behind BOTH pairs as REGULAR
-  // files byte-equal to the bundle (the hook runs the DEPLOYED checker). No catalog: a differing pair is reported.
+  // The spec-layer ensure (SKILL.md upgrade step 2), modeled the way the prose performs it: only where there is
+  // Node evidence (a package.json OR a deployed kit script); the reader pair copy-if-missing; the store root
+  // create-only, date rendered, ONLY behind BOTH pairs as REGULAR files byte-equal to the bundle (the hook runs
+  // the DEPLOYED checker). No catalog: a differing pair is reported.
   it('the upgrade ensure seeds a MISSING reader pair, and the store root ONLY behind bundle-equal reader + checker pairs', () => {
     const project = makeProject();
     const docsAi = bootstrap(project);
@@ -251,13 +252,19 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
     const root = join(docsAi, 'specs', 'index.md');
     const checker = join(scripts, 'check-docs-size.mjs');
     for (const name of READER_PAIR) rmSync(join(scripts, name)); // a pre-spec deployment: no reader, no store
+    // ...and, for the FIRST probe only, every OTHER Node witness the evidence rule reads — a deployed
+    // kit script is evidence enough, so "no package.json" alone no longer makes a No-Node tree.
+    const SEED_SET = readdirSync(ENFORCEMENT).filter((name) => name.endsWith('.mjs') && !name.endsWith('.test.mjs') && !name.startsWith('_'));
+    const WITNESSES = SEED_SET.filter((name) => !READER_PAIR.includes(name));
+    for (const name of WITNESSES) rmSync(join(scripts, name), { force: true });
     rmSync(join(docsAi, 'specs'), { recursive: true });
     // Presence is probed WITHOUT following links: a dangling symlink is present (and not a regular file).
     const present = (p) => { try { lstatSync(p); return true; } catch { return false; } };
     const regular = (p) => present(p) && lstatSync(p).isFile();
     const regularAndEqual = (name) => regular(join(scripts, name)) && readFileSync(join(scripts, name)).equals(readFileSync(join(ENFORCEMENT, name)));
+    const nodeEvidence = () => regular(join(project, 'package.json')) || SEED_SET.some((name) => regular(join(scripts, name)));
     const ensureSpecLayer = () => {
-      if (!present(join(project, 'package.json'))) return 'skipped-no-node';
+      if (!nodeEvidence()) return 'skipped-no-node-evidence';
       if ([...READER_PAIR, ...CHECKER_PAIR].map((name) => join(scripts, name)).concat(root).some((p) => present(p) && !regular(p))) return 'reported';
       for (const name of READER_PAIR) if (!present(join(scripts, name))) cpSync(join(ENFORCEMENT, name), join(scripts, name));
       if (![...READER_PAIR, ...CHECKER_PAIR].every(regularAndEqual)) return 'reported';
@@ -266,8 +273,15 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
       writeFileSync(root, readFileSync(join(TEMPLATES, 'specs', 'index.md'), 'utf8').replaceAll('{{DATE}}', '2026-08-23'));
       return 'seeded';
     };
-    assert.equal(ensureSpecLayer(), 'skipped-no-node', 'a No-Node deployment: nothing written');
+    assert.equal(ensureSpecLayer(), 'skipped-no-node-evidence', 'no Node evidence: nothing written');
+    cpSync(join(ENFORCEMENT, 'archive-caps.mjs'), join(scripts, 'archive-caps.mjs'));
+    assert.notEqual(ensureSpecLayer(), 'skipped-no-node-evidence', 'ONE deployed kit script (a witness the old package.json probe never saw) is evidence enough');
+    rmSync(join(scripts, 'archive-caps.mjs'));
+    for (const name of READER_PAIR) rmSync(join(scripts, name), { force: true }); // the witness run seeded the reader pair — back to the pre-spec state
     assert.equal(present(join(scripts, READER_PAIR[0])), false);
+    // Put the deployed checker pair (and the ADR rotator the hook runs) back: every later step below
+    // exercises the bundle-equality gate, which needs the pair on disk exactly as bootstrap left it.
+    for (const name of WITNESSES) cpSync(join(ENFORCEMENT, name), join(scripts, name));
     writeFileSync(join(project, 'package.json'), '{"name":"fixture"}\n');
     symlinkSync(join(project, 'nowhere'), join(scripts, READER_PAIR[0]));
     assert.equal(ensureSpecLayer(), 'reported', 'a DANGLING symlink where the reader belongs: nothing is written through it');
@@ -396,7 +410,7 @@ describe('standalone bootstrap — the navigator the entry point declares always
     const navigator = upgrade.indexOf('ensure the NAVIGATOR');
     assert.ok(specLayer > 0 && specLayer < navigator && navigator < upgrade.indexOf(EQUAL_HEAD_ANCHOR), 'spec layer -> navigator -> equal-head exit');
     const block = upgrade.slice(specLayer, navigator);
-    for (const token of [...READER_PAIR, ...CHECKER_PAIR, 'regular files', 'dangling', 'byte-equal', 'index.md` **if missing**', 'date filled', 'No-Node', 'never overwrites a deployed script']) assert.ok(block.includes(token), token);
+    for (const token of [...READER_PAIR, ...CHECKER_PAIR, 'regular files', 'dangling', 'byte-equal', 'index.md` **if missing**', 'date filled', 'Node evidence', 'never overwrites a deployed script']) assert.ok(block.includes(token), token);
   });
 
   it('the upgrade flow documents the finalizer at BOTH positions the deploy needs it', () => {

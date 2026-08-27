@@ -55,6 +55,7 @@ project deployment (/proj)
   kit                       1.3.0
   memory                    1.0.0
   docs/ai present           yes
+  specs                     unknown — the installed kit predates the adoption state
   visibility                hidden (git-ignored, local-only)
 
 settings
@@ -158,6 +159,25 @@ describe('renderers — branch coverage (every replaced-function branch)', () =>
   it('an OLD-UNROTATED layout renders the SAME actionable line as old', () => {
     const unrotated = renderPlain({ installed: [], project: { dir: '/p', deployed: true, adrLayout: 'old-unrotated', deployStamps: [] } });
     assert.match(unrotated, /ADR store\s+old layout — run \/agent-workflow-kit migrate-adr-store/);
+  });
+
+  it('the specs line renders per adoption state, the decline and the ack read error', () => {
+    const withSpecs = (specs) => renderPlain({ installed: [], project: { dir: '/p', deployed: true, deployStamps: [], specs } });
+    assert.match(withSpecs({ state: 'not-adopted', live: 0, draft: 0, declined: false }), /specs\s+not adopted$/m);
+    assert.match(withSpecs({ state: 'adopting', live: 0, draft: 2, declined: true }), /specs\s+adopting \(2 draft\) — declined/);
+    assert.match(withSpecs({ state: 'adopted', live: 3, draft: 1, declined: false }), /specs\s+adopted \(3 live, 1 draft\)/);
+    assert.match(
+      withSpecs({ state: 'unreadable', reason: 'docs/ai/specs is a file, not a directory', live: 0, draft: 0, declined: false }),
+      /specs\s+could not be read — docs\/ai\/specs is a file/,
+    );
+    assert.match(
+      withSpecs({ state: 'not-adopted', live: 0, draft: 0, declined: false, declineError: 'docs/ai/acks.json: expected a JSON object' }),
+      /not adopted \(decline ack unreadable: docs\/ai\/acks\.json: expected a JSON object\)/,
+    );
+    const none = renderPlain({ installed: [], project: { dir: '/p', deployed: true, deployStamps: [] } });
+    assert.match(none, /specs\s+unknown — the installed kit predates the adoption state/, 'a legacy envelope says so instead of inventing a state');
+    const undeployed = renderPlain({ installed: [], project: { dir: '/p', deployed: false, deployStamps: [], specs: { state: 'not-adopted', live: 0, draft: 0, declined: false } } });
+    assert.doesNotMatch(undeployed, /specs/, 'no deployment — nothing whose adoption state could mean anything');
   });
 
   it('a member with TWO notes (engine missing both fragments) prints both as ↳ sub-lines', () => {

@@ -4,6 +4,20 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 7.1.0 — the rules template names the adoption state a zero relies on, and the upgrade skips only on no Node evidence (AD-123)
+
+`references/templates/agent_rules.md`: §1.2 no longer says "zero is legal during adoption" — a zero
+names the adoption state it relies on (not adopted, adopting, or nothing spec-covered touched); §2.5
+Communication gains its last bullet — a tool-composed `skipped-*` line whose stated reason the observed
+tree disproves is raised as a FINDING, never pasted as neutral, and a tool may not emit a skip it could
+itself disprove; §2.6 is the re-rendered engine 4.2.0 lens (the Spec-first bullet with the state
+clause). The kit's template twin moves byte-identically.
+
+`SKILL.md` upgrade step 2: the ADR enforcement pair and the spec layer skip ONLY when no Node evidence
+exists — no regular `package.json` at the root and none of the kit-seeded `scripts/*.mjs` present; a
+probe that cannot be read is a stated failure, never a skip. A deployment the kit itself made is
+therefore always recognized, whatever its stack.
+
 ## 7.0.0 — a symlinked docs file gets named instead of skipped (AD-119)
 
 The docs cap-validator discovered files through `readdir(dir, { withFileTypes: true })` and kept an

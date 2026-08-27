@@ -95,6 +95,9 @@ const DISCIPLINE_TOKENS = [
   'exists at plan review',
   'lands with the code',
   'adoption shim',
+  // the adoption state (AD-123) — a zero governing-spec citation names the state it relies on
+  'adoption state',
+  'never a licence',
 ];
 
 // The pre-E4 intro line (the outgoing body differs from the current fragment ONLY by the
@@ -104,6 +107,11 @@ const CURRENT_INTRO =
   "Apply these when authoring a plan, reviewing, folding a finding, or editing code — the layer read **before any code change**. (Full canon: the project's planning / workflow-methodology + orchestration canon. This section is rendered from that canon and refreshed on upgrade; a custom edit is preserved verbatim, but flagged.)";
 const PRE_E4_INTRO =
   "Apply these when authoring a plan, reviewing, folding a finding, or editing code — the layer read **before any code change**. (Full canon: the project's planning / workflow-methodology + orchestration canon.)";
+
+// The IMMEDIATELY-previous release's Spec-first line (this release's delta is its REWORDING —
+// the adoption-state clause). Held here so the exact outgoing body is computable without git history.
+const PREVIOUS_SPEC_FIRST =
+  "- **Spec-first.** A plan names its GOVERNING spec(s) — zero, one or many, one per touched spec-covered slice (the feature spec under `docs/ai/specs/`; page-only coverage governs as an ADOPTION SHIM, with Out of scope + Revision stated inline in the plan). Each cited spec's Out of scope bounds that slice's work and the plan's non-goals restate it per slice — no global union; a cross-spec conflict is resolved by a spec revision BEFORE approval, never by silent precedence. A NEW feature's draft spec exists AT plan review (a `create` row); a change to a governed contract rides the plan as its proposed revision (a `modify` row); approval confirms plan and contract atomically, and the revision lands with the code. Scenario bindings are per scenario: a new scenario is `unbound` until its test lands in the same plan, and a status never regresses for an extension.";
 
 describe('agent-rules-lens fragment — canon presence', () => {
   it('starts with the number-neutral heading', () => {
@@ -157,13 +165,15 @@ describe('agent-rules-lens-priors — append-only prior store shape', () => {
 
   it('the OUTGOING body of the previous release IS the newest entry — exact normalized equality', () => {
     // The current fragment differs from the IMMEDIATELY-previous release's body by EXACTLY the
-    // spec-first bullet — so the exact expected outgoing body is computable, and a typo in the
-    // prior entry goes red instead of sliding past a spot-check. This line moves with every canon
-    // release: it names THIS release's delta, never a past one.
+    // REWORDED spec-first bullet (the adoption-state clause) — so the exact expected outgoing body
+    // is computable, and a typo in the prior entry goes red instead of sliding past a spot-check.
+    // This line moves with every canon release: it names THIS release's delta, never a past one.
     const lines = fragment.split('\n');
-    const kept = lines.filter((l) => !l.startsWith('- **Spec-first.**'));
-    assert.equal(lines.length - kept.length, 1, 'sanity: exactly ONE spec-first bullet is this release\'s delta');
-    const outgoing = normalize(kept.join('\n'));
+    const specFirst = lines.filter((l) => l.startsWith('- **Spec-first.**'));
+    assert.equal(specFirst.length, 1, 'sanity: exactly ONE spec-first bullet is this release\'s delta');
+    const outgoing = normalize(
+      lines.map((l) => (l.startsWith('- **Spec-first.**') ? PREVIOUS_SPEC_FIRST : l)).join('\n'),
+    );
     assert.notEqual(outgoing, normalize(fragment), 'sanity: the swap actually changes the body');
     assert.ok(outgoing.includes(CURRENT_INTRO), 'the outgoing body carries the provenance intro (post-E4)');
     assert.equal(priors[priors.length - 1], outgoing, 'the newest prior byte-equals the pre-strip fragment (normalized)');
