@@ -28,7 +28,7 @@ import { parseSemver, compareSemver } from './semver-lite.mjs';
 import { validateManifest, readAuthoritativeVersion, UNSUPPORTED, INVALID } from './manifest/validate.mjs';
 import { START_MARKER, excludePath, inferVisibility } from './hide-footprint.mjs';
 import { readEngineFragment, ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL, AUTONOMY_FRAGMENT_REL, LENS_FRAGMENT_REL, LENS_PRIORS_REL } from './engine-source.mjs';
-import { ACTIVITIES, resolveActivityRecipe, composeReadiness } from './recipes.mjs';
+import { ACTIVITIES, resolveActivityRecipe, composeReadiness, safeLine } from './recipes.mjs';
 // The config reader lives in orchestration-config.mjs (the single config contract). The read-only status
 // settings-survey reuses THIS reader (one strict-JSON + loud-on-malformed contract), not a second copy.
 import { loadConfig } from './orchestration-config.mjs';
@@ -52,9 +52,10 @@ import { HOOK_FILE_REL as GATE_HOOK_FILE_REL, isHookWired } from './gate-hook.mj
 // writer, which pulls in the atomic-write core) so the status survey stays a pure reader.
 import { settingsSnapshot } from './bridge-settings-read.mjs';
 import { GATES_REL, loadDeclaration } from './run-gates.mjs';
-// The cheap-agents READ core's bundle reader + placement planner — reused by the settings survey
-// (one implementation, never a drifting copy; the read core imports only node builtins, no cycle).
-import { readBundledAgents, planPlacement } from './cheap-agents-read.mjs';
+// The cheap-agents READ core's bundle reader, placement planner and executor-vehicle survey —
+// reused by the settings survey (one implementation, never a drifting copy; the read core imports
+// only node builtins, no cycle).
+import { readBundledAgents, planPlacement, surveyExecutorVehicle, EXECUTOR_VEHICLE, assertDirSafe, readFsDeps, CLAUDE_DIR, AGENTS_DIR } from './cheap-agents-read.mjs';
 // The status vocabulary (manifestState constants, internal→public maps, display names, the no-leak
 // forbidden set) lives in the frozen labels.mjs LEAF (Plan §4.2 B1) so the import graph is acyclic —
 // nothing imports family-registry for vocabulary. Imported here for internal use; the public subset is
@@ -615,14 +616,34 @@ export const surveyGateHook = (dir, deps = {}) => {
 };
 
 // cheap agents: the kit-placed .claude/agents/ vehicles (Mode: agents) — how many of the bundled
-// cheap-lane definitions are present in the project. A customized copy counts as PLACED (it exists;
-// the writer preserves it) — the welcome-mat agents rung keys on zero placed. Read-only; REUSES the
-// writer's own bundle reader + placement planner (cheap-agents.mjs — one implementation).
+// definitions are present in the project, plus the ONE full-tool vehicle's own state. A customized
+// copy counts as PLACED (it exists; the writer preserves it) — the welcome-mat agents rung keys on
+// zero placed, so the counts span every vehicle, the executor included. The executor state comes
+// from the read core's survey (the subagent carrier's one instrument — one implementation), which
+// answers a state instead of throwing; its reason rides along when it carries one.
 export const surveyCheapAgents = (dir, deps = {}) => {
   try {
+    const projectDir = resolve(dir);
     const templates = readBundledAgents(deps);
-    const plan = planPlacement(templates, resolve(dir), deps);
-    return { bundled: templates.length, placed: plan.filter((p) => p.action !== 'place').length };
+    const vehicle = (deps.surveyVehicle ?? surveyExecutorVehicle)(projectDir, deps);
+    // The executor is judged by its own survey (which answers a state where the placement plan
+    // would throw); the plan covers the read-only vehicles, so a broken executor never hides them,
+    // and it never follows a symlinked ancestor — the writer's own guard refuses first.
+    const executor = { executor: vehicle.state, ...(vehicle.reason ? { executorReason: safeLine(vehicle.reason) } : {}) };
+    try {
+      const fs = readFsDeps(deps);
+      assertDirSafe(join(projectDir, CLAUDE_DIR), CLAUDE_DIR, fs);
+      assertDirSafe(join(projectDir, AGENTS_DIR), AGENTS_DIR, fs);
+      const plan = planPlacement(templates.filter((t) => t.name !== EXECUTOR_VEHICLE), projectDir, deps);
+      return {
+        bundled: templates.length,
+        readOnly: templates.filter((t) => t.name !== EXECUTOR_VEHICLE).length,
+        placed: plan.filter((p) => p.action !== 'place').length + (['placed', 'customized'].includes(vehicle.state) ? 1 : 0),
+        ...executor,
+      };
+    } catch (err) {
+      return { error: localizeError(err), ...executor };
+    }
   } catch (err) {
     return { error: localizeError(err) };
   }

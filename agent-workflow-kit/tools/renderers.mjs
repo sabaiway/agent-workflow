@@ -20,6 +20,10 @@ const SETTINGS_COL = 14;
 // checks, so a future token joins the render by joining this line.
 const ACTIONABLE_ADR_LAYOUTS = Object.freeze(['old', 'old-unrotated']);
 
+const DEGRADE_ARROW = '←';
+const EMPTY_CELL = '—';
+const UNKNOWN_EXECUTOR = 'unknown';
+
 const SGR = Object.freeze({ bold: '\x1b[1m', reset: '\x1b[0m' });
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 export const visibleLength = (s) => s.replace(ANSI_RE, '').length;
@@ -116,13 +120,22 @@ const renderSettings = (vm, { color, glyph }) => {
   const s = vm.project?.settings;
   if (!s) return [];
   const lines = ['', heading(BLOCK_TITLES.settings, color)];
-  // recipes — the effective recipe per slot, or a loud error; a detector floor adds a sub-line.
+  // recipes — one line per slot: the effective recipe, where it came from, and the requested value
+  // a degrade replaced (a joined single line could not carry three activities and their slots), or a
+  // loud error; a detector floor adds a sub-line.
   if (s.recipes?.error) lines.push(`  ${pad(SETTINGS_LABELS.recipes, SETTINGS_COL)}error: ${s.recipes.error}`);
   else if (s.recipes) {
-    const joined = s.recipes.pairs.map((p) => `${p.key}=${p.recipe}`).join(' · ') || '—';
-    lines.push(`  ${pad(SETTINGS_LABELS.recipes, SETTINGS_COL)}${joined}`);
+    const rows = s.recipes.pairs.map((p) => {
+      const source = p.source ? ` (${p.source})` : '';
+      const recovery = p.degradedFrom === 'subagent' ? ' — runs solo until the executor vehicle is usable (/agent-workflow-kit agents)' : '';
+      const degraded = p.degradedFrom ? ` ${DEGRADE_ARROW} degraded from ${p.degradedFrom}${recovery}` : '';
+      return `${p.key}: ${p.recipe}${source}${degraded}`;
+    });
+    (rows.length ? rows : [EMPTY_CELL]).forEach((row, i) => {
+      lines.push(`  ${pad(i === 0 ? SETTINGS_LABELS.recipes : '', SETTINGS_COL)}${row}`);
+    });
     if (s.recipes.detectError) {
-      lines.push(`  ${pad('', SETTINGS_COL)}${glyph.note} couldn't check backends (${s.recipes.detectError}); recipes floored at solo`);
+      lines.push(`  ${pad('', SETTINGS_COL)}${glyph.note} couldn't check backends (${s.recipes.detectError}); bridge-backed recipes floored at solo; the executor vehicle is unaffected`);
     }
   }
   // attribution — effective includeCoAuthoredBy; a real local override is called out.
@@ -136,10 +149,17 @@ const renderSettings = (vm, { color, glyph }) => {
   else if (s.velocity) {
     lines.push(`  ${pad(SETTINGS_LABELS.velocity, SETTINGS_COL)}defaultMode=${String(s.velocity.defaultMode)} · allow project/local=${s.velocity.allow.project}/${s.velocity.allow.local}`);
   }
-  // cheap agents — the kit-placed .claude/agents/ vehicles: placed count vs the bundle.
-  if (s.agents?.error) lines.push(`  ${pad(SETTINGS_LABELS.agents, SETTINGS_COL)}error: ${s.agents.error}`);
+  // cheap agents — the kit-placed .claude/agents/ vehicles: placed count vs the bundle, then the
+  // split the subagent carrier turns on — the read-only vehicles and the ONE executor, whose state
+  // decides whether a slot configured `subagent` can ride it (an unusable one carries its reason).
+  if (s.agents?.error) {
+    const partial = s.agents.executor ? ` — executor ${s.agents.executor}${s.agents.executorReason ? ` (${s.agents.executorReason})` : ''}` : '';
+    lines.push(`  ${pad(SETTINGS_LABELS.agents, SETTINGS_COL)}error: ${s.agents.error}${partial}`);
+  }
   else if (s.agents) {
-    lines.push(`  ${pad(SETTINGS_LABELS.agents, SETTINGS_COL)}placed=${s.agents.placed}/${s.agents.bundled}`);
+    const reason = s.agents.executorReason ? ` (${s.agents.executorReason})` : '';
+    const executor = s.agents.executor == null ? `${UNKNOWN_EXECUTOR} (the installed kit predates the field)` : `${s.agents.executor}${reason}`;
+    lines.push(`  ${pad(SETTINGS_LABELS.agents, SETTINGS_COL)}${s.agents.placed}/${s.agents.bundled} placed — ${s.agents.readOnly} read-only, executor ${executor}`);
   }
   // gate hook — the opt-in PreToolUse gate-approval hook: wired / file placed / declaration present /
   // declared gate count (null → '?' — unknown is shown as unknown, never as a number).

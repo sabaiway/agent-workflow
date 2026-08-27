@@ -25,10 +25,17 @@ const fullEnvelope = () => ({
     deployStamps: [{ display: 'kit', version: '1.3.0' }, { display: 'memory', version: '1.0.0' }],
     visibility: { state: 'hidden' },
     settings: {
-      recipes: { configSource: 'docs/ai/orchestration.json', activities: { 'plan-authoring': { review: { recipe: 'reviewed' } }, 'plan-execution': { execute: { recipe: 'delegated' }, review: { recipe: 'council' } } } },
+      recipes: {
+        configSource: 'docs/ai/orchestration.json',
+        activities: {
+          'plan-authoring': { author: { recipe: 'subagent', source: 'config', degradedFrom: null }, review: { recipe: 'reviewed', source: 'default', degradedFrom: null } },
+          'plan-execution': { execute: { recipe: 'delegated', source: 'config', degradedFrom: null }, review: { recipe: 'council', source: 'config', degradedFrom: null } },
+          routine: { carrier: { recipe: 'solo', source: 'config', degradedFrom: 'subagent' }, parallel: { recipe: 'on', source: 'default', degradedFrom: null } },
+        },
+      },
       attribution: { project: false, local: null, effective: false },
       velocity: { defaultMode: 'acceptEdits', allowEntries: { project: 1, local: 2 } },
-      agents: { bundled: 3, placed: 1 },
+      agents: { bundled: 5, placed: 3, executor: 'unusable', executorReason: 'tools: Read, Grep is read-only' },
       hook: { wired: true, filePlaced: true, declarationPresent: false, declaredGates: 0 },
     },
   },
@@ -59,11 +66,19 @@ project deployment (/proj)
   visibility                hidden (git-ignored, local-only)
 
 settings
-  recipes       plan-authoring.review=reviewed · plan-execution.execute=delegated · plan-execution.review=council
+  recipes       plan-authoring.author: subagent (config)
+                plan-authoring.review: reviewed (default)
+                plan-execution.execute: delegated (config)
+                plan-execution.review: council (config)
+                routine.carrier: solo (config) ← degraded from subagent — runs solo until the executor vehicle is usable (/agent-workflow-kit agents)
+                routine.parallel: on (default)
   attribution   includeCoAuthoredBy effective=false
   velocity      defaultMode=acceptEdits · allow project/local=1/2
-  subagents     placed=1/3
+  subagents     3/5 placed — 4 read-only, executor unusable (tools: Read, Grep is read-only)
   gate hook     wired=yes · file=yes · gates.json=no · declared=0`;
+
+// The one plain-surface render helper every non-golden case goes through.
+const renderPlain = (env) => render(toViewModel(env), { mode: 'plain', width: 80, color: false, ascii: false });
 
 describe('renderers — plain (byte-exact golden)', () => {
   it('renders the full 4-block envelope byte-for-byte', () => {
@@ -136,8 +151,6 @@ describe('renderers — ASCII glyph fallback', () => {
 });
 
 describe('renderers — branch coverage (every replaced-function branch)', () => {
-  const renderPlain = (env) => render(toViewModel(env), { mode: 'plain', width: 80, color: false, ascii: false });
-
   it('an undeployed project shows the no-deployment line, no stamps', () => {
     const out = renderPlain({ installed: [], project: { dir: '/empty', deployed: false, deployStamps: [] } });
     assert.match(out, /project deployment \(\/empty\)/);
@@ -215,7 +228,7 @@ describe('renderers — branch coverage (every replaced-function branch)', () =>
       installed: [],
       project: { dir: '/p', deployed: true, deployStamps: [], settings: { recipes: { activities: { 'plan-authoring': { review: { recipe: 'solo' } } }, detectError: 'corrupt bridge manifest' } } },
     });
-    assert.match(out, /couldn't check backends \(corrupt bridge manifest\); recipes floored at solo/);
+    assert.match(out, /couldn't check backends \(corrupt bridge manifest\); bridge-backed recipes floored at solo; the executor vehicle is unaffected/);
   });
 
   it('settings: a real local attribution override is flagged', () => {
@@ -272,7 +285,6 @@ describe('renderers — branch coverage (every replaced-function branch)', () =>
 });
 
 describe('renderers — the checked-scope freshness verdict (INV-C × INV-B)', () => {
-  const renderPlain = (env) => render(toViewModel(env), { mode: 'plain', width: 80, color: false, ascii: false });
   const member = (name, display, freshness, extra = {}) => ({
     member: name,
     display,
@@ -319,5 +331,42 @@ describe('renderers — the checked-scope freshness verdict (INV-C × INV-B)', (
     });
     assert.match(out, /1 member\(s\) need a refresh \(see the ↳ notes above\)\./);
     assert.ok(!/could not be checked/.test(out));
+  });
+});
+
+describe('renderers — the resolved carrier per slot and the vehicle behind it', () => {
+  const withSettings = (settings) => renderPlain({ installed: [], project: { dir: '/p', deployed: true, deployStamps: [], settings } });
+
+  it('one line per slot with its source; routine names both of its slots; a degrade names what it replaced', () => {
+    const out = withSettings({
+      recipes: {
+        activities: {
+          'plan-authoring': { author: { recipe: 'subagent', source: 'config', degradedFrom: null } },
+          routine: { carrier: { recipe: 'solo', source: 'config', degradedFrom: 'subagent' }, parallel: { recipe: 'off', source: 'config', degradedFrom: null } },
+        },
+      },
+    });
+    assert.match(out, /recipes\s+plan-authoring\.author: subagent \(config\)/);
+    assert.match(out, /^\s+routine\.carrier: solo \(config\) ← degraded from subagent — runs solo until the executor vehicle is usable \(\/agent-workflow-kit agents\)$/m);
+    assert.match(out, /^\s+routine\.parallel: off \(config\)$/m);
+  });
+
+  it('the subagents line splits the read-only vehicles from the executor, whose reason rides an unusable state', () => {
+    const line = (agents) => withSettings({ agents }).split('\n').find((l) => l.includes('subagents'));
+    assert.match(line({ bundled: 5, placed: 5, executor: 'placed' }), /subagents\s+5\/5 placed — 4 read-only, executor placed$/);
+    assert.match(line({ bundled: 5, placed: 5, executor: 'customized' }), /executor customized$/);
+    assert.match(line({ bundled: 5, placed: 4, executor: 'missing' }), /4\/5 placed — 4 read-only, executor missing$/);
+    assert.match(line({ bundled: 5, placed: 5, executor: 'unusable', executorReason: 'tools: Read is read-only' }), /executor unusable \(tools: Read is read-only\)$/);
+  });
+
+  it('an envelope predating the executor field says unknown, never a state', () => {
+    assert.match(withSettings({ agents: { bundled: 4, placed: 4 } }), /subagents\s+4\/4 placed — 4 read-only, executor unknown \(the installed kit predates the field\)/);
+    const partial = withSettings({ agents: { error: '.claude/agents is a symlink', executor: 'unusable', executorReason: 'a symlink' } });
+    assert.match(partial, /subagents\s+error: \.claude\/agents is a symlink — executor unusable \(a symlink\)/, 'a partial error still names the executor state');
+    const mixed = withSettings({
+      recipes: { activities: { 'plan-execution': { execute: { recipe: 'subagent', source: 'config', degradedFrom: null } } }, detectError: 'detector down' },
+    });
+    assert.match(mixed, /plan-execution\.execute: subagent \(config\)/, 'the executor-backed slot still resolves');
+    assert.match(mixed, /bridge-backed recipes floored at solo; the executor vehicle is unaffected/);
   });
 });

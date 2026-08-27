@@ -4,6 +4,13 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 7.1.1 — the seed orchestration note names every slot (AD-124)
+
+`references/templates/orchestration.json`: the `_README` note now names the three activities, every
+slot and its accepted values, the `subagent` carrier and the `parallel` switch; the JSON shape is
+unchanged (two activities, `solo` everywhere), so a kit that predates the third activity still
+accepts the seed. `SKILL.md` lists five orchestration recipes. Documentation only — PATCH.
+
 ## 7.1.0 — the rules template names the adoption state a zero relies on, and the upgrade skips only on no Node evidence (AD-123)
 
 `references/templates/agent_rules.md`: §1.2 no longer says "zero is legal during adoption" — a zero

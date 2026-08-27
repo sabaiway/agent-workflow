@@ -34,10 +34,17 @@ const fullEnvelope = () => ({
     ],
     visibility: { state: 'hidden' },
     settings: {
-      recipes: { configSource: 'docs/ai/orchestration.json', activities: { 'plan-authoring': { review: { recipe: 'reviewed' } }, 'plan-execution': { execute: { recipe: 'delegated' }, review: { recipe: 'council' } } } },
+      recipes: {
+        configSource: 'docs/ai/orchestration.json',
+        activities: {
+          'plan-authoring': { author: { recipe: 'subagent', source: 'config', degradedFrom: null }, review: { recipe: 'reviewed', source: 'default', degradedFrom: null } },
+          'plan-execution': { execute: { recipe: 'delegated', source: 'config', degradedFrom: null }, review: { recipe: 'council', source: 'config', degradedFrom: null } },
+          routine: { carrier: { recipe: 'solo', source: 'config', degradedFrom: 'subagent' }, parallel: { recipe: 'on', source: 'default', degradedFrom: null } },
+        },
+      },
       attribution: { project: false, local: null, effective: false },
       velocity: { defaultMode: 'acceptEdits', allowEntries: { project: 1, local: 2 } },
-      agents: { bundled: 3, placed: 1 },
+      agents: { bundled: 5, placed: 3, executor: 'unusable', executorReason: 'tools: Read, Grep is read-only' },
       hook: { wired: true, filePlaced: true, declarationPresent: false, declaredGates: 0 },
     },
   },
@@ -140,17 +147,30 @@ describe('view-model — bridges / project / settings', () => {
     assert.equal(vm.project.visibility.phrase, 'hidden (git-ignored, local-only)');
   });
 
-  it('settings: recipe pairs flatten activity.slot=recipe; attribution override is presence-and-differ; velocity counts', () => {
+  it('settings: recipe pairs flatten activity.slot with source and degradedFrom; attribution override is presence-and-differ; velocity counts', () => {
     const vm = toViewModel(fullEnvelope());
     assert.deepEqual(vm.project.settings.recipes.pairs, [
-      { key: 'plan-authoring.review', recipe: 'reviewed' },
-      { key: 'plan-execution.execute', recipe: 'delegated' },
-      { key: 'plan-execution.review', recipe: 'council' },
+      { key: 'plan-authoring.author', recipe: 'subagent', source: 'config', degradedFrom: null },
+      { key: 'plan-authoring.review', recipe: 'reviewed', source: 'default', degradedFrom: null },
+      { key: 'plan-execution.execute', recipe: 'delegated', source: 'config', degradedFrom: null },
+      { key: 'plan-execution.review', recipe: 'council', source: 'config', degradedFrom: null },
+      { key: 'routine.carrier', recipe: 'solo', source: 'config', degradedFrom: 'subagent' },
+      { key: 'routine.parallel', recipe: 'on', source: 'default', degradedFrom: null },
     ]);
     assert.equal(vm.project.settings.attribution.override, false, 'local null → project value stands, not an override');
     assert.deepEqual(vm.project.settings.velocity, { defaultMode: 'acceptEdits', allow: { project: 1, local: 2 } });
-    assert.deepEqual(vm.project.settings.agents, { bundled: 3, placed: 1 });
+    assert.deepEqual(vm.project.settings.agents, { bundled: 5, placed: 3, readOnly: 4, executor: 'unusable', executorReason: 'tools: Read, Grep is read-only' });
     assert.deepEqual(vm.project.settings.hook, { wired: true, filePlaced: true, declarationPresent: false, declaredGates: 0, declarationError: null });
+  });
+
+  it('an envelope predating the carrier fields reads unknown, never an invented state', () => {
+    const vm = toViewModel({
+      installed: [],
+      project: { dir: '/p', deployed: true, settings: { recipes: { activities: { 'plan-execution': { execute: { recipe: 'solo' } } } }, agents: { bundled: 4, placed: 4 } } },
+    });
+    assert.deepEqual(vm.project.settings.recipes.pairs, [{ key: 'plan-execution.execute', recipe: 'solo', source: null, degradedFrom: null }]);
+    assert.equal(vm.project.settings.agents.executor, null);
+    assert.equal(vm.project.settings.agents.readOnly, 4, 'an envelope predating the executor field bundled only read-only vehicles');
   });
 
   it('hook declaredGates: null (malformed) survives; an envelope predating the field defaults to null', () => {

@@ -51,7 +51,7 @@ import { loadAutonomy, isSparseSeedConfig, AUTONOMY_REL } from './autonomy-confi
 import { deriveDoctorPlan } from './autonomy-doctor.mjs';
 import { detectBackends, findOnPath } from './detect-backends.mjs';
 import { isDirectRun } from './direct-run.mjs';
-import { ACTIVITIES, resolveActivityRecipe, composeReadiness } from './recipes.mjs';
+import { ACTIVITIES, resolveActivityRecipe, composeReadiness, safeLine } from './recipes.mjs';
 import { surveyFamily, surveyGateHook, surveyAdrLayoutStrict } from './family-registry.mjs';
 import { probeSandboxMasks, needsMasksApply } from './sandbox-masks.mjs';
 import { shellQuoteArg } from './review-state.mjs';
@@ -83,6 +83,8 @@ import { DEFAULT_BUNDLE_ROOT } from './bridge-settings-read.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
 import { loadWorktreesConfig, resolveProbeDir } from './worktrees.mjs';
 import { preflightCheapAgents, EXECUTOR_VEHICLE } from './cheap-agents.mjs';
+// The vehicle READINESS comes from the read-only half — the same survey `recipes` and `status` read.
+import { surveyExecutorVehicle, readStamp, readFsDeps, WORKFLOW_STAMP, EXPECTED_WORKFLOW_VERSION } from './cheap-agents-read.mjs';
 // The ack store's path, keys, lane registry, fingerprint and guarded reader live in their own leaf
 // (contract: kit/ack-store) — `status` reads the same store, and a second copy is what drifts.
 import {
@@ -176,6 +178,10 @@ export const SEVERITIES = Object.freeze({
   'mcp-channel.masked': SEVERITY_OPTIONAL,
   'mcp-channel.differing': SEVERITY_ATTENTION,
   agents: SEVERITY_OPTIONAL,
+  // The `agents` row above is an OFFER to place vehicles. This one reports a config that ALREADY
+  // names the subagent carrier over a vehicle that cannot carry it — a configured declaration that
+  // is broken, which is what attention means.
+  'executor-vehicle': SEVERITY_ATTENTION,
   'family-freshness': SEVERITY_ATTENTION,
   'adr-store-migration': SEVERITY_ATTENTION,
   'sandbox-masks': SEVERITY_OPTIONAL,
@@ -251,6 +257,7 @@ export const WHATS = Object.freeze({
   'mcp-channel.masked': '{rel} is a {className} here (a sandbox device mask is the usual cause), so the entry to merge is printed instead',
   'mcp-channel.differing': 'an "{server}" MCP entry is already declared here and DIFFERS from the registration this kit copy would write',
   agents: '{n} bundled subagent vehicle(s) not placed (Claude Code) — {ro} read-only, {ex} the full-tool executor; the apply PREVIEWS first',
+  'executor-vehicle': '{n} slot(s) configured subagent but the executor vehicle is {state}{reason} — every such slot runs solo until it is usable',
   'family-freshness': '{parts}',
   'adr-store-migration': 'still on the retired 3-tier ADR layout — {shape}',
   'sandbox-masks': '{n} sandbox device mask(s) clutter git status — the managed exclude block is absent or stale',
@@ -310,6 +317,7 @@ export const BENEFITS = Object.freeze({
   'state-block': 'no silent stalls — a turn ending on «you are not needed», or on work it never started, warns at once instead of waiting to be spotted',
   'mcp-channel': 'velocity — path facts and literal searches arrive as typed tool calls whose arguments are JSON fields, never a shell string',
   agents: 'cost and quiet — cheap-model mechanical work, no shell on a read-only vehicle (no prompt flood); the executor carries slices you verify',
+  'executor-vehicle': 'carrier readiness — a slot you configured subagent dispatches the subagent it names instead of silently running solo',
   'family-freshness': 'currency — placed family members carry the latest shipped fixes and features',
   'adr-store-migration': 'durability — every decision becomes its own file with a generated navigator, instead of one hand-rotated pile',
   'sandbox-masks': 'zero clutter — git status shows only your changes (the review domain already ignores the masks by construction)',
@@ -367,6 +375,10 @@ export const OPT_IN_CAPABILITIES = Object.freeze([
   // which is why the review-recipe benefit is worded for either slot rather than for review alone.
   { id: 'delegated-execution', mode: 'set-recipe', advisorKey: 'review-recipe' },
   { id: 'agents', mode: 'agents', advisorKey: 'agents' },
+  // A DISTINCT capability from the offer above: the offer converges the moment nothing is left to
+  // PLACE, which a customized-but-unusable executor also satisfies — so it can never observe the
+  // state that makes a configured subagent carrier run solo.
+  { id: 'executor-vehicle', mode: 'agents', advisorKey: 'executor-vehicle' },
   // Exempt, not un-audited. `acceptEdits` auto-applies Edit/Write and auto-runs mkdir/touch/mv/cp:
   // a TRUST-POSTURE change. The kit never nudges a user toward weakening their approval posture (the
   // same doctrine that keeps sandbox network/filesystem allowances HAND-APPLY); velocity presents the
@@ -963,6 +975,60 @@ const probeCheapAgents = ({ root, deps, add, skip }) => {
   }
 };
 
+// The subagent carrier's ONE instrument (contract: kit/carriers). Neither neighbour can report this
+// state: `probeReviewRecipe` skips a slot configured `subagent` by construction, and the offer above
+// judges only what is left to PLACE — a customized-but-broken vehicle leaves nothing to place. So a
+// project could declare the carrier and have every such slot run solo, unseen.
+const VEHICLE_BROKEN_STATES = Object.freeze(['missing', 'unusable']);
+
+const writerBlock = (root, deps) => {
+  try {
+    preflightCheapAgents({ cwd: root }, deps);
+    return null;
+  } catch (err) {
+    return safeLine(err?.message ?? String(err));
+  }
+};
+
+const probeExecutorVehicle = ({ root, deps, add, skip }) => {
+  try {
+    // The VALIDATED reader, as probeReviewRecipe uses it: a schema-invalid config is a stated skip,
+    // never an item computed over a shape nothing accepted.
+    const { config } = loadConfig(root, deps.readFile ?? readFileSync, deps.lstat ?? lstatSync);
+    const configured = Object.entries(ACTIVITIES).flatMap(([activity, def]) =>
+      Object.keys(def.slots).filter((slot) => config?.[activity]?.[slot] === 'subagent'));
+    if (configured.length === 0) return;
+    const survey = (deps.surveyVehicle ?? surveyExecutorVehicle)(root, deps);
+    if (!VEHICLE_BROKEN_STATES.includes(survey.state)) return;
+    const reason = safeLine(survey.reason ?? '');
+    const stamp = readStamp(join(root, WORKFLOW_STAMP), readFsDeps(deps));
+    const preconditions = [
+      ...(stamp === EXPECTED_WORKFLOW_VERSION ? [] : [`run /agent-workflow-kit upgrade first (deployment stamp ${stamp ?? 'none'}, expected ${EXPECTED_WORKFLOW_VERSION})`]),
+      ...(survey.state === 'unusable' ? [`${reason || 'the vehicle file is unusable'} — fix that`] : []),
+    ];
+    // The writer refuses on ANY vehicle path it cannot touch (a symlinked read-only vehicle blocks a
+    // missing executor's placement too), so its own preflight is the last precondition — named once.
+    const blocked = writerBlock(root, deps);
+    if (blocked && blocked !== reason) preconditions.push(`${blocked} — fix that`);
+    const room = templateBudget(WHATS['executor-vehicle']) - String(configured.length).length - survey.state.length - 2;
+    add(
+      'executor-vehicle',
+      fillTemplate(WHATS['executor-vehicle'], {
+        n: configured.length,
+        state: survey.state,
+        reason: reason && room > 0 ? `: ${truncatedTo(reason, room)}` : '',
+      }),
+      // The writer places a MISSING vehicle; an unusable path (a symlink, a read-only customization)
+      // is kept or refused, so that state's apply is a hand-apply precondition before the writer.
+      `${preconditions.length ? `HAND-APPLY: ${preconditions.join('; ')}, then run: ` : ''}node ${q(toolPath('cheap-agents.mjs'))} --apply --cwd ${q(root)}`,
+      'executor-vehicle',
+      `hidden-mode deployments only: after the apply, run node ${q(toolPath('hide-footprint.mjs'))} --dir ${q(root)} --reconcile so the placed .claude/agents/ stays invisible to git status`,
+    );
+  } catch (err) {
+    skip('executor-vehicle', err);
+  }
+};
+
 const probeFamilyFreshness = ({ deps, add, skip }) => {
   try {
     const survey = deps.surveyFamily ?? surveyFamily;
@@ -1484,6 +1550,7 @@ const PROBES = Object.freeze([
   probeReadLane,
   probeStateBlockHook,
   probeCheapAgents,
+  probeExecutorVehicle,
   probeFamilyFreshness,
   probeAdrStore,
   probeMasksItem,

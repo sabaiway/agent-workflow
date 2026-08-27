@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-27 — AD-124 who does what is a project setting (kit 10.4.0 · engine 4.3.0 MINOR · memory 7.1.1 PATCH)
+
+**The carrier of a step is a setting, not a memory.** `docs/ai/orchestration.json` now says who
+authors a plan, who executes a ledger row and who carries a routine chore — the orchestrator, a bridge,
+or a full-tool frontier subagent — with a project default per slot and a per-run override that never
+touches the file. The kit ships the executor vehicle beside its four read-only ones, surveys it as a
+readiness fact, renders the dispatch form per slot and raises an attention item when a configured
+subagent has no usable vehicle; the engine canon names the fifth recipe and the third activity.
+Plan 1: two plan-review rounds and twelve diff-review rounds across both configured review
+backends, 28 findings folded. Plan 2: three diff-review rounds, 18 findings folded, then an attestation round.
+
 ## 2026-08-27 — AD-123 a deployed project is never in an unnamed spec-adoption state (kit 10.3.0 · engine 4.2.0 · memory 7.1.0, all MINOR)
 
 **Two lines stopped being false about the tree they described.** A Bash-only consumer's `upgrade`

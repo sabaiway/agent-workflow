@@ -222,16 +222,21 @@ executor** (a parallel hand in execute: a bounded sub-task to `codex exec` in a 
   verified facts + the full diff, so it gives a sound second opinion instead of guessing from stale context.
 
 **Named recipes tie it together.** Rather than improvising "should I get a second opinion? from which
-bridge? what if it's down?" each time, the kit offers four named ways to compose the bridges into the
+bridge? what if it's down?" each time, the kit offers five named ways to compose the carriers into the
 loop — **Solo** (no backend), **Reviewed** (one reviews), **Council** (both review, you synthesize),
-**Delegated** (a bridge runs a bounded sub-task). `/agent-workflow-kit recipes` plans + recommends one
-for your environment (degrading gracefully when a bridge isn't ready); the orchestrator always commits.
+**Delegated** (a bridge runs a bounded sub-task), **Subagent** (a full-tool frontier subagent from the
+placed `executor` vehicle carries a bounded, file-disjoint slice; the orchestrator verifies it). Honest
+limit: Subagent is a Claude Code lane, and a missing or unusable vehicle degrades the slot to Solo with
+the reason stated. `/agent-workflow-kit recipes` plans + recommends one for your environment (degrading
+gracefully when a carrier isn't ready); the orchestrator always commits.
 
 **Activity procedures make it a playbook.** A bare "write a plan" or "execute the plan" now has codified,
 recipe-aware steps. `/agent-workflow-kit procedures <activity>` (read-only) prints a named activity's
-ordered steps — `plan-authoring`, `plan-execution` — and the **recipe resolved for each step** from a
-per-project, hand-edited `docs/ai/orchestration.json` (seeded conservative — Solo by default — with an
-onboarding note on how to opt into a backend) plus the live backend readiness. Each activity and each
+ordered steps — `plan-authoring`, `plan-execution`, `routine` (its carrier plus a `parallel` switch) —
+and the **recipe resolved for each step** from a per-project `docs/ai/orchestration.json` (seeded
+conservative — Solo by default; set it in plain language with `/agent-workflow-kit set-recipe`, hand-edit
+stays supported, and a per-run `procedures --override` changes one session without writing) plus the
+live carrier readiness. Each activity and each
 slot is configured independently; a per-run `--override` adjusts one step once.
 
 Honest caveats:

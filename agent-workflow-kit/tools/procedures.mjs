@@ -27,6 +27,8 @@ import { detectBackends, wrapperCmdFor, wrapperContractFor } from './detect-back
 import { loadRegistry, allowedLabel } from './bridge-settings-read.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { ACTIVITIES, SLOT_RECIPES, isSwitchSlot, resolveActivityRecipe, planRecipe, composeReadiness } from './recipes.mjs';
+// The dispatch-form wording, from the pure (fs-free) leaf that owns it: composed here, never re-worded.
+import { dispatchForm, parallelLine } from './carriers.mjs';
 import { resolveEngineDir, readEngineFragment, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
 // The plan-in-flight detector (AD-038) — imported from the plan-files.mjs LEAF (read-only fs by
 // construction); the WRITER-capable grounding.mjs is only NAMED in rendered text, never imported.
@@ -159,7 +161,7 @@ const resolveAllSlots = ({ activity, config, detection, overrides }) => {
   const knobsFor = (cmd) => [...registry.values()].filter((k) => (k.appliesTo ?? []).includes(cmd));
   return Object.entries(ACTIVITIES[activity].slots).map(([slot, slotType]) => {
     const resolved = resolveActivityRecipe({ config: config ?? {}, readiness: detection, activity, slot, override: overrides[slot] });
-    if (isSwitchSlot(slotType)) return { slot, ...resolved, backends: [], contracts: [], vehicles: [] };
+    if (isSwitchSlot(slotType)) return { slot, slotType, ...resolved, backends: [], contracts: [], vehicles: [] };
     // The concrete wrapper set this slot's EFFECTIVE recipe dispatches (empty for solo). Reuse
     // planRecipe's drift-guarded dispatch for WHICH backends, then resolve each (backend, role) to its
     // manifest wrapper cmd via the bridge registry — no wrapper name is hand-composed here. A vehicle
@@ -179,9 +181,13 @@ const resolveAllSlots = ({ activity, config, detection, overrides }) => {
       // settable knob, while the writer refuses to set it — a driving contract that contradicts the
       // tool it points at.
       .map((c) => ({ ...c, settings: knobsFor(c.cmd).map((k) => ({ key: k.key, allowed: allowedLabel(k), retired: k.retired ?? null })) }));
-    return { slot, ...resolved, backends, contracts, vehicles };
+    return { slot, slotType, ...resolved, backends, contracts, vehicles };
   });
 };
+
+// The routine switch reads against the EFFECTIVE carrier: the resolved recipe of the activity's
+// carrier-typed slot (registry-driven — no slot name is spelled here), solo when it has none.
+const effectiveCarrier = (slots) => slots.find((s) => s.slotType === 'carrier')?.recipe ?? 'solo';
 
 // An unsatisfiable EXPLICIT override is the only "warning" (loud, flagged for the agent to relay). A
 // graceful config/default degradation is reported as a per-slot reason, not a warning.
@@ -486,11 +492,19 @@ const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flow
     '',
     `resolved recipes for "${activity}" (read-only — the orchestrator runs the recipe via the bridge skills or the executor vehicle and owns any commit; every other carrier never commits):`,
   ];
+  const carrier = effectiveCarrier(slots);
   for (const s of slots) {
     const arrow = s.degradedFrom ? ` (requested ${s.degradedFrom} → degraded)` : '';
-    lines.push(`  ${s.slot}: ${s.recipe} — ${SOURCE_LABEL[s.source]}${arrow}${backendSetLabel(s.backends)}`);
+    // A switch slot states what the flag DOES under the effective carrier; both keep the source suffix.
+    lines.push(isSwitchSlot(s.slotType)
+      ? `  ${parallelLine({ value: s.recipe, carrier })} — ${SOURCE_LABEL[s.source]}`
+      : `  ${s.slot}: ${s.recipe} — ${SOURCE_LABEL[s.source]}${arrow}${backendSetLabel(s.backends)}`);
     if (s.reason) lines.push(`      ↳ ${s.reason}`);
-    for (const v of s.vehicles ?? []) lines.push(`      ${v.backend} — the placed subagent vehicle (${v.state})`);
+    // The form replaces the one-line vehicle mention: a carrier never told how to carry is a name,
+    // not an instruction. Indented like the driving contracts beside it.
+    for (const v of s.vehicles ?? []) {
+      for (const line of dispatchForm({ activity, slot: s.slot, state: v.state })) lines.push(`      ${line}`);
+    }
     for (const c of s.contracts ?? []) lines.push(...contractLines(c));
   }
   if ((flowHalves ?? []).length) lines.push('', ...flowHalves);
@@ -551,7 +565,8 @@ Accepted values: ${Object.entries(SLOT_RECIPES).map(([type, values]) => `${type}
 
 Reads the activity's procedure steps LIVE from the installed agent-workflow-engine
 (references/procedures.md), resolves the effective recipe per slot from
-${CONFIG_REL} + the read-only backend detector, and prints both. A per-run
+${CONFIG_REL} + the read-only backend detector plus the executor-vehicle survey, and prints
+both. A per-run
 --override <slot>=<value> (repeatable) overrides the configured/default recipe for that slot.
 Read-only: never writes, never commits, never runs a subscription CLI.
 

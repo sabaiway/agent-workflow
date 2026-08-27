@@ -4,6 +4,21 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 4.3.0 — the fifth recipe, the third activity, and a carrier that is never the one who commits (AD-124)
+
+`references/orchestration.md` admits the CARRIER wherever it said backend: the orchestrator, a bridge
+backend, or a full-tool frontier subagent dispatched from the placed executor vehicle; §2 lists
+**Subagent** as the fifth recipe (a bounded, file-disjoint slice; degrades to Solo when the vehicle is
+missing or unusable); §5 states the honest limit (a Claude Code lane — readiness is the vehicle FILE,
+never the host; it spends no bridge quota but the host model's); §6 now reads "no recipe lets a
+carrier commit or perform a git write … the orchestrator alone stages and commits".
+`references/procedures.md`: `Slots: author, review` (the author carrier drafts from the orchestrator's
+brief), the Subagent branch beside Delegated, and a new `## routine` activity (`Slots: carrier,
+parallel`; a read-only slice rides a placed read-only vehicle, a write-capable one the executor; a
+read-only chore has no commit boundary). Both injected pointer fragments name the fifth recipe and the
+third activity; the prior texts are appended to the kit's known-prior stores, so a deployed slot
+refreshes on the next reconcile.
+
 ## 4.2.0 — a zero governing-spec citation names the adoption state it relies on (AD-123)
 
 `references/agent-rules-lens.md`'s **Spec-first** bullet, `references/planning.md`'s *Goal and boundary*

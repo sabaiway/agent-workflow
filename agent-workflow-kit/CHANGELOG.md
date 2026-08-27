@@ -4,6 +4,36 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 10.4.0 — who does what is a project setting, and a subagent is a first-class carrier of every kind of work (AD-124)
+
+The rule "design, then hand execution to a frontier subagent" lived in an agent's memory and in a
+prose bullet of one project's `agent_rules.md`. It is now a VALUE in `docs/ai/orchestration.json`,
+resolved and rendered by the surfaces that already resolve and render every recipe.
+
+**One registry** (`tools/carriers.mjs`, contract `docs/ai/specs/kit/carriers.md`, re-exported by
+`recipes.mjs` so no importer moves): three activities — `plan-authoring` (`author`, `review`),
+`plan-execution` (`execute`, `review`) and the new `routine` (`carrier`, `parallel`); the fifth recipe
+`subagent` (a full-tool frontier subagent carries a bounded, file-disjoint slice; the orchestrator
+verifies it and commits); `parallel` is a switch (`on | off`) resolved outside the recipe lattice.
+Computed defaults stay `solo` (placing the vehicle never flips one); the seed config keeps its
+two-activity shape, so an older kit accepts it; `routine` carries no autonomy level of its own.
+
+**The executor vehicle.** `references/agents/executor.md` — model opus, all tools, the dispatch form in
+its prompt, never a git write, the project's own language rules — is the fifth bundled vehicle the
+`agents` writer places beside the four read-only ones. `tools/cheap-agents-read.mjs` (the writer's
+read core, so the read-only advisors never import a writer) surveys it as `placed | customized |
+unusable | missing` through a stated YAML subset; `composeReadiness` surveys the vehicle first and
+hands a bridge-detector failure to `onDetectError`, so neither axis masks the other; a review-role
+computation never counts the executor.
+
+**Every surface speaks the carrier.** `set-recipe` writes every slot (value-neutral diagnostics);
+`procedures` renders the dispatch form per `subagent` slot and the `parallel × carrier` cells;
+`status` shows the resolved carrier per slot and the executor state; the advisor raises ONE
+`attention` item for a configured `subagent` whose vehicle is missing or unusable; the catalog and
+every mode doc name five recipes and three activities. A routine chore is classified first:
+read-only rides a placed read-only vehicle (or is carried solo, stated), write-capable rides the
+executor.
+
 ## 10.3.0 — a deployed project is never in an unnamed spec-adoption state, and a skip names a fact the tree can check (AD-123)
 
 A consumer's `upgrade` printed `specs: skipped-no-node — no package.json at the project root` beside

@@ -54,7 +54,11 @@ const recipesVm = (r) => {
   if (r.error) return { error: r.error };
   const pairs = [];
   for (const [activity, slots] of Object.entries(r.activities ?? {})) {
-    for (const [slot, v] of Object.entries(slots)) pairs.push({ key: `${activity}.${slot}`, recipe: v.recipe });
+    // source + degradedFrom ride along: an effective recipe alone cannot tell a chosen value from a
+    // computed default, nor a degrade from a configuration that really names the resolved recipe.
+    for (const [slot, v] of Object.entries(slots)) {
+      pairs.push({ key: `${activity}.${slot}`, recipe: v.recipe, source: v.source ?? null, degradedFrom: v.degradedFrom ?? null });
+    }
   }
   return { pairs, detectError: r.detectError ?? null };
 };
@@ -76,8 +80,18 @@ const velocityVm = (v) => {
 
 const agentsVm = (a) => {
   if (!a) return null;
-  if (a.error) return { error: a.error };
-  return { bundled: a.bundled ?? 0, placed: a.placed ?? 0 };
+  if (a.error) return { error: a.error, executor: a.executor ?? null, executorReason: a.executorReason ?? null };
+  const bundled = a.bundled ?? 0;
+  return {
+    bundled,
+    placed: a.placed ?? 0,
+    // The envelope counts the read-only vehicles; an envelope predating the executor field bundled
+    // only read-only ones.
+    readOnly: a.readOnly ?? (a.executor == null ? bundled : Math.max(bundled - 1, 0)),
+    // null = an envelope predating the field (unknown), never a state.
+    executor: a.executor ?? null,
+    executorReason: a.executorReason ?? null,
+  };
 };
 
 const hookVm = (h) => {

@@ -28,6 +28,7 @@ import {
   withVehicle,
   vehicleDegradeReason,
   EXECUTOR_APPLY,
+  safeLine,
 } from './carriers.mjs';
 // The READ core of the vehicle surface, never the writer: this advisor can never reach a module
 // that creates `.claude/agents/`.
@@ -42,7 +43,7 @@ import {
   DEGRADED,
 } from './detect-backends.mjs';
 
-export { ACTIVITIES, POLICY_ACTIVITIES, SLOT_RECIPES, isSwitchSlot, EXECUTOR_APPLY };
+export { ACTIVITIES, POLICY_ACTIVITIES, SLOT_RECIPES, isSwitchSlot, EXECUTOR_APPLY, safeLine };
 
 const CODEX = 'codex-cli-bridge';
 const AGY = 'antigravity-cli-bridge';

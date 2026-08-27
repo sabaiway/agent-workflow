@@ -2,6 +2,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -195,33 +196,55 @@ describe('procedures CLI — override resolution (degrades loudly, still exit 0)
   });
 });
 
-describe('procedures CLI — the subagent carrier and the routine switch', () => {
-  const routine = (executor, argv = ['routine']) => {
-    writeConfig(JSON.stringify({ routine: { carrier: 'subagent' } }));
-    return run(argv, { executor });
+// spec:carriers/S5 — the dispatch form per subagent slot, the four routine parallel x carrier cells, today's lines for solo and delegated, and an --override that writes nothing.
+describe('procedures CLI — the dispatch form and the routine switch', () => {
+  const FORM = (state, slice) => [slice, `dispatch: the executor vehicle (.claude/agents/executor.md — ${state}), in the background`, 'the orchestrator verifies every returned slice by running its suites itself', 'the subagent is never told to commit, never a review backend, never a bridge substitute', 'honest limit: a Claude Code lane — on a host that cannot dispatch the vehicle, follow this form by hand and say so'].map((l) => `      ${l}`);
+  const EXECUTE_SLICE = 'a slice is a set of file-disjoint ledger rows; wording is copied verbatim where wording is a red line';
+  const carried = (activity, slot, executor = 'placed') => {
+    writeConfig(JSON.stringify({ [activity]: { [slot]: 'subagent' } }));
+    return run([activity], { executor });
   };
+  const lines = (r) => r.stdout.split('\n');
 
-  it('a placed vehicle carries the carrier and renders ONE plain executor line; a missing one degrades to solo', () => {
-    const placed = routine('placed');
-    assert.equal(placed.code, 0, placed.stderr);
-    assert.match(placed.stdout, /carrier: subagent — from docs\/ai\/orchestration\.json/);
-    assert.match(placed.stdout, /^ {6}executor — the placed subagent vehicle \(placed\)$/m);
-    assert.doesNotMatch(placed.stdout, /executor — driving contract/, 'a vehicle is never looked up in a bridge manifest');
-    const gone = routine('missing');
+  it('a subagent slot prints its activity slice sentence + the four dispatch lines carrying the surveyed state, and never the one-liner', () => {
+    const exec = carried('plan-execution', 'execute');
+    assert.equal(exec.code, 0, exec.stderr);
+    assert.match(exec.stdout, /execute: subagent — from docs\/ai\/orchestration\.json/);
+    for (const line of FORM('placed', EXECUTE_SLICE)) assert.ok(lines(exec).includes(line), line);
+    assert.doesNotMatch(exec.stdout, /the placed subagent vehicle/, 'the form REPLACES the one-liner, it never rides beside it');
+    const author = carried('plan-authoring', 'author', 'customized');
+    for (const line of FORM('customized', 'a slice is a brief naming the goal, the governing spec(s) and the ledger constraints; the subagent drafts the plan or the contract from it, and the orchestrator reviews the draft as its own')) assert.ok(lines(author).includes(line), line);
+    assert.ok(!lines(author).includes(`      ${EXECUTE_SLICE}`), 'the slice noun is the activity own');
+  });
+  it('routine renders all four parallel x carrier cells', () => {
+    for (const [carrier, argv, line] of [
+      ['subagent', [], '  parallel: on — file-disjoint slices dispatch concurrently — computed default'],
+      ['subagent', ['--override', 'parallel=off'], '  parallel: off — one slice at a time — from --override'],
+      ['solo', [], '  parallel: on (no effect while the carrier is solo) — computed default'],
+      ['solo', ['--override', 'parallel=off'], '  parallel: off — one slice at a time (no effect while the carrier is solo) — from --override'],
+    ]) {
+      writeConfig(JSON.stringify({ routine: { carrier } }));
+      assert.ok(lines(run(['routine', ...argv], { executor: 'placed' })).includes(line), `carrier ${carrier} ${argv.join(' ')}`);
+    }
+  });
+  it('solo, delegated and a missing vehicle render today lines, and an --override leaves the config byte-identical', () => {
+    const gone = carried('routine', 'carrier', 'missing');
     assert.match(gone.stdout, /carrier: solo — from docs\/ai\/orchestration\.json \(requested subagent → degraded\)/);
     assert.match(gone.stdout, /↳ .*executor/);
-    assert.doesNotMatch(gone.stdout, /the placed subagent vehicle/);
+    writeConfig(JSON.stringify({ 'plan-execution': { execute: 'delegated', review: 'solo' } }));
+    const bridged = run(['plan-execution'], { executor: 'placed' });
+    assert.match(bridged.stdout, /execute: delegated — from docs\/ai\/orchestration\.json → codex-exec/);
+    assert.match(bridged.stdout, /codex-exec — driving contract/);
+    assert.match(bridged.stdout, /review: solo — from docs\/ai\/orchestration\.json/);
+    writeConfig(JSON.stringify({ 'plan-execution': { execute: 'subagent' } }));
+    const digest = () => createHash('sha256').update(readFileSync(join(cwd, CONFIG_REL))).digest('hex');
+    const before = digest();
+    const solo = run(['plan-execution', '--override', 'execute=solo'], { executor: 'placed' });
+    assert.equal(solo.code, 0, solo.stderr);
+    assert.match(solo.stdout, /execute: solo — from --override/);
+    assert.equal(digest(), before, 'a per-run override never touches the config file');
+    for (const r of [gone, bridged, solo]) assert.doesNotMatch(r.stdout, /dispatch: the executor vehicle/, 'no form outside a resolved subagent slot');
   });
-
-  it('routine.parallel renders at on and at off and never reaches the recipe lattice', () => {
-    assert.match(routine('placed').stdout, /parallel: on — computed default/);
-    const off = routine('placed', ['routine', '--override', 'parallel=off']);
-    assert.equal(off.code, 0, off.stderr);
-    assert.match(off.stdout, /parallel: off — from --override/);
-    const j = JSON.parse(routine('placed', ['routine', '--json']).stdout);
-    assert.deepEqual([j.slots.parallel.recipe, j.slots.parallel.backends, j.slots.parallel.contracts], ['on', [], []]);
-  });
-
 });
 
 describe('procedures CLI — a backend-detection failure does NOT break activity resolution', () => {
@@ -692,6 +715,7 @@ describe('procedures CLI — --help is read-only and exits 0', () => {
     assert.match(r.stdout, /plan-authoring → author, review;  plan-execution → execute, review;  routine → carrier, parallel/);
     assert.match(r.stdout, /carrier accepts solo\|subagent/);
     assert.match(r.stdout, /switch accepts on\|off/);
+    assert.match(r.stdout, /the read-only backend detector plus the executor-vehicle survey/, 'readiness names BOTH sources');
     assert.match(r.stdout, /never commits/);
   });
 });

@@ -585,6 +585,11 @@ const buildInventoryFixtures = () => {
   writeFileSync(join(root10, 'docs', 'ai', 'history', 'decisions-archive.md'), '# retired archive\n');
   results.push(buildRecommendations({ cwd: root10, deps: hermeticDeps(root10) }));
   rmSync(root10, { recursive: true, force: true });
+  // (11) a config naming the subagent carrier with no vehicle placed: executor-vehicle.
+  const root11 = makeProject();
+  writeFileSync(join(root11, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ routine: { carrier: 'subagent' } }));
+  results.push(buildRecommendations({ cwd: root11, deps: hermeticDeps(root11) }));
+  rmSync(root11, { recursive: true, force: true });
   return results;
 };
 
@@ -1635,6 +1640,47 @@ describe('recommendations — every probe degrades honestly (per-branch skip cov
   });
 });
 
+// The ONLY surface that can report a configured carrier with no vehicle: the review-recipe probe
+// skips a subagent slot, and the agents offer converges on nothing-left-to-place — true of a broken one.
+describe('recommendations — the executor-vehicle attention item (spec:carriers/S7)', () => {
+  const BUNDLED = readFileSync(join(HERE, '..', 'references', 'agents', 'executor.md'), 'utf8');
+  const CARRIER = JSON.stringify({ routine: { carrier: 'subagent' } });
+  const run = (config, vehicle) => {
+    const root = makeProject();
+    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), config);
+    const dir = join(root, '.claude', 'agents');
+    if (vehicle !== undefined) { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'executor.md'), vehicle); }
+    const built = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    return { ...built, root, found: built.items.filter((i) => i.key === 'executor-vehicle') };
+  };
+  it('configured + missing: exactly ONE attention item, counted, applied by the agents writer', () => {
+    const { found, items, root } = run(JSON.stringify({ 'plan-execution': { execute: 'subagent' }, routine: { carrier: 'subagent' } }));
+    assert.equal(found.length, 1, `one item, never one per slot: ${JSON.stringify(items.map((i) => i.key))}`);
+    assert.equal(found[0].severity, SEVERITY_ATTENTION);
+    assert.equal(found[0].what, '2 slot(s) configured subagent but the executor vehicle is missing — every such slot runs solo until it is usable');
+    assert.equal(found[0].apply, `node ${join(HERE, 'cheap-agents.mjs')} --apply --cwd ${root}`);
+    assert.match(found[0].detail, /hidden-mode deployments only:.*--reconcile/u, 'the reconcile rides the detail, never the apply');
+  });
+  it('configured + unusable: the survey reason rides the text', () => {
+    const { found } = run(CARRIER, '---\nname: executor\ntools: Read\n---\nbody\n');
+    assert.equal(found.length, 1);
+    assert.equal(found[0].what, '1 slot(s) configured subagent but the executor vehicle is unusable: tools: Read is read-only — every such slot runs solo until it is usable');
+  });
+  it('placed, customized and no subagent slot: NOTHING — the rest of the list is untouched', () => {
+    const placed = run(CARRIER, BUNDLED);
+    const unconfigured = run(JSON.stringify({ routine: { carrier: 'solo' } }), BUNDLED);
+    const cases = { placed, customized: run(CARRIER, '---\nname: executor\ntools: Read, Bash\n---\nmine\n'), unconfigured };
+    for (const [label, r] of Object.entries(cases)) assert.deepEqual(r.found, [], `${label} raises no item`);
+    assert.deepEqual(placed.items.map((i) => i.key), unconfigured.items.map((i) => i.key), 'the same full list either way');
+  });
+  it('a config the validated reader refuses is a stated SKIP, never an item', () => {
+    const { found, skips } = run(JSON.stringify({ routine: { carrier: 'bogus' } }));
+    assert.deepEqual(found, []);
+    assert.ok(skips.some((s) => s.key === 'executor-vehicle'), `the invalid config is stated: ${JSON.stringify(skips)}`);
+  });
+});
+
 // ── the inert-declaration item ─────────────────────────────────────────────────────
 // The field-report class: a declaration that RUNS GREEN and verifies nothing. The gates-declaration
 // offer converges the moment any gate exists, so it can never observe this state — the advisor was
@@ -2610,5 +2656,59 @@ describe('recommendations — the cheap-agents offer (OPT-IN-SHIPS-INVISIBLE)', 
     const skip = skips.find((s) => s.key === 'agents');
     assert.ok(skip, 'the check that could not run says so');
     assert.match(skip.reason, /upgrade/u, 'and names the recovery');
+  });
+});
+
+describe('the executor-vehicle apply follows the actual cause (AD-124 fold)', () => {
+  const survey = (state, reason = null) => () => ({ state, reason, rel: '.claude/agents/executor.md' });
+  const configured = (root) => writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ routine: { carrier: 'subagent' } }));
+  const itemOf = (root, extra) => buildRecommendations({ cwd: root, deps: hermeticDeps(root, extra) }).items.find((i) => i.key === 'executor-vehicle');
+
+  it('unusable → the HAND-APPLY precondition quotes the survey reason, then the writer', () => {
+    const root = makeProject();
+    configured(root);
+    const item = itemOf(root, { surveyVehicle: survey('unusable', '.claude/agents is a symlink — refusing to write through it') });
+    rmSync(root, { recursive: true, force: true });
+    assert.match(item.apply, /^HAND-APPLY: \.claude\/agents is a symlink — refusing to write through it — fix that, then run: node .*cheap-agents\.mjs --apply --cwd /u);
+  });
+
+  it('a stale deployment stamp → the upgrade precondition comes first, for a missing vehicle too', () => {
+    const root = makeProject();
+    configured(root);
+    writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '2.9.0\n');
+    const missing = itemOf(root, { surveyVehicle: survey('missing') });
+    const unusable = itemOf(root, { surveyVehicle: survey('unusable', 'tools: Read is read-only') });
+    rmSync(root, { recursive: true, force: true });
+    assert.match(missing.apply, /^HAND-APPLY: run \/agent-workflow-kit upgrade first \(deployment stamp 2\.9\.0, expected 3\.0\.0\), then run: node /u);
+    assert.match(unusable.apply, /^HAND-APPLY: run \/agent-workflow-kit upgrade first \(deployment stamp 2\.9\.0, expected 3\.0\.0\); tools: Read is read-only — fix that, then run: node /u);
+  });
+
+  it('a missing vehicle beside a symlinked read-only vehicle → the writer\'s own refusal is a precondition', () => {
+    const root = makeProject();
+    configured(root);
+    mkdirSync(join(root, '.claude', 'agents'), { recursive: true });
+    symlinkSync(join(root, 'nowhere'), join(root, '.claude', 'agents', 'mechanical-sweep.md'));
+    const item = itemOf(root, {});
+    rmSync(root, { recursive: true, force: true });
+    assert.match(item.apply, /^HAND-APPLY: \[agent-workflow-kit\] \.claude\/agents\/mechanical-sweep\.md exists but is not a regular file — refusing to touch it — fix that, then run: node /u);
+  });
+
+  it('an unusable vehicle whose reason IS the writer\'s refusal → named once', () => {
+    const root = makeProject();
+    configured(root);
+    mkdirSync(join(root, '.claude', 'agents'), { recursive: true });
+    symlinkSync(join(root, 'nowhere'), join(root, '.claude', 'agents', 'executor.md'));
+    const item = itemOf(root, {});
+    rmSync(root, { recursive: true, force: true });
+    assert.match(item.apply, /^HAND-APPLY: /u);
+    assert.equal((item.apply.match(/executor\.md/gu) ?? []).length, 1, item.apply);
+  });
+
+  it('a current stamp and a missing vehicle → the direct apply, no precondition', () => {
+    const root = makeProject();
+    configured(root);
+    const item = itemOf(root, { surveyVehicle: survey('missing') });
+    rmSync(root, { recursive: true, force: true });
+    assert.match(item.apply, /^node .*cheap-agents\.mjs --apply --cwd /u);
   });
 });

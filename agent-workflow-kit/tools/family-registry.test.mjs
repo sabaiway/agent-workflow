@@ -1006,45 +1006,134 @@ describe('surveyGateHook — wired (either settings file) / file placed / declar
   });
 });
 
-describe('surveyCheapAgents — the kit-placed .claude/agents/ vehicles (placed vs bundled)', () => {
-  const ENOENT = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-  // A hermetic bundle + project fs: bundle templates under /bundle, project files under .claude/agents/.
-  const vehicleFs = ({ bundle, project = {} }) => ({
-    bundleDir: '/bundle',
-    readdir: () => Object.keys(bundle),
-    readFile: (p) => {
-      const s = String(p);
-      const name = s.split('/').pop();
-      if (s.startsWith('/bundle')) return bundle[name];
-      if (Object.prototype.hasOwnProperty.call(project, name)) return project[name];
-      throw ENOENT();
-    },
-    lstat: (p) => {
-      const s = String(p);
-      const name = s.split('/').pop();
-      if (s.includes('.claude/agents') && Object.prototype.hasOwnProperty.call(project, name)) {
-        return { isSymbolicLink: () => false, isFile: () => true, isDirectory: () => false };
-      }
-      throw ENOENT();
-    },
-  });
+const VEHICLE_REL = '.claude/agents/executor.md';
+const AGENTS_ENOENT = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+// A hermetic bundle + project fs: bundle templates under /bundle, project files under .claude/agents/,
+// and the executor survey injected — the vehicle's state is an axis of its own, never fixture noise.
+const vehicleFs = ({ bundle, project = {}, executor = { state: 'missing', reason: null } }) => ({
+  bundleDir: '/bundle',
+  readdir: () => Object.keys(bundle),
+  readFile: (p) => {
+    const s = String(p);
+    const name = s.split('/').pop();
+    if (s.startsWith('/bundle')) return bundle[name];
+    if (Object.prototype.hasOwnProperty.call(project, name)) return project[name];
+    throw AGENTS_ENOENT();
+  },
+  lstat: (p) => {
+    const s = String(p);
+    const name = s.split('/').pop();
+    if (s.includes('.claude/agents') && Object.prototype.hasOwnProperty.call(project, name)) {
+      return { isSymbolicLink: () => false, isFile: () => true, isDirectory: () => false };
+    }
+    throw AGENTS_ENOENT();
+  },
+  surveyVehicle: () => ({ ...executor, rel: VEHICLE_REL }),
+});
 
+const TWO_VEHICLES = { 'sweep.md': 'S', 'triage.md': 'T' };
+
+describe('surveyCheapAgents — the kit-placed .claude/agents/ vehicles (placed vs bundled)', () => {
   it('none placed → placed=0 with the bundle count (the welcome-mat agents rung keys on zero placed)', () => {
-    const r = surveyCheapAgents('/p', vehicleFs({ bundle: { 'sweep.md': 'S', 'triage.md': 'T' } }));
-    assert.deepEqual(r, { bundled: 2, placed: 0 });
+    const r = surveyCheapAgents('/p', vehicleFs({ bundle: TWO_VEHICLES }));
+    assert.deepEqual(r, { bundled: 2, readOnly: 2, placed: 0, executor: 'missing' });
   });
 
   it('an identical AND a customized copy both count as placed (a customization is present, never "absent")', () => {
     const r = surveyCheapAgents('/p', vehicleFs({
-      bundle: { 'sweep.md': 'S', 'triage.md': 'T' },
+      bundle: TWO_VEHICLES,
       project: { 'sweep.md': 'S', 'triage.md': 'customized' },
     }));
-    assert.deepEqual(r, { bundled: 2, placed: 2 });
+    assert.deepEqual(r, { bundled: 2, readOnly: 2, placed: 2, executor: 'missing' });
+  });
+
+  it('a symlinked executor.md never collapses the block: the read-only counts survive and the executor reads unusable', () => {
+    const bundle = { ...TWO_VEHICLES, 'executor.md': 'E' };
+    const project = { 'sweep.md': 'S', 'triage.md': 'T', 'executor.md': 'E' };
+    const deps = vehicleFs({ bundle, project, executor: { state: 'unusable', reason: 'a symlink' } });
+    const lstat = deps.lstat;
+    deps.lstat = (p) => (String(p).endsWith('executor.md')
+      ? { isSymbolicLink: () => true, isFile: () => false, isDirectory: () => false }
+      : lstat(p));
+    assert.deepEqual(surveyCheapAgents('/p', deps), { bundled: 3, readOnly: 2, placed: 2, executor: 'unusable', executorReason: 'a symlink' });
+  });
+
+  it('a symlinked .claude/agents ancestor: no vehicle file is read, the counts are not claimed, the executor state survives', () => {
+    const bundle = { ...TWO_VEHICLES, 'executor.md': 'E' };
+    const project = { 'sweep.md': 'S', 'triage.md': 'T', 'executor.md': 'E' };
+    const deps = vehicleFs({ bundle, project, executor: { state: 'unusable', reason: '.claude/agents is a symlink — refusing to write through it' } });
+    const readFile = deps.readFile;
+    const readProject = [];
+    deps.readFile = (p) => { if (String(p).includes('.claude/agents')) readProject.push(String(p)); return readFile(p); };
+    deps.lstat = (p) => (String(p).endsWith('/.claude/agents')
+      ? { isSymbolicLink: () => true, isFile: () => false, isDirectory: () => false }
+      : { isSymbolicLink: () => false, isFile: () => false, isDirectory: () => true });
+    const r = surveyCheapAgents('/p', deps);
+    assert.match(r.error, /symlink/u, 'the refusal is the error');
+    assert.equal(r.executor, 'unusable');
+    assert.match(r.executorReason, /symlink/u);
+    assert.equal(r.placed, undefined, 'no count is claimed through a symlinked ancestor');
+    assert.deepEqual(readProject, [], 'no vehicle file was read through the symlink');
+  });
+
+  it('a symlinked read-only vehicle: the placement plan refuses, and the error still carries the executor state', () => {
+    const deps = vehicleFs({ bundle: { ...TWO_VEHICLES, 'executor.md': 'E' }, project: { 'sweep.md': 'S' }, executor: { state: 'placed', reason: null } });
+    const lstat = deps.lstat;
+    deps.lstat = (p) => (String(p).endsWith('/sweep.md')
+      ? { isSymbolicLink: () => true, isFile: () => false, isDirectory: () => false }
+      : lstat(p));
+    const r = surveyCheapAgents('/p', deps);
+    assert.match(r.error, /sweep\.md exists but is not a regular file/u);
+    assert.equal(r.executor, 'placed', 'the surveyed state survives a later refusal');
+    assert.equal(r.placed, undefined);
+  });
+
+  it('an executor reason carrying escape sequences reaches the envelope as one clean line', () => {
+    const r = surveyCheapAgents('/p', vehicleFs({ bundle: TWO_VEHICLES, executor: { state: 'unusable', reason: 'tools: \x1b[31mRead\x1b[0m\nis read-only' } }));
+    assert.equal(r.executorReason, 'tools: Read is read-only');
   });
 
   it('an unreadable bundle → a localized error field (never a crash, never a false zero)', () => {
     const r = surveyCheapAgents('/p', { bundleDir: '/bundle', readdir: () => { throw new Error('EACCES'); } });
     assert.ok(r.error, 'a localized error field is present');
+  });
+});
+
+describe('status carries the resolved carrier and the vehicle behind it (spec:carriers/S6)', () => {
+  it('the recipes survey names the author slot and routine with both of its slots', () => {
+    const r = surveyRecipes('/p', {
+      detect: () => [], lstat: STAT_ENOENT, readFile: () => '',
+      surveyVehicle: () => ({ state: 'placed', reason: null, rel: VEHICLE_REL }),
+    });
+    assert.deepEqual(Object.keys(r.activities['plan-authoring']), ['author', 'review']);
+    assert.deepEqual(Object.keys(r.activities.routine), ['carrier', 'parallel']);
+    for (const slot of Object.values(r.activities.routine)) {
+      assert.deepEqual(Object.keys(slot).sort(), ['degradedFrom', 'recipe', 'source']);
+    }
+  });
+
+  it('every executor state reaches the agents block, and only a state with a reason carries one', () => {
+    const states = [
+      { state: 'placed', reason: null },
+      { state: 'customized', reason: null },
+      { state: 'missing', reason: null },
+      { state: 'unusable', reason: 'tools: Read, Grep is read-only' },
+    ];
+    for (const executor of states) {
+      const r = surveyCheapAgents('/p', vehicleFs({ bundle: TWO_VEHICLES, executor }));
+      assert.equal(r.executor, executor.state);
+      assert.equal(r.executorReason ?? null, executor.reason, `${executor.state} reason`);
+      assert.equal(r.bundled, 2, 'the counts span every vehicle, the executor included');
+    }
+  });
+
+  it('the vehicle state rides the settings survey (status reads ONE agents block)', () => {
+    const s = surveySettings('/p', {
+      ...settingsFs({ project: undefined, local: undefined }),
+      exists: () => false,
+      ...vehicleFs({ bundle: TWO_VEHICLES, executor: { state: 'customized', reason: null } }),
+    });
+    assert.equal(s.agents.executor, 'customized');
   });
 });
 

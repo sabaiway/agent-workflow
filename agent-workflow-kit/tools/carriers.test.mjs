@@ -16,6 +16,13 @@ import {
   withVehicle,
   EXECUTOR_APPLY,
   vehicleDegradeReason,
+  SLICE_BY_ACTIVITY,
+  DISPATCH_LINES,
+  PARALLEL_LINES,
+  PARALLEL_SOLO_NOTE,
+  SUBAGENT_SLOT_TYPES,
+  dispatchForm,
+  parallelLine,
 } from './carriers.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -226,5 +233,52 @@ describe('carriers — a routine chore carries no autonomy level of its own', ()
     assert.deepEqual(Object.keys(POLICY_ACTIVITIES), ['plan-authoring', 'plan-execution']);
     assert.equal(ACTIVITIES.routine.policy, false);
     for (const name of Object.keys(POLICY_ACTIVITIES)) assert.equal(ACTIVITIES[name].policy, true);
+  });
+});
+
+describe('the dispatch form — the ONE wording source, pinned whole', () => {
+  it('every activity has a slice sentence, and each is the exact sentence', () => {
+    assert.deepEqual(Object.keys(SLICE_BY_ACTIVITY).sort(), Object.keys(ACTIVITIES).sort());
+    assert.equal(SLICE_BY_ACTIVITY['plan-execution'], 'a slice is a set of file-disjoint ledger rows; wording is copied verbatim where wording is a red line');
+    assert.equal(SLICE_BY_ACTIVITY['plan-authoring'], 'a slice is a brief naming the goal, the governing spec(s) and the ledger constraints; the subagent drafts the plan or the contract from it, and the orchestrator reviews the draft as its own');
+    assert.equal(SLICE_BY_ACTIVITY.routine, "a slice is a bounded mechanical task; a read-only one (a sweep, gate triage) rides its placed read-only vehicle, or is carried solo with a stated reason when that vehicle is absent; a write-capable one (a regeneration, a fixture build) rides the executor; the changelog stays the orchestrator's");
+  });
+
+  it('the four shared dispatch lines are exact, and in this order', () => {
+    assert.deepEqual(DISPATCH_LINES, [
+      'dispatch: the executor vehicle (.claude/agents/executor.md — <state>), in the background',
+      'the orchestrator verifies every returned slice by running its suites itself',
+      'the subagent is never told to commit, never a review backend, never a bridge substitute',
+      'honest limit: a Claude Code lane — on a host that cannot dispatch the vehicle, follow this form by hand and say so',
+    ]);
+  });
+
+  it('SUBAGENT_SLOT_TYPES is computed from the value table — exactly the slot types that hold a subagent', () => {
+    assert.deepEqual(SUBAGENT_SLOT_TYPES, ['execute', 'carrier']);
+    for (const slotType of SUBAGENT_SLOT_TYPES) assert.ok(SLOT_RECIPES[slotType].includes(SUBAGENT_RECIPE.id), slotType);
+  });
+
+  it('dispatchForm fills the surveyed state into the first line and prepends the activity slice', () => {
+    const form = dispatchForm({ activity: 'plan-execution', slot: 'execute', state: 'customized' });
+    assert.equal(form[0], SLICE_BY_ACTIVITY['plan-execution']);
+    assert.equal(form[1], 'dispatch: the executor vehicle (.claude/agents/executor.md — customized), in the background');
+    assert.deepEqual(form.slice(2), DISPATCH_LINES.slice(1));
+    assert.match(dispatchForm({ activity: 'routine', slot: 'carrier' })[1], / missing\), in the background$/u, 'an unstated state reads missing, never an empty parenthesis');
+  });
+
+  it('renders nothing for a slot no subagent can carry, and for an unknown activity', () => {
+    assert.deepEqual(dispatchForm({ activity: 'plan-execution', slot: 'review', state: 'placed' }), []);
+    assert.deepEqual(dispatchForm({ activity: 'routine', slot: 'parallel', state: 'placed' }), []);
+    assert.deepEqual(dispatchForm({ activity: 'nope', slot: 'execute', state: 'placed' }), []);
+    assert.deepEqual(dispatchForm(), []);
+  });
+
+  it('the four parallel x carrier cells are exact', () => {
+    assert.equal(parallelLine({ value: 'on', carrier: 'subagent' }), 'parallel: on — file-disjoint slices dispatch concurrently');
+    assert.equal(parallelLine({ value: 'on', carrier: 'solo' }), 'parallel: on (no effect while the carrier is solo)');
+    assert.equal(parallelLine({ value: 'off', carrier: 'subagent' }), 'parallel: off — one slice at a time');
+    assert.equal(parallelLine({ value: 'off', carrier: 'solo' }), 'parallel: off — one slice at a time (no effect while the carrier is solo)');
+    assert.equal(PARALLEL_SOLO_NOTE, '(no effect while the carrier is solo)');
+    assert.deepEqual(PARALLEL_LINES, { on: 'parallel: on — file-disjoint slices dispatch concurrently', off: 'parallel: off — one slice at a time' });
   });
 });
