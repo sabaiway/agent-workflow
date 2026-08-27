@@ -699,7 +699,11 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       tools/spec-coverage-cli.mjs (argv, fs and the one write, the shrink-only debt).
     //       Both also ride the NAMED list above: a count alone would let either fall out of the
     //       payload unnoticed the moment some other file leaked in at the same time.
-    assert.equal(packed.length, 257, `tarball file count drifted (${packed.length} ≠ 257)`);
+    // 259 = 257 + the agy-review suite split: bridges/antigravity-cli-bridge/bin/
+    //       agy-review-harness.test.mjs (the shared fake CLI + sandbox) and agy-review-verdict.test.mjs
+    //       (the verdict-body honesty topic). A bridge subtree ships its tests — files[] excludes
+    //       only tools/ and bin/ tests of the kit itself.
+    assert.equal(packed.length, 259, `tarball file count drifted (${packed.length} ≠ 259)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

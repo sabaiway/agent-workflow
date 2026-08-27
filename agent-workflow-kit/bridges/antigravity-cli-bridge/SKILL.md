@@ -2,7 +2,7 @@
 name: antigravity-cli-bridge
 description: Delegate work to Google's Antigravity CLI (`agy`) — the successor to Gemini CLI — to reach Gemini, Claude, and GPT-OSS models under a Google AI Pro/Ultra subscription from the terminal. Use when the user wants to run a headless `agy` prompt, hand a focused task or second-opinion review to `agy`, install or authenticate Antigravity CLI, check or economise its quota/models, bridge project context into `agy`, set up a second delegated-execution backend beside Codex, or troubleshoot `agy` flags, models, auth, conversations, or its headless behaviour.
 metadata:
-  version: '5.3.0'
+  version: '5.4.0'
 ---
 
 # antigravity-cli-bridge
@@ -163,7 +163,9 @@ billed turn restating the model's own prose (16,585 → 33,446 tokens on a match
 
 **Honesty + posture (D4/D5):** a run with no recognized `### Verdict` section — empty output
 included — **exits 4 with NO receipt**: treat it as a *failed review to re-run*, never a fatal
-session error. One stderr banner states the actual posture (`review posture: model=… timeout=…`)
+session error. The verdict vocabulary is closed (SHIP / SHIP WITH NITS / REWORK), and a
+ship-class verdict arriving beside a numbered `### Blocking` finding is a verdict-body
+contradiction: the same exit 4, NO receipt, both halves named. One stderr banner states the actual posture (`review posture: model=… timeout=…`)
 and the receipt records the same `posture {model}`; an attesting review with `AGY_MODEL` explicitly
 emptied refuses pre-spend (`AGY_PROBE=1` exempt), and control bytes in a model string refuse
 pre-spend in every mode. The `timeout=` field is **banner-only** (exactly the duration `agy-run`

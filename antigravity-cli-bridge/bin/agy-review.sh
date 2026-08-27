@@ -338,7 +338,7 @@ DEFAULT_AGY_REVIEW_MODEL="Gemini 3.7 Flash (High)"
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by agy-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="agy"
-AW_BRIDGE_VERSION="5.3.0"  # aw-version-anchor
+AW_BRIDGE_VERSION="5.4.0"  # aw-version-anchor
 # `-` not `:-` so an EXPLICIT empty AGY_MODEL= survives (drop --model, use settings.json — agy.sh:52).
 AGY_MODEL="${AGY_MODEL-$DEFAULT_AGY_REVIEW_MODEL}"
 # D5 control-byte screen — IMMEDIATELY after resolution, BEFORE the off-frontier advisory (or any
@@ -1068,6 +1068,14 @@ parse_agy_verdict() { # $1 = captured-output file
   elif [[ "$line" =~ ^SHIP([^[:alnum:]_]|$) ]]; then printf 'SHIP'
   else printf 'unknown'
   fi
+}
+
+parse_agy_verdict_line() { # $1 = captured-output file
+  awk '/^### Verdict[[:space:]]*$/{flag=1; next} flag && NF {print; exit}' "$1" 2>/dev/null
+}
+
+parse_agy_blocking_first_numbered() { # $1 = captured-output file
+  awk 'flag && /^### /{exit} /^### Blocking[[:space:]]*$/{flag=1; next} flag && /^[0-9]+[.)]/{print; exit}' "$1" 2>/dev/null
 }
 
 # The repo file map is a FIXED cost that scales with REPO SIZE, not change size (measured 28,735
@@ -2110,6 +2118,16 @@ if [[ $rc -eq 0 ]]; then
     echo "       SHIP / SHIP WITH NITS / REWORK) — a FAILED review; NO receipt was written. Re-run" >&2
     echo "       the review; if it recurs, inspect the captured output for what the model produced." >&2
     exit 4
+  fi
+  if [[ "$verdict" == "SHIP" || "$verdict" == "SHIP WITH NITS" ]]; then
+    first_blocking_item="$(parse_agy_blocking_first_numbered "$review_out_file")"
+    if [[ -n "$first_blocking_item" ]]; then
+      verdict_line="$(parse_agy_verdict_line "$review_out_file")"
+      echo "error: verdict-body contradiction — '### Verdict' reads '$verdict_line' while '### Blocking'" >&2
+      echo "       carries a numbered finding ($first_blocking_item). A ship-class verdict cannot" >&2
+      echo "       ride blocking findings; NO receipt was written. Re-run the review." >&2
+      exit 4
+    fi
   fi
   if [[ -n "$resume_mode" ]]; then
     # A continuation never re-embeds the current artifact (agy holds the ORIGINAL round server-side;

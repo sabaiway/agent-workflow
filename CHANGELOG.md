@@ -7,6 +7,24 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-26 — AD-122 a review can no longer pass a change it called broken (kit 10.2.0 · antigravity-cli-bridge 5.4.0, both MINOR)
+
+**The receipt stops lying.** A consumer's council round recorded a clean `SHIP WITH NITS` receipt
+while the same review body listed a correctness bug and a security violation under `### Blocking`:
+the wrapper parsed the verdict line and nothing anywhere read the section its own prompt mandates.
+A ship-class verdict beside a numbered Blocking item is now a verdict-body contradiction and takes
+the existing failed-review arm — exit 4, NO receipt, both halves named, re-run the review — in the
+fresh, fed and continuation lanes alike. The verdict is never rewritten and never downgraded.
+
+Bounded on purpose: the predicate binds the mandated shape, not comprehension; `REWORK` is never
+refused; an absent Blocking section is not a contradiction; and exactly one section is judged, so a
+repeated heading can never suppress a receipt the first one did not. The codex twin is unchanged —
+its contract carries no machine-checkable findings section.
+
+Written to a contract before the code, under the AD-121 ruling, and the bridge's 3224-line test
+suite was split while the guard went in: a shared harness file, the wrapper suite at 2893 lines with
+its 213 arms green, and a 109-line topic suite carrying the eight scenarios.
+
 ## 2026-08-26 — AD-121 no work without a specification (kit 10.1.0 · engine 4.1.0, both MINOR)
 
 **A contract stops being a suggestion.** A shipped tool that no LIVE contract under `docs/ai/specs/`

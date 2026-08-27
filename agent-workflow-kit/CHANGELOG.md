@@ -4,6 +4,22 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 10.2.0 — a review can no longer pass a change it called broken (AD-122)
+
+Ships antigravity-cli-bridge **5.4.0** in the bundled bridge tree. A consumer recorded a clean
+`SHIP WITH NITS` receipt over a review body that named a correctness bug and a security violation
+under `### Blocking` — the wrapper read the verdict line and nothing read the section. Now a
+ship-class verdict beside a numbered Blocking item is a verdict-body contradiction and takes the
+existing failed-review arm: exit 4, no receipt, both halves named, re-run the review. `REWORK` is
+never refused — a veto needs no corroboration, only a pass does — an absent Blocking section is not
+a contradiction, and a repeated heading terminates the scan, so exactly one section is ever judged.
+
+The guard was written to a contract first (`docs/ai/specs/bridges/agy-review-verdict.md`, eight
+scenarios), and the bridge's test suite was split in the same change: the shared fixture surface
+moved to `bin/agy-review-harness.test.mjs`, the wrapper suite shrank to 2893 lines with all 213
+existing arms green, and the new contract got its own topic file. Both new files ship with the
+bridge tree, so the tarball count pin moves 257 → 259.
+
 ## 10.1.0 — no work without a specification, and a ratchet that does not trust its own file (AD-121)
 
 A shipped tool that no LIVE contract claims is now a REFUSAL, not a preference. `tools/spec-coverage.mjs`
