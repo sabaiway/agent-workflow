@@ -31,7 +31,7 @@ const IMPORT_RE = /(?:^|\n)\s*(?:import\s[^'"]*?|export\s[^'"]*?from\s*)['"](\.{
 // leaf's own settings-path literals load-bearing rather than a duplication (it exports the same two
 // strings, and importing them would pull the whole settings WRITER into the read graph).
 const READ_ROOTS = ['flow-store-read.mjs', 'procedures.mjs', 'source-size-core.mjs', 'mcp-registration.mjs'];
-const WRITE_MODULES = ['atomic-write.mjs', 'flow-store.mjs', 'orchestration-write.mjs', 'mcp.mjs', 'velocity-profile.mjs'];
+const WRITE_MODULES = ['atomic-write.mjs', 'flow-store.mjs', 'orchestration-write.mjs', 'mcp.mjs', 'velocity-profile.mjs', 'cheap-agents.mjs'];
 
 const moduleFiles = (() => {
   const files = [];
@@ -87,6 +87,27 @@ describe('read-graph purity — the advisor surface is structurally read-only (F
     // can see. Asserting the same edge for both would have been a green test over a false claim.
     assert.ok([...closureOf([resolve(TOOLS_DIR, 'mcp.mjs')])].map(rel).includes('atomic-write.mjs'), 'mcp.mjs really does reach the write core');
     assert.match(readFileSync(resolve(TOOLS_DIR, 'velocity-profile.mjs'), 'utf8'), /fs\.writeFile\(/u, 'velocity-profile.mjs really does write, directly');
+  });
+
+  // ── the vehicle surface's own split (the third `.claude/` writer) ────────────────────
+  // The advisor asks "is the executor vehicle placed?" and the answer used to arrive through
+  // cheap-agents.mjs, which imports mkdirSync/writeFileSync and can create .claude/agents/. The
+  // split moved the reading half out; only this walk can show that the advisor now reaches the
+  // core and nothing but the core.
+  it('cheap-agents-read is the ONLY half the advisor reaches — procedures and recipes never reach the writer', () => {
+    const core = resolve(TOOLS_DIR, 'cheap-agents-read.mjs');
+    const writer = resolve(TOOLS_DIR, 'cheap-agents.mjs');
+    assert.ok(edges.has(core) && edges.has(writer), 'both halves are tools modules');
+    for (const root of ['procedures.mjs', 'recipes.mjs']) {
+      const closure = [...closureOf([resolve(TOOLS_DIR, root)])].map(rel);
+      assert.ok(closure.includes('cheap-agents-read.mjs'), `${root} must reach the read core — otherwise this claim is about nothing`);
+      assert.equal(closure.includes('cheap-agents.mjs'), false, `${root} reached the writer: ${closure.sort().join(', ')}`);
+    }
+    // Both directions of the split: the core reaches no writer, and the writer really is one.
+    const coreClosure = [...closureOf([core])].map(rel);
+    assert.deepEqual(coreClosure.filter((r) => WRITE_MODULES.includes(r)), [], `the read core reached: ${coreClosure.sort().join(', ')}`);
+    assert.equal(coreClosure.includes('cheap-agents.mjs'), false, 'the core must never reach its own writer');
+    assert.match(readFileSync(writer, 'utf8'), /fs\.writeFile\(/u, 'cheap-agents.mjs really does write, directly');
   });
 
   // ── the source-size practice's own two edges (D-18) ──────────────────────────────────

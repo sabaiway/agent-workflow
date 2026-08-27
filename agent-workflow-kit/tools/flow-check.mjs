@@ -29,8 +29,7 @@ import {
   resolveReceiptsPath, readReceipts, computeTreeFingerprint,
 } from './core-evidence.mjs';
 import { loadConfig } from './orchestration-config.mjs';
-import { requiredBackendsForConfiguredRecipe, DISPLAY_ALIASES } from './recipes.mjs';
-import { detectBackends } from './detect-backends.mjs';
+import { requiredBackendsForConfiguredRecipe, DISPLAY_ALIASES, composeReadiness } from './recipes.mjs';
 import { decideFlowCheck } from './flow-check-cores.mjs';
 import { short } from './flow-check-rungs.mjs';
 import {
@@ -116,11 +115,7 @@ export const computeFlowDecision = ({ cwd = process.cwd(), consumer = 'gate', pr
     let readiness = [];
     let detectionFailed = false;
     if (configFailure == null && config?.['plan-execution']?.review == null) {
-      try {
-        readiness = detectBackends();
-      } catch {
-        detectionFailed = true;
-      }
+      readiness = composeReadiness(top, { ...probes, onDetectError: () => { detectionFailed = true; } });
     }
     const obligations = configFailure == null
       ? requiredBackendsForConfiguredRecipe({ config, readiness, detectionFailed })

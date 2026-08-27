@@ -3,10 +3,10 @@
 //
 // It composes the AD-018 orchestration recipes into NAMED activities: it reads the canonical procedure
 // steps LIVE from the installed agent-workflow-engine (references/procedures.md — AD-016 live read, no
-// bundled mirror), reads the per-project, hand-edited config (docs/ai/orchestration.json), runs the
-// read-only backend detector, and prints the activity's steps VERBATIM + the resolved effective recipe
-// per slot (default = Reviewed-when-a-backend-is-ready, Council on request, slot-aware incl. Delegated),
-// plus the project's DECLARED source-size practice when it declares one (D-17 U1).
+// bundled mirror), reads the per-project, hand-edited config (docs/ai/orchestration.json), composes the
+// readiness every caller composes (detected backends + the executor vehicle), and prints the activity's
+// steps VERBATIM + the resolved effective recipe per slot, plus the project's DECLARED source-size
+// practice when it declares one (D-17 U1).
 //
 // Invariants (mirror recipes.mjs): pure-where-possible, READ-ONLY (never writes, never commits, never
 // runs a subscription CLI). The deterministic resolution lives in the kit (resolveActivityRecipe), not
@@ -26,7 +26,7 @@ import { detectBackends, wrapperCmdFor, wrapperContractFor } from './detect-back
 // core only — never the writer — so this read-only advisor never imports the atomic-write core.
 import { loadRegistry, allowedLabel } from './bridge-settings-read.mjs';
 import { isDirectRun } from './direct-run.mjs';
-import { ACTIVITIES, resolveActivityRecipe, planRecipe } from './recipes.mjs';
+import { ACTIVITIES, SLOT_RECIPES, isSwitchSlot, resolveActivityRecipe, planRecipe, composeReadiness } from './recipes.mjs';
 import { resolveEngineDir, readEngineFragment, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
 // The plan-in-flight detector (AD-038) — imported from the plan-files.mjs LEAF (read-only fs by
 // construction); the WRITER-capable grounding.mjs is only NAMED in rendered text, never imported.
@@ -34,19 +34,15 @@ import { plansInFlight, PLANS_REL } from './plan-files.mjs';
 // The family's ONE shell quoter for a RENDERED command operand (bare when the value is already safe,
 // single-quoted otherwise) — the same leaf eight other command renderers here read through.
 import { shellQuoteArg } from './repo-lex.mjs';
-// The config schema/read core lives in orchestration-config.mjs (the single config contract). procedures
-// is READ-ONLY: it imports the reader + the SHARED slot/recipe validity, never the fs-writer
-// (orchestration-write.mjs) DIRECTLY — the import-split test pins the direct-import rule.
-// CONFIG_REL is RE-EXPORTED so existing importers (procedures.test.mjs, historically) keep their
-// import site working.
+// The config schema/read core (orchestration-config.mjs, the single config contract): the reader +
+// the SHARED slot/recipe validity, never the fs-writer (orchestration-write.mjs) DIRECTLY — the
+// import-split test pins the direct-import rule.
 import { CONFIG_REL, fail, loadConfig, assertSlotRecipe } from './orchestration-config.mjs';
 import { AUTONOMY_REL, loadAutonomy, resolveAutonomy, isSparseSeedConfig } from './autonomy-config.mjs';
-// The flow armed-halves probe (P8): read-only store presence/adoption facts for the session-start
-// surface, imported from the read module that OWNS no write API — this advisor never imports the
-// mixed flow-store module (append API) DIRECTLY, like it never imports orchestration-write (the
-// import-split test pins both direct rules). The TRANSITIVE claim is now structural, not
-// narrated: this advisor's import closure reaches NO write-API module and the tools graph is
-// acyclic — pinned by test/read-graph-purity.test.mjs (FLOW-READ-GRAPH-PURITY).
+// The flow armed-halves probe (P8): read-only store presence/adoption facts, from the read module
+// that OWNS no write API — never the mixed flow-store module (append API) DIRECTLY, like never
+// orchestration-write (the import-split test pins both direct rules; the TRANSITIVE claim is
+// structural — test/read-graph-purity.test.mjs pins it).
 import { resolveFlowStorePath, readFlowStore } from './flow-store-read.mjs';
 import { CHAIN_KIND } from './flow-record.mjs';
 // The declared source-size practice (D-17 U1), read through the practice's PURE READ core — never
@@ -57,18 +53,17 @@ export { CONFIG_REL };
 
 // ── argument + override parsing (usage errors → exit 2) ─────────────────────────────
 
-// Parse the activity's --override <slot>=<recipe> tokens into a { slot: recipe } map, validating each
+// Parse the activity's --override <slot>=<value> tokens into a { slot: recipe } map, validating each
 // against the SHARED slot/recipe validity table (assertSlotRecipe — the SAME accept/reject the set-recipe
-// op parser uses, drift-guarded). Every malformed token is a USAGE error (exit 2): a bare `<recipe>` (no
-// slot), an unknown slot for the activity, an invalid recipe-for-slot, or a duplicate slot. (An override
-// naming a recipe whose backend merely is not `ready` is NOT a usage error — it degrades loudly at
-// resolution time, exit 0.) The `--override` grammar stays activity-SCOPED (the activity comes from the
-// CLI arg), unlike the fully-qualified `--set <activity>.<slot>=<recipe>` the writer takes.
+// op parser uses, drift-guarded). Every malformed token is a USAGE error (exit 2): a bare `<recipe>`, an
+// unknown slot for the activity, an invalid recipe-for-slot, or a duplicate slot. (An override naming a
+// recipe whose backend merely is not `ready` is NOT a usage error — it degrades loudly at resolution
+// time, exit 0.) The grammar stays activity-SCOPED, unlike the writer's `--set <activity>.<slot>=<x>`.
 const parseOverrides = (tokens, activity) => {
   const overrides = {};
   for (const tok of tokens) {
     const eq = tok.indexOf('=');
-    if (eq <= 0) throw fail(2, `--override must be <slot>=<recipe> (got "${tok}")`);
+    if (eq <= 0) throw fail(2, `--override must be <slot>=<value> (got "${tok}")`);
     const slot = tok.slice(0, eq);
     const recipe = tok.slice(eq + 1);
     assertSlotRecipe(activity, slot, recipe); // shared validity (unknown slot / invalid recipe → exit 2)
@@ -91,7 +86,7 @@ const parseArgs = (argv) => {
       json = true;
     } else if (a === '--override') {
       const tok = argv[i + 1];
-      if (tok === undefined || tok.startsWith('--')) throw fail(2, '--override requires <slot>=<recipe>');
+      if (tok === undefined || tok.startsWith('--')) throw fail(2, '--override requires <slot>=<value>');
       overrideTokens.push(tok);
       i += 1;
     } else if (a.startsWith('--override=')) {
@@ -162,25 +157,29 @@ const resolveAllSlots = ({ activity, config, detection, overrides }) => {
     }
   })();
   const knobsFor = (cmd) => [...registry.values()].filter((k) => (k.appliesTo ?? []).includes(cmd));
-  return Object.keys(ACTIVITIES[activity].slots).map((slot) => {
+  return Object.entries(ACTIVITIES[activity].slots).map(([slot, slotType]) => {
     const resolved = resolveActivityRecipe({ config: config ?? {}, readiness: detection, activity, slot, override: overrides[slot] });
+    if (isSwitchSlot(slotType)) return { slot, ...resolved, backends: [], contracts: [], vehicles: [] };
     // The concrete wrapper set this slot's EFFECTIVE recipe dispatches (empty for solo). Reuse
     // planRecipe's drift-guarded dispatch for WHICH backends, then resolve each (backend, role) to its
-    // manifest wrapper cmd via the bridge registry — no wrapper name is hand-composed here.
+    // manifest wrapper cmd via the bridge registry — no wrapper name is hand-composed here. A vehicle
+    // step is NOT a bridge: it carries its own state and is never looked up in a manifest.
     const { dispatch } = planRecipe(resolved.recipe, detection);
-    const backends = dispatch.map((d) => wrapperCmdFor(d.backend, d.role)).filter(Boolean);
+    const vehicles = dispatch.filter((d) => d.vehicle != null).map((d) => ({ backend: d.backend, state: d.vehicle }));
+    const bridged = dispatch.filter((d) => d.vehicle == null);
+    const backends = bridged.map((d) => wrapperCmdFor(d.backend, d.role)).filter(Boolean);
     // The full DRIVING CONTRACT per dispatched (backend, role) — resolved HERE, on the raw dispatch
     // pairs, BEFORE they are flattened to wrapper names (the name array cannot reconstruct the role).
     // Every slot with a non-empty dispatch gets contracts — including execute=delegated; the contract
     // is NEVER gated by REVIEW_RECIPES (that set gates only the review-loop economics block).
-    const contracts = dispatch
+    const contracts = bridged
       .map((d) => ({ backend: d.backend, role: d.role, cmd: wrapperCmdFor(d.backend, d.role), contract: wrapperContractFor(d.backend, d.role) }))
       .filter((c) => c.cmd && c.contract)
       // `retired` rides along: without it this surface advertised a RETIRED key as an ordinary
       // settable knob, while the writer refuses to set it — a driving contract that contradicts the
       // tool it points at.
       .map((c) => ({ ...c, settings: knobsFor(c.cmd).map((k) => ({ key: k.key, allowed: allowedLabel(k), retired: k.retired ?? null })) }));
-    return { slot, ...resolved, backends, contracts };
+    return { slot, ...resolved, backends, contracts, vehicles };
   });
 };
 
@@ -410,12 +409,11 @@ const flowHalvesAdvice = (flow, probe) => {
 // plan is being written. Composed from the project's live declaration, never from constants here.
 // Each config state speaks as itself: ABSENT renders NOTHING (a project that declares no practice must
 // not be handed invented limits); AUTHORED and INCOMPLETE render the declared caps plus the honest
-// "nothing is recorded yet" line — both are pre-mint states, and treating INCOMPLETE as MINTED would
-// report a half record as the whole tree's debt; MINTED renders the recorded counts too.
+// "nothing is recorded yet" line (treating INCOMPLETE as MINTED would report a half record as the
+// whole tree's debt); MINTED renders the recorded counts too.
 // A config that cannot be read renders ONE loud line carrying the reader's own message and the render
-// still completes: the exit code for a broken source-size config belongs to the practice's own
-// checker (exit 2 there, and its declared gate reds the matrix on it), while THIS tool's exit
-// contract is about its own config and the engine.
+// still completes: the exit code for a broken source-size config belongs to the practice's own checker,
+// while THIS tool's exit contract is about its own config and the engine.
 
 export const DECLARED_PRACTICE_HEADER = `Declared source-size practice (${SOURCE_SIZE_CONFIG_REL}) — known BEFORE the code is written:`;
 
@@ -486,12 +484,13 @@ const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flow
   const lines = [
     section,
     '',
-    `resolved recipes for "${activity}" (read-only — the orchestrator runs the recipe via the bridge skills and owns any commit; a backend never commits):`,
+    `resolved recipes for "${activity}" (read-only — the orchestrator runs the recipe via the bridge skills or the executor vehicle and owns any commit; every other carrier never commits):`,
   ];
   for (const s of slots) {
     const arrow = s.degradedFrom ? ` (requested ${s.degradedFrom} → degraded)` : '';
     lines.push(`  ${s.slot}: ${s.recipe} — ${SOURCE_LABEL[s.source]}${arrow}${backendSetLabel(s.backends)}`);
     if (s.reason) lines.push(`      ↳ ${s.reason}`);
+    for (const v of s.vehicles ?? []) lines.push(`      ${v.backend} — the placed subagent vehicle (${v.state})`);
     for (const c of s.contracts ?? []) lines.push(...contractLines(c));
   }
   if ((flowHalves ?? []).length) lines.push('', ...flowHalves);
@@ -544,16 +543,16 @@ const buildJson = ({ activity, section, slots, configSource, warnings, plans, au
 const HELP = `procedures — read-only activity-procedures advisor for the agent-workflow family.
 
 Usage:
-  node procedures.mjs <activity> [--override <slot>=<recipe>]... [--json]
+  node procedures.mjs <activity> [--override <slot>=<value>]... [--json]
 
 Activities: ${Object.keys(ACTIVITIES).join(', ')}
-Slots:      plan-authoring → review;  plan-execution → execute, review
-Recipes:    review accepts solo|reviewed|council;  execute accepts solo|delegated
+Slots:      ${Object.entries(ACTIVITIES).map(([a, d]) => `${a} → ${Object.keys(d.slots).join(', ')}`).join(';  ')}
+Accepted values: ${Object.entries(SLOT_RECIPES).map(([type, values]) => `${type} accepts ${values.join('|')}`).join(';  ')}
 
 Reads the activity's procedure steps LIVE from the installed agent-workflow-engine
 (references/procedures.md), resolves the effective recipe per slot from
 ${CONFIG_REL} + the read-only backend detector, and prints both. A per-run
---override <slot>=<recipe> (repeatable) overrides the configured/default recipe for that slot.
+--override <slot>=<value> (repeatable) overrides the configured/default recipe for that slot.
 Read-only: never writes, never commits, never runs a subscription CLI.
 
 Also prints the project's DECLARED source-size practice (${SOURCE_SIZE_CONFIG_REL}) when it declares
@@ -582,18 +581,17 @@ export const main = (argv, ctx = {}) => {
     const { activity, overrides, json } = parseArgs(argv);
     const { config, source: configSource } = loadConfig(cwd, readFile, lstat);
     const section = extractSection(readProceduresCanon(env, home), activity);
-    // Backend detection is a SECONDARY input — it only refines the recipe. A corrupt / unreadable backend
-    // must NOT fail activity resolution as a config/engine error (exit 1, outside the contract): treat all
-    // backends as not-ready (resolution floors at Solo) and surface the failure as a loud warning, exit 0.
+    // Readiness is a SECONDARY input — it only refines the recipe. A corrupt bridge must NOT fail
+    // activity resolution as a config/engine error: the detector-failure hook floors the bridge half
+    // at not-ready and warns (exit 0), while the surveyed executor vehicle survives untouched.
     const detectWarnings = [];
-    let detection = [];
-    try {
-      detection = detect();
-    } catch (err) {
-      detectWarnings.push(
-        `backend detection failed (${(err && err.message) || err}) — treating all backends as not ready; recipes needing a backend degrade to solo.`,
-      );
-    }
+    const detection = composeReadiness(cwd, {
+      detect,
+      surveyVehicle: ctx.surveyVehicle,
+      onDetectError: (err) => detectWarnings.push(
+        `backend detection failed (${(err && err.message) || err}) — treating every bridge as not ready; recipes needing a bridge degrade to solo (the executor vehicle is unaffected).`,
+      ),
+    });
     const slots = resolveAllSlots({ activity, config, detection, overrides });
     const warnings = [...detectWarnings, ...collectWarnings(slots)];
     const plans = plansInFlight(cwd);

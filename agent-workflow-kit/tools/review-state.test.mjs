@@ -1,9 +1,8 @@
-// review-state.test.mjs — the AD-038 read-only receipt checker: every branch of the normative
-// --check exit contract (the tool header is the single home of that list), the stale-after-edit
-// case, the fold → fresh-grounded-re-receipt → green loop (continuations do NOT restore green),
-// informational receipts (plan/diff + fresh:false) never satisfying a tree check, and the
-// plan-in-flight naming-convention detector against a fixture mirroring THIS repo's real
-// post-tidy docs/plans directory.
+// review-state.test.mjs — the AD-038 read-only receipt checker: every branch of the normative --check
+// exit contract (the tool header is the single home of that list), the stale-after-edit case, the fold
+// → fresh-grounded-re-receipt → green loop (continuations do NOT restore green), informational
+// receipts (plan/diff + fresh:false) never satisfying a tree check, and the plan-in-flight
+// naming-convention detector against a fixture mirroring THIS repo's real docs/plans directory.
 
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,9 +25,9 @@ import {
   readReceipts,
   RECEIPTS_BASENAME,
 } from './review-state.mjs';
-// The obligations derivation is a NEW export authored WITH its fixtures — imported dynamically so
-// this spec LOADS (and each fixture fails individually) against a pre-hardening tree; the
-// behavior fixtures below import only the pre-existing surface and fail on their own assertions.
+// The obligations derivation is a NEW export authored WITH its fixtures — imported dynamically so this
+// spec LOADS (each fixture failing individually) against a pre-hardening tree; the behavior fixtures
+// below import only the pre-existing surface.
 const { requiredBackendsForConfiguredRecipe } = await import('./review-state.mjs');
 import { READY, NEEDS_SKILL } from './detect-backends.mjs';
 
@@ -40,16 +39,15 @@ const detect = (codex, agy) => () => [
 ];
 
 // The normative receipt fixture (AD-038 shape + the D3 self-declaring probe marker); tests override
-// fields. wrapperVersion stays at its historical 2.2.0 ON PURPOSE: the probe verdict must depend on
-// the MARKER alone, so a suite about anything else must not be able to pass because of a version.
-// The default verdict is SHIP-CLASS: only ship-class satisfies the hardened gate, so presence
-// tests satisfy by default; the veto/vocabulary fixtures override it explicitly.
+// fields. wrapperVersion stays at its historical 2.2.0 ON PURPOSE: the probe verdict must depend on the
+// MARKER alone, so no suite can pass because of a version. The default verdict is SHIP-CLASS (only
+// ship-class satisfies the hardened gate); the veto/vocabulary fixtures override it explicitly.
 const RECEIPT_FIXTURE = JSON.parse(
   '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"ship","grounded":true,"factsHash":null,"wrapperVersion":"2.2.0","timestamp":"2026-07-03T12:00:00Z","probe":false,"posture":{"model":"<display>"}}',
 );
-// An agy `code` receipt additionally SELF-DECLARES how the change set reached the model (D8b); the
-// current-generation value for a single-turn review is `inline`. Fixtures that exercise the
-// pre-marker class pass `delivery: undefined` explicitly (JSON.stringify then drops the key).
+// An agy `code` receipt additionally SELF-DECLARES how the change set reached the model (D8b); for a
+// single-turn review that is `inline`. Pre-marker fixtures pass `delivery: undefined` (JSON.stringify
+// drops the key).
 const receiptLine = (overrides) => {
   const receipt = { ...RECEIPT_FIXTURE, ...overrides };
   if (receipt.backend === 'agy' && !Object.hasOwn(overrides, 'delivery')) receipt.delivery = 'inline';
@@ -59,9 +57,9 @@ const receiptLine = (overrides) => {
 const COUNCIL_CONFIG = JSON.stringify({ 'plan-execution': { execute: 'solo', review: 'council' } });
 const SOLO_CONFIG = JSON.stringify({ 'plan-execution': { review: 'solo' } });
 
-// A real git fixture repo: committed base, per-test config / plans / pending state. The committed
-// base is IDENTICAL for every test (all variation is untracked, written post-commit), so it is
-// built ONCE and cloned per test — a per-test `git init`+commit dominated this suite's wall.
+// A real git fixture repo: committed base, per-test config / plans / pending state. The committed base
+// is IDENTICAL for every test (all variation is untracked), so it is built ONCE and cloned per test —
+// a per-test `git init`+commit dominated this suite's wall.
 const REPO_TEMPLATE = (() => {
   const dir = mkdtempSync(join(tmpdir(), 'review-state-template-'));
   const g = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
@@ -251,9 +249,7 @@ describe('review-state --check — exit-1 branches', () => {
 });
 
 describe('review-state --check — detector failure fails CLOSED (a gate, not an advisor)', () => {
-  const throwingDetect = () => {
-    throw Object.assign(new Error('corrupt bridge (EISDIR)'), { code: 'EISDIR' });
-  };
+  const throwingDetect = () => { throw Object.assign(new Error('corrupt bridge (EISDIR)'), { code: 'EISDIR' }); };
 
   it('a throwing detector under a configured council: the obligations are config-derived — unreceipted → 1, ship-receipted → 0', () => {
     const { root } = makeRepo();
@@ -273,6 +269,16 @@ describe('review-state --check — detector failure fails CLOSED (a gate, not an
     const r = main(['--check'], { cwd: root, env: {}, detect: throwingDetect });
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.code, 0, r.stdout);
+  });
+
+  it('the carrier is not collateral: a placed vehicle is still surveyed while the detector throws', () => {
+    const { root } = makeRepo({ config: SOLO_CONFIG });
+    let surveys = 0;
+    const placed = { state: 'placed', reason: null, rel: '.claude/agents/executor.md' };
+    const r = main(['--json'], { cwd: root, env: {}, detect: throwingDetect, surveyVehicle: () => { surveys += 1; return placed; } });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(surveys, 1, 'the bridge failure never costs the carrier its survey');
+    assert.match(JSON.parse(r.stdout).detectionWarning, /backend detection failed .* bridge readiness unknown/);
   });
 
   it('a throwing detector with NO config (computed default) → 1 (the default could have been reviewed — unknowable)', () => {
@@ -330,12 +336,11 @@ describe('review-state — informational receipts never satisfy the tree check',
 });
 
 // ── the probe-receipt filter (BRIDGE-MODES-CATALOG, D3) ──────────────────────────────
-// A probe-relaxed review (CODEX_PROBE=1 / AGY_PROBE=1) runs with the frontier-model/max-effort
-// guard OFF, so its findings must never attest a tree — but the wrappers used to write receipts
-// UNCONDITIONALLY, so a probe review minted a receipt this gate accepted. The wrappers now SELF-
-// DECLARE on every review (probe:true or probe:false); the filter runs PER RECEIPT, so a probe line
-// never poisons a real one at the same fingerprint, and a marker that is malformed OR ABSENT is
-// rejected fail-closed — silence is not a declaration, so a pre-marker receipt no longer passes.
+// A probe-relaxed review (CODEX_PROBE=1 / AGY_PROBE=1) runs with the frontier-model/max-effort guard
+// OFF, so its findings must never attest a tree — but the wrappers used to write receipts
+// UNCONDITIONALLY. They now SELF-DECLARE on every review (probe:true|false); the filter runs PER
+// RECEIPT, so a probe line never poisons a real one at the same fingerprint, and a marker that is
+// malformed OR ABSENT is rejected fail-closed — silence is not a declaration.
 describe('review-state — probe receipts never attest the tree (D3)', () => {
   it('probe-only receipts for a backend → FAIL, with a probe reason DISTINCT from stale', () => {
     const { root } = makeRepo();
@@ -360,12 +365,11 @@ describe('review-state — probe receipts never attest the tree (D3)', () => {
     assert.equal(r.code, 0, r.stdout);
   });
 
-  // B1 (the maintainer's decision to close the hole; the first mechanism proved release-order-coupled
-  // and was replaced by this one). A marker-aware wrapper ALWAYS self-declares
-  // (`probe:true`/`probe:false`), so the receipt states the fact directly and no version proxy is
-  // needed. An ABSENT marker means the probe status is UNTRUSTWORTHY — whatever wrote it: the pre-D3
-  // wrappers honoured the probe env vars while writing nothing, and a hand-written/third-party line
-  // says nothing either. Claim untrustworthiness, never provenance. Either way: rejected fail-closed.
+  // B1 (the first mechanism proved release-order-coupled and was replaced by this one). A marker-aware
+  // wrapper ALWAYS self-declares (`probe:true`/`probe:false`), so no version proxy is needed. An ABSENT
+  // marker means the probe status is UNTRUSTWORTHY whatever wrote it: the pre-D3 wrappers honoured the
+  // probe env vars while writing nothing, and a hand-written line says nothing either. Claim
+  // untrustworthiness, never provenance — rejected fail-closed.
   it('a self-declared probe:false receipt satisfies — the wrapper states the fact, not a version', () => {
     const { root } = makeRepo();
     assert.equal(RECEIPT_FIXTURE.probe, false, 'the fixture must self-declare — else this is vacuous');
@@ -496,8 +500,8 @@ describe('review-state — probe receipts never attest the tree (D3)', () => {
   });
 
   // D8b: an agy `code` receipt minted before the delivery marker existed cannot be told apart from a
-  // proven one by fingerprint alone (the classifier deliberately ignores wrapperVersion), and the
-  // old --add-dir lane was observed returning a confident fabrication under exactly that shape.
+  // proven one by fingerprint alone (the classifier ignores wrapperVersion), and the old --add-dir lane
+  // was observed returning a confident fabrication under exactly that shape.
   it('a DELIVERY-LESS agy receipt renders its own rejection with the stated recovery (D8b)', () => {
     const { root } = makeRepo();
     const fp = computeTreeFingerprint(root);
@@ -557,9 +561,9 @@ describe('review-state — plan-in-flight detector (the queue.md naming conventi
   });
 
   it('a fixture mirroring a real mid-execution docs/plans directory yields exactly the one active plan', () => {
-    // The SHAPE of this repo's own docs/plans during a plan execution: the queue index, every
-    // scratch marker class the convention names (EXECUTE- / FEEDBACK- prefixes; PLAN-PROMPT /
-    // prompt / handoff carriers; superseded-plan renames), and exactly ONE bare active plan.
+    // The SHAPE of this repo's own docs/plans during a plan execution: the queue index, every scratch
+    // marker class the convention names (EXECUTE- / FEEDBACK- prefixes; PLAN-PROMPT / prompt / handoff
+    // carriers; superseded renames), and exactly ONE bare active plan.
     const root = mkdtempSync(join(tmpdir(), 'review-state-detector-'));
     mkdirSync(join(root, 'docs', 'plans'), { recursive: true });
     const POST_TIDY = [
@@ -590,8 +594,8 @@ describe('review-state — plan-in-flight detector (the queue.md naming conventi
 describe('review-state — receipts file + env override + report surface', () => {
   it('AW_REVIEW_RECEIPTS overrides where receipts are read from', () => {
     const { root } = makeRepo();
-    // The override file must live OUTSIDE the work tree — an in-repo untracked file would itself
-    // move the fingerprint it attests.
+    // The override file must live OUTSIDE the work tree — an in-repo untracked file would move the
+    // fingerprint it attests.
     const outside = mkdtempSync(join(tmpdir(), 'review-state-receipts-'));
     const override = join(outside, 'elsewhere.jsonl');
     const fp = computeTreeFingerprint(root);
@@ -742,9 +746,8 @@ describe('backendReceiptStatus — the latest grounded receipt wins', () => {
 
 // ── the verdict vocabulary + the D3(b) degrade-record escape (the strip-the-kit hardening) ────────
 // Satisfaction is SHIP-CLASS ONLY; a recognized negative on the LATEST normal receipt is an
-// authoritative veto; an unrecognized verdict never attests (fail closed). The ONLY exemption lane
-// for an unavailable backend under council is an EXPLICIT per-backend, per-tree degrade record in
-// the core-evidence store — and never all backends.
+// authoritative veto; an unrecognized verdict never attests (fail closed). The ONLY exemption lane for
+// an unavailable backend under council is an EXPLICIT per-backend, per-tree degrade record — never all.
 
 const degradeLine = (backend, fingerprint, over = {}) =>
   `${JSON.stringify({ schema: 1, kind: 'degrade', backend, reason: 'backend unavailable for this tree', fingerprint, timestamp: '2026-07-16T00:00:00Z', ...over })}\n`;
@@ -1076,12 +1079,11 @@ describe('requiredBackendsForConfiguredRecipe — obligations from the CONFIGURE
 });
 
 // ── the never-committable review-domain filter (AD-044 Plan 4, Decision 1) ──────────────────────
-// Test strategy (probe-proven): on a regular filesystem git's dir walk does NOT list FIFOs/devices
-// as untracked at all — the real mask class surfaces only where the sandbox's dirent LIES (readdir
-// says file, lstat says char device). So these tests assert through the FILTER PREDICATE with a
-// LYING injected lstat over a git-visible regular fixture file — the sandbox mechanism itself —
-// plus a true-lstat control proving non-vacuity. char/block devices are not creatable
-// unprivileged; injected stats cover all four classes.
+// Test strategy (probe-proven): on a regular filesystem git's dir walk does NOT list FIFOs/devices as
+// untracked at all — the real mask class surfaces only where the sandbox's dirent LIES (readdir says
+// file, lstat says char device). So these tests assert through the FILTER PREDICATE with a LYING
+// injected lstat over a git-visible regular fixture file, plus a true-lstat control proving
+// non-vacuity; char/block devices are not creatable unprivileged, so injected stats cover all four.
 
 // A fake lstat result: exactly one type flag true, every other false (a real lstat has one type).
 const fakeStat = (type) => ({
@@ -1110,8 +1112,7 @@ describe('isNeverCommittableStat — the filtered class is EXACTLY char/block/FI
 });
 
 describe('review-domain filter — fingerprint + isTreeClean over a lying lstat (the sandbox mechanism)', () => {
-  // A repo whose ONLY untracked path is the git-visible mask fixture; the lying lstat reports it
-  // as the given class while git (dirent) lists it — exactly the in-sandbox divergence.
+  // A repo whose ONLY untracked path is the git-visible mask fixture; the lying lstat reports the given class while git (dirent) lists it.
   const makeMaskRepo = () => {
     const { root, g } = makeRepo({ config: null, plan: null, pending: false });
     g('add', '-A');
@@ -1164,9 +1165,9 @@ describe('review-domain filter — fingerprint + isTreeClean over a lying lstat 
     assert.equal(clean, false, 'a symlink-only tree is reviewable, never clean');
   });
 
+  const throwing = () => { throw new Error('EACCES'); };
   it('isTreeClean: a THROWING lstat keeps the path in the domain (dirty — fail-safe)', () => {
     const { root } = makeMaskRepo();
-    const throwing = () => { throw new Error('EACCES'); };
     const clean = isTreeClean(root, { lstat: throwing });
     rmSync(root, { recursive: true, force: true });
     assert.equal(clean, false, 'an unverifiable untracked path can never read clean');
@@ -1177,7 +1178,6 @@ describe('review-domain filter — fingerprint + isTreeClean over a lying lstat 
     assert.equal(countNeverCommittableUntracked(outside), 0, 'not a git tree — nothing to count');
     rmSync(outside, { recursive: true, force: true });
     const { root } = makeMaskRepo();
-    const throwing = () => { throw new Error('EACCES'); };
     assert.equal(countNeverCommittableUntracked(root, { lstat: throwing }), 0, 'an unverifiable path never inflates the advisory count');
     rmSync(root, { recursive: true, force: true });
   });
@@ -1217,19 +1217,12 @@ describe('review-domain filter — fingerprint + isTreeClean over a lying lstat 
   });
 });
 
-// A clean-tree PASS that hides a latent arm is the count-free form of the
-// guard-reports-count-not-location defect class: the inventory the human report already prints must
-// ride the --check line too, BEFORE the gate can block anything.
+// A clean-tree PASS that hides a latent arm is the count-free form of the guard-reports-count-not-
+// location defect class: the inventory the human report prints must ride the --check line too.
 describe('review-state --check — a clean tree still reports the plan inventory', () => {
   const cleanState = (overrides = {}) => ({
-    obligations: { recipe: 'council', source: 'config' },
-    malformed: 0,
-    evidenceUnavailable: false,
-    receiptsReadError: null,
-    plans: ['active-plan.md'],
-    fingerprint: 'current',
-    clean: true,
-    ...overrides,
+    obligations: { recipe: 'council', source: 'config' }, malformed: 0, evidenceUnavailable: false, receiptsReadError: null,
+    plans: ['active-plan.md'], fingerprint: 'current', clean: true, ...overrides,
   });
 
   const cleanRepo = (opts) => {
@@ -1316,8 +1309,8 @@ describe('review-state --check — a clean tree still reports the plan inventory
 });
 
 // ── Phase 2 (flow Plan 3): the gated flow arms (#43/#68/#61/#48, P3/P13/P19) ──
-// Static imports (hoisted): a late top-level await here would let a filtered run drain the root
-// suite — and its template-removing after() hook — before this block even registers.
+// Static imports (hoisted): a late top-level await would let a filtered run drain the root suite — and
+// its template-removing after() hook — before this block registers.
 import { buildState, computePlanAdoptionCoverage } from './review-state.mjs';
 import { resolveFlowStorePath } from './flow-store.mjs';
 import { FLOW_SCHEMA_VERSION, canonicalFlowDigest } from './flow-record.mjs';
@@ -1467,8 +1460,7 @@ describe('review-state — Phase-2 flow arms (two-tier activation + the three ga
     assert.match(r.stdout, /internal-attestation/);
   });
 
-  // The lens-substitution rung (#15/#3, Phase 4.3): an attestation whose lens set claims a review
-  // provider's slot needs a THEN-ACTIVE down-mark — substitution is recorded, never silent.
+  // The lens-substitution rung (#15/#3): a lens set claiming a review provider's slot needs a THEN-ACTIVE down-mark — recorded, never silent.
   it('lens substitution: an attestation claiming a provider slot WITHOUT a down-mark never counts — the floor refuses naming the contract', () => {
     const { root } = makeRepo({ config: SOLO_CONFIG });
     writeFileSync(planPath(root), PLAN_WITH_ID);
@@ -1585,8 +1577,8 @@ describe('review-state — Phase-2 flow arms (two-tier activation + the three ga
     assert.match(r.stdout, /internal-only/);
   });
 
+  const flowBlock = { schema: 1, councilRounds: 3, debtQueue: 'docs/notes.md', convergenceSummary: 'docs/summary.md' };
   it('delta-chain arm: an unbroken declared-path chain lifts a stale SHIP receipt to CURRENT with the #61 label', () => {
-    const flowBlock = { schema: 1, councilRounds: 3, debtQueue: 'docs/notes.md', convergenceSummary: 'docs/summary.md' };
     const { root } = makeRepo({ config: JSON.stringify({ 'plan-execution': { review: 'council' }, flow: flowBlock }) });
     const fp0 = computeTreeFingerprint(root);
     mint(root, { backend: 'codex', fingerprint: fp0 });
@@ -1615,7 +1607,6 @@ describe('review-state — Phase-2 flow arms (two-tier activation + the three ga
   });
 
   it('delta-chain arm: a BROKEN chain never lifts — the stale refusal stands (fail closed)', () => {
-    const flowBlock = { schema: 1, councilRounds: 3, debtQueue: 'docs/notes.md', convergenceSummary: 'docs/summary.md' };
     const { root } = makeRepo({ config: JSON.stringify({ 'plan-execution': { review: 'council' }, flow: flowBlock }) });
     const fp0 = computeTreeFingerprint(root);
     mint(root, { backend: 'codex', fingerprint: fp0 });
@@ -1670,6 +1661,17 @@ describe('review-state — Phase-2 flow arms (two-tier activation + the three ga
     assert.match(r.stdout, /authoritative veto/);
   });
 
+  it('the readiness carries the executor vehicle, surveyed at the work-tree root, and it never reviews', () => {
+    const { root } = makeRepo({ config: null });
+    const asked = [];
+    const stateFor = (state) => buildState({ cwd: root, env: {}, detect: detect(NEEDS_SKILL, NEEDS_SKILL), surveyVehicle: (dir) => { asked.push(dir); return { state, reason: null, rel: '.claude/agents/executor.md' }; } });
+    const [placed, missing] = [stateFor('placed'), stateFor('missing')];
+    rmSync(root, { recursive: true, force: true });
+    assert.deepEqual(asked, [placed.root, placed.root], 'the survey is composed at the anchor the config is read from');
+    assert.deepEqual([placed.obligations.recipe, placed.obligations.backends], ['solo', []], 'a placed executor is no ready reviewer');
+    assert.equal(missing.obligations.recipe, 'solo');
+  });
+
   it('the coverage map reads each plan file ONCE and never on the unarmed fast path (P13/P19)', () => {
     const { root } = makeRepo();
     writeFileSync(planPath(root), PLAN_WITH_ID);
@@ -1684,9 +1686,7 @@ describe('review-state — Phase-2 flow arms (two-tier activation + the three ga
     const armed = buildState({ cwd: root, env: {}, detect: detect(READY, READY), readFile });
     rmSync(root, { recursive: true, force: true });
     assert.equal(reads.filter((p) => p.includes('active-plan')).length, 1, 'armed — exactly one bounded read per plan');
-    assert.equal(armed.planCoverage.length, 1);
-    assert.equal(armed.planCoverage[0].covered, true);
-    assert.equal(armed.planCoverage[0].planId, 'plan-x');
+    assert.deepEqual(armed.planCoverage.map((c) => [c.covered, c.planId]), [[true, 'plan-x']]);
   });
 
   it('computePlanAdoptionCoverage names each uncovered class: no planId · no adoption · digest mismatch · foreign owner', () => {
@@ -1709,15 +1709,10 @@ describe('review-state — Phase-2 flow arms (two-tier activation + the three ga
       },
     });
     const byPlan = Object.fromEntries(coverage.map((c) => [c.plan, c]));
-    assert.equal(byPlan['no-id.md'].covered, false);
-    assert.match(byPlan['no-id.md'].reason, /planId/);
-    assert.equal(byPlan['no-adoption.md'].covered, false);
-    assert.match(byPlan['no-adoption.md'].reason, /no adoption/);
-    assert.equal(byPlan['edited.md'].covered, false);
-    assert.match(byPlan['edited.md'].reason, /edited after adoption|no longer matches/);
-    assert.equal(byPlan['foreign.md'].covered, false);
-    assert.match(byPlan['foreign.md'].reason, /foreign|owned by/);
-    assert.equal(byPlan['ghost.md'].covered, false, 'an unreadable plan file is uncovered, never skipped');
-    assert.match(byPlan['ghost.md'].reason, /unreadable/);
+    const classes = [['no-id.md', /planId/], ['no-adoption.md', /no adoption/], ['edited.md', /edited after adoption|no longer matches/], ['foreign.md', /foreign|owned by/], ['ghost.md', /unreadable/]];
+    for (const [plan, reason] of classes) {
+      assert.equal(byPlan[plan].covered, false, `${plan} is uncovered, never skipped`);
+      assert.match(byPlan[plan].reason, reason);
+    }
   });
 });

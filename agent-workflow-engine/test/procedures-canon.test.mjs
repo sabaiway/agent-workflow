@@ -46,13 +46,14 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.ok(procedures.length > 500, 'the procedures canon must carry real content');
   });
 
-  it('declares both v1 activities as their own `## <activity>` section', () => {
-    assert.ok(sectionOf(procedures, 'plan-authoring'), 'has a ## plan-authoring section');
-    assert.ok(sectionOf(procedures, 'plan-execution'), 'has a ## plan-execution section');
+  it('declares all three activities as their own `## <activity>` section', () => {
+    for (const activity of ['plan-authoring', 'plan-execution', 'routine']) {
+      assert.ok(sectionOf(procedures, activity), `has a ## ${activity} section`);
+    }
   });
 
-  it('plan-authoring declares `Slots: review` as its first content line', () => {
-    assert.equal(slotsLineOf(sectionOf(procedures, 'plan-authoring')), 'Slots: review');
+  it('plan-authoring declares `Slots: author, review` as its first content line', () => {
+    assert.equal(slotsLineOf(sectionOf(procedures, 'plan-authoring')), 'Slots: author, review');
   });
 
   it('plan-execution declares `Slots: execute, review` as its first content line', () => {
@@ -306,6 +307,36 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.match(flat, /Communication contract/i);
     assert.match(flat, /delivers the artifact \*\*inline\*\*/, 'deliver the artifact inline');
     assert.match(procedures, /see §X/, 'names the banned bare-pointer anti-pattern');
+  });
+
+  it('spec:carriers/S10 — the carrier slots reach the steps: the author carrier drafts, the subagent branch rides beside Delegated', () => {
+    const draft = stepOf(sectionOf(procedures, 'plan-authoring'), 2).replace(/\s+/g, ' ');
+    assert.match(draft, /The resolved `author` carrier drafts/, 'the Draft step resolves the author carrier');
+    assert.match(draft, /Solo: the orchestrator writes it/, 'the Solo arm writes the plan itself');
+    assert.match(draft, /Subagent: the orchestrator writes a BRIEF/, 'the Subagent arm starts from a brief');
+    assert.match(draft, /goal, governing specs, ledger\s+constraints, files/, 'what the brief carries');
+    assert.match(draft, /drafts the plan and any `create` \/ `modify` spec row from it/, 'the subagent drafts the plan and its spec rows');
+    assert.match(draft, /reviews the draft as its own before step 3/, 'the orchestrator owns the draft it accepts');
+    const dispatch = stepOf(sectionOf(procedures, 'plan-execution'), 2).replace(/\s+/g, ' ');
+    assert.match(dispatch, /\*\*If `execute` resolved to Subagent\*\*, split the ledger into file-disjoint slices/, 'the subagent branch splits the ledger');
+    assert.match(dispatch, /exact wording where wording is a red line/, 'wording is copied where it is a red line');
+    assert.match(dispatch, /the executor vehicle in the background/, 'the dispatch is backgrounded');
+    assert.match(dispatch, /verify every returned slice by running its suites yourself before step 3/, 'the orchestrator verifies every returned slice');
+  });
+
+  it('the routine activity declares `Slots: carrier, parallel` and carries its five steps', () => {
+    const routine = sectionOf(procedures, 'routine');
+    assert.equal(slotsLineOf(routine), 'Slots: carrier, parallel');
+    const flat = routine.replace(/\s+/g, ' ');
+    assert.match(flat, /1\. \*\*Name the chore and its slices\*\*/, 'step 1 names the chore and its slices');
+    assert.match(flat, /each slice bounded and file-disjoint/, 'the slices are bounded and file-disjoint');
+    assert.match(flat, /2\. \*\*Resolve the recipe\*\* — `carrier` and `parallel` from `docs\/ai\/orchestration\.json` \+ readiness/, 'step 2 resolves both slots');
+    assert.match(flat, /`--override <slot>=<value>` per run/, 'the per-run override');
+    assert.match(flat, /3\. \*\*Carry it\*\* — Solo: the orchestrator does it\. Subagent classifies each slice: read-only \(a sweep, gate triage\) rides its placed read-only vehicle, or is carried Solo with a stated reason when that vehicle is absent; write-capable \(a regeneration, a fixture build\) rides the executor\./, 'step 3 picks the vehicle by the slice class, never the executor for read-only work');
+    assert.match(flat, /never the changelog/, 'the changelog stays the orchestrator\'s');
+    assert.match(flat, /concurrently when `parallel` is on/, 'the parallel switch drives concurrency');
+    assert.match(flat, /4\. \*\*Verify\*\* — every returned slice, by running its suites yourself/, 'step 4 verifies every returned slice');
+    assert.match(flat, /5\. \*\*The commit boundary is unchanged\*\* — when an accepted slice changed the tree, the orchestrator alone commits; a read-only chore has no commit boundary; a carrier never commits/, 'step 5 keeps the commit boundary, and a read-only chore has none');
   });
 });
 

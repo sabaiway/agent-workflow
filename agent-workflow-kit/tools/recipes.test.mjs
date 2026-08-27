@@ -20,6 +20,9 @@ import {
   composeActiveRecipeLine,
   composeAutonomyFacts,
   buildReport,
+  composeReadiness,
+  bridgeEntries,
+  requiredBackendsForConfiguredRecipe,
 } from './recipes.mjs';
 import { READY, NEEDS_SKILL, NEEDS_CLI, NEEDS_CREDENTIALS, DEGRADED } from './detect-backends.mjs';
 
@@ -29,76 +32,81 @@ const REPO_ROOT = join(HERE, '..', '..');
 
 const CODEX = 'codex-cli-bridge';
 const AGY = 'antigravity-cli-bridge';
-const RECIPE_IDS = ['solo', 'reviewed', 'council', 'delegated'];
+const EXECUTOR = 'executor';
+const CARRY = 'carry';
+const RECIPE_IDS = ['solo', 'reviewed', 'council', 'delegated', 'subagent'];
+const RECIPE_TITLES = ['Solo', 'Reviewed', 'Council', 'Delegated', 'Subagent'];
 
-// A synthetic detector fixture — the planner only consumes { name, readiness } off each entry, built
-// from the REAL readiness vocabulary (no `missing` — that is a probe-axis state, not a readiness).
+// A synthetic detector fixture, built from the REAL readiness vocabulary (no `missing` — that is the
+// vehicle's probe axis, not a bridge readiness).
 const detect = (codexReadiness, agyReadiness) => [
   { name: CODEX, readiness: codexReadiness },
   { name: AGY, readiness: agyReadiness },
 ];
 
+// The readiness array the CLI modes compose, through the CLI's own seam — never re-implemented here.
+const readinessWith = (state, codexReadiness = READY, agyReadiness = READY) =>
+  composeReadiness('/nowhere', {
+    detect: () => detect(codexReadiness, agyReadiness),
+    surveyVehicle: () => ({ state, reason: state === 'unusable' ? 'a symlink' : null, rel: '.claude/agents/executor.md' }),
+  });
+
 const readManifest = (name) => JSON.parse(readFileSync(join(REPO_ROOT, name, 'capability.json'), 'utf8'));
 
 // ── RECIPES shape ────────────────────────────────────────────────────────────────
 
-describe('RECIPES — the four named patterns', () => {
-  it('is exactly the four recipes, in lattice order', () => {
+describe('RECIPES — the five named patterns', () => {
+  it('is exactly the five recipes, in lattice order', () => {
     assert.deepEqual(RECIPES.map((r) => r.id), RECIPE_IDS);
   });
 
   it('each recipe declares a role (or null for Solo), a minBackends count, and a degradation target', () => {
     for (const r of RECIPES) {
-      assert.ok(typeof r.id === 'string' && r.id.length > 0);
-      assert.ok('role' in r, `${r.id} declares a role key`);
+      assert.ok(typeof r.id === 'string' && r.id.length > 0 && 'role' in r && 'degradesTo' in r, `${r.id} declares id/role/degradesTo`);
       assert.ok(Number.isInteger(r.minBackends), `${r.id} declares minBackends`);
-      assert.ok('degradesTo' in r, `${r.id} declares a degradation target`);
     }
   });
 
   it('Solo is the floor (no role, no backend, no degradation target)', () => {
     const solo = RECIPES.find((r) => r.id === 'solo');
-    assert.equal(solo.role, null);
-    assert.equal(solo.minBackends, 0);
-    assert.equal(solo.degradesTo, null);
+    assert.deepEqual([solo.role, solo.minBackends, solo.degradesTo], [null, 0, null]);
   });
 
-  it('Reviewed/Council need review; Delegated needs execute; degradation chains terminate at Solo', () => {
-    const by = Object.fromEntries(RECIPES.map((r) => [r.id, r]));
-    assert.equal(by.reviewed.role, 'review');
-    assert.equal(by.reviewed.minBackends, 1);
-    assert.equal(by.reviewed.degradesTo, 'solo');
-    assert.equal(by.council.role, 'review');
-    assert.equal(by.council.minBackends, 2);
-    assert.equal(by.council.degradesTo, 'reviewed');
-    assert.equal(by.delegated.role, 'execute');
-    assert.equal(by.delegated.minBackends, 1);
-    assert.equal(by.delegated.degradesTo, 'solo');
+  it('Reviewed/Council need review; Delegated needs execute; Subagent needs carry; chains terminate at Solo', () => {
+    const by = Object.fromEntries(RECIPES.map((r) => [r.id, [r.role, r.minBackends, r.degradesTo]]));
+    assert.deepEqual(by.reviewed, ['review', 1, 'solo']);
+    assert.deepEqual(by.council, ['review', 2, 'reviewed']);
+    assert.deepEqual(by.delegated, ['execute', 1, 'solo']);
+    assert.deepEqual(by.subagent, [CARRY, 1, 'solo']);
   });
 });
 
 // ── drift guards ───────────────────────────────────────────────────────────────
 
-describe('role-coverage drift-guard — every recipe role ∈ union of the bridges provides[]', () => {
-  it('no recipe demands a role no backend provides', () => {
-    const union = new Set([...readManifest(CODEX).provides, ...readManifest(AGY).provides]);
+describe('role-coverage drift-guard — every recipe role has a declared provider', () => {
+  it('no recipe demands a role nothing provides', () => {
+    const provided = new Set(Object.values(BACKEND_ROLES).flat());
     for (const r of RECIPES) {
-      if (r.role !== null) assert.ok(union.has(r.role), `recipe ${r.id} role "${r.role}" is provided by some backend`);
+      if (r.role !== null) assert.ok(provided.has(r.role), `recipe ${r.id} role "${r.role}" has a provider`);
     }
+  });
+
+  it('carry is the ONE role no bridge provides — the executor vehicle is its only provider', () => {
+    const bridgeRoles = new Set([...readManifest(CODEX).provides, ...readManifest(AGY).provides]);
+    const nonBridge = [...new Set(Object.values(BACKEND_ROLES).flat())].filter((role) => !bridgeRoles.has(role));
+    assert.deepEqual(nonBridge, [CARRY]);
+    assert.deepEqual(BACKEND_ROLES[EXECUTOR], [CARRY]);
   });
 });
 
-describe('BACKEND_ROLES drift-guard — keyed by status.name, equals each bridge provides[]', () => {
-  it('is keyed by the manifest names the detector emits (not the display aliases)', () => {
-    assert.deepEqual(Object.keys(BACKEND_ROLES).sort(), [AGY, CODEX].sort());
+describe('manifest drift-guards — BACKEND_ROLES / BACKEND_META / DISPLAY_ALIASES track each bridge manifest', () => {
+  it('is keyed by the readiness names (manifest names, not display aliases) plus the executor vehicle', () => {
+    assert.deepEqual(Object.keys(BACKEND_ROLES).sort(), [AGY, CODEX, EXECUTOR].sort());
   });
   it('matches each bridge capability.json provides[]', () => {
     assert.deepEqual(BACKEND_ROLES[CODEX], readManifest(CODEX).provides);
     assert.deepEqual(BACKEND_ROLES[AGY], readManifest(AGY).provides);
   });
-});
-
-describe('BACKEND_META drift-guard — cost/quota mirror the manifests; agy carries a health advisory', () => {
   it('cost + quota equal each bridge capability.json', () => {
     for (const name of [CODEX, AGY]) {
       const m = readManifest(name);
@@ -107,17 +115,11 @@ describe('BACKEND_META drift-guard — cost/quota mirror the manifests; agy carr
     }
   });
   it('the agy health advisory (Issue-001) is present as static project knowledge', () => {
-    assert.equal(typeof BACKEND_META[AGY].health, 'string');
-    assert.ok(BACKEND_META[AGY].health.length > 0);
-    // codex carries no standing health caveat
-    assert.ok(!BACKEND_META[CODEX].health);
+    assert.ok(typeof BACKEND_META[AGY].health === 'string' && BACKEND_META[AGY].health.length > 0);
+    assert.ok(!BACKEND_META[CODEX].health, 'codex carries no standing health caveat');
   });
-});
-
-describe('DISPLAY_ALIASES — the manifest-name → human-alias map', () => {
   it('maps both bridges to their short aliases', () => {
-    assert.equal(DISPLAY_ALIASES[CODEX], 'codex');
-    assert.equal(DISPLAY_ALIASES[AGY], 'agy');
+    assert.deepEqual([DISPLAY_ALIASES[CODEX], DISPLAY_ALIASES[AGY]], ['codex', 'agy']);
   });
 });
 
@@ -173,127 +175,66 @@ describe('engine narrative ⟷ manifest role-vocabulary parity', () => {
 const dispatchBackends = (plan) => plan.dispatch.map((d) => d.backend);
 const notesText = (plan) => plan.notes.join(' :: ');
 
-describe('planRecipe — all backends ready', () => {
-  const det = detect(READY, READY);
+// The lattice over every environment, as one table: requested recipe → effective recipe + dispatch.
+const ENVIRONMENTS = [
+  { name: 'both ready', det: detect(READY, READY), expect: { reviewed: ['reviewed', [CODEX]], council: ['council', [CODEX, AGY]], delegated: ['delegated', [CODEX]] } },
+  { name: 'codex only', det: detect(READY, NEEDS_SKILL), expect: { reviewed: ['reviewed', [CODEX]], council: ['reviewed', [CODEX]], delegated: ['delegated', [CODEX]] } },
+  { name: 'agy only', det: detect(NEEDS_SKILL, READY), expect: { reviewed: ['reviewed', [AGY]], council: ['reviewed', [AGY]], delegated: ['solo', []] } },
+  { name: 'none installed', det: detect(NEEDS_SKILL, NEEDS_SKILL), expect: { reviewed: ['solo', []], council: ['solo', []], delegated: ['solo', []] } },
+  { name: 'agy wrapper off PATH', det: detect(READY, DEGRADED), expect: { reviewed: ['reviewed', [CODEX]], council: ['reviewed', [CODEX]], delegated: ['delegated', [CODEX]] } },
+];
 
-  it('Solo: no degradation, no dispatch', () => {
-    const p = planRecipe('solo', det);
-    assert.equal(p.effective, 'solo');
-    assert.equal(p.degraded, false);
-    assert.deepEqual(p.dispatch, []);
-  });
-
-  it('Reviewed: picks codex over agy (deterministic tie-break), not degraded', () => {
-    const p = planRecipe('reviewed', det);
-    assert.equal(p.effective, 'reviewed');
-    assert.equal(p.degraded, false);
-    assert.deepEqual(dispatchBackends(p), [CODEX]);
-    // codex chosen → the agy health caveat is NOT attached
-    assert.ok(!notesText(p).includes(BACKEND_META[AGY].health));
-  });
-
-  it('Council: both backends review; the agy health caveat + the two-quota note are attached', () => {
-    const p = planRecipe('council', det);
-    assert.equal(p.effective, 'council');
-    assert.equal(p.degraded, false);
-    assert.deepEqual(dispatchBackends(p), [CODEX, AGY]);
-    assert.ok(notesText(p).includes(BACKEND_META[AGY].health), 'agy health note present when agy is used');
-    assert.match(notesText(p), /two backends|both backends|two .*quota/i);
-  });
-
-  it('Delegated: codex executes the bounded sub-task', () => {
-    const p = planRecipe('delegated', det);
-    assert.equal(p.effective, 'delegated');
-    assert.equal(p.degraded, false);
-    assert.deepEqual(p.dispatch, [{ role: 'execute', backend: CODEX, display: 'codex' }]);
-  });
-});
-
-describe('planRecipe — codex only (agy needs-skill)', () => {
-  const det = detect(READY, NEEDS_SKILL);
-
-  it('Council → Reviewed(codex) with a stated reason', () => {
-    const p = planRecipe('council', det);
-    assert.equal(p.effective, 'reviewed');
-    assert.equal(p.degraded, true);
-    assert.equal(p.degradation[0].from, 'council');
-    assert.equal(p.degradation[0].to, 'reviewed');
-    assert.match(p.degradation[0].reason, /not installed/i);
-    assert.deepEqual(dispatchBackends(p), [CODEX]);
-  });
-
-  it('Delegated stays Delegated (codex provides execute and is ready)', () => {
-    const p = planRecipe('delegated', det);
-    assert.equal(p.effective, 'delegated');
-    assert.equal(p.degraded, false);
-  });
-
-  it('Reviewed → codex', () => {
-    assert.deepEqual(dispatchBackends(planRecipe('reviewed', det)), [CODEX]);
-  });
-});
-
-describe('planRecipe — agy only (codex needs-skill)', () => {
-  const det = detect(NEEDS_SKILL, READY);
-
-  it('Council → Reviewed(agy)', () => {
-    const p = planRecipe('council', det);
-    assert.equal(p.effective, 'reviewed');
-    assert.equal(p.degraded, true);
-    assert.deepEqual(dispatchBackends(p), [AGY]);
-    assert.ok(notesText(p).includes(BACKEND_META[AGY].health), 'agy health note present when agy is the reviewer');
-  });
-
-  it('Delegated → Solo (no backend provides execute) with the reason stated', () => {
-    const p = planRecipe('delegated', det);
-    assert.equal(p.effective, 'solo');
-    assert.equal(p.degraded, true);
-    assert.match(p.degradation[0].reason, /execute/i);
-    assert.deepEqual(p.dispatch, []);
-  });
-
-  it('Reviewed → agy', () => {
-    assert.deepEqual(dispatchBackends(planRecipe('reviewed', det)), [AGY]);
-  });
-});
-
-describe('planRecipe — none installed (both needs-skill)', () => {
-  const det = detect(NEEDS_SKILL, NEEDS_SKILL);
-  for (const id of ['reviewed', 'council', 'delegated']) {
-    it(`${id} → Solo, reason names the not-installed bridge skill`, () => {
-      const p = planRecipe(id, det);
-      assert.equal(p.effective, 'solo');
-      assert.equal(p.degraded, true);
-      assert.match(p.degradation.map((d) => d.reason).join(' '), /not installed/i);
+describe('planRecipe — the lattice over every environment', () => {
+  for (const { name, det, expect } of ENVIRONMENTS) {
+    it(`${name}: Solo dispatches nothing and every recipe reaches its effective form`, () => {
+      const solo = planRecipe('solo', det);
+      assert.deepEqual([solo.effective, solo.degraded, solo.dispatch], ['solo', false, []]);
+      for (const [requested, [effective, backends]] of Object.entries(expect)) {
+        const p = planRecipe(requested, det);
+        assert.equal(p.effective, effective, `${requested} in "${name}"`);
+        assert.deepEqual(dispatchBackends(p), backends, `${requested} in "${name}"`);
+        assert.equal(p.degraded, effective !== requested, `${requested} in "${name}"`);
+      }
     });
   }
-});
 
-describe('planRecipe — agy degraded (wrapper not on PATH)', () => {
-  const det = detect(READY, DEGRADED);
-
-  it('Reviewed → codex (agy not dispatchable); no agy health note (agy unused)', () => {
-    const p = planRecipe('reviewed', det);
-    assert.equal(p.effective, 'reviewed');
-    assert.equal(p.degraded, false);
-    assert.deepEqual(dispatchBackends(p), [CODEX]);
-    assert.ok(!notesText(p).includes(BACKEND_META[AGY].health));
-  });
-
-  it('Council → Reviewed(codex); the degradation reason is the wrapper one (distinct from the health note)', () => {
-    const p = planRecipe('council', det);
-    assert.equal(p.effective, 'reviewed');
-    assert.equal(p.degraded, true);
-    assert.match(p.degradation[0].reason, /PATH|wrapper/i);
-    assert.deepEqual(dispatchBackends(p), [CODEX]);
+  it('a dispatch record carries the role, the readiness name and the display alias', () => {
+    assert.deepEqual(planRecipe('delegated', detect(READY, READY)).dispatch, [{ role: 'execute', backend: CODEX, display: 'codex' }]);
   });
 });
 
-describe('planRecipe — purity + determinism', () => {
+describe('planRecipe — degradation reasons, advisory notes, purity', () => {
+  it('Council → Reviewed states the from/to pair and the not-installed bridge skill', () => {
+    const step = planRecipe('council', detect(READY, NEEDS_SKILL)).degradation[0];
+    assert.deepEqual([step.from, step.to], ['council', 'reviewed']);
+    assert.match(step.reason, /not installed/i);
+  });
+
+  it('a wrapper off PATH reads as the wrapper reason, distinct from the health note', () => {
+    assert.match(planRecipe('council', detect(READY, DEGRADED)).degradation[0].reason, /PATH|wrapper/i);
+  });
+
+  it('a role no ready backend provides names the role', () => {
+    assert.match(planRecipe('delegated', detect(NEEDS_SKILL, READY)).degradation[0].reason, /execute/i);
+  });
+
+  it('the agy health caveat rides a dispatch that uses agy, and only that', () => {
+    const health = BACKEND_META[AGY].health;
+    assert.ok(notesText(planRecipe('council', detect(READY, READY))).includes(health), 'council uses agy');
+    assert.ok(notesText(planRecipe('reviewed', detect(NEEDS_SKILL, READY))).includes(health), 'agy is the reviewer');
+    assert.ok(!notesText(planRecipe('reviewed', detect(READY, READY))).includes(health), 'codex chosen');
+    assert.ok(!notesText(planRecipe('reviewed', detect(READY, DEGRADED))).includes(health), 'agy not dispatchable');
+  });
+
+  it('Council carries the two-quota caveat', () => {
+    assert.match(notesText(planRecipe('council', detect(READY, READY))), /two backends|both backends|two .*quota/i);
+  });
+
   it('is deterministic: same detection → deeply-equal plan', () => {
     const det = detect(READY, NEEDS_CREDENTIALS);
     assert.deepEqual(planRecipe('council', det), planRecipe('council', det));
   });
+
   it('does not mutate the detection input', () => {
     const det = detect(READY, READY);
     const snapshot = JSON.parse(JSON.stringify(det));
@@ -332,19 +273,12 @@ describe('recommendRecipe — never blank; the everyday default', () => {
   });
 
   it('the clause is never empty', () => {
-    for (const det of [
-      detect(READY, READY),
-      detect(READY, NEEDS_SKILL),
-      detect(NEEDS_SKILL, NEEDS_SKILL),
-      detect(NEEDS_CREDENTIALS, DEGRADED),
-    ]) {
-      assert.ok(recommendRecipe(det).clause.trim().length > 0);
-    }
+    const mixes = [detect(READY, READY), detect(READY, NEEDS_SKILL), detect(NEEDS_SKILL, NEEDS_SKILL), detect(NEEDS_CREDENTIALS, DEGRADED)];
+    for (const det of mixes) assert.ok(recommendRecipe(det).clause.trim().length > 0);
   });
 
   it('present-but-not-ready tie-break is deterministic (codex before agy) regardless of detection order', () => {
-    // Both present-but-not-ready at the SAME readiness rank → the remedy must name codex, not whichever
-    // the detector happened to emit first (mirrors the dispatch-path priority).
+    // At the SAME readiness rank the remedy must name codex, not whichever the detector emitted first.
     const forward = recommendRecipe([{ name: CODEX, readiness: DEGRADED }, { name: AGY, readiness: DEGRADED }]);
     const reversed = recommendRecipe([{ name: AGY, readiness: DEGRADED }, { name: CODEX, readiness: DEGRADED }]);
     assert.equal(forward.clause, reversed.clause, 'order-independent');
@@ -355,103 +289,58 @@ describe('recommendRecipe — never blank; the everyday default', () => {
 // ── CLI / formatRecipes ──────────────────────────────────────────────────────────
 
 describe('formatRecipes — deterministic advisor text', () => {
-  it('renders the four recipes + a recommendation deterministically', () => {
+  it('renders the five recipes + a recommendation deterministically', () => {
     const det = detect(READY, NEEDS_SKILL);
     const once = formatRecipes(det);
     assert.equal(once, formatRecipes(det), 'same detection → identical text');
-    for (const title of ['Solo', 'Reviewed', 'Council', 'Delegated']) assert.match(once, new RegExp(title));
+    assert.match(once, /via the bridge skills or the executor vehicle and always commits/, 'the header names both carriers');
+    assert.match(once, /needs a provider providing carry, but no provider provides it/, 'a degrade names providers, never only backends');
+    for (const title of RECIPE_TITLES) assert.match(once, new RegExp(title));
   });
 });
 
 // ── ACTIVITIES + resolveActivityRecipe (the activity-procedures resolver) ───────────
 
-describe('ACTIVITIES — the v1 activity/slot table', () => {
-  it('declares exactly plan-authoring (review) and plan-execution (execute, review)', () => {
-    assert.deepEqual(Object.keys(ACTIVITIES), ['plan-authoring', 'plan-execution']);
-    assert.deepEqual(Object.keys(ACTIVITIES['plan-authoring'].slots), ['review']);
-    assert.deepEqual(Object.keys(ACTIVITIES['plan-execution'].slots), ['execute', 'review']);
+// The table itself is pinned in carriers.test.mjs; what recipes.mjs owes is the re-export (so no
+// importer's path moved) and the bridge between the table's values and the RECIPES lattice.
+describe('the registry re-export — carriers.mjs through recipes.mjs', () => {
+  it('re-exports the table so every importer keeps its `from ./recipes.mjs` path', async () => {
+    const carriers = await import('./carriers.mjs');
+    assert.equal(ACTIVITIES, carriers.ACTIVITIES, 'one table object, not a copy');
+    assert.equal(SLOT_RECIPES, carriers.SLOT_RECIPES);
   });
 
-  it('every slot type maps to a SLOT_RECIPES list, and every listed recipe is a real RECIPE id', () => {
+  it('every recipe-typed slot value is a real RECIPE id; a switch value is deliberately not one', () => {
     const recipeIds = new Set(RECIPES.map((r) => r.id));
     for (const def of Object.values(ACTIVITIES)) {
       for (const slotType of Object.values(def.slots)) {
-        assert.ok(Array.isArray(SLOT_RECIPES[slotType]), `slot type "${slotType}" has a recipe list`);
+        if (slotType === 'switch') continue;
         for (const id of SLOT_RECIPES[slotType]) assert.ok(recipeIds.has(id), `"${id}" is a real recipe`);
       }
     }
-  });
-
-  it('review composes solo|reviewed|council; execute composes solo|delegated', () => {
-    assert.deepEqual(SLOT_RECIPES.review, ['solo', 'reviewed', 'council']);
-    assert.deepEqual(SLOT_RECIPES.execute, ['solo', 'delegated']);
+    for (const value of SLOT_RECIPES.switch) assert.ok(!recipeIds.has(value), `"${value}" is a flag, not a recipe`);
   });
 });
 
-// The activity/slot drift guard — the JS ACTIVITIES table must match the engine canon's parseable
-// `Slots:` lines (the kit parses ONLY that line; the steps are rendered verbatim). Clones the
-// engine↔kit recipe-name parity pattern above.
-describe('engine↔kit activity/slot parity — ACTIVITIES matches procedures.md `Slots:` lines', () => {
-  const PROCEDURES = readFileSync(join(REPO_ROOT, 'agent-workflow-engine', 'references', 'procedures.md'), 'utf8');
-  const sectionOf = (activity) => {
-    const lines = PROCEDURES.split('\n');
-    const start = lines.findIndex((l) => l.trim() === `## ${activity}`);
-    if (start === -1) return null;
-    let end = lines.length;
-    for (let i = start + 1; i < lines.length; i += 1) {
-      if (/^## /.test(lines[i])) {
-        end = i;
-        break;
-      }
-    }
-    return lines.slice(start, end);
-  };
-  const slotsOf = (activity) => {
-    const sec = sectionOf(activity);
-    if (!sec) return null;
-    const slotsLine = sec.slice(1).map((l) => l.trim()).find((l) => l.startsWith('Slots:'));
-    if (!slotsLine) return null;
-    return slotsLine
-      .replace(/^Slots:\s*/, '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-  };
-
-  for (const [activity, def] of Object.entries(ACTIVITIES)) {
-    it(`${activity}: the canon's Slots line equals the JS slot set`, () => {
-      assert.deepEqual(slotsOf(activity), Object.keys(def.slots), `procedures.md "## ${activity}" Slots: drifted from ACTIVITIES`);
-    });
-  }
-
-  it('procedures.md declares no activity section absent from the ACTIVITIES table', () => {
-    const headingIds = PROCEDURES.split('\n')
-      .filter((l) => /^## /.test(l))
-      .map((l) => l.replace(/^##\s+/, '').trim());
-    for (const id of headingIds) assert.ok(ACTIVITIES[id], `procedures.md "## ${id}" has no ACTIVITIES entry`);
-  });
-});
+// The resolution triple every arm below reads: what ran, where it came from, what it fell from.
+const resolveTriple = (args) => {
+  const r = resolveActivityRecipe(args);
+  return [r.recipe, r.source, r.degradedFrom];
+};
 
 describe('resolveActivityRecipe — defaults (config silent), readiness-aware', () => {
   it('review default is Reviewed when a backend is ready — NOT Council (recommendRecipe is not reused)', () => {
-    const r = resolveActivityRecipe({ readiness: detect(READY, READY), activity: 'plan-authoring', slot: 'review' });
-    assert.equal(r.recipe, 'reviewed');
-    assert.equal(r.source, 'default');
-    assert.equal(r.degradedFrom, null);
+    assert.deepEqual(resolveTriple({ readiness: detect(READY, READY), activity: 'plan-authoring', slot: 'review' }), ['reviewed', 'default', null]);
     // sanity: recommendRecipe DOES return council for the same detection — the default must not.
     assert.equal(recommendRecipe(detect(READY, READY)).recipe, 'council');
   });
 
   it('review default is Solo when no backend is ready', () => {
-    const r = resolveActivityRecipe({ readiness: detect(NEEDS_SKILL, NEEDS_SKILL), activity: 'plan-authoring', slot: 'review' });
-    assert.equal(r.recipe, 'solo');
-    assert.equal(r.source, 'default');
+    assert.deepEqual(resolveTriple({ readiness: detect(NEEDS_SKILL, NEEDS_SKILL), activity: 'plan-authoring', slot: 'review' }), ['solo', 'default', null]);
   });
 
   it('execute default is Solo even when codex is ready (Delegated is opt-in)', () => {
-    const r = resolveActivityRecipe({ readiness: detect(READY, READY), activity: 'plan-execution', slot: 'execute' });
-    assert.equal(r.recipe, 'solo');
-    assert.equal(r.source, 'default');
+    assert.deepEqual(resolveTriple({ readiness: detect(READY, READY), activity: 'plan-execution', slot: 'execute' }), ['solo', 'default', null]);
   });
 });
 
@@ -460,31 +349,22 @@ describe('resolveActivityRecipe — config-driven, graceful degradation', () => 
 
   it('config review=council holds when both backends are ready', () => {
     const r = resolveActivityRecipe({ config, readiness: detect(READY, READY), activity: 'plan-authoring', slot: 'review' });
-    assert.equal(r.recipe, 'council');
-    assert.equal(r.source, 'config');
-    assert.equal(r.degradedFrom, null);
-    assert.equal(r.overrideUnsatisfied, false);
+    assert.deepEqual([r.recipe, r.source, r.degradedFrom, r.overrideUnsatisfied], ['council', 'config', null, false]);
   });
 
   it('config review=council degrades GRACEFULLY to Reviewed with one backend (not a loud override)', () => {
     const r = resolveActivityRecipe({ config, readiness: detect(READY, NEEDS_SKILL), activity: 'plan-authoring', slot: 'review' });
-    assert.equal(r.recipe, 'reviewed');
-    assert.equal(r.degradedFrom, 'council');
-    assert.equal(r.overrideUnsatisfied, false);
+    assert.deepEqual([r.recipe, r.degradedFrom, r.overrideUnsatisfied], ['reviewed', 'council', false]);
     assert.match(r.reason, /not installed|council/i);
   });
 
   it('config execute=delegated holds when codex is ready', () => {
-    const r = resolveActivityRecipe({ config, readiness: detect(READY, NEEDS_SKILL), activity: 'plan-execution', slot: 'execute' });
-    assert.equal(r.recipe, 'delegated');
-    assert.equal(r.degradedFrom, null);
+    assert.deepEqual(resolveTriple({ config, readiness: detect(READY, NEEDS_SKILL), activity: 'plan-execution', slot: 'execute' }), ['delegated', 'config', null]);
   });
 
   it('config execute=delegated degrades to Solo when codex is not ready (agy cannot execute)', () => {
     const r = resolveActivityRecipe({ config, readiness: detect(NEEDS_SKILL, READY), activity: 'plan-execution', slot: 'execute' });
-    assert.equal(r.recipe, 'solo');
-    assert.equal(r.degradedFrom, 'delegated');
-    assert.equal(r.overrideUnsatisfied, false);
+    assert.deepEqual([r.recipe, r.degradedFrom, r.overrideUnsatisfied], ['solo', 'delegated', false]);
     assert.match(r.reason, /execute/i);
   });
 });
@@ -492,22 +372,17 @@ describe('resolveActivityRecipe — config-driven, graceful degradation', () => 
 describe('resolveActivityRecipe — override precedence + LOUD degradation', () => {
   it('an override beats the config entry', () => {
     const config = { 'plan-authoring': { review: 'solo' } };
-    const r = resolveActivityRecipe({ config, readiness: detect(READY, READY), activity: 'plan-authoring', slot: 'review', override: 'council' });
-    assert.equal(r.recipe, 'council');
-    assert.equal(r.source, 'override');
+    assert.deepEqual(resolveTriple({ config, readiness: detect(READY, READY), activity: 'plan-authoring', slot: 'review', override: 'council' }), ['council', 'override', null]);
   });
 
   it('an unsatisfiable override degrades LOUDLY (overrideUnsatisfied = true)', () => {
     const r = resolveActivityRecipe({ readiness: detect(READY, NEEDS_SKILL), activity: 'plan-authoring', slot: 'review', override: 'council' });
-    assert.equal(r.recipe, 'reviewed');
-    assert.equal(r.degradedFrom, 'council');
-    assert.equal(r.overrideUnsatisfied, true, 'an explicit override that cannot be satisfied is flagged loud');
+    assert.deepEqual([r.recipe, r.degradedFrom, r.overrideUnsatisfied], ['reviewed', 'council', true]);
   });
 
   it('a satisfiable override is not flagged', () => {
     const r = resolveActivityRecipe({ readiness: detect(READY, READY), activity: 'plan-authoring', slot: 'review', override: 'council' });
-    assert.equal(r.recipe, 'council');
-    assert.equal(r.overrideUnsatisfied, false);
+    assert.deepEqual([r.recipe, r.overrideUnsatisfied], ['council', false]);
   });
 });
 
@@ -516,22 +391,167 @@ describe('resolveActivityRecipe — defensive validity + purity', () => {
     assert.throws(() => resolveActivityRecipe({ readiness: detect(READY, READY), activity: 'nope', slot: 'review' }), /unknown activity/);
   });
   it('throws on an unknown slot for the activity', () => {
-    assert.throws(
-      () => resolveActivityRecipe({ readiness: detect(READY, READY), activity: 'plan-authoring', slot: 'execute' }),
-      /unknown slot/,
-    );
+    assert.throws(() => resolveActivityRecipe({ readiness: detect(READY, READY), activity: 'plan-authoring', slot: 'execute' }), /unknown slot/);
   });
   it('throws on a recipe invalid for the slot (e.g. delegated in a review slot)', () => {
-    assert.throws(
-      () => resolveActivityRecipe({ readiness: detect(READY, READY), activity: 'plan-authoring', slot: 'review', override: 'delegated' }),
-      /invalid recipe/,
-    );
+    assert.throws(() => resolveActivityRecipe({ readiness: detect(READY, READY), activity: 'plan-authoring', slot: 'review', override: 'delegated' }), /invalid recipe/);
   });
   it('does not mutate the detection input', () => {
     const det = detect(READY, READY);
     const snapshot = JSON.parse(JSON.stringify(det));
     resolveActivityRecipe({ readiness: det, activity: 'plan-execution', slot: 'review' });
     assert.deepEqual(det, snapshot);
+  });
+});
+
+describe('the subagent carrier in the lattice, the resolver and the CLI (spec:carriers/S2)', () => {
+  it('a placed or customized vehicle carries; a missing or unusable one degrades to Solo', () => {
+    for (const state of ['placed', 'customized']) {
+      const p = planRecipe('subagent', readinessWith(state));
+      assert.equal(p.effective, 'subagent');
+      assert.deepEqual(p.dispatch, [{ role: CARRY, backend: EXECUTOR, display: EXECUTOR, vehicle: state }]);
+      assert.deepEqual(p.notes, [], 'the vehicle spends no bridge quota');
+    }
+    for (const state of ['missing', 'unusable']) {
+      const p = planRecipe('subagent', readinessWith(state));
+      assert.equal(p.effective, 'solo', state);
+      assert.equal(p.degraded, true);
+      assert.match(p.degradation.map((d) => d.reason).join(' '), new RegExp(`${CARRY}|${EXECUTOR}`));
+    }
+  });
+
+  it('the executor is the ONLY provider of carry — both bridges ready changes nothing', () => {
+    const p = planRecipe('subagent', detect(READY, READY));
+    assert.equal(p.effective, 'solo');
+    assert.match(p.degradation[0].reason, /no provider provides it/);
+  });
+
+  it('a carrier slot holds when placed, degrades gracefully when missing, and stays silent by default', () => {
+    const config = { 'plan-authoring': { author: 'subagent' }, routine: { carrier: 'subagent' } };
+    for (const [activity, slot] of [['plan-authoring', 'author'], ['routine', 'carrier']]) {
+      const ok = resolveActivityRecipe({ config, readiness: readinessWith('placed'), activity, slot });
+      assert.deepEqual([ok.recipe, ok.source, ok.degradedFrom], ['subagent', 'config', null]);
+      const gone = resolveActivityRecipe({ config, readiness: readinessWith('missing'), activity, slot });
+      assert.deepEqual([gone.recipe, gone.degradedFrom, gone.overrideUnsatisfied], ['solo', 'subagent', false]);
+      const silent = resolveActivityRecipe({ readiness: readinessWith('placed'), activity, slot });
+      assert.deepEqual([silent.recipe, silent.source], ['solo', 'default'], 'placing the vehicle never flips a default');
+    }
+  });
+
+  it('an --override to subagent on a missing vehicle degrades LOUDLY', () => {
+    const r = resolveActivityRecipe({ readiness: readinessWith('missing'), activity: 'plan-execution', slot: 'execute', override: 'subagent' });
+    assert.deepEqual([r.recipe, r.degradedFrom, r.overrideUnsatisfied], ['solo', 'subagent', true]);
+  });
+
+  it('routine.parallel returns its value untouched from every source and NEVER degrades', () => {
+    const flag = (extra) => resolveActivityRecipe({ readiness: readinessWith('missing'), activity: 'routine', slot: 'parallel', ...extra });
+    assert.deepEqual(flag({}), { recipe: 'on', source: 'default', degradedFrom: null, reason: null, overrideUnsatisfied: false });
+    assert.deepEqual(flag({ config: { routine: { parallel: 'off' } } }), { recipe: 'off', source: 'config', degradedFrom: null, reason: null, overrideUnsatisfied: false });
+    assert.deepEqual(flag({ config: { routine: { parallel: 'off' } }, override: 'on' }), { recipe: 'on', source: 'override', degradedFrom: null, reason: null, overrideUnsatisfied: false });
+  });
+
+  it('routine.parallel refuses a value outside on|off rather than coercing it', () => {
+    assert.throws(
+      () => resolveActivityRecipe({ readiness: readinessWith('placed'), activity: 'routine', slot: 'parallel', override: 'maybe' }),
+      /invalid recipe "maybe" for switch slot/,
+    );
+  });
+
+  it('a ready executor is NOT a ready reviewer — a silent review config still computes solo', () => {
+    const r = requiredBackendsForConfiguredRecipe({ config: {}, readiness: readinessWith('placed', NEEDS_SKILL, NEEDS_SKILL) });
+    assert.deepEqual([r.recipe, r.source, r.backends, r.minShip], ['solo', 'default', [], 0]);
+    assert.equal(recommendRecipe(readinessWith('placed', NEEDS_SKILL, NEEDS_SKILL)).recipe, 'solo');
+  });
+
+  it('the human render names the vehicle state when placed, and the degrade when missing', () => {
+    const placed = formatRecipes(readinessWith('placed'));
+    assert.match(placed, /Subagent \(subagent\) — a full-tool frontier subagent/);
+    assert.match(placed, /Subagent: executor carry \(vehicle placed\)/);
+    assert.match(formatRecipes(readinessWith('missing')), /Subagent → solo: orchestrator only/);
+  });
+
+  it('the JSON report carries the fifth recipe and its plan, placed and missing', () => {
+    const placed = buildReport(readinessWith('placed'));
+    assert.deepEqual(placed.recipes.map((r) => r.id), RECIPE_IDS);
+    const placedPlan = placed.plans.find((p) => p.requested === 'subagent');
+    assert.equal(placedPlan.effective, 'subagent');
+    assert.deepEqual(placedPlan.dispatch, [{ role: CARRY, backend: EXECUTOR, display: EXECUTOR, vehicle: 'placed' }]);
+    const missingPlan = buildReport(readinessWith('missing')).plans.find((p) => p.requested === 'subagent');
+    assert.deepEqual([missingPlan.effective, missingPlan.degraded], ['solo', true]);
+  });
+
+  it('the active-recipe line renders the new slots and dispatches no wrapper for the executor', () => {
+    const line = composeActiveRecipeLine({ config: { routine: { carrier: 'subagent' } }, source: 'x' }, readinessWith('placed'));
+    assert.ok(!line.includes('\n'), 'exactly one line');
+    assert.match(line, /routine\.carrier = subagent \(configured\)/);
+    assert.match(line, /routine\.parallel = on \(computed default; switch\)/);
+    assert.match(line, /plan-authoring\.author = solo \(computed default\)/);
+  });
+});
+
+// ── the two axes: bridgeEntries (what the renders name) + composeReadiness (how they get it) ──────
+
+describe('bridgeEntries + composeReadiness — the bridge half renders, the carrier survives a detector throw', () => {
+  const boom = () => { throw new Error('corrupt bridge (EISDIR)'); };
+  const placed = () => ({ state: 'placed', reason: null, rel: '.claude/agents/executor.md' });
+
+  it('bridgeEntries drops exactly the executor entry, keeps bridge order, and never mutates its input', () => {
+    const readiness = readinessWith('placed', READY, NEEDS_SKILL);
+    const snapshot = structuredClone(readiness);
+    assert.deepEqual(bridgeEntries(readiness).map((b) => b.name), [CODEX, AGY]);
+    assert.deepEqual(readiness, snapshot, 'the input array is untouched');
+    assert.deepEqual(bridgeEntries(detect(READY, READY)), detect(READY, READY), 'no vehicle entry — nothing dropped');
+  });
+
+  it('composeStatusLine never names the executor, while the lattice still carries the placed vehicle', () => {
+    const readiness = readinessWith('placed');
+    assert.ok(!composeStatusLine(readiness, recommendRecipe(readiness)).includes(EXECUTOR));
+    assert.equal(planRecipe('subagent', readiness).effective, 'subagent');
+  });
+
+  it('surveys the vehicle FIRST and hands a detector throw to the hook exactly once', () => {
+    const order = [];
+    const errors = [];
+    const readiness = composeReadiness('/nowhere', {
+      surveyVehicle: () => { order.push('survey'); return placed(); },
+      detect: () => { order.push('detect'); return boom(); },
+      onDetectError: (err) => errors.push(err),
+    });
+    assert.deepEqual(order, ['survey', 'detect'], 'the vehicle is surveyed before the bridges');
+    assert.equal(errors.length, 1);
+    assert.match(errors[0].message, /corrupt bridge/);
+    assert.deepEqual(readiness.map((b) => b.name), [EXECUTOR], 'the vehicle entry only — the bridge set is empty');
+    assert.equal(readiness[0].readiness, READY);
+  });
+
+  it('with NO hook the throw becomes one stderr line and the vehicle still comes back', () => {
+    const lines = [];
+    const original = console.error;
+    console.error = (...args) => lines.push(args.join(' '));
+    let readiness;
+    try {
+      readiness = composeReadiness('/nowhere', { surveyVehicle: placed, detect: boom });
+    } finally {
+      console.error = original;
+    }
+    assert.deepEqual(readiness.map((b) => b.name), [EXECUTOR]);
+    assert.equal(lines.length, 1, 'exactly one line, never a repeat per caller');
+    assert.match(lines[0], /backend detection failed: corrupt bridge/);
+  });
+
+  it('CLI: neither --status-line nor --json lists the executor under backends, and subagent still resolves', () => {
+    const root = mkdtempSync(join(tmpdir(), 'recipes-vehicle-'));
+    mkdirSync(join(root, '.claude', 'agents'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'agents', 'executor.md'), readFileSync(join(HERE, '..', 'references', 'agents', 'executor.md')));
+    const env = { ...process.env, PATH: '' };
+    const opts = { encoding: 'utf8', env, cwd: root };
+    const report = JSON.parse(execFileSync(process.execPath, [SCRIPT, '--json'], opts));
+    const statusLine = execFileSync(process.execPath, [SCRIPT, '--status-line'], opts);
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(report.plans.find((p) => p.requested === 'subagent').effective, 'subagent', 'the placed vehicle carries');
+    const backendsPart = (line) => line.slice(0, line.indexOf(' — run '));
+    assert.ok(!backendsPart(report.statusLine).includes(EXECUTOR));
+    assert.ok(!backendsPart(statusLine).includes(EXECUTOR));
   });
 });
 
@@ -595,24 +615,12 @@ describe('composeStatusLine — the tool speaks, the agent pastes', () => {
     const det = detect(READY, READY);
     const base = composeStatusLine(det, { clause: 'x' });
     assert.equal(composeStatusLine(det, { clause: 'x' }, null, null), base, 'an omitted param keeps the line byte-identical');
-    const declared = composeStatusLine(det, { clause: 'x' }, null, {
-      source: 'docs/ai/autonomy.json',
-      activities: { 'plan-authoring': { autonomy: 'prompt' }, 'plan-execution': { autonomy: 'sandbox' } },
-      renderState: 'in sync',
-    });
+    const prompts = { 'plan-authoring': { autonomy: 'prompt' }, 'plan-execution': { autonomy: 'prompt' } };
+    const declared = composeStatusLine(det, { clause: 'x' }, null, { source: 'docs/ai/autonomy.json', activities: { ...prompts, 'plan-execution': { autonomy: 'sandbox' } }, renderState: 'in sync' });
     assert.equal(declared, `${base} · autonomy: plan-authoring=prompt, plan-execution=sandbox (declared; render in sync)`);
-    const defaults = composeStatusLine(det, { clause: 'x' }, null, {
-      source: 'none',
-      activities: { 'plan-authoring': { autonomy: 'prompt' }, 'plan-execution': { autonomy: 'prompt' } },
-      renderState: null,
-    });
+    const defaults = composeStatusLine(det, { clause: 'x' }, null, { source: 'none', activities: prompts, renderState: null });
     assert.match(defaults, /autonomy: .*\(computed defaults — no policy file; declare with \/agent-workflow-kit set-autonomy\)$/);
-    const sparse = composeStatusLine(det, { clause: 'x' }, null, {
-      source: 'docs/ai/autonomy.json',
-      defaultsEquivalent: true,
-      activities: { 'plan-authoring': { autonomy: 'prompt' }, 'plan-execution': { autonomy: 'prompt' } },
-      renderState: null,
-    });
+    const sparse = composeStatusLine(det, { clause: 'x' }, null, { source: 'docs/ai/autonomy.json', defaultsEquivalent: true, activities: prompts, renderState: null });
     assert.match(sparse, /\(declared, defaults-equivalent — computed defaults apply; declare levels with \/agent-workflow-kit set-autonomy\)$/, 'the sparse seed never reads as DRIFT');
   });
 
@@ -627,11 +635,7 @@ describe('composeStatusLine — the tool speaks, the agent pastes', () => {
 describe('the autonomy segment rides EVERY machine-composed surface (review-recipes-r01-major-01, Segment B)', () => {
   it('buildReport statusLine carries the SAME autonomy segment when the facts are supplied', () => {
     const det = detect(READY, READY);
-    const facts = {
-      source: 'none',
-      activities: { 'plan-authoring': { autonomy: 'prompt' }, 'plan-execution': { autonomy: 'prompt' } },
-      renderState: null,
-    };
+    const facts = { source: 'none', activities: { 'plan-authoring': { autonomy: 'prompt' }, 'plan-execution': { autonomy: 'prompt' } }, renderState: null };
     const report = buildReport(det, null, facts);
     assert.match(report.statusLine, /· autonomy: /, 'the --json envelope must not expose a stale status line');
     assert.equal(report.statusLine, composeStatusLine(det, report.recommendation, null, facts));
@@ -768,7 +772,7 @@ describe('buildReport — additive statusLine field', () => {
 describe('recipes.mjs CLI — read-only, exit 0', () => {
   it('prints the recipes and exits 0', () => {
     const out = execFileSync(process.execPath, [SCRIPT], { encoding: 'utf8', env: { ...process.env, PATH: '' } });
-    for (const title of ['Solo', 'Reviewed', 'Council', 'Delegated']) assert.match(out, new RegExp(title));
+    for (const title of RECIPE_TITLES) assert.match(out, new RegExp(title));
   });
   it('--json emits parseable JSON with the recommendation + the additive statusLine', () => {
     const out = execFileSync(process.execPath, [SCRIPT, '--json'], { encoding: 'utf8', env: { ...process.env, PATH: '' } });
@@ -781,9 +785,8 @@ describe('recipes.mjs CLI — read-only, exit 0', () => {
 });
 
 describe('recipes.mjs CLI — --status-line + strict args (no silent fallthrough)', () => {
-  // Isolate the host: --status-line now reads the bridge-settings snapshot (env > file), so a host with
-  // a bridge env var set OR a real ~/.config settings file would otherwise append a `· settings:` suffix
-  // and break the exact-line assertions. Point XDG at an empty dir and strip every bridge setting env var.
+  // Isolate the host: a bridge env var or a real ~/.config settings file would append a `· settings:`
+  // suffix and break the exact-line assertions.
   const cleanEnv = () => {
     const env = { ...process.env, PATH: '', XDG_CONFIG_HOME: join(HERE, '__no_xdg_fixture__') };
     for (const k of ['CODEX_SERVICE_TIER', 'CODEX_HARD_TIMEOUT', 'CODEX_REVIEW_MAX_TOTAL_BYTES', 'AGY_HARD_TIMEOUT', 'AGY_REVIEW_ALLOW_ADDDIR']) delete env[k];
@@ -791,8 +794,7 @@ describe('recipes.mjs CLI — --status-line + strict args (no silent fallthrough
   };
 
   it('--status-line emits exactly one line matching the composed contract (incl. autonomy + posture)', () => {
-    // cwd = system temp (no docs/ai): the autonomy segment must state the computed-defaults origin
-    // honestly — and the line stays hermetic (this repo's own policy file never leaks into the pin).
+    // cwd = system temp (no docs/ai), so the line stays hermetic and states computed defaults honestly.
     const out = execFileSync(process.execPath, [SCRIPT, '--status-line'], { encoding: 'utf8', env: cleanEnv(), cwd: tmpdir() });
     assert.ok(out.endsWith('\n'), 'ends with the single trailing newline');
     const line = out.slice(0, -1);

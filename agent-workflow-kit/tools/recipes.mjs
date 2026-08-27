@@ -1,25 +1,37 @@
 #!/usr/bin/env node
 // Recipe planner — the pure brain behind the read-only `/agent-workflow-kit recipes` advisor.
 //
-// A "recipe" is a NAMED orchestration pattern over the family's optional execution-backends (the
-// subscription-CLI bridges: codex-cli-bridge → `codex`, antigravity-cli-bridge → `agy`), composed
-// into the plan → execute → review flow. The ENGINE owns the canonical narrative
-// (agent-workflow-engine/references/orchestration.md — the when/why, kept in lockstep by the
-// recipe-name parity guard in recipes.test.mjs); this module owns the EXECUTABLE dispatch: given a
-// recipe + the read-only detector's view of the environment, which backend does which role, how it
-// degrades when a backend isn't ready, and the advisory quota/health notes.
-//
-// Invariants (the backends/status posture): pure (no fs/network/CLI in planRecipe/recommendRecipe),
-// read-only, NEVER runs a subscription CLI. The kit only surfaces/selects/plans a recipe — the
-// orchestrator (the main agent) executes it via the bridge skills and always makes the single commit;
-// a backend is advisory or delegated, never autonomous. Dependency-free, Node >= 22.
+// A "recipe" is a NAMED orchestration pattern over the family's optional carriers: the
+// subscription-CLI bridges (codex-cli-bridge → `codex`, antigravity-cli-bridge → `agy`) and the
+// executor subagent vehicle. The ENGINE owns the canonical narrative
+// (agent-workflow-engine/references/orchestration.md, kept in lockstep by the recipe-name parity
+// guard in recipes.test.mjs); this module owns the EXECUTABLE dispatch. The activity/slot registry
+// lives in carriers.mjs, re-exported here so every importer keeps its './recipes.mjs' path.
+// Invariants: pure (no fs/network/CLI in planRecipe/recommendRecipe), read-only, NEVER runs a
+// subscription CLI. The orchestrator executes a recipe and always makes the single commit; a
+// backend or a subagent is advisory or delegated, never autonomous. Dependency-free, Node >= 22.
 
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-// The host-level bridge-settings snapshot (fact-only, best-effort). READ-ONLY core only — never the
-// writer — so this read-only advisor never pulls in the atomic-write core.
+// The READ-ONLY settings core, never the writer: this advisor never pulls in the atomic-write core.
 import { settingsSnapshot, DEFAULT_BUNDLE_ROOT } from './bridge-settings-read.mjs';
 import { isDirectRun } from './direct-run.mjs';
+import {
+  ACTIVITIES,
+  POLICY_ACTIVITIES,
+  SLOT_RECIPES,
+  SUBAGENT_RECIPE,
+  CARRY_ROLE,
+  EXECUTOR_PROVIDER,
+  SWITCH_DEFAULT,
+  isSwitchSlot,
+  withVehicle,
+  vehicleDegradeReason,
+  EXECUTOR_APPLY,
+} from './carriers.mjs';
+// The READ core of the vehicle surface, never the writer: this advisor can never reach a module
+// that creates `.claude/agents/`.
+import { surveyExecutorVehicle } from './cheap-agents-read.mjs';
 import {
   detectBackends,
   wrapperCmdFor,
@@ -30,25 +42,25 @@ import {
   DEGRADED,
 } from './detect-backends.mjs';
 
+export { ACTIVITIES, POLICY_ACTIVITIES, SLOT_RECIPES, isSwitchSlot, EXECUTOR_APPLY };
+
 const CODEX = 'codex-cli-bridge';
 const AGY = 'antigravity-cli-bridge';
 
 // The manifest-name → human-alias map (the detector emits manifest names; humans say codex/agy).
 export const DISPLAY_ALIASES = { [CODEX]: 'codex', [AGY]: 'agy' };
 
-// The backend → role table, keyed by the manifest name the detector emits (status.name) — NOT the
-// display alias. Drift-guarded against each bridge capability.json `provides[]` (recipes.test.mjs).
+// The provider → role table, keyed by the name the readiness array carries, NOT the display alias.
+// The bridge rows are drift-guarded against each capability.json `provides[]`; the executor row is
+// the vehicle withVehicle appends, and the ONLY provider of `carry`.
 export const BACKEND_ROLES = {
   [CODEX]: ['execute', 'review'],
   [AGY]: ['review', 'probe'],
+  [EXECUTOR_PROVIDER]: [CARRY_ROLE],
 };
 
-// Review obligations from the CONFIGURED plan-execution.review recipe — the RAW config value,
-// never the readiness-degraded effective recipe (a computed readiness-degrade NEVER silently
-// becomes solo). Homed HERE (cycle-free) so review-state AND flow-check consume the SAME consumed
-// backend set (#42 exact coverage must never fall open on the computed-default class).
-//   solo     → no obligation; reviewed → ONE ship-class from ANY backend (minShip 1);
-//   council  → EVERY backend ship-class or degrade-recorded, and never all (minShip 1).
+// Review obligations from the CONFIGURED plan-execution.review recipe — the RAW config value, never
+// the readiness-degraded one. Homed HERE so review-state and flow-check share one backend set (#42).
 export const requiredBackendsForConfiguredRecipe = ({ config, readiness = [], detectionFailed = false } = {}) => {
   const configured = config?.['plan-execution']?.review;
   const providers = Object.values(DISPLAY_ALIASES); // every review-capable backend, codex first
@@ -56,7 +68,9 @@ export const requiredBackendsForConfiguredRecipe = ({ config, readiness = [], de
     // No config + no readiness signal: the computed default is UNKNOWABLE — fail closed upstream.
     return { recipe: null, source: 'default', backends: [], minShip: 0, perBackend: false, unknowable: true };
   }
-  const anyReady = readiness.some((b) => b.readiness === READY);
+  // Role-filtered: a ready EXECUTOR vehicle is a carry provider, never a reviewer, so it must not
+  // turn a silent review config into `reviewed`.
+  const anyReady = readyProvidersOf('review', readiness).length >= 1;
   const recipe = configured ?? (anyReady ? 'reviewed' : 'solo');
   const source = configured != null ? 'config' : 'default';
   if (recipe === 'solo') return { recipe, source, backends: [], minShip: 0, perBackend: false, unknowable: false };
@@ -64,10 +78,8 @@ export const requiredBackendsForConfiguredRecipe = ({ config, readiness = [], de
   return { recipe, source, backends: providers, minShip: 1, perBackend: false, unknowable: false };
 };
 
-// Advisory metadata the DETECTION object does not carry (it has no cost/quota — those live only in
-// capability.json). cost/quota are drift-guarded against the manifests; the agy `health` advisory is
-// static project knowledge (Issue-001: the Antigravity service can stall on substantive prompts —
-// invisible to file-presence detection, so it is NOT a readiness signal, only a standing caveat).
+// Advisory metadata the detection object does not carry. cost/quota are drift-guarded against the
+// manifests; agy's `health` (Issue-001) is invisible to detection — a caveat, not a readiness signal.
 export const BACKEND_META = {
   [CODEX]: { cost: 'subscription', quota: { kind: 'subscription', finite: true } },
   [AGY]: {
@@ -77,17 +89,15 @@ export const BACKEND_META = {
   },
 };
 
-// Deterministic tie-break order: codex before agy. agy is a sound grounded reviewer now, but codex is
-// the more reliable default for substantive reviews (agy carries the standing service-stall caveat above).
+// Deterministic tie-break: codex before agy — the more reliable default for substantive reviews.
 const BACKEND_PRIORITY = [CODEX, AGY];
 const priorityIndex = (name) => {
   const i = BACKEND_PRIORITY.indexOf(name);
   return i === -1 ? BACKEND_PRIORITY.length : i;
 };
 
-// The four recipes, in lattice order. `role` is the backend role a recipe needs (null = Solo, no
-// backend); `minBackends` is how many READY providers it needs; `degradesTo` is the next-weaker
-// recipe when it can't be satisfied (the chain terminates at Solo, which is always satisfiable).
+// The five recipes, in lattice order. `degradesTo` is the next-weaker recipe when a recipe can't be
+// satisfied; every chain terminates at Solo, which always is.
 export const RECIPES = [
   {
     id: 'solo',
@@ -121,12 +131,12 @@ export const RECIPES = [
     degradesTo: 'solo',
     summary: 'the orchestrator hands a bounded execution sub-task to a backend (codex exec), then reviews the diff and commits.',
   },
+  SUBAGENT_RECIPE,
 ];
 
 const recipeById = (id) => RECIPES.find((r) => r.id === id);
 
-// The human reason a non-ready readiness yields (read-only file-presence remedies — never a claim
-// about whether the backend's service is responsive).
+// Read-only file-presence remedies — never a claim about whether a backend's service is responsive.
 const READINESS_REASON = {
   [NEEDS_SKILL]: 'bridge skill not installed — run /agent-workflow-kit setup',
   [NEEDS_CLI]: 'the CLI is not installed',
@@ -136,18 +146,16 @@ const READINESS_REASON = {
 
 // ── pure planner ───────────────────────────────────────────────────────────────
 
-// Backends (ready or not) whose role table includes `role`.
 const providersOf = (role, detection) => detection.filter((b) => (BACKEND_ROLES[b.name] ?? []).includes(role));
 
-// READY providers of `role`, in deterministic priority order (codex before agy) → an array of names.
-const readyProvidersOf = (role, detection) =>
+// In deterministic priority order, so a dispatch never depends on detection emission order.
+const readyProviderEntriesOf = (role, detection) =>
   providersOf(role, detection)
     .filter((b) => b.readiness === READY)
-    .sort((a, b) => priorityIndex(a.name) - priorityIndex(b.name))
-    .map((b) => b.name);
+    .sort((a, b) => priorityIndex(a.name) - priorityIndex(b.name));
 
-// Availability = readiness === READY, full stop. A recipe is satisfiable iff it needs no backend OR
-// enough READY providers of its role exist.
+const readyProvidersOf = (role, detection) => readyProviderEntriesOf(role, detection).map((b) => b.name);
+
 const isSatisfiable = (recipe, detection) =>
   recipe.role === null || readyProvidersOf(recipe.role, detection).length >= recipe.minBackends;
 
@@ -155,41 +163,44 @@ const isSatisfiable = (recipe, detection) =>
 const degradeReason = (recipe, detection) => {
   const providers = providersOf(recipe.role, detection);
   if (providers.length === 0) {
-    return `${recipe.title} needs a backend providing ${recipe.role}, but no backend provides it`;
+    return `${recipe.title} needs a provider providing ${recipe.role}, but no provider provides it`;
   }
   const ready = providers.filter((b) => b.readiness === READY);
   const detail = providers
     .filter((b) => b.readiness !== READY)
-    .map((b) => `${DISPLAY_ALIASES[b.name] ?? b.name}: ${READINESS_REASON[b.readiness] ?? b.readiness}`)
+    .map((b) => (b.name === EXECUTOR_PROVIDER
+      ? vehicleDegradeReason(b.vehicle, EXECUTOR_APPLY)
+      : `${DISPLAY_ALIASES[b.name] ?? b.name}: ${READINESS_REASON[b.readiness] ?? b.readiness}`))
     .join('; ');
-  return `${recipe.title} needs ${recipe.minBackends} backend(s) providing ${recipe.role}, but only ${ready.length} ready${detail ? ` — ${detail}` : ''}`;
+  return `${recipe.title} needs ${recipe.minBackends} provider(s) providing ${recipe.role}, but only ${ready.length} ready${detail ? ` — ${detail}` : ''}`;
 };
 
-// Per-stage dispatch for an EFFECTIVE (already-satisfiable) recipe: the first `minBackends` READY
-// providers, in priority order. Solo dispatches nothing (the orchestrator does it all).
+// Per-stage dispatch for an EFFECTIVE (already-satisfiable) recipe. The executor's step carries its
+// vehicle state, so both renders can name it.
 const dispatchFor = (recipe, detection) => {
   if (recipe.role === null) return [];
-  return readyProvidersOf(recipe.role, detection)
+  return readyProviderEntriesOf(recipe.role, detection)
     .slice(0, recipe.minBackends)
-    .map((name) => ({ role: recipe.role, backend: name, display: DISPLAY_ALIASES[name] }));
+    .map((b) => {
+      const step = { role: recipe.role, backend: b.name, display: DISPLAY_ALIASES[b.name] ?? b.name };
+      return b.vehicle ? { ...step, vehicle: b.vehicle.state } : step;
+    });
 };
 
 const QUOTA_NOTE = "Prefer the cheapest model that fits the task; don't reach for a top-tier model by reflex.";
 const COUNCIL_QUOTA_NOTE = "Council spends two backends' quota for one decision — reserve it for changes that justify the cost.";
 
-// Advisory notes for an effective recipe: a quota reminder when any backend is dispatched, the
-// two-quota caveat for Council, and the agy health advisory whenever the dispatch actually uses agy.
+// The quota reminder rides a subscription-BACKEND dispatch only: the executor vehicle spends no
+// bridge quota, and its recipe is a frontier one, so the cheapest-model reminder would contradict it.
 const notesFor = (recipe, dispatch) => {
   const notes = [];
-  if (dispatch.length > 0) notes.push(QUOTA_NOTE);
+  if (dispatch.some((d) => d.role !== CARRY_ROLE)) notes.push(QUOTA_NOTE);
   if (recipe.id === 'council') notes.push(COUNCIL_QUOTA_NOTE);
   if (dispatch.some((d) => d.backend === AGY) && BACKEND_META[AGY].health) notes.push(BACKEND_META[AGY].health);
   return notes;
 };
 
-// planRecipe(recipe, detection) → pure plan. `recipe` is a recipe id or descriptor. Walks the
-// degradation chain (with a stated reason per step) until a satisfiable recipe is reached, then emits
-// the per-stage dispatch + advisory notes. Deterministic; never mutates the detection input.
+// planRecipe → pure plan: walks the degradation chain, a stated reason per step, then dispatches.
 export const planRecipe = (recipe, detection) => {
   const requested = typeof recipe === 'string' ? recipeById(recipe) : recipe;
   if (!requested) throw new Error(`unknown recipe: ${recipe}`);
@@ -211,7 +222,7 @@ export const planRecipe = (recipe, detection) => {
   };
 };
 
-// How close to ready a non-ready backend is — used to surface the most-actionable remedy first.
+// Rank = how close to ready, so the most actionable remedy surfaces first.
 const READINESS_RANK = { [DEGRADED]: 3, [NEEDS_CREDENTIALS]: 2, [NEEDS_CLI]: 1, [NEEDS_SKILL]: 0 };
 const READINESS_REMEDY = {
   [NEEDS_SKILL]: 'run /agent-workflow-kit setup',
@@ -220,9 +231,8 @@ const READINESS_REMEDY = {
   [DEGRADED]: 'run /agent-workflow-kit setup (wrapper not on PATH)',
 };
 
-// recommendRecipe(detection) → { recipe, clause }. Never blank: both ready → Council (Reviewed the
-// everyday default); one ready → Reviewed; none installed → Solo + a setup pointer; a backend
-// present-but-not-ready → Solo with that backend's specific remedy. Pure.
+// recommendRecipe(detection) → { recipe, clause }, never blank: both ready → Council (Reviewed the
+// everyday default); one → Reviewed; otherwise Solo plus the most actionable remedy. Pure.
 export const recommendRecipe = (detection) => {
   const readyReview = readyProvidersOf('review', detection);
   if (readyReview.length >= 2) {
@@ -231,14 +241,11 @@ export const recommendRecipe = (detection) => {
   if (readyReview.length === 1) {
     return { recipe: 'reviewed', clause: `Reviewed available (via ${DISPLAY_ALIASES[readyReview[0]]})` };
   }
-  // No ready reviewer → Solo. Say how to unlock more: a present-but-not-ready backend names its
-  // remedy; nothing installed names the setup pointer.
-  const present = detection.filter((b) => b.readiness !== NEEDS_SKILL && b.readiness !== READY);
+  // Role-filtered: the executor vehicle unlocks no review recipe, so it never supplies the remedy.
+  const present = providersOf('review', detection).filter((b) => b.readiness !== NEEDS_SKILL && b.readiness !== READY);
   if (present.length === 0) {
     return { recipe: 'solo', clause: 'Solo — run /agent-workflow-kit setup to add a backend' };
   }
-  // Rank by how close to ready; break ties with the SAME codex-before-agy priority the dispatch path
-  // uses (priorityIndex) so the recommendation is deterministic regardless of detection emission order.
   const best = [...present].sort(
     (a, b) => (READINESS_RANK[b.readiness] ?? -1) - (READINESS_RANK[a.readiness] ?? -1) || priorityIndex(a.name) - priorityIndex(b.name),
   )[0];
@@ -247,42 +254,19 @@ export const recommendRecipe = (detection) => {
 };
 
 // ── activity procedures: per-slot recipe resolution ────────────────────────────────
-
-// The named activities and their typed recipe slots — the EXECUTABLE mirror of the engine canon
-// (agent-workflow-engine/references/procedures.md). Drift-guarded against that canon's `Slots:` lines
-// (recipes.test.mjs): the activity ids and each section's slot set must match this table. The slot
-// VALUE is the slot's recipe-TYPE (used to look up which recipes are valid for it, SLOT_RECIPES); in
-// v1 each slot's key equals its type, but the indirection keeps a future renamed slot expressible.
-export const ACTIVITIES = {
-  'plan-authoring': { slots: { review: 'review' } },
-  'plan-execution': { slots: { execute: 'execute', review: 'review' } },
-};
-
-// Which recipes are valid in each slot type. `review` composes a review DEPTH (Solo / Reviewed /
-// Council); `execute` composes Solo / Delegated (delegation is opt-in). A recipe outside its slot's
-// list is a config error (the IO shell) or a usage error (an --override) — never silently coerced.
-export const SLOT_RECIPES = {
-  review: ['solo', 'reviewed', 'council'],
-  execute: ['solo', 'delegated'],
-};
-
-// The computed default for a slot when the config is silent (no file, or no entry for this slot).
-// review → Reviewed when ANY review-capable backend is `ready`, else Solo (NEVER Council — Council is
-// opt-in; it spends two backends' quota). execute → Solo (Delegated is opt-in only). Readiness-aware,
-// so a computed default is always satisfiable and never itself degrades. Deliberately NOT
-// recommendRecipe (which returns Council when both are ready — that drives the status line, not a
-// per-slot default).
+// The computed default for a silent slot. NEVER Council (opt-in: it spends two backends' quota) and
+// deliberately not recommendRecipe, which drives the status line rather than a per-slot default.
+// Every non-review, non-switch slot floors at Solo, so placing the executor vehicle never flips a
+// default. Readiness-aware, so a computed default is always satisfiable and never itself degrades.
 const computedDefaultForSlot = (slotType, detection) => {
   if (slotType === 'review') return readyProvidersOf('review', detection).length >= 1 ? 'reviewed' : 'solo';
-  return 'solo'; // execute (and any future opt-in slot) floors at Solo
+  if (isSwitchSlot(slotType)) return SWITCH_DEFAULT;
+  return 'solo';
 };
 
-// resolveActivityRecipe({ config, readiness, activity, slot, override }) → the effective recipe for ONE
-// slot of an activity, with graceful-vs-loud degradation. Precedence: an explicit `override` (degrades
-// LOUDLY — overrideUnsatisfied, so the agent tells the user) > the `config` entry (degrades gracefully)
-// > the computed default (graceful; readiness-aware so it never degrades). Satisfiability + the
-// degradation lattice REUSE planRecipe (Council → Reviewed → Solo; Delegated → Solo) — the single source
-// of the recipe lattice. `readiness` is the detector array ([{ name, readiness }]). Pure; never mutates.
+// The effective recipe for ONE slot. Precedence: an explicit `override` (degrades LOUDLY, so the
+// agent tells the user) > the `config` entry (graceful) > the computed default. Satisfiability and
+// the lattice REUSE planRecipe — one source. Pure; never mutates.
 export const resolveActivityRecipe = ({ config = {}, readiness = [], activity, slot, override } = {}) => {
   const activityDef = ACTIVITIES[activity];
   if (!activityDef) throw new Error(`unknown activity: ${activity}`);
@@ -293,10 +277,15 @@ export const resolveActivityRecipe = ({ config = {}, readiness = [], activity, s
   const requested = override ?? configured ?? computedDefaultForSlot(slotType, readiness);
   const source = override != null ? 'override' : configured != null ? 'config' : 'default';
 
-  // Defensive: the IO shell (config) and CLI (override) validate recipe-for-slot first; a stray value
-  // here is a programmer error, surfaced loudly rather than silently coerced into a neighbour recipe.
+  // Defensive: the IO shell and the CLI validate first, so a stray value here is a programmer error
+  // — surfaced loudly rather than silently coerced into a neighbour recipe.
   if (!(SLOT_RECIPES[slotType] ?? []).includes(requested)) {
     throw new Error(`invalid recipe "${requested}" for ${slotType} slot of "${activity}"`);
+  }
+
+  // A switch slot is a flag, not a recipe: it resolves outside the lattice and can never degrade.
+  if (isSwitchSlot(slotType)) {
+    return { recipe: requested, source, degradedFrom: null, reason: null, overrideUnsatisfied: false };
   }
 
   const plan = planRecipe(requested, readiness);
@@ -310,21 +299,12 @@ export const resolveActivityRecipe = ({ config = {}, readiness = [], activity, s
   };
 };
 
-// ── the one-line backend status (deterministic-first: the tool speaks, the agent pastes) ───────────
+// ── the one-line backend status (the tool speaks, the agent pastes) ───────────────────────────────
+// Machine-composed so the agent composes NOTHING factual (a session once echoed SKILL.md's canonical
+// example while the detector said otherwise). Always exactly one line.
 
-// composeStatusLine(detection, recommendation) → the ENTIRE one-line backend-status summary the
-// bootstrap/upgrade report footers print. Machine-composed so the agent pastes it verbatim and
-// composes NOTHING factual (this closes the realistic-example contamination class: a session once
-// echoed SKILL.md's canonical example while the detector said otherwise). Display names come from
-// DISPLAY_ALIASES — the ONE alias table the recommendation clause already uses; ordering is the
-// deterministic BACKEND_PRIORITY (codex before agy), independent of detection emission order.
-// Always exactly one line: no part may carry a newline (pinned by tests).
-// composeConfiguredPosture(ctx) → the CONFIGURED dispatch posture (strip-the-kit D5), rendered
-// from the bundled manifests' VALIDATED posture pins overlaid with the ACTIVE bridge-settings —
-// today only the codex tier knob (bridge-settings stays model/effort-free by design, so this
-// surface can never carry a settings-file model claim). Returns null when NO bundled bridge
-// declares a posture block (a pre-D5 bundle keeps every surface byte-identical). Best-effort:
-// a corrupt bundle degrades to null — the posture segment is a footer fact, never a gate.
+// The CONFIGURED dispatch posture: the bundled manifests' pins overlaid with the active
+// bridge-settings. No pins or a corrupt bundle → null; the posture segment is a fact, never a gate.
 export const composeConfiguredPosture = (ctx = {}) => {
   try {
     const bundleRoot = ctx.bundleRoot ?? DEFAULT_BUNDLE_ROOT;
@@ -339,8 +319,7 @@ export const composeConfiguredPosture = (ctx = {}) => {
       }
       if (!Object.hasOwn(manifest, 'posture')) continue; // a pre-D5 bridge — legitimate absence
       const posture = manifest.posture;
-      // The FULL closed shape (the validator/receipt-predicate twin): a present-but-invalid
-      // block nulls the WHOLE render — fail closed to silence, never a partial/mangled line.
+      // A present-but-invalid block nulls the WHOLE render — never a partial/mangled line.
       const invalid =
         posture === null || typeof posture !== 'object' || Array.isArray(posture) ||
         typeof posture.model !== 'string' || posture.model.length === 0 ||
@@ -362,33 +341,29 @@ export const composeConfiguredPosture = (ctx = {}) => {
   }
 };
 
+// The bridge half of a readiness array: every backend-status render lists BRIDGES (the things
+// `/agent-workflow-kit backends` sets up); the executor vehicle is a carrier, judged by the agents
+// mode, and only the recipe lattice sees it.
+export const bridgeEntries = (readiness) => readiness.filter((b) => b.name !== EXECUTOR_PROVIDER);
+
 export const composeStatusLine = (detection, recommendation, settings = null, autonomy = null, posture = null) => {
-  const backends = [...detection]
+  const backends = bridgeEntries(detection)
     .sort((a, b) => priorityIndex(a.name) - priorityIndex(b.name))
     .map((b) => `${DISPLAY_ALIASES[b.name] ?? b.name} ${b.readiness === READY ? '✓' : '✗'} ${b.readiness}`)
     .join(' · ');
   const base = `backends: ${backends} — run /agent-workflow-kit backends · recipes: ${recommendation.clause} — see /agent-workflow-kit recipes`;
-  // Fact-only suffix, ONLY when a bridge knob is actively set (env/file, non-default). Omitted otherwise,
-  // so the default line is byte-identical to before. A raw env value may (D3) carry newlines/control
-  // chars — collapse them to a single space so the "exactly one line" backend-status contract holds.
+  // A raw env value may carry newlines/control chars — collapse them so the one-line contract holds.
   const oneLine = (s) => String(s).replace(/[\s]+/g, ' ').trim();
   const active = settings?.active ?? [];
-  // A RETIRED knob is rendered as retired, never as an armed capability (D3 Invariant E): the line
-  // exists in the user's file, so hiding it would be a silent deletion — but reading it as active
-  // would claim a capability the wrapper no longer has.
+  // A RETIRED knob renders as retired: hiding the user's line would be a silent deletion, reading it
+  // as active would claim a capability the wrapper no longer has.
   const suffix = active.length ? ` · settings: ${active.map((s) => `${oneLine(s.key)}=${oneLine(s.value)}${s.retired ? ' (RETIRED — arms nothing)' : ''}`).join(' · ')}` : '';
-  // The autonomy segment (AD-044 Plan 4): rendered ONLY when the caller supplies the computed
-  // facts (composeAutonomyFacts) — an omitted param keeps the line byte-identical (the settings-
-  // suffix precedent). Fact-only: effective per-activity levels + the render-sync state; an absent
-  // policy says "computed defaults" honestly; a malformed policy surfaces LOUDLY, never omitted.
+  // Each optional segment renders ONLY when its facts are supplied; an omitted param changes nothing.
   const autonomySegment = autonomy == null ? '' : ` · autonomy: ${oneLine(formatAutonomySegment(autonomy))}`;
-  // The D5 posture segment: rendered ONLY when the caller supplies the composed pins-derived
-  // posture (composeConfiguredPosture) — an omitted/null param keeps the line byte-identical.
   const postureSegment = posture == null ? '' : ` · posture: ${oneLine(posture)}`;
   return base + suffix + autonomySegment + postureSegment;
 };
 
-// The one-segment autonomy renderer behind composeStatusLine's 4th param.
 const formatAutonomySegment = (a) => {
   if (a.error) return `MALFORMED policy — ${a.error}`;
   const levels = Object.entries(a.activities ?? {}).map(([k, v]) => `${k}=${v.autonomy}`).join(', ');
@@ -400,14 +375,8 @@ const formatAutonomySegment = (a) => {
   return `${levels} (${state})`;
 };
 
-// composeAutonomyFacts(cwd) → the fact object the status/active lines render (AD-044 Plan 4):
-// { source, redlines, activities, renderState } or { error }. Lazy imports — autonomy-config
-// statically imports THIS module (ACTIVITIES) and velocity-profile is heavy, so both load at call
-// time only (the loadConfig precedent). Never throws: a malformed policy becomes { error } so the
-// one-line surfaces render it loudly instead of dying.
-// The policy lives at the PROJECT root; the report-footer invokes the paste surfaces without
-// --cwd, so a subdirectory shell must still find it. Nearest-.git walk-up (dir or worktree file),
-// fs-only — this advisor stays spawn-free; no repo found → the cwd itself (fixture behavior).
+// The policy lives at the PROJECT root and the paste surfaces run without --cwd, so a subdirectory
+// shell must still find it. Fs-only: this advisor stays spawn-free.
 const projectTopOf = (cwd) => {
   let dir = resolve(cwd);
   for (;;) {
@@ -418,9 +387,8 @@ const projectTopOf = (cwd) => {
   }
 };
 
-// `deps` is threaded to the render check because that check now PROBES the installed harness: without
-// a seam the render state would vary with the machine composing the facts, and a caller could not
-// pin it. Production passes nothing and probes for real.
+// The facts the status/active lines render. Lazy imports: autonomy-config statically imports THIS
+// module. Never throws — a malformed policy becomes { error }, rendered loudly. `deps` is the probe seam.
 export const composeAutonomyFacts = async (cwd, deps = {}) => {
   try {
     const root = projectTopOf(cwd);
@@ -428,10 +396,8 @@ export const composeAutonomyFacts = async (cwd, deps = {}) => {
     const { config, source } = loadAutonomy(root);
     const resolved = resolveAutonomy(config);
     if (source === 'none') return { source, redlines: resolved.redlines, activities: resolved.activities, renderState: null };
-    // The STRUCTURAL seed (_README only) is a fresh-deployment NORMAL — treating it as "declared"
-    // would report "render DRIFT" on every fresh upgrade (codex, Segment B). An EXPLICIT policy
-    // declaring the default values is a real declaration — its render state IS computed
-    // (structural detection, codex Segment B closing).
+    // The structural seed is a fresh-deployment NORMAL: reading it as "declared" would report
+    // "render DRIFT" on every fresh upgrade.
     if (isSparseSeedConfig(config)) {
       return { source, defaultsEquivalent: true, redlines: resolved.redlines, activities: resolved.activities, renderState: null };
     }
@@ -452,29 +418,22 @@ export const composeAutonomyFacts = async (cwd, deps = {}) => {
 
 // ── the one-line ACTIVE-recipe line (the discovery line — configured, never recommended) ───────────
 
-// composeActiveRecipeLine({ config, source }, detection) → ONE line rendering the CONFIGURED recipe of
-// every activity/slot (resolved via resolveActivityRecipe: config entry, else computed default), each
-// with its source label, its degradation stated, and its dispatched wrapper set — explicitly labeled
-// "configured" and contrasted with the readiness-RECOMMENDED recipe (which composeStatusLine shows and
-// which is NOT what runs). This is the machine-composed sibling of composeStatusLine (AD-034): the
-// session-start checklist + the handover "Active recipes:" slot paste it verbatim, so no agent composes
-// the configured-recipe facts by hand. `{ config, source }` is exactly what loadConfig returns (source
-// 'none' when no config file exists). Always exactly one line: no part may carry a newline (pinned).
+// ONE line rendering the CONFIGURED recipe of every activity/slot with its source, degradation and
+// dispatched wrappers — contrasted with the readiness-RECOMMENDED recipe, which is NOT what runs.
+// The session-start checklist and the handover "Active recipes:" slot paste it verbatim.
 export const composeActiveRecipeLine = ({ config, source } = {}, detection, autonomy = null) => {
   const cells = [];
   for (const [activity, def] of Object.entries(ACTIVITIES)) {
-    // The per-activity autonomy level rides each cell when the caller supplies the facts (AD-044
-    // Plan 4) — an omitted param keeps the line byte-identical (the composeStatusLine precedent).
     const level = autonomy?.activities?.[activity]?.autonomy;
     const auto = level ? `; autonomy ${level}` : '';
-    for (const slot of Object.keys(def.slots)) {
+    for (const [slot, slotType] of Object.entries(def.slots)) {
       const r = resolveActivityRecipe({ config: config ?? {}, readiness: detection, activity, slot });
-      const { dispatch } = planRecipe(r.recipe, detection);
+      const dispatch = isSwitchSlot(slotType) ? [] : planRecipe(r.recipe, detection).dispatch;
       const wrappers = dispatch.map((d) => wrapperCmdFor(d.backend, d.role)).filter(Boolean);
       const srcLabel = r.source === 'config' ? 'configured' : 'computed default';
       const head = r.degradedFrom
         ? `${activity}.${slot} = ${r.degradedFrom} (${srcLabel}; degrades here to ${r.recipe} — ${r.reason}${auto})`
-        : `${activity}.${slot} = ${r.recipe} (${srcLabel}${auto})`;
+        : `${activity}.${slot} = ${r.recipe} (${srcLabel}${isSwitchSlot(slotType) ? '; switch' : ''}${auto})`;
       const suffix =
         wrappers.length >= 2
           ? ` → every backend every round: ${wrappers.join(' + ')}`
@@ -486,18 +445,16 @@ export const composeActiveRecipeLine = ({ config, source } = {}, detection, auto
   }
   const rec = recommendRecipe(detection);
   const origin = source === 'none' || config == null ? 'no config file — computed defaults apply' : `from ${source}`;
-  // A MALFORMED policy must surface LOUDLY on this paste surface too — silently rendering cells
-  // without levels would hide the required STOP signal (Segment B). One line always.
+  // A MALFORMED policy surfaces LOUDLY here too: rendering cells without levels would hide the STOP.
   const malformed = autonomy?.error
     ? ` · autonomy: MALFORMED policy — ${String(autonomy.error).replace(/[\s]+/g, ' ').trim()}`
     : '';
-  return `active recipes (${origin}): ${cells.join(' · ')} — the configured recipes above are what runs; readiness-recommended here: ${rec.recipe} (informational)${malformed}`;
+  return `active recipes (${origin}): ${cells.join(' · ')} — the configured orchestration values above are what runs; readiness-recommended here: ${rec.recipe} (informational)${malformed}`;
 };
 
 // ── report + CLI ─────────────────────────────────────────────────────────────────
 
-// The structured report behind `--json` — the recipes, the recommendation, a plan per recipe, and
-// (additive) the pasteable one-line backend status composed from the same detection.
+// The structured report behind `--json`, incl. the same one-line status the --status-line mode emits.
 export const buildReport = (detection, settings = null, autonomy = null, posture = null) => {
   const recommendation = recommendRecipe(detection);
   return {
@@ -511,17 +468,15 @@ export const buildReport = (detection, settings = null, autonomy = null, posture
     })),
     recommendation,
     plans: RECIPES.map((r) => planRecipe(r.id, detection)),
-    // The SAME autonomy facts the --status-line surface renders — the --json envelope must never
-    // expose a stale machine-composed status line (Segment B).
+    // The --json envelope must never expose a status line staler than the --status-line surface.
     statusLine: composeStatusLine(detection, recommendation, settings, autonomy, posture),
   };
 };
 
-// formatRecipes(detection) → deterministic human advisor text: the four recipes, the recommendation,
-// and the per-recipe plan for the current environment (degradation reasons + dispatch + notes).
+// Deterministic human advisor text: the recipes, the recommendation, and the per-recipe plan here.
 export const formatRecipes = (detection) => {
   const lines = [
-    'agent-workflow orchestration recipes (read-only — the orchestrator executes via the bridge skills and always commits)',
+    'agent-workflow orchestration recipes (read-only — the orchestrator executes via the bridge skills or the executor vehicle and always commits)',
     '',
   ];
   for (const r of RECIPES) lines.push(`  ${r.title} (${r.id}) — ${r.summary}`);
@@ -530,7 +485,9 @@ export const formatRecipes = (detection) => {
   for (const r of RECIPES) {
     const p = planRecipe(r.id, detection);
     const arrow = p.degraded ? ` → ${p.effective}` : '';
-    const who = p.dispatch.length ? p.dispatch.map((d) => `${d.display} ${d.role}`).join(', ') : 'orchestrator only';
+    const who = p.dispatch.length
+      ? p.dispatch.map((d) => `${d.display} ${d.role}${d.vehicle ? ` (vehicle ${d.vehicle})` : ''}`).join(', ')
+      : 'orchestrator only';
     lines.push(`  ${r.title}${arrow}: ${who}`);
     for (const step of p.degradation) lines.push(`      ↳ ${step.reason}`);
     for (const note of p.notes) lines.push(`      • ${note}`);
@@ -538,22 +495,37 @@ export const formatRecipes = (detection) => {
   return lines.join('\n');
 };
 
-// The full argv vocabulary — anything else rejects LOUDLY. The old parse silently routed unknown
-// args into the multi-line human render; with `--status-line` / `--active-line` (whose output is
-// pasted as fact) a mistyped flag masquerading as a mode would be a silent failure, so the parse is
-// strict now.
+// Closed argv vocabulary: the mode outputs are pasted as fact, so a mistyped flag masquerading as a
+// mode would be a silent failure.
 const KNOWN_ARGS = new Set(['--help', '-h', '--json', '--status-line', '--active-line']);
 const EXCLUSIVE_ARGS = ['--json', '--status-line', '--active-line']; // each owns stdout whole
 
-const main = async (argv) => {
+// The readiness array EVERY mode composes: the detected backends plus the executor vehicle as the
+// one carry provider. Two independent axes: the vehicle is surveyed first, and a bridge detector
+// failure reaches `deps.onDetectError` exactly once (default: a loud stderr line) while the
+// vehicle's readiness survives it — so a caller's fail-closed state for bridges never masks the
+// carrier, and the reverse. `deps` is also the seam a test injects a fake survey or detector through.
+export const composeReadiness = (cwd, deps = {}) => {
+  const survey = (deps.surveyVehicle ?? surveyExecutorVehicle)(cwd, deps);
+  let detection = [];
+  try {
+    detection = (deps.detect ?? detectBackends)();
+  } catch (err) {
+    (deps.onDetectError ?? ((e) => console.error(`[agent-workflow-kit] backend detection failed: ${e.message}`)))(err);
+  }
+  return withVehicle(detection, survey);
+};
+
+const main = async (argv, deps = {}) => {
   if (argv.includes('--help') || argv.includes('-h')) {
     console.log(`recipes — read-only orchestration-recipe advisor for the agent-workflow family.
 
 Usage:
   node recipes.mjs [--json | --status-line | --active-line]
 
-Lists the four recipes (Solo / Reviewed / Council / Delegated) and, from the read-only backend
-detector, plans + recommends one for the current environment. --status-line prints exactly ONE
+Lists the five recipes (Solo / Reviewed / Council / Delegated / Subagent) and, from the read-only
+backend detector plus the executor-vehicle survey, plans + recommends one for the current
+environment. --status-line prints exactly ONE
 line — the machine-composed backend-status summary the bootstrap/upgrade reports paste verbatim
 (incl. the per-activity autonomy segment: effective levels + render-sync state, honest
 computed-defaults wording when no policy file exists). --active-line prints exactly ONE line — the
@@ -574,31 +546,30 @@ exclusive. Detection only — never writes, never commits, never runs a subscrip
     console.error(`[agent-workflow-kit] ${exclusive.join(' and ')} are mutually exclusive — pick one output`);
     return 1;
   }
-  const detection = detectBackends();
+  const cwd = process.cwd();
+  const readiness = composeReadiness(cwd, deps);
   if (argv.includes('--active-line')) {
-    // Lazy import: orchestration-config.mjs statically imports this module (ACTIVITIES/SLOT_RECIPES),
-    // so the config reader is pulled in at run time only — no static import cycle.
+    // Lazy: orchestration-config.mjs statically imports this module — no static cycle.
     const { loadConfig } = await import('./orchestration-config.mjs');
     try {
-      console.log(composeActiveRecipeLine(loadConfig(process.cwd()), detection, await composeAutonomyFacts(process.cwd())));
+      console.log(composeActiveRecipeLine(loadConfig(cwd), readiness, await composeAutonomyFacts(cwd)));
     } catch (err) {
       console.error(`[agent-workflow-kit] ${err.message}`);
       return err.exitCode ?? 1;
     }
   } else if (argv.includes('--status-line')) {
     const snapshot = settingsSnapshot();
-    console.log(composeStatusLine(detection, recommendRecipe(detection), snapshot, await composeAutonomyFacts(process.cwd()), composeConfiguredPosture({ settings: snapshot })));
+    console.log(composeStatusLine(readiness, recommendRecipe(readiness), snapshot, await composeAutonomyFacts(cwd), composeConfiguredPosture({ settings: snapshot })));
   } else if (argv.includes('--json')) {
     const snapshot = settingsSnapshot();
-    console.log(JSON.stringify(buildReport(detection, snapshot, await composeAutonomyFacts(process.cwd()), composeConfiguredPosture({ settings: snapshot })), null, 2));
+    console.log(JSON.stringify(buildReport(readiness, snapshot, await composeAutonomyFacts(cwd), composeConfiguredPosture({ settings: snapshot })), null, 2));
   }
-  else console.log(formatRecipes(detection));
+  else console.log(formatRecipes(readiness));
   return 0;
 };
 
-// Natural exit via process.exitCode — never process.exit inside the async main (it would drop buffered
-// stdio writes on piped stderr), and never a TOP-LEVEL await here: orchestration-config.mjs statically
-// imports this module, so awaiting the dynamic import during our own evaluation would deadlock the cycle.
+// Natural exit via process.exitCode — never process.exit inside the async main (it would drop
+// buffered stdio on piped stderr), and never a TOP-LEVEL await (that would deadlock the import cycle).
 if (isDirectRun(import.meta.url)) {
   main(process.argv.slice(2)).then(
     (code) => {

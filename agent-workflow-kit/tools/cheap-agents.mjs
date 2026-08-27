@@ -1,8 +1,11 @@
 #!/usr/bin/env node
-// cheap-agents.mjs — the onboarding writer behind `/agent-workflow-kit agents`: places the
-// bundled CHEAP-LANE subagent definitions (references/agents/*.md — haiku/low-effort, bounded
-// read-only tools) into a project's .claude/agents/ so mechanical work (sweeps, changelog
-// skeletons, gate triage) stops running on a frontier model by default.
+// cheap-agents.mjs — the onboarding writer behind `/agent-workflow-kit agents`: places the bundled
+// subagent definitions (references/agents/*.md) into a project's .claude/agents/. FOUR vehicles
+// grant NO shell — three ride the cheap lane (haiku/low-effort) so mechanical work (sweeps,
+// changelog skeletons, gate triage) stops running on a frontier model by default, and review-lens
+// is the read-only review opinion. The fifth, `executor`, is the ONE full-tool vehicle: dispatched
+// only for a bounded execution, authoring, or write-capable routine slice the orchestrator verifies, never for read-only work, and it
+// never commits. `surveyExecutorVehicle` is that vehicle's readiness, for the subagent carrier.
 //
 // The family's second `.claude/` writer, the velocity-profile.mjs writer discipline verbatim:
 //   • preview-then-mutate — `--dry-run` is the DEFAULT and writes nothing; `--apply` writes;
@@ -25,29 +28,48 @@
 // state, not an error); 1 precondition STOP (stamp, symlink, missing bundle); 2 usage.
 // Dependency-free, Node >= 22. No side effects on import.
 
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDirectRun } from './direct-run.mjs';
 import { shellQuoteArg } from './repo-lex.mjs';
+// The READ core, never a second copy: the bundle, the placement plan and the executor survey live
+// there so the read-only advisor graph can reach them without reaching this writer.
+import {
+  AGENTS_DIR,
+  CLAUDE_DIR,
+  WORKFLOW_STAMP,
+  EXPECTED_WORKFLOW_VERSION,
+  UTF8,
+  CHEAP_AGENTS_STAMP,
+  makeCheapAgentsError,
+  readFsDeps,
+  readBundledAgents,
+  readStamp,
+  assertDirSafe,
+  planPlacement,
+} from './cheap-agents-read.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-
-export const AGENTS_DIR = '.claude/agents';
-export const CLAUDE_DIR = '.claude';
-export const WORKFLOW_STAMP = 'docs/ai/.workflow-version';
-export const EXPECTED_WORKFLOW_VERSION = '3.0.0';
-export const BUNDLED_AGENTS_DIR = resolve(HERE, '..', 'references', 'agents');
+export {
+  AGENTS_DIR,
+  CLAUDE_DIR,
+  WORKFLOW_STAMP,
+  EXPECTED_WORKFLOW_VERSION,
+  BUNDLED_AGENTS_DIR,
+  CHEAP_AGENTS_STAMP,
+  CHEAP_AGENTS_SYMLINK,
+  CHEAP_AGENTS_BUNDLE,
+  makeCheapAgentsError,
+  readBundledAgents,
+  planPlacement,
+  surveyExecutorVehicle,
+  EXECUTOR_VEHICLE,
+  EXECUTOR_VEHICLE_REL,
+} from './cheap-agents-read.mjs';
 
 const EXIT_OK = 0;
 const EXIT_PRECONDITION = 1;
 const EXIT_USAGE = 2;
-const UTF8 = 'utf8';
-const ERROR_PREFIX = '[agent-workflow-kit]';
-
-export const CHEAP_AGENTS_STAMP = 'CHEAP_AGENTS_STAMP';
-export const CHEAP_AGENTS_SYMLINK = 'CHEAP_AGENTS_SYMLINK';
-export const CHEAP_AGENTS_BUNDLE = 'CHEAP_AGENTS_BUNDLE';
 
 // The fallback-lens contract, formalized where it lives (flow-orchestration #15/#3, Phase 4.3):
 // the internal-attestation evaluation consumes this sentence — a lens set claiming a configured
@@ -57,95 +79,24 @@ export const FALLBACK_LENS_ADDITIONAL_ONLY = 'review-lens is an ADDITIONAL read-
 
 const USAGE = `usage: cheap-agents [--dry-run | --apply] [--cwd <dir>] [--help]
 
-Places the bundled READ-ONLY subagent definitions into the project's ${AGENTS_DIR}/. No vehicle
-grants a shell: three ride a cheap model (haiku/low) for mechanical work — extraction sweeps,
-changelog fact-skeletons, gate triage — and review-lens is a read-only REVIEW vehicle on a
-review-capable model. Default is --dry-run (a preview; writes nothing). --apply writes.
+Places the bundled subagent definitions into the project's ${AGENTS_DIR}/. Four vehicles grant NO
+shell: three ride a cheap model (haiku/low) for mechanical work — extraction sweeps, changelog
+fact-skeletons, gate triage — and review-lens is a read-only REVIEW vehicle on a review-capable
+model. The fifth, executor, is the ONE full-tool vehicle: dispatched only for a bounded execution,
+authoring, or write-capable routine slice the orchestrator verifies, never for read-only work, and
+it never commits.
+Default is --dry-run (a preview; writes nothing). --apply writes.
 An existing file with DIFFERENT content is preserved and reported, never overwritten.`;
 
 export const fail = (exitCode, message) => Object.assign(new Error(message), { exitCode });
 
-export const makeCheapAgentsError = (code, message) =>
-  Object.assign(new Error(`${ERROR_PREFIX} ${message}`), { name: 'CheapAgentsError', code, exitCode: EXIT_PRECONDITION });
-
-const fsDeps = (deps = {}) => ({
-  exists: deps.exists ?? existsSync,
-  lstat: deps.lstat ?? lstatSync,
+const writeFsDeps = (deps = {}) => ({
   mkdir: deps.mkdir ?? mkdirSync,
-  readFile: deps.readFile ?? readFileSync,
   writeFile: deps.writeFile ?? writeFileSync,
-  readdir: deps.readdir ?? readdirSync,
 });
 
-const lstatNoFollow = (absPath, fs) => {
-  try {
-    return fs.lstat(absPath);
-  } catch (err) {
-    if (err && err.code === 'ENOENT') return null;
-    throw err;
-  }
-};
-
-// ── the bundle (the kit's own references/agents/) ─────────────────────────────────────
-
-export const readBundledAgents = (deps = {}) => {
-  const fs = fsDeps(deps);
-  const bundleDir = deps.bundleDir ?? BUNDLED_AGENTS_DIR;
-  let names;
-  try {
-    names = fs.readdir(bundleDir);
-  } catch (err) {
-    throw makeCheapAgentsError(CHEAP_AGENTS_BUNDLE, `bundled agents dir unreadable (${err.code ?? err.message}): ${bundleDir}`);
-  }
-  const templates = names
-    .filter((name) => name.endsWith('.md'))
-    .sort()
-    .map((name) => ({ name, content: fs.readFile(join(bundleDir, name), UTF8) }));
-  if (templates.length === 0) {
-    throw makeCheapAgentsError(CHEAP_AGENTS_BUNDLE, `no bundled agent templates found in ${bundleDir} — the kit install is incomplete`);
-  }
-  return templates;
-};
-
-// ── preflight (velocity discipline: symlink-safe, stamp read, no writes) ──────────────
-
-const readStamp = (absPath, fs) => {
-  try {
-    if (!fs.exists(absPath)) return null;
-    const stamp = String(fs.readFile(absPath, UTF8)).trim();
-    return stamp.length ? stamp : null;
-  } catch {
-    return null; // unreadable stamp == not a valid deployment stamp (apply STOPs; dry-run reports)
-  }
-};
-
-const assertDirSafe = (absPath, relPath, fs) => {
-  const stat = lstatNoFollow(absPath, fs);
-  if (stat === null) return { absent: true };
-  if (stat.isSymbolicLink()) throw makeCheapAgentsError(CHEAP_AGENTS_SYMLINK, `${relPath} is a symlink — refusing to write through it`);
-  if (!stat.isDirectory()) throw makeCheapAgentsError(CHEAP_AGENTS_SYMLINK, `${relPath} exists but is not a directory — refusing to write through it`);
-  return { absent: false };
-};
-
-// Per-template placement plan: place | already-current | customized-preserved (never clobbered).
-export const planPlacement = (templates, projectDir, deps = {}) => {
-  const fs = fsDeps(deps);
-  return templates.map((template) => {
-    const rel = `${AGENTS_DIR}/${template.name}`;
-    const abs = join(projectDir, AGENTS_DIR, template.name);
-    const stat = lstatNoFollow(abs, fs);
-    if (stat === null) return { ...template, rel, abs, action: 'place' };
-    if (stat.isSymbolicLink() || !stat.isFile()) {
-      throw makeCheapAgentsError(CHEAP_AGENTS_SYMLINK, `${rel} exists but is not a regular file — refusing to touch it`);
-    }
-    const existing = fs.readFile(abs, UTF8);
-    if (existing === template.content) return { ...template, rel, abs, action: 'already-current' };
-    return { ...template, rel, abs, action: 'customized-preserved' };
-  });
-};
-
 export const preflightCheapAgents = ({ cwd }, deps = {}) => {
-  const fs = fsDeps(deps);
+  const fs = readFsDeps(deps);
   const projectDir = cwd ?? process.cwd();
   const templates = readBundledAgents(deps);
   const stamp = readStamp(join(projectDir, WORKFLOW_STAMP), fs);
@@ -159,7 +110,7 @@ export const preflightCheapAgents = ({ cwd }, deps = {}) => {
 // ── the writer ────────────────────────────────────────────────────────────────────────
 
 export const writeCheapAgents = ({ cwd, dryRun = true } = {}, deps = {}) => {
-  const fs = fsDeps(deps);
+  const fs = writeFsDeps(deps);
   const preflight = preflightCheapAgents({ cwd }, deps);
   if (dryRun) return { wrote: false, dryRun: true, ...preflight };
 
@@ -186,8 +137,8 @@ const ACTION_LABEL = {
 export const formatResult = (result) => {
   const lines = [
     result.dryRun
-      ? 'agent-workflow read-only subagents — DRY RUN (no changes)'
-      : 'agent-workflow read-only subagents — APPLY',
+      ? 'agent-workflow subagent vehicles — DRY RUN (no changes)'
+      : 'agent-workflow subagent vehicles — APPLY',
   ];
   for (const item of result.plan) {
     const verb = result.dryRun && item.action === 'place' ? 'would place' : ACTION_LABEL[item.action];
@@ -197,8 +148,9 @@ export const formatResult = (result) => {
     lines.push(`note: no current deployment stamp found (${result.stamp ?? 'none'}) — --apply will refuse until init/upgrade runs.`);
   }
   lines.push(
-    'the vehicles are Claude Code subagents with READ-ONLY tools and NO shell — so a fan-out can never turn into a wave of approval prompts.',
-    `three ride the cheap lane (model: haiku, effort: low) for mechanical work; ${FALLBACK_LENS_ADDITIONAL_ONLY} Writing code and running gates stay on your main lane.`,
+    'four vehicles are Claude Code subagents with READ-ONLY tools and NO shell — so a fan-out can never turn into a wave of approval prompts.',
+    `three of those ride the cheap lane (model: haiku, effort: low) for mechanical work; ${FALLBACK_LENS_ADDITIONAL_ONLY}`,
+    'executor is the one FULL-TOOL vehicle: dispatched only for a bounded execution, authoring, or write-capable routine slice the orchestrator verifies, never for read-only work, and it never commits.',
   );
   // A preview must print the EXACT command that applies it. The advisor renders this dry-run as an
   // item's one-liner, and that flow's contract is "run the printed command, no improvisation" — a

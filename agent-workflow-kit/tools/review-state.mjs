@@ -93,9 +93,9 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { detectBackends, READY } from './detect-backends.mjs';
+import { detectBackends } from './detect-backends.mjs';
 import { isDirectRun } from './direct-run.mjs';
-import { resolveActivityRecipe, DISPLAY_ALIASES, requiredBackendsForConfiguredRecipe } from './recipes.mjs';
+import { resolveActivityRecipe, DISPLAY_ALIASES, requiredBackendsForConfiguredRecipe, composeReadiness } from './recipes.mjs';
 import { CONFIG_REL, fail, loadConfig } from './orchestration-config.mjs';
 import { resolveFlowStorePath, readFlowStore, deriveFlowOwner, readPlanFrontmatterId } from './flow-store.mjs';
 import { CHAIN_KIND, authoritativeFlowRecords } from './flow-record.mjs';
@@ -309,16 +309,16 @@ export const degradeRecordSet = ({ cwd, env = process.env, fingerprint }) => {
 // work-tree ROOT when one exists — the fingerprint is root-anchored, so a subdirectory invocation
 // must read the same config/plans or a dirty unreceipted tree could false-PASS as "no plan in
 // flight". Outside a git tree the cwd is the only anchor (and --check exits 0).
-export const buildState = ({ cwd, env = process.env, detect = detectBackends, lstat = lstatSync, readFile = readFileSync } = {}) => {
+export const buildState = ({ cwd, env = process.env, detect = detectBackends, surveyVehicle, lstat = lstatSync, readFile = readFileSync } = {}) => {
   const root = gitLine(['rev-parse', '--show-toplevel'], cwd) ?? cwd;
   const { config, source: configSource } = loadConfig(root);
-  let detection = [];
+  // A bridge-detector throw reaches the hook, never a catch that would also lose the surveyed
+  // executor vehicle: bridge readiness goes unknown (fail closed below), the carrier stays known.
   let detectionWarning = null;
-  try {
-    detection = detect();
-  } catch (err) {
-    detectionWarning = `backend detection failed (${(err && err.message) || err}) — readiness unknown.`;
-  }
+  const onDetectError = (err) => {
+    detectionWarning = `backend detection failed (${(err && err.message) || err}) — bridge readiness unknown.`;
+  };
+  const detection = composeReadiness(root, { detect, surveyVehicle, onDetectError });
   // The resolver stays for DISPLAY/diagnostics only; the OBLIGATIONS come from the configured
   // recipe (never the readiness-degraded effective one — no silent solo).
   const resolved = resolveActivityRecipe({ config: config ?? {}, readiness: detection, activity: ACTIVITY, slot: SLOT });
@@ -439,7 +439,6 @@ export const buildState = ({ cwd, env = process.env, detect = detectBackends, ls
     degradedExempt,
     maskedUntracked: countNeverCommittableUntracked(cwd, { lstat }),
     detectionWarning,
-    anyReviewerReady: detection.some((b) => b.readiness === READY),
     flowPresent,
     flowArmed,
     flowBrokenReason,
@@ -733,7 +732,7 @@ export const main = (argv, ctx = {}) => {
     if (argv.includes('--help') || argv.includes('-h')) return { code: 0, stdout: HELP, stderr: '' };
     const unknown = argv.find((a) => !KNOWN_ARGS.has(a));
     if (unknown !== undefined) throw fail(2, `unknown argument: ${unknown}`);
-    const state = buildState({ cwd, env, detect, lstat: ctx.lstat, readFile: ctx.readFile });
+    const state = buildState({ cwd, env, detect, surveyVehicle: ctx.surveyVehicle, lstat: ctx.lstat, readFile: ctx.readFile });
     const check = decideCheck(state);
     // The mask advisory is NON-FAILING by contract: one notice line, never an exit-code arm.
     const advisory = maskAdvisoryLine(state);

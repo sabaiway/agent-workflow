@@ -47,7 +47,7 @@ pointers are the **three empty slots** the composition root fills — never auth
 | Visibility / conversational-language / agent-attribution contracts | **memory** | the three `AGENTS.md` blocks |
 | Deployment-lineage stamp | **memory** | `docs/ai/.memory-version` |
 | Plan shape (goal and boundary, module ledger, verification), lifecycle, `queue.md`, mandatory Cleanup | **methodology** (not this skill) | the empty `workflow:methodology` slot — filled by the composition root |
-| Orchestration recipes (Solo / Reviewed / Council / Delegated) | **methodology engine** (not this skill) | the empty `workflow:orchestration` slot — filled by the composition root |
+| Orchestration recipes (Solo / Reviewed / Council / Delegated / Subagent) | **methodology engine** (not this skill) | the empty `workflow:orchestration` slot — filled by the composition root |
 | Autonomy-policy read contract (`docs/ai/autonomy.json`) | **methodology engine** (not this skill) | the empty `workflow:autonomy` slot — filled by the composition root |
 | Per-project recipe **CONFIG** (which recipe each activity/slot uses) | **memory** seeds an *editable default* | `docs/ai/orchestration.json` (agent-writable via the composition root's `set-recipe` writer, or hand-edited; the recipe **canon** + the slot **vocabulary** live in the engine / composition root, never here) |
 | Per-project **gate declaration** (which verification commands must be green) | **memory** seeds an *editable default* | `docs/ai/gates.json` (hand-editable; an empty list as shipped — the project declares its own commands; the **runner** lives in the composition root, never here) |

@@ -59,7 +59,7 @@ describe('orchestration-config — loadConfig + validateConfig', () => {
   });
 
   it('schema-invalid (recipe not allowed for slot) → fail(1)', () => {
-    assert.throws(() => validateConfig({ 'plan-authoring': { review: 'delegated' } }), (e) => e.exitCode === 1 && /invalid recipe "delegated" for review slot/.test(e.message));
+    assert.throws(() => validateConfig({ 'plan-authoring': { review: 'delegated' } }), (e) => e.exitCode === 1 && /invalid value "delegated" for review slot/.test(e.message));
   });
 
   it('unknown activity / unknown slot / non-string _README → fail(1)', () => {
@@ -75,9 +75,8 @@ describe('orchestration-config — loadConfig + validateConfig', () => {
 });
 
 // ── characterization: the unknown-top-level-key refusal (the lagging-kit failure shape) ──
-// A kit that predates a reserved top-level key sees it as an unknown activity: the config LOAD
-// fails loudly (exit 1), reddening every consumer surface that shares loadConfig. Pinned green on
-// the validator as-is — this IS the documented behavior a pre-flow kit exhibits on a `flow` block.
+// A kit predating a reserved top-level key sees it as an unknown activity: the config LOAD fails
+// loudly, reddening every consumer that shares loadConfig. This IS a pre-flow kit's behavior.
 describe('orchestration-config — unknown-top-level-key characterization (lagging-kit failure shape)', () => {
   let cwd;
   beforeEach(() => {
@@ -101,12 +100,9 @@ describe('orchestration-config — unknown-top-level-key characterization (laggi
 
 // ── parseOp ≡ validateConfig accept/reject (the ONE shared slot/recipe validity table) ──
 describe('orchestration-config — parseOp (typed, fully-qualified) + shared validity', () => {
-  it('parses a valid --set into a typed record', () => {
+  it('parses a valid --set and a valid --unset into typed records', () => {
     assert.deepEqual(parseOp('set', 'plan-authoring.review=council'), { kind: 'set', activity: 'plan-authoring', slot: 'review', recipe: 'council' });
     assert.deepEqual(parseOp('set', 'plan-execution.execute=delegated'), { kind: 'set', activity: 'plan-execution', slot: 'execute', recipe: 'delegated' });
-  });
-
-  it('parses a valid --unset into a typed record', () => {
     assert.deepEqual(parseOp('unset', 'plan-execution.review'), { kind: 'unset', activity: 'plan-execution', slot: 'review' });
   });
 
@@ -114,24 +110,23 @@ describe('orchestration-config — parseOp (typed, fully-qualified) + shared val
     assert.throws(() => parseOp('set', 'review=council'), (e) => e.exitCode === 2 && /name the activity/.test(e.message));
   });
 
-  it('rejects unknown activity / unknown slot / invalid recipe-for-slot (exit 2)', () => {
+  it('rejects unknown activity / unknown slot / invalid value-for-slot (exit 2)', () => {
     assert.throws(() => parseOp('set', 'plan-foo.review=council'), (e) => e.exitCode === 2 && /unknown activity "plan-foo"/.test(e.message));
     assert.throws(() => parseOp('set', 'plan-authoring.execute=delegated'), (e) => e.exitCode === 2 && /unknown slot "execute"/.test(e.message));
-    assert.throws(() => parseOp('set', 'plan-authoring.review=delegated'), (e) => e.exitCode === 2 && /invalid recipe "delegated" for review slot/.test(e.message));
+    assert.throws(() => parseOp('set', 'plan-authoring.review=delegated'), (e) => e.exitCode === 2 && /invalid value "delegated" for review slot/.test(e.message));
   });
 
   it('rejects a --set with no recipe, and a --unset with a stray recipe (exit 2)', () => {
     assert.throws(() => parseOp('set', 'plan-authoring.review='), (e) => e.exitCode === 2);
     assert.throws(() => parseOp('set', 'plan-authoring.review'), (e) => e.exitCode === 2);
-    assert.throws(() => parseOp('unset', 'plan-authoring.review=solo'), (e) => e.exitCode === 2 && /without a recipe/.test(e.message));
+    assert.throws(() => parseOp('unset', 'plan-authoring.review=solo'), (e) => e.exitCode === 2 && /without a value/.test(e.message));
   });
 
-  // Drift table — parseOp('set') and validateConfig MUST agree on accept/reject for every (activity,
-  // slot, recipe): both route through the one shared validity table. recipeValidForSlot is the predicate.
+  // parseOp('set') and validateConfig MUST agree on accept/reject for every (activity, slot, recipe).
   it('parseOp(set) accept/reject ≡ validateConfig accept/reject over the full matrix', () => {
-    const activities = ['plan-authoring', 'plan-execution', 'plan-foo'];
-    const slots = ['review', 'execute', 'bogus'];
-    const recipes = ['solo', 'reviewed', 'council', 'delegated', 'nope'];
+    const activities = ['plan-authoring', 'plan-execution', 'routine', 'plan-foo'];
+    const slots = ['review', 'execute', 'author', 'carrier', 'parallel', 'bogus'];
+    const recipes = ['solo', 'reviewed', 'council', 'delegated', 'subagent', 'on', 'off', 'nope'];
     for (const a of activities) {
       for (const s of slots) {
         for (const r of recipes) {
@@ -150,6 +145,40 @@ describe('orchestration-config — parseOp (typed, fully-qualified) + shared val
   it('assertSlotRecipe is the shared validator (exit code is parameterized)', () => {
     assert.doesNotThrow(() => assertSlotRecipe('plan-authoring', 'review', 'council'));
     assert.throws(() => assertSlotRecipe('plan-authoring', 'review', 'delegated', 1), (e) => e.exitCode === 1);
+  });
+});
+
+// ── the three activities, their typed slots and each slot's value set (AD-124) ──
+describe('orchestration-config — the carrier surface validates (spec:carriers/S3)', () => {
+  it('accepts a subagent carrier in every carrier-typed and execute-typed slot, and parallel on|off', () => {
+    for (const config of [
+      { 'plan-authoring': { author: 'subagent' } },
+      { 'plan-execution': { execute: 'subagent' } },
+      { routine: { carrier: 'subagent' } },
+      { routine: { carrier: 'subagent', parallel: 'off' } },
+    ]) {
+      assert.deepEqual(validateConfig(config), config, JSON.stringify(config));
+    }
+  });
+
+  it('refuses a value outside its slot, an unknown slot and an unknown activity with exit 1', () => {
+    const refusal = (config, pattern) =>
+      assert.throws(() => validateConfig(config), (e) => e.exitCode === 1 && pattern.test(e.message), JSON.stringify(config));
+    refusal({ 'plan-authoring': { author: 'delegated' } }, /invalid value "delegated" for carrier slot of "plan-authoring" \(carrier accepts: solo, subagent\)/);
+    refusal({ routine: { parallel: 'maybe' } }, /invalid value "maybe" for switch slot of "routine" \(switch accepts: on, off\)/);
+    refusal({ 'plan-authoring': { review: 'subagent' } }, /invalid value "subagent" for review slot/);
+    refusal({ routine: { review: 'council' } }, /unknown slot "review" for activity "routine" \(routine slots: carrier, parallel\)/);
+    refusal({ chores: { carrier: 'solo' } }, /unknown activity "chores".*routine/);
+  });
+
+  it('a config with no routine block and no author is valid — an absent slot resolves its default', () => {
+    const legacy = { 'plan-authoring': { review: 'solo' }, 'plan-execution': { execute: 'solo', review: 'solo' } };
+    assert.deepEqual(validateConfig(legacy), legacy);
+    const readiness = [{ name: 'executor', readiness: 'missing', vehicle: { state: 'missing', reason: null } }];
+    for (const [activity, slot, expected] of [['plan-authoring', 'author', 'solo'], ['routine', 'carrier', 'solo'], ['routine', 'parallel', 'on']]) {
+      const r = resolveActivityRecipe({ config: legacy, readiness, activity, slot });
+      assert.deepEqual([r.recipe, r.source], [expected, 'default'], `${activity}.${slot}`);
+    }
   });
 });
 
@@ -176,58 +205,46 @@ describe('orchestration-config — applySetOps (pure merge)', () => {
     assert.equal(out['plan-authoring'].review, 'reviewed');
   });
 
-  it('empty {} base + a real change + seedReadme → activity added AND _README seeded', () => {
-    const out = applySetOps({}, [parseOp('set', 'plan-authoring.review=council')], { seedReadme: CANON_README });
-    assert.equal(out._README, CANON_README);
-    assert.equal(out['plan-authoring'].review, 'council');
+  it('an empty or absent base + a real change + seedReadme → the activity is added AND _README seeded', () => {
+    for (const base of [{}, null]) {
+      const out = applySetOps(base, [parseOp('set', 'plan-authoring.review=council')], { seedReadme: CANON_README });
+      assert.deepEqual(out, { _README: CANON_README, 'plan-authoring': { review: 'council' } }, JSON.stringify(base));
+    }
   });
 
-  it('absent (null) base behaves like {}', () => {
-    const out = applySetOps(null, [parseOp('set', 'plan-authoring.review=council')], { seedReadme: CANON_README });
-    assert.equal(out['plan-authoring'].review, 'council');
-    assert.equal(out._README, CANON_README);
+  it('overwrites an existing slot value, but a no-op set seeds no _README (change-gated)', () => {
+    const overwritten = applySetOps({ 'plan-authoring': { review: 'solo' } }, [parseOp('set', 'plan-authoring.review=council')]);
+    assert.equal(overwritten['plan-authoring'].review, 'council');
+    const noop = applySetOps({ 'plan-authoring': { review: 'solo' } }, [parseOp('set', 'plan-authoring.review=solo')], { seedReadme: CANON_README });
+    assert.deepEqual(noop, { 'plan-authoring': { review: 'solo' } }, 'no change → no spurious _README seed');
   });
 
-  it('overwrites an existing slot value', () => {
-    const out = applySetOps({ 'plan-authoring': { review: 'solo' } }, [parseOp('set', 'plan-authoring.review=council')]);
-    assert.equal(out['plan-authoring'].review, 'council');
-  });
-
-  it('a no-op set (slot already equals) does NOT seed _README (change-gated)', () => {
-    const out = applySetOps({ 'plan-authoring': { review: 'solo' } }, [parseOp('set', 'plan-authoring.review=solo')], { seedReadme: CANON_README });
-    assert.equal(out._README, undefined, 'no change → no spurious _README seed');
-    assert.deepEqual(out, { 'plan-authoring': { review: 'solo' } });
-  });
-
-  it('unset removes a slot; an emptied activity is dropped (sparse)', () => {
+  it('unset removes a slot, drops an emptied activity (sparse), and is a no-op on an absent slot', () => {
     const out = applySetOps({ 'plan-authoring': { review: 'council' }, 'plan-execution': { execute: 'delegated' } }, [parseOp('unset', 'plan-authoring.review')]);
-    assert.equal(out['plan-authoring'], undefined, 'emptied activity dropped');
-    assert.equal(out['plan-execution'].execute, 'delegated');
+    assert.deepEqual(out, { 'plan-execution': { execute: 'delegated' } }, 'emptied activity dropped');
+    assert.deepEqual(applySetOps({}, [parseOp('unset', 'plan-authoring.review')], { seedReadme: CANON_README }), {});
   });
 
-  it('unset of an absent slot is a no-op (no seed, nothing added)', () => {
-    const out = applySetOps({}, [parseOp('unset', 'plan-authoring.review')], { seedReadme: CANON_README });
-    assert.deepEqual(out, {});
-  });
-
-  it('re-validates the merged result (loud on an invalid op slipping through)', () => {
-    // A hand-built op that bypasses the parser must still be rejected by the post-merge validateConfig.
+  it('re-validates the merged result — a hand-built op bypassing the parser is still refused', () => {
     assert.throws(() => applySetOps({}, [{ kind: 'set', activity: 'plan-authoring', slot: 'review', recipe: 'delegated' }]), (e) => e.exitCode === 1);
   });
 });
 
 // ── serializeConfig — canonical 2-space, _README first, round-trip ──
 describe('orchestration-config — serializeConfig', () => {
-  it('emits _README first, 2-space, trailing newline', () => {
+  it('emits _README first, 2-space, trailing newline, and round-trips', () => {
     const out = serializeConfig({ 'plan-authoring': { review: 'solo' }, _README: 'note' });
-    assert.ok(out.startsWith('{\n  "_README": "note",'), '_README sorted first');
-    assert.ok(out.endsWith('}\n'), 'trailing newline');
     assert.equal(out, JSON.stringify({ _README: 'note', 'plan-authoring': { review: 'solo' } }, null, 2) + '\n');
-  });
-
-  it('round-trips: parse(serialize(x)) deep-equals x', () => {
     const x = { _README: 'r', 'plan-execution': { execute: 'delegated', review: 'council' } };
     assert.deepEqual(JSON.parse(serializeConfig(x)), x);
+  });
+
+  it('SEED_CONFIG keeps its two-activity shape — an older installed kit must accept the seed', () => {
+    assert.deepEqual(SEED_CONFIG, {
+      _README: CANON_README,
+      'plan-authoring': { review: 'solo' },
+      'plan-execution': { execute: 'solo', review: 'solo' },
+    });
   });
 
   it('serializeConfig(SEED_CONFIG) is byte-identical to the shipped template (kit + memory)', () => {
@@ -259,6 +276,27 @@ describe('orchestration-config — canonical refresh', () => {
     assert.match(CANON_README, /set-recipe/);
     assert.ok(!/never written for you/.test(CANON_README));
     assert.ok(KNOWN_PRIOR_README.some((p) => /never written for you/.test(p)), 'the v1 note is retained as a known prior');
+  });
+
+  it('CANON_README names the three activities, every slot, its values, the vehicle and the defaults', () => {
+    for (const [activity, def] of Object.entries(ACTIVITIES)) {
+      assert.ok(CANON_README.includes(activity), `names "${activity}"`);
+      for (const slot of Object.keys(def.slots)) assert.ok(CANON_README.includes(slot), `names the "${slot}" slot`);
+    }
+    for (const values of ['solo | reviewed | council', 'solo | delegated | subagent', 'solo | subagent', 'on | off']) {
+      assert.ok(CANON_README.includes(values), `names ${values}`);
+    }
+    assert.match(CANON_README, /composition root's `agents` writer places it/, 'subagent needs the placed executor vehicle');
+    assert.ok(!CANON_README.includes('/agent-workflow-kit'), 'the memory twin of the seed must name no sibling skill');
+    assert.match(CANON_README, /'solo' for every recipe and carrier slot, and 'on' for the parallel switch/, 'the defaults are stated per slot kind, never "everywhere"');
+  });
+
+  it('the OUTGOING note joined the known-prior set, so an existing file refreshes on the next write', () => {
+    const outgoing = KNOWN_PRIOR_README.find((p) => /set-recipe --unset/.test(p) && !/routine/.test(p));
+    assert.ok(outgoing, 'the two-activity pre-AD-124 note is retained as a known prior');
+    const refreshed = refreshReadme({ _README: outgoing, routine: { carrier: 'subagent' } });
+    assert.deepEqual([refreshed.changed, refreshed.config._README], [true, CANON_README]);
+    assert.deepEqual(refreshed.config.routine, { carrier: 'subagent' }, 'activities preserved');
   });
 
   it('refreshReadme: a prior-canonical _README is refreshed to CANON_README; a customized one is preserved', () => {
@@ -362,8 +400,7 @@ describe('orchestration-config — flow tolerate branch (FLOW-TOLERATE)', () => 
   });
 });
 
-// Green characterization of the upgrade path: refreshReadme (the rewrite `upgrade` drives) touches
-// ONLY `_README` — a present flow subtree rides through JSON-value-equal in all three cases.
+// The upgrade path: refreshReadme touches ONLY `_README`; a present flow subtree rides through.
 describe('orchestration-config — upgrade-path flow preservation (refreshReadme characterization)', () => {
   const FLOW = { schema: FLOW_SCHEMA_VERSION, future: { bytes: true } };
 

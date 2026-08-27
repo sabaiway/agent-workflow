@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { main } from './set-recipe.mjs';
-import { CONFIG_REL, CANON_README, serializeConfig, FLOW_SCHEMA_VERSION } from './orchestration-config.mjs';
+import { CONFIG_REL, CANON_README, KNOWN_PRIOR_README, serializeConfig, FLOW_SCHEMA_VERSION } from './orchestration-config.mjs';
 import { READY, NEEDS_SKILL } from './detect-backends.mjs';
 
 const CODEX = 'codex-cli-bridge';
@@ -13,6 +13,7 @@ const detect = (codex, agy) => () => [
   { name: CODEX, readiness: codex },
   { name: AGY, readiness: agy },
 ];
+const survey = (state) => () => ({ state, reason: state === 'unusable' ? 'a symlink' : null, rel: '.claude/agents/executor.md' });
 
 let cwd;
 beforeEach(() => {
@@ -23,7 +24,8 @@ afterEach(() => rmSync(cwd, { recursive: true, force: true }));
 
 const write = (json) => writeFileSync(join(cwd, CONFIG_REL), json);
 const read = () => readFileSync(join(cwd, CONFIG_REL), 'utf8');
-const run = (argv, { codex = READY, agy = READY } = {}) => main(argv, { cwd, detect: detect(codex, agy) });
+const run = (argv, { codex = READY, agy = READY, vehicle = 'missing' } = {}) =>
+  main(argv, { cwd, detect: detect(codex, agy), surveyVehicle: survey(vehicle) });
 
 describe('set-recipe — arg parsing (usage → exit 2)', () => {
   it('a bare recipe (no activity) → exit 2 (name the activity)', () => {
@@ -31,7 +33,7 @@ describe('set-recipe — arg parsing (usage → exit 2)', () => {
     assert.equal(r.code, 2);
     assert.match(r.stderr, /name the activity/);
   });
-  it('unknown slot / invalid recipe-for-slot → exit 2', () => {
+  it('unknown slot / invalid value-for-slot → exit 2', () => {
     assert.equal(run(['--set', 'plan-authoring.execute=delegated']).code, 2);
     assert.equal(run(['--set', 'plan-authoring.review=delegated']).code, 2);
   });
@@ -78,7 +80,7 @@ describe('set-recipe — preview by default (writes NOTHING)', () => {
     const r = run([]);
     assert.equal(r.code, 0);
     assert.match(r.stdout, /plan-authoring/);
-    assert.match(r.stdout, /--set <activity>\.<slot>=<recipe>/);
+    assert.match(r.stdout, /--set <activity>\.<slot>=<value>/);
   });
 });
 
@@ -184,6 +186,13 @@ describe('set-recipe — detection failure degrades, never blocks (exit 0)', () 
     assert.match(r.stdout, /backend detection failed/);
     assert.equal(JSON.parse(read())['plan-authoring'].review, 'council', 'the config write is readiness-independent');
   });
+
+  it('the carrier survives the throw: a placed vehicle still previews routine.carrier=subagent as subagent', () => {
+    const r = main(['--set', 'routine.carrier=subagent'], { cwd, detect: throwingDetect, surveyVehicle: survey('placed') });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /backend detection failed/, 'the bridge half is still reported as unknown');
+    assert.match(r.stdout, /effective here: subagent/, 'a bridge detector failure never costs the carrier');
+  });
 });
 
 describe('set-recipe — post-write active-recipe echo (AD-038 discovery)', () => {
@@ -284,4 +293,100 @@ describe('set-recipe — --json schema + readiness permutations', () => {
       assert.equal(j.changed[0].degradedFrom, degraded ? 'council' : null);
     });
   }
+});
+
+describe('set-recipe — every slot of the three activities [spec:carriers/S4]', () => {
+  const roundTrip = (qualified, value, { vehicle = 'placed', effective = value } = {}) => {
+    const [activity, slot] = qualified.split('.');
+    const preview = run(['--set', `${qualified}=${value}`], { vehicle });
+    assert.equal(preview.code, 0, preview.stderr);
+    assert.match(preview.stdout, new RegExp(`${qualified.replace('.', '\\.')}: \\(computed default\\) → ${value}`));
+    assert.match(preview.stdout, new RegExp(`effective here: ${effective}`));
+    assert.equal(existsSync(join(cwd, CONFIG_REL)), false, 'a preview writes nothing');
+
+    const wrote = run(['--set', `${qualified}=${value}`, '--write'], { vehicle });
+    assert.equal(wrote.code, 0, wrote.stderr);
+    assert.equal(JSON.parse(read())[activity][slot], value, `${qualified} is on disk`);
+
+    const unset = run(['--unset', qualified, '--write'], { vehicle });
+    assert.equal(unset.code, 0, unset.stderr);
+    assert.equal(JSON.parse(read())[activity]?.[slot], undefined, `${qualified} is back to its default`);
+    return unset;
+  };
+
+  it('plan-authoring.author carries a subagent and unsets back to solo', () => {
+    const unset = roundTrip('plan-authoring.author', 'subagent');
+    assert.match(unset.stdout, /effective here: solo/);
+  });
+
+  it('plan-execution.execute accepts subagent beside delegated', () => {
+    roundTrip('plan-execution.execute', 'subagent');
+  });
+
+  it('routine.carrier is writable like any other slot', () => {
+    roundTrip('routine.carrier', 'subagent');
+  });
+
+  it('routine.parallel=off is a flag: it writes, unsets, and never talks about degradation', () => {
+    const unset = roundTrip('routine.parallel', 'off', { vehicle: 'missing' });
+    assert.match(unset.stdout, /effective here: on/, 'the computed default for the switch is on');
+    const preview = run(['--set', 'routine.parallel=off'], { vehicle: 'missing' });
+    assert.doesNotMatch(preview.stdout, /degrade/i, 'a switch slot never degrades');
+  });
+});
+
+describe('set-recipe — a subagent preview is honest about the executor vehicle', () => {
+  it('a placed vehicle previews subagent with no degradation', () => {
+    const r = run(['--set', 'routine.carrier=subagent'], { vehicle: 'placed' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /effective here: subagent/);
+    assert.doesNotMatch(r.stdout, /degrade/i);
+  });
+
+  it('a missing vehicle previews solo and names the apply command', () => {
+    const r = run(['--set', 'routine.carrier=subagent'], { vehicle: 'missing' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /effective here: solo \(requested subagent → degraded/);
+    assert.match(r.stdout, /\/agent-workflow-kit agents/, 'the reason names the writer that places the vehicle');
+  });
+
+  it('the post-write echo resolves against the same readiness (a placed vehicle carries)', () => {
+    const r = run(['--set', 'plan-execution.execute=subagent', '--write'], { vehicle: 'placed' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /plan-execution\.execute = subagent \(configured/);
+  });
+});
+
+describe('set-recipe — a value outside the slot list is a usage error naming the accepted values', () => {
+  it('routine.parallel=maybe → exit 2 naming on|off', () => {
+    const r = run(['--set', 'routine.parallel=maybe']);
+    assert.equal(r.code, 2);
+    assert.match(r.stderr, /switch accepts: on, off/);
+  });
+
+  it('plan-authoring.author=delegated → exit 2 naming solo|subagent', () => {
+    const r = run(['--set', 'plan-authoring.author=delegated']);
+    assert.equal(r.code, 2);
+    assert.match(r.stderr, /carrier accepts: solo, subagent/);
+  });
+});
+
+describe('set-recipe — a known-prior _README refreshes on a touched write', () => {
+  it('the outgoing canonical note is replaced by the current one (a customization stays)', () => {
+    write(serializeConfig({ _README: KNOWN_PRIOR_README.at(-1), 'plan-execution': { execute: 'solo' } }));
+    const r = run(['--set', 'routine.carrier=subagent', '--write'], { vehicle: 'placed' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(JSON.parse(read())._README, CANON_README);
+  });
+});
+
+describe('set-recipe — --help lists the registry, not a hand-typed list', () => {
+  it('names every activity with its slots and every slot type with its values', () => {
+    const r = run(['--help']);
+    assert.equal(r.code, 0);
+    assert.match(r.stdout, /plan-authoring → author, review/);
+    assert.match(r.stdout, /routine → carrier, parallel/);
+    assert.match(r.stdout, /carrier slots accept solo \| subagent/);
+    assert.match(r.stdout, /switch slots accept on \| off/);
+  });
 });

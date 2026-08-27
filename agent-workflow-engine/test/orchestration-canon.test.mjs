@@ -8,12 +8,12 @@ import { fileURLToPath } from 'node:url';
 // executable dispatch in tools/recipes.mjs and pins these files by a cross-package parity guard).
 // These tests guard the two shapes the kit relies on: the bounded one-line slot fragment (injected
 // into a deployed AGENTS.md, so it must stay one marker-free line under the cap budget) and the full
-// reference (must name all four recipe ids so the parity guard and a reader both find them).
+// reference (must name all five recipe ids so the parity guard and a reader both find them).
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SLOT = join(ROOT, 'references', 'orchestration-slot.md');
 const REFERENCE = join(ROOT, 'references', 'orchestration.md');
 
-const RECIPE_IDS = ['solo', 'reviewed', 'council', 'delegated'];
+const RECIPE_IDS = ['solo', 'reviewed', 'council', 'delegated', 'subagent'];
 
 // A `## <n>. <heading>` section: the heading line through the line before the next `## ` (or EOF).
 const sectionFrom = (text, headingRe) => {
@@ -55,7 +55,7 @@ describe('engine orchestration-slot.md — bounded one-line fragment', () => {
     assert.ok(!slot.includes('references/orchestration.md'), 'the slot must never point at the engine-internal reference (absent from a user project)');
   });
 
-  it('names all four recipes', () => {
+  it('names all five recipes', () => {
     const lower = slot.toLowerCase();
     for (const id of RECIPE_IDS) assert.ok(lower.includes(id), `the slot fragment names the "${id}" recipe`);
   });
@@ -73,7 +73,7 @@ describe('engine orchestration.md — canonical recipe reference', () => {
     assert.ok(reference.length > 500, 'the canonical reference must carry real content');
   });
 
-  it('names all four recipe ids verbatim (the kit parity guard reads them here)', () => {
+  it('names all five recipe ids verbatim (the kit parity guard reads them here)', () => {
     const lower = reference.toLowerCase();
     for (const id of RECIPE_IDS) assert.ok(lower.includes(id), `the reference names the "${id}" recipe`);
   });
@@ -160,5 +160,51 @@ describe('engine orchestration.md — canonical recipe reference', () => {
     assert.match(flat, /delegated backends the policy is informational/i, 'the informational-for-backends honesty note');
     assert.match(flat, /set-autonomy/, 'routes to the policy writer');
     assert.match(flat, /red-line commands keep their asks at every level/i, 'red-lines never move');
+  });
+
+  it('\u00a71 names WHO carries a step \u2014 the orchestrator, a bridge backend, or a subagent from the placed vehicle', () => {
+    const flat1 = sectionFrom(reference, /^## 1\. /).replace(/\s+/g, ' ');
+    assert.match(flat1, /who carries a step/i, '\u00a71 opens on the carrier, not on the backend alone');
+    assert.match(flat1, /the \*\*orchestrator\*\* itself \(Solo\)/, 'the orchestrator is a carrier');
+    assert.match(flat1, /a \*\*bridge backend\*\* \(Reviewed \/ Council \/ Delegated\)/, 'a bridge backend is a carrier');
+    assert.match(flat1, /\*\*full-tool frontier subagent\*\* dispatched from the placed executor vehicle \(Subagent\)/, 'a subagent is a carrier');
+    assert.match(flat1, /every other carrier is \*\*advisory or delegated, never autonomous, and never commits\*\*/, 'the carrier bar replaces the backend-only bar');
+  });
+
+  it('spec:carriers/S9 \u2014 \u00a72 lists Subagent as the fifth recipe with its load-bearing limits', () => {
+    const flat2 = sectionFrom(reference, /^## 2\. /).replace(/\s+/g, ' ');
+    assert.match(flat2, /\*\*Subagent\*\* \(`subagent`\)/, '\u00a72 carries the Subagent row with its id');
+    assert.match(flat2, /bounded, file-disjoint\*\* slice/, 'the slice is bounded and file-disjoint');
+    assert.match(flat2, /full-tool frontier subagent/, 'the carrier is a full-tool frontier subagent');
+    assert.match(flat2, /verifies the returned slice by running its suites/, 'the orchestrator verifies by running the suites');
+    assert.match(flat2, /the folds, the gates, the release documents, the asks and the \*\*one commit\*\*/, 'what the orchestrator keeps');
+    assert.match(flat2, /never a review backend/, 'never a review backend');
+    assert.match(flat2, /never a bridge substitute/, 'never a bridge substitute');
+    assert.match(flat2, /never told to commit/, 'never told to commit');
+    assert.match(flat2, /\*\*degrades to Solo\*\*/, 'degrades to Solo');
+  });
+
+  it('the Subagent readiness is the vehicle FILE \u2014 \u00a74 degrades it to Solo, \u00a75 refuses to claim the host', () => {
+    const flat4 = sectionFrom(reference, /^## 4\. /).replace(/\s+/g, ' ');
+    assert.match(flat4, /\*\*Subagent \u2192 Solo\.\*\* The executor vehicle is `missing` or `unusable`/, '\u00a74 carries the Subagent degrade with its reason');
+    assert.match(flat4, /`\.claude\/agents\/executor\.md`/, '\u00a74 names the vehicle file readiness is read from');
+    const flat5 = sectionFrom(reference, /^## 5\. /).replace(/\s+/g, ' ');
+    assert.match(flat5, /Subagent carrier is a Claude Code lane/, '\u00a75 states the lane honestly');
+    assert.match(flat5, /readiness is the vehicle FILE, never the host/, 'readiness is the file, never the host');
+    assert.match(flat5, /instruction the orchestrator follows by hand/, 'an undispatchable host makes the render an instruction');
+    assert.match(flat5, /never reported as a subagent dispatch/, 'and it is never reported as a dispatch');
+  });
+
+  it('the retired backend-only wording cannot return (the \u00a72 heading, the \u00a76 commit sentence)', () => {
+    assert.ok(!reference.includes('## 2. The four recipes'), '\u00a72 is the five-recipe table, never the four-recipe one');
+    const flat = reference.replace(/\s+/g, ' ');
+    assert.ok(!flat.includes('No recipe makes a backend write to the repo or create a commit.'), '\u00a76 bounds every carrier, not the backend alone');
+    assert.ok(!flat.includes('a backend never writes to the repo at all'), '\u00a76 never claims a delegated backend does not edit \u2014 it edits in its sandbox');
+    assert.ok(flat.includes('No recipe lets a carrier commit or perform a git write: a review backend reads and returns findings; a delegated backend edits inside its own sandbox and returns a diff the orchestrator reviews; a subagent edits only the files its brief names \u2014 and the orchestrator alone stages and commits.'), '\u00a76 states the three carriers and the one committer');
+    assert.ok(flat.includes('spends no bridge quota (it runs on the host\u2019s own model and consumes that model\u2019s quota and cost)') || flat.includes("spends no bridge quota (it runs on the host's own model and consumes that model's quota and cost)"), '\u00a71 names the executor\u2019s real cost');
+    assert.ok(!flat.includes('spends no subscription quota'), 'the executor is never claimed free');
+    assert.ok(flat.includes('A routine slice is classified first: a read-only one rides a placed read-only vehicle (or is carried Solo with a stated reason when that vehicle is absent); a write-capable one rides the executor.'), '§2 never sends read-only work to the executor');
+    assert.ok(flat.includes('a customized file is kept; an unusable path must be fixed or removed first, then placed'), '§4 states what the apply command does and does not repair');
+    assert.ok(!flat.includes('puts the vehicle back'), 'the apply command is never claimed to repair an unusable path');
   });
 });

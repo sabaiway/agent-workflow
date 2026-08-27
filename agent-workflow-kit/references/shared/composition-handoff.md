@@ -19,7 +19,7 @@
 exists, run ONE command — `node ${CLAUDE_SKILL_DIR}/tools/inject-methodology.mjs reconcile
 <project>/AGENTS.md` — which reconciles **three** bounded pointers in a single atomic write: the
 **workflow-methodology** pointer (the plan → execute → review summary), the
-**orchestration-recipes** pointer (the Solo / Reviewed / Council / Delegated vocabulary, routing to
+**orchestration-recipes** pointer (the Solo / Reviewed / Council / Delegated / Subagent vocabulary, routing to
 `/agent-workflow-kit recipes`) right below it, and the **autonomy-policy** pointer (the
 `docs/ai/autonomy.json` read contract) below that. Each is **one atomic operation per slot**:
 **ensure the slot exists**

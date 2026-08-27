@@ -50,13 +50,10 @@ const D = (pair) => pair.repeat(32);
 const TS = (n) => `2026-07-30T00:00:${String(n).padStart(2, '0')}.000Z`;
 
 const chainRec = (purpose, over = {}) => ({
-  schema: FLOW_SCHEMA_VERSION, kind: 'chain', purpose, planId: 'plan-a', cycle: 1,
-  round: 1, commitEpoch: 0, owner: 'main', base: BASE, timestamp: TS(0),
-  stepId: 'step-1', fingerprint: FP, ...over,
+  schema: FLOW_SCHEMA_VERSION, kind: 'chain', purpose, planId: 'plan-a', cycle: 1, round: 1, commitEpoch: 0,
+  owner: 'main', base: BASE, timestamp: TS(0), stepId: 'step-1', fingerprint: FP, ...over,
 });
-const adoption = (over = {}) => chainRec('adoption', {
-  round: 0, stepId: null, planLabel: 'Plan A', createdAt: TS(0), planDigest: D('1a'), ...over,
-});
+const adoption = (over = {}) => chainRec('adoption', { round: 0, stepId: null, planLabel: 'Plan A', createdAt: TS(0), planDigest: D('1a'), ...over });
 const opener = (opensFrom, over = {}) => chainRec('round', { opensFrom, dispatches: [], dispositions: [], ...over });
 const refresh = (refreshedRecord, over = {}) => {
   const r = chainRec('refresh', { fingerprintBefore: D('aa'), fingerprintAfter: D('aa'), cause: 're-attest', refreshedRecord, ...over });
@@ -66,10 +63,7 @@ const refresh = (refreshedRecord, over = {}) => {
 const delta = (over = {}) => ({
   schema: FLOW_SCHEMA_VERSION, kind: 'bookkeeping-delta', fingerprintBefore: D('aa'), fingerprintAfter: D('ab'),
   path: 'docs/notes.md', contentDigest: D('cd'),
-  custodyProof: {
-    preClass: 'absent', tracked: false, headDigest: null, indexDigest: null,
-    worktreeDigest: null, maskedFingerprint: D('aa'),
-  },
+  custodyProof: { preClass: 'absent', tracked: false, headDigest: null, indexDigest: null, worktreeDigest: null, maskedFingerprint: D('aa') },
   base: BASE, timestamp: TS(0), ...over,
 });
 const coreStart = (fp, attempt, n) => ({ schema: EVIDENCE_SCHEMA_VERSION, kind: 'final-start', fingerprint: fp, attempt, timestamp: TS(n) });
@@ -77,8 +71,7 @@ const coreDegrade = (fp, n) => ({ schema: EVIDENCE_SCHEMA_VERSION, kind: 'degrad
 const coreFinal = (attempt, fp, n) => ({
   schema: EVIDENCE_SCHEMA_VERSION, kind: 'final', status: 'green', attempt, fingerprintBefore: fp, fingerprintAfter: fp,
   declared: [{ id: 'g', cmd: 'true' }], results: [{ id: 'g', ok: true, code: 0 }], integrityFailure: null,
-  evidenceHashes: { redProof: D('aa'), degrade: D('bb') }, lcovSha256: null, timestamp: TS(n),
-});
+  evidenceHashes: { redProof: D('aa'), degrade: D('bb') }, lcovSha256: null, timestamp: TS(n) });
 
 const flowReadOf = (records) => parseFlowStoreText(records.map((r) => JSON.stringify(r)).join('\n'));
 const coreReadOf = (records) => parseEvidenceText(records.map((r) => JSON.stringify(r)).join('\n'));
@@ -92,30 +85,22 @@ const F3 = 'c3'.repeat(32);
 const short = (digest) => `${digest.slice(0, 12)}…`;
 const coreRedFinal = (attempt, fp, n) => ({ ...coreFinal(attempt, fp, n), status: 'red', results: [{ id: 'g', ok: false, code: 1 }] });
 const receipt = (backend, verdict, fp, over = {}) => ({
-  schema: 1, artifact: 'code', fresh: true, probe: false, grounded: true, fingerprint: fp,
-  backend, verdict, posture: { model: 'frontier' }, delivery: 'inline', timestamp: TS(0), ...over,
-});
+  schema: 1, artifact: 'code', fresh: true, probe: false, grounded: true, fingerprint: fp, backend, verdict,
+  posture: { model: 'frontier' }, delivery: 'inline', timestamp: TS(0), ...over });
 const downMark = (backend, over = {}) => ({
   schema: FLOW_SCHEMA_VERSION, kind: 'down-mark', fingerprint: FP, backend, reason: 'quota stall',
-  expiresAt: TS(30), base: BASE, timestamp: TS(1), ...over,
-});
-const markClear = (target, backend, over = {}) => ({
-  schema: FLOW_SCHEMA_VERSION, kind: 'down-mark-clear', fingerprint: FP, backend, target, base: BASE, timestamp: TS(2), ...over,
-});
+  expiresAt: TS(30), base: BASE, timestamp: TS(1), ...over });
+const markClear = (target, backend, over = {}) => ({ schema: FLOW_SCHEMA_VERSION, kind: 'down-mark-clear', fingerprint: FP, backend, target, base: BASE, timestamp: TS(2), ...over });
 const justification = (mark, degradeRecord, over = {}) => ({
-  schema: FLOW_SCHEMA_VERSION, kind: 'degrade-justification', fingerprint: FP,
-  downMark: canonicalFlowDigest(mark), degradeDigest: canonicalFlowDigest(degradeRecord),
-  base: BASE, timestamp: TS(5), ...over,
-});
+  schema: FLOW_SCHEMA_VERSION, kind: 'degrade-justification', fingerprint: FP, base: BASE, timestamp: TS(5),
+  downMark: canonicalFlowDigest(mark), degradeDigest: canonicalFlowDigest(degradeRecord), ...over });
 const rerunCause = (attempt, fp, over = {}) => ({
   schema: FLOW_SCHEMA_VERSION, kind: 'rerun-cause', fingerprint: fp, cause: 'confirmed retry after the fix landed',
-  attempt, base: BASE, timestamp: TS(6), ...over,
-});
+  attempt, base: BASE, timestamp: TS(6), ...over });
 const override = (vetoRecord, over = {}) => ({
-  schema: FLOW_SCHEMA_VERSION, kind: 'maintainer-override', fingerprint: FP,
+  schema: FLOW_SCHEMA_VERSION, kind: 'maintainer-override', fingerprint: FP, chainRecord: D('00'), supersedes: null,
   vetoReceiptDigest: canonicalFlowDigest(vetoRecord), backend: vetoRecord.backend, verdict: vetoRecord.verdict,
-  chainRecord: D('00'), supersedes: null, base: BASE, timestamp: TS(7), ...over,
-});
+  base: BASE, timestamp: TS(7), ...over });
 const recordsOf = (recs) => {
   const read = flowReadOf(recs);
   assert.equal(read.malformed, 0, read.malformedReasons[0]);
@@ -1480,6 +1465,24 @@ describe('flow-check — computeFlowDecision (the guard-facing two-tier answer)'
     assert.equal(gate.refusals.some(unansweredRed), false, `the in-matrix gate lane reaches its fixed point: ${gate.refusals}`);
     const guard = computeFlowDecision({ cwd: root, consumer: 'commit-guard' });
     assert.ok(guard.refusals.some(unansweredRed), `the commit boundary still refuses on the strict rule: ${guard.refusals}`);
+  });
+
+  it('the obligations readiness carries the executor vehicle, which never becomes a review obligation', () => {
+    const root = makeRepo();
+    writeFileSync(resolveFlowStorePath(root, {}), `${JSON.stringify(adoption())}\n`);
+    const asked = [];
+    const decide2 = (state) => computeFlowDecision({ cwd: root, probes: { detect: () => [], surveyVehicle: (dir) => { asked.push(dir); return { state, reason: null, rel: '.claude/agents/executor.md' }; } } });
+    const placed = decide2('placed');
+    assert.equal(asked.length, 1, 'the readiness path composes the vehicle survey');
+    assert.equal(placed.armed, true);
+    assert.deepEqual(placed.refusals, decide2('missing').refusals, 'a placed executor changes no review obligation');
+  });
+
+  it('armed + a THROWING bridge detector + no configured review recipe: the undecidable coverage refuses fail-closed (the hook, not a dead catch)', () => {
+    const root = makeRepo();
+    writeFileSync(resolveFlowStorePath(root, {}), `${JSON.stringify(adoption())}\n`);
+    const d = computeFlowDecision({ cwd: root, probes: { detect: () => { throw new Error('detector down'); }, surveyVehicle: () => ({ state: 'placed', reason: null, rel: '.claude/agents/executor.md' }) } });
+    assert.ok(d.refusals.some((r) => /backend detector is down/.test(r)), `a detector failure must stay a fail-closed refusal: ${d.refusals}`);
   });
 
   it('armed + a SYMLINKED receipts store: the decision refuses fail-closed, never an empty success (RECEIPTS-READER-NOFOLLOW)', () => {

@@ -163,11 +163,16 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'references/scripts/markdown-blocks.mjs',
       // the spec reader the deployed navigator collapse imports: a drop breaks check-docs-size at load
       'references/scripts/spec-schema.mjs',
-      // the cheap-lane subagent writer + its bundled vehicles
+      // the activity/slot registry the recipe lattice and the config validator both read
+      'tools/carriers.mjs',
+      // the cheap-lane subagent writer, its READ core (recipes.mjs imports it, so a payload drop
+      // breaks the advisor at load) + the bundled vehicles
       'tools/cheap-agents.mjs',
+      'tools/cheap-agents-read.mjs',
       'references/agents/mechanical-sweep.md',
       'references/agents/changelog-skeleton.md',
       'references/agents/gate-triage.md',
+      'references/agents/executor.md',
       // the gate-approval PreToolUse hook: writer + the bundled self-contained runtime
       'tools/gate-hook.mjs',
       'references/hooks/gate-approve.mjs',
@@ -712,7 +717,17 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       probe the ensures gate on), tools/spec-adoption.mjs (the store survey + decline the advisor
     //       and status read) and tools/ack-store.mjs (the ack store's path, lanes, fingerprint and the
     //       one guarded reader, extracted from the advisor). Their *.test.mjs siblings are stripped.
-    assert.equal(packed.length, 262, `tarball file count drifted (${packed.length} ≠ 262)`);
+    // 264 = 262 + the carrier leaves (AD-124): references/agents/executor.md, the ONE full-tool
+    //       vehicle the subagent carrier resolves on, and tools/carriers.mjs, the activity/slot
+    //       registry recipes.mjs re-exports. Both also ride the NAMED list above: the carrier
+    //       degrades to solo when the vehicle is absent, so a payload drop would turn a configured
+    //       `subagent` slot into a silent solo run rather than a loud missing file, and a dropped
+    //       registry breaks recipes.mjs at load.
+    // 265 = 264 + tools/cheap-agents-read.mjs: the READ core split out of the agents writer so the
+    //       read-only advisor graph never imports a module that can create .claude/agents/. It also
+    //       rides the NAMED list above — recipes.mjs imports it, so a payload drop would break the
+    //       recipes advisor at load rather than merely shifting a number.
+    assert.equal(packed.length, 265, `tarball file count drifted (${packed.length} ≠ 265)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

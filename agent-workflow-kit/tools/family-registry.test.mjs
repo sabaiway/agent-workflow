@@ -54,9 +54,9 @@ import { READY, NEEDS_SKILL } from './detect-backends.mjs';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '../..'); // agent-workflow-kit/tools → repo root
 
-// Build classifyMember deps that present the marker, with an injectable validate/readVersion.
-// The marker probe is STAT-FIRST (existsSync swallows EACCES), so the marker presence is modeled via
-// the injected `stat` (isFile → present; throw ENOENT → absent; throw EACCES → unknown).
+// Build classifyMember deps that present the marker, with an injectable validate/readVersion. The
+// marker probe is STAT-FIRST (existsSync swallows EACCES), so presence is modeled via the injected
+// `stat` (isFile → present; throw ENOENT → absent; throw EACCES → unknown).
 const installedDeps = ({ report, version = '9.9.9', home = '/home/test' }) => ({
   stat: () => ({ isFile: () => true }),
   getenv: {},
@@ -112,8 +112,7 @@ describe('classifyMember', () => {
   });
 
   it('surfaces an EACCES marker probe as "unknown" — never masked as not-installed (stat-first)', () => {
-    // statSync THROWS EACCES (existsSync would have swallowed it into a false → 'absent' → a silent
-    // failure). The stat-first probe surfaces it as 'unknown'.
+    // statSync THROWS EACCES (existsSync would swallow it into 'absent'); stat-first says 'unknown'.
     const r = classifyMember(KIT, { stat: EACCES, getenv: {}, home: '/home/test' });
     assert.equal(r.manifestState, UNKNOWN);
     assert.equal(r.installed, false); // not removed — ownership could not be verified
@@ -138,8 +137,8 @@ describe('surveyFamily', () => {
     assert.ok(rows.every((r) => r.manifestState === NOT_INSTALLED));
   });
 
-  // Only the engine member validates as ok (its name+kind match); the others go FOREIGN under this
-  // shared validate stub — so only the engine row is eligible for the orchestration-fragment caveat.
+  // Only the engine member validates as ok (name+kind match); the others go FOREIGN under this shared
+  // validate stub, so only the engine row is eligible for the orchestration-fragment caveat.
   const engineValidate = (dir) =>
     String(dir).includes('agent-workflow-engine')
       ? { result: VALID, name: 'agent-workflow-engine', kind: 'methodology-engine', available: true }
@@ -148,8 +147,7 @@ describe('surveyFamily', () => {
   // The caveats mirror the consumers: each reads a live engine fragment (readEngineFragment) — the
   // recipes pointer (orchestration-slot.md, engine >= 1.2.0) AND the activity-procedures canon
   // (procedures.md, engine >= 1.3.0). An absent / non-file / unreadable fragment surfaces as a DISTINCT
-  // caveat in `row.caveats` (an array, so missing BOTH surfaces BOTH); a current readable
-  // fragment never gets one. Helpers below model each fragment's on-disk state independently.
+  // caveat in `row.caveats` (an array, so missing BOTH surfaces BOTH). Helpers below model each state.
   const engineDeps = (over) => ({
     exists: () => true, // SKILL.md marker present (classifyMember)
     stat: () => ({ isFile: () => true }),
@@ -160,9 +158,7 @@ describe('surveyFamily', () => {
     ...over,
   });
   // statType where each fragment is independently a readable file ('file') or absent (null); the engine
-  // dir + everything else is a 'dir'. readFileSync returns content for a present fragment.
-  // Pin the mock to the AUTHORITATIVE engine-source constants (mirrors engine-source.test.mjs), so a
-  // fragment-path rename follows here instead of silently passing against the old basename.
+  // dir + everything else is a 'dir'. The mock is pinned to the AUTHORITATIVE engine-source constants.
   const fragmentStat = ({ orch = 'file', aut = 'file', proc = 'file', lens = 'file', lensPriors = 'file' }) => (p) => {
     const s = String(p);
     if (s.endsWith(ORCHESTRATION_FRAGMENT_REL)) return orch;
@@ -193,8 +189,8 @@ describe('surveyFamily', () => {
   });
 
   it('an OK engine MISSING the autonomy fragment gets the autonomy caveat (only) — the reconcile would soft-skip it', () => {
-    // The realistic post-release case: every published engine predates references/autonomy-slot.md
-    // until the AD-044 Plan-4 release — status must caveat what the chained reconcile soft-skips.
+    // Every published engine predates references/autonomy-slot.md until the AD-044 Plan-4 release —
+    // status must caveat what the chained reconcile soft-skips.
     const rows = surveyFamily(engineDeps({
       readVersion: () => ({ version: '1.14.1' }),
       statType: fragmentStat({ aut: null }), // autonomy fragment ABSENT, everything else present
@@ -307,8 +303,7 @@ describe('surveyProject', () => {
     assert.equal(r.deployed, false);
     assert.equal(r.hiddenFence, false);
     assert.ok(r.stamps.every((s) => s.version === null));
-    // Re-cut with the discriminator arm: `none` here means no monolith, no store, no HOT window AND
-    // no deployed rotator — not merely "nothing matched the two old probes".
+    // `none` here means no monolith, no store, no HOT window AND no deployed rotator.
     assert.equal(r.adrLayout, 'none', 'no ADR substrate and no deployed rotator → none');
   });
 
@@ -359,8 +354,8 @@ describe('surveyProject', () => {
     writeFileSync(join(store, 'docs', 'ai', 'specs', 'index.md'), ROOT_DOC(['- [x](./x.md)']));
     writeFileSync(join(store, 'docs', 'ai', 'specs', 'x.md'), specDoc('x'));
     assert.deepEqual([specsOf(store).state, specsOf(store).live], ['adopted', 1]);
-    // A survey that THROWS (an io primitive failing outright) is the unreadable state with its reason —
-    // the read-only view never crashes and never reads a failure as "not adopted".
+    // A survey that THROWS (an io primitive failing) is the unreadable state with its reason — the
+    // read-only view never crashes and never reads a failure as "not adopted".
     const thrown = surveyProject(store, { io: { probe: () => { throw Object.assign(new Error('EIO: io failed'), { code: 'EIO' }); } } }).specs;
     assert.equal(thrown.state, 'unreadable');
     assert.match(thrown.reason, /EIO/);
@@ -369,14 +364,12 @@ describe('surveyProject', () => {
 });
 
 // ── the ADR-layout discriminator: the old-scheme tree that never rotated ──────────
-//
 // A consumer on the retired 3-tier scheme that never rotated far enough to produce a monolith read
 // `none` — no status line, no upgrade instruct, and the migration tool called their tree "a fresh
 // new-scheme tree". The discriminator is the DEPLOYED rotator's own provenance: the new-scheme file
 // names the store path, the pre-migration one does not (verified: `git show
-// 1517e4e:.../archive-decisions.mjs` contains zero occurrences of it). Never "has decisions.md,
-// lacks adr/" — that shape false-positives a tree whose NEW rotator already reds its own gate, and
-// every No-Node project.
+// 1517e4e:.../archive-decisions.mjs` contains zero occurrences of it). Never "has decisions.md, lacks
+// adr/" — that false-positives a tree whose NEW rotator already reds its gate, and every No-Node one.
 
 describe('surveyAdrLayout — the old-unrotated arm', () => {
   const dir = '/proj';
@@ -427,8 +420,8 @@ describe('surveyAdrLayout — the old-unrotated arm', () => {
 
   it('a store beside a NEW rotator is migrated; beside an OLD one it is still actionable', () => {
     assert.equal(surveyProject(dir, treeDeps({ [HOT]: '', [STORE]: null, [ROTATOR]: NEW_ROTATOR })).adrLayout, 'migrated');
-    // `upgrade` preserves an existing rotator, so an old-scheme one beside a store will write a
-    // monolith again the next time it rotates. A store on disk is not proof the crossing finished.
+    // `upgrade` preserves an existing rotator, so an old-scheme one beside a store writes a monolith
+    // again on its next rotation: a store on disk is not proof the crossing finished.
     assert.equal(surveyProject(dir, treeDeps({ [HOT]: '', [STORE]: null, [ROTATOR]: OLD_ROTATOR })).adrLayout, 'old-unrotated');
   });
 
@@ -450,10 +443,9 @@ describe('surveyAdrLayout — the old-unrotated arm', () => {
 describe('surveyAdrLayoutStrict — an error may never become an absence', () => {
   const dir = '/proj';
 
-  // The advisor cannot reuse the lenient survey: it turns every failure into `none`, which would
-  // render "flow optimal" over an unreadable old layout. The strict core propagates instead — and
-  // that is only real if the DEFAULT probe can report a failure at all (existsSync returns false
-  // for EACCES exactly as it does for a missing file, so a strict policy layered on it is vacuous).
+  // The advisor cannot reuse the lenient survey: it turns every failure into `none`, which would render
+  // "flow optimal" over an unreadable old layout. The strict core propagates instead — real only if the
+  // DEFAULT probe can report a failure (existsSync returns false for EACCES as for a missing file).
   const throwing = (code) => () => {
     throw Object.assign(new Error(code), { code });
   };
@@ -496,16 +488,15 @@ describe('surveyAdrLayoutStrict — an error may never become an absence', () =>
 // ── surveyFamily: the memory offline caveat (Step 2.2) ─────────────────────────────
 
 describe('surveyFamily — memory offline caveat (orchestration template probe)', () => {
-  // Only the memory member validates as ok here; the others go FOREIGN — so only the memory row is
+  // Only the memory member validates as ok here; the others go FOREIGN, so only the memory row is
   // eligible for the orchestration-template caveat. The template probe keys on deps.exists/stat.
   const memoryValidate = (dir) =>
     String(dir).includes('agent-workflow-memory')
       ? { result: VALID, name: 'agent-workflow-memory', kind: 'memory-substrate', available: true }
       : { result: VALID, name: 'x', kind: 'x', available: true };
   const endsWithTemplate = (p) => String(p).endsWith(MEMORY_ORCH_TEMPLATE_REL);
-  // STAT-FIRST marker probe → presence is modeled via `stat`. Default: every path is a present file.
-  // Overrides make ONLY the template path absent (ENOENT) / uncheckable (EACCES) while SKILL.md markers
-  // stay present, so the memory member still classifies OK and only the template probe varies.
+  // STAT-FIRST marker probe → presence is modeled via `stat`. Default: every path is a present file;
+  // overrides make ONLY the template path absent (ENOENT) / uncheckable (EACCES).
   const memoryDeps = (templateStat) => ({
     stat: (p) => (endsWithTemplate(p) && templateStat ? templateStat() : { isFile: () => true }),
     getenv: {},
@@ -531,8 +522,7 @@ describe('surveyFamily — memory offline caveat (orchestration template probe)'
   });
 
   it('an OK memory MISSING the autonomy template gets its own offline caveat — inform, never gate (AD-044 Plan 4)', () => {
-    // The Plan-3 decision holds: detectMemory never gates on the autonomy seed; the registry
-    // caveat is the discovery mechanism instead (the recommendations advisor surfaces it).
+    // detectMemory never gates on the autonomy seed; the registry caveat is the discovery mechanism.
     const deps = {
       stat: (p) => {
         if (String(p).endsWith('references/templates/autonomy.json')) return ENOENT();
@@ -573,9 +563,8 @@ describe('surveyFamily — memory offline caveat (orchestration template probe)'
 // ── surveyFamily: the bridge freshness probe (INV-A / INV-B) ────────────────────────
 
 describe('surveyFamily — bridge freshness probe (placed vs kit-bundled mirror)', () => {
-  // Only the codex bridge validates as ok here; every other member goes FOREIGN — so only the codex
-  // row is eligible for the probe. The bundled side is modeled via deps.readFile against the
-  // resolved `<bundleRoot>/<name>/capability.json` path (both sides stay local files).
+  // Only the codex bridge validates as ok here; every other member goes FOREIGN. The bundled side is
+  // modeled via deps.readFile against `<bundleRoot>/<name>/capability.json` (both sides local files).
   const bridgeValidate = (dir) =>
     String(dir).includes('codex-cli-bridge')
       ? { result: VALID, name: 'codex-cli-bridge', kind: 'execution-backend', available: true }
@@ -649,8 +638,8 @@ describe('surveyFamily — bridge freshness probe (placed vs kit-bundled mirror)
   });
 
   it('the DEFAULT bundle root resolves the real in-repo mirror (no injection → reads bridges/<name>/capability.json)', () => {
-    // Feed the probe the REAL bundled version as the placed version: the comparison must run against
-    // the in-repo bundle via the default root and conclude checked-current (version-agnostic).
+    // Feed the probe the REAL bundled version as the placed one: the comparison runs against the
+    // in-repo bundle via the default root and concludes checked-current (version-agnostic).
     const realBundled = JSON.parse(
       readFileSync(resolve(REPO_ROOT, 'agent-workflow-kit', 'bridges', 'codex-cli-bridge', 'capability.json'), 'utf8'),
     ).version;
@@ -665,9 +654,8 @@ describe('surveyFamily — bridge freshness probe (placed vs kit-bundled mirror)
   });
 
   it('a version read that THROWS (present-but-unreadable SKILL.md, EACCES after validate) never crashes — placed-side unknown', () => {
-    // The real readAuthoritativeVersion throws on an existing-but-unreadable SKILL.md: stat needs no
-    // read permission, readFileSync does. The survey must degrade to the placed-side unknown note
-    // (INV-B), never crash the read-only status.
+    // The real readAuthoritativeVersion throws on an existing-but-unreadable SKILL.md: stat needs no read
+    // permission, readFileSync does. The survey degrades to the placed-side unknown note (INV-B).
     const e = codexEnvelope({ ...bridgeDeps({}), readVersion: () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); } });
     assert.deepEqual(e.refresh, { behind: false, recommend: null, freshness: 'unknown' });
     assert.match(e.notes[0], /installed copy has no readable version/);
@@ -678,8 +666,7 @@ describe('surveyFamily — bridge freshness probe (placed vs kit-bundled mirror)
 // ── the bridge freshness probe, end-to-end: REAL validator + REAL files (no mocks) ────────────────
 // Round-2 council regression: the unit fixtures above inject validate/readVersion; this block runs the
 // probe through the real validateManifest + readAuthoritativeVersion over real temp files (the
-// acceptance-fixture shape: the in-repo bundled bridge copied and downgraded), so the mocked pair can
-// never drift from what the real validator accepts.
+// acceptance-fixture shape: the in-repo bundled bridge copied and downgraded), so the mocks cannot drift.
 
 describe('surveyFamily — bridge freshness probe against the REAL validator + real files', () => {
   const bundledSrc = resolve(REPO_ROOT, 'agent-workflow-kit', 'bridges', 'codex-cli-bridge');
@@ -897,6 +884,19 @@ describe('surveyRecipes — engine-free effective recipe per slot', () => {
     const r = surveyRecipes('/p', { detect: detect(READY, READY), lstat: () => ({}), readFile: () => '{ not json' });
     assert.ok(r.error);
     assert.match(r.error, /orchestration\.json/);
+  });
+
+  it('the three activities resolve, and a carrier slot follows the executor vehicle (placed → subagent, missing → solo)', () => {
+    const survey = (state) => surveyRecipes('/p', {
+      detect: detect(READY, READY), lstat: () => ({}), readFile: () => JSON.stringify({ routine: { carrier: 'subagent' } }),
+      surveyVehicle: () => ({ state, reason: null, rel: '.claude/agents/executor.md' }),
+    });
+    const placed = survey('placed');
+    assert.deepEqual(Object.keys(placed.activities), ['plan-authoring', 'plan-execution', 'routine']);
+    assert.deepEqual([placed.activities.routine.carrier.recipe, placed.activities.routine.parallel.recipe], ['subagent', 'on']);
+    assert.equal(placed.activities['plan-authoring'].author.recipe, 'solo', 'placing the vehicle never flips a default');
+    const gone = survey('missing');
+    assert.deepEqual([gone.activities.routine.carrier.recipe, gone.activities.routine.carrier.degradedFrom], ['solo', 'subagent']);
   });
 
   it('a detector failure floors recipes at solo BUT surfaces detectError (no silent failure)', () => {

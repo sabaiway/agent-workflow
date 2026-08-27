@@ -12,9 +12,8 @@ import { allowedLabel } from './bridge-settings-read.mjs';
 import { SOURCE_SIZE_CONFIG_REL, SOURCE_SIZE_WHY } from './source-size-core.mjs';
 
 // Host-independent fixtures: a temp cwd for the config + the REPO's OWN engine via
-// AGENT_WORKFLOW_ENGINE_DIR (it ships references/procedures.md, so the live read is deterministic and
-// needs no separate engine fixture) + an INJECTED synthetic detection (ctx.detect) so the resolved
-// recipe never depends on which backends the test host happens to have installed.
+// AGENT_WORKFLOW_ENGINE_DIR (it ships references/procedures.md, so the live read is deterministic) +
+// an INJECTED detection and vehicle survey, so no resolved recipe depends on the test host.
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ENGINE_DIR = join(HERE, '..', '..', 'agent-workflow-engine');
 const CODEX = 'codex-cli-bridge';
@@ -34,16 +33,17 @@ afterEach(() => {
 });
 
 const writeConfig = (json) => writeFileSync(join(cwd, CONFIG_REL), json);
-// Run main() with the repo engine + an injected detection; config comes from the temp cwd.
-const run = (argv, { codex = READY, agy = READY } = {}) =>
-  main(argv, { cwd, env: { AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR }, detect: detect(codex, agy) });
+// Run main() with the repo engine + an injected detection and vehicle survey; config from the temp cwd.
+const vehicle = (state) => () => ({ state, reason: state === 'unusable' ? 'a symlink' : null, rel: '.claude/agents/executor.md' });
+const run = (argv, { codex = READY, agy = READY, executor = 'missing' } = {}) =>
+  main(argv, { cwd, env: { AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR }, detect: detect(codex, agy), surveyVehicle: vehicle(executor) });
 
 describe('procedures CLI — happy path (section verbatim + resolved recipe)', () => {
   it('plan-authoring prints the canon section + the resolved review recipe, exit 0', () => {
     const r = run(['plan-authoring'], { codex: READY, agy: NEEDS_SKILL });
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /## plan-authoring/);
-    assert.match(r.stdout, /Slots: review/);
+    assert.match(r.stdout, /Slots: author, review/);
     assert.match(r.stdout, /resolved recipes for "plan-authoring"/);
     assert.match(r.stdout, /review: reviewed — computed default/);
   });
@@ -91,11 +91,11 @@ describe('procedures CLI — config IO (§2.2)', () => {
     assert.match(r.stderr, new RegExp(`${CONFIG_REL}: malformed JSON`));
   });
 
-  it('schema-invalid (recipe not allowed for the slot) → loud `path: invalid recipe …`, exit 1', () => {
+  it('schema-invalid (recipe not allowed for the slot) → loud `path: invalid value …`, exit 1', () => {
     writeConfig(JSON.stringify({ 'plan-authoring': { review: 'delegated' } }));
     const r = run(['plan-authoring']);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /invalid recipe "delegated" for review slot of "plan-authoring"/);
+    assert.match(r.stderr, /invalid value "delegated" for review slot of "plan-authoring"/);
   });
 
   it('schema-invalid (unknown activity) → exit 1', () => {
@@ -120,8 +120,7 @@ describe('procedures CLI — config IO (§2.2)', () => {
   });
 
   it('a DANGLING symlink at the config path is unreadable (exit 1), NOT silently treated as absent', () => {
-    // A broken config symlink is a present-but-broken config — surface it loudly, never fall through to
-    // defaults (no-silent-failures). lstat sees the link; readFileSync follows it to a missing target.
+    // A broken config symlink is a present-but-broken config — surfaced loudly, never fallen through to defaults; lstat sees the link, readFileSync follows it to a missing target.
     symlinkSync(join(cwd, 'nowhere.json'), join(cwd, CONFIG_REL));
     const r = run(['plan-authoring']);
     assert.equal(r.code, 1);
@@ -145,7 +144,7 @@ describe('procedures CLI — usage errors → exit 2', () => {
   it('a bare --override <recipe> (no slot) → exit 2', () => {
     const r = run(['plan-authoring', '--override', 'council']);
     assert.equal(r.code, 2);
-    assert.match(r.stderr, /--override must be <slot>=<recipe>/);
+    assert.match(r.stderr, /--override must be <slot>=<value>/);
   });
 
   it('--override with an unknown slot for the activity → exit 2', () => {
@@ -157,7 +156,7 @@ describe('procedures CLI — usage errors → exit 2', () => {
   it('--override with a recipe invalid for the slot → exit 2', () => {
     const r = run(['plan-authoring', '--override', 'review=delegated']);
     assert.equal(r.code, 2);
-    assert.match(r.stderr, /invalid recipe "delegated" for review slot/);
+    assert.match(r.stderr, /invalid value "delegated" for review slot/);
   });
 
   it('a duplicate --override for the same slot → exit 2', () => {
@@ -196,10 +195,37 @@ describe('procedures CLI — override resolution (degrades loudly, still exit 0)
   });
 });
 
+describe('procedures CLI — the subagent carrier and the routine switch', () => {
+  const routine = (executor, argv = ['routine']) => {
+    writeConfig(JSON.stringify({ routine: { carrier: 'subagent' } }));
+    return run(argv, { executor });
+  };
+
+  it('a placed vehicle carries the carrier and renders ONE plain executor line; a missing one degrades to solo', () => {
+    const placed = routine('placed');
+    assert.equal(placed.code, 0, placed.stderr);
+    assert.match(placed.stdout, /carrier: subagent — from docs\/ai\/orchestration\.json/);
+    assert.match(placed.stdout, /^ {6}executor — the placed subagent vehicle \(placed\)$/m);
+    assert.doesNotMatch(placed.stdout, /executor — driving contract/, 'a vehicle is never looked up in a bridge manifest');
+    const gone = routine('missing');
+    assert.match(gone.stdout, /carrier: solo — from docs\/ai\/orchestration\.json \(requested subagent → degraded\)/);
+    assert.match(gone.stdout, /↳ .*executor/);
+    assert.doesNotMatch(gone.stdout, /the placed subagent vehicle/);
+  });
+
+  it('routine.parallel renders at on and at off and never reaches the recipe lattice', () => {
+    assert.match(routine('placed').stdout, /parallel: on — computed default/);
+    const off = routine('placed', ['routine', '--override', 'parallel=off']);
+    assert.equal(off.code, 0, off.stderr);
+    assert.match(off.stdout, /parallel: off — from --override/);
+    const j = JSON.parse(routine('placed', ['routine', '--json']).stdout);
+    assert.deepEqual([j.slots.parallel.recipe, j.slots.parallel.backends, j.slots.parallel.contracts], ['on', [], []]);
+  });
+
+});
+
 describe('procedures CLI — a backend-detection failure does NOT break activity resolution', () => {
-  // A corrupt / unreadable bridge can make the detector throw. Detection is a SECONDARY input (it only
-  // refines the recipe), so a throw must NOT surface as a config/engine error (exit 1) — resolution
-  // floors at Solo and the failure is a loud warning, exit 0.
+  // A corrupt bridge can make the detector throw. Readiness is SECONDARY, so a throw floors resolution at Solo and warns — never a config/engine error (exit 1).
   const throwingDetect = () => {
     throw Object.assign(new Error('corrupt bridge manifest (EISDIR)'), { code: 'EISDIR' });
   };
@@ -288,8 +314,7 @@ describe('procedures CLI — --json schema (§2.0)', () => {
     const r = run(['plan-execution', '--json'], { codex: READY, agy: NEEDS_SKILL });
     assert.equal(r.code, 0, r.stderr);
     const j = JSON.parse(r.stdout);
-    // The unarmed JSON key set stays byte-exact to the pre-flow shape — the flowHalves key is
-    // CONDITIONAL on a flow block (unarmed neutrality), unlike the unconditional additive keys.
+    // The unarmed JSON key set stays byte-exact to the pre-flow shape — flowHalves is CONDITIONAL on a flow block, unlike the unconditional additive keys.
     assert.deepEqual(Object.keys(j).sort(), ['activity', 'autonomy', 'configSource', 'costLanes', 'declaredPractice', 'foldScope', 'groundingPreStep', 'reviewLoop', 'section', 'slots', 'specCheck', 'warnings'].sort());
     assert.equal(j.activity, 'plan-execution');
     assert.match(j.section, /## plan-execution/);
@@ -383,8 +408,7 @@ describe('procedures CLI — review-loop economics block (§2.2, M1/M6): prints 
 
 describe('procedures CLI — activity-aware instrument pointer: plan-execution names the D3 loop, plan-authoring never does', () => {
   it('plan-execution (council) names the D3 instruments (red-proof / --final / commit-guard)', () => {
-    // The structured reviewLoop is the assertion target (the verbatim canon section also names the
-    // instruments, so a bare stdout match could stay green with the advice bullet deleted).
+    // The structured reviewLoop is the assertion target: the verbatim canon section names the instruments too, so a bare stdout match could stay green with the bullet deleted.
     const j = JSON.parse(run(['plan-execution', '--override', 'review=council', '--json'], { codex: READY, agy: READY }).stdout);
     const instrumentLine = j.reviewLoop.find((l) => l.includes('run-gates --final'));
     assert.ok(instrumentLine, 'plan-execution reviewLoop carries the computed-instrument line');
@@ -400,8 +424,6 @@ describe('procedures CLI — activity-aware instrument pointer: plan-execution n
   });
 
   it('BOTH activities carry the triage classification vocabulary (fixable-bug / inherent-layer-residual / escalate)', () => {
-    // Assert on the structured reviewLoop, NOT the human stdout — the verbatim canon section also
-    // carries these tokens, so a stdout match could stay green with the advice bullet deleted.
     for (const activity of ['plan-authoring', 'plan-execution']) {
       const j = JSON.parse(run([activity, '--override', 'review=council', '--json'], { codex: READY, agy: READY }).stdout);
       for (const token of ['fixable-bug', 'inherent-layer-residual', 'escalate']) {
@@ -411,8 +433,7 @@ describe('procedures CLI — activity-aware instrument pointer: plan-execution n
   });
 
   it('solo omits the instrument pointer and the classification bullet with the whole block (non-vacuous)', () => {
-    // The canon SECTION (rendered verbatim above the advice) legitimately names the instruments
-    // for plan-execution — the solo invariant lives in the structured ADVICE block, which must be empty.
+    // The canon SECTION legitimately names the instruments for plan-execution — the solo invariant lives in the structured ADVICE block, which must be empty.
     const r = JSON.parse(run(['plan-execution', '--override', 'review=solo', '--json'], { codex: READY, agy: READY }).stdout);
     assert.deepEqual(r.reviewLoop, [], 'solo → empty reviewLoop (no instrument pointer, no classification bullet)');
   });
@@ -428,11 +449,9 @@ describe('procedures CLI — activity-aware instrument pointer: plan-execution n
 
 describe('procedures CLI — cost-lane advisory block (cost-tiered execution): unconditional, canon-token-guarded', () => {
   const SENTINEL = /Cost lanes \(orchestration\.md §5\)/;
-  // The distinctive tokens shared with the canon (orchestration.md §5) — pinned on BOTH sides so
-  // the advisor paraphrase and the canon cannot silently drift apart. The last five are the D7
-  // prompt-economy invariants (REC-UX-REWORK) — ONE distinctive token per invariant
-  // (a fan-out vehicles · b shell form · c capability-gated launcher · quality/speed guard ·
-  // honest limit), also pinned on the lens side (engine lens-fragment.test.mjs).
+  // The distinctive tokens shared with the canon (orchestration.md §5) — pinned on BOTH sides so the
+  // advisor paraphrase and the canon cannot drift. The last five are the D7 prompt-economy invariants
+  // (REC-UX-REWORK), ONE token each, also pinned on the lens side.
   const CANON_TOKENS = [
     'cheapest adequate executor', 'no named guardrail', 'L0', 'L1', 'L2', 'L3', 'red lines never move',
     'forbidden lane downgrade', 'plain pipeline per call', 'vehicle mandate a host cannot satisfy',
@@ -489,8 +508,7 @@ describe('procedures CLI — cost-lane advisory block (cost-tiered execution): u
   });
 
   // The SECOND Decision-5 point of use (AD-044 Plan 4): the L0 checker tools each state their
-  // sandbox-lane contract line on their own HELP/header surface (the canon-side twin lives in the
-  // engine's orchestration-canon test — both sides pinned, neither can silently drop it).
+  // sandbox-lane contract line on their own HELP/header surface (the canon-side twin is the engine's).
   it('the four L0 checker tools carry the sandbox-lane contract line on their own surfaces', () => {
     for (const rel of ['run-gates.mjs', 'review-state.mjs', 'core-evidence.mjs', 'coverage-check.mjs']) {
       const src = readFileSync(join(HERE, rel), 'utf8');
@@ -512,10 +530,9 @@ describe('procedures CLI — the finding-scope block: plan-execution ONLY, uncon
     }
   });
 
-  // The canon section is printed VERBATIM directly above this block, so a paraphrase of the three
-  // arms and the two bars duplicates text on the same screen — and a token assertion over stdout
-  // would pass on the canon text alone, guarding nothing. The WHOLE structured block is compared,
-  // so neither a paraphrase nor a prefix/suffix can ride along unnoticed.
+  // The canon section is printed VERBATIM directly above this block, so a paraphrase of the three arms
+  // duplicates text on one screen and a stdout token assertion would pass on the canon alone — the
+  // WHOLE structured block is compared instead.
   const expectedBlock = (plan, queue, register) => [
     'Finding scope (procedures.md plan-execution step 5) — the rule is the section above; this is the checker it names:',
     `  • node ${shellQuoteArg(FOLD_SCOPE_TOOL)} --class '<in-scope|new-invariant|blocking>' --claim '<the invariant>' --plan ${shellQuoteArg(plan)} --queue ${shellQuoteArg(queue)}`,
@@ -530,9 +547,7 @@ describe('procedures CLI — the finding-scope block: plan-execution ONLY, uncon
     }
   });
 
-  // The rendered command is meant to be PASTED, so every operand goes through the same shell quoter
-  // the family's other command renderers use: the class/claim placeholders are shell syntax in their
-  // own right, and a plan filename may carry `$` or a backtick, which stay active inside "…".
+  // The rendered command is meant to be PASTED, so every operand goes through the family's shell quoter: the placeholders are shell syntax, and a plan filename may carry `$`.
   it('renders a shell-safe command — placeholders inert, a metacharacter plan path quoted', () => {
     const nasty = 'a$plan`x.md';
     mkdirSync(join(cwd, 'docs', 'plans'), { recursive: true });
@@ -565,8 +580,7 @@ describe('procedures CLI — the finding-scope block: plan-execution ONLY, uncon
   });
 });
 
-// Reached through the module NAMESPACE, not a named import: a static named import of an export that
-// does not exist yet is a link error, and a suite that cannot load cannot be observed red.
+// Reached through the module NAMESPACE: a static named import of an export that does not exist yet is a link error, and a suite that cannot load cannot be observed red.
 const { SPEC_CHECK_TOOL } = await import('./procedures.mjs');
 
 describe('procedures CLI — the spec-check block: plan-execution ONLY, unconditional across recipes', () => {
@@ -582,8 +596,7 @@ describe('procedures CLI — the spec-check block: plan-execution ONLY, uncondit
     }
   });
 
-  // The WHOLE structured block is compared, so neither a paraphrase of the canon nor an extra line
-  // can ride along unnoticed — the same bar the finding-scope block is held to.
+  // The WHOLE structured block is compared, so neither a paraphrase nor an extra line rides along unnoticed — the bar the finding-scope block is held to.
   const expectedBlock = () => [
     'Spec store (the feature-spec layer) — state what this session changed, then let the checker judge the store against it:',
     `  • node ${shellQuoteArg(SPEC_CHECK_TOOL)} --ops-file ${shellQuoteArg(REGISTER)}   (or --op '<add|modify|remove>=docs/ai/specs/<slug>.md', repeatable; rename=<old>:<new>)`,
@@ -672,11 +685,13 @@ describe('procedures CLI — the per-activity autonomy block (AD-044 Plan 4)', (
 });
 
 describe('procedures CLI — --help is read-only and exits 0', () => {
-  it('prints usage naming both activities and exits 0', () => {
+  it('prints usage naming every activity, slot and accepted value FROM the table, and exits 0', () => {
     const r = run(['--help']);
     assert.equal(r.code, 0);
-    assert.match(r.stdout, /plan-authoring/);
-    assert.match(r.stdout, /plan-execution/);
+    assert.match(r.stdout, /Activities: plan-authoring, plan-execution, routine/);
+    assert.match(r.stdout, /plan-authoring → author, review;  plan-execution → execute, review;  routine → carrier, parallel/);
+    assert.match(r.stdout, /carrier accepts solo\|subagent/);
+    assert.match(r.stdout, /switch accepts on\|off/);
     assert.match(r.stdout, /never commits/);
   });
 });
@@ -685,18 +700,15 @@ describe('procedures CLI — point-of-use driving contract: verbatim, manifest-d
   const REPO_ROOT = join(HERE, '..', '..');
   const manifestContract = (bridge, role) =>
     JSON.parse(readFileSync(join(REPO_ROOT, bridge, 'capability.json'), 'utf8')).roles[role].contract;
-  // The host-level settings knobs a wrapper cmd honors, DERIVED from the manifest (drift-guarded both
-  // ways vs the advisor's own manifest read — a new/removed knob or an appliesTo edit fails here).
+  // The host-level settings knobs a wrapper cmd honors, DERIVED from the manifest (drift-guarded both ways vs the advisor's read — a new knob or an appliesTo edit fails here).
   const manifestSettings = (bridge, cmd) =>
     (JSON.parse(readFileSync(join(REPO_ROOT, bridge, 'capability.json'), 'utf8')).settings ?? [])
       .filter((s) => (s.appliesTo ?? []).includes(cmd))
       .map((s) => ({ key: s.key, allowed: allowedLabel(s), retired: s.retired ?? null }));
   const norm = (s) => s.replace(/\s+/g, ' ').trim();
-  // The advisor region below the verbatim canon section — scope the descriptor parse to it so a
-  // canon edit mentioning a wrapper name can never leak into the set-equality.
+  // The advisor region below the verbatim canon section — the descriptor parse is scoped to it, so a canon edit naming a wrapper never leaks into the set-equality.
   const adviceRegion = (stdout) => stdout.slice(stdout.indexOf('resolved recipes for'));
-  // The exact descriptor lines rendered for one wrapper (its block-header line excluded): these must
-  // set-EQUAL the manifest invocations ∪ continue — a MISSING descriptor and a STALE EXTRA both fail.
+  // The exact descriptor lines rendered for one wrapper (block header excluded): they set-EQUAL the manifest invocations ∪ continue — a MISSING or STALE EXTRA descriptor fails.
   const cmdLines = (stdout, cmd) =>
     adviceRegion(stdout).split('\n').map((l) => l.trim())
       .filter((l) => l.startsWith(`${cmd} `) && !l.includes('— driving contract'))
@@ -723,8 +735,7 @@ describe('procedures CLI — point-of-use driving contract: verbatim, manifest-d
     assert.ok(agy.invocations.length && codex.invocations.length, 'manifest descriptor sets are non-empty');
     assert.deepEqual(cmdLines(r.stdout, 'agy-review').sort(), descriptorSet(agy), 'agy-review descriptors ⟷ manifest');
     assert.deepEqual(cmdLines(r.stdout, 'codex-review').sort(), descriptorSet(codex), 'codex-review descriptors ⟷ manifest');
-    // agy: the FULL contract renders in the block — flags set-EQUAL the manifest descriptors,
-    // the grounding note is verbatim, and the round-2 delta is surfaced at the point of use.
+    // agy: the FULL contract renders — flags set-EQUAL the manifest descriptors, the grounding note is verbatim, and the round-2 delta is surfaced at the point of use.
     const agyBlock = contractBlock(r.stdout, 'agy-review');
     const agyFlagLines = agyBlock.split('\n').map((l) => norm(l)).filter((l) => l.startsWith('--'));
     assert.deepEqual(agyFlagLines.sort(), agy.flags.map(norm).sort(), 'rendered flag lines ⟷ manifest flags');
@@ -766,8 +777,7 @@ describe('procedures CLI — point-of-use driving contract: verbatim, manifest-d
     const human = run(['plan-authoring', '--override', 'review=council'], { codex: READY, agy: READY }).stdout;
     assert.match(human, /host settings \(survive kit upgrades/);
     assert.match(human, /CODEX_SERVICE_TIER — "priority"/);
-    // A RETIRED key renders as clear-only, never as an ordinary settable knob — this surface points
-    // at the writer, and the writer refuses to set it.
+    // A RETIRED key renders as clear-only, never as an ordinary settable knob — this surface points at the writer, and the writer refuses to set it.
     assert.match(human, /AGY_REVIEW_ALLOW_ADDDIR — RETIRED: recognized but arms nothing/);
     assert.match(human, /--unset clears an existing line/);
   });
@@ -781,9 +791,8 @@ describe('procedures CLI — point-of-use driving contract: verbatim, manifest-d
   });
 });
 
-// §4.0 — an installed engine too old to ship references/procedures.md must FAIL LOUDLY (exit 1 with a
-// clear "upgrade the engine" message), never a cryptic read error. A temp fixture models a VALID
-// methodology-engine that ships every fragment EXCEPT procedures.md (i.e. engine < 1.3.0).
+// §4.0 — an installed engine too old to ship references/procedures.md must FAIL LOUDLY (exit 1, an
+// "upgrade the engine" message), never a cryptic read error; the fixture models one.
 describe('procedures CLI — engine too old (no procedures.md) → loud exit 1', () => {
   const makeOldEngine = () => {
     const dir = mkdtempSync(join(tmpdir(), 'old-engine-'));
@@ -957,10 +966,8 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
   });
 
   it('render-incomplete-states-the-partial-record: a half-written record is neither "nothing" nor a minted one', () => {
-    // The machine half is baseline + aggregate together; a file carrying one without the other was
-    // hand-edited into that state. It is a PRE-mint state — reporting its half as the tree's recorded
-    // debt would state a number the ratchet does not hold — but saying "no size is recorded" states a
-    // fact that is simply untrue, so the render names the half that IS missing.
+    // The machine half is baseline + aggregate together; a file carrying one was hand-edited into that
+    // PRE-mint state. Its half is not the tree's debt, and "no size is recorded" is untrue — name it.
     writePractice({ ...AUTHORED, baseline: BASELINE });
     const r = run(['plan-execution'], { codex: READY, agy: READY });
     assert.equal(r.code, 0, r.stderr);
@@ -973,8 +980,7 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
     const r = run(['plan-authoring'], { codex: READY, agy: READY });
     assert.equal(r.code, 0, r.stderr);
     assert.ok(!r.stdout.includes(DECLARED_PRACTICE_HEADER), 'no declaration → no block');
-    // Scoped BELOW the verbatim canon section: the canon's own rung names the practice conditionally
-    // ("when the project declares a source-size cap"), and that text is printed for every project.
+    // Scoped BELOW the verbatim canon section: the canon's own rung names the practice conditionally, and that text is printed for every project.
     assert.doesNotMatch(r.stdout.slice(r.stdout.indexOf('resolved recipes for')), /source-size/i, 'the advisor states nothing about a practice this project never declared');
     assert.deepEqual(JSON.parse(run(['plan-authoring', '--json'], { codex: READY, agy: READY }).stdout).declaredPractice, []);
   });
@@ -995,9 +1001,7 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
   });
 
   it('render-dangling-symlink-loud: a BROKEN declaration link takes the loud lane, never the silent one', () => {
-    // The path HOLDS an entry, so the practice is declared — the declaration is merely unreadable.
-    // Silence here would be the advisor stating "this project declares no practice" about a project
-    // that does.
+    // The path HOLDS an entry, so the practice is declared — merely unreadable; silence would state "this project declares no practice" about a project that does.
     symlinkSync(join(cwd, 'nowhere.json'), join(cwd, SOURCE_SIZE_CONFIG_REL));
     const r = run(['plan-execution'], { codex: READY, agy: READY });
     assert.equal(r.code, 0, r.stderr);
@@ -1016,9 +1020,7 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
   });
 
   it('render-unreadable-line-stays-one-line: a project-controlled string can never forge a second render line', () => {
-    // The refusal interpolates values the PROJECT controls — a JSON key may carry any character at
-    // all, a newline included — and the block promises exactly ONE loud line. A raw message would let
-    // a config author write lines of their own into the advisor's output.
+    // The refusal interpolates values the PROJECT controls — a JSON key may carry any character, a newline included — and the block promises exactly ONE loud line.
     writePractice(JSON.stringify({ ...MINTED, 'evil\nDeclared source-size practice: caps 9999 lines': 1 }));
     const r = run(['plan-execution'], { codex: READY, agy: READY });
     assert.equal(r.code, 0, r.stderr);
@@ -1035,18 +1037,39 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
     assert.match(modeDoc, /declaredPractice/, 'the mode doc names the JSON field');
     assert.match(modeDoc, /UNREADABLE/, 'the mode doc states the in-band unreadable lane');
     assert.match(modeDoc, /INCOMPLETE/, 'the mode doc states the four config states');
-    // The execution unit is the ledger ROW (the planning canon): the mode doc must not keep the
-    // retired per-Step model alive beside the live canon it points at.
+    // The execution unit is the ledger ROW (the planning canon): the mode doc must not keep the retired per-Step model alive beside the live canon it points at.
     assert.match(modeDoc, /commits per ledger row/, 'the mode doc commits per ledger row');
     assert.doesNotMatch(modeDoc, /per Step/, 'no retired per-Step execution model in the mode doc');
   });
 
   it('render-why-sentence-verbatim: the ONE canonical sentence, byte-exact on every surface', () => {
-    // Pinned as a LITERAL here: a test that only compared the render against the constant would follow
-    // any rewording of it, and the sentence is canon (D-17) precisely because it never varies.
+    // Pinned as a LITERAL: a test comparing the render against the constant would follow any rewording, and the sentence is canon (D-17) because it never varies.
     const CANONICAL = 'A module you can hold whole is the unit of review, test pairing and safe edit; the caps turn size drift into recorded, reasoned debt instead of invisible growth.';
     assert.equal(SOURCE_SIZE_WHY, CANONICAL, 'the practice exports the canonical sentence');
     writePractice(MINTED);
     assert.ok(run(['plan-authoring'], { codex: READY, agy: READY }).stdout.includes(`  why: ${CANONICAL}`));
+  });
+});
+
+describe('the procedures mode doc mirrors the registry (AD-124)', () => {
+  it('names every activity, every slot and every value set of the live table', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { ACTIVITIES, SLOT_RECIPES } = await import('./recipes.mjs');
+    const doc = readFileSync(new URL('../references/modes/procedures.md', import.meta.url), 'utf8');
+    for (const [activity, def] of Object.entries(ACTIVITIES)) {
+      assert.ok(doc.includes(`\`${activity}\``), `the mode doc names ${activity}`);
+      for (const slot of Object.keys(def.slots)) assert.ok(doc.includes(`\`${slot}\``), `the mode doc names the ${slot} slot`);
+    }
+    for (const values of Object.values(SLOT_RECIPES)) assert.ok(doc.includes(values.join(' | ')), `the mode doc names ${values.join(' | ')}`);
+    assert.ok(!/two v1 activities/u.test(doc), 'the two-activity wording is gone');
+  });
+});
+
+describe('the procedures mode doc never keeps the two-value execute list (AD-124)', () => {
+  it('every execute value list in the mode doc names subagent', async () => {
+    const { readFileSync } = await import('node:fs');
+    const doc = readFileSync(new URL('../references/modes/procedures.md', import.meta.url), 'utf8');
+    assert.doesNotMatch(doc, /solo \| delegated`(?! \| subagent)|solo\|delegated`(?!\|subagent)/u);
+    assert.match(doc, /Subagent → Solo when the executor vehicle is missing or unusable/u);
   });
 });

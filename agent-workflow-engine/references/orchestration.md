@@ -1,9 +1,10 @@
 # Orchestration Recipes
 
-Canonical, on-demand reference for **how an orchestrating agent composes the optional
-execution-backends** (the family's subscription-CLI bridges) into the `plan → execute → review`
+Canonical, on-demand reference for **how an orchestrating agent composes the carriers of a step** —
+itself, the optional execution-backends (the family's subscription-CLI bridges) and a full-tool
+frontier subagent — into the `plan → execute → review`
 flow. This is the *narrative* source of truth — the **vocabulary** (what each recipe is), the
-**when/why** (which to reach for), the **graceful-degradation lattice** (what happens when a backend
+**when/why** (which to reach for), the **graceful-degradation lattice** (what happens when a carrier
 is unavailable), and the **quota/health guard**. The kit (`agent-workflow-kit`) owns the *executable*
 dispatch (`tools/recipes.mjs` — `planRecipe` / `recommendRecipe`) and surfaces it read-only as
 `/agent-workflow-kit recipes`; the two representations are kept in lockstep by a recipe-name parity
@@ -13,9 +14,12 @@ guard. For the plan lifecycle this composes with, see [`planning.md`](planning.m
 
 ## 1. The role vocabulary recipes are built over
 
-A recipe is an **orchestration pattern**, not a runnable script. The **orchestrator** (the main
-agent) always owns the decisions, the edits it accepts, verification, and the **single commit** — a
-backend is **advisory or delegated, never autonomous, and never commits**.
+A recipe is an **orchestration pattern**, not a runnable script. It names **who carries a step** —
+the **orchestrator** itself (Solo), a **bridge backend** (Reviewed / Council / Delegated), or a
+**full-tool frontier subagent** dispatched from the placed executor vehicle (Subagent). The
+orchestrator (the main agent) always owns the decisions, the edits it accepts, verification, and the
+**single commit** — every other carrier is **advisory or delegated, never autonomous, and never
+commits**.
 
 Each backend declares what it can do in its `capability.json` `provides` / `roles`:
 
@@ -27,14 +31,26 @@ Each backend declares what it can do in its `capability.json` `provides` / `role
 
 Both are **subscription** backends with a **finite quota** — spend deliberately.
 
-## 2. The four recipes
+The third carrier is neither: the **executor vehicle** — a full-tool frontier subagent the
+orchestrator dispatches from the placed `.claude/agents/executor.md`. It declares no
+`capability.json` and spends no bridge quota (it runs on the host's own model and consumes that
+model's quota and cost); it carries the `carry` role only — never
+`review`, never `probe` — and its availability is the vehicle FILE, not a detector (§4, §5).
 
-| Recipe (id) | Pattern | Roles needed | Backends that satisfy it |
+## 2. The five recipes
+
+| Recipe (id) | Pattern | Roles needed | Carriers that satisfy it |
 |-------------|---------|--------------|--------------------------|
 | **Solo** (`solo`) | The orchestrator plans, executes, and self-reviews. No backend. | none | — (always available; the floor) |
 | **Reviewed** (`reviewed`) | The orchestrator executes; **one** backend reviews the result (advisory). | ≥1 backend providing `review` | `codex` and/or `agy` |
 | **Council** (`council`) | **Both** backends review independently; the orchestrator synthesizes the two opinions. | ≥2 backends providing `review` | `codex` **and** `agy` |
 | **Delegated** (`delegated`) | The orchestrator hands a **bounded** execution sub-task to a backend, then reviews the returned diff and commits. | ≥1 backend providing `execute` | `codex` only |
+| **Subagent** (`subagent`) | The orchestrator hands a **bounded, file-disjoint** slice — of execution, of plan/contract authoring, or of routine work — to a **full-tool frontier subagent**, then verifies the returned slice by running its suites. A routine slice is classified first: a read-only one rides a placed read-only vehicle (or is carried Solo with a stated reason when that vehicle is absent); a write-capable one rides the executor. | the `carry` role | the placed executor vehicle |
+
+The orchestrator keeps the folds, the gates, the release documents, the asks and the **one commit**
+whatever the recipe resolves to. A subagent is **never a review backend**, **never a bridge
+substitute**, and is **never told to commit**; it **degrades to Solo** when the executor vehicle is
+missing or unusable.
 
 ## 3. When / why to reach for each (the decision vocabulary)
 
@@ -51,6 +67,12 @@ Both are **subscription** backends with a **finite quota** — spend deliberatel
 - **Delegated** — when a bounded, well-specified sub-task can be handed off (parallelism, or to keep
   the orchestrator's own context focused). Only `codex` provides `execute`. The orchestrator still
   reviews the returned diff and owns the commit — delegation never bypasses the review or the gate.
+- **Subagent** — when the work is **bounded and file-disjoint** and the orchestrator's own context is
+  the scarce resource: execution slices, a plan or a contract drafted from a brief the orchestrator
+  writes, or routine chores (gate triage, sweeps, doc regeneration, fixture builds). It spends no
+  bridge quota; it runs on the host's own model and consumes that model's quota and cost. The orchestrator still writes the brief, verifies every returned slice by running
+  its suites itself, and owns the commit — a subagent never stands in for the bridge a `review`
+  recipe names.
 
 ## 4. Graceful degradation (never silent)
 
@@ -61,6 +83,12 @@ Availability is **pure file-presence**: a backend is dispatchable **iff its dete
 the wrapper is not on `PATH`). This is a claim about **set-up state only** — never about whether a
 backend's *service* is actually responsive.
 
+The subagent carrier makes the same kind of claim from a different file: its availability is the
+**executor vehicle** at `.claude/agents/executor.md` — `placed` or `customized` is dispatchable,
+`unusable` or `missing` is not, and the state is the human reason (the writer's apply command
+places a missing vehicle; a customized file is kept; an unusable path must be fixed or removed
+first, then placed). Never a claim about the host that would run it (§5).
+
 When a recipe's roles can't be satisfied, it **degrades to a weaker recipe with a stated reason** —
 always reported, never silently dropped:
 
@@ -68,6 +96,7 @@ always reported, never silently dropped:
   neither is `ready` → Solo.
 - **Delegated → Solo.** No backend provides `execute` and is `ready` → Solo, with the reason.
 - **Reviewed → Solo.** No backend provides `review` and is `ready` → Solo, with the reason.
+- **Subagent → Solo.** The executor vehicle is `missing` or `unusable` → Solo, with the reason.
 
 **Recipe fidelity — the converse: every ready backend, every round.** Degradation is the *only*
 licence to run fewer backends than the recipe names. When the resolved recipe is `council` and BOTH
@@ -152,6 +181,11 @@ task that genuinely needs to run or write keeps a full-tool subagent. **Honest l
 no deterministic gate classifies a dispatch — enforcement is this canon at the point of use,
 the placed vehicles, and the retro loop.
 
+**The Subagent carrier is a Claude Code lane**, exactly like the placed vehicles above: its
+readiness is the vehicle FILE, never the host. On a host that cannot dispatch the vehicle, the
+rendered dispatch form is an **instruction the orchestrator follows by hand** and reports as such —
+never reported as a subagent dispatch.
+
 **Sandbox lanes.** Under an OS sandbox the lanes split once more by **surface class**: the L0
 surfaces are **sandbox-safe** (gate/state/coverage checks, git reads, plain no-network tests);
 the bridge wrappers are **genuinely unsandboxed** (they need network); npm-cache-touching commands
@@ -184,10 +218,13 @@ stays read-only.
 
 ## 6. The orchestrator always commits
 
-No recipe makes a backend write to the repo or create a commit. The kit's `recipes` surface is
+No recipe lets a carrier commit or perform a git write: a review backend reads and returns findings;
+a delegated backend edits inside its own sandbox and returns a diff the orchestrator reviews; a
+subagent edits only the files its brief names — and the orchestrator alone stages and commits. The kit's `recipes` surface is
 **read-only** — it lists the recipes, plans one for the current environment, and recommends a
 default; it **never executes** a recipe and **never runs a subscription CLI**. The orchestrator
-executes the chosen recipe through the bridge skills, accepts or rejects every edit, runs the
+executes the chosen recipe through the bridge skills or the executor vehicle, accepts or rejects
+every returned edit, runs the
 verification gate, and makes the **one** commit — exactly as the plan lifecycle (`planning.md`)
 requires.
 

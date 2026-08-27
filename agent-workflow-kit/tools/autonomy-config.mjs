@@ -20,7 +20,7 @@
 
 import { readFileSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
-import { ACTIVITIES } from './recipes.mjs';
+import { POLICY_ACTIVITIES as ACTIVITIES } from './recipes.mjs';
 
 // The hand-editable / agent-writable, per-project policy (strict JSON). cwd-relative — the error prefix
 // uses this rel path so a user sees a path they can open, never an absolute temp/host path.

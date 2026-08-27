@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // set-recipe.mjs — the WRITER for docs/ai/orchestration.json. The division of labor (AD-025): the AGENT
-// turns plain language into explicit `--set <activity>.<slot>=<recipe>` / `--unset <activity>.<slot>`
+// turns plain language into explicit `--set <activity>.<slot>=<value>` / `--unset <activity>.<slot>`
 // ops; the KIT does the deterministic validate → merge → preview → write. The kit ships NO NL parser
 // (stays dependency-free + deterministic) and performs no `all`-magic — the agent expands "both review"
 // into explicit per-activity ops (asking if scope is unclear).
@@ -17,15 +17,25 @@
 // language when narrating. Exit codes: 0 success (an explicit recipe that gracefully degrades is still
 // 0); 2 usage (bad/duplicate op, --write with zero ops); 1 config error (malformed/unreadable config)
 // or a write STOP (no deployment / symlinked leaf). main(argv, ctx) → { code, stdout, stderr }; cwd /
-// env / home / detect / fs are injectable for host-independent tests.
+// env / home / detect / surveyVehicle / fs are injectable for host-independent tests.
+//
+// It writes every slot of every activity in the registry (carriers.mjs, via recipes.mjs) — the
+// carrier slots and the `routine.parallel` switch included — and resolves each preview against the
+// SAME readiness the recipes advisor composes: detected backends plus the executor-vehicle survey.
 //
 // Dependency-free, Node >= 22. No side effects on import (the isDirectRun idiom).
 
 import { readFileSync, lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { detectBackends } from './detect-backends.mjs';
 import { isDirectRun } from './direct-run.mjs';
-import { resolveActivityRecipe, composeActiveRecipeLine } from './recipes.mjs';
+import {
+  ACTIVITIES,
+  SLOT_RECIPES,
+  EXECUTOR_APPLY,
+  composeReadiness,
+  resolveActivityRecipe,
+  composeActiveRecipeLine,
+} from './recipes.mjs';
 import { loadAutonomy, resolveAutonomy } from './autonomy-config.mjs';
 import {
   CONFIG_REL,
@@ -35,6 +45,7 @@ import {
   parseOp,
   applySetOps,
   serializeConfig,
+  refreshReadme,
   CANON_README,
 } from './orchestration-config.mjs';
 import { writeConfig as writeConfigFs } from './orchestration-write.mjs';
@@ -50,7 +61,7 @@ const parseArgs = (argv) => {
   let write = false;
   let json = false;
   const takeOp = (kind, tok) => {
-    if (tok === undefined || tok.startsWith('--')) throw fail(2, `--${kind} requires <activity>.<slot>${kind === 'set' ? '=<recipe>' : ''}`);
+    if (tok === undefined || tok.startsWith('--')) throw fail(2, `--${kind} requires <activity>.<slot>${kind === 'set' ? '=<value>' : ''}`);
     const op = parseOp(kind, tok);
     const key = `${op.activity}.${op.slot}`;
     if (seen.has(key)) throw fail(2, `duplicate op for "${key}" — name each activity.slot at most once`);
@@ -74,12 +85,24 @@ const parseArgs = (argv) => {
 
 // ── effective-recipe resolution per op (degradation honesty) ────────────────────────
 
+// The readiness EVERY resolution here runs against: the detected bridges plus the executor-vehicle
+// survey, composed by the one helper the recipes CLI uses. Detection is a SECONDARY input — a bridge
+// detector throw must NOT block the write (the config write is readiness-independent) and must not
+// cost the CARRIER either: the hook warns, the bridge half floors at not-ready, the vehicle survives.
+const composeReadinessOrWarn = (cwd, deps, warnings) =>
+  composeReadiness(cwd, {
+    ...deps,
+    onDetectError: (err) => warnings.push(
+      `backend detection failed (${(err && err.message) || err}) — treating every bridge as not ready; recipes needing a bridge degrade to solo (the executor vehicle is unaffected).`,
+    ),
+  });
+
 // A single op's before/after value + the effective recipe it resolves to here (vs live readiness).
 // `to` is null for an unset (falls to the computed default). degradedFrom/reason carry the honesty.
-const resolveOp = (op, current, after, detection) => {
+const resolveOp = (op, current, after, readiness) => {
   const from = current?.[op.activity]?.[op.slot] ?? null;
   const to = after?.[op.activity]?.[op.slot] ?? null;
-  const r = resolveActivityRecipe({ config: after ?? {}, readiness: detection, activity: op.activity, slot: op.slot });
+  const r = resolveActivityRecipe({ config: after ?? {}, readiness, activity: op.activity, slot: op.slot });
   return { activity: op.activity, slot: op.slot, from, to, effective: r.recipe, degradedFrom: r.degradedFrom, reason: r.reason };
 };
 
@@ -127,19 +150,40 @@ const buildJson = ({ changed, unchanged, warnings, writtenPath, noop, activeLine
   activeLine: activeLine ?? null,
 });
 
+// The writable surface, rendered FROM the registry — never re-typed as literals, so an activity, a
+// slot or an accepted value added to the table shows up in the help (and in the doc that quotes it).
+const ACTIVITY_LINES = Object.entries(ACTIVITIES)
+  .map(([activity, def]) => `  ${activity} → ${Object.keys(def.slots).join(', ')}`)
+  .join('\n');
+
+const VALUE_LINES = Object.entries(SLOT_RECIPES)
+  .map(([slotType, values]) => `  ${slotType} slots accept ${values.join(' | ')}`)
+  .join('\n');
+
+const QUALIFIED_SLOTS = Object.entries(ACTIVITIES)
+  .flatMap(([activity, def]) => Object.keys(def.slots).map((slot) => `${activity}.${slot}`))
+  .join(', ');
+
 const HELP = `set-recipe — write the per-project orchestration config (docs/ai/orchestration.json).
 
 Usage:
-  node set-recipe.mjs [--set <activity>.<slot>=<recipe>]... [--unset <activity>.<slot>]... [--write] [--json]
+  node set-recipe.mjs [--set <activity>.<slot>=<value>]... [--unset <activity>.<slot>]... [--write] [--json]
 
-  --set    <activity>.<slot>=<recipe>   pin a recipe (fully-qualified; e.g. plan-authoring.review=council)
+  --set    <activity>.<slot>=<value>   pin a value (fully-qualified; e.g. plan-authoring.review=council)
   --unset  <activity>.<slot>            return a slot to its computed default
   --write                               apply the change (default: preview only — writes nothing)
   --json                                machine-readable output
   --help, -h                            this help
 
-Activities/slots: plan-authoring → review;  plan-execution → execute, review
-Recipes:          review accepts solo|reviewed|council;  execute accepts solo|delegated
+Activities and their slots:
+${ACTIVITY_LINES}
+
+Accepted values per slot type:
+${VALUE_LINES}
+
+A carrier slot set to subagent needs the executor vehicle placed in this project — ${EXECUTOR_APPLY};
+without it the slot resolves to solo with the reason stated. routine.parallel is a flag, not a
+recipe: it never degrades.
 
 Previews by default; --write applies via an atomic, symlink/TOCTOU-safe write behind a deployment gate.
 Config writer only: it NEVER runs a backend and NEVER commits. Hand-editing the file stays fully supported.
@@ -152,7 +196,7 @@ Exit codes: 0 success (an explicit recipe that gracefully degrades is still 0);
 
 export const main = (argv, ctx = {}) => {
   const cwd = ctx.cwd ?? process.cwd();
-  const detect = ctx.detect ?? detectBackends;
+  const readinessDeps = { detect: ctx.detect, surveyVehicle: ctx.surveyVehicle };
   const readFile = ctx.readFileSync ?? readFileSync;
   const lstat = ctx.lstatSync ?? lstatSync;
   const writeConfig = ctx.writeConfig ?? writeConfigFs;
@@ -170,23 +214,18 @@ export const main = (argv, ctx = {}) => {
         return { code: 0, stdout: JSON.stringify(buildJson({ changed: [], unchanged: [], warnings: [], writtenPath: null, noop: true }), null, 2), stderr: '' };
       }
       const shown = current == null ? `(no ${CONFIG_REL} yet — computed defaults apply)` : serializeConfig(current).replace(/\n$/, '');
-      const hint = `\nPass --set <activity>.<slot>=<recipe> (preview) then --write to apply. Activities/slots: plan-authoring.review, plan-execution.execute, plan-execution.review.`;
+      const hint = `\nPass --set <activity>.<slot>=<value> (preview) then --write to apply. Activities/slots: ${QUALIFIED_SLOTS}.`;
       return { code: 0, stdout: `${source === 'none' ? '' : `${CONFIG_REL}:\n`}${shown}${hint}`, stderr: '' };
     }
 
-    const after = applySetOps(current, ops, { seedReadme: CANON_README });
+    // The merged config, then the _README refresh: a note that normalize-matches a KNOWN PRIOR canonical
+    // is replaced by the current one on a touched write, while a customized note stays untouched.
+    const after = refreshReadme(applySetOps(current, ops, { seedReadme: CANON_README })).config;
 
-    // Detection is a SECONDARY input — it only refines the EFFECTIVE recipe note. A throw must NOT block
-    // the write (the config write is readiness-independent): treat all backends as not-ready, warn, exit 0.
     const warnings = [];
-    let detection = [];
-    try {
-      detection = detect();
-    } catch (err) {
-      warnings.push(`backend detection failed (${(err && err.message) || err}) — treating all backends as not ready; recipes needing a backend degrade to solo.`);
-    }
+    const readiness = composeReadinessOrWarn(cwd, readinessDeps, warnings);
 
-    const resolved = ops.map((op) => resolveOp(op, current, after, detection));
+    const resolved = ops.map((op) => resolveOp(op, current, after, readiness));
     const changed = resolved.filter((e) => e.from !== e.to);
     const unchanged = resolved.filter((e) => e.from === e.to);
     const noop = changed.length === 0;
@@ -220,7 +259,7 @@ export const main = (argv, ctx = {}) => {
         return { error: (err && err.message) || String(err) };
       }
     })();
-    const activeLine = composeActiveRecipeLine({ config: after, source: CONFIG_REL }, detection, autonomyFacts);
+    const activeLine = composeActiveRecipeLine({ config: after, source: CONFIG_REL }, readiness, autonomyFacts);
     const stdout = json
       ? JSON.stringify(buildJson({ changed, unchanged, warnings, writtenPath, noop: false, activeLine }), null, 2)
       : formatHuman({ changed, unchanged, warnings, wrote: true, fileBody, activeLine });

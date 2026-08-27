@@ -1,13 +1,12 @@
 // recommendations.test.mjs — the read-only upgrade Recommendations advisor (AD-044 Plan 4 +
-// REC-UX-REWORK/AD-053). Pins: the verdict-first D1 state matrix over the frozen severity
-// registry, the D2 shape gate (one-line char-capped registry strings, banned tokens, the add()
-// runtime backstop, capped skip reasons), the present-even-when-empty section contract, --cwd
-// explicitness (subdir-proof), cwd-independent apply one-liners, the fact-true frozen benefit
-// registry (bridge tier claims velocity ONLY; the dual security wording rides only the
-// real-security-delta items; posture/risk prose lives in the mode-doc notes at the consent
-// moment — never inline in registry strings, D3), the sandbox-lane fingerprint-ack convergence
-// (D4/D6), honest probe degradation (a failed probe = a stated skipped-item line, never a crash,
-// never a fabricated item), and the advisor's read-only nature (source scan).
+// REC-UX-REWORK/AD-053). Pins: the verdict-first D1 state matrix over the frozen severity registry,
+// the D2 shape gate (one-line char-capped registry strings, banned tokens, the add() runtime
+// backstop, capped skip reasons), the present-even-when-empty section contract, --cwd explicitness
+// (subdir-proof), cwd-independent apply one-liners, the fact-true frozen benefit registry (bridge
+// tier claims velocity ONLY; the dual security wording rides only the real-security-delta items;
+// posture/risk prose lives in the mode-doc notes at the consent moment, never inline in registry
+// strings, D3), the sandbox-lane fingerprint-ack convergence (D4/D6), honest probe degradation (a
+// failed probe = a stated skipped-item line, never a crash or a fabricated item), read-only nature.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -56,8 +55,8 @@ import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
 // spelling its own server path or allow rules would drift off the thing the probe actually reads.
 import { DEFAULT_SERVER_PATH, ENABLED_KEY, MCP_JSON_REL, SERVER_NAME, SETTINGS_REL, allowRulesFor } from './mcp-registration.mjs';
 // The decline fact is the leaf's own derivation, and the store fixtures are the spec-check harness's
-// document builders — a fixture spelling either here would drift off what the probe reads.
-// Dynamic: the suite must LOAD against the pre-fix tree (no spec-adoption leaf, no probe export) so the red proof observes assertion failures.
+// document builders — a fixture spelling either here would drift off what the probe reads. Dynamic:
+// the suite must LOAD against the pre-fix tree (no leaf, no probe export) so the red proof observes it.
 const { declineFingerprint } = await import('./spec-adoption.mjs').catch(() => ({}));
 const { probeSpecAdoption } = await import('./recommendations.mjs');
 import { ROOT_DOC, specDoc } from './spec-check-harness.test.mjs';
@@ -91,12 +90,12 @@ const finalCapableGatesJson = () => JSON.stringify({
   ],
 });
 
-// An AVAILABLE census over an ordinary JS project — the tree every declaration row in this file is
-// about. It is injected because makeProject() is deliberately NOT a git tree (git-initing it would
-// change what the sandbox-masks probe sees in every unrelated suite here), and because a census this
-// file did not choose would make its gates-inert rows assertions about two things at once. The
-// census's OWN dispositions — narrow, tie, minority, unavailable — are pinned against REAL git trees
-// in test/advisor-third-outcomes.test.mjs and test/tracked-tree-census.test.mjs, never faked.
+// An AVAILABLE census over an ordinary JS project — the tree every declaration row here is about. It
+// is injected because makeProject() is deliberately NOT a git tree (git-initing it would change what
+// the sandbox-masks probe sees in every unrelated suite here), and because an unchosen census would
+// make its gates-inert rows assertions about two things at once. The census's OWN dispositions —
+// narrow, tie, minority, unavailable — are pinned against REAL git trees in
+// test/advisor-third-outcomes.test.mjs and test/tracked-tree-census.test.mjs, never faked.
 import * as FOREIGN from '../../scripts/testing/foreign-fixture.mjs';
 
 const WITHIN_DOMAIN_CENSUS = Object.freeze({
@@ -313,11 +312,9 @@ describe('recommendations — shape is contract (D2 static registry gate)', () =
 });
 
 // ── the ADR-store crossing item ───────────────────────────────────────────────────
-//
-// This mode used to declare it had NO advisor capability, so `upgrade` ended with "flow optimal"
-// for a project sitting on the retired layout. The probe reads the STRICT layout survey on purpose:
-// the lenient one turns an unreadable tree into "nothing here", which is the one answer that must
-// never be produced by a failure.
+// This mode used to declare it had NO advisor capability, so `upgrade` ended with "flow optimal" for
+// a project sitting on the retired layout. The probe reads the STRICT layout survey on purpose: the
+// lenient one turns an unreadable tree into "nothing here", the one answer a failure must never give.
 
 describe('recommendations — the ADR-store crossing offer', () => {
   // The probe reads the survey, so drive it through the survey's own dep shape: a tree whose files
@@ -494,9 +491,8 @@ describe('recommendations — the add() runtime backstop (D2)', () => {
   });
 
   it('the VARIANT identifier is the machine-readable outcome — a per-site arm reports its own, not the base key', () => {
-    // The human render says which ITEM fired; only this field says which ARM of it did. A consumer
-    // asserting an exact outcome (the pre-publish smoke) would otherwise have to pattern-match prose
-    // the registry is free to reword.
+    // The human render says which ITEM fired; only this field says which ARM did. A consumer asserting
+    // an exact outcome (the pre-publish smoke) would else pattern-match prose the registry may reword.
     const { items } = run(({ add }) => add('read-lane', 'w', 'HAND-APPLY: x', 'read-lane.stale'));
     assert.equal(items[0].key, 'read-lane', 'the base key still names the item');
     assert.equal(items[0].variant, 'read-lane.stale', 'and the variant names the arm');
@@ -720,12 +716,11 @@ describe('recommendations — item probes over fixtures', () => {
     assert.ok(!sparse.items.some((i) => ['autonomy-render', 'autonomy-policy'].includes(i.key)), 'the defaults-equivalent seed fires neither autonomy item');
   });
 
-  // The advisor used to OFFER to arm AGY_REVIEW_ALLOW_ADDDIR with the benefit "large reviews — an
-  // oversized agy code review offloads to a staging dir instead of refusing". That lane is retired:
-  // headless agy auto-denies its own read_file, so the offload could return a confident fabrication.
-  // The offer is WITHDRAWN, and the withdrawal is a CHECKED registry deletion (advisor-coverage's
-  // orphan guard fails on an add() key no capability claims, and its set-equality fails on a
-  // declaration with no row) — never a silent one.
+  // The advisor used to OFFER to arm AGY_REVIEW_ALLOW_ADDDIR ("large reviews — an oversized agy code
+  // review offloads to a staging dir instead of refusing"). That lane is retired: headless agy
+  // auto-denies its own read_file, so the offload could return a confident fabrication. The
+  // withdrawal is a CHECKED registry deletion (advisor-coverage's orphan guard fails on an add() key
+  // no capability claims, its set-equality on a declaration with no row) — never a silent one.
   it('a placed agy-review NEVER offers the retired add-dir knob, in any configuration', () => {
     const root = makeProject();
     mkdirSync(join(root, '.config', 'agent-workflow'), { recursive: true });
@@ -933,10 +928,9 @@ describe('recommendations — item probes over fixtures', () => {
     assert.doesNotMatch(item.apply, /HAND-APPLY/u, 'no longer hand-apply — it joins the consent-gated writer class');
     assert.doesNotMatch(item.apply, /allowedDomains|allowWrite/u, 'the apply never asks the user to touch a security key');
     assert.doesNotMatch(item.apply, new RegExp(`${SANDBOX_LANE_ACK_PARENT}|settings\\.json`, 'u'), 'the ack no longer lives in the host settings namespace');
-    // The absence of --apply proves ONLY that the apply is the PREVIEW form (per §3 it still runs
-    // only AFTER confirmation, then prints its follow-up run under the SAME consent — nothing runs
-    // before confirmation). A no---apply MUTATION (e.g. family-freshness's `npx … init`) is a
-    // DIFFERENT item; the direct --apply form is pinned by the gate-hook item's own test.
+    // The absence of --apply proves ONLY that the apply is the PREVIEW form (per §3 it still runs only
+    // AFTER confirmation, under the SAME consent). A no---apply MUTATION (family-freshness's
+    // `npx … init`) is a DIFFERENT item; the direct --apply form is pinned by gate-hook's own test.
     assert.doesNotMatch(item.apply, /--apply/u, 'the sandbox-lane apply is the PREVIEW form (no --apply); it still runs only after confirmation');
     // The LIVE recipe rides a SEPARATE `recipe:` detail line — the apply stays a pure command; the
     // recipe: line is the fill source for the mode-doc lane-(2) hand-apply block.
@@ -1172,9 +1166,8 @@ describe('recommendations — the state-block-guard offer (AD-075)', () => {
     assert.ok(!skips.some((s) => s.key === 'state-block'));
   });
 
-  // The offered command must NOT carry --require-block: that flag turns on the absent-block report,
-  // and this kit does not mandate the three-part block — recommending it to every project would hand
-  // them a hook that warns after nearly every turn.
+  // The offered command must NOT carry --require-block: that flag turns on the absent-block report, and
+  // this kit does not mandate the block — every project would get a hook warning after nearly every turn.
   it('the offered wiring does NOT enable the strict absent-block report', () => {
     const root = makeProject();
     const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
@@ -1379,12 +1372,11 @@ describe('recommendations — the read-lane offer (AD-055 Part II, Help-through-
 });
 
 // ── the typed-channel registration offer ──────────────────────────────────────────
-//
 // The offer's shape is unusual on purpose and each property is pinned here: a registration is a
-// command the MCP client will RUN, so the rendered apply is the mode's FLAGLESS preview and the
-// `--apply` stays a separate step the maintainer takes after reading the entry. Two arms are
-// HAND-APPLY (a differing entry, a sandbox-masked file), and the arm that must NOT render is the
-// one where the file is unreadable but the settings half is already complete.
+// command the MCP client will RUN, so the rendered apply is the mode's FLAGLESS preview and `--apply`
+// stays a separate step taken after reading the entry. Two arms are HAND-APPLY (a differing entry, a
+// sandbox-masked file); the arm that must NOT render is the unreadable file with a complete settings
+// half.
 
 describe('recommendations — the typed-channel (mcp) registration offer', () => {
   const OUR_ENTRY = { type: 'stdio', command: 'node', args: [DEFAULT_SERVER_PATH] };
@@ -1611,6 +1603,29 @@ describe('recommendations — every probe degrades honestly (per-branch skip cov
     assert.equal(item.apply, '/agent-workflow-kit backends');
   });
 
+  it('a bridge detector that throws makes the review-recipe probe a stated SKIP, never an item from an empty readiness', () => {
+    const root = makeProject();
+    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'council' } }));
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { detect: () => { throw new Error('detector down'); } }) });
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(items.find((i) => i.key === 'review-recipe'), undefined, 'no item may be minted from an empty readiness');
+    assert.ok(skips.some((s) => s.key === 'review-recipe' && /detector down/.test(String(s.reason ?? s.error ?? s.message ?? JSON.stringify(s)))), `the failure is a stated skip: ${JSON.stringify(skips)}`);
+  });
+
+  it('the review-recipe probe never judges a subagent slot — missing or placed, the executor is not its finding', () => {
+    const root = makeProject();
+    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ routine: { carrier: 'subagent' } }));
+    const itemsFor = (state) => buildRecommendations({
+      cwd: root,
+      deps: hermeticDeps(root, { surveyVehicle: () => ({ state, reason: null, rel: '.claude/agents/executor.md' }) }),
+    }).items;
+    const missing = itemsFor('missing').find((i) => i.key === 'review-recipe');
+    const placed = itemsFor('placed').find((i) => i.key === 'review-recipe');
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(missing, undefined, 'a missing vehicle is the executor probe\'s finding, never a /backends remedy');
+    assert.equal(placed, undefined, 'a placed vehicle mis-degrades nothing');
+  });
+
   it('a MALFORMED gates.json skips the gate-hook item with the declaration reason', () => {
     const root = makeProject();
     writeFileSync(join(root, 'docs', 'ai', 'gates.json'), '{ not json');
@@ -1621,11 +1636,10 @@ describe('recommendations — every probe degrades honestly (per-branch skip cov
 });
 
 // ── the inert-declaration item ─────────────────────────────────────────────────────
-//
 // The field-report class: a declaration that RUNS GREEN and verifies nothing. The gates-declaration
 // offer converges the moment any gate exists, so it can never observe this state — the advisor was
 // silent while the runner reported every gate PASS. Both causes are read off the declaration through
-// the SAME predicates --final and the fill decide with, so the advisor can never disagree with them.
+// the SAME predicates --final and the fill decide with, so the advisor can never disagree.
 
 describe('recommendations — the inert gate declaration item', () => {
   const kitCheck = (tool) => `node "${join(HERE, tool)}" --check`;
@@ -1731,9 +1745,8 @@ describe('recommendations — the inert gate declaration item', () => {
   });
 
   // The apply is a PREVIEW, so what it must earn is a runnable next step. In cause A the declaration
-  // already carries the checker, and the checker is in the offer too — a whole-offer apply therefore
-  // collides on that id by construction. Naming the producer keeps the one entry that fixes the
-  // reported state, and the follow-up apply converges instead of refusing.
+  // already carries the checker, and so does the offer — a whole-offer apply collides on that id by
+  // construction. Naming the producer keeps the one entry that fixes the reported state.
   it('cause A: the previewed apply names the PRODUCER, and running it converges the item', () => {
     const root = makeProject();
     writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { test: 'node --test' } }));
@@ -1752,10 +1765,9 @@ describe('recommendations — the inert gate declaration item', () => {
     assert.equal(after, undefined, 'following the rendered lane converges the item it was rendered for');
   });
 
-  // The source-size checker is one of the kit's OWN checkers. A classifier that does not know it
-  // reads a matrix of nothing but that gate as carrying project verification — so a project that has
-  // just adopted the practice and declared nothing else is told its deployment is optimal, which is
-  // the exact invisibility this item exists to remove.
+  // The source-size checker is one of the kit's OWN checkers. A classifier that does not know it reads
+  // a matrix of nothing but that gate as carrying project verification — so a project that just
+  // adopted the practice is told its deployment is optimal: the invisibility this item removes.
   it('cause B: a matrix of nothing but kit checkers INCLUDING source-size fires the no-verification arm', () => {
     const root = makeProject();
     const { item } = (() => {
@@ -1820,10 +1832,9 @@ describe('recommendations — the inert gate declaration item', () => {
 
   // The residual the producer-unrecognized arm must never overstate. The fill screens by terminating
   // -class script NAME before it looks at a body, so a recognizable `node --test` under `ci` is a
-  // producer the offer can never carry. The arm still fires — nothing declares one and nothing
-  // offers one — but its text must not tell that project its suite is inexpressible, because the
-  // reader would go looking for a script they are already running. (This row lives here rather than
-  // beside its siblings so the third-outcomes suite's frozen bytes keep their red-proofs.)
+  // producer the offer can never carry. The arm still fires, but its text must not tell that project
+  // its suite is inexpressible — the reader would hunt for a script they already run. (It lives here,
+  // not beside its siblings, so the third-outcomes suite's frozen bytes keep their red-proofs.)
   it('cause A over a recognizable producer under a NON-OFFERED script name says what it knows, never that the suite is inexpressible', () => {
     const built = buildForeignFixture({
       tsFiles: 3,
@@ -2212,9 +2223,8 @@ describe('recommendations — the worktrees-dir arming item', () => {
 
 // The item's ONLY convergence signal used to be deps.canWriteDir — injectable from tests, never
 // supplied in production (main passes `deps: ctx.deps ?? {}`), so it fired forever even once its own
-// advice had been applied. Convergence is now a DECLARATION confirmation (an allowWrite entry
-// covering the probed dir) plus a fingerprint ack for hosts that ignore the settings key; a supplied
-// host signal still overrides both, in either direction.
+// advice had been applied. Convergence is now a DECLARATION confirmation (an allowWrite entry over
+// the probed dir) plus a fingerprint ack for hosts ignoring the key; a host signal still overrides.
 describe('recommendations — worktrees-dir convergence lanes (D7)', () => {
   const worktreesProject = (name) => {
     const root = makeProject();
@@ -2524,7 +2534,7 @@ describe('recommendations — read-only by construction', () => {
 // The cheap-agents offer. Unlike every other item here, this one was NOT found by an incident — the
 // opt-in coverage registry surfaced it: `agents` is the family's second `.claude/` writer and the
 // `help` Tune tail advertises it, yet the advisor had no entry, so a user who never ran `help` never
-// learned it existed while the advisor reported the deployment optimal.
+// learned it existed.
 describe('recommendations — the cheap-agents offer (OPT-IN-SHIPS-INVISIBLE)', () => {
   it('a project with no placed subagents is OFFERED them, with a runnable consent-gated apply', () => {
     const root = makeProject();
@@ -2534,15 +2544,14 @@ describe('recommendations — the cheap-agents offer (OPT-IN-SHIPS-INVISIBLE)', 
     assert.ok(item, 'a shipped opt-in capability must never be invisible');
     assert.equal(item.severity, SEVERITY_OPTIONAL);
     assert.match(item.apply, /cheap-agents\.mjs/u, 'the apply runs the writer that owns the placement');
-    assert.match(item.what, /\d+ read-only subagent/u, 'the WHAT states how many are missing');
-    assert.match(item.benefit, /no vehicle has a shell/u, 'the benefit states the property that makes a fan-out quiet');
+    assert.match(item.what, /\d+ bundled subagent vehicle\(s\) not placed .* \d+ read-only, \d+ the full-tool executor/u, 'the WHAT counts the read-only vehicles and the executor apart');
+    assert.match(item.benefit, /no shell on a read-only vehicle/u, 'the benefit scopes the no-shell property to the read-only vehicles');
     assert.ok(!skips.some((s) => s.key === 'agents'));
   });
 
-  // The writer's contract is «--dry-run first, ALWAYS» (references/modes/agents.md invariants), so
-  // the rendered line must be the PREVIEW. Rendering --apply would skip the per-vehicle plan the user
-  // is supposed to see BEFORE consenting — and «already current» vs «customized, preserved» is
-  // exactly what that plan discloses.
+  // The writer's contract is «--dry-run first, ALWAYS» (references/modes/agents.md invariants), so the
+  // rendered line must be the PREVIEW. Rendering --apply would skip the per-vehicle plan the user sees
+  // BEFORE consenting — «already current» vs «customized, preserved» is what that plan discloses.
   it('renders the PREVIEW, never a bare --apply that would skip the mandated dry-run', () => {
     const root = makeProject();
     const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });

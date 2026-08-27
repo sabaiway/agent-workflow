@@ -28,7 +28,7 @@ import { parseSemver, compareSemver } from './semver-lite.mjs';
 import { validateManifest, readAuthoritativeVersion, UNSUPPORTED, INVALID } from './manifest/validate.mjs';
 import { START_MARKER, excludePath, inferVisibility } from './hide-footprint.mjs';
 import { readEngineFragment, ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL, AUTONOMY_FRAGMENT_REL, LENS_FRAGMENT_REL, LENS_PRIORS_REL } from './engine-source.mjs';
-import { ACTIVITIES, resolveActivityRecipe } from './recipes.mjs';
+import { ACTIVITIES, resolveActivityRecipe, composeReadiness } from './recipes.mjs';
 // The config reader lives in orchestration-config.mjs (the single config contract). The read-only status
 // settings-survey reuses THIS reader (one strict-JSON + loud-on-malformed contract), not a second copy.
 import { loadConfig } from './orchestration-config.mjs';
@@ -52,9 +52,9 @@ import { HOOK_FILE_REL as GATE_HOOK_FILE_REL, isHookWired } from './gate-hook.mj
 // writer, which pulls in the atomic-write core) so the status survey stays a pure reader.
 import { settingsSnapshot } from './bridge-settings-read.mjs';
 import { GATES_REL, loadDeclaration } from './run-gates.mjs';
-// The cheap-agents writer's own bundle reader + placement planner — reused by the settings survey
-// (one implementation, never a drifting copy; cheap-agents imports only node builtins, no cycle).
-import { readBundledAgents, planPlacement } from './cheap-agents.mjs';
+// The cheap-agents READ core's bundle reader + placement planner — reused by the settings survey
+// (one implementation, never a drifting copy; the read core imports only node builtins, no cycle).
+import { readBundledAgents, planPlacement } from './cheap-agents-read.mjs';
 // The status vocabulary (manifestState constants, internal→public maps, display names, the no-leak
 // forbidden set) lives in the frozen labels.mjs LEAF (Plan §4.2 B1) so the import graph is acyclic —
 // nothing imports family-registry for vocabulary. Imported here for internal use; the public subset is
@@ -486,9 +486,6 @@ export const surveyProject = (projectDir, deps = {}) => {
 // consumes THIS, never the human table verbatim. An envelope-shape test pins its shape so later phases
 // (the settings/visibility block) can't silently break the Phase-2 version consumer.
 
-// STATE_PUBLIC (internal→public token map) + DISPLAY_NAMES + displayOf now live in labels.mjs (B1) —
-// imported at the top of this file. They are used below exactly as before.
-
 // ── the settings survey (Phase 3) — read-only, honest, localized-on-error ──────────
 // Each sub-survey returns a small user-safe object OR a single `{ error }` field (a localized message,
 // never a crash): a malformed/unreadable file in ONE area must not break the rest of `status`. The
@@ -527,19 +524,21 @@ export const surveyVisibility = (dir, deps = {}) => {
 };
 
 // orchestration recipes: the EFFECTIVE recipe per slot (config · default · effective), engine-free —
-// shared loadConfig + resolveActivityRecipe + the read-only backend detector. A malformed config → a
-// localized error field; a detection failure floors at solo (a corrupt bridge must not break the view).
+// shared loadConfig + resolveActivityRecipe + the ONE readiness composition (detected backends +
+// the executor vehicle). A malformed config → a localized error field; a detection failure floors
+// at solo (a corrupt bridge must not break the view) but is surfaced as `detectError`, so the
+// render says "couldn't check backends" instead of letting a real solo-default look identical.
 export const surveyRecipes = (dir, deps = {}) => {
-  // A detector failure floors recipes at solo (mirrors procedures) but is surfaced as `detectError`, so
-  // the render says "couldn't check backends" instead of letting a real solo-default look identical.
   const { detection, error: detectError } = detectSafe(deps);
+  const projectDir = resolve(dir);
+  const readiness = composeReadiness(projectDir, { ...deps, detect: () => detection });
   try {
-    const { config, source } = loadConfig(resolve(dir), deps.readFile ?? readFileSync, deps.lstat ?? lstatSync);
+    const { config, source } = loadConfig(projectDir, deps.readFile ?? readFileSync, deps.lstat ?? lstatSync);
     const activities = {};
     for (const [activity, def] of Object.entries(ACTIVITIES)) {
       activities[activity] = {};
       for (const slot of Object.keys(def.slots)) {
-        const r = resolveActivityRecipe({ config: config ?? {}, readiness: detection, activity, slot });
+        const r = resolveActivityRecipe({ config: config ?? {}, readiness, activity, slot });
         activities[activity][slot] = { recipe: r.recipe, source: r.source, degradedFrom: r.degradedFrom ?? null };
       }
     }

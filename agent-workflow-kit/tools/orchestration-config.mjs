@@ -68,7 +68,7 @@ export const assertSlotRecipe = (activity, slot, recipe, exitCode = 2) => {
   if (!(SLOT_RECIPES[slotType] ?? []).includes(recipe)) {
     throw fail(
       exitCode,
-      `invalid recipe "${recipe}" for ${slotType} slot of "${activity}" (${slotType} accepts: ${SLOT_RECIPES[slotType].join(', ')})`,
+      `invalid value "${recipe}" for ${slotType} slot of "${activity}" (${slotType} accepts: ${SLOT_RECIPES[slotType].join(', ')})`,
     );
   }
   return slotType;
@@ -98,14 +98,14 @@ const parseQualified = (lhs, flag) => {
 export const parseOp = (kind, token) => {
   if (kind === 'set') {
     const eq = token.indexOf('=');
-    if (eq <= 0) throw fail(2, `--set must be <activity>.<slot>=<recipe> (got "${token}")`);
+    if (eq <= 0) throw fail(2, `--set must be <activity>.<slot>=<value> (got "${token}")`);
     const recipe = token.slice(eq + 1);
-    if (!recipe) throw fail(2, `--set must be <activity>.<slot>=<recipe> (got "${token}")`);
+    if (!recipe) throw fail(2, `--set must be <activity>.<slot>=<value> (got "${token}")`);
     const { activity, slot } = parseQualified(token.slice(0, eq), '--set');
     assertSlotRecipe(activity, slot, recipe);
     return { kind: 'set', activity, slot, recipe };
   }
-  if (token.includes('=')) throw fail(2, `--unset takes <activity>.<slot> without a recipe (got "${token}")`);
+  if (token.includes('=')) throw fail(2, `--unset takes <activity>.<slot> without a value (got "${token}")`);
   const { activity, slot } = parseQualified(token, '--unset');
   assertSlot(activity, slot);
   return { kind: 'unset', activity, slot };
@@ -245,7 +245,7 @@ export const validateConfig = (config) => {
       if (typeof recipe !== 'string' || !(SLOT_RECIPES[slotType] ?? []).includes(recipe)) {
         throw fail(
           1,
-          `${CONFIG_REL}: invalid recipe "${recipe}" for ${slotType} slot of "${key}" (${slotType} accepts: ${SLOT_RECIPES[slotType].join(', ')})`,
+          `${CONFIG_REL}: invalid value "${recipe}" for ${slotType} slot of "${key}" (${slotType} accepts: ${SLOT_RECIPES[slotType].join(', ')})`,
         );
       }
     }
@@ -361,19 +361,40 @@ export const CANON_README =
   "Per-project orchestration config: the recipe used at each step (slot) of each named activity. " +
   "Easiest: tell the agent in plain language and run the `set-recipe` writer — it interprets your intent, " +
   "previews the change, and writes valid JSON for you. You can still hand-edit this file directly whenever you " +
-  "prefer; that option never goes away. Each activity is configured independently (e.g. plan-authoring, " +
-  "plan-execution), and so is each slot within it. A slot's value is a recipe: a 'review' slot accepts " +
+  "prefer; that option never goes away. Three activities are configured independently, and so is each slot " +
+  "within them: 'plan-authoring' (slots author, review), 'plan-execution' (slots execute, review) and " +
+  "'routine' (slots carrier, parallel). A slot's value is a recipe: a 'review' slot accepts " +
   "solo | reviewed | council (you self-review / one backend reviews / both review and you synthesize); an " +
-  "'execute' slot accepts solo | delegated (you implement / a backend runs a bounded sub-task). The default " +
-  "below is 'solo' everywhere — no execution backend required. Raise a slot to reviewed or council for a second " +
-  "opinion, or to delegated to hand off execution; those need an execution backend set up first. Remove a slot's " +
-  "line (or run `set-recipe --unset <activity>.<slot>`) to fall back to the computed default (reviewed when a " +
-  "review backend is ready, otherwise solo). Run the read-only procedures advisor to see an activity's steps " +
-  "plus the recipe resolved for your environment. Strict JSON — no comments.";
+  "'execute' slot accepts solo | delegated | subagent (you implement / a backend runs a bounded sub-task / a " +
+  "full-tool frontier subagent carries a bounded slice you verify); the carrier slots 'plan-authoring.author' " +
+  "and 'routine.carrier' accept solo | subagent. 'routine.parallel' is a flag rather than a recipe: it accepts " +
+  "on | off and decides whether file-disjoint subagent slices dispatch concurrently. The default below is " +
+  "'solo' for every recipe and carrier slot, and 'on' for the parallel switch — no execution backend required. " +
+  "Raise a slot to reviewed or council for a second " +
+  "opinion, or to delegated to hand off execution; those need an execution backend set up first. 'subagent' " +
+  "needs the executor vehicle placed in this project — the composition root's `agents` writer places it; without " +
+  "it the slot resolves to solo with the reason stated. Remove a slot's line, or a whole activity block (or " +
+  "run `set-recipe --unset <activity>.<slot>`), to fall back to the computed default: reviewed when a review " +
+  "backend is ready and otherwise solo for a review slot, solo for author, execute and carrier, on for " +
+  "parallel. Run the read-only procedures advisor to see an activity's steps plus the recipe resolved for " +
+  "your environment. Strict JSON — no comments.";
 
 export const KNOWN_PRIOR_README = [
   // v1 (pre-set-recipe) — the "Hand-edit this file — it is never written for you" note. APPEND-ONLY.
   "Per-project orchestration config: the recipe used at each step (slot) of each named activity. Hand-edit this file — it is never written for you. Each activity is configured independently (e.g. plan-authoring, plan-execution), and so is each slot within it. A slot's value is a recipe: a 'review' slot accepts solo | reviewed | council (you self-review / one backend reviews / both review and you synthesize); an 'execute' slot accepts solo | delegated (you implement / a backend runs a bounded sub-task). The default below is 'solo' everywhere — no execution backend required. Raise a slot to reviewed or council for a second opinion, or to delegated to hand off execution; those need an execution backend set up first. Remove a slot's line to fall back to the computed default (reviewed when a review backend is ready, otherwise solo). Run the read-only procedures advisor to see an activity's steps plus the recipe resolved for your environment, and pass a per-run override to change one slot just once. Strict JSON — no comments.",
+  // v2 (two activities, an `execute` slot without a carrier) — the note that shipped before AD-124.
+  "Per-project orchestration config: the recipe used at each step (slot) of each named activity. Easiest: tell " +
+  "the agent in plain language and run the `set-recipe` writer — it interprets your intent, previews the change, " +
+  "and writes valid JSON for you. You can still hand-edit this file directly whenever you prefer; that option " +
+  "never goes away. Each activity is configured independently (e.g. plan-authoring, plan-execution), and so is " +
+  "each slot within it. A slot's value is a recipe: a 'review' slot accepts solo | reviewed | council (you " +
+  "self-review / one backend reviews / both review and you synthesize); an 'execute' slot accepts solo | " +
+  "delegated (you implement / a backend runs a bounded sub-task). The default below is 'solo' everywhere — no " +
+  "execution backend required. Raise a slot to reviewed or council for a second opinion, or to delegated to hand " +
+  "off execution; those need an execution backend set up first. Remove a slot's line (or run `set-recipe --unset " +
+  "<activity>.<slot>`) to fall back to the computed default (reviewed when a review backend is ready, otherwise " +
+  "solo). Run the read-only procedures advisor to see an activity's steps plus the recipe resolved for your " +
+  "environment. Strict JSON — no comments.",
 ];
 
 // refreshReadme(config) → { config, changed }: refresh ONLY the `_README` value when it normalize-

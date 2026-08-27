@@ -1,6 +1,6 @@
 ---
 name: agent-workflow-engine
-description: Canonical home of the agent-workflow planning methodology — the capped plan shape (goal and boundary, module ledger, verification), plan lifecycle, queue.md series index, mandatory Cleanup phase, the feature-spec canon (the durable per-feature contract layer with its frozen schema and Out-of-scope discipline), the bounded methodology slot fragment, the orchestration-recipe vocabulary (Solo / Reviewed / Council / Delegated), and the activity-procedures canon (plan-authoring / plan-execution, with typed recipe slots). A published, installable npm package (available:true) that *provides* the methodology text; it mutates nothing. The composition root (agent-workflow-kit) reads this canon LIVE from the installed engine and injects the bounded slots from it — one source of truth, no bundled mirror; `npx @sabaiway/agent-workflow-kit@latest init` installs the engine.
+description: Canonical home of the agent-workflow planning methodology — the capped plan shape (goal and boundary, module ledger, verification), plan lifecycle, queue.md series index, mandatory Cleanup phase, the feature-spec canon (the durable per-feature contract layer with its frozen schema and Out-of-scope discipline), the bounded methodology slot fragment, the orchestration-recipe vocabulary (Solo / Reviewed / Council / Delegated / Subagent), and the activity-procedures canon (plan-authoring / plan-execution / routine, with typed recipe slots). A published, installable npm package (available:true) that *provides* the methodology text; it mutates nothing. The composition root (agent-workflow-kit) reads this canon LIVE from the installed engine and injects the bounded slots from it — one source of truth, no bundled mirror; `npx @sabaiway/agent-workflow-kit@latest init` installs the engine.
 disable-model-invocation: true
 metadata:
   version: '4.2.0'
@@ -34,13 +34,13 @@ slot fill is needed but the engine is absent, the kit's reconcile **fails loudly
   `<!-- workflow:methodology:start -->` / `<!-- workflow:methodology:end -->` markers. A short
   summary + pointer, not the full reference, so the entry point stays under its line cap.
 - [`references/orchestration.md`](references/orchestration.md) — the canonical **orchestration-recipe**
-  reference: the four recipes (Solo / Reviewed / Council / Delegated) defined over the bridges' role
-  vocabulary, the when/why decision guidance, the graceful-degradation lattice, and the quota/health
-  guard. The kit owns the executable dispatch and surfaces it as `/agent-workflow-kit recipes`.
+  reference: the five recipes (Solo / Reviewed / Council / Delegated / Subagent) defined over the
+  bridges' role vocabulary and the executor vehicle's `carry` role, the when/why decision guidance,
+  the graceful-degradation lattice, and the quota/health guard. The kit owns the executable dispatch and surfaces it as `/agent-workflow-kit recipes`.
 - [`references/orchestration-slot.md`](references/orchestration-slot.md) — the **bounded** one-line
   orchestration fragment the composition root injects into a deployed `AGENTS.md`, between the
   `<!-- workflow:orchestration:start -->` / `<!-- workflow:orchestration:end -->` markers. It names the
-  four recipes and routes to `/agent-workflow-kit recipes`, never to this engine-internal reference.
+  five recipes and routes to `/agent-workflow-kit recipes`, never to this engine-internal reference.
 - [`references/autonomy-slot.md`](references/autonomy-slot.md) — the **bounded** one-line autonomy
   fragment the composition root injects into a deployed `AGENTS.md`, between the
   `<!-- workflow:autonomy:start -->` / `<!-- workflow:autonomy:end -->` markers. It carries the
@@ -50,7 +50,7 @@ slot fill is needed but the engine is absent, the kit's reconcile **fails loudly
   sandbox + the orchestrator). It routes to the kit's `set-autonomy` / `autonomy-doctor` surfaces,
   never to any engine-internal reference.
 - [`references/procedures.md`](references/procedures.md) — the canonical **activity-procedures** canon:
-  the ordered steps of the named activities (`plan-authoring`, `plan-execution`) with **typed recipe
+  the ordered steps of the named activities (`plan-authoring`, `plan-execution`, `routine`) with **typed recipe
   slots** that bind to the orchestration recipes, composing with `planning.md` without restating it. It
   stays generic (no project-specific stages baked in). The kit reads it live and renders the steps +
   the resolved effective recipe per slot via the read-only `/agent-workflow-kit procedures <activity>`.

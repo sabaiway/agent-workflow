@@ -4,7 +4,7 @@
 methodology *text* — the capped plan shape (goal and boundary, module ledger, verification), the plan-file lifecycle
 (`docs/plans/*.md`, ephemeral, never committed), the `queue.md` series index, the mandatory
 final **Phase: Cleanup**, the **orchestration-recipe** vocabulary (Solo / Reviewed / Council /
-Delegated), the bounded slot fragments the family kit injects into a deployed project's
+Delegated / Subagent), the bounded slot fragments the family kit injects into a deployed project's
 `AGENTS.md`, and the canonical agent-rules lens block the kit renders into a deployed
 `docs/ai/agent_rules.md`.
 
@@ -52,8 +52,9 @@ the canonical methodology reference on disk:
   methodology fragment the composition root injects into a deployed `AGENTS.md` (a short summary +
   pointer, kept under the entry point's line cap).
 - [`references/orchestration.md`](references/orchestration.md) — the canonical **orchestration-recipe**
-  reference: the four recipes (Solo / Reviewed / Council / Delegated) over the bridges' role
-  vocabulary, the when/why, the graceful-degradation lattice, and the quota/health guard.
+  reference: the five recipes (Solo / Reviewed / Council / Delegated / Subagent) over the bridges'
+  role vocabulary and the executor vehicle's `carry` role, the when/why, the graceful-degradation
+  lattice, and the quota/health guard.
 - [`references/orchestration-slot.md`](references/orchestration-slot.md) — the **bounded** one-line
   orchestration fragment the composition root injects into a deployed `AGENTS.md`, routing to the
   in-project recipes surface.
@@ -62,7 +63,7 @@ the canonical methodology reference on disk:
   for `docs/ai/autonomy.json` (read at session start; the canonical default floor when absent; STOP
   on malformed), routing to the in-project `set-autonomy` / `autonomy-doctor` surfaces.
 - [`references/procedures.md`](references/procedures.md) — the canonical **activity-procedures** canon:
-  the named activities (`plan-authoring`, `plan-execution`) as ordered steps with typed recipe slots,
+  the named activities (`plan-authoring`, `plan-execution`, `routine`) as ordered steps with typed recipe slots,
   read live and rendered by the read-only `/agent-workflow-kit procedures <activity>`.
 - [`references/agent-rules-lens.md`](references/agent-rules-lens.md) — the canonical **agent-rules
   lens** block (the planning/review/process-fidelity invariants) the kit renders into a deployed

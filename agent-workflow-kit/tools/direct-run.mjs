@@ -56,6 +56,12 @@ export const LIBRARY_ONLY_MODULES = Object.freeze({
   // Named by references/modes/mcp.md as the read half the advisor and uninstall ask. It only ever
   // REPORTS; the command that acts on what it reports is the mode itself.
   'mcp-registration.mjs': '/agent-workflow-kit mcp',
+  // Named by references/modes/set-recipe.md as the activity/slot registry; the command that shows
+  // the recipes it defines, resolved for this environment, is the recipes advisor.
+  'carriers.mjs': '/agent-workflow-kit recipes',
+  // The READ core of the subagent-vehicle surface: it sits one name away from the writer
+  // references/modes/agents.md DOES name, and reaching for it is reaching for the agents mode.
+  'cheap-agents-read.mjs': '/agent-workflow-kit agents',
 });
 
 // The frozen refusal line. One line, names the module, names the command.

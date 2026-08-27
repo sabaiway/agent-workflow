@@ -37,7 +37,7 @@ The three setup choices — **visibility** (step 2), **conversational language**
 10. **Honest `known_issues.md`.** Every bug with a workaround gets Impact + Plan so it isn't re-discovered later.
 11. **One conversational language.** Talk to the user in the language chosen at bootstrap; keep code, paths, commands, and abbreviations in their source language. See *Communication contract*.
 12. **Attribution is opt-in.** Honour the *Attribution* block: by default no agent/AI/model mention anywhere (commits, PRs, code, comments, docs), and no `Co-Authored-By` trailer. See *Attribution contract*.
-13. **Orchestrate via a named recipe.** Compose execution through a named recipe (Solo / Reviewed / Council / Delegated) and **always commit yourself** — backends are advisory or delegated, never autonomous. Encoded via the reconciled `workflow:orchestration` pointer (it routes to `/agent-workflow-kit recipes` + the engine canon), not by bloating the entry point.
+13. **Orchestrate via a named recipe.** Compose execution through a named recipe (Solo / Reviewed / Council / Delegated / Subagent) and **always commit yourself** — every other carrier is advisory or delegated, never autonomous. Encoded via the reconciled `workflow:orchestration` pointer (it routes to `/agent-workflow-kit recipes` + the engine canon), not by bloating the entry point.
 
 ---
 

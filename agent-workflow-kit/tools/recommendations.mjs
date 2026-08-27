@@ -51,7 +51,7 @@ import { loadAutonomy, isSparseSeedConfig, AUTONOMY_REL } from './autonomy-confi
 import { deriveDoctorPlan } from './autonomy-doctor.mjs';
 import { detectBackends, findOnPath } from './detect-backends.mjs';
 import { isDirectRun } from './direct-run.mjs';
-import { ACTIVITIES, resolveActivityRecipe } from './recipes.mjs';
+import { ACTIVITIES, resolveActivityRecipe, composeReadiness } from './recipes.mjs';
 import { surveyFamily, surveyGateHook, surveyAdrLayoutStrict } from './family-registry.mjs';
 import { probeSandboxMasks, needsMasksApply } from './sandbox-masks.mjs';
 import { shellQuoteArg } from './review-state.mjs';
@@ -82,7 +82,7 @@ import { loadConfig } from './orchestration-config.mjs';
 import { DEFAULT_BUNDLE_ROOT } from './bridge-settings-read.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
 import { loadWorktreesConfig, resolveProbeDir } from './worktrees.mjs';
-import { preflightCheapAgents } from './cheap-agents.mjs';
+import { preflightCheapAgents, EXECUTOR_VEHICLE } from './cheap-agents.mjs';
 // The ack store's path, keys, lane registry, fingerprint and guarded reader live in their own leaf
 // (contract: kit/ack-store) — `status` reads the same store, and a second copy is what drifts.
 import {
@@ -250,7 +250,7 @@ export const WHATS = Object.freeze({
   'mcp-channel': "the kit's read-only MCP server is not registered here — path questions and literal searches stay shell strings",
   'mcp-channel.masked': '{rel} is a {className} here (a sandbox device mask is the usual cause), so the entry to merge is printed instead',
   'mcp-channel.differing': 'an "{server}" MCP entry is already declared here and DIFFERS from the registration this kit copy would write',
-  agents: '{n} read-only subagent(s) not placed (Claude Code) — no shell-free vehicle for that work; the apply PREVIEWS first',
+  agents: '{n} bundled subagent vehicle(s) not placed (Claude Code) — {ro} read-only, {ex} the full-tool executor; the apply PREVIEWS first',
   'family-freshness': '{parts}',
   'adr-store-migration': 'still on the retired 3-tier ADR layout — {shape}',
   'sandbox-masks': '{n} sandbox device mask(s) clutter git status — the managed exclude block is absent or stale',
@@ -309,7 +309,7 @@ export const BENEFITS = Object.freeze({
   'read-lane': 'velocity — pipes/chains of your seeded read-only commands auto-approve instead of prompting (opt-in, conservatively classified)',
   'state-block': 'no silent stalls — a turn ending on «you are not needed», or on work it never started, warns at once instead of waiting to be spotted',
   'mcp-channel': 'velocity — path facts and literal searches arrive as typed tool calls whose arguments are JSON fields, never a shell string',
-  agents: 'cost and quiet — mechanical work runs on a cheap model, and no vehicle has a shell, so a read-only fan-out cannot flood you with prompts',
+  agents: 'cost and quiet — cheap-model mechanical work, no shell on a read-only vehicle (no prompt flood); the executor carries slices you verify',
   'family-freshness': 'currency — placed family members carry the latest shipped fixes and features',
   'adr-store-migration': 'durability — every decision becomes its own file with a generated navigator, instead of one hand-rotated pile',
   'sandbox-masks': 'zero clutter — git status shows only your changes (the review domain already ignores the masks by construction)',
@@ -477,11 +477,12 @@ const probeReviewRecipe = ({ root, deps, add, skip }) => {
     // The VALIDATED reader (Segment B): a schema-invalid config (unknown activity/slot,
     // bad recipe) throws here and becomes a stated skip — raw JSON.parse would silently ignore it.
     const { config } = loadConfig(root, deps.readFile ?? readFileSync, deps.lstat ?? lstatSync);
-    const detection = detectBackends(deps);
+    const readiness = composeReadiness(root, { ...deps, detect: deps.detect ?? (() => detectBackends(deps)), onDetectError: (err) => { throw err; } });
     const degraded = [];
     for (const [activity, def] of Object.entries(ACTIVITIES)) {
       for (const slot of Object.keys(def.slots)) {
-        const r = resolveActivityRecipe({ config, readiness: detection, activity, slot });
+        if (config?.[activity]?.[slot] === 'subagent') continue; // the executor vehicle has its own probe
+        const r = resolveActivityRecipe({ config, readiness, activity, slot });
         if (r.degradedFrom) degraded.push(`${activity}.${slot}: configured ${r.degradedFrom} degrades to ${r.recipe} (${r.reason})`);
       }
     }
@@ -952,11 +953,9 @@ const probeCheapAgents = ({ root, deps, add, skip }) => {
     // skipped the per-vehicle plan the user is supposed to see before consenting.
     // The hidden-mode reconcile rides the detail, never the apply line: it is wrong to run on a
     // VISIBLE deployment, and the apply slot must stay one pure executable command.
-    add(
-      'agents',
-      fillTemplate(WHATS.agents, { n: toPlace.length }),
-      `node ${q(toolPath('cheap-agents.mjs'))} --cwd ${q(root)}`,
-      'agents',
+    const executors = toPlace.filter((item) => item.name === EXECUTOR_VEHICLE).length;
+    add('agents', fillTemplate(WHATS.agents, { n: toPlace.length, ex: executors, ro: toPlace.length - executors }),
+      `node ${q(toolPath('cheap-agents.mjs'))} --cwd ${q(root)}`, 'agents',
       `hidden-mode deployments only: after the --apply the preview prints, run node ${q(toolPath('hide-footprint.mjs'))} --dir ${q(root)} --reconcile so the placed .claude/agents/ stays invisible to git status`,
     );
   } catch (err) {

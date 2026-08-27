@@ -311,3 +311,16 @@ describe('formatHelp / buildJson', () => {
     assert.deepEqual(Object.keys(j.commands[0]).sort(), ['group', 'invocation', 'key', 'kind', 'oneLine'].sort());
   });
 });
+
+describe('the agents catalog line names four read-only vehicles and the one full-tool executor (AD-124)', () => {
+  it('neither the catalog entry nor the tune tail claims every vehicle is shell-free', async () => {
+    const { COMMANDS } = await import('./commands.mjs');
+    const { readFileSync } = await import('node:fs');
+    const agents = COMMANDS.find((c) => c.key === 'agents');
+    assert.match(agents.oneLine, /four read-only ones, none granted a shell/u);
+    assert.match(agents.oneLine, /the one full-tool executor/u);
+    const source = readFileSync(new URL('./commands.mjs', import.meta.url), 'utf8');
+    assert.match(source, /agents {8}subagent vehicles: four read-only .* \+ the one full-tool executor/u, 'the tune tail says the same');
+    assert.doesNotMatch(source, /shell-free subagents|none of them granted a shell/u);
+  });
+});

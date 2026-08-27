@@ -12,7 +12,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -103,4 +103,25 @@ describe('published READMEs — structure guard (AD-009)', () => {
       assert.deepEqual(missing, [], `${rel}: local links pointing nowhere: ${JSON.stringify(missing)}`);
     });
   }
+});
+
+// The recipe vocabulary is FIVE names on every normative shipped surface (AD-124). Known-prior stores
+// (inject-methodology.mjs, orchestration-config.mjs) legitimately keep the four-name text and are not
+// normative, so the scan is by path, never repo-wide.
+describe('shipped surfaces name five recipes, never the retired four-name list', () => {
+  const FOUR_ONLY = /Solo\s*\/\s*Reviewed\s*\/\s*Council\s*\/\s*Delegated(?!\s*\/\s*Subagent)/u;
+  const normative = [
+    'agent-workflow-kit/tools/commands.mjs',
+    'agent-workflow-kit/README.md',
+    'agent-workflow-kit/SKILL.md',
+    'agent-workflow-memory/README.md',
+    'agent-workflow-memory/SKILL.md',
+    ...readdirSync(resolve(repoRoot, 'agent-workflow-kit/references/modes')).map((f) => `agent-workflow-kit/references/modes/${f}`),
+    ...readdirSync(resolve(repoRoot, 'agent-workflow-kit/references/shared')).map((f) => `agent-workflow-kit/references/shared/${f}`),
+  ].filter((rel) => /\.(md|mjs)$/.test(rel) && present(rel));
+  it('no normative kit or memory surface lists Solo / Reviewed / Council / Delegated without Subagent', () => {
+    assert.ok(normative.length >= 10, 'the scan covers the shipped surfaces, never an empty list');
+    const stale = normative.filter((rel) => FOUR_ONLY.test(readFileSync(resolve(repoRoot, rel), 'utf8')));
+    assert.deepEqual(stale, [], 'every recipe list names the fifth recipe');
+  });
 });
