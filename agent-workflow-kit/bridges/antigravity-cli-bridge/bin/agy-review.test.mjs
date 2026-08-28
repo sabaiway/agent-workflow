@@ -2,7 +2,7 @@ import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, readFileSync,
-  existsSync, readdirSync, symlinkSync, cpSync,
+  existsSync, readdirSync, symlinkSync, cpSync, realpathSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync, execFile } from 'node:child_process';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const NO_FILE_READ = 'The artifact below is complete and inline. Do not read any file, call any tool, or request one.';
 import {
   WRAPPER, farmFor, makeSandbox, run, runAsync, readReceipts, RECEIPTS_REL,
   ARTIFACT_HEADER, SHAPE_HEADER, FED_CAP, FED_WIDE_CAP, MAX_COUNTABLE_PROOF_ADDRESS,
@@ -409,6 +410,25 @@ describe('agy-review.sh — guard + grounding (2, 3)', { concurrency: 2 }, () =>
     const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'] });
     rmSync(sb.home, { recursive: true, force: true });
     assert.match(r.prompt, /Do NOT comment on AI model names\/versions or your own knowledge cutoff/);
+  });
+
+  it('plan and diff prepend the no-file-read instruction before the artifact; code mode stays unchanged', async () => {
+    // spec:plan-review-loop/S23
+    for (const [mode, file, header] of [['plan', 'p.md', '## The implementation plan under review'], ['diff', 'd.patch', '## The diff under review']]) {
+      const sb = makeSandbox();
+      writeFileSync(join(sb.repo, file), `${mode} body\n`);
+      const r = await run(sb, { args: [mode, file, '--facts', 'f'] });
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(r.prompt.indexOf(NO_FILE_READ) >= 0, `${mode}: instruction present`);
+      assert.ok(r.prompt.indexOf(NO_FILE_READ) < r.prompt.indexOf(header), `${mode}: instruction precedes artifact`);
+    }
+
+    const code = makeSandbox();
+    const r = await run(code, { args: ['code', '--facts', 'f'] });
+    rmSync(code.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.prompt, new RegExp(NO_FILE_READ.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'code prompt is unchanged');
   });
 
   it('--facts / --decided / --focus all reach the prompt', async () => {
@@ -2041,7 +2061,7 @@ describe('agy-review.sh — declared contract is really accepted (forward guard)
 // The normative fixture: the AD-038 shape + the D3 self-declaring probe marker (backend/verdict here
 // carry this bridge's vocabulary; dynamic values are asserted by shape):
 const RECEIPT_FIXTURE = JSON.parse(
-  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"revise","grounded":true,"factsHash":null,"wrapperVersion":"2.3.0","timestamp":"2026-07-03T12:00:00Z","probe":false,"posture":{"model":"<display>"},"delivery":"inline"}',
+  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"revise","grounded":true,"factsHash":null,"wrapperVersion":"2.3.0","timestamp":"2026-07-03T12:00:00Z","probe":false,"durationS":0,"blocking":0,"posture":{"model":"<display>"},"delivery":"inline"}',
 );
 const sha256HexOf = async (buf) => {
   const { createHash } = await import('node:crypto');
@@ -2051,6 +2071,7 @@ const VERDICT_OUTPUT = '### Verdict\nSHIP WITH NITS — solid, two nits.\n### Bl
 
 describe('agy-review.sh — review receipts (AD-038)', { concurrency: 2 }, () => {
   it('a fresh grounded code review appends ONE fixture-shaped receipt (verdict verbatim, factsHash real)', async () => {
+    // spec:plan-review-loop/S22
     const sb = makeSandbox();
     const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT } });
     const receipts = readReceipts(sb.repo);
@@ -2069,6 +2090,11 @@ describe('agy-review.sh — review receipts (AD-038)', { concurrency: 2 }, () =>
     assert.equal(receipt.factsHash, await sha256HexOf('a tiny fact'), 'sha256 of the facts payload — an empty/changed facts file is visible');
     assert.equal(receipt.wrapperVersion, MANIFEST.version, 'receipt version ⟷ capability.json version');
     assert.match(receipt.timestamp, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    assert.ok(Number.isInteger(receipt.durationS) && receipt.durationS >= 0);
+    assert.equal(receipt.blocking, 0);
+    assert.equal(Object.hasOwn(receipt, 'artifactPath'), false, 'a code receipt carries no artifact path');
+    assert.match(r.stderr, /review duration: \d+s/);
+    for (const field of ['durationS', 'blocking', 'artifactPath']) assert.ok(REVIEW_CONTRACT.receipt.includes(`${field} = `), `the manifest receipt contract declares ${field}`);
   });
 
   // The probe marker (BRIDGE-MODES-CATALOG, D3) — the twin of the sibling bridge's arm: an
@@ -2139,6 +2165,34 @@ describe('agy-review.sh — review receipts (AD-038)', { concurrency: 2 }, () =>
       assert.equal(r.status, 0, r.stderr);
       assert.equal(receipts[0].verdict, want, `verdict for: ${output.slice(0, 30)}`);
     }
+  });
+
+  it('a REWORK receipt counts every numbered item in the first Blocking section', async () => {
+    const sb = makeSandbox();
+    const output = '### Verdict\nREWORK\n### Blocking\n1. first\n2) second\n### Non-blocking\nnone';
+    const r = await run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_OUTPUT: output } });
+    const receipts = readReceipts(sb.repo);
+    rmSync(sb.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipts[0].blocking, 2);
+  });
+
+  it('a large Blocking section is counted whole and the contradiction arm still exits 4 (no SIGPIPE)', async () => {
+    const items = Array.from({ length: 5000 }, (_, i) => `${i + 1}. finding ${i + 1}`).join('\n');
+    const rework = makeSandbox();
+    const r = await run(rework, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_OUTPUT: `### Verdict\nREWORK\n### Blocking\n${items}\n### Non-blocking\nnone` } });
+    const receipts = readReceipts(rework.repo);
+    rmSync(rework.home, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(receipts[0].blocking, 5000);
+
+    const ship = makeSandbox();
+    const s = await run(ship, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_OUTPUT: `### Verdict\nSHIP\n### Blocking\n${items}\n### Non-blocking\nnone` } });
+    const shipReceipts = readReceipts(ship.repo);
+    rmSync(ship.home, { recursive: true, force: true });
+    assert.equal(s.status, 4, s.stderr);
+    assert.match(s.stderr, /verdict-body contradiction/);
+    assert.equal(shipReceipts.length, 0);
   });
 
   // The wrapper-minted finding manifest (flow-orchestration Phase 4.2, Decision 2/P5/P24-25):
@@ -2363,6 +2417,21 @@ describe('agy-review.sh — review receipts (AD-038)', { concurrency: 2 }, () =>
     assert.equal(r.status, 0, r.stderr);
     assert.equal(receipts[0].artifact, 'plan');
     assert.equal(receipts[0].fingerprint, await sha256HexOf('# plan body\n'), 'plan fingerprint = file sha256');
+    assert.equal(receipts[0].artifactPath, 'p.md', 'realpath inside the work tree normalizes repo-relative');
+  });
+
+  it('plan and diff refuse an uncarriable artifact-path byte before agy runs', async () => {
+    for (const mode of ['plan', 'diff']) {
+      for (const [name, diagnostic] of [['bad"name.md', /double quote/], ['bad\\name.md', /backslash/], ['bad\nname.md', /control byte/]]) {
+        const sb = makeSandbox();
+        writeFileSync(join(sb.repo, name), '# artifact\n');
+        const r = await run(sb, { args: [mode, name, '--facts', 'f'] });
+        rmSync(sb.home, { recursive: true, force: true });
+        assert.equal(r.status, 2, `${mode}: ${name}`);
+        assert.match(r.stderr, diagnostic, `${mode}: ${name}`);
+        assert.equal(r.invoked, false, `${mode}: ${name}: refusal is pre-spend`);
+      }
+    }
   });
 
   it('plan/diff outside a git work tree: warn + skip the receipt (exit 0) unless AW_REVIEW_RECEIPTS is set', async () => {
@@ -2382,10 +2451,12 @@ describe('agy-review.sh — review receipts (AD-038)', { concurrency: 2 }, () =>
       env: { AGY_FAKE_OUTPUT: VERDICT_OUTPUT, AW_REVIEW_RECEIPTS: override },
     });
     const body = existsSync(override) ? readFileSync(override, 'utf8') : '';
+    const expectedPath = realpathSync(join(outside, 'p.md'));
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(written.status, 0, written.stderr);
     assert.match(body, /"backend":"agy"/, 'the override path receives the receipt outside a git tree');
     assert.match(body, /"artifact":"plan"/);
+    assert.equal(JSON.parse(body).artifactPath, expectedPath, 'outside a work tree the normalized path is absolute');
   });
 
   it('a receipt write failure warns loudly but never fails the review (fail-safe direction)', async () => {

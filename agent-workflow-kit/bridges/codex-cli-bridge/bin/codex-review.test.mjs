@@ -315,6 +315,25 @@ describe('codex-review.sh — hard timeout (1.3)', { concurrency: 2 }, () => {
     assert.match(r.stderr, /hard-timeout preflight fails CLOSED/);
     assert.equal(r.capStdin, '', 'codex must NOT be invoked when the preflight refuses');
   });
+
+  it('refuses by name BEFORE any run when node is missing or below the family floor', async () => {
+    const missing = makeSandbox();
+    const r1 = await run(missing, { path: `${missing.bin}:${farmFor(['node'])}` });
+    rmSync(missing.root, { recursive: true, force: true });
+    assert.equal(r1.status, 127);
+    assert.match(r1.stderr, /'node' is not on PATH/);
+    assert.equal(r1.capStdin, '', 'codex must NOT be invoked without node');
+
+    const old = makeSandbox();
+    const shim = join(old.root, 'node-shim');
+    mkdirSync(shim);
+    writeFileSync(join(shim, 'node'), '#!/bin/sh\necho v18.0.0\n', { mode: 0o755 });
+    const r2 = await run(old, { path: `${shim}:${old.bin}:${farmFor(['node'])}` });
+    rmSync(old.root, { recursive: true, force: true });
+    assert.equal(r2.status, 127);
+    assert.match(r2.stderr, /node 'v18\.0\.0' is below the family floor/);
+    assert.equal(r2.capStdin, '', 'codex must NOT be invoked on a too-old node');
+  });
 });
 
 describe('codex-review.sh — precomputed diff for code mode (2.1)', { concurrency: 2 }, () => {
@@ -901,7 +920,7 @@ describe('codex-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)
 // The normative fixture: the AD-038 shape + the D3 self-declaring probe marker (field VALUES with
 // dynamic content are asserted by shape):
 const RECEIPT_FIXTURE = JSON.parse(
-  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"revise","grounded":true,"factsHash":null,"wrapperVersion":"2.3.0","timestamp":"2026-07-03T12:00:00Z","probe":false,"posture":{"model":"<m>","effort":"<e>","tier":null}}',
+  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"revise","grounded":true,"factsHash":null,"wrapperVersion":"2.3.0","timestamp":"2026-07-03T12:00:00Z","probe":false,"durationS":0,"blocking":0,"posture":{"model":"<m>","effort":"<e>","tier":null}}',
 );
 const RECEIPTS_REL = join('.git', 'agent-workflow-review-receipts.jsonl');
 const readReceipts = (repo) => {
@@ -913,6 +932,7 @@ const sha256Hex = (buf) => createHash('sha256').update(buf).digest('hex');
 
 describe('codex-review.sh — review receipts (AD-038)', { concurrency: 2 }, () => {
   it('a successful code review appends ONE fixture-shaped receipt (text-mode verdict parse)', async () => {
+    // spec:plan-review-loop/S20
     const sb = makeSandbox();
     const r = await run(sb, { env: { CODEX_FAKE_FINAL: '[major] — a.txt:1 — x — y\nVerdict: revise' } });
     const receipts = readReceipts(sb.repo);
@@ -931,6 +951,11 @@ describe('codex-review.sh — review receipts (AD-038)', { concurrency: 2 }, () 
     assert.equal(receipt.factsHash, null, 'native grounding — no separate facts payload');
     assert.equal(receipt.wrapperVersion, MANIFEST.version, 'receipt version ⟷ capability.json version');
     assert.match(receipt.timestamp, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    assert.ok(Number.isInteger(receipt.durationS) && receipt.durationS >= 0);
+    assert.equal(receipt.blocking, 1, 'one [major] line is blocking in the codex vocabulary');
+    assert.equal(Object.hasOwn(receipt, 'artifactPath'), false, 'a code receipt carries no artifact path');
+    assert.match(r.stderr, /review duration: \d+s/);
+    for (const field of ['durationS', 'blocking', 'artifactPath']) assert.ok(REVIEW_CONTRACT.receipt.includes(`${field} = `), `the manifest receipt contract declares ${field}`);
   });
 
   // The probe marker (BRIDGE-MODES-CATALOG, D3): a CODEX_PROBE=1 review runs with the
@@ -986,12 +1011,26 @@ describe('codex-review.sh — review receipts (AD-038)', { concurrency: 2 }, () 
   it('CODEX_REVIEW_SCHEMA=1 reads the schema verdict field', async () => {
     const sb = makeSandbox();
     const r = await run(sb, {
-      env: { CODEX_REVIEW_SCHEMA: '1', CODEX_FAKE_FINAL: '{"findings":[],"verdict":"ship","notes":"ok"}' },
+      env: { CODEX_REVIEW_SCHEMA: '1', CODEX_FAKE_FINAL: '{"findings":[{"severity":"blocker"},{"severity":"major"},{"severity":"minor"}],"verdict":"ship","notes":"ok"}' },
     });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(receipts[0].verdict, 'ship');
+    assert.equal(receipts[0].blocking, 2, 'schema mode counts blocker and major findings only');
+  });
+
+  it('schema mode: findings the wrapper cannot count fail the run with NO receipt', async () => {
+    // spec:plan-review-loop/S28
+    for (const payload of ['{"findings":"nope","verdict":"ship"}', '{"findings":[{"severity":"huge"}],"verdict":"ship"}']) {
+      const sb = makeSandbox();
+      const r = await run(sb, { env: { CODEX_REVIEW_SCHEMA: '1', CODEX_FAKE_FINAL: payload } });
+      const receipts = readReceipts(sb.repo);
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(r.status, 4, payload);
+      assert.match(r.stderr, /findings array the wrapper cannot/, payload);
+      assert.equal(receipts.length, 0, `${payload}: an uncountable payload never reaches the receipt store`);
+    }
   });
 
   it('no parseable verdict is a FAILED run — never recorded as "unknown" (D4 owns the arm)', async () => {
@@ -1004,6 +1043,7 @@ describe('codex-review.sh — review receipts (AD-038)', { concurrency: 2 }, () 
   });
 
   it('plan mode: artifact "plan", fingerprint = the artifact-file sha256', async () => {
+    // spec:plan-review-loop/S21
     const sb = makeSandbox();
     const planBytes = readFileSync(join(sb.repo, 'plan.md'));
     const r = await run(sb, { args: ['plan', 'plan.md'], env: { CODEX_FAKE_FINAL: 'Verdict: ship' } });
@@ -1012,6 +1052,19 @@ describe('codex-review.sh — review receipts (AD-038)', { concurrency: 2 }, () 
     assert.equal(r.status, 0, r.stderr);
     assert.equal(receipts[0].artifact, 'plan');
     assert.equal(receipts[0].fingerprint, sha256Hex(planBytes), 'plan fingerprint = file sha256');
+    assert.equal(receipts[0].artifactPath, 'plan.md', 'realpath inside the work tree normalizes repo-relative');
+  });
+
+  it('plan mode refuses an uncarriable artifact-path byte before codex runs', async () => {
+    for (const [name, diagnostic] of [['bad"name.md', /double quote/], ['bad\\name.md', /backslash/], ['bad\nname.md', /control byte/]]) {
+      const sb = makeSandbox();
+      writeFileSync(join(sb.repo, name), '# plan\n');
+      const r = await run(sb, { args: ['plan', name] });
+      rmSync(sb.root, { recursive: true, force: true });
+      assert.equal(r.status, 2, name);
+      assert.match(r.stderr, diagnostic, name);
+      assert.equal(r.capStdin, '', `${name}: refusal is pre-spend`);
+    }
   });
 
   it('AW_REVIEW_RECEIPTS overrides the receipt destination', async () => {

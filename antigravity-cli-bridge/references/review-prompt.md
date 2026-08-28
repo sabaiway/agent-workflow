@@ -31,6 +31,9 @@ GUARD    Do NOT comment on AI model names/versions or your own knowledge cutoff 
 ## Focus
 {{FOCUS}}            # from --focus "…" + any trailing focus words, merged in parse order (optional)
 
+PLAN/DIFF ONLY  The artifact below is complete and inline. Do not read any file, call any tool,
+                or request one.
+
 ## The change set / plan / diff under review
 {{ARTIFACT}}         # code: the assembled, repo-complete working-tree change set (when oversized it
                      #   is not inlined at all — see the chunked feed below)

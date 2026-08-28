@@ -173,6 +173,12 @@ hands to `timeout(1)`; without a capping binary `agy-review` fails CLOSED pre-sp
 informational, never a receipt field. **Quote the posture banner verbatim** when labeling a
 dispatch.
 
+Every successful review receipt carries integer `durationS` and `blocking`; the wrapper prints
+`review duration: <n>s`. A plan or diff receipt also carries `artifactPath`, normalized to a
+repo-relative realpath inside the work tree and an absolute realpath otherwise. A double quote,
+backslash or control byte in that path refuses pre-spend because the receipt encoder cannot carry
+it. Agy counts numbered items in the first `### Blocking` section.
+
 **Flow dispatch nonce (`AW_REVIEW_NONCE`, unset by default):** under the safe grammar
 `[A-Za-z0-9._-]{1,64}` (anything else refuses pre-spend), a successful review first mints the
 finding MANIFEST `agent-workflow-finding-manifest-agy-<nonce>.json` beside the receipts file —

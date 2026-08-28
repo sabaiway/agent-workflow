@@ -114,8 +114,13 @@ Receipt:
   uncommitted-state payload (staged diff + unstaged diff + untracked-not-ignored contents — the
   review-payload domain; never-committable untracked paths — character/block devices, FIFOs,
   sockets — are excluded from the domain entirely, untracked symlinks/directories ride as
-  name-only notes) in code mode, the artifact-file sha256 in plan/diff mode; verdict
-  recorded verbatim from the mandated '### Verdict' section (SHIP / SHIP WITH NITS / REWORK);
+  name-only notes) in code mode, the artifact-file sha256 in plan/diff mode; durationS = integer
+  wall-clock seconds from CLI start through verdict parsing and the wrapper prints review duration:
+  <n>s; blocking = the count of numbered items in the first ### Blocking section; artifactPath =
+  the normalized realpath on plan/diff receipts only (repo-relative inside the work tree, absolute
+  otherwise), while a double quote, backslash or control byte refuses pre-spend because the receipt
+  encoder cannot carry it; verdict recorded verbatim from the mandated '### Verdict' section
+  (SHIP / SHIP WITH NITS / REWORK);
   grounded = whether a NON-EMPTY --facts payload was supplied (code mode refuses pre-spend without
   one — no run, no receipt — unless --ungrounded/AGY_PROBE=1; in plan/diff an empty payload records
   grounded:false — fail-closed, the state gate rejects it), factsHash = sha256 of the facts
@@ -163,7 +168,7 @@ Honesty + posture (D4/D5):
   mode.
 
 Closed grammar: unknown flags are rejected; no '--' passthrough (the flag escape is --ungrounded; the env escape is AGY_PROBE=1).
-Requires at run time: the agy CLI on PATH + a Google AI subscription login (--help needs neither).
+Requires at run time: the agy CLI on PATH, a Google AI subscription login, Node >= 22 (--help needs none of these).
 HELP
     exit 0
     ;;
@@ -891,6 +896,42 @@ receipt_json_scalar() {
   if [[ -z "${1:-}" ]]; then printf 'null'; else printf '"%s"' "$1"; fi
 }
 
+# refuse_uncarriable_artifact_byte <label> <value> — the receipt encoder escapes nothing beyond its
+# grammar-bound fields, so an artifact path is BOUNDED, never escaped: a byte the line could not
+# carry refuses pre-spend, by name.
+refuse_uncarriable_artifact_byte() {
+  local label="$1" value="$2" byte=""
+  case "$value" in
+    *'"'*) byte="a double quote" ;;
+    *'\'*) byte="a backslash" ;;
+    *[$'\x01'-$'\x1f'$'\x7f']*) byte="a control" ;;
+  esac
+  if [[ -z "$byte" ]]; then return 0; fi
+  echo "error: $label contains $byte byte, which the receipt encoder cannot carry." >&2
+  return 2
+}
+
+normalize_artifact_path() {
+  local input="$1" normalized
+  refuse_uncarriable_artifact_byte "artifact path" "$input" || return 2
+  if ! normalized="$(node -e '
+const { realpathSync } = require("node:fs");
+const { isAbsolute, relative, sep } = require("node:path");
+const { spawnSync } = require("node:child_process");
+const absolute = realpathSync(process.argv[1]);
+const git = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" });
+const root = git.status === 0 ? realpathSync(git.stdout.replace(/\r?\n$/, "")) : null;
+const rel = root === null ? null : relative(root, absolute);
+const contained = rel !== null && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+process.stdout.write((contained ? rel : absolute).split(sep).join("/"));
+' -- "$input" 2>/dev/null)"; then
+    echo "error: artifact path '$input' could not be normalized to a real path." >&2
+    return 2
+  fi
+  refuse_uncarriable_artifact_byte "normalized artifact path" "$normalized" || return 2
+  printf '%s' "$normalized"
+}
+
 # STRICT JSON string encoding for the ONE free-form receipt field (the posture model display
 # string): backslash then double-quote escaped. Control bytes never reach here — the posture
 # resolution refuses them pre-spend (D5), so these two escapes make the encoding total.
@@ -1008,7 +1049,7 @@ process.exit(code);
   return 0
 }
 
-# write_review_receipt <artifact|""> <fresh: true|false> <fingerprint|""> <verdict> <grounded: true|false> <factsHash|""> [probe: true|false] [delivery|""] [findings-file]
+# write_review_receipt <artifact|""> <fresh: true|false> <fingerprint|""> <verdict> <grounded: true|false> <factsHash|""> [probe: true|false] [delivery|""] [findings-file] [artifact-path] [durationS] [blocking]
 # Appends ONE receipt line (the AD-038 fixture shape) as a side effect of a SUCCESSFUL review —
 # to $AW_REVIEW_RECEIPTS when set, else <git dir>/agent-workflow-review-receipts.jsonl (inside the
 # git dir by construction, so it is never committable). Fail-safe: every failure here warns loudly
@@ -1022,6 +1063,7 @@ process.exit(code);
 # minted FIRST (atomic, no-clobber, ORDERED) and a failed mint EXCLUDES the receipt append.
 write_review_receipt() {
   local artifact="$1" fresh="$2" fingerprint="$3" verdict="$4" grounded="$5" facts_hash="$6" probe="${7:-false}" delivery="${8:-}" findings_file="${9:-}"
+  local artifact_path="${10:-}" duration_s="${11:-0}" blocking="${12:-0}"
   local receipts="${AW_REVIEW_RECEIPTS:-}"
   if [[ -z "$receipts" ]]; then
     local receipt_git_dir
@@ -1039,16 +1081,16 @@ write_review_receipt() {
   fi
   # A nonce-SUPPLIED dispatch stamps its nonce into the receipt too (the flow round-land matcher
   # requires exact {backend, nonce} equality — dispatch identity end-to-end); the nonce is
-  # grammar-safe by the pre-spend check, and a nonce-less receipt stays BYTE-EXACT (the frozen
-  # compatibility floor).
-  local line probe_field=',"probe":false' delivery_field="" nonce_field=""
+  # grammar-safe by the pre-spend check; a nonce-less receipt adds NO nonce field.
+  local line probe_field=',"probe":false' artifact_path_field="" delivery_field="" nonce_field=""
   if [[ "$probe" == "true" ]]; then probe_field=',"probe":true'; fi
+  if [[ -n "$artifact_path" ]]; then artifact_path_field=",\"artifactPath\":\"$artifact_path\""; fi
   if [[ -n "$delivery" ]]; then delivery_field=",\"delivery\":\"$delivery\""; fi
   if [[ -n "${AW_REVIEW_NONCE:-}" ]]; then nonce_field=",\"nonce\":\"${AW_REVIEW_NONCE}\""; fi
-  line="$(printf '{"schema":1,"artifact":%s,"fresh":%s,"fingerprint":%s,"backend":"%s","verdict":"%s","grounded":%s,"factsHash":%s,"wrapperVersion":"%s","timestamp":"%s"%s,"posture":%s%s%s}' \
+  line="$(printf '{"schema":1,"artifact":%s,"fresh":%s,"fingerprint":%s,"backend":"%s","verdict":"%s","grounded":%s,"factsHash":%s,"wrapperVersion":"%s","timestamp":"%s"%s,"durationS":%s,"blocking":%s%s,"posture":%s%s%s}' \
     "$(receipt_json_scalar "$artifact")" "$fresh" "$(receipt_json_scalar "$fingerprint")" \
     "$AW_RECEIPT_BACKEND" "$verdict" "$grounded" "$(receipt_json_scalar "$facts_hash")" \
-    "$AW_BRIDGE_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$probe_field" "$(posture_json)" "$delivery_field" "$nonce_field")"
+    "$AW_BRIDGE_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$probe_field" "$duration_s" "$blocking" "$artifact_path_field" "$(posture_json)" "$delivery_field" "$nonce_field")"
   if ! printf '%s\n' "$line" >>"$receipts" 2>/dev/null; then
     echo "warning: could not append the review receipt to $receipts — the review itself succeeded;" >&2
     echo "         the review-state gate will read the current tree as un-receipted." >&2
@@ -1074,8 +1116,8 @@ parse_agy_verdict_line() { # $1 = captured-output file
   awk '/^### Verdict[[:space:]]*$/{flag=1; next} flag && NF {print; exit}' "$1" 2>/dev/null
 }
 
-parse_agy_blocking_first_numbered() { # $1 = captured-output file
-  awk 'flag && /^### /{exit} /^### Blocking[[:space:]]*$/{flag=1; next} flag && /^[0-9]+[.)]/{print; exit}' "$1" 2>/dev/null
+parse_agy_blocking_numbered() { # $1 = captured-output file
+  awk 'flag && /^### /{exit} /^### Blocking[[:space:]]*$/{flag=1; next} flag && /^[0-9]+[.)]/{print}' "$1" 2>/dev/null
 }
 
 # The repo file map is a FIXED cost that scales with REPO SIZE, not change size (measured 28,735
@@ -1569,6 +1611,7 @@ PLAN_CONTENT=""
 DIFF_CONTENT=""
 REVIEW_ARTIFACT=""
 REVIEW_FINGERPRINT=""
+REVIEW_ARTIFACT_PATH=""
 # D8/D8b: an agy `code` receipt SELF-DECLARES how the change set reached the model — `inline` when
 # the whole set rode ONE prompt (delivery proven BY CONSTRUCTION), `fed` when a chunked feed proved
 # it by echo. The kit's gate requires the field present and valid, never a particular value, and a
@@ -1586,6 +1629,7 @@ if [[ -z "$resume_mode" ]]; then
       if [[ ! -f "$target" ]]; then
         echo "error: $mode file '$target' not found." >&2; exit 2
       fi
+      if ! REVIEW_ARTIFACT_PATH="$(normalize_artifact_path "$target")"; then exit 2; fi
       # Read the target NOW (before any cd) — its path is relative to the invocation cwd.
       if [[ "$mode" == "plan" ]]; then PLAN_CONTENT="$(cat -- "$target")"; else DIFF_CONTENT="$(cat -- "$target")"; fi
       # Plan/diff receipt identity: the artifact-file sha256 (informational-only for the tree checker).
@@ -1803,11 +1847,13 @@ else
     REVIEW_DELIVERY="inline"
   fi
 
+  # Plan/diff carry the prohibition themselves: headless agy auto-denies read_file, and a denied
+  # read ends the review without an answer.
   emit_artifact() {
     case "$mode" in
       code) echo "## The change set under review (assembled working-tree diff — repo-complete)"; assemble_code_diff ;;
-      plan) echo "## The implementation plan under review"; printf '%s\n' "$PLAN_CONTENT" ;;
-      diff) echo "## The diff under review"; printf '%s\n' "$DIFF_CONTENT" ;;
+      plan) echo "The artifact below is complete and inline. Do not read any file, call any tool, or request one."; echo; echo "## The implementation plan under review"; printf '%s\n' "$PLAN_CONTENT" ;;
+      diff) echo "The artifact below is complete and inline. Do not read any file, call any tool, or request one."; echo; echo "## The diff under review"; printf '%s\n' "$DIFF_CONTENT" ;;
     esac
   }
   emit_grounding() {  # POSTURE + GUARD + FACTS + DECIDED + FOCUS
@@ -2061,6 +2107,7 @@ review_out_file="$staging/review-output"
 envelope_file="$staging/review-envelope"
 dispatch_flags=("${AGY_TRANSPORT_FLAGS[@]}")
 if (( ${#run_passthrough[@]} > 0 )); then dispatch_flags+=("${run_passthrough[@]}"); fi
+review_started_at="$(date +%s)"
 set +e
 if (( FED_MODE == 1 )); then
   run_fed_review
@@ -2119,8 +2166,9 @@ if [[ $rc -eq 0 ]]; then
     echo "       the review; if it recurs, inspect the captured output for what the model produced." >&2
     exit 4
   fi
+  blocking_items="$(parse_agy_blocking_numbered "$review_out_file")"
   if [[ "$verdict" == "SHIP" || "$verdict" == "SHIP WITH NITS" ]]; then
-    first_blocking_item="$(parse_agy_blocking_first_numbered "$review_out_file")"
+    first_blocking_item="${blocking_items%%$'\n'*}"
     if [[ -n "$first_blocking_item" ]]; then
       verdict_line="$(parse_agy_verdict_line "$review_out_file")"
       echo "error: verdict-body contradiction — '### Verdict' reads '$verdict_line' while '### Blocking'" >&2
@@ -2129,11 +2177,14 @@ if [[ $rc -eq 0 ]]; then
       exit 4
     fi
   fi
+  blocking_count=0
+  if [[ -n "$blocking_items" ]]; then blocking_count=$(( $(printf '%s\n' "$blocking_items" | wc -l) )); fi
+  review_duration_s=$(( $(date +%s) - review_started_at ))
   if [[ -n "$resume_mode" ]]; then
     # A continuation never re-embeds the current artifact (agy holds the ORIGINAL round server-side;
     # --facts is rejected above), so it cannot attest the folded tree: fresh:false, artifact /
     # fingerprint / factsHash null, grounded false — informational-only, ignored by the state gate.
-    write_review_receipt "" false "" "$verdict" false "" "$REVIEW_PROBE" "" "$review_out_file"
+    write_review_receipt "" false "" "$verdict" false "" "$REVIEW_PROBE" "" "$review_out_file" "" "$review_duration_s" "$blocking_count"
     echo "notice: a continuation receipt is fresh:false (informational-only) — only a fresh grounded run" >&2
     echo "        (agy-review code --facts @f) mints a receipt that satisfies the review-state gate." >&2
   else
@@ -2143,7 +2194,8 @@ if [[ $rc -eq 0 ]]; then
       grounded=true
       facts_hash="$(printf '%s' "$FACTS_CONTENT" | sha256_stdin || true)"
     fi
-    write_review_receipt "$REVIEW_ARTIFACT" true "$REVIEW_FINGERPRINT" "$verdict" "$grounded" "$facts_hash" "$REVIEW_PROBE" "$REVIEW_DELIVERY" "$review_out_file"
+    write_review_receipt "$REVIEW_ARTIFACT" true "$REVIEW_FINGERPRINT" "$verdict" "$grounded" "$facts_hash" "$REVIEW_PROBE" "$REVIEW_DELIVERY" "$review_out_file" "$REVIEW_ARTIFACT_PATH" "$review_duration_s" "$blocking_count"
   fi
+  echo "review duration: ${review_duration_s}s" >&2
 fi
 exit $rc

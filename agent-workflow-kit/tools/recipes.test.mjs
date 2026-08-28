@@ -473,6 +473,35 @@ describe('the subagent carrier in the lattice, the resolver and the CLI (spec:ca
     assert.equal(recommendRecipe(readinessWith('placed', NEEDS_SKILL, NEEDS_SKILL)).recipe, 'solo');
   });
 
+  it('derives the raw review obligation independently for each review activity', () => {
+    const readiness = detect(READY, NEEDS_SKILL);
+    const table = [
+      ['solo', 'solo', [], false],
+      ['reviewed', 'reviewed', ['codex', 'agy'], false],
+      ['council', 'council', ['codex', 'agy'], true],
+      [['codex-review'], 'reviewed', ['codex'], true],
+      [['review-lens'], 'solo', [], false],
+      [['codex-review', 'review-lens'], 'reviewed', ['codex'], true],
+    ];
+    for (const activity of ['plan-authoring', 'plan-execution']) {
+      for (const [configured, recipe, backends, perBackend] of table) {
+        const result = requiredBackendsForConfiguredRecipe({ config: { [activity]: { review: configured } }, readiness, activity });
+        assert.deepEqual([result.recipe, result.backends, result.perBackend], [recipe, backends, perBackend], `${activity}: ${JSON.stringify(configured)}`);
+      }
+    }
+  });
+
+  it('uses readiness only for an absent slot, reports detector failure as unknowable, and defaults activity to plan-execution', () => {
+    const oneReady = detect(READY, NEEDS_SKILL);
+    const noneReady = detect(NEEDS_SKILL, NEEDS_SKILL);
+    assert.equal(requiredBackendsForConfiguredRecipe({ config: {}, readiness: oneReady, activity: 'plan-authoring' }).recipe, 'reviewed');
+    assert.equal(requiredBackendsForConfiguredRecipe({ config: {}, readiness: noneReady, activity: 'plan-authoring' }).recipe, 'solo');
+    assert.equal(requiredBackendsForConfiguredRecipe({ config: {}, readiness: [], detectionFailed: true, activity: 'plan-authoring' }).unknowable, true);
+    assert.equal(requiredBackendsForConfiguredRecipe({ config: { 'plan-authoring': { review: 'council' } }, readiness: [], detectionFailed: true, activity: 'plan-authoring' }).unknowable, false);
+    assert.equal(requiredBackendsForConfiguredRecipe({ config: { 'plan-execution': { review: 'council' } }, readiness: noneReady }).recipe, 'council');
+    assert.throws(() => requiredBackendsForConfiguredRecipe({ config: {}, readiness: noneReady, activity: 'routine' }), /has no review slot/);
+  });
+
   it('the human render names the vehicle state when placed, and the degrade when missing', () => {
     const placed = formatRecipes(readinessWith('placed'));
     assert.match(placed, /Subagent \(subagent\) — a full-tool frontier subagent/);

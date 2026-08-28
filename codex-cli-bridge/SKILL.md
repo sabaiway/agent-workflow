@@ -124,6 +124,13 @@ is **banner-only** (exactly the duration handed to `timeout(1)`; on exec `uncapp
 capping binary, while `codex-review` **fails CLOSED pre-spend** there) — informational, never a
 receipt field. **Quote the posture banner verbatim** when labeling a dispatch.
 
+Every successful review receipt carries integer `durationS` and `blocking`; the wrapper prints
+`review duration: <n>s`. A plan receipt also carries `artifactPath`, normalized to a repo-relative
+realpath inside the work tree and an absolute realpath otherwise. A double quote, backslash or
+control byte in that path refuses pre-spend because the receipt encoder cannot carry it. Codex
+counts `[blocker]` and `[major]` lines, or those two finding severities in schema mode — a schema
+payload whose findings cannot be counted fails the run (exit 4, no receipt).
+
 `codex exec` is headless: there is **no TTY**, so `approval_policy=never` — anything needing
 escalation is refused and reported, never interactively approved. The wrappers capture only codex's
 **final message** (`-o`), so output is clean; the JSON event stream + reasoning go to a run trace

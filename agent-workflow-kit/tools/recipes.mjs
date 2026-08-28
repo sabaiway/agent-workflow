@@ -47,10 +47,13 @@ export const BACKEND_ROLES = {
   [EXECUTOR_PROVIDER]: [CARRY_ROLE],
 };
 
-// Review obligations from the CONFIGURED plan-execution.review recipe — the RAW config value, never
-// the readiness-degraded one. Homed HERE so review-state and flow-check share one backend set (#42).
-export const requiredBackendsForConfiguredRecipe = ({ config, readiness = [], detectionFailed = false } = {}) => {
-  const configured = config?.['plan-execution']?.review;
+// Review obligations from the CONFIGURED activity's review recipe — the RAW config value, never
+// the readiness-degraded one. The default preserves review-state and flow-check's backend set (#42).
+export const requiredBackendsForConfiguredRecipe = ({ config, readiness = [], detectionFailed = false, activity = 'plan-execution' } = {}) => {
+  if (!Object.hasOwn(ACTIVITIES, activity) || !Object.hasOwn(ACTIVITIES[activity].slots, 'review')) {
+    throw new Error(`activity "${activity}" has no review slot`);
+  }
+  const configured = config?.[activity]?.review;
   const providers = Object.values(DISPLAY_ALIASES); // every review-capable backend, codex first
   if (configured == null && detectionFailed) {
     // No config + no readiness signal: the computed default is UNKNOWABLE — fail closed upstream.

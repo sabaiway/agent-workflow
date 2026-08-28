@@ -60,8 +60,14 @@ Receipt:
   untracked-not-ignored contents — the review-payload domain; never-committable untracked paths —
   character/block devices, FIFOs, sockets — are excluded from the domain entirely, untracked
   symlinks/directories ride as name-only notes) in code mode, the artifact-file
-  sha256 in plan mode; verdict parsed from the mandated literal verdict line (schema mode: the
-  verdict field); always fresh:true (one-shot) + grounded:true (native AGENTS.md auto-merge,
+  sha256 in plan mode; durationS = integer wall-clock seconds from CLI start through verdict parsing
+  and the wrapper prints review duration: <n>s; blocking = the count of [blocker] and [major] lines
+  (schema mode: findings with either severity; a payload whose findings cannot be counted fails
+  the run, no receipt); artifactPath = the normalized realpath on plan receipts only (repo-relative
+  inside the work tree, absolute otherwise), while a double quote,
+  backslash or control byte refuses pre-spend because the receipt encoder cannot carry it; verdict
+  parsed from the mandated literal verdict line (schema mode: the verdict field); always
+  fresh:true (one-shot) + grounded:true (native AGENTS.md auto-merge,
   factsHash null); probe = whether the run relaxed the quality guards (CODEX_PROBE=1), written on
   EVERY receipt so it self-declares — the kit's review-state gate rejects a probe-marked receipt (a
   probe review never attests) and equally rejects an unmarked one (silence is not a declaration);
@@ -107,7 +113,7 @@ Honesty + posture (D4/D5):
   refuses pre-spend in every mode.
 
 Environment: CODEX_REVIEW_SCHEMA=1 (structured JSON findings), CODEX_HARD_TIMEOUT (seconds, default 1800), CODEX_PROBE=1 (throwaway probe only), AW_REVIEW_RECEIPTS (receipt file override), AW_REVIEW_NONCE (dispatch nonce — mints the finding manifest beside the receipt; the --nonce <n> flag is its plain-argument equivalent).
-Requires at run time: the codex CLI on PATH, a ChatGPT-subscription login, a git work tree with a root AGENTS.md (--help needs none of these).
+Requires at run time: the codex CLI on PATH, a ChatGPT-subscription login, Node >= 22, a git work tree with a root AGENTS.md (--help needs none of these).
 HELP
     exit 0
     ;;
@@ -550,6 +556,42 @@ receipt_json_scalar() {
   if [[ -z "${1:-}" ]]; then printf 'null'; else printf '"%s"' "$1"; fi
 }
 
+# refuse_uncarriable_artifact_byte <label> <value> — the receipt encoder escapes nothing beyond its
+# grammar-bound fields, so an artifact path is BOUNDED, never escaped: a byte the line could not
+# carry refuses pre-spend, by name.
+refuse_uncarriable_artifact_byte() {
+  local label="$1" value="$2" byte=""
+  case "$value" in
+    *'"'*) byte="a double quote" ;;
+    *'\'*) byte="a backslash" ;;
+    *[$'\x01'-$'\x1f'$'\x7f']*) byte="a control" ;;
+  esac
+  if [[ -z "$byte" ]]; then return 0; fi
+  echo "error: $label contains $byte byte, which the receipt encoder cannot carry." >&2
+  return 2
+}
+
+normalize_artifact_path() {
+  local input="$1" normalized
+  refuse_uncarriable_artifact_byte "artifact path" "$input" || return 2
+  if ! normalized="$(node -e '
+const { realpathSync } = require("node:fs");
+const { isAbsolute, relative, sep } = require("node:path");
+const { spawnSync } = require("node:child_process");
+const absolute = realpathSync(process.argv[1]);
+const git = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" });
+const root = git.status === 0 ? realpathSync(git.stdout.replace(/\r?\n$/, "")) : null;
+const rel = root === null ? null : relative(root, absolute);
+const contained = rel !== null && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+process.stdout.write((contained ? rel : absolute).split(sep).join("/"));
+' -- "$input" 2>/dev/null)"; then
+    echo "error: artifact path '$input' could not be normalized to a real path." >&2
+    return 2
+  fi
+  refuse_uncarriable_artifact_byte "normalized artifact path" "$normalized" || return 2
+  printf '%s' "$normalized"
+}
+
 # STRICT JSON string encoding for the free-form posture fields (model/effort ride env/settings):
 # backslash then double-quote escaped. Control bytes never reach here — the D5 pre-spend gate
 # refuses them, so these two escapes make the encoding total.
@@ -665,7 +707,7 @@ process.exit(code);
   return 0
 }
 
-# write_review_receipt <artifact|""> <fresh: true|false> <fingerprint|""> <verdict> <grounded: true|false> <factsHash|""> [probe: true|false] [delivery|""] [findings-file]
+# write_review_receipt <artifact|""> <fresh: true|false> <fingerprint|""> <verdict> <grounded: true|false> <factsHash|""> [probe: true|false] [delivery|""] [findings-file] [artifact-path] [durationS] [blocking]
 # Appends ONE receipt line (the AD-038 fixture shape) as a side effect of a SUCCESSFUL review —
 # to $AW_REVIEW_RECEIPTS when set, else <git dir>/agent-workflow-review-receipts.jsonl (inside the
 # git dir by construction, so it is never committable). Fail-safe: every failure here warns loudly
@@ -679,6 +721,7 @@ process.exit(code);
 # minted FIRST (atomic, no-clobber, ORDERED) and a failed mint EXCLUDES the receipt append.
 write_review_receipt() {
   local artifact="$1" fresh="$2" fingerprint="$3" verdict="$4" grounded="$5" facts_hash="$6" probe="${7:-false}" delivery="${8:-}" findings_file="${9:-}"
+  local artifact_path="${10:-}" duration_s="${11:-0}" blocking="${12:-0}"
   local receipts="${AW_REVIEW_RECEIPTS:-}"
   if [[ -z "$receipts" ]]; then
     local receipt_git_dir
@@ -696,16 +739,16 @@ write_review_receipt() {
   fi
   # A nonce-SUPPLIED dispatch stamps its nonce into the receipt too (the flow round-land matcher
   # requires exact {backend, nonce} equality — dispatch identity end-to-end); the nonce is
-  # grammar-safe by the pre-spend check, and a nonce-less receipt stays BYTE-EXACT (the frozen
-  # compatibility floor).
-  local line probe_field=',"probe":false' delivery_field="" nonce_field=""
+  # grammar-safe by the pre-spend check; a nonce-less receipt adds NO nonce field.
+  local line probe_field=',"probe":false' artifact_path_field="" delivery_field="" nonce_field=""
   if [[ "$probe" == "true" ]]; then probe_field=',"probe":true'; fi
+  if [[ -n "$artifact_path" ]]; then artifact_path_field=",\"artifactPath\":\"$artifact_path\""; fi
   if [[ -n "$delivery" ]]; then delivery_field=",\"delivery\":\"$delivery\""; fi
   if [[ -n "${AW_REVIEW_NONCE:-}" ]]; then nonce_field=",\"nonce\":\"${AW_REVIEW_NONCE}\""; fi
-  line="$(printf '{"schema":1,"artifact":%s,"fresh":%s,"fingerprint":%s,"backend":"%s","verdict":"%s","grounded":%s,"factsHash":%s,"wrapperVersion":"%s","timestamp":"%s"%s,"posture":%s%s%s}' \
+  line="$(printf '{"schema":1,"artifact":%s,"fresh":%s,"fingerprint":%s,"backend":"%s","verdict":"%s","grounded":%s,"factsHash":%s,"wrapperVersion":"%s","timestamp":"%s"%s,"durationS":%s,"blocking":%s%s,"posture":%s%s%s}' \
     "$(receipt_json_scalar "$artifact")" "$fresh" "$(receipt_json_scalar "$fingerprint")" \
     "$AW_RECEIPT_BACKEND" "$verdict" "$grounded" "$(receipt_json_scalar "$facts_hash")" \
-    "$AW_BRIDGE_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$probe_field" "$(posture_json)" "$delivery_field" "$nonce_field")"
+    "$AW_BRIDGE_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$probe_field" "$duration_s" "$blocking" "$artifact_path_field" "$(posture_json)" "$delivery_field" "$nonce_field")"
   if ! printf '%s\n' "$line" >>"$receipts" 2>/dev/null; then
     echo "warning: could not append the review receipt to $receipts — the review itself succeeded;" >&2
     echo "         the review-state gate will read the current tree as un-receipted." >&2
@@ -835,8 +878,27 @@ if [[ "$nonce_flag_set" == "1" ]]; then
 fi
 set -- "${scan_args[@]+"${scan_args[@]}"}"
 
+# Pre-spend node probe (the agy twin's posture): the plan artifact-path normalization, the schema
+# parse and the nonce finding-manifest mint run in node, so a missing or too-old node refuses by
+# name BEFORE any codex run — never a spent run with the wrong diagnostic.
+AW_MIN_NODE_MAJOR=22
+if ! command -v node >/dev/null 2>&1; then
+  echo "error: 'node' is not on PATH. This review runs node for the plan artifact-path normalization," >&2
+  echo "       the CODEX_REVIEW_SCHEMA parse and the nonce finding-manifest mint (family floor: Node >= ${AW_MIN_NODE_MAJOR})." >&2
+  echo "       Refusing BEFORE any run is spent. Install Node >= ${AW_MIN_NODE_MAJOR}, then re-run." >&2
+  exit 127
+fi
+aw_node_version="$(node --version 2>/dev/null || true)"
+aw_node_major="${aw_node_version#v}"; aw_node_major="${aw_node_major%%.*}"
+if [[ ! "$aw_node_major" =~ ^[0-9]+$ ]] || (( aw_node_major < AW_MIN_NODE_MAJOR )); then
+  echo "error: node '${aw_node_version:-<unreadable>}' is below the family floor (Node >= ${AW_MIN_NODE_MAJOR}) this review needs." >&2
+  echo "       Refusing BEFORE any run is spent. Upgrade Node to >= ${AW_MIN_NODE_MAJOR}, then re-run." >&2
+  exit 127
+fi
+
 REVIEW_ARTIFACT=""
 REVIEW_FINGERPRINT=""
+REVIEW_ARTIFACT_PATH=""
 
 case "$mode" in
   plan)
@@ -850,6 +912,7 @@ case "$mode" in
       echo "error: unexpected arguments after plan file: $*" >&2
       exit 2
     fi
+    if ! REVIEW_ARTIFACT_PATH="$(normalize_artifact_path "$target")"; then exit 2; fi
     # Plan-mode receipt identity: the artifact-file sha256 (informational-only for the tree checker).
     REVIEW_ARTIFACT="plan"
     REVIEW_FINGERPRINT="$(sha256_stdin <"$target" || true)"
@@ -974,6 +1037,7 @@ invoke_codex() {
 }
 
 codex_cmd=("${codex_flags[@]}" -)
+review_started_at="$(date +%s)"
 invoke_codex
 
 # Raw-text fallback: if the structured-findings run failed (not a timeout), retry
@@ -1028,22 +1092,29 @@ fi
 verdict=""
 if [[ -f "$out" && -s "$out" ]]; then
   if [[ "$verdict_parse_mode" == "schema" ]]; then
-    # STRUCTURAL parse (round-1 fold): the TOP-LEVEL `verdict` field of the schema payload,
-    # accepted only inside the closed enum — a legal multiline layout parses, a decoy "verdict"
-    # inside a findings string never substitutes, malformed/out-of-enum stays empty (the D4
-    # failed-run arm). Node ≥22 is a family floor, so the one-liner adds no dependency.
-    verdict="$(node -e 'try{const v=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).verdict;if(["ship","revise","rethink"].includes(v))process.stdout.write(v);}catch{}' "$out" 2>/dev/null || true)"
+    # STRUCTURAL parse: the TOP-LEVEL `verdict` inside the closed enum AND `findings` an array whose
+    # every item carries a severity inside the closed enum, read ONCE — a legal multiline layout
+    # parses, a decoy "verdict" inside a findings string never substitutes, malformed / out-of-enum /
+    # uncountable stays empty (the D4 failed-run arm): a payload the wrapper cannot count is never
+    # receipted as "0 blocking". Node >=22 is a family floor, so the one-liner adds no dependency.
+    schema_parse="$(node -e 'try{const v=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8"));const sev=["blocker","major","minor","nit"];if(["ship","revise","rethink"].includes(v.verdict)&&Array.isArray(v.findings)&&v.findings.every((f)=>f!==null&&typeof f==="object"&&sev.includes(f.severity)))process.stdout.write(v.verdict+"\t"+v.findings.filter((f)=>f.severity==="blocker"||f.severity==="major").length);}catch{}' "$out" 2>/dev/null || true)"
+    verdict="${schema_parse%%$'\t'*}"
+    blocking_count="${schema_parse#*$'\t'}"
   else
     verdict="$(sed -nE 's/^Verdict: (ship|revise|rethink)[[:space:]]*$/\1/p' "$out" | tail -n1)"
+    blocking_count="$(awk '/^\[(blocker|major)\]([[:space:]]|$)/{n++} END{print n+0}' "$out")"
   fi
 fi
 if [[ -z "$verdict" ]]; then
   echo "error: the review produced no recognized 'Verdict: <ship|revise|rethink>' line (empty or" >&2
-  echo "       verdict-less final message) — a FAILED review; NO receipt was written. Re-run the" >&2
-  echo "       review; if it recurs, inspect the captured output for what the model produced." >&2
+  echo "       verdict-less final message; in schema mode also a findings array the wrapper cannot" >&2
+  echo "       count) — a FAILED review; NO receipt was written. Re-run the review; if it recurs," >&2
+  echo "       inspect the captured output for what the model produced." >&2
   exit 4
 fi
+review_duration_s=$(( $(date +%s) - review_started_at ))
 # codex is grounded by construction (AGENTS.md auto-merge + the precomputed change set): grounded
 # true, factsHash null (native grounding — no separate facts payload exists). Every codex run is a
 # full fresh run (one-shot, no resume) → fresh:true. $REVIEW_PROBE marks a guards-relaxed run.
-write_review_receipt "$REVIEW_ARTIFACT" true "$REVIEW_FINGERPRINT" "$verdict" true "" "$REVIEW_PROBE" "" "$out"
+write_review_receipt "$REVIEW_ARTIFACT" true "$REVIEW_FINGERPRINT" "$verdict" true "" "$REVIEW_PROBE" "" "$out" "$REVIEW_ARTIFACT_PATH" "$review_duration_s" "$blocking_count"
+echo "review duration: ${review_duration_s}s" >&2

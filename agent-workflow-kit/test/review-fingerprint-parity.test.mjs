@@ -46,6 +46,8 @@ const SHARED_FNS = [
   'emit_fingerprint_payload',
   'compute_tree_fingerprint',
   'receipt_json_scalar',
+  'refuse_uncarriable_artifact_byte',
+  'normalize_artifact_path',
   'write_finding_manifest',
   'write_review_receipt',
   'emit_repo_file_map',
